@@ -1,0 +1,31 @@
+<mat-card>
+	<mat-card-header>
+		<mat-card-title>Map</mat-card-title>
+		<span class="meta">
+			@if (lastSeen()) {
+				Last seen {{ lastSeen() }}
+			} @else {
+				No location data for this day
+			}
+		</span>
+	</mat-card-header>
+	<div #map class="map-canvas"></div>
+	<div class="map-controls">
+		<mat-checkbox
+			[checked]="follow()"
+			[disabled]="!live()"
+			(change)="follow.set($event.checked)">
+			Follow live location
+		</mat-checkbox>
+		<mat-checkbox
+			[checked]="walkMatch()"
+			(change)="walkMatch.set($event.checked)">
+			Snap walks to paths
+		</mat-checkbox>
+		<mat-checkbox
+			[checked]="showFixes()"
+			(change)="showFixes.set($event.checked)">
+			Show GPS fixes
+		</mat-checkbox>
+	</div>
+</mat-card>

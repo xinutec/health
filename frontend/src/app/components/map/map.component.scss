@@ -1,0 +1,19 @@
+.map-canvas {
+	height: 420px;
+	width: 100%;
+	margin-top: 8px;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.meta {
+	margin-left: auto;
+	align-self: center;
+	font: var(--mat-sys-body-medium);
+	color: var(--text-secondary);
+}
+
+.map-controls {
+	margin-top: 8px;
+	font: var(--mat-sys-body-medium);
+}

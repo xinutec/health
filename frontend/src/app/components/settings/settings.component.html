@@ -1,0 +1,72 @@
+<div class="settings-page">
+	<header class="settings-header">
+		<a mat-icon-button routerLink="/" aria-label="Back to dashboard">
+			<mat-icon>arrow_back</mat-icon>
+		</a>
+		<h1>Settings</h1>
+	</header>
+
+	<mat-card>
+		<mat-card-header>
+			<mat-card-title>Share your timeline</mat-card-title>
+			<mat-card-subtitle>
+				Give someone a link to see your last N days. Read-only.
+			</mat-card-subtitle>
+		</mat-card-header>
+		<mat-card-content>
+			@if (loading()) {
+				<mat-spinner diameter="32"></mat-spinner>
+			} @else if (health.shareStatus(); as s) {
+				@if (s.active && s.url) {
+					<mat-form-field appearance="outline" class="full-width">
+						<mat-label>Share link</mat-label>
+						<input matInput readonly [value]="s.url" #linkInput />
+						<button
+							matSuffix
+							mat-icon-button
+							(click)="copyLink(linkInput.value)"
+							matTooltip="Copy link"
+							aria-label="Copy link">
+							<mat-icon>content_copy</mat-icon>
+						</button>
+					</mat-form-field>
+					<p>
+						Currently showing the last {{ s.daysBack }} day{{ s.daysBack === 1 ? "" : "s" }}.
+						@if (s.lastAccessedAt) {
+							Last accessed {{ formatDate(s.lastAccessedAt) }}.
+						} @else {
+							Not yet accessed.
+						}
+					</p>
+					<mat-form-field appearance="outline" subscriptSizing="dynamic">
+						<mat-label>Days to share</mat-label>
+						<input matInput type="number" min="1" max="365" [ngModel]="editDays()" (ngModelChange)="editDays.set($event)" />
+						<mat-hint>Change this and press "Update days" — the link stays the same.</mat-hint>
+					</mat-form-field>
+				} @else {
+					<p>No share link active. Choose how many days to share, then create one.</p>
+					<mat-form-field appearance="outline">
+						<mat-label>Days to share</mat-label>
+						<input matInput type="number" min="1" max="365" [(ngModel)]="daysInput" />
+					</mat-form-field>
+				}
+			}
+			@if (error(); as e) {
+				<p class="error">{{ e }}</p>
+			}
+		</mat-card-content>
+		@if (health.shareStatus(); as s) {
+			<mat-card-actions align="end">
+				@if (s.active) {
+					<button mat-button class="danger" (click)="revoke()">Revoke</button>
+					<button mat-stroked-button (click)="rotate(s.daysBack ?? 7)">Generate new link</button>
+					<button mat-flat-button (click)="updateDays()" [disabled]="editDays() === s.daysBack">
+						Update days
+					</button>
+				} @else {
+					<button mat-flat-button (click)="create()">Create share link</button>
+				}
+			</mat-card-actions>
+		}
+	</mat-card>
+</div>

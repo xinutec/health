@@ -1,0 +1,10 @@
+<mat-card>
+  <mat-card-header><mat-card-title>Heart Rate</mat-card-title></mat-card-header>
+  <mat-card-content>
+    @if (points().length === 0) {
+      <p class="no-data">No heart rate data available</p>
+    } @else {
+      <canvas baseChart [data]="chartData()" [options]="chartOptions()" type="line"></canvas>
+    }
+  </mat-card-content>
+</mat-card>

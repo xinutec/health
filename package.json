@@ -1,0 +1,53 @@
+{
+  "name": "health-sync",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "sync": "node dist/sync.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:frontend": "cd frontend && npm test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json",
+    "check:schema-types": "node scripts/check-schema-types.mjs",
+    "lint": "biome check .",
+    "lint:frontend": "cd frontend && npm run lint",
+    "format": "biome check --write .",
+    "verify": "npm run typecheck && npm run typecheck:frontend && npm run check:schema-types && npm run lint && npm run lint:frontend && npm test && npm run test:frontend",
+    "analyze": "node dist/cli/analyze-day.js",
+    "audit:fitbit": "node dist/cli/audit-fitbit-sync.js",
+    "golden": "scripts/golden.sh",
+    "golden-hsmm": "scripts/golden-hsmm.sh",
+    "score-decoder": "scripts/score-decoder.sh",
+    "score-constraints": "scripts/score-constraints.sh",
+    "walk-gate": "scripts/walk-gate.sh",
+    "capture-golden": "scripts/capture-golden.sh",
+    "backtest": "scripts/backtest.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.7.0",
+    "kysely": "^0.29.0",
+    "kysely-mariadb": "^0.1.2",
+    "mariadb": "^3.4.0",
+    "stream-json": "^2.1.0",
+    "tz-lookup": "^6.1.25",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "vite": "^7.3.5"
+  }
+}

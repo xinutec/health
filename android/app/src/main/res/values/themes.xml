@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Full-bleed window, no action bar — the WebView is the whole UI. A framework
+         theme so this module needs no AppCompat/Material dependency. Black behind the
+         bars + on launch to match the dark dashboard (no white flash). -->
+    <style name="Theme.HealthWeb" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

@@ -1,0 +1,184 @@
+@if (!authenticated()) {
+	<div class="prompt">
+		<h2>Sign in to view your health data</h2>
+		<a mat-flat-button href="/login">Sign in with Nextcloud</a>
+	</div>
+} @else if (loading()) {
+	<div class="app-loading">
+		<mat-spinner diameter="48"></mat-spinner>
+		<p>Loading your health data...</p>
+	</div>
+} @else if (!fitbitLinked()) {
+	<div class="prompt">
+		<h2>Link your Fitbit account</h2>
+		<p>Connect your Fitbit to start tracking your health data.</p>
+		<a mat-flat-button href="/fitbit/auth">Link Fitbit</a>
+	</div>
+} @else {
+	<app-pull-to-refresh
+		[busy]="dataLoading()"
+		(refresh)="reloadCurrent()"
+		(refreshingChange)="pullRefreshing.set($event)">
+	<mat-tab-group
+		[selectedIndex]="tabIndex()"
+		(selectedIndexChange)="changeTab($event)"
+		[backgroundColor]="'primary'"
+		class="view-tabs">
+		<mat-tab label="Day">
+			<div class="tab-content">
+				<app-day-nav
+					[label]="formatDisplayDate()"
+					[loading]="dayLoading()"
+					[canPrev]="canGoLeft()"
+					[canNext]="canGoRight()"
+					(navigate)="changeDay($event)" />
+
+				<!--
+					The cards render unconditionally — `dayLoading()` only
+					toggles a `stale` class that fades the body, and a
+					sibling overlay paints a spinner on top. The overlay
+					is OUTSIDE .day-body because CSS opacity cascades to
+					children: if the overlay nested inside the faded body
+					it would also be faded to 35%. Keeping the DOM stable
+					across day switches stops mat-tab-body-wrapper from
+					reflowing, which is what was making the day-nav row
+					drift vertically.
+				-->
+				<div class="day-body-wrap">
+					<div class="day-body" [class.stale]="dayLoading()">
+						<app-summary-cards
+							[latestActivity]="latestActivity()"
+							[latestSleep]="latestSleep()" />
+						<div class="section">
+							<app-hypnogram [stages]="sleepStages()" />
+						</div>
+						<div class="section">
+							<app-intraday-hr [points]="intradayHr()" />
+						</div>
+						@if (velocityError()) {
+							<div class="section velocity-error">
+								<p>Couldn't load your location, transport and timeline for this day.</p>
+								<button mat-stroked-button (click)="retryDay()">Retry</button>
+							</div>
+						} @else {
+							<div class="section">
+								<app-speed-chart [data]="velocity()" />
+							</div>
+							<div class="section">
+								<app-battery-chart [data]="velocity()" />
+							</div>
+							<div class="section">
+								<app-timeline [data]="velocity()" [referenceDate]="selectedDate()" />
+							</div>
+						}
+						<details class="perf-panel">
+							<summary>Performance</summary>
+							<div class="perf-content">
+								@if (timings().window; as w) {
+									<section>
+										<h4>Window load (activity · sleep · HRV)</h4>
+										<table>
+											<tr><td>activity</td><td>{{ w.activity | number:'1.0-0' }} ms</td></tr>
+											<tr><td>sleep</td><td>{{ w.sleep | number:'1.0-0' }} ms</td></tr>
+											<tr><td>hrv</td><td>{{ w.hrv | number:'1.0-0' }} ms</td></tr>
+											<tr><td>body</td><td>{{ w.body | number:'1.0-0' }} ms</td></tr>
+											<tr class="total"><td>total (parallel)</td><td>{{ w.total | number:'1.0-0' }} ms</td></tr>
+										</table>
+									</section>
+								}
+								@if (timings().day; as d) {
+									<section>
+										<h4>Day load (stages · HR · velocity)</h4>
+										<table>
+											<tr><td>stages</td><td>{{ d.stages | number:'1.0-0' }} ms</td></tr>
+											<tr><td>hr intraday</td><td>{{ d.hr | number:'1.0-0' }} ms</td></tr>
+											<tr><td>velocity</td><td>{{ d.velocity | number:'1.0-0' }} ms</td></tr>
+											<tr class="total"><td>total (parallel)</td><td>{{ d.total | number:'1.0-0' }} ms</td></tr>
+										</table>
+									</section>
+								}
+								@if (velocity()?.timing; as phases) {
+									<section>
+										<h4>Server pipeline phases</h4>
+										<table>
+											@for (entry of phases | keyvalue; track entry.key) {
+												<tr><td>{{ entry.key }}</td><td>{{ entry.value | number:'1.0-0' }} ms</td></tr>
+											}
+										</table>
+									</section>
+								}
+							</div>
+						</details>
+					</div>
+					@if (dayLoading() && !pullRefreshing()) {
+						<div class="day-body-overlay" aria-hidden="true">
+							<mat-spinner diameter="32"></mat-spinner>
+						</div>
+					}
+				</div>
+			</div>
+		</mat-tab>
+		<mat-tab label="Trends">
+			<div class="tab-content">
+				<div class="trend-range">
+					<mat-button-toggle-group
+						aria-label="Trends window"
+						[value]="trendPresets.includes($any(trendDays())) ? trendDays() : null"
+						(change)="setTrendDays($event.value)">
+						@for (preset of trendPresets; track preset) {
+							<mat-button-toggle [value]="preset">{{ preset }}d</mat-button-toggle>
+						}
+					</mat-button-toggle-group>
+					<mat-form-field appearance="outline" class="trend-days-field">
+						<mat-label>Days</mat-label>
+						<input
+							matInput
+							type="number"
+							min="1"
+							max="365"
+							[ngModel]="trendDays()"
+							(change)="setTrendDays($any($event.target).valueAsNumber)" />
+					</mat-form-field>
+				</div>
+				<div class="charts-row">
+					<app-steps-chart [activity]="activity()" />
+					<app-heartrate-chart [activity]="activity()" />
+				</div>
+				<div class="section">
+					<app-weight-chart [body]="body()" />
+				</div>
+				<div class="section">
+					<app-hrv-chart [hrv]="hrv()" />
+				</div>
+				<div class="section">
+					<app-sleep-chart [sleep]="sleep()" />
+				</div>
+			</div>
+		</mat-tab>
+		<mat-tab label="Map">
+			<ng-template matTabContent>
+				<div class="tab-content">
+					<app-day-nav
+						[label]="formatDisplayDate()"
+						[loading]="dayLoading()"
+						[canPrev]="canGoLeft()"
+						[canNext]="canGoRight()"
+						(navigate)="changeDay($event)" />
+					<div class="day-body-wrap">
+						<div class="day-body" [class.stale]="dayLoading()">
+							<div class="section">
+								<app-map [data]="velocity()" [live]="isToday()" [liveFix]="liveFix()" [liveTail]="liveTail()" [dayKey]="displayedDate()" [(walkMatch)]="walkMatch" />
+							</div>
+						</div>
+						@if (dayLoading() && !pullRefreshing()) {
+							<div class="day-body-overlay" aria-hidden="true">
+								<mat-spinner diameter="32"></mat-spinner>
+							</div>
+						}
+					</div>
+				</div>
+			</ng-template>
+		</mat-tab>
+	</mat-tab-group>
+	</app-pull-to-refresh>
+}

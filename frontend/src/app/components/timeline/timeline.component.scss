@@ -1,0 +1,112 @@
+.timeline {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: 56px 32px 1fr;
+  gap: 12px;
+  padding: 4px 0;
+  align-items: stretch;
+
+  &:last-child .line {
+    display: none;
+  }
+}
+
+.time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-top: 6px;
+
+  .start {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Day offset (e.g. "−1d") sits below the time on its own line so
+   * the right-aligned 56px column doesn't have to widen and shift
+   * everything else right. */
+  .day-offset {
+    font-size: 11px;
+    color: var(--text-faint);
+    line-height: 1.2;
+  }
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+
+  .dot {
+    color: var(--color-moving);
+    background: var(--mat-sys-surface);
+    border-radius: 50%;
+    z-index: 1;
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+    margin-top: 6px;
+  }
+
+  .line {
+    flex: 1;
+    width: 2px;
+    background: var(--border-faint);
+    margin-top: 2px;
+  }
+}
+
+.content {
+  padding: 4px 0 16px 0;
+
+  .primary {
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .secondary {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+}
+
+.mode-stationary .dot {
+  color: var(--color-stationary);
+}
+
+.city-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0 8px 56px;
+  margin-top: 4px;
+
+  .city-icon {
+    color: var(--color-overlay);
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  .city-name {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+}
+
+/* Tighten spacing when a city header sits right above the first entry */
+.city-header + .entry {
+  padding-top: 0;
+}

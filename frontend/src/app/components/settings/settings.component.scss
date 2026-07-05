@@ -1,0 +1,40 @@
+/* Page-level layout only — nothing visual that Material already
+ * provides via mat-card / mat-form-field. */
+.settings-page {
+	max-width: 720px;
+	margin: 0 auto;
+	padding: 1rem;
+}
+.settings-header {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-bottom: 1rem;
+}
+.settings-header h1 {
+	margin: 0;
+	font: var(--mat-sys-title-large);
+}
+.full-width {
+	width: 100%;
+}
+.error {
+	color: var(--mat-sys-error);
+}
+/* Let the action buttons wrap with spacing on narrow screens instead of
+ * crammed into one row that collides with the content above. */
+mat-card-actions {
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+/* Uniform vertical rhythm for the card body. Material's outline fields
+ * float their label up onto their top border, so every field needs
+ * clearance from the element above it — not just the first. One rule
+ * (16px, a step of Material's 8px scale) gives every stacked sibling that
+ * clearance, instead of patching each collision one at a time. */
+mat-card-content {
+	margin-top: 1rem; /* gap below the card header/subtitle */
+}
+mat-card-content > * + * {
+	margin-top: 1rem; /* gap between every stacked body element */
+}

@@ -1,0 +1,38 @@
+<mat-toolbar color="primary" class="toolbar">
+	<span class="title">Health@if (mode() === "share") { (shared) }</span>
+	<span class="spacer"></span>
+	@if (health.user(); as user) {
+		<span class="user-name">{{ user.displayName }}</span>
+		@if (mode() !== "share") {
+			@if (shareUrl(); as url) {
+				<button
+					mat-icon-button
+					type="button"
+					(click)="copyShareLink(url)"
+					matTooltip="Copy a link to this view"
+					aria-label="Copy a link to this view"
+					class="share-link">
+					<mat-icon>share</mat-icon>
+				</button>
+			}
+			<a mat-icon-button routerLink="/settings" aria-label="Settings" class="settings-link">
+				<mat-icon>settings</mat-icon>
+			</a>
+			<form method="POST" action="/logout" class="logout-form">
+				<button mat-button type="submit">Logout</button>
+			</form>
+		}
+	}
+</mat-toolbar>
+
+@if (mode() !== "share") {
+	<app-reauth-banner></app-reauth-banner>
+}
+
+<main class="content">
+	<router-outlet></router-outlet>
+</main>
+
+@if (version(); as v) {
+	<footer class="version-note">build {{ v }}</footer>
+}

@@ -1,0 +1,19 @@
+<div class="day-nav">
+	@if (canPrev()) {
+		<button mat-icon-button (click)="navigate.emit(-1)" aria-label="Previous day">
+			<mat-icon>chevron_left</mat-icon>
+		</button>
+	} @else {
+		<span class="day-nav-spacer" aria-hidden="true"></span>
+	}
+	<span class="day-label" [class.loading]="loading()">
+		{{ label() }}
+	</span>
+	@if (canNext()) {
+		<button mat-icon-button (click)="navigate.emit(1)" aria-label="Next day">
+			<mat-icon>chevron_right</mat-icon>
+		</button>
+	} @else {
+		<span class="day-nav-spacer" aria-hidden="true"></span>
+	}
+</div>

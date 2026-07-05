@@ -1,0 +1,30 @@
+:host {
+	display: block;
+	margin-bottom: 16px;
+}
+.day-nav {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+}
+/* Placeholder taking the exact footprint of a hidden mat-icon-button so
+ * the label stays centred when a chevron disappears at an edge (today,
+ * or a share-window boundary). 40px matches Material 3's icon-button
+ * hit area. */
+.day-nav-spacer {
+	display: inline-block;
+	width: 40px;
+	height: 40px;
+}
+.day-label {
+	font-size: 16px;
+	font-weight: 500;
+	/* Fixed width so long date strings ("Tuesday, May 13") don't push
+	 * the chevrons outward as you arrow across days. */
+	width: 180px;
+	text-align: center;
+	&.loading {
+		opacity: 0.5;
+	}
+}

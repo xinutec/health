@@ -1,0 +1,41 @@
+:host { display: block; }
+
+.ptr-viewport {
+  position: relative;
+  // Contain the indicator's hidden slot above the fold.
+  overflow: visible;
+}
+
+.ptr-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+  color: var(--text-faint);
+}
+
+.ptr-arrow {
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+.ptr-arrow.armed {
+  // Flip the arrow once the pull is far enough to trigger.
+  transform: rotate(180deg);
+  color: var(--mat-sys-primary);
+}
+
+.ptr-content {
+  will-change: transform;
+}
+// Animate only the snap-back to rest; while dragging the content tracks the
+// finger 1:1 with no transition.
+.ptr-content.settling {
+  transition: transform 0.2s ease-out;
+}

@@ -1,0 +1,48 @@
+---
+name: build
+
+# health-sync (Node/Hono backend + Angular frontend) — gate the image on `npm
+# run verify` (typecheck + schema-drift + biome + angular-eslint + backend and
+# frontend unit tests), then build + push xinutec/health-sync:latest to Docker
+# Hub. The golden + walk-geometry fixture gates are NOT here: they need the
+# gitignored local fixtures and run from scripts/deploy.sh, not CI. The k8s
+# manifests + deploy live in the home monorepo (xinutec/pippijn
+# code/kubes/health/k8s); the image tag is the only contract with the deploy.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/flake.lock"
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm ci --prefix frontend
+      - run: npm run verify
+
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: xinutec/health-sync:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=registry,ref=xinutec/health-sync:cache
+          cache-to: type=registry,ref=xinutec/health-sync:cache

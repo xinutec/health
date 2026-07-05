@@ -1,0 +1,24 @@
+.cards {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.stat-card {
+  flex: 1;
+  min-width: 140px;
+}
+.label {
+  font: var(--mat-sys-label-small);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mat-sys-on-surface-variant);
+  margin-bottom: 4px;
+}
+.value {
+  font: var(--mat-sys-headline-medium);
+}
+.unit {
+  font: var(--mat-sys-body-medium);
+  color: var(--mat-sys-on-surface-variant);
+}

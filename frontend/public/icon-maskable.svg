@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Maskable variant of icon.svg: full-bleed square (no rounded corners) so a
+     launcher's own mask applies cleanly; the pulse sits inside the safe zone.
+     Generated PNG: icon-512-maskable.png (see frontend/gen-icons.sh). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#7c4dff"/>
+  <path d="M80 256 H200 L224 200 L248 312 L276 116 L300 372 L324 256 H432"
+        fill="none" stroke="#ffffff" stroke-width="34"
+        stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,38 @@
+<mat-card>
+  <mat-card-header><mat-card-title>Your Day</mat-card-title></mat-card-header>
+  <mat-card-content>
+    @if (rows().length === 0) {
+      <p class="no-data">No timeline data available</p>
+    } @else {
+      <div class="timeline">
+        @for (r of rows(); track $index) {
+          @if (r.kind === "city") {
+            <div class="city-header">
+              <mat-icon class="city-icon">location_city</mat-icon>
+              <span class="city-name">{{ r.city }}</span>
+            </div>
+          } @else {
+            <div class="entry" [class.mode-stationary]="r.entry.mode === 'stationary'">
+              <div class="time">
+                <span class="start">{{ r.entry.startLabel }}</span>
+                @if (r.entry.startDayOffset) {
+                  <span class="day-offset">{{ r.entry.startDayOffset }}</span>
+                }
+              </div>
+              <div class="rail">
+                <mat-icon class="dot">{{ r.entry.icon }}</mat-icon>
+                <div class="line"></div>
+              </div>
+              <div class="content">
+                <div class="primary">{{ r.entry.primary }}</div>
+                @if (r.entry.secondary) {
+                  <div class="secondary">{{ r.entry.secondary }}</div>
+                }
+              </div>
+            </div>
+          }
+        }
+      </div>
+    }
+  </mat-card-content>
+</mat-card>

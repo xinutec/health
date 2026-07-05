@@ -1,0 +1,36 @@
+node_modules/
+dist/
+.local-data/
+docs/archive/
+
+# Captured fixture days contain real GPS + biometric data (home/work
+# coords, HR, cadence). Local-only. CI snapshot tests must use
+# synthetic fixtures committed under tests/fixtures/synthetic/
+# instead (TODO — Phase 1 deliverable still to be built).
+tests/fixtures/days/
+
+# Golden-day regression corpus: real prod days + their blessed
+# day-state baselines. Real coords / place names / journeys — local
+# only, never committed. Run via `npm run golden` (see golden-check.js).
+tests/golden/
+
+# Rail-snap fixtures: a real day frozen with its raw fixes, classified
+# segments, and the OSM rail geometry of every train corridor. Real
+# coords / journeys — local only. Captured by capture-railsnap-fixture.js.
+tests/fixtures/railsnap/
+
+# Focus-places fixtures: real member stays of a conflated cluster
+# (café + residence) and the Home cluster, for the splitCluster E2E
+# test. Real coords / times — local only. Captured by
+# capture-focusplaces-fixture.js.
+tests/fixtures/focusplaces/
+
+# Route-graph fixtures: OSM rail geometry for a bbox corridor, used
+# by the route-aware decoder acceptance test. Real London coords —
+# local only. Captured by capture-route-graph-fixture.js.
+tests/fixtures/route-graphs/
+
+# Road-match fixtures: a real day frozen with its raw fixes, classified
+# road-vehicle segments, and the OSM drivable-road geometry around them.
+# Real coords / journeys — local only. Captured by capture-roadmatch-fixture.js.
+tests/fixtures/roadmatch/

@@ -1,0 +1,19 @@
+<div class="ptr-viewport">
+  <div
+    class="ptr-indicator"
+    [style.transform]="'translateY(' + indicatorY() + 'px)'"
+    [style.opacity]="spinning() ? 1 : progress()"
+    aria-hidden="true">
+    @if (spinning()) {
+      <mat-spinner diameter="22" />
+    } @else {
+      <span class="ptr-arrow" [class.armed]="armed()">↓</span>
+    }
+  </div>
+  <div
+    class="ptr-content"
+    [class.settling]="pull() === 0"
+    [style.transform]="'translateY(' + pull() + 'px)'">
+    <ng-content />
+  </div>
+</div>

@@ -1,0 +1,24 @@
+<mat-card>
+  <mat-card-header><mat-card-title>Sleep Stages</mat-card-title></mat-card-header>
+  <mat-card-content>
+    @if (stages().length === 0) {
+      <p class="no-data">No sleep stage data available</p>
+    } @else {
+      <div class="hypnogram-container">
+        <div class="y-labels">
+          @for (label of stageLabels; track label) {
+            <span>{{ label }}</span>
+          }
+        </div>
+        <div class="canvas-wrap">
+          <canvas #canvas></canvas>
+          <div class="x-labels">
+            @for (label of timeLabels(); track label) {
+              <span>{{ label }}</span>
+            }
+          </div>
+        </div>
+      </div>
+    }
+  </mat-card-content>
+</mat-card>

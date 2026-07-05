@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive-icon background: deep pink for the health/heart dashboard —
+         distinct on the launcher from the other web apps. -->
+    <color name="ic_launcher_background">#AD1457</color>
+</resources>

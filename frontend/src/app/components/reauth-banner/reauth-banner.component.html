@@ -1,0 +1,27 @@
+@if (connectionState.nextcloudStatus() === "needs_reauth" || connectionState.nextcloudStatus() === "not_linked") {
+	<div class="reauth-banner" role="status">
+		<mat-icon class="icon">link_off</mat-icon>
+		<span class="message">
+			@switch (state()) {
+				@case ("waiting") { Opened Nextcloud in a new tab — finish granting access there, this banner will disappear automatically. }
+				@case ("failed") { Connect attempt failed: {{ errorMessage() }}. Try again? }
+				@default {
+					@if (connectionState.nextcloudStatus() === "not_linked") {
+						Connect your Nextcloud to load location data.
+					} @else {
+						Your Nextcloud connection has expired. Reconnect to load location data.
+					}
+				}
+			}
+		</span>
+		@if (state() === "waiting") {
+			<mat-spinner diameter="24"></mat-spinner>
+		} @else {
+			<button mat-flat-button (click)="reconnect()" [disabled]="state() === 'starting'">
+				@if (state() === "starting") { Starting… }
+				@else if (connectionState.nextcloudStatus() === "not_linked") { Connect Nextcloud }
+				@else { Reconnect Nextcloud }
+			</button>
+		}
+	</div>
+}

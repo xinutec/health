@@ -1,0 +1,28 @@
+.toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	// Edge-to-edge (viewport-fit=cover): the toolbar surface fills the status-bar
+	// strip and its content drops below it. height:auto overrides mat-toolbar's
+	// fixed height (border-box would otherwise absorb the padding); min-height folds
+	// in the inset so the content keeps its full height below the status bar.
+	height: auto;
+	min-height: calc(64px + var(--safe-top, 0px));
+	padding-top: var(--safe-top, 0px);
+}
+.title { font-size: 18px; font-weight: 600; }
+.spacer { flex: 1; }
+.user-name { font-size: 14px; color: var(--mat-sys-on-surface-variant); margin-right: 8px; }
+.share-link, .settings-link { margin-right: 4px; }
+.logout-form { display: inline; }
+.content {
+	max-width: 1280px;
+	margin: 0 auto;
+}
+.version-note {
+	text-align: center;
+	font-size: 11px;
+	color: var(--mat-sys-on-surface-variant);
+	opacity: 0.7;
+	padding: 8px 0 calc(8px + var(--safe-bottom, 0px));
+}

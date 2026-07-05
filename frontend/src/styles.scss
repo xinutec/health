@@ -1,0 +1,101 @@
+@use "@angular/material" as mat;
+
+// Material 3 theme — the single source of truth for colour, typography and
+// density. `mat.theme()` emits the `--mat-sys-*` system tokens that every
+// M3 component reads, so there's no hand-maintained palette and no
+// prebuilt-theme CSS (the deprecated way). `color-scheme: dark` selects the
+// dark side of the generated `light-dark()` values — this is a dark-only
+// dashboard.
+//
+// Leaflet's stylesheet is loaded globally via angular.json `styles` (not a
+// Sass `@import`): it targets `.leaflet-*` elements Leaflet creates at
+// runtime, which component-scoped styles could never match.
+html {
+	@include mat.theme(
+		(
+			color: (
+				primary: mat.$violet-palette,
+				tertiary: mat.$cyan-palette,
+			),
+			typography: Roboto,
+			density: 0,
+		)
+	);
+	color-scheme: dark;
+
+	// Reserve the scrollbar gutter so the page width doesn't jump ~15px
+	// when the day-loading spinner replaces the cards (visible as a
+	// horizontal jitter on centered content).
+	scrollbar-gutter: stable;
+
+	// The custom pull-to-refresh (PullToRefreshComponent) owns the
+	// top-overscroll gesture and reloads just the data, so suppress the
+	// browser's native pull-to-reload / rubber-band at the page boundary.
+	overscroll-behavior-y: contain;
+}
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	min-height: 100vh;
+	background: var(--mat-sys-surface);
+	color: var(--mat-sys-on-surface);
+	font: var(--mat-sys-body-medium);
+}
+
+:root {
+	// Status-bar / notch inset at the top (with viewport-fit=cover: edge-to-edge on
+	// Android, the notch on iOS). The sticky toolbar pads by this so it isn't drawn
+	// under the system status bar. 0 in a normal browser tab.
+	--safe-top: env(safe-area-inset-top, 0px);
+
+	// App semantic aliases over Material 3 system tokens. Components keep
+	// referencing these names, but the values now flow from the theme — a
+	// palette or light/dark change propagates automatically instead of
+	// needing hand-edited rgba() tiers.
+	--text-secondary: var(--mat-sys-on-surface);
+	--text-tertiary: var(--mat-sys-on-surface-variant);
+	--text-faint: var(--mat-sys-outline);
+	--border-faint: var(--mat-sys-outline-variant);
+
+	// Data-visualisation accents for the timeline state icons — intentional
+	// domain colours (moving / stationary / overlay), not theme-derived.
+	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
+	--color-moving: #818cf8;
+	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
+	--color-stationary: #94a3b8;
+	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
+	--color-overlay: #c4b5fd;
+
+	// Material 3 has no "warning" colour role, so this app-level amber pair
+	// fills it (the re-auth banner needs attention but isn't a hard error).
+	// Tuned for the dark surface — deep amber container, light amber
+	// foreground — rather than the light-theme amber it used to hard-code.
+	// dev-lint: allow-hardcoded-color app-level warn pair — M3 has no warning role
+	--app-warn-container: #3a2e0a;
+	// dev-lint: allow-hardcoded-color app-level warn pair — M3 has no warning role
+	--app-on-warn-container: #ffd98a;
+}
+
+// Shared "no data yet" placeholder for any chart/card with nothing to show
+// for the current day. Kept global so the components that all rendered this
+// identically don't drift.
+.no-data {
+	color: var(--mat-sys-on-surface-variant);
+	padding: 24px 0;
+	text-align: center;
+}
+
+// A destructive text button (e.g. Revoke). M3 themes ignore the old
+// color="warn" input, so tint via the button's own tokens (same idiom as
+// life's styles.scss).
+button.danger {
+	--mat-button-text-label-text-color: var(--mat-sys-error);
+	--mat-button-text-state-layer-color: var(--mat-sys-error);
+	--mat-button-text-ripple-color: color-mix(in srgb, var(--mat-sys-error) 10%, transparent);
+	color: var(--mat-sys-error); // fallback should the token names drift
+}

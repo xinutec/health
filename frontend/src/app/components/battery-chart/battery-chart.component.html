@@ -1,0 +1,23 @@
+<mat-card>
+  <mat-card-header><mat-card-title>Battery</mat-card-title></mat-card-header>
+  <mat-card-content>
+    @if (!hasData()) {
+      <p class="no-data">No battery data available</p>
+    } @else {
+      <div class="legend">
+        <span class="legend-item"><span class="swatch" [style.background]="phoneColor"></span>Phone</span>
+        @if (hasWatch()) {
+          <span class="legend-item"><span class="swatch" [style.background]="watchColor"></span>Watch</span>
+        }
+      </div>
+      <div class="chart-container">
+        <canvas #canvas></canvas>
+        <div class="x-labels">
+          @for (label of timeLabels(); track $index) {
+            <span>{{ label }}</span>
+          }
+        </div>
+      </div>
+    }
+  </mat-card-content>
+</mat-card>
