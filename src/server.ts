@@ -14,6 +14,7 @@ import { cleanupExpiredSessions, sessionMiddleware } from "./middleware/session.
 import { shareAuthMiddleware } from "./middleware/share-auth.js";
 import { apiRoutes } from "./routes/api.js";
 import { fitbitOAuthRoutes } from "./routes/fitbit-oauth.js";
+import { internalRoutes } from "./routes/internal.js";
 import { nextcloudOAuthRoutes } from "./routes/nextcloud-oauth.js";
 import { owntracksRoutes } from "./routes/owntracks.js";
 import { escapeHtml } from "./server-html.js";
@@ -117,6 +118,10 @@ app.route("/", fitbitOAuthRoutes(config));
 
 // API routes (all require auth)
 app.route("/api", apiRoutes(config));
+
+// Internal service-to-service routes (the coach app reads the user's places).
+// Gated by the X-Service-Token shared secret, not a session cookie.
+app.route("/internal", internalRoutes(config));
 
 // Owntracks proxy. Auth is the session token in the URL (same as the
 // PhoneTrack endpoint it forwards to). No session cookie required —

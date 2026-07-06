@@ -41,6 +41,21 @@ const schema = z.object({
 			.pipe(z.array(z.string().min(8))),
 	}),
 
+	/** Shared secrets for the internal service-to-service endpoints
+	 *  (`/internal/*`, consumed by the coach app). Comma-separated;
+	 *  empty (the default) disables the internal API entirely. Mirrors
+	 *  the `owntracks.allowedTokens` shape. */
+	serviceTokens: z
+		.string()
+		.default("")
+		.transform((s) =>
+			s
+				.split(",")
+				.map((t) => t.trim())
+				.filter((t) => t.length > 0),
+		)
+		.pipe(z.array(z.string().min(16))),
+
 	sessionSecret: z.string().min(16),
 
 	/** Public origin where the dashboard is reachable. Used by the
@@ -71,6 +86,7 @@ export function loadConfig(): Config {
 		owntracks: {
 			allowedTokens: process.env.OWNTRACKS_ALLOWED_TOKENS ?? "",
 		},
+		serviceTokens: process.env.SERVICE_TOKEN ?? "",
 		sessionSecret: process.env.SESSION_SECRET,
 		publicBaseUrl: process.env.PUBLIC_BASE_URL,
 	});

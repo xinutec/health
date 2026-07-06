@@ -54,6 +54,7 @@ const CONFIG: Config = {
 		baseUrl: "https://nc.test",
 	},
 	owntracks: { allowedTokens: ["abc12345token1", "def67890token2"] },
+	serviceTokens: [],
 	sessionSecret: "x".repeat(32),
 	publicBaseUrl: "https://health.test",
 };
