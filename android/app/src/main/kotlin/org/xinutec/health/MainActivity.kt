@@ -3,6 +3,7 @@ package org.xinutec.health
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
@@ -35,6 +36,14 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // On debug builds, expose this WebView to the Chrome DevTools protocol so
+        // it can be inspected remotely over adb (chrome://inspect, or attach to the
+        // app's `*_devtools_remote` socket): live console, DOM, network, and JS
+        // evaluation against the running dashboard. Gated to debuggable builds so a
+        // release build never opens the WebView to inspection.
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
         val prefs = getSharedPreferences("viewer", Context.MODE_PRIVATE)
         web =
             WebView(this).apply {
