@@ -5,7 +5,10 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -70,6 +73,24 @@ class MainActivity : Activity() {
                             ) { result -> parseCssColor(result)?.let(root::setBackgroundColor) }
                         }
                     }
+                // Forward the web app's console (console.log/warn/error and uncaught
+                // JS errors) to logcat under [WEB_TAG]. WebView only surfaces these
+                // through a WebChromeClient — without one, the dashboard's own
+                // diagnostics never leave the WebView. Read them with:
+                //   adb logcat -s HealthWeb
+                webChromeClient =
+                    object : WebChromeClient() {
+                        override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                            val line = "${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})"
+                            when (msg.messageLevel()) {
+                                ConsoleMessage.MessageLevel.ERROR -> Log.e(WEB_TAG, line)
+                                ConsoleMessage.MessageLevel.WARNING -> Log.w(WEB_TAG, line)
+                                ConsoleMessage.MessageLevel.DEBUG -> Log.d(WEB_TAG, line)
+                                else -> Log.i(WEB_TAG, line)
+                            }
+                            return true
+                        }
+                    }
                 // Black until the page loads and reports its surface colour; avoids a
                 // white flash on launch.
                 setBackgroundColor(Color.BLACK)
@@ -114,5 +135,8 @@ class MainActivity : Activity() {
         // The health dashboard (HTTPS, behind a Nextcloud-OAuth login).
         private const val HEALTH_URL = "https://health.xinutec.org/"
         private const val KEY_LAST_URL = "last_url"
+
+        // logcat tag for forwarded WebView console messages (`adb logcat -s HealthWeb`).
+        private const val WEB_TAG = "HealthWeb"
     }
 }
