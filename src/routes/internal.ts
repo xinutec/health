@@ -17,6 +17,7 @@ import type { AppEnv } from "../env.js";
 import { type FocusPlaceForPresence, pickCurrentPlace } from "../geo/current-place.js";
 import { serviceAuth } from "../middleware/service-auth.js";
 import { fetchTrackPoints, NextcloudNotLinkedError, NextcloudReauthRequiredError } from "../nextcloud/phonetrack.js";
+import { latestAndBaseline } from "../stats.js";
 
 /** Config the internal routes need: the Nextcloud base (for the latest fix) +
  *  the service-token allowlist. */
@@ -31,6 +32,12 @@ const userParam = z.string().min(1).max(64);
 function nextDay(date: string): string {
 	const d = new Date(date);
 	d.setDate(d.getDate() + 1);
+	return d.toISOString().slice(0, 10);
+}
+
+function sinceDate(days: number): string {
+	const d = new Date();
+	d.setDate(d.getDate() - days);
 	return d.toISOString().slice(0, 10);
 }
 
@@ -109,6 +116,55 @@ export function internalRoutes(config: InternalRoutesConfig): Hono<AppEnv> {
 			console.error(`/internal/place/current failed for user=${uid}:`, e);
 			return c.json({ error: "current place fetch failed" }, 400);
 		}
+	});
+
+	// GET /internal/recovery?user= → raw recovery data (latest + trailing baseline
+	// per metric). UNOPINIONATED: coach composes the readiness score + decides how
+	// to modulate training. Missing stream → that field is null.
+	app.get("/recovery", async (c) => {
+		const parsed = userParam.safeParse(c.req.query("user"));
+		if (!parsed.success) return c.json({ error: "user required" }, 400);
+		const uid = parsed.data;
+		const since = sinceDate(28);
+
+		const hrvRows = await db()
+			.selectFrom("hrv_daily")
+			.select(["date", "daily_rmssd"])
+			.where("user_id", "=", uid)
+			.where("date", ">=", since)
+			.execute();
+		const rhrRows = await db()
+			.selectFrom("daily_activity")
+			.select(["date", "resting_heart_rate"])
+			.where("user_id", "=", uid)
+			.where("date", ">=", since)
+			.execute();
+		const sleepRows = await db()
+			.selectFrom("sleep")
+			.select(["date", "minutes_asleep", "is_main_sleep"])
+			.where("user_id", "=", uid)
+			.where("date", ">=", since)
+			.where("is_main_sleep", "=", true)
+			.execute();
+
+		const hrv = latestAndBaseline(
+			hrvRows.map((r) => ({ date: r.date, value: r.daily_rmssd == null ? null : Number(r.daily_rmssd) })),
+		);
+		const restingHr = latestAndBaseline(rhrRows.map((r) => ({ date: r.date, value: r.resting_heart_rate ?? null })));
+
+		// Last night's main sleep (newest by date), in hours.
+		const mains = sleepRows
+			.filter((r) => r.is_main_sleep && r.minutes_asleep != null)
+			.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+		const lastSleep = mains.at(-1);
+		const sleepHours = lastSleep ? Number(lastSleep.minutes_asleep) / 60 : null;
+
+		return c.json({
+			asOf: new Date().toISOString().slice(0, 10),
+			sleepHours,
+			hrv,
+			restingHr,
+		});
 	});
 
 	return app;

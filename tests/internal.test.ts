@@ -192,3 +192,51 @@ describe("GET /internal/place/current", () => {
 		expect(await res.json()).toBeNull();
 	});
 });
+
+describe("GET /internal/recovery", () => {
+	it("returns latest + baseline per metric, main-sleep only", async () => {
+		setMockResult("hrv_daily", [
+			{ user_id: "alice", date: "2026-07-01", daily_rmssd: 40 },
+			{ user_id: "alice", date: "2026-07-05", daily_rmssd: 55 }, // newest
+		]);
+		setMockResult("daily_activity", [
+			{ user_id: "alice", date: "2026-07-01", resting_heart_rate: 60 },
+			{ user_id: "alice", date: "2026-07-05", resting_heart_rate: 58 },
+		]);
+		setMockResult("sleep", [
+			{ user_id: "alice", date: "2026-07-05", minutes_asleep: 450, is_main_sleep: true },
+			{ user_id: "alice", date: "2026-07-05", minutes_asleep: 30, is_main_sleep: false }, // nap, ignored
+		]);
+		const res = await makeApp().request("/internal/recovery?user=alice", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(res.status).toBe(200);
+		const b = (await res.json()) as {
+			sleepHours: number;
+			hrv: { latest: number; mean: number };
+			restingHr: { latest: number };
+		};
+		expect(b.sleepHours).toBeCloseTo(7.5);
+		expect(b.hrv.latest).toBe(55);
+		expect(b.hrv.mean).toBe(40);
+		expect(b.restingHr.latest).toBe(58);
+	});
+
+	it("nulls every field when the user has no biometrics", async () => {
+		setMockResult("hrv_daily", []);
+		setMockResult("daily_activity", []);
+		setMockResult("sleep", []);
+		const res = await makeApp().request("/internal/recovery?user=bob", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		const b = (await res.json()) as Record<string, unknown>;
+		expect(b.hrv).toBeNull();
+		expect(b.restingHr).toBeNull();
+		expect(b.sleepHours).toBeNull();
+	});
+
+	it("requires a service token", async () => {
+		const res = await makeApp().request("/internal/recovery?user=alice");
+		expect(res.status).toBe(401);
+	});
+});
