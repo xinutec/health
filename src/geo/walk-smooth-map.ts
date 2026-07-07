@@ -438,9 +438,20 @@ export interface ReconstructProfile {
 	/** Walkable-attraction σ (m) and gating radius (m). */
 	networkSigmaM: number;
 	networkRadiusM: number;
-	/** Building-repulsion σ (m): a state inside a footprint is pulled to the
-	 *  boundary with weight `1/σ²`. Small → buildings are near-impassable. */
+	/** Redescending scale (m) for the network attraction: the pull is
+	 *  `wNet · gm(nearDist, networkRobustM)`, so a state CLOSE to a way is hugged
+	 *  hard (matcher-like on clean GPS) while a state far from any way barely tugs
+	 *  (a phantom-dissolved leg or a wrong parallel way is not yanked). This is the
+	 *  hard/soft unification — adaptive by distance-to-network, not a fixed σ. */
+	networkRobustM: number;
+	/** Building-repulsion σ (m): weight `1/σ²` of the clearance factor. Small →
+	 *  buildings are near-impassable. */
 	buildingSigmaM: number;
+	/** Building CLEARANCE band (m): a state is repelled to at least this far
+	 *  OUTSIDE the nearest wall whenever it is inside a footprint OR within the band
+	 *  outside it. A field (not just when-inside), so a chord grazing a corner is
+	 *  pushed off the wall even with no vertex inside it. */
+	buildingClearM: number;
 	/** Densify the state chain to ≤ this spacing (m) by inserting FREE states
 	 *  between fixes, so the line can bend around a building BETWEEN fixes — a
 	 *  straight chord clipping a block would otherwise cross it with no vertex
@@ -463,11 +474,19 @@ export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
 	gncSteps: 8,
 	innerIters: 2,
 	smoothSigmaM: 6,
-	networkSigmaM: 8,
+	networkSigmaM: 5,
 	networkRadiusM: 25,
+	networkRobustM: 12,
 	buildingSigmaM: 1.5,
-	targetSpacingM: 8,
-	freeTetherSigmaM: 22,
+	buildingClearM: 4,
+	// Densification OFF (vertex-per-fix). Measured 2026-07-07: inserting free
+	// states between fixes did NOT reduce building-crossing (those residuals are
+	// OSM graph gaps, #305) and it inflated corridor-stall ~2× — a scoring
+	// artifact of projecting a many-vertex line onto the sparse raw fixes, not real
+	// wander. Vertex-per-fix ties the matcher on corridor-stall while keeping the
+	// phantom-dissolution win. Kept as a knob for a future building-aware pass.
+	targetSpacingM: 100000,
+	freeTetherSigmaM: 40,
 };
 
 /** Geman-McClure IRLS weight for residual `r` at kernel scale `c` (both metres):
@@ -605,41 +624,61 @@ class WalkGrid {
 		return found ? { x: bx, y: by, distM: Math.sqrt(best) } : null;
 	}
 
-	/** If (px,py) is inside a building footprint, the nearest boundary point to
-	 *  escape to; else null. */
-	insideBuilding(px: number, py: number): { x: number; y: number } | null {
-		const list = this.ringCells.get(WalkGrid.key(Math.floor(px / this.cell), Math.floor(py / this.cell)));
-		if (!list) return null;
-		let best = Infinity;
-		let bx = 0;
-		let by = 0;
+	/** Building-CLEARANCE target for (px,py): the point `clearM` OUTSIDE the nearest
+	 *  wall, whenever the state is inside a footprint OR within `clearM` of a wall
+	 *  from outside; else null. A field (not just when-inside), so a chord grazing a
+	 *  corner is pushed off the wall even with no vertex strictly inside. */
+	clearanceTarget(px: number, py: number, clearM: number): { x: number; y: number } | null {
+		const c = this.cell;
+		const cx0 = Math.floor(px / c);
+		const cy0 = Math.floor(py / c);
+		let inside = false;
+		let bestD2 = Infinity;
+		let wx = 0;
+		let wy = 0;
 		let found = false;
-		for (const r of list) {
-			const ring = this.rings[r];
-			if (px < ring.minx || px > ring.maxx || py < ring.miny || py > ring.maxy) continue;
-			const pts = ring.pts;
-			const n = pts.length / 2;
-			// even-odd ray cast (metric)
-			let inside = false;
-			for (let i = 0, j = n - 1; i < n; j = i++) {
-				const yi = pts[i * 2 + 1];
-				const xi = pts[i * 2];
-				const yj = pts[j * 2 + 1];
-				const xj = pts[j * 2];
-				if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
-			}
-			if (!inside) continue;
-			for (let i = 0, j = n - 1; i < n; j = i++) {
-				const p = projMetric(px, py, pts[j * 2], pts[j * 2 + 1], pts[i * 2], pts[i * 2 + 1]);
-				if (p.d2 < best) {
-					best = p.d2;
-					bx = p.x;
-					by = p.y;
-					found = true;
+		const seen = new Set<number>();
+		for (let cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+			for (let cy = cy0 - 1; cy <= cy0 + 1; cy++) {
+				const list = this.ringCells.get(WalkGrid.key(cx, cy));
+				if (!list) continue;
+				for (const r of list) {
+					if (seen.has(r)) continue;
+					seen.add(r);
+					const ring = this.rings[r];
+					const pts = ring.pts;
+					const n = pts.length / 2;
+					if (px >= ring.minx && px <= ring.maxx && py >= ring.miny && py <= ring.maxy) {
+						let ins = false;
+						for (let i = 0, j = n - 1; i < n; j = i++) {
+							const yi = pts[i * 2 + 1];
+							const xi = pts[i * 2];
+							const yj = pts[j * 2 + 1];
+							const xj = pts[j * 2];
+							if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) ins = !ins;
+						}
+						if (ins) inside = true;
+					}
+					for (let i = 0, j = n - 1; i < n; j = i++) {
+						const p = projMetric(px, py, pts[j * 2], pts[j * 2 + 1], pts[i * 2], pts[i * 2 + 1]);
+						if (p.d2 < bestD2) {
+							bestD2 = p.d2;
+							wx = p.x;
+							wy = p.y;
+							found = true;
+						}
+					}
 				}
 			}
 		}
-		return found ? { x: bx, y: by } : null;
+		if (!found) return null;
+		const dist = Math.sqrt(bestD2);
+		if (!inside && dist > clearM) return null; // already clear
+		if (dist < 1e-6) return null; // exactly on the wall — no defined normal
+		// Outward unit: toward the wall when inside (escape), away from it when outside.
+		const ux = inside ? (wx - px) / dist : (px - wx) / dist;
+		const uy = inside ? (wy - py) / dist : (py - wy) / dist;
+		return { x: wx + ux * clearM, y: wy + uy * clearM };
 	}
 }
 
@@ -763,15 +802,17 @@ export function reconstructWalk(
 					bn[i] += wFreeTether * seedN[i];
 				}
 				if (grid) {
-					// Soft walkable attraction (radius-gated).
+					// Adaptive walkable attraction — hug hard when close to a way,
+					// redescend to weak when far (the hard/soft unification).
 					const near = grid.nearest(px, py, profile.networkRadiusM);
 					if (near) {
-						d[i] += wNet;
-						be[i] += wNet * near.x;
-						bn[i] += wNet * near.y;
+						const wN = wNet * gmWeight(near.distM, profile.networkRobustM);
+						d[i] += wN;
+						be[i] += wN * near.x;
+						bn[i] += wN * near.y;
 					}
-					// Building repulsion — pull a state inside a footprint to the boundary.
-					const esc = grid.insideBuilding(px, py);
+					// Building clearance field — keep the state ≥ clearM off any wall.
+					const esc = grid.clearanceTarget(px, py, profile.buildingClearM);
 					if (esc) {
 						d[i] += wBuild;
 						be[i] += wBuild * esc.x;
