@@ -36,11 +36,10 @@ import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import {
 	countSharpTurns,
-	DEFAULT_MAP_SMOOTH_PROFILE,
 	type MapSmoothProfile,
 	REFINE_MATCHED_PROFILE,
+	reconstructWalk,
 	refineMatchedPath,
-	smoothWalkMap,
 	type WalkFix,
 } from "../geo/walk-smooth-map.js";
 import { type CapturedDay, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
@@ -309,7 +308,7 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 		// replacement for the Viterbi matcher: accuracy-weighted emission suppresses
 		// the low-accuracy post-tunnel reacquire fixes that the matcher (blind to
 		// accuracy) snaps into phantom detours. Measured before any prod wiring.
-		const smoothed = smoothWalkMap(rawWalk, walkable, DEFAULT_MAP_SMOOTH_PROFILE);
+		const smoothed = reconstructWalk(rawWalk, { ways: walkable.ways, buildings });
 		const smoothPts = smoothed?.map((p) => ({ lat: p.lat, lon: p.lon })) ?? null;
 		const smootherPlaus =
 			smoothPts && smoothPts.length >= 2

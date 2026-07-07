@@ -44,7 +44,7 @@
  * Dijkstra routing.
  */
 
-import { metersBetween, projectPointToSegment, type RoadGeometry } from "./map-match-core.js";
+import { type BuildingRing, metersBetween, projectPointToSegment, type RoadGeometry } from "./map-match-core.js";
 
 /** One GPS fix to reconstruct. `accuracyM` is the reported horizontal accuracy
  *  (metres); when absent the profile fallback σ is used. */
@@ -363,4 +363,289 @@ export function tortuosity(pts: readonly Pt[]): number {
 	for (let i = 1; i < pts.length; i++) len += metersBetween(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
 	const straight = metersBetween(pts[0].lat, pts[0].lon, pts[pts.length - 1].lat, pts[pts.length - 1].lon);
 	return straight > 1 ? len / straight : 1;
+}
+
+// ---------------------------------------------------------------------------
+// reconstructWalk — the robust, annealed MAP reconstruction (true-path Phase 1)
+// ---------------------------------------------------------------------------
+//
+// The upgrade over smoothWalkMap: NO input is trusted as ground truth. The plain
+// smoother above is a convex weighted least-squares — it believes every fix's
+// position (accuracy only changes the strength), so a tight cluster of
+// confidently-wrong fixes (a post-tunnel GPS reacquire smear) still wins and the
+// line detours to follow it. Measured on the corpus that is a wash: gross phantom
+// detours dissolve but the line wanders off-pavement and through buildings.
+//
+// reconstructWalk fixes this with a SMARTER MINIMISER, not more trust in the
+// numbers:
+//
+//   1. Redescending robust GPS emission (Geman-McClure). Past a residual scale a
+//      fix's influence falls toward zero — a fix that disagrees with the CONSENSUS
+//      trajectory (its temporal neighbours + the map) is rejected, not merely
+//      down-weighted. Outliers are inferred from mutual inconsistency, not from
+//      the reported accuracy.
+//   2. Graduated Non-Convexity = deterministic annealing. The robust loss is
+//      non-convex, so one solve can commit to the phantom as "inliers". We start
+//      with the kernel scale c large (nearly quadratic → a broad, convex fit),
+//      then geometrically anneal c down, progressively sharpening the outlier
+//      rejection. Escapes the wrong basin like simulated annealing but with NO RNG
+//      — the golden corpus needs reproducibility. Each inner step is the same
+//      Jacobi-PCG least-squares as smoothWalkMap (IRLS on the robust weights).
+//   3. Accuracy is only a weak, clamped scale prior ("use it a bit") — it sets the
+//      per-fix base trust within a narrow band, never dominating; the robust
+//      kernel does the real inlier/outlier work.
+//   4. Map as first-class factors: soft walkable attraction (as before) PLUS a
+//      one-sided BUILDING REPULSION — a state inside a footprint is pulled to its
+//      nearest boundary, so a line through a house is high-energy by construction
+//      (this is what turns the corpus wash into a win, subsuming the case-based
+//      building corrector).
+//   5. Optional ANCHOR endpoints: pin the first/last state to a confident
+//      coordinate (station entrance / stay centroid) so a leg is reconstructed
+//      BETWEEN known truths, not from free-floating GPS.
+//
+// Every factor is soft and robust; the MAP estimate is the drawn path. Pure and
+// deterministic. Honest fallback (too few fixes) → null, as smoothWalkMap.
+
+/** A soft endpoint anchor: pull a terminal state toward a confident coordinate. */
+export interface WalkAnchor {
+	lat: number;
+	lon: number;
+	/** Trust as a Gaussian σ (m); smaller pins harder. */
+	sigmaM: number;
+}
+
+/** Tuning for {@link reconstructWalk}. σ are metres; weight is `1/σ²`. */
+export interface ReconstructProfile {
+	minFixes: number;
+	/** Accuracy → weak per-fix trust: the reported accuracy is CLAMPED to this
+	 *  band before becoming the base σ, so the best/worst fix differ by at most
+	 *  `(max/min)²` in weight — a nudge, not a verdict. */
+	accClampMinM: number;
+	accClampMaxM: number;
+	/** Base σ for a fix with no reported accuracy. */
+	accFallbackM: number;
+	/** Geman-McClure GNC schedule for the GPS emission: anneal the kernel scale
+	 *  from `gncStartM` (large → convex, everything an inlier) down to
+	 *  `gncTargetM` (redescending → rejects gross outliers), over `gncSteps`. */
+	gncStartM: number;
+	gncTargetM: number;
+	gncSteps: number;
+	/** IRLS / attractor re-linearisations per anneal step. */
+	innerIters: number;
+	/** Smoothness σ (m): scale of the tolerated second difference (physics prior).
+	 *  This is what carries the path THROUGH a rejected outlier. */
+	smoothSigmaM: number;
+	/** Walkable-attraction σ (m) and gating radius (m). */
+	networkSigmaM: number;
+	networkRadiusM: number;
+	/** Building-repulsion σ (m): a state inside a footprint is pulled to the
+	 *  boundary with weight `1/σ²`. Small → buildings are near-impassable. */
+	buildingSigmaM: number;
+	/** Densify the state chain to ≤ this spacing (m) by inserting FREE states
+	 *  between fixes, so the line can bend around a building BETWEEN fixes — a
+	 *  straight chord clipping a block would otherwise cross it with no vertex
+	 *  inside to repel. */
+	targetSpacingM: number;
+	/** A FREE state gets a WEAK, non-robust tether (this σ, m) toward its
+	 *  interpolated position on the raw GPS corridor — enough to stop it drifting
+	 *  off the corridor (which inflates the over-route/corridor-stall metric) while
+	 *  still free enough to bend around a building. Large → nearly free. */
+	freeTetherSigmaM: number;
+}
+
+export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
+	minFixes: 4,
+	accClampMinM: 10,
+	accClampMaxM: 35,
+	accFallbackM: 20,
+	gncStartM: 60,
+	gncTargetM: 20,
+	gncSteps: 8,
+	innerIters: 2,
+	smoothSigmaM: 6,
+	networkSigmaM: 8,
+	networkRadiusM: 25,
+	buildingSigmaM: 1.5,
+	targetSpacingM: 8,
+	freeTetherSigmaM: 22,
+};
+
+/** Geman-McClure IRLS weight for residual `r` at kernel scale `c` (both metres):
+ *  `(c²/(c²+r²))²` ∈ (0,1]. Redescending — →1 as r→0 (full trust), →0 as r≫c
+ *  (rejected). Large c ⇒ ≈1 everywhere (quadratic); small c ⇒ sharp rejection. */
+function gmWeight(r: number, c: number): number {
+	const c2 = c * c;
+	const t = c2 / (c2 + r * r);
+	return t * t;
+}
+
+/** Even-odd ray cast: is `p` inside the closed ring (first↔last edge implicit)? */
+function pointInRing(p: Pt, ring: BuildingRing): boolean {
+	let inside = false;
+	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+		const yi = ring[i].lat;
+		const xi = ring[i].lon;
+		const yj = ring[j].lat;
+		const xj = ring[j].lon;
+		if (yi > p.lat !== yj > p.lat && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi) inside = !inside;
+	}
+	return inside;
+}
+
+/** If `p` is inside any building footprint, the nearest point on that footprint's
+ *  boundary (where to escape to); else null. When inside several (overlapping
+ *  footprints), the nearest boundary across them — the shortest way out. */
+function buildingEscapeTarget(p: Pt, buildings: readonly BuildingRing[]): { lat: number; lon: number } | null {
+	let best: { lat: number; lon: number; distM: number } | null = null;
+	for (const ring of buildings) {
+		if (ring.length < 3 || !pointInRing(p, ring)) continue;
+		for (let i = 0; i < ring.length; i++) {
+			const a = ring[i];
+			const b = ring[(i + 1) % ring.length];
+			const proj = projectPointToSegment(p, a, b);
+			if (best === null || proj.distM < best.distM) best = { lat: proj.lat, lon: proj.lon, distM: proj.distM };
+		}
+	}
+	return best ? { lat: best.lat, lon: best.lon } : null;
+}
+
+/**
+ * Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
+ * Fuses a redescending GPS emission (GNC-annealed), a smoothness/physics prior,
+ * soft walkable attraction, building repulsion, and optional endpoint anchors.
+ * One vertex per fix, timestamps preserved; null when too short. Deterministic.
+ */
+export function reconstructWalk(
+	fixes: readonly WalkFix[],
+	geo: RoadGeometry,
+	profile: ReconstructProfile = DEFAULT_RECONSTRUCT_PROFILE,
+	anchors?: { start?: WalkAnchor; end?: WalkAnchor },
+): SmoothedPoint[] | null {
+	if (fixes.length < profile.minFixes) return null;
+
+	const lat0 = fixes[0].lat;
+	const lon0 = fixes[0].lon;
+	const cosLat = Math.cos((lat0 * Math.PI) / 180);
+	const toE = (lon: number) => (lon - lon0) * 111_320 * cosLat;
+	const toN = (lat: number) => (lat - lat0) * 111_320;
+	const toLon = (e: number) => lon0 + e / (111_320 * cosLat);
+	const toLat = (m: number) => lat0 + m / 111_320;
+
+	// Densify: keep every fix as an OBSERVED state (GPS emission + accuracy) and
+	// insert FREE states (no GPS term) between consecutive fixes so the spacing is
+	// ≤ targetSpacingM. Free states are placed purely by smoothness + network +
+	// building, so the line can bend AROUND a block between two fixes — a straight
+	// chord would otherwise cut through it with no vertex inside to repel.
+	const seedE: number[] = [];
+	const seedN: number[] = [];
+	const obsE: number[] = []; // GPS target (only meaningful where obsW > 0)
+	const obsN: number[] = [];
+	const obsW: number[] = []; // weak accuracy prior, 0 for a free state
+	const ts: number[] = [];
+	for (let i = 0; i < fixes.length; i++) {
+		const fe = toE(fixes[i].lon);
+		const fn = toN(fixes[i].lat);
+		const acc = fixes[i].accuracyM ?? profile.accFallbackM;
+		const sigma = Math.min(profile.accClampMaxM, Math.max(profile.accClampMinM, acc));
+		seedE.push(fe);
+		seedN.push(fn);
+		obsE.push(fe);
+		obsN.push(fn);
+		obsW.push(1 / (sigma * sigma));
+		ts.push(fixes[i].ts);
+		if (i + 1 < fixes.length) {
+			const ne = toE(fixes[i + 1].lon);
+			const nn2 = toN(fixes[i + 1].lat);
+			const segLen = Math.hypot(ne - fe, nn2 - fn);
+			const k = Math.max(0, Math.floor(segLen / profile.targetSpacingM) - 1);
+			for (let j = 1; j <= k; j++) {
+				const f = j / (k + 1);
+				seedE.push(fe + (ne - fe) * f);
+				seedN.push(fn + (nn2 - fn) * f);
+				obsE.push(0);
+				obsN.push(0);
+				obsW.push(0); // free state — no GPS emission
+				ts.push(Math.round(fixes[i].ts + (fixes[i + 1].ts - fixes[i].ts) * f));
+			}
+		}
+	}
+	const m = seedE.length;
+
+	const wSmooth = 1 / (profile.smoothSigmaM * profile.smoothSigmaM);
+	const wNet = 1 / (profile.networkSigmaM * profile.networkSigmaM);
+	const wBuild = 1 / (profile.buildingSigmaM * profile.buildingSigmaM);
+	const wFreeTether = 1 / (profile.freeTetherSigmaM * profile.freeTetherSigmaM);
+	const buildings = geo.buildings ?? [];
+	const hasWays = geo.ways.length > 0;
+
+	let e: Float64Array = Float64Array.from(seedE);
+	let nn: Float64Array = Float64Array.from(seedN);
+
+	// GNC: geometric anneal of the GPS kernel scale c from start → target.
+	const ratio = profile.gncSteps > 1 ? (profile.gncTargetM / profile.gncStartM) ** (1 / (profile.gncSteps - 1)) : 1;
+	let c = profile.gncStartM;
+	for (let step = 0; step < profile.gncSteps; step++) {
+		for (let inner = 0; inner < profile.innerIters; inner++) {
+			const d = new Float64Array(m);
+			const be = new Float64Array(m);
+			const bn = new Float64Array(m);
+			for (let i = 0; i < m; i++) {
+				const cur = { lat: toLat(nn[i]), lon: toLon(e[i]) };
+				// Robust GPS emission (observed states only) — reject a fix that
+				// disagrees with the consensus trajectory.
+				if (obsW[i] > 0) {
+					const rGps = Math.hypot(e[i] - obsE[i], nn[i] - obsN[i]);
+					const wg = obsW[i] * gmWeight(rGps, c);
+					d[i] += wg;
+					be[i] += wg * obsE[i];
+					bn[i] += wg * obsN[i];
+				} else {
+					// Free state: weak, non-robust tether to its interpolated position on
+					// the raw corridor — keeps it from drifting off (over-route) without
+					// pinning it, so it can still bow around a building.
+					d[i] += wFreeTether;
+					be[i] += wFreeTether * seedE[i];
+					bn[i] += wFreeTether * seedN[i];
+				}
+				// Soft walkable attraction (radius-gated).
+				if (hasWays) {
+					const near = nearestWalkablePoint(cur, geo);
+					if (near && near.distM <= profile.networkRadiusM) {
+						d[i] += wNet;
+						be[i] += wNet * toE(near.lon);
+						bn[i] += wNet * toN(near.lat);
+					}
+				}
+				// Building repulsion — pull a state inside a footprint to the boundary.
+				if (buildings.length > 0) {
+					const esc = buildingEscapeTarget(cur, buildings);
+					if (esc) {
+						d[i] += wBuild;
+						be[i] += wBuild * toE(esc.lon);
+						bn[i] += wBuild * toN(esc.lat);
+					}
+				}
+			}
+			// Endpoint anchors — reconstruct between confident truths.
+			if (anchors?.start) {
+				const w = 1 / (anchors.start.sigmaM * anchors.start.sigmaM);
+				d[0] += w;
+				be[0] += w * toE(anchors.start.lon);
+				bn[0] += w * toN(anchors.start.lat);
+			}
+			if (anchors?.end) {
+				const w = 1 / (anchors.end.sigmaM * anchors.end.sigmaM);
+				d[m - 1] += w;
+				be[m - 1] += w * toE(anchors.end.lon);
+				bn[m - 1] += w * toN(anchors.end.lat);
+			}
+			e = solvePCG(d, wSmooth, be, e);
+			nn = solvePCG(d, wSmooth, bn, nn);
+		}
+		c = Math.max(profile.gncTargetM, c * ratio);
+	}
+
+	const out: SmoothedPoint[] = [];
+	for (let i = 0; i < m; i++) out.push({ lat: toLat(nn[i]), lon: toLon(e[i]), ts: ts[i] });
+	return out;
 }
