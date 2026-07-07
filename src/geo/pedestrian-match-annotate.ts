@@ -16,6 +16,7 @@
  * `walkMatchedPath` undefined and the raw track draws instead.
  */
 
+import { type StepPoint, stepsInWindow } from "./biometrics.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { holdImplausibleSpeed, rejectSpikes } from "./episode-geometry.js";
 import type { FilteredPoint } from "./kalman.js";
@@ -110,6 +111,7 @@ export async function annotateWalkMatches(
 	displayFixes: readonly PedFix[],
 	points: readonly FilteredPoint[],
 	osm: OsmAdapter,
+	stepPoints: readonly StepPoint[] = [],
 ): Promise<EnrichedSegment[]> {
 	if (process.env.WALK_MATCH_DISABLE === "1") return [...segments];
 
@@ -220,7 +222,13 @@ export async function annotateWalkMatches(
 		// the reconstruction is ~the same length, so nothing changes. Deterministic.
 		let smoothed = false;
 		if (process.env.WALK_RECON === "1") {
-			const recon = reconstructWalk(walkFixes, { ways, buildings });
+			// Pedometer budget for the leg window (#320): the one signal independent
+			// of GPS that contradicts a coherent smear. null (no step data for the
+			// day) leaves the factor off.
+			const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
+			const recon = reconstructWalk(walkFixes, { ways, buildings }, undefined, {
+				stepsWalked: stepsWalked ?? undefined,
+			});
 			if (recon && recon.length >= 2) {
 				const drawnLen = pathLenM(drawn);
 				const reconLen = pathLenM(recon);

@@ -3,6 +3,7 @@ import type { RoadGeometry } from "../src/geo/road-match.js";
 import {
 	countSharpTurns,
 	DEFAULT_MAP_SMOOTH_PROFILE,
+	reconstructWalk,
 	refineMatchedPath,
 	smoothWalkMap,
 	type WalkFix,
@@ -136,6 +137,71 @@ describe("smoothWalkMap", () => {
 		const noisyOff = Math.abs(noisy[5].lat - LAT) * 111_320;
 		const preciseOff = Math.abs(precise[5].lat - LAT) * 111_320;
 		expect(noisyOff).toBeLessThan(preciseOff); // low-accuracy outlier pulled in harder
+	});
+});
+
+describe("reconstructWalk step-magnitude factor", () => {
+	/** A COHERENT smear — the class the robust kernel cannot reject (P1's
+	 *  "coherent-smear phantom", the 07-06 Pancras Road signature): fixes drift
+	 *  smoothly ~1.9 km along the corridor, every fix agreeing with its temporal
+	 *  neighbours, while the pedometer says the user walked ~300 m. Only the
+	 *  independent step signal can contradict it. Deterministic. */
+	function smearFixes(n: number): WalkFix[] {
+		const out: WalkFix[] = [];
+		const cl = 111_320 * Math.cos((LAT * Math.PI) / 180);
+		for (let i = 0; i < n; i++) {
+			const f = i / (n - 1);
+			// Smooth one-way eastward drift over 1900 m with a gentle 40 m weave —
+			// locally consistent, globally phantom.
+			const eastM = 1900 * f;
+			const northM = 40 * Math.sin(f * Math.PI * 3);
+			out.push({
+				lat: LAT + dLat(northM),
+				lon: -0.28 + eastM / cl,
+				ts: 1000 + i * 30,
+				accuracyM: 15, // confidently wrong — a reacquire smear reports good accuracy
+			});
+		}
+		return out;
+	}
+
+	it("collapses a scatter smear toward the pedometer budget", () => {
+		const fixes = smearFixes(40);
+		const noSteps = reconstructWalk(fixes, straightGeo);
+		expect(noSteps).not.toBeNull();
+		const withSteps = reconstructWalk(fixes, straightGeo, undefined, { stepsWalked: 400 });
+		expect(withSteps).not.toBeNull();
+		const lenWithout = pathLengthM(noSteps as Array<{ lat: number; lon: number }>);
+		const lenWith = pathLengthM(withSteps as Array<{ lat: number; lon: number }>);
+		// Budget = 400 × 0.75 = 300 m; slack ×1.4 → equilibrium ~420 m. Allow
+		// convergence slop, but the smear must collapse far below the step-blind line.
+		expect(lenWith).toBeLessThan(lenWithout * 0.6);
+		expect(lenWith).toBeLessThan(700);
+	});
+
+	it("does not distort a legit leg whose length agrees with the steps", () => {
+		// ~700 m of consistent low-jitter fixes along the way; 940 steps ≈ 705 m.
+		const fixes = jitteryFixes(30, 5);
+		const noSteps = reconstructWalk(fixes, straightGeo);
+		const withSteps = reconstructWalk(fixes, straightGeo, undefined, { stepsWalked: 940 });
+		expect(withSteps).toEqual(noSteps); // within slack → the factor is fully off
+	});
+
+	it("stays soft when the budget is only mildly under the drawn length", () => {
+		// Same legit ~700 m leg but the pedometer undercounted (500 steps ≈ 375 m).
+		// GPS consensus must hold: the leg may shrink a little, never collapse.
+		const fixes = jitteryFixes(30, 5);
+		const noSteps = reconstructWalk(fixes, straightGeo) as Array<{ lat: number; lon: number }>;
+		const withSteps = reconstructWalk(fixes, straightGeo, undefined, { stepsWalked: 500 }) as Array<{
+			lat: number;
+			lon: number;
+		}>;
+		expect(pathLengthM(withSteps)).toBeGreaterThan(pathLengthM(noSteps) * 0.8);
+	});
+
+	it("is a no-op when steps are unknown", () => {
+		const fixes = smearFixes(20);
+		expect(reconstructWalk(fixes, straightGeo, undefined, {})).toEqual(reconstructWalk(fixes, straightGeo));
 	});
 });
 

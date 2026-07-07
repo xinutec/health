@@ -126,7 +126,26 @@ export function enrichSegmentWithBiometrics(
 	return result;
 }
 
-/** Steps per minute over a segment'\''s window. Zero if the segment is shorter
+/** Total pedometer steps whose per-minute rows fall inside `[startTs, endTs]`,
+ *  or `null` when the step series carries no rows for that day at all — the
+ *  same "no Fitbit data ≠ zero steps" convention as `stepsTotal` above. Used
+ *  by the walk reconstruction's step-magnitude factor (#320), which must stay
+ *  OFF when there is no step evidence rather than treat absence as zero. */
+export function stepsInWindow(stepPoints: readonly StepPoint[], startTs: number, endTs: number): number | null {
+	if (stepPoints.length === 0) return null;
+	let total = 0;
+	let anyOverlap = false;
+	for (const sp of stepPoints) {
+		if (sp.ts >= startTs && sp.ts <= endTs) {
+			total += sp.steps;
+			anyOverlap = true;
+		}
+	}
+	if (anyOverlap || stepPoints.some((sp) => Math.abs(sp.ts - startTs) < 86400)) return total;
+	return null;
+}
+
+/** Steps per minute over a segment's window. Zero if the segment is shorter
  *  than 30 seconds (denominator too small to be meaningful). Steps outside
  *  the window are ignored. */
 export function cadenceForSegment(segment: TrackSegment, stepPoints: StepPoint[]): number {
@@ -168,12 +187,12 @@ export function peakCadenceForSegment(segment: TrackSegment, stepPoints: StepPoi
  *  Erring conservative is intentional. */
 const WALKING_MIN_CADENCE = 5;
 
-/** Don'\''t correct very short segments — a 1-min "walking" segment with
+/** Don't correct very short segments — a 1-min "walking" segment with
  *  zero steps could be a brief pause. Need enough samples to be confident. */
 const CADENCE_CORRECTION_MIN_DURATION_S = 3 * 60;
 
-/** Above this speed, the segment classifier already wouldn'\''t pick walking
- *  — cadence correction shouldn'\''t fight that boundary. */
+/** Above this speed, the segment classifier already wouldn't pick walking
+ *  — cadence correction shouldn't fight that boundary. */
 const WALKING_MAX_SPEED_KMH = 15;
 
 /** A cadence-flipped "driving" leg only gets reverted to walking when its
@@ -219,10 +238,10 @@ const STATIONARY_WALK_MIN_AVG_SPEED_KMH = 1.0;
 const STATIONARY_WALK_STAY_MIN_DURATION_S = 10 * 60;
 const STATIONARY_WALK_STAY_MAX_EXTENT_M = 80;
 
-/** Require at least one step row at or after the segment'\''s end within this
- *  window — proof that Fitbit data has been synced through the segment'\''s
+/** Require at least one step row at or after the segment's end within this
+ *  window — proof that Fitbit data has been synced through the segment's
  *  time period. Without this, "no steps recorded" might just mean "we
- *  haven'\''t pulled this minute from Fitbit yet" and we'\''d wrongly correct
+ *  haven't pulled this minute from Fitbit yet" and we'd wrongly correct
  *  a real walk into driving. */
 const CADENCE_CORRECTION_FRESHNESS_S = 30 * 60;
 
@@ -234,12 +253,12 @@ const CADENCE_CORRECTION_FRESHNESS_S = 30 * 60;
  *
  *  Runs BEFORE merge so a neighbouring drive can absorb the relabelled leg.
  *
- *  Pure: needs a `TrackSegment`-shaped input plus the day'\''s step rows.
+ *  Pure: needs a `TrackSegment`-shaped input plus the day's step rows.
  *  Returns a segment with `refinedMode` / `refinedReason` updated when a
  *  correction applies; otherwise returns the input unchanged.
  *
  *  Conservative on missing data: if `stepPoints` is empty (no Fitbit data
- *  for the day at all), no correction is applied — we don'\''t know the
+ *  for the day at all), no correction is applied — we don't know the
  *  cadence and a false-positive correction would be worse than leaving
  *  the GPS classification alone.
  */
@@ -254,10 +273,10 @@ export function correctModeFromCadence<
 	if (currentMode !== "walking") return segment;
 	if (segment.avgSpeed > WALKING_MAX_SPEED_KMH) return segment;
 
-	// Freshness guard: only correct when there'\''s a step row at-or-after the
-	// segment'\''s end, within the freshness window. That proves Fitbit data
-	// has been pulled through the segment'\''s time period; otherwise zero
-	// cadence might just mean the most recent sync hasn'\''t covered this
+	// Freshness guard: only correct when there's a step row at-or-after the
+	// segment's end, within the freshness window. That proves Fitbit data
+	// has been pulled through the segment's time period; otherwise zero
+	// cadence might just mean the most recent sync hasn't covered this
 	// minute yet, and a real walk would be wrongly relabelled as driving.
 	const hasFreshData = stepPoints.some(
 		(sp) => sp.ts >= segment.endTs && sp.ts <= segment.endTs + CADENCE_CORRECTION_FRESHNESS_S,

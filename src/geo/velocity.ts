@@ -1404,7 +1404,10 @@ export async function computeVelocityFromInputs(
 			// `options.walkMatch === false` (the /api/velocity `walkMatch=0` query
 			// param) skips matching so the map can render the raw walks for an A/B
 			// comparison against the pavement-matched line.
-			run: (segs) => (options.walkMatch === false ? segs : annotateWalkMatches(segs, displayFixes, points, inputs.osm)),
+			run: (segs) =>
+				options.walkMatch === false
+					? segs
+					: annotateWalkMatches(segs, displayFixes, points, inputs.osm, biomForStaySplit.steps),
 		},
 
 		// Per-segment displayTz: the IANA tz the frontend should use to render

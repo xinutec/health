@@ -30,12 +30,14 @@ import { buildingCrossingM, offPathBuildingCrossingM } from "../eval/walk-buildi
 import { gateWalks, WALK_SPEED_CEIL_KMH, type WalkBaseline, type WalkBaselineEntry } from "../eval/walk-gate.js";
 import { walkPlausibility } from "../eval/walk-plausibility.js";
 import { onNamedWayFraction } from "../eval/walk-route-correctness.js";
+import { stepsInWindow } from "../geo/biometrics.js";
 import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { BuildingFootprint } from "../geo/osm-local.js";
 import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import {
 	countSharpTurns,
+	DEFAULT_RECONSTRUCT_PROFILE,
 	type MapSmoothProfile,
 	REFINE_MATCHED_PROFILE,
 	reconstructWalk,
@@ -169,6 +171,15 @@ interface WalkVerdict {
 	smootherSharpTurns: number | null;
 	smootherBuildingM: number | null;
 	smootherOffPathM: number | null;
+	/** Step-budget consistency (#320, geometry-roadmap G0): the leg's pedometer
+	 *  displacement budget (steps × stride, no slack) against each arm's drawn
+	 *  length. The corridor metrics are blind to a coherent smear — they reward
+	 *  agreement with the very fixes the pedometer contradicts — so a drawn
+	 *  length far above the budget is the honest phantom witness. null budget =
+	 *  no step data for the day. */
+	stepBudgetM: number | null;
+	candidateLenM: number;
+	smootherLenM: number | null;
 }
 
 /** How far the candidate's route-correctness may fall below baseline before it
@@ -308,7 +319,12 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 		// replacement for the Viterbi matcher: accuracy-weighted emission suppresses
 		// the low-accuracy post-tunnel reacquire fixes that the matcher (blind to
 		// accuracy) snaps into phantom detours. Measured before any prod wiring.
-		const smoothed = reconstructWalk(rawWalk, { ways: walkable.ways, buildings });
+		// Pedometer budget for the leg (#320) — same evidence the prod wiring
+		// passes, so the referee measures the factor it will ship with.
+		const stepsWalked = stepsInWindow(base.biometrics.steps, onE.startTs, onE.endTs);
+		const smoothed = reconstructWalk(rawWalk, { ways: walkable.ways, buildings }, undefined, {
+			stepsWalked: stepsWalked ?? undefined,
+		});
 		const smoothPts = smoothed?.map((p) => ({ lat: p.lat, lon: p.lon })) ?? null;
 		const smootherPlaus =
 			smoothPts && smoothPts.length >= 2
@@ -343,6 +359,9 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 			smootherSharpTurns: smoothPts ? countSharpTurns(smoothPts) : null,
 			smootherBuildingM: smoothPts ? crossM(smoothPts) : null,
 			smootherOffPathM: smoothPts ? offPathM(smoothPts) : null,
+			stepBudgetM: stepsWalked !== null ? stepsWalked * DEFAULT_RECONSTRUCT_PROFILE.stepStrideM : null,
+			candidateLenM: candidate.drawnLengthM,
+			smootherLenM: smootherPlaus?.drawnLengthM ?? null,
 		});
 	}
 	return verdicts;
@@ -393,8 +412,15 @@ async function main(): Promise<void> {
 					? ""
 					: `  bldg ${(v.baselineBuildingM ?? 0).toFixed(0)}→${v.candidateBuildingM.toFixed(0)}m` +
 						`  offPath ${(v.baselineOffPathM ?? 0).toFixed(0)}→${(v.candidateOffPathM ?? 0).toFixed(0)}m${(v.candidateOffPathM ?? 0) >= 5 ? " ⚠crosses-building" : ""}`;
+			// Step-budget consistency (#320): drawn length vs the pedometer budget.
+			// The one witness a coherent smear cannot fool — flag when the drawn
+			// line is more than the reconstruction's slack over the budget.
+			const budget =
+				v.stepBudgetM === null
+					? ""
+					: `  len ${v.candidateLenM.toFixed(0)}m/budget ${v.stepBudgetM.toFixed(0)}m${v.candidateLenM > v.stepBudgetM * DEFAULT_RECONSTRUCT_PROFILE.stepSlackRatio ? " ⚠over-budget" : ""}`;
 			console.log(
-				`  ${tag} @${hhmm(v.startTs)}Z  offWalkP90 ${b} → ${c}  stall ${v.candidateStallM.toFixed(0).padStart(4)}m${stallFlag}  ${spd.toFixed(1).padStart(5)}km/h${spdFlag}${route}${bldg}   (${v.baselineKind} → ${v.candidateKind})`,
+				`  ${tag} @${hhmm(v.startTs)}Z  offWalkP90 ${b} → ${c}  stall ${v.candidateStallM.toFixed(0).padStart(4)}m${stallFlag}  ${spd.toFixed(1).padStart(5)}km/h${spdFlag}${route}${bldg}${budget}   (${v.baselineKind} → ${v.candidateKind})`,
 			);
 			if (v.refineP90 !== null) {
 				const sp90 = `${v.refineP90.toFixed(0).padStart(3)}m`;
@@ -416,8 +442,9 @@ async function main(): Promise<void> {
 					v.smootherOffPathM === null
 						? ""
 						: `  offPath ${(v.candidateOffPathM ?? 0).toFixed(0)}→${v.smootherOffPathM.toFixed(0)}m`;
+				const glen = v.smootherLenM === null ? "" : `  len ${v.candidateLenM.toFixed(0)}→${v.smootherLenM.toFixed(0)}m`;
 				console.log(
-					`      └ SMOOTHER    offWalkP90 ${gp90}  stall ${(v.smootherStallM ?? 0).toFixed(0).padStart(4)}m  turns ${v.candidateSharpTurns}→${v.smootherSharpTurns ?? "-"}${groute}${goff}`,
+					`      └ SMOOTHER    offWalkP90 ${gp90}  stall ${(v.smootherStallM ?? 0).toFixed(0).padStart(4)}m  turns ${v.candidateSharpTurns}→${v.smootherSharpTurns ?? "-"}${groute}${goff}${glen}`,
 				);
 			}
 		}

@@ -121,11 +121,13 @@ function nearestWalkablePoint(p: Pt, geo: RoadGeometry): { lat: number; lon: num
 }
 
 /**
- * Apply the SPD normal matrix `A = diag(d) + wAcc·LᵀL` to a vector, matrix-free,
- * where `L` is the second-difference (biharmonic) stencil `[1, −2, 1]`. `d` is
- * the combined GPS + network diagonal.
+ * Apply the SPD normal matrix `A = diag(d) + wAcc·LᵀL + wEdge·D₁ᵀD₁` to a
+ * vector, matrix-free, where `L` is the second-difference (biharmonic) stencil
+ * `[1, −2, 1]` and `D₁` the first-difference stencil `[−1, 1]`. `d` is the
+ * combined GPS + network diagonal; `wEdge` (default 0 = absent) is the uniform
+ * edge weight of the step-magnitude contraction factor.
  */
-function applyA(v: Float64Array, d: Float64Array, wAcc: number): Float64Array {
+function applyA(v: Float64Array, d: Float64Array, wAcc: number, wEdge = 0): Float64Array {
 	const n = v.length;
 	const out = new Float64Array(n);
 	for (let i = 0; i < n; i++) out[i] = d[i] * v[i];
@@ -137,12 +139,21 @@ function applyA(v: Float64Array, d: Float64Array, wAcc: number): Float64Array {
 		out[k + 1] -= 2 * lv;
 		out[k + 2] += lv;
 	}
+	if (wEdge > 0) {
+		// Scatter D₁ᵀD₁v: edge k couples rows k (−) and k+1 (+).
+		for (let k = 0; k + 1 < n; k++) {
+			const f = wEdge * (v[k + 1] - v[k]);
+			out[k] -= f;
+			out[k + 1] += f;
+		}
+	}
 	return out;
 }
 
-/** Diagonal of `A = diag(d) + wAcc·LᵀL`, for Jacobi preconditioning. The
- *  biharmonic stencil contributes 1/5/6/5/1 down the band. */
-function diagOfA(d: Float64Array, wAcc: number): Float64Array {
+/** Diagonal of `A = diag(d) + wAcc·LᵀL + wEdge·D₁ᵀD₁`, for Jacobi
+ *  preconditioning. The biharmonic stencil contributes 1/5/6/5/1 down the band;
+ *  the first-difference stencil contributes 1/2/…/2/1. */
+function diagOfA(d: Float64Array, wAcc: number, wEdge = 0): Float64Array {
 	const n = d.length;
 	const out = new Float64Array(n);
 	for (let i = 0; i < n; i++) {
@@ -150,21 +161,24 @@ function diagOfA(d: Float64Array, wAcc: number): Float64Array {
 		if (i <= n - 3) ltl += 1; // stencil k=i, coefficient on row i is +1
 		if (i - 1 >= 0 && i - 1 <= n - 3) ltl += 4; // k=i-1, coefficient −2
 		if (i - 2 >= 0 && i - 2 <= n - 3) ltl += 1; // k=i-2, coefficient +1
-		out[i] = d[i] + wAcc * ltl;
+		let d1 = 0;
+		if (i <= n - 2) d1 += 1; // edge i touches row i
+		if (i >= 1) d1 += 1; // edge i-1 touches row i
+		out[i] = d[i] + wAcc * ltl + wEdge * d1;
 	}
 	return out;
 }
 
-/** Solve the SPD system `A x = b` (A = diag(d) + wAcc·LᵀL) by Jacobi-
- *  preconditioned conjugate gradient. `x0` seeds the iterate. */
-function solvePCG(d: Float64Array, wAcc: number, b: Float64Array, x0: Float64Array): Float64Array {
+/** Solve the SPD system `A x = b` (A = diag(d) + wAcc·LᵀL + wEdge·D₁ᵀD₁) by
+ *  Jacobi-preconditioned conjugate gradient. `x0` seeds the iterate. */
+function solvePCG(d: Float64Array, wAcc: number, b: Float64Array, x0: Float64Array, wEdge = 0): Float64Array {
 	const n = b.length;
-	const invDiag = diagOfA(d, wAcc);
+	const invDiag = diagOfA(d, wAcc, wEdge);
 	for (let i = 0; i < n; i++) invDiag[i] = 1 / invDiag[i];
 	const x = new Float64Array(n);
 	x.set(x0);
 	// r = b − A x
-	const ax0 = applyA(x, d, wAcc);
+	const ax0 = applyA(x, d, wAcc, wEdge);
 	const r = new Float64Array(n);
 	for (let i = 0; i < n; i++) r[i] = b[i] - ax0[i];
 	const z = new Float64Array(n);
@@ -180,7 +194,7 @@ function solvePCG(d: Float64Array, wAcc: number, b: Float64Array, x0: Float64Arr
 
 	const maxIter = Math.min(2 * n + 50, 2000);
 	for (let it = 0; it < maxIter; it++) {
-		const ap = applyA(p, d, wAcc);
+		const ap = applyA(p, d, wAcc, wEdge);
 		let pap = 0;
 		for (let i = 0; i < n; i++) pap += p[i] * ap[i];
 		if (pap <= 0) break; // numerical guard (A is SPD, so this is only round-off)
@@ -462,6 +476,30 @@ export interface ReconstructProfile {
 	 *  off the corridor (which inflates the over-route/corridor-stall metric) while
 	 *  still free enough to bend around a building. Large → nearly free. */
 	freeTetherSigmaM: number;
+	/** Step-magnitude factor (#320): mean stride (m/step) converting the leg's
+	 *  pedometer count into a displacement budget. */
+	stepStrideM: number;
+	/** Drawn length up to `budget × slack` draws no force — covers stride
+	 *  variance, GPS length inflation, and honest pedometer undercount. */
+	stepSlackRatio: number;
+	/** Base σ (m) of the per-edge contraction factor; the effective edge weight
+	 *  is `ramp/σ²` (see the ramp in {@link reconstructWalk}). */
+	stepSigmaM: number;
+	/** Width (in excess ratio above 1) over which the quadratic ramp
+	 *  `((L/target − 1)/width)²` reaches σ-strength. The slack ratio already
+	 *  absorbs all LEGITIMATE variance (stride spread, GPS length inflation,
+	 *  honest undercount), so beyond it the violation turns physically
+	 *  impossible over a narrow band — the ramp must saturate quickly or the
+	 *  map priors out-muscle the evidence mid-collapse. */
+	stepRampWidthRatio: number;
+	/** Ramp saturation: the quadratic excess ramp is capped here, bounding the
+	 *  factor even on a grotesque smear. */
+	stepRampCap: number;
+	/** Extra re-linearisations at the final GNC scale while the step budget is
+	 *  still violated > 5 % — a smear contracts a bounded distance per solve, so
+	 *  the fixed schedule alone leaves a gross one half-collapsed. Bounded; a
+	 *  leg at equilibrium breaks out immediately. */
+	stepExtraIters: number;
 }
 
 export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
@@ -487,6 +525,20 @@ export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
 	// phantom-dissolution win. Kept as a knob for a future building-aware pass.
 	targetSpacingM: 100000,
 	freeTetherSigmaM: 40,
+	// Step-magnitude factor (#320). σ=20 m puts the SATURATED factor (ramp-capped
+	// at 16 → weight 0.04) well above the strongest clamped GPS emission (1/10² =
+	// 0.01) — a gross coherent smear (the class the robust kernel cannot reject,
+	// e.g. 07-06: 418 steps ≈ 300 m against 1.9 km drawn) is contracted to the
+	// budget. A mild excess (≤ ~2× target) ramps quadratically from zero, so an
+	// honest leg with an undercounting pedometer feels a force ≪ its GPS
+	// consensus and barely moves. Slack 1.4 keeps the factor fully off for any
+	// leg within pedometer agreement.
+	stepStrideM: 0.75,
+	stepSlackRatio: 1.4,
+	stepSigmaM: 20,
+	stepRampWidthRatio: 0.25,
+	stepRampCap: 16,
+	stepExtraIters: 12,
 };
 
 /** Geman-McClure IRLS weight for residual `r` at kernel scale `c` (both metres):
@@ -682,17 +734,28 @@ class WalkGrid {
 	}
 }
 
+/** Independent evidence fused into {@link reconstructWalk} beyond the GPS/map
+ *  factors: endpoint anchors (#319) and the leg's pedometer count (#320). */
+export interface WalkEvidence {
+	start?: WalkAnchor;
+	end?: WalkAnchor;
+	/** Pedometer steps recorded within the leg's window. `undefined` = no step
+	 *  data (watch data absent for the day) — the step factor stays off. */
+	stepsWalked?: number;
+}
+
 /**
  * Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
  * Fuses a redescending GPS emission (GNC-annealed), a smoothness/physics prior,
- * soft walkable attraction, building repulsion, and optional endpoint anchors.
+ * soft walkable attraction, building repulsion, optional endpoint anchors, and
+ * a soft step-magnitude contraction toward the pedometer displacement budget.
  * One vertex per fix, timestamps preserved; null when too short. Deterministic.
  */
 export function reconstructWalk(
 	fixes: readonly WalkFix[],
 	geo: RoadGeometry,
 	profile: ReconstructProfile = DEFAULT_RECONSTRUCT_PROFILE,
-	anchors?: { start?: WalkAnchor; end?: WalkAnchor },
+	evidence?: WalkEvidence,
 ): SmoothedPoint[] | null {
 	if (fixes.length < profile.minFixes) return null;
 
@@ -774,14 +837,61 @@ export function reconstructWalk(
 	let e: Float64Array = Float64Array.from(seedE);
 	let nn: Float64Array = Float64Array.from(seedN);
 
-	// GNC: geometric anneal of the GPS kernel scale c from start → target.
+	// Step-magnitude displacement budget (#320): the drawn length may not
+	// grossly exceed what the pedometer says was walked. Soft, never a gate.
+	const stepTargetM =
+		evidence?.stepsWalked !== undefined
+			? Math.max(1, evidence.stepsWalked * profile.stepStrideM * profile.stepSlackRatio)
+			: null;
+
+	const pathLen = (): number => {
+		let len = 0;
+		for (let i = 0; i + 1 < m; i++) len += Math.hypot(e[i + 1] - e[i], nn[i + 1] - nn[i]);
+		return len;
+	};
+
+	// GNC: geometric anneal of the GPS kernel scale c from start → target. When
+	// the step budget is still grossly violated after the schedule, keep
+	// re-linearising at the target scale (bounded by stepExtraIters): a coherent
+	// smear contracts a bounded distance per solve (its GPS is rejected, so only
+	// the map priors resist), while an honest leg sits at a static equilibrium —
+	// its live GPS consensus holds it, so extra iterations move nothing.
 	const ratio = profile.gncSteps > 1 ? (profile.gncTargetM / profile.gncStartM) ** (1 / (profile.gncSteps - 1)) : 1;
 	let c = profile.gncStartM;
-	for (let step = 0; step < profile.gncSteps; step++) {
+	for (let step = 0; step < profile.gncSteps + profile.stepExtraIters; step++) {
+		if (step >= profile.gncSteps && (stepTargetM === null || pathLen() <= stepTargetM * 1.05)) break;
 		for (let inner = 0; inner < profile.innerIters; inner++) {
 			const d = new Float64Array(m);
 			const be = new Float64Array(m);
 			const bn = new Float64Array(m);
+			// Step-magnitude contraction, re-linearised at the current estimate:
+			// when the current length L exceeds the budget target, every edge gets
+			// a first-difference target of `s·(current edge)` with s = target/L —
+			// a uniform shrink whose force fades to zero as L reaches the target
+			// (self-limiting; it cannot over-collapse). The quadratic excess ramp
+			// keeps it far below GPS consensus on an honest leg while saturating
+			// above the strongest clamped emission on a gross coherent smear.
+			let wEdge = 0;
+			let shrink = 1;
+			if (stepTargetM !== null) {
+				const excess = pathLen() / stepTargetM;
+				if (excess > 1) {
+					const over = (excess - 1) / profile.stepRampWidthRatio;
+					const ramp = Math.min(profile.stepRampCap, over * over);
+					wEdge = ramp / (profile.stepSigmaM * profile.stepSigmaM);
+					shrink = 1 / excess;
+					// Scatter D₁ᵀ(wEdge·t) into the rhs: edge k's target t_k touches
+					// rows k (−) and k+1 (+).
+					for (let k = 0; k + 1 < m; k++) {
+						const tE = shrink * (e[k + 1] - e[k]);
+						const tN = shrink * (nn[k + 1] - nn[k]);
+						be[k] -= wEdge * tE;
+						be[k + 1] += wEdge * tE;
+						bn[k] -= wEdge * tN;
+						bn[k + 1] += wEdge * tN;
+					}
+				}
+			}
 			for (let i = 0; i < m; i++) {
 				const px = e[i];
 				const py = nn[i];
@@ -821,20 +931,29 @@ export function reconstructWalk(
 				}
 			}
 			// Endpoint anchors — reconstruct between confident truths.
-			if (anchors?.start) {
-				const w = 1 / (anchors.start.sigmaM * anchors.start.sigmaM);
+			if (evidence?.start) {
+				const w = 1 / (evidence.start.sigmaM * evidence.start.sigmaM);
 				d[0] += w;
-				be[0] += w * toE(anchors.start.lon);
-				bn[0] += w * toN(anchors.start.lat);
+				be[0] += w * toE(evidence.start.lon);
+				bn[0] += w * toN(evidence.start.lat);
 			}
-			if (anchors?.end) {
-				const w = 1 / (anchors.end.sigmaM * anchors.end.sigmaM);
+			if (evidence?.end) {
+				const w = 1 / (evidence.end.sigmaM * evidence.end.sigmaM);
 				d[m - 1] += w;
-				be[m - 1] += w * toE(anchors.end.lon);
-				bn[m - 1] += w * toN(anchors.end.lat);
+				be[m - 1] += w * toE(evidence.end.lon);
+				bn[m - 1] += w * toN(evidence.end.lat);
 			}
-			e = solvePCG(d, wSmooth, be, e);
-			nn = solvePCG(d, wSmooth, bn, nn);
+			e = solvePCG(d, wSmooth, be, e, wEdge);
+			nn = solvePCG(d, wSmooth, bn, nn, wEdge);
+			if (process.env.WALK_RECON_DEBUG === "1") {
+				let len = 0;
+				let maxAbs = 0;
+				for (let i = 0; i + 1 < m; i++) len += Math.hypot(e[i + 1] - e[i], nn[i + 1] - nn[i]);
+				for (let i = 0; i < m; i++) maxAbs = Math.max(maxAbs, Math.abs(e[i]), Math.abs(nn[i]));
+				console.error(
+					`[recon-dbg] step=${step} inner=${inner} c=${c.toFixed(1)} wEdge=${wEdge.toExponential(2)} shrink=${shrink.toFixed(3)} len=${len.toFixed(0)} maxAbs=${maxAbs.toExponential(2)}`,
+				);
+			}
 		}
 		c = Math.max(profile.gncTargetM, c * ratio);
 	}
