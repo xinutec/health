@@ -154,6 +154,9 @@ async function refreshOne(userId: string): Promise<void> {
 	const RESIDENCE_SLEEP_THRESHOLD_H = 5;
 	const tMine = Date.now();
 	const amenityLabels = new Map<number, string | null>();
+	// Parallel to amenityLabels: the winning venue's OSM subtype (its kind),
+	// kept so consumers can classify a place without parsing its name.
+	const amenityKinds = new Map<number, string | null>();
 	// Venue-type prior mining (#246): each stay whose venue attribution is
 	// geometrically UNAMBIGUOUS (attributeStayVenue's distance+margin
 	// gates) contributes one (subtype, dwell, hour) training record. The
@@ -215,12 +218,15 @@ async function refreshOne(userId: string): Promise<void> {
 		// café) would otherwise let the residence's evening stays, the
 		// ones whose GPS drifts venue-ward, vote the café's name onto the
 		// residence — its centroid stays a clear ~70 m off the café.
+		let winnerKind: string | null = null;
 		if (winner !== null) {
 			const atCentroid = await nearbyLandmarks(c.centroidLat, c.centroidLon, 100);
 			const winnerHere = atCentroid.find((l) => l.name === winner);
 			if (winnerHere === undefined || !isLabelWorthyVenue(winnerHere)) winner = null;
+			else winnerKind = winnerHere.subtype;
 		}
 		amenityLabels.set(c.id, winner);
+		amenityKinds.set(c.id, winnerKind);
 	}
 	console.log(
 		`[${userId}] amenity mining: ${[...amenityLabels.values()].filter((v) => v !== null).length}/${
@@ -296,6 +302,7 @@ async function refreshOne(userId: string): Promise<void> {
 					const detectedLabel = cls.label;
 					const displayName = displayNames.get(c.id) ?? null;
 					const amenityLabel = amenityLabels.get(c.id) ?? null;
+					const amenityKind = amenityKinds.get(c.id) ?? null;
 					const hourProfile = serializeHourProfile(hourProfileOf(c));
 
 					if (match.oldId !== null) {
@@ -315,6 +322,7 @@ async function refreshOne(userId: string): Promise<void> {
 								display_name = ?,
 								sleep_hours = ?,
 								amenity_label = ?,
+								amenity_kind = ?,
 								hour_profile = ?,
 								refreshed_at = CURRENT_TIMESTAMP
 							WHERE id = ?`,
@@ -330,14 +338,15 @@ async function refreshOne(userId: string): Promise<void> {
 								displayName,
 								Math.round(sleepH),
 								amenityLabel,
+								amenityKind,
 								hourProfile,
 								match.oldId,
 							],
 						);
 					} else {
 						await conn.query(
-							`INSERT INTO focus_places (user_id, centroid_lat, centroid_lon, radius_m, total_dwell_sec, visit_count, unique_days, first_seen_ts, last_seen_ts, detected_label, display_name, sleep_hours, amenity_label, hour_profile)
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+							`INSERT INTO focus_places (user_id, centroid_lat, centroid_lon, radius_m, total_dwell_sec, visit_count, unique_days, first_seen_ts, last_seen_ts, detected_label, display_name, sleep_hours, amenity_label, amenity_kind, hour_profile)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 							[
 								userId,
 								c.centroidLat,
@@ -352,6 +361,7 @@ async function refreshOne(userId: string): Promise<void> {
 								displayName,
 								Math.round(sleepH),
 								amenityLabel,
+								amenityKind,
 								hourProfile,
 							],
 						);

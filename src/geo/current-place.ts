@@ -12,7 +12,23 @@
  * jitter at a centroid, tight enough not to catch the place next door.
  */
 
+import { STAY_DISPLAY_NAME } from "./focus-places.js";
 import { haversineMeters } from "./place-snap.js";
+
+/** Best human label for a focus place. A specific auto-name (Home/Work) wins;
+ *  otherwise a mined venue name beats the generic "Stay"; otherwise "Place".
+ *  (Without this, "Stay" would mask a perfectly good venue name.) */
+export function placeLabel(displayName: string | null, amenityLabel: string | null): string {
+	if (displayName !== null && displayName !== STAY_DISPLAY_NAME) return displayName;
+	return amenityLabel ?? displayName ?? "Place";
+}
+
+/** Whether a place is recognisable in a picker: a specific Home/Work, or a
+ *  mined venue name. A bare "Stay" (no venue) names no specific place, so
+ *  several are indistinguishable — not worth offering. */
+export function isNamedPlace(displayName: string | null, amenityLabel: string | null): boolean {
+	return (displayName !== null && displayName !== STAY_DISPLAY_NAME) || amenityLabel !== null;
+}
 
 /** Presence radius around a focus-place centroid. Matches the long-stay gate. */
 export const PRESENCE_RADIUS_M = 100;
@@ -53,7 +69,7 @@ export function pickCurrentPlace(fix: CurrentFix, places: readonly FocusPlaceFor
 	const { p, d } = best;
 	return {
 		id: p.id,
-		label: p.displayName ?? p.amenityLabel ?? "Place",
+		label: placeLabel(p.displayName, p.amenityLabel),
 		displayName: p.displayName,
 		amenityLabel: p.amenityLabel,
 		centroid: { lat: p.centroidLat, lon: p.centroidLon },

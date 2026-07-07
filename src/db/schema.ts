@@ -677,6 +677,13 @@ const MIGRATIONS: readonly string[] = [
     recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, ts)
   )`,
+
+	// v38: OSM subtype of the mined amenity (the raw tag value —
+	// "restaurant", "fitness_centre", "supermarket"), alongside the venue
+	// NAME already in amenity_label. Lets consumers classify a place by
+	// kind (coach filters non-training venues) instead of parsing the name.
+	// NULL when no venue was confidently mined. Written by refresh-focus-places.
+	`ALTER TABLE focus_places ADD COLUMN IF NOT EXISTS amenity_kind VARCHAR(64) NULL`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {

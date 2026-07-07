@@ -1,7 +1,36 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../src/env.js";
-import { pickCurrentPlace } from "../src/geo/current-place.js";
+import { isNamedPlace, pickCurrentPlace, placeLabel } from "../src/geo/current-place.js";
+
+// --- pure label helpers ------------------------------------------------------
+
+describe("placeLabel", () => {
+	it("a specific Home/Work wins over a venue", () => {
+		expect(placeLabel("Home", "PureGym")).toBe("Home");
+	});
+	it("a mined venue name beats the generic Stay", () => {
+		expect(placeLabel("Stay", "The Ivy")).toBe("The Ivy");
+	});
+	it("falls back to Stay when there's no venue", () => {
+		expect(placeLabel("Stay", null)).toBe("Stay");
+	});
+	it("falls back to Place when nothing names it", () => {
+		expect(placeLabel(null, null)).toBe("Place");
+	});
+});
+
+describe("isNamedPlace", () => {
+	it("Home/Work and mined venues are named", () => {
+		expect(isNamedPlace("Work", null)).toBe(true);
+		expect(isNamedPlace("Stay", "The Ivy")).toBe(true); // venue rescues a Stay
+		expect(isNamedPlace(null, "PureGym")).toBe(true);
+	});
+	it("a bare Stay (no venue) is not named", () => {
+		expect(isNamedPlace("Stay", null)).toBe(false);
+		expect(isNamedPlace(null, null)).toBe(false);
+	});
+});
 
 // --- pure selector -----------------------------------------------------------
 
@@ -103,6 +132,7 @@ const HOME_ROW = {
 	centroid_lon: -0.1,
 	display_name: "Home",
 	amenity_label: null,
+	amenity_kind: null,
 	total_dwell_sec: 36000,
 	visit_count: 10,
 	unique_days: 20,
@@ -115,10 +145,40 @@ const GYM_ROW = {
 	centroid_lon: -0.2,
 	display_name: null,
 	amenity_label: "PureGym",
+	amenity_kind: "fitness_centre",
 	total_dwell_sec: 3600,
 	visit_count: 5,
 	unique_days: 5,
 	last_seen_ts: 2000,
+};
+// A sometime-sleep cluster with no mined venue: the generic "Stay". Several
+// look identical, so it's not "named" and coach should hide it.
+const STAY_ROW = {
+	id: 3,
+	user_id: "alice",
+	centroid_lat: 51.7,
+	centroid_lon: -0.3,
+	display_name: "Stay",
+	amenity_label: null,
+	amenity_kind: null,
+	total_dwell_sec: 40000,
+	visit_count: 3,
+	unique_days: 3,
+	last_seen_ts: 3000,
+};
+// A restaurant the user dwelled at — named, but a non-training venue (food).
+const DINNER_ROW = {
+	id: 4,
+	user_id: "alice",
+	centroid_lat: 51.8,
+	centroid_lon: -0.4,
+	display_name: "Stay",
+	amenity_label: "The Ivy",
+	amenity_kind: "restaurant",
+	total_dwell_sec: 7200,
+	visit_count: 2,
+	unique_days: 2,
+	last_seen_ts: 4000,
 };
 
 describe("/internal auth", () => {
@@ -150,6 +210,28 @@ describe("GET /internal/places", () => {
 			headers: { "X-Service-Token": TOKEN },
 		});
 		expect(await bob.json()).toEqual([]);
+	});
+
+	it("exposes named + category, and a venue name beats a generic Stay", async () => {
+		setMockResult("focus_places", [HOME_ROW, GYM_ROW, STAY_ROW, DINNER_ROW]);
+		const res = await makeApp().request("/internal/places?user=alice", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		const body = (await res.json()) as {
+			id: number;
+			label: string;
+			named: boolean;
+			category: string | null;
+		}[];
+		const by = (id: number) => body.find((p) => p.id === id);
+		// Home: named, no venue category.
+		expect(by(1)).toMatchObject({ label: "Home", named: true, category: null });
+		// Gym: named, leisure — a training place.
+		expect(by(2)).toMatchObject({ label: "PureGym", named: true, category: "leisure" });
+		// Bare Stay: unnamed (coach hides it), no category.
+		expect(by(3)).toMatchObject({ label: "Stay", named: false, category: null });
+		// Restaurant: the venue name beats "Stay"; named but category food.
+		expect(by(4)).toMatchObject({ label: "The Ivy", named: true, category: "food" });
 	});
 
 	it("400s without a user param", async () => {

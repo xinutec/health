@@ -50,6 +50,11 @@ export interface Cluster {
 export type ClusterLabel = "home" | "work" | "hotel" | "frequent" | "one-off" | "other";
 export type DisplayName = "Home" | "Work" | "Stay";
 
+/** The generic display name for a sometime-sleep cluster we couldn't tie to a
+ *  named place. Unlike "Home"/"Work" it names no specific place, so a mined
+ *  venue name should outrank it in any human label (see `placeLabel`). */
+export const STAY_DISPLAY_NAME: DisplayName = "Stay";
+
 export interface ClusterClassification {
 	label: ClusterLabel;
 	reason: string;
@@ -647,7 +652,7 @@ export function assignDisplayNames(clusters: Cluster[]): Map<number, string> {
 		const sleepHours = sleepHoursOf(c);
 		const uniqueDays = uniqueDayCount(c.stays, c.centroidLon);
 		if (sleepHours >= 5 && uniqueDays >= 2) {
-			names.set(c.id, "Stay");
+			names.set(c.id, STAY_DISPLAY_NAME);
 		}
 	}
 

@@ -14,7 +14,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db } from "../db/pool.js";
 import type { AppEnv } from "../env.js";
-import { type FocusPlaceForPresence, pickCurrentPlace } from "../geo/current-place.js";
+import { type FocusPlaceForPresence, isNamedPlace, pickCurrentPlace, placeLabel } from "../geo/current-place.js";
+import { categoryOfSubtype } from "../geo/venue-prior.js";
 import { serviceAuth } from "../middleware/service-auth.js";
 import { fetchTrackPoints, NextcloudNotLinkedError, NextcloudReauthRequiredError } from "../nextcloud/phonetrack.js";
 import { latestAndBaseline } from "../stats.js";
@@ -52,6 +53,7 @@ async function loadFocusPlaces(userId: string) {
 			"centroid_lon",
 			"display_name",
 			"amenity_label",
+			"amenity_kind",
 			"total_dwell_sec",
 			"visit_count",
 			"unique_days",
@@ -63,6 +65,7 @@ async function loadFocusPlaces(userId: string) {
 		id: r.id,
 		displayName: r.display_name,
 		amenityLabel: r.amenity_label,
+		amenityKind: r.amenity_kind,
 		centroidLat: Number(r.centroid_lat),
 		centroidLon: Number(r.centroid_lon),
 		avgDwellSec: r.visit_count > 0 ? Number(r.total_dwell_sec) / r.visit_count : 0,
@@ -83,9 +86,15 @@ export function internalRoutes(config: InternalRoutesConfig): Hono<AppEnv> {
 		return c.json(
 			places.map((p) => ({
 				id: p.id,
-				label: p.displayName ?? p.amenityLabel ?? "Place",
+				label: placeLabel(p.displayName, p.amenityLabel),
 				displayName: p.displayName,
 				amenityLabel: p.amenityLabel,
+				// Recognisable in a picker (specific name, not a bare "Stay").
+				named: isNamedPlace(p.displayName, p.amenityLabel),
+				// Coarse venue class from the mined OSM subtype (food / leisure
+				// / errand / …), or null when unmined. Lets coach filter
+				// non-training venues without knowing the OSM taxonomy.
+				category: p.amenityKind ? categoryOfSubtype(p.amenityKind) : null,
 				centroid: { lat: p.centroidLat, lon: p.centroidLon },
 				avgDwellSec: Math.round(p.avgDwellSec),
 				uniqueDays: p.uniqueDays,
