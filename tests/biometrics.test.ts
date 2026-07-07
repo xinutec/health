@@ -238,7 +238,7 @@ describe("correctModeFromCadence — passenger-in-traffic detection", () => {
 	});
 
 	it("re-labels walking → driving when cadence is near zero AND Fitbit data is fresh", () => {
-		// Fitbit was on AND data has been pulled past the segment'\''s end
+		// Fitbit was on AND data has been pulled past the segment's end
 		// (a step row exists shortly after) — but the segment itself has
 		// no steps → user was a passenger.
 		const seg = baseSeg("walking", 4, 5 * 60);
@@ -256,7 +256,7 @@ describe("correctModeFromCadence — passenger-in-traffic detection", () => {
 		// Real regression: walked home at 22:30; segment ended 22:45. Latest
 		// Fitbit step sync only reaches 19:04, hours behind. With the old
 		// code, zero cadence in window triggered driving-correction even
-		// though we simply hadn'\''t pulled the relevant minutes from Fitbit
+		// though we simply hadn't pulled the relevant minutes from Fitbit
 		// yet. The freshness guard requires a step row within 30 min after
 		// the segment end before applying the correction.
 		const seg = baseSeg("walking", 4, 5 * 60);
@@ -287,7 +287,7 @@ describe("correctModeFromCadence — passenger-in-traffic detection", () => {
 	});
 
 	it("does NOT correct very short segments (insufficient cadence sample)", () => {
-		// 1-min walking with no steps could be a brief pause; don'\''t over-react.
+		// 1-min walking with no steps could be a brief pause; don't over-react.
 		const seg = baseSeg("walking", 4, 60);
 		const stepsThisDay: StepPoint[] = [step(7 * HOUR, 100)];
 		const r = correctModeFromCadence(seg, stepsThisDay);
@@ -296,7 +296,7 @@ describe("correctModeFromCadence — passenger-in-traffic detection", () => {
 
 	it("does NOT correct walking at high speed (already implausible as walking)", () => {
 		// If avgSpeed > 15 km/h, the segment classifier would already prefer
-		// cycling/driving — cadence correction shouldn'\''t override.
+		// cycling/driving — cadence correction shouldn't override.
 		const seg = baseSeg("walking", 25, 5 * 60);
 		const r = correctModeFromCadence(seg, [step(7 * HOUR, 100)]);
 		expect(r.refinedMode ?? r.mode).toBe("walking"); // unchanged

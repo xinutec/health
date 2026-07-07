@@ -718,7 +718,7 @@ export function inferTransitGaps(segments: TrackSegment[], points: FilteredPoint
 		//   - segment.mode is already "train" or "plane" (classifier picked it)
 		//   - segment looks rail-shaped from features alone: very high
 		//     linearity (>0.95) + high maxSpeed (>60 km/h). Rail tracks
-		//     are straighter than roads. The user'\''s motorway drives top
+		//     are straighter than roads. The user's motorway drives top
 		//     out around linearity 0.91; tube/train hit 0.99. This catches
 		//     the case where the classifier picked driving for the tube
 		//     but OSM refineMode (which runs *after* inferTransitGaps in

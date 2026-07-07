@@ -97,7 +97,7 @@ export interface IntradayStream {
 	/** Fetch one day. Throws on transient failure (treated as "retry next time"). */
 	sync: DaySyncFn;
 	/** Optional: return true to skip this date without spending an API call.
-	 *  Use this when another stream'\''s stored data implies this date is empty
+	 *  Use this when another stream's stored data implies this date is empty
 	 *  (e.g. steps skips a date with no HR row → Fitbit was off that day). */
 	skipIf?: (date: string) => Promise<boolean>;
 	/** Consecutive empty days that mark the stream complete. Default 14. */

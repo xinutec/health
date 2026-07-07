@@ -79,7 +79,7 @@ async function migrateLegacyBackfillKeys(userId: string): Promise<void> {
 }
 
 /** Wrapper around the pure sortStreamsByCursorRecency helper: fetches each
- *  stream'\''s stored cursor from sync_state and feeds it into the sort. */
+ *  stream's stored cursor from sync_state and feeds it into the sort. */
 async function orderStreamsByCursorRecency<T extends { name: string }>(
 	userId: string,
 	streams: T[],
@@ -95,8 +95,8 @@ async function orderStreamsByCursorRecency<T extends { name: string }>(
 
 /** Walk one stream backwards from its stored cursor, fetching one day per
  *  iteration, until the rate-limit budget is gone or we hit the empty-day
- *  threshold (stream complete). Each stream is independent — HR'\''s
- *  cursor + complete flag are unrelated to Steps'\''s, and so on. */
+ *  threshold (stream complete). Each stream is independent — HR's
+ *  cursor + complete flag are unrelated to Steps's, and so on. */
 async function runIntradayBackfill(
 	client: FitbitClient,
 	userId: string,
@@ -415,9 +415,9 @@ for (const user of users) {
 				name: "hr_intraday",
 				sync: async (date: string) => {
 					const points = await syncHeartRateIntraday(client, conn, user.user_id, date, date);
-					// Daily summaries ride along on HR'\''s coverage. Their per-day
+					// Daily summaries ride along on HR's coverage. Their per-day
 					// fetch is cheap and they only have meaningful empty/non-empty
-					// at the daily level, which HR'\''s streak already captures.
+					// at the daily level, which HR's streak already captures.
 					await trySync(user.user_id, `backfill activity ${date}`, () =>
 						syncActivity(client, conn, user.user_id, date, date),
 					);
@@ -433,7 +433,7 @@ for (const user of users) {
 				sync: (date: string) => syncStepsIntraday(client, conn, user.user_id, date, date),
 				// Skip days where we already know Fitbit was off (no HR row stored).
 				// Saves rate limit; data integrity is preserved because if HR ever
-				// gets backfilled later, we'\''ll re-evaluate (skipIf is checked each run).
+				// gets backfilled later, we'll re-evaluate (skipIf is checked each run).
 				skipIf: async (date: string) => {
 					const start = `${date} 00:00:00`;
 					const end = `${date} 23:59:59`;
@@ -452,7 +452,7 @@ for (const user of users) {
 			// Priority: stream with the most recent cursor goes first. A
 			// freshly-deployed stream (cursor still at today) gets the rate
 			// budget before an older stream that has been digging through 2024
-			// — otherwise HR'\''s deep backfill could starve Steps for hours.
+			// — otherwise HR's deep backfill could starve Steps for hours.
 			const hrvIntradayStream: IntradayStream = {
 				name: "hrv_intraday",
 				sync: (date: string) => syncHrvIntraday(client, conn, user.user_id, date, date),
