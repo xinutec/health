@@ -59,6 +59,15 @@ export interface EnrichedSegment extends TrackSegment {
 	 *  the map falls back to the raw track. Each point carries an interpolated
 	 *  timestamp like `matchedPath`. */
 	walkMatchedPath?: SnappedPoint[];
+	/** Derived: this WALKING leg drawn by the robust continuous MAP reconstruction
+	 *  (`reconstructWalk`) INSTEAD of the Viterbi map-match, attached only when the
+	 *  reconstruction is substantially shorter than the matched/raw line — i.e. that
+	 *  line carried a phantom out-and-back the GPS does not robustly support (the
+	 *  post-tunnel-reacquire smear the accuracy-blind matcher snapped into a detour,
+	 *  #296 / `WALK_RECON`). Drawn as `kind:"smoothed"`. When present it takes
+	 *  precedence over `walkMatchedPath`. `undefined` on the vast majority of legs,
+	 *  where the matched line is kept unchanged. */
+	walkSmoothedPath?: SnappedPoint[];
 	/** Fraction of the moving segment's sampled points whose nearest
 	 *  drivable road is closer than any rail-only way (a sample with a
 	 *  road but no rail in range counts as road-nearest — there is no

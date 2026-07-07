@@ -25,7 +25,7 @@ import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
 import { effectiveMode } from "./segment-util.js";
 import { type CorrectRunDiag, correctWalkPath } from "./walk-building-escape.js";
-import { countSharpTurns, refineMatchedPath, type WalkFix } from "./walk-smooth-map.js";
+import { countSharpTurns, reconstructWalk, refineMatchedPath, type WalkFix } from "./walk-smooth-map.js";
 
 /** A raw GPS fix as drawn — the same set the raw renderer uses. */
 interface PedFix {
@@ -52,6 +52,13 @@ export function drainWalkCorrectDiag(): Array<CorrectRunDiag & { startTs: number
  *  disc is both cheap and sufficient. */
 const WALK_QUERY_SLACK_M = 120;
 
+/** Total drawn length (m) of a polyline. */
+function pathLenM(pts: ReadonlyArray<{ lat: number; lon: number }>): number {
+	let total = 0;
+	for (let i = 1; i < pts.length; i++) total += metersBetween(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
+	return total;
+}
+
 /** Great-circle metres between two lat/lon points. */
 function metersBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
 	const R = 6371000;
@@ -76,6 +83,20 @@ function metersBetween(aLat: number, aLon: number, bLat: number, bLon: number): 
  *  the stray cap only catches a gross mis-snap. */
 const WALK_NEEDS_MATCH_M = 18;
 const WALK_MATCH_MAX_STRAY_M = 40;
+
+/** Robust-reconstruction swap (`WALK_RECON`, #296). The Viterbi matcher is blind
+ *  to GPS accuracy, so a post-tunnel reacquire smear gets snapped into a clean
+ *  out-and-back phantom detour (the Regent's Park case: ~1.5 km drawn on ~300 m of
+ *  steps). `reconstructWalk` rejects those low-consensus fixes (redescending
+ *  emission under a GNC anneal) and draws the honest short path. We swap it in for
+ *  the matched/raw line ONLY when it is BOTH a large fraction shorter AND shorter by
+ *  a wide absolute margin — the unambiguous signature of a dissolved excursion. On
+ *  an ordinary leg the reconstruction is ~the same length, so the swap never fires
+ *  and the matched line is kept byte-identical (measured: a global replacement
+ *  over-routes ~70 m more on ~1/3 of legs; this conditional swap ships only the win).
+ *  Both thresholds must clear. */
+const RECON_SWAP_MAX_LEN_FRACTION = 0.75; // reconstruction ≤ 75 % of the drawn length
+const RECON_SWAP_MIN_ABS_DROP_M = 150; // …AND ≥ 150 m shorter
 
 /**
  * Attach `walkMatchedPath` to every walking segment the matcher can confidently
@@ -157,6 +178,13 @@ export async function annotateWalkMatches(
 			);
 		}
 		const useMatch = decision?.use === true;
+		// Accuracy-aware fixes for the continuous MAP passes (refine + reconstruct).
+		const walkFixes: WalkFix[] = clean.map((p) => ({
+			lat: p.lat,
+			lon: p.lon,
+			ts: p.ts,
+			accuracyM: p.accuracy ?? undefined,
+		}));
 
 		let drawn: Array<{ lat: number; lon: number; ts: number }>;
 		if (useMatch && result) {
@@ -168,12 +196,6 @@ export async function annotateWalkMatches(
 			// opts out.
 			drawn = result.path;
 			if (process.env.WALK_REFINE_DISABLE !== "1") {
-				const walkFixes: WalkFix[] = clean.map((p) => ({
-					lat: p.lat,
-					lon: p.lon,
-					ts: p.ts,
-					accuracyM: p.accuracy ?? undefined,
-				}));
 				const refined = refineMatchedPath(walkFixes, result.path);
 				if (refined && countSharpTurns(refined) < countSharpTurns(result.path)) drawn = refined;
 			}
@@ -187,6 +209,32 @@ export async function annotateWalkMatches(
 			// its "correction" would replace a short honest line with a long noisy
 			// one (measured: the 2026-07-01 10:44 leg, 1908 m of jitter in 10 min).
 			drawn = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+		}
+
+		// Robust-reconstruction swap (#296, behind WALK_RECON): when the drawn line
+		// (matched or raw) is a phantom out-and-back — the accuracy-blind matcher
+		// snapping a post-tunnel GPS smear into a clean detour — `reconstructWalk`
+		// rejects the low-consensus fixes and draws the honest short path. Swap it in
+		// ONLY when it is a large fraction shorter AND shorter by a wide absolute
+		// margin (the unambiguous dissolved-excursion signature); on an ordinary leg
+		// the reconstruction is ~the same length, so nothing changes. Deterministic.
+		let smoothed = false;
+		if (process.env.WALK_RECON === "1") {
+			const recon = reconstructWalk(walkFixes, { ways, buildings });
+			if (recon && recon.length >= 2) {
+				const drawnLen = pathLenM(drawn);
+				const reconLen = pathLenM(recon);
+				if (reconLen <= drawnLen * RECON_SWAP_MAX_LEN_FRACTION && drawnLen - reconLen >= RECON_SWAP_MIN_ABS_DROP_M) {
+					drawn = recon.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+					smoothed = true;
+					if (process.env.WALK_MATCH_DEBUG === "1") {
+						const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+						console.error(
+							`[walk-recon] ${t(seg.startTs)}-${t(seg.endTs)} SWAP drawn=${drawnLen.toFixed(0)}m → recon=${reconLen.toFixed(0)}m`,
+						);
+					}
+				}
+			}
 		}
 
 		// Building corrector (Pippijn's case-based design): densify → route a gap
@@ -210,10 +258,12 @@ export async function annotateWalkMatches(
 			if (corrected) drawn = fixed;
 		}
 
-		// Attach the drawn line when it is a vetted match, or when the corrector
-		// actually changed an (otherwise raw) leg — an unchanged raw leg keeps its
-		// existing raw rendering path untouched.
-		if (useMatch || corrected) out.push({ ...seg, walkMatchedPath: drawn });
+		// Attach the drawn line. A reconstruction swap draws as `kind:"smoothed"`
+		// (`walkSmoothedPath`, precedence over the matched line); otherwise a vetted
+		// match or a corrector-changed raw leg draws as `kind:"matched"`. An unchanged
+		// raw leg keeps its existing raw rendering path untouched.
+		if (smoothed) out.push({ ...seg, walkSmoothedPath: drawn });
+		else if (useMatch || corrected) out.push({ ...seg, walkMatchedPath: drawn });
 		else out.push(seg);
 	}
 	return out;

@@ -176,6 +176,18 @@ function resolveEpisode(
 		// across buildings. Clipped to the state window. Falls through to the raw
 		// track when the matcher bailed (off-network / fragmented graph). Same
 		// solid styling as road `matched`.
+		// Robust reconstruction (#296): a walking leg whose matched line was a
+		// phantom out-and-back (bad-GPS reacquire) is drawn by `reconstructWalk`
+		// instead — `walkSmoothedPath`, which takes precedence over the matched line
+		// when present. `kind:"smoothed"`, same solid styling.
+		const walkSmoothSeg = covering.find(
+			(s) => (s.walkSmoothedPath?.length ?? 0) >= 2 && effectiveMode(s) === "walking",
+		);
+		const walkSmoothed = walkSmoothSeg?.walkSmoothedPath
+			?.filter((mp) => mp.ts >= state.startTs && mp.ts <= state.endTs)
+			.map((mp) => ({ lat: mp.lat, lon: mp.lon, ts: mp.ts }));
+		if (walkSmoothed && walkSmoothed.length >= 2) return { ...base, kind: "smoothed", points: walkSmoothed };
+
 		const walkMatchSeg = covering.find((s) => (s.walkMatchedPath?.length ?? 0) >= 2 && effectiveMode(s) === "walking");
 		const walkMatched = walkMatchSeg?.walkMatchedPath
 			?.filter((mp) => mp.ts >= state.startTs && mp.ts <= state.endTs)
