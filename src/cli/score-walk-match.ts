@@ -36,9 +36,11 @@ import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import {
 	countSharpTurns,
+	DEFAULT_MAP_SMOOTH_PROFILE,
 	type MapSmoothProfile,
 	REFINE_MATCHED_PROFILE,
 	refineMatchedPath,
+	smoothWalkMap,
 	type WalkFix,
 } from "../geo/walk-smooth-map.js";
 import { type CapturedDay, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
@@ -158,6 +160,16 @@ interface WalkVerdict {
 	refineRouteCorr: number | null;
 	refineSharpTurns: number | null;
 	refineBuildingM: number | null;
+	/** The from-scratch SMOOTHER-PRIMARY arm (true-path Phase 1): the continuous
+	 *  MAP smoother run over the raw accuracy-weighted fixes + the whole walkable
+	 *  network, as the DRAW (not a refinement of the matched line). This is the
+	 *  candidate replacement for the Viterbi matcher — measured here before wiring. */
+	smootherP90: number | null;
+	smootherStallM: number | null;
+	smootherRouteCorr: number | null;
+	smootherSharpTurns: number | null;
+	smootherBuildingM: number | null;
+	smootherOffPathM: number | null;
 }
 
 /** How far the candidate's route-correctness may fall below baseline before it
@@ -291,6 +303,21 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 					)
 				: null;
 
+		// The SMOOTHER-PRIMARY arm — the from-scratch continuous MAP smoother run
+		// over the raw accuracy-weighted fixes + the whole walkable network, as the
+		// DRAW itself (not a refinement of the matched line). This is the candidate
+		// replacement for the Viterbi matcher: accuracy-weighted emission suppresses
+		// the low-accuracy post-tunnel reacquire fixes that the matcher (blind to
+		// accuracy) snaps into phantom detours. Measured before any prod wiring.
+		const smoothed = smoothWalkMap(rawWalk, walkable, DEFAULT_MAP_SMOOTH_PROFILE);
+		const smoothPts = smoothed?.map((p) => ({ lat: p.lat, lon: p.lon })) ?? null;
+		const smootherPlaus =
+			smoothPts && smoothPts.length >= 2
+				? walkPlausibility(raw, smoothPts, onE.startTs, onE.endTs, [], walkable)
+				: null;
+		const smootherRouteCorr =
+			smoothPts && accepted.size > 0 ? onNamedWayFraction(smoothPts, accepted, walkable) : null;
+
 		verdicts.push({
 			date,
 			startTs: onE.startTs,
@@ -312,6 +339,12 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 			refineRouteCorr,
 			refineSharpTurns: refined ? countSharpTurns(refined.map((p) => ({ lat: p.lat, lon: p.lon }))) : null,
 			refineBuildingM: refined ? crossM(refined.map((p) => ({ lat: p.lat, lon: p.lon }))) : null,
+			smootherP90: smootherPlaus?.offWalkableP90M ?? null,
+			smootherStallM: smootherPlaus?.corridorStallM ?? null,
+			smootherRouteCorr,
+			smootherSharpTurns: smoothPts ? countSharpTurns(smoothPts) : null,
+			smootherBuildingM: smoothPts ? crossM(smoothPts) : null,
+			smootherOffPathM: smoothPts ? offPathM(smoothPts) : null,
 		});
 	}
 	return verdicts;
@@ -373,6 +406,20 @@ async function main(): Promise<void> {
 						: `  route ${(v.candidateRouteCorr * 100).toFixed(0)}%→${(v.refineRouteCorr * 100).toFixed(0)}%`;
 				console.log(
 					`      └ MAP-refine  offWalkP90 ${sp90}  stall ${(v.refineStallM ?? 0).toFixed(0).padStart(4)}m  turns ${v.candidateSharpTurns}→${v.refineSharpTurns ?? "-"}${sroute}`,
+				);
+			}
+			if (v.smootherP90 !== null) {
+				const gp90 = `${v.smootherP90.toFixed(0).padStart(3)}m`;
+				const groute =
+					v.smootherRouteCorr === null || v.candidateRouteCorr === null
+						? ""
+						: `  route ${(v.candidateRouteCorr * 100).toFixed(0)}%→${(v.smootherRouteCorr * 100).toFixed(0)}%${v.smootherRouteCorr > (v.candidateRouteCorr ?? 0) + 0.05 ? " ✓" : ""}`;
+				const goff =
+					v.smootherOffPathM === null
+						? ""
+						: `  offPath ${(v.candidateOffPathM ?? 0).toFixed(0)}→${v.smootherOffPathM.toFixed(0)}m`;
+				console.log(
+					`      └ SMOOTHER    offWalkP90 ${gp90}  stall ${(v.smootherStallM ?? 0).toFixed(0).padStart(4)}m  turns ${v.candidateSharpTurns}→${v.smootherSharpTurns ?? "-"}${groute}${goff}`,
 				);
 			}
 		}
@@ -463,6 +510,35 @@ async function main(): Promise<void> {
 			`mean −${aTurnsDrop.toFixed(1)} sharp turns each; of those stall-worse>15m ${aStallWorse}, ` +
 			`offWalk-worse>5m ${aOffWorse}, route-worse>5% ${aRouteWorse}`,
 	);
+
+	// SMOOTHER-PRIMARY head-to-head: the from-scratch continuous MAP smoother AS
+	// THE DRAW vs the current matched line. This is the true-path Phase-1 candidate.
+	// Headline witnesses: corridor-stall (the invented-detour / phantom-excursion
+	// signal — this is what the Regent's Park reacquire case blows up) and
+	// route-correctness against confirmed streets.
+	const sm = all.filter((v) => v.smootherP90 !== null && v.candidateP90 !== null);
+	const smStallBetter = sm.filter((v) => (v.smootherStallM ?? 0) < v.candidateStallM - 15).length;
+	const smStallWorse = sm.filter((v) => (v.smootherStallM ?? 0) > v.candidateStallM + 15).length;
+	const smRouted = sm.filter((v) => v.smootherRouteCorr !== null && v.candidateRouteCorr !== null);
+	const smRouteBetter = smRouted.filter((v) => (v.smootherRouteCorr ?? 0) > (v.candidateRouteCorr ?? 0) + 0.05).length;
+	const smRouteWorse = smRouted.filter((v) => (v.smootherRouteCorr ?? 0) < (v.candidateRouteCorr ?? 0) - 0.05).length;
+	const smP90Worse = sm.filter((v) => (v.smootherP90 ?? 0) > (v.candidateP90 ?? 0) + 3).length;
+	console.log(
+		`\nSMOOTHER-PRIMARY vs CURRENT (${sm.length} walks): ` +
+			`corridor-stall mean ${mean(sm.map((v) => v.candidateStallM)).toFixed(0)}m→${mean(sm.map((v) => v.smootherStallM ?? 0)).toFixed(0)}m (better>15m ${smStallBetter}, worse>15m ${smStallWorse}); ` +
+			`route better>5% ${smRouteBetter}, worse>5% ${smRouteWorse}; offWalkP90 worse-by>3m ${smP90Worse}`,
+	);
+	// The legs where the smoother most reduces the corridor-stall — the phantom
+	// detours it dissolves (the target class). Regent's Park should top this.
+	for (const v of sm
+		.filter((x) => (x.smootherStallM ?? 0) < x.candidateStallM - 40)
+		.sort((a, b) => b.candidateStallM - (b.smootherStallM ?? 0) - (a.candidateStallM - (a.smootherStallM ?? 0)))
+		.slice(0, 8)) {
+		console.log(
+			`  ${v.date} @${hhmm(v.startTs)}Z  stall ${v.candidateStallM.toFixed(0)}m → ${(v.smootherStallM ?? 0).toFixed(0)}m` +
+				`  (dissolved ${(v.candidateStallM - (v.smootherStallM ?? 0)).toFixed(0)}m of phantom detour)`,
+		);
+	}
 
 	// --- ratchet gate ------------------------------------------------------
 	// The durable floor: compare this run's candidate metrics against the
