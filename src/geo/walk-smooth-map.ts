@@ -44,7 +44,7 @@
  * Dijkstra routing.
  */
 
-import { type BuildingRing, metersBetween, projectPointToSegment, type RoadGeometry } from "./map-match-core.js";
+import { metersBetween, projectPointToSegment, type RoadGeometry } from "./map-match-core.js";
 
 /** One GPS fix to reconstruct. `accuracyM` is the reported horizontal accuracy
  *  (metres); when absent the profile fallback σ is used. */
@@ -479,34 +479,168 @@ function gmWeight(r: number, c: number): number {
 	return t * t;
 }
 
-/** Even-odd ray cast: is `p` inside the closed ring (first↔last edge implicit)? */
-function pointInRing(p: Pt, ring: BuildingRing): boolean {
-	let inside = false;
-	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-		const yi = ring[i].lat;
-		const xi = ring[i].lon;
-		const yj = ring[j].lat;
-		const xj = ring[j].lon;
-		if (yi > p.lat !== yj > p.lat && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi) inside = !inside;
-	}
-	return inside;
+/** Closest point on the metric segment a→b to (px,py), clamped to the segment;
+ *  returns the point and its SQUARED distance (avoids a sqrt in the hot loop). */
+function projMetric(
+	px: number,
+	py: number,
+	ax: number,
+	ay: number,
+	bx: number,
+	by: number,
+): { x: number; y: number; d2: number } {
+	const dx = bx - ax;
+	const dy = by - ay;
+	const len2 = dx * dx + dy * dy || 1e-9;
+	let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+	t = t < 0 ? 0 : t > 1 ? 1 : t;
+	const x = ax + t * dx;
+	const y = ay + t * dy;
+	const ex = px - x;
+	const ey = py - y;
+	return { x, y, d2: ex * ex + ey * ey };
 }
 
-/** If `p` is inside any building footprint, the nearest point on that footprint's
- *  boundary (where to escape to); else null. When inside several (overlapping
- *  footprints), the nearest boundary across them — the shortest way out. */
-function buildingEscapeTarget(p: Pt, buildings: readonly BuildingRing[]): { lat: number; lon: number } | null {
-	let best: { lat: number; lon: number; distM: number } | null = null;
-	for (const ring of buildings) {
-		if (ring.length < 3 || !pointInRing(p, ring)) continue;
-		for (let i = 0; i < ring.length; i++) {
-			const a = ring[i];
-			const b = ring[(i + 1) % ring.length];
-			const proj = projectPointToSegment(p, a, b);
-			if (best === null || proj.distM < best.distM) best = { lat: proj.lat, lon: proj.lon, distM: proj.distM };
+/**
+ * A uniform-grid spatial index over the leg's walkable segments and building
+ * rings, in the local metric frame. Replaces the O(states × all-segments) brute
+ * force in the reconstruct hot loop with an O(states × local-cell) lookup — the
+ * difference between a per-leg solve that crawls over the whole-day network and
+ * one that is near-constant per query. Built once per leg; pure.
+ */
+class WalkGrid {
+	private readonly cell: number;
+	/** Flat [ax,ay,bx,by] × nSeg, metric. */
+	private readonly seg: Float64Array;
+	private readonly segCells = new Map<number, number[]>();
+	private readonly rings: { pts: Float64Array; minx: number; miny: number; maxx: number; maxy: number }[] = [];
+	private readonly ringCells = new Map<number, number[]>();
+	/** Cell key: pack signed cell coords into one number (cells fit in ±32k). */
+	private static key(cx: number, cy: number): number {
+		return (cx + 32768) * 65536 + (cy + 32768);
+	}
+
+	constructor(segs: readonly number[][], rings: readonly Float64Array[], cell: number) {
+		this.cell = cell;
+		this.seg = new Float64Array(segs.length * 4);
+		for (let i = 0; i < segs.length; i++) {
+			const s = segs[i];
+			this.seg[i * 4] = s[0];
+			this.seg[i * 4 + 1] = s[1];
+			this.seg[i * 4 + 2] = s[2];
+			this.seg[i * 4 + 3] = s[3];
+			this.insertBox(
+				this.segCells,
+				i,
+				Math.min(s[0], s[2]),
+				Math.min(s[1], s[3]),
+				Math.max(s[0], s[2]),
+				Math.max(s[1], s[3]),
+			);
+		}
+		for (let r = 0; r < rings.length; r++) {
+			const pts = rings[r];
+			let minx = Infinity;
+			let miny = Infinity;
+			let maxx = -Infinity;
+			let maxy = -Infinity;
+			for (let k = 0; k < pts.length; k += 2) {
+				minx = Math.min(minx, pts[k]);
+				maxx = Math.max(maxx, pts[k]);
+				miny = Math.min(miny, pts[k + 1]);
+				maxy = Math.max(maxy, pts[k + 1]);
+			}
+			this.rings.push({ pts, minx, miny, maxx, maxy });
+			this.insertBox(this.ringCells, r, minx, miny, maxx, maxy);
 		}
 	}
-	return best ? { lat: best.lat, lon: best.lon } : null;
+
+	private insertBox(
+		map: Map<number, number[]>,
+		id: number,
+		minx: number,
+		miny: number,
+		maxx: number,
+		maxy: number,
+	): void {
+		const c = this.cell;
+		for (let cx = Math.floor(minx / c); cx <= Math.floor(maxx / c); cx++) {
+			for (let cy = Math.floor(miny / c); cy <= Math.floor(maxy / c); cy++) {
+				const k = WalkGrid.key(cx, cy);
+				const list = map.get(k);
+				if (list) list.push(id);
+				else map.set(k, [id]);
+			}
+		}
+	}
+
+	/** Nearest point on any walkable segment to (px,py) within maxR, else null. */
+	nearest(px: number, py: number, maxR: number): { x: number; y: number; distM: number } | null {
+		const c = this.cell;
+		const R = Math.max(1, Math.ceil(maxR / c));
+		const cx0 = Math.floor(px / c);
+		const cy0 = Math.floor(py / c);
+		let best = maxR * maxR;
+		let bx = 0;
+		let by = 0;
+		let found = false;
+		const seen = new Set<number>();
+		for (let cx = cx0 - R; cx <= cx0 + R; cx++) {
+			for (let cy = cy0 - R; cy <= cy0 + R; cy++) {
+				const list = this.segCells.get(WalkGrid.key(cx, cy));
+				if (!list) continue;
+				for (const i of list) {
+					if (seen.has(i)) continue;
+					seen.add(i);
+					const p = projMetric(px, py, this.seg[i * 4], this.seg[i * 4 + 1], this.seg[i * 4 + 2], this.seg[i * 4 + 3]);
+					if (p.d2 < best) {
+						best = p.d2;
+						bx = p.x;
+						by = p.y;
+						found = true;
+					}
+				}
+			}
+		}
+		return found ? { x: bx, y: by, distM: Math.sqrt(best) } : null;
+	}
+
+	/** If (px,py) is inside a building footprint, the nearest boundary point to
+	 *  escape to; else null. */
+	insideBuilding(px: number, py: number): { x: number; y: number } | null {
+		const list = this.ringCells.get(WalkGrid.key(Math.floor(px / this.cell), Math.floor(py / this.cell)));
+		if (!list) return null;
+		let best = Infinity;
+		let bx = 0;
+		let by = 0;
+		let found = false;
+		for (const r of list) {
+			const ring = this.rings[r];
+			if (px < ring.minx || px > ring.maxx || py < ring.miny || py > ring.maxy) continue;
+			const pts = ring.pts;
+			const n = pts.length / 2;
+			// even-odd ray cast (metric)
+			let inside = false;
+			for (let i = 0, j = n - 1; i < n; j = i++) {
+				const yi = pts[i * 2 + 1];
+				const xi = pts[i * 2];
+				const yj = pts[j * 2 + 1];
+				const xj = pts[j * 2];
+				if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+			}
+			if (!inside) continue;
+			for (let i = 0, j = n - 1; i < n; j = i++) {
+				const p = projMetric(px, py, pts[j * 2], pts[j * 2 + 1], pts[i * 2], pts[i * 2 + 1]);
+				if (p.d2 < best) {
+					best = p.d2;
+					bx = p.x;
+					by = p.y;
+					found = true;
+				}
+			}
+		}
+		return found ? { x: bx, y: by } : null;
+	}
 }
 
 /**
@@ -575,8 +709,28 @@ export function reconstructWalk(
 	const wNet = 1 / (profile.networkSigmaM * profile.networkSigmaM);
 	const wBuild = 1 / (profile.buildingSigmaM * profile.buildingSigmaM);
 	const wFreeTether = 1 / (profile.freeTetherSigmaM * profile.freeTetherSigmaM);
-	const buildings = geo.buildings ?? [];
-	const hasWays = geo.ways.length > 0;
+
+	// Build the spatial index once (metric frame): walkable segments + building
+	// rings. This is what makes the per-state nearest-way / inside-building lookups
+	// near-constant instead of a whole-network scan.
+	const segs: number[][] = [];
+	for (const w of geo.ways) {
+		for (let i = 1; i < w.coords.length; i++) {
+			segs.push([toE(w.coords[i - 1][1]), toN(w.coords[i - 1][0]), toE(w.coords[i][1]), toN(w.coords[i][0])]);
+		}
+	}
+	const rings: Float64Array[] = [];
+	for (const ring of geo.buildings ?? []) {
+		if (ring.length < 3) continue;
+		const arr = new Float64Array(ring.length * 2);
+		for (let k = 0; k < ring.length; k++) {
+			arr[k * 2] = toE(ring[k].lon);
+			arr[k * 2 + 1] = toN(ring[k].lat);
+		}
+		rings.push(arr);
+	}
+	const grid =
+		segs.length > 0 || rings.length > 0 ? new WalkGrid(segs, rings, Math.max(profile.networkRadiusM, 15)) : null;
 
 	let e: Float64Array = Float64Array.from(seedE);
 	let nn: Float64Array = Float64Array.from(seedN);
@@ -590,11 +744,12 @@ export function reconstructWalk(
 			const be = new Float64Array(m);
 			const bn = new Float64Array(m);
 			for (let i = 0; i < m; i++) {
-				const cur = { lat: toLat(nn[i]), lon: toLon(e[i]) };
+				const px = e[i];
+				const py = nn[i];
 				// Robust GPS emission (observed states only) — reject a fix that
 				// disagrees with the consensus trajectory.
 				if (obsW[i] > 0) {
-					const rGps = Math.hypot(e[i] - obsE[i], nn[i] - obsN[i]);
+					const rGps = Math.hypot(px - obsE[i], py - obsN[i]);
 					const wg = obsW[i] * gmWeight(rGps, c);
 					d[i] += wg;
 					be[i] += wg * obsE[i];
@@ -607,22 +762,20 @@ export function reconstructWalk(
 					be[i] += wFreeTether * seedE[i];
 					bn[i] += wFreeTether * seedN[i];
 				}
-				// Soft walkable attraction (radius-gated).
-				if (hasWays) {
-					const near = nearestWalkablePoint(cur, geo);
-					if (near && near.distM <= profile.networkRadiusM) {
+				if (grid) {
+					// Soft walkable attraction (radius-gated).
+					const near = grid.nearest(px, py, profile.networkRadiusM);
+					if (near) {
 						d[i] += wNet;
-						be[i] += wNet * toE(near.lon);
-						bn[i] += wNet * toN(near.lat);
+						be[i] += wNet * near.x;
+						bn[i] += wNet * near.y;
 					}
-				}
-				// Building repulsion — pull a state inside a footprint to the boundary.
-				if (buildings.length > 0) {
-					const esc = buildingEscapeTarget(cur, buildings);
+					// Building repulsion — pull a state inside a footprint to the boundary.
+					const esc = grid.insideBuilding(px, py);
 					if (esc) {
 						d[i] += wBuild;
-						be[i] += wBuild * toE(esc.lon);
-						bn[i] += wBuild * toN(esc.lat);
+						be[i] += wBuild * esc.x;
+						bn[i] += wBuild * esc.y;
 					}
 				}
 			}
