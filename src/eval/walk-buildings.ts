@@ -1,7 +1,7 @@
 /**
  * Building-crossing referee — the headline metric for a drawn walk that the
  * off-walkable and corridor-stall proxies are structurally blind to
- * (`docs/proposals/2026-07-continuous-field-walk-reconstruction.md`, Phase 0).
+ * (`docs/proposals/geometry-roadmap.md`, Phase 0).
  *
  * A graph-snapped walk can cut a diagonal chord across a building block and still
  * score WELL on off-walkable-p90 — a chord lying on a way centreline is "near a

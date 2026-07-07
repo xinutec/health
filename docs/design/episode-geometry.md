@@ -204,6 +204,23 @@ Measured (`score-walk-match`, off-walkable p90) across the golden corpus: 37
 walks improved (e.g. 55 m → 3 m), 0 regressed. This is the pedestrian slice of
 map-constrained positioning, shipped as a display layer.
 
+### Reconstructed walks (`walkSmoothedPath`, behind `WALK_RECON`)
+
+A second, evidence-fused walk drawer exists alongside the matcher:
+`reconstructWalk` (`walk-smooth-map.ts`) computes the walk as the MAP
+estimate of one robust energy — redescending Geman–McClure GPS emission
+under a deterministic graduated-non-convexity anneal, accuracy as a weak
+clamped prior, L2 smoothness, soft walkable attraction, building clearance
+field. `pedestrian-match-annotate.ts` swaps it in for a leg **only when the
+reconstruction is ≥25 % and ≥150 m shorter** than the matched/raw line —
+the signature of a dissolved phantom out-and-back (an isolated GPS spur the
+accuracy-blind matcher snapped into a detour). The segment then carries
+`walkSmoothedPath` and `episode-geometry` prefers it as `kind:"smoothed"`,
+above `walkMatchedPath`. The swap ships **off by default** (`WALK_RECON=1`
+opt-in): it does not yet fix the coherent-smear phantom class, which needs
+the independent-evidence factors tracked in
+`../proposals/geometry-roadmap.md`.
+
 ### Bounding the `unknown` connector
 
 An `unknown` (no-GPS) state between two anchors gets a `tentative`

@@ -1,7 +1,7 @@
 /**
  * Point-to-point routing on the walkable network — the case-2 primitive of the
  * building-escape corrector
- * (`docs/proposals/2026-07-continuous-field-walk-reconstruction.md`).
+ * (`docs/proposals/geometry-roadmap.md`).
  *
  * When a drawn walk's chord cuts through a building block and no vertex sits
  * inside the block to push (sparse fixes), the honest line goes *around* the

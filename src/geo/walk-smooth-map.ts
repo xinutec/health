@@ -1,7 +1,7 @@
 /**
  * Continuous MAP walk-path reconstruction — the smart replacement for the
  * discrete Viterbi snap (`pedestrian-match.ts`) and its post-hoc geometric
- * cleanups (`docs/proposals/2026-07-true-path-reconstruction.md`, Phase 1).
+ * cleanups (`docs/proposals/geometry-roadmap.md`, Phase 1).
  *
  * # The idea
  *

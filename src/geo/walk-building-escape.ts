@@ -1,7 +1,7 @@
 /**
  * Building-escape walk corrector — the explicit, case-based reconstruction of a
  * drawn walk line so it stops running through houses
- * (`docs/proposals/2026-07-continuous-field-walk-reconstruction.md`).
+ * (`docs/proposals/geometry-roadmap.md`).
  *
  * The design (Pippijn's), stated as three cases over the drawn line + the OSM
  * walkable network + building footprints:

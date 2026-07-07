@@ -1,6 +1,6 @@
 /**
  * CLI: score the drawn map line's POSITION accuracy on a captured day —
- * Phase 0 baseline of `docs/proposals/2026-06-map-constrained-positioning.md`.
+ * Phase 0 baseline of `docs/proposals/geometry-roadmap.md`.
  *
  * Runs the real pipeline (`computeVelocity`) and scores each road-vehicle
  * episode's drawn geometry with `position-score.ts`:

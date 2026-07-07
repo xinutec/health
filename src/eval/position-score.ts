@@ -1,7 +1,7 @@
 /**
  * Position-level eval — the "source of truth test" for *where the line is
  * drawn*, the measurement foundation Phase 0 of
- * `docs/proposals/2026-06-map-constrained-positioning.md` calls for.
+ * `docs/proposals/geometry-roadmap.md` calls for.
  *
  * Every map-positioning change we made on 2026-06-21 was unmeasurable: we
  * could only eyeball screenshots. This module scores a drawn track against

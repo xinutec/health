@@ -1,6 +1,6 @@
 /**
  * CLI: the deterministic referee for pedestrian map-matching
- * (`docs/proposals/2026-06-map-constrained-positioning.md`, #265/#271).
+ * (`docs/proposals/geometry-roadmap.md`, #265/#271).
  *
  * Replays a captured golden fixture TWICE through the pure pipeline — once with
  * the walk-matcher off (`walkMatch:false` → walks resolve to the smoother) and

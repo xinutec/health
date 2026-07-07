@@ -1,7 +1,7 @@
 /**
  * Truth-anchored route-correctness — the honest referee for a drawn walk, the
  * gate the off-walkable and corridor-stall proxies cannot be
- * (`docs/proposals/2026-07-true-path-reconstruction.md`, Phase 0).
+ * (`docs/proposals/geometry-roadmap.md`, Phase 0).
  *
  * The confirmed ground-truth narratives name the street a walk ran along
  * ("walking on Barn Rise"). This measures what fraction of the DRAWN line's
