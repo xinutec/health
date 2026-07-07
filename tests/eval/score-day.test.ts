@@ -20,7 +20,7 @@ function gt(
 	startMin: number,
 	endMin: number,
 	status: GroundTruthRow["status"],
-	blessed: GroundTruthRow["blessed"],
+	truth: GroundTruthRow["truth"],
 ): GroundTruthRow {
 	return {
 		windowText: `${startMin} – ${endMin}`,
@@ -29,8 +29,8 @@ function gt(
 		status,
 		provenance: "unspecified",
 		statusText: status,
-		blessedText: "",
-		blessed,
+		truthText: "",
+		truth,
 		correctVersionText: null,
 	};
 }

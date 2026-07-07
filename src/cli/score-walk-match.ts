@@ -75,9 +75,9 @@ function loadNamedWalkWindows(date: string, tz: string): NamedWalkWindow[] {
 	const gt = parseGroundTruth(readFileSync(path, "utf8"), date, tz);
 	const out: NamedWalkWindow[] = [];
 	for (const row of gt.rows) {
-		if (row.blessed?.mode !== "walking" || !row.blessed.wayName) continue;
+		if (row.truth?.mode !== "walking" || !row.truth.wayName) continue;
 		if (!isEnforceableTruth(row)) continue;
-		out.push({ startTs: row.startTs, endTs: row.endTs, name: row.blessed.wayName });
+		out.push({ startTs: row.startTs, endTs: row.endTs, name: row.truth.wayName });
 	}
 	return out;
 }

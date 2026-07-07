@@ -130,32 +130,43 @@ export interface LegResult {
 const JOURNEY_PAUSE_MAX_S = 5 * 60;
 
 /** Build the ground-truth leg + journey structure from the audit rows.
- *  Only `correct` rows with a parsed blessed cell contribute (the only
- *  rows where the cell IS the truth — same gate as `score-day.ts`).
- *  Consecutive movement rows form one journey; a non-movement stay of
- *  `JOURNEY_PAUSE_MAX_S`+ (or any unscorable row) breaks the run, while a
- *  shorter stay is absorbed as an in-journey pause. */
+ *  The cell is always the TRUTH (see `ground-truth.ts`), so `correct` and
+ *  `wrong` rows contribute legs alike — a `wrong` row is a true leg the
+ *  pipeline is KNOWN to miss, which is exactly what this metric must keep
+ *  demanding (excluding it would silently drop the broken legs the score
+ *  exists to measure). Consecutive movement rows form one journey; a
+ *  non-movement stay of `JOURNEY_PAUSE_MAX_S`+ (or an `unclear`/unparsed
+ *  row) breaks the run, while a shorter stay is absorbed as an in-journey
+ *  pause. */
 export function groundTruthJourneys(rows: readonly GroundTruthRow[]): Journey[] {
 	const journeys: Journey[] = [];
 	let current: Leg[] = [];
-	// A journey must be anchored by ≥1 `correct` leg to be demanded. A `partial`
-	// row EXTENDS a journey (a partial train mid-trip keeps it one journey — only
-	// a detail like line/exact station is imperfect, the MODE is right) but does
-	// not SEED one: a run of only-partial movement is too uncertain to assert.
-	let currentHasCorrect = false;
+	// A journey must be anchored by ≥1 definite (`correct`/`wrong`) leg to be
+	// demanded. A `partial` row EXTENDS a journey (a partial train mid-trip
+	// keeps it one journey — only a detail like line/exact station is
+	// imperfect, the MODE is right) but does not SEED one: a run of
+	// only-partial movement is too uncertain to assert.
+	let currentHasDefinite = false;
 	const flush = (): void => {
-		if (current.length > 0 && currentHasCorrect) {
+		if (current.length > 0 && currentHasDefinite) {
 			journeys.push({ startTs: current[0].startTs, endTs: current[current.length - 1].endTs, legs: current });
 		}
 		current = [];
-		currentHasCorrect = false;
+		currentHasDefinite = false;
 	};
 	for (const row of rows) {
-		const b = row.blessed;
-		// Usable for journey SHAPE when the MODE is trustworthy: `correct` and
-		// `partial` both name the right mode; `wrong` / `unclear` / unparsed are a
-		// stretch we can't assert continuity across, so they break the journey.
-		if ((row.status !== "correct" && row.status !== "partial") || b === null) {
+		const b = row.truth;
+		// The audit tables are SPARSE — they need not list every stay. A time
+		// gap between rows longer than a pause is unaudited time we cannot
+		// assert continuity across (without this, two trips hours apart with
+		// no stay row between them concatenate into one impossible demand).
+		const prevEnd = current[current.length - 1]?.endTs;
+		if (prevEnd !== undefined && row.startTs - prevEnd > JOURNEY_PAUSE_MAX_S) flush();
+		// Usable for journey SHAPE when the cell's mode is a definite truth
+		// claim: `correct`, `wrong`, and `partial` all name the true mode;
+		// `unclear` / unparsed rows can't assert continuity, so they break
+		// the journey.
+		if (row.status === "unclear" || b === null) {
 			flush();
 			continue;
 		}
@@ -170,7 +181,7 @@ export function groundTruthJourneys(rows: readonly GroundTruthRow[]): Journey[] 
 			mode: canonicalMode(b.mode),
 			line: lineOf(b.mode, b.lineName),
 		});
-		if (row.status === "correct") currentHasCorrect = true;
+		if (row.status === "correct" || row.status === "wrong") currentHasDefinite = true;
 	}
 	flush();
 	return journeys;
@@ -215,6 +226,16 @@ export function statesToJourneys(
  *  pipeline's (mode-shape equality on the best temporally-overlapping journey).
  *  The gate's referee — decoupled from the lossy minute path {@link scoreJourneys}
  *  uses for the decoder's leg-fidelity scores. */
+/** A match must also COVER the ground-truth journey in time, not just echo
+ *  its deduped mode shape: when a journey fragments (e.g. a dark-tube ride
+ *  rendered as walk+stay+walk+short-train), the first fragment can have the
+ *  identical shape — [walking, train, walking] — while spanning a third of
+ *  the trip. Uncovered ground-truth time beyond 20% of the journey (with a
+ *  4-minute absolute allowance for boundary noise on short hops) fails the
+ *  match. */
+const COVERAGE_SLACK_FRAC = 0.2;
+const COVERAGE_SLACK_MIN_S = 240;
+
 export function journeyShapeResults(
 	gtJourneys: readonly Journey[],
 	pipelineJourneys: readonly Journey[],
@@ -222,13 +243,22 @@ export function journeyShapeResults(
 	return gtJourneys.map((gt) => {
 		const match = bestOverlap(gt, pipelineJourneys);
 		const expectedShape = modeShape(gt);
-		const actualShape = match !== null ? modeShape(match) : null;
+		// Compare structure over the AUDITED span only: the ground truth
+		// asserts nothing about time outside its rows, so pipeline legs
+		// entirely beyond the journey window must not fail the match. A leg
+		// that crosses the boundary still overlaps and is kept.
+		const clipped = match === null ? null : match.legs.filter((l) => l.endTs > gt.startTs && l.startTs < gt.endTs);
+		const actualShape = clipped !== null && clipped.length > 0 ? modeShape({ ...match!, legs: clipped }) : null;
+		const overlap =
+			match === null ? 0 : Math.max(0, Math.min(gt.endTs, match.endTs) - Math.max(gt.startTs, match.startTs));
+		const uncovered = gt.endTs - gt.startTs - overlap;
+		const covered = uncovered <= Math.max(COVERAGE_SLACK_FRAC * (gt.endTs - gt.startTs), COVERAGE_SLACK_MIN_S);
 		return {
 			startTs: gt.startTs,
 			endTs: gt.endTs,
 			expectedShape,
 			actualShape,
-			matched: actualShape !== null && arraysEqual(expectedShape, actualShape),
+			matched: actualShape !== null && arraysEqual(expectedShape, actualShape) && covered,
 		};
 	});
 }

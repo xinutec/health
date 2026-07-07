@@ -153,7 +153,7 @@ export function scoreDay(
 		const rowMinutes = Math.max(0, Math.round((row.endTs - row.startTs) / 60));
 		totalMinutes += rowMinutes;
 
-		const scorable = row.status === "correct" && row.blessed !== null;
+		const scorable = row.status === "correct" && row.truth !== null;
 		if (!scorable) {
 			rowResults.push({
 				row,
@@ -164,7 +164,7 @@ export function scoreDay(
 			});
 			continue;
 		}
-		const blessed = row.blessed;
+		const blessed = row.truth;
 		if (blessed === null) continue; // defensive — scorable already gates on it
 
 		const expectedMode = canonicalMode(blessed.mode);

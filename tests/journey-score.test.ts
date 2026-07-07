@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GroundTruthMode, GroundTruthRow, ParsedBlessed } from "../src/eval/ground-truth.js";
+import type { GroundTruthMode, GroundTruthRow, ParsedTruth } from "../src/eval/ground-truth.js";
 import {
 	decoderJourneys,
 	groundTruthJourneys,
@@ -26,7 +26,7 @@ function gtRow(
 	line: string | null = null,
 	status: GroundTruthRow["status"] = "correct",
 ): GroundTruthRow {
-	const blessed: ParsedBlessed = {
+	const truth: ParsedTruth = {
 		mode,
 		place: null,
 		wayName: null,
@@ -38,8 +38,8 @@ function gtRow(
 		windowText: `${startMin}–${endMin}`,
 		startTs: T0 + startMin * 60,
 		endTs: T0 + endMin * 60,
-		blessedText: "(synthetic)",
-		blessed,
+		truthText: "(synthetic)",
+		truth,
 		status,
 		provenance: "user",
 		statusText: status,
@@ -135,14 +135,43 @@ describe("groundTruthJourneys", () => {
 		expect(journeys[0].legs.map((l) => l.mode)).toEqual(["walking", "train", "train", "walking"]);
 	});
 
-	it("does NOT seed a journey from partial rows alone (needs a correct anchor)", () => {
+	it("does NOT seed a journey from partial rows alone (needs a definite anchor)", () => {
 		const rows = [
 			gtRow(0, 10, "stationary"),
-			gtRow(10, 12, "driving", null, "wrong"),
+			gtRow(10, 12, "driving", null, "partial"),
 			gtRow(12, 15, "train", "Metropolitan Line", "partial"),
-			gtRow(15, 20, "stationary", null, "wrong"),
+			gtRow(15, 20, "stationary", null, "unclear"),
 		];
 		expect(groundTruthJourneys(rows)).toHaveLength(0);
+	});
+
+	it("a wrong row is a true leg the pipeline misses — it seeds and shapes the journey", () => {
+		// The cell is the truth even on a `wrong` row (the status only says the
+		// pipeline deviates), so the metric must keep DEMANDING the leg.
+		const rows = [
+			gtRow(0, 10, "walking"),
+			gtRow(10, 20, "train", "Victoria Line", "wrong"), // decoded as unknown today
+			gtRow(20, 25, "walking", null, "wrong"),
+			gtRow(25, 120, "stationary"),
+		];
+		const journeys = groundTruthJourneys(rows);
+		expect(journeys).toHaveLength(1);
+		expect(journeys[0].legs.map((l) => l.mode)).toEqual(["walking", "train", "walking"]);
+	});
+
+	it("does not concatenate trips across an unaudited multi-hour gap between rows", () => {
+		// Sparse audit table: no stay row between a midday trip and an
+		// afternoon one — the builder must not demand them as one journey.
+		const rows = [gtRow(0, 15, "walking"), gtRow(16, 30, "driving"), gtRow(180, 226, "driving", null, "wrong")];
+		const journeys = groundTruthJourneys(rows);
+		expect(journeys).toHaveLength(2);
+		expect(journeys[0].legs.map((l) => l.mode)).toEqual(["walking", "driving"]);
+		expect(journeys[1].legs.map((l) => l.mode)).toEqual(["driving"]);
+	});
+
+	it("an unclear row breaks the journey (no continuity claim)", () => {
+		const rows = [gtRow(0, 10, "walking"), gtRow(10, 20, "walking", null, "unclear"), gtRow(20, 30, "walking")];
+		expect(groundTruthJourneys(rows)).toHaveLength(2);
 	});
 });
 
@@ -300,5 +329,56 @@ describe("scoreJourneys — trip structure", () => {
 		];
 		const score = scoreJourneys(rows, decoder);
 		expect(score.journeysModeSequenceMatched).toBe(0);
+	});
+});
+
+describe("journeyShapeResults — coverage gate", () => {
+	const st = (startMin: number, endMin: number, mode: string) => ({
+		startTs: T0 + startMin * 60,
+		endTs: T0 + endMin * 60,
+		mode,
+	});
+
+	it("a same-shape fragment covering a third of the journey is NOT a match (the 06-16 return)", () => {
+		// GT: walk + train + (4-min interchange gap) + train + walk over ~76
+		// min (shape dedupes to [walking, train, walking]). Pipeline: the ride
+		// fragments at a 6-min station stay; the first fragment has the
+		// identical shape but ends two-thirds early.
+		const gt = groundTruthJourneys([
+			gtRow(0, 14, "walking"),
+			gtRow(14, 23, "train", "Victoria Line"),
+			gtRow(27, 51, "train", "Metropolitan Line", "wrong"),
+			gtRow(51, 76, "walking"),
+		]);
+		const pipeline = statesToJourneys([
+			st(3, 13, "walking"),
+			st(13, 24, "train"),
+			st(24, 26, "walking"),
+			// 6-min stay 26–32 splits the pipeline journeys
+			st(32, 42, "walking"),
+			st(44, 48, "train"),
+			st(49, 74, "walking"),
+		]);
+		const res = journeyShapeResults(gt, pipeline);
+		expect(res).toHaveLength(1);
+		expect(res[0].matched).toBe(false);
+	});
+
+	it("ignores pipeline legs entirely outside the audited journey window", () => {
+		// GT audits walk+train ending at min 21; the pipeline continues with a
+		// short walk at min 22 (unaudited time — possibly true, unverifiable).
+		const gt = groundTruthJourneys([gtRow(0, 11, "walking"), gtRow(11, 21, "train", "Metropolitan Line")]);
+		const pipeline = statesToJourneys([st(0, 10, "walking"), st(11, 21, "train"), st(22, 27, "walking")]);
+		expect(journeyShapeResults(gt, pipeline)[0].matched).toBe(true);
+	});
+
+	it("a full-coverage same-shape journey IS a match despite minor boundary slop", () => {
+		const gt = groundTruthJourneys([
+			gtRow(0, 14, "walking"),
+			gtRow(14, 33, "train", "Metropolitan Line"),
+			gtRow(33, 46, "walking"),
+		]);
+		const pipeline = statesToJourneys([st(1, 15, "walking"), st(15, 32, "train"), st(32, 45, "walking")]);
+		expect(journeyShapeResults(gt, pipeline)[0].matched).toBe(true);
 	});
 });

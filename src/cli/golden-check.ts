@@ -117,9 +117,11 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 	if (gtJourneys.length > 0) lines.push(`    journeys: ${journeysMatchedCount}/${gtJourneys.length} reconstructed`);
 	for (const { row, verdict } of res.verdicts) {
 		if (verdict === "regressed")
-			lines.push(`      ✗ REGRESSED ${row.windowText}: confirmed "${row.blessedText}" no longer holds`);
+			lines.push(`      ✗ REGRESSED ${row.windowText}: confirmed "${row.truthText}" no longer holds`);
 		if (verdict === "cleared")
-			lines.push(`      ✓ cleared    ${row.windowText}: known error "${row.blessedText}" is fixed`);
+			lines.push(
+				`      ✓ cleared    ${row.windowText}: now matches truth "${row.truthText}" — flip the row to correct`,
+			);
 	}
 	// Per-journey failure diagnostic: expected vs reconstructed mode shape — the
 	// signal that says WHICH factor (corridor / kinematic / cadence) each broken

@@ -258,7 +258,7 @@ function collectAllPlaceNames(days: readonly GroundTruthDay[]): Set<string> {
 	const names = new Set<string>();
 	for (const day of days) {
 		for (const row of day.rows) {
-			if (row.blessed?.place) names.add(row.blessed.place);
+			if (row.truth?.place) names.add(row.truth.place);
 		}
 	}
 	return names;
@@ -516,9 +516,9 @@ function renderDayReport(day: GroundTruthDay, score: DayScore, source: string): 
 		const pPart = `P:${r.placeAgreement.padEnd(8)}`;
 		const lPart = `L:${r.lineAgreement.padEnd(8)}`;
 		const blessed = (
-			r.row.blessed?.mode === "train"
-				? `train ${r.row.blessed.trainFromTo?.from} → ${r.row.blessed.trainFromTo?.to}${r.row.blessed.lineName ? ` · ${r.row.blessed.lineName}` : ""}`
-				: r.row.blessedText
+			r.row.truth?.mode === "train"
+				? `train ${r.row.truth.trainFromTo?.from} → ${r.row.truth.trainFromTo?.to}${r.row.truth.lineName ? ` · ${r.row.truth.lineName}` : ""}`
+				: r.row.truthText
 		).slice(0, 50);
 		console.log(`  ${tag} ${r.row.windowText.padEnd(15)} ${mPart}  ${pPart} ${lPart}  ${blessed}`);
 	}

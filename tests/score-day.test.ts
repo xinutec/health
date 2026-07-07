@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GroundTruthRow, ParsedBlessed } from "../src/eval/ground-truth.js";
+import type { GroundTruthRow, ParsedTruth } from "../src/eval/ground-truth.js";
 import { type DecoderMinute, scoreDay } from "../src/eval/score-day.js";
 
 /**
@@ -15,7 +15,7 @@ import { type DecoderMinute, scoreDay } from "../src/eval/score-day.js";
 
 const T0 = 1_700_000_000;
 
-function blessed(over: Partial<ParsedBlessed>): ParsedBlessed {
+function truthCell(over: Partial<ParsedTruth>): ParsedTruth {
 	return {
 		mode: "bus",
 		place: null,
@@ -28,13 +28,13 @@ function blessed(over: Partial<ParsedBlessed>): ParsedBlessed {
 }
 
 /** A `correct`, enforceable ground-truth row spanning [startMin, endMin) minutes. */
-function row(startMin: number, endMin: number, b: ParsedBlessed): GroundTruthRow {
+function row(startMin: number, endMin: number, b: ParsedTruth): GroundTruthRow {
 	return {
 		windowText: `${startMin}–${endMin}`,
 		startTs: T0 + startMin * 60,
 		endTs: T0 + endMin * 60,
-		blessedText: "(synthetic)",
-		blessed: b,
+		truthText: "(synthetic)",
+		truth: b,
 		status: "correct",
 		provenance: "user",
 		statusText: "correct",
@@ -51,7 +51,7 @@ function minutes(startMin: number, endMin: number, mode: DecoderMinute["mode"]):
 
 describe("scoreDay — road-vehicle modes", () => {
 	it("scores a blessed bus row against a decoder that says bus (match)", () => {
-		const rows = [row(0, 10, blessed({ mode: "bus" }))];
+		const rows = [row(0, 10, truthCell({ mode: "bus" }))];
 		const decoder = minutes(0, 10, "bus");
 		const score = scoreDay(rows, decoder, new Map());
 		expect(score.scorableMinutes).toBe(10);
@@ -59,7 +59,7 @@ describe("scoreDay — road-vehicle modes", () => {
 	});
 
 	it("counts a bus mislabelled as driving as a mode miss (bus ≠ driving)", () => {
-		const rows = [row(0, 10, blessed({ mode: "bus" }))];
+		const rows = [row(0, 10, truthCell({ mode: "bus" }))];
 		const decoder = minutes(0, 10, "driving");
 		const score = scoreDay(rows, decoder, new Map());
 		expect(score.scorableMinutes).toBe(10);
@@ -67,7 +67,7 @@ describe("scoreDay — road-vehicle modes", () => {
 	});
 
 	it("counts a bus read as walking (the 06-12 failure) as a miss", () => {
-		const rows = [row(0, 10, blessed({ mode: "bus" }))];
+		const rows = [row(0, 10, truthCell({ mode: "bus" }))];
 		const decoder = minutes(0, 10, "walking");
 		const score = scoreDay(rows, decoder, new Map());
 		expect(score.modeMatching).toBe(0);

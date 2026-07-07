@@ -3,9 +3,20 @@
  *
  * Each ground-truth file has a free-text narrative followed by an
  * `## Audit of ...` section containing a markdown table. The table is
- * the structured truth signal: per-window status (`correct` / `wrong`
- * / `partial` / `unclear`) plus, when blessed-cell content matches
- * what actually happened, the cell content IS the ground-truth state.
+ * the structured truth signal: per window, the second cell states WHAT
+ * ACTUALLY HAPPENED (the truth), and the status says how the pipeline
+ * relates to it — `correct` (pipeline matches, locked), `wrong`
+ * (pipeline is known to deviate from this truth — tolerated debt), or
+ * `partial` / `unclear` (advisory only). The cell is always the truth,
+ * never a snapshot of pipeline output: that convention is what lets a
+ * checker verify that a fixed deviation now matches reality rather
+ * than merely observing that the output changed.
+ *
+ * Times in the table are interpreted in the timezone the caller passes
+ * (the fixture's display tz) unless the file declares its own with a
+ * `Times: <IANA-zone>` line — needed when the narrative was written in
+ * the timezone the day was lived in (e.g. a Netherlands trip in CEST)
+ * or transcribed from a UTC rendering.
  *
  * Why a parser exists at all:
  *
@@ -70,26 +81,27 @@ export function isEnforceableTruth(row: Pick<GroundTruthRow, "status" | "provena
 
 export type GroundTruthMode = "sleeping" | "stationary" | "walking" | "cycling" | "driving" | "bus" | "train" | "plane";
 
-export interface ParsedBlessed {
+export interface ParsedTruth {
 	mode: GroundTruthMode;
 	/** Focus-place name (e.g. "Home", "Cleveland Clinic London"). `null`
 	 *  for movement modes or train. */
 	place: string | null;
-	/** OSM way name when the blessed cell is "walking on X" or
+	/** OSM way name when the truth cell is "walking on X" or
 	 *  "driving on X". Distinct from `place` — a way attribution is
 	 *  weaker signal (it's just the nearest road, not a destination). */
 	wayName: string | null;
 	/** Trailing parenthetical qualifier — e.g. "(hotel)" on
 	 *  "Parkhotel Den Haag (hotel)" surfaces the amenity classification
-	 *  the pipeline emitted. Useful diagnostic when place names match
-	 *  but the qualifier reveals a wrong-amenity attribution. */
+	 *  of the place. Useful diagnostic when place names match but the
+	 *  qualifier reveals a wrong-amenity attribution. */
 	placeQualifier: string | null;
-	/** Train boarding + alighting station names. `null` for non-train
-	 *  modes. */
+	/** Transit boarding + alighting station/stop names (train and bus).
+	 *  `null` for other modes or when the cell doesn't assert them. */
 	trainFromTo: { from: string; to: string } | null;
-	/** Named rail line (e.g. "Metropolitan Line"). `null` when the
-	 *  blessed cell omits the `· Line Name` suffix (which itself is a
-	 *  partial-attribution signal). */
+	/** Named line (train, e.g. "Metropolitan Line") or route number
+	 *  (bus, e.g. "38") asserted with a `· Line` suffix. A trailing
+	 *  parenthetical after the route (e.g. "(Circle/H&C/Met)") is
+	 *  commentary, NOT a line assertion, and is not captured here. */
 	lineName: string | null;
 }
 
@@ -102,14 +114,14 @@ export interface GroundTruthRow {
 	 *  hour:minute is less than the start, the window crosses midnight
 	 *  and `endTs` is the next calendar day. */
 	endTs: number;
-	/** Original blessed-cell text, verbatim — kept so diagnostics can
-	 *  show the human-readable reference even when `blessed` failed to
+	/** Original truth-cell text, verbatim — kept so diagnostics can
+	 *  show the human-readable reference even when `truth` failed to
 	 *  parse into structured form. */
-	blessedText: string;
-	/** Structured form of the blessed cell. `null` when the cell didn't
+	truthText: string;
+	/** Structured form of the truth cell. `null` when the cell didn't
 	 *  match any known shape (e.g. an "unlabelled sliver" or some other
 	 *  edge case in the narrative). */
-	blessed: ParsedBlessed | null;
+	truth: ParsedTruth | null;
 	status: AuditStatus;
 	/** How this verdict is known — see {@link Provenance}. Parsed from an
 	 *  inline `{...}` tag in the status or notes cell; `unspecified` when
@@ -144,10 +156,16 @@ interface RawRow {
 	startMm: number;
 	endHh: number;
 	endMm: number;
-	blessedText: string;
+	truthText: string;
 	statusText: string;
 	correctVersionText: string | null;
 }
+
+/** An explicit table-times timezone declared in the file — a line of the
+ *  form `Times: Europe/Amsterdam` anywhere in the document. Overrides the
+ *  caller-supplied (fixture) tz, for narratives written in the timezone
+ *  the day was lived in rather than the fixture's display tz. */
+const TIMES_TZ = /^Times:\s*([A-Za-z_]+(?:\/[A-Za-z_+-]+)*|UTC)\s*$/m;
 
 /** Parse a single ground-truth markdown file into structured form.
  *
@@ -162,6 +180,8 @@ interface RawRow {
  *  file's date), otherwise today. This matches the convention used
  *  across all blessed ground-truth files. */
 export function parseGroundTruth(markdown: string, date: string, tz: string): GroundTruthDay {
+	const declaredTz = TIMES_TZ.exec(markdown)?.[1];
+	if (declaredTz) tz = declaredTz;
 	const lines = markdown.split("\n");
 	const rawRows: RawRow[] = [];
 
@@ -184,7 +204,7 @@ export function parseGroundTruth(markdown: string, date: string, tz: string): Gr
 		const m = /^(\d{2}):(\d{2})\s*[–-]\s*(\d{2}):(\d{2})$/.exec(windowText);
 		if (!m) continue;
 
-		const blessedText = cells[1].trim();
+		const truthText = cells[1].trim();
 		const statusText = cells[2].trim();
 		const correctVersion = cells.length >= 4 ? cells.slice(3).join("|").trim() : "";
 
@@ -194,7 +214,7 @@ export function parseGroundTruth(markdown: string, date: string, tz: string): Gr
 			startMm: Number(m[2]),
 			endHh: Number(m[3]),
 			endMm: Number(m[4]),
-			blessedText,
+			truthText,
 			statusText,
 			correctVersionText: correctVersion.length === 0 ? null : correctVersion,
 		});
@@ -234,8 +254,8 @@ export function parseGroundTruth(markdown: string, date: string, tz: string): Gr
 			windowText: r.windowText,
 			startTs,
 			endTs,
-			blessedText: r.blessedText,
-			blessed: parseBlessedCell(r.blessedText),
+			truthText: r.truthText,
+			truth: parseTruthCell(r.truthText),
 			status: normaliseStatus(r.statusText),
 			provenance: parseProvenance(`${r.statusText} ${r.correctVersionText ?? ""}`),
 			statusText: r.statusText,
@@ -307,10 +327,11 @@ function normaliseStatus(text: string): AuditStatus {
 	return "unclear";
 }
 
-/** Parse a blessed-cell into structured form. Returns null when the
- *  text doesn't match any known shape. */
-export function parseBlessedCell(text: string): ParsedBlessed | null {
-	const t = text.trim();
+/** Parse a truth-cell into structured form. Returns null when the
+ *  text doesn't match any known shape. Emphasis markers (`**bold**`)
+ *  are presentation, not content, and are stripped first. */
+export function parseTruthCell(text: string): ParsedTruth | null {
+	const t = text.replace(/\*+/g, "").trim();
 	if (t.length === 0) return null;
 
 	const verb = /^(sleeping|stationary|walking|cycling|driving|bus|train|plane)\b\s*(.*)$/.exec(t);
@@ -321,7 +342,9 @@ export function parseBlessedCell(text: string): ParsedBlessed | null {
 	if (mode === "train" || mode === "bus") {
 		// Transit leg: "From → To" or "From → To · Line/Route". `trainFromTo`
 		// + `lineName` carry the board/alight + the line (train) or route
-		// number (bus, e.g. "38") symmetrically.
+		// number (bus, e.g. "38") symmetrically. A trailing parenthetical on
+		// the alight ("… → King's Cross St Pancras (Circle/H&C/Met)") is
+		// commentary — only a `· Line` suffix asserts the line.
 		const tm = /^(.+?)\s+→\s+([^·]+?)(?:\s*·\s*(.+))?$/.exec(rest);
 		if (tm) {
 			return {
@@ -329,18 +352,26 @@ export function parseBlessedCell(text: string): ParsedBlessed | null {
 				place: null,
 				wayName: null,
 				placeQualifier: null,
-				trainFromTo: { from: tm[1].trim(), to: tm[2].trim() },
+				trainFromTo: { from: tm[1].trim(), to: tm[2].replace(/\s*\([^)]*\)\s*$/, "").trim() },
 				lineName: tm[3]?.trim() ?? null,
 			};
 		}
-		return {
-			mode,
-			place: null,
-			wayName: null,
-			placeQualifier: null,
-			trainFromTo: null,
-			lineName: null,
-		};
+		// No route. "train on X" names the LINE ("train on Circle Line"),
+		// mirroring the pipeline's bare-line rendering; a bus's "on X" names
+		// the ROAD and falls through to the generic way shape below.
+		if (mode === "train") {
+			const on = /^on\s+(.+)$/.exec(rest);
+			if (on) {
+				return {
+					mode,
+					place: null,
+					wayName: null,
+					placeQualifier: null,
+					trainFromTo: null,
+					lineName: on[1].trim(),
+				};
+			}
+		}
 	}
 
 	// "@ Place [(qualifier)]" → focus-place attribution.

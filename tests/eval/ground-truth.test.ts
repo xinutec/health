@@ -52,14 +52,14 @@ describe("parseGroundTruth", () => {
 		const r0 = out.rows[0];
 		expect(r0.windowText).toBe("00:05 – 08:58");
 		expect(r0.status).toBe("correct");
-		expect(r0.blessed?.mode).toBe("sleeping");
-		expect(r0.blessed?.place).toBe("Home");
+		expect(r0.truth?.mode).toBe("sleeping");
+		expect(r0.truth?.place).toBe("Home");
 		expect(r0.correctVersionText).toBeNull(); // empty cell → null
 	});
 
 	it("normalises **wrong** to wrong", () => {
 		const out = parseGroundTruth(MINIMAL_FOUR_COL, "2026-05-22", "Europe/London");
-		const wrongRow = out.rows.find((r) => r.blessedText.includes("Deepwell Underpass"));
+		const wrongRow = out.rows.find((r) => r.truthText.includes("Deepwell Underpass"));
 		expect(wrongRow?.status).toBe("wrong");
 		expect(wrongRow?.correctVersionText).toContain("Met Line");
 	});
@@ -116,7 +116,7 @@ describe("parseGroundTruth", () => {
 
 	it("classifies blessed cells: sleeping / stationary @ Place / walking / driving / train", () => {
 		const out = parseGroundTruth(MINIMAL_FOUR_COL, "2026-05-22", "Europe/London");
-		const byWindow = new Map(out.rows.map((r) => [r.windowText, r.blessed]));
+		const byWindow = new Map(out.rows.map((r) => [r.windowText, r.truth]));
 
 		expect(byWindow.get("00:05 – 08:58")?.mode).toBe("sleeping");
 		expect(byWindow.get("00:05 – 08:58")?.place).toBe("Home");
@@ -145,8 +145,8 @@ describe("parseGroundTruth", () => {
 		const out = parseGroundTruth(MINIMAL_THREE_COL_WITH_TRAILING_NOTES, "2026-04-29", "Europe/Amsterdam");
 		const hotelRow = out.rows.find((r) => r.windowText === "22:16 – 08:08");
 		// "Parkhotel Den Haag (hotel)" → place "Parkhotel Den Haag", placeQualifier "hotel"
-		expect(hotelRow?.blessed?.place).toBe("Parkhotel Den Haag");
-		expect(hotelRow?.blessed?.placeQualifier).toBe("hotel");
+		expect(hotelRow?.truth?.place).toBe("Parkhotel Den Haag");
+		expect(hotelRow?.truth?.placeQualifier).toBe("hotel");
 	});
 
 	it("returns groundTruthAt(minute) resolving any minute in the day", () => {
@@ -155,7 +155,7 @@ describe("parseGroundTruth", () => {
 		// Compute the UTC ts for 00:30 London on 2026-05-22.
 		const ts = Date.UTC(2026, 4, 21, 23, 30, 0) / 1000; // 00:30 BST = 23:30 UTC prev day
 		const row = out.rows.find((r) => r.startTs <= ts && ts < r.endTs);
-		expect(row?.blessed?.mode).toBe("sleeping");
+		expect(row?.truth?.mode).toBe("sleeping");
 	});
 });
 
