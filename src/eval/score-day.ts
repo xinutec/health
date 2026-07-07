@@ -25,7 +25,7 @@
  * Pure function. No DB, no IO, no globals.
  */
 
-import type { GroundTruthMode, GroundTruthRow } from "./ground-truth.js";
+import { type GroundTruthMode, type GroundTruthRow, isEnforceableTruth } from "./ground-truth.js";
 
 export type DecoderMode =
 	| "stationary"
@@ -153,7 +153,13 @@ export function scoreDay(
 		const rowMinutes = Math.max(0, Math.round((row.endTs - row.startTs) / 60));
 		totalMinutes += rowMinutes;
 
-		const scorable = row.status === "correct" && row.truth !== null;
+		// Truth-in-cell (#323): the cell states the truth for `correct` AND
+		// `wrong` rows alike — `wrong` marks the heuristic PIPELINE's known
+		// deviation, not doubt about the truth. The decoder is a different
+		// candidate and is scored against both (the wrong rows are exactly the
+		// legs it exists to fix), gated on trustworthy provenance like every
+		// other truth consumer.
+		const scorable = isEnforceableTruth(row) && row.truth !== null;
 		if (!scorable) {
 			rowResults.push({
 				row,

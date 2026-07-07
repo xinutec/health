@@ -27,7 +27,7 @@ function gt(
 		startTs: TS_START + startMin * MIN,
 		endTs: TS_START + endMin * MIN,
 		status,
-		provenance: "unspecified",
+		provenance: "user",
 		statusText: status,
 		truthText: "",
 		truth,
@@ -109,6 +109,46 @@ describe("scoreDay", () => {
 		const score = scoreDay(rows, decoder, new Map([["Home", 42]]));
 		expect(score.scorableMinutes).toBe(30);
 		expect(score.modeMatching).toBe(30);
+	});
+
+	it("scores `wrong` rows — the truth cell is the truth; wrong marks the PIPELINE's known deviation", () => {
+		// Truth-in-cell (#323): a `wrong` status means the heuristic pipeline is
+		// known to deviate, NOT that the truth is doubtful. The decoder is a
+		// different candidate and must be measured against these rows — they are
+		// exactly the legs it exists to fix (same principle as the journey
+		// ratchet keeping wrong-row legs demanded).
+		const rows = [
+			gt(0, 10, "wrong", {
+				mode: "train",
+				place: null,
+				wayName: null,
+				placeQualifier: null,
+				trainFromTo: { from: "A", to: "B" },
+				lineName: "Jubilee Line",
+			}),
+		];
+		const decoder = dec(0, 10, "train", null, "Jubilee Line");
+		const score = scoreDay(rows, decoder, new Map());
+		expect(score.scorableMinutes).toBe(10);
+		expect(score.modeMatching).toBe(10);
+		expect(score.lineScorable).toBe(10);
+		expect(score.lineMatching).toBe(10);
+	});
+
+	it("does not score rows without trustworthy provenance (inferred/untagged are advisory)", () => {
+		const rows = [
+			gt(0, 10, "correct", {
+				mode: "walking",
+				place: null,
+				wayName: null,
+				placeQualifier: null,
+				trainFromTo: null,
+				lineName: null,
+			}),
+		];
+		rows[0] = { ...rows[0], provenance: "inferred" };
+		const score = scoreDay(rows, dec(0, 10, "walking"), new Map());
+		expect(score.scorableMinutes).toBe(0);
 	});
 
 	it("counts mismatching minutes in scorable counts but not matching", () => {
