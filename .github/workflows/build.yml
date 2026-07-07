@@ -23,6 +23,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
       - run: npm ci
       - run: npm ci --prefix frontend
       - run: npm run verify
@@ -45,4 +49,5 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=registry,ref=xinutec/health-sync:cache
-          cache-to: type=registry,ref=xinutec/health-sync:cache
+          # mode=max persists the builder-stage layers (npm installs, backend build) too.
+          cache-to: type=registry,ref=xinutec/health-sync:cache,mode=max
