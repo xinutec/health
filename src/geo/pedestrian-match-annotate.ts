@@ -265,15 +265,19 @@ export async function annotateWalkMatches(
 			drawn = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
 		}
 
-		// Robust-reconstruction swap (#296, behind WALK_RECON): when the drawn line
-		// (matched or raw) is a phantom out-and-back — the accuracy-blind matcher
-		// snapping a post-tunnel GPS smear into a clean detour — `reconstructWalk`
-		// rejects the low-consensus fixes and draws the honest short path. Swap it in
-		// ONLY when it is a large fraction shorter AND shorter by a wide absolute
-		// margin (the unambiguous dissolved-excursion signature); on an ordinary leg
-		// the reconstruction is ~the same length, so nothing changes. Deterministic.
+		// Robust-reconstruction swap (#296/#321): when the drawn line (matched or
+		// raw) is a phantom out-and-back — the accuracy-blind matcher snapping a
+		// post-tunnel GPS smear into a clean detour — `reconstructWalk` (with the
+		// step budget #320 and endpoint anchors #319 as evidence) rejects the
+		// low-consensus fixes and draws the honest short path. Swap it in ONLY
+		// when it is a large fraction shorter AND shorter by a wide absolute
+		// margin (the unambiguous dissolved-excursion signature); on an ordinary
+		// leg the reconstruction is ~the same length, so nothing changes.
+		// Deterministic. ON by default since 2026-07-07 (flipped after the swap
+		// fired on exactly the two confirmed smears — 07-06 09:16Z, 06-16 15:48Z —
+		// with a clean corpus ratchet); WALK_RECON=0 is the emergency off-switch.
 		let smoothed = false;
-		if (process.env.WALK_RECON === "1") {
+		if (process.env.WALK_RECON !== "0") {
 			// Pedometer budget for the leg window (#320): the one signal independent
 			// of GPS that contradicts a coherent smear. null (no step data for the
 			// day) leaves the factor off. Endpoint anchors (#319): pin the leg
