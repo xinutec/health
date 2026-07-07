@@ -114,7 +114,13 @@ class MainActivity : Activity() {
                 setBackgroundColor(Color.BLACK)
             }
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // ime() included: with enforced edge-to-edge (targetSdk 35+) the window
+            // no longer auto-resizes for the keyboard — without this the IME just
+            // draws over the page and bottom sheets stay buried under it.
+            val bars =
+                insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime(),
+                )
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             WindowInsetsCompat.CONSUMED
         }
