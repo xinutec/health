@@ -315,8 +315,7 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 			smoothPts && smoothPts.length >= 2
 				? walkPlausibility(raw, smoothPts, onE.startTs, onE.endTs, [], walkable)
 				: null;
-		const smootherRouteCorr =
-			smoothPts && accepted.size > 0 ? onNamedWayFraction(smoothPts, accepted, walkable) : null;
+		const smootherRouteCorr = smoothPts && accepted.size > 0 ? onNamedWayFraction(smoothPts, accepted, walkable) : null;
 
 		verdicts.push({
 			date,
