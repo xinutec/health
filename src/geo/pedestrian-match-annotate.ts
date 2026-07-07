@@ -26,7 +26,13 @@ import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
 import { effectiveMode } from "./segment-util.js";
 import { type CorrectRunDiag, correctWalkPath } from "./walk-building-escape.js";
-import { countSharpTurns, reconstructWalk, refineMatchedPath, type WalkFix } from "./walk-smooth-map.js";
+import {
+	countSharpTurns,
+	reconstructWalk,
+	refineMatchedPath,
+	type WalkAnchor,
+	type WalkFix,
+} from "./walk-smooth-map.js";
 
 /** A raw GPS fix as drawn — the same set the raw renderer uses. */
 interface PedFix {
@@ -85,6 +91,51 @@ function metersBetween(aLat: number, aLon: number, bLat: number, bLon: number): 
 const WALK_NEEDS_MATCH_M = 18;
 const WALK_MATCH_MAX_STRAY_M = 40;
 
+/** Endpoint-anchor derivation (#319): a walking leg's endpoints are often
+ *  confidently known from its NEIGHBOURS — the stay it left / arrived at (its
+ *  centroid) or the train it alighted from / boarded (the snapped track's
+ *  terminal vertex ≈ the station). A reacquire smear contradicts both; the
+ *  anchors pin the reconstruction between the known truths. Only a neighbour
+ *  that is temporally adjacent (gap ≤ {@link ANCHOR_MAX_GAP_S}) testifies —
+ *  across a long unknown gap the endpoint is genuinely unknown. */
+const ANCHOR_MAX_GAP_S = 180;
+/** A snapped rail track's terminal vertex sits at the station to ~platform
+ *  precision. */
+const STATION_ANCHOR_SIGMA_M = 15;
+/** A stay centroid is softer: a poor-GPS indoor stay's centroid can itself be
+ *  biased by the smear (#244). */
+const STAY_ANCHOR_SIGMA_M = 25;
+
+/** The anchor a neighbouring segment contributes to a walk's endpoint, or
+ *  undefined when it has nothing confident to say. `side` is which end of the
+ *  NEIGHBOUR touches the walk: "end" = the walk follows it (its end
+ *  coordinate), "start" = the walk precedes it. */
+function neighborAnchor(n: EnrichedSegment | undefined, side: "end" | "start", walkTs: number): WalkAnchor | undefined {
+	if (!n) return undefined;
+	const gapS = side === "end" ? walkTs - n.endTs : n.startTs - walkTs;
+	if (gapS > ANCHOR_MAX_GAP_S) return undefined;
+	const mode = effectiveMode(n);
+	if (mode === "stationary" && n.centroidLat !== undefined && n.centroidLon !== undefined) {
+		return { lat: n.centroidLat, lon: n.centroidLon, sigmaM: STAY_ANCHOR_SIGMA_M };
+	}
+	if (mode === "train" && n.snappedPath !== undefined && n.snappedPath.length >= 2) {
+		const p = side === "end" ? n.snappedPath[n.snappedPath.length - 1] : n.snappedPath[0];
+		return { lat: p.lat, lon: p.lon, sigmaM: STATION_ANCHOR_SIGMA_M };
+	}
+	return undefined;
+}
+
+/** Both endpoint anchors for the walking segment at `segments[i]` (#319). */
+export function walkEndpointAnchors(
+	segments: readonly EnrichedSegment[],
+	i: number,
+): { start?: WalkAnchor; end?: WalkAnchor } {
+	return {
+		start: neighborAnchor(segments[i - 1], "end", segments[i].startTs),
+		end: neighborAnchor(segments[i + 1], "start", segments[i].endTs),
+	};
+}
+
 /** Robust-reconstruction swap (`WALK_RECON`, #296). The Viterbi matcher is blind
  *  to GPS accuracy, so a post-tunnel reacquire smear gets snapped into a clean
  *  out-and-back phantom detour (the Regent's Park case: ~1.5 km drawn on ~300 m of
@@ -117,7 +168,8 @@ export async function annotateWalkMatches(
 
 	const speedByTs = new Map(points.map((p) => [p.ts, p.speed_kmh]));
 	const out: EnrichedSegment[] = [];
-	for (const seg of segments) {
+	for (let si = 0; si < segments.length; si++) {
+		const seg = segments[si];
 		if (effectiveMode(seg) !== "walking") {
 			out.push(seg);
 			continue;
@@ -224,9 +276,11 @@ export async function annotateWalkMatches(
 		if (process.env.WALK_RECON === "1") {
 			// Pedometer budget for the leg window (#320): the one signal independent
 			// of GPS that contradicts a coherent smear. null (no step data for the
-			// day) leaves the factor off.
+			// day) leaves the factor off. Endpoint anchors (#319): pin the leg
+			// between the neighbouring stay centroids / snapped station ends.
 			const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
 			const recon = reconstructWalk(walkFixes, { ways, buildings }, undefined, {
+				...walkEndpointAnchors(segments, si),
 				stepsWalked: stepsWalked ?? undefined,
 			});
 			if (recon && recon.length >= 2) {

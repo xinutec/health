@@ -33,7 +33,9 @@ import { onNamedWayFraction } from "../eval/walk-route-correctness.js";
 import { stepsInWindow } from "../geo/biometrics.js";
 import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { BuildingFootprint } from "../geo/osm-local.js";
+import { walkEndpointAnchors } from "../geo/pedestrian-match-annotate.js";
 import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
+import { effectiveMode } from "../geo/segment-util.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import {
 	countSharpTurns,
@@ -319,10 +321,17 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 		// replacement for the Viterbi matcher: accuracy-weighted emission suppresses
 		// the low-accuracy post-tunnel reacquire fixes that the matcher (blind to
 		// accuracy) snaps into phantom detours. Measured before any prod wiring.
-		// Pedometer budget for the leg (#320) — same evidence the prod wiring
-		// passes, so the referee measures the factor it will ship with.
+		// Pedometer budget (#320) + endpoint anchors (#319) — the same evidence
+		// the prod wiring passes, so the referee measures the factors it will
+		// ship with. The anchors come from the walking SEGMENT's neighbours;
+		// match the episode to its segment by window overlap.
 		const stepsWalked = stepsInWindow(base.biometrics.steps, onE.startTs, onE.endTs);
+		const segIdx = on.segments.findIndex(
+			(s) => s.startTs < onE.endTs && s.endTs > onE.startTs && effectiveMode(s) === "walking",
+		);
+		const anchors = segIdx >= 0 ? walkEndpointAnchors(on.segments, segIdx) : {};
 		const smoothed = reconstructWalk(rawWalk, { ways: walkable.ways, buildings }, undefined, {
+			...anchors,
 			stepsWalked: stepsWalked ?? undefined,
 		});
 		const smoothPts = smoothed?.map((p) => ({ lat: p.lat, lon: p.lon })) ?? null;

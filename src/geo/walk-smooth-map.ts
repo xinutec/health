@@ -645,8 +645,15 @@ class WalkGrid {
 		}
 	}
 
-	/** Nearest point on any walkable segment to (px,py) within maxR, else null. */
-	nearest(px: number, py: number, maxR: number): { x: number; y: number; distM: number } | null {
+	/** Nearest point on any walkable segment to (px,py) within maxR, else null.
+	 *  Also returns the winning segment's unit tangent (tx,ty), so the caller
+	 *  can build a NORMAL-ONLY (point-to-line) attraction: hugging the way must
+	 *  not resist sliding along it. */
+	nearest(
+		px: number,
+		py: number,
+		maxR: number,
+	): { x: number; y: number; distM: number; tx: number; ty: number } | null {
 		const c = this.cell;
 		const R = Math.max(1, Math.ceil(maxR / c));
 		const cx0 = Math.floor(px / c);
@@ -654,7 +661,7 @@ class WalkGrid {
 		let best = maxR * maxR;
 		let bx = 0;
 		let by = 0;
-		let found = false;
+		let bestSeg = -1;
 		const seen = new Set<number>();
 		for (let cx = cx0 - R; cx <= cx0 + R; cx++) {
 			for (let cy = cy0 - R; cy <= cy0 + R; cy++) {
@@ -668,12 +675,16 @@ class WalkGrid {
 						best = p.d2;
 						bx = p.x;
 						by = p.y;
-						found = true;
+						bestSeg = i;
 					}
 				}
 			}
 		}
-		return found ? { x: bx, y: by, distM: Math.sqrt(best) } : null;
+		if (bestSeg < 0) return null;
+		const dx = this.seg[bestSeg * 4 + 2] - this.seg[bestSeg * 4];
+		const dy = this.seg[bestSeg * 4 + 3] - this.seg[bestSeg * 4 + 1];
+		const len = Math.hypot(dx, dy) || 1;
+		return { x: bx, y: by, distM: Math.sqrt(best), tx: dx / len, ty: dy / len };
 	}
 
 	/** Building-CLEARANCE target for (px,py): the point `clearM` OUTSIDE the nearest
@@ -849,19 +860,33 @@ export function reconstructWalk(
 		for (let i = 0; i + 1 < m; i++) len += Math.hypot(e[i + 1] - e[i], nn[i + 1] - nn[i]);
 		return len;
 	};
+	// Is a piece of hard evidence still grossly unsatisfied? Length beyond the
+	// step budget (>5 %), or a terminal state further than 3σ from its anchor.
+	const evidenceViolated = (): boolean => {
+		if (stepTargetM !== null && pathLen() > stepTargetM * 1.05) return true;
+		const off = (a: WalkAnchor | undefined, i: number): boolean =>
+			a !== undefined && Math.hypot(e[i] - toE(a.lon), nn[i] - toN(a.lat)) > 3 * a.sigmaM;
+		return off(evidence?.start, 0) || off(evidence?.end, m - 1);
+	};
 
 	// GNC: geometric anneal of the GPS kernel scale c from start → target. When
-	// the step budget is still grossly violated after the schedule, keep
-	// re-linearising at the target scale (bounded by stepExtraIters): a coherent
-	// smear contracts a bounded distance per solve (its GPS is rejected, so only
-	// the map priors resist), while an honest leg sits at a static equilibrium —
-	// its live GPS consensus holds it, so extra iterations move nothing.
+	// the step budget or an endpoint anchor is still grossly violated after the
+	// schedule, keep re-linearising at the target scale (bounded by
+	// stepExtraIters): a coherent smear contracts — and its whole chain migrates
+	// toward the anchors — a bounded distance per solve (its GPS is rejected, so
+	// only the map priors resist), while an honest leg sits at a static
+	// equilibrium — its live GPS consensus holds it, so extra iterations move
+	// nothing.
 	const ratio = profile.gncSteps > 1 ? (profile.gncTargetM / profile.gncStartM) ** (1 / (profile.gncSteps - 1)) : 1;
 	let c = profile.gncStartM;
 	for (let step = 0; step < profile.gncSteps + profile.stepExtraIters; step++) {
-		if (step >= profile.gncSteps && (stepTargetM === null || pathLen() <= stepTargetM * 1.05)) break;
+		if (step >= profile.gncSteps && !evidenceViolated()) break;
 		for (let inner = 0; inner < profile.innerIters; inner++) {
-			const d = new Float64Array(m);
+			// Per-axis diagonals: the network attraction is ANISOTROPIC (normal-only,
+			// point-to-line), so east and north see different weights there. All
+			// other factors contribute identically to both.
+			const dE = new Float64Array(m);
+			const dN = new Float64Array(m);
 			const be = new Float64Array(m);
 			const bn = new Float64Array(m);
 			// Step-magnitude contraction, re-linearised at the current estimate:
@@ -900,31 +925,44 @@ export function reconstructWalk(
 				if (obsW[i] > 0) {
 					const rGps = Math.hypot(px - obsE[i], py - obsN[i]);
 					const wg = obsW[i] * gmWeight(rGps, c);
-					d[i] += wg;
+					dE[i] += wg;
+					dN[i] += wg;
 					be[i] += wg * obsE[i];
 					bn[i] += wg * obsN[i];
 				} else {
 					// Free state: weak, non-robust tether to its interpolated position on
 					// the raw corridor — keeps it from drifting off (over-route) without
 					// pinning it, so it can still bow around a building.
-					d[i] += wFreeTether;
+					dE[i] += wFreeTether;
+					dN[i] += wFreeTether;
 					be[i] += wFreeTether * seedE[i];
 					bn[i] += wFreeTether * seedN[i];
 				}
 				if (grid) {
 					// Adaptive walkable attraction — hug hard when close to a way,
-					// redescend to weak when far (the hard/soft unification).
+					// redescend to weak when far (the hard/soft unification). NORMAL-ONLY
+					// (point-to-line, diagonal approximation): the true penalty is on the
+					// distance PERPENDICULAR to the way, `wN·(n·(x−p))²` with n the way
+					// normal — an isotropic point spring also resists sliding ALONG the
+					// way, which drags every anchor/step correction to a crawl (measured:
+					// endpoint anchors converged ~10 m per solve against it). Keeping the
+					// east/north systems separable means dropping the nx·ny cross term:
+					// exact for an axis-aligned way, mildly soft for a diagonal one.
 					const near = grid.nearest(px, py, profile.networkRadiusM);
 					if (near) {
 						const wN = wNet * gmWeight(near.distM, profile.networkRobustM);
-						d[i] += wN;
-						be[i] += wN * near.x;
-						bn[i] += wN * near.y;
+						const nx = -near.ty;
+						const ny = near.tx;
+						dE[i] += wN * nx * nx;
+						dN[i] += wN * ny * ny;
+						be[i] += wN * nx * nx * near.x;
+						bn[i] += wN * ny * ny * near.y;
 					}
 					// Building clearance field — keep the state ≥ clearM off any wall.
 					const esc = grid.clearanceTarget(px, py, profile.buildingClearM);
 					if (esc) {
-						d[i] += wBuild;
+						dE[i] += wBuild;
+						dN[i] += wBuild;
 						be[i] += wBuild * esc.x;
 						bn[i] += wBuild * esc.y;
 					}
@@ -933,18 +971,20 @@ export function reconstructWalk(
 			// Endpoint anchors — reconstruct between confident truths.
 			if (evidence?.start) {
 				const w = 1 / (evidence.start.sigmaM * evidence.start.sigmaM);
-				d[0] += w;
+				dE[0] += w;
+				dN[0] += w;
 				be[0] += w * toE(evidence.start.lon);
 				bn[0] += w * toN(evidence.start.lat);
 			}
 			if (evidence?.end) {
 				const w = 1 / (evidence.end.sigmaM * evidence.end.sigmaM);
-				d[m - 1] += w;
+				dE[m - 1] += w;
+				dN[m - 1] += w;
 				be[m - 1] += w * toE(evidence.end.lon);
 				bn[m - 1] += w * toN(evidence.end.lat);
 			}
-			e = solvePCG(d, wSmooth, be, e, wEdge);
-			nn = solvePCG(d, wSmooth, bn, nn, wEdge);
+			e = solvePCG(dE, wSmooth, be, e, wEdge);
+			nn = solvePCG(dN, wSmooth, bn, nn, wEdge);
 			if (process.env.WALK_RECON_DEBUG === "1") {
 				let len = 0;
 				let maxAbs = 0;

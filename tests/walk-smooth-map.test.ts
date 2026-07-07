@@ -205,6 +205,50 @@ describe("reconstructWalk step-magnitude factor", () => {
 	});
 });
 
+describe("reconstructWalk endpoint anchors", () => {
+	const cl = 111_320 * Math.cos((LAT * Math.PI) / 180);
+	const at = (eastM: number, northM = 0) => ({ lat: LAT + dLat(northM), lon: -0.28 + eastM / cl });
+
+	it("pins the endpoints of a coherent smear to the anchors (#319, the 07-06 anchor bug)", () => {
+		// The Regent's Park signature: the walk truly ran station → clinic
+		// (~300 m), but the reacquire smear drifts 1.9 km. Both endpoints are
+		// confidently known (station entrance / stay centroid) and contradict
+		// the smear — with anchors + steps the reconstruction must start and
+		// end at them.
+		const fixes: WalkFix[] = [];
+		const n = 40;
+		for (let i = 0; i < n; i++) {
+			const f = i / (n - 1);
+			fixes.push({ ...at(1900 * f, 40 * Math.sin(f * Math.PI * 3)), ts: 1000 + i * 30, accuracyM: 15 });
+		}
+		const start = at(0);
+		const end = at(300);
+		const recon = reconstructWalk(fixes, straightGeo, undefined, {
+			start: { ...start, sigmaM: 15 },
+			end: { ...end, sigmaM: 15 },
+			stepsWalked: 400,
+		}) as Array<{ lat: number; lon: number }>;
+		expect(recon).not.toBeNull();
+		const dist = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) =>
+			Math.hypot((a.lat - b.lat) * 111_320, (a.lon - b.lon) * cl);
+		expect(dist(recon[0], start)).toBeLessThan(60);
+		expect(dist(recon[recon.length - 1], end)).toBeLessThan(60);
+	});
+
+	it("barely moves the endpoints of a legit leg whose fixes agree with the anchors", () => {
+		const fixes = jitteryFixes(30, 5);
+		const noAnchor = reconstructWalk(fixes, straightGeo) as Array<{ lat: number; lon: number }>;
+		const anchored = reconstructWalk(fixes, straightGeo, undefined, {
+			start: { lat: fixes[0].lat, lon: fixes[0].lon, sigmaM: 30 },
+			end: { lat: fixes[fixes.length - 1].lat, lon: fixes[fixes.length - 1].lon, sigmaM: 30 },
+		}) as Array<{ lat: number; lon: number }>;
+		const dist = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) =>
+			Math.hypot((a.lat - b.lat) * 111_320, (a.lon - b.lon) * cl);
+		expect(dist(anchored[0], noAnchor[0])).toBeLessThan(10);
+		expect(dist(anchored[anchored.length - 1], noAnchor[noAnchor.length - 1])).toBeLessThan(10);
+	});
+});
+
 describe("refineMatchedPath", () => {
 	// Perpendicular distance (m) from a point to a polyline — for the clamp check.
 	function distToPolyline(p: { lat: number; lon: number }, path: Array<{ lat: number; lon: number }>): number {
