@@ -13,12 +13,17 @@
  * stay recorded and can only shrink. Pure: no IO.
  */
 
+import { DEFAULT_RECONSTRUCT_PROFILE } from "../geo/walk-smooth-map.js";
+
 /** Referee metrics recorded per walk. null = honestly unmeasured (no building
  *  data in the fixture / no named-street truth over the leg). */
 export interface WalkBaselineEntry {
 	/** Episode start (unix seconds) — the walk's identity within its day. */
 	startTs: number;
-	/** Off-walkable p90 of the drawn line (m). */
+	/** Off-walkable p90 of the drawn line (m). RECORDED BUT NOT GATED (G0):
+	 *  the metric is snapper-biased — a phantom that hugs mapped ways scores
+	 *  well, and a reconstruction that rightly dissolves it scores worse. Kept
+	 *  as a display column and for history. */
 	p90M: number | null;
 	/** Corridor over-route (m). */
 	stallM: number;
@@ -28,12 +33,18 @@ export interface WalkBaselineEntry {
 	routeCorr: number | null;
 	/** Building-crossing while off every walkable way (m) — the true defect. */
 	offPathM: number | null;
+	/** Drawn length of the leg (m). */
+	lenM: number;
+	/** Pedometer displacement budget (steps × stride, m); null = no step data.
+	 *  Gated as EXCESS over budget×slack — the witness a coherent smear cannot
+	 *  fool (G0's step-budget consistency). */
+	budgetM: number | null;
 }
 
 /** date → walks. The committed floor (locally, beside the fixtures). */
 export type WalkBaseline = Record<string, WalkBaselineEntry[]>;
 
-export type WalkGateMetric = "p90" | "stall" | "speed" | "route" | "offPath";
+export type WalkGateMetric = "stall" | "speed" | "route" | "offPath" | "budget";
 
 export interface WalkGateDelta {
 	date: string;
@@ -58,10 +69,14 @@ export interface WalkGateResult {
 	unmeasured: { date: string; startTs: number; metric: WalkGateMetric }[];
 }
 
-/** p90 may rise this much (m) before it counts as a regression. */
-export const P90_EPS_M = 3;
 /** Over-route may rise this much (m). */
 export const STALL_EPS_M = 15;
+/** Step-budget excess (drawn length beyond budget×slack, m) may rise this
+ *  much. */
+export const BUDGET_EPS_M = 30;
+/** The same slack the reconstruction grants before its step factor acts —
+ *  the gate must not flag what the model deliberately tolerates. */
+export const BUDGET_SLACK_RATIO = DEFAULT_RECONSTRUCT_PROFILE.stepSlackRatio;
 /** Route-correctness may fall this much (fraction). */
 export const ROUTE_EPS = 0.1;
 /** Off-path building-crossing may rise this much (m). */
@@ -126,11 +141,18 @@ export function gateWalks(
 			// Higher-is-worse metrics with an epsilon; null on either side never
 			// compares (newly measured is not a regression; lost measurement is
 			// surfaced separately).
+			// Step-budget excess: how far the drawn length runs beyond what the
+			// pedometer allows (with the reconstruction's own slack). null budget
+			// on either side = no step data = honestly unmeasured.
+			const excess = (w: WalkBaselineEntry): number | null =>
+				w.budgetM === null || w.budgetM === undefined || w.lenM === undefined
+					? null
+					: Math.max(0, w.lenM - w.budgetM * BUDGET_SLACK_RATIO);
 			const axes: { metric: WalkGateMetric; base: number | null; now: number | null; eps: number; up: boolean }[] = [
-				{ metric: "p90", base: b.p90M, now: c.p90M, eps: P90_EPS_M, up: true },
 				{ metric: "stall", base: b.stallM, now: c.stallM, eps: STALL_EPS_M, up: true },
 				{ metric: "route", base: b.routeCorr, now: c.routeCorr, eps: ROUTE_EPS, up: false },
 				{ metric: "offPath", base: b.offPathM, now: c.offPathM, eps: OFFPATH_EPS_M, up: true },
+				{ metric: "budget", base: excess(b), now: excess(c), eps: BUDGET_EPS_M, up: true },
 			];
 			for (const a of axes) {
 				if (a.base === null) continue;

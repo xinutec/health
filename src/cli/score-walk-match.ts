@@ -210,6 +210,8 @@ function toBaseline(verdicts: readonly WalkVerdict[]): WalkBaseline {
 			speedKmh: v.candidateSpeedKmh,
 			routeCorr: v.candidateRouteCorr,
 			offPathM: v.candidateOffPathM,
+			lenM: v.candidateLenM,
+			budgetM: v.stepBudgetM,
 		};
 		if (!out[v.date]) out[v.date] = [];
 		out[v.date].push(entry);

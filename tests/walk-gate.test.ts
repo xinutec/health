@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	gateWalks,
 	OFFPATH_EPS_M,
-	P90_EPS_M,
 	ROUTE_EPS,
 	STALL_EPS_M,
 	WALK_SPEED_CEIL_KMH,
@@ -14,6 +13,8 @@ function walk(overrides: Partial<WalkBaselineEntry> = {}): WalkBaselineEntry {
 	return {
 		startTs: 1_000_000,
 		p90M: 8,
+		lenM: 500,
+		budgetM: 600,
 		stallM: 20,
 		speedKmh: 4.5,
 		routeCorr: 0.8,
@@ -37,21 +38,33 @@ describe("gateWalks", () => {
 		expect(r.unmeasured).toEqual([]);
 	});
 
-	it("flags a p90 rise beyond the epsilon as a regression", () => {
-		const r = gateWalks(day([walk({ p90M: 8 })]), day([walk({ p90M: 8 + P90_EPS_M + 1 })]));
+	it("does NOT gate off-walkable p90 — it is snapper-biased (G0): a smear hugging mapped ways scores well", () => {
+		// A reconstruction that dissolves a phantom legitimately sits further
+		// from the mapped ways than the way-hugging smear did. p90 stays a
+		// display column; it must never fail the gate.
+		const r = gateWalks(day([walk({ p90M: 8 })]), day([walk({ p90M: 60 })]));
+		expect(r.regressed).toEqual([]);
+		expect(r.improved).toEqual([]);
+	});
+
+	it("gates step-budget excess: drawn length may not grow further over the pedometer budget", () => {
+		// floor: 500 m drawn on a 600×slack budget → no excess. now: 1500 m → gross excess.
+		const r = gateWalks(day([walk({ lenM: 500, budgetM: 600 })]), day([walk({ lenM: 1500, budgetM: 600 })]));
 		expect(r.regressed).toHaveLength(1);
-		expect(r.regressed[0]).toMatchObject({ date: "2026-07-01", metric: "p90", base: 8 });
+		expect(r.regressed[0].metric).toBe("budget");
 	});
 
-	it("tolerates a p90 rise within the epsilon", () => {
-		const r = gateWalks(day([walk({ p90M: 8 })]), day([walk({ p90M: 8 + P90_EPS_M - 0.5 })]));
+	it("reports a shrinking budget excess as an improvement (re-bless signal)", () => {
+		const r = gateWalks(day([walk({ lenM: 2000, budgetM: 600 })]), day([walk({ lenM: 900, budgetM: 600 })]));
 		expect(r.regressed).toEqual([]);
+		expect(r.improved.some((i) => i.metric === "budget")).toBe(true);
 	});
 
-	it("reports a p90 drop beyond the epsilon as an improvement (re-bless signal)", () => {
-		const r = gateWalks(day([walk({ p90M: 12 })]), day([walk({ p90M: 12 - P90_EPS_M - 1 })]));
-		expect(r.regressed).toEqual([]);
-		expect(r.improved.some((i) => i.metric === "p90")).toBe(true);
+	it("tolerates budget-excess wobble within the epsilon and skips legs without step data", () => {
+		const wobble = gateWalks(day([walk({ lenM: 1000, budgetM: 600 })]), day([walk({ lenM: 1010, budgetM: 600 })]));
+		expect(wobble.regressed).toEqual([]);
+		const noBudget = gateWalks(day([walk({ budgetM: null })]), day([walk({ lenM: 5000, budgetM: null })]));
+		expect(noBudget.regressed).toEqual([]);
 	});
 
 	it("flags a stall rise beyond the epsilon; tolerates within", () => {
@@ -89,8 +102,8 @@ describe("gateWalks", () => {
 
 	it("never compares against a null baseline metric (newly measured ≠ regression)", () => {
 		const r = gateWalks(
-			day([walk({ p90M: null, routeCorr: null, offPathM: null })]),
-			day([walk({ p90M: 50, routeCorr: 0.1, offPathM: 40 })]),
+			day([walk({ routeCorr: null, offPathM: null, budgetM: null })]),
+			day([walk({ routeCorr: 0.1, offPathM: 40, lenM: 5000, budgetM: 100 })]),
 		);
 		expect(r.regressed).toEqual([]);
 	});
