@@ -155,6 +155,12 @@ class TrackCorridor {
 	private readonly nearM: number;
 	private readonly farM: number;
 	private readonly maxPenalty: number;
+	/** Lazily-built chord grid for `distTo`. The brute-force scan — every track
+	 *  chord, per graph edge — was a walkMatch hot spot (O(fixes) × O(edges)).
+	 *  `penalty` is flat beyond `farM`, so the query clamps there: exact below
+	 *  the clamp, and any value ≥ farM maps to the same penalty — byte-identical
+	 *  edge weights. */
+	private grid: SegmentNearGrid | null | undefined;
 	constructor(fixes: ReadonlyArray<{ lat: number; lon: number }>, profile: MatchProfile) {
 		this.pts = fixes.map((f) => ({ lat: f.lat, lon: f.lon }));
 		this.nearM = profile.corridorNearM;
@@ -164,12 +170,9 @@ class TrackCorridor {
 	distTo(lat: number, lon: number): number {
 		if (this.pts.length === 0) return 0;
 		if (this.pts.length === 1) return metersBetween(lat, lon, this.pts[0].lat, this.pts[0].lon);
-		let best = Number.POSITIVE_INFINITY;
-		for (let i = 1; i < this.pts.length; i++) {
-			const d = projectPointToSegment({ lat, lon }, this.pts[i - 1], this.pts[i]).distM;
-			if (d < best) best = d;
-		}
-		return best;
+		if (this.grid === undefined) this.grid = SegmentNearGrid.fromTrack(this.pts, this.farM);
+		if (this.grid === null) return 0;
+		return this.grid.nearestDist(lat, lon, this.farM);
 	}
 	penalty(distM: number): number {
 		if (distM <= this.nearM) return 1;
@@ -208,10 +211,17 @@ const BUILDING_GRID_CELL_M = 48;
 class BuildingPenalty {
 	private readonly rings: BuildingRing[];
 	private readonly boxes: Array<{ minLat: number; maxLat: number; minLon: number; maxLon: number }> = [];
-	private readonly buckets = new Map<string, number[]>();
+	private readonly buckets = new Map<number, number[]>();
 	private readonly cellLat: number;
 	private readonly cellLon: number;
 	private readonly memo = new Map<string, number>();
+	/** Fix grid for `fixSupports` — the brute scan of every fix per in-building
+	 *  sample was a hot spot. Cell = supportM, so a supporting fix (within
+	 *  supportM per axis) is always in the 3×3 neighbourhood; probed 5×5 for a
+	 *  safety ring against the equirectangular cos drift. Exact. */
+	private readonly fixBuckets = new Map<number, number[]>();
+	private readonly fixCellLat: number;
+	private readonly fixCellLon: number;
 	constructor(
 		buildings: readonly BuildingRing[],
 		private readonly fixes: ReadonlyArray<{ lat: number; lon: number }>,
@@ -236,17 +246,25 @@ class BuildingPenalty {
 			this.boxes.push({ minLat, maxLat, minLon, maxLon });
 			for (let cy = Math.floor(minLat / this.cellLat); cy <= Math.floor(maxLat / this.cellLat); cy++) {
 				for (let cx = Math.floor(minLon / this.cellLon); cx <= Math.floor(maxLon / this.cellLon); cx++) {
-					const key = `${cy},${cx}`;
+					const key = cellKey(cy, cx);
 					const b = this.buckets.get(key);
 					if (b) b.push(i);
 					else this.buckets.set(key, [i]);
 				}
 			}
 		}
+		this.fixCellLat = supportM / 111_320;
+		this.fixCellLon = supportM / (111_320 * Math.cos((refLat * Math.PI) / 180));
+		for (let i = 0; i < fixes.length; i++) {
+			const key = cellKey(Math.floor(fixes[i].lat / this.fixCellLat), Math.floor(fixes[i].lon / this.fixCellLon));
+			const b = this.fixBuckets.get(key);
+			if (b) b.push(i);
+			else this.fixBuckets.set(key, [i]);
+		}
 	}
 
 	private inAnyRing(lat: number, lon: number): boolean {
-		const bucket = this.buckets.get(`${Math.floor(lat / this.cellLat)},${Math.floor(lon / this.cellLon)}`);
+		const bucket = this.buckets.get(cellKey(Math.floor(lat / this.cellLat), Math.floor(lon / this.cellLon)));
 		if (!bucket) return false;
 		for (const i of bucket) {
 			const b = this.boxes[i];
@@ -257,10 +275,68 @@ class BuildingPenalty {
 	}
 
 	private fixSupports(lat: number, lon: number): boolean {
-		for (const f of this.fixes) {
-			if (metersBetween(lat, lon, f.lat, f.lon) <= this.supportM) return true;
+		const cy = Math.floor(lat / this.fixCellLat);
+		const cx = Math.floor(lon / this.fixCellLon);
+		for (let dy = -2; dy <= 2; dy++) {
+			for (let dx = -2; dx <= 2; dx++) {
+				const bucket = this.fixBuckets.get(cellKey(cy + dy, cx + dx));
+				if (!bucket) continue;
+				for (const i of bucket) {
+					const f = this.fixes[i];
+					if (metersBetween(lat, lon, f.lat, f.lon) <= this.supportM) return true;
+				}
+			}
 		}
 		return false;
+	}
+
+	/** Occupied building cells dilated by one ring — `nearAnyBucket` probes ONE
+	 *  key per edge sample instead of a 3×3 neighbourhood. Built lazily on the
+	 *  first factor() call (matchImprovesDisplay-only geometries never pay). */
+	private dilated: Set<number> | null = null;
+
+	/** True when some 3 m sample of the edge COULD hit a non-empty building
+	 *  bucket — probed at cell granularity (half-cell steps against the dilated
+	 *  occupancy, which covers every cell a finer sample can land in), so an
+	 *  edge nowhere near a building skips the 3 m sampling entirely.
+	 *  Conservative: never false when the fine loop would find a ring. */
+	private nearAnyBucket(aLat: number, aLon: number, bLat: number, bLon: number, lenM: number): boolean {
+		if (this.dilated === null) {
+			this.dilated = new Set<number>();
+			for (const key of this.buckets.keys()) {
+				// Invert cellKey: |cx| < 2^21 (half the multiplier), so rounding the
+				// quotient recovers cy exactly, for negative cx too.
+				const cy = Math.round(key / 4_194_304);
+				const cx = key - cy * 4_194_304;
+				for (let dy = -1; dy <= 1; dy++) {
+					for (let dx = -1; dx <= 1; dx++) this.dilated.add(cellKey(cy + dy, cx + dx));
+				}
+			}
+		}
+		const n = Math.max(1, Math.ceil((lenM * 2) / BUILDING_GRID_CELL_M));
+		for (let k = 0; k <= n; k++) {
+			const t = k / n;
+			const cy = Math.floor((aLat + (bLat - aLat) * t) / this.cellLat);
+			const cx = Math.floor((aLon + (bLon - aLon) * t) / this.cellLon);
+			if (this.dilated.has(cellKey(cy, cx))) return true;
+		}
+		return false;
+	}
+
+	/** The edge test itself, unmemoised — graph construction calls this once per
+	 *  edge (a memo would never hit; building its string key dominated the old
+	 *  profile). */
+	factorOnce(aLat: number, aLon: number, bLat: number, bLon: number): number {
+		const len = metersBetween(aLat, aLon, bLat, bLon);
+		if (!this.nearAnyBucket(aLat, aLon, bLat, bLon, len)) return 1;
+		const n = Math.max(1, Math.ceil(len / BUILDING_SAMPLE_STEP_M));
+		for (let k = 0; k <= n; k++) {
+			const t = k / n;
+			const lat = aLat + (bLat - aLat) * t;
+			const lon = aLon + (bLon - aLon) * t;
+			if (this.inAnyRing(lat, lon) && !this.fixSupports(lat, lon)) return this.crossFactor;
+		}
+		return 1;
 	}
 
 	/** Weight multiplier for the edge a→b: `crossFactor` when some in-building
@@ -270,18 +346,7 @@ class BuildingPenalty {
 		const key = `${aLat},${aLon},${bLat},${bLon}`;
 		const hit = this.memo.get(key);
 		if (hit !== undefined) return hit;
-		let out = 1;
-		const len = metersBetween(aLat, aLon, bLat, bLon);
-		const n = Math.max(1, Math.ceil(len / BUILDING_SAMPLE_STEP_M));
-		for (let k = 0; k <= n; k++) {
-			const t = k / n;
-			const lat = aLat + (bLat - aLat) * t;
-			const lon = aLon + (bLon - aLon) * t;
-			if (this.inAnyRing(lat, lon) && !this.fixSupports(lat, lon)) {
-				out = this.crossFactor;
-				break;
-			}
-		}
+		const out = this.factorOnce(aLat, aLon, bLat, bLon);
 		this.memo.set(key, out);
 		return out;
 	}
@@ -331,6 +396,155 @@ export function projectPointToSegment(p: Pt, a: Pt, b: Pt): { lat: number; lon: 
 	return { lat, lon, t, distM };
 }
 
+/** Integer key for a grid cell — the hot grids probe buckets millions of times
+ *  per day and template-string keys were a measurable slice of matcher self time
+ *  (plus the GC of the throwaway strings). `|cx| < 2^21` holds for every cell
+ *  size in use (the smallest, 15 m, gives |cx| ≤ ~1.4 M at the equator), so the
+ *  2^22 multiplier keys the pair collision-free within double precision. */
+function cellKey(cy: number, cx: number): number {
+	return cy * 4_194_304 + cx;
+}
+
+/**
+ * Exact nearest-segment queries over a set of polyline chords, via a grid of
+ * rasterised chord samples and an expanding-ring search.
+ *
+ * The brute-force alternative — project the query onto EVERY chord — is what
+ * made `nearestRoadDist` and `TrackCorridor.distTo` the walkMatch hot spots
+ * (O(chords) per query, called per drawn-line sample / per graph edge; measured
+ * ~4 s/day). The grid answers the same query in near-constant time and is
+ * EXACT, not approximate: rings are scanned outward until no unscanned chord
+ * can possibly beat the best projection found (unscanned ⇒ every rasterised
+ * sample ≥ (k−1)·cell away ⇒ true distance ≥ (k−1)·cell − cell/4, the
+ * rasterisation step being ≤ cell/2 — the 1.5-cell stop margin also absorbs
+ * the equirectangular cos drift across a leg-sized disc). Same floats in, min
+ * of the same projections out ⇒ byte-identical results.
+ *
+ * `clampM` truncates the search for callers that only care up to a saturation
+ * distance (the corridor penalty is flat beyond `corridorFarM`): the query
+ * returns `min(trueDist, clampM)`, exact below the clamp.
+ */
+export class SegmentNearGrid {
+	private readonly chords: Array<{ a: Pt; b: Pt }>;
+	private readonly buckets = new Map<number, number[]>();
+	private readonly cellM: number;
+	private readonly cellLat: number;
+	private readonly cellLon: number;
+	private readonly seenGen: Uint32Array;
+	private gen = 0;
+	private minCy = 0;
+	private maxCy = 0;
+	private minCx = 0;
+	private maxCx = 0;
+
+	constructor(chords: Array<{ a: Pt; b: Pt }>, cellM: number, refLat: number) {
+		this.chords = chords;
+		this.cellM = cellM;
+		this.cellLat = cellM / 111_320;
+		this.cellLon = cellM / (111_320 * Math.cos((refLat * Math.PI) / 180));
+		this.seenGen = new Uint32Array(chords.length);
+		let first = true;
+		for (let i = 0; i < chords.length; i++) {
+			const { a, b } = chords[i];
+			const steps = Math.max(1, Math.ceil((metersBetween(a.lat, a.lon, b.lat, b.lon) * 2) / cellM));
+			let lastKey = Number.NaN;
+			for (let k = 0; k <= steps; k++) {
+				const f = k / steps;
+				const cy = Math.floor((a.lat + f * (b.lat - a.lat)) / this.cellLat);
+				const cx = Math.floor((a.lon + f * (b.lon - a.lon)) / this.cellLon);
+				if (first || cy < this.minCy) this.minCy = cy;
+				if (first || cy > this.maxCy) this.maxCy = cy;
+				if (first || cx < this.minCx) this.minCx = cx;
+				if (first || cx > this.maxCx) this.maxCx = cx;
+				first = false;
+				const key = cellKey(cy, cx);
+				if (key === lastKey) continue;
+				lastKey = key;
+				const b2 = this.buckets.get(key);
+				if (b2) {
+					if (b2[b2.length - 1] !== i) b2.push(i);
+				} else this.buckets.set(key, [i]);
+			}
+		}
+	}
+
+	/** From a set of OSM ways (each coord pair becomes a chord). */
+	static fromWays(ways: readonly OsmRoadWay[], cellM: number): SegmentNearGrid | null {
+		const chords: Array<{ a: Pt; b: Pt }> = [];
+		for (const w of ways) {
+			for (let i = 1; i < w.coords.length; i++) {
+				chords.push({
+					a: { lat: w.coords[i - 1][0], lon: w.coords[i - 1][1] },
+					b: { lat: w.coords[i][0], lon: w.coords[i][1] },
+				});
+			}
+		}
+		if (chords.length === 0) return null;
+		return new SegmentNearGrid(chords, cellM, chords[0].a.lat);
+	}
+
+	/** From an ordered track polyline (consecutive point pairs become chords). */
+	static fromTrack(pts: readonly Pt[], cellM: number): SegmentNearGrid | null {
+		if (pts.length < 2) return null;
+		const chords: Array<{ a: Pt; b: Pt }> = [];
+		for (let i = 1; i < pts.length; i++) chords.push({ a: pts[i - 1], b: pts[i] });
+		return new SegmentNearGrid(chords, cellM, pts[0].lat);
+	}
+
+	/** Exact `min(distance to nearest chord, clampM)`. */
+	nearestDist(lat: number, lon: number, clampM = Number.POSITIVE_INFINITY): number {
+		const cy = Math.floor(lat / this.cellLat);
+		const cx = Math.floor(lon / this.cellLon);
+		// Rings past the occupied bounding box (plus one) cannot contain a bucket.
+		const maxK = Math.max(cy - this.minCy, this.maxCy - cy, cx - this.minCx, this.maxCx - cx, 0) + 1;
+		this.gen++;
+		const p: Pt = { lat, lon };
+		let best = Number.POSITIVE_INFINITY;
+		for (let k = 0; k <= maxK; k++) {
+			if ((k - 1.5) * this.cellM >= Math.min(best, clampM)) break;
+			// Cells at Chebyshev distance exactly k.
+			const yLo = cy - k;
+			const yHi = cy + k;
+			for (let x = cx - k; x <= cx + k; x++) {
+				best = this.probe(cellKey(yLo, x), p, best);
+				if (k > 0) best = this.probe(cellKey(yHi, x), p, best);
+			}
+			for (let y = yLo + 1; y <= yHi - 1; y++) {
+				best = this.probe(cellKey(y, cx - k), p, best);
+				best = this.probe(cellKey(y, cx + k), p, best);
+			}
+		}
+		return Math.min(best, clampM);
+	}
+
+	private probe(key: number, p: Pt, best: number): number {
+		const bucket = this.buckets.get(key);
+		if (!bucket) return best;
+		for (const i of bucket) {
+			if (this.seenGen[i] === this.gen) continue;
+			this.seenGen[i] = this.gen;
+			const d = segmentDistM(p, this.chords[i].a, this.chords[i].b);
+			if (d < best) best = d;
+		}
+		return best;
+	}
+}
+
+/** {@link projectPointToSegment}'s distance only, allocation-free — the grid
+ *  probe runs it per candidate chord on the hot path and the projection object
+ *  was pure GC churn there. Identical arithmetic, identical floats. */
+function segmentDistM(p: Pt, a: Pt, b: Pt): number {
+	const cosLat = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+	const bx = (b.lon - a.lon) * 111_320 * cosLat;
+	const by = (b.lat - a.lat) * 111_320;
+	const px = (p.lon - a.lon) * 111_320 * cosLat;
+	const py = (p.lat - a.lat) * 111_320;
+	const len2 = bx * bx + by * by;
+	let t = len2 === 0 ? 0 : (px * bx + py * by) / len2;
+	t = Math.max(0, Math.min(1, t));
+	return metersBetween(p.lat, p.lon, a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon));
+}
+
 /**
  * Fraction of `fixes` whose nearest way in `geo` is further than `thresholdM`.
  * A low value means the raw GPS already hugs the network; a high value means the
@@ -358,8 +572,16 @@ export function fractionOffRoad(fixes: readonly RoadFix[], geo: RoadGeometry, th
 	return off / fixes.length;
 }
 
-/** Nearest distance (m) from a point to any way in `geo`. */
-export function nearestRoadDist(p: Pt, geo: RoadGeometry): number {
+/** Grid cell (m) for way-distance queries — off-network excursions of interest
+ *  are a few tens of metres, so most queries resolve within a ring or two. */
+const WAY_DIST_GRID_CELL_M = 64;
+
+/** Nearest distance (m) from a point to any way in `geo`. `index`, when the
+ *  caller has one (built once per geometry via {@link SegmentNearGrid.fromWays}),
+ *  answers in near-constant time; without it this is a full scan of every way
+ *  chord — fine for a one-off query, the hot spot when called per sample. */
+export function nearestRoadDist(p: Pt, geo: RoadGeometry, index?: SegmentNearGrid | null): number {
+	if (index) return index.nearestDist(p.lat, p.lon);
 	let best = Number.POSITIVE_INFINITY;
 	for (const w of geo.ways) {
 		for (let i = 1; i < w.coords.length; i++) {
@@ -381,11 +603,19 @@ export function nearestRoadDist(p: Pt, geo: RoadGeometry): number {
  * that cuts across a block. The map draws the chords, so the chords are what we
  * must measure. Pure.
  */
-export function maxPolylineOffRoad(path: readonly Pt[], geo: RoadGeometry, stepM = 15): number {
+export function maxPolylineOffRoad(
+	path: readonly Pt[],
+	geo: RoadGeometry,
+	stepM = 15,
+	index?: SegmentNearGrid | null,
+): number {
 	if (path.length === 0 || geo.ways.length === 0) return 0;
+	// One grid over the ways amortises across every sample of the drawn line —
+	// the per-sample full scan was the display-gate hot spot.
+	const idx = index ?? SegmentNearGrid.fromWays(geo.ways, WAY_DIST_GRID_CELL_M);
 	let worst = 0;
 	const consider = (p: Pt): void => {
-		const d = nearestRoadDist(p, geo);
+		const d = nearestRoadDist(p, geo, idx);
 		if (d > worst) worst = d;
 	};
 	for (let i = 0; i < path.length; i++) {
@@ -453,8 +683,9 @@ export function matchImprovesDisplay(
 	needsMatchM: number,
 	maxStrayM: number,
 ): DisplayMatchDecision {
-	const rawOffRoadM = maxPolylineOffRoad(fixes, geo);
-	const matchedOffRoadM = maxPolylineOffRoad(matchedPath, geo);
+	const index = geo.ways.length > 0 ? SegmentNearGrid.fromWays(geo.ways, WAY_DIST_GRID_CELL_M) : null;
+	const rawOffRoadM = maxPolylineOffRoad(fixes, geo, undefined, index);
+	const matchedOffRoadM = maxPolylineOffRoad(matchedPath, geo, undefined, index);
 	const strayM = quantilePointDistToPolyline(fixes, matchedPath, STRAY_QUANTILE);
 	const use = rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM && strayM <= maxStrayM;
 	return { use, rawOffRoadM, matchedOffRoadM, strayM };
@@ -471,10 +702,17 @@ interface RoadSegment {
 
 interface RoadGraph {
 	vertices: Pt[];
-	adj: Array<Array<{ to: number; w: number }>>;
+	/** Adjacency: neighbour vertex + undirected edge id (weights via `weightOf`). */
+	adj: Array<Array<{ to: number; e: number }>>;
 	/** Real way segments — the candidate-projection surface. Excludes gap-bridge
 	 *  edges, which are graph connectivity only. */
 	segments: RoadSegment[];
+	/** Corridor- and building-weighted cost of edge `e`, computed on FIRST read
+	 *  and memoised. Dijkstra only relaxes the edges it actually reaches — a
+	 *  radius-bounded region near the fixes — while the eager version paid the
+	 *  corridor + building test for every edge in the disc up front (measured
+	 *  the dominant walkMatch cost). Same floats on every edge that is read. */
+	weightOf(e: number): number;
 }
 
 /**
@@ -490,9 +728,14 @@ function buildRoadGraph(
 	bpen: BuildingPenalty | null = null,
 ): RoadGraph {
 	const vertices: Pt[] = [];
-	const adj: Array<Array<{ to: number; w: number }>> = [];
+	const adj: Array<Array<{ to: number; e: number }>> = [];
 	const segments: RoadSegment[] = [];
 	const idByKey = new Map<string, number>();
+	// Raw endpoint coords per edge — the ORIGINAL way coords, not the deduped
+	// vertex coords (a shared node keeps the first way's floats; the weight must
+	// keep using this way's own, as the eager version did).
+	const edgeCoords: number[] = [];
+	const weights: Array<number | undefined> = [];
 
 	const vertexId = (lat: number, lon: number): number => {
 		const key = `${lat.toFixed(profile.vertexDp)},${lon.toFixed(profile.vertexDp)}`;
@@ -505,10 +748,13 @@ function buildRoadGraph(
 		}
 		return id;
 	};
-	const addEdge = (a: number, b: number, w: number): void => {
+	const addEdge = (a: number, b: number, aLat: number, aLon: number, bLat: number, bLon: number): void => {
 		if (a === b) return;
-		adj[a].push({ to: b, w });
-		adj[b].push({ to: a, w });
+		const e = weights.length;
+		weights.push(undefined);
+		edgeCoords.push(aLat, aLon, bLat, bLon);
+		adj[a].push({ to: b, e });
+		adj[b].push({ to: a, e });
 	};
 
 	for (const way of ways) {
@@ -518,12 +764,7 @@ function buildRoadGraph(
 		for (const [lat, lon] of way.coords) {
 			const id = vertexId(lat, lon);
 			if (prev >= 0 && id !== prev) {
-				// Edge weight is corridor-penalised (routing cost), times the
-				// building factor for an unsupported through-building edge; the
-				// segment's `lengthM` is the raw metric length (candidate offsets +
-				// the physical route length reported to the transition model).
-				const bf = bpen ? bpen.factor(prevLat, prevLon, lat, lon) : 1;
-				addEdge(prev, id, corridor.edgeWeight(prevLat, prevLon, lat, lon) * bf);
+				addEdge(prev, id, prevLat, prevLon, lat, lon);
 				segments.push({ u: prev, v: id, lengthM: metersBetween(prevLat, prevLon, lat, lon), wayName: way.name });
 			}
 			prev = id;
@@ -532,8 +773,27 @@ function buildRoadGraph(
 		}
 	}
 
-	bridgeGaps(vertices, adj, corridor, profile.gapBridgeM, bpen);
-	return { vertices, adj, segments };
+	bridgeGaps(vertices, adj, profile.gapBridgeM, addEdge);
+
+	// Edge weight is corridor-penalised (routing cost), times the building
+	// factor for an unsupported through-building edge; the segment's `lengthM`
+	// stays the raw metric length (candidate offsets + the physical route
+	// length reported to the transition model).
+	const weightOf = (e: number): number => {
+		let w = weights[e];
+		if (w === undefined) {
+			const k = e * 4;
+			const aLat = edgeCoords[k];
+			const aLon = edgeCoords[k + 1];
+			const bLat = edgeCoords[k + 2];
+			const bLon = edgeCoords[k + 3];
+			const bf = bpen ? bpen.factorOnce(aLat, aLon, bLat, bLon) : 1;
+			w = corridor.edgeWeight(aLat, aLon, bLat, bLon) * bf;
+			weights[e] = w;
+		}
+		return w;
+	};
+	return { vertices, adj, segments, weightOf };
 }
 
 /** Add edges between vertices of different ways within `gapBridgeM` that do not
@@ -541,18 +801,17 @@ function buildRoadGraph(
  *  linear in vertex count. */
 function bridgeGaps(
 	vertices: Pt[],
-	adj: Array<Array<{ to: number; w: number }>>,
-	corridor: TrackCorridor,
+	adj: Array<Array<{ to: number; e: number }>>,
 	gapBridgeM: number,
-	bpen: BuildingPenalty | null = null,
+	addEdge: (a: number, b: number, aLat: number, aLon: number, bLat: number, bLon: number) => void,
 ): void {
 	if (vertices.length === 0) return;
 	const cellLat = gapBridgeM / 111_320;
 	const midLat = vertices[0].lat;
 	const cellLon = gapBridgeM / (111_320 * Math.cos((midLat * Math.PI) / 180));
-	const buckets = new Map<string, number[]>();
+	const buckets = new Map<number, number[]>();
 	for (let i = 0; i < vertices.length; i++) {
-		const key = `${Math.floor(vertices[i].lat / cellLat)},${Math.floor(vertices[i].lon / cellLon)}`;
+		const key = cellKey(Math.floor(vertices[i].lat / cellLat), Math.floor(vertices[i].lon / cellLon));
 		const b = buckets.get(key);
 		if (b) b.push(i);
 		else buckets.set(key, [i]);
@@ -563,17 +822,19 @@ function bridgeGaps(
 		const baseLon = Math.floor(v.lon / cellLon);
 		for (let dLat = -1; dLat <= 1; dLat++) {
 			for (let dLon = -1; dLon <= 1; dLon++) {
-				const b = buckets.get(`${baseLat + dLat},${baseLon + dLon}`);
+				const b = buckets.get(cellKey(baseLat + dLat, baseLon + dLon));
 				if (!b) continue;
 				for (const j of b) {
 					if (j <= i) continue;
+					// Per-axis quick reject before the trig-bearing distance. The 1%
+					// slack keeps it strictly conservative against the equirectangular
+					// cos drift between the pair's own midpoint and the grid's refLat.
+					if (Math.abs(vertices[j].lat - v.lat) > cellLat * 1.01 || Math.abs(vertices[j].lon - v.lon) > cellLon * 1.01)
+						continue;
 					const gap = metersBetween(v.lat, v.lon, vertices[j].lat, vertices[j].lon);
 					if (gap > gapBridgeM) continue;
 					if (adj[i].some((e) => e.to === j)) continue;
-					const bf = bpen ? bpen.factor(v.lat, v.lon, vertices[j].lat, vertices[j].lon) : 1;
-					const w = corridor.edgeWeight(v.lat, v.lon, vertices[j].lat, vertices[j].lon) * bf;
-					adj[i].push({ to: j, w });
-					adj[j].push({ to: i, w });
+					addEdge(i, j, v.lat, v.lon, vertices[j].lat, vertices[j].lon);
 				}
 			}
 		}
@@ -587,7 +848,7 @@ function bridgeGaps(
 class SegmentIndex {
 	private readonly cellLat: number;
 	private readonly cellLon: number;
-	private readonly buckets = new Map<string, number[]>();
+	private readonly buckets = new Map<number, number[]>();
 
 	constructor(vertices: readonly Pt[], segments: readonly RoadSegment[], cellM: number, refLat: number) {
 		this.cellLat = cellM / 111_320;
@@ -597,7 +858,7 @@ class SegmentIndex {
 			const a = vertices[s.u];
 			const b = vertices[s.v];
 			const steps = Math.max(1, Math.ceil((s.lengthM * 2) / cellM));
-			const seen = new Set<string>();
+			const seen = new Set<number>();
 			for (let k = 0; k <= steps; k++) {
 				const f = k / steps;
 				const key = this.key(a.lat + f * (b.lat - a.lat), a.lon + f * (b.lon - a.lon));
@@ -610,8 +871,8 @@ class SegmentIndex {
 		}
 	}
 
-	private key(lat: number, lon: number): string {
-		return `${Math.floor(lat / this.cellLat)},${Math.floor(lon / this.cellLon)}`;
+	private key(lat: number, lon: number): number {
+		return cellKey(Math.floor(lat / this.cellLat), Math.floor(lon / this.cellLon));
 	}
 
 	/** Segment indices whose cell neighbourhood covers `(lat, lon)`. */
@@ -621,7 +882,7 @@ class SegmentIndex {
 		const out = new Set<number>();
 		for (let dLat = -1; dLat <= 1; dLat++) {
 			for (let dLon = -1; dLon <= 1; dLon++) {
-				const b = this.buckets.get(`${baseLat + dLat},${baseLon + dLon}`);
+				const b = this.buckets.get(cellKey(baseLat + dLat, baseLon + dLon));
 				if (b) for (const i of b) out.add(i);
 			}
 		}
@@ -752,7 +1013,7 @@ class LazyDijkstra {
 				return;
 			}
 			for (const e of this.graph.adj[u]) {
-				const nd = cur.p + e.w;
+				const nd = cur.p + this.graph.weightOf(e.e);
 				if (nd < this.dist[e.to]) {
 					this.dist[e.to] = nd;
 					this.prev[e.to] = u;
