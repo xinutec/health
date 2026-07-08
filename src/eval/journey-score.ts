@@ -248,7 +248,8 @@ export function journeyShapeResults(
 		// entirely beyond the journey window must not fail the match. A leg
 		// that crosses the boundary still overlaps and is kept.
 		const clipped = match === null ? null : match.legs.filter((l) => l.endTs > gt.startTs && l.startTs < gt.endTs);
-		const actualShape = clipped !== null && clipped.length > 0 ? modeShape({ ...match!, legs: clipped }) : null;
+		const actualShape =
+			match !== null && clipped !== null && clipped.length > 0 ? modeShape({ ...match, legs: clipped }) : null;
 		const overlap =
 			match === null ? 0 : Math.max(0, Math.min(gt.endTs, match.endTs) - Math.max(gt.startTs, match.startTs));
 		const uncovered = gt.endTs - gt.startTs - overlap;
