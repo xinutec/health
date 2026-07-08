@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { NearbyStation } from "../src/geo/osm.js";
-import { TUBE_HOP_MIN_AVG_KMH, upgradeTubeHops } from "../src/geo/passes/tube-hop.js";
+import {
+	TUBE_HOP_BLACKOUT_MIN_KMH,
+	TUBE_HOP_BLACKOUT_MIN_SHARE,
+	TUBE_HOP_MIN_AVG_KMH,
+	TUBE_HOP_SURFACE_MAX_KMH,
+	upgradeTubeHops,
+} from "../src/geo/passes/tube-hop.js";
 import type { TransportMode } from "../src/geo/segments.js";
 
 /**
@@ -161,5 +167,114 @@ describe("upgradeTubeHops", () => {
 	it("exposes the bus-pace threshold as a calibration constant", () => {
 		expect(TUBE_HOP_MIN_AVG_KMH).toBeGreaterThan(20);
 		expect(TUBE_HOP_MIN_AVG_KMH).toBeLessThan(35);
+	});
+});
+
+describe("upgradeTubeHops — blackout hop (the one-stop rescue)", () => {
+	const lk = lookups([STATION_A, STATION_B, STATION_C]);
+
+	/** The 2026-07-07 shape: a ONE-stop sub-surface hop. The rider walks down
+	 *  to the platform (fixes jitter at station A at walking pace), the ride
+	 *  itself is a GPS blackout (tunnel), and the phone reacquires at station B
+	 *  — so nearly all of the leg's displacement sits in a single inter-fix
+	 *  teleport. Dwell drags avgSpeed to ~19 km/h, under the speed gate; the
+	 *  bus matcher then claims the leg because the tube runs under the bus
+	 *  corridor and the interpolated blackout line passes the bus stops. */
+	function blackoutLeg(
+		a: Station,
+		b: Station,
+		avgSpeed = 19,
+	): { seg: Seg; points: Array<{ ts: number; lat: number; lon: number }> } {
+		const jitter = 0.00013; // ~9 m — platform-access shuffling at walking pace
+		const points = [
+			{ ts: T0, lat: a.lat, lon: a.lon },
+			{ ts: T0 + 20, lat: a.lat + jitter, lon: a.lon },
+			{ ts: T0 + 40, lat: a.lat, lon: a.lon + jitter },
+			{ ts: T0 + 60, lat: a.lat + jitter, lon: a.lon + jitter },
+			{ ts: T0 + 80, lat: a.lat, lon: a.lon },
+			// a surviving poor-accuracy fix mid-blackout: still at A, 61 s later
+			{ ts: T0 + 141, lat: a.lat + jitter, lon: a.lon },
+			// reacquire at B: the whole ride in one 16 s hop
+			{ ts: T0 + 157, lat: b.lat, lon: b.lon },
+			{ ts: T0 + 171, lat: b.lat + jitter, lon: b.lon },
+		];
+		return { seg: { startTs: T0, endTs: T0 + 171, mode: "driving", avgSpeed }, points };
+	}
+
+	it("upgrades a slow station-to-station leg whose displacement is one blackout teleport", async () => {
+		const { seg, points } = blackoutLeg(STATION_A, STATION_B);
+		const [out] = await upgradeTubeHops([seg], points, lk.stationsLookup, lk.linesLookup);
+		expect(out.mode).toBe("train");
+		expect(out.refinedMode).toBe("train");
+		expect(out.wayName).toBe("Deepwell → Carfax");
+		expect(out.refinedReason).toMatch(/tube hop blackout/);
+	});
+
+	it("leaves a bus with a mid-ride GPS hole as driving (observed portions move at bus pace)", async () => {
+		// Continuous progress A→B at ~17 km/h with one 90 s hole. The hole's
+		// displacement share is under the threshold AND the observed portions
+		// move at vehicle pace — both say "surface vehicle, just lost signal".
+		const a = STATION_A;
+		const b = STATION_B;
+		const frac = (f: number) => ({ lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f });
+		const points = [
+			{ ts: T0, ...frac(0) },
+			{ ts: T0 + 30, ...frac(0.11) },
+			{ ts: T0 + 60, ...frac(0.22) },
+			// 90 s hole while the bus keeps rolling
+			{ ts: T0 + 150, ...frac(0.8) },
+			{ ts: T0 + 180, ...frac(1) },
+		];
+		const seg: Seg = { startTs: T0, endTs: T0 + 180, mode: "driving", avgSpeed: 19 };
+		const [out] = await upgradeTubeHops([seg], points, lk.stationsLookup, lk.linesLookup);
+		expect(out.mode).toBe("driving");
+		expect(out.wayName).toBeUndefined();
+	});
+
+	it("leaves a blackout leg as driving when the endpoints share no line", async () => {
+		const { seg, points } = blackoutLeg(STATION_A, STATION_C);
+		const [out] = await upgradeTubeHops([seg], points, lk.stationsLookup, lk.linesLookup);
+		expect(out.mode).toBe("driving");
+	});
+
+	it("leaves a blackout leg as driving when only one endpoint is a station", async () => {
+		const offRoad = { lat: LAT + 0.02, lon: -0.13, name: "nowhere", lines: [] as string[] };
+		const { seg, points } = blackoutLeg(offRoad, STATION_B);
+		const [out] = await upgradeTubeHops([seg], points, lk.stationsLookup, lk.linesLookup);
+		expect(out.mode).toBe("driving");
+	});
+
+	it("resolves the board station from the blackout boundary, not the lag-polluted leg start", async () => {
+		// The 2026-07-07 second-order bug: the leg's FIRST Kalman fix trails the
+		// preceding walk (filter lag) and lands nearer a decoy station; the
+		// platform-access cluster — where the observation actually dies — sits at
+		// the true board station. Last-seen-before-the-tunnel is the board
+		// evidence, first-seen-after is the alight evidence.
+		const decoy = { lat: LAT - 0.0015, lon: -0.1415, name: "Decoy Cross", lines: STATION_A.lines };
+		const lk2 = lookups([STATION_A, STATION_B, decoy]);
+		const jitter = 0.00013;
+		const a = STATION_A;
+		const b = STATION_B;
+		const points = [
+			// leg start: walk-lag fix ~130 m west of A, within 120 m of the decoy
+			{ ts: T0, lat: decoy.lat + 0.0003, lon: decoy.lon + 0.0003 },
+			// platform-access cluster AT station A
+			{ ts: T0 + 30, lat: a.lat, lon: a.lon },
+			{ ts: T0 + 60, lat: a.lat + jitter, lon: a.lon },
+			{ ts: T0 + 141, lat: a.lat, lon: a.lon + jitter },
+			// the blackout hop
+			{ ts: T0 + 157, lat: b.lat, lon: b.lon },
+			{ ts: T0 + 171, lat: b.lat + jitter, lon: b.lon },
+		];
+		const seg: Seg = { startTs: T0, endTs: T0 + 171, mode: "driving", avgSpeed: 19 };
+		const [out] = await upgradeTubeHops([seg], points, lk2.stationsLookup, lk2.linesLookup);
+		expect(out.mode).toBe("train");
+		expect(out.wayName).toBe("Deepwell → Carfax");
+	});
+
+	it("exposes the blackout thresholds as calibration constants", () => {
+		expect(TUBE_HOP_BLACKOUT_MIN_SHARE).toBeGreaterThan(0.5);
+		expect(TUBE_HOP_BLACKOUT_MIN_KMH).toBeGreaterThan(15);
+		expect(TUBE_HOP_SURFACE_MAX_KMH).toBeLessThan(12);
 	});
 });
