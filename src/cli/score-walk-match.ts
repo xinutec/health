@@ -33,16 +33,13 @@ import { onNamedWayFraction } from "../eval/walk-route-correctness.js";
 import { stepsInWindow } from "../geo/biometrics.js";
 import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { BuildingFootprint } from "../geo/osm-local.js";
-import { walkEndpointAnchors } from "../geo/pedestrian-match-annotate.js";
 import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
-import { effectiveMode } from "../geo/segment-util.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import {
 	countSharpTurns,
 	DEFAULT_RECONSTRUCT_PROFILE,
 	type MapSmoothProfile,
 	REFINE_MATCHED_PROFILE,
-	reconstructWalk,
 	refineMatchedPath,
 	type WalkFix,
 } from "../geo/walk-smooth-map.js";
@@ -238,8 +235,17 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 	// Fresh adapter per arm (stateless, but explicit).
 	const offInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
 	const onInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
+	const reconInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
 	const off = await computeVelocityFromInputs(offInputs, { walkMatch: false });
 	const on = await computeVelocityFromInputs(onInputs, { walkMatch: true });
+	// The SMOOTHER-PRIMARY arm as the PIPELINE would ship it (#330): the same
+	// walkMatch pass with `walkDraw: "recon"` — reconstructWalk (cleaned fixes,
+	// endpoint anchors, pedometer budget) as the draw, raw fallback when it
+	// bails. Replaying through the pipeline (not a hand-rolled call here) keeps
+	// the referee input-identical to prod: an earlier in-referee arm fed the
+	// smoother UNFILTERED raw fixes — no speed cap, no rejectSpikes — and
+	// charged it for teleport spikes prod never shows it.
+	const reconRun = await computeVelocityFromInputs(reconInputs, { walkMatch: true, walkDraw: "recon" });
 
 	// walkMatch only changes drawn geometry, not segmentation, so the episode
 	// lists align by index. Score only walking legs with a drawable line.
@@ -317,26 +323,16 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 					)
 				: null;
 
-		// The SMOOTHER-PRIMARY arm — the from-scratch continuous MAP smoother run
-		// over the raw accuracy-weighted fixes + the whole walkable network, as the
-		// DRAW itself (not a refinement of the matched line). This is the candidate
-		// replacement for the Viterbi matcher: accuracy-weighted emission suppresses
-		// the low-accuracy post-tunnel reacquire fixes that the matcher (blind to
-		// accuracy) snaps into phantom detours. Measured before any prod wiring.
-		// Pedometer budget (#320) + endpoint anchors (#319) — the same evidence
-		// the prod wiring passes, so the referee measures the factors it will
-		// ship with. The anchors come from the walking SEGMENT's neighbours;
-		// match the episode to its segment by window overlap.
+		// The SMOOTHER-PRIMARY arm, read from the pipeline replay above: the leg as
+		// `walkDraw: "recon"` would draw it — reconstructWalk over the SAME cleaned
+		// fixes (speed cap + rejectSpikes), disc-read network, endpoint anchors and
+		// pedometer budget as prod, with the honest raw fallback when it bails.
+		// The episode lists align by index (walkMatch changes geometry, never
+		// segmentation).
 		const stepsWalked = stepsInWindow(base.biometrics.steps, onE.startTs, onE.endTs);
-		const segIdx = on.segments.findIndex(
-			(s) => s.startTs < onE.endTs && s.endTs > onE.startTs && effectiveMode(s) === "walking",
-		);
-		const anchors = segIdx >= 0 ? walkEndpointAnchors(on.segments, segIdx) : {};
-		const smoothed = reconstructWalk(rawWalk, { ways: walkable.ways, buildings }, undefined, {
-			...anchors,
-			stepsWalked: stepsWalked ?? undefined,
-		});
-		const smoothPts = smoothed?.map((p) => ({ lat: p.lat, lon: p.lon })) ?? null;
+		const reconE = reconRun.episodes[i];
+		const smoothPts =
+			reconE && reconE.points.length >= 2 ? reconE.points.map((p) => ({ lat: p.lat, lon: p.lon })) : null;
 		const smootherPlaus =
 			smoothPts && smoothPts.length >= 2
 				? walkPlausibility(raw, smoothPts, onE.startTs, onE.endTs, [], walkable)

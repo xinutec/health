@@ -554,7 +554,7 @@ export async function computeVelocity(
 	userId: string,
 	date: string,
 	tz?: string,
-	options: { enrich?: boolean; walkMatch?: boolean } = {},
+	options: { enrich?: boolean; walkMatch?: boolean; walkDraw?: "matcher" | "recon" } = {},
 ): Promise<VelocityResult> {
 	// Production wrapper: load the input closure from the DB / PhoneTrack,
 	// then run the pure classification core. The two-step split (Phase B of
@@ -582,7 +582,7 @@ export async function computeVelocity(
  */
 export async function computeVelocityFromInputs(
 	inputs: ClassificationInputs,
-	options: { enrich?: boolean; walkMatch?: boolean } = {},
+	options: { enrich?: boolean; walkMatch?: boolean; walkDraw?: "matcher" | "recon" } = {},
 ): Promise<VelocityResult> {
 	const { userId, date, displayTz: tz } = inputs.identity;
 	const t0 = Date.now();
@@ -1407,7 +1407,7 @@ export async function computeVelocityFromInputs(
 			run: (segs) =>
 				options.walkMatch === false
 					? segs
-					: annotateWalkMatches(segs, displayFixes, points, inputs.osm, biomForStaySplit.steps),
+					: annotateWalkMatches(segs, displayFixes, points, inputs.osm, biomForStaySplit.steps, options.walkDraw),
 		},
 
 		// Per-segment displayTz: the IANA tz the frontend should use to render

@@ -163,6 +163,7 @@ export async function annotateWalkMatches(
 	points: readonly FilteredPoint[],
 	osm: OsmAdapter,
 	stepPoints: readonly StepPoint[] = [],
+	draw: "matcher" | "recon" = "matcher",
 ): Promise<EnrichedSegment[]> {
 	if (process.env.WALK_MATCH_DISABLE === "1") return [...segments];
 
@@ -236,21 +237,6 @@ export async function annotateWalkMatches(
 			out.push(seg);
 			continue;
 		}
-		const fixes: RoadFix[] = clean.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
-		// Buildings ride along as the matcher's impassable layer (#304): an
-		// unsupported through-building edge is routed around at graph level, so
-		// most crossings never reach the corrector below.
-		const result = matchWalkSegment(fixes, { ways, buildings });
-		const decision = result
-			? matchImprovesDisplay(fixes, result.path, { ways }, WALK_NEEDS_MATCH_M, WALK_MATCH_MAX_STRAY_M)
-			: null;
-		if (process.env.WALK_MATCH_DEBUG === "1" && result && decision) {
-			const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
-			console.error(
-				`[walk-match] ${t(seg.startTs)}-${t(seg.endTs)} use=${decision.use} rawOff=${decision.rawOffRoadM.toFixed(0)} matchedOff=${decision.matchedOffRoadM.toFixed(0)} stray=${decision.strayM.toFixed(0)} (needs>${WALK_NEEDS_MATCH_M}, stray≤${WALK_MATCH_MAX_STRAY_M})`,
-			);
-		}
-		const useMatch = decision?.use === true;
 		// Accuracy-aware fixes for the continuous MAP passes (refine + reconstruct).
 		const walkFixes: WalkFix[] = clean.map((p) => ({
 			lat: p.lat,
@@ -259,64 +245,116 @@ export async function annotateWalkMatches(
 			accuracyM: p.accuracy ?? undefined,
 		}));
 
-		let drawn: Array<{ lat: number; lon: number; ts: number }>;
-		if (useMatch && result) {
-			// De-box the matched line: round its boxy ~90° graph corners toward the
-			// raw GPS with the continuous MAP refinement, keeping the vetted matched
-			// line as the single corridor (so it can't stray off-route; the clamp
-			// bounds it). Applied only when it actually reduces sharp turns — else the
-			// matched line is already smooth and is kept as-is. `WALK_REFINE_DISABLE=1`
-			// opts out.
-			drawn = result.path;
-			if (process.env.WALK_REFINE_DISABLE !== "1") {
-				const refined = refineMatchedPath(walkFixes, result.path);
-				if (refined && countSharpTurns(refined) < countSharpTurns(result.path)) drawn = refined;
-			}
-		} else {
-			// Matcher bailed or the gate rejected: the leg draws as raw GPS — which
-			// on house-lined streets can itself run through buildings. The corrector
-			// below fixes exactly that. Start from EXACTLY the line the raw renderer
-			// draws (rejectSpikes + holdImplausibleSpeed, `episode-geometry.ts`) —
-			// starting from the un-collapsed fixes would hand the corrector an
-			// indoor-smear teleport zigzag the renderer never shows, and attaching
-			// its "correction" would replace a short honest line with a long noisy
-			// one (measured: the 2026-07-01 10:44 leg, 1908 m of jitter in 10 min).
-			drawn = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
-		}
-
-		// Robust-reconstruction swap (#296/#321): when the drawn line (matched or
-		// raw) is a phantom out-and-back — the accuracy-blind matcher snapping a
-		// post-tunnel GPS smear into a clean detour — `reconstructWalk` (with the
-		// step budget #320 and endpoint anchors #319 as evidence) rejects the
-		// low-consensus fixes and draws the honest short path. Swap it in ONLY
-		// when it is a large fraction shorter AND shorter by a wide absolute
-		// margin (the unambiguous dissolved-excursion signature); on an ordinary
-		// leg the reconstruction is ~the same length, so nothing changes.
-		// Deterministic. ON by default since 2026-07-07 (flipped after the swap
-		// fired on exactly the two confirmed smears — 07-06 09:16Z, 06-16 15:48Z —
-		// with a clean corpus ratchet); WALK_RECON=0 is the emergency off-switch.
+		// Reconstruction-primary draw (#330, geometry-roadmap G2): the robust MAP
+		// reconstruction IS the drawn line — no Viterbi matcher, no display gate,
+		// no trim/despike. Same eligibility, cleaned fixes, and evidence (anchors
+		// + pedometer) as the conditional swap below, and it falls THROUGH to the
+		// shared building corrector — the reconstruction bends toward ways but has
+		// no routing, so a chord crossing a block is the corrector's job here just
+		// as it is for a raw-drawn leg. Honest fallback: recon bails → the raw
+		// renderer's line. The referee's recon arm measures exactly this path.
+		let useMatch = false;
 		let smoothed = false;
-		if (process.env.WALK_RECON !== "0") {
-			// Pedometer budget for the leg window (#320): the one signal independent
-			// of GPS that contradicts a coherent smear. null (no step data for the
-			// day) leaves the factor off. Endpoint anchors (#319): pin the leg
-			// between the neighbouring stay centroids / snapped station ends.
+		let drawn: Array<{ lat: number; lon: number; ts: number }>;
+		if (draw === "recon") {
+			// The reconstruction starts from EXACTLY the fix set the raw renderer
+			// draws (rejectSpikes + holdImplausibleSpeed) — the same principle the
+			// corrector's raw fallback documents below. Without the teleport-RUN
+			// collapse, a dense indoor jitter that rejectSpikes can't see reaches
+			// the solver as mutually-consistent evidence the robust kernel keeps
+			// (measured: the 2026-05-15 20:18 leg drew 1808 m on a 533 m raw line).
+			const held = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH);
+			const reconFixes: WalkFix[] = held.map((p) => ({
+				lat: p.lat,
+				lon: p.lon,
+				ts: p.ts,
+				accuracyM: p.accuracy ?? undefined,
+			}));
 			const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
-			const recon = reconstructWalk(walkFixes, { ways, buildings }, undefined, {
+			const recon = reconstructWalk(reconFixes, { ways, buildings }, undefined, {
 				...walkEndpointAnchors(segments, si),
 				stepsWalked: stepsWalked ?? undefined,
 			});
 			if (recon && recon.length >= 2) {
-				const drawnLen = pathLenM(drawn);
-				const reconLen = pathLenM(recon);
-				if (reconLen <= drawnLen * RECON_SWAP_MAX_LEN_FRACTION && drawnLen - reconLen >= RECON_SWAP_MIN_ABS_DROP_M) {
-					drawn = recon.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
-					smoothed = true;
-					if (process.env.WALK_MATCH_DEBUG === "1") {
-						const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
-						console.error(
-							`[walk-recon] ${t(seg.startTs)}-${t(seg.endTs)} SWAP drawn=${drawnLen.toFixed(0)}m → recon=${reconLen.toFixed(0)}m`,
-						);
+				drawn = recon.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+				smoothed = true;
+			} else {
+				drawn = held.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+			}
+		} else {
+			const fixes: RoadFix[] = clean.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+			// Buildings ride along as the matcher's impassable layer (#304): an
+			// unsupported through-building edge is routed around at graph level, so
+			// most crossings never reach the corrector below.
+			const result = matchWalkSegment(fixes, { ways, buildings });
+			const decision = result
+				? matchImprovesDisplay(fixes, result.path, { ways }, WALK_NEEDS_MATCH_M, WALK_MATCH_MAX_STRAY_M)
+				: null;
+			if (process.env.WALK_MATCH_DEBUG === "1" && result && decision) {
+				const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+				console.error(
+					`[walk-match] ${t(seg.startTs)}-${t(seg.endTs)} use=${decision.use} rawOff=${decision.rawOffRoadM.toFixed(0)} matchedOff=${decision.matchedOffRoadM.toFixed(0)} stray=${decision.strayM.toFixed(0)} (needs>${WALK_NEEDS_MATCH_M}, stray≤${WALK_MATCH_MAX_STRAY_M})`,
+				);
+			}
+			useMatch = decision?.use === true;
+
+			if (useMatch && result) {
+				// De-box the matched line: round its boxy ~90° graph corners toward the
+				// raw GPS with the continuous MAP refinement, keeping the vetted matched
+				// line as the single corridor (so it can't stray off-route; the clamp
+				// bounds it). Applied only when it actually reduces sharp turns — else the
+				// matched line is already smooth and is kept as-is. `WALK_REFINE_DISABLE=1`
+				// opts out.
+				drawn = result.path;
+				if (process.env.WALK_REFINE_DISABLE !== "1") {
+					const refined = refineMatchedPath(walkFixes, result.path);
+					if (refined && countSharpTurns(refined) < countSharpTurns(result.path)) drawn = refined;
+				}
+			} else {
+				// Matcher bailed or the gate rejected: the leg draws as raw GPS — which
+				// on house-lined streets can itself run through buildings. The corrector
+				// below fixes exactly that. Start from EXACTLY the line the raw renderer
+				// draws (rejectSpikes + holdImplausibleSpeed, `episode-geometry.ts`) —
+				// starting from the un-collapsed fixes would hand the corrector an
+				// indoor-smear teleport zigzag the renderer never shows, and attaching
+				// its "correction" would replace a short honest line with a long noisy
+				// one (measured: the 2026-07-01 10:44 leg, 1908 m of jitter in 10 min).
+				drawn = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+			}
+
+			// Robust-reconstruction swap (#296/#321): when the drawn line (matched or
+			// raw) is a phantom out-and-back — the accuracy-blind matcher snapping a
+			// post-tunnel GPS smear into a clean detour — `reconstructWalk` (with the
+			// step budget #320 and endpoint anchors #319 as evidence) rejects the
+			// low-consensus fixes and draws the honest short path. Swap it in ONLY
+			// when it is a large fraction shorter AND shorter by a wide absolute
+			// margin (the unambiguous dissolved-excursion signature); on an ordinary
+			// leg the reconstruction is ~the same length, so nothing changes.
+			// Deterministic. ON by default since 2026-07-07 (flipped after the swap
+			// fired on exactly the two confirmed smears — 07-06 09:16Z, 06-16 15:48Z —
+			// with a clean corpus ratchet); WALK_RECON=0 is the emergency off-switch.
+			if (process.env.WALK_RECON !== "0") {
+				// Pedometer budget for the leg window (#320): the one signal independent
+				// of GPS that contradicts a coherent smear. null (no step data for the
+				// day) leaves the factor off. Endpoint anchors (#319): pin the leg
+				// between the neighbouring stay centroids / snapped station ends.
+				const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
+				const recon = reconstructWalk(walkFixes, { ways, buildings }, undefined, {
+					...walkEndpointAnchors(segments, si),
+					stepsWalked: stepsWalked ?? undefined,
+				});
+				if (recon && recon.length >= 2) {
+					const drawnLen = pathLenM(drawn);
+					const reconLen = pathLenM(recon);
+					if (reconLen <= drawnLen * RECON_SWAP_MAX_LEN_FRACTION && drawnLen - reconLen >= RECON_SWAP_MIN_ABS_DROP_M) {
+						drawn = recon.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+						smoothed = true;
+						if (process.env.WALK_MATCH_DEBUG === "1") {
+							const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+							console.error(
+								`[walk-recon] ${t(seg.startTs)}-${t(seg.endTs)} SWAP drawn=${drawnLen.toFixed(0)}m → recon=${reconLen.toFixed(0)}m`,
+							);
+						}
 					}
 				}
 			}
