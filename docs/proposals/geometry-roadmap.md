@@ -65,9 +65,10 @@ for the merely unlikely, always an honest raw fallback
    so no amount of robust weighting rejects it. **Only independent evidence
    can**: the step budget, the leg's endpoint anchors, a true heading.
 
-Corollary: the flag stays off until Phase G1 makes the swap fire on class 2.
+Corollary (RESOLVED 2026-07-08): G1 landed, the swap fires on class 2, and
+the flag is ON by default (`WALK_RECON=0` is the off-switch).
 
-## Phase G0 — measurement honesty (gates everything)
+## Phase G0 — measurement honesty (gates everything) — DONE 2026-07-08
 
 - **Validate phantom fixes by geometry** — drawn length + bbox against the
   ground-truth narrative — never by corridor-stall alone (it is fooled by
@@ -80,7 +81,12 @@ Corollary: the flag stays off until Phase G1 makes the swap fire on class 2.
   `steps × stride` per leg. Cheap, independent, and it would have exposed the
   corridor-stall artifact immediately.
 
-## Phase G1 — independent-evidence factors (the Regent's Park fix)
+Shipped: the referee prints `len/budget` per walk with an over-budget flag;
+the walk ratchet (`walk-gate.ts`) no longer gates off-walkable p90 (recorded,
+display-only — snapper-biased) and instead gates step-budget EXCESS
+(`len − budget×slack`, 30 m eps) alongside stall / route / offPath / speed.
+
+## Phase G1 — independent-evidence factors (the Regent's Park fix) — DONE 2026-07-08
 
 - **G1a — soft step-magnitude factor (#320).** Thread per-minute steps
   (`biometrics.cadenceForSegment`) into `reconstructWalk`; a soft factor
@@ -96,12 +102,25 @@ Corollary: the flag stays off until Phase G1 makes the swap fire on class 2.
 - Verdict by geometry on the smear fixtures + full-corpus referee
   non-regression.
 
-## Phase G2 — flip (#321)
+Shipped (#320 + #319): per-edge step contraction with a quadratic excess ramp
+over a 1.4× slack + extra anneal iterations while evidence is violated;
+anchors from neighbour stay centroids (σ25) / snapped-rail terminals (σ15,
+gap ≤180 s). The unlock for the anchors was making the walkable attraction
+NORMAL-ONLY (point-to-line): the isotropic point spring resisted sliding
+along the way and stalled every anchor correction. Measured: the 07-06 smear
+pins at Euston Square and draws ~714 m; 06-16's 17.6 km/h fragment collapses
+2493→1028 m; legit legs byte-identical.
 
-When the swap fires on the smear class with zero regression elsewhere: flip
-`WALK_RECON` on by default, retire `trim/despike/correctWalkPath` and the
-Viterbi walk matcher, re-bless golden against the narratives (not blindly),
-deploy.
+## Phase G2 — flip (#321) — flip DONE 2026-07-08; retirement DEFERRED
+
+Flipped: `WALK_RECON` on by default; the swap fired on exactly the two
+confirmed smears (07-06 09:16Z, 06-16 15:48Z) and nothing else; walk floor
+re-blessed against the narratives; deployed.
+
+Deferred: retiring `trim/despike/correctWalkPath` and the Viterbi walk
+matcher. The smoother-primary arm does not yet beat the matched line
+corpus-wide, so only the swap ships — the retirement verdict re-runs under
+the reframed (G0) gate when the reconstruction wins outright.
 
 ## Phase G3 — PDR / true heading (#322, #297)
 
