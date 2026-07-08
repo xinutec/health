@@ -167,24 +167,17 @@ export async function annotateWalkMatches(
 	if (process.env.WALK_MATCH_DISABLE === "1") return [...segments];
 
 	const speedByTs = new Map(points.map((p) => [p.ts, p.speed_kmh]));
-	const out: EnrichedSegment[] = [];
-	for (let si = 0; si < segments.length; si++) {
-		const seg = segments[si];
-		if (effectiveMode(seg) !== "walking") {
-			out.push(seg);
-			continue;
-		}
+
+	// Disc geometry per eligible walking leg (pure, cheap). Each leg reads the
+	// walkable network in a single disc around its centroid — the same
+	// `walkableRoads(lat, lon, radius)` call on deterministic (frozen-fix)
+	// coordinates the smoother already captured.
+	const prep = segments.map((seg) => {
+		if (effectiveMode(seg) !== "walking") return null;
 		const inWin = displayFixes
 			.filter((f) => f.ts >= seg.startTs && f.ts <= seg.endTs && (speedByTs.get(f.ts) ?? 0) <= WALK_SPEED_CAP_KMH)
 			.sort((a, b) => a.ts - b.ts);
-		if (inWin.length < MIN_LEG_FIXES) {
-			out.push(seg);
-			continue;
-		}
-
-		// Read the walkable network in a single disc around the leg's centroid —
-		// the same `walkableRoads(lat, lon, radius)` call on deterministic
-		// (frozen-fix) coordinates the smoother already captured.
+		if (inWin.length < MIN_LEG_FIXES) return null;
 		let cLat = 0;
 		let cLon = 0;
 		for (const p of inWin) {
@@ -198,18 +191,44 @@ export async function annotateWalkMatches(
 			const d = metersBetween(cLat, cLon, p.lat, p.lon);
 			if (d > maxDist) maxDist = d;
 		}
-		const discRadiusM = Math.round(maxDist + WALK_QUERY_SLACK_M);
-		const ways = await osm.walkableRoads(cLat, cLon, discRadiusM);
+		return { inWin, cLat, cLon, discRadiusM: Math.round(maxDist + WALK_QUERY_SLACK_M) };
+	});
+
+	// Fire every leg's OSM reads up front so the DB round-trips overlap each
+	// other and the CPU work below, instead of stalling the loop one query at a
+	// time (measured ~1.8s of a walk-heavy day's pass was serial DB latency).
+	// Identical queries in the identical conditional structure — buildingsNear
+	// (the impassable layer for the building-escape corrector, queried whenever
+	// the ways read comes back non-empty so capture records it) still only
+	// fires in that case — so a fixture replay sees exactly the captured keys.
+	// The no-op catch keeps a failing query from surfacing as an unhandled
+	// rejection while an earlier leg is still processing; the per-leg await
+	// below still rethrows it, aborting the pass like the serial version did.
+	const reads = prep.map((p) => {
+		if (p === null) return null;
+		const ways = osm.walkableRoads(p.cLat, p.cLon, p.discRadiusM);
+		const buildings = ways.then((w) => (w.length === 0 ? [] : osm.buildingsNear(p.cLat, p.cLon, p.discRadiusM)));
+		ways.catch(() => {});
+		buildings.catch(() => {});
+		return { ways, buildings };
+	});
+
+	const out: EnrichedSegment[] = [];
+	for (let si = 0; si < segments.length; si++) {
+		const seg = segments[si];
+		const p = prep[si];
+		const read = reads[si];
+		if (p === null || read === null) {
+			out.push(seg);
+			continue;
+		}
+		const inWin = p.inWin;
+		const ways = await read.ways;
 		if (ways.length === 0) {
 			out.push(seg);
 			continue;
 		}
-		// Building footprints in the same disc — the impassable layer for the
-		// building-escape corrector. Queried unconditionally (so capture records
-		// them; the pipeline is otherwise building-blind and no fixture carries
-		// them). The escape itself is applied below, gated, so drawn geometry — and
-		// therefore the golden corpus — is unchanged until it is turned on.
-		const buildings = await osm.buildingsNear(cLat, cLon, discRadiusM);
+		const buildings = await read.buildings;
 
 		// The matcher gets the same fixes with lone teleport spikes dropped.
 		const clean = rejectSpikes(inWin);
