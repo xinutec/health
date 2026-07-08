@@ -216,6 +216,15 @@ export async function annotateWalkMatches(
 
 	const out: EnrichedSegment[] = [];
 	for (let si = 0; si < segments.length; si++) {
+		// Yield to the event loop between legs (#334): a walk-heavy day's matcher
+		// legs are ~0.1–1 s of synchronous CPU each and this pass dominates a
+		// velocity cache MISS, so without a yield every parallel request on the
+		// single-threaded server (heartrate, sleep) queues behind the WHOLE pass
+		// (measured: a 350 ms endpoint reported 5.8 s in the browser). One
+		// setImmediate per leg caps that starvation at ~one leg. Output-identical;
+		// the awaited OSM reads below resolve from prefetched promises and give no
+		// yield once settled.
+		if (si > 0) await new Promise((resolve) => setImmediate(resolve));
 		const seg = segments[si];
 		const p = prep[si];
 		const read = reads[si];
