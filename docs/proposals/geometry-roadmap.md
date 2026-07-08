@@ -122,6 +122,34 @@ matcher. The smoother-primary arm does not yet beat the matched line
 corpus-wide, so only the swap ships — the retirement verdict re-runs under
 the reframed (G0) gate when the reconstruction wins outright.
 
+**Retirement verdict re-run 2026-07-08 (#330): still deferred, now measured
+honestly.** The recon-primary draw is wired into the pipeline as
+`walkDraw: "recon"` (annotateWalkMatches; matcher path byte-identical, golden
+26/26) — reconstructWalk + the shared building corrector, no Viterbi / gate /
+trim / despike — and the referee's smoother arm is a pipeline replay of it,
+not an in-referee reimplementation. Two measurement defects fixed on the way:
+
+- The old referee arm fed the smoother UNFILTERED raw fixes (no speed cap, no
+  rejectSpikes, no holdImplausibleSpeed) — prod never shows it those. Input
+  parity dissolved the absurd tails (a "1808 m on a 533 m raw line" leg was
+  the teleport-run jitter the raw renderer collapses).
+- `maxCorridorStall`'s greedy monotone projection mis-scored walks whose
+  FIXES run out-and-back on one street: a smoothed vertex snapped to the
+  return pass, ratcheting the floor so the rest read as stall (a line ≤ 12 m
+  off a 118 m-stall line scored 2169 m; a matched line scored 2226 m that is
+  really 18 m). Now a min-cost monotone (DP) assignment; the invented-detour
+  signal is unchanged. Stall floors re-blessed on unchanged lines.
+
+Honest verdict, gate axes vs the current draw (142 corpus walks): recon
+LOSES 67 — stall +20–60 m on ~45 (the Viterbi's on-network routing is simply
+a better local draw for ordinary dense-OSM walks), offPath building-crossing
++6–125 m on ~25 (recon bends near ways but does not route around blocks; the
+corrector's honesty guards decline many repairs) — and WINS ~31 (the big
+phantom dissolutions, which the shipped conditional swap already captures).
+Retirement stays earned-not-given: the flip re-runs when G3 evidence (true
+heading) or better factors close the ordinary-leg gap. The `walkDraw` arm +
+honest referee are the standing harness for that re-run.
+
 ## Phase G3 — PDR / true heading (#322, #297)
 
 `motion_log.cog` is GPS-derived course, correlated with the noise it should
