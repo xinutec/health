@@ -19,6 +19,19 @@ describe("maxCorridorStall", () => {
 	it("spikes for an out-and-back the fixes don't make", () => {
 		expect(maxCorridorStall([A, B, C], [A, B, at(51.499, 0.0006), B, C])).toBeGreaterThan(150);
 	});
+	it("stays small when the FIXES themselves walk out-and-back (same street twice)", () => {
+		// A walk out to C and back along the same street. The drawn line follows
+		// it faithfully but slightly smoothed (a few metres off the fixes). The
+		// old greedy nearest-projection could snap an early drawn vertex onto the
+		// RETURN pass, ratchet the corridor floor to the far arc, and read the
+		// whole rest of the walk as one giant stall (measured on the corpus: a
+		// line ≤ 12 m off a 118 m-stall line scored 2169 m). The min-cost
+		// monotone assignment keeps each pass on the pass it follows.
+		const outAndBack = [A, B, C, B, A];
+		const smoothedNudge = 0.00002; // ~2 m N of the street on both passes
+		const drawn = outAndBack.map((p) => at(p.lat + smoothedNudge, p.lon));
+		expect(maxCorridorStall(outAndBack, drawn)).toBeLessThan(30);
+	});
 });
 
 describe("walkPlausibility", () => {

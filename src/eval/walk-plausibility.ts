@@ -35,12 +35,24 @@ export function maxCorridorStall(fixes: readonly LatLon[], path: readonly LatLon
 	for (let i = 1; i < fixes.length; i++) fArc.push(fArc[i - 1] + m(fixes[i - 1], fixes[i]));
 	const pArc = [0];
 	for (let i = 1; i < path.length; i++) pArc.push(pArc[i - 1] + m(path[i - 1], path[i]));
-	const cp: number[] = [];
-	let minS = 0;
-	for (const v of path) {
-		let best = Number.POSITIVE_INFINITY;
-		let bestS = minS;
-		for (let i = 0; i < fixes.length - 1; i++) {
+
+	// Monotone projection of the path onto the fix polyline — as the MIN-COST
+	// monotone assignment (DP), not a greedy nearest-projection ratchet. The
+	// greedy version mis-scored out-and-back walks: on a street walked TWICE the
+	// locally-nearest projection of an early smoothed vertex could land on the
+	// RETURN pass (far arc), ratcheting the floor forward so the whole rest of
+	// the walk read as one giant stall (measured: a line ≤ 12 m off a 118 m-stall
+	// matched line scored 2169 m). Choosing the jointly-cheapest monotone
+	// assignment puts each pass of the drawn line on the pass of the fixes it
+	// actually follows; an invented detour still cannot advance (no nearby fixes
+	// ahead), so the stall it is meant to catch is unchanged.
+	const V = path.length;
+	const S = fixes.length - 1;
+	const dist = new Float64Array(V * S);
+	const arc = new Float64Array(V * S);
+	for (let k = 0; k < V; k++) {
+		const v = path[k];
+		for (let i = 0; i < S; i++) {
 			const a = fixes[i];
 			const b = fixes[i + 1];
 			const cosLat = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
@@ -50,19 +62,69 @@ export function maxCorridorStall(fixes: readonly LatLon[], path: readonly LatLon
 			const py = (v.lat - a.lat) * 111_320;
 			const l2 = bx * bx + by * by || 1e-9;
 			const t = Math.max(0, Math.min(1, (px * bx + py * by) / l2));
-			const d = Math.hypot(px - t * bx, py - t * by);
-			const s = fArc[i] + t * (fArc[i + 1] - fArc[i]);
-			if (d < best && s >= minS - 1) {
-				best = d;
-				bestS = s;
+			dist[k * S + i] = Math.hypot(px - t * bx, py - t * by);
+			arc[k * S + i] = fArc[i] + t * (fArc[i + 1] - fArc[i]);
+		}
+	}
+	// DP over (vertex, fix-segment): cost = own projection distance + cheapest
+	// predecessor whose arc position is ≤ ours + 1 m (the same 1 m backtrack
+	// tolerance the greedy version allowed). Prefix-min over the predecessor
+	// candidates sorted by arc makes each step O(S log S).
+	let prevCost = new Float64Array(S);
+	let cost = new Float64Array(S);
+	const parent = new Int32Array(V * S).fill(-1);
+	for (let i = 0; i < S; i++) prevCost[i] = dist[i];
+	const order = new Array<number>(S);
+	const prefixMinCost = new Float64Array(S);
+	const prefixMinIdx = new Int32Array(S);
+	for (let k = 1; k < V; k++) {
+		for (let i = 0; i < S; i++) order[i] = i;
+		const prevBase = (k - 1) * S;
+		order.sort((x, y) => arc[prevBase + x] - arc[prevBase + y]);
+		for (let r = 0; r < S; r++) {
+			const c = prevCost[order[r]];
+			if (r === 0 || c < prefixMinCost[r - 1]) {
+				prefixMinCost[r] = c;
+				prefixMinIdx[r] = order[r];
+			} else {
+				prefixMinCost[r] = prefixMinCost[r - 1];
+				prefixMinIdx[r] = prefixMinIdx[r - 1];
 			}
 		}
-		cp.push(bestS);
-		minS = bestS;
+		for (let i = 0; i < S; i++) {
+			// Last rank whose predecessor arc ≤ this candidate's arc + 1 m.
+			const sMax = arc[k * S + i] + 1;
+			let lo = 0;
+			let hi = S - 1;
+			let r = -1;
+			while (lo <= hi) {
+				const mid = (lo + hi) >> 1;
+				if (arc[prevBase + order[mid]] <= sMax) {
+					r = mid;
+					lo = mid + 1;
+				} else hi = mid - 1;
+			}
+			if (r < 0) {
+				cost[i] = Number.POSITIVE_INFINITY;
+			} else {
+				cost[i] = dist[k * S + i] + prefixMinCost[r];
+				parent[k * S + i] = prefixMinIdx[r];
+			}
+		}
+		[prevCost, cost] = [cost, prevCost];
 	}
+	// Backtrack the optimal assignment into per-vertex corridor positions.
+	let bestI = 0;
+	for (let i = 1; i < S; i++) if (prevCost[i] < prevCost[bestI]) bestI = i;
+	const cp = new Float64Array(V);
+	for (let k = V - 1; k >= 0; k--) {
+		cp[k] = arc[k * S + bestI];
+		if (k > 0) bestI = parent[k * S + bestI] >= 0 ? parent[k * S + bestI] : bestI;
+	}
+
 	let j = 0;
 	let worst = 0;
-	for (let k = 0; k < path.length; k++) {
+	for (let k = 0; k < V; k++) {
 		while (cp[k] - cp[j] > tolM) j++;
 		worst = Math.max(worst, pArc[k] - pArc[j]);
 	}
