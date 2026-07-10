@@ -1,5 +1,12 @@
 <mat-card>
-  <mat-card-header><mat-card-title>Your Day</mat-card-title></mat-card-header>
+  <mat-card-header>
+    <mat-card-title>Your Day</mat-card-title>
+    @if (journeyCount() > 0) {
+      <button type="button" class="toggle-all" (click)="anyExpanded() ? collapseAll() : expandAll()">
+        {{ anyExpanded() ? "Collapse all" : "Expand all" }}
+      </button>
+    }
+  </mat-card-header>
   <mat-card-content>
     @if (rows().length === 0) {
       <p class="no-data">No timeline data available</p>
@@ -11,28 +18,79 @@
               <mat-icon class="city-icon">location_city</mat-icon>
               <span class="city-name">{{ r.city }}</span>
             </div>
-          } @else {
-            <div class="entry" [class.mode-stationary]="r.entry.mode === 'stationary'">
+          } @else if (r.kind === "journey") {
+            <button
+              type="button"
+              class="entry journey"
+              [class.expanded]="isExpanded(r.journey.index)"
+              [attr.aria-expanded]="isExpanded(r.journey.index)"
+              (click)="toggleJourney(r.journey.index)"
+            >
               <div class="time">
-                <span class="start">{{ r.entry.startLabel }}</span>
-                @if (r.entry.startDayOffset) {
-                  <span class="day-offset">{{ r.entry.startDayOffset }}</span>
+                <span class="start">{{ r.journey.startLabel }}</span>
+                @if (r.journey.startDayOffset) {
+                  <span class="day-offset">{{ r.journey.startDayOffset }}</span>
                 }
               </div>
               <div class="rail">
-                <mat-icon class="dot">{{ r.entry.icon }}</mat-icon>
+                <mat-icon class="dot journey-dot">route</mat-icon>
                 <div class="line"></div>
               </div>
               <div class="content">
-                <div class="primary">{{ r.entry.primary }}</div>
-                @if (r.entry.secondary) {
-                  <div class="secondary">{{ r.entry.secondary }}</div>
-                }
+                <div class="primary journey-primary">
+                  <span class="leg-icons">
+                    @for (ic of r.journey.icons; track $index) {
+                      @if (!$first) {
+                        <mat-icon class="leg-sep">chevron_right</mat-icon>
+                      }
+                      <mat-icon class="leg-icon">{{ ic }}</mat-icon>
+                    }
+                  </span>
+                  @if (r.journey.inferred) {
+                    <span class="inferred-dot" title="Contains inferred (unobserved) data">•</span>
+                  }
+                  <mat-icon class="chevron">{{
+                    isExpanded(r.journey.index) ? "expand_less" : "expand_more"
+                  }}</mat-icon>
+                </div>
+                <div class="secondary">{{ r.journey.summaryLabel }}</div>
               </div>
-            </div>
+            </button>
+            @if (isExpanded(r.journey.index)) {
+              @for (leg of r.journey.legs; track $index) {
+                <ng-container
+                  *ngTemplateOutlet="entryTpl; context: { $implicit: leg, leg: true }"
+                ></ng-container>
+              }
+            }
+          } @else {
+            <ng-container
+              *ngTemplateOutlet="entryTpl; context: { $implicit: r.entry, leg: false }"
+            ></ng-container>
           }
         }
       </div>
     }
   </mat-card-content>
 </mat-card>
+
+<ng-template #entryTpl let-entry let-leg="leg">
+  <div class="entry" [class.mode-stationary]="entry.mode === 'stationary'" [class.leg]="leg">
+    <div class="time">
+      <span class="start">{{ entry.startLabel }}</span>
+      @if (entry.startDayOffset) {
+        <span class="day-offset">{{ entry.startDayOffset }}</span>
+      }
+    </div>
+    <div class="rail">
+      <mat-icon class="dot">{{ entry.icon }}</mat-icon>
+      <div class="line"></div>
+    </div>
+    <div class="content">
+      <div class="primary">{{ entry.primary }}</div>
+      @if (entry.secondary) {
+        <div class="secondary">{{ entry.secondary }}</div>
+      }
+    </div>
+  </div>
+</ng-template>
