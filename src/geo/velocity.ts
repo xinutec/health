@@ -67,6 +67,7 @@ import {
 import { annotateRailRuns, RAIL_RUN_STATION_RADIUS_M } from "./passes/rail-runs.js";
 import { repairVehicleHandoff } from "./passes/repair-handoff.js";
 import {
+	absorbFarFocusPlacePhantom,
 	absorbIntraPlaceWalk,
 	attachStayCentroids,
 	consolidateJitterStays,
@@ -1483,7 +1484,22 @@ export async function computeVelocityFromInputs(
 		// walk coalesces into its stay. See absorbIntraPlaceWalk.
 		{
 			name: "finalMerge",
-			run: (segs) => mergeAdjacentStays(absorbIntraPlaceWalk(segs, points)),
+			// ...then swallow a phantom focus-place stay: a transient the place's
+			// over-long veto radius mis-labelled (a coffee stop at the station
+			// stamped "Work"), surfacing as a spurious leave-and-return. When it
+			// demotes a stay to walking it returns a NEW array (else the same
+			// reference), so coalesce the freshly-adjacent walks ONLY then —
+			// keeping days with no such artifact byte-identical. See
+			// absorbFarFocusPlacePhantom.
+			run: (segs) => {
+				const intra = absorbIntraPlaceWalk(segs, points);
+				const swallowed = absorbFarFocusPlacePhantom(intra, knownPlaces, points);
+				// dev-lint: allow-reference-equality absorbFarFocusPlacePhantom returns its
+				// input array by identity on a no-op, so !== means "a stay was demoted" —
+				// coalesce the freshly-adjacent walks only then, keeping other days byte-identical.
+				const coalesced = swallowed === intra ? swallowed : mergeAdjacentMoving(swallowed);
+				return mergeAdjacentStays(coalesced);
+			},
 		},
 		// Plausibility critic: repair any contiguous vehicle hand-off the
 		// grammar forbids — absorb a non-train leg flush against an identified

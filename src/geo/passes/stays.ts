@@ -8,6 +8,7 @@
  */
 
 import tzLookup from "tz-lookup";
+import type { KnownPlaceProjection } from "../classification-inputs.js";
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
 import { bestPlace, extractCity, placeLabel } from "../osm.js";
@@ -172,6 +173,110 @@ export function absorbIntraPlaceWalk<T extends EnrichedSegment>(segments: T[], p
 			centroidLon: cp.lon,
 			refinedReason: seg.refinedReason ? `${seg.refinedReason}; ${reason}` : reason,
 		};
+	});
+}
+
+/** A stay whose centroid is within this of a focus place's stored centroid
+ *  genuinely IS that place. */
+const FOCUS_AT_PLACE_M = 90;
+/** ...and a stay this far from the focus centroid is NOT the place — the label
+ *  is an over-reach. A well-established focus place's veto radius grows to
+ *  ~300 m+ (see `place-prior`), so a transient near a well-known place (a
+ *  coffee stop at the station on the way in) inherits its name. The 30 m gap
+ *  above `FOCUS_AT_PLACE_M` stops a borderline stay from flip-flopping. */
+const FOCUS_PHANTOM_MIN_M = 120;
+
+/**
+ * Swallow a phantom focus-place stay. When the SAME focus place (matched by
+ * `focusPlaceId`) labels two stays split only by movement — one AT its stored
+ * centroid (the real visit) and one FAR from it (a transient the place's
+ * over-long veto radius swallowed) — the far stay is a labelling artifact that
+ * surfaces as a spurious leave-and-return. Demote it to walking and drop its
+ * place so it coalesces into the surrounding arrival; the real stay is left
+ * alone.
+ *
+ * Motivating real case (2026-07-10): a genuine coffee stop ~190 m from the
+ * Work centroid, at King's Cross station just after alighting the tube, was
+ * stamped "Work" (the established place reaches ~300 m). The day read
+ * Work → walk → Work — "left work and came back" — when the truth was one
+ * arrival.
+ *
+ * Deliberately biased to SWALLOW, not relabel: a missed brief stop beats a
+ * wrongly-labelled one (feedback: precision over recall for visits). We do NOT
+ * guess a replacement venue for the transient — that is exactly where a wrong
+ * label would creep in.
+ *
+ * Tightly gated so it only ever fires on the artifact shape: the same focus id
+ * must appear both NEAR (≤ `FOCUS_AT_PLACE_M`) and FAR (≥ `FOCUS_PHANTOM_MIN_M`)
+ * with NO other stay between them (so they are one visit split by movement, not
+ * a real round-trip through a different place). Trusted signals only — stay and
+ * place centroids; no OSM, no building data. Pure; conservative on missing
+ * centroids (a stay whose distance can't be computed is never a phantom and
+ * never a twin).
+ */
+export function absorbFarFocusPlacePhantom<T extends EnrichedSegment>(
+	segments: T[],
+	knownPlaces: readonly KnownPlaceProjection[],
+	points: readonly FilteredPoint[],
+): T[] {
+	const placeCentroid = new Map<string | number, { lat: number; lon: number }>();
+	for (const p of knownPlaces) if (p.id != null) placeCentroid.set(p.id, { lat: p.centroidLat, lon: p.centroidLon });
+
+	const centroidOf = (s: T): { lat: number; lon: number } | null => {
+		if (s.centroidLat != null && s.centroidLon != null) return { lat: s.centroidLat, lon: s.centroidLon };
+		const win = samplesInWindow(points, s);
+		if (win.length === 0) return null;
+		return {
+			lat: win.reduce((a, p) => a + p.lat, 0) / win.length,
+			lon: win.reduce((a, p) => a + p.lon, 0) / win.length,
+		};
+	};
+	const distToFocus = (s: T): number | null => {
+		if (s.focusPlaceId == null) return null;
+		const fp = placeCentroid.get(s.focusPlaceId);
+		if (fp === undefined) return null;
+		const c = centroidOf(s);
+		if (c === null) return null;
+		return haversineMeters(c.lat, c.lon, fp.lat, fp.lon);
+	};
+
+	const stays = segments
+		.map((s, i) => ({ s, i }))
+		.filter((x) => effectiveMode(x.s) === "stationary" && x.s.focusPlaceId != null);
+
+	const noStayBetween = (i: number, j: number): boolean => {
+		const lo = Math.min(i, j);
+		const hi = Math.max(i, j);
+		for (let k = lo + 1; k < hi; k++) if (effectiveMode(segments[k]) === "stationary") return false;
+		return true;
+	};
+
+	const phantoms = new Set<number>();
+	for (const far of stays) {
+		const df = distToFocus(far.s);
+		if (df === null || df < FOCUS_PHANTOM_MIN_M) continue;
+		for (const near of stays) {
+			if (near.i === far.i || near.s.focusPlaceId !== far.s.focusPlaceId) continue;
+			const dn = distToFocus(near.s);
+			if (dn === null || dn > FOCUS_AT_PLACE_M) continue;
+			if (!noStayBetween(far.i, near.i)) continue;
+			phantoms.add(far.i);
+			break;
+		}
+	}
+	if (phantoms.size === 0) return segments;
+
+	return segments.map((s, i) => {
+		if (!phantoms.has(i)) return s;
+		const reason = "far focus-place phantom (label over-reach) — swallowed into the arrival, not a separate visit";
+		return {
+			...s,
+			refinedMode: "walking",
+			place: undefined,
+			focusPlaceId: undefined,
+			city: undefined,
+			refinedReason: s.refinedReason ? `${s.refinedReason}; ${reason}` : reason,
+		} as T;
 	});
 }
 
