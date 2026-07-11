@@ -19,10 +19,6 @@ interface TimelineEntry {
   icon: string;
   primary: string;
   secondary?: string;
-  /** Road / transit-line / station-pair text (moving states only).
-   *  Kept alongside the assembled `secondary` so a journey summary can
-   *  surface transit-line names without re-parsing display strings. */
-  wayName?: string;
   /** State was asserted from surrounding days, not observed. */
   inferred: boolean;
 }
@@ -39,8 +35,10 @@ interface TimelineJourney {
   endLabel: string;
   /** One mode icon per leg, in travel order. */
   icons: string[];
-  /** Collapsed one-liner: "→ {destination} · {total}", falling back to
-   *  transit-line names or bare duration when no destination is known. */
+  /** Collapsed one-liner: the transports (non-walking legs) by mode, in
+   *  order — "Train · Bus · {total}" — since the destination just repeats
+   *  the visit row below and the line detail lives in the expanded legs.
+   *  Bare duration for an all-walking journey. */
   summaryLabel: string;
   /** Any leg carried inferred (no-data) status. */
   inferred: boolean;
@@ -158,7 +156,7 @@ export class TimelineComponent {
           j++;
         }
         if (legs.length >= 2) {
-          out.push({ kind: "journey", journey: this.buildJourney(legs, journeyIdx++, rows, j) });
+          out.push({ kind: "journey", journey: this.buildJourney(legs, journeyIdx++) });
         } else {
           out.push(r); // lone leg — no benefit to hiding its way-name behind a click
         }
@@ -171,47 +169,25 @@ export class TimelineComponent {
     return out;
   }
 
-  /** Assemble the collapsed summary for a run of legs. `tailFrom` is the
-   *  index just past the run, used to name the destination visit. */
-  private buildJourney(
-    legs: TimelineEntry[],
-    index: number,
-    rows: TimelineRow[],
-    tailFrom: number,
-  ): TimelineJourney {
+  /** Assemble the collapsed summary for a run of legs. */
+  private buildJourney(legs: TimelineEntry[], index: number): TimelineJourney {
     const first = legs[0];
     const last = legs[legs.length - 1];
     const totalSeconds = legs.reduce((sum, l) => sum + l.durationSeconds, 0);
     const durationLabel = this.formatDuration(totalSeconds);
 
-    // Destination = the next visit after the run (skipping city headers).
-    let destination: string | undefined;
-    for (let k = tailFrom; k < rows.length; k++) {
-      const rk = rows[k];
-      if (rk.kind === "city") continue;
-      if (rk.kind === "entry" && (rk.entry.mode === "stationary" || rk.entry.mode === "sleeping")) {
-        destination = rk.entry.primary;
-      }
-      break;
-    }
+    // List the transports in order by MODE only — "Train", "Bus" — not the
+    // station-pair/line detail, which lives in the expanded legs. The walks
+    // are implied by the icon rail, and the destination is the visit row
+    // directly below, so both would be noise here. Collapse consecutive
+    // same-mode legs so a train interchange reads "Train", not "Train · Train".
+    const modes = legs
+      .filter((l) => l.mode !== "walking")
+      .map((l) => l.mode.charAt(0).toUpperCase() + l.mode.slice(1));
+    const transitLabels = modes.filter((m, i) => i === 0 || m !== modes[i - 1]);
 
-    // Transit-line names (train/bus legs) as a fallback subtitle when
-    // there's no destination to point at (journey trailing off the day).
-    const lineNames: string[] = [];
-    for (const leg of legs) {
-      if ((leg.mode === "train" || leg.mode === "bus") && leg.wayName && !lineNames.includes(leg.wayName)) {
-        lineNames.push(leg.wayName);
-      }
-    }
-
-    let summaryLabel: string;
-    if (destination) {
-      summaryLabel = `→ ${destination} · ${durationLabel}`;
-    } else if (lineNames.length > 0) {
-      summaryLabel = `${lineNames.join(" · ")} · ${durationLabel}`;
-    } else {
-      summaryLabel = durationLabel;
-    }
+    const summaryLabel =
+      transitLabels.length > 0 ? `${transitLabels.join(" · ")} · ${durationLabel}` : durationLabel;
 
     return {
       index,
@@ -313,7 +289,6 @@ export class TimelineComponent {
       icon,
       primary,
       secondary,
-      wayName: state.wayName,
       inferred: !!state.inferred,
     };
   }
@@ -373,7 +348,6 @@ export class TimelineComponent {
       icon,
       primary,
       secondary,
-      wayName: s.wayName,
       inferred: false,
     };
   }

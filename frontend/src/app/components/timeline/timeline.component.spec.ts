@@ -75,8 +75,26 @@ describe("TimelineComponent journey grouping", () => {
 		expect(j).not.toBeNull();
 		expect(j?.icons).toEqual(["directions_walk", "train", "directions_walk"]);
 		expect(j?.legs.length).toBe(3);
-		// 10 + 20 + 10 minutes of travel, pointed at the arrival visit.
-		expect(j?.summaryLabel).toBe("→ University College Hospital · 40m");
+		// Transports by mode (walk dropped), 10 + 20 + 10 minutes total.
+		expect(j?.summaryLabel).toBe("Train · 40m");
+	});
+
+	it("lists distinct transports in order and collapses a same-mode interchange", () => {
+		reset();
+		// walk, train, train (interchange), bus, walk — one journey.
+		const fixture = setup([
+			state("stationary", 20, { place: "Home" }),
+			state("walking", 5),
+			state("train", 10, { wayName: "A → B · Victoria Line" }),
+			state("train", 8, { wayName: "B → C · Northern Line" }),
+			state("bus", 12, { wayName: "Route 24" }),
+			state("walking", 4),
+			state("stationary", 30, { place: "Work" }),
+		]);
+		const c = fixture.componentInstance;
+		const j = c.rows().find((r) => r.kind === "journey");
+		// Two trains collapse to one "Train"; bus kept; walks dropped.
+		expect(j?.kind === "journey" && j.journey.summaryLabel).toBe("Train · Bus · 39m");
 	});
 
 	it("keeps visits as their own rows and does not fold a lone leg", () => {
