@@ -88,6 +88,7 @@ import {
 	roadSupportedConfidence,
 } from "./segments.js";
 import {
+	reassignVehicleArrivalWalk,
 	reassignWalkTailToVehicle,
 	splitStaysOnEvidence,
 	splitWalksOnEvidence,
@@ -1278,6 +1279,20 @@ export async function computeVelocityFromInputs(
 		{
 			name: "walkVehicleHandoff",
 			run: (segs) => reassignWalkTailToVehicle(segs, points),
+		},
+
+		// Vehicle→walk ARRIVAL correction: the mirror of walkVehicleHandoff.
+		// A drive decelerating to a halt at a stay leaves its final slow
+		// seconds glued to the first minute of sitting still, and the blended
+		// segment's diluted mean scores WALKING — a phantom walk wedged
+		// between the drive and the stay (2026-07-09 Grenfell Gardens → Home,
+		// mislabelled "walk on The Avenue"). Move the vehicle-paced head back
+		// into the preceding drive; if the residual is already parked at the
+		// stay, dissolve the walk into it. Runs after walkVehicleHandoff so
+		// the launch-side boundary is settled first.
+		{
+			name: "vehicleArrival",
+			run: (segs) => reassignVehicleArrivalWalk(segs, points),
 		},
 
 		// Rail-journey assembly: when GPS surfaces mid-tunnel, one continuous

@@ -754,3 +754,160 @@ export function reassignWalkTailToVehicle<T extends TrackSegment>(
 	}
 	return out;
 }
+
+// --- vehicle→walk ARRIVAL boundary correction --------------------------
+// The mirror of reassignWalkTailToVehicle, for the arrival side. When a
+// drive ends at a stay, its final seconds — decelerating to a halt — are
+// slow enough that segmentation can bundle them with the first minute of
+// sitting still into ONE segment. The parked fixes dilute the mean to
+// walking pace, so a phantom `walking` leg appears wedged between the drive
+// and the stay (2026-07-09: the Grenfell Gardens → Home drive whose tail
+// surfaced as a "walk on The Avenue"). splitWalksOnVehicleLeg can't reclaim
+// it — the blended segment often lands just under its 5-minute floor, and
+// the vehicle sub-run just under its 120 s bar.
+//
+// Corroboration makes a low bar safe: a confirmed road vehicle PRECEDES and
+// a stationary stay FOLLOWS. So a sustained, real-progress vehicle-paced
+// HEAD run belongs to the drive — advance the boundary forward into it. If
+// everything after that run already sits at the following stay, the
+// residual is the arrival, not a walk: fold it into the stay and drop the
+// walk. Otherwise a genuine walk-to-the-door remains, and only the vehicle
+// head moves. Net displacement, not raw speed readings, is the gate. Pure.
+
+/** Per-step net-progress speed (km/h) marking the head as travelling. */
+const ARRIVAL_MOVE_KMH = 15;
+/** Require a sustained run, not one glitchy pair. */
+const ARRIVAL_MIN_HEAD_STEPS = 2;
+/** Net displacement floor — corroborated by the adjacent vehicle, so far
+ *  below splitWalksOnVehicleLeg's 400 m. */
+const ARRIVAL_MIN_NET_DIST_M = 80;
+/** …and one unambiguously-motorised instant. */
+const ARRIVAL_PEAK_KMH = 20;
+/** The residual counts as "parked at the stay" — and the walk is dissolved —
+ *  only if it is genuinely STILL: every remaining fix sits within this of the
+ *  stay centroid, its net progress is negligible, and its median speed is at
+ *  a standstill. A residual that walks (~4–5 km/h) toward the door is a REAL
+ *  walk-in (2026-06-02 taxi home → "the real walk in from the kerb") and must
+ *  be left intact, so the pass does nothing at all in that case — precision
+ *  over recall: better a mislabelled vehicle head than an eaten walk. */
+const ARRIVAL_STAY_RADIUS_M = 90;
+const ARRIVAL_TAIL_MAX_NET_M = 45;
+/** Median tail speed at/below this reads as a standstill, not walking. */
+const ARRIVAL_TAIL_STATIONARY_KMH = 2.5;
+
+/**
+ * Dissolve a phantom `walking` segment that is really a road vehicle's
+ * decelerating arrival at the stay it sits before: its leading fixes are a
+ * sustained vehicle-paced run (the drive's continuation) and everything after
+ * is parked at the following stationary stay. The drive is extended forward
+ * over the run and the parked residual folds into the stay; the walk is
+ * dropped. Acts ONLY with both a road-vehicle predecessor and a stationary
+ * successor, a qualifying vehicle head, AND a genuinely-still residual — if
+ * the residual walks (a real walk-in from the kerb), the segment is left
+ * entirely untouched. Pure.
+ */
+export function reassignVehicleArrivalWalk<T extends TrackSegment>(
+	segments: readonly T[],
+	points: readonly FilteredPoint[],
+): T[] {
+	const segs = [...segments];
+	const out: T[] = [];
+	const stats = (start: number, end: number): { count: number; avg: number; max: number } => {
+		const speeds: number[] = [];
+		for (const p of points) if (p.ts >= start && p.ts < end) speeds.push(p.speed_kmh ?? 0);
+		const max = speeds.length ? Math.max(...speeds) : 0;
+		return { count: speeds.length, avg: Math.round(median(speeds) * 10) / 10, max: Math.round(max * 10) / 10 };
+	};
+
+	for (let i = 0; i < segs.length; i++) {
+		const cur = segs[i];
+		const prev = out.length > 0 ? out[out.length - 1] : undefined;
+		const next = segs[i + 1];
+		if (
+			cur.mode !== "walking" ||
+			!prev ||
+			!HANDOFF_VEHICLE_MODES.has(segMode(prev)) ||
+			!next ||
+			next.mode !== "stationary"
+		) {
+			out.push(cur);
+			continue;
+		}
+		const fixes = samplesInWindow(points, cur).sort((a, b) => a.ts - b.ts);
+		if (fixes.length < 3) {
+			out.push(cur);
+			continue;
+		}
+		const stepKmh = (a: number, b: number): number => {
+			const dt = fixes[b].ts - fixes[a].ts;
+			return dt > 0 ? (haversineMeters(fixes[a].lat, fixes[a].lon, fixes[b].lat, fixes[b].lon) / dt) * 3.6 : 0;
+		};
+		let h = 0;
+		let headSteps = 0;
+		while (h < fixes.length - 1 && stepKmh(h, h + 1) >= ARRIVAL_MOVE_KMH) {
+			h++;
+			headSteps++;
+		}
+		if (headSteps < ARRIVAL_MIN_HEAD_STEPS) {
+			out.push(cur);
+			continue;
+		}
+		const headNet = haversineMeters(fixes[0].lat, fixes[0].lon, fixes[h].lat, fixes[h].lon);
+		let peak = 0;
+		for (let k = 0; k <= h; k++) peak = Math.max(peak, fixes[k].speed_kmh ?? 0);
+		if (headNet < ARRIVAL_MIN_NET_DIST_M || peak < ARRIVAL_PEAK_KMH) {
+			out.push(cur);
+			continue;
+		}
+		const boundaryTs = fixes[h].ts;
+
+		const stayFixes = samplesInWindow(points, next);
+		const sc =
+			stayFixes.length > 0
+				? {
+						lat: stayFixes.reduce((s, p) => s + p.lat, 0) / stayFixes.length,
+						lon: stayFixes.reduce((s, p) => s + p.lon, 0) / stayFixes.length,
+					}
+				: { lat: fixes[fixes.length - 1].lat, lon: fixes[fixes.length - 1].lon };
+		const tail = fixes.slice(h);
+		const tailNet =
+			tail.length >= 2
+				? haversineMeters(tail[0].lat, tail[0].lon, tail[tail.length - 1].lat, tail[tail.length - 1].lon)
+				: 0;
+		const tailMedianKmh = median(tail.map((f) => f.speed_kmh ?? 0));
+		const tailParked =
+			tail.every((f) => haversineMeters(f.lat, f.lon, sc.lat, sc.lon) <= ARRIVAL_STAY_RADIUS_M) &&
+			tailNet <= ARRIVAL_TAIL_MAX_NET_M &&
+			tailMedianKmh <= ARRIVAL_TAIL_STATIONARY_KMH;
+
+		// Precision over recall: only touch the segment when we are sure it is
+		// a drive that arrived and parked. If the residual is a real walk to
+		// the door, leave the whole thing alone — a mislabelled vehicle head
+		// is a smaller error than an eaten walk-in.
+		if (!tailParked) {
+			out.push(cur);
+			continue;
+		}
+
+		// Extend the drive forward over its arrival tail, fold the parked
+		// residual into the stay, and drop the phantom walk.
+		const vehStats = stats(prev.startTs, boundaryTs);
+		out[out.length - 1] = {
+			...prev,
+			endTs: boundaryTs,
+			avgSpeed: vehStats.avg,
+			maxSpeed: vehStats.max,
+			pointCount: vehStats.count,
+			refinedReason: `${prev.refinedReason ? `${prev.refinedReason}; ` : ""}extended forward: absorbed the drive's decelerating arrival tail (${Math.round(headNet)} m, peak ${Math.round(peak)} km/h) that segmentation glued onto the following walk`,
+		};
+		const stStats = stats(boundaryTs, next.endTs);
+		segs[i + 1] = {
+			...next,
+			startTs: boundaryTs,
+			avgSpeed: stStats.avg,
+			maxSpeed: stStats.max,
+			pointCount: stStats.count,
+		};
+	}
+	return out;
+}
