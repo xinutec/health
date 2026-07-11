@@ -166,6 +166,21 @@ button.entry.journey {
   }
 }
 
+/* An open journey (its header + revealed legs) gets a slight highlight — a
+ * lighter tint of the card surface — so the expanded block reads as one unit.
+ * The legs only exist while expanded, so they always carry it. The rail dot
+ * matches the tint (rather than the plain surface) so it still punches through
+ * the connector line without standing out darker than its row. */
+.entry.journey.expanded,
+.entry.leg {
+  --journey-open-bg: color-mix(in srgb, var(--mat-sys-surface), white 7%);
+  background: var(--journey-open-bg);
+
+  .dot {
+    background: var(--journey-open-bg);
+  }
+}
+
 /* Expand-all / collapse-all control in the card header. */
 .toggle-all {
   margin-left: auto;
