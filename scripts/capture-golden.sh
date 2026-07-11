@@ -1,5 +1,6 @@
-#!/usr/bin/env nix-shell
-#!nix-shell -i bash -p openssh nodejs_24
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Capture a deterministic golden fixture for one day from prod.
 #
 # Builds locally, then runs capture-golden.js against the prod health-db

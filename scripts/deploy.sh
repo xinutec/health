@@ -2,12 +2,13 @@
 #!nix-shell -i bash -p git gh
 # Deploy the health-sync app end-to-end.
 #
-# Node for `npm run verify` is sourced per-command from the default
-# channel's nodejs_24 (24.16+, see VERIFY_NODE below). The Angular 22
-# frontend build hard-requires Node >= 24.15; the default channel now
-# ships 24.16, so no special channel pin is needed (it briefly required
-# nixos-26.05 in 2026-06 when the default was 24.14). git/gh come from
-# the shebang's default-channel nix-shell.
+# Node is sourced per-command from the flake devShell (`nix develop`,
+# rev-pinned via flake.lock — same single source of truth as every other
+# script; see scripts/_devshell.sh). This is deliberate: the ambient nix
+# channel drifts to a too-old Node and the Angular 22 build hard-requires
+# >= 24.15. git/gh stay on the shebang's default-channel nix-shell — a
+# non-default-channel gh can't read the macOS keyring (401), so it must
+# NOT come from the pinned flake.
 # (2026-06-29 Angular 21->22 + zoneless migration; Node 22->24.)
 #
 # Runs `npm run verify` (typecheck + lint + tests), then the local
@@ -21,8 +22,8 @@
 #   scripts/deploy.sh -m "commit message"
 #   scripts/deploy.sh -F /path/to/message.txt
 #
-# The shebang pulls in git / nodejs / gh via nix-shell so you can run the
-# script directly on macOS without a manual wrapper.
+# The shebang pulls in git / gh via nix-shell so you can run the script
+# directly on macOS; node comes per-command from the flake devShell (below).
 
 set -euo pipefail
 
@@ -68,13 +69,15 @@ cleanup() {
 trap cleanup EXIT
 
 # --- verify --------------------------------------------------------------
-# The Angular 22 frontend build needs Node >= 24.15; the default channel's
-# nodejs_24 (24.16+) satisfies that, sourced per-command so it doesn't
-# shadow the shebang's gh.
-VERIFY_NODE="nixpkgs#nodejs_24"
-echo "==> [1/7] npm run verify (node from $VERIFY_NODE)"
+# The Angular 22 frontend build needs Node >= 24.15; the flake devShell
+# pins it (24.18 at the current lock). Sourced per-command via `nix
+# develop` so it layers over — not shadows — the shebang's gh. HEALTH_DEVSHELL=1
+# tells any nested health script (npm run golden -> golden.sh) it is already
+# inside the devShell, so it skips its own re-exec.
+DEV="nix develop $HEALTH_DIR -c env HEALTH_DEVSHELL=1"
+echo "==> [1/7] npm run verify (node from flake devShell)"
 cd "$HEALTH_DIR"
-nix shell "$VERIFY_NODE" --command npm run verify
+$DEV npm run verify
 
 # --- golden + geometry gates ---------------------------------------------
 # The deterministic fixture gates: day-state snapshot diff (incl. worldline
@@ -85,8 +88,8 @@ nix shell "$VERIFY_NODE" --command npm run verify
 # bless is in flight).
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	echo "==> [2/7] golden corpus + walk-geometry ratchet"
-	nix shell "$VERIFY_NODE" --command npm run golden
-	nix shell "$VERIFY_NODE" --command npm run walk-gate
+	$DEV npm run golden
+	$DEV npm run walk-gate
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate (DEPLOY_SKIP_GOLDEN=1)"
 fi

@@ -1,5 +1,6 @@
-#!/usr/bin/env nix-shell
-#!nix-shell -i bash -p openssh nodejs_24
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Backtest the factor-scorer path against the legacy cascade over a
 # date range. Mirrors scripts/golden.sh — builds locally, then runs
 # backtest-classification.js against the prod health-db via

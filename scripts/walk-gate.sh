@@ -1,5 +1,6 @@
-#!/usr/bin/env nix-shell
-#!nix-shell -i bash -p nodejs_24
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Walk-geometry ratchet gate — does any drawn walk read worse than its blessed
 # floor? Zero-DB, deterministic (same fixture closure as `npm run golden`).
 # Wraps src/cli/score-walk-match.ts; the ratchet lives in src/eval/walk-gate.ts

@@ -11,7 +11,14 @@
     in {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.nodejs_24 ]; # backend (Hono) + Angular 22 frontend
+          # The single source of truth for every script's toolchain — see
+          # scripts/_devshell.sh. Pinned via flake.lock so it never drifts
+          # to a too-old Node (the ambient nix channel does; that broke the
+          # Angular >=24.15 build). Bump with: nix flake update.
+          packages = [
+            pkgs.nodejs_24 # backend (Hono) + Angular 22 frontend (needs >=24.15)
+            pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
+          ];
         };
       });
     };

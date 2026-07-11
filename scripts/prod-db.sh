@@ -1,5 +1,6 @@
-#!/usr/bin/env nix-shell
-#!nix-shell -i bash -p openssh nodejs_24
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Run a command with a tunnel open to the prod health-db.
 #
 # Opens an SSH-forwarded connection to the prod MariaDB and exports the
@@ -18,10 +19,8 @@
 # classification pipeline is not timezone-pure).
 #
 # Wrapper chatter goes to stderr, so the command's stdout stays clean.
-# The shebang pulls ssh / node via nix-shell — same pattern as
-# scripts/deploy.sh.
-
-set -euo pipefail
+# ssh / node come from the flake devShell (see scripts/_devshell.sh),
+# rev-pinned via flake.lock like every other script.
 
 [ "$#" -ge 1 ] || {
 	echo "usage: prod-db.sh <command...>" >&2
