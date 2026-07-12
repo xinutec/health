@@ -33,8 +33,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import tzLookup from "tz-lookup";
 import { z } from "zod";
-import { destroyPool, initPool } from "../db/pool.js";
-import { detectFocusPlaces, type RawPoint } from "../geo/focus-places.js";
+import { db, destroyPool, initPool } from "../db/pool.js";
+import {
+	detectFocusPlaces,
+	type FitbitSleepWindow,
+	type RawPoint,
+	sleepHoursFromFitbit,
+	sleepHoursOf,
+} from "../geo/focus-places.js";
 import type { NearbyLandmark } from "../geo/osm.js";
 import { nearbyLandmarks } from "../geo/osm.js";
 import {
@@ -135,19 +141,50 @@ async function collectFromProd(): Promise<TrainingStay[]> {
 	const detected = detectFocusPlaces(points);
 	console.error(`[${userId}] ${detected.stays.length} stays, ${detected.clusters.length} clusters`);
 
+	// Mirror `refresh-focus-places` EXACTLY, or the A/B is measured against a
+	// fiction. Two gates there, both upstream of the venue attribution:
+	//   1. mining walks the CLUSTERS' stays, not every detected stay;
+	//   2. a cluster whose Fitbit-confirmed sleep clears the residency
+	//      threshold is skipped whole — a home does not train venue-type
+	//      priors, and the shops near it must not inherit its dwells.
+	// Getting this wrong is how the baseline stops being the baseline.
+	const sleepRows = await db()
+		.selectFrom("sleep")
+		.select(["start_time", "end_time"])
+		.where("user_id", "=", userId)
+		.where("is_main_sleep", "=", true)
+		.execute();
+	const sleepWindows: FitbitSleepWindow[] = sleepRows.map((r) => ({
+		startTs: Math.floor(new Date(r.start_time).getTime() / 1000),
+		endTs: Math.floor(new Date(r.end_time).getTime() / 1000),
+	}));
+	const hasFitbitSleep = sleepWindows.length > 0;
+	const RESIDENCE_SLEEP_THRESHOLD_H = 5;
+
 	const out: TrainingStay[] = [];
-	for (const s of detected.stays) {
-		const tz = tzLookup(s.centroidLat, s.centroidLon);
-		out.push({
-			startTs: s.startTs,
-			endTs: s.endTs,
-			durationSec: s.durationSec,
-			localHour: localHourOf(Math.floor((s.startTs + s.endTs) / 2), tz),
-			lat: s.centroidLat,
-			lon: s.centroidLon,
-			candidates: await nearbyLandmarks(s.centroidLat, s.centroidLon, 100),
-		});
+	let residentialSkipped = 0;
+	for (const c of detected.clusters) {
+		const sleepH = hasFitbitSleep ? sleepHoursFromFitbit(c.stays, sleepWindows) : sleepHoursOf(c);
+		if (sleepH >= RESIDENCE_SLEEP_THRESHOLD_H) {
+			residentialSkipped += c.stays.length;
+			continue;
+		}
+		for (const s of c.stays) {
+			const tz = tzLookup(s.centroidLat, s.centroidLon);
+			out.push({
+				startTs: s.startTs,
+				endTs: s.endTs,
+				durationSec: s.durationSec,
+				localHour: localHourOf(Math.floor((s.startTs + s.endTs) / 2), tz),
+				lat: s.centroidLat,
+				lon: s.centroidLon,
+				candidates: await nearbyLandmarks(s.centroidLat, s.centroidLon, 100),
+			});
+		}
 	}
+	console.error(
+		`[${userId}] ${out.length} mineable stays (${residentialSkipped} skipped as residential, ${detected.stays.length - out.length - residentialSkipped} not in any cluster)`,
+	);
 	await destroyPool();
 	return out;
 }
@@ -171,6 +208,33 @@ for (const s of stays) {
 	}
 }
 const hardPriors = minePriors(hardStays);
+
+// --- does this harness actually reproduce prod? -----------------------------
+// The A/B is worthless if the baseline arm is not the baseline. `--expect`
+// takes prod's real blob (lift it out of any golden fixture's
+// `inputs.venuePriors`) and diffs against what this CLI mines with the hard
+// gate. They must match. If they don't, some gate upstream of the venue
+// attribution differs, every later measurement is confounded, and the number
+// to fix is this one — not the model.
+const expectAt = flag("--expect");
+if (expectAt) {
+	const expected = JSON.parse(await readFile(expectAt, "utf8")) as ReturnType<typeof minePriors>;
+	const subs = new Set([...Object.keys(expected.bySubtype), ...Object.keys(hardPriors.bySubtype)]);
+	const diffs = [...subs]
+		.map((s) => ({ s, want: expected.bySubtype[s]?.visits ?? 0, got: hardPriors.bySubtype[s]?.visits ?? 0 }))
+		.filter((d) => d.want !== d.got);
+	if (diffs.length === 0 && expected.totalVisits === hardPriors.totalVisits) {
+		console.error(`✓ harness reproduces prod (${hardPriors.totalVisits} visits) — the baseline arm is honest`);
+	} else {
+		console.error(
+			`✗ harness does NOT reproduce prod: ${expected.totalVisits} visits in prod vs ${hardPriors.totalVisits} mined here`,
+		);
+		for (const d of diffs.sort((a, b) => Math.abs(b.want - b.got) - Math.abs(a.want - a.got)).slice(0, 15)) {
+			console.error(`    ${d.s.padEnd(18)} prod ${String(d.want).padStart(3)}   mined ${String(d.got).padStart(3)}`);
+		}
+		console.error(`  Every A/B below is confounded until this matches. Fix the harness, not the model.`);
+	}
+}
 
 // --- what SOFT attribution would see (measurement only — nothing is mined
 //     from it in P0; that is P1) -------------------------------------------
