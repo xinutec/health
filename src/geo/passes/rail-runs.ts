@@ -344,7 +344,7 @@ function findRunBoardingFix(points: FilteredPoint[], startTs: number): FilteredP
  * station, not the user getting off. The actual alight is the first slow
  * fix that ISN'T followed by a return to transit speed.
  */
-function findRunAlightFix(points: FilteredPoint[], endTs: number): FilteredPoint | undefined {
+export function findRunAlightFix(points: readonly FilteredPoint[], endTs: number): FilteredPoint | undefined {
 	const slow = (p: FilteredPoint): boolean => p.speed_kmh < POST_TRANSIT_SPEED_KMH;
 	const findSustainedAlight = (predicate: (p: FilteredPoint) => boolean): FilteredPoint | undefined => {
 		for (const p of points) {

@@ -1596,6 +1596,24 @@ export async function computeVelocityFromInputs(
 			run: (segs) => repairVehicleHandoff(segs),
 		},
 
+		// Re-establish the back-to-back shared-station constraint over the FINAL
+		// leg sequence. railReconcile enforced it early, on the pre-merge
+		// fragments — but two later passes invalidate that: railJourney rewrites a
+		// merged ride's alight, and repairHandoff absorbs the surfaced sliver that
+		// was keeping an interchange's two legs apart. An invariant checked before
+		// the last pass that can break it is not an invariant.
+		//
+		// The 2026-06-28 morning: the Metropolitan ride now alights at "King's
+		// Cross St Pancras", while the Victoria leg boarding the same platform
+		// still carries "London King's Cross" — the co-located National Rail node
+		// that `nearbyStations` happens to rank 1.7 m closer. One interchange, two
+		// names, and a rail-discontinuity between them. Same pure constraint, run
+		// where it can finally see the truth.
+		{
+			name: "railReconcile2",
+			run: async (segs) => reconcileAdjacentRailLegs(segs),
+		},
+
 		// Transit-interchange stay label: a stationary stay sitting at a station
 		// and bracketed by train legs on BOTH sides — a train alighting just
 		// before (across at most one short platform-change walk) and a train

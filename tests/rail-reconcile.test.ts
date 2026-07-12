@@ -411,3 +411,93 @@ describe("assembleRailJourney", () => {
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 	});
 });
+
+/**
+ * A merged ride's ALIGHT must be resolved from the ride's own end, not inherited
+ * from the last fragment — whose label stops wherever the GPS last surfaced.
+ *
+ * The 2026-06-28 Metropolitan ride went dark one stop short of its destination.
+ * The last fragment could only name the last station the phone saw, so the ride
+ * was labelled as ending there — contradicting the Victoria leg that boarded at
+ * the real destination, and leaving a physically impossible worldline.
+ */
+describe("assembleRailJourney — the ride's alight comes from the ride's end", () => {
+	/** Four stations 692 m apart along one line, west to east. */
+	const MET_STATIONS = [
+		{ name: "Ashvale", lat: 51.5, lon: 0.0 },
+		{ name: "Brookden", lat: 51.5, lon: 0.01 },
+		{ name: "Carfax", lat: 51.5, lon: 0.02 },
+		{ name: "Deepwell", lat: 51.5, lon: 0.03 },
+	];
+
+	const osm = {
+		linesAtPoint: async () => new Set<string>(["Metropolitan Line"]),
+		stationsOnLine: async (line: string) => (line === "Metropolitan Line" ? MET_STATIONS : []),
+	};
+
+	const fix = (minute: number, lat: number, lon: number, speed_kmh: number) => ({
+		ts: minute * 60,
+		lat,
+		lon,
+		speed_kmh,
+		bearing: 90,
+	});
+
+	/** Ashvale → Brookden, then Brookden → Carfax: GPS surfaced twice, then went
+	 *  dark for the final Carfax → Deepwell hop. `last.alight` is Carfax — a
+	 *  mid-ride waypoint. The rider got off at Deepwell. */
+	const darkRide = [
+		seg("train", 0, 10, { wayName: "Ashvale → Brookden · Metropolitan Line", centroidLat: 51.5, centroidLon: 0.0 }),
+		seg("train", 10, 17, { wayName: "Brookden → Carfax · Metropolitan Line", centroidLat: 51.5, centroidLon: 0.015 }),
+	];
+
+	it("carries the ride past its last GPS-seen station to where the rider actually got off", async () => {
+		// GPS returns at 25 min, walking pace, 7 m from Deepwell — the real alight.
+		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.5, 0.0301, 2)];
+		const out = await assembleRailJourney([...darkRide], points, osm);
+		const trains = out.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(1);
+		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
+	});
+
+	it("keeps the fragment's label when the ride's end is never observed", async () => {
+		// No fix after the last fragment: we do not know where they got off, so we
+		// must not invent a station — the honest answer is the one we had.
+		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60)];
+		const out = await assembleRailJourney([...darkRide], points, osm);
+		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
+	});
+
+	it("keeps the fragment's label when the ride ends nowhere near the line", async () => {
+		// The post-ride fix is ~3.5 km off the line's stations (beyond
+		// JOURNEY_ALIGHT_MAX_M). Naming the nearest station anyway would be a
+		// fabrication.
+		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.53, 0.08, 2)];
+		const out = await assembleRailJourney([...darkRide], points, osm);
+		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
+	});
+
+	it("never collapses the ride to a degenerate 'X → X'", async () => {
+		// The rider returns to where they boarded (GPS reacquires at Ashvale).
+		// Re-resolving would name the board station as the alight; keep the
+		// fragment's label rather than emit a zero-length ride.
+		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.5, 0.0001, 2)];
+		const out = await assembleRailJourney([...darkRide], points, osm);
+		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
+	});
+
+	it("is not fooled by a mid-ride station dwell — the train stopped, the rider did not get off", async () => {
+		// A slow fix at Carfax (the train standing at the platform) followed by a
+		// return to transit speed is a dwell, not an alight. findRunAlightFix must
+		// walk past it to the sustained slow fix at Deepwell.
+		const points = [
+			fix(5, 51.5, 0.005, 60),
+			fix(15, 51.5, 0.015, 60),
+			fix(18, 51.5, 0.02, 1), // standing at Carfax…
+			fix(19, 51.5, 0.022, 55), // …and moving again
+			fix(25, 51.5, 0.0301, 2),
+		];
+		const out = await assembleRailJourney([...darkRide], points, osm);
+		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
+	});
+});

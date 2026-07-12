@@ -9,10 +9,11 @@
 
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
+import { haversineMeters } from "../place-snap.js";
 import { interpolateTimes } from "../rail-snap.js";
 import { effectiveMode, samplesInWindow } from "../segment-util.js";
 import { MOVING_MERGE_MAX_GAP_S } from "./moving.js";
-import { expandTubeLineNames } from "./rail-runs.js";
+import { expandTubeLineNames, findRunAlightFix } from "./rail-runs.js";
 
 /** The boarding→alighting station pair at the core of a train wayName
  *  ("Victoria → King's Cross St Pancras"), stripped of any "· Line"
@@ -187,8 +188,57 @@ function legLocation(seg: EnrichedSegment, points: readonly FilteredPoint[]): { 
  *  captured in the golden OSM trace, so the pass stays deterministic on replay. */
 type RailJourneyOsm = {
 	linesAtPoint(lat: number, lon: number, radiusM?: number): Promise<Set<string>>;
-	stationsOnLine(lineName: string): Promise<ReadonlyArray<{ name: string }>>;
+	stationsOnLine(lineName: string): Promise<ReadonlyArray<LineStation>>;
 };
+
+/** A station the line serves, with the coordinate of its canonical node. */
+type LineStation = { name: string; lat: number; lon: number };
+
+/** Max distance (m) from the ride's alighting fix to a station ON THE LINE for
+ *  that station to be accepted as the alight. Matches the rail-run endpoint
+ *  radius: the first post-ride fix is routinely a few hundred metres from the
+ *  platform (the phone reports again once the rider is already walking out).
+ *  Beyond it we have no idea where they got off and keep the fragment's own
+ *  label rather than invent one. */
+const JOURNEY_ALIGHT_MAX_M = 400;
+
+/**
+ * Resolve the alighting station of a MERGED rail journey.
+ *
+ * A fragment's alight label is only trustworthy for that fragment's window. The
+ * last fragment of a ride that ends in a GPS blackout alights at a *mid-ride
+ * waypoint* — the last station the phone saw — not at the station the rider
+ * actually got off at. Inheriting `last.alight` therefore truncates the ride at
+ * whatever the GPS happened to catch last (2026-06-28: the Metropolitan ride
+ * Wembley Park → King's Cross went dark after Euston Square and was labelled as
+ * ending there, contradicting the Victoria leg that then boarded at King's
+ * Cross).
+ *
+ * Resolve it from the ride's own end instead: take the first fix at which the
+ * rider is demonstrably off the train (the same rule `annotateRailRuns` uses)
+ * and name the nearest station THE RIDE'S LINE ACTUALLY SERVES. Constraining
+ * the candidates to the line is what makes the answer stable: a raw
+ * `nearbyStations` lookup at King's Cross ranks the National Rail terminus node
+ * 1.7 m ahead of the Underground station, so the label is a coin-flip between
+ * two co-located nodes — but only one of them is on the Metropolitan line.
+ *
+ * Uses no OSM call of its own: the line's station set is already fetched (and
+ * memoised) to decide the merge, so this is a re-read of evidence in hand.
+ * Returns null when the ride's end is unobserved or lands nowhere near the
+ * line — the caller then keeps the fragment's label.
+ */
+function resolveJourneyAlight(
+	points: readonly FilteredPoint[],
+	endTs: number,
+	onLine: readonly LineStation[],
+): string | null {
+	const off = findRunAlightFix(points, endTs);
+	if (off === undefined || onLine.length === 0) return null;
+	const nearest = [...onLine]
+		.map((s) => ({ s, d: haversineMeters(off.lat, off.lon, s.lat, s.lon) }))
+		.sort((a, b) => a.d - b.d)[0];
+	return nearest.d <= JOURNEY_ALIGHT_MAX_M ? nearest.s.name : null;
+}
 
 /** A station-pair-labelled train leg (the only kind the assembler reasons over). */
 function isStationPairTrain(seg: EnrichedSegment | undefined): seg is EnrichedSegment {
@@ -234,7 +284,7 @@ async function findThroughLine(
 	stations: ReadonlySet<string>,
 	points: readonly FilteredPoint[],
 	osm: RailJourneyOsm,
-	stationsOnLineMemo: Map<string, Set<string>>,
+	stationsOnLineMemo: Map<string, readonly LineStation[]>,
 ): Promise<string | null> {
 	const tried = new Set<string>();
 	const want = [...stations];
@@ -243,10 +293,11 @@ async function findThroughLine(
 		tried.add(line);
 		let onLine = stationsOnLineMemo.get(line);
 		if (onLine === undefined) {
-			onLine = new Set((await osm.stationsOnLine(line)).map((s) => s.name));
+			onLine = await osm.stationsOnLine(line);
 			stationsOnLineMemo.set(line, onLine);
 		}
-		return want.every((s) => onLine.has(s));
+		const names = new Set(onLine.map((s) => s.name));
+		return want.every((s) => names.has(s));
 	};
 	// Cheapest candidates first: a line a leg already names costs no OSM call.
 	for (const t of trains) {
@@ -292,7 +343,7 @@ export async function assembleRailJourney(
 	osm: RailJourneyOsm,
 ): Promise<EnrichedSegment[]> {
 	const out: EnrichedSegment[] = [];
-	const stationsOnLineMemo = new Map<string, Set<string>>();
+	const stationsOnLineMemo = new Map<string, readonly LineStation[]>();
 	let i = 0;
 	while (i < segments.length) {
 		if (!isStationPairTrain(segments[i])) {
@@ -432,13 +483,21 @@ export async function assembleRailJourney(
 					pointCount += segments[m].pointCount;
 					maxSpeed = Math.max(maxSpeed, segments[m].maxSpeed);
 				}
+				// The ride's alight, resolved from the ride's own end against the
+				// stations its line serves — NOT inherited from the last fragment,
+				// whose label stops wherever the GPS last surfaced. See
+				// resolveJourneyAlight. Falls back to the fragment's label when the
+				// ride's end is unobserved, and never collapses to a degenerate
+				// "X → X".
+				const resolved = resolveJourneyAlight(points, segments[lastPos].endTs, stationsOnLineMemo.get(groupLine) ?? []);
+				const alight = resolved !== null && resolved !== first.board ? resolved : last.alight;
 				const reason = `rail-journey assembly: ${e - p + 1} fragments on ${groupLine} (GPS surfaced mid-ride) merged into one continuous ride`;
 				out.push({
 					...segments[firstPos],
 					mode: "train",
 					refinedMode: "train",
 					endTs: segments[lastPos].endTs,
-					wayName: `${first.board} → ${last.alight} · ${groupLine}`,
+					wayName: `${first.board} → ${alight} · ${groupLine}`,
 					snappedPath: undefined,
 					pointCount,
 					maxSpeed,
