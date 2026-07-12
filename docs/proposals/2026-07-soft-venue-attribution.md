@@ -1,7 +1,7 @@
 ---
 created: 2026-07-12
 updated: 2026-07-12
-status: design (no code)
+status: P0 shipped (stop condition passed 6.8x); P1 built but NOT shipped — blocked behind #344 + near-field
 references:
   - 2026-07-venue-measurement-model.md
   - ../design/probabilistic-principles.md
@@ -163,6 +163,96 @@ teach it. So the mixture needs an **`other` component** with its own prior mass:
 *Σᵢ rᵢ + r_other = 1*. A stay with no plausible candidate assigns most of its
 mass to `other` and contributes almost nothing to any subtype — which is the
 correct behaviour, and is what the current hard gate achieves by accident.
+
+## RESULTS (2026-07-12) — P0 and P1 are built and measured
+
+### P0: the stop condition passed, 6.8×
+
+Mined against the real 180-day history (306 mineable stays, after mirroring
+prod's residential-cluster skip):
+
+| | hard gate | soft attribution |
+|---|---|---|
+| training visits | **40** | **271.5** (effective) |
+| stays that teach | 40 | 280 |
+| stays discarded | 266 | 26 |
+
+`cafe`: **3 → 32.2 visits**, and its 40–150-minute dwell bucket goes from
+**zero to 11.1**. `supermarket`, `clothes`, `bakery`, `pharmacy` — all **0**
+under the hard gate — pick up real mass. Those are high-street venues. The
+starvation diagnosis is confirmed.
+
+Mean `other` mass came out at **0.113** against the referee's measured ~0.083
+base rate, so `OTHER_COMPONENT_NATS` is roughly sound. (It first read 0.317 —
+that was a bug in the *harness*, which mined all 528 stays instead of mirroring
+prod's residential skip. `--expect` now diffs the mined blob against prod's real
+one and refuses to be trusted unless they match. An A/B whose baseline is not
+the baseline is worse than no A/B.)
+
+### P1: no referee gain. Not shipped.
+
+| | correct | scorer arm |
+|---|---|---|
+| hard priors (prod) | 25/36 | 16/17 |
+| **soft priors** | **25/36** | **15/17** |
+
+No improvement, and the scorer arm is marginally *worse*. **P1 does not ship on
+this evidence.** `minePriorsSoft` exists and is inert; `refresh-focus-places`
+still mines the hard gate.
+
+### But the prior is not the reason — and this is the finding
+
+The prior has almost nothing to act on. Of the **7** wrong cases: **4** are
+stays the venue scorer *never runs on* (the focus-place override, #344), **1**
+has the truth missing from the mirror, and the last **2** are a station and a
+two-shop errand. Nothing the prior does can reach any of the first five.
+
+The decisive check — `rankVenues` at the real 06-28 Urban Social centroid, with
+each prior:
+
+| prior | The Library (pub, 0 m) | Urban Social (cafe, 9 m) | winner |
+|---|---|---|---|
+| hard (prod today) | **1.35** | 1.32 | pub, by 0.03 nats |
+| **soft** | 3.91 | **4.05** | **café, by 0.14 nats** |
+
+**The soft prior flips the score to the café** (shape term 2.58 vs 2.41). It is
+the first change anything has made that puts Urban Social on top — and it works
+for the right reason: the model finally learned that this user sits in cafés for
+an hour.
+
+It changes nothing, because the score is discarded twice over:
+
+1. **The focus-place override** (#344): `rankVenues` never runs on this stay.
+2. **Near-field**: even if it did, the smeared centroid lands *inside* The
+   Library's polygon (0 m) while the café's pin is 9 m out — so the nearest wins
+   outright and the summed evidence is never consulted.
+
+**Three layers, each masking the next. Fixing any one alone changes nothing.**
+
+This also explains — and partly retracts — the V0 conclusion that "V1 is dead".
+V0 measured `blockedByNearField = 0`, which is *true of the corpus as it runs
+today*, because the focus-place override hides every stay that would prove
+near-field harmful. V1 was not refuted on the merits; it was **untestable behind
+a layer that fires first**. The lesson is about the referee, not the model: *a
+metric can only see the layer that is actually reached.*
+
+### The stack, in the only order that works
+
+1. **#344** — focus-place `amenity_label` becomes evidence (a prior term in
+   nats on that candidate), not an override. Exposes the 4 hidden stays to the
+   scorer. Alone: does not fix Urban Social (the scorer would say the pub).
+2. **Near-field must stop being decisive** when the fix is smeared. This is V1
+   from the other proposal, now with an actual case behind it. Alone: does not
+   fix Urban Social (the hard prior has the pub ahead by 0.03 nats).
+3. **The soft prior (P1)** — the thing that finally names the café. Alone:
+   unreachable, as measured above.
+
+Each is independently checkable against the referee, but **only the third
+produces a correct label, and only after the first two land.** Sequence them;
+do not ship them separately and expect the number to move.
+
+The margin is **0.14 nats**. That is thin. It should be treated as a hypothesis
+the referee will test once the stack is unblocked — not as a result.
 
 ## Phases
 
