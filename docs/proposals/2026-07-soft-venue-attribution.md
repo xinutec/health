@@ -428,3 +428,58 @@ outranking present evidence.**
   `operator=Stonegate` and a website)? This is a genuinely different signal from
   geometry and it is currently unused. It may be worth more than any of the
   above, and it is cheap. Probe it before P2.
+
+---
+
+## 2026-07-12: #344 measured — "weight, don't filter" is REFUTED, and near-field is the real blocker
+
+The plan was to turn the focus-place `amenity_label` override from a veto into
+a bounded evidence term in `rankVenues`, with the magnitude *fitted* against the
+21 focus-place stays the referee adjudicates rather than hand-picked. It was
+built, swept, and reverted. The measurement is the artifact.
+
+**The memory term is worthless at every positive weight.**
+
+| `MEMORY_MATCH_NATS` | golden cleared | golden regressed | referee |
+| --- | --- | --- | --- |
+| **0.0** (no memory at all) | **3** | 1 | **44/53 (83%)** |
+| 1.0 / 1.5 / 2.0 | 2 | 1 | 43/53 (81%) |
+| 2.5 / 3.0 / 5.0 | 1 | 1 | 42/53 (79%) |
+| *the veto (today's prod)* | — | — | *42/53 (79%)* |
+
+Accuracy falls monotonically as the memory grows. The mined label carries no
+information the scorer does not already have from distance, opening hours and
+the visit-shape prior. So "weight, don't filter" collapses to "don't": the right
+end state is to **delete** the override, not to soften it.
+
+**But deleting it is blocked, and not by anything in this proposal.** It costs
+exactly one confirmed truth — Macmillan Cancer Centre (06-15) — and that loss is
+not caused by the deletion. The referee reports the truth as *"−4.03 nats
+behind"*: Macmillan **outscores** the winner ("Proton International @ UCLH") by
+four nats and still ranks #3, because Proton sits inside `NEAR_FIELD_DECISIVE_M`
+(12 m) and the near-field rule ranks it above every non-near-field candidate
+*regardless of score*. It is irreducible: it survives a memory term at 5 nats,
+and it survives converting the enclosing-institution rule to evidence. Only
+near-field can be electing it.
+
+The focus-place override was **masking a near-field bug**. That is the whole
+finding, and it is the three-layer stack this proposal already predicted —
+observed, this time, instead of argued.
+
+Two other things worth keeping:
+
+- **Enclosing-as-evidence is also refuted.** Converting the enclosing-institution
+  rule from an absolute sort key to a bounded nats term is strictly worse at
+  every weight tried (1/2/3/5) — it breaks HMC Westeinde (×2) and Royal Free
+  Hospital — *and* it does not recover Macmillan. Do not assume a hard rule
+  should become nats just because it is hard; measure. (What near-field probably
+  wants is a distance-decaying bonus, not a cliff at 12 m — but that is a
+  hypothesis, not a plan.)
+- **A measurement over a broken corpus is not a measurement.** The pre-#342
+  sweep said deleting the override cost *three* confirmed truths. Two of the
+  three were the 06-28 Metropolitan/Victoria station labels — artifacts of the
+  impossible-leg bug, not of the override. Repairing the gate (#342) changed the
+  verdict on #344. The golden corpus caught the referee lying a third time.
+
+**Order of work:** #345 (near-field) → delete the override (#344) → the soft
+prior (#343, P2/P3) → #325 (Urban Social).
