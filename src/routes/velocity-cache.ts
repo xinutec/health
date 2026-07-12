@@ -141,17 +141,3 @@ export function _resetVelocityCache(): void {
 	cache.clear();
 	inFlight.clear();
 }
-
-/** Drop every cached day for a user.
- *
- * A place confirmation changes what the pipeline concludes about EVERY day the
- * user has ever been to that place — past days included, since the label is
- * keyed by location, not by date. Without this the timeline would keep serving
- * the old venue name from cache for up to five minutes, and the confirmation
- * would look like it had not worked. */
-export function invalidateUser(userId: string): void {
-	for (const key of [...cache.keys()]) {
-		// Keys are `${uid}|${date}|${tz}|wm${0|1}` — see the /velocity route.
-		if (key.startsWith(`${userId}|`)) cache.delete(key);
-	}
-}

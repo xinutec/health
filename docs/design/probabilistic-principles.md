@@ -214,6 +214,78 @@ uncertainty. The metric to optimise is *calibration* (the
 posterior matches the long-run frequency of being right), not
 top-1 agreement.
 
+## Rule 6: the user never edits the algorithm's output
+
+**The user does not label, confirm, correct, override or
+otherwise hand-feed the algorithm. Ever. There is no "was this
+right?" prompt, no venue picker, no drag-the-track-here, no
+tick-to-confirm. Zero user load.**
+
+This is a hard rule, not a preference, and it holds even —
+especially — when the algorithm is stuck.
+
+The temptation is precise and it is seductive. The model narrows
+an indoor cafe to two venues 13 m apart in the same building,
+both plausible, and the fixes genuinely cannot separate them.
+The obvious move is to show the two and let the user tap one.
+It "works": the label becomes right, the user was only
+inconvenienced once, and the answer is remembered forever.
+
+It is a cop-out, for three reasons:
+
+1. **It moves the cost of an unsolved inference problem onto the
+   person the system exists to serve.** A dashboard that asks
+   you to do its homework is a worse product than one that is
+   sometimes wrong and says so.
+2. **It caps the algorithm.** The moment a manual override
+   exists, every hard case has a cheap escape, and the hard
+   cases are precisely the ones that would have forced the model
+   to get better. The 2 % of stays the model cannot name are
+   where the remaining signal is; hand them to the user and that
+   signal is never mined.
+3. **It launders a modelling failure as a feature.** The picker
+   *looks* like Rule 5 (surfacing uncertainty) but it is the
+   opposite: Rule 5 says *show* the posterior, own the doubt, and
+   go fix the model. A picker shows the posterior and then asks
+   the user to collapse it.
+
+A venue the model cannot name is a **bug**, and it stays open as
+a bug. "The GPS genuinely cannot separate these two" is a
+finding, not a resolution — it means the *geometry* cannot
+separate them, and the answer is to find the signal that can:
+the approach vector through the door, the dwell shape, the
+opening hours, the biometric signature of a cafe versus a pub,
+the sequence of what the user did before and after. When none of
+those work yet, the honest output is the top candidate with its
+uncertainty exposed (Rule 5) — never a question.
+
+### What this rule does NOT forbid
+
+- **Ground-truth narratives** (`tests/golden/ground-truth/*.md`).
+  These are a *developer* test oracle, written offline, used to
+  measure the algorithm and to fit parameters. They are how we
+  know the model is wrong. They are not a runtime input and no
+  user-facing surface writes them.
+- **Explicit user *preferences*** that are not claims about what
+  happened — home timezone, share-link settings, capture
+  frequency. Configuration is not labelling.
+- **Learning from behaviour the user produces anyway** — the
+  mined focus places, venue-type priors, per-mode biometric
+  signatures. The user is not being *asked* for anything; the
+  system is inferring from data it already has.
+
+The line is: **does the product ask the user to supply, confirm
+or fix an inference?** If yes, it is forbidden, however small the
+tap.
+
+### History
+
+A place-confirmation picker was built and shipped on 2026-07-12
+(commit 49876af) for exactly the Urban Social case above, and
+reverted the same day for exactly this reason. Do not rebuild it.
+The venue is still misnamed; that is the correct state of the
+world until the model earns it.
+
 ## The current generator constraints
 
 These are the hard generator constraints — properties a
@@ -372,6 +444,11 @@ If you find yourself:
   external evidence about which configurations are possible.)
 - Adding a fast path / heuristic for "the common case" → don't.
   Generator + scorer is supposed to BE the common case.
+- Tempted to ask the user — a confirm prompt, a venue picker, a
+  "was this right?", a drag-the-track handle — because the model
+  is stuck on a hard case → **no.** See Rule 6. The hard case is
+  the work. Ship the top candidate with its uncertainty exposed
+  and leave the bug open.
 
 These aren't style preferences — they're the difference between
 a probabilistic system that respects physics and a stack of

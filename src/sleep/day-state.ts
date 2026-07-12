@@ -64,11 +64,6 @@ export interface DayState {
 	 *  itself is "sleeping" this attribute is omitted — would be
 	 *  redundant. */
 	asleep?: boolean;
-	/** The stay's centroid — stationary states only. Lets the UI ask which
-	 *  venues were in the running and let the user settle one the sensors
-	 *  genuinely cannot (see `place-confirmation.ts`). */
-	lat?: number;
-	lon?: number;
 	/** IANA tz the state's timestamps should render in. Sourced
 	 *  from the underlying segment's displayTz, or from the sleep
 	 *  window's tz for synthesized sleeping intervals. */
@@ -244,13 +239,6 @@ function makeStateFromSegment(
 	const state: DayState = { startTs, endTs, mode };
 	if (seg.place !== undefined) state.place = seg.place;
 	if (seg.wayName !== undefined) state.wayName = seg.wayName;
-	// The stay's own centroid, so the UI can ask what else was in the running
-	// here and let the user settle a venue the sensors could not (see
-	// `place-confirmation.ts`). Only meaningful for a stay.
-	if (mode === "stationary" && seg.centroidLat !== undefined && seg.centroidLon !== undefined) {
-		state.lat = seg.centroidLat;
-		state.lon = seg.centroidLon;
-	}
 	if (asleep && mode !== "sleeping") state.asleep = true;
 	if (seg.displayTz) state.tz = seg.displayTz;
 	return state;

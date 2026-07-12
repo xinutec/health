@@ -68,11 +68,7 @@
 								<app-battery-chart [data]="velocity()" />
 							</div>
 							<div class="section">
-								<app-timeline
-									[data]="velocity()"
-									[referenceDate]="selectedDate()"
-									(placeConfirmed)="reloadCurrent()"
-								/>
+								<app-timeline [data]="velocity()" [referenceDate]="selectedDate()" />
 							</div>
 						}
 						<details class="perf-panel">

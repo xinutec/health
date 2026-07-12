@@ -40,7 +40,6 @@ import { loadEmptyDayBracket } from "./infer-empty-day.js";
 import type { ModeStats } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { dbOsmAdapter } from "./osm-adapter.js";
-import type { PlaceConfirmation } from "./place-confirmation.js";
 import { dateBoundsUtc } from "./timezone.js";
 import { loadBiometrics } from "./velocity.js";
 import type { VenuePriors } from "./venue-prior.js";
@@ -117,7 +116,6 @@ export async function loadClassificationInputs(
 		sleepWindows,
 		emptyDayBracket,
 		venuePriors,
-		placeConfirmations,
 	] = await Promise.all([
 		loadKnownPlacesQuery(userId),
 		loadModeBiometricsQuery(userId),
@@ -133,7 +131,6 @@ export async function loadClassificationInputs(
 		loadDaySleepWindows(userId, date),
 		loadEmptyDayBracket(userId, date),
 		loadVenuePriorsQuery(userId),
-		loadPlaceConfirmationsQuery(userId),
 	]);
 
 	return {
@@ -165,24 +162,7 @@ export async function loadClassificationInputs(
 		sleepWindows,
 		emptyDayBracket,
 		venuePriors,
-		placeConfirmations,
 	};
-}
-
-/** The user's confirmed place labels. A bounded per-user row-set, so it joins
- *  the deterministic input closure like every other table the pipeline reads. */
-async function loadPlaceConfirmationsQuery(userId: string): Promise<PlaceConfirmation[]> {
-	const rows = await db()
-		.selectFrom("place_confirmations")
-		.select(["lat", "lon", "radius_m", "label"])
-		.where("user_id", "=", userId)
-		.execute();
-	return rows.map((r) => ({
-		lat: Number(r.lat),
-		lon: Number(r.lon),
-		radiusM: Number(r.radius_m),
-		label: r.label,
-	}));
 }
 
 /** The day's `motion_log` rows — the per-fix heading/velocity/accuracy the

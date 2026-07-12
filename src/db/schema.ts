@@ -685,19 +685,10 @@ const MIGRATIONS: readonly string[] = [
 	// NULL when no venue was confidently mined. Written by refresh-focus-places.
 	`ALTER TABLE focus_places ADD COLUMN IF NOT EXISTS amenity_kind VARCHAR(64) NULL`,
 
-	// place_confirmations: the user telling us what a place actually is.
-	//
-	// Some venue ties cannot be broken by any sensor. OSM maps Urban Social as a
-	// bare node and the pub next door as a building, 13 m apart in the same
-	// terrace, both plausible for a midday hour-long sit. The geometry narrows
-	// the field to those two and then stops — honestly. A cleverer prior would
-	// only be guessing with more confidence.
-	//
-	// So the last step is a confirmation. Keyed by LOCATION, not by focus_place
-	// id: focus_places are re-mined from scratch by refresh-focus-places, and a
-	// confirmation the user made once must not evaporate when a cluster shifts
-	// or splits. Any stay whose centroid lands within `radius_m` takes the
-	// label, for good.
+	// place_confirmations — created 2026-07-12, RETIRED the same day; see the
+	// DROP below. Migrations are append-only (a version already recorded in
+	// schema_migrations must keep its index), so the CREATE stays even though
+	// nothing ever reads the table.
 	`CREATE TABLE IF NOT EXISTS place_confirmations (
       id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
       user_id     VARCHAR(64)  NOT NULL,
@@ -709,6 +700,19 @@ const MIGRATIONS: readonly string[] = [
       PRIMARY KEY (id),
       KEY idx_user (user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+	// …and drop it again.
+	//
+	// It let the user pick the right venue when the model could not, and it was
+	// a cop-out: it moved the cost of an unsolved inference problem onto the
+	// person using the system, and it would have quietly capped how good the
+	// algorithm ever needed to get. The venue it could not name (Urban Social,
+	// 2026-07-12) is still not named — that is now a bug to fix, which is the
+	// point. See RULE 6 in docs/design/probabilistic-principles.md.
+	//
+	// Dropped rather than left dormant: a table that exists is a table someone
+	// will wire back up.
+	`DROP TABLE IF EXISTS place_confirmations`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {
