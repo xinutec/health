@@ -331,40 +331,6 @@ export interface AttributedStay {
 	localHour: number;
 }
 
-/** Aggregate attributed stays into the priors blob. Pure counting — every
- *  number in the result is mined, none authored. */
-export function minePriors(stays: readonly AttributedStay[]): VenuePriors {
-	const bySubtype: Record<string, VenueTypeStats> = {};
-	const byCategory: Partial<Record<VenueCategory, VenueTypeStats>> = {};
-	const emptyStats = (): VenueTypeStats => ({
-		visits: 0,
-		dwell: new Array(DWELL_BUCKETS).fill(0),
-		hours: new Array(24).fill(0),
-	});
-	for (const stay of stays) {
-		const bucket = dwellBucket(stay.durationSec);
-		const hour = ((stay.localHour % 24) + 24) % 24;
-		let st = bySubtype[stay.subtype];
-		if (!st) {
-			st = emptyStats();
-			bySubtype[stay.subtype] = st;
-		}
-		st.visits++;
-		st.dwell[bucket]++;
-		st.hours[hour]++;
-		const category = categoryOfSubtype(stay.subtype);
-		let cat = byCategory[category];
-		if (!cat) {
-			cat = emptyStats();
-			byCategory[category] = cat;
-		}
-		cat.visits++;
-		cat.dwell[bucket]++;
-		cat.hours[hour]++;
-	}
-	return { bySubtype, byCategory, totalVisits: stays.length };
-}
-
 /** Honest-label floor for the stay-context path in `bestPlace`: when even
  *  the best candidate scores below this, no venue (or area) nearby is a
  *  plausible destination and the resolver falls through to the
@@ -472,4 +438,131 @@ export function rankVenues(
 		if (a.landmark.distanceM !== b.landmark.distanceM) return a.landmark.distanceM - b.landmark.distanceM;
 		return a.landmark.name.localeCompare(b.landmark.name);
 	});
+}
+
+// --- soft attribution (proposal 2026-07-soft-venue-attribution, P0) ---------
+
+/**
+ * How much of one stay each candidate venue is entitled to claim.
+ *
+ * `attributeStayVenue` above is a hard filter: a stay trains the prior on ONE
+ * venue or on none. On a dense high street no venue clears its margin, so the
+ * stay teaches nothing — and dense high streets are where cafés live. That is
+ * why the mined prior has three café visits and none in the hour-long dwell
+ * bucket (see the proposal).
+ *
+ * The responsibility is the soft form of the same question: *given the
+ * evidence, what is the probability this stay happened at each candidate?*
+ * Fractional, summing to 1 across the candidates PLUS an `other` component for
+ * "the true venue is not in this list" (an unmapped café, a friend's flat).
+ *
+ * The score deliberately uses **every term `rankVenues` knows EXCEPT the shape
+ * prior** — distance, venue-over-area, opening hours. Feeding the shape prior
+ * into the weights that train the shape prior is the feedback loop that made
+ * `focus_place #6053` self-confirm; keeping it out means a responsibility
+ * computed here cannot launder the model's own guesses back into itself. (P2
+ * of the proposal reintroduces it deliberately, as EM, with collapse guards.
+ * P0/P1 do not.)
+ *
+ * Near-field dominance is NOT applied: it is a ranking shortcut, not a
+ * probability, and it would hand a whole stay to whichever venue happens to be
+ * nearest — exactly the commitment this is designed to avoid.
+ */
+export interface StayResponsibilities {
+	candidates: { landmark: NearbyLandmark; r: number }[];
+	/** Mass assigned to "none of these" — the true venue is unmapped or absent.
+	 *  1 − Σ candidate r. A stay with no plausible candidate lands here and
+	 *  contributes almost nothing to the prior, which is correct. */
+	other: number;
+}
+
+/**
+ * Log-odds of the `other` component — how good a candidate must be before we
+ * believe it over "the true venue is not in this list at all".
+ *
+ * **PROVISIONAL, and knowingly so.** Borrowed from `VENUE_RANK_FLOOR_NATS`,
+ * which is a reasonable starting point but answers a *different* question: the
+ * floor decides "should we print a name?"; this decides "is the truth even
+ * here?". They come apart — a lone café at 95 m scores −1.32, so at this
+ * setting it takes ~55% of the stay against `other`. Nobody calibrated that
+ * coin-flip.
+ *
+ * It must be FIT, not chosen (Rule 4), and the data to fit it exists: the V0
+ * referee measured the truth absent from the candidate set on 3 of 36
+ * narrative-named stays (~8%). P0's miner reports the mean `other` mass over
+ * the real training set for exactly this reason — so the constant can be
+ * solved for instead of argued about.
+ *
+ * Until then: the responsibility ORDERING is sound; the MAGNITUDES are not
+ * calibrated, and nothing should depend on their absolute value.
+ */
+const OTHER_COMPONENT_NATS = VENUE_RANK_FLOOR_NATS;
+
+export function stayResponsibilities(
+	landmarks: readonly NearbyLandmark[],
+	stay: StayShape | null,
+): StayResponsibilities {
+	const pool = landmarks.filter(
+		(l) => VENUE_TYPES.has(l.type) && !NEVER_DESTINATION_SUBTYPES.has(l.subtype) && !l.reverseGeocoded,
+	);
+	const scores = pool.map((landmark) => {
+		const distance = -0.5 * (landmark.distanceM / DISTANCE_SIGMA_M) ** 2;
+		const venue = VENUE_OVER_AREA_NATS;
+		const hours = stay ? (hoursScore(landmark, stay) ?? 0) : 0;
+		return { landmark, s: distance + venue + hours };
+	});
+	// Softmax over the candidates plus the `other` component, in a numerically
+	// safe form (subtract the max before exponentiating).
+	const logits = [...scores.map((x) => x.s), OTHER_COMPONENT_NATS];
+	const max = Math.max(...logits);
+	const exps = logits.map((s) => Math.exp(s - max));
+	const z = exps.reduce((a, b) => a + b, 0);
+	return {
+		candidates: scores.map((x, i) => ({ landmark: x.landmark, r: exps[i] / z })),
+		other: exps[exps.length - 1] / z,
+	};
+}
+
+/** Effective sample size of a soft-attributed training set: how many whole
+ *  visits' worth of evidence it actually carries (Σ of all responsibilities,
+ *  excluding the `other` mass). This is the number that decides whether soft
+ *  attribution is the right lever at all — if it barely exceeds what the hard
+ *  gate already admits, the prior stays too thin to matter and the plan is
+ *  wrong. See the proposal's P0 stop condition. */
+export function effectiveSampleSize(stays: readonly StayResponsibilities[]): number {
+	return stays.reduce((n, s) => n + s.candidates.reduce((m, c) => m + c.r, 0), 0);
+}
+
+/** Aggregate attributed stays into the priors blob. Pure counting — every
+ *  number in the result is mined, none authored. */
+export function minePriors(stays: readonly AttributedStay[]): VenuePriors {
+	const bySubtype: Record<string, VenueTypeStats> = {};
+	const byCategory: Partial<Record<VenueCategory, VenueTypeStats>> = {};
+	const emptyStats = (): VenueTypeStats => ({
+		visits: 0,
+		dwell: new Array(DWELL_BUCKETS).fill(0),
+		hours: new Array(24).fill(0),
+	});
+	for (const stay of stays) {
+		const bucket = dwellBucket(stay.durationSec);
+		const hour = ((stay.localHour % 24) + 24) % 24;
+		let st = bySubtype[stay.subtype];
+		if (!st) {
+			st = emptyStats();
+			bySubtype[stay.subtype] = st;
+		}
+		st.visits++;
+		st.dwell[bucket]++;
+		st.hours[hour]++;
+		const category = categoryOfSubtype(stay.subtype);
+		let cat = byCategory[category];
+		if (!cat) {
+			cat = emptyStats();
+			byCategory[category] = cat;
+		}
+		cat.visits++;
+		cat.dwell[bucket]++;
+		cat.hours[hour]++;
+	}
+	return { bySubtype, byCategory, totalVisits: stays.length };
 }

@@ -38,6 +38,7 @@ import {
 } from "../eval/venue-referee.js";
 import type { RawPhonetrackFix } from "../geo/classification-inputs.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
+import type { VenuePriors } from "../geo/venue-prior.js";
 import { setVenueTraceSink, type VenueDecisionTrace } from "../geo/venue-trace.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -48,6 +49,15 @@ const GROUND_TRUTH_DIR = path.join(GOLDEN_DIR, "ground-truth");
 const args = process.argv.slice(2);
 const verbose = args.includes("--verbose");
 const jsonAt = args.includes("--json") ? args[args.indexOf("--json") + 1] : null;
+/** Replace each fixture's CAPTURED venue priors with a blob mined offline
+ *  (`mine-venue-priors --out`). The priors are an input to the pipeline, so
+ *  without this a re-mine is invisible to the replay unless every fixture is
+ *  re-captured — which drags in unrelated OSM drift. This is what makes a
+ *  change to the prior falsifiable against the corpus. */
+const priorsAt = args.includes("--priors") ? args[args.indexOf("--priors") + 1] : null;
+const injectedPriors: VenuePriors | null = priorsAt
+	? (JSON.parse(await readFile(priorsAt, "utf8")) as VenuePriors)
+	: null;
 
 const hhmm = (unix: number, tz: string): string =>
 	new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(
@@ -98,7 +108,8 @@ for (const file of files) {
 	const restore = setVenueTraceSink((t) => {
 		if (t.stay) traces.push(t);
 	});
-	const inputs = inputsFromFixture(captured);
+	const base = inputsFromFixture(captured);
+	const inputs = injectedPriors ? { ...base, venuePriors: injectedPriors } : base;
 	let states: Awaited<ReturnType<typeof computeVelocityFromInputs>>["states"];
 	try {
 		({ states } = await computeVelocityFromInputs(inputs));
