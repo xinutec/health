@@ -127,6 +127,11 @@ export interface DayState {
    *  synthesized sleeping intervals that have no overlapping
    *  segment. */
   tz?: string;
+  /** The stay's centroid — stationary states only. Lets the UI ask which
+   *  venues were in the running, and let the user settle one the sensors
+   *  genuinely cannot. */
+  lat?: number;
+  lon?: number;
   /** For sleeping states only: minutes the user was actually asleep
    *  (Fitbit minutes_asleep). Differs from the wall-clock span by
    *  the time spent awake in bed. */
@@ -265,6 +270,21 @@ function yesterday(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+export interface PlaceCandidate {
+  name: string;
+  subtype: string;
+  distanceM: number;
+  /** The scorer's summed log-evidence, in nats. Shown so the ranking is legible
+   *  rather than magic — a near-tie looks like a near-tie. */
+  score: number;
+}
+
+export interface PlaceCandidates {
+  /** The label the user has already confirmed here, if any. */
+  confirmed: string | null;
+  candidates: PlaceCandidate[];
 }
 
 @Injectable({ providedIn: "root" })
@@ -472,6 +492,48 @@ export class HealthService {
       });
     } catch {
       // Best-effort — never let logging break the dashboard.
+    }
+  }
+  /** The venue candidates the scorer weighed for a stay, in its own order.
+   *
+   *  Not a free-text box on purpose: the point is to pick between the venues the
+   *  model was genuinely torn between — two shops in one building, say — not to
+   *  invent a name it will never see again. */
+  async placeCandidates(
+    lat: number,
+    lon: number,
+    startTs: number,
+    endTs: number,
+    tz: string,
+  ): Promise<PlaceCandidates | null> {
+    try {
+      const q = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        start: String(startTs),
+        end: String(endTs),
+        tz,
+      });
+      const res = await this.fetch(`/api/place/candidates?${q}`);
+      if (!res.ok) return null;
+      return (await res.json()) as PlaceCandidates;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Record which venue this actually is. Applies to every visit to this spot,
+   *  past and future — the label was always about the place, not the day. */
+  async confirmPlace(lat: number, lon: number, label: string): Promise<boolean> {
+    try {
+      const res = await this.fetch("/api/place/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lon, label }),
+      });
+      return res.ok;
+    } catch {
+      return false;
     }
   }
 }

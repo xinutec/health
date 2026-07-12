@@ -34,6 +34,7 @@ import type { HrPoint, SleepStageRecord, StepPoint } from "./biometrics.js";
 import type { BusRoute } from "./bus-route-match.js";
 import type { ModeStats } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
+import type { PlaceConfirmation } from "./place-confirmation.js";
 import type { KnownPlace } from "./place-snap.js";
 import type { VenuePriors } from "./venue-prior.js";
 
@@ -215,6 +216,11 @@ export interface ClassificationInputs {
 	 *  ranking in `bestPlace` for stationary stays (#246). Optional so
 	 *  fixtures captured before the field existed replay as "no priors". */
 	venuePriors?: VenuePriors | null;
+	/** The user's confirmed place labels (`place_confirmations`). The last word
+	 *  on a venue the sensors cannot resolve — see `place-confirmation.ts`.
+	 *  Optional so fixtures captured before the table existed replay as "none
+	 *  confirmed". */
+	placeConfirmations?: readonly PlaceConfirmation[];
 }
 
 /** A single `rail_route_cache` row, projected to the columns

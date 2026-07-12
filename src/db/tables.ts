@@ -440,6 +440,26 @@ export interface VenueTypePriorsTable {
 	updated_at: Generated<Date>;
 }
 
+/** `place_confirmations` — the user's own word on what a place is.
+ *
+ *  The end of what the sensors can say. Two venues in one building, 13 m apart,
+ *  both plausible for the same sit: the geometry narrows to the pair and stops.
+ *  This closes it.
+ *
+ *  Keyed by LOCATION, not by `focus_places.id`: focus places are re-mined from
+ *  scratch, and a confirmation the user made once must survive a cluster
+ *  shifting, splitting or being renumbered. */
+export interface PlaceConfirmationsTable {
+	id: Generated<number>;
+	user_id: string;
+	lat: number;
+	lon: number;
+	/** How far from `lat`/`lon` a stay may sit and still take this label. */
+	radius_m: number;
+	label: string;
+	created_at: Generated<Date>;
+}
+
 export interface DecodedDaysTable {
 	user_id: string;
 	/** DATE in the user's displayTz, stored as 'YYYY-MM-DD'. */
@@ -507,5 +527,6 @@ export interface Database {
 	presence_log: PresenceLogTable;
 	learned_hmm_models: LearnedHmmModelsTable;
 	venue_type_priors: VenueTypePriorsTable;
+	place_confirmations: PlaceConfirmationsTable;
 	schema_migrations: SchemaMigrationsTable;
 }

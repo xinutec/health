@@ -87,7 +87,19 @@
       <div class="line"></div>
     </div>
     <div class="content">
-      <div class="primary">{{ entry.primary }}</div>
+      @if (entry.stay) {
+        <button
+          type="button"
+          class="primary primary-stay"
+          [title]="'Not right? Pick the place'"
+          (click)="openPlacePicker(entry.stay)"
+        >
+          {{ entry.primary }}
+          <mat-icon class="edit-place">edit</mat-icon>
+        </button>
+      } @else {
+        <div class="primary">{{ entry.primary }}</div>
+      }
       @if (entry.secondary) {
         <div class="secondary">{{ entry.secondary }}</div>
       }

@@ -225,3 +225,31 @@ button.entry.journey {
 .city-header + .entry {
   padding-top: 0;
 }
+
+/* A stay whose venue the user can settle. Deliberately quiet: the pencil only
+   shows on hover/focus, so the timeline reads as a narrative, not a form. */
+.primary-stay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  .edit-place {
+    font-size: 0.9rem;
+    width: 0.9rem;
+    height: 0.9rem;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  &:hover .edit-place,
+  &:focus-visible .edit-place {
+    opacity: 0.55;
+  }
+}

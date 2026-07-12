@@ -1,4 +1,9 @@
-import { Component, computed, input, signal, ChangeDetectionStrategy } from "@angular/core";
+import { Component, computed, inject, input, output, signal, ChangeDetectionStrategy } from "@angular/core";
+import { MatDialog } from "@angular/material/dialog";
+import {
+  PlacePickerComponent,
+  type PlacePickerData,
+} from "../place-picker/place-picker.component";
 import { NgTemplateOutlet } from "@angular/common";
 import { MatCardModule } from "@angular/material/card";
 import { MatIconModule } from "@angular/material/icon";
@@ -22,6 +27,9 @@ interface TimelineEntry {
   secondary?: string;
   /** State was asserted from surrounding days, not observed. */
   inferred: boolean;
+  /** Present on a stay with a known centroid: the handle the place picker needs
+   *  to ask what else was in the running here, and to record the answer. */
+  stay?: { lat: number; lon: number; startTs: number; endTs: number; tz: string; current: string };
 }
 
 /** A consecutive run of ≥2 moving legs between two visits, collapsed
@@ -62,6 +70,11 @@ type TimelineRow =
   styleUrl: "./timeline.component.scss",
 })
 export class TimelineComponent {
+  private readonly dialog = inject(MatDialog);
+  /** Emitted when the user confirms a venue — the page reloads the day so the
+   *  new label (and every other day at that place) shows immediately. */
+  readonly placeConfirmed = output<string>();
+
   readonly data = input<VelocityData | null>(null);
   /** Calendar date being displayed (YYYY-MM-DD). Used to compute
    *  -1d / +1d markers on state timestamps that fall outside the
@@ -261,7 +274,20 @@ export class TimelineComponent {
       secondary = secondary ? `${secondary} · no data (inferred)` : "no data (inferred)";
     }
 
+    const stay =
+      state.mode === "stationary" && state.lat !== undefined && state.lon !== undefined
+        ? {
+            lat: state.lat,
+            lon: state.lon,
+            startTs: state.startTs,
+            endTs: state.endTs,
+            tz: tz ?? "UTC",
+            current: primary,
+          }
+        : undefined;
+
     return {
+      stay,
       startLabel,
       startDayOffset,
       endLabel,
@@ -292,6 +318,21 @@ export class TimelineComponent {
       rows.push({ kind: "entry", entry: this.toEntry(s) });
     }
     return rows;
+  }
+
+  /** "Which place is this?" — offered on any stay we have a centroid for.
+   *
+   *  Some venue ties are not resolvable by any sensor: two venues in one
+   *  building, both plausible for the same sit. The scorer narrows the field and
+   *  honestly stops. This is where the user finishes the job. */
+  openPlacePicker(stay: NonNullable<TimelineEntry["stay"]>): void {
+    const ref = this.dialog.open<PlacePickerComponent, PlacePickerData, string | null>(
+      PlacePickerComponent,
+      { data: stay, width: "22rem", maxWidth: "90vw" },
+    );
+    ref.afterClosed().subscribe((label) => {
+      if (label) this.placeConfirmed.emit(label);
+    });
   }
 
   private toEntry(s: TrackSegment): TimelineEntry {

@@ -4,8 +4,12 @@ import { db } from "../db/pool.js";
 import type { AppEnv } from "../env.js";
 import { getConnectionStatus as getFitbitConnectionStatus } from "../fitbit/token-manager.js";
 import { loadWatchBattery } from "../fitbit/watch-battery.js";
+import { dbOsmAdapter } from "../geo/osm-adapter.js";
+import { confirmedLabelFor, type PlaceConfirmation } from "../geo/place-confirmation.js";
+import { haversineMeters } from "../geo/place-snap.js";
 import { dateBoundsUtc, isValidTimezone } from "../geo/timezone.js";
 import { computeVelocity } from "../geo/velocity.js";
+import { rankVenues, type VenuePriors } from "../geo/venue-prior.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireOwnerOnly } from "../middleware/share-auth.js";
 import { NextcloudClient } from "../nextcloud/client.js";
@@ -26,7 +30,7 @@ import {
 } from "../share/repository.js";
 import { buildShareUrl, clampShareDaysBack } from "../share/token.js";
 import { clipInferredFuture } from "../sleep/day-state.js";
-import { getVelocityCached, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
+import { getVelocityCached, invalidateUser, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
 
 /** Subset of the full Config that the API routes actually need. Narrowing
  *  the type here keeps test stubs minimal and surfaces dependency drift
@@ -626,5 +630,98 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		}
 	});
 
+	// --- place confirmations ------------------------------------------------
+	//
+	// The end of what the sensors can honestly say. Two venues in one building,
+	// both plausible for the same sit: the geometry narrows the field to the pair
+	// and stops. These two endpoints let the user close it, once, for good.
+
+	/** The ranked venue candidates for a stay — what the scorer actually
+	 *  considered, in its own order, with the winner first. Offering the user a
+	 *  free-text box would be worse: the point is to pick the venue the model was
+	 *  torn between, not to invent a new name for it. */
+	app.get("/place/candidates", async (c) => {
+		const q = z
+			.object({
+				lat: z.coerce.number().min(-90).max(90),
+				lon: z.coerce.number().min(-180).max(180),
+				start: z.coerce.number().int(),
+				end: z.coerce.number().int(),
+				tz: z.string().refine(isValidTimezone).default("UTC"),
+			})
+			.parse({
+				lat: c.req.query("lat"),
+				lon: c.req.query("lon"),
+				start: c.req.query("start"),
+				end: c.req.query("end"),
+				tz: c.req.query("tz"),
+			});
+		const uid = c.get("session").userId;
+
+		const landmarks = await dbOsmAdapter.nearbyLandmarks(q.lat, q.lon, 100);
+		const row = await db()
+			.selectFrom("venue_type_priors")
+			.select("priors_json")
+			.where("user_id", "=", uid)
+			.executeTakeFirst();
+		const priors = row ? (JSON.parse(row.priors_json) as VenuePriors) : null;
+
+		const ranked = rankVenues(landmarks, { startUnix: q.start, endUnix: q.end, tz: q.tz }, priors);
+		const confirmed = confirmedLabelFor(q.lat, q.lon, await loadConfirmations(uid));
+		return c.json({
+			confirmed,
+			candidates: ranked.slice(0, 8).map((r) => ({
+				name: r.landmark.name,
+				subtype: r.landmark.subtype,
+				distanceM: Math.round(r.landmark.distanceM),
+				score: Math.round(r.total * 100) / 100,
+			})),
+		});
+	});
+
+	/** Record the user's answer. Keyed by location so it survives focus_places
+	 *  being re-mined, and applied to every day — past visits included, since the
+	 *  label was always about the place, not the date. That is why the whole
+	 *  user's velocity cache is dropped. */
+	app.post("/place/confirm", async (c) => {
+		const uid = c.get("session").userId;
+		const body = z
+			.object({
+				lat: z.number().min(-90).max(90),
+				lon: z.number().min(-180).max(180),
+				label: z.string().min(1).max(128),
+				radiusM: z.number().int().min(5).max(200).default(40),
+			})
+			.parse(await c.req.json());
+
+		// One confirmation per place: replace any the new one overlaps, rather
+		// than stacking contradictory labels on the same building.
+		const existing = await loadConfirmations(uid);
+		const clash = existing.find((e) => haversineMeters(e.lat, e.lon, body.lat, body.lon) <= e.radiusM);
+		if (clash) {
+			await db()
+				.deleteFrom("place_confirmations")
+				.where("user_id", "=", uid)
+				.where("label", "=", clash.label)
+				.execute();
+		}
+		await db()
+			.insertInto("place_confirmations")
+			.values({ user_id: uid, lat: body.lat, lon: body.lon, radius_m: body.radiusM, label: body.label })
+			.execute();
+
+		invalidateUser(uid);
+		return c.json({ ok: true, label: body.label });
+	});
+
 	return app;
+}
+
+async function loadConfirmations(userId: string): Promise<PlaceConfirmation[]> {
+	const rows = await db()
+		.selectFrom("place_confirmations")
+		.select(["lat", "lon", "radius_m", "label"])
+		.where("user_id", "=", userId)
+		.execute();
+	return rows.map((r) => ({ lat: Number(r.lat), lon: Number(r.lon), radiusM: Number(r.radius_m), label: r.label }));
 }

@@ -684,6 +684,31 @@ const MIGRATIONS: readonly string[] = [
 	// kind (coach filters non-training venues) instead of parsing the name.
 	// NULL when no venue was confidently mined. Written by refresh-focus-places.
 	`ALTER TABLE focus_places ADD COLUMN IF NOT EXISTS amenity_kind VARCHAR(64) NULL`,
+
+	// place_confirmations: the user telling us what a place actually is.
+	//
+	// Some venue ties cannot be broken by any sensor. OSM maps Urban Social as a
+	// bare node and the pub next door as a building, 13 m apart in the same
+	// terrace, both plausible for a midday hour-long sit. The geometry narrows
+	// the field to those two and then stops — honestly. A cleverer prior would
+	// only be guessing with more confidence.
+	//
+	// So the last step is a confirmation. Keyed by LOCATION, not by focus_place
+	// id: focus_places are re-mined from scratch by refresh-focus-places, and a
+	// confirmation the user made once must not evaporate when a cluster shifts
+	// or splits. Any stay whose centroid lands within `radius_m` takes the
+	// label, for good.
+	`CREATE TABLE IF NOT EXISTS place_confirmations (
+      id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id     VARCHAR(64)  NOT NULL,
+      lat         DECIMAL(9,6) NOT NULL,
+      lon         DECIMAL(9,6) NOT NULL,
+      radius_m    INT          NOT NULL DEFAULT 40,
+      label       VARCHAR(128) NOT NULL,
+      created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {

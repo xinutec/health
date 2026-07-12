@@ -76,6 +76,7 @@ import {
 import { upgradeTubeHops } from "./passes/tube-hop.js";
 import { resolveVehicleIdentity } from "./passes/vehicle-identity.js";
 import { annotateWalkMatches } from "./pedestrian-match-annotate.js";
+import { confirmedLabelFor } from "./place-confirmation.js";
 import { type PlaceCandidate, pickBestPlace } from "./place-prior.js";
 import { haversineMeters, type KnownPlace, snapToPlace } from "./place-snap.js";
 import { DRIVABLE_HIGHWAY_SUBTYPES, RAIL_ONLY_SUBTYPES } from "./rail-road-proximity.js";
@@ -898,6 +899,22 @@ export async function computeVelocityFromInputs(
 			if (seg.mode === "stationary") {
 				const cLat = segPoints.reduce((s, p) => s + p.lat, 0) / segPoints.length;
 				const cLon = segPoints.reduce((s, p) => s + p.lon, 0) / segPoints.length;
+
+				// The user's own word, and it beats everything below it.
+				//
+				// Some venue ties no sensor can break: OSM maps Urban Social as a
+				// node and the pub sharing its building as a way, 13 m apart, both
+				// plausible for the same midday hour. The geometry narrows the
+				// field to that pair and honestly stops. Once the user has said
+				// which it is, there is nothing left to infer — so this runs before
+				// the station, focus-place and OSM pickers, all of which would
+				// otherwise re-derive a guess we no longer need.
+				const confirmed = confirmedLabelFor(cLat, cLon, inputs.placeConfirmations ?? []);
+				if (confirmed !== null) {
+					const namedPlace = await bestPlace(inputs.osm, cLat, cLon, { preferResidential: false });
+					const city = extractCity(namedPlace);
+					return { ...seg, place: confirmed, ...(city ? { city } : {}) };
+				}
 
 				// Transit continuity: a stay immediately after a train,
 				// within station range, is at the station the user just
