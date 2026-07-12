@@ -2,6 +2,7 @@ import { Component, computed, input, signal, ChangeDetectionStrategy } from "@an
 import { NgTemplateOutlet } from "@angular/common";
 import { MatCardModule } from "@angular/material/card";
 import { MatIconModule } from "@angular/material/icon";
+import { isMoving, modeStyle } from "../../modes";
 import type { DayState, TrackSegment, VelocityData } from "../../services/health.service";
 
 interface TimelineEntry {
@@ -50,24 +51,7 @@ type TimelineRow =
   | { kind: "entry"; entry: TimelineEntry }
   | { kind: "journey"; journey: TimelineJourney };
 
-const MODE_ICONS: Record<string, string> = {
-  sleeping: "bedtime",
-  stationary: "place",
-  walking: "directions_walk",
-  cycling: "directions_bike",
-  driving: "directions_car",
-  bus: "directions_bus",
-  train: "train",
-  plane: "flight",
-  boat: "directions_boat",
-  unknown: "signal_disconnected",
-};
 
-/** Modes that count as transit legs eligible to fold into a journey.
- *  Deliberately excludes `stationary`/`sleeping` (visits — the signal,
- *  always their own row) and `unknown` (a GPS gap, not a leg — it
- *  breaks a run rather than joining it). */
-const MOVING_MODES = new Set(["walking", "cycling", "driving", "bus", "train", "plane", "boat"]);
 
 @Component({
   selector: "app-timeline",
@@ -146,12 +130,12 @@ export class TimelineComponent {
     let i = 0;
     while (i < rows.length) {
       const r = rows[i];
-      if (r.kind === "entry" && MOVING_MODES.has(r.entry.mode)) {
+      if (r.kind === "entry" && isMoving(r.entry.mode)) {
         const legs: TimelineEntry[] = [];
         let j = i;
         while (j < rows.length) {
           const rj = rows[j];
-          if (rj.kind !== "entry" || !MOVING_MODES.has(rj.entry.mode)) break;
+          if (rj.kind !== "entry" || !isMoving(rj.entry.mode)) break;
           legs.push(rj.entry);
           j++;
         }
@@ -181,9 +165,7 @@ export class TimelineComponent {
     // are implied by the icon rail, and the destination is the visit row
     // directly below, so both would be noise here. Collapse consecutive
     // same-mode legs so a train interchange reads "Train", not "Train · Train".
-    const modes = legs
-      .filter((l) => l.mode !== "walking")
-      .map((l) => l.mode.charAt(0).toUpperCase() + l.mode.slice(1));
+    const modes = legs.filter((l) => l.mode !== "walking").map((l) => modeStyle(l.mode).label);
     const transitLabels = modes.filter((m, i) => i === 0 || m !== modes[i - 1]);
 
     const summaryLabel =
@@ -233,7 +215,7 @@ export class TimelineComponent {
   }
 
   private stateToEntry(state: DayState, segments: TrackSegment[]): TimelineEntry {
-    const icon = MODE_ICONS[state.mode] ?? "place";
+    const icon = modeStyle(state.mode).icon;
     const tz = state.tz ?? this.displayTzForState(state, segments);
     const startLabel = this.formatTime(state.startTs, tz);
     const startDayOffset = this.dayOffsetLabel(state.startTs, tz);
@@ -263,7 +245,7 @@ export class TimelineComponent {
       primary = "No GPS signal";
       secondary = `${durationLabel} · unknown`;
     } else {
-      const verb = state.mode.charAt(0).toUpperCase() + state.mode.slice(1);
+      const verb = modeStyle(state.mode).verb;
       primary = verb;
       const parts: string[] = [];
       if (state.wayName) parts.push(`on ${state.wayName}`);
@@ -314,7 +296,7 @@ export class TimelineComponent {
 
   private toEntry(s: TrackSegment): TimelineEntry {
     const mode = s.refinedMode ?? s.mode;
-    const icon = MODE_ICONS[mode] ?? "place";
+    const icon = modeStyle(mode).icon;
     const tz = s.displayTz;
     const startLabel = this.formatTime(s.startTs, tz);
     const endLabel = this.formatTime(s.endTs, tz);
@@ -327,7 +309,7 @@ export class TimelineComponent {
       primary = s.place ?? "Stopped";
       secondary = `${durationLabel} stationary`;
     } else {
-      const verb = mode.charAt(0).toUpperCase() + mode.slice(1);
+      const verb = modeStyle(mode).verb;
       primary = `${verb} · ${s.avgSpeed} km/h`;
       if (s.wayName) {
         secondary = `On ${s.wayName} · ${durationLabel}`;

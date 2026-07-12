@@ -85,7 +85,7 @@ describe("scenario: tube journey labelled as driving", () => {
 			// by refineMode, but maxSpeed 98.9 km/h is implausible on UK
 			// urban surface roads (30-50 mph limit) and a subway is
 			// within 25 m. The rule overrides the refineMode pick.
-			const refined = { mode: "driving", wayName: "Underpass Road" };
+			const refined = { mode: "driving" as const, wayName: "Underpass Road" };
 			const result = rejectImplausibleDriving(refined, 98.9, [trunkAbove, subwayBelow]);
 			expect(result.mode).toBe("train");
 			expect(result.wayName).toBe("Metropolitan Line");

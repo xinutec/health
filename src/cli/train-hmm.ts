@@ -36,13 +36,13 @@
 import { z } from "zod";
 import { db, initPool, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
-import type { TransportMode } from "../geo/segments.js";
+import type { ModelledMode } from "../geo/segments.js";
 import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, loadBiometrics } from "../geo/velocity.js";
 import { fitPerModeEmissions, type LabeledSample } from "../hmm/fit-emissions.js";
 import { buildObservationTensor } from "../hmm/observation.js";
 
-const KNOWN_MODES: ReadonlySet<TransportMode> = new Set([
+const KNOWN_MODES: ReadonlySet<ModelledMode> = new Set([
 	"stationary",
 	"walking",
 	"cycling",
@@ -52,8 +52,12 @@ const KNOWN_MODES: ReadonlySet<TransportMode> = new Set([
 	"unknown",
 ]);
 
-function asTransportMode(s: string): TransportMode | null {
-	return KNOWN_MODES.has(s as TransportMode) ? (s as TransportMode) : null;
+/** Modes the HSMM can be trained on. `vehicle` and `boat` are excluded by
+ *  construction (`ModelledMode`): `vehicle` is the pipeline's admission that it
+ *  could not identify a ride, so it has no biometric signature to learn, and a
+ *  sample labelled "I don't know" would only blur the modes it sits between. */
+function asModelledMode(s: string): ModelledMode | null {
+	return KNOWN_MODES.has(s as ModelledMode) ? (s as ModelledMode) : null;
 }
 
 const config = z
@@ -228,7 +232,7 @@ async function collectDaySamples(
 		if (segIdx === -1) continue;
 		const seg = velResult.segments[segIdx];
 		const rawMode = seg.refinedMode ?? seg.mode;
-		const mode = asTransportMode(rawMode);
+		const mode = asModelledMode(rawMode);
 		if (mode === null || mode === "unknown") continue;
 		const placeId = mode === "stationary" ? (segPlaceId.get(segIdx) ?? null) : null;
 		samples.push({

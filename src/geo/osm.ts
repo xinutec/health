@@ -1036,7 +1036,7 @@ export async function nearbyBuildings(lat: number, lon: number, radiusM = 150): 
  * - Mode "stationary" + nearby aeroway → likely at airport
  */
 export interface ModeRefinement {
-	mode: string;
+	mode: TransportMode;
 	confidence: "low" | "medium" | "high";
 	reason: string;
 	wayName?: string;
@@ -1078,7 +1078,7 @@ export interface RailRoadProximity {
 }
 
 export function refineMode(
-	originalMode: string,
+	originalMode: TransportMode,
 	speedKmh: number,
 	ways: NearbyWay[],
 	biometric?: BiometricContext,
@@ -1139,10 +1139,10 @@ const SUBWAY_PARALLEL_DISTANCE_M = 100;
  * that rewrite (see [[health-sync-hmm-debt]] memory).
  */
 export function rejectImplausibleDriving(
-	refined: { mode: string; wayName?: string },
+	refined: { mode: TransportMode; wayName?: string },
 	maxSpeedKmh: number,
 	ways: NearbyWay[],
-): { mode: string; wayName?: string; reason?: string } {
+): { mode: TransportMode; wayName?: string; reason?: string } {
 	if (refined.mode !== "driving") return refined;
 	if (maxSpeedKmh <= URBAN_NON_MOTORWAY_MAX_KMH) return refined;
 	const onMotorway = ways.some((w) => w.type === "highway" && MOTORWAY_GRADE_SUBTYPES.has(w.subtype));
@@ -1188,7 +1188,7 @@ export function rejectImplausibleDriving(
  * of what the caller has decided to provide.
  */
 function refineModeViaFactors(
-	originalMode: string,
+	originalMode: TransportMode,
 	speedKmh: number,
 	ways: NearbyWay[],
 	biometric?: BiometricContext,
@@ -1196,7 +1196,7 @@ function refineModeViaFactors(
 	debugLabel?: string,
 	railRoad?: RailRoadProximity,
 ): ModeRefinement {
-	const candidates = generateRefineModeCandidates(originalMode as TransportMode, ways, biometric);
+	const candidates = generateRefineModeCandidates(originalMode, ways, biometric);
 	const factors: Factor[] = [speedEmission, osmDistance, modeCoherence];
 	if (biometric) factors.push(biometricLL, modePrior, classifierPrior);
 	if (railRoad) factors.push(railCorridor);
@@ -1206,7 +1206,7 @@ function refineModeViaFactors(
 			speedKmh,
 			biometricObs: biometric?.obs,
 			modeStats: biometric?.stats,
-			originalMode: originalMode as TransportMode,
+			originalMode,
 			confidenceMargin,
 			meanRailDistM: railRoad?.meanRailDistM ?? null,
 			meanDrivableRoadDistM: railRoad?.meanDrivableRoadDistM ?? null,
@@ -1266,7 +1266,7 @@ function reasonFromBest(ranked: ScoredRefinement): string {
 	return `${ranked.best.mode} (no way context)`;
 }
 
-function refineModeLegacyCascade(originalMode: string, speedKmh: number, ways: NearbyWay[]): ModeRefinement {
+function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, ways: NearbyWay[]): ModeRefinement {
 	const railways = ways.filter((w) => w.type === "railway");
 	const highways = ways.filter((w) => w.type === "highway");
 	const aeroways = ways.filter((w) => w.type === "aeroway");

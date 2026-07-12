@@ -18,11 +18,11 @@
  * Pure function. No DB, no IO, no globals.
  */
 
-import type { TransportMode } from "../geo/segments.js";
+import type { ModelledMode } from "../geo/segments.js";
 
 /** A single labeled minute used as a training sample. */
 export interface LabeledSample {
-	mode: TransportMode;
+	mode: ModelledMode;
 	/** Heart rate (bpm) at the minute, or `null` if no HR reading. */
 	hr: number | null;
 	/** Cadence (steps/min). `0` is a meaningful value ("explicit zero
@@ -68,7 +68,7 @@ export interface LearnedModeParameters {
 
 export interface TrainingSummary {
 	totalSampleCount: number;
-	samplesPerMode: Partial<Record<TransportMode, number>>;
+	samplesPerMode: Partial<Record<ModelledMode, number>>;
 	samplesPerPlace: Record<string, number>;
 }
 
@@ -76,7 +76,7 @@ export interface LearnedEmissionParameters {
 	/** Per-mode learned parameters. `"fallback"` for modes that
 	 *  didn't reach `MIN_SAMPLES_PER_MODE` — caller should use
 	 *  hand-tuned `MODE_PRIORS` for those modes. */
-	perMode: Partial<Record<TransportMode, LearnedModeParameters | "fallback">>;
+	perMode: Partial<Record<ModelledMode, LearnedModeParameters | "fallback">>;
 	/** Per-place HR fits for stationary states. Keyed by stringified
 	 *  place id (so the blob is JSON-friendly). Populated when a
 	 *  place has at least `MIN_SAMPLES_PER_PLACE` stationary samples
@@ -150,7 +150,7 @@ function fitGaussian(values: readonly number[], stdFloor: number): GaussianFit {
 
 export function fitPerModeEmissions(samples: readonly LabeledSample[]): LearnedEmissionParameters {
 	// Bucket by mode.
-	const byMode = new Map<TransportMode, LabeledSample[]>();
+	const byMode = new Map<ModelledMode, LabeledSample[]>();
 	for (const s of samples) {
 		let bucket = byMode.get(s.mode);
 		if (!bucket) {
@@ -160,8 +160,8 @@ export function fitPerModeEmissions(samples: readonly LabeledSample[]): LearnedE
 		bucket.push(s);
 	}
 
-	const perMode: Partial<Record<TransportMode, LearnedModeParameters | "fallback">> = {};
-	const samplesPerMode: Partial<Record<TransportMode, number>> = {};
+	const perMode: Partial<Record<ModelledMode, LearnedModeParameters | "fallback">> = {};
+	const samplesPerMode: Partial<Record<ModelledMode, number>> = {};
 
 	for (const [mode, modeSamples] of byMode.entries()) {
 		samplesPerMode[mode] = modeSamples.length;

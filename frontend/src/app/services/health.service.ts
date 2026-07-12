@@ -1,4 +1,5 @@
 import { Injectable, inject, signal } from "@angular/core";
+import type { DayStateMode } from "../modes";
 import { ConnectionStateService } from "./connection-state.service";
 
 export interface ActivityDay {
@@ -59,6 +60,23 @@ export interface BatterySample {
   level: number;
 }
 
+/** The mode a segment should be *shown* as.
+ *
+ *  Three fields encode it, and reading any one alone is wrong:
+ *    - `mode` is the raw speed/shape classification, before any refinement.
+ *    - `refinedMode` is what the OSM + rail + bus passes concluded, when they
+ *      concluded anything.
+ *    - `vehicleKind` turns a `driving` leg into a bus without changing `mode`.
+ *
+ *  The speed chart used to colour its bands off `seg.mode` alone, so the same
+ *  screen showed a tube ride as "train" in the timeline and as a car in the
+ *  chart. The backend has the identical helper (`src/geo/segment-util.ts`) with
+ *  the identical warning; this is its client-side twin. */
+export function effectiveMode(seg: TrackSegment): string {
+  if (seg.vehicleKind === "bus") return "bus";
+  return seg.refinedMode ?? seg.mode;
+}
+
 export interface TrackSegment {
   startTs: number;
   endTs: number;
@@ -76,6 +94,11 @@ export interface TrackSegment {
   city?: string; // city/town/village (stationary segments) — used to group consecutive same-city entries
   wayName?: string;
   refinedMode?: string;
+  /** Stop-pattern refinement of a road-vehicle leg: "bus" when the leg's
+   *  dwells coincide with bus stops, or its endpoints match a bus route.
+   *  The mode stays "driving"; this is what makes it a bus for display.
+   *  Read it through `effectiveMode()` — never off `mode` directly. */
+  vehicleKind?: "bus";
   refinedReason?: string;
   /** IANA tz the segment's timestamps should be rendered in.
    *  Derived per-segment from the segment's location (stationary
@@ -91,7 +114,7 @@ export interface TrackSegment {
 export interface DayState {
   startTs: number;
   endTs: number;
-  mode: "sleeping" | "stationary" | "walking" | "cycling" | "driving" | "bus" | "train" | "plane" | "unknown";
+  mode: DayStateMode;
   /** Human-readable place (stationary / sleeping). */
   place?: string;
   /** Human-readable way (moving — road, line, station-pair). */

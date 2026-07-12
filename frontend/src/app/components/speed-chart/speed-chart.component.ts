@@ -1,26 +1,7 @@
 import { Component, effect, ElementRef, input, type OnDestroy, signal, viewChild, ChangeDetectionStrategy } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
-import { displayTzAt, type VelocityData } from "../../services/health.service";
-
-const MODE_COLORS: Record<string, string> = {
-	stationary: "rgba(120, 120, 120, 0.2)",
-	walking: "rgba(34, 197, 94, 0.25)",
-	cycling: "rgba(59, 130, 246, 0.25)",
-	driving: "rgba(249, 115, 22, 0.25)",
-	bus: "rgba(234, 88, 12, 0.25)",
-	train: "rgba(168, 85, 247, 0.25)",
-	plane: "rgba(236, 72, 153, 0.25)",
-};
-
-const MODE_LABELS: Record<string, string> = {
-	stationary: "Still",
-	walking: "Walking",
-	cycling: "Cycling",
-	driving: "Driving",
-	bus: "Bus",
-	train: "Train",
-	plane: "Plane",
-};
+import { modeStyle } from "../../modes";
+import { displayTzAt, effectiveMode, type VelocityData } from "../../services/health.service";
 
 @Component({
 	selector: "app-speed-chart",
@@ -92,7 +73,7 @@ export class SpeedChartComponent implements OnDestroy {
 			for (const seg of segments) {
 				const x1 = xPos(seg.startTs);
 				const x2 = xPos(seg.endTs);
-				ctx.fillStyle = MODE_COLORS[seg.mode] ?? MODE_COLORS["stationary"];
+				ctx.fillStyle = modeStyle(effectiveMode(seg)).fill;
 				ctx.fillRect(x1, padTop, x2 - x1, drawH);
 				modesSet.add(seg.mode);
 			}
@@ -154,10 +135,10 @@ export class SpeedChartComponent implements OnDestroy {
 	}
 
 	modeColor(mode: string): string {
-		return (MODE_COLORS[mode] ?? MODE_COLORS["stationary"]).replace(/[\d.]+\)$/, "0.6)");
+		return modeStyle(mode).fill.replace(/[\d.]+\)$/, "0.6)");
 	}
 
 	modeLabel(mode: string): string {
-		return MODE_LABELS[mode] ?? mode;
+		return modeStyle(mode).label;
 	}
 }

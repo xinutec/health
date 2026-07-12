@@ -25,11 +25,11 @@
  * Pure function. No DB, no I/O, no globals.
  */
 
-import type { TransportMode } from "../geo/segments.js";
+import type { ModelledMode } from "../geo/segments.js";
 
 /** A single HMM state. */
 export interface State {
-	mode: TransportMode;
+	mode: ModelledMode;
 	/** `focus_places.id` when `mode === "stationary"` and the user is
 	 *  at a known place; `null` for off-network stationary or for any
 	 *  moving mode. */
@@ -103,7 +103,7 @@ export function stateKey(s: State): string {
 	return s.mode;
 }
 
-const MOVEMENT_MODES: readonly TransportMode[] = ["walking", "cycling", "driving", "plane", "unknown"];
+const MOVEMENT_MODES: readonly ModelledMode[] = ["walking", "cycling", "driving", "plane", "unknown"];
 
 export function buildStateSpace(input: BuildStateSpaceInput): State[] {
 	const states: State[] = [];

@@ -15,21 +15,10 @@ import {
 import { MatCardModule } from "@angular/material/card";
 import { MatCheckboxModule } from "@angular/material/checkbox";
 import * as L from "leaflet";
+import { modeStyle } from "../../modes";
 import { displayTzAt, type LatestFix, type VelocityData } from "../../services/health.service";
 
-/** Track colour per transport mode — distinct hues from the app
- *  palette, so a glance at the line shows how the day was travelled. */
-const MODE_COLORS: Record<string, string> = {
-	walking: "#22c55e",
-	cycling: "#f59e0b",
-	driving: "#ef4444",
-	bus: "#ea580c",
-	train: "#3b82f6",
-	plane: "#8b5cf6",
-	stationary: "#94a3b8",
-	sleeping: "#94a3b8",
-};
-const DEFAULT_COLOR = "#94a3b8";
+
 
 /**
  * Map tab — the day's track on an OpenStreetMap basemap.
@@ -218,7 +207,7 @@ export class MapComponent implements OnDestroy {
 			// so it draws solid like raw/matched.
 			const dashed = ep.kind === "snapped" || ep.kind === "tentative";
 			L.polyline(prevLast ? [prevLast, ...coords] : coords, {
-				color: MODE_COLORS[ep.mode] ?? DEFAULT_COLOR,
+				color: modeStyle(ep.mode).color,
 				weight: 4,
 				opacity: 0.9,
 				...(dashed ? { dashArray: "6 6" } : {}),
@@ -234,7 +223,7 @@ export class MapComponent implements OnDestroy {
 				radius: 6,
 				color: "#ffffff",
 				weight: 2,
-				fillColor: MODE_COLORS["stationary"],
+				fillColor: modeStyle("stationary").color,
 				fillOpacity: 1,
 			})
 				.bindPopup(ep.place)

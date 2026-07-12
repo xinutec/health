@@ -26,7 +26,7 @@ import {
 } from "../share/repository.js";
 import { buildShareUrl, clampShareDaysBack } from "../share/token.js";
 import { clipInferredFuture } from "../sleep/day-state.js";
-import { getVelocityCached } from "./velocity-cache.js";
+import { getVelocityCached, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
 
 /** Subset of the full Config that the API routes actually need. Narrowing
  *  the type here keeps test stubs minimal and surfaces dependency drift
@@ -392,20 +392,30 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 			// pod restart clears the cache so logic changes go live
 			// on the first request after deploy.
 			const cacheKey = `${uid}|${date}|${tz ?? ""}|wm${walkMatch ? 1 : 0}`;
-			const result = await getVelocityCached(cacheKey, async () => {
-				const r = await computeVelocity(config, uid, date, tz, { walkMatch });
-				// Watch-battery series for the same day, plotted alongside the phone
-				// battery. Loaded here (not in computeVelocity) so it stays out of the
-				// golden/velocity path; a DB hiccup degrades to no watch series. Cached
-				// with the result — a cache-hit request costs zero DB round-trips, at
-				// worst TTL-stale (5 min) on a display-only chart.
-				const bounds = dateBoundsUtc(date, tz);
-				const watchBattery = await loadWatchBattery(uid, tz ?? "UTC", bounds.startUtc, bounds.endUtc).catch((e) => {
-					console.error(`watch battery load failed for user=${uid} date=${date}:`, e);
-					return [];
-				});
-				return { ...r, watchBattery };
-			});
+			// A day still in progress keeps changing under us: a ride a minute old
+			// cannot yet be identified as the train it will turn out to be, so the
+			// full window leaves a superseded verdict on screen long after the
+			// pipeline corrected itself. Hold a live day briefly instead — being
+			// partial, it is also far cheaper to recompute.
+			const ttlMs = isLiveDay(date, tz) ? LIVE_TTL_MS : undefined;
+			const result = await getVelocityCached(
+				cacheKey,
+				async () => {
+					const r = await computeVelocity(config, uid, date, tz, { walkMatch });
+					// Watch-battery series for the same day, plotted alongside the phone
+					// battery. Loaded here (not in computeVelocity) so it stays out of the
+					// golden/velocity path; a DB hiccup degrades to no watch series. Cached
+					// with the result — a cache-hit request costs zero DB round-trips, at
+					// worst TTL-stale (5 min) on a display-only chart.
+					const bounds = dateBoundsUtc(date, tz);
+					const watchBattery = await loadWatchBattery(uid, tz ?? "UTC", bounds.startUtc, bounds.endUtc).catch((e) => {
+						console.error(`watch battery load failed for user=${uid} date=${date}:`, e);
+						return [];
+					});
+					return { ...r, watchBattery };
+				},
+				ttlMs,
+			);
 			// Never assert the future: clip inferred continuations (dwell-prior,
 			// empty-day) to the current moment. Cache holds the full
 			// deterministic result; the clip is per-request so "now" advances.

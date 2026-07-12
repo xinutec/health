@@ -74,6 +74,7 @@ import {
 	mergeAdjacentStays,
 } from "./passes/stays.js";
 import { upgradeTubeHops } from "./passes/tube-hop.js";
+import { resolveVehicleIdentity } from "./passes/vehicle-identity.js";
 import { annotateWalkMatches } from "./pedestrian-match-annotate.js";
 import { type PlaceCandidate, pickBestPlace } from "./place-prior.js";
 import { haversineMeters, type KnownPlace, snapToPlace } from "./place-snap.js";
@@ -992,8 +993,8 @@ export async function computeVelocityFromInputs(
 				// Temper motion-only confidence by the road-corridor evidence: a
 				// "driving" leg the GPS shows off any road is ambiguous (could be
 				// rail), so it shouldn't read a confident 100% car (#296).
-				confidence: roadSupportedConfidence(plausible.mode as TransportMode, seg.confidence, roadCorridorFraction),
-				refinedMode: plausible.mode as TransportMode,
+				confidence: roadSupportedConfidence(plausible.mode, seg.confidence, roadCorridorFraction),
+				refinedMode: plausible.mode,
 				refinedReason: plausible.reason ?? refined.reason,
 				wayName: plausible.wayName,
 				...(movingCity ? { city: movingCity } : {}),
@@ -1576,6 +1577,20 @@ export async function computeVelocityFromInputs(
 				}
 				return out;
 			},
+		},
+
+		// LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
+		// nobody has identified yet" — `vehicleSplit` mints it, and the rail and
+		// bus passes above each get their chance to claim it. They have now all
+		// had that chance, so any placeholder still wearing the name of a car
+		// must justify it with road evidence or be demoted to an honest
+		// `vehicle`. Must run after `roadMatch` / `busRoutes` / `busEvidence`
+		// (which supply that evidence) and after every mode upgrade — otherwise
+		// it would demote a tube ride that simply hadn't been identified yet,
+		// which is the very bug it exists to fix. See `resolveVehicleIdentity`.
+		{
+			name: "vehicleIdentity",
+			run: (segs) => resolveVehicleIdentity(segs),
 		},
 	];
 

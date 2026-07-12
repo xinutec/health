@@ -9,7 +9,50 @@
 import type { FilteredPoint } from "./kalman.js";
 import { samplesInWindow } from "./segment-util.js";
 
-export type TransportMode = "stationary" | "walking" | "cycling" | "driving" | "train" | "plane" | "unknown";
+/** Every mode the pipeline can attribute to a stretch of time.
+ *
+ *  Two of these are not physical modes but honest statements of ignorance, and
+ *  the distinction matters:
+ *    - `unknown` — no observation at all (a GPS gap). We do not know *where*
+ *      you were, let alone how you got there.
+ *    - `vehicle` — you were plainly in a vehicle (vehicle-speed, linear track)
+ *      but nothing identified *which*: no road matched, no street name, no bus
+ *      route, no rail line. Distinct from `driving`, which asserts a car.
+ *
+ *  `driving` doubles as the working placeholder for an unidentified road
+ *  vehicle *inside* the cascade — the rail and bus passes each get a chance to
+ *  claim it — and `resolveVehicleIdentity` runs last to demote any placeholder
+ *  that nobody claimed to `vehicle`. So `driving` means "a car" on the way out,
+ *  even though it means "some vehicle" on the way through.
+ *
+ *  Note `bus` is NOT here: a bus is a `driving` segment carrying
+ *  `vehicleKind: "bus"`, flattened to a `bus` mode at the day-state layer. */
+export type TransportMode =
+	| "stationary"
+	| "walking"
+	| "cycling"
+	| "driving"
+	| "vehicle"
+	| "train"
+	| "boat"
+	| "plane"
+	| "unknown";
+
+/** The modes a *generative* model may emit: the physical ones.
+ *
+ *  The HSMM keys its emission, duration and transition priors on this rather
+ *  than on the full {@link TransportMode}, because two of those are not things
+ *  the world does — they are things *we* say when we cannot tell:
+ *    - `vehicle` is produced by `resolveVehicleIdentity` at the very end of the
+ *      velocity cascade, as an admission that no pass identified the ride. A
+ *      decoder cannot have a speed/heart-rate signature for "unidentified".
+ *    - `boat` is an OSM-geometry refinement (you were on a waterway), never a
+ *      state the motion model proposes on its own.
+ *
+ *  Keeping them out of the model's alphabet means a `Record<ModelledMode, …>`
+ *  of priors stays exhaustive and honest, instead of forcing a made-up prior
+ *  for a mode that exists only to say "I don't know". */
+export type ModelledMode = Exclude<TransportMode, "vehicle" | "boat">;
 
 /** A machine-readable tag for the *kind* of refinement a downstream pass made,
  *  for the cases where a later pass needs to branch on "was this segment touched

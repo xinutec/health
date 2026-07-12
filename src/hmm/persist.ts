@@ -21,7 +21,7 @@
 
 import type { Kysely } from "kysely";
 import type { Database } from "../db/tables.js";
-import type { TransportMode } from "../geo/segments.js";
+import type { ModelledMode } from "../geo/segments.js";
 import type { State } from "./state-space.js";
 
 /** Bump when the classifier output for a typical day would change
@@ -48,7 +48,7 @@ export interface HmmSegment {
 	startTs: number;
 	/** Unix seconds, exclusive. */
 	endTs: number;
-	mode: TransportMode;
+	mode: ModelledMode;
 	/** focus_places.id for stationary @ knownPlace; null otherwise. */
 	placeId: number | null;
 	/** Named rail line for train segments; null otherwise. */

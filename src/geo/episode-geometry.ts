@@ -73,7 +73,18 @@ const UNKNOWN_CONNECTOR_MAX_M = 2000;
  *  negligible and stitching would add a redundant near-duplicate point. */
 const STATION_STITCH_MIN_M = 100;
 
-const MOVING_MODES: ReadonlySet<DayStateMode> = new Set(["walking", "cycling", "driving", "bus", "plane"]);
+/** Modes drawn as a travelled line rather than a stay marker. `vehicle` — a ride
+ *  no pass could identify — is still unambiguously *movement*, so it draws its
+ *  track like any other leg; only its label is uncertain, not its geometry. */
+const MOVING_MODES: ReadonlySet<DayStateMode> = new Set([
+	"walking",
+	"cycling",
+	"driving",
+	"vehicle",
+	"bus",
+	"boat",
+	"plane",
+]);
 
 /** Road-vehicle modes eligible for road map-matching (`kind:"matched"`).
  *  Walking (often off-carriageway pavement) and plane are excluded — the

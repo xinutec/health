@@ -24,18 +24,18 @@
  * The converter is pure: no DB access, no side effects.
  */
 
+import type { TransportMode } from "../geo/segments.js";
 import type { EnrichedSegment } from "../geo/velocity.js";
 
-export type DayStateMode =
-	| "sleeping"
-	| "stationary"
-	| "walking"
-	| "cycling"
-	| "driving"
-	| "bus"
-	| "train"
-	| "plane"
-	| "unknown";
+/** What the timeline can show for a stretch of the day: every {@link TransportMode}
+ *  the classifier can attribute, plus the two the segment layer cannot express —
+ *  `sleeping` (which comes from the Fitbit sleep windows, not from GPS) and `bus`
+ *  (which lives on a segment as `vehicleKind`, not as a mode; see the flattening
+ *  in {@link segmentsToStates}).
+ *
+ *  Derived from `TransportMode` rather than hand-listed, so adding a mode to the
+ *  classifier cannot silently fail to reach the UI. */
+export type DayStateMode = TransportMode | "sleeping" | "bus";
 
 export interface SleepWindow {
 	startTs: number;
@@ -197,7 +197,7 @@ function stateForInterval(
 	const segment = seg as EnrichedSegment;
 	// vehicleKind refines a driving leg into a bus for display (task
 	// #247) — the transport-mode machinery upstream still says driving.
-	const segMode = segment.vehicleKind === "bus" ? "bus" : ((segment.refinedMode ?? segment.mode) as DayStateMode);
+	const segMode: DayStateMode = segment.vehicleKind === "bus" ? "bus" : (segment.refinedMode ?? segment.mode);
 
 	if (!sleep) {
 		return makeStateFromSegment(segment, start, end, segMode, false);

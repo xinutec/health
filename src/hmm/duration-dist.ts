@@ -24,7 +24,7 @@
  * Pure module. No DB, no IO, no globals.
  */
 
-import type { TransportMode } from "../geo/segments.js";
+import type { ModelledMode } from "../geo/segments.js";
 
 export interface GammaFit {
 	/** Shape parameter (α > 0). */
@@ -70,7 +70,7 @@ export const HARD_FLOOR_LOG_PROB = -10;
  *  drive-by GPS noise isn't a home visit) are layered on top
  *  at integration time by the HSMM caller.
  */
-export const DEFAULT_MIN_DURATION_BY_MODE: Record<TransportMode, number> = {
+export const DEFAULT_MIN_DURATION_BY_MODE: Record<ModelledMode, number> = {
 	stationary: 2,
 	walking: 2,
 	cycling: 2,
@@ -127,7 +127,7 @@ export function fitDurationDistribution(values: readonly number[]): GammaFit {
  * directly so very-short or very-long durations don't underflow.
  * Lanczos approximation for `log Γ(α)`.
  */
-export function logDurationProb(d: number, _mode: TransportMode, fit: GammaFit, minDuration: number): number {
+export function logDurationProb(d: number, _mode: ModelledMode, fit: GammaFit, minDuration: number): number {
 	if (d < minDuration) return HARD_FLOOR_LOG_PROB;
 	if (d <= 0) return HARD_FLOOR_LOG_PROB;
 	return logGammaPdf(d, fit.alpha, fit.beta);

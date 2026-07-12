@@ -45,18 +45,62 @@ interface CacheEntry {
 }
 
 const TTL_MS = 5 * 60 * 1000;
+
+/** TTL for a day that is still happening.
+ *
+ *  A finished day's classification is settled: replaying it tomorrow gives the
+ *  same answer, so five minutes of staleness costs nothing. A day *in progress*
+ *  is a different object — every new fix can change it, and the pipeline's
+ *  verdict on an unfinished journey is provisional by construction. One minute
+ *  into a tube ride the rail passes have too little track to identify the line,
+ *  so the leg reads as an unidentified vehicle; two minutes later it is a train
+ *  on the Metropolitan Line. Cache the first answer for five minutes and the
+ *  user stares at a superseded verdict long after the pipeline would have
+ *  corrected itself (the 2026-07-12 report).
+ *
+ *  The cost is affordable precisely because the day is partial: today's compute
+ *  runs in a few hundred milliseconds mid-morning, not the 5–10 s a full
+ *  data-rich day takes — there is simply less of it. So a live day gets a short
+ *  TTL, still long enough to absorb tab-switching and chevron navigation. */
+export const LIVE_TTL_MS = 60 * 1000;
+
 const MAX_ENTRIES = 32;
 
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<VelocityResult>>();
 
+/** Is `date` the day currently in progress, as the viewer experiences it?
+ *
+ *  The boundary that matters is the viewer's local midnight, not UTC's — at
+ *  23:30 in London the UTC date has already rolled over, and treating the day
+ *  as finished would freeze the evening's timeline an hour early. `tz`
+ *  undefined mirrors the API's own fallback: the date is read as UTC.
+ *
+ *  `nowMs` is injectable so this is testable without freezing the clock. */
+export function isLiveDay(date: string, tz: string | undefined, nowMs: number = Date.now()): boolean {
+	const today = new Intl.DateTimeFormat("en-CA", {
+		timeZone: tz ?? "UTC",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(new Date(nowMs));
+	return date === today;
+}
+
 /** Get a velocity result from the cache, or compute and cache it. Generic so
  *  the route can cache the result with request-scoped extras attached (the
  *  watch-battery series) without widening `VelocityResult` itself; one key
- *  always stores what its own `compute` returned. */
-export async function getVelocityCached<T extends VelocityResult>(key: string, compute: () => Promise<T>): Promise<T> {
+ *  always stores what its own `compute` returned.
+ *
+ *  `ttlMs` lets the caller shorten the window for a day still in progress —
+ *  see {@link LIVE_TTL_MS}. */
+export async function getVelocityCached<T extends VelocityResult>(
+	key: string,
+	compute: () => Promise<T>,
+	ttlMs: number = TTL_MS,
+): Promise<T> {
 	const entry = cache.get(key);
-	if (entry && Date.now() - entry.cachedAtMs < TTL_MS) {
+	if (entry && Date.now() - entry.cachedAtMs < ttlMs) {
 		// LRU bump: delete + re-insert so this key is now most-recent.
 		cache.delete(key);
 		cache.set(key, entry);
