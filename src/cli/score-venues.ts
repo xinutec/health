@@ -80,10 +80,9 @@ if (files.length === 0) {
 }
 
 const cases: VenueCase[] = [];
-/** Stays the narrative names after a mined focus place (Home, Work, …). The
- *  venue scorer is not the component that answers those — a focus place
- *  overrides it downstream — so counting them here would measure the wrong
- *  thing. Reported as a count so the exclusion is visible, never silent. */
+/** Home/Work stays: intent labels no venue scorer could produce. Counted so
+ *  the exclusion is visible, never silent. Every other named stay — including
+ *  the ones a focus place answers — IS adjudicated. */
 let focusPlaceStays = 0;
 let daysWithTruth = 0;
 
@@ -119,14 +118,27 @@ for (const file of files) {
 
 	const fixes: RawPhonetrackFix[] = inputs.phonetrack.today;
 	const focusNames = inputs.knownPlaces.map((p) => p.displayName ?? p.amenityLabel ?? "").filter((n) => n.length > 0);
+	// "Home" and "Work" are INTENT labels: personal names for a cluster that no
+	// venue scorer could ever produce from OSM. A stay the narrative names after
+	// one of those is not a venue-attribution case, and counting it would drown
+	// the signal in easy wins.
+	//
+	// Everything ELSE a focus place is named after — Macmillan Cancer Centre,
+	// Miné Mané — IS a venue, and IS something the scorer could name. Those must
+	// be counted. Excluding them (as this referee originally did, by testing the
+	// truth against every focus-place name) made the referee blind to the cases
+	// the focus-place override gets RIGHT: it reported +3 for removing the
+	// override while the golden corpus showed +3 / −3. A referee that can only
+	// see a layer's failures will always recommend deleting it.
+	const INTENT_LABELS: ReadonlySet<string> = new Set(["Home", "Work"]);
+	const intentNames = inputs.knownPlaces.map((p) => p.displayName ?? "").filter((n) => INTENT_LABELS.has(n));
 
 	for (const row of namedStays) {
 		const truthPlace = row.truth?.place as string;
-		// A stay the narrative names after a mined focus place (Home, Work) is
-		// answered by the focus-place layer by construction. Counting those
-		// would measure the wrong thing — and drown the venue signal in easy
-		// wins. Excluded, but counted, so the exclusion is never silent.
-		if (focusNames.some((n) => venueNameMatches(truthPlace, n))) {
+		// Only Home/Work are excluded — see INTENT_LABELS above. A stay whose
+		// truth is a real VENUE stays in, even when a focus place is named after
+		// it, because that is precisely where the override earns its keep.
+		if (intentNames.some((n) => venueNameMatches(truthPlace, n))) {
 			focusPlaceStays++;
 			continue;
 		}
@@ -201,8 +213,7 @@ const describe = (r: VenueCaseResult): string => {
 console.log(
 	`\nvenue-attribution referee — ${cases.length} named stay(s) across ${daysWithTruth} day(s) with narratives`,
 );
-console.log(`  excluded: ${focusPlaceStays} stay(s) the narrative names after a mined focus place (Home, Work — the`);
-console.log(`            focus-place layer answers those by construction; counting them would measure nothing)\n`);
+console.log(`  excluded: ${focusPlaceStays} Home/Work stay(s) — intent labels, not venues any scorer could name\n`);
 
 for (const r of report.results) {
 	if (verbose || r.verdict !== "correct") console.log(describe(r));
