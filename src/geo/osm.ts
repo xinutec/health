@@ -37,6 +37,7 @@ import {
 import { USER_AGENT } from "./osm-overpass.js";
 import type { OsmRoadWay } from "./road-match.js";
 import { rankVenues, type StayShape, VENUE_RANK_FLOOR_NATS, type VenuePriors } from "./venue-prior.js";
+import { traceVenueDecision } from "./venue-trace.js";
 
 /**
  * Overpass endpoints, tried in order. The main server overpass-api.de is
@@ -385,13 +386,16 @@ export async function bestPlace(
 		// same venue — the landmark carries the opening_hours tag.
 		if (nomVenue && !landmarks.some((l) => l.name === nomVenue.name)) candidates.push(nomVenue);
 		if (candidates.length > 0) {
-			const top = rankVenues(candidates, opts.stay, opts.priors ?? null)[0];
+			const ranked = rankVenues(candidates, opts.stay, opts.priors ?? null);
+			const top = ranked[0];
+			const accepted = top.landmark.enclosing === true || top.total >= VENUE_RANK_FLOOR_NATS;
 			if (process.env.VENUE_DEBUG === "1") {
 				console.error(
 					`[venue] ${lat.toFixed(5)},${lon.toFixed(5)} stay=${new Date(opts.stay.startUnix * 1000).toISOString().slice(11, 16)}-${new Date(opts.stay.endUnix * 1000).toISOString().slice(11, 16)} priors=${opts.priors ? "y" : "n"} top=${top.landmark.name} total=${top.total.toFixed(2)} candidates=${candidates.length}`,
 				);
 			}
-			if (top.landmark.enclosing || top.total >= VENUE_RANK_FLOOR_NATS) {
+			traceVenueDecision({ lat, lon, stay: opts.stay, ranked, accepted });
+			if (accepted) {
 				if (nomVenue && top.landmark.name === nomVenue.name) nominatimWon = true;
 				else bestLandmark = top.landmark;
 			}

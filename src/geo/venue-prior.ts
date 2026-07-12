@@ -291,6 +291,11 @@ export interface VenueCandidateScore {
 	landmark: NearbyLandmark;
 	total: number;
 	parts: VenueScoreParts;
+	/** This candidate qualified for near-field distance dominance — it is
+	 *  ranked above every non-near-field candidate REGARDLESS of `total`. The
+	 *  flag is what makes the short-circuit measurable: when the top candidate
+	 *  carries it, the summed evidence below did not decide this stay. */
+	nearField: boolean;
 }
 
 // --- mining ------------------------------------------------------------------
@@ -430,6 +435,18 @@ export function rankVenues(
 	// Degenerate input (everything is street furniture): better to rank the
 	// furniture than to return nothing — callers rely on non-empty in.
 	const pool = eligible.length > 0 ? eligible : landmarks;
+	// A real point venue within NEAR_FIELD_DECISIVE_M is one you are sitting
+	// on — it outranks any farther candidate (and the prior) but not an
+	// enclosing institution. EXCEPT a venue OSM says is closed during the
+	// stay: then either OSM is stale or you are at a different (perhaps
+	// unmapped) place — proximity is no longer decisive, so fall back to the
+	// scored ranking where the closed penalty can be weighed. Open or
+	// hours-unknown venues remain eligible.
+	const isNearField = (l: NearbyLandmark): boolean => {
+		if (l.reverseGeocoded || !VENUE_TYPES.has(l.type) || l.distanceM > NEAR_FIELD_DECISIVE_M) return false;
+		const h = stay ? hoursScore(l, stay) : null;
+		return h === null || h >= 0;
+	};
 	const scored = pool.map((landmark): VenueCandidateScore => {
 		const distance = -0.5 * (landmark.distanceM / DISTANCE_SIGMA_M) ** 2;
 		const venue = VENUE_TYPES.has(landmark.type) ? VENUE_OVER_AREA_NATS : 0;
@@ -439,26 +456,15 @@ export function rankVenues(
 			landmark,
 			total: distance + venue + (shape ?? 0) + (hours ?? 0),
 			parts: { distance, venue, shape, hours },
+			nearField: isNearField(landmark),
 		};
 	});
-	// A real point venue within NEAR_FIELD_DECISIVE_M is one you are sitting
-	// on — it outranks any farther candidate (and the prior) but not an
-	// enclosing institution. EXCEPT a venue OSM says is closed during the
-	// stay: then either OSM is stale or you are at a different (perhaps
-	// unmapped) place — proximity is no longer decisive, so fall back to the
-	// scored ranking where the closed penalty can be weighed. Open or
-	// hours-unknown venues remain eligible.
-	const nearField = (l: NearbyLandmark): boolean => {
-		if (l.reverseGeocoded || !VENUE_TYPES.has(l.type) || l.distanceM > NEAR_FIELD_DECISIVE_M) return false;
-		const h = stay ? hoursScore(l, stay) : null;
-		return h === null || h >= 0;
-	};
 	return scored.sort((a, b) => {
 		const ea = a.landmark.enclosing === true;
 		const eb = b.landmark.enclosing === true;
 		if (ea !== eb) return ea ? -1 : 1;
-		const na = nearField(a.landmark);
-		const nb = nearField(b.landmark);
+		const na = a.nearField;
+		const nb = b.nearField;
 		if (na !== nb) return na ? -1 : 1;
 		// Two near-field venues: the nearer one is what you are sitting on.
 		if (na && nb && a.landmark.distanceM !== b.landmark.distanceM) return a.landmark.distanceM - b.landmark.distanceM;
