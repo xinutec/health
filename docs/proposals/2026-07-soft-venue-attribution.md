@@ -236,14 +236,66 @@ near-field harmful. V1 was not refuted on the merits; it was **untestable behind
 a layer that fires first**. The lesson is about the referee, not the model: *a
 metric can only see the layer that is actually reached.*
 
+### CORRECTION (same day): the referee was lying about #344
+
+Everything above about the focus-place layer being **0/4** was **an artifact of a
+broken metric**, and it is worth stating loudly because it nearly caused a bad
+change to ship.
+
+The referee excluded any stay whose truth named a mined focus place — a
+reasonable-looking guard against drowning in 94 "Home" stays. But it also
+excluded `Macmillan Cancer Centre`, `Miné Mané`, and every other **venue** a
+focus place is named after: *exactly the population the override answers
+correctly*. The referee could see the layer's four failures and none of its
+seventeen successes.
+
+Corrected (only Home/Work excluded — intent labels no OSM scorer could produce):
+
+| layer | accuracy |
+|---|---|
+| venue scorer | 16/17 (94%) |
+| **focus-place override** | **17/21 (81%)** |
+| other | 9/15 (60%) |
+| **overall** | **42/53 (79%)** |
+
+**Deleting the override was then tried, and reverted.** It cleared 3 confirmed
+rows (Pizza Union, Olivomare, Proton @ UCLH) and **regressed 3** — Macmillan
+Cancer Centre, plus two 06-28 train legs, because stationary place names feed
+board/alight station resolution and a venue relabel can break a *train*. Net
+zero, with a confirmed-label regression. **Golden caught what the referee could
+not.**
+
+Two lessons, and the second is the general one:
+
+- **A referee that can only see a layer's failures will always recommend
+  deleting that layer.** The exclusion that makes a metric readable is also the
+  exclusion that can blind it.
+- This is the *second* time in one day the same metric misled me (the first: V1
+  "refuted" because the override hid its cases), and both times the golden
+  corpus — which adjudicates *everything*, not a filtered subset — was the thing
+  that caught it. **The referee tells you why a number moved. It is not allowed
+  to be the thing that decides whether to move it.**
+
+So #344 is not "delete the override". It is: **weight, don't filter.** The mined
+label is 81% right — that is real evidence and must not be thrown away — but it
+must not be a *veto* either. It belongs in `rankVenues` as a bounded prior term
+in nats, where a strong present-evidence signal can overrule a stale memory and
+a weak one cannot. The magnitude must be *fitted* against the 21 focus-place
+cases the referee can now finally see, not hand-picked.
+
 ### The stack, in the only order that works
 
-1. **#344** — focus-place `amenity_label` becomes evidence (a prior term in
-   nats on that candidate), not an override. Exposes the 4 hidden stays to the
-   scorer. Alone: does not fix Urban Social (the scorer would say the pub).
+1. **#344** — focus-place `amenity_label` becomes a bounded evidence term in
+   `rankVenues`, not a veto. NOT a deletion (see the correction above: the layer
+   is 81% right, and deleting it regresses confirmed labels). Alone: does not fix
+   Urban Social.
 2. **Near-field must stop being decisive** when the fix is smeared. This is V1
-   from the other proposal, now with an actual case behind it. Alone: does not
-   fix Urban Social (the hard prior has the pub ahead by 0.03 nats).
+   from the other proposal, now with an actual case behind it — and the case is
+   worse than "picks the wrong venue": at the Urban Social centroid it elects
+   *Benita Bakery* (1 m, score **−1.53**, *below* the honest-label floor), so the
+   scorer then **declines entirely** and Nominatim stamps the building. Urban
+   Social scores −0.01 — **1.52 nats higher** — ranked 7th. Near-field can
+   destroy the answer, not merely misdirect it. Alone: does not fix Urban Social.
 3. **The soft prior (P1)** — the thing that finally names the café. Alone:
    unreachable, as measured above.
 
