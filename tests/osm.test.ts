@@ -488,6 +488,65 @@ describe("refineMode", () => {
 		expect(r.confidence).toBe("high");
 	});
 
+	// A walk down a city street renders with NO street name at all, because OSM
+	// maps the pavement and the carriageway as two separate ways at the same
+	// physical place — and the pavement is almost always unnamed. The closest way
+	// to a walking GPS fix is therefore an anonymous `footway`, and reading its
+	// `.name` yields nothing, even though the street is sitting right there in
+	// the same result set.
+	//
+	// 2026-07-01 14:27, walking the length of Euston Road from Work to King's
+	// Cross: the recorded ways at the samples are `footway (unnamed, 0-3 m)` and
+	// `Euston Road [trunk, 0-2 m]`. The leg rendered as bare "walking".
+	//
+	// It was masked until now: the segment used to be glued to a tube ride, whose
+	// speed pushed avgSpeed over the 30 km/h bar into the driveable branch, which
+	// skips pedestrian ways and picks the road. The label was right by accident of
+	// a wrong speed. Give the walk its real speed and the bug surfaces.
+	//
+	// The pavement is genuinely where the user is, so it must keep deciding the
+	// MODE. It just cannot supply the NAME.
+	describe("names a walk after the street its pavement belongs to", () => {
+		it("borrows the adjacent road's name when the closest way is an unnamed pavement", () => {
+			const ways: NearbyWay[] = [
+				{ type: "highway", subtype: "footway", distanceM: 1 },
+				{ type: "highway", subtype: "trunk", name: "Euston Road", distanceM: 3 },
+			];
+			const r = refineMode("walking", 4.5, ways);
+			expect(r.mode).toBe("walking"); // the pavement still decides the mode
+			expect(r.wayName).toBe("Euston Road"); // …but the street supplies the name
+		});
+
+		it("prefers the nearest named way, not merely the first in the list", () => {
+			const ways: NearbyWay[] = [
+				{ type: "highway", subtype: "footway", distanceM: 1 },
+				{ type: "highway", subtype: "primary", name: "Gower Street", distanceM: 18 },
+				{ type: "highway", subtype: "trunk", name: "Euston Road", distanceM: 4 },
+			];
+			expect(refineMode("walking", 4.5, ways).wayName).toBe("Euston Road");
+		});
+
+		it("keeps a named pedestrian way's own name rather than borrowing", () => {
+			const ways: NearbyWay[] = [
+				{ type: "highway", subtype: "pedestrian", name: "Tolmers Square", distanceM: 1 },
+				{ type: "highway", subtype: "trunk", name: "Euston Road", distanceM: 20 },
+			];
+			expect(refineMode("walking", 4.5, ways).wayName).toBe("Tolmers Square");
+		});
+
+		// The guard. A footpath through a park is not on a street, and the road at
+		// the park's edge is not where the user is walking. Naming the walk after
+		// it would be exactly the confidently-wrong label this whole exercise is
+		// about removing. Unnamed is the honest answer.
+		it("does not borrow a road that is too far to be the same street", () => {
+			const ways: NearbyWay[] = [
+				{ type: "highway", subtype: "path", distanceM: 2 },
+				{ type: "highway", subtype: "residential", name: "Some Road", distanceM: 70 },
+			];
+			expect(refineMode("walking", 4.5, ways).wayName).toBeUndefined();
+		});
+	});
+
 	it("identifies driving on motorway", () => {
 		const ways: NearbyWay[] = [{ type: "highway", subtype: "motorway", name: "A2" }];
 		const r = refineMode("driving", 100, ways);

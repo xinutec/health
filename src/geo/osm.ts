@@ -1066,6 +1066,60 @@ function pickBestHighway(highways: NearbyWay[], speedKmh: number): NearbyWay {
 	return highways[0];
 }
 
+/** How far a named way may sit from the pavement and still be the street that
+ *  pavement belongs to. A pavement runs a few metres from its carriageway's
+ *  centreline; a wide dual carriageway (Euston Road) reaches ~25 m. Beyond
+ *  that it is a different street — a road at the far edge of the park you are
+ *  walking through — and naming the walk after it would be exactly the
+ *  confidently-wrong label we are trying to stop emitting. */
+const WALK_NAME_BORROW_MAX_M = 30;
+
+/** Ceiling below which a segment is moving at pedestrian pace, and a nearby
+ *  unnamed footway is plausibly the pavement the user is on. */
+const WALK_NAME_BORROW_MAX_KMH = 10;
+
+/**
+ * Name a walk after the street its pavement belongs to.
+ *
+ * OSM models a street's pavement and its carriageway as two separate ways at
+ * the same physical place, and the pavement is almost always unnamed. So the
+ * way *closest* to a walking GPS fix is an anonymous `footway`, and reading its
+ * `.name` renders the leg with no street at all — even though the street is
+ * sitting right there in the same result set, a few metres away.
+ *
+ * The pavement is genuinely where the user is, so it must keep deciding the
+ * MODE (see `pickBestHighway`). It simply cannot supply the NAME. This borrows
+ * the name of the nearest named way within {@link WALK_NAME_BORROW_MAX_M},
+ * returning undefined when nothing is close enough to be the same street.
+ *
+ * The bug was masked for as long as walks were glued to the rides that
+ * followed them: the ride's speed pushed `avgSpeed` past the 30 km/h bar into
+ * `pickBestHighway`'s driveable branch, which skips pedestrian ways and picks
+ * the road. Those labels were right by accident of a wrong speed
+ * (2026-07-01 "walking on Euston Road"). Once `splitWalksOnVehicleLeg` gives a
+ * remainder its own honest kinematics, the accident stops happening and the
+ * underlying gap shows — so this is the other half of that fix, not a separate
+ * concern.
+ *
+ * The driving side of this asymmetry was fixed long ago (#99: prefer a
+ * driveable road over a closer footway). This is its pedestrian sibling, and
+ * mirrors the factor scorer's named/unnamed same-mode dedup, which is grounded
+ * in the same OSM duplication.
+ */
+function borrowStreetName(highways: readonly NearbyWay[]): string | undefined {
+	let best: NearbyWay | undefined;
+	let bestDist = Number.POSITIVE_INFINITY;
+	for (const h of highways) {
+		if (!h.name) continue;
+		const d = h.distanceM ?? Number.POSITIVE_INFINITY;
+		if (d < bestDist) {
+			bestDist = d;
+			best = h;
+		}
+	}
+	return bestDist <= WALK_NAME_BORROW_MAX_M ? best?.name : undefined;
+}
+
 export interface RailRoadProximity {
 	/** Mean distance (m) to the nearest rail-only way across the
 	 *  segment's sample points where any rail-only way was in range.
@@ -1334,9 +1388,12 @@ function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, 
 	// the footway really might be where the user is.
 	if (highways.length > 0) {
 		const hw = pickBestHighway(highways, speedKmh);
+		// The picked way decides the mode. When it is an unnamed pavement, the
+		// street it belongs to supplies the name — see `borrowStreetName`.
+		const hwName = hw.name ?? (speedKmh < WALK_NAME_BORROW_MAX_KMH ? borrowStreetName(highways) : undefined);
 		// Pedestrian-only highways
 		if (hw.subtype === "footway" || hw.subtype === "path" || hw.subtype === "pedestrian") {
-			if (speedKmh < 10) return { mode: "walking", confidence: "high", reason: `on ${hw.subtype}`, wayName: hw.name };
+			if (speedKmh < 10) return { mode: "walking", confidence: "high", reason: `on ${hw.subtype}`, wayName: hwName };
 		}
 		if (hw.subtype === "cycleway") {
 			return { mode: "cycling", confidence: "high", reason: "on cycleway", wayName: hw.name };
@@ -1351,7 +1408,7 @@ function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, 
 		if (speedKmh > 30 && !PEDESTRIAN_HIGHWAY_SUBTYPES.has(hw.subtype)) {
 			return { mode: originalMode, confidence: "medium", reason: `on ${hw.subtype}`, wayName: hw.name };
 		}
-		return { mode: originalMode, confidence: "medium", reason: `near ${hw.subtype}`, wayName: hw.name };
+		return { mode: originalMode, confidence: "medium", reason: `near ${hw.subtype}`, wayName: hwName };
 	}
 
 	// On a navigable waterway → boat. Excludes drains, ditches, streams (too small).

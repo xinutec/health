@@ -751,6 +751,139 @@ export async function computeVelocityFromInputs(
 	// unenriched). The cap keeps total in-flight queries safely under
 	// the pool size; segments are independent, so only wall-clock shape
 	// changes, never results.
+	/**
+	 * OSM enrichment for a *moving* segment: sample along the path, aggregate
+	 * the nearby ways, refine the mode, name the road, tag the city.
+	 *
+	 * Extracted so it can be run a second time. `splitWalksOnVehicleLeg` carves
+	 * a hidden ride out of a walk long *after* this pass, leaving two on-foot
+	 * remainders whose inherited enrichment was derived from the parent's
+	 * window — a window that spanned the ride. The `reenrichSplitWalks` pass
+	 * sends those remainders back through here to be named from their own
+	 * geometry (2026-07-12: a walk from Highbury & Islington down Upper Street,
+	 * labelled "Euston Road" because the parent segment had begun at King's
+	 * Cross, on the far side of a tube ride).
+	 *
+	 * It reads `seg.mode`, `seg.avgSpeed` and `seg.maxSpeed`, so a remainder's
+	 * kinematics must be recomputed *before* it is re-enriched — otherwise
+	 * refineMode is handed the ride's speeds and duly reaches the ride's
+	 * conclusion about a walk.
+	 */
+	const enrichMovingSegment = async (
+		seg: EnrichedSegment,
+		segPoints: readonly FilteredPoint[],
+	): Promise<EnrichedSegment> => {
+		// Moving segment: sample several points along the path so the
+		// OSM evidence reflects the whole route, not whatever the
+		// centroid happens to land on.
+		const sampleCount = Math.min(N_SAMPLES, segPoints.length);
+		const sampleIdxs = Array.from({ length: sampleCount }, (_, i) =>
+			Math.floor((i * (segPoints.length - 1)) / Math.max(1, sampleCount - 1)),
+		);
+		const movingStart = segPoints[0];
+		const movingEnd = segPoints[segPoints.length - 1];
+		const [wayResults, startPlace, endPlace] = await Promise.all([
+			Promise.all(sampleIdxs.map((i) => inputs.osm.nearbyWays(segPoints[i].lat, segPoints[i].lon))),
+			// Endpoint reverseGeocode: tag the segment with a city iff
+			// both endpoints agree. A walk inside one city gets a city
+			// header; a drive between two cities stays untagged.
+			//
+			// City needs AREA-level truth, so query zoom 16 at a ~110 m
+			// grid coordinate — not the old building-level zoom 18 at the
+			// raw endpoint. Raw endpoints never repeat between days, so
+			// every fresh compute paid live Nominatim HTTP here (measured
+			// 2026-07-02: ~14 endpoint misses ≈ the 13.5 s osm pass);
+			// habitual endpoints now share one cached cell forever. The
+			// only cost is a city boundary crossing a cell, and the
+			// both-endpoints-must-agree rule already absorbs that.
+			inputs.osm.reverseGeocode(cityGrid(movingStart.lat), cityGrid(movingStart.lon), CITY_ZOOM),
+			inputs.osm.reverseGeocode(cityGrid(movingEnd.lat), cityGrid(movingEnd.lon), CITY_ZOOM),
+		]);
+		// Dedup by (type, subtype, name) but keep the *minimum* distance
+		// across sample points. A road we brushed past at one sample
+		// shouldn't outweigh a road we hugged at four others — and the
+		// distance is what refineMode uses to tie-break parallel
+		// rail/road.
+		const byKey = new Map<string, (typeof wayResults)[number][number]>();
+		for (const ways of wayResults) {
+			for (const w of ways) {
+				const key = `${w.type}/${w.subtype}/${w.name ?? ""}`;
+				const existing = byKey.get(key);
+				if (!existing) {
+					byKey.set(key, w);
+				} else {
+					const existingD = existing.distanceM ?? Number.POSITIVE_INFINITY;
+					const newD = w.distanceM ?? Number.POSITIVE_INFINITY;
+					if (newD < existingD) byKey.set(key, w);
+				}
+			}
+		}
+		const aggregated = [...byKey.values()];
+		// Rail-vs-road proximity per sample point — feeds the
+		// rail-corridor factor. For each sample's nearbyWays list,
+		// the minimum distance to any rail-only way and the minimum
+		// to any drivable highway. Mean across samples where each
+		// kind had something in range; null when no sample had it.
+		// The factor scorer uses the ratio to discriminate train
+		// from driving when speed-emission can't.
+		const railRoad = computeRailRoadProximity(wayResults);
+		// Per-sample road-vs-rail "which is nearer" fraction, from the
+		// same samples — the GPS evidence the HSMM movement→train
+		// override weighs against (see decideHsmmTrainOverride). No
+		// extra OSM query.
+		const roadCorridorFraction = computeRoadNearestFraction(wayResults);
+		// Under USE_BIOMETRIC_FACTOR, pass per-segment hr/cadence + the
+		// loaded mode signatures into refineMode so the factor scorer's
+		// candidate generator can filter biologically-implausible
+		// candidates. Without the flag, refineMode runs with no
+		// biometric context and the legacy `applyBiometricSignature`
+		// pass below does the corresponding work as a post-step.
+		const biometricCtx =
+			biometricFactorOn && preEnrichBiometrics && preEnrichModeStats
+				? {
+						obs: {
+							hr: meanInWindow(preEnrichBiometrics.hr, (p) => p.bpm, seg.startTs, seg.endTs),
+							cadence: meanInWindow(preEnrichBiometrics.steps, (p) => p.steps, seg.startTs, seg.endTs),
+							speed: seg.avgSpeed,
+						},
+						stats: preEnrichModeStats,
+					}
+				: undefined;
+		const refined = refineMode(
+			seg.mode,
+			seg.avgSpeed,
+			aggregated,
+			biometricCtx,
+			seg.confidenceMargin,
+			process.env.FACTOR_DEBUG === "1"
+				? `[${new Date(seg.startTs * 1000).toISOString().slice(11, 16)}-${new Date(seg.endTs * 1000).toISOString().slice(11, 16)}Z]`
+				: undefined,
+			railRoad,
+		);
+		// Physical-plausibility override: a tube ride under a road
+		// can look like driving to refineMode (the road is the
+		// closest OSM way). Demote when the max speed exceeds
+		// urban-non-motorway limits and a subway is parallel.
+		const plausible = rejectImplausibleDriving(
+			{ mode: refined.mode, wayName: refined.wayName },
+			seg.maxSpeed,
+			aggregated,
+		);
+		const movingCity = commonCity(startPlace, endPlace);
+		return {
+			...seg,
+			// Temper motion-only confidence by the road-corridor evidence: a
+			// "driving" leg the GPS shows off any road is ambiguous (could be
+			// rail), so it shouldn't read a confident 100% car (#296).
+			confidence: roadSupportedConfidence(plausible.mode, seg.confidence, roadCorridorFraction),
+			refinedMode: plausible.mode,
+			refinedReason: plausible.reason ?? refined.reason,
+			wayName: plausible.wayName,
+			...(movingCity ? { city: movingCity } : {}),
+			...(roadCorridorFraction !== null ? { roadCorridorFraction } : {}),
+		};
+	};
+
 	const enrichStart = Date.now();
 	const enriched: EnrichedSegment[] = await mapLimit(refinedSegments, ENRICH_CONCURRENCY, async (seg, i) => {
 		// Synthetic gap segments (inferred-walking or `unknown`) carry
@@ -891,115 +1024,7 @@ export async function computeVelocityFromInputs(
 					...(city ? { city } : {}),
 				};
 			}
-			// Moving segment: sample several points along the path so the
-			// OSM evidence reflects the whole route, not whatever the
-			// centroid happens to land on.
-			const sampleCount = Math.min(N_SAMPLES, segPoints.length);
-			const sampleIdxs = Array.from({ length: sampleCount }, (_, i) =>
-				Math.floor((i * (segPoints.length - 1)) / Math.max(1, sampleCount - 1)),
-			);
-			const movingStart = segPoints[0];
-			const movingEnd = segPoints[segPoints.length - 1];
-			const [wayResults, startPlace, endPlace] = await Promise.all([
-				Promise.all(sampleIdxs.map((i) => inputs.osm.nearbyWays(segPoints[i].lat, segPoints[i].lon))),
-				// Endpoint reverseGeocode: tag the segment with a city iff
-				// both endpoints agree. A walk inside one city gets a city
-				// header; a drive between two cities stays untagged.
-				//
-				// City needs AREA-level truth, so query zoom 16 at a ~110 m
-				// grid coordinate — not the old building-level zoom 18 at the
-				// raw endpoint. Raw endpoints never repeat between days, so
-				// every fresh compute paid live Nominatim HTTP here (measured
-				// 2026-07-02: ~14 endpoint misses ≈ the 13.5 s osm pass);
-				// habitual endpoints now share one cached cell forever. The
-				// only cost is a city boundary crossing a cell, and the
-				// both-endpoints-must-agree rule already absorbs that.
-				inputs.osm.reverseGeocode(cityGrid(movingStart.lat), cityGrid(movingStart.lon), CITY_ZOOM),
-				inputs.osm.reverseGeocode(cityGrid(movingEnd.lat), cityGrid(movingEnd.lon), CITY_ZOOM),
-			]);
-			// Dedup by (type, subtype, name) but keep the *minimum* distance
-			// across sample points. A road we brushed past at one sample
-			// shouldn't outweigh a road we hugged at four others — and the
-			// distance is what refineMode uses to tie-break parallel
-			// rail/road.
-			const byKey = new Map<string, (typeof wayResults)[number][number]>();
-			for (const ways of wayResults) {
-				for (const w of ways) {
-					const key = `${w.type}/${w.subtype}/${w.name ?? ""}`;
-					const existing = byKey.get(key);
-					if (!existing) {
-						byKey.set(key, w);
-					} else {
-						const existingD = existing.distanceM ?? Number.POSITIVE_INFINITY;
-						const newD = w.distanceM ?? Number.POSITIVE_INFINITY;
-						if (newD < existingD) byKey.set(key, w);
-					}
-				}
-			}
-			const aggregated = [...byKey.values()];
-			// Rail-vs-road proximity per sample point — feeds the
-			// rail-corridor factor. For each sample's nearbyWays list,
-			// the minimum distance to any rail-only way and the minimum
-			// to any drivable highway. Mean across samples where each
-			// kind had something in range; null when no sample had it.
-			// The factor scorer uses the ratio to discriminate train
-			// from driving when speed-emission can't.
-			const railRoad = computeRailRoadProximity(wayResults);
-			// Per-sample road-vs-rail "which is nearer" fraction, from the
-			// same samples — the GPS evidence the HSMM movement→train
-			// override weighs against (see decideHsmmTrainOverride). No
-			// extra OSM query.
-			const roadCorridorFraction = computeRoadNearestFraction(wayResults);
-			// Under USE_BIOMETRIC_FACTOR, pass per-segment hr/cadence + the
-			// loaded mode signatures into refineMode so the factor scorer's
-			// candidate generator can filter biologically-implausible
-			// candidates. Without the flag, refineMode runs with no
-			// biometric context and the legacy `applyBiometricSignature`
-			// pass below does the corresponding work as a post-step.
-			const biometricCtx =
-				biometricFactorOn && preEnrichBiometrics && preEnrichModeStats
-					? {
-							obs: {
-								hr: meanInWindow(preEnrichBiometrics.hr, (p) => p.bpm, seg.startTs, seg.endTs),
-								cadence: meanInWindow(preEnrichBiometrics.steps, (p) => p.steps, seg.startTs, seg.endTs),
-								speed: seg.avgSpeed,
-							},
-							stats: preEnrichModeStats,
-						}
-					: undefined;
-			const refined = refineMode(
-				seg.mode,
-				seg.avgSpeed,
-				aggregated,
-				biometricCtx,
-				seg.confidenceMargin,
-				process.env.FACTOR_DEBUG === "1"
-					? `[${new Date(seg.startTs * 1000).toISOString().slice(11, 16)}-${new Date(seg.endTs * 1000).toISOString().slice(11, 16)}Z]`
-					: undefined,
-				railRoad,
-			);
-			// Physical-plausibility override: a tube ride under a road
-			// can look like driving to refineMode (the road is the
-			// closest OSM way). Demote when the max speed exceeds
-			// urban-non-motorway limits and a subway is parallel.
-			const plausible = rejectImplausibleDriving(
-				{ mode: refined.mode, wayName: refined.wayName },
-				seg.maxSpeed,
-				aggregated,
-			);
-			const movingCity = commonCity(startPlace, endPlace);
-			return {
-				...seg,
-				// Temper motion-only confidence by the road-corridor evidence: a
-				// "driving" leg the GPS shows off any road is ambiguous (could be
-				// rail), so it shouldn't read a confident 100% car (#296).
-				confidence: roadSupportedConfidence(plausible.mode, seg.confidence, roadCorridorFraction),
-				refinedMode: plausible.mode,
-				refinedReason: plausible.reason ?? refined.reason,
-				wayName: plausible.wayName,
-				...(movingCity ? { city: movingCity } : {}),
-				...(roadCorridorFraction !== null ? { roadCorridorFraction } : {}),
-			};
+			return enrichMovingSegment(seg, segPoints);
 		} catch (e) {
 			console.warn(`OSM enrichment failed for segment ${seg.startTs}: ${e}`);
 			return seg;
@@ -1294,6 +1319,51 @@ export async function computeVelocityFromInputs(
 		{
 			name: "vehicleArrival",
 			run: (segs) => reassignVehicleArrivalWalk(segs, points),
+		},
+
+		// Re-enrich the on-foot remainders `vehicleSplit` left behind.
+		//
+		// The OSM pass ran ~30 passes ago, on segments that had not yet been
+		// split. When a "walk" turns out to have spanned a ride — classically
+		// because the fixes cut out underground, gluing walk + tube + walk into
+		// one row — everything that pass concluded about it was derived from a
+		// window containing the ride: the road name from a line of samples drawn
+		// straight through it, the refined mode from speeds averaged across it.
+		//
+		// The 2026-07-12 case: one segment ran King's Cross → Highbury &
+		// Islington. Both remainders came out named "Euston Road" (the parent's
+		// pick, hugged at the King's Cross end) — including the one 4 km away on
+		// Upper Street. `walkRemainder` has already recomputed their kinematics
+		// and cleared that enrichment; here they get their own, from their own
+		// geometry, exactly as if they had been separate segments all along.
+		//
+		// Runs after walkVehicleHandoff / vehicleArrival so the walk↔vehicle
+		// boundaries are settled first — no point naming a stretch that is about
+		// to be re-cut. A remainder that fails re-enrichment stays honestly
+		// unnamed rather than confidently wrong.
+		{
+			name: "reenrichSplitWalks",
+			run: async (segs) => {
+				const stale = segs.filter((s) => s.needsReenrich);
+				if (stale.length === 0) return segs;
+				const redone = new Map<number, EnrichedSegment>();
+				await Promise.all(
+					stale.map(async (seg) => {
+						const segPoints = samplesInWindow(points, seg);
+						if (segPoints.length === 0) return;
+						try {
+							redone.set(seg.startTs, await enrichMovingSegment(seg, segPoints));
+						} catch (e) {
+							console.warn(`re-enrichment failed for split walk ${seg.startTs}: ${e}`);
+						}
+					}),
+				);
+				return segs.map((s) => {
+					if (!s.needsReenrich) return s;
+					const { needsReenrich: _, ...rest } = redone.get(s.startTs) ?? s;
+					return rest;
+				});
+			},
 		},
 
 		// Rail-journey assembly: when GPS surfaces mid-tunnel, one continuous

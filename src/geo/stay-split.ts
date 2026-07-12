@@ -497,6 +497,78 @@ const VEHICLE_LEG_PEAK_KMH = 20;
 const VEHICLE_LEG_MIN_REMAINDER_S = 60;
 
 /**
+ * Rebuild an on-foot remainder left behind by the carve.
+ *
+ * The parent walking segment unknowingly spanned a ride, so *every* summary
+ * it carries — `avgSpeed`, `maxSpeed`, `linearity` — was measured across that
+ * ride, and every OSM label it carries was derived by sampling a line drawn
+ * through it. None of that is evidence about the on-foot stretch either side.
+ *
+ * The 2026-07-12 case: a single "walk" spanned King's Cross → Highbury &
+ * Islington because the fixes cut out underground. Emitting the remainders as
+ * `{...seg}` gave two walking rows a peak of 64 km/h (the Victoria Line's
+ * speed) and the street name "Euston Road" — which the second remainder,
+ * 4 km away on Upper Street, had never been near.
+ *
+ * So recompute the kinematics from the remainder's own fixes, and drop the
+ * enrichment: `wayName` / `place` / `refinedMode` / `refinedReason` and the
+ * confidence derived alongside them. `reenrichSplitWalks` re-derives them from
+ * the remainder's own geometry once the cascade reaches the OSM layer; a
+ * remainder that never gets re-enriched is honestly unnamed rather than
+ * confidently wrong.
+ *
+ * Pure. Mirrors what the carve already does for the vehicle part.
+ */
+function walkRemainder<T extends TrackSegment>(
+	seg: T,
+	startTs: number,
+	endTs: number,
+	points: readonly FilteredPoint[],
+	/** True for the remainder that begins where the ride ends. The ride owns
+	 *  its boundary fixes — the fix *at* `driveEnd` is the one the vehicle
+	 *  arrived on, and its speed reading is the vehicle's — so the walk must
+	 *  not take it. Without this the trailing walk inherits the ride's arrival
+	 *  speed and is right back to claiming 34 km/h on foot. */
+	ridePrecedes = false,
+): T {
+	const fixes = points
+		.filter((p) => (ridePrecedes ? p.ts > startTs : p.ts >= startTs) && p.ts < endTs)
+		.sort((a, b) => a.ts - b.ts);
+	const rebuilt = { ...seg, startTs, endTs, pointCount: fixes.length } as T & {
+		refinedMode?: TransportMode;
+		refinedReason?: string;
+		wayName?: string;
+		place?: string;
+		needsReenrich?: boolean;
+	};
+	// Enrichment computed over the parent's window is not evidence about this
+	// stretch. Clear it and flag for re-derivation.
+	rebuilt.refinedMode = undefined;
+	rebuilt.refinedReason = undefined;
+	rebuilt.wayName = undefined;
+	rebuilt.place = undefined;
+	rebuilt.needsReenrich = true;
+
+	if (fixes.length >= 2) {
+		const speeds = fixes.map((f) => f.speed_kmh ?? 0);
+		let pathDist = 0;
+		for (let k = 1; k < fixes.length; k++) {
+			pathDist += haversineMeters(fixes[k - 1].lat, fixes[k - 1].lon, fixes[k].lat, fixes[k].lon);
+		}
+		const straight = haversineMeters(
+			fixes[0].lat,
+			fixes[0].lon,
+			fixes[fixes.length - 1].lat,
+			fixes[fixes.length - 1].lon,
+		);
+		rebuilt.avgSpeed = Math.round(median(speeds) * 10) / 10;
+		rebuilt.maxSpeed = Math.round(Math.max(...speeds) * 10) / 10;
+		rebuilt.linearity = pathDist > 0 ? Math.round(Math.min(straight / pathDist, 1) * 100) / 100 : 0;
+	}
+	return rebuilt;
+}
+
+/**
  * Split each `walking` segment that hides a vehicle leg into
  * `[walk?, driving, walk?]`. The carved leg is left as `driving`; the
  * later bus-vs-car pass (#247) and OSM road naming refine it. Walks with
@@ -509,11 +581,25 @@ export function splitWalksOnVehicleLeg<T extends TrackSegment>(
 	const debug = process.env.VEHICLE_SPLIT_DEBUG === "1";
 	const tt = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
 	const out: T[] = [];
-	const isTrain = (s: T | undefined): boolean =>
-		s !== undefined && ((s as { refinedMode?: TransportMode }).refinedMode ?? s.mode) === "train";
+	const effective = (s: T): TransportMode => (s as { refinedMode?: TransportMode }).refinedMode ?? s.mode;
+	const isTrain = (s: T | undefined): boolean => s !== undefined && effective(s) === "train";
 	for (let i = 0; i < segments.length; i++) {
 		const seg = segments[i];
-		if (seg.mode !== "walking" || seg.endTs - seg.startTs < VEHICLE_LEG_MIN_SEGMENT_S) {
+		// The *effective* mode, not the raw one. A short urban car ride averages
+		// low — traffic, lights — so the segmenter's raw `mode` is often
+		// "walking" while OSM refinement has already correctly called it
+		// `driving` on a named road. Gating on the raw mode sent this pass
+		// hunting for a ride hidden inside a segment the pipeline had already
+		// concluded WAS a ride, and it carved a user-confirmed 14-minute car
+		// ride home into a walk plus a 3-minute drive (2026-05-25, Fulton Road).
+		//
+		// That went unseen only because the remainders inherited the parent's
+		// `refinedMode: "driving"` and so still rendered as driving. Now that a
+		// remainder gets its own honest kinematics (see `walkRemainder`), the bad
+		// carve would surface as "walking on Fulton Road" — so the gate has to be
+		// right. This pass is for a walk that hides a ride; a leg already
+		// identified as a vehicle is the ride.
+		if (effective(seg) !== "walking" || seg.endTs - seg.startTs < VEHICLE_LEG_MIN_SEGMENT_S) {
 			out.push(seg);
 			continue;
 		}
@@ -602,7 +688,6 @@ export function splitWalksOnVehicleLeg<T extends TrackSegment>(
 			continue;
 		}
 
-		const countIn = (from: number, to: number): number => points.filter((p) => p.ts >= from && p.ts < to).length;
 		const meanKmh = dur > 0 ? Math.round((netDist / dur) * 3.6 * 10) / 10 : 0;
 		// Carve the ride. Clear the inherited on-foot enrichment (footway
 		// name, place, walking refinedMode) — OSM enrichment already ran, so
@@ -618,11 +703,15 @@ export function splitWalksOnVehicleLeg<T extends TrackSegment>(
 		drivePart.avgSpeed = meanKmh;
 		drivePart.maxSpeed = Math.round(peak * 10) / 10;
 		drivePart.linearity = 1;
-		drivePart.pointCount = countIn(driveStart, driveEnd);
+		// Inclusive of the boundary fixes: `peakBetween(a, b)` already counts
+		// them as the ride's, so the walks either side must not (see
+		// `walkRemainder`). Partitioning on a half-open window would count the
+		// arrival fix twice — once in the ride's peak, once in the walk's.
+		drivePart.pointCount = points.filter((p) => p.ts >= driveStart && p.ts <= driveEnd).length;
 		drivePart.refinedReason = `vehicle-leg split: ${Math.round(netDist)} m net progress in ${Math.round(dur / 60)} min (peak ${Math.round(peak)} km/h) inside a walking segment — a ride, not a walk`;
-		if (driveStart > seg.startTs) out.push({ ...seg, endTs: driveStart, pointCount: countIn(seg.startTs, driveStart) });
+		if (driveStart > seg.startTs) out.push(walkRemainder(seg, seg.startTs, driveStart, points));
 		out.push(drivePart);
-		if (driveEnd < seg.endTs) out.push({ ...seg, startTs: driveEnd, pointCount: countIn(driveEnd, seg.endTs) });
+		if (driveEnd < seg.endTs) out.push(walkRemainder(seg, driveEnd, seg.endTs, points, true));
 	}
 	return out;
 }

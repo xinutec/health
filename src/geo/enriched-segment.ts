@@ -41,6 +41,13 @@ export interface EnrichedSegment extends TrackSegment {
 	vehicleKind?: "bus";
 	refinedMode?: TransportMode; // OSM-refined transport mode (may differ from heuristic mode)
 	refinedReason?: string;
+	/** Set by `splitWalksOnVehicleLeg` on the on-foot remainders it leaves
+	 *  behind. Those run long after the OSM pass, so their inherited
+	 *  enrichment was derived from the parent segment's window — a window that
+	 *  spanned the ride now carved out of it. The `reenrichSplitWalks` pass
+	 *  re-derives their road name and refined mode from their own geometry and
+	 *  clears the flag; it is an internal marker and never reaches the API. */
+	needsReenrich?: boolean;
 	displayTz?: string; // IANA tz to render the segment's timestamps in (frontend uses this instead of browser tz)
 	biometrics?: BiometricEnrichment;
 	snappedPath?: SnappedPoint[]; // derived: this train segment drawn on the OSM rail track — see annotateSnappedPaths
