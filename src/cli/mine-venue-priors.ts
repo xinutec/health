@@ -52,6 +52,7 @@ import {
 	effectiveSampleSize,
 	localHourOf,
 	minePriors,
+	minePriorsSoft,
 	type StayResponsibilities,
 	type StayShape,
 	stayResponsibilities,
@@ -266,12 +267,20 @@ stays.forEach((s, i) => {
 });
 
 if (outPriors) {
-	// P0 writes the HARD-gate blob — byte-equivalent to what prod mines today.
-	// That is the point: it proves the file path reproduces current behaviour,
-	// so any later difference is attributable to the algorithm and not the
-	// harness. P1 is what changes the blob.
-	await writeFile(outPriors, `${JSON.stringify(hardPriors, null, "\t")}\n`, "utf8");
-	console.error(`wrote priors (hard gate, = current prod) to ${outPriors}`);
+	// Default: the HARD-gate blob, which must reproduce prod exactly (--expect
+	// checks it). That is the baseline arm.
+	// --soft: the P1 blob, mined from fractional responsibilities. That is the
+	// candidate arm. Feed either to `score-venues --priors <file>`.
+	const soften = args.includes("--soft");
+	const blob = soften
+		? minePriorsSoft(
+				stays.map((s, i) => ({ responsibilities: soft[i], durationSec: s.durationSec, localHour: s.localHour })),
+			)
+		: hardPriors;
+	await writeFile(outPriors, `${JSON.stringify(blob, null, "\t")}\n`, "utf8");
+	console.error(
+		`wrote priors (${soften ? "SOFT — P1 candidate" : "hard gate, = current prod"}) to ${outPriors} — ${blob.totalVisits.toFixed(1)} visits`,
+	);
 }
 
 const n = (x: number, w = 6): string => x.toFixed(1).padStart(w);

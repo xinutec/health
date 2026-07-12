@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { NearbyLandmark } from "../src/geo/osm.js";
-import { effectiveSampleSize, type StayShape, stayResponsibilities } from "../src/geo/venue-prior.js";
+import {
+	attributeStayVenue,
+	effectiveSampleSize,
+	minePriorsSoft,
+	type SoftAttributedStay,
+	type StayShape,
+	stayResponsibilities,
+} from "../src/geo/venue-prior.js";
 
 const venue = (name: string, subtype: string, distanceM: number, openingHours?: string): NearbyLandmark => ({
 	name,
@@ -105,6 +112,51 @@ describe("stayResponsibilities — how much of a stay each venue may claim", () 
 			SIT,
 		);
 		expect(r.candidates.map((c) => c.landmark.name)).toEqual(["Corner Cafe"]);
+	});
+});
+
+describe("minePriorsSoft — fractional counts into the same prior shape", () => {
+	const stayAt = (candidates: NearbyLandmark[], durationSec: number, localHour: number): SoftAttributedStay => ({
+		responsibilities: stayResponsibilities(candidates, SIT),
+		durationSec,
+		localHour,
+	});
+
+	it("splits one ambiguous stay across its candidates instead of discarding it", () => {
+		// The exact stay the hard gate throws away: 77 min on Upper Street.
+		const priors = minePriorsSoft([stayAt(UPPER_STREET, 77 * 60, 10)]);
+
+		// attributeStayVenue returns null here (no venue is 20m clear), so
+		// minePriors would produce ZERO training visits from this stay.
+		expect(attributeStayVenue(UPPER_STREET)).toBeNull();
+
+		// Soft attribution teaches every plausible candidate a fraction.
+		expect(priors.totalVisits).toBeGreaterThan(0.8);
+		expect(priors.bySubtype.cafe.visits).toBeGreaterThan(0);
+		expect(priors.bySubtype.pub.visits).toBeGreaterThan(0);
+		// …and the café's mass lands in the 40-150min bucket (index 2) — the
+		// bucket that is empty in the real mined prior today.
+		expect(priors.bySubtype.cafe.dwell[2]).toBeGreaterThan(0);
+		expect(priors.bySubtype.cafe.hours[10]).toBeGreaterThan(0);
+	});
+
+	it("keeps the category pool consistent with the subtype mass", () => {
+		const priors = minePriorsSoft([stayAt(UPPER_STREET, 77 * 60, 10)]);
+		const foodSubtypes = ["cafe", "pub", "fast_food", "bakery"];
+		const foodMass = foodSubtypes.reduce((s, k) => s + (priors.bySubtype[k]?.visits ?? 0), 0);
+		expect(priors.byCategory.food?.visits).toBeCloseTo(foodMass, 6);
+	});
+
+	it("degenerates to the hard gate's answer when a stay is unambiguous", () => {
+		// One isolated café: responsibility ~1, so soft ≈ hard (1 visit of cafe).
+		const priors = minePriorsSoft([stayAt([venue("Lone Cafe", "cafe", 5)], 77 * 60, 10)]);
+		expect(priors.bySubtype.cafe.visits).toBeGreaterThan(0.9);
+		expect(priors.totalVisits).toBeCloseTo(priors.bySubtype.cafe.visits, 6);
+	});
+
+	it("contributes almost nothing from a stay with no plausible venue", () => {
+		const priors = minePriorsSoft([stayAt([venue("Distant Cafe", "cafe", 95)], 77 * 60, 10)]);
+		expect(priors.totalVisits).toBeLessThan(0.6); // uncalibrated magnitude; see OTHER_COMPONENT_NATS
 	});
 });
 

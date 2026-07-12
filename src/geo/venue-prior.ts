@@ -533,6 +533,75 @@ export function effectiveSampleSize(stays: readonly StayResponsibilities[]): num
 	return stays.reduce((n, s) => n + s.candidates.reduce((m, c) => m + c.r, 0), 0);
 }
 
+/** One stay, with the mass each candidate venue may claim of it. */
+export interface SoftAttributedStay {
+	responsibilities: StayResponsibilities;
+	durationSec: number;
+	/** Local hour (0–23, venue tz) of the stay midpoint. */
+	localHour: number;
+}
+
+/**
+ * Mine the visit-shape prior from FRACTIONAL counts (proposal P1).
+ *
+ * Identical in structure to {@link minePriors} — same buckets, same category
+ * pooling, same output shape, so every consumer is unchanged — but each stay
+ * contributes `r` of a visit to each candidate's subtype instead of 1 to the
+ * argmax and 0 to everyone else.
+ *
+ * That single change is the whole point: `attributeStayVenue` discards a stay
+ * entirely unless one venue is 20 m clear of its neighbours, which never
+ * happens on a dense high street, which is where cafés are. Measured on the
+ * real history: the hard gate admits 40 visits, this admits 271 effective —
+ * and the café's 40–150-minute dwell bucket goes from ZERO to 11.
+ *
+ * `VenueTypeStats` counts are plain numbers, so fractional mass flows through
+ * the existing smoothing (`blendedBinP`) untouched: a subtype with 0.4 visits
+ * is simply out-weighed by the Dirichlet pseudo-counts, which is correct.
+ *
+ * NOTE: the responsibilities passed in must NOT have been computed with the
+ * shape prior in the loop (see {@link stayResponsibilities}) — otherwise this
+ * is a self-confirming feedback loop rather than a one-pass estimate. Making
+ * that iteration safe is P2's job, and it needs collapse guards this does not
+ * have.
+ */
+export function minePriorsSoft(stays: readonly SoftAttributedStay[]): VenuePriors {
+	const bySubtype: Record<string, VenueTypeStats> = {};
+	const byCategory: Partial<Record<VenueCategory, VenueTypeStats>> = {};
+	const emptyStats = (): VenueTypeStats => ({
+		visits: 0,
+		dwell: new Array(DWELL_BUCKETS).fill(0),
+		hours: new Array(24).fill(0),
+	});
+	let total = 0;
+	for (const stay of stays) {
+		const bucket = dwellBucket(stay.durationSec);
+		const hour = ((stay.localHour % 24) + 24) % 24;
+		for (const { landmark, r } of stay.responsibilities.candidates) {
+			if (r <= 0) continue;
+			let st = bySubtype[landmark.subtype];
+			if (!st) {
+				st = emptyStats();
+				bySubtype[landmark.subtype] = st;
+			}
+			st.visits += r;
+			st.dwell[bucket] += r;
+			st.hours[hour] += r;
+			const category = categoryOfSubtype(landmark.subtype);
+			let cat = byCategory[category];
+			if (!cat) {
+				cat = emptyStats();
+				byCategory[category] = cat;
+			}
+			cat.visits += r;
+			cat.dwell[bucket] += r;
+			cat.hours[hour] += r;
+			total += r;
+		}
+	}
+	return { bySubtype, byCategory, totalVisits: total };
+}
+
 /** Aggregate attributed stays into the priors blob. Pure counting — every
  *  number in the result is mined, none authored. */
 export function minePriors(stays: readonly AttributedStay[]): VenuePriors {
