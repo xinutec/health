@@ -12,7 +12,17 @@ tests/fixtures/days/
 # Golden-day regression corpus: real prod days + their blessed
 # day-state baselines. Real coords / place names / journeys — local
 # only, never committed. Run via `npm run golden` (see golden-check.js).
-tests/golden/
+tests/golden/*
+
+# ...EXCEPT the two ratchet floors. These are what the deploy gate compares
+# against, and they were untracked local state: no history, not bisectable, and
+# silently desynchronised by a golden re-bless — which is how a real walk
+# regression sat undetected from 2026-07-09 to 07-13 (#346). Tracking them makes
+# every movement of the floor a reviewable diff, so raising a floor becomes an
+# explicit act instead of an invisible one. Safe to commit where the fixtures are
+# not: they carry NO coordinates and NO place names — only timestamps and metres.
+!tests/golden/walk-baseline.json
+!tests/golden/journey-baseline.json
 
 # Rail-snap fixtures: a real day frozen with its raw fixes, classified
 # segments, and the OSM rail geometry of every train corridor. Real
