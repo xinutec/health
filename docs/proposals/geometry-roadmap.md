@@ -43,14 +43,38 @@ for the merely unlikely, always an honest raw fallback
   adaptive robust walkable attraction; building clearance field; optional
   endpoint anchors; uniform-grid spatial index (`WalkGrid`) for near-O(1)
   nearest-way / in-building lookups.
-- **`WALK_RECON` per-leg swap** (`pedestrian-match-annotate.ts`, **off by
-  default**): draws the reconstruction only when it is ≥25 % AND ≥150 m
-  shorter than the matched/raw line — the dissolved-out-and-back signature.
-  Surfaces as `walkSmoothedPath` / `kind:"smoothed"`.
+- **`WALK_RECON` per-leg swap** (`pedestrian-match-annotate.ts`, **on by
+  default** since the G2 flip; `WALK_RECON=0` is the off-switch): draws the
+  reconstruction only when it is ≥25 % AND ≥150 m shorter than the
+  matched/raw line — the dissolved-phantom signature. Surfaces as
+  `walkSmoothedPath` / `kind:"smoothed"`. **Input parity is load-bearing**:
+  both invocations of `reconstructWalk` (recon-primary arm AND the
+  conditional swap) receive the same collapsed fix set
+  (`rejectSpikes` + `holdImplausibleSpeed`). The swap once received
+  un-collapsed fixes; dense indoor jitter then reached the solver as
+  mutually-consistent evidence and legs drew far over their step budget —
+  the walk-gate red that motivated tracking the ratchet floors in git.
 - **Referee**: `score-walk-match.ts` replays golden walks over
   baseline/matched/smoother-primary arms; metrics in `walk-score.ts`,
   `walk-buildings.ts`, `walk-plausibility.ts`, `walk-route-correctness.ts`;
   SVG eyeball via `render-walk-match.ts`; wired into the deploy gate (#307).
+
+Known residuals in the current draw:
+
+- **Graph-gap corner-cuts** (#305 characterised the class, #350 a live
+  case): where the walkable network is missing an on-the-ground edge —
+  typically a station-forecourt / parade passage — the matched line
+  connects the surrounding corridors straight through the block, leaving
+  short in-building runs (single-digit to low-tens of metres per leg).
+  Data fix (OSM edit) or gap-tolerant routing, not a matcher parameter.
+- **Corrector buys building fixes with invented distance** (#347): open,
+  with both obvious guards measured and refuted — see the task before
+  touching it. Points at retirement (#330), not a third guard.
+- **A walk whose head is a mis-segmented ride** draws fine (the matcher
+  sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
+  the boundary defect chain and its fix live in
+  `../design/episode-geometry.md` ("The boundary class recurs") and #348,
+  with the display-honesty half in #349.
 
 ## The central fact — two phantom classes (measured 2026-07-07)
 

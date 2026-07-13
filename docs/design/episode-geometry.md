@@ -200,6 +200,22 @@ the drawn chords vs the walkable surface) confirms it both follows the pavement
 better than the raw line AND stays faithful to the fixes. `episode-geometry`
 prefers it (`kind:"matched"`), falling back to the raw track when the matcher
 bails (off-network, or a graph too fragmented to route — the honest `null`).
+
+Two consequences of the matched path worth stating explicitly:
+
+- **A matched walk silently sheds unwalkable fixes.** When a mis-placed
+  segment boundary leaves vehicle-paced fixes at a walk's head (see the
+  boundary-recurrence note under Grounding), the matcher cannot route them
+  on the walkable network and the matched line simply starts at the first
+  on-foot fix. That is honest in itself — but it widens the gap the
+  frontend bridge then spans (below, #349), and the walk's *duration* and
+  step budget still include the shed ride.
+- **Graph gaps draw corner-cuts.** Where the pedestrian network is missing
+  an edge that exists on the ground (classically a station-forecourt /
+  parade passage), the matched line connects the surrounding corridors
+  straight through the block — short in-building runs of metres to tens of
+  metres (#305 characterised the class; #350 tracks a live station-parade
+  case). The referee's `bldg` column measures it per leg.
 Measured (`score-walk-match`, off-walkable p90) across the golden corpus: 37
 walks improved (e.g. 55 m → 3 m), 0 regressed. This is the pedestrian slice of
 map-constrained positioning, shipped as a display layer.
@@ -213,12 +229,16 @@ under a deterministic graduated-non-convexity anneal, accuracy as a weak
 clamped prior, L2 smoothness, soft walkable attraction, building clearance
 field. `pedestrian-match-annotate.ts` swaps it in for a leg **only when the
 reconstruction is ≥25 % and ≥150 m shorter** than the matched/raw line —
-the signature of a dissolved phantom out-and-back (an isolated GPS spur the
-accuracy-blind matcher snapped into a detour). The segment then carries
+the signature of a dissolved phantom (an isolated out-and-back spur, or a
+coherent reacquire smear collapsed by the independent-evidence factors:
+step budget + endpoint anchors). The segment then carries
 `walkSmoothedPath` and `episode-geometry` prefers it as `kind:"smoothed"`,
-above `walkMatchedPath`. The swap ships **off by default** (`WALK_RECON=1`
-opt-in): it does not yet fix the coherent-smear phantom class, which needs
-the independent-evidence factors tracked in
+above `walkMatchedPath`. The swap is **on by default** (`WALK_RECON=0` is
+the emergency off-switch), and both ways the reconstruction is invoked —
+primary draw and conditional swap — are fed the same collapsed fix set
+(`rejectSpikes` + `holdImplausibleSpeed`); feeding the swap un-collapsed
+fixes let dense indoor jitter reach the solver as consistent evidence and
+drew over-budget legs. History and measurements in
 `../proposals/geometry-roadmap.md`.
 
 ### Bounding the `unknown` connector
@@ -277,6 +297,19 @@ cross-run continuity, which are Leaflet-shaped concerns operating over
 the resolved `EpisodeGeometry[]` (now bridging adjacent episodes'
 endpoints rather than reaching back into a `DisplayPoint` array).
 
+**Known honesty gap in the bridge (#349).** The continuity bridge is
+drawn as part of the *following* episode's polyline, in that episode's
+mode colour and solid style. When adjacent geometries genuinely abut,
+the bridge is invisible. But when they don't — a segment boundary
+placed kilometres early, or a matched walk that shed an unwalkable
+head — the bridge becomes a long, confident, solid line that renders
+exactly the artifact this design exists to remove (a train tail
+re-appearing as a "walk" straight down the rail corridor), *without any
+episode's `points` containing a single bad coordinate*. The backend
+geometry is honest; the join is not. The fix direction tracked in #349:
+style a bridge beyond a short cap as tentative, or emit long joins as
+explicit `tentative` episodes backend-side so provenance stays visible.
+
 ## Invariants (enforced, not hoped)
 
 1. **Narrative-freeze.** `segmentsToDayStates` output is byte-identical
@@ -297,7 +330,11 @@ endpoints rather than reaching back into a `DisplayPoint` array).
    grounding), and a fully GPS-dark leg draws nothing rather than a guess.
    Phase 2 makes cached coverage a guarantee so confident rides reliably
    snap; until then the raw-own-fixes fallback is honest, not a zigzag of
-   someone else's trace.
+   someone else's trace. *Scope caveat:* the speed filter guards
+   `raw`-kind geometry only — `matched`/`smoothed` walks never contain the
+   fast fixes (the matcher sheds them) — so the invariant holds for every
+   episode's `points`, but the frontend bridge between episodes can still
+   mis-attribute a span (#349, above).
 4. **Determinism.** `buildEpisodes` is a pure function of its inputs, so
    replaying a golden fixture reproduces its geometry exactly. *Note:*
    adding *golden geometry baselines* is not free — `golden-check.ts`
@@ -337,6 +374,42 @@ walking. The boundary lands ~90 s early, so the walk absorbs the train's
 fast tail and draws it along the rail line. The speed-plausibility filter
 drops every fix over the 12 km/h walking ceiling; what remains is the
 real walk at the station, off the track.
+
+### The boundary class recurs at kilometre scale (#348)
+
+A later captured day reproduced the same class, bigger: a ride whose
+final overground run is *dense* good-GPS fixes was cut minutes early —
+the train leg ends while the fixes are still at ~60 km/h — and the
+stranded tail (kilometres, not ~90 s) landed in the following walk.
+Replay showed why every layer of defence declined it, each locally
+reasonable:
+
+1. **`segments.ts` scores fixed 5-minute windows by *median* speed.** A
+   window straddling the alight holds ~1.5 min of ride and ~3.5 min of
+   genuine walk; the median is walking pace, so the whole window scores
+   `walking` (a vehicle-paced `maxSpeed` only dampens the score — it is
+   not a veto). Any fast tail shorter than about half a window is
+   invisible to segmentation by construction.
+2. **`splitWalksOnVehicleLeg` correctly refuses.** Its alighting-bleed
+   guard recognises a fast head butting against a preceding train as
+   *that train's* boundary bleeding in, not a separate ride — carving it
+   into a phantom drive would be worse. It defers to the rail passes.
+3. **`anchorTrainAlightToWalkedStation` assumes a sparse blackout hop.**
+   Its settle scan looks for the last single inter-fix step that is both
+   long and fast; on a dense fast run every step is fast but each is
+   *individually* just around the distance floor, so the last qualifying
+   step lands mid-track where there is no station, and the pass bails
+   silently. The settle needs to be defined on the *run* (net
+   displacement of contiguous vehicle-paced steps), not on one step —
+   that is the open fix in #348, with the captured day as the
+   acceptance fixture.
+
+Display-side, the matched walk sheds the unwalkable tail, so no episode
+*draws* it — the visible artifact is the frontend bridge spanning the
+gap (#349). But the depiction fix is not sufficient here: the timeline
+still reports the ride minutes as walking, and the leg's step budget is
+contaminated. The boundary itself must move; that is classification
+work, tracked in #348.
 
 **The test is cache-independent and needs no station coordinate** — it
 reads only `speed_kmh`, which is on every fix:
@@ -388,12 +461,16 @@ each justified by a real day that looks wrong.
 - **Fix the map renderer in place.** Patching `map.component` to hide
   blips without unifying the model leaves two sources of truth that will
   drift again. The win is the shared model, not the patch.
-- **Re-classify: move the train→walk boundary later.** Tempting (the
-  boundary is ~90 s early), but it changes the `DayState` sequence the
-  golden harness freezes and the narrative already reads fine. Geometry
-  is downstream: the speed filter fixes the *depiction* without touching
-  classification. A boundary fix can be a separate classification task if
-  a day ever needs it.
+- **Re-classify: move the train→walk boundary later.** *(Superseded in
+  part — a day now needs it; see "The boundary class recurs" under
+  Grounding and #348.)* The original reasoning stands for the ~90 s
+  case: the display fix required no classification change and the
+  narrative read fine. But the kilometre-scale recurrence shows the
+  depiction-only defence has a ceiling — when the stranded tail is
+  minutes long, the narrative itself is wrong and the boundary must
+  move. The division of labour is unchanged: geometry stays downstream
+  and never re-decides classification; the boundary fix is a
+  classification pass change (#348), not a geometry feedback loop.
 - **Anchor a station-egress connector on the alight station coordinate.**
   Designed, then dropped once the data showed the cause was mis-segmented
   *fast train fixes*, not GPS scatter — so there is nothing to connect

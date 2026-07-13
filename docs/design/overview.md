@@ -56,9 +56,9 @@ TypeScript on Hono (lightweight HTTP framework). Two entry points:
 
 ### Frontend (`frontend/`)
 
-Angular 19 SPA. Standalone components, signals, Chart.js for
-visualization. Built to static files, served by the backend from
-`public/`.
+Angular SPA (currently v22 — see `frontend/package.json`). Zoneless,
+standalone components, signals, Chart.js for visualization, Leaflet for
+the map. Built to static files, served by the backend from `public/`.
 
 ### Infrastructure (`k8s/`)
 
@@ -123,43 +123,63 @@ src/
 │   ├── phonetrack.ts       # GPS point fetch + visualisation-filter sync
 │   └── phonetrack-prefs.ts # per-user preference storage in NC user_prefs
 ├── geo/
-│   ├── timezone.ts         # tz-aware date bounds + Fitbit ts → unix; cached
-│   │                         Intl.DateTimeFormat per tz
+│   ├── velocity.ts         # the orchestrator: PhoneTrack → Kalman →
+│   │                         segments → the refinement pass cascade →
+│   │                         episodes. The `passes` array in this file is
+│   │                         the authoritative, ordered list of the ~40
+│   │                         refinement passes — order is load-bearing and
+│   │                         each entry's comment says why it sits there.
+│   ├── timezone.ts         # tz-aware date bounds + Fitbit ts → unix
 │   ├── kalman.ts           # gap-aware Kalman filter for raw GPS
-│   ├── segments.ts         # window-based mode classifier (stay / walk /
-│   │                         cycle / drive / rail / plane) + merge
-│   ├── place-snap.ts       # snap noisy fixes to known focus_places centroid
-│   ├── focus-places.ts     # cluster history → focus_places (overnight-aware,
-│   │                         carries hour_profile + visit counts + dwell)
-│   ├── osm.ts              # Overpass + Nominatim with mirror fallback,
-│   │                         negative caching, 4s per-mirror timeout
-│   ├── biometrics.ts       # enrich a segment with HR mean/std/min/max +
-│   │                         sleep fraction; graceful nulls when Fitbit absent
-│   └── velocity.ts         # full pipeline: PhoneTrack → Kalman → segments →
-│                             OSM enrich → biometric enrich → API response
-└── cli/
-    ├── analyze-day.ts          # debug: print a day's velocity result
-    ├── find-focus-places.ts    # one-off cluster discovery
-    └── refresh-focus-places.ts # nightly: refresh + warm OSM cache
+│   ├── segments.ts         # first-pass mode classifier: fixed 5-minute
+│   │                         windows → per-mode feature scores → merge.
+│   │                         Windows score on median speed, so a window
+│   │                         straddling a mode change goes wholesale to the
+│   │                         majority mode — boundary defects from this are
+│   │                         corrected (not always successfully, #348) by
+│   │                         later passes, see episode-geometry.md
+│   ├── passes/             # extracted refinement passes (rail absorbers /
+│   │                         reconcile / tube-hop, …) — wired in velocity.ts
+│   ├── episode-geometry.ts # display geometry per DayState (episode-geometry.md)
+│   ├── pedestrian-match*.ts, walk-*.ts, road-match*.ts, rail-snap.ts
+│   │                       # per-mode drawn-path machinery (geometry-roadmap.md)
+│   ├── place-snap.ts / focus-places.ts / place-prior.ts / venue-*.ts
+│   │                       # stay place attribution
+│   ├── osm.ts / osm-local.ts  # Overpass/Nominatim + local OSM mirror
+│   └── biometrics.ts       # segment HR / cadence / sleep enrichment
+├── hmm/                    # HSMM decoder (shadow; place-override is live) —
+│                             see proposals/decoder-roadmap.md
+└── cli/                    # capture (capture-golden, capture-day), replay
+                              (golden-check, analyze-day, decode-day), scoring
+                              (score-walk-match, score-decoder-golden, …) and
+                              probe tools — one file per job, see src/cli/
 ```
 
-## Testing
+## Testing and gates
 
-Vitest, 204 tests across 16 files. Coverage:
-- Session signing and verification (`session.test.ts`)
-- OAuth state lifecycle: create, consume, expiry, replay (`oauth-state.test.ts`)
-- API user isolation — queries only return data for the session user (`api.test.ts`)
-- Config validation (`config.test.ts`)
-- Time / timezone math (`time.test.ts`, `timezone.test.ts`, `timezone-bounds.test.ts`)
-- Geo pipeline: Kalman (`kalman.test.ts`), segments (`segments.test.ts`),
-  place-snap (`place-snap.test.ts`), focus-places (`focus-places.test.ts`),
-  biometric enrichment (`biometrics.test.ts`), velocity end-to-end
-  (`velocity.test.ts`)
-- OSM cache mechanics: `osm.test.ts` for query shape, `osm-cache.test.ts`
-  for negative caching, mirror fallback, in-flight dedup, 4s abort path
-- PhoneTrack visualisation-filter prefs (`phonetrack-prefs.test.ts`)
+Vitest across `tests/` (~160 test files; auth, timezone math, the full
+geo pipeline, OSM cache mechanics, HSMM decode, and scenario tests that
+run synthetic days end-to-end). Tests share the same strict type
+checking as production code, so a stale call into a refactored
+signature surfaces immediately.
 
-Verify cycle: `nix-shell --run "npm run verify"` — runs tsc against `src/` and against `src/+tests/` (via `tsconfig.test.json`), then format + lint + vitest. Tests share the same strict type checking as production code, so a stale call into a refactored signature surfaces immediately.
+Beyond the unit suite, three replay gates guard behaviour on **real
+captured days** (fixtures gitignored — see
+`privacy-in-tests-and-commits.md`):
+
+- `scripts/verify.sh` — typecheck (src + tests), biome, vitest,
+  frontend build + e2e. Run by the pre-commit hook.
+- `scripts/golden.sh` — replays the golden day corpus
+  (`tests/golden/days/`) byte-identically, checks confirmed ground
+  truths, worldline feasibility, and the journey ratchet.
+- `scripts/walk-gate.sh` — the walk-geometry referee
+  (`score-walk-match`) against the per-metric ratchet floor in
+  `tests/golden/walk-baseline.json` (tracked in git, moved only by an
+  explicit re-bless).
+
+`scripts/deploy.sh` runs all three before building, pushing, and
+rolling out. Every script enters the pinned nix devshell itself
+(`scripts/_devshell.sh`) — run them directly, no wrapper needed.
 
 ## Security checklist
 
@@ -253,7 +273,13 @@ per segment, in parallel:
    enrichSegmentWithBiometrics (biometrics.ts)   ──► fitbit tables (DB)
        │
        ▼
-EnrichedSegment[]  →  API response (and Angular timeline UI)
+refinement pass cascade (velocity.ts `passes` — rail runs, underground
+reconstruction, boarding/alight anchors, journey assembly, vehicle
+splits, walk/road/rail drawn paths, HSMM place override, …)
+       │
+       ▼
+EnrichedSegment[] → DayState[] (day-state.ts) + EpisodeGeometry[]
+(episode-geometry.ts) → API response (Angular timeline + map)
 ```
 
 ### Caches and their purpose
