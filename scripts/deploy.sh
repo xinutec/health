@@ -99,15 +99,18 @@ echo "==> [3/7] staging changes"
 cd "$HEALTH_DIR"
 git add -A
 
-# Nothing to commit? Exit clean rather than creating an empty commit.
-if git diff --cached --quiet; then
-	echo "deploy: nothing staged — nothing to deploy."
-	exit 0
-fi
-
 # --- commit + push -------------------------------------------------------
-echo "==> [4/7] git commit"
-git commit -F "$MSG_FILE"
+# Nothing staged is NOT nothing to deploy: work committed by hand (the normal
+# case when a fix had to be gated and reviewed before it could ship) is already
+# in HEAD. Exiting here made such a commit undeployable by this script — the
+# 5ef3517 walk fix sat committed and unshippable until this was fixed. Skip the
+# commit, deploy what HEAD already says.
+if git diff --cached --quiet; then
+	echo "==> [4/7] git commit — nothing staged; deploying the existing HEAD"
+else
+	echo "==> [4/7] git commit"
+	git commit -F "$MSG_FILE"
+fi
 
 COMMIT_SHA=$(git rev-parse HEAD)
 echo "    HEAD is now $COMMIT_SHA"
