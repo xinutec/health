@@ -12,6 +12,9 @@
 			"correctness": {
 				"noUnusedImports": "error",
 				"noUnusedVariables": "warn"
+			},
+			"nursery": {
+				"noBaseToString": "error"
 			}
 		}
 	},

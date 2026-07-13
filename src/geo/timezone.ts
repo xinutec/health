@@ -121,7 +121,7 @@ export function fitbitTsToUnix(s: string | Date, tz?: string): number {
 	// The mariadb driver returns DATETIME columns as Date objects whose
 	// UTC components match the stored wall-clock — coerce to an ISO string
 	// so the parser sees a uniform format regardless of source.
-	const str = typeof s === "string" ? s : s instanceof Date ? s.toISOString() : String(s);
+	const str = typeof s === "string" ? s : s.toISOString();
 	const m = str.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
 	if (!m) return Number.NaN;
 	const [, ys, mos, ds, hs, mis, ss] = m;

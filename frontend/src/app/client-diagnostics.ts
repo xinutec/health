@@ -49,17 +49,20 @@ export function installErrorReporting(health: HealthService): void {
 	window.addEventListener("error", (e: ErrorEvent) => {
 		const sig = `${truncate(e.message, 200)}|${e.filename ?? ""}|${e.lineno ?? 0}`;
 		if (!shouldEmit(sig)) return;
+		// `ErrorEvent.error` is `any` — anything can be thrown. Only an Error
+		// carries a stack.
+		const thrown: unknown = e.error;
 		void reporter?.healthRef.clientLog("uncaught-error", {
 			message: truncate(e.message, 200),
 			filename: truncate(e.filename ?? "", 200),
 			line: e.lineno ?? 0,
 			col: e.colno ?? 0,
-			stack: truncate(e.error?.stack ?? "", 1500),
+			stack: truncate(thrown instanceof Error ? (thrown.stack ?? "") : "", 1500),
 		});
 	});
 
 	window.addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
-		const reason = e.reason;
+		const reason: unknown = e.reason;
 		const message = reason instanceof Error ? reason.message : String(reason);
 		const stack = reason instanceof Error ? (reason.stack ?? "") : "";
 		const sig = `rejection|${truncate(message, 200)}`;

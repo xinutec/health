@@ -63,17 +63,17 @@ describe("AppComponent toolbar — share quick-copy button", () => {
 
 	it("hides the share button when no share status is loaded", async () => {
 		const fixture = await setup(null);
-		expect(fixture.nativeElement.querySelector(".share-link")).toBeNull();
+		expect((fixture.nativeElement as HTMLElement).querySelector(".share-link")).toBeNull();
 	});
 
 	it("hides the share button when sharing is not active", async () => {
 		const fixture = await setup({ active: false });
-		expect(fixture.nativeElement.querySelector(".share-link")).toBeNull();
+		expect((fixture.nativeElement as HTMLElement).querySelector(".share-link")).toBeNull();
 	});
 
 	it("shows the share button when a share link is active", async () => {
 		const fixture = await setup({ active: true, url: "https://health.example/share/abc" });
-		expect(fixture.nativeElement.querySelector(".share-link")).not.toBeNull();
+		expect((fixture.nativeElement as HTMLElement).querySelector(".share-link")).not.toBeNull();
 	});
 
 	it("copies the bare share URL when no day or tab is in the URL", async () => {
@@ -81,7 +81,7 @@ describe("AppComponent toolbar — share quick-copy button", () => {
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		vi.stubGlobal("navigator", { userAgent: "test", clipboard: { writeText } });
 		const fixture = await setup({ active: true, url });
-		const button = fixture.nativeElement.querySelector(".share-link") as HTMLButtonElement;
+		const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(".share-link")!;
 		button.click();
 		expect(writeText).toHaveBeenCalledWith(url);
 	});
@@ -91,7 +91,7 @@ describe("AppComponent toolbar — share quick-copy button", () => {
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		vi.stubGlobal("navigator", { userAgent: "test", clipboard: { writeText } });
 		const fixture = await setup({ active: true, url }, "/?date=2026-05-20&tab=trends&trendDays=60");
-		const button = fixture.nativeElement.querySelector(".share-link") as HTMLButtonElement;
+		const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(".share-link")!;
 		button.click();
 		// The whole query string rides along verbatim — including trendDays,
 		// which no allowlist had to be taught about.

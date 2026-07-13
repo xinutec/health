@@ -18,7 +18,7 @@ function activity(date: string, steps = 5000): ActivityDay {
 		minutes_fairly_active: 20,
 		minutes_very_active: 30,
 		resting_heart_rate: 60,
-	} as ActivityDay;
+	};
 }
 
 function mainSleep(date: string, minutes = 489): SleepLog {
@@ -36,7 +36,7 @@ function mainSleep(date: string, minutes = 489): SleepLog {
 		minutes_rem: 100,
 		minutes_wake: 30,
 		is_main_sleep: true,
-	} as SleepLog;
+	};
 }
 
 /** A promise whose resolution the test triggers by hand — lets a test
@@ -77,19 +77,22 @@ function makeHealthMock(opts: { activity?: ActivityDay[]; sleep?: SleepLog[] } =
 	const health = {
 		user: signal({ fitbitLinked: true }),
 		shareToken: signal(null),
-		checkAuth: async () => true,
-		clientLog: async () => {},
-		syncPhoneTrackFilter: async () => {},
-		getLatestFix: async () => null,
-		getActivity: async (days: number) => {
+		// The real service is async; these stubs only have to satisfy that
+		// signature, so they return a settled promise rather than pretending to
+		// await something.
+		checkAuth: () => Promise.resolve(true),
+		clientLog: () => Promise.resolve(),
+		syncPhoneTrackFilter: () => Promise.resolve(),
+		getLatestFix: () => Promise.resolve(null),
+		getActivity: (days: number) => {
 			activityDaysSeen.push(days);
-			return opts.activity ?? [];
+			return Promise.resolve(opts.activity ?? []);
 		},
-		getSleep: async () => opts.sleep ?? [],
-		getHrv: async () => [],
-		getBody: async () => [],
-		getSleepStages: async () => [],
-		getHeartRateIntraday: async () => [],
+		getSleep: () => Promise.resolve(opts.sleep ?? []),
+		getHrv: () => Promise.resolve([]),
+		getBody: () => Promise.resolve([]),
+		getSleepStages: () => Promise.resolve([]),
+		getHeartRateIntraday: () => Promise.resolve([]),
 		getVelocity: (date: string) => {
 			const d = deferred<VelocityData>();
 			pending.set(date, d);
@@ -99,7 +102,7 @@ function makeHealthMock(opts: { activity?: ActivityDay[]; sleep?: SleepLog[] } =
 	return { health, pending, activityDaysSeen };
 }
 
-const vel = (): VelocityData => ({ points: [], segments: [] }) as unknown as VelocityData;
+const vel = (): VelocityData => ({ points: [], segments: [] });
 
 function setup(mock: HealthMock): ComponentFixture<DashboardComponent> {
 	TestBed.configureTestingModule({

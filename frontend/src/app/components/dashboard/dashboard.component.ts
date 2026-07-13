@@ -433,7 +433,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		return n;
 	}
 
-	async ngOnInit(): Promise<void> {
+	ngOnInit(): void {
+		// Angular calls the hook expecting void: an async ngOnInit is never
+		// awaited, so a rejection inside it would go unhandled.
+		void this.init();
+	}
+
+	private async init(): Promise<void> {
 		// Share mode: stash the route's `:token` param onto HealthService
 		// so every API call carries `X-Share-Token`. The rest of the
 		// dashboard runs identically; server-side gates enforce

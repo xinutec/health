@@ -14,7 +14,7 @@ function activity(date: string, steps = 5000): ActivityDay {
 		minutes_fairly_active: 20,
 		minutes_very_active: 30,
 		resting_heart_rate: 60,
-	} as ActivityDay;
+	};
 }
 
 function mainSleep(date: string, minutes = 489): SleepLog {
@@ -32,7 +32,7 @@ function mainSleep(date: string, minutes = 489): SleepLog {
 		minutes_rem: 100,
 		minutes_wake: 30,
 		is_main_sleep: true,
-	} as SleepLog;
+	};
 }
 
 const TODAY = "2026-05-10";

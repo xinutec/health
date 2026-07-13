@@ -21,7 +21,7 @@
 
 import { TestBed } from "@angular/core/testing";
 import { describe, expect, it } from "vitest";
-import type { DayState, VelocityData } from "../../services/health.service";
+import type { DayState } from "../../services/health.service";
 import { TimelineComponent } from "./timeline.component";
 
 let cursor = 1_700_000_000; // arbitrary fixed epoch; tests are relative
@@ -40,7 +40,7 @@ function state(mode: DayState["mode"], minutes: number, extra: Partial<DayState>
 
 function setup(states: DayState[]) {
 	const fixture = TestBed.createComponent(TimelineComponent);
-	fixture.componentRef.setInput("data", { segments: [], states } as unknown as VelocityData);
+	fixture.componentRef.setInput("data", { segments: [], states });
 	fixture.componentRef.setInput("referenceDate", null);
 	fixture.detectChanges();
 	return fixture;
@@ -115,17 +115,17 @@ describe("TimelineComponent journey grouping", () => {
 		const fixture = setup(commuteDay());
 		const c = fixture.componentInstance;
 
-		expect(fixture.nativeElement.textContent).not.toContain("Barn Rise");
+		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Barn Rise");
 
 		c.toggleJourney(0);
 		fixture.detectChanges();
-		const text = fixture.nativeElement.textContent ?? "";
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
 		expect(text).toContain("Barn Rise");
 		expect(text).toContain("Metropolitan Line");
 
 		c.toggleJourney(0);
 		fixture.detectChanges();
-		expect(fixture.nativeElement.textContent).not.toContain("Barn Rise");
+		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Barn Rise");
 	});
 
 	it("expandAll / collapseAll flip every journey", () => {

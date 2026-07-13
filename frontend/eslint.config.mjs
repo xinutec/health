@@ -19,10 +19,16 @@ export default tseslint.config(
 	{
 		files: ["src/**/*.ts"],
 		extends: [
-			...tseslint.configs.recommended,
-			...tseslint.configs.stylistic,
+			// Type-aware: without a project the rules that need types — notably
+			// no-base-to-string / restrict-template-expressions, the ones that stop
+			// a value rendering as `[object Object]` — load but never fire.
+			...tseslint.configs.recommendedTypeChecked,
+			...tseslint.configs.stylisticTypeChecked,
 			...angular.configs.tsRecommended,
 		],
+		languageOptions: {
+			parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+		},
 		processor: angular.processInlineTemplates,
 		rules: {
 			"@angular-eslint/component-max-inline-declarations": ["error", { template: 0, styles: 0 }],

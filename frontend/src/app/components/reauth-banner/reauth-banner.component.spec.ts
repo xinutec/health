@@ -33,21 +33,21 @@ describe("ReauthBannerComponent", () => {
 
 	it("renders nothing when Nextcloud status is 'unknown' (default)", () => {
 		const { fixture } = setup();
-		expect(fixture.nativeElement.querySelector(".reauth-banner")).toBeNull();
+		expect((fixture.nativeElement as HTMLElement).querySelector(".reauth-banner")).toBeNull();
 	});
 
 	it("renders nothing when status is 'active'", () => {
 		const { fixture, connection } = setup();
 		connection.setNextcloudStatus("active");
 		fixture.detectChanges();
-		expect(fixture.nativeElement.querySelector(".reauth-banner")).toBeNull();
+		expect((fixture.nativeElement as HTMLElement).querySelector(".reauth-banner")).toBeNull();
 	});
 
 	it("renders the banner with 'Reconnect Nextcloud' button when status is 'needs_reauth'", () => {
 		const { fixture, connection } = setup();
 		connection.setNextcloudStatus("needs_reauth");
 		fixture.detectChanges();
-		const banner = fixture.nativeElement.querySelector(".reauth-banner") as HTMLElement | null;
+		const banner = (fixture.nativeElement as HTMLElement).querySelector(".reauth-banner");
 		expect(banner).not.toBeNull();
 		expect(banner?.textContent ?? "").toContain("expired");
 		const button = banner?.querySelector("button");
@@ -63,7 +63,7 @@ describe("ReauthBannerComponent", () => {
 		const { fixture, connection } = setup();
 		connection.setNextcloudStatus("not_linked");
 		fixture.detectChanges();
-		const banner = fixture.nativeElement.querySelector(".reauth-banner") as HTMLElement | null;
+		const banner = (fixture.nativeElement as HTMLElement).querySelector(".reauth-banner");
 		expect(banner).not.toBeNull();
 		expect(banner?.textContent ?? "").toContain("Connect your Nextcloud");
 		const button = banner?.querySelector("button");

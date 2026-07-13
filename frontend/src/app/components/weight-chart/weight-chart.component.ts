@@ -39,7 +39,7 @@ export class WeightChartComponent {
               const x = items[0]?.parsed.x;
               return x == null ? "" : fmt(x);
             },
-            label: (ctx) => `${(ctx.parsed.y as number).toFixed(1)} kg`,
+            label: (ctx) => `${(ctx.parsed.y!).toFixed(1)} kg`,
           },
         },
       },

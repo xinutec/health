@@ -7,7 +7,7 @@
  * time components directly from the string without Date parsing.
  */
 export function parseLocalTime(ts: string): { hours: number; minutes: number } {
-  const match = ts.match(/(\d{2}):(\d{2})/);
+  const match = /(\d{2}):(\d{2})/.exec(ts);
   if (!match) throw new Error(`Cannot parse time from: ${ts}`);
   return { hours: parseInt(match[1], 10), minutes: parseInt(match[2], 10) };
 }
@@ -24,7 +24,7 @@ export function formatLocalTime(ts: string): string {
 export function localEpoch(ts: string): number {
   // Replace Z suffix and parse without timezone conversion
   const clean = ts.replace(/Z$/, "").replace("T", " ");
-  const match = clean.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+  const match = /(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/.exec(clean);
   if (!match) throw new Error(`Cannot parse timestamp: ${ts}`);
   const [, y, mo, d, h, mi, s] = match.map(Number);
   return new Date(y, mo - 1, d, h, mi, s).getTime();

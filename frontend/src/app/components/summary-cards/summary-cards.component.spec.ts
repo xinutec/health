@@ -1,6 +1,5 @@
 import { TestBed } from "@angular/core/testing";
 import { describe, expect, it } from "vitest";
-import type { ActivityDay, SleepLog } from "../../services/health.service";
 import { SummaryCardsComponent } from "./summary-cards.component";
 
 const ALL_LABELS = ["Steps", "Resting HR", "Active Minutes", "Calories", "Sleep", "Sleep Efficiency"];
@@ -10,7 +9,7 @@ describe("SummaryCardsComponent", () => {
 		const fixture = TestBed.createComponent(SummaryCardsComponent);
 		fixture.detectChanges();
 
-		const text = fixture.nativeElement.textContent ?? "";
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
 		for (const label of ALL_LABELS) {
 			expect(text).toContain(label);
 		}
@@ -31,11 +30,11 @@ describe("SummaryCardsComponent", () => {
 			minutes_fairly_active: 25,
 			minutes_very_active: 35,
 			resting_heart_rate: 58,
-		} as ActivityDay);
+		});
 		fixture.componentRef.setInput("latestSleep", null);
 		fixture.detectChanges();
 
-		const text = fixture.nativeElement.textContent ?? "";
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
 		expect(text).toContain("8,500"); // steps
 		expect(text).toContain("60"); // active minutes (25 + 35)
 		expect(text).toContain("58"); // resting HR
@@ -61,10 +60,10 @@ describe("SummaryCardsComponent", () => {
 			minutes_rem: null,
 			minutes_wake: null,
 			is_main_sleep: true,
-		} as SleepLog);
+		});
 		fixture.detectChanges();
 
-		const text = fixture.nativeElement.textContent ?? "";
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
 		expect(text).toContain("8h 9m");
 		expect(text).toContain("92");
 	});
@@ -82,10 +81,10 @@ describe("SummaryCardsComponent", () => {
 			minutes_fairly_active: 0,
 			minutes_very_active: 0,
 			resting_heart_rate: null,
-		} as ActivityDay);
+		});
 		fixture.detectChanges();
 
-		const text = fixture.nativeElement.textContent ?? "";
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
 		// The Resting HR value should be em dash, not "null bpm"
 		expect(text).toMatch(/Resting HR\s*—\s*bpm/);
 	});

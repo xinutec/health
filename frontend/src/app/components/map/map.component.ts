@@ -143,7 +143,7 @@ export class MapComponent implements OnDestroy {
 		const control = new L.Control({ position: "topright" });
 		control.onAdd = (): HTMLElement => {
 			const container = L.DomUtil.create("div", "leaflet-bar");
-			const btn = L.DomUtil.create("a", "", container) as HTMLAnchorElement;
+			const btn = L.DomUtil.create("a", "", container);
 			btn.href = "#";
 			btn.title = "Centre on current location";
 			btn.setAttribute("role", "button");
@@ -174,7 +174,7 @@ export class MapComponent implements OnDestroy {
 			this.resizeObs = new ResizeObserver(() => this.map?.invalidateSize());
 			this.resizeObs.observe(el);
 			// Tap-to-inspect: report the nearest drawn vertex. Bound once.
-			map.on("click", (e: L.LeafletMouseEvent) => this.showInspect(map as L.Map, e.latlng));
+			map.on("click", (e: L.LeafletMouseEvent) => this.showInspect(map!, e.latlng));
 			this.map = map;
 			this.layer = layer;
 		}

@@ -295,6 +295,13 @@ export class HealthService {
     return this.connection.fetch(input, { ...init, headers });
   }
 
+  /** `Response.json()` is `any` — nothing on the wire is checked against `T`.
+   *  This is the single place where the backend's shape is taken on trust, so
+   *  the assertion is stated here once instead of implied at every call. */
+  private static async body<T>(res: Response): Promise<T> {
+    return (await res.json()) as T;
+  }
+
   async checkAuth(): Promise<boolean> {
     try {
       const res = await this.fetch("/api/me");
@@ -327,37 +334,37 @@ export class HealthService {
   async getHrv(days = 30, signal?: AbortSignal): Promise<HrvDay[]> {
     const res = await this.fetch(`/api/hrv?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch HRV");
-    return res.json();
+    return HealthService.body<HrvDay[]>(res);
   }
 
   async getBody(days = 30, signal?: AbortSignal): Promise<BodyDay[]> {
     const res = await this.fetch(`/api/body?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch body");
-    return res.json();
+    return HealthService.body<BodyDay[]>(res);
   }
 
   async getActivity(days = 30, signal?: AbortSignal): Promise<ActivityDay[]> {
     const res = await this.fetch(`/api/activity?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch activity");
-    return res.json();
+    return HealthService.body<ActivityDay[]>(res);
   }
 
   async getSleep(days = 30, signal?: AbortSignal): Promise<SleepLog[]> {
     const res = await this.fetch(`/api/sleep?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch sleep");
-    return res.json();
+    return HealthService.body<SleepLog[]>(res);
   }
 
   async getSleepStages(date = today(), signal?: AbortSignal): Promise<SleepStage[]> {
     const res = await this.fetch(`/api/sleep/stages?date=${date}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch sleep stages");
-    return res.json();
+    return HealthService.body<SleepStage[]>(res);
   }
 
   async getHeartRateIntraday(date = yesterday(), signal?: AbortSignal): Promise<HeartRatePoint[]> {
     const res = await this.fetch(`/api/heartrate/intraday?date=${date}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch heart rate intraday");
-    return res.json();
+    return HealthService.body<HeartRatePoint[]>(res);
   }
 
   async getVelocity(date = yesterday(), signal?: AbortSignal, walkMatch = true): Promise<VelocityData> {
@@ -367,7 +374,7 @@ export class HealthService {
     const wm = walkMatch ? "" : "&walkMatch=0";
     const res = await this.fetch(`/api/velocity?date=${date}&tz=${encodeURIComponent(tz)}${wm}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch velocity data");
-    return res.json();
+    return HealthService.body<VelocityData>(res);
   }
 
   /** The most recent location fix, for the live map marker. Returns
@@ -415,7 +422,7 @@ export class HealthService {
   async getShareStatus(): Promise<ShareStatus> {
     const res = await this.fetch("/api/share");
     if (!res.ok) throw new Error(`share status failed: ${res.status}`);
-    return res.json();
+    return HealthService.body<ShareStatus>(res);
   }
 
   /** Fetch the share status and publish it on the `shareStatus`

@@ -54,8 +54,11 @@ export class SettingsComponent implements OnInit {
 	 *  loaded status so "Update days" can change it without rotating. */
 	readonly editDays = signal(7);
 
-	async ngOnInit(): Promise<void> {
-		await this.refresh();
+	ngOnInit(): void {
+		// Angular calls the hook expecting void: an async ngOnInit is never
+		// awaited, so a rejection here would go unhandled. refresh() already
+		// funnels its failures into the `error` signal.
+		void this.refresh();
 	}
 
 	async refresh(): Promise<void> {
