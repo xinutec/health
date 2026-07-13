@@ -262,24 +262,33 @@ export async function annotateWalkMatches(
 		// no routing, so a chord crossing a block is the corrector's job here just
 		// as it is for a raw-drawn leg. Honest fallback: recon bails → the raw
 		// renderer's line. The referee's recon arm measures exactly this path.
+		// The reconstruction starts from EXACTLY the fix set the raw renderer draws
+		// (rejectSpikes + holdImplausibleSpeed) — the same principle the corrector's
+		// raw fallback documents below. Without the teleport-RUN collapse, a dense
+		// indoor jitter that rejectSpikes can't see reaches the solver as mutually-
+		// consistent evidence the robust kernel keeps (measured: the 2026-05-15
+		// 20:18 leg drew 1808 m on a 533 m raw line). This holds for BOTH ways the
+		// reconstruction is invoked — as the primary draw and as the conditional
+		// swap. Feeding the swap the un-collapsed fixes is what left the 2026-07-07
+		// 08:42Z leg drawing 670 m against a 354 m pedometer budget while the same
+		// leg reconstructed to 171 m as the primary draw.
+		const held = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH);
+		const reconFixes: WalkFix[] = held.map((p) => ({
+			lat: p.lat,
+			lon: p.lon,
+			ts: p.ts,
+			accuracyM: p.accuracy ?? undefined,
+		}));
+
+		// Pedometer budget for the leg window (#320): the one signal independent of
+		// GPS that contradicts a coherent smear. null (no step data for the day)
+		// leaves the factor off.
+		const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
+
 		let useMatch = false;
 		let smoothed = false;
 		let drawn: Array<{ lat: number; lon: number; ts: number }>;
 		if (draw === "recon") {
-			// The reconstruction starts from EXACTLY the fix set the raw renderer
-			// draws (rejectSpikes + holdImplausibleSpeed) — the same principle the
-			// corrector's raw fallback documents below. Without the teleport-RUN
-			// collapse, a dense indoor jitter that rejectSpikes can't see reaches
-			// the solver as mutually-consistent evidence the robust kernel keeps
-			// (measured: the 2026-05-15 20:18 leg drew 1808 m on a 533 m raw line).
-			const held = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH);
-			const reconFixes: WalkFix[] = held.map((p) => ({
-				lat: p.lat,
-				lon: p.lon,
-				ts: p.ts,
-				accuracyM: p.accuracy ?? undefined,
-			}));
-			const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
 			const recon = reconstructWalk(reconFixes, { ways, buildings }, undefined, {
 				...walkEndpointAnchors(segments, si),
 				stepsWalked: stepsWalked ?? undefined,
@@ -328,7 +337,7 @@ export async function annotateWalkMatches(
 				// indoor-smear teleport zigzag the renderer never shows, and attaching
 				// its "correction" would replace a short honest line with a long noisy
 				// one (measured: the 2026-07-01 10:44 leg, 1908 m of jitter in 10 min).
-				drawn = holdImplausibleSpeed(clean, WALK_SPEED_CAP_KMH).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+				drawn = held.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
 			}
 
 			// Robust-reconstruction swap (#296/#321): when the drawn line (matched or
@@ -347,8 +356,7 @@ export async function annotateWalkMatches(
 				// of GPS that contradicts a coherent smear. null (no step data for the
 				// day) leaves the factor off. Endpoint anchors (#319): pin the leg
 				// between the neighbouring stay centroids / snapped station ends.
-				const stepsWalked = stepsInWindow(stepPoints, seg.startTs, seg.endTs);
-				const recon = reconstructWalk(walkFixes, { ways, buildings }, undefined, {
+				const recon = reconstructWalk(reconFixes, { ways, buildings }, undefined, {
 					...walkEndpointAnchors(segments, si),
 					stepsWalked: stepsWalked ?? undefined,
 				});
