@@ -6,6 +6,7 @@ import {
 	inferTransitGaps,
 	isStationaryIncoherent,
 	normalizeScores,
+	pedestrianCoreDisplacementM,
 	smoothSegments,
 	type TrackSegment,
 } from "../src/geo/segments.js";
@@ -674,27 +675,136 @@ describe("isStationaryIncoherent", () => {
 	// stay and named after a POI it drifted past.
 
 	it("flags a directed, displaced 'stationary' segment as incoherent (the Bleecker phantom)", () => {
-		// lin 0.91, ~106 m net progress — a walk, not a stay.
-		expect(isStationaryIncoherent({ linearity: 0.91, netDisplacementM: 106 })).toBe(true);
+		// lin 0.91, ~106 m net progress over ~5 min — a walk, not a stay.
+		expect(
+			isStationaryIncoherent({ linearity: 0.91, netDisplacementM: 106, coreDisplacementM: 106, durationS: 300 }),
+		).toBe(true);
 	});
 
 	it("does NOT flag a genuine stay that mills around a point (clinic: low linearity)", () => {
-		expect(isStationaryIncoherent({ linearity: 0.28, netDisplacementM: 40 })).toBe(false);
+		expect(
+			isStationaryIncoherent({ linearity: 0.28, netDisplacementM: 40, coreDisplacementM: 40, durationS: 3600 }),
+		).toBe(false);
 	});
 
 	it("does NOT flag a still stay whose few fixes happen to be colinear but barely move", () => {
 		// High linearity but tiny displacement — the floor protects it.
-		expect(isStationaryIncoherent({ linearity: 0.95, netDisplacementM: 20 })).toBe(false);
+		expect(
+			isStationaryIncoherent({ linearity: 0.95, netDisplacementM: 20, coreDisplacementM: 20, durationS: 600 }),
+		).toBe(false);
 	});
 
 	it("does NOT flag a home stay (moderate linearity, small displacement)", () => {
-		expect(isStationaryIncoherent({ linearity: 0.56, netDisplacementM: 60 })).toBe(false);
+		expect(
+			isStationaryIncoherent({ linearity: 0.56, netDisplacementM: 60, coreDisplacementM: 60, durationS: 7200 }),
+		).toBe(false);
 	});
 
 	it("requires BOTH directed motion and real displacement", () => {
-		expect(isStationaryIncoherent({ linearity: 0.95, netDisplacementM: 80 })).toBe(false); // displaced too little
-		expect(isStationaryIncoherent({ linearity: 0.6, netDisplacementM: 300 })).toBe(false); // not directed
-		expect(isStationaryIncoherent({ linearity: 0.85, netDisplacementM: 250 })).toBe(true); // both
+		// displaced too little
+		expect(
+			isStationaryIncoherent({ linearity: 0.95, netDisplacementM: 80, coreDisplacementM: 80, durationS: 600 }),
+		).toBe(false);
+		// not directed
+		expect(
+			isStationaryIncoherent({ linearity: 0.6, netDisplacementM: 300, coreDisplacementM: 300, durationS: 600 }),
+		).toBe(false);
+		// both
+		expect(
+			isStationaryIncoherent({ linearity: 0.85, netDisplacementM: 250, coreDisplacementM: 250, durationS: 600 }),
+		).toBe(true);
+	});
+
+	it("does NOT flag a dwell-scale window whose pedestrian core implies no locomotion pace (#354)", () => {
+		// A 2.5 h office afternoon whose tail is the walk-out-and-board: raw
+		// first→last spans the ride's teleports (km), but the pedestrian core
+		// displaced 408 m = 0.16 km/h. Nothing locomotes that slowly — the
+		// departure is a boundary problem, not evidence the whole window
+		// moved. Flipping it wholesale manufactured a phantom multi-hour walk.
+		expect(
+			isStationaryIncoherent({ linearity: 0.9, netDisplacementM: 3000, coreDisplacementM: 408, durationS: 9060 }),
+		).toBe(false);
+	});
+
+	it("STILL flags a short mid-ride fragment spanning a teleport (rail absorbers rely on the flip)", () => {
+		// A 4-min "stay" whose raw net is 1.5 km with a ~0 m pedestrian core:
+		// sparse tunnel fixes clustered as a stop. Short windows keep the old
+		// behaviour — suppressing these broke reconstructed journeys and moved
+		// a Met alight to the wrong station (measured 2026-07-14).
+		expect(
+			isStationaryIncoherent({ linearity: 1.0, netDisplacementM: 1466, coreDisplacementM: 1, durationS: 240 }),
+		).toBe(true);
+	});
+
+	it("still flags a slow-but-real march over a dwell-scale window (core pace above the floor)", () => {
+		// 700 m core over 45 min = 0.93 km/h — a genuine crawl (crowd, luggage).
+		expect(
+			isStationaryIncoherent({ linearity: 0.88, netDisplacementM: 700, coreDisplacementM: 700, durationS: 2700 }),
+		).toBe(true);
+	});
+});
+
+describe("pedestrianCoreDisplacementM", () => {
+	// The coherence pass catches SLOW locomotion misread as dwelling — so a
+	// vehicle-paced step (a tunnel-reacquire teleport, a ride head stranded in
+	// the stay's tail) can never be evidence for it. Displacement is judged
+	// over the pedestrian-paced core: edge runs of ≥15 km/h steps are trimmed.
+	const fix = (ts: number, lat: number, lon: number) => ({ ts, lat, lon, speed_kmh: 1, bearing: 0 });
+
+	it("trims a trailing vehicle-paced run (dwell cloud + ride-head teleports = a stay)", () => {
+		// 30 min milling inside a ~60 m cloud, then two ~29+ km/h teleport
+		// steps as a ride departs. First→last reads kilometres; the core
+		// reads the cloud.
+		const cloud = Array.from({ length: 30 }, (_, i) =>
+			fix(i * 60, 51.53 + (((i * 37) % 11) - 5) * 0.000005, -0.126 + (((i * 41) % 11) - 5) * 0.000005),
+		);
+		const teleports = [fix(30 * 60, 51.525, -0.15), fix(30 * 60 + 240, 51.536, -0.175)];
+		const d = pedestrianCoreDisplacementM([...cloud, ...teleports]);
+		expect(d).toBeLessThan(90);
+	});
+
+	it("trims a leading vehicle-paced run (ride tail stranded at a stay's head)", () => {
+		const teleports = [fix(0, 51.536, -0.175), fix(240, 51.525, -0.15)];
+		const cloud = Array.from({ length: 30 }, (_, i) => fix(600 + i * 60, 51.53, -0.126));
+		const d = pedestrianCoreDisplacementM([...teleports, ...cloud]);
+		expect(d).toBeLessThan(90);
+	});
+
+	it("handles a departing ride that dwells at a platform mid-tunnel (fast, slow, fast tail)", () => {
+		// The measured 07-07 shape: the tail teleports are NOT one contiguous
+		// fast run — the train stops at a station between them, producing a
+		// slow step at a point kilometres from the stay. Any fix beyond a
+		// teleport is off the stay's worldline; the core is the dwell mass.
+		const cloud = Array.from({ length: 30 }, (_, i) => fix(i * 60, 51.53, -0.126));
+		const tail = [
+			fix(30 * 60, 51.525, -0.15), // teleport (~29 km/h)
+			fix(30 * 60 + 150, 51.5239, -0.1573), // slow platform step (~3.8 km/h)
+			fix(30 * 60 + 300, 51.536, -0.175), // teleport again
+		];
+		const d = pedestrianCoreDisplacementM([...cloud, ...tail]);
+		expect(d).toBeLessThan(90);
+	});
+
+	it("keeps a genuine pedestrian march intact (the walk-to-the-station shape)", () => {
+		// ~470 m of steady ~2.8 km/h progress — every step pedestrian-paced.
+		const march = Array.from({ length: 20 }, (_, i) => fix(i * 30, 51.53 + i * 0.0002, -0.126));
+		const d = pedestrianCoreDisplacementM(march);
+		expect(d).toBeGreaterThan(250);
+	});
+
+	it("an interior spike does not extend the core's endpoints", () => {
+		// Cloud, one out-and-back multipath spike mid-window, cloud: the
+		// first→last displacement is already the cloud's — unchanged.
+		const a = Array.from({ length: 10 }, (_, i) => fix(i * 60, 51.53, -0.126));
+		const spike = [fix(11 * 60, 51.535, -0.13)];
+		const b = Array.from({ length: 10 }, (_, i) => fix((13 + i) * 60, 51.53, -0.126));
+		const d = pedestrianCoreDisplacementM([...a, ...spike, ...b]);
+		expect(d).toBeLessThan(20);
+	});
+
+	it("returns 0 on fewer than two fixes", () => {
+		expect(pedestrianCoreDisplacementM([])).toBe(0);
+		expect(pedestrianCoreDisplacementM([fix(0, 51.53, -0.126)])).toBe(0);
 	});
 });
 

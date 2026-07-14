@@ -87,6 +87,7 @@ import {
 	classifySegments,
 	enforcePhysicalConstraints,
 	isStationaryIncoherent,
+	pedestrianCoreDisplacementM,
 	roadSupportedConfidence,
 } from "./segments.js";
 import {
@@ -1136,7 +1137,29 @@ export async function computeVelocityFromInputs(
 					const first = segPoints[0];
 					const last = segPoints[segPoints.length - 1];
 					const netDisplacementM = haversineMeters(first.lat, first.lon, last.lat, last.lon);
-					if (!isStationaryIncoherent({ linearity: seg.linearity, netDisplacementM })) return seg;
+					// The dwell-with-departure-tail carve-out (#354) judges what the
+					// window's pedestrian-paced mass did, separately from the raw
+					// march signal — a ride head stranded in a long stay's tail must
+					// not flip hours of dwelling into one giant walk.
+					const coreDisplacementM = pedestrianCoreDisplacementM(segPoints);
+					const durationS = seg.endTs - seg.startTs;
+					if (process.env.STAY_FLIP_DEBUG === "1") {
+						const oldFlip = seg.linearity > 0.7 && netDisplacementM > 90;
+						const newFlip = isStationaryIncoherent({
+							linearity: seg.linearity,
+							netDisplacementM,
+							coreDisplacementM,
+							durationS,
+						});
+						if (oldFlip !== newFlip) {
+							const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+							console.error(
+								`[stay-flip] ${t(seg.startTs)}-${t(seg.endTs)} lin=${seg.linearity.toFixed(2)} rawNet=${netDisplacementM.toFixed(0)} coreNet=${coreDisplacementM.toFixed(0)} dur=${Math.round(durationS / 60)}m old=${oldFlip} new=${newFlip}`,
+							);
+						}
+					}
+					if (!isStationaryIncoherent({ linearity: seg.linearity, netDisplacementM, coreDisplacementM, durationS }))
+						return seg;
 					return {
 						...seg,
 						mode: "walking" as const,

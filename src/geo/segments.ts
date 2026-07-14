@@ -306,19 +306,101 @@ export const STAY_MAX_LINEARITY = 0.7;
  *  genuinely still) stay — which never reaches high linearity — is safe. */
 export const STAY_MAX_NET_DISPLACEMENT_M = 90;
 
+/** A "stationary" window at least this long is dwell-scale: if its
+ *  pedestrian-paced mass never reached locomotion pace, the displacement is a
+ *  departing (or arriving) ride/walk TAIL, not evidence the whole window
+ *  moved. Short windows are never suppressed — a 3–5 min "stay" spanning a
+ *  teleport is a mid-ride fragment whose flip the rail absorbers rely on
+ *  (measured: suppressing those broke two reconstructed journeys and moved a
+ *  Met alight to the wrong station). */
+export const STAY_FLIP_DWELL_MIN_S = 45 * 60;
+/** Minimum implied pace of the pedestrian core over the whole window for a
+ *  dwell-scale flip. A march covers its displacement in minutes — even a
+ *  platform crawl nets ~1 km/h — while a 2.5 h office "stay" whose tail is
+ *  the walk-out-and-board displaces its core 408 m = 0.16 km/h: no locomotion
+ *  produces that pace. Flipping it wholesale manufactured a phantom
+ *  multi-hour walk (#354). */
+export const STAY_FLIP_MIN_PACE_KMH = 0.5;
+
 /**
  * Stationary-coherence constraint: a segment labelled `stationary` whose
- * fixes progress in a directed line over a real distance is not a stay —
- * it is slow locomotion (a walk to a platform, a crawl through traffic)
- * that low per-fix speed misread as dwelling. Left unchecked, the place
- * step then names the "stay" after whatever POI it drifted past (the
- * 2026-06-12 "Bleecker" / "The Other Palace" phantoms on the walk to
- * Victoria). This is a physical-impossibility constraint, not a heuristic:
- * a stay does not translate `STAY_MAX_NET_DISPLACEMENT_M` along a straight
- * line. Pure decision so the calibration is unit-testable.
+ * fixes progress in a directed line over a real distance is not a stay — it
+ * is slow locomotion (a walk to a platform, a crawl through traffic) that
+ * low per-fix speed misread as dwelling. Left unchecked, the place step then
+ * names the "stay" after whatever POI it drifted past (the 2026-06-12
+ * "Bleecker" / "The Other Palace" phantoms on the walk to Victoria).
+ *
+ * One carve-out (#354): a DWELL-SCALE window whose pedestrian-paced core
+ * never reached locomotion pace is a stay with a departure tail — hours of
+ * genuine dwelling must not be relabelled as one giant walk because the user
+ * eventually left. The tail is a boundary problem for the boarding passes.
+ * Pure decision so the calibration is unit-testable.
  */
-export function isStationaryIncoherent(opts: { linearity: number; netDisplacementM: number }): boolean {
-	return opts.linearity > STAY_MAX_LINEARITY && opts.netDisplacementM > STAY_MAX_NET_DISPLACEMENT_M;
+export function isStationaryIncoherent(opts: {
+	linearity: number;
+	/** Raw first→last fix displacement — the original march signal. */
+	netDisplacementM: number;
+	/** First→last displacement of the pedestrian-paced core (see
+	 *  `pedestrianCoreDisplacementM`) — what the window's dwell mass did. */
+	coreDisplacementM: number;
+	durationS: number;
+}): boolean {
+	if (opts.linearity <= STAY_MAX_LINEARITY) return false;
+	if (opts.netDisplacementM <= STAY_MAX_NET_DISPLACEMENT_M) return false;
+	const corePaceKmh = opts.durationS > 0 ? (opts.coreDisplacementM / opts.durationS) * 3.6 : 0;
+	const dwellWithDepartureTail = opts.durationS >= STAY_FLIP_DWELL_MIN_S && corePaceKmh < STAY_FLIP_MIN_PACE_KMH;
+	return !dwellWithDepartureTail;
+}
+
+/** A consecutive-fix step at or above this pace is a vehicle (or a reacquire
+ *  teleport), never the slow locomotion the coherence constraint exists to
+ *  catch. Matches the vehicle-pace floor used by the walk carve
+ *  (`VEHICLE_LEG_MOVE_KMH`) and the kinematic feasibility check — comfortably
+ *  above the 12 km/h walking ceiling. */
+const PEDESTRIAN_CORE_MAX_STEP_KMH = 15;
+
+/**
+ * Net displacement of a fix sequence's pedestrian core: the sequence is split
+ * at every vehicle-paced step, and the core is the largest resulting run —
+ * the segment's dwell mass. Its first→last distance is what a pedestrian
+ * could have covered.
+ *
+ * The stationary-coherence constraint asks "did this 'stay' actually march
+ * somewhere on foot?" — so a ride head stranded in the stay's tail must not
+ * answer it. That tail is NOT a contiguous fast run: a departing tube ride
+ * surfaces as teleports interleaved with slow steps (the train dwelling at a
+ * platform), so edge-trimming cannot remove it — any fix beyond a teleport is
+ * off the stay's worldline. One such tail turned a 2.5 h office afternoon
+ * into a phantom multi-hour "walk" carrying the corpus's worst
+ * impossible-kinematics legs (#354). A genuine slow march (the
+ * walk-to-the-station shape the constraint exists for) has pedestrian-paced
+ * steps throughout: one run, the full displacement. Pure.
+ */
+export function pedestrianCoreDisplacementM(fixes: readonly FilteredPoint[]): number {
+	if (fixes.length < 2) return 0;
+	const vehiclePaced = (a: FilteredPoint, b: FilteredPoint): boolean => {
+		const dt = b.ts - a.ts;
+		if (dt <= 0) return false;
+		return (haversineMeters(a.lat, a.lon, b.lat, b.lon) / dt) * 3.6 >= PEDESTRIAN_CORE_MAX_STEP_KMH;
+	};
+	let bestStart = 0;
+	let bestEnd = 0; // inclusive; [bestStart, bestEnd] is the largest run so far
+	let runStart = 0;
+	for (let i = 1; i < fixes.length; i++) {
+		if (vehiclePaced(fixes[i - 1], fixes[i])) {
+			if (i - 1 - runStart > bestEnd - bestStart) {
+				bestStart = runStart;
+				bestEnd = i - 1;
+			}
+			runStart = i;
+		}
+	}
+	if (fixes.length - 1 - runStart > bestEnd - bestStart) {
+		bestStart = runStart;
+		bestEnd = fixes.length - 1;
+	}
+	if (bestEnd <= bestStart) return 0;
+	return haversineMeters(fixes[bestStart].lat, fixes[bestStart].lon, fixes[bestEnd].lat, fixes[bestEnd].lon);
 }
 
 /**
