@@ -18,6 +18,13 @@ import * as L from "leaflet";
 import { modeStyle } from "../../modes";
 import { displayTzAt, type LatestFix, type VelocityData } from "../../services/health.service";
 
+/** Longest gap (m) between two episodes' drawn ends that still joins the next
+ *  episode's own polyline. Sized to cosmetic stitching: a station platform →
+ *  forecourt offset, a Kalman overshoot — comfortably above GPS noise, far
+ *  below an inter-station span. Beyond it the bridge is an unobserved span
+ *  and draws as a muted dashed connector instead (#349). */
+const BRIDGE_JOIN_MAX_M = 120;
+
 
 
 /**
@@ -203,10 +210,33 @@ export class MapComponent implements OnDestroy {
 				continue;
 			}
 			const coords = ep.points.map((p) => [p.lat, p.lon] as L.LatLngTuple);
+			// Continuity bridge to the previous episode's last drawn point. A
+			// SHORT gap is cosmetic stitching — adjacent geometries nearly
+			// abut — and joins this episode's own line. A LONG gap is not
+			// geometry: it is an unobserved span (a mis-placed boundary, a
+			// matcher that shed an unwalkable head), and drawing it solid in
+			// this episode's colour once painted a confident 2 km "walk"
+			// straight down a rail corridor (#349). Past the cap the bridge
+			// draws as its own muted dashed connector, making inference
+			// visually distinct from observation.
+			let joinPrev = false;
+			if (prevLast) {
+				const gapM = map.distance(prevLast, coords[0]);
+				if (gapM <= BRIDGE_JOIN_MAX_M) {
+					joinPrev = true;
+				} else {
+					L.polyline([prevLast, coords[0]], {
+						color: "#8a8f98",
+						weight: 3,
+						opacity: 0.6,
+						dashArray: "2 8",
+					}).addTo(layer);
+				}
+			}
 			// Inferred geometry draws dashed; smoothed is denoised real GPS,
 			// so it draws solid like raw/matched.
 			const dashed = ep.kind === "snapped" || ep.kind === "tentative";
-			L.polyline(prevLast ? [prevLast, ...coords] : coords, {
+			L.polyline(joinPrev && prevLast ? [prevLast, ...coords] : coords, {
 				color: modeStyle(ep.mode).color,
 				weight: 4,
 				opacity: 0.9,
