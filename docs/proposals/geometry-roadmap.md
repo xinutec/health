@@ -100,6 +100,15 @@ Known residuals in the current draw (re-measured 2026-07-14 via
 - **Corrector buys building fixes with invented distance** (#347): open,
   with both obvious guards measured and refuted — see the task before
   touching it. Points at retirement (#330), not a third guard.
+- **Walks drawn across UNMAPPED housing blocks are invisible to every
+  building-aware pass** — measured 2026-07-14: a user-flagged diagonal cut
+  across terraced blocks scored offPath 0 m and all visible crossing-runs
+  routed, because those blocks have no building polygons in OSM (the #305
+  data-gap class; block-cut needs a footprint within 30 m to fire). Check
+  the basemap for missing house outlines BEFORE treating such a cut as a
+  corrector decline. Candidate lever: landuse-block interiors as soft
+  cut-through evidence (#357) — falsify with the passage-snap discipline
+  (must not touch forest/park walks or tie lines to centerlines).
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in

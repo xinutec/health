@@ -34,6 +34,16 @@ rule we hand-wrote reactively (#175, #176, #181, #234) stops being code and
 becomes a structural consequence. Impossible journeys become
 *unrepresentable* rather than *pruned*.
 
+Measured evidence the cascade cannot be patched into correctness
+(2026-07-14, #354): the passes don't just leak at their seams — some
+**depend on other passes' errors**. Short mid-ride "stationary" fragments
+(sparse tunnel fixes clustered as a stop) are mis-flipped to *walking* by
+the stationary-coherence pass, and the rail absorbers rely on that wrong
+label to assemble the ride; making the flip more honest broke reconstructed
+journeys and moved an alight to the wrong station. In a cascade, fixing one
+pass's lie can regress its consumers; in a joint decode there is no
+intermediate label to lie about.
+
 ## The bar (what "good" means)
 
 - A "your day" output a human reads and immediately accepts as *plausible*.
