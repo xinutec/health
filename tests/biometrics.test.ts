@@ -415,6 +415,32 @@ describe("correctModeFromCadence — stationary walk-through detection (2026-05-
 		expect(r.refinedMode).toBe("walking");
 	});
 
+	it("NEVER flips a multi-hour stationary segment — walk-throughs are minutes-scale", () => {
+		// The phantom-afternoon class: a 3.5 h office stay whose merged window
+		// picked up a short errand's fixes (busting the tight-extent veto) and
+		// its step burst (supplying the peak cadence). Every per-minute guard
+		// passes — but relabelling HOURS of dwell as one walk off a single
+		// walking burst is structurally absurd. If a long stay truly hides a
+		// walk, the carve passes own splitting it out; this pass only flips
+		// whole short stops.
+		const seg = stationarySeg(1.5, 202 * 60);
+		const burst: StepPoint[] = [step(0, 8), step(5700, 95), step(5760, 90), step(5820, 88), step(11_000, 5)];
+		// Fixes mostly in one tight cluster, plus an errand excursion past the
+		// 80 m extent veto — the polluted-merge shape.
+		const pts: FilteredPoint[] = [
+			...clusteredFixes(40, 0.00007),
+			...Array.from({ length: 10 }, (_, i) => ({
+				ts: 5700 + i * 60,
+				lat: 51.5256 + 0.0012, // ~130 m north — extent > 80 m
+				lon: -0.1231,
+				speed_kmh: 4,
+				bearing: 0,
+			})),
+		];
+		const r = correctStationaryWalkThrough(seg, burst, pts);
+		expect(r.refinedMode ?? r.mode).toBe("stationary");
+	});
+
 	it("does not apply the geometry veto to a short walk-through (5-min Union Park still flips)", () => {
 		// Same tight cluster, but only 5 min — under the long-dwell threshold,
 		// so the veto stays out of the way and the burst flips it.

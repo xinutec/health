@@ -8,6 +8,7 @@
  */
 
 import tzLookup from "tz-lookup";
+import type { StepPoint } from "../biometrics.js";
 import type { KnownPlaceProjection } from "../classification-inputs.js";
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
@@ -37,7 +38,26 @@ const STAY_BRIDGE_MAX_GAP_S = 10 * 60;
  *  excursion — even a brief one — averages 3+ km/h. */
 const STAY_BRIDGE_MAX_AVG_KMH = 2;
 
-export function mergeAdjacentStays(segments: EnrichedSegment[]): EnrichedSegment[] {
+/** Mean cadence (steps/min) at or above which the middle segment is a real
+ *  stepping excursion, never a multipath phantom. Multipath happens while the
+ *  user SITS — its step evidence is fidget-level (the stay-split "ambiguous"
+ *  band tops out ~8/min) — while a browse-heavy errand defeats the avg-speed
+ *  guard (median fix speed sub-walking inside the shop) yet steps 50+/min the
+ *  whole window. Steps are the only DIRECT movement evidence; a middle that
+ *  steps like a walk must survive as one. The motivating case (#329): a
+ *  ~10-min shop errand from the office, ~60 steps/min at avgSpeed 0.9 km/h,
+ *  swallowed into the office stay — whose polluted fixes and step burst a
+ *  later pass then flipped wholesale into a multi-hour phantom walk. */
+const STAY_BRIDGE_MAX_CADENCE = 20;
+
+export function mergeAdjacentStays(segments: EnrichedSegment[], steps: readonly StepPoint[] = []): EnrichedSegment[] {
+	const meanCadence = (s: EnrichedSegment): number => {
+		const durMin = (s.endTs - s.startTs) / 60;
+		if (durMin <= 0) return 0;
+		let total = 0;
+		for (const p of steps) if (p.ts >= s.startTs && p.ts < s.endTs) total += p.steps;
+		return total / durMin;
+	};
 	const result: EnrichedSegment[] = [];
 	for (const seg of segments) {
 		const prev = result[result.length - 1];
@@ -86,7 +106,8 @@ export function mergeAdjacentStays(segments: EnrichedSegment[]): EnrichedSegment
 			prev?.mode !== "stationary" &&
 			prev !== undefined &&
 			prev.endTs - prev.startTs <= STAY_BRIDGE_MAX_GAP_S &&
-			prev.avgSpeed <= STAY_BRIDGE_MAX_AVG_KMH;
+			prev.avgSpeed <= STAY_BRIDGE_MAX_AVG_KMH &&
+			meanCadence(prev) < STAY_BRIDGE_MAX_CADENCE;
 		const isBlackoutGap = prev?.mode === "unknown" && prev.pointCount === 0;
 		if (
 			prev &&

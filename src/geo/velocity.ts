@@ -1149,7 +1149,7 @@ export async function computeVelocityFromInputs(
 
 		{
 			name: "merge",
-			run: (segs) => mergeAdjacentMoving(mergeAdjacentStays(segs)),
+			run: (segs) => mergeAdjacentMoving(mergeAdjacentStays(segs, steps)),
 		},
 
 		// Collapse a sit that indoor/urban GPS jitter shattered into several
@@ -1585,7 +1585,7 @@ export async function computeVelocityFromInputs(
 				// input array by identity on a no-op, so !== means "a stay was demoted" —
 				// coalesce the freshly-adjacent walks only then, keeping other days byte-identical.
 				const coalesced = swallowed === intra ? swallowed : mergeAdjacentMoving(swallowed);
-				return mergeAdjacentStays(coalesced);
+				return mergeAdjacentStays(coalesced, steps);
 			},
 		},
 		// Plausibility critic: repair any contiguous vehicle hand-off the
@@ -1684,7 +1684,28 @@ export async function computeVelocityFromInputs(
 	];
 
 	let segs = physicallyCorrected;
-	for (const pass of passes) segs = await runPass(pass.name, () => pass.run(segs));
+	// PASS_TRACE=1 prints the segment list after every refinement pass that
+	// changed it — the way to find which pass ate (or invented) a segment.
+	const trace = process.env.PASS_TRACE === "1";
+	const traceLine = (list: readonly EnrichedSegment[]): string =>
+		list
+			.map((s) => {
+				const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+				return `${t(s.startTs)}-${t(s.endTs)}:${effectiveMode(s)}`;
+			})
+			.join(" ");
+	let prevTrace = trace ? traceLine(segs) : "";
+	if (trace) console.error(`[pass-trace] input: ${prevTrace}`);
+	for (const pass of passes) {
+		segs = await runPass(pass.name, () => pass.run(segs));
+		if (trace) {
+			const cur = traceLine(segs);
+			if (cur !== prevTrace) {
+				console.error(`[pass-trace] ${pass.name}: ${cur}`);
+				prevTrace = cur;
+			}
+		}
+	}
 	const withBiometrics = segs;
 
 	const total = Date.now() - t0;

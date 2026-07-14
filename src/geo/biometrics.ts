@@ -238,6 +238,16 @@ const STATIONARY_WALK_MIN_AVG_SPEED_KMH = 1.0;
 const STATIONARY_WALK_STAY_MIN_DURATION_S = 10 * 60;
 const STATIONARY_WALK_STAY_MAX_EXTENT_M = 80;
 
+/** A stop longer than this is never wholesale-flipped to walking. Real
+ *  walk-throughs (a park stroll between two stops) are minutes-scale; a
+ *  multi-hour "stop" that carries a walking burst is a DWELL that contains a
+ *  walk, and carving that walk out belongs to the split passes
+ *  (`splitWalksOnEvidence`), never to a whole-segment relabel. Without this
+ *  ceiling the extent veto is the only protection, and one short errand's
+ *  fixes inside a merged stay bust it — a 3.5 h office afternoon rendered as
+ *  one continuous phantom "walk" (#329). */
+const STATIONARY_WALK_THROUGH_MAX_DURATION_S = 45 * 60;
+
 /** Require at least one step row at or after the segment's end within this
  *  window — proof that Fitbit data has been synced through the segment's
  *  time period. Without this, "no steps recorded" might just mean "we
@@ -446,6 +456,7 @@ export function correctStationaryWalkThrough<
 
 	const currentMode = effectiveMode(segment);
 	if (currentMode !== "stationary") return segment;
+	if (duration > STATIONARY_WALK_THROUGH_MAX_DURATION_S) return segment;
 	if (segment.avgSpeed < STATIONARY_WALK_MIN_AVG_SPEED_KMH) return segment;
 
 	// Physical-plausibility veto: a long segment whose fixes never leave a

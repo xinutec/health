@@ -120,4 +120,41 @@ describe("scenario: continuous stay split by GPS multipath spike", () => {
 		const result = mergeAdjacentStays([firstStay, longGap, secondStay]);
 		expect(result.length).toBeGreaterThan(1);
 	});
+
+	it("does NOT swallow a stepping errand: sustained cadence in the middle is a real excursion, not multipath", () => {
+		// The errand class: a ~10-min walk to an adjacent building and into a
+		// shop. Most of the errand is BROWSING, so the median per-fix speed
+		// sits under the 2 km/h phantom ceiling — but the step counter shows
+		// sustained walking cadence the whole window. A multipath phantom
+		// happens while the user SITS: its step evidence is fidget-level.
+		// Steps are the only direct movement evidence (module header); the
+		// bridge must consult them before erasing a leg.
+		const errandWalk: EnrichedSegment = {
+			...phantomWalk,
+			endTs: phantomWalk.startTs + 10 * 60, // right at the bridge duration cap
+			avgSpeed: 0.9, // browse-heavy: median fix speed reads sub-walking
+			pointCount: 40,
+		};
+		const steps = Array.from({ length: 10 }, (_, i) => ({
+			ts: errandWalk.startTs + i * 60,
+			steps: 55 + (i % 3) * 10, // sustained 55-75/min — unambiguous walking
+		}));
+		const result = mergeAdjacentStays([firstStay, errandWalk, secondStay], steps);
+		expect(
+			result.map((s) => s.mode),
+			"a sustained-cadence middle must survive the phantom bridge",
+		).toContain("walking");
+	});
+
+	it("still bridges the multipath phantom when the step stream shows only fidget-level activity", () => {
+		// Same shape as the phantom, with the step context present: a couple
+		// of fidget spikes while sitting must not block the bridge.
+		const steps = [
+			{ ts: phantomWalk.startTs + 60, steps: 12 },
+			{ ts: phantomWalk.startTs + 200, steps: 25 },
+		];
+		const result = mergeAdjacentStays([firstStay, phantomWalk, secondStay], steps);
+		expect(result).toHaveLength(1);
+		expect(result[0].mode).toBe("stationary");
+	});
 });
