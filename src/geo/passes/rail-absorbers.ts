@@ -403,28 +403,44 @@ export async function anchorTrainAlightToWalkedStation(
 		const fixes = samplesInWindow(points, walk);
 		if (fixes.length < 3) continue;
 
-		// The alighting hop ends at the LAST fast inter-station step in the walk —
-		// not the first. GPS routinely "sticks" at an intermediate surfaced
-		// station (a slow cluster) while the train keeps going in the tunnel, so a
-		// first-settle scan stops one station short. Taking the furthest hop, then
-		// requiring its end to be a station ON THE RUN'S LINE (the guard below),
-		// reaches the true disembark (06-29: stuck at Baker Street, then a 56 km/h
-		// jump on to Euston Square). The station+line gate stops a stray late spike
-		// from hijacking the alight.
+		// The alighting hop ends where the LAST vehicle-paced RUN in the walk
+		// settles — a run, not a single step. With a tunnel blackout the ride
+		// is one long jump (a run of one step); with continuous overground GPS
+		// it is many short fast steps, each individually UNDER the sparse-hop
+		// distance floor (14 s at 60 km/h is ~230 m), so a per-step
+		// `stepM >= floor` test lands mid-track between fixes and the station
+		// gate below then bails — the whole ride tail stays stranded in the
+		// walk. Contiguous steps at hop pace accumulate instead: a run
+		// qualifies once its NET displacement covers a real inter-station
+		// distance. The LAST qualifying run — never the first — because GPS
+		// routinely "sticks" at an intermediate surfaced station (a slow
+		// cluster) while the train keeps going. The station+line gate below
+		// still stops a stray late spike from hijacking the alight.
 		let settle = -1;
+		let settleRunSteps = 0; // how many consecutive fast steps backed the chosen settle
+		let runStart = -1; // index of the fix the current vehicle-paced run started at
 		for (let i = 1; i < fixes.length; i++) {
 			const dt = fixes[i].ts - fixes[i - 1].ts;
 			const stepM = haversineMeters(fixes[i - 1].lat, fixes[i - 1].lon, fixes[i].lat, fixes[i].lon);
 			const stepKmh = dt > 0 ? (stepM / dt) * 3.6 : 0;
-			if (stepM >= ALIGHT_HOP_MIN_DIST_M && stepKmh >= ALIGHT_HOP_MIN_KMH) settle = i;
+			if (stepKmh >= ALIGHT_HOP_MIN_KMH) {
+				if (runStart < 0) runStart = i - 1;
+				const runNetM = haversineMeters(fixes[runStart].lat, fixes[runStart].lon, fixes[i].lat, fixes[i].lon);
+				if (runNetM >= ALIGHT_HOP_MIN_DIST_M) {
+					settle = i;
+					settleRunSteps = i - runStart;
+				}
+			} else {
+				runStart = -1;
+			}
 		}
-		if (settle < 1) continue; // no fast inter-station hop in the walk
+		if (settle < 1) continue; // no vehicle-paced inter-station run in the walk
 		const alightFix = fixes[settle];
 		const surfaced = fixes[0];
 		if (haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon) < ALIGHT_HOP_MIN_DIST_M) continue;
 
 		const station = pickBestStation(await stationsLookup(alightFix.lat, alightFix.lon));
-		if (!station || station.name === rail.alight) continue;
+		if (!station) continue;
 
 		// Line-continuity guard: the new alight must share a tube line with the
 		// GPS-surfaced station — the hop stayed on the run's corridor, not off to
@@ -439,11 +455,27 @@ export async function anchorTrainAlightToWalkedStation(
 		if (![...alightCanon].some((l) => surfacedCanon.has(l))) continue;
 
 		const hopM = Math.round(haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon));
-		const reason = `alight re-anchored to ${station.name} (walk's leading hop reached it) — reclaimed a ${hopM} m hop the GPS blackout left in the walk (was alighting ${rail.alight})`;
+		// The rail-run topology often gets the alight NAME right while the cut
+		// lands early (the label is anchored on stations, the boundary on
+		// segmentation windows). A settled station equal to the current label is
+		// therefore NOT "nothing to do" — the ride tail is still stranded in the
+		// walk; only the rename is a no-op. Extend the boundary in both cases —
+		// BUT the same-station extension demands DENSE evidence (≥2 consecutive
+		// fast steps). A single fast step landing at the labelled alight is the
+		// stuck-GPS signature: the rider already alighted and walks while stale
+		// fixes teleport to catch up — extending there eats a real walk's head.
+		// The rename case keeps working on a single blackout hop because it is
+		// additionally anchored by the station+line topology of a DIFFERENT
+		// station the walk demonstrably reached.
+		const sameAlight = station.name === rail.alight;
+		if (sameAlight && settleRunSteps < 2) continue;
+		const reason = sameAlight
+			? `alight boundary extended to the ${station.name} arrival — reclaimed a ${hopM} m ride tail the early cut left in the walk`
+			: `alight re-anchored to ${station.name} (walk's leading hop reached it) — reclaimed a ${hopM} m hop the GPS blackout left in the walk (was alighting ${rail.alight})`;
 		out[k] = {
 			...train,
 			endTs: alightFix.ts,
-			wayName: `${rail.board} → ${station.name}${rail.line ? ` · ${rail.line}` : ""}`,
+			wayName: sameAlight ? train.wayName : `${rail.board} → ${station.name}${rail.line ? ` · ${rail.line}` : ""}`,
 			refinedReason: train.refinedReason ? `${train.refinedReason}; ${reason}` : reason,
 		};
 		out[k + 1] = { ...walk, startTs: alightFix.ts };

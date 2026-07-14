@@ -394,22 +394,43 @@ reasonable:
    guard recognises a fast head butting against a preceding train as
    *that train's* boundary bleeding in, not a separate ride — carving it
    into a phantom drive would be worse. It defers to the rail passes.
-3. **`anchorTrainAlightToWalkedStation` assumes a sparse blackout hop.**
-   Its settle scan looks for the last single inter-fix step that is both
+3. **`anchorTrainAlightToWalkedStation` assumed a sparse blackout hop.**
+   Its settle scan looked for the last single inter-fix step that is both
    long and fast; on a dense fast run every step is fast but each is
    *individually* just around the distance floor, so the last qualifying
-   step lands mid-track where there is no station, and the pass bails
-   silently. The settle needs to be defined on the *run* (net
-   displacement of contiguous vehicle-paced steps), not on one step —
-   that is the open fix in #348, with the captured day as the
-   acceptance fixture.
+   step landed mid-track where there is no station, and the pass bailed
+   silently. Fixed (#348): the settle is defined on the *run* — the net
+   displacement of contiguous vehicle-paced steps — so one blackout jump
+   and a dense deceleration both qualify. Two guards came out of the
+   corpus replay: (a) a settled station **equal to the leg's current
+   alight label** still extends the boundary (the label is often right
+   while the cut is early — "same name" is not "nothing to do"), and
+   (b) that same-station extension demands **≥2 consecutive fast steps**:
+   a single fast step landing at the labelled alight is the stuck-GPS
+   signature (the rider already walks while stale fixes teleport to catch
+   up), and extending on it eats a confirmed walk's head. The rename case
+   keeps working on single hops — it is anchored by the topology of a
+   different station the walk demonstrably reached.
 
 Display-side, the matched walk sheds the unwalkable tail, so no episode
 *draws* it — the visible artifact is the frontend bridge spanning the
-gap (#349). But the depiction fix is not sufficient here: the timeline
-still reports the ride minutes as walking, and the leg's step budget is
-contaminated. The boundary itself must move; that is classification
-work, tracked in #348.
+gap (#349). The depiction fix alone was not sufficient here: the
+timeline still reported the ride minutes as walking, and the leg's step
+budget was contaminated — hence the boundary fix above.
+
+**The invariant that makes this class countable.** The failure taught a
+structural lesson: the cascade has no global physical check on its
+output — every kinematic rule lived inside individual passes as scores
+or gates, and the seams between passes leak. `worldline-feasibility`
+now carries an `impossible-mode-kinematics` invariant (a walking leg
+whose fixes sustain a ≥2-step vehicle-paced run over an inter-station
+net distance is not walking, whatever produced it), checked in two
+places: the golden gate ratchets the standing per-day counts against
+`tests/golden/feasibility-baseline.json` (only-shrink, like the journey
+floor; the rail invariants stay hard-zero), and `computeVelocityFrom
+Inputs` logs `INFEASIBLE` lines for every *served* day — so a leak on
+any ordinary day becomes a logged, countable defect instead of a
+confident line on the map.
 
 **The test is cache-independent and needs no station coordinate** — it
 reads only `speed_kmh`, which is on every fix:
@@ -418,8 +439,12 @@ reads only `speed_kmh`, which is on every fix:
   whose source fix exceeds 12 km/h**, and that it retains the genuine
   slow walk near the following stay's centroid.
 - Run it with the fixture's `railRouteCache` **as captured** and
-  **emptied** — identical result, since the filter never consults
-  `snappedPath`.
+  **emptied** — the decision layer (states, episode windows/kinds, the
+  filter's raw-arm output) is identical, since neither classification
+  nor the speed filter consults `snappedPath`. The *smoothed* line may
+  legitimately shift a few metres: `reconstructWalk`'s endpoint anchors
+  deliberately pin walk ends to snapped-rail terminals, so byte-identity
+  is asserted only where the cache is genuinely out of scope.
 
 ## Phased plan
 

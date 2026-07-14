@@ -138,11 +138,17 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 }
 
 const JOURNEY_BASELINE_PATH = path.join(GOLDEN_DIR, "journey-baseline.json");
+/** Per-day standing count of `impossible-mode-kinematics` legs — the ratcheted
+ *  ceiling. Tracked in git like the other floors; safe to commit (counts only,
+ *  no coordinates). */
+const FEASIBILITY_BASELINE_PATH = path.join(GOLDEN_DIR, "feasibility-baseline.json");
+type FeasibilityBaseline = Record<string, number>;
 
 const args = process.argv.slice(2);
 let bless = false;
 let blessDate: string | null = null;
 let blessJourneys = false;
+let blessFeasibility = false;
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === "--bless") {
 		bless = true;
@@ -156,6 +162,12 @@ for (let i = 0; i < args.length; i++) {
 		// ground-truth journeys the pipeline now reconstructs. Run after a
 		// change that fixes a journey (the run prints it as an improvement).
 		blessJourneys = true;
+	} else if (args[i] === "--bless-feasibility") {
+		// Ratchet the kinematic-feasibility ceiling DOWN to the current run:
+		// record how many impossible-mode-kinematics legs each day still
+		// emits. Run after a change that removes some (the run prints the
+		// improvement).
+		blessFeasibility = true;
 	} else {
 		console.error(`unknown argument: ${args[i]}`);
 		process.exit(2);
@@ -167,6 +179,14 @@ async function loadJourneyBaseline(): Promise<JourneyBaseline> {
 		return JSON.parse(await readFile(JOURNEY_BASELINE_PATH, "utf8")) as JourneyBaseline;
 	} catch {
 		return {}; // no baseline yet — first run bootstraps
+	}
+}
+
+async function loadFeasibilityBaseline(): Promise<FeasibilityBaseline | null> {
+	try {
+		return JSON.parse(await readFile(FEASIBILITY_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
+	} catch {
+		return null; // no baseline yet — first run bootstraps
 	}
 }
 
@@ -188,11 +208,15 @@ if (files.length === 0) {
 let regressions = 0;
 let blessed = 0;
 let checked = 0;
-// Worldline-feasibility baseline (Phase 0 of journey-worldline): count
-// physically-impossible outputs across the corpus. Informational for now —
-// the regression baseline the migration drives to zero.
+// Worldline-feasibility accounting (Phase 0 of journey-worldline). Two
+// severities: the label-only rail invariants are HARD-ZERO (the corpus has
+// none; any occurrence is a regression), while the kinematic invariant
+// carries a standing per-day count of pre-existing defects and is RATCHETED
+// (can only shrink) against the committed baseline — the same only-shrink
+// discipline as the journey floor.
 let infeasibleDays = 0;
-let totalViolations = 0;
+let hardViolations = 0;
+const kinematicNow: FeasibilityBaseline = {};
 // Per-day set of ground-truth journeys the pipeline reconstructs this run —
 // compared against the committed baseline by the journey ratchet gate below.
 const journeysNow: JourneyBaseline = {};
@@ -205,10 +229,12 @@ for (const file of files) {
 	const label = `${captured.meta.date} ${captured.meta.user}${captured.meta.description ? ` — ${captured.meta.description}` : ""}`;
 
 	let states: Awaited<ReturnType<typeof computeVelocityFromInputs>>["states"];
+	let dayPoints: Awaited<ReturnType<typeof computeVelocityFromInputs>>["points"];
 	let actual: ReturnType<typeof normalizeStates>;
 	try {
 		const result = await computeVelocityFromInputs(inputsFromFixture(captured));
 		states = result.states;
+		dayPoints = result.points;
 		actual = normalizeStates(states, captured.meta.tz);
 	} catch (e) {
 		// An uncaptured-query throw means the pipeline reached an OSM call
@@ -252,12 +278,16 @@ for (const file of files) {
 		journeysNow[captured.meta.date] = truth.journeyMatched;
 	}
 
-	// Worldline-feasibility report (informational): physically-impossible
-	// outputs the cascade emitted on this day's timeline.
-	const violations = checkWorldlineFeasibility(states);
+	// Worldline-feasibility report: physically-impossible outputs the cascade
+	// emitted on this day's timeline. Points enable the kinematic invariant
+	// (a walking leg sustaining vehicle pace) on top of the label-only
+	// rail-continuity checks.
+	const violations = checkWorldlineFeasibility(states, dayPoints);
 	if (violations.length > 0) {
 		infeasibleDays++;
-		totalViolations += violations.length;
+		const kinematic = violations.filter((v) => v.kind === "impossible-mode-kinematics").length;
+		if (kinematic > 0) kinematicNow[captured.meta.date] = kinematic;
+		hardViolations += violations.length - kinematic;
 		console.log(`    ⚠ feasibility: ${violations.length} physically-impossible leg(s)`);
 		for (const v of violations) console.log(`      ✗ ${v.kind}: ${v.detail}`);
 	}
@@ -272,17 +302,63 @@ console.log(
 	`\n${checked - regressions}/${checked} fixture(s) match baseline` +
 		(regressions > 0 ? `, ${regressions} regressed.` : "."),
 );
-// Worldline feasibility is a hard gate: the corpus baseline is zero
-// impossible legs (every blessed day is physically consistent), so any
-// regression into impossibility is a failure, not a tolerated diff. This is
-// independent of the snapshot diff — a change can keep the blessed states
-// byte-identical and still introduce an impossibility on a non-blessed path,
-// but on the corpus this guards the invariant directly.
+// Rail worldline invariants are a hard gate: the corpus baseline is zero
+// (every blessed day is rail-consistent), so any occurrence is a failure,
+// not a tolerated diff. This is independent of the snapshot diff — a change
+// can keep the blessed states byte-identical and still introduce an
+// impossibility on a non-blessed path, but on the corpus this guards the
+// invariant directly.
 console.log(
-	totalViolations > 0
-		? `worldline-feasibility: FAIL — ${totalViolations} impossible leg(s) across ${infeasibleDays}/${checked} day(s).`
-		: `worldline-feasibility: all ${checked} day(s) physically consistent.`,
+	hardViolations > 0
+		? `worldline-feasibility (rail): FAIL — ${hardViolations} impossible leg(s).`
+		: `worldline-feasibility (rail): all ${checked} day(s) consistent.`,
 );
+
+// Kinematic feasibility is a RATCHET: the corpus carries a standing count of
+// pre-existing impossible-mode-kinematics legs (rides stranded inside walks
+// that the boundary passes do not yet reclaim). The committed baseline is a
+// ceiling that can only shrink — a day emitting MORE than its baseline is a
+// regression; fixing legs prompts a re-bless that ratchets the ceiling down.
+const kinematicTotal = Object.values(kinematicNow).reduce((n, c) => n + c, 0);
+let kinematicRegressed = 0;
+if (blessFeasibility) {
+	const ordered: FeasibilityBaseline = {};
+	for (const date of Object.keys(kinematicNow).sort()) ordered[date] = kinematicNow[date];
+	await writeFile(FEASIBILITY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	console.log(
+		`feasibility (kinematic): blessed ceiling — ${kinematicTotal} standing leg(s) across ${Object.keys(ordered).length} day(s).`,
+	);
+	process.exit(0);
+}
+const feasBaseline = await loadFeasibilityBaseline();
+if (feasBaseline === null) {
+	console.log(
+		`feasibility (kinematic): no baseline yet — ${kinematicTotal} standing leg(s). Establish the ceiling with: npm run golden -- --bless-feasibility`,
+	);
+} else {
+	const dates = new Set([...Object.keys(feasBaseline), ...Object.keys(kinematicNow)]);
+	let improvedDays = 0;
+	for (const date of [...dates].sort()) {
+		const was = feasBaseline[date] ?? 0;
+		const now = kinematicNow[date] ?? 0;
+		if (now > was) {
+			kinematicRegressed += now - was;
+			console.log(`      ✗ feasibility (kinematic): ${date} emits ${now} impossible leg(s), ceiling is ${was}`);
+		} else if (now < was) {
+			improvedDays++;
+		}
+	}
+	console.log(
+		kinematicRegressed > 0
+			? `feasibility (kinematic): FAIL — ${kinematicRegressed} leg(s) above the committed ceiling.`
+			: `feasibility (kinematic): ${kinematicTotal} standing leg(s), none above the ceiling.`,
+	);
+	if (improvedDays > 0) {
+		console.log(
+			`feasibility (kinematic): ${improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-feasibility`,
+		);
+	}
+}
 
 // --- journey ratchet -----------------------------------------------------
 // Ratchet the story-correctness of the drawn timeline: a ground-truth journey
@@ -323,4 +399,4 @@ if (gate.improved.length > 0) {
 		console.log(`      ✓ ${im.date} @${new Date(im.startTs * 1000).toISOString().slice(11, 16)}Z`);
 }
 
-process.exit(regressions > 0 || totalViolations > 0 || gate.regressed.length > 0 ? 1 : 0);
+process.exit(regressions > 0 || hardViolations > 0 || kinematicRegressed > 0 || gate.regressed.length > 0 ? 1 : 0);

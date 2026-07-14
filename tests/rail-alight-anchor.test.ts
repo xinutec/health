@@ -121,6 +121,117 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		expect(out[0].wayName).toBe("Ashvale → Carfax");
 	});
 
+	it("extends the train when the leading ride is a DENSE fast run (no single step clears the sparse-hop floor)", async () => {
+		// Overground alight with continuous GPS: the ride into the true
+		// disembark is many short vehicle-paced steps (14 s apart, each
+		// ~215 m ≈ 55 km/h — individually UNDER the 250 m sparse-hop floor),
+		// not one long blackout jump. The settle must be found on the RUN's
+		// net displacement, not on any single step.
+		const trainEnd = T0;
+		const N = 7;
+		const walkFixes: FilteredPoint[] = [];
+		for (let i = 0; i <= N; i++) {
+			const f = i / N;
+			walkFixes.push(
+				fix(T0 + i * 14, CARFAX.lat + (DEEPWELL.lat - CARFAX.lat) * f, CARFAX.lon + (DEEPWELL.lon - CARFAX.lon) * f),
+			);
+		}
+		const settleTs = T0 + N * 14;
+		// genuine slow walk away from the station afterwards
+		walkFixes.push(fix(settleTs + 60, DEEPWELL.lat - 0.0015, DEEPWELL.lon - 0.0008));
+		walkFixes.push(fix(settleTs + 180, DEEPWELL.lat - 0.003, DEEPWELL.lon - 0.0015));
+		const points = [fix(trainEnd - 300, ASHVALE.lat, ASHVALE.lon), fix(trainEnd - 100, 51.55, -0.25), ...walkFixes];
+		const segs: EnrichedSegment[] = [
+			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Carfax · Metropolitan Line"),
+			seg(T0, settleTs + 180, "walking"),
+		];
+		const out = await anchorTrainAlightToWalkedStation(segs, points, lk.stationsLookup, lk.linesLookup);
+		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
+		expect(out[0].endTs).toBe(settleTs);
+		expect(out[1].startTs).toBe(settleTs);
+	});
+
+	it("extends the boundary even when the settled station IS the leg's current alight label", async () => {
+		// The rail-run topology often gets the alight NAME right while the
+		// boundary TIME lands early (the label is anchored on stations, the
+		// cut on windows). The walked-to station equalling the current label
+		// must not read as "nothing to do": the ride tail is still stranded
+		// in the walk and the leg must extend to the settle fix.
+		const trainEnd = T0;
+		const N = 7;
+		const walkFixes: FilteredPoint[] = [];
+		for (let i = 0; i <= N; i++) {
+			const f = i / N;
+			walkFixes.push(
+				fix(T0 + i * 14, CARFAX.lat + (DEEPWELL.lat - CARFAX.lat) * f, CARFAX.lon + (DEEPWELL.lon - CARFAX.lon) * f),
+			);
+		}
+		const settleTs = T0 + N * 14;
+		walkFixes.push(fix(settleTs + 60, DEEPWELL.lat - 0.0015, DEEPWELL.lon - 0.0008));
+		walkFixes.push(fix(settleTs + 180, DEEPWELL.lat - 0.003, DEEPWELL.lon - 0.0015));
+		const points = [fix(trainEnd - 300, ASHVALE.lat, ASHVALE.lon), fix(trainEnd - 100, 51.55, -0.25), ...walkFixes];
+		const segs: EnrichedSegment[] = [
+			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Deepwell · Metropolitan Line"),
+			seg(T0, settleTs + 180, "walking"),
+		];
+		const out = await anchorTrainAlightToWalkedStation(segs, points, lk.stationsLookup, lk.linesLookup);
+		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line"); // label untouched
+		expect(out[0].endTs).toBe(settleTs); // boundary moved
+		expect(out[1].startTs).toBe(settleTs);
+		expect(out[0].refinedReason).toMatch(/reclaimed/i);
+	});
+
+	it("does NOT extend on an isolated reacquire teleport landing at the labelled alight (stuck-GPS walk)", async () => {
+		// GPS stuck at the previous station while the rider already alighted
+		// and walks: the walk's fixes are walking-pace with ISOLATED teleport
+		// steps as GPS catches up, the last one landing at the labelled
+		// alight. A single fast step is stale-GPS reacquire, not a ride —
+		// the confirmed walk's head must not be eaten by the train.
+		const trainEnd = T0;
+		const w = (i: number, lat: number, lon: number) => fix(T0 + i, lat, lon);
+		const points = [
+			fix(trainEnd - 300, ASHVALE.lat, ASHVALE.lon),
+			fix(trainEnd - 100, 51.55, -0.25),
+			// walk fixes: stuck near Carfax, teleport toward Deepwell, walk, teleport to Deepwell, walk on
+			w(0, CARFAX.lat, CARFAX.lon),
+			w(14, CARFAX.lat - 0.0001, CARFAX.lon + 0.0003), // walking pace
+			w(105, CARFAX.lat + 0.001, CARFAX.lon + 0.0135), // 91 s gap, ~930 m — isolated teleport
+			w(125, CARFAX.lat + 0.0009, CARFAX.lon + 0.0138), // walking pace
+			w(139, CARFAX.lat + 0.0008, CARFAX.lon + 0.014), // walking pace
+			w(178, DEEPWELL.lat, DEEPWELL.lon), // 39 s, ~580 m — isolated teleport to the alight
+			w(198, DEEPWELL.lat + 0.0001, DEEPWELL.lon - 0.0004), // walking pace
+			w(300, DEEPWELL.lat - 0.001, DEEPWELL.lon - 0.002), // walks away
+		];
+		const segs: EnrichedSegment[] = [
+			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Deepwell · Metropolitan Line"),
+			seg(T0, T0 + 300, "walking"),
+		];
+		const out = await anchorTrainAlightToWalkedStation(segs, points, lk.stationsLookup, lk.linesLookup);
+		expect(out[0].endTs).toBe(trainEnd); // boundary untouched
+		expect(out[1].startTs).toBe(T0);
+	});
+
+	it("does NOT fire on dense walking jitter (short fast steps with no accumulated displacement)", async () => {
+		// A walk whose GPS jitters fast for single steps but goes nowhere at
+		// vehicle pace: isolated ≥15 km/h steps, each immediately followed by
+		// slow steps, never accumulating an inter-station net displacement.
+		const trainEnd = T0;
+		const walkFixes: FilteredPoint[] = [];
+		for (let i = 0; i <= 10; i++) {
+			// alternate ±40 m around Carfax every 8 s: step speed ~18 km/h, net ~0
+			const off = i % 2 === 0 ? 0.0004 : 0;
+			walkFixes.push(fix(T0 + i * 8, CARFAX.lat + off, CARFAX.lon));
+		}
+		const points = [fix(trainEnd - 300, ASHVALE.lat, ASHVALE.lon), fix(trainEnd - 100, 51.55, -0.25), ...walkFixes];
+		const segs: EnrichedSegment[] = [
+			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Carfax"),
+			seg(T0, T0 + 80, "walking"),
+		];
+		const out = await anchorTrainAlightToWalkedStation(segs, points, lk.stationsLookup, lk.linesLookup);
+		expect(out[0].wayName).toBe("Ashvale → Carfax");
+		expect(out[1].startTs).toBe(T0);
+	});
+
 	it("leaves a plain walk (no fast leading hop) untouched", async () => {
 		const { segs, points } = trainThenWalk();
 		// rewrite the walk's leading hop to walking pace (small steps)

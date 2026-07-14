@@ -102,3 +102,73 @@ describe("checkWorldlineFeasibility", () => {
 		expect(checkWorldlineFeasibility(legs)).toEqual([]);
 	});
 });
+
+describe("checkWorldlineFeasibility — mode kinematics", () => {
+	// ~250 m of latitude per 14 s ≈ 64 km/h — a vehicle-paced step.
+	const FAST_DLAT = 0.00225;
+	// ~28 m per 14 s ≈ 7 km/h — a brisk-walk step.
+	const WALK_DLAT = 0.00025;
+
+	function fixesFrom(t0: number, lat0: number, steps: number[]): { ts: number; lat: number; lon: number }[] {
+		const out = [{ ts: t0, lat: lat0, lon: -0.28 }];
+		for (const dLat of steps) {
+			const prev = out[out.length - 1];
+			out.push({ ts: prev.ts + 14, lat: prev.lat + dLat, lon: -0.28 });
+		}
+		return out;
+	}
+
+	it("flags a walking leg whose fixes sustain a vehicle-paced run (the stranded ride tail)", () => {
+		// 8 consecutive ~64 km/h steps (a 2 km ride) then genuine walking pace.
+		const points = fixesFrom(1000, 51.55, [
+			...Array.from({ length: 8 }, () => FAST_DLAT),
+			...Array.from({ length: 10 }, () => WALK_DLAT),
+		]);
+		const legs = [leg({ mode: "walking", startTs: 1000, endTs: 1000 + 18 * 14 })];
+		const v = checkWorldlineFeasibility(legs, points);
+		expect(v).toHaveLength(1);
+		expect(v[0].kind).toBe("impossible-mode-kinematics");
+		expect(v[0].detail).toMatch(/walking/);
+	});
+
+	it("does NOT flag a genuine walk", () => {
+		const points = fixesFrom(
+			1000,
+			51.55,
+			Array.from({ length: 20 }, () => WALK_DLAT),
+		);
+		const legs = [leg({ mode: "walking", startTs: 1000, endTs: 1000 + 20 * 14 })];
+		expect(checkWorldlineFeasibility(legs, points)).toEqual([]);
+	});
+
+	it("does NOT flag a single reacquire teleport hop (one fast step is GPS, not a ride)", () => {
+		const points = fixesFrom(1000, 51.55, [WALK_DLAT, WALK_DLAT, FAST_DLAT * 2, WALK_DLAT, WALK_DLAT]);
+		const legs = [leg({ mode: "walking", startTs: 1000, endTs: 1000 + 5 * 14 })];
+		expect(checkWorldlineFeasibility(legs, points)).toEqual([]);
+	});
+
+	it("does NOT flag fast jitter with no accumulated displacement (urban canyon)", () => {
+		// alternating ±60 m at 14 s: every step ~15 km/h but net ~0.
+		const points = [{ ts: 1000, lat: 51.55, lon: -0.28 }];
+		for (let i = 1; i <= 12; i++) {
+			points.push({ ts: 1000 + i * 14, lat: 51.55 + (i % 2 === 0 ? 0 : 0.00055), lon: -0.28 });
+		}
+		const legs = [leg({ mode: "walking", startTs: 1000, endTs: 1000 + 12 * 14 })];
+		expect(checkWorldlineFeasibility(legs, points)).toEqual([]);
+	});
+
+	it("does NOT flag vehicle-paced fixes inside a driving leg (right mode, fast is fine)", () => {
+		const points = fixesFrom(
+			1000,
+			51.55,
+			Array.from({ length: 8 }, () => FAST_DLAT),
+		);
+		const legs = [leg({ mode: "driving", startTs: 1000, endTs: 1000 + 8 * 14 })];
+		expect(checkWorldlineFeasibility(legs, points)).toEqual([]);
+	});
+
+	it("is inert when no points are supplied (label-only callers keep working)", () => {
+		const legs = [leg({ mode: "walking", startTs: 1000, endTs: 2000 })];
+		expect(checkWorldlineFeasibility(legs)).toEqual([]);
+	});
+});

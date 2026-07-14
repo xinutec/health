@@ -171,7 +171,13 @@ captured days** (fixtures gitignored — see
   frontend build + e2e. Run by the pre-commit hook.
 - `scripts/golden.sh` — replays the golden day corpus
   (`tests/golden/days/`) byte-identically, checks confirmed ground
-  truths, worldline feasibility, and the journey ratchet.
+  truths, worldline feasibility (rail invariants hard-zero; the
+  kinematic invariant ratchets per-day counts against
+  `tests/golden/feasibility-baseline.json`, only-shrink), and the
+  journey ratchet. The same feasibility check also runs on every
+  *served* day inside `computeVelocityFromInputs`, logging
+  `INFEASIBLE` lines — physically-impossible output is a counted
+  defect on ordinary days, not just blessed ones.
 - `scripts/walk-gate.sh` — the walk-geometry referee
   (`score-walk-match`) against the per-metric ratchet floor in
   `tests/golden/walk-baseline.json` (tracked in git, moved only by an

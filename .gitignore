@@ -23,6 +23,7 @@ tests/golden/*
 # not: they carry NO coordinates and NO place names — only timestamps and metres.
 !tests/golden/walk-baseline.json
 !tests/golden/journey-baseline.json
+!tests/golden/feasibility-baseline.json
 
 # Rail-snap fixtures: a real day frozen with its raw fixes, classified
 # segments, and the OSM rail geometry of every train corridor. Real

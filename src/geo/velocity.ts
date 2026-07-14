@@ -8,6 +8,7 @@ import { sql } from "kysely";
 import tzLookup from "tz-lookup";
 import { db } from "../db/pool.js";
 import { getSyncState } from "../db/sync-state.js";
+import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
@@ -1793,6 +1794,17 @@ export async function computeVelocityFromInputs(
 			dayEndTs: bounds.endUtc,
 		}),
 	);
+
+	// Physical-feasibility report on the SERVED timeline — every day, not just
+	// the golden corpus. The cascade has no global physical invariant of its
+	// own (each pass guards only its own seam), so this is where an impossible
+	// output — a walking leg sustaining vehicle pace, a rail discontinuity —
+	// becomes a logged defect instead of a confident line on the map. Log-only:
+	// repair stays upstream in the passes; fabricating a correction here would
+	// hide the defect the log exists to count.
+	for (const v of checkWorldlineFeasibility(finalStates, points)) {
+		console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
+	}
 
 	return {
 		points,

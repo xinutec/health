@@ -215,14 +215,21 @@ describe("buildEpisodes — per-mode geometry resolution", () => {
 });
 
 // Real-data grounding (gitignored fixture; skipped in CI). A captured
-// day in which a train's overground deceleration into its alighting
-// station is mis-segmented into the following walking episode — the
-// walk's leading fixes carry vehicle speed (≫12 km/h). The speed filter
+// day in which a ride's fixes are mis-segmented into a walking episode —
+// the walk carries vehicle-speed fixes (≫12 km/h). The speed filter
 // drops them; the genuine slow walk survives. Cache-independent: the
 // filter never consults snappedPath.
+//
+// The day must still EXHIBIT the bleed: the run-based alight anchor
+// (#348) reclaimed the original grounding day's tail into its train, so
+// this points at a day from the standing kinematic-feasibility ceiling
+// (tests/golden/feasibility-baseline.json) instead. When that ceiling
+// reaches zero — no corpus day leaks a ride into a walk any more — this
+// real-data describe has no material left and should be retired; the
+// synthetic units above keep covering the filter.
 function loadCaptured(): CapturedDay | null {
 	try {
-		return parseCapturedDay(readFileSync("tests/golden/days/2026-06-09-pippijn.json", "utf8"));
+		return parseCapturedDay(readFileSync("tests/golden/days/2026-07-06-pippijn.json", "utf8"));
 	} catch {
 		return null;
 	}
@@ -281,12 +288,31 @@ describeWithFixture("buildEpisodes — train-tail bleed into a walk (real data)"
 		}
 	});
 
-	it("is identical with the rail-route cache emptied (no snappedPath dependence)", async () => {
+	it("classification and the speed filter are cache-independent (only the smoother's anchors may move)", async () => {
+		// The ORIGINAL invariant ("walking episodes byte-identical with the
+		// rail cache emptied") no longer holds by design: reconstructWalk's
+		// endpoint anchors (#319) deliberately pin a walk's ends to
+		// snapped-rail terminals, so a smoothed walk's line may shift a few
+		// metres without the cache. What must stay cache-independent is the
+		// decision layer: the day's states (boundaries, modes) and every
+		// walking episode's window/kind — and the drawn line must remain
+		// walk-plausible in both worlds (the speed filter never consults
+		// snappedPath).
 		const withCache = buildEpisodes(result.states, result.segments, result.points).filter((e) => e.mode === "walking");
 		const noCacheResult = await computeVelocityFromInputs({ ...inputs, railRouteCache: [] });
 		const withoutCache = buildEpisodes(noCacheResult.states, noCacheResult.segments, noCacheResult.points).filter(
 			(e) => e.mode === "walking",
 		);
-		expect(withoutCache).toEqual(withCache);
+		expect(noCacheResult.states.map((s) => [s.startTs, s.endTs, s.mode])).toEqual(
+			result.states.map((s) => [s.startTs, s.endTs, s.mode]),
+		);
+		expect(withoutCache.map((e) => [e.startTs, e.endTs, e.kind])).toEqual(
+			withCache.map((e) => [e.startTs, e.endTs, e.kind]),
+		);
+		for (const [i, e] of withoutCache.entries()) {
+			if (e.kind === "raw") expect(e.points).toEqual(withCache[i].points); // the filter's own arm: identical
+			const drawnKmh = (3.6 * pathLength(e.points)) / Math.max(1, e.endTs - e.startTs);
+			expect(drawnKmh).toBeLessThanOrEqual(12);
+		}
 	});
 });
