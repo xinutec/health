@@ -76,6 +76,19 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   ELIMINATED outright (no partial purchases, the #347 lever), within the
   same detour-ratio bound as routes. Corpus: 2 former zigzag escapes now
   draw as clean corner lines (offPath 15→0 and 15→9).
+- **Passage snap (`snapPassages`)** — the drawing half of the `onWayM`
+  mapped-passage exemption. A stretch the badness metric excuses as riding
+  an OSM way through a building was still DRAWN 2–3 m beside the way, over
+  the roofs. In-building points now project exactly onto the way when it is
+  within 4 m (`PASSAGE_SNAP_REACH_M` — real passage offsets measure 2–3 m),
+  a stretch qualifies only with ≥3 m in-building length, and the snaps must
+  be COHERENT (one way, monotone parameter) or the stretch is left alone.
+  Runs LAST in `pedestrian-match-annotate`, after the display gate and the
+  corrector, so it cannot perturb their decisions. Two per-metric stall
+  "regressions" this caused were adjudicated from geometry as improvements
+  (the line now follows the passage's real bend; one leg went offPath
+  129→0 m) and blessed — corridor-stall penalises way-bends raw GPS cut
+  across; judge passage changes by way-adherence, not stall alone.
 - **The 14 surviving through-building runs split into two classes the
   detour honestly declines**: TERRACED ROWS (10 — abutting footprints;
   rounding one house means rounding the whole row; no bounded honest
@@ -240,6 +253,15 @@ tunnel-transit coherence #251).
 - **Naive accuracy-weighting is a wash** (better 31 / worse 37 legs): the
   smear reported good accuracy. Robustness must come from mutual consistency
   (GNC), with accuracy a weak prior — and coherent smears still need G1.
+- **Passage-snap scoping is load-bearing — four measured failures.** An
+  any-sample in-building trigger yanked corner-nicking street walks onto
+  ways (corridor-stall regressed on ~12 ordinary legs); an 8 m snap reach
+  regressed 3 more (true passage offsets are 2–3 m); per-point nearest-way
+  snapping WITHOUT way-coherence zigzags between parallel ways/branches;
+  and snapping INSIDE `correctWalkPath` perturbed its whole-line honesty
+  invariant, flipping one leg's entire correction into a revert — display
+  re-positioning must run after every accept/reject decision, on the line
+  that actually ships.
 - **No big-bang flips** — flag + referee ratchet + raw fallback, arm by arm.
 
 ## Verification
