@@ -25,7 +25,7 @@ import { MAX_SPEED_FOR_MODE } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
 import { effectiveMode } from "./segment-util.js";
-import { type CorrectRunDiag, correctWalkPath } from "./walk-building-escape.js";
+import { type CorrectRunDiag, correctWalkPath, snapPassages } from "./walk-building-escape.js";
 import {
 	countSharpTurns,
 	reconstructWalk,
@@ -396,6 +396,23 @@ export async function annotateWalkMatches(
 			corrected =
 				fixed.length !== drawn.length || fixed.some((p, k) => p.lat !== drawn[k].lat || p.lon !== drawn[k].lon);
 			if (corrected) drawn = fixed;
+		}
+
+		// Passage snap — the drawing half of the mapped-passage exemption. A
+		// stretch the badness metric excuses as riding an OSM way through a
+		// building (arcade, parade cut-through) must be DRAWN riding that way,
+		// not 2–3 m beside it over the roofs. Runs LAST, on the final line, so
+		// it cannot perturb the matcher's display gate or the corrector's
+		// accept/reject/invariant decisions (measured: an in-corrector snap
+		// flipped one leg's whole correction into a revert). Strictly scoped
+		// inside footprints — lateral offset on open streets and open-ground
+		// walks are untouched.
+		if (process.env.WALK_BUILDING_ESCAPE !== "0" && buildings.length > 0) {
+			const snapped = snapPassages(drawn, { ways }, buildings);
+			if (snapped.length !== drawn.length || snapped.some((p, k) => p.lat !== drawn[k].lat || p.lon !== drawn[k].lon)) {
+				drawn = snapped;
+				corrected = true;
+			}
 		}
 
 		// Attach the drawn line. A reconstruction swap draws as `kind:"smoothed"`

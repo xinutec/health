@@ -394,6 +394,188 @@ function pathBadnessM(pts: ReadonlyArray<{ lat: number; lon: number }>, ctx: Bad
 	return total;
 }
 
+// --- case 2.5: geometric corner detour ---------------------------------
+// When the street network cannot route a crossing run around a block (a
+// fragmented graph, an unmapped area), the walk still did not go through the
+// wall. Humans skirt a building along its perimeter — a pavement usually
+// exists along a wall even when OSM maps none — so the detour is derivable
+// from the footprint itself: leave the chord at the wall, follow the ring's
+// corners (offset a step outside) to the far side, rejoin. Unlike case 2's
+// "any badness reduction" rule (#347's inflation lever), a corner detour is
+// accepted only when it ELIMINATES its run's crossing outright and stays
+// within the same detour-ratio bound routes obey — partial purchases are
+// impossible by construction.
+
+/** How far outside the wall a corner-detour vertex stands (m). */
+const CORNER_CLEARANCE_M = 2;
+/** Recursion bound: a detour corner may itself land before ANOTHER footprint;
+ *  each level fixes the first crossed ring of every sub-chord. Beyond this
+ *  many nested footprints the area is dense — decline (honest trustGPS). */
+const CORNER_MAX_DEPTH = 3;
+
+/** Intersection parameters t∈(0,1) along a→b where the segment crosses the
+ *  ring's boundary, ascending. Even-odd with the ring's edges. */
+function segRingCrossingTs(a: Pt2, b: Pt2, ring: BuildingFootprint): number[] {
+	const ts: number[] = [];
+	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+		const p = ring[j];
+		const q = ring[i];
+		const d1x = b.lon - a.lon;
+		const d1y = b.lat - a.lat;
+		const d2x = q.lon - p.lon;
+		const d2y = q.lat - p.lat;
+		const denom = d1x * d2y - d1y * d2x;
+		if (Math.abs(denom) < 1e-18) continue;
+		const t = ((p.lon - a.lon) * d2y - (p.lat - a.lat) * d2x) / denom;
+		const u = ((p.lon - a.lon) * d1y - (p.lat - a.lat) * d1x) / denom;
+		if (t > 1e-9 && t < 1 - 1e-9 && u >= 0 && u <= 1) ts.push(t);
+	}
+	return ts.sort((x, y) => x - y);
+}
+
+/** The ring's vertices from just past the edge crossed at `tEntry` to the edge
+ *  crossed at `tExit`, walking the ring forward or backward, each pushed
+ *  `CORNER_CLEARANCE_M` outward from the ring centroid. */
+function ringCornersBetween(a: Pt2, b: Pt2, ring: BuildingFootprint, forward: boolean): Pt2[] {
+	// Index of the edge (j→i form: edge k is ring[k]→ring[(k+1)%n]) each
+	// crossing lies on, by re-running the intersection per edge.
+	const n = ring.length;
+	let entryEdge = -1;
+	let exitEdge = -1;
+	let tEntry = Number.POSITIVE_INFINITY;
+	let tExit = Number.NEGATIVE_INFINITY;
+	for (let k = 0; k < n; k++) {
+		const p = ring[k];
+		const q = ring[(k + 1) % n];
+		const d1x = b.lon - a.lon;
+		const d1y = b.lat - a.lat;
+		const d2x = q.lon - p.lon;
+		const d2y = q.lat - p.lat;
+		const denom = d1x * d2y - d1y * d2x;
+		if (Math.abs(denom) < 1e-18) continue;
+		const t = ((p.lon - a.lon) * d2y - (p.lat - a.lat) * d2x) / denom;
+		const u = ((p.lon - a.lon) * d1y - (p.lat - a.lat) * d1x) / denom;
+		if (t <= 1e-9 || t >= 1 - 1e-9 || u < 0 || u > 1) continue;
+		if (t < tEntry) {
+			tEntry = t;
+			entryEdge = k;
+		}
+		if (t > tExit) {
+			tExit = t;
+			exitEdge = k;
+		}
+	}
+	if (entryEdge === -1 || exitEdge === -1 || entryEdge === exitEdge) return [];
+	let cLat = 0;
+	let cLon = 0;
+	for (const p of ring) {
+		cLat += p.lat / n;
+		cLon += p.lon / n;
+	}
+	const cosLat = Math.cos((cLat * Math.PI) / 180);
+	const corners: Pt2[] = [];
+	if (forward) {
+		for (let k = (entryEdge + 1) % n; ; k = (k + 1) % n) {
+			corners.push(ring[k]);
+			if (k === exitEdge) break;
+			if (corners.length > n) return [];
+		}
+	} else {
+		for (let k = entryEdge; ; k = (k - 1 + n) % n) {
+			corners.push(ring[k]);
+			if (k === (exitEdge + 1) % n) break;
+			if (corners.length > n) return [];
+		}
+	}
+	return corners.map((p) => {
+		const dy = (p.lat - cLat) * 111_320;
+		const dx = (p.lon - cLon) * 111_320 * cosLat;
+		const len = Math.hypot(dx, dy) || 1;
+		return {
+			lat: p.lat + ((dy / len) * CORNER_CLEARANCE_M) / 111_320,
+			lon: p.lon + ((dx / len) * CORNER_CLEARANCE_M) / (111_320 * cosLat),
+		};
+	});
+}
+
+/** Does the polyline enter any footprint? 2 m midpoint sampling, ctx bboxes. */
+function polylineEntersBuilding(pts: readonly Pt2[], ctx: BadnessCtx): boolean {
+	for (let i = 1; i < pts.length; i++) {
+		const a = pts[i - 1];
+		const b = pts[i];
+		const segLen = metersBetween(a.lat, a.lon, b.lat, b.lon);
+		const steps = Math.max(1, Math.ceil(segLen / 2));
+		for (let k = 0; k <= steps; k++) {
+			const f = k / steps;
+			if (insideBuildingCtx({ lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f }, ctx)) return true;
+		}
+	}
+	return false;
+}
+
+/** First footprint the segment a→b passes through, or null. */
+function firstCrossedRing(a: Pt2, b: Pt2, ctx: BadnessCtx): BuildingFootprint | null {
+	let best: BuildingFootprint | null = null;
+	let bestT = Number.POSITIVE_INFINITY;
+	for (let i = 0; i < ctx.buildings.length; i++) {
+		const box = ctx.boxes[i];
+		if (
+			Math.max(a.lat, b.lat) < box.minLat ||
+			Math.min(a.lat, b.lat) > box.maxLat ||
+			Math.max(a.lon, b.lon) < box.minLon ||
+			Math.min(a.lon, b.lon) > box.maxLon
+		)
+			continue;
+		const ts = segRingCrossingTs(a, b, ctx.buildings[i]);
+		// A pass-through needs an in-building span: two boundary crossings (or
+		// an endpoint inside, which the anchors exclude by construction).
+		if (ts.length >= 2 && ts[0] < bestT) {
+			bestT = ts[0];
+			best = ctx.buildings[i];
+		}
+	}
+	return best;
+}
+
+/** Repair a chord recursively: replace each pass-through with the shorter
+ *  crossing-free corner path around that ring, then fix the sub-chords the
+ *  corners created. Returns the full vertex list a…b, or null when no
+ *  crossing-free bounded path exists (dense surroundings — decline). */
+function repairChord(a: Pt2, b: Pt2, ctx: BadnessCtx, depth: number): Pt2[] | null {
+	const ring = firstCrossedRing(a, b, ctx);
+	if (!ring) return [a, b];
+	if (depth >= CORNER_MAX_DEPTH) return null;
+	let best: Pt2[] | null = null;
+	let bestLen = Number.POSITIVE_INFINITY;
+	for (const forward of [true, false]) {
+		const corners = ringCornersBetween(a, b, ring, forward);
+		if (corners.length === 0) continue;
+		// Recursively repair every sub-chord (a corner path may run before
+		// ANOTHER footprint).
+		const pts: Pt2[] = [a];
+		let ok = true;
+		let prev: Pt2 = a;
+		for (const next of [...corners, b]) {
+			const sub = repairChord(prev, next, ctx, depth + 1);
+			if (!sub) {
+				ok = false;
+				break;
+			}
+			for (let k = 1; k < sub.length; k++) pts.push(sub[k]);
+			prev = next;
+		}
+		if (!ok) continue;
+		if (polylineEntersBuilding(pts, ctx)) continue;
+		let len = 0;
+		for (let k = 1; k < pts.length; k++) len += metersBetween(pts[k - 1].lat, pts[k - 1].lon, pts[k].lat, pts[k].lon);
+		if (len < bestLen) {
+			bestLen = len;
+			best = pts;
+		}
+	}
+	return best;
+}
+
 /** Insert intermediate vertices so no chord exceeds `stepM`; timestamps are
  *  interpolated linearly along each chord. Original vertices are kept exactly. */
 function densify(drawn: readonly CorrectedPoint[], stepM: number): CorrectedPoint[] {
@@ -418,11 +600,12 @@ function densify(drawn: readonly CorrectedPoint[], stepM: number): CorrectedPoin
  *  sink is supplied. Diagnostic only — lets the referee tally WHY a residual
  *  building crossing survives (graph gap vs budget vs dense-area vs the
  *  whole-line invariant), which forks the fix entirely. `outcome`:
- *  `routed` = case 2 accepted; `escaped` = case 1 accepted; `trustGPS` = both
- *  refused (the crossing stands); `invariant-revert` = the whole leg was
- *  discarded because corrections made it worse overall. */
+ *  `routed` = case 2 accepted; `cornered` = case 2.5 accepted (geometric
+ *  corner detour); `escaped` = case 1 accepted; `trustGPS` = all refused (the
+ *  crossing stands); `invariant-revert` = the whole leg was discarded because
+ *  corrections made it worse overall. */
 export interface CorrectRunDiag {
-	outcome: "routed" | "escaped" | "trustGPS" | "invariant-revert";
+	outcome: "routed" | "cornered" | "escaped" | "trustGPS" | "invariant-revert";
 	straightM: number;
 	runBadM: number;
 	routeFound: boolean;
@@ -579,6 +762,56 @@ export function correctWalkPath(
 				}
 			}
 		}
+		if (!replaced && runBadM >= opts.minCrossingM) {
+			// CASE 2.5 — no street route: corner detour around the footprint(s)
+			// themselves. Accepted only when it eliminates the run's crossings
+			// outright (verified by construction), obeys the same detour-ratio
+			// bound as routes, does not raise the composite badness (a wall-hug
+			// far from every way in a truly unmapped area is not confidently a
+			// walk — the block-cut rule keeps its vote), and fits the budget.
+			const detour = repairChord(anchorA, anchorB, ctx, 0);
+			if (process.env.WALK_CORNER_DEBUG === "1" && (!detour || detour.length <= 2)) {
+				console.error(
+					`[corner] decline: repairChord=${detour ? "trivial" : "null"} straight=${Math.round(dStraightM)}m runBad=${Math.round(runBadM)}m`,
+				);
+			}
+			if (detour && detour.length > 2) {
+				let total = 0;
+				const cum: number[] = [0];
+				for (let k = 1; k < detour.length; k++) {
+					total += metersBetween(detour[k - 1].lat, detour[k - 1].lon, detour[k].lat, detour[k].lon);
+					cum.push(total);
+				}
+				const addedM = total - dStraightM;
+				const lenOK = total <= Math.max(opts.minRouteBudgetM, dStraightM * opts.maxDetourRatio);
+				const detourBadM = pathBadnessM(detour, ctx);
+				if (process.env.WALK_CORNER_DEBUG === "1" && !(lenOK && detourBadM < runBadM && addedM <= budgetM)) {
+					console.error(
+						`[corner] decline: lenOK=${lenOK} (total=${Math.round(total)} straight=${Math.round(dStraightM)}) detourBad=${Math.round(detourBadM)} vs runBad=${Math.round(runBadM)} added=${Math.round(addedM)} budget=${Math.round(budgetM)}`,
+					);
+				}
+				if (lenOK && detourBadM < runBadM && addedM <= budgetM) {
+					diag?.({
+						outcome: "cornered",
+						straightM: dStraightM,
+						runBadM,
+						routeFound: dRouteFound,
+						routeBadM: detourBadM,
+						addedM,
+						budgetM,
+						anchorASnapM: dAnchorASnapM,
+						anchorBSnapM: dAnchorBSnapM,
+					});
+					budgetM -= Math.max(0, addedM);
+					out.pop();
+					for (let k = 0; k < detour.length; k++) {
+						const f = total > 0 ? cum[k] / total : 0;
+						out.push({ lat: detour[k].lat, lon: detour[k].lon, ts: anchorA.ts + (anchorB.ts - anchorA.ts) * f });
+					}
+					replaced = true;
+				}
+			}
+		}
 		if (!replaced) {
 			// CASE 1 FALLBACK — no honest route around; escape each interior vertex
 			// off the building onto its near-side street. Kept only if it reduces the
@@ -644,6 +877,134 @@ export function correctWalkPath(
 			anchorBSnapM: null,
 		});
 		return drawn.map((p) => ({ ...p }));
+	}
+	return out;
+}
+
+/**
+ * Passage snap — the drawing half of the mapped-passage exemption. The badness
+ * metric rightly EXEMPTS a line riding an OSM way through a building (arcade,
+ * concourse, parade cut-through), but the exemption tolerates `onWayM` of
+ * lateral error — which draws the walker over the buildings BESIDE the
+ * passage (measured: in-building drawn vertices 2–3 m from a way whose own
+ * line threads the gap). If a stretch is excused as riding the passage, it
+ * must be DRAWN riding the passage: densify it and project every point that
+ * has a way within `onWayM` exactly onto that way. Strictly scoped — a
+ * segment qualifies only when a sample is INSIDE a footprint, so lateral GPS
+ * offset on open streets (which side you walked — signal) and open-ground
+ * walks are untouched.
+ */
+/** Furthest a passage-snap may MOVE a point (m). Qualification uses `onWayM`
+ *  (the badness exemption's band), but the measured true passage offsets are
+ *  2–3 m; snapping from deeper pulls the line sideways off the raw corridor
+ *  and reads as invented stall (measured: 3 corpus legs regressed at the 8 m
+ *  reach, 0 at this one). A deeper in-building point keeps its position —
+ *  still exempt, just not confidently ON the way. */
+const PASSAGE_SNAP_REACH_M = 4;
+
+export function snapPassages(
+	pts: readonly CorrectedPoint[],
+	walkable: RoadGeometry,
+	buildings: readonly BuildingFootprint[],
+	opts: CorrectOptions = DEFAULT_CORRECT_OPTIONS,
+): CorrectedPoint[] {
+	if (walkable.ways.length === 0 || buildings.length === 0 || pts.length < 2) return [...pts];
+	const ctx = makeBadnessCtx(walkable, buildings, opts);
+	const out: CorrectedPoint[] = [];
+	// Nearest way point with the way identity + a monotone parameter along it
+	// (way index, segment index, in-segment fraction) — the coherence key.
+	const snapWithWay = (q: {
+		lat: number;
+		lon: number;
+	}): { lat: number; lon: number; distM: number; wayIdx: number; t: number } | null => {
+		let best: { lat: number; lon: number; distM: number; wayIdx: number; t: number } | null = null;
+		for (let w = 0; w < ctx.walkable.ways.length; w++) {
+			const coords = ctx.walkable.ways[w].coords;
+			for (let i = 1; i < coords.length; i++) {
+				const a = { lat: coords[i - 1][0], lon: coords[i - 1][1] };
+				const b = { lat: coords[i][0], lon: coords[i][1] };
+				const proj = projectPointToSegment(q, a, b);
+				if (best === null || proj.distM < best.distM) {
+					const segLen = metersBetween(a.lat, a.lon, b.lat, b.lon) || 1;
+					const f = metersBetween(a.lat, a.lon, proj.lat, proj.lon) / segLen;
+					best = { lat: proj.lat, lon: proj.lon, distM: proj.distM, wayIdx: w, t: i - 1 + Math.min(1, f) };
+				}
+			}
+		}
+		return best;
+	};
+	for (let i = 0; i < pts.length; i++) {
+		if (i > 0) {
+			const a = pts[i - 1];
+			const b = pts[i];
+			const segLen = metersBetween(a.lat, a.lon, b.lat, b.lon);
+			const steps = Math.max(1, Math.ceil(segLen / 2));
+			// A segment qualifies only when it is SUBSTANTIALLY inside (≥
+			// minCrossingM of in-building sampled length with a way in reach) —
+			// a line that merely nicks a footprint corner beside the pavement
+			// must not be yanked onto the way (measured: an any-sample trigger
+			// regressed corridor-stall on a dozen ordinary street walks).
+			let insideM = 0;
+			for (let k = 0; k <= steps; k++) {
+				const f = k / steps;
+				const mid = { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+				if (insideBuildingCtx(mid, ctx) && ctx.grid.within(mid, ctx.opts.onWayM)) insideM += segLen / (steps + 1);
+			}
+			if (insideM >= ctx.opts.minCrossingM) {
+				// Follow the way through the passage: densified points that are
+				// themselves INSIDE a footprint project onto it and pick up the
+				// way's own bends, so a chord between two on-way vertices stops
+				// cutting the corner. COHERENCE is required: every in-building
+				// sample must project onto the SAME way, monotonically along it —
+				// that is what traversing a passage looks like. Incoherent snaps
+				// (nearest-way flips, back-and-forth parameters) would zigzag the
+				// line and read as invented corridor-stall (measured), so the
+				// whole stretch is left alone instead.
+				const n = Math.max(1, Math.ceil(segLen / 3));
+				const snapped: CorrectedPoint[] = [];
+				let coherent = true;
+				let wayIdx = -1;
+				let dir = 0;
+				let prevT = Number.NaN;
+				for (let k = 1; k < n && coherent; k++) {
+					const f = k / n;
+					const q = {
+						lat: a.lat + (b.lat - a.lat) * f,
+						lon: a.lon + (b.lon - a.lon) * f,
+						ts: a.ts + (b.ts - a.ts) * f,
+					};
+					if (!insideBuildingCtx(q, ctx)) continue;
+					const near = snapWithWay(q);
+					if (!near || near.distM > PASSAGE_SNAP_REACH_M) {
+						coherent = false;
+						break;
+					}
+					if (wayIdx === -1) wayIdx = near.wayIdx;
+					else if (near.wayIdx !== wayIdx) {
+						coherent = false;
+						break;
+					}
+					if (!Number.isNaN(prevT) && near.t !== prevT) {
+						const step = Math.sign(near.t - prevT);
+						if (dir === 0) dir = step;
+						else if (step !== dir) {
+							coherent = false;
+							break;
+						}
+					}
+					prevT = near.t;
+					snapped.push({ ...q, lat: near.lat, lon: near.lon });
+				}
+				if (coherent) for (const q of snapped) out.push(q);
+			}
+		}
+		const p = pts[i];
+		if (insideBuildingCtx(p, ctx)) {
+			const near = snapWithWay(p);
+			out.push(near && near.distM <= PASSAGE_SNAP_REACH_M ? { ...p, lat: near.lat, lon: near.lon } : { ...p });
+		} else {
+			out.push({ ...p });
+		}
 	}
 	return out;
 }

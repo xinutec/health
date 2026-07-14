@@ -59,14 +59,31 @@ for the merely unlikely, always an honest raw fallback
   `walk-buildings.ts`, `walk-plausibility.ts`, `walk-route-correctness.ts`;
   SVG eyeball via `render-walk-match.ts`; wired into the deploy gate (#307).
 
-Known residuals in the current draw:
+Known residuals in the current draw (re-measured 2026-07-14 via
+`diag-walk-crossings` after the corner detour landed):
 
-- **Graph-gap corner-cuts** (#305 characterised the class, #350 a live
-  case): where the walkable network is missing an on-the-ground edge —
-  typically a station-forecourt / parade passage — the matched line
-  connects the surrounding corridors straight through the block, leaving
-  short in-building runs (single-digit to low-tens of metres per leg).
-  Data fix (OSM edit) or gap-tolerant routing, not a matcher parameter.
+- **Mapped passages are NOT defects.** The prominent station-parade
+  "crossing" (#350) measured as the matcher correctly following a real
+  OSM walkway through the block — drawn vertices ≤3 m from the way, raw
+  fixes on the same line. The basemap paints the footprint over the
+  passage; the referee's "raw crossing incl. mapped passages" class had
+  it right. Check for a mapped way under any visually-alarming crossing
+  BEFORE treating it as a pipeline defect.
+- **Corner detour (case 2.5, `repairChord`)** now handles the
+  free-standing-footprint chord class: when the street network cannot
+  route a crossing run around, the line follows the footprint's own
+  corners (2 m clearance) — accepted only when the crossing is
+  ELIMINATED outright (no partial purchases, the #347 lever), within the
+  same detour-ratio bound as routes. Corpus: 2 former zigzag escapes now
+  draw as clean corner lines (offPath 15→0 and 15→9).
+- **The 14 surviving through-building runs split into two classes the
+  detour honestly declines**: TERRACED ROWS (10 — abutting footprints;
+  rounding one house means rounding the whole row; no bounded honest
+  path; trustGPS is right, especially on sparse-fix days) and WEAVES
+  (6 — the drawn line wobbles off-network near buildings while the
+  straight anchor chord crosses nothing; not a detour problem at all).
+  Both point at the reconstruction (buildings-as-hard-constraint), not
+  at more corrector cases.
 - **Corrector buys building fixes with invented distance** (#347): open,
   with both obvious guards measured and refuted — see the task before
   touching it. Points at retirement (#330), not a third guard.

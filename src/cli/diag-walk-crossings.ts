@@ -57,6 +57,7 @@ async function main(): Promise<void> {
 
 	const tally: Record<string, number> = {
 		routed: 0,
+		cornered: 0,
 		escaped: 0,
 		"trustGPS/fragmented": 0,
 		"trustGPS/unmapped": 0,
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
 		);
 		for (const r of drainWalkCorrectDiag()) {
 			if (r.outcome === "routed") tally.routed++;
+			else if (r.outcome === "cornered") tally.cornered++;
 			else if (r.outcome === "escaped") tally.escaped++;
 			else if (r.outcome === "invariant-revert") tally["invariant-revert"]++;
 			else {

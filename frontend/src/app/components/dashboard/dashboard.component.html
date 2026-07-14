@@ -19,6 +19,7 @@
 		[busy]="dataLoading()"
 		(refresh)="reloadCurrent()"
 		(refreshingChange)="pullRefreshing.set($event)">
+ <!-- dev-lint: allow-unstyled-class temporary adoption waiver -- decide: style, rename, or delete -->
 	<mat-tab-group
 		[selectedIndex]="tabIndex()"
 		(selectedIndexChange)="changeTab($event)"
