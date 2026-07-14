@@ -432,6 +432,35 @@ Inputs` logs `INFEASIBLE` lines for every *served* day — so a leak on
 any ordinary day becomes a logged, countable defect instead of a
 confident line on the map.
 
+**The class is symmetric — the boarding side (#329/#354).** A ride's
+*head* stranded in the preceding segment produces the mirror failures,
+and it enters through segment *classification*, not geometry. Two entry
+passes were measured manufacturing multi-hour phantom "walks" out of an
+office afternoon whose tail held the departure:
+
+- `mergeAdjacentStays`' multipath-phantom bridge swallowed a real
+  stepping errand (browse-heavy, so median fix speed reads sub-walking),
+  and `correctStationaryWalkThrough` then flipped the polluted merged
+  stay wholesale — fixed by a cadence guard on the bridge and a 45-min
+  ceiling on the walk-through flip (a walk-through is minutes-scale;
+  carving long stays belongs to the split passes).
+- `stationaryCoherence` flipped a dwell whose tail held the next ride's
+  tunnel-reacquire fixes: the first→last displacement was the ride's,
+  not the dwell's — fixed by judging the *pedestrian core* (the largest
+  vehicle-step-free fix run; edge-trimming fails because trains dwell at
+  platforms, so ride tails read fast/slow/fast) and suppressing the flip
+  only for dwell-scale windows whose core pace is below locomotion.
+  **Short "stationary" fragments spanning a teleport must keep
+  flipping** — the rail absorbers rely on it; suppressing them broke
+  reconstructed journeys and moved an alight to the wrong station.
+
+Full rationale and constants live on the pass doc-comments
+(`passes/stays.ts`, `biometrics.ts`, `segments.ts`). The residual:
+the ride's true head (the pre-boarding fixes) stays inside the stay —
+stays render as a dot, so nothing false is drawn, but the ride starts
+late until a boarding-side anchor learns to claim a vehicle tail out of
+a stay (the boarding twin of `anchorTrainAlightToWalkedStation`).
+
 **The test is cache-independent and needs no station coordinate** — it
 reads only `speed_kmh`, which is on every fix:
 
