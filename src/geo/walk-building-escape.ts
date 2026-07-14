@@ -291,10 +291,17 @@ export const DEFAULT_CORRECT_OPTIONS: CorrectOptions = {
  * majority of the thousands of rings a real leg carries) plus the walkable
  * network for the off-network test.
  */
-interface BadnessCtx {
+/** The ring-geometry slice of {@link BadnessCtx} — everything the crossing
+ *  tests and the corner router need. Narrow on purpose so `reconstructWalk`
+ *  can reuse the corner router without a walkable grid or corrector options
+ *  (see {@link routeChordAroundBuildings}). */
+interface RingCtx {
 	buildings: readonly BuildingFootprint[];
-	/** Per-ring bbox expanded by buildingProxM, aligned with `buildings`. */
+	/** Per-ring bbox (possibly expanded), aligned with `buildings`. */
 	boxes: Array<{ minLat: number; maxLat: number; minLon: number; maxLon: number }>;
+}
+
+interface BadnessCtx extends RingCtx {
 	walkable: RoadGeometry;
 	/** Grid over the walkable segments for the per-sample threshold tests. */
 	grid: WaySegmentGrid;
@@ -328,7 +335,7 @@ function makeBadnessCtx(
 /** Is `p` inside a building? The ctx form of {@link containingBuilding}: the
  *  precomputed (expanded) bboxes reject almost every ring before the ray cast —
  *  this runs first on every 2 m badness sample. */
-function insideBuildingCtx(p: { lat: number; lon: number }, ctx: BadnessCtx): boolean {
+function insideBuildingCtx(p: { lat: number; lon: number }, ctx: RingCtx): boolean {
 	for (let i = 0; i < ctx.buildings.length; i++) {
 		const b = ctx.boxes[i];
 		if (p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon) continue;
@@ -499,7 +506,7 @@ function ringCornersBetween(a: Pt2, b: Pt2, ring: BuildingFootprint, forward: bo
 }
 
 /** Does the polyline enter any footprint? 2 m midpoint sampling, ctx bboxes. */
-function polylineEntersBuilding(pts: readonly Pt2[], ctx: BadnessCtx): boolean {
+function polylineEntersBuilding(pts: readonly Pt2[], ctx: RingCtx): boolean {
 	for (let i = 1; i < pts.length; i++) {
 		const a = pts[i - 1];
 		const b = pts[i];
@@ -514,7 +521,7 @@ function polylineEntersBuilding(pts: readonly Pt2[], ctx: BadnessCtx): boolean {
 }
 
 /** First footprint the segment a→b passes through, or null. */
-function firstCrossedRing(a: Pt2, b: Pt2, ctx: BadnessCtx): BuildingFootprint | null {
+function firstCrossedRing(a: Pt2, b: Pt2, ctx: RingCtx): BuildingFootprint | null {
 	let best: BuildingFootprint | null = null;
 	let bestT = Number.POSITIVE_INFINITY;
 	for (let i = 0; i < ctx.buildings.length; i++) {
@@ -541,7 +548,7 @@ function firstCrossedRing(a: Pt2, b: Pt2, ctx: BadnessCtx): BuildingFootprint | 
  *  crossing-free corner path around that ring, then fix the sub-chords the
  *  corners created. Returns the full vertex list a…b, or null when no
  *  crossing-free bounded path exists (dense surroundings — decline). */
-function repairChord(a: Pt2, b: Pt2, ctx: BadnessCtx, depth: number): Pt2[] | null {
+function repairChord(a: Pt2, b: Pt2, ctx: RingCtx, depth: number): Pt2[] | null {
 	const ring = firstCrossedRing(a, b, ctx);
 	if (!ring) return [a, b];
 	if (depth >= CORNER_MAX_DEPTH) return null;
@@ -574,6 +581,37 @@ function repairChord(a: Pt2, b: Pt2, ctx: BadnessCtx, depth: number): Pt2[] | nu
 		}
 	}
 	return best;
+}
+
+/**
+ * Route the chord a→b around any building footprints it passes through, via
+ * the footprints' own corners (2 m clearance, recursive over nested rings).
+ * Returns the full crossing-free vertex list `a…b`, or null when no bounded
+ * crossing-free corner path exists (dense surroundings — the caller keeps the
+ * chord; honesty over invention). The narrow, reusable form of the corrector's
+ * case-2.5 primitive, for callers that have footprints but no walkable
+ * network in scope (`reconstructWalk`'s corner insertion, #353).
+ */
+export function routeChordAroundBuildings(
+	a: { lat: number; lon: number },
+	b: { lat: number; lon: number },
+	buildings: readonly BuildingFootprint[],
+): Array<{ lat: number; lon: number }> | null {
+	if (buildings.length === 0) return [a, b];
+	const boxes = buildings.map((ring) => {
+		let minLat = Number.POSITIVE_INFINITY;
+		let maxLat = Number.NEGATIVE_INFINITY;
+		let minLon = Number.POSITIVE_INFINITY;
+		let maxLon = Number.NEGATIVE_INFINITY;
+		for (const p of ring) {
+			if (p.lat < minLat) minLat = p.lat;
+			if (p.lat > maxLat) maxLat = p.lat;
+			if (p.lon < minLon) minLon = p.lon;
+			if (p.lon > maxLon) maxLon = p.lon;
+		}
+		return { minLat, maxLat, minLon, maxLon };
+	});
+	return repairChord(a, b, { buildings, boxes }, 0);
 }
 
 /** Insert intermediate vertices so no chord exceeds `stepM`; timestamps are

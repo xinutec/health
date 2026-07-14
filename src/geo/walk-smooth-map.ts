@@ -45,6 +45,7 @@
  */
 
 import { metersBetween, projectPointToSegment, type RoadGeometry } from "./map-match-core.js";
+import { routeChordAroundBuildings } from "./walk-building-escape.js";
 
 /** One GPS fix to reconstruct. `accuracyM` is the reported horizontal accuracy
  *  (metres); when absent the profile fallback σ is used. */
@@ -500,6 +501,34 @@ export interface ReconstructProfile {
 	 *  the fixed schedule alone leaves a gross one half-collapsed. Bounded; a
 	 *  leg at equilibrium breaks out immediately. */
 	stepExtraIters: number;
+	/** HARD building constraint (#353a): after each inner solve, any state
+	 *  strictly INSIDE a footprint is PROJECTED to its clearance target instead
+	 *  of merely pulled — occupancy of a footprint becomes impossible for the
+	 *  iterate, not just expensive. Exemptions keep it honest: states whose RAW
+	 *  observation sits inside a footprint as part of a sustained run
+	 *  (genuine indoor presence — a café, a mall walkway; see
+	 *  `indoorPresenceMinFixes`), states within `passageWayReachM` of a
+	 *  walkable way (mapped passages), and the two terminal states (a walk
+	 *  legitimately starts at an indoor doorway). */
+	hardProjectBuildings: boolean;
+	/** HARD building constraint (#353b): after the anneal, any output edge that
+	 *  still PASSES THROUGH a footprint (both ends outside — the between-vertex
+	 *  gap projection can't see) is routed around that ring's own corners.
+	 *  Kept only when a bounded crossing-free corner path exists; presence-
+	 *  exempt rings are never routed around. */
+	insertCornerDetours: boolean;
+	/** ≥ this many CONSECUTIVE observed fixes raw-inside the SAME footprint =
+	 *  genuine indoor presence: the building is occupied, not an obstacle. The
+	 *  clearance field and both hard constraints are OFF for those states
+	 *  (weight-don't-filter: evidence of entry beats the impossibility prior).
+	 *  Judged on the RAW observations so the exemption is stable evidence the
+	 *  solver cannot drag. */
+	indoorPresenceMinFixes: number;
+	/** A state within this of a walkable way is never hard-projected — the
+	 *  mapped-passage class (ways THROUGH buildings) is owned by the way
+	 *  attraction + passage snap, not the building constraint. Matches the
+	 *  corrector's `onWayM` exemption. */
+	passageWayReachM: number;
 }
 
 export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
@@ -539,7 +568,38 @@ export const DEFAULT_RECONSTRUCT_PROFILE: ReconstructProfile = {
 	stepRampWidthRatio: 0.25,
 	stepRampCap: 16,
 	stepExtraIters: 12,
+	// Hard building constraint (#353), corpus verdict 2026-07-14 over 154 walks
+	// (arms sweepable without a rebuild via RECON_SPACING_M / RECON_HARD_PROJECT
+	// / RECON_CORNERS, see reconstructProfileFromEnv):
+	// - CORNER INSERTION ships: ΣoffPath 1081→987 m, walks-with-crossings
+	//   36→30, corridor-stall and drawn length unchanged, ZERO introduced
+	//   crossings.
+	// - HARD PROJECTION is REFUTED — do not enable: it INTRODUCED crossings on
+	//   2 clean walks (the projected vertex's re-angled edges cut neighbouring
+	//   footprints), regressed stall on 3, and netted ~nothing (the soft
+	//   clearance field already does the vertex work).
+	// - Free-state densification (targetSpacingM) re-measured under the FIXED
+	//   min-cost-DP stall metric and STILL refuted: +4 % drawn length and 8
+	//   stall regressions for no crossing gain. Vertex-per-fix stands.
+	hardProjectBuildings: false,
+	insertCornerDetours: true,
+	indoorPresenceMinFixes: 3,
+	passageWayReachM: 8,
 };
+
+/** The default profile with the #353 experiment knobs overridable from the
+ *  environment, so the referee can sweep arms without a rebuild. Unset env =
+ *  the committed defaults — the golden gates always measure shipped behaviour. */
+export function reconstructProfileFromEnv(base: ReconstructProfile = DEFAULT_RECONSTRUCT_PROFILE): ReconstructProfile {
+	const num = (v: string | undefined, d: number) => (v ? Number(v) : d);
+	const flag = (v: string | undefined, d: boolean) => (v === undefined ? d : v === "1");
+	return {
+		...base,
+		targetSpacingM: num(process.env.RECON_SPACING_M, base.targetSpacingM),
+		hardProjectBuildings: flag(process.env.RECON_HARD_PROJECT, base.hardProjectBuildings),
+		insertCornerDetours: flag(process.env.RECON_CORNERS, base.insertCornerDetours),
+	};
+}
 
 /** Geman-McClure IRLS weight for residual `r` at kernel scale `c` (both metres):
  *  `(c²/(c²+r²))²` ∈ (0,1]. Redescending — →1 as r→0 (full trust), →0 as r≫c
@@ -691,7 +751,7 @@ class WalkGrid {
 	 *  wall, whenever the state is inside a footprint OR within `clearM` of a wall
 	 *  from outside; else null. A field (not just when-inside), so a chord grazing a
 	 *  corner is pushed off the wall even with no vertex strictly inside. */
-	clearanceTarget(px: number, py: number, clearM: number): { x: number; y: number } | null {
+	clearanceTarget(px: number, py: number, clearM: number): { x: number; y: number; inside: boolean } | null {
 		const c = this.cell;
 		const cx0 = Math.floor(px / c);
 		const cy0 = Math.floor(py / c);
@@ -741,7 +801,41 @@ class WalkGrid {
 		// Outward unit: toward the wall when inside (escape), away from it when outside.
 		const ux = inside ? (wx - px) / dist : (px - wx) / dist;
 		const uy = inside ? (wy - py) / dist : (py - wy) / dist;
-		return { x: wx + ux * clearM, y: wy + uy * clearM };
+		return { x: wx + ux * clearM, y: wy + uy * clearM, inside };
+	}
+
+	/** Index of the ring containing (px,py), or −1. Same even-odd test as the
+	 *  clearance field, exposed for the indoor-presence exemption (#353): raw
+	 *  observations are classified once, so the exemption is stable evidence. */
+	ringContaining(px: number, py: number): number {
+		const c = this.cell;
+		const cx0 = Math.floor(px / c);
+		const cy0 = Math.floor(py / c);
+		const seen = new Set<number>();
+		for (let cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+			for (let cy = cy0 - 1; cy <= cy0 + 1; cy++) {
+				const list = this.ringCells.get(WalkGrid.key(cx, cy));
+				if (!list) continue;
+				for (const r of list) {
+					if (seen.has(r)) continue;
+					seen.add(r);
+					const ring = this.rings[r];
+					if (px < ring.minx || px > ring.maxx || py < ring.miny || py > ring.maxy) continue;
+					const pts = ring.pts;
+					const n = pts.length / 2;
+					let ins = false;
+					for (let i = 0, j = n - 1; i < n; j = i++) {
+						const yi = pts[i * 2 + 1];
+						const xi = pts[i * 2];
+						const yj = pts[j * 2 + 1];
+						const xj = pts[j * 2];
+						if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) ins = !ins;
+					}
+					if (ins) return r;
+				}
+			}
+		}
+		return -1;
 	}
 }
 
@@ -765,7 +859,7 @@ export interface WalkEvidence {
 export function reconstructWalk(
 	fixes: readonly WalkFix[],
 	geo: RoadGeometry,
-	profile: ReconstructProfile = DEFAULT_RECONSTRUCT_PROFILE,
+	profile: ReconstructProfile = reconstructProfileFromEnv(),
 	evidence?: WalkEvidence,
 ): SmoothedPoint[] | null {
 	if (fixes.length < profile.minFixes) return null;
@@ -844,6 +938,37 @@ export function reconstructWalk(
 	}
 	const grid =
 		segs.length > 0 || rings.length > 0 ? new WalkGrid(segs, rings, Math.max(profile.networkRadiusM, 15)) : null;
+
+	// Indoor-presence exemption (#353): a run of ≥ indoorPresenceMinFixes
+	// consecutive OBSERVED fixes whose RAW positions sit inside the SAME
+	// footprint is evidence of genuine entry (a café, a shop, a mall walkway) —
+	// for those states, and the free states between them, the building is
+	// occupied space, not an obstacle: no clearance pull, no hard projection,
+	// no corner routing. Weight-don't-filter: many points inside beat the
+	// impossibility prior; an isolated point or an interpolated chord does not.
+	const exempt = new Uint8Array(m);
+	if (grid) {
+		const obsIdx: number[] = [];
+		for (let i = 0; i < m; i++) if (obsW[i] > 0) obsIdx.push(i);
+		let runStart = 0;
+		let runRing = -2;
+		const markRun = (from: number, to: number): void => {
+			// from/to index into obsIdx, inclusive; exempt every STATE between
+			// the run's first and last observed state (free states included).
+			if (to - from + 1 < profile.indoorPresenceMinFixes) return;
+			for (let s = obsIdx[from]; s <= obsIdx[to]; s++) exempt[s] = 1;
+		};
+		for (let k = 0; k < obsIdx.length; k++) {
+			const i = obsIdx[k];
+			const ring = grid.ringContaining(seedE[i], seedN[i]);
+			if (ring !== runRing || ring === -1) {
+				if (runRing >= 0) markRun(runStart, k - 1);
+				runStart = k;
+				runRing = ring;
+			}
+		}
+		if (runRing >= 0) markRun(runStart, obsIdx.length - 1);
+	}
 
 	let e: Float64Array = Float64Array.from(seedE);
 	let nn: Float64Array = Float64Array.from(seedN);
@@ -959,12 +1084,15 @@ export function reconstructWalk(
 						bn[i] += wN * ny * ny * near.y;
 					}
 					// Building clearance field — keep the state ≥ clearM off any wall.
-					const esc = grid.clearanceTarget(px, py, profile.buildingClearM);
-					if (esc) {
-						dE[i] += wBuild;
-						dN[i] += wBuild;
-						be[i] += wBuild * esc.x;
-						bn[i] += wBuild * esc.y;
+					// Presence-exempt states are genuinely indoors: no pull at all.
+					if (!exempt[i]) {
+						const esc = grid.clearanceTarget(px, py, profile.buildingClearM);
+						if (esc) {
+							dE[i] += wBuild;
+							dN[i] += wBuild;
+							be[i] += wBuild * esc.x;
+							bn[i] += wBuild * esc.y;
+						}
 					}
 				}
 			}
@@ -985,6 +1113,22 @@ export function reconstructWalk(
 			}
 			e = solvePCG(dE, wSmooth, be, e, wEdge);
 			nn = solvePCG(dN, wSmooth, bn, nn, wEdge);
+			// Hard projection (#353a): occupancy of a footprint is impossible for
+			// the iterate — a non-exempt interior state inside a ring is MOVED to
+			// its clearance target (projected gradient), not merely pulled.
+			// Terminals are spared (a walk may start at an indoor doorway);
+			// states riding a mapped way through the building are the passage
+			// class and belong to the way attraction.
+			if (profile.hardProjectBuildings && grid) {
+				for (let i = 1; i < m - 1; i++) {
+					if (exempt[i]) continue;
+					const esc = grid.clearanceTarget(e[i], nn[i], profile.buildingClearM);
+					if (!esc?.inside) continue;
+					if (grid.nearest(e[i], nn[i], profile.passageWayReachM)) continue;
+					e[i] = esc.x;
+					nn[i] = esc.y;
+				}
+			}
 			if (process.env.WALK_RECON_DEBUG === "1") {
 				let len = 0;
 				let maxAbs = 0;
@@ -1000,5 +1144,44 @@ export function reconstructWalk(
 
 	const out: SmoothedPoint[] = [];
 	for (let i = 0; i < m; i++) out.push({ lat: toLat(nn[i]), lon: toLon(e[i]), ts: ts[i] });
+
+	// Corner insertion (#353b): the projection keeps VERTICES out of footprints,
+	// but an edge between two exterior vertices can still pass through one (the
+	// between-vertex gap). Route each such edge around the ring's own corners —
+	// only when a bounded, crossing-free corner path exists, and never across a
+	// presence-exempt endpoint (an edge entering an occupied café is honest).
+	if (profile.insertCornerDetours && (geo.buildings?.length ?? 0) > 0) {
+		const CORNER_DETOUR_MAX_RATIO = 2.5;
+		const footprints = (geo.buildings ?? []).map((r) => [...r]);
+		const repaired: SmoothedPoint[] = [out[0]];
+		for (let i = 0; i + 1 < m; i++) {
+			const a = out[i];
+			const b = out[i + 1];
+			if (!exempt[i] && !exempt[i + 1]) {
+				const chordM = Math.hypot(toE(b.lon) - toE(a.lon), toN(b.lat) - toN(a.lat));
+				const path = chordM > 1 ? routeChordAroundBuildings(a, b, footprints) : null;
+				if (path && path.length > 2) {
+					let lenM = 0;
+					for (let k = 1; k < path.length; k++) {
+						lenM += Math.hypot(toE(path[k].lon) - toE(path[k - 1].lon), toN(path[k].lat) - toN(path[k - 1].lat));
+					}
+					if (lenM <= chordM * CORNER_DETOUR_MAX_RATIO) {
+						// Interior corners, timestamps interpolated by along-path distance.
+						let acc = 0;
+						for (let k = 1; k < path.length - 1; k++) {
+							acc += Math.hypot(toE(path[k].lon) - toE(path[k - 1].lon), toN(path[k].lat) - toN(path[k - 1].lat));
+							repaired.push({
+								lat: path[k].lat,
+								lon: path[k].lon,
+								ts: Math.round(a.ts + (b.ts - a.ts) * (acc / lenM)),
+							});
+						}
+					}
+				}
+			}
+			repaired.push(b);
+		}
+		return repaired;
+	}
 	return out;
 }

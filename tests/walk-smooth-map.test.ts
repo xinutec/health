@@ -3,6 +3,7 @@ import type { RoadGeometry } from "../src/geo/road-match.js";
 import {
 	countSharpTurns,
 	DEFAULT_MAP_SMOOTH_PROFILE,
+	DEFAULT_RECONSTRUCT_PROFILE,
 	reconstructWalk,
 	refineMatchedPath,
 	smoothWalkMap,
@@ -293,5 +294,135 @@ describe("refineMatchedPath", () => {
 
 	it("returns null when the matched line is too thin to refine", () => {
 		expect(refineMatchedPath([{ lat: LAT, lon: -0.28, ts: 0 }], [{ lat: LAT, lon: -0.28 }])).toBeNull();
+	});
+});
+
+describe("reconstructWalk hard building constraint (#353)", () => {
+	const dLonAt = (m: number) => m / (111_320 * Math.cos((LAT * Math.PI) / 180));
+	/** Square footprint centred at (latC, lonC), half-size halfM metres. */
+	const square = (latC: number, lonC: number, halfM: number) => [
+		{ lat: latC - dLat(halfM), lon: lonC - dLonAt(halfM) },
+		{ lat: latC - dLat(halfM), lon: lonC + dLonAt(halfM) },
+		{ lat: latC + dLat(halfM), lon: lonC + dLonAt(halfM) },
+		{ lat: latC + dLat(halfM), lon: lonC - dLonAt(halfM) },
+	];
+	const inSquare = (p: { lat: number; lon: number }, latC: number, lonC: number, halfM: number) =>
+		Math.abs(p.lat - latC) * 111_320 < halfM &&
+		Math.abs(p.lon - lonC) * 111_320 * Math.cos((LAT * Math.PI) / 180) < halfM;
+	/** March east along LAT, fixes every ~stepLonM metres. */
+	const march = (n: number, stepM: number): WalkFix[] =>
+		Array.from({ length: n }, (_, i) => ({
+			lat: LAT,
+			lon: -0.28 + dLonAt(i * stepM),
+			ts: 1000 + i * 30,
+			accuracyM: 12,
+		}));
+	const HARD = {
+		...DEFAULT_RECONSTRUCT_PROFILE,
+		targetSpacingM: 20,
+		hardProjectBuildings: true,
+		insertCornerDetours: true,
+	};
+	/** No point of the polyline — sampled every 2 m along each edge — may sit
+	 *  inside the square. */
+	const sampledInside = (pts: Array<{ lat: number; lon: number }>, latC: number, lonC: number, halfM: number) => {
+		for (let i = 1; i < pts.length; i++) {
+			const a = pts[i - 1];
+			const b = pts[i];
+			const lenM = Math.hypot((b.lat - a.lat) * 111_320, (b.lon - a.lon) * 111_320 * Math.cos((LAT * Math.PI) / 180));
+			const steps = Math.max(1, Math.ceil(lenM / 2));
+			for (let k = 0; k <= steps; k++) {
+				const f = k / steps;
+				if (inSquare({ lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f }, latC, lonC, halfM))
+					return true;
+			}
+		}
+		return false;
+	};
+
+	it("keeps a transit chord OUT of a footprint it would cut through (no network in scope)", () => {
+		// 8 fixes marching east, 80 m apart; a 25 m half-size house straddles the
+		// straight line midway between fixes 3 and 4. No walkable ways at all
+		// (unmapped-network area) — only the hard constraint can act.
+		const fixes = march(8, 80);
+		const lonC = -0.28 + dLonAt(3.5 * 80);
+		const geo: RoadGeometry = { ways: [], buildings: [square(LAT, lonC, 25)] };
+		const recon = reconstructWalk(fixes, geo, HARD) as Array<{ lat: number; lon: number }>;
+		expect(recon).not.toBeNull();
+		expect(sampledInside(recon, LAT, lonC, 25)).toBe(false);
+	});
+
+	it("preserves genuine indoor presence: a sustained observed run inside stays inside", () => {
+		// 3 fixes outside, 5 fixes dwelling INSIDE a large footprint (a cafe),
+		// 3 fixes outside — the presence run must not be shoved to the walls.
+		const lonC = -0.28 + dLonAt(300);
+		const fixes: WalkFix[] = [
+			...Array.from({ length: 3 }, (_, i) => ({
+				lat: LAT,
+				lon: -0.28 + dLonAt(i * 60),
+				ts: 1000 + i * 30,
+				accuracyM: 12,
+			})),
+			...Array.from({ length: 5 }, (_, i) => ({
+				lat: LAT + dLat(i % 2 === 0 ? 3 : -3),
+				lon: lonC + dLonAt((i - 2) * 4),
+				ts: 1200 + i * 30,
+				accuracyM: 15,
+			})),
+			...Array.from({ length: 3 }, (_, i) => ({
+				lat: LAT,
+				lon: -0.28 + dLonAt(420 + i * 60),
+				ts: 1500 + i * 30,
+				accuracyM: 12,
+			})),
+		];
+		const geo: RoadGeometry = { ways: [], buildings: [square(LAT, lonC, 40)] };
+		const recon = reconstructWalk(fixes, geo, HARD) as Array<{ lat: number; lon: number }>;
+		expect(recon).not.toBeNull();
+		// The five dwell fixes map to output indices via free-state insertion;
+		// assert that SOME output vertices remain inside (the presence survives).
+		const insideCount = recon.filter((p) => inSquare(p, LAT, lonC, 39)).length;
+		expect(insideCount).toBeGreaterThanOrEqual(3);
+	});
+
+	it("projects an ISOLATED interior fix out (one point inside is not presence)", () => {
+		const lonC = -0.28 + dLonAt(240);
+		const fixes = march(9, 60).map((f, i) => (i === 4 ? { ...f, lon: lonC, lat: LAT } : f));
+		const geo: RoadGeometry = { ways: [], buildings: [square(LAT, lonC, 20)] };
+		const recon = reconstructWalk(fixes, geo, HARD) as Array<{ lat: number; lon: number }>;
+		expect(recon).not.toBeNull();
+		expect(sampledInside(recon, LAT, lonC, 19)).toBe(false);
+	});
+
+	it("is inert without buildings: hard flags change nothing (forest walks untouched)", () => {
+		const fixes = jitteryFixes(12, 6);
+		const soft = reconstructWalk(fixes, straightGeo, {
+			...HARD,
+			hardProjectBuildings: false,
+			insertCornerDetours: false,
+		});
+		const hard = reconstructWalk(fixes, straightGeo, HARD);
+		expect(hard).toEqual(soft);
+	});
+
+	it("declines an unbounded detour: a huge slab keeps the honest chord", () => {
+		// A 300 m-wide slab dead across the path: the corner path would exceed
+		// 2.5x the chord, so the edge is kept as-is rather than invented around.
+		const fixes = march(6, 100);
+		const lonC = -0.28 + dLonAt(2.5 * 100);
+		const slab = [
+			{ lat: LAT - dLat(300), lon: lonC - dLonAt(20) },
+			{ lat: LAT - dLat(300), lon: lonC + dLonAt(20) },
+			{ lat: LAT + dLat(300), lon: lonC + dLonAt(20) },
+			{ lat: LAT + dLat(300), lon: lonC - dLonAt(20) },
+		];
+		const geo: RoadGeometry = { ways: [], buildings: [slab] };
+		const withCorners = reconstructWalk(fixes, geo, { ...HARD, hardProjectBuildings: false });
+		const without = reconstructWalk(fixes, geo, {
+			...HARD,
+			hardProjectBuildings: false,
+			insertCornerDetours: false,
+		});
+		expect(withCorners).toEqual(without);
 	});
 });
