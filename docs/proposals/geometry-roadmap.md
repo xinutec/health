@@ -42,7 +42,18 @@ for the merely unlikely, always an honest raw fallback
   deterministic); accuracy a weak clamped scale prior; L2 smoothness;
   adaptive robust walkable attraction; building clearance field; optional
   endpoint anchors; uniform-grid spatial index (`WalkGrid`) for near-O(1)
-  nearest-way / in-building lookups.
+  nearest-way / in-building lookups. Since #353 (2026-07-14) buildings are a
+  HARD constraint on transit, not presence: output edges passing through a
+  footprint are routed around that ring's own corners (`routeChordAroundBuildings`,
+  the corrector's case-2.5 primitive re-exported narrow; ≤2.5× chord bound,
+  else the honest chord stands), and an **indoor-presence exemption**
+  (≥3 consecutive observed fixes raw-inside the same ring = genuine entry —
+  a café, a shop, a mall walkway) turns ALL building forces off for that
+  stretch, its interior free states, terminals (doorways), and
+  mapped-passage states. Corpus: crossing metres 1081→987, walks-with-
+  crossings 36→30, stall/length unchanged, zero introduced crossings; the
+  exemption alone fixed 4 walks (one 332→0 m) — the old soft field had been
+  nudging genuine indoor fixes toward walls.
 - **`WALK_RECON` per-leg swap** (`pedestrian-match-annotate.ts`, **on by
   default** since the G2 flip; `WALK_RECON=0` is the off-switch): draws the
   reconstruction only when it is ≥25 % AND ≥150 m shorter than the
@@ -248,11 +259,20 @@ tunnel-transit coherence #251).
 - **Whole-walk step-distance GATE: reverted 2026-07-01.** At the threshold
   that caught the triangle it rejected 27/63 good matches. Steps are a coarse
   global magnitude — soft factor only.
-- **Densification inflates corridor-stall — measured twice.** Blanket:
-  102→187. Building-aware selective + free-state map-pull: 102→133 plus a new
-  504 m excursion. Structural: the per-vertex clearance field can only route
-  around a footprint by adding vertices, and added vertices projected onto
-  sparse raw fixes read as wander. Keep `reconstructWalk` vertex-per-fix.
+- **Densification inflates corridor-stall — measured THREE times, the last
+  under the FIXED (min-cost DP) stall metric** (2026-07-14, closing #353's
+  re-measure mandate): free states at 20 m spacing cost +4 % drawn length
+  and 8 stall regressions across 154 walks for no crossing gain — the
+  refutation no longer rests on the broken greedy metric. Keep
+  `reconstructWalk` vertex-per-fix; corner INSERTION (a targeted vertex
+  exactly where an edge crosses a ring) is the measured exception that
+  works.
+- **Hard per-iteration building projection is REFUTED** (2026-07-14, #353):
+  projecting an interior state to its clearance target INTRODUCED crossings
+  on 2 clean walks — the moved vertex's re-angled edges cut *neighbouring*
+  footprints — regressed stall on 3, and netted ~nothing; the soft clearance
+  field already does the vertex work. The knob stays
+  (`RECON_HARD_PROJECT=1`) as a measured-dead experiment; do not enable.
 - **off-walkable-p90 and absolute building-crossing are snapper-biased** —
   they reward hiding on a way centreline. On the six worst legs the RAW GPS
   itself crosses buildings 117–538 m (offset + OSM footprint overlap, #305).
