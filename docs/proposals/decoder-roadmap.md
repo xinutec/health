@@ -12,8 +12,16 @@ This is the single forward plan for the classification line of work. It
 replaces seven separate proposals that each described one slice of the same
 arc (physical-plausibility, journey-worldline, constraint-first-decoder,
 decoder-owns-mode, phase1-train-softprior, tube-journey-segment,
-truth-engine). Their full text is in git history; the durable parts are
-here.
+truth-engine), plus the 2026-05 scored-classification roadmap — whose
+"escalate to a joint model or keep iterating factors in the cascade?"
+decision point this document resolves: escalate. The factor library it
+shipped lives on as the decoder's per-minute scoring layer
+(`../design/probabilistic-principles.md`); its unfinished cascade-side
+phases (activating the factor scorer inside `refineMode`, the
+commute-history prior as a cascade feature) are abandoned — that
+investment belongs in the decoder, not in a second scoring path inside
+the incumbent. Full text of all replaced proposals is in git history;
+the durable parts are here.
 
 The shipped machinery these phases build on — the HSMM Viterbi decoder, the
 factor library, the generator/scorer split — is documented as current

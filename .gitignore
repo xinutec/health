@@ -1,7 +1,6 @@
 node_modules/
 dist/
 .local-data/
-docs/archive/
 
 # Captured fixture days contain real GPS + biometric data (home/work
 # coords, HR, cadence). Local-only. CI snapshot tests must use

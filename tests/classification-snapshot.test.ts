@@ -1,6 +1,6 @@
 /**
- * Classification snapshot — the committable CI net for the
- * scored-classification migration (#103).
+ * Classification snapshot — the committable CI net for factor-scorer
+ * changes (#103).
  *
  * Each scenario is a synthetic day driven through the full
  * `computeVelocityFromInputs` core; the test pins the per-segment

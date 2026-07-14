@@ -4,9 +4,9 @@
  * Wraps the existing `scoreWindow` Gaussian range-score in
  * `segments.ts` as a log-likelihood per `ModeCandidate`. The factor
  * unpacks an existing computation; it does not introduce new logic.
- * That's by design — Phase 1 of the scored-classification refactor
- * (see `docs/proposals/2026-05-scored-classification.md`) is
- * structural, not behavioural.
+ * That's by design — the factor extraction was structural, not
+ * behavioural (see `docs/design/probabilistic-principles.md` for the
+ * factor contract).
  *
  * Behavioural notes:
  *

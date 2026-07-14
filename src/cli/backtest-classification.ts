@@ -12,10 +12,12 @@
  *     into the scorer change once the scorer is on?"
  *
  * Purpose: measure what flipping a prod flag would do *before* actually
- * flipping it. Phase 1 of the scored-classification refactor builds on
- * this — every subsequent factor change can be re-run against the same
+ * flipping it — every factor change can be re-run against the same
  * range to confirm the change moves the right segments in the right
- * direction. See docs/proposals/2026-05-scored-classification.md.
+ * direction. (Historical note: the cascade-side factor-scorer flag this
+ * was built to gate was never activated; that line was abandoned in
+ * favour of the decoder — see docs/proposals/decoder-roadmap.md. The
+ * harness itself remains the flag-backtest tool.)
  *
  * Usage (run via `scripts/backtest.sh` so the prod-db tunnel + env are
  * set up):

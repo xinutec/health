@@ -1,9 +1,9 @@
 /**
- * Factor framework — shared types for the scored-classification
- * refactor.
+ * Factor framework — shared types for factor-decomposed mode scoring,
+ * the per-minute scoring layer of the decoder architecture.
  *
- * See `docs/proposals/2026-05-scored-classification.md` for the
- * architectural context. Each factor is a pure function: given a
+ * See `docs/design/probabilistic-principles.md` for the architectural
+ * contract. Each factor is a pure function: given a
  * `ModeCandidate` (one of the alternative interpretations the
  * candidate-generator emitted) and a `FactorContext` (everything
  * the factor might look at — window features, segment biometrics,

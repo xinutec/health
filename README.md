@@ -22,20 +22,14 @@ docs/                           cross-cutting docs and proposals
 ├── design/                     System-as-shipped: current architecture
 │   ├── overview.md               Top-level architecture diagram + module map
 │   └── timezone.md               Per-row tz handling rules and rationale
-├── proposals/                  Design proposals (active work)
-│   ├── README.md                 Index + status of each proposal
-│   └── 2026-05-scored-classification.md
-│                                 Incremental factor-decomposed
-│                                 classification + commute prior
-└── archive/                    Superseded or paused proposals
-                                [GITIGNORED — local-only, per
-                                .gitignore line 4. Active proposals
-                                that reference archive docs (e.g.
-                                2026-05 references 2025-model-hmm.md)
-                                must remain understandable WITHOUT
-                                the archive — the link is "see also
-                                my local notes," not load-bearing.]
+└── proposals/                  Design proposals (active work)
+    ├── README.md                 Index + status of each proposal
+    ├── decoder-roadmap.md        The forward plan: one joint decoder
+    └── geometry-roadmap.md       The forward plan: one honest estimator
 ```
+
+Superseded proposals are deleted, not archived — git history is the
+log (see `docs/proposals/README.md`).
 
 ## Common commands
 

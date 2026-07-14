@@ -123,6 +123,15 @@ stays and is wrong on none of them. Not one stay in the corpus has the truth
 outscoring a near-field winner. The premise — "near-field is unsound on a
 smeared sit" — is not what the data says.
 
+> **Correction (#345, later the same day): "wrong 0 times" was measured by a
+> blind metric.** `blockedByNearField` cannot see a near-field winner whose
+> `total` is *below* a non-near-field candidate's — and a confirmed case
+> exists (the truth outscores the near-field winner by 4.03 nats and still
+> ranks 3rd), plus a below-floor election that destroys the answer outright.
+> V1 *as specified here* (gate near-field on GPS quality) stays dead — the
+> smeared-sit premise really was wrong — but near-field itself is NOT
+> exonerated. That work continues under #345, metric-first.
+
 **The scorer is not the weak layer.** It is right 94% of the time it runs.
 
 **The focus-place layer is 0/4**, and it is a *hard override*: when a mined
@@ -280,22 +289,13 @@ truth harness to report, over the corpus:
 This is the number every later phase moves. Without it we are tuning
 against anecdotes — which is how #341 happened.
 
-### V1 — un-short-circuit near-field
+### V1 — REFUTED, spec removed
 
-The cheapest real win, and it stands alone.
-
-Near-field is *sound on a clean stay* (retiring it outright cost Starbucks
-and Pret) and *unsound on a smeared one* — and it cannot tell the
-difference, because the scorer cannot see the stay's own GPS quality.
-
-Plumb the stay's **fix spread + median accuracy** into `rankVenues`, and
-gate the short-circuit on it: proximity is decisive only when the fix is
-tight enough for proximity to *mean* something. On a smeared indoor sit it
-does not fire, and the score — which already knows Green Shop (−2.63) and
-Benita Bakery (−1.76) are implausible for an 80-minute midday dwell — gets
-to run at all.
-
-This does not name Urban Social. It stops the pub *winning by default*.
+Was: gate the near-field short-circuit on the stay's own GPS quality (fix
+spread + median accuracy). V0 measured that it would fix zero corpus stays
+— see "What V0 measured" above, including the #345 correction. The live
+near-field work is #345 (metric first, then the rule). Full spec in git
+history if ever needed.
 
 ### V2 — venues as extents
 

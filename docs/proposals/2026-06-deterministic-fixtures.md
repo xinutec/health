@@ -3,7 +3,6 @@ created: 2026-06-04
 updated: 2026-06-04
 status: design (revised — adapter pattern for unbounded sources)
 references:
-  - 2026-05-scored-classification.md
   - 2026-06-presence-continuity.md
   - decoder-roadmap.md
 ---
