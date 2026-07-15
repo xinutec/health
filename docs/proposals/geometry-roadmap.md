@@ -121,58 +121,51 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   cut-through evidence (#357) — falsify with the passage-snap discipline
   (must not touch forest/park walks or tie lines to centerlines).
 
-## #357 — the "walking through houses" class: measured root cause + design
+## #357 — the "walking through houses" class: root cause, twice corrected
 
-**Ground truth settled it (2026-07-15, user-confirmed): the walk follows
-the streets; no alley exists.** And the measurements then falsified the
-first design (landuse cut-through evidence): the drawn matched line is
-never more than **12 m from a mapped walkable way** (Barn Rise / The
-Crossways) — an off-network-chord detector would never fire. What is
-actually wrong, per the referee and the user's eye comparing snap ON/OFF:
+**Ground truth settled the WHAT (2026-07-15, user-confirmed): the walk
+follows the streets; no alley exists.** The WHY took three measurement
+rounds, each falsifying the previous design — all three recorded here so
+none is rebuilt:
 
-- Raw GPS runs 10–30 m wide of the walked street with slow systematic
-  wobble (urban multipath), overlapping unmapped-house `landuse` grey.
-- The matcher **half-corrects**: some vertices projected onto the way,
-  others kept raw, producing on-way/off-way zigzag that is WORSE than raw
-  (morning strand offWalkP90 REGRESSED 10→12 m) while still overlapping
-  the houses. Per-fix distance-gated snapping structurally cannot fix a
-  *systematic* offset: every individual fix is ~20 m off, so under the
-  per-fix gate the way never wins — even though twenty consecutive fixes
-  all agreeing "20 m west of Barn Rise at Barn Rise's bearing" is
-  overwhelming evidence that the street is where the user walked.
-
-**The design: corridor commitment — sequence-level evidence, not
-per-fix.**
-
-1. **Parallelism detector.** For a run of consecutive fixes: one
-   candidate way, sustained bearing agreement (track heading ≈ way
-   bearing), lateral offset consistent (low variance, sign-stable), run
-   length ≥ ~80 m. That conjunction is the "GPS is clearly wrong in a
-   knowable way" signature — the offset is bias, not information.
-2. **Commit the corridor.** Where the detector fires, the drawn line IS
-   the way's geometry between entry and exit projections — full
-   commitment, no half-snap. Where it does not fire (open ground, plazas,
-   parks, genuine off-street walking, ambiguous parallel streets), the
-   line stays with the fixes — untouched, exactly as today. This is the
-   "don't ruin good fixes" guarantee stated structurally: the lever only
-   engages on sustained parallel agreement, which good honest off-street
-   fixes never exhibit.
-3. **Personal corridor prior (the #84 idea, walks edition).** The anchor
-   walks are the user's daily station↔home route: dozens of past
-   traversals exist. Pool them (the rail snapper already pools per-route
-   fixes in `refresh-rail-routes` — same shape): the median lateral
-   offset of many days cancels per-day drift and both strengthens and
-   sanity-checks corridor commitment. Repeated-route walks should be the
-   most accurate on the map, not the wobbliest.
-4. **Heading capture (#322)** strengthens the parallelism evidence when
-   it lands; not a prerequisite.
-
-Referee gates: offWalkP90 must not regress on committed stretches
-(committed-line-vs-fix distance is *expected* ~offset, so judge by
-way-adherence + stall + length, the #350 lesson); park/forest and
-non-parallel walks byte-identical; floors + journeys held. The landuse
-evidence idea stays REFUTED for this class (recorded here as a landmine:
-it detects off-network chords, and this class is never off-network).
+1. **Landuse cut-through evidence: REFUTED.** The drawn line is never
+   more than ~12 m from a mapped walkable way on this class — an
+   off-network-chord detector can never fire.
+2. **"Systematic 10–30 m GPS offset + per-fix half-snap": REFUTED at leg
+   level (2026-07-15).** A per-point dump of the confirmed acceptance
+   legs showed the RAW line already 1–8 m from the walked ways for
+   almost every vertex (one ~28 m stray tail fix), and the pure matched
+   line riding the correct route at 0.0 m off-network. There was no
+   sustained offset to commit away. A synthetic probe closed the theory:
+   `reconstructWalk` already absorbs a UNIFORM lateral offset up to
+   ~25 m (a uniform translation is in the smoothness prior's null space
+   and the way attraction wins it back; it collapses only past
+   `networkRadiusM`, where the way is invisible). The corridor-commitment
+   / lateral-bias-variable design this section previously proposed is
+   therefore parked: the evidence it needs (a sustained sign-stable
+   offset with the way out of attraction range) has not been observed on
+   the corpus. Revive it only against a measured leg of that shape.
+   The personal corridor prior (#84) stays open on its own merits.
+3. **The actual mechanisms, measured and fixed (2026-07-15):**
+   - **`refineMatchedPath` was the degrader (#359).** The de-boxing
+     refinement carried a whole-line 12 m deviation budget, so on
+     straight stretches it pulled the vetted on-network matched line up
+     to ~12 m off-street toward ordinary GPS wobble — the half-snap
+     zigzag photographed by the user (that leg's offWalkP90 REGRESSED
+     10→12 m vs raw). Fixed: the full budget now attaches only to
+     STAIRCASE-ARTIFACT corners (two sharp corners ≤ 25 m apart — the
+     graph-snap zigzag signature); everywhere else, including isolated
+     REAL street corners (cutting one 8–12 m puts the line through the
+     corner building), the budget is a tight 2.5 m. Measured on the
+     confirmed day: all six walks improved, the regressed leg flipped to
+     offWalkP90 8 m (below its raw 10 m).
+   - **`building=canopy` counted as a house (#360).** The evening leg's
+     entire "building crossing" (37 m) was one station-forecourt canopy
+     — a roof over open walkable ground, genuinely walked under.
+     Non-enclosing `building=roof`/`canopy` footprints are now excluded
+     from `queryBuildingsNear`, so they no longer repel drawers, trigger
+     the corrector, or score as crossings (fixtures pick this up on
+     re-capture).
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in
@@ -276,6 +269,14 @@ phantom dissolutions, which the shipped conditional swap already captures).
 Retirement stays earned-not-given: the flip re-runs when G3 evidence (true
 heading) or better factors close the ordinary-leg gap. The `walkDraw` arm +
 honest referee are the standing harness for that re-run.
+
+**Re-run 2026-07-15 (160 corpus walks): unchanged verdict, still
+deferred.** Corridor-stall mean 32→38 m (better >15 m on 20, worse on
+48); route-correctness better >5 % on 6, worse on 10; offWalkP90 worse
+>3 m on 39. The loss profile is the same routing gap, not a factor gap —
+recon wanders where the matcher routes. Priority therefore shifted to
+fixing the shipping matcher path's own degrader (#359, below) rather
+than adding recon factors that don't address routing.
 
 ## Phase G3 — PDR / true heading (#322, #297)
 
