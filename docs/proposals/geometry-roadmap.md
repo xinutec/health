@@ -121,7 +121,7 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   cut-through evidence (#357) — falsify with the passage-snap discipline
   (must not touch forest/park walks or tie lines to centerlines).
 
-## #357 — the "walking through houses" class: root cause, twice corrected
+## #357 — the "walking through houses" class: root cause, corrected in five mechanisms
 
 **Ground truth settled the WHAT (2026-07-15, user-confirmed): the walk
 follows the streets; no alley exists.** The WHY took three measurement
@@ -166,6 +166,38 @@ none is rebuilt:
      from `queryBuildingsNear`, so they no longer repel drawers, trigger
      the corrector, or score as crossings (fixtures pick this up on
      re-capture).
+   - **Refine dropped route vertices between fixes (#361).** The
+     refinement resamples the matched line one-vertex-per-FIX, so a
+     street-junction corner with no fix within ~25 m of it simply
+     vanished and the chord cut through the block. Per-vertex clamps are
+     structurally blind to this (every vertex IS on-route; the EDGE
+     shortcuts), and `offWalkP90` hides a single ~25 m cut below the
+     percentile on a long leg — detection has to be max-deviation /
+     route-corner fidelity. Fixed: after the clamp, matched vertices
+     whose chord deviation exceeds their local budget are spliced back
+     in, gap endpoints snapped to the route (seam kinks), and the
+     reinstated detour bounded (unbounded splicing resurrected a matcher
+     route spur: stall 11→300 with a 103 m building crossing).
+   - **The staircase-artifact signature matched real geometry (follow-up
+     to #359/#361).** A pedestrian-crossing double-back is exactly two
+     clustered sharp corners — the old two-corner artifact test gave
+     refine a 12 m licence there and it cut a 9.8 m diagonal. An
+     artifact now requires ≥ 3 clustered sharp corners; a real crossing
+     double-back keeps its shape.
+   - **The splice detour bound rejected acute junctions (follow-up to
+     #361).** A genuine acute double-back at a junction needs ~1.7× the
+     chord, over the 1.6× ratio bound, so the restored-corner splice
+     refused the exact corner class the user reported. The bound is now
+     ratio AND absolute: a gap's insertions are rejected only when the
+     detour exceeds 1.6× the chord AND adds > 50 m — spur-class
+     resurrections add hundreds of metres and still trip it.
+
+   Corpus verdict for the two follow-ups (2026-07-15, blessed): improved
+   6 legs (one stall 184→37), regressed 2 — both regressions are matcher
+   route spurs (on-street out-and-backs, offPath 0) that refine's old
+   two-corner licence had been trimming by accident. The spur defect
+   belongs to the matcher's routing (#330 class), filed as #362; hiding
+   it in the display stage cut real corners.
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in

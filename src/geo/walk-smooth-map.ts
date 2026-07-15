@@ -309,12 +309,17 @@ export const REFINE_MATCHED_PROFILE: MapSmoothProfile = {
  *  budget reaches; the budget tapers linearly to the tight budget at this
  *  distance. */
 const REFINE_CORNER_REACH_M = 30;
-/** Two sharp corners of the matched line within this of each other are the
- *  STAIRCASE-ARTIFACT signature (a graph snap zigzagging between parallel
+/** Sharp corners of the matched line clustered within this of each other are
+ *  the STAIRCASE-ARTIFACT signature (a graph snap zigzagging between parallel
  *  edges) — only there does the refinement earn its full budget. An isolated
  *  sharp corner is real street geometry: the walked pavement goes AROUND it,
- *  so "rounding" it 8–12 m puts the line through the corner building. */
+ *  so "rounding" it 8–12 m puts the line through the corner building. A
+ *  corner needs ≥ {@link REFINE_STAIRCASE_MIN_NEIGHBORS} OTHER sharp corners
+ *  in reach: a real pedestrian-crossing double-back is exactly TWO clustered
+ *  sharp corners (measured false-matching the 2-corner signature and cutting
+ *  ~10 m across the corner block); a genuine staircase has many. */
 const REFINE_STAIRCASE_NEIGHBOR_M = 25;
+const REFINE_STAIRCASE_MIN_NEIGHBORS = 2;
 /** Deviation budget (m) everywhere outside a staircase artifact — enough to
  *  soften vertex hairlines, far too little to split the difference toward GPS
  *  wobble. The 2026-07-14 morning walk measured why this must be tight: the
@@ -360,8 +365,10 @@ export function refineMatchedPath(
 	for (let i = 1; i < matchedPath.length - 1; i++) {
 		if (countSharpTurns(matchedPath.slice(i - 1, i + 2)) > 0) corners.push(matchedPath[i]);
 	}
-	const artifactCorners = corners.filter((c, i) =>
-		corners.some((o, j) => j !== i && distM(c, o) <= REFINE_STAIRCASE_NEIGHBOR_M),
+	const artifactCorners = corners.filter(
+		(c, i) =>
+			corners.filter((o, j) => j !== i && distM(c, o) <= REFINE_STAIRCASE_NEIGHBOR_M).length >=
+			REFINE_STAIRCASE_MIN_NEIGHBORS,
 	);
 	const budgetAt = (p: { lat: number; lon: number }): number => {
 		let dMin = Number.POSITIVE_INFINITY;
@@ -443,13 +450,17 @@ export function refineMatchedPath(
 	// entered and left from 2.5 m beside the line would otherwise kink at the
 	// seams (measured: +3 sharp turns on the isolated-corner scene).
 	//
-	// BOUNDED DETOUR ONLY: a restored right-angle corner lengthens the chord by
-	// at most ~√2, so a gap whose insertions would grow it beyond
-	// SPLICE_MAX_LEN_RATIO is NOT a skipped corner — it is a matcher route spur
-	// or a mis-projection on a self-overlapping route, exactly the artifacts the
+	// BOUNDED DETOUR ONLY: a gap whose insertions would grow the chord past
+	// BOTH bounds is NOT a skipped corner — it is a matcher route spur or a
+	// mis-projection on a self-overlapping route, exactly the artifacts the
 	// trim pass removes; reinstating one measured stall 11→300 m with 103 m of
 	// building crossing on a single leg. Those gaps keep the plain chord.
+	// Two bounds because real corners fail a pure ratio: a right angle fits
+	// under √2, but an ACUTE double-back junction (down one street, back along
+	// the next) measured ~1.68× — the absolute allowance admits it (a real
+	// corner adds tens of metres; the spur class adds hundreds).
 	const SPLICE_MAX_LEN_RATIO = 1.6;
+	const SPLICE_MAX_EXTRA_M = 50;
 	const inserts: number[][] = clamped.map(() => []);
 	const snapToRoute = new Set<number>();
 	for (let i = 0; i + 1 < clamped.length; i++) {
@@ -468,7 +479,7 @@ export function refineMatchedPath(
 		let pathLen = 0;
 		for (let k = 1; k < chain.length; k++) pathLen += distM(chain[k - 1], chain[k]);
 		const chord = Math.max(1, distM(clamped[i], clamped[i + 1]));
-		if (pathLen > chord * SPLICE_MAX_LEN_RATIO) continue;
+		if (pathLen > chord * SPLICE_MAX_LEN_RATIO && pathLen - chord > SPLICE_MAX_EXTRA_M) continue;
 		inserts[i] = gap;
 		snapToRoute.add(i);
 		snapToRoute.add(i + 1);

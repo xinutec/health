@@ -331,6 +331,62 @@ describe("refineMatchedPath", () => {
 		for (const p of r) expect(distToPolyline(p, matched)).toBeLessThanOrEqual(3);
 	});
 
+	it("preserves an ACUTE double-back junction with no fix near it (#361 follow-up)", () => {
+		// The junction-cut variant the 1.6× ratio bound wrongly rejected: the real
+		// route reaches a junction and doubles back at ~120°, so the restored path
+		// is ~1.7× the chord. A right angle fits under √2; an acute real corner
+		// must fit too — only the unbounded spur class (hundreds of metres) stays
+		// rejected.
+		const dLonM = (m: number) => m / (111_320 * Math.cos((LAT * Math.PI) / 180));
+		// Route: south-west down to a junction, then back north-east-east: a
+		// ~35° hairpin-ish real corner (street A into street B).
+		const jn = { lat: LAT, lon: -0.28 };
+		const matched: Array<{ lat: number; lon: number }> = [];
+		for (let i = 3; i >= 1; i--) matched.push({ lat: LAT + dLat(40 * i), lon: -0.28 - dLonM(20 * i) });
+		matched.push(jn);
+		for (let i = 1; i <= 3; i++) matched.push({ lat: LAT + dLat(15 * i), lon: -0.28 + dLonM(40 * i) });
+		// Fixes on both arms, none within ~35 m of the junction.
+		const fixes: WalkFix[] = [];
+		for (let i = 3; i >= 1; i--)
+			fixes.push({ lat: LAT + dLat(40 * i + 2), lon: -0.28 - dLonM(20 * i), ts: 0, accuracyM: 10 });
+		for (let i = 1; i <= 3; i++)
+			fixes.push({ lat: LAT + dLat(15 * i + 2), lon: -0.28 + dLonM(40 * i), ts: 0, accuracyM: 10 });
+		fixes.forEach((f, i) => {
+			f.ts = 1000 + i * 20;
+		});
+		const refined = refineMatchedPath(fixes, matched, undefined, 12);
+		expect(refined).not.toBeNull();
+		const r = refined as Array<{ lat: number; lon: number; ts: number }>;
+		expect(distToPolyline(jn, r)).toBeLessThanOrEqual(3);
+	});
+
+	it("a real crossing double-back (2 clustered sharp corners) is NOT a staircase artifact (#361 follow-up)", () => {
+		// A pedestrian-crossing turnback puts exactly TWO sharp corners within a
+		// few metres — the 2-corner artifact signature false-matched it and gave
+		// the refinement a 12 m licence to cut across the corner block. A genuine
+		// graph staircase has MANY clustered corners; two are real geometry.
+		const dLonM = (m: number) => m / (111_320 * Math.cos((LAT * Math.PI) / 180));
+		// Route: east along a road, 12 m north across a crossing, then east again
+		// — two sharp corners 12 m apart.
+		const matched: Array<{ lat: number; lon: number }> = [];
+		for (let i = 0; i <= 2; i++) matched.push({ lat: LAT, lon: -0.28 + dLonM(40 * i) });
+		matched.push({ lat: LAT + dLat(12), lon: -0.28 + dLonM(80) });
+		for (let i = 3; i <= 5; i++) matched.push({ lat: LAT + dLat(12), lon: -0.28 + dLonM(40 * i) });
+		expect(countSharpTurns(matched)).toBe(2);
+		// Fixes wobble ~7 m and cut the crossing diagonally.
+		const fixes: WalkFix[] = [];
+		for (let i = 0; i <= 4; i++) fixes.push({ lat: LAT + dLat(7), lon: -0.28 + dLonM(18 * i), ts: 0, accuracyM: 10 });
+		for (let i = 6; i <= 10; i++) fixes.push({ lat: LAT + dLat(5), lon: -0.28 + dLonM(18 * i), ts: 0, accuracyM: 10 });
+		fixes.forEach((f, i) => {
+			f.ts = 1000 + i * 20;
+		});
+		const refined = refineMatchedPath(fixes, matched, undefined, 12);
+		expect(refined).not.toBeNull();
+		const r = refined as Array<{ lat: number; lon: number; ts: number }>;
+		// Tight budget everywhere: no vertex drifts beyond ~3 m of the route.
+		for (const p of r) expect(distToPolyline(p, matched)).toBeLessThanOrEqual(3);
+	});
+
 	it("preserves a route corner that has NO fix near it (#361)", () => {
 		// The junction-cut class: GPS wobble leaves no fix anywhere near a street
 		// junction the route turns through, so a one-vertex-per-fix resample drops
