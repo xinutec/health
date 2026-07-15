@@ -330,6 +330,38 @@ describe("refineMatchedPath", () => {
 		// corner building; the walked pavement goes around it.
 		for (const p of r) expect(distToPolyline(p, matched)).toBeLessThanOrEqual(3);
 	});
+
+	it("preserves a route corner that has NO fix near it (#361)", () => {
+		// The junction-cut class: GPS wobble leaves no fix anywhere near a street
+		// junction the route turns through, so a one-vertex-per-fix resample drops
+		// the junction vertex entirely and the chord between the neighbouring
+		// fixes cuts ~15 m through the block. Per-vertex clamping cannot catch
+		// this — every VERTEX is on-route; the EDGE shortcuts. The skipped route
+		// vertex must be spliced back into the drawn line.
+		const dLonM = (m: number) => m / (111_320 * Math.cos((LAT * Math.PI) / 180));
+		const cornerLon = -0.28 + dLonM(120);
+		const matched: Array<{ lat: number; lon: number }> = [];
+		for (let i = 0; i <= 3; i++) matched.push({ lat: LAT, lon: -0.28 + dLonM(40 * i) });
+		for (let i = 1; i <= 3; i++) matched.push({ lat: LAT + dLat(40 * i), lon: cornerLon });
+		// Fixes hug both legs at ±3 m but stop 25 m short of the corner on each
+		// side — nothing observes the junction itself.
+		const fixes: WalkFix[] = [];
+		for (let i = 0; i <= 7; i++) fixes.push({ lat: LAT + dLat(3), lon: -0.28 + dLonM(13 * i), ts: 0, accuracyM: 10 });
+		for (let i = 2; i <= 9; i++)
+			fixes.push({ lat: LAT + dLat(13 * i), lon: cornerLon - dLonM(3), ts: 0, accuracyM: 10 });
+		fixes.forEach((f, i) => {
+			f.ts = 1000 + i * 15;
+		});
+		const refined = refineMatchedPath(fixes, matched, undefined, 12);
+		expect(refined).not.toBeNull();
+		const r = refined as Array<{ lat: number; lon: number; ts: number }>;
+		// The corner apex must be ON the drawn line: the matched corner vertex is
+		// within ~3 m of the refined polyline, so no edge cuts the block.
+		const corner = { lat: LAT, lon: cornerLon };
+		expect(distToPolyline(corner, r)).toBeLessThanOrEqual(3);
+		// Timestamps stay monotonic through the spliced vertex.
+		for (let i = 1; i < r.length; i++) expect(r[i].ts).toBeGreaterThanOrEqual(r[i - 1].ts);
+	});
 });
 
 describe("reconstructWalk hard building constraint (#353)", () => {

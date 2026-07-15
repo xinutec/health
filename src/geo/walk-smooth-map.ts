@@ -375,7 +375,7 @@ export function refineMatchedPath(
 	// the budget radius, so a corner-cut survives (near-corner, full budget)
 	// while a straight stretch stays on the line and a block-crossing excursion
 	// (the raw-GPS noise the off-walkable scorer punishes) is capped everywhere.
-	return smoothed.map((p) => {
+	const clamped = smoothed.map((p) => {
 		const near = nearestWalkablePoint(p, corridor);
 		const budget = budgetAt(p);
 		if (!near || near.distM <= budget) return p;
@@ -386,6 +386,110 @@ export function refineMatchedPath(
 			ts: p.ts,
 		};
 	});
+
+	// Splice back skipped route vertices (#361). The smoother resamples the
+	// matched line one-vertex-per-FIX, so a route corner with no fix near it (a
+	// street junction the GPS wobble skipped past) vanishes from the output and
+	// the chord between the neighbouring vertices cuts the block — a defect the
+	// per-vertex clamp above is structurally blind to (every VERTEX is on-route;
+	// the EDGE shortcuts). Re-insert every matched vertex that lies between two
+	// consecutive output vertices (by arclength along the matched line) and
+	// deviates from their chord by more than ITS OWN local budget: a real
+	// junction corner (tight budget) is always restored; a staircase-artifact
+	// zigzag vertex (full budget) stays cut — the de-boxing mandate.
+	const toXY = (p: { lat: number; lon: number }): [number, number] => [
+		(p.lon - matchedPath[0].lon) * 111_320 * cl,
+		(p.lat - matchedPath[0].lat) * 111_320,
+	];
+	const cum: number[] = [0];
+	for (let i = 1; i < matchedPath.length; i++) cum.push(cum[i - 1] + distM(matchedPath[i - 1], matchedPath[i]));
+	// Arclength of the nearest point on the matched line to `p`.
+	const arcOf = (p: { lat: number; lon: number }): number => {
+		const [px, py] = toXY(p);
+		let bestD = Number.POSITIVE_INFINITY;
+		let bestS = 0;
+		for (let i = 1; i < matchedPath.length; i++) {
+			const [ax, ay] = toXY(matchedPath[i - 1]);
+			const [bx, by] = toXY(matchedPath[i]);
+			const dx = bx - ax;
+			const dy = by - ay;
+			const len2 = dx * dx + dy * dy || 1e-9;
+			const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+			const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+			if (d < bestD) {
+				bestD = d;
+				bestS = cum[i - 1] + Math.sqrt(len2) * t;
+			}
+		}
+		return bestS;
+	};
+	const chordDistM = (
+		v: { lat: number; lon: number },
+		a: { lat: number; lon: number },
+		b: { lat: number; lon: number },
+	): number => {
+		const [px, py] = toXY(v);
+		const [ax, ay] = toXY(a);
+		const [bx, by] = toXY(b);
+		const dx = bx - ax;
+		const dy = by - ay;
+		const len2 = dx * dx + dy * dy || 1e-9;
+		const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+		return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+	};
+	const arcs = clamped.map(arcOf);
+	// First pass: which route vertices does each gap owe? A gap's endpoints get
+	// SNAPPED onto the route when it receives an insertion — a restored corner
+	// entered and left from 2.5 m beside the line would otherwise kink at the
+	// seams (measured: +3 sharp turns on the isolated-corner scene).
+	//
+	// BOUNDED DETOUR ONLY: a restored right-angle corner lengthens the chord by
+	// at most ~√2, so a gap whose insertions would grow it beyond
+	// SPLICE_MAX_LEN_RATIO is NOT a skipped corner — it is a matcher route spur
+	// or a mis-projection on a self-overlapping route, exactly the artifacts the
+	// trim pass removes; reinstating one measured stall 11→300 m with 103 m of
+	// building crossing on a single leg. Those gaps keep the plain chord.
+	const SPLICE_MAX_LEN_RATIO = 1.6;
+	const inserts: number[][] = clamped.map(() => []);
+	const snapToRoute = new Set<number>();
+	for (let i = 0; i + 1 < clamped.length; i++) {
+		const sA = arcs[i];
+		const sB = arcs[i + 1];
+		// Forward progress only — never splice across a backtracking pair.
+		if (sB <= sA) continue;
+		const gap: number[] = [];
+		for (let k = 0; k < matchedPath.length; k++) {
+			if (cum[k] <= sA || cum[k] >= sB) continue;
+			if (chordDistM(matchedPath[k], clamped[i], clamped[i + 1]) <= budgetAt(matchedPath[k])) continue;
+			gap.push(k);
+		}
+		if (gap.length === 0) continue;
+		const chain = [clamped[i], ...gap.map((k) => matchedPath[k]), clamped[i + 1]];
+		let pathLen = 0;
+		for (let k = 1; k < chain.length; k++) pathLen += distM(chain[k - 1], chain[k]);
+		const chord = Math.max(1, distM(clamped[i], clamped[i + 1]));
+		if (pathLen > chord * SPLICE_MAX_LEN_RATIO) continue;
+		inserts[i] = gap;
+		snapToRoute.add(i);
+		snapToRoute.add(i + 1);
+	}
+	if (snapToRoute.size === 0) return clamped;
+	const positioned = clamped.map((p, i) => {
+		if (!snapToRoute.has(i)) return p;
+		const near = nearestWalkablePoint(p, corridor);
+		return near ? { lat: near.lat, lon: near.lon, ts: p.ts } : p;
+	});
+	const out: SmoothedPoint[] = [positioned[0]];
+	for (let i = 0; i + 1 < positioned.length; i++) {
+		const a = positioned[i];
+		const b = positioned[i + 1];
+		for (const k of inserts[i]) {
+			const frac = (cum[k] - arcs[i]) / (arcs[i + 1] - arcs[i]);
+			out.push({ lat: matchedPath[k].lat, lon: matchedPath[k].lon, ts: Math.round(a.ts + (b.ts - a.ts) * frac) });
+		}
+		out.push(b);
+	}
+	return out;
 }
 
 /**
