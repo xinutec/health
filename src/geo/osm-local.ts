@@ -1024,11 +1024,20 @@ export type BuildingFootprint = Array<{ lat: number; lon: number }>;
  *  matter right next to the walk. */
 const BUILDING_QUERY_MARGIN_M = 100;
 
+/** OSM `building=` values that are a roof over open, walkable ground — a
+ *  station-forecourt canopy, a fuel-station roof — not an enclosed structure
+ *  (OSM wiki, Key:building "roof"). Walking under one is ordinary; treating
+ *  the footprint as impassable repels drawn lines from a path genuinely
+ *  walked and scores the walk as "crossing a building" (measured: the
+ *  2026-07-14 evening leg's whole crossing length was one station canopy). */
+const NON_ENCLOSING_BUILDING_SUBTYPES = ["roof", "canopy"];
+
 /**
  * Building footprint rings within `radiusM` of a point — the impassable-surface
  * layer for the pedestrian smoother. Buildings are closed OSM ways, stored as
  * LINESTRING outlines in `osm_lines` under `feature_type = 'building'`. A ring
- * with fewer than 3 points isn't a polygon and is dropped.
+ * with fewer than 3 points isn't a polygon and is dropped, as are non-enclosing
+ * roof-only structures (see {@link NON_ENCLOSING_BUILDING_SUBTYPES}).
  */
 export async function queryBuildingsNear(lat: number, lon: number, radiusM: number): Promise<BuildingFootprint[]> {
 	const dLat = (radiusM + BUILDING_QUERY_MARGIN_M) / 111_320;
@@ -1041,6 +1050,7 @@ export async function queryBuildingsNear(lat: number, lon: number, radiusM: numb
 			SELECT ST_AsText(geom) AS wkt
 			FROM osm_lines
 			WHERE feature_type = 'building'
+			  AND (subtype IS NULL OR subtype NOT IN (${sql.join(NON_ENCLOSING_BUILDING_SUBTYPES)}))
 			  AND MBRIntersects(geom, ST_GeomFromText(${poly}, 4326))
 			LIMIT 20000
 		`.execute(db())
