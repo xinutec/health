@@ -295,6 +295,41 @@ describe("refineMatchedPath", () => {
 	it("returns null when the matched line is too thin to refine", () => {
 		expect(refineMatchedPath([{ lat: LAT, lon: -0.28, ts: 0 }], [{ lat: LAT, lon: -0.28 }])).toBeNull();
 	});
+
+	it("keeps a real street route on the matched line: no drift on straights, no cutting an isolated corner (#359)", () => {
+		// The 2026-07-14 morning-walk class: the matched line rides the correct
+		// streets exactly; the raw fixes sit ~8 m off with ordinary wobble. The
+		// refinement's licence is the STAIRCASE ARTIFACT (dense alternating graph
+		// corners, previous test) — a real, isolated street corner and the straights
+		// around it must stay on the line. The whole-line 12 m budget measurably
+		// redrew this class up to ~12 m off-street toward the wobble (half-snap).
+		const dLonM = (m: number) => m / (111_320 * Math.cos((LAT * Math.PI) / 180));
+		// L-shaped matched line: ~120 m east, one real 90° corner, ~120 m north.
+		const cornerLon = -0.28 + dLonM(120);
+		const matched: Array<{ lat: number; lon: number }> = [];
+		for (let i = 0; i <= 3; i++) matched.push({ lat: LAT, lon: -0.28 + dLonM(40 * i) });
+		for (let i = 1; i <= 3; i++) matched.push({ lat: LAT + dLat(40 * i), lon: cornerLon });
+		expect(countSharpTurns(matched)).toBe(1);
+		// Fixes: 8 m north of the east leg, one corner-cutting fix inside the
+		// corner, then 8 m west of the north leg.
+		const fixes: WalkFix[] = [];
+		for (let i = 0; i <= 8; i++) fixes.push({ lat: LAT + dLat(8), lon: -0.28 + dLonM(13 * i), ts: 0, accuracyM: 10 });
+		fixes.push({ lat: LAT + dLat(14), lon: cornerLon - dLonM(14), ts: 0, accuracyM: 10 });
+		for (let i = 1; i <= 8; i++)
+			fixes.push({ lat: LAT + dLat(13 * i), lon: cornerLon - dLonM(8), ts: 0, accuracyM: 10 });
+		fixes.forEach((f, i) => {
+			f.ts = 1000 + i * 15;
+		});
+		const refined = refineMatchedPath(fixes, matched, undefined, 12);
+		expect(refined).not.toBeNull();
+		const r = refined as Array<{ lat: number; lon: number; ts: number }>;
+		// No new corners invented…
+		expect(countSharpTurns(r)).toBeLessThanOrEqual(countSharpTurns(matched));
+		// …and EVERY vertex stays on the matched route — straights and the real
+		// corner alike. Cutting the corner 8–12 m would put the line through the
+		// corner building; the walked pavement goes around it.
+		for (const p of r) expect(distToPolyline(p, matched)).toBeLessThanOrEqual(3);
+	});
 });
 
 describe("reconstructWalk hard building constraint (#353)", () => {

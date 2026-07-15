@@ -305,6 +305,24 @@ export const REFINE_MATCHED_PROFILE: MapSmoothProfile = {
 	iterations: 6,
 };
 
+/** How far (m) from a staircase-artifact corner the full de-boxing deviation
+ *  budget reaches; the budget tapers linearly to the tight budget at this
+ *  distance. */
+const REFINE_CORNER_REACH_M = 30;
+/** Two sharp corners of the matched line within this of each other are the
+ *  STAIRCASE-ARTIFACT signature (a graph snap zigzagging between parallel
+ *  edges) — only there does the refinement earn its full budget. An isolated
+ *  sharp corner is real street geometry: the walked pavement goes AROUND it,
+ *  so "rounding" it 8–12 m puts the line through the corner building. */
+const REFINE_STAIRCASE_NEIGHBOR_M = 25;
+/** Deviation budget (m) everywhere outside a staircase artifact — enough to
+ *  soften vertex hairlines, far too little to split the difference toward GPS
+ *  wobble. The 2026-07-14 morning walk measured why this must be tight: the
+ *  matched line rode the correct streets at 0 m off-network and the refinement's
+ *  whole-line 12 m licence redrew the mid-leg up to ~12 m off-street toward
+ *  ordinary GPS wobble — a half-snap zigzag worse than the raw draw (#359). */
+const REFINE_STRAIGHT_DEVIATION_M = 2.5;
+
 /**
  * Refine an already map-matched walk line: round its corners toward where the
  * raw GPS actually was, using the matched path itself as the on-route corridor.
@@ -327,16 +345,41 @@ export function refineMatchedPath(
 	const smoothed = smoothWalkMap(fixes, corridor, profile);
 	if (!smoothed) return null;
 
+	// The refinement's mandate is the STAIRCASE ARTIFACT — a graph snap
+	// zigzagging boxy corners between parallel edges, which the fix evidence
+	// consistently cuts through. Its licence to leave the matched line is
+	// therefore LOCAL: the full maxDeviationM budget within reach of a CLUSTERED
+	// sharp corner (one with another sharp corner ≤ REFINE_STAIRCASE_NEIGHBOR_M
+	// away), tapering to a tight budget everywhere else. An isolated corner is
+	// real street geometry and a whole-line budget measurably redraws the
+	// straights toward ordinary GPS wobble (see REFINE_STRAIGHT_DEVIATION_M).
+	const cl = Math.cos((matchedPath[0].lat * Math.PI) / 180);
+	const distM = (a: { lat: number; lon: number }, b: { lat: number; lon: number }): number =>
+		Math.hypot((a.lat - b.lat) * 111_320, (a.lon - b.lon) * 111_320 * cl);
+	const corners: Array<{ lat: number; lon: number }> = [];
+	for (let i = 1; i < matchedPath.length - 1; i++) {
+		if (countSharpTurns(matchedPath.slice(i - 1, i + 2)) > 0) corners.push(matchedPath[i]);
+	}
+	const artifactCorners = corners.filter((c, i) =>
+		corners.some((o, j) => j !== i && distM(c, o) <= REFINE_STAIRCASE_NEIGHBOR_M),
+	);
+	const budgetAt = (p: { lat: number; lon: number }): number => {
+		let dMin = Number.POSITIVE_INFINITY;
+		for (const c of artifactCorners) dMin = Math.min(dMin, distM(p, c));
+		const t = Math.min(1, dMin / REFINE_CORNER_REACH_M);
+		return maxDeviationM + (REFINE_STRAIGHT_DEVIATION_M - maxDeviationM) * t;
+	};
+
 	// Faithfulness clamp — the vetted matched line is on the pavement and
-	// route-faithful; the refinement's ONLY licence is to round its boxy corners
-	// toward the GPS, NOT to wander off it. Any vertex that strays past
-	// maxDeviationM is pulled radially back to the clamp radius, so a corner-cut
-	// survives (small deviation) while a block-crossing excursion (the raw-GPS
-	// noise the off-walkable scorer punishes) is capped at the matched corridor.
+	// route-faithful. Any vertex past its local budget is pulled radially back to
+	// the budget radius, so a corner-cut survives (near-corner, full budget)
+	// while a straight stretch stays on the line and a block-crossing excursion
+	// (the raw-GPS noise the off-walkable scorer punishes) is capped everywhere.
 	return smoothed.map((p) => {
 		const near = nearestWalkablePoint(p, corridor);
-		if (!near || near.distM <= maxDeviationM) return p;
-		const f = maxDeviationM / near.distM;
+		const budget = budgetAt(p);
+		if (!near || near.distM <= budget) return p;
+		const f = budget / near.distM;
 		return {
 			lat: near.lat + (p.lat - near.lat) * f,
 			lon: near.lon + (p.lon - near.lon) * f,
