@@ -461,6 +461,33 @@ stays render as a dot, so nothing false is drawn, but the ride starts
 late until a boarding-side anchor learns to claim a vehicle tail out of
 a stay (the boarding twin of `anchorTrainAlightToWalkedStation`).
 
+**The symmetric invariant + its repair (#356).** The invariant above
+only catches ride fixes stranded in a *walking* leg. The mirror — the
+user's walk stranded inside a *train* leg — draws as a "train" at
+walking pace down a street (raw geometry) or silently omits the walk
+(snapped geometry, which draws the inferred corridor and nothing else).
+`worldline-feasibility` now also asserts on train legs: a run of fixes
+at pedestrian pace (≤9 km/h per step) sustaining ≥90 s and ≥120 m NET
+**while the wearer steps at walking cadence (≥60 steps/min)** is not
+riding, whatever produced it. All four signals must agree: a seated
+signal-crawl has no cadence, a platform dwell has no net distance, a
+brief slow patch has no duration; without step data the invariant does
+not assert. First measured sweep found six such legs on 29 days — three
+tails (the stolen arrival walk), one head behind a reacquire blip, two
+mid-leg (hidden interchanges / over-claimed rides).
+
+The repair, `shedVehiclePedestrianEdges` (`stay-split.ts`, the mirror
+of `reassignVehicleArrivalWalk`): when the qualifying run sits at a
+train leg's *edge* and an adjacent **walking** segment exists to
+receive it, move the boundary — the ride keeps the fix it arrived on /
+departs from, the walk is rebuilt from its own extended fixes and
+re-enriched. Deliberately narrow: it never invents a segment (no
+adjacent walk → the invariant keeps counting) and never consumes the
+ride (the run must terminate at a vehicle-paced step and leave ≥2 min
+of leg). Mid-leg runs and edge runs behind a reacquire blip stay as
+counted ceiling debt — claiming those belongs to the boarding-side
+anchor work.
+
 **The test is cache-independent and needs no station coordinate** — it
 reads only `speed_kmh`, which is on every fix:
 

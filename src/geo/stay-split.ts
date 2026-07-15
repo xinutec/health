@@ -40,6 +40,13 @@
  * "don't know" answer is to leave the data's ambiguity intact.
  */
 
+import {
+	meanCadenceSpm,
+	PEDESTRIAN_MIN_CADENCE_SPM,
+	PEDESTRIAN_MIN_RUN_NET_M,
+	PEDESTRIAN_MIN_RUN_S,
+	PEDESTRIAN_STEP_MAX_KMH,
+} from "../eval/worldline-feasibility.js";
 import type { HrPoint, StepPoint } from "./biometrics.js";
 import type { FilteredPoint } from "./kalman.js";
 import { samplesInWindow } from "./segment-util.js";
@@ -997,6 +1004,93 @@ export function reassignVehicleArrivalWalk<T extends TrackSegment>(
 			maxSpeed: stStats.max,
 			pointCount: stStats.count,
 		};
+	}
+	return out;
+}
+
+/**
+ * Hand a train leg's pedestrian *edge* back to the adjacent walk (#356's
+ * repair; the invariant in `worldline-feasibility` is the detector).
+ *
+ * The class: the segmenter places the train/walk boundary where the
+ * *smoothed* speed finally decays, so the ride's tail (or head) owns one to
+ * two minutes of genuine walking — the map then either draws a "train" at
+ * walking pace down a street (raw geometry) or silently omits the stretch
+ * (snapped geometry), and the walk starts a couple hundred metres from the
+ * station it actually left.
+ *
+ * Evidence bar — identical to the invariant's, all four signals must agree
+ * on the edge run before the boundary moves:
+ *   pace   — every step in the run at ≤ `PEDESTRIAN_STEP_MAX_KMH`;
+ *   time   — the run sustains ≥ `PEDESTRIAN_MIN_RUN_S`;
+ *   space  — it travels ≥ `PEDESTRIAN_MIN_RUN_NET_M` NET;
+ *   body   — the wearer steps at ≥ `PEDESTRIAN_MIN_CADENCE_SPM` through it.
+ * Without step data the pass is inert (a seated signal-crawl and a walk are
+ * indistinguishable by pace alone).
+ *
+ * Deliberately narrow: it only MOVES a boundary into an adjacent walking
+ * segment — it never invents a segment (no receiver → the invariant keeps
+ * counting the leg), and it never consumes the ride (the run must stop at a
+ * vehicle-paced step, and the remaining leg must keep ≥2 minutes). The
+ * receiving walk is rebuilt from its own extended fixes and flagged
+ * `needsReenrich` — its previous way name is not evidence about the new
+ * stretch.
+ */
+export function shedVehiclePedestrianEdges<T extends TrackSegment>(
+	segments: readonly T[],
+	points: readonly FilteredPoint[],
+	steps: readonly StepPoint[],
+): T[] {
+	if (steps.length === 0) return [...segments];
+	const MIN_REMAINING_RIDE_S = 120;
+	const out = [...segments];
+
+	const stepKmh = (a: FilteredPoint, b: FilteredPoint): number => {
+		const dt = b.ts - a.ts;
+		return dt > 0 ? (haversineMeters(a.lat, a.lon, b.lat, b.lon) / dt) * 3.6 : Number.POSITIVE_INFINITY;
+	};
+	const qualifies = (from: FilteredPoint, to: FilteredPoint): boolean => {
+		const durS = to.ts - from.ts;
+		const netM = haversineMeters(from.lat, from.lon, to.lat, to.lon);
+		if (durS < PEDESTRIAN_MIN_RUN_S || netM < PEDESTRIAN_MIN_RUN_NET_M) return false;
+		const cadence = meanCadenceSpm(steps, from.ts, to.ts);
+		return cadence !== null && cadence >= PEDESTRIAN_MIN_CADENCE_SPM;
+	};
+
+	for (let i = 0; i < out.length; i++) {
+		const cur = out[i];
+		if (segMode(cur) !== "train") continue;
+
+		// TAIL → the following walk claims the run.
+		const next = out[i + 1];
+		if (next && segMode(next) === "walking") {
+			const fixes = samplesInWindow(points, cur).sort((a, b) => a.ts - b.ts);
+			let s = fixes.length - 1;
+			while (s > 0 && stepKmh(fixes[s - 1], fixes[s]) <= PEDESTRIAN_STEP_MAX_KMH) s--;
+			// s > 0: the scan stopped at a vehicle-paced step, so a ride remains.
+			if (s > 0 && s < fixes.length - 1 && qualifies(fixes[s], fixes[fixes.length - 1])) {
+				const boundary = fixes[s].ts; // the fix the ride arrived on stays with the ride
+				if (boundary - cur.startTs >= MIN_REMAINING_RIDE_S) {
+					out[i] = { ...cur, endTs: boundary };
+					out[i + 1] = walkRemainder(next, boundary, next.endTs, points, true);
+				}
+			}
+		}
+
+		// HEAD → the preceding walk claims the run (the boarding-side mirror).
+		const prev = i > 0 ? out[i - 1] : undefined;
+		if (prev && segMode(prev) === "walking") {
+			const fixes = samplesInWindow(points, out[i]).sort((a, b) => a.ts - b.ts);
+			let e = 0;
+			while (e < fixes.length - 1 && stepKmh(fixes[e], fixes[e + 1]) <= PEDESTRIAN_STEP_MAX_KMH) e++;
+			if (e > 0 && e < fixes.length - 1 && qualifies(fixes[0], fixes[e])) {
+				const boundary = fixes[e].ts; // the fix the ride departs from stays with the ride
+				if (out[i].endTs - boundary >= MIN_REMAINING_RIDE_S) {
+					out[i] = { ...out[i], startTs: boundary };
+					out[i - 1] = walkRemainder(prev, prev.startTs, boundary, points, false);
+				}
+			}
+		}
 	}
 	return out;
 }

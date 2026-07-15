@@ -102,6 +102,102 @@ function fixDistanceM(a: FeasibilityFix, b: FeasibilityFix): number {
  *  asserting there would not be zero-false-positive yet. */
 const KINEMATIC_ASSERTED_MODES: ReadonlySet<string> = new Set(["walking"]);
 
+/** A per-minute step-count bucket — the minimal shape of
+ *  `biometrics.StepPoint` the symmetric invariant needs. */
+export interface FeasibilityStepPoint {
+	ts: number;
+	steps: number;
+}
+
+/** The symmetric direction (#356): vehicle modes a *pedestrian* stepping run
+ *  is impossible for. Train only, deliberately: buses and cars genuinely
+ *  crawl at walking pace in traffic, where phantom wrist-cadence (a bumpy
+ *  ride) could false-positive; a train sustaining walking pace over real
+ *  distance while the wearer steps at walking cadence has no innocent
+ *  reading. */
+const PEDESTRIAN_ASSERTED_VEHICLE_MODES: ReadonlySet<string> = new Set(["train"]);
+/** Per-step pace at or below which a fix pair could be on-foot motion. Brisk
+ *  walking tops out ~7 km/h; 9 leaves GPS-noise headroom. (A train *can* move
+ *  this slowly — that is why pace alone never asserts; cadence must agree.) */
+export const PEDESTRIAN_STEP_MAX_KMH = 9;
+/** A pedestrian run only counts once it has walked a real distance NET —
+ *  platform-dwell jitter accumulates nothing. */
+export const PEDESTRIAN_MIN_RUN_NET_M = 120;
+/** …for a sustained stretch. A sub-minute slow patch is a signal-stop crawl;
+ *  the acceptance case (a stolen station-exit walk) runs ~2 minutes. */
+export const PEDESTRIAN_MIN_RUN_S = 90;
+/** …while the wearer steps at walking cadence. A seated rider on a crawling
+ *  train shows near-zero steps/min; genuine walking is ≳100. 60 splits them
+ *  with margin on both sides. */
+export const PEDESTRIAN_MIN_CADENCE_SPM = 60;
+
+/** Mean steps/min over [startTs, endTs] from per-minute buckets, or null when
+ *  no bucket overlaps the window (no data ≠ zero cadence). */
+export function meanCadenceSpm(steps: readonly FeasibilityStepPoint[], startTs: number, endTs: number): number | null {
+	let total = 0;
+	let overlapped = false;
+	for (const s of steps) {
+		if (s.ts + 60 <= startTs || s.ts >= endTs) continue;
+		overlapped = true;
+		total += s.steps;
+	}
+	if (!overlapped) return null;
+	return total / Math.max(1, (endTs - startTs) / 60);
+}
+
+/**
+ * The symmetric kinematic invariant (#356): a `train` leg whose fixes sustain
+ * a pedestrian-paced run over a real net distance *while the wearer steps at
+ * walking cadence* contains movement that is not riding — an arrival/boarding
+ * walk stranded inside the ride by a mis-placed segment boundary (the class
+ * behind the "train at walking pace down the street" map line). Requires all
+ * four signals to agree (pace band, duration, net displacement, cadence) so a
+ * signal-stop crawl (no cadence), a platform dwell (no net distance), and a
+ * brief slow patch (no duration) never assert. Without step data it does not
+ * assert at all.
+ */
+function checkVehiclePedestrianRuns(
+	legs: readonly FeasibilityLeg[],
+	points: readonly FeasibilityFix[],
+	steps: readonly FeasibilityStepPoint[],
+): FeasibilityViolation[] {
+	const violations: FeasibilityViolation[] = [];
+	for (const l of legs) {
+		if (!PEDESTRIAN_ASSERTED_VEHICLE_MODES.has(l.mode)) continue;
+		const fixes = points.filter((p) => p.ts >= l.startTs && p.ts <= l.endTs);
+		let runStart = -1;
+		let worst: { netM: number; durS: number; cadence: number } | null = null;
+		for (let i = 1; i < fixes.length; i++) {
+			const dt = fixes[i].ts - fixes[i - 1].ts;
+			const stepKmh = dt > 0 ? (fixDistanceM(fixes[i - 1], fixes[i]) / dt) * 3.6 : 0;
+			if (stepKmh <= PEDESTRIAN_STEP_MAX_KMH && dt > 0) {
+				if (runStart < 0) runStart = i - 1;
+				const durS = fixes[i].ts - fixes[runStart].ts;
+				const netM = fixDistanceM(fixes[runStart], fixes[i]);
+				if (durS >= PEDESTRIAN_MIN_RUN_S && netM >= PEDESTRIAN_MIN_RUN_NET_M && (!worst || netM > worst.netM)) {
+					const cadence = meanCadenceSpm(steps, fixes[runStart].ts, fixes[i].ts);
+					if (cadence !== null && cadence >= PEDESTRIAN_MIN_CADENCE_SPM) {
+						worst = { netM, durS, cadence };
+					}
+				}
+			} else {
+				runStart = -1;
+			}
+		}
+		if (worst) {
+			violations.push({
+				kind: "impossible-mode-kinematics",
+				startTs: l.startTs,
+				endTs: l.endTs,
+				detail:
+					`${l.mode} leg sustains a pedestrian-paced stepping run: ${Math.round(worst.netM)} m net over ` +
+					`${Math.round(worst.durS)} s at ${Math.round(worst.cadence)} steps/min — not riding`,
+			});
+		}
+	}
+	return violations;
+}
+
 /**
  * A `walking` leg whose fixes sustain a vehicle-paced run over a real
  * distance contains movement that is not walking — a ride tail stranded by a
@@ -161,8 +257,12 @@ function checkModeKinematics(
 export function checkWorldlineFeasibility(
 	legs: readonly FeasibilityLeg[],
 	points?: readonly FeasibilityFix[],
+	steps?: readonly FeasibilityStepPoint[],
 ): FeasibilityViolation[] {
 	const violations: FeasibilityViolation[] = points ? checkModeKinematics(legs, points) : [];
+	if (points && steps && steps.length > 0) {
+		violations.push(...checkVehiclePedestrianRuns(legs, points, steps));
+	}
 
 	// The station the previous train leg alighted at, when determinable, and
 	// whether a relocating leg has occurred since (which severs the continuity

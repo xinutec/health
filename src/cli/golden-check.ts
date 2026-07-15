@@ -231,8 +231,9 @@ for (const file of files) {
 	let states: Awaited<ReturnType<typeof computeVelocityFromInputs>>["states"];
 	let dayPoints: Awaited<ReturnType<typeof computeVelocityFromInputs>>["points"];
 	let actual: ReturnType<typeof normalizeStates>;
+	const dayInputs = inputsFromFixture(captured);
 	try {
-		const result = await computeVelocityFromInputs(inputsFromFixture(captured));
+		const result = await computeVelocityFromInputs(dayInputs);
 		states = result.states;
 		dayPoints = result.points;
 		actual = normalizeStates(states, captured.meta.tz);
@@ -280,9 +281,10 @@ for (const file of files) {
 
 	// Worldline-feasibility report: physically-impossible outputs the cascade
 	// emitted on this day's timeline. Points enable the kinematic invariant
-	// (a walking leg sustaining vehicle pace) on top of the label-only
-	// rail-continuity checks.
-	const violations = checkWorldlineFeasibility(states, dayPoints);
+	// (a walking leg sustaining vehicle pace); step data enables the
+	// symmetric one (#356 — a train leg sustaining a pedestrian stepping
+	// run) on top of the label-only rail-continuity checks.
+	const violations = checkWorldlineFeasibility(states, dayPoints, dayInputs.biometrics.steps);
 	if (violations.length > 0) {
 		infeasibleDays++;
 		const kinematic = violations.filter((v) => v.kind === "impossible-mode-kinematics").length;

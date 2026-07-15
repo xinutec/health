@@ -93,6 +93,7 @@ import {
 import {
 	reassignVehicleArrivalWalk,
 	reassignWalkTailToVehicle,
+	shedVehiclePedestrianEdges,
 	splitStaysOnEvidence,
 	splitWalksOnEvidence,
 	splitWalksOnVehicleLeg,
@@ -1345,6 +1346,19 @@ export async function computeVelocityFromInputs(
 			run: (segs) => reassignVehicleArrivalWalk(segs, points),
 		},
 
+		// The mirror of vehicleArrival for the OTHER side of a ride boundary
+		// (#356): a train leg whose edge sustains a pedestrian-paced stepping
+		// run (pace + duration + net distance + wearer cadence all agree) is
+		// still carrying the user's walk to/from the platform — hand that run
+		// to the adjacent walking segment. Fixes the "train at walking pace
+		// down the street" / "walk starts 200 m from the station" class the
+		// worldline-feasibility invariant counts. Runs before
+		// reenrichSplitWalks so the extended walk gets re-derived enrichment.
+		{
+			name: "vehicleEdgeShed",
+			run: (segs) => shedVehiclePedestrianEdges(segs, points, biomForStaySplit.steps),
+		},
+
 		// Re-enrich the on-foot remainders `vehicleSplit` left behind.
 		//
 		// The OSM pass ran ~30 passes ago, on segments that had not yet been
@@ -1846,7 +1860,7 @@ export async function computeVelocityFromInputs(
 	// becomes a logged defect instead of a confident line on the map. Log-only:
 	// repair stays upstream in the passes; fabricating a correction here would
 	// hide the defect the log exists to count.
-	for (const v of checkWorldlineFeasibility(finalStates, points)) {
+	for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps)) {
 		console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
 	}
 

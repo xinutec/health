@@ -172,3 +172,83 @@ describe("checkWorldlineFeasibility — mode kinematics", () => {
 		expect(checkWorldlineFeasibility(legs)).toEqual([]);
 	});
 });
+
+describe("checkWorldlineFeasibility — pedestrian run inside a vehicle leg (#356)", () => {
+	const FAST_DLAT = 0.00225; // ~64 km/h per 14 s step
+	const WALK_DLAT = 0.00025; // ~7 km/h per 14 s step
+
+	function fixesFrom(t0: number, lat0: number, steps: number[]): { ts: number; lat: number; lon: number }[] {
+		const out = [{ ts: t0, lat: lat0, lon: -0.28 }];
+		for (const dLat of steps) {
+			const prev = out[out.length - 1];
+			out.push({ ts: prev.ts + 14, lat: prev.lat + dLat, lon: -0.28 });
+		}
+		return out;
+	}
+
+	/** Per-minute step buckets covering [t0, t0+minutes*60) at a given cadence. */
+	function cadence(t0: number, minutes: number, stepsPerMin: number): { ts: number; steps: number }[] {
+		return Array.from({ length: minutes }, (_, i) => ({ ts: t0 + i * 60, steps: stepsPerMin }));
+	}
+
+	// The acceptance shape (2026-07-14 evening, abstracted): a ride at ~64 km/h
+	// whose tail is 9 brisk-walk steps (~2 min, ~250 m net) with sustained
+	// walking cadence — the user is out of the train and walking, but the leg
+	// still owns the fixes.
+	const rideThenWalkTail = fixesFrom(1000, 51.55, [
+		...Array.from({ length: 8 }, () => FAST_DLAT),
+		...Array.from({ length: 9 }, () => WALK_DLAT),
+	]);
+	const tailLegs = [leg({ mode: "train", startTs: 1000, endTs: 1000 + 17 * 14, wayName: "Ashvale → Carfax" })];
+
+	it("flags a train leg whose tail sustains a pedestrian-paced stepping run (the stolen arrival walk)", () => {
+		const steps = cadence(1000, 5, 110);
+		const v = checkWorldlineFeasibility(tailLegs, rideThenWalkTail, steps);
+		expect(v).toHaveLength(1);
+		expect(v[0].kind).toBe("impossible-mode-kinematics");
+		expect(v[0].detail).toMatch(/train/);
+		expect(v[0].detail).toMatch(/pedestrian/);
+	});
+
+	it("does NOT flag the same pace shape when the wearer is not stepping (a signal-crawl into the platform)", () => {
+		const steps = cadence(1000, 5, 4); // seated: incidental wrist movement only
+		expect(checkWorldlineFeasibility(tailLegs, rideThenWalkTail, steps)).toEqual([]);
+	});
+
+	it("does NOT assert at all when no step data exists (cannot distinguish crawl from walk)", () => {
+		expect(checkWorldlineFeasibility(tailLegs, rideThenWalkTail)).toEqual([]);
+		expect(checkWorldlineFeasibility(tailLegs, rideThenWalkTail, [])).toEqual([]);
+	});
+
+	it("does NOT flag a station dwell mid-ride (near-zero pace accumulates no distance)", () => {
+		const dwell = fixesFrom(1000, 51.55, [
+			...Array.from({ length: 4 }, () => FAST_DLAT),
+			...Array.from({ length: 9 }, () => 0.00002), // ~0.5 km/h jitter at the platform
+			...Array.from({ length: 4 }, () => FAST_DLAT),
+		]);
+		const legs = [leg({ mode: "train", startTs: 1000, endTs: 1000 + 17 * 14 })];
+		const steps = cadence(1000, 5, 110); // even with cadence: no net displacement, no assertion
+		expect(checkWorldlineFeasibility(legs, dwell, steps)).toEqual([]);
+	});
+
+	it("does NOT flag a genuine ride end-to-end", () => {
+		const ride = fixesFrom(
+			1000,
+			51.55,
+			Array.from({ length: 17 }, () => FAST_DLAT),
+		);
+		const legs = [leg({ mode: "train", startTs: 1000, endTs: 1000 + 17 * 14 })];
+		const steps = cadence(1000, 5, 110);
+		expect(checkWorldlineFeasibility(legs, ride, steps)).toEqual([]);
+	});
+
+	it("does NOT flag a short pedestrian blip (under the duration floor)", () => {
+		const blip = fixesFrom(1000, 51.55, [
+			...Array.from({ length: 12 }, () => FAST_DLAT),
+			...Array.from({ length: 3 }, () => WALK_DLAT), // 42 s of walk pace — could be a crawl
+		]);
+		const legs = [leg({ mode: "train", startTs: 1000, endTs: 1000 + 15 * 14 })];
+		const steps = cadence(1000, 5, 110);
+		expect(checkWorldlineFeasibility(legs, blip, steps)).toEqual([]);
+	});
+});
