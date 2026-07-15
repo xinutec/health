@@ -120,6 +120,54 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   corrector decline. Candidate lever: landuse-block interiors as soft
   cut-through evidence (#357) — falsify with the passage-snap discipline
   (must not touch forest/park walks or tie lines to centerlines).
+
+## #357 — unmapped-block cut-through: the design
+
+Measured shape of the class (2026-07-14/15, the recurring station-to-home
+walks): the offending lines are MATCHED walks that hug their fixes
+(offWalkP90 8–10 m) — the *GPS itself* traverses the block interior, and
+the matcher rightly keeps GPS where the walkable graph offers no support.
+The blocks render grey on the basemap because of `landuse=residential`
+polygons; live OSM has almost no house footprints there (2 footprints /
+3 landuse polygons in the flagged crop), so every footprint-keyed pass is
+blind. Two honest readings exist and only ground truth separates them:
+(a) GPS drift pulls a street walk into the block interior — the drawn line
+is wrong; (b) the user genuinely cuts through on a real but unmapped
+path — the drawn line is RIGHT and the "fix" is basemap data (the #350
+parade lesson, which was a mapped walkway and NOT a defect). Get the
+user's answer for the anchor walks before turning any knob.
+
+Phases (house method — metric first, lever by measurement):
+
+1. **Referee metric.** Per walk: metres of drawn line inside a
+   residential-landuse polygon while further than ~25 m from any walkable
+   way and outside every mapped footprint/passage. Split **transit** cuts
+   (enter-and-leave, no dwell) from **presence** (sustained raw fixes in
+   the block interior — the indoor-presence exemption class: a visit to a
+   house). Only transit metres are candidate defects.
+2. **Evidence fetch.** `OsmAdapter` gains a residential-landuse read
+   (coverage-boxed around walk legs like `buildingsNear`; same graceful
+   `[]` degradation on old fixtures; new call sites → re-capture wave).
+3. **The lever, chosen by measurement.** Candidates, both
+   weight-don't-filter: (a) a soft block-interior badness field in
+   `reconstructWalk`, scaled DOWN by fix accuracy/consistency so tight
+   mutually-agreeing fixes keep their line — this is the "don't ruin good
+   fixes" guarantee, same shape as the accuracy-weak-prior principle; (b)
+   a matcher route-preference: when an off-network chord's transit-cut
+   metres are high and a bounded on-street route of comparable length
+   exists, prefer the route (the #304 pavement-preference shape). Ship
+   whichever the referee says wins; expect (a) since these walks draw
+   matched only because recon's swap gate ("substantially shorter") never
+   fires — promoting recon for high-transit-cut walks is part of the
+   measurement.
+4. **Exemptions, non-negotiable:** presence-in-block (visits); mapped
+   passages/footpaths through blocks (snap TO them, never around);
+   forest/park/other landuse untouched (byte-identical goldens outside
+   residential); never tie the line to street centerlines.
+
+Gates: zero introduced crossings on footprint-mapped walks, stall/len
+floors unchanged, journey ratchet held, and per-flagged-walk basemap
+check before counting it a defect.
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in
