@@ -121,53 +121,58 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   cut-through evidence (#357) — falsify with the passage-snap discipline
   (must not touch forest/park walks or tie lines to centerlines).
 
-## #357 — unmapped-block cut-through: the design
+## #357 — the "walking through houses" class: measured root cause + design
 
-Measured shape of the class (2026-07-14/15, the recurring station-to-home
-walks): the offending lines are MATCHED walks that hug their fixes
-(offWalkP90 8–10 m) — the *GPS itself* traverses the block interior, and
-the matcher rightly keeps GPS where the walkable graph offers no support.
-The blocks render grey on the basemap because of `landuse=residential`
-polygons; live OSM has almost no house footprints there (2 footprints /
-3 landuse polygons in the flagged crop), so every footprint-keyed pass is
-blind. Two honest readings exist and only ground truth separates them:
-(a) GPS drift pulls a street walk into the block interior — the drawn line
-is wrong; (b) the user genuinely cuts through on a real but unmapped
-path — the drawn line is RIGHT and the "fix" is basemap data (the #350
-parade lesson, which was a mapped walkway and NOT a defect). Get the
-user's answer for the anchor walks before turning any knob.
+**Ground truth settled it (2026-07-15, user-confirmed): the walk follows
+the streets; no alley exists.** And the measurements then falsified the
+first design (landuse cut-through evidence): the drawn matched line is
+never more than **12 m from a mapped walkable way** (Barn Rise / The
+Crossways) — an off-network-chord detector would never fire. What is
+actually wrong, per the referee and the user's eye comparing snap ON/OFF:
 
-Phases (house method — metric first, lever by measurement):
+- Raw GPS runs 10–30 m wide of the walked street with slow systematic
+  wobble (urban multipath), overlapping unmapped-house `landuse` grey.
+- The matcher **half-corrects**: some vertices projected onto the way,
+  others kept raw, producing on-way/off-way zigzag that is WORSE than raw
+  (morning strand offWalkP90 REGRESSED 10→12 m) while still overlapping
+  the houses. Per-fix distance-gated snapping structurally cannot fix a
+  *systematic* offset: every individual fix is ~20 m off, so under the
+  per-fix gate the way never wins — even though twenty consecutive fixes
+  all agreeing "20 m west of Barn Rise at Barn Rise's bearing" is
+  overwhelming evidence that the street is where the user walked.
 
-1. **Referee metric.** Per walk: metres of drawn line inside a
-   residential-landuse polygon while further than ~25 m from any walkable
-   way and outside every mapped footprint/passage. Split **transit** cuts
-   (enter-and-leave, no dwell) from **presence** (sustained raw fixes in
-   the block interior — the indoor-presence exemption class: a visit to a
-   house). Only transit metres are candidate defects.
-2. **Evidence fetch.** `OsmAdapter` gains a residential-landuse read
-   (coverage-boxed around walk legs like `buildingsNear`; same graceful
-   `[]` degradation on old fixtures; new call sites → re-capture wave).
-3. **The lever, chosen by measurement.** Candidates, both
-   weight-don't-filter: (a) a soft block-interior badness field in
-   `reconstructWalk`, scaled DOWN by fix accuracy/consistency so tight
-   mutually-agreeing fixes keep their line — this is the "don't ruin good
-   fixes" guarantee, same shape as the accuracy-weak-prior principle; (b)
-   a matcher route-preference: when an off-network chord's transit-cut
-   metres are high and a bounded on-street route of comparable length
-   exists, prefer the route (the #304 pavement-preference shape). Ship
-   whichever the referee says wins; expect (a) since these walks draw
-   matched only because recon's swap gate ("substantially shorter") never
-   fires — promoting recon for high-transit-cut walks is part of the
-   measurement.
-4. **Exemptions, non-negotiable:** presence-in-block (visits); mapped
-   passages/footpaths through blocks (snap TO them, never around);
-   forest/park/other landuse untouched (byte-identical goldens outside
-   residential); never tie the line to street centerlines.
+**The design: corridor commitment — sequence-level evidence, not
+per-fix.**
 
-Gates: zero introduced crossings on footprint-mapped walks, stall/len
-floors unchanged, journey ratchet held, and per-flagged-walk basemap
-check before counting it a defect.
+1. **Parallelism detector.** For a run of consecutive fixes: one
+   candidate way, sustained bearing agreement (track heading ≈ way
+   bearing), lateral offset consistent (low variance, sign-stable), run
+   length ≥ ~80 m. That conjunction is the "GPS is clearly wrong in a
+   knowable way" signature — the offset is bias, not information.
+2. **Commit the corridor.** Where the detector fires, the drawn line IS
+   the way's geometry between entry and exit projections — full
+   commitment, no half-snap. Where it does not fire (open ground, plazas,
+   parks, genuine off-street walking, ambiguous parallel streets), the
+   line stays with the fixes — untouched, exactly as today. This is the
+   "don't ruin good fixes" guarantee stated structurally: the lever only
+   engages on sustained parallel agreement, which good honest off-street
+   fixes never exhibit.
+3. **Personal corridor prior (the #84 idea, walks edition).** The anchor
+   walks are the user's daily station↔home route: dozens of past
+   traversals exist. Pool them (the rail snapper already pools per-route
+   fixes in `refresh-rail-routes` — same shape): the median lateral
+   offset of many days cancels per-day drift and both strengthens and
+   sanity-checks corridor commitment. Repeated-route walks should be the
+   most accurate on the map, not the wobbliest.
+4. **Heading capture (#322)** strengthens the parallelism evidence when
+   it lands; not a prerequisite.
+
+Referee gates: offWalkP90 must not regress on committed stretches
+(committed-line-vs-fix distance is *expected* ~offset, so judge by
+way-adherence + stall + length, the #350 lesson); park/forest and
+non-parallel walks byte-identical; floors + journeys held. The landuse
+evidence idea stays REFUTED for this class (recorded here as a landmine:
+it detects off-network chords, and this class is never off-network).
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in
