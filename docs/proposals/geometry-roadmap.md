@@ -198,6 +198,23 @@ none is rebuilt:
    two-corner licence had been trimming by accident. The spur defect
    belongs to the matcher's routing (#330 class), filed as #362; hiding
    it in the display stage cut real corners.
+   - **The temporal-stall spur (#362, same day).** The unmasked spur is a
+     doubling-back over street the walker JUST covered (the leg's own
+     junction, ~44 m up and back while the fixes wobble in place), so
+     every spur vertex sits within ~22 m of a fix from the descent —
+     spatially on-corridor, and `trimOverRouteExcursions`' spatial gate
+     never flags it. `despikeUnsupportedApexes` can't either (the spur
+     has interior route vertices, not a single apex). Fixed with a second
+     trim pass on the corridor positions the function already computes:
+     a stretch that travels ≥ 80 m while its monotone corridor position
+     advances < 15 % of that AND returns near its start (net displacement
+     < 35 % of span) is excised. The three guards hold each look-alike: a
+     GPS-traced out-and-back advances the corridor arc in step (the fixes
+     polyline contains it), a gap-fill advances along the fix chord, and
+     a real corner/way-bend ends far from its start. Corpus: regressed 0,
+     improved 3 (the unmasked leg stall 88→3, plus two latent spur legs
+     171→40 and 149→101). The 05-15 leg's stall stays: it ships the
+     smoother arm and all arms agree — not this class.
 - **A walk whose head is a mis-segmented ride** draws fine (the matcher
   sheds unwalkable fixes) but leaves a kilometre-scale frontend bridge —
   the boundary defect chain and its fix live in

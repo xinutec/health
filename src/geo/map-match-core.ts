@@ -1224,9 +1224,20 @@ function corridorPositions(fixes: readonly Pt[], path: readonly Pt[]): number[] 
  * The two conditions separate the bug from the look-alikes: a GAP-FILL also
  * strays from the (sparse) fixes but advances the corridor in step with the line
  * (so the ratio test spares it), and a there-and-back walk the GPS actually
- * traced keeps every vertex near a fix (so it is never even flagged). Only the
- * GPS-unsupported detours are removed, keeping the good pavement-snapping for
- * the rest of the walk.
+ * traced advances the corridor arc in step with the path (the fixes polyline
+ * contains the out-and-back). Only the GPS-unsupported detours are removed,
+ * keeping the good pavement-snapping for the rest of the walk.
+ *
+ * A second pass catches the TEMPORAL stall (#362): a doubling-back over street
+ * the walker just covered sits within `offCorridorM` of the earlier fixes —
+ * spatially supported, so the first pass never flags it — while its corridor
+ * position is frozen (the phone never re-walked the street). Any stretch that
+ * travels ≥ `minStallM`, advances the corridor by less than `stallRatio` of
+ * that (much stricter than `detourRatio`: an invented double-back advances the
+ * corridor near zero, while a window polluted with real walking rises well
+ * above it), and RETURNS near where it started (net displacement <
+ * `returnRatio` of the span — a real corner or way-bend ends far from its
+ * start, so it can never qualify) is excised the same way.
  */
 export function trimOverRouteExcursions(
 	fixes: readonly Pt[],
@@ -1234,6 +1245,8 @@ export function trimOverRouteExcursions(
 	offCorridorM = 30,
 	detourRatio = 0.5,
 	minStallM = 80,
+	returnRatio = 0.35,
+	stallRatio = 0.15,
 ): MatchedPoint[] {
 	if (path.length < 3 || fixes.length < 2) return [...path];
 	const cp = corridorPositions(fixes, path);
@@ -1265,6 +1278,32 @@ export function trimOverRouteExcursions(
 			}
 		}
 		k = b;
+	}
+	// Temporal-stall pass: reversal stretches over already-walked ground.
+	const cum: number[] = [0];
+	for (let i = 1; i < n; i++) {
+		cum.push(cum[i - 1] + metersBetween(path[i - 1].lat, path[i - 1].lon, path[i].lat, path[i].lon));
+	}
+	let a = 0;
+	while (a < n - 2) {
+		if (remove[a]) {
+			a++;
+			continue;
+		}
+		let found = -1;
+		for (let b = a + 2; b < n; b++) {
+			if (remove[b]) break;
+			const span = cum[b] - cum[a];
+			if (span < minStallM) continue;
+			const netDisp = metersBetween(path[a].lat, path[a].lon, path[b].lat, path[b].lon);
+			if (cp[b] - cp[a] < span * stallRatio && netDisp < span * returnRatio) found = b;
+		}
+		if (found >= 0) {
+			for (let x = a + 1; x < found; x++) remove[x] = true;
+			a = found;
+		} else {
+			a++;
+		}
 	}
 	// Drop the excised vertices, then any now-coincident neighbours.
 	const out: MatchedPoint[] = [];

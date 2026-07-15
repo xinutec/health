@@ -43,4 +43,44 @@ describe("trimOverRouteExcursions", () => {
 	it("returns the path unchanged when there is too little to trim", () => {
 		expect(trimOverRouteExcursions([A, B], [A, B])).toEqual([A, B]);
 	});
+
+	// The temporal-stall spur (#362): the router doubles back over street the
+	// walker JUST covered, so every spur vertex sits near a fix from the descent
+	// — spatially on-corridor — while the corridor position is frozen (the
+	// wobbling fixes never re-walk the street).
+	describe("temporal stall over just-walked ground", () => {
+		// A N→S street along lon 0 into a junction at lat 51.5, then E along the
+		// cross street. ~111 m per 0.001° lat; ~69 m per 0.001° lon at this lat.
+		const south = [p(51.5008, 0, 0), p(51.50055, 0, 30), p(51.5003, 0, 60), p(51.50005, 0, 90)];
+		const wobble = [p(51.50005, 0.00003, 100), p(51.50008, 0.00001, 110), p(51.50004, 0.00005, 120)];
+		const east = [p(51.5, 0.0006, 180), p(51.5, 0.0012, 240)];
+		const fixes = [...south, ...wobble, ...east];
+		const jn = p(51.5, 0, 95);
+
+		it("excises a ~100 m doubling-back the fixes never re-traced", () => {
+			// Path: down the street, reach the junction, back up ~50 m, return,
+			// continue east. Every spur vertex is within ~17 m of a descent fix.
+			const spur = [p(51.50022, 0, 105), p(51.50045, 0, 110), p(51.50022, 0, 115)];
+			const path = [...south.map((f) => p(f.lat, 0, f.ts)), jn, ...spur, p(51.5, 0, 125), ...east];
+			const out = trimOverRouteExcursions(fixes, path);
+			expect(out.some((v) => v.lat > 51.5001 && v.ts > 95)).toBe(false);
+			expect(pathLength(out)).toBeLessThan(pathLength(path) - 80);
+		});
+
+		it("keeps an out-and-back the GPS actually traced", () => {
+			// The fixes themselves walk out ~100 m and back before heading east:
+			// corridor arc advances in step with the path, so nothing is excised.
+			const traced = [p(51.5, 0, 0), p(51.5009, 0, 60), p(51.5, 0, 120), p(51.5, 0.0006, 180), p(51.5, 0.0012, 240)];
+			const path = traced.map((f) => p(f.lat, f.lon, f.ts));
+			expect(trimOverRouteExcursions(traced, path)).toEqual(path);
+		});
+
+		it("keeps a way-bend the raw GPS cut across (net displacement is real)", () => {
+			// Sparse fixes chord ~124 m E; the way detours ~60 m S around a block.
+			// The bend ends far from where it started — a reversal test must spare it.
+			const sparse = [p(51.5, 0, 0), p(51.5, 0.0018, 240)];
+			const bend = [p(51.5, 0, 0), p(51.49946, 0, 60), p(51.49946, 0.0018, 180), p(51.5, 0.0018, 240)];
+			expect(trimOverRouteExcursions(sparse, bend)).toEqual(bend);
+		});
+	});
 });
