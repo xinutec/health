@@ -606,6 +606,10 @@ export interface LocalFeatureResult {
 	 *  bounding box. Only meaningful for line/area features (a stay
 	 *  inside a building footprint); always false for point features. */
 	encloses: boolean;
+	/** The feature's own coordinates. Point features only (osm_points
+	 *  geometry is a POINT); line/area queries leave them undefined. */
+	lat?: number;
+	lon?: number;
 }
 
 /**
@@ -646,6 +650,10 @@ export function buildPointsQuery(
 			"name",
 			"tags_json",
 			sql<number>`ST_Distance_Sphere(geom, ${point})`.as("distance_m"),
+			// The point's own coordinates. Geometry is built from
+			// `POINT(lon lat)` WKT, so ST_X is longitude, ST_Y latitude.
+			sql<number>`ST_X(geom)`.as("lon"),
+			sql<number>`ST_Y(geom)`.as("lat"),
 		])
 		.where("feature_type", "=", featureType)
 		// MBR pre-filter first — index-accelerated, drops from 5k
@@ -673,6 +681,8 @@ export async function queryPoints(
 		subtype: r.subtype,
 		name: r.name,
 		distance_m: Number(r.distance_m),
+		lat: Number(r.lat),
+		lon: Number(r.lon),
 		// A point feature has no interior — it never encloses a stay.
 		encloses: false,
 		// MariaDB's JSON column type may return either a string (legacy

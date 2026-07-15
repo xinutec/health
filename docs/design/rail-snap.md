@@ -51,6 +51,21 @@ request path. So the geometry is computed offline:
   segment's time window onto the cached geometry. A route not yet
   cached simply draws raw until the next cron run.
 
+Because the cache key is the full `wayName` string, the *label* is
+load-bearing for geometry: a run that loses its `· <line>` suffix keys
+a different route than the same journey labelled with it, and a
+labelling failure downgrades the drawn line to raw GPS — whose
+alight-side reacquire tail can cut across buildings at street level.
+One measured cause: `resolveRailRunLabel`'s line intersection used the
+raw endpoint fixes, and an off-corridor street-reacquire fix returns no
+lines at all, emptying the intersection. The labeller now retries the
+intersection at the *resolved stations' own node coordinates*
+(`NearbyStation.lat/lon`) when the fix-point intersection is empty or
+ambiguous — the stations are the physical endpoints being asked about;
+the fixes were only ever a proxy for them. Fallback-only, so runs the
+fix-point intersection already resolves are untouched, and fixture
+recordings that predate the coordinate fields skip the retry.
+
 The frontend renders a `snappedPath` as a distinct dashed polyline so
 it reads as inferred, not measured.
 

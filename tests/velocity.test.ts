@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FilteredPoint } from "../src/geo/kalman.js";
+import type { NearbyStation } from "../src/geo/osm.js";
 import { composeWayName, mergeAdjacentMoving } from "../src/geo/passes/moving.js";
 import { mergeAdjacentSameRouteTrains } from "../src/geo/passes/rail-reconcile.js";
 import { annotateRailRuns, expandTubeLineNames } from "../src/geo/passes/rail-runs.js";
@@ -576,6 +577,50 @@ describe("annotateRailRuns", () => {
 		const points = [fix(900, 50.03, 5.0), fix(1600, 50.03, 5.0)];
 		const out = await annotateRailRuns(segs, points, lookup);
 		expect(out[0].wayName).toBeUndefined();
+	});
+
+	it("falls back to station-coordinate line lookup when the alight fix is off-corridor", async () => {
+		// The raw-drawn-ride class: the alight-side fix is a street
+		// reacquire point with NO line in range, so the fix-point line
+		// intersection comes up empty and the label loses its line
+		// suffix — which is also the rail_route_cache key, so the ride
+		// draws as raw GPS. The station itself was resolved; its own
+		// coordinates sit on the corridor and the intersection there is
+		// a singleton.
+		const coords: Record<string, { lat: number; lon: number }> = {
+			"Station K": { lat: 50.03, lon: 5.0 },
+			"Station B": { lat: 50.023, lon: 4.967 },
+			"Station W": { lat: 50.063, lon: 4.846 },
+		};
+		const stationCoordLookup = async (lat: number, lon: number): Promise<NearbyStation[]> => {
+			const name = stationAt(lat, lon);
+			return [{ name, subtype: "subway", distanceM: 50, ...coords[name] }];
+		};
+		const lines = async (lat: number, lon: number): Promise<Set<string>> => {
+			if (Math.abs(lat - 50.03) < 0.005 && Math.abs(lon - 5.0) < 0.005) return new Set(["Line M", "Line J"]);
+			// Station W's own node sits on the corridor…
+			if (Math.abs(lat - 50.063) < 0.002 && Math.abs(lon - 4.846) < 0.002) return new Set(["Line M"]);
+			// …but the alight fix (50.068, 4.852) is off it: nothing in range.
+			return new Set();
+		};
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1600, 50.068, 4.852)];
+		const out = await annotateRailRuns(segs, points, stationCoordLookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W · Line M");
+	});
+
+	it("keeps the bare station-pair label when the station lookup carries no coordinates", async () => {
+		// Old recorded fixtures predate NearbyStation.lat/lon — the
+		// fallback must not fire (and must not issue new lookups) so
+		// replays stay byte-identical.
+		const lines = async (lat: number, lon: number): Promise<Set<string>> => {
+			if (Math.abs(lat - 50.03) < 0.005 && Math.abs(lon - 5.0) < 0.005) return new Set(["Line M", "Line J"]);
+			return new Set();
+		};
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1600, 50.068, 4.852)];
+		const out = await annotateRailRuns(segs, points, lookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W");
 	});
 
 	it("leaves non-rail segments alone", async () => {

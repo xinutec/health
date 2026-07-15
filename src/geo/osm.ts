@@ -729,6 +729,12 @@ export interface NearbyStation {
 	/** "subway", "rail", "light_rail", "tram" — what Fitbit's API calls it. */
 	subtype: string;
 	distanceM: number;
+	/** The station node's own coordinates. Optional: fixture recordings made
+	 *  before these fields existed replay without them, and consumers must
+	 *  degrade to the query point (a rail-run line lookup then simply keeps
+	 *  the fix-point behaviour of those recordings). */
+	lat?: number;
+	lon?: number;
 }
 
 /**
@@ -839,12 +845,18 @@ function deriveStationSubtype(f: { subtype: string | null; tags: Record<string, 
  * exists.
  */
 export function dedupeStationsByName(
-	features: Array<{ name: string | null; derivedSubtype: string; distance_m: number }>,
+	features: Array<{ name: string | null; derivedSubtype: string; distance_m: number; lat?: number; lon?: number }>,
 ): NearbyStation[] {
 	const stations = new Map<string, NearbyStation>();
 	for (const f of features) {
 		if (!f.name) continue;
-		const candidate: NearbyStation = { name: f.name, subtype: f.derivedSubtype, distanceM: f.distance_m };
+		const candidate: NearbyStation = {
+			name: f.name,
+			subtype: f.derivedSubtype,
+			distanceM: f.distance_m,
+			lat: f.lat,
+			lon: f.lon,
+		};
 		const existing = stations.get(f.name);
 		if (!existing) {
 			stations.set(f.name, candidate);

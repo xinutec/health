@@ -405,8 +405,14 @@ async function resolveRailRunLabel(
 	let startStation: string | undefined;
 	let beforeLookup = { lat: slowBefore.lat, lon: slowBefore.lon };
 	let endStation: string | undefined;
+	// The resolved stations' own node coordinates (when the adapter
+	// supplies them) — the line-intersection fallback below retries the
+	// lookup there when the fix-point intersection fails.
+	let startStationCoord: { lat: number; lon: number } | undefined;
+	let endStationCoord: { lat: number; lon: number } | undefined;
 	try {
-		let stationaryCandidate: { name: string; lat: number; lon: number; endTs: number } | null = null;
+		let stationaryCandidate: { name: string; lat: number; lon: number; endTs: number; station: NearbyStation } | null =
+			null;
 		for (let i = run.from - 1; i >= 0; i--) {
 			const seg = segments[i];
 			if (seg.mode === "stationary") {
@@ -425,7 +431,7 @@ async function resolveRailRunLabel(
 					const stations = await stationsLookup(last.lat, last.lon);
 					const best = pickBestStation(stations);
 					if (best) {
-						stationaryCandidate = { name: best.name, lat: last.lat, lon: last.lon, endTs: last.ts };
+						stationaryCandidate = { name: best.name, lat: last.lat, lon: last.lon, endTs: last.ts, station: best };
 					}
 				}
 				break;
@@ -441,6 +447,7 @@ async function resolveRailRunLabel(
 				// slowBefore is mid-tunnel GPS noise — trust stationary.
 				startStation = stationaryCandidate.name;
 				beforeLookup = { lat: stationaryCandidate.lat, lon: stationaryCandidate.lon };
+				startStationCoord = stationCoord(stationaryCandidate.station);
 			}
 			// else: realistic walking pace, fall through to slowBefore.
 		}
@@ -449,7 +456,11 @@ async function resolveRailRunLabel(
 			startStation ? Promise.resolve([]) : stationsLookup(slowBefore.lat, slowBefore.lon),
 			stationsLookup(after.lat, after.lon),
 		]);
-		if (!startStation) startStation = pickBestStation(startStationsSlow)?.name;
+		if (!startStation) {
+			const bestSlow = pickBestStation(startStationsSlow);
+			startStation = bestSlow?.name;
+			startStationCoord = stationCoord(bestSlow);
+		}
 		// Fallback for back-compat: when slowBefore doesn't resolve
 		// to a station but a preceding-stationary station exists,
 		// use that — covers the original "user noisy at platform"
@@ -457,8 +468,11 @@ async function resolveRailRunLabel(
 		if (!startStation && stationaryCandidate) {
 			startStation = stationaryCandidate.name;
 			beforeLookup = { lat: stationaryCandidate.lat, lon: stationaryCandidate.lon };
+			startStationCoord = stationCoord(stationaryCandidate.station);
 		}
-		endStation = pickBestStation(endStations)?.name;
+		const bestEnd = pickBestStation(endStations);
+		endStation = bestEnd?.name;
+		endStationCoord = stationCoord(bestEnd);
 	} catch {
 		return null;
 	}
@@ -487,14 +501,43 @@ async function resolveRailRunLabel(
 		// suffix) into a Set before intersecting — Wembley Park ∩ Green
 		// Park then resolves to the single Jubilee Line, King's Cross ∩
 		// Wembley Park to the Metropolitan.
-		const startCanon = new Set([...startLines].flatMap(expandTubeLineNames));
-		const endCanon = new Set([...endLines].flatMap(expandTubeLineNames));
+		const startCanon = canonicalLines(startLines);
+		const endCanon = canonicalLines(endLines);
 		const intersection = [...startCanon].filter((l) => endCanon.has(l));
 		if (intersection.length === 1) return `${base} · ${intersection[0]}`;
+
+		// Fallback: the lookup point for an endpoint can be an
+		// off-corridor fix (a street reacquire after alighting, a stay
+		// centroid a block from the platform) where linesAtPoint finds
+		// nothing — the intersection empties and the label loses its
+		// line, which is also the rail_route_cache key, so the ride
+		// draws as raw GPS. The stations themselves were resolved and
+		// their own nodes sit on the corridor: retry the intersection
+		// at the station coordinates (falling back to the original
+		// result for an endpoint whose recording carries no coords).
+		if (startStationCoord || endStationCoord) {
+			const [startRetry, endRetry] = await Promise.all([
+				startStationCoord ? linesLookup(startStationCoord.lat, startStationCoord.lon).then(canonicalLines) : startCanon,
+				endStationCoord ? linesLookup(endStationCoord.lat, endStationCoord.lon).then(canonicalLines) : endCanon,
+			]);
+			const retry = [...startRetry].filter((l) => endRetry.has(l));
+			if (retry.length === 1) return `${base} · ${retry[0]}`;
+		}
 		return base;
 	} catch {
 		return base;
 	}
+}
+
+/** Canonicalise a raw `linesAtPoint` result into a directionless line set. */
+function canonicalLines(lines: Set<string>): Set<string> {
+	return new Set([...lines].flatMap(expandTubeLineNames));
+}
+
+/** A station's own node coordinates, when the adapter supplied them
+ *  (recordings made before `NearbyStation.lat/lon` existed have none). */
+function stationCoord(s: NearbyStation | null | undefined): { lat: number; lon: number } | undefined {
+	return s && s.lat !== undefined && s.lon !== undefined ? { lat: s.lat, lon: s.lon } : undefined;
 }
 
 /**
