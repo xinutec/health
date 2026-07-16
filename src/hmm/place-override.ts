@@ -192,12 +192,17 @@ function maybeOverrideMovementToTrain(seg: EnrichedSegment, hmmSegments: readonl
 	// `refinedMode ?? mode`). Clear the `refinedReason` since the
 	// pipeline's biometric / cadence reclassification reasoning no
 	// longer applies — HSMM's route-graph evidence supersedes it.
+	// `vehicleKind` must go for the same reason: it is the bus
+	// passes' judgement of the leg AS a road vehicle, and the
+	// day-state flattening gives it precedence over refinedMode —
+	// left in place it renders this train as a bus (#365).
 	return {
 		...seg,
 		mode: "train",
 		refinedMode: "train",
 		refinedReason: `hsmm route evidence — ${dominant.line}`,
 		wayName: dominant.line,
+		vehicleKind: undefined,
 	};
 }
 

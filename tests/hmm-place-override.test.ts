@@ -191,6 +191,23 @@ describe("applyHsmmPlaceOverride", () => {
 		expect(out[0].wayName).toBe("Metropolitan Line");
 	});
 
+	it("clears a stale vehicleKind:'bus' when overriding to train (#365)", () => {
+		// The bus-evidence pass judges a leg while it is still an
+		// unidentified driving placeholder; a sub-surface tube under a
+		// main road shows the same stop geometry as a bus, so it stamps
+		// vehicleKind:"bus". The train override supersedes that whole
+		// road-vehicle interpretation — leaving vehicleKind behind lets
+		// the day-state flattening render a "bus" named after a tube
+		// line (vehicleKind outranks refinedMode there).
+		const segments = [moving(0, 6, "driving")];
+		(segments[0] as { avgSpeed: number }).avgSpeed = 23;
+		(segments[0] as { vehicleKind?: "bus" }).vehicleKind = "bus";
+		const hmm = [hsmmTrain(0, 6, "Metropolitan Line")];
+		const out = applyHsmmPlaceOverride(segments, hmm, PLACES);
+		expect(out[0].mode).toBe("train");
+		expect(out[0].vehicleKind).toBeUndefined();
+	});
+
 	it("does NOT override slow-walk → train (the user is walking to the tube, not riding it yet)", () => {
 		// 19:55-20:04 on 2026-05-22: pipeline says walking @ 1.8 km/h
 		// to Pentonville Road tube entrance. HSMM picked train @ Met
