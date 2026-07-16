@@ -55,6 +55,13 @@ NC_CLIENT_SECRET=$(get NC_CLIENT_SECRET)
 USE_FACTOR_SCORER=$(get USE_FACTOR_SCORER)
 USE_BIOMETRIC_FACTOR=$(get USE_BIOMETRIC_FACTOR)
 USE_CONTINUITY_CONTINUATION=$(get USE_CONTINUITY_CONTINUATION)
+# C4 continuity flags — these gate the HSMM decode itself, so a Mac
+# replay that misses them decodes a different day than the cron wrote
+# to decoded_days.
+USE_CADENCE_IMPUTATION=$(get USE_CADENCE_IMPUTATION)
+USE_SEGMENT_EVIDENCE=$(get USE_SEGMENT_EVIDENCE)
+USE_CHAIN_CONTEXT=$(get USE_CHAIN_CONTEXT)
+USE_REACQUIRE_ROBUST_SPEED=$(get USE_REACQUIRE_ROBUST_SPEED)
 [ -n "$DB_PASSWORD" ] || {
 	echo "DB_PASSWORD not found in pod env" >&2
 	exit 1
@@ -66,6 +73,10 @@ export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
 [ -n "$USE_FACTOR_SCORER" ] && export USE_FACTOR_SCORER || true
 [ -n "$USE_BIOMETRIC_FACTOR" ] && export USE_BIOMETRIC_FACTOR || true
 [ -n "$USE_CONTINUITY_CONTINUATION" ] && export USE_CONTINUITY_CONTINUATION || true
+[ -n "$USE_CADENCE_IMPUTATION" ] && export USE_CADENCE_IMPUTATION || true
+[ -n "$USE_SEGMENT_EVIDENCE" ] && export USE_SEGMENT_EVIDENCE || true
+[ -n "$USE_CHAIN_CONTEXT" ] && export USE_CHAIN_CONTEXT || true
+[ -n "$USE_REACQUIRE_ROBUST_SPEED" ] && export USE_REACQUIRE_ROBUST_SPEED || true
 # NC_BASE_URL is usually unset in the pod (the app falls back to a
 # built-in default). Only export it when prod actually sets it —
 # exporting an empty string would fail URL validation.
