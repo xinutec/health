@@ -10,10 +10,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # `compare-vs-ground-truth.js --source hsmm` (a stale inline decode that
 # needs a live DB), this is the faithful decoder measured offline.
 #
-#   npm run score-decoder                 # every captured day with ground truth
-#   npm run score-decoder -- 2026-05-22   # one day
+#   npm run score-decoder                        # every captured day with ground truth
+#   npm run score-decoder -- 2026-05-22          # one day
+#   npm run score-decoder -- --bless-scoreboard  # record the C4.0 ratchet baseline
 #
-# Exit 0 = scored at least one day. Exit 2 = no corpus / no ground truth.
+# Full-corpus runs compare journey-structure scores (trips, legs,
+# stations, phantom rides) against tests/golden/decoder-scoreboard.json —
+# the C4 workstream gate (counts only; tracked in git).
+#
+# Exit 0 = scored + ratchet clean. Exit 1 = scoreboard regression.
+# Exit 2 = no corpus / no ground truth.
 
 set -euo pipefail
 

@@ -24,6 +24,7 @@ tests/golden/*
 !tests/golden/journey-baseline.json
 !tests/golden/feasibility-baseline.json
 !tests/golden/rail-triple-baseline.json
+!tests/golden/decoder-scoreboard.json
 
 # Rail-snap fixtures: a real day frozen with its raw fixes, classified
 # segments, and the OSM rail geometry of every train corridor. Real

@@ -72,7 +72,7 @@ job.
 
 ## Workstreams
 
-### C4.0 — shadow scoreboard (measurement before modes)
+### C4.0 — shadow scoreboard (measurement before modes) — DONE 2026-07-16
 
 Extend the decoder eval (`score-day.ts` / the #227 journey eval) so each
 acceptance day scores the decoder's journey structure against the
@@ -81,6 +81,17 @@ the narrative asserts them, phantom-ride count. Record the baseline
 before any change. Every workstream below ships only when this
 scoreboard improves and nothing regresses corpus-wide. (This is the
 #227 Phase A deliverable, scoped to what C4 needs.)
+
+Shipped as `src/eval/decoder-scoreboard.ts` (station fidelity with a
+`missing` outcome distinct from wrong — the decoder emits no stations
+until C4.3 — and majority-rule phantom-ride counting) + the ratchet in
+`score-decoder-golden.ts` against the tracked
+`tests/golden/decoder-scoreboard.json`. All five acceptance days have
+decoded-day fixtures (07-15/07-16 captured 2026-07-16). Baseline over
+the 10-day decoder corpus: trips 15/36, stations 0/32 (all missing, none
+wrong), 5 phantom rides. A wrong station ratchets separately from a
+missing one: wrong may never rise, so C4.3 cannot buy coverage with
+lies.
 
 ### C4.1 — emission honesty in blackouts
 

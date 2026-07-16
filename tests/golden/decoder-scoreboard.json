@@ -1,0 +1,122 @@
+{
+	"2026-05-15": {
+		"journeysExpected": 3,
+		"journeysMatched": 1,
+		"legModeScorable": 10,
+		"legModeMatching": 7,
+		"legLineScorable": 1,
+		"legLineMatching": 1,
+		"stationsAsserted": 4,
+		"stationsMatching": 0,
+		"stationsMissing": 4,
+		"phantomRides": 0
+	},
+	"2026-05-18": {
+		"journeysExpected": 6,
+		"journeysMatched": 4,
+		"legModeScorable": 10,
+		"legModeMatching": 9,
+		"legLineScorable": 0,
+		"legLineMatching": 0,
+		"stationsAsserted": 2,
+		"stationsMatching": 0,
+		"stationsMissing": 2,
+		"phantomRides": 1
+	},
+	"2026-05-20": {
+		"journeysExpected": 3,
+		"journeysMatched": 2,
+		"legModeScorable": 8,
+		"legModeMatching": 6,
+		"legLineScorable": 0,
+		"legLineMatching": 0,
+		"stationsAsserted": 2,
+		"stationsMatching": 0,
+		"stationsMissing": 2,
+		"phantomRides": 0
+	},
+	"2026-05-22": {
+		"journeysExpected": 5,
+		"journeysMatched": 2,
+		"legModeScorable": 11,
+		"legModeMatching": 7,
+		"legLineScorable": 0,
+		"legLineMatching": 0,
+		"stationsAsserted": 3,
+		"stationsMatching": 0,
+		"stationsMissing": 3,
+		"phantomRides": 0
+	},
+	"2026-05-25": {
+		"journeysExpected": 2,
+		"journeysMatched": 1,
+		"legModeScorable": 3,
+		"legModeMatching": 2,
+		"legLineScorable": 0,
+		"legLineMatching": 0,
+		"stationsAsserted": 0,
+		"stationsMatching": 0,
+		"stationsMissing": 0,
+		"phantomRides": 0
+	},
+	"2026-06-09": {
+		"journeysExpected": 4,
+		"journeysMatched": 2,
+		"legModeScorable": 10,
+		"legModeMatching": 6,
+		"legLineScorable": 0,
+		"legLineMatching": 0,
+		"stationsAsserted": 3,
+		"stationsMatching": 0,
+		"stationsMissing": 3,
+		"phantomRides": 1
+	},
+	"2026-06-12": {
+		"journeysExpected": 3,
+		"journeysMatched": 0,
+		"legModeScorable": 9,
+		"legModeMatching": 7,
+		"legLineScorable": 3,
+		"legLineMatching": 1,
+		"stationsAsserted": 4,
+		"stationsMatching": 0,
+		"stationsMissing": 4,
+		"phantomRides": 1
+	},
+	"2026-06-16": {
+		"journeysExpected": 3,
+		"journeysMatched": 1,
+		"legModeScorable": 10,
+		"legModeMatching": 5,
+		"legLineScorable": 2,
+		"legLineMatching": 1,
+		"stationsAsserted": 5,
+		"stationsMatching": 0,
+		"stationsMissing": 5,
+		"phantomRides": 0
+	},
+	"2026-07-15": {
+		"journeysExpected": 3,
+		"journeysMatched": 0,
+		"legModeScorable": 11,
+		"legModeMatching": 9,
+		"legLineScorable": 3,
+		"legLineMatching": 3,
+		"stationsAsserted": 5,
+		"stationsMatching": 0,
+		"stationsMissing": 5,
+		"phantomRides": 1
+	},
+	"2026-07-16": {
+		"journeysExpected": 4,
+		"journeysMatched": 2,
+		"legModeScorable": 10,
+		"legModeMatching": 7,
+		"legLineScorable": 2,
+		"legLineMatching": 2,
+		"stationsAsserted": 4,
+		"stationsMatching": 0,
+		"stationsMissing": 4,
+		"phantomRides": 1
+	}
+}

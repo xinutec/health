@@ -41,6 +41,13 @@ export interface Leg {
 	mode: string;
 	/** Transit line for train/bus legs; null otherwise or when unknown. */
 	line: string | null;
+	/** Boarding / alighting station for transit legs. On the ground-truth
+	 *  side these come from the cell's `From → To` (asserted only on
+	 *  definite rows); on the decoder side they are null until the decoder
+	 *  emits journey structure (C4.3) — the scoreboard counts that as
+	 *  `missing`, distinct from wrong. */
+	board: string | null;
+	alight: string | null;
 }
 
 /** A journey: a maximal run of consecutive movement legs (bounded by a
@@ -175,13 +182,20 @@ export function groundTruthJourneys(rows: readonly GroundTruthRow[]): Journey[] 
 			if (row.endTs - row.startTs >= JOURNEY_PAUSE_MAX_S) flush();
 			continue;
 		}
+		// Stations are only ASSERTED by definite rows — a `partial` cell's
+		// From → To is approximate by declaration and must not convict a
+		// mismatch.
+		const definite = row.status === "correct" || row.status === "wrong";
+		const fromTo = definite ? b.trainFromTo : null;
 		current.push({
 			startTs: row.startTs,
 			endTs: row.endTs,
 			mode: canonicalMode(b.mode),
 			line: lineOf(b.mode, b.lineName),
+			board: fromTo?.from ?? null,
+			alight: fromTo?.to ?? null,
 		});
-		if (row.status === "correct" || row.status === "wrong") currentHasDefinite = true;
+		if (definite) currentHasDefinite = true;
 	}
 	flush();
 	return journeys;
@@ -205,7 +219,7 @@ export function statesToJourneys(
 		const mode = canonicalMode(sMode);
 		const last = legs[legs.length - 1];
 		if (last !== undefined && last.mode === mode && s.startTs <= last.endTs + 1) last.endTs = s.endTs;
-		else legs.push({ startTs: s.startTs, endTs: s.endTs, mode, line: null });
+		else legs.push({ startTs: s.startTs, endTs: s.endTs, mode, line: null, board: null, alight: null });
 	}
 	const journeys: Journey[] = [];
 	let current: Leg[] = [];
@@ -290,7 +304,7 @@ export function decoderJourneys(
 		if (last !== undefined && last.mode === mode && last.line === line && m.ts <= last.endTs) {
 			last.endTs = m.ts + 60;
 		} else {
-			legs.push({ startTs: m.ts, endTs: m.ts + 60, mode, line });
+			legs.push({ startTs: m.ts, endTs: m.ts + 60, mode, line, board: null, alight: null });
 		}
 	}
 	// Group legs into journeys: a gap larger than the tolerance starts a
