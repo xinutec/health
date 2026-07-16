@@ -35,7 +35,7 @@ import path from "node:path";
 import { z } from "zod";
 import { initPool, db as kyselyDb, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
-import { useCadenceImputation, useContinuityContinuation } from "../geo/factors/feature-flag.js";
+import { useCadenceImputation, useContinuityContinuation, useSegmentEvidence } from "../geo/factors/feature-flag.js";
 import { parseHourProfile } from "../geo/focus-places.js";
 import { stationsOnLine } from "../geo/line-stations.js";
 import { dbOsmAdapter } from "../geo/osm-adapter.js";
@@ -197,6 +197,7 @@ const inputs: HsmmInputs = {
 	continuityContext,
 	proximityByMinute,
 	imputeCadence: useCadenceImputation(),
+	segmentEvidence: useSegmentEvidence(),
 };
 
 const expected = decodeHsmm(inputs);

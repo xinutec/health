@@ -36,7 +36,7 @@ import { countPhantomRides, scoreStations } from "../eval/decoder-scoreboard.js"
 import { parseGroundTruth } from "../eval/ground-truth.js";
 import { decoderJourneys, groundTruthJourneys, scoreJourneys } from "../eval/journey-score.js";
 import { type DecoderMinute, scoreDay } from "../eval/score-day.js";
-import { useCadenceImputation } from "../geo/factors/feature-flag.js";
+import { useCadenceImputation, useSegmentEvidence } from "../geo/factors/feature-flag.js";
 import { decodeHsmm } from "../hmm/decode.js";
 import type { HmmSegment } from "../hmm/persist.js";
 import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
@@ -175,7 +175,11 @@ async function main(): Promise<void> {
 		// candidate can be scored against the blessed flag-off baseline
 		// (expect the ratchet to report the diff; bless only when clean).
 		const minutes = segmentsToMinutes(
-			decodeHsmm({ ...hsmmInputsFromFixture(captured), imputeCadence: useCadenceImputation() }),
+			decodeHsmm({
+				...hsmmInputsFromFixture(captured),
+				imputeCadence: useCadenceImputation(),
+				segmentEvidence: useSegmentEvidence(),
+			}),
 		);
 		const gt = parseGroundTruth(readFileSync(gtPath, "utf8"), date, captured.meta.tz);
 		// Place-name → id from the fixture's own focus places (displayName).

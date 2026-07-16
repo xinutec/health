@@ -129,6 +129,24 @@ the scoreboard (`USE_CADENCE_IMPUTATION=1 npm run score-decoder`):
   reintroduce a global tail; drift robustness must come from per-segment
   chain context (C4.2) or learned emissions (#208).
 
+### C4.2 groundwork — segment physics evidence (shadow, 2026-07-16)
+
+`src/hmm/segment-evidence.ts`, behind `USE_SEGMENT_EVIDENCE=1` (same
+loader-gated pattern): one bounded z-penalty per candidate segment
+composed into the duration hook — net bracket displacement vs mode
+(stationary ≈ 0; walking ≈ measured steps × stride, the
+expected-vs-observed step likelihood; vehicles ≈ mode-typical net
+speed). Measured with both flags on: 05-15 gains a journey (2/3), 06-12
+holds 2/3, one line gain; but two undiagnosed leg-mode losses appear
+(05-20, 06-09 — marginal post-train walk windows trade minutes with
+adjacent stays) and the 06-12 drift phantom SURVIVES: drift fixes
+scatter at jog speed, so the segment's own brackets show real local
+motion and stationary pays the displacement penalty too. Confirmed: the
+drift-phantom class is only separable with NEIGHBOUR-STATE context
+(entering a ride from `stationary @P` and returning to `stationary @P`
+minutes later = never left) — C4.2 proper, below, not segment-local
+observables.
+
 ### C4.2 — exit→entry chain context
 
 The decoder's transition model knows mode adjacency but not *place*

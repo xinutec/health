@@ -66,3 +66,13 @@ export function useBiometricFactor(): boolean {
 export function useCadenceImputation(): boolean {
 	return process.env.USE_CADENCE_IMPUTATION === "1";
 }
+
+/** USE_SEGMENT_EVIDENCE=1 — C4.2 groundwork
+ *  (`docs/proposals/2026-07-continuity-c4.md`): segment-scoped physics
+ *  evidence (net displacement + step budget vs mode,
+ *  `src/hmm/segment-evidence.ts`) composed into the HSMM duration hook.
+ *  Shadow-measured on the decoder scoreboard alone and together with
+ *  USE_CADENCE_IMPUTATION; flips on when the scoreboard clears. */
+export function useSegmentEvidence(): boolean {
+	return process.env.USE_SEGMENT_EVIDENCE === "1";
+}

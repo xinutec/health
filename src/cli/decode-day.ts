@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { initPool, db as kyselyDb, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
-import { useCadenceImputation, useContinuityContinuation } from "../geo/factors/feature-flag.js";
+import { useCadenceImputation, useContinuityContinuation, useSegmentEvidence } from "../geo/factors/feature-flag.js";
 import { parseHourProfile } from "../geo/focus-places.js";
 import { stationsOnLine } from "../geo/line-stations.js";
 import { dbOsmAdapter, type OsmAdapter } from "../geo/osm-adapter.js";
@@ -144,6 +144,7 @@ async function decodeAndPersist(
 		continuityContext,
 		proximityByMinute,
 		imputeCadence: useCadenceImputation(),
+		segmentEvidence: useSegmentEvidence(),
 	});
 	if (dry) {
 		const fmt = (ts: number): string =>

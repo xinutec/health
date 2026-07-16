@@ -32,6 +32,7 @@ import type { Observation } from "./observation.js";
 import { buildObservationTensor } from "./observation.js";
 import { groupStatesIntoSegments, type HmmSegment } from "./persist.js";
 import { buildRouteRailEvidence } from "./route-rail-evidence.js";
+import { buildSegmentEvidence } from "./segment-evidence.js";
 import { buildStateSpace, type FocusPlaceRef, type State } from "./state-space.js";
 import { buildTrainGeneratorPrior } from "./train-generator-prior.js";
 import { buildDurationLogProb } from "./train-hop-duration.js";
@@ -115,6 +116,10 @@ export interface HsmmInputs {
 	 *  absent/false keeps the pre-C4.1 tensor. Carried in fixtures so a
 	 *  replay reproduces the capture. */
 	imputeCadence?: boolean;
+	/** C4.2 segment-scoped physics evidence (net displacement / step
+	 *  budget vs mode, `segment-evidence.ts`). Loader-set from
+	 *  `useSegmentEvidence()`; absent/false keeps the prior decode. */
+	segmentEvidence?: boolean;
 }
 
 /**
@@ -173,12 +178,22 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 	// 2-minute movement floor. See `train-hop-duration.ts`. Multi-minute
 	// trains and every other mode are unaffected — the golden corpus is
 	// unchanged.
-	const durationLogProb = buildDurationLogProb({
+	const durationPrior = buildDurationLogProb({
 		fits: BASELINE_DURATION_FITS,
 		minByMode: DEFAULT_MIN_DURATION_BY_MODE,
 		tsAt: (i) => tensor[i]?.ts,
 		isTrainCovered: trainGen.isCovered,
 	});
+	// C4.2 segment physics (opt-in): net displacement + step budget scored
+	// once per candidate segment, composed with the duration prior — the
+	// duration hook is the one place the trellis knows a segment's full
+	// window.
+	const segEvidence = inputs.segmentEvidence === true ? buildSegmentEvidence({ observations: tensor }) : null;
+	const durationLogProb =
+		segEvidence === null
+			? durationPrior
+			: (state: State, d: number, segEndIndex: number): number =>
+					durationPrior(state, d, segEndIndex) + segEvidence(state, d, segEndIndex);
 
 	const hmmStates = hsmmViterbi({
 		observations: tensor,
