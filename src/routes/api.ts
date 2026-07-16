@@ -4,6 +4,7 @@ import { db } from "../db/pool.js";
 import type { AppEnv } from "../env.js";
 import { getConnectionStatus as getFitbitConnectionStatus } from "../fitbit/token-manager.js";
 import { loadWatchBattery } from "../fitbit/watch-battery.js";
+import { scheduleRailRouteFill, unsnappedTrainRoutes } from "../geo/rail-route-fill.js";
 import { dateBoundsUtc, isValidTimezone } from "../geo/timezone.js";
 import { computeVelocity } from "../geo/velocity.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -402,6 +403,12 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 				cacheKey,
 				async () => {
 					const r = await computeVelocity(config, uid, date, tz, { walkMatch });
+					// A train leg with a route label but no cached rail geometry —
+					// a key first ridden today, or a blackout fragment — queues a
+					// background fill so the ride snaps on the next cache-miss view
+					// instead of after the nightly refresh. Fire-and-forget; never
+					// blocks or fails this request. See rail-route-fill.ts (#363).
+					scheduleRailRouteFill(unsnappedTrainRoutes(r.segments, r.points));
 					// Watch-battery series for the same day, plotted alongside the phone
 					// battery. Loaded here (not in computeVelocity) so it stays out of the
 					// golden/velocity path; a DB hiccup degrades to no watch series. Cached

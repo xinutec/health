@@ -871,9 +871,14 @@ export async function queryRailCorridor(fixes: Array<{ lat: number; lon: number 
 		`.execute(db())
 	).rows;
 	const lines: OsmLine[] = [];
+	let parsed = 0;
 	for (const r of lineRows) {
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 2) lines.push({ osmId: Number(r.osm_id), name: r.name, subtype: r.subtype, coords });
+		// Up to 12k WKT parses in one tick would starve the event loop when
+		// this runs on the serving pod (the background miss-driven fill) —
+		// the same starvation class as the velocity cache-MISS lesson.
+		if (++parsed % 1000 === 0) await new Promise((resolve) => setImmediate(resolve));
 	}
 
 	const stationRows = (

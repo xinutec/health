@@ -502,11 +502,13 @@ const MIGRATIONS: readonly string[] = [
 	// rail_route_cache — precomputed snapped rail geometry, keyed by a
 	// train run's `<board> → <alight>` station-pair label. The velocity
 	// pipeline reads this with a single PK lookup and never runs the
-	// expensive corridor query on the request path; the geometry is
-	// (re)computed offline by the refresh-rail-routes CLI. A rail
+	// expensive corridor query on the request path; rows are written by
+	// the nightly refresh-rail-routes upsert (authoritative, pooled
+	// corridor) and by the serving path's background miss-driven fill
+	// for first-seen keys (rail-route-fill.ts, insert-if-absent). A rail
 	// route's drawn geometry is the same every time it is travelled, so
-	// caching by route_key reuses the work across days. The whole table
-	// is rebuildable from scratch — it is a cache, not a source of truth.
+	// caching by route_key reuses the work across days. It is a cache,
+	// not a source of truth — losing it only costs recomputation.
 	`CREATE TABLE IF NOT EXISTS rail_route_cache (
     route_key VARCHAR(191) NOT NULL,
     geometry_json LONGTEXT NOT NULL,

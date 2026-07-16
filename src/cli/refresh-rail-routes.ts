@@ -17,9 +17,12 @@
  *
  * A rail route's drawn geometry is the same every time it is travelled,
  * so it is keyed by route, not by day — the work is reused across every
- * day that route appears. The whole table is rebuilt transactionally
- * each run: a pure cache, fully recomputable, no incremental
- * accumulator.
+ * day that route appears. Rows are UPSERTED, never wiped: keys outside
+ * the scan window must survive (their days are still browsable), and the
+ * serving path's miss-driven fill (rail-route-fill.ts, #363) inserts
+ * first-seen keys the same day it serves them. This job remains
+ * authoritative for every key it covers — its pooled-cloud geometry
+ * overwrites a single-day fill.
  *
  * Run by the data-analysis cron (and manually):
  *   node dist/cli/refresh-rail-routes.js        # default 180-day window
@@ -30,9 +33,7 @@ import { z } from "zod";
 import { db, destroyPool, initPool, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
 import { getSyncState } from "../db/sync-state.js";
-import { stationsOnLine } from "../geo/line-stations.js";
-import { queryRailCorridor } from "../geo/osm-local.js";
-import { parseRailWayName, snapTrainSegment, snapTrainSegmentOnLine } from "../geo/rail-snap.js";
+import { computeRailRoute } from "../geo/rail-route-fill.js";
 import { computeVelocity } from "../geo/velocity.js";
 
 const config = z
@@ -152,67 +153,39 @@ for (const u of users) {
 	}
 }
 
-/**
- * Fallback for a route the fix-cloud snap left un-snapped (thin / one-off
- * underground ride): if the route label names a LINE, route between its two
- * stations over ONLY that line's ways — no fix cloud needed. The line name is
- * the disambiguator instead of a dense corridor, so a confident tube renders
- * on-track even on the first ride. Uses a STATION-anchored OSM query (the two
- * stations + the thin fixes) rather than the fix-cloud corridor, which for a
- * one-off ride may not span board→alight. Returns null → keep un-snapped.
- */
-async function snapKnownLine(key: string, acc: RouteAccumulator): Promise<Array<{ lat: number; lon: number }> | null> {
-	const parsed = parseRailWayName(key);
-	if (!parsed?.line) return null;
-	const stns = await stationsOnLine(parsed.line);
-	const board = stns.find((s) => s.name === parsed.board);
-	const alight = stns.find((s) => s.name === parsed.alight);
-	if (!board || !alight) return null;
-	// Bbox spanning the two stations (+ the thin ride fixes) so the OSM scan
-	// returns the line's full geometry between them.
-	const geo = await queryRailCorridor([
-		{ lat: board.lat, lon: board.lon },
-		{ lat: alight.lat, lon: alight.lon },
-		...acc.fixes,
-	]);
-	const snapped = snapTrainSegmentOnLine(acc.seg, geo);
-	return snapped ? snapped.path.map((p) => ({ lat: p.lat, lon: p.lon })) : null;
-}
-
-// Pass 2: snap each route along its pooled historic corridor.
+// Pass 2: snap each route along its pooled historic corridor, falling back
+// to the known-line route for thin / one-off rides. `computeRailRoute` is
+// the shared composite the serving path's miss-driven fill also uses
+// (rail-route-fill.ts) — same algorithm, richer (pooled) corridor evidence.
 const routes = new Map<string, Geometry>();
 for (const [key, acc] of byRoute) {
-	const geo = await queryRailCorridor(acc.fixes);
-	const snapped = snapTrainSegment(acc.seg, geo, acc.fixes);
-	if (snapped) {
-		routes.set(
-			key,
-			snapped.path.map((p) => ({ lat: p.lat, lon: p.lon })),
-		);
-		console.log(`  resolved route → ${snapped.path.length} pts (${acc.fixes.length} historic fixes)`);
-		continue;
-	}
-	// Thin / one-off corridor: if the label names a line, snap to that line's
-	// route between the stations directly (no fix cloud).
-	const lineRoute = await snapKnownLine(key, acc);
-	if (lineRoute && lineRoute.length >= 2) {
-		routes.set(key, lineRoute);
-		console.log(`  resolved route via known-line fallback → ${lineRoute.length} pts (${acc.fixes.length} thin fixes)`);
+	const geom = await computeRailRoute({ key, seg: acc.seg, fixes: acc.fixes });
+	if (geom && geom.length >= 2) {
+		routes.set(key, geom);
+		console.log(`  resolved route → ${geom.length} pts (${acc.fixes.length} historic fixes)`);
 	} else {
 		console.log(`  route left un-snapped (${acc.fixes.length} historic fixes — thin or disconnected)`);
 	}
 }
 
-console.log(`Computed ${routes.size} route geometries; rebuilding rail_route_cache`);
+console.log(`Computed ${routes.size} route geometries; upserting into rail_route_cache`);
 await withConnection(async (conn) => {
-	// Transactional full rebuild — readers see the old snapshot until
-	// commit, so the dashboard never observes an empty cache mid-refresh.
+	// UPSERT, not a wipe-and-rebuild: a DELETE-all here silently dropped
+	// every route key not ridden inside the scan window, so browsing an
+	// older day drew its rides raw forever — and it would also discard the
+	// serving path's miss-driven fills for routes that never recur. The
+	// pooled recompute stays authoritative for every key it covers
+	// (overwriting any single-day fill); keys outside the window persist.
+	// Stale-on-OSM-edit is accepted until the route is ridden again.
 	await conn.beginTransaction();
 	try {
-		await conn.query("DELETE FROM rail_route_cache");
 		if (routes.size > 0) {
 			const rows = [...routes.entries()].map(([key, geom]) => [key, JSON.stringify(geom)]);
-			await conn.batch("INSERT INTO rail_route_cache (route_key, geometry_json) VALUES (?, ?)", rows);
+			await conn.batch(
+				`INSERT INTO rail_route_cache (route_key, geometry_json) VALUES (?, ?)
+				 ON DUPLICATE KEY UPDATE geometry_json = VALUES(geometry_json), computed_at = CURRENT_TIMESTAMP`,
+				rows,
+			);
 		}
 		await conn.commit();
 	} catch (e) {
@@ -220,7 +193,7 @@ await withConnection(async (conn) => {
 		throw e;
 	}
 });
-console.log(`rail_route_cache rebuilt: ${routes.size} routes`);
+console.log(`rail_route_cache upserted: ${routes.size} routes`);
 
 await destroyPool();
 process.exit(0);
