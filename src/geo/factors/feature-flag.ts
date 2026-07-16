@@ -51,3 +51,18 @@ export function useContinuityContinuation(): boolean {
 export function useBiometricFactor(): boolean {
 	return process.env.USE_BIOMETRIC_FACTOR === "1";
 }
+
+/** USE_CADENCE_IMPUTATION=1 — C4.1 of
+ *  `docs/proposals/2026-07-continuity-c4.md`. When on, the HSMM
+ *  observation tensor imputes `cadence: 0` for a rowless minute when the
+ *  watch was demonstrably alive around it (measured HR/step rows within
+ *  the liveness window on both sides), so the zero-inflated cadence
+ *  emission can refute walking through GPS blackouts. Off keeps the
+ *  pre-C4.1 tensor (rowless minute = null = factor skipped). Shadow-
+ *  measured on the decoder scoreboard; flips on when the scoreboard
+ *  clears (needs the C4.2 entry chain context — measured 2026-07-16:
+ *  imputation alone converts phantom walks into phantom vehicle
+ *  micro-rides on drift bursts). */
+export function useCadenceImputation(): boolean {
+	return process.env.USE_CADENCE_IMPUTATION === "1";
+}

@@ -104,4 +104,140 @@ describe("buildObservationTensor", () => {
 		const tensor = buildObservationTensor({ date: dateStr, tz, points, hr: [], steps: [] });
 		expect(tensor[0].gps).toBeNull();
 	});
+
+	// C4.1 watch-liveness imputation (the cadence hole,
+	// docs/proposals/2026-07-continuity-c4.md): steps_intraday only writes
+	// non-zero minutes, so a truly-still minute arrives as `null` and the
+	// zero-inflated cadence emission SKIPS — walking pays no step penalty
+	// exactly where steps would refute it. When the watch is demonstrably
+	// alive around the minute, no step row means zero steps.
+	describe("watch-liveness cadence imputation", () => {
+		const hrAt = (...mins: number[]): HrPoint[] => mins.map((m) => ({ ts: minTs(m) + 10, bpm: 70 }));
+
+		it("is OFF by default — a rowless minute stays null without the flag", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				hr: hrAt(400),
+				steps: [{ ts: minTs(500), steps: 30 }],
+			});
+			expect(tensor[400].cadence).toBeNull();
+		});
+
+		it("imputes 0 for a rowless minute with HR in the same minute", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(400),
+				steps: [{ ts: minTs(500), steps: 30 }],
+			});
+			expect(tensor[400].cadence).toBe(0);
+		});
+
+		it("imputes 0 inside an HR-covered blackout window (alive on both sides)", () => {
+			// HR at minutes 398 and 402 — minute 400 has no HR row of its own
+			// but the device is alive within the window on both sides.
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(398, 402),
+				steps: [{ ts: minTs(500), steps: 30 }],
+			});
+			expect(tensor[400].cadence).toBe(0);
+		});
+
+		it("keeps null when the watch is silent beyond the window on either side", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(100, 130),
+				steps: [{ ts: minTs(100), steps: 30 }],
+			});
+			// Minute 115: nearest liveness 15 min away on both sides — off-wrist
+			// (or charge gap), not a measured stillness.
+			expect(tensor[115].cadence).toBeNull();
+		});
+
+		it("keeps null after the watch goes silent (one-sided evidence)", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(100, 101, 102),
+				steps: [{ ts: minTs(100), steps: 30 }],
+			});
+			// Minute 104: alive 2 min before, but nothing ever after — the
+			// device may have come off mid-window; do not assert stillness.
+			expect(tensor[104].cadence).toBeNull();
+		});
+
+		it("a step row counts as liveness for its neighbours", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: [],
+				steps: [
+					{ ts: minTs(600), steps: 20 },
+					{ ts: minTs(604), steps: 15 },
+				],
+			});
+			expect(tensor[602].cadence).toBe(0);
+		});
+
+		it("never imputes on a day with no step rows at all", () => {
+			// HR everywhere but a step stream that never wrote a single row is
+			// indistinguishable from a steps sync failure — imputing zeros would
+			// decode the whole day as still.
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(400, 401, 402),
+				steps: [],
+			});
+			expect(tensor[401].cadence).toBeNull();
+		});
+
+		it("a gap wider than the window imputes nothing, even between two alive edges", () => {
+			// Alive at 700 and 712: every minute in between fails the window on
+			// at least one side. Imputed zeros must not chain to bridge it —
+			// liveness comes from measured rows only.
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(700, 712),
+				steps: [{ ts: minTs(650), steps: 10 }],
+			});
+			for (let m = 701; m < 712; m++) expect(tensor[m].cadence).toBeNull();
+		});
+
+		it("leaves measured cadence values untouched", () => {
+			const tensor = buildObservationTensor({
+				date: dateStr,
+				tz,
+				points: [],
+				imputeCadence: true,
+				hr: hrAt(300, 301),
+				steps: [
+					{ ts: minTs(300), steps: 12 },
+					{ ts: minTs(301), steps: 0 },
+				],
+			});
+			expect(tensor[300].cadence).toBe(12);
+			expect(tensor[301].cadence).toBe(0);
+		});
+	});
 });

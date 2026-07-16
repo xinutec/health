@@ -103,10 +103,22 @@ export interface ObservationTensorInput {
 	 *  #238 — then the distances stay null and the line-proximity factor
 	 *  keeps its pre-#238 behaviour. */
 	proximityByMinute?: ReadonlyMap<number, { railDistM: number | null; roadDistM: number | null }>;
+	/** C4.1 watch-liveness cadence imputation (see the block below).
+	 *  Opt-in while the C4 scoreboard shadow-measures it
+	 *  (`USE_CADENCE_IMPUTATION=1` at the decode call sites); default
+	 *  keeps the pre-C4.1 tensor byte-identical. */
+	imputeCadence?: boolean;
 }
 
 const MINUTES_PER_DAY = 1440;
 const SECONDS_PER_MINUTE = 60;
+
+/** Watch-liveness window (minutes) for cadence imputation. A rowless
+ *  minute counts as `0` steps only when a measured HR or step row exists
+ *  within this many minutes on BOTH sides — a worn watch writes HR
+ *  near-continuously, so a short sampling gap stays covered, while an
+ *  off-wrist / charging period fails one side and stays `null`. */
+const WATCH_LIVENESS_WINDOW_MIN = 5;
 
 export function median(values: number[]): number {
 	if (values.length === 0) return 0;
@@ -146,7 +158,7 @@ function localCtx(ts: number, tz: string): { hour: number; dayOfWeek: number } {
 }
 
 export function buildObservationTensor(input: ObservationTensorInput): Observation[] {
-	const { date, tz, points, hr, steps, sleep, proximityByMinute } = input;
+	const { date, tz, points, hr, steps, sleep, proximityByMinute, imputeCadence } = input;
 	const { startUtc, endUtc } = dateBoundsUtc(date, tz);
 
 	// Pre-bucket the input streams by minute index for O(N) aggregation
@@ -239,6 +251,44 @@ export function buildObservationTensor(input: ObservationTensorInput): Observati
 			roadDistM,
 			railDistM,
 		};
+	}
+
+	// Watch-liveness cadence imputation (C4.1, the cadence hole —
+	// docs/proposals/2026-07-continuity-c4.md): steps_intraday only writes
+	// non-zero minutes, so a truly-still minute reaches the decoder as
+	// `cadence: null` and the zero-inflated cadence emission SKIPS —
+	// walking pays no step penalty exactly where the step data would
+	// refute it (GPS blackouts, where cadence is the only per-minute
+	// movement sensor). When the device is demonstrably alive around the
+	// minute, "no row" means "zero steps": impute 0. Liveness is MEASURED
+	// rows only (HR or steps) — imputed zeros never extend the window —
+	// and a day with no step rows at all imputes nothing (a silent steps
+	// stream is indistinguishable from a sync failure; zeroing the whole
+	// day would decode it as still).
+	const dayHasStepRows = stepBuckets.some((b) => b !== null);
+	if (imputeCadence === true && dayHasStepRows) {
+		const alive = (m: number): boolean => stepBuckets[m] !== null || hrBuckets[m].length > 0;
+		const prevAliveDist = new Array<number>(MINUTES_PER_DAY).fill(Number.POSITIVE_INFINITY);
+		const nextAliveDist = new Array<number>(MINUTES_PER_DAY).fill(Number.POSITIVE_INFINITY);
+		let last = Number.NEGATIVE_INFINITY;
+		for (let m = 0; m < MINUTES_PER_DAY; m++) {
+			if (alive(m)) last = m;
+			prevAliveDist[m] = m - last;
+		}
+		let next = Number.POSITIVE_INFINITY;
+		for (let m = MINUTES_PER_DAY - 1; m >= 0; m--) {
+			if (alive(m)) next = m;
+			nextAliveDist[m] = next - m;
+		}
+		for (let m = 0; m < MINUTES_PER_DAY; m++) {
+			if (
+				aggregated[m].cadence === null &&
+				prevAliveDist[m] <= WATCH_LIVENESS_WINDOW_MIN &&
+				nextAliveDist[m] <= WATCH_LIVENESS_WINDOW_MIN
+			) {
+				aggregated[m].cadence = 0;
+			}
+		}
 	}
 
 	// Second pass: fill prevGpsFix (forward) and nextGpsFix (backward

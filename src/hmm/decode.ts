@@ -110,6 +110,11 @@ export interface HsmmInputs {
 	 *  absent on inputs built before #238, in which case the road-vs-rail
 	 *  test is skipped and the decode is unchanged. */
 	proximityByMinute?: ReadonlyMap<number, { railDistM: number | null; roadDistM: number | null }>;
+	/** C4.1 watch-liveness cadence imputation. Set by the LOADER from
+	 *  `useCadenceImputation()` (this module stays flag-free and pure);
+	 *  absent/false keeps the pre-C4.1 tensor. Carried in fixtures so a
+	 *  replay reproduces the capture. */
+	imputeCadence?: boolean;
 }
 
 /**
@@ -125,6 +130,7 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 		steps: inputs.steps,
 		sleep: inputs.sleep,
 		proximityByMinute: inputs.proximityByMinute,
+		imputeCadence: inputs.imputeCadence === true,
 	});
 	const states = buildStateSpace({ focusPlaces: inputs.places, knownLines: KNOWN_LINES });
 

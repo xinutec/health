@@ -93,7 +93,7 @@ wrong), 5 phantom rides. A wrong station ratchets separately from a
 missing one: wrong may never rise, so C4.3 cannot buy coverage with
 lies.
 
-### C4.1 — emission honesty in blackouts
+### C4.1 — emission honesty in blackouts — imputation BUILT, shadow (2026-07-16)
 
 The cadence-hole fix above, plus a per-segment **step-budget entry
 term**: at segment entry the hypothesis predicts a step distribution
@@ -101,6 +101,33 @@ term**: at segment entry the hypothesis predicts a step distribution
 with corridor bursts; stationary → near zero) and is scored against the
 observed sum. Entry-shaped (fires once per segment, like the hour-of-day
 prior) so long stays aren't over-weighted. Targets mechanism 1.
+
+Status: watch-liveness imputation implemented in `buildObservationTensor`
+(measured liveness within a 5-minute window on BOTH sides; a day with no
+step rows imputes nothing), behind `USE_CADENCE_IMPUTATION=1` — the flag
+gate lives in the loaders, `decodeHsmm` stays pure. Shadow-measured on
+the scoreboard (`USE_CADENCE_IMPUTATION=1 npm run score-decoder`):
+
+- **Wins**: two journeys reconstructed on a previously 0-matched day
+  (pre-boarding platform waits sharpen leg boundaries), leg mode/line
+  gains on three days, and hidden mid-walk stops surface (sensor-decisive
+  multi-minute sub-1 km/h zero-step blocks with sagging HR inside coarse
+  narrative "walking" rows — the known hidden-shop-stop class, #268).
+- **Blockers to flipping the flag**: (a) zero-step GPS-drift bursts that
+  used to decode as phantom *walks* now decode as phantom vehicle
+  micro-rides — the lie changed shape, not size; C4.2's entry chain
+  context ("you never left the place") is the principled fix. (b) One
+  real slow walk with measured positive cadence gets swallowed into the
+  adjacent stay on a thin margin — the step-budget entry term is the
+  counter-pressure. (c) The hidden-stop days need narrative adjudication
+  (ground truth comes only from Pippijn).
+- **Refuted en route**: a global heavy-tailed drift mixture on the
+  stationary speed emission (0.9·N(0,2) + 0.1·N(0,12)). It fixed the
+  drift phantom but reshaped marginal boundaries corpus-wide — on
+  acceptance day 07-15 the midday hop fragmented from one 5-minute train
+  into two 1-minute trains on *different lines* (+1 phantom). Do not
+  reintroduce a global tail; drift robustness must come from per-segment
+  chain context (C4.2) or learned emissions (#208).
 
 ### C4.2 — exit→entry chain context
 
