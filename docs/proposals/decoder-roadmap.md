@@ -128,7 +128,15 @@ against a metric that can't move.
   *defined* as journey-level no-regression but no journey metric exists.
 - **Corpus invariant checker.** Run no-teleport / board = prior-alight /
   every-triple-connected over current output. It would have caught the
-  2026-06-22 two-alights-at-one-station bug.
+  2026-06-22 two-alights-at-one-station bug. Status: board = prior-alight and
+  no-self-ride are the standing hard-zero gate; the labelled-line half of
+  every-triple-connected shipped 2026-07-16 as the `invalid-rail-triple`
+  invariant (line membership from `stationsOnLine`, ratcheted per-day ceiling
+  in `tests/golden/rail-triple-baseline.json`, standing debt: the 2026-07-12
+  erased-interchange leg, #351). Membership is proximity-inferred and
+  over-inclusive, so it can only under-report — a *served-station /
+  stop-pattern* check needs real route-relation membership (see the
+  route-membership mirror task).
 - **Position-teleport check.** Extend `worldline-feasibility.ts` (today only
   `rail-discontinuity` / `degenerate-train-leg`) with a `position-teleport`
   kind: a stay/sleep place must be reachable from the adjacent observed

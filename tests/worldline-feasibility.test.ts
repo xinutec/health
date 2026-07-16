@@ -103,6 +103,61 @@ describe("checkWorldlineFeasibility", () => {
 	});
 });
 
+describe("checkWorldlineFeasibility — invalid rail triple", () => {
+	// Line membership as the fixture trace / stationsOnLine provides it:
+	// line name → stations the line serves (proximity-inferred, so
+	// over-inclusive — a violation here is a station nowhere near the line).
+	const membership = new Map<string, Array<{ name: string }>>([
+		["Metropolitan Line", [{ name: "Ashvale" }, { name: "Carfax" }, { name: "Deepwell" }]],
+		["Victoria Line", [{ name: "Elmford" }, { name: "Finsbury Park" }]],
+	]);
+
+	it("flags a labelled leg whose BOARD station the line does not serve (the erased-interchange shape)", () => {
+		// The #351 shape: a walk-from station fused into a Met leg — the Met
+		// does not go anywhere near Elmford.
+		const legs = [train("Elmford", "Carfax", "Metropolitan Line", 0)];
+		const v = checkWorldlineFeasibility(legs, undefined, undefined, membership);
+		expect(v).toHaveLength(1);
+		expect(v[0].kind).toBe("invalid-rail-triple");
+		expect(v[0].detail).toContain("Metropolitan Line");
+		expect(v[0].detail).toContain("Elmford");
+	});
+
+	it("flags an ALIGHT station the line does not serve", () => {
+		const legs = [train("Ashvale", "Finsbury Park", "Metropolitan Line", 0)];
+		const v = checkWorldlineFeasibility(legs, undefined, undefined, membership);
+		expect(v).toHaveLength(1);
+		expect(v[0].kind).toBe("invalid-rail-triple");
+		expect(v[0].detail).toContain("Finsbury Park");
+	});
+
+	it("passes a leg whose line serves both endpoints, case-insensitively", () => {
+		const legs = [train("ASHVALE", "carfax", "Metropolitan Line", 0)];
+		expect(checkWorldlineFeasibility(legs, undefined, undefined, membership)).toEqual([]);
+	});
+
+	it("does not assert on a leg with no line label", () => {
+		const legs = [train("Elmford", "Carfax", undefined, 0)];
+		expect(checkWorldlineFeasibility(legs, undefined, undefined, membership)).toEqual([]);
+	});
+
+	it("does not assert when the line has no membership data", () => {
+		const legs = [train("Elmford", "Carfax", "Jubilee Line", 0)];
+		expect(checkWorldlineFeasibility(legs, undefined, undefined, membership)).toEqual([]);
+	});
+
+	it("treats an EMPTY membership list as unknown, not as serves-nothing", () => {
+		const empty = new Map<string, Array<{ name: string }>>([["Ghost Line", []]]);
+		const legs = [train("Elmford", "Carfax", "Ghost Line", 0)];
+		expect(checkWorldlineFeasibility(legs, undefined, undefined, empty)).toEqual([]);
+	});
+
+	it("is inert without a membership map (label-only callers keep working)", () => {
+		const legs = [train("Elmford", "Carfax", "Metropolitan Line", 0)];
+		expect(checkWorldlineFeasibility(legs)).toEqual([]);
+	});
+});
+
 describe("checkWorldlineFeasibility — mode kinematics", () => {
 	// ~250 m of latitude per 14 s ≈ 64 km/h — a vehicle-paced step.
 	const FAST_DLAT = 0.00225;

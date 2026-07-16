@@ -36,7 +36,11 @@
 
 import { parseRailWayName } from "../geo/passes/rail-reconcile.js";
 
-export type FeasibilityViolationKind = "rail-discontinuity" | "degenerate-train-leg" | "impossible-mode-kinematics";
+export type FeasibilityViolationKind =
+	| "rail-discontinuity"
+	| "degenerate-train-leg"
+	| "impossible-mode-kinematics"
+	| "invalid-rail-triple";
 
 export interface FeasibilityViolation {
 	kind: FeasibilityViolationKind;
@@ -254,14 +258,64 @@ function checkModeKinematics(
 	return violations;
 }
 
+/** Line → stations-it-serves, as `stationsOnLine` (or a fixture's recorded
+ *  trace of it) provides. Membership is proximity-inferred and therefore
+ *  OVER-inclusive (a station near a passing-but-not-stopping line counts as
+ *  served), so absence is the strong signal: a labelled endpoint missing from
+ *  a non-empty list is a station nowhere near the line's tracks — a journey
+ *  that physically cannot have happened as labelled. Over-inclusion can only
+ *  produce false NEGATIVES, which keeps this invariant zero-false-positive.
+ *  An empty list means the line is unknown to the mirror (not "serves
+ *  nothing") and never asserts. */
+export type LineMembership = ReadonlyMap<string, ReadonlyArray<{ name: string }>>;
+
+/**
+ * The valid-triple invariant (#181/#351): a train leg labelled
+ * `Board → Alight · Line` must name two stations the line actually reaches.
+ * The class behind it: a boarding/alight anchor fuses a walked-from station
+ * into a leg on a line that never goes there (the 2026-07-12 return leg
+ * labelled a Metropolitan Line ride from a station only the Victoria line
+ * serves — the interchange erased into an impossible label).
+ */
+function checkRailTriples(legs: readonly FeasibilityLeg[], lineStations: LineMembership): FeasibilityViolation[] {
+	const violations: FeasibilityViolation[] = [];
+	const norm = (s: string): string => s.trim().toLowerCase();
+	for (const l of legs) {
+		if (l.mode !== "train") continue;
+		const rail = parseRailWayName(l.wayName);
+		if (!rail?.line) continue;
+		const served = lineStations.get(rail.line);
+		if (served === undefined || served.length === 0) continue; // unknown line — cannot assert
+		const names = new Set(served.map((s) => norm(s.name)));
+		for (const [role, station] of [
+			["boards at", rail.board],
+			["alights at", rail.alight],
+		] as const) {
+			if (!names.has(norm(station))) {
+				violations.push({
+					kind: "invalid-rail-triple",
+					startTs: l.startTs,
+					endTs: l.endTs,
+					detail: `train labelled ${rail.line} ${role} ${station}, a station that line does not serve`,
+				});
+			}
+		}
+	}
+	return violations;
+}
+
 export function checkWorldlineFeasibility(
 	legs: readonly FeasibilityLeg[],
 	points?: readonly FeasibilityFix[],
 	steps?: readonly FeasibilityStepPoint[],
+	lineStations?: LineMembership,
 ): FeasibilityViolation[] {
 	const violations: FeasibilityViolation[] = points ? checkModeKinematics(legs, points) : [];
 	if (points && steps && steps.length > 0) {
 		violations.push(...checkVehiclePedestrianRuns(legs, points, steps));
+	}
+	if (lineStations !== undefined) {
+		violations.push(...checkRailTriples(legs, lineStations));
 	}
 
 	// The station the previous train leg alighted at, when determinable, and

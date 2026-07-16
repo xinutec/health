@@ -63,6 +63,7 @@ import {
 	annotateSnappedPaths,
 	assembleRailJourney,
 	mergeAdjacentSameRouteTrains,
+	parseRailWayName,
 	reconcileAdjacentRailLegs,
 } from "./passes/rail-reconcile.js";
 import { annotateRailRuns, RAIL_RUN_STATION_RADIUS_M } from "./passes/rail-runs.js";
@@ -1875,7 +1876,27 @@ export async function computeVelocityFromInputs(
 	// becomes a logged defect instead of a confident line on the map. Log-only:
 	// repair stays upstream in the passes; fabricating a correction here would
 	// hide the defect the log exists to count.
-	for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps)) {
+	//
+	// Line membership for the valid-triple invariant (#181/#351): resolve each
+	// labelled line's station set through the adapter (memoised in prod; also
+	// what makes every future golden capture record membership for every
+	// labelled line). A line the adapter cannot answer — an older fixture
+	// replaying without that trace key — is skipped, never a violation.
+	const labelledLines = new Set<string>();
+	for (const s of finalStates) {
+		if (s.mode !== "train") continue;
+		const line = parseRailWayName(s.wayName ?? undefined)?.line;
+		if (line) labelledLines.add(line);
+	}
+	const lineStations = new Map<string, Awaited<ReturnType<typeof inputs.osm.stationsOnLine>>>();
+	for (const line of labelledLines) {
+		try {
+			lineStations.set(line, await inputs.osm.stationsOnLine(line));
+		} catch {
+			// Uncaptured in a fixture trace — no membership, no assertion.
+		}
+	}
+	for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps, lineStations)) {
 		console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
 	}
 

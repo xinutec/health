@@ -143,12 +143,20 @@ const JOURNEY_BASELINE_PATH = path.join(GOLDEN_DIR, "journey-baseline.json");
  *  no coordinates). */
 const FEASIBILITY_BASELINE_PATH = path.join(GOLDEN_DIR, "feasibility-baseline.json");
 type FeasibilityBaseline = Record<string, number>;
+/** Per-day standing count of `invalid-rail-triple` legs — a labelled train
+ *  leg whose line does not serve its board/alight station (#181/#351).
+ *  Ratcheted like the kinematic ceiling: membership data comes from each
+ *  fixture's recorded `stationsOnLine` trace, so a re-capture that widens
+ *  coverage can surface NEW standing debt — that is a real defect becoming
+ *  visible, blessed into the ceiling rather than hidden. */
+const RAIL_TRIPLE_BASELINE_PATH = path.join(GOLDEN_DIR, "rail-triple-baseline.json");
 
 const args = process.argv.slice(2);
 let bless = false;
 let blessDate: string | null = null;
 let blessJourneys = false;
 let blessFeasibility = false;
+let blessRailTriples = false;
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === "--bless") {
 		bless = true;
@@ -168,6 +176,11 @@ for (let i = 0; i < args.length; i++) {
 		// emits. Run after a change that removes some (the run prints the
 		// improvement).
 		blessFeasibility = true;
+	} else if (args[i] === "--bless-rail-triples") {
+		// Ratchet the invalid-rail-triple ceiling to the current run. Down
+		// after a fix; up only when a re-capture widens membership coverage
+		// and surfaces pre-existing debt.
+		blessRailTriples = true;
 	} else {
 		console.error(`unknown argument: ${args[i]}`);
 		process.exit(2);
@@ -217,6 +230,7 @@ let checked = 0;
 let infeasibleDays = 0;
 let hardViolations = 0;
 const kinematicNow: FeasibilityBaseline = {};
+const railTripleNow: FeasibilityBaseline = {};
 // Per-day set of ground-truth journeys the pipeline reconstructs this run —
 // compared against the committed baseline by the journey ratchet gate below.
 const journeysNow: JourneyBaseline = {};
@@ -283,13 +297,19 @@ for (const file of files) {
 	// emitted on this day's timeline. Points enable the kinematic invariant
 	// (a walking leg sustaining vehicle pace); step data enables the
 	// symmetric one (#356 — a train leg sustaining a pedestrian stepping
-	// run) on top of the label-only rail-continuity checks.
-	const violations = checkWorldlineFeasibility(states, dayPoints, dayInputs.biometrics.steps);
+	// run) on top of the label-only rail-continuity checks. Line membership
+	// comes from the fixture's recorded `stationsOnLine` trace (no live
+	// queries at replay), enabling the valid-triple invariant (#181/#351) on
+	// exactly the lines the captured pipeline run resolved.
+	const lineStations = new Map(Object.entries(captured.inputs.osmTrace.stationsOnLine ?? {}));
+	const violations = checkWorldlineFeasibility(states, dayPoints, dayInputs.biometrics.steps, lineStations);
 	if (violations.length > 0) {
 		infeasibleDays++;
 		const kinematic = violations.filter((v) => v.kind === "impossible-mode-kinematics").length;
 		if (kinematic > 0) kinematicNow[captured.meta.date] = kinematic;
-		hardViolations += violations.length - kinematic;
+		const railTriples = violations.filter((v) => v.kind === "invalid-rail-triple").length;
+		if (railTriples > 0) railTripleNow[captured.meta.date] = railTriples;
+		hardViolations += violations.length - kinematic - railTriples;
 		console.log(`    ⚠ feasibility: ${violations.length} physically-impossible leg(s)`);
 		for (const v of violations) console.log(`      ✗ ${v.kind}: ${v.detail}`);
 	}
@@ -362,6 +382,58 @@ if (feasBaseline === null) {
 	}
 }
 
+// --- invalid-rail-triple ratchet ------------------------------------------
+// Same only-shrink discipline as the kinematic ceiling, tracked separately:
+// a labelled train leg naming a station its line does not serve (#181/#351).
+// Coverage depends on each fixture's recorded stationsOnLine trace, so a
+// re-capture can WIDEN coverage and surface pre-existing debt — bless the
+// higher ceiling explicitly rather than let it hide.
+const railTripleTotal = Object.values(railTripleNow).reduce((n, c) => n + c, 0);
+let railTripleRegressed = 0;
+if (blessRailTriples) {
+	const ordered: FeasibilityBaseline = {};
+	for (const date of Object.keys(railTripleNow).sort()) ordered[date] = railTripleNow[date];
+	await writeFile(RAIL_TRIPLE_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	console.log(
+		`rail triples: blessed ceiling — ${railTripleTotal} standing invalid leg(s) across ${Object.keys(ordered).length} day(s).`,
+	);
+	process.exit(0);
+}
+let railTripleBaseline: FeasibilityBaseline | null = null;
+try {
+	railTripleBaseline = JSON.parse(await readFile(RAIL_TRIPLE_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
+} catch {
+	railTripleBaseline = null; // no baseline yet — first run bootstraps
+}
+if (railTripleBaseline === null) {
+	console.log(
+		`rail triples: no baseline yet — ${railTripleTotal} standing invalid leg(s). Establish the ceiling with: npm run golden -- --bless-rail-triples`,
+	);
+} else {
+	const dates = new Set([...Object.keys(railTripleBaseline), ...Object.keys(railTripleNow)]);
+	let improvedDays = 0;
+	for (const date of [...dates].sort()) {
+		const was = railTripleBaseline[date] ?? 0;
+		const now = railTripleNow[date] ?? 0;
+		if (now > was) {
+			railTripleRegressed += now - was;
+			console.log(`      ✗ rail triples: ${date} emits ${now} invalid leg(s), ceiling is ${was}`);
+		} else if (now < was) {
+			improvedDays++;
+		}
+	}
+	console.log(
+		railTripleRegressed > 0
+			? `rail triples: FAIL — ${railTripleRegressed} leg(s) above the committed ceiling.`
+			: `rail triples: ${railTripleTotal} standing invalid leg(s), none above the ceiling.`,
+	);
+	if (improvedDays > 0) {
+		console.log(
+			`rail triples: ${improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-rail-triples`,
+		);
+	}
+}
+
 // --- journey ratchet -----------------------------------------------------
 // Ratchet the story-correctness of the drawn timeline: a ground-truth journey
 // the pipeline USED to reconstruct correctly (in the committed baseline) that
@@ -401,4 +473,12 @@ if (gate.improved.length > 0) {
 		console.log(`      ✓ ${im.date} @${new Date(im.startTs * 1000).toISOString().slice(11, 16)}Z`);
 }
 
-process.exit(regressions > 0 || hardViolations > 0 || kinematicRegressed > 0 || gate.regressed.length > 0 ? 1 : 0);
+process.exit(
+	regressions > 0 ||
+		hardViolations > 0 ||
+		kinematicRegressed > 0 ||
+		railTripleRegressed > 0 ||
+		gate.regressed.length > 0
+		? 1
+		: 0,
+);
