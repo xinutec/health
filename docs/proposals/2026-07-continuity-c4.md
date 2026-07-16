@@ -174,7 +174,7 @@ stay to train would equally have flipped a real stay anywhere in a
 blackout. Recovering dark rides honestly is C4.2 proper (reachability
 chain context) and C4.3 (station anchors as generator input).
 
-### C4.2 — exit→entry chain context
+### C4.2 — exit→entry chain context — transition factor BUILT, shadow (2026-07-16)
 
 The decoder's transition model knows mode adjacency but not *place*
 continuity for moving states. Add chain context at segment entry,
@@ -196,6 +196,31 @@ composing into the existing `entryLogProb`:
 
 Per-segment, not per-minute — no state-space explosion (the route-aware
 decoder's cautionary precedent).
+
+Status: the transition-level factor is implemented in
+`src/hmm/chain-context.ts` behind `USE_CHAIN_CONTEXT=1` (same
+loader-gated pattern; composed into `transitionLogProb`, evaluated only
+on non-hard-zero transitions): place-anchored reachability both ways
+(entering/leaving `stationary @ P` scored by `dist(prevGpsFix, P)`)
+plus boarding feasibility for `train @ L` (exit anchor to L's nearest
+track, true per-line polyline distance — the `edgesNear` grid only
+reaches ~750 m; gated off on generator-vouched windows). Same staleness
+σ-inflation as segment evidence, so blackout transitions assert
+~nothing. Per-minute memoization keeps overhead ~0.7 s/day.
+
+Shadow-measured 2026-07-16, chain-context ALONE vs blessed baseline:
+one day changes corpus-wide — 05-15 legs-mode 7→8, legs-line 1→2 (the
+midday hop's line evidence), everything else byte-identical. No
+regressions: the first C4 flag that is strictly clean on its own. All
+three flags together reproduce the two-flag result exactly (the
+remaining blockers are imputation/evidence-era, none chain-caused).
+
+Still missing for C4.2 proper: the close-time triple term — a vehicle
+segment entered from `stationary @ P` whose evidence shows it never
+left P's neighbourhood (the 06-12 drift phantom). Needs the closing
+segment's PREDECESSOR state at the duration hook
+(`backPrev[segStart][state]` in the trellis makes this a mechanical
+extension), then a "never left" displacement-from-P likelihood.
 
 ### C4.3 — chained train triples (subsume the anchors)
 

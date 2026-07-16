@@ -232,7 +232,11 @@ function geometryLengthM(geom: readonly { lat: number; lon: number }[]): number 
  *  of the polyline, compute the perpendicular distance from the
  *  point to the segment (clamped at endpoints). Return the minimum
  *  across segments. */
-function pointToPolylineMeters(lat: number, lon: number, geometry: readonly { lat: number; lon: number }[]): number {
+export function pointToPolylineMeters(
+	lat: number,
+	lon: number,
+	geometry: readonly { lat: number; lon: number }[],
+): number {
 	let best = Number.POSITIVE_INFINITY;
 	for (let i = 1; i < geometry.length; i++) {
 		const d = pointToSegmentMeters(lat, lon, geometry[i - 1], geometry[i]);

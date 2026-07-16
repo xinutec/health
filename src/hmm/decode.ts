@@ -19,6 +19,7 @@
 import type { HrPoint, SleepStageRecord, StepPoint } from "../geo/biometrics.js";
 import type { FilteredPoint } from "../geo/kalman.js";
 import type { RouteGraph } from "../geo/route-graph.js";
+import { buildChainContext } from "./chain-context.js";
 import { DEFAULT_MIN_DURATION_BY_MODE, type GammaFit } from "./duration-dist.js";
 import { buildEmissionFn } from "./emissions.js";
 import { buildEntryPrior } from "./entry-prior.js";
@@ -120,6 +121,11 @@ export interface HsmmInputs {
 	 *  budget vs mode, `segment-evidence.ts`). Loader-set from
 	 *  `useSegmentEvidence()`; absent/false keeps the prior decode. */
 	segmentEvidence?: boolean;
+	/** C4.2 exit→entry chain context (`chain-context.ts`): geometric
+	 *  feasibility of every new-segment transition from the previous
+	 *  segment's exit evidence. Loader-set from `useChainContext()`;
+	 *  absent/false keeps the prior decode. */
+	chainContext?: boolean;
 }
 
 /**
@@ -195,10 +201,27 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 			: (state: State, d: number, segEndIndex: number): number =>
 					durationPrior(state, d, segEndIndex) + segEvidence(state, d, segEndIndex);
 
+	// C4.2 exit→entry chain context (opt-in): geometric feasibility of
+	// each new-segment transition, composed with the static transition
+	// prior — the transition hook is the one place the trellis knows
+	// both the state being left and the state being entered.
+	const chainFn =
+		inputs.chainContext === true
+			? buildChainContext({ placeCoords, routeGraph: inputs.routeGraph, isTrainCovered: trainGen.isCovered })
+			: null;
+	const transitionLogProb =
+		chainFn === null
+			? transition
+			: (from: State, to: State, obs: Observation): number => {
+					const t = transition(from, to);
+					if (t === Number.NEGATIVE_INFINITY) return t;
+					return t + chainFn(from, to, obs);
+				};
+
 	const hmmStates = hsmmViterbi({
 		observations: tensor,
 		states,
-		transitionLogProb: transition,
+		transitionLogProb,
 		emissionLogProb: emission,
 		initialLogProb,
 		entryLogProb,

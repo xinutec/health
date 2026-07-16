@@ -67,6 +67,17 @@ export function useCadenceImputation(): boolean {
 	return process.env.USE_CADENCE_IMPUTATION === "1";
 }
 
+/** USE_CHAIN_CONTEXT=1 — C4.2 proper
+ *  (`docs/proposals/2026-07-continuity-c4.md`): exit→entry chain
+ *  context (`src/hmm/chain-context.ts`) — every new-segment transition
+ *  scored for geometric feasibility from the previous segment's exit
+ *  evidence (teleport cost into/out of a known place, boarding
+ *  feasibility for a named line). Shadow-measured on the decoder
+ *  scoreboard; flips on when the scoreboard clears. */
+export function useChainContext(): boolean {
+	return process.env.USE_CHAIN_CONTEXT === "1";
+}
+
 /** USE_SEGMENT_EVIDENCE=1 — C4.2 groundwork
  *  (`docs/proposals/2026-07-continuity-c4.md`): segment-scoped physics
  *  evidence (net displacement + step budget vs mode,
