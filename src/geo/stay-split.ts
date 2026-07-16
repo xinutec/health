@@ -1094,3 +1094,190 @@ export function shedVehiclePedestrianEdges<T extends TrackSegment>(
 	}
 	return out;
 }
+
+/** Per-step net-progress pace (km/h) marking a stay-tail fix as the ride
+ *  moving — the same vehicle-pace floor the other boundary passes use. */
+const RIDE_HEAD_STEP_KMH = 15;
+/** From the first ride step to the stay's last fix must displace a real
+ *  inter-station distance — a lone urban-canyon spike never qualifies. */
+const RIDE_HEAD_MIN_NET_M = 250;
+/** The march must set out from the stay itself: its first fix sits within
+ *  this of the dwell mass. A loose tether — the net-distance floor does the
+ *  real work; this only rejects a tail that begins somewhere else entirely. */
+const MARCH_START_MAX_FROM_DWELL_M = 150;
+/** After the first ride step the fixes must never come back within this of
+ *  the dwell mass — an errand-and-back (or a teleport spike that returns)
+ *  means the user never left for good, and nothing may be carved. */
+const DWELL_RETURN_RADIUS_M = 120;
+/** The carve must leave a real stay behind. A "stay" short enough to be a
+ *  platform wait is owned by the boarding-platform absorber, not here. */
+const RIDE_HEAD_MIN_REMAINING_STAY_S = 600;
+/** Steps below this pace are standing (the platform wait), not marching. */
+const MARCH_STILL_KMH = 2.5;
+
+/**
+ * Claim a ride's head — the walk to the station, the platform wait, and the
+ * first tunnel-reacquire fixes — out of the STAY that precedes a train leg
+ * (#355; the boarding twin of the alight-side anchors, and the residual left
+ * by the #354 dwell-with-departure-tail carve-out).
+ *
+ * The class: GPS dies in the tunnel right after boarding, so segmentation
+ * sees no boundary until the next clean fix, minutes into the ride — the
+ * stay ends where the reacquire fixes finally cohere and the train leg
+ * starts late. Nothing false is drawn (stays render as a dot), but the walk
+ * to the station is missing and the ride's start is a lie.
+ *
+ * Anatomy of a qualifying stay tail, scanned from the dwell out:
+ *   march — a contiguous moving run (every step above standing pace, at or
+ *           below pedestrian pace) that sets out from the dwell mass and
+ *           covers real ground, with the wearer stepping through it — the
+ *           same four-signal evidence bar as `shedVehiclePedestrianEdges`;
+ *   wait  — an optional standing run (the platform);
+ *   ride  — at least one vehicle-paced step after which the fixes never
+ *           return to the dwell, displacing an inter-station distance net.
+ *
+ * The stay is cut back to the march's departure fix, the march surfaces as
+ * a new walking leg (rebuilt from its own fixes and re-enriched — the
+ * stay's place label is not evidence about it), and the train extends back
+ * to the march's end, owning the wait and the reacquire fixes — platform
+ * dwell belongs to the ride, as with the boarding-platform absorber.
+ *
+ * Unlike the shed pass this one deliberately INVENTS a segment — that is
+ * the point: there is no walk to receive the run, because the whole
+ * departure is buried in the stay. Precision over recall everywhere else:
+ * without step data it is inert; a tail whose march never leaves the dwell
+ * or whose ride evidence returns to it is left alone; the carve must leave
+ * a dwell-scale stay behind. Pure.
+ */
+export function claimRideHeadFromStay<T extends TrackSegment>(
+	segments: readonly T[],
+	points: readonly FilteredPoint[],
+	steps: readonly StepPoint[],
+): T[] {
+	if (steps.length === 0) return [...segments];
+	const segs = [...segments];
+	const out: T[] = [];
+	const stats = (start: number, end: number): { count: number; avg: number; max: number } => {
+		const speeds: number[] = [];
+		for (const p of points) if (p.ts >= start && p.ts < end) speeds.push(p.speed_kmh ?? 0);
+		const max = speeds.length ? Math.max(...speeds) : 0;
+		return { count: speeds.length, avg: Math.round(median(speeds) * 10) / 10, max: Math.round(max * 10) / 10 };
+	};
+
+	for (let i = 0; i < segs.length; i++) {
+		const cur = segs[i];
+		const next = segs[i + 1];
+		if (!next || segMode(cur) !== "stationary" || segMode(next) !== "train") {
+			out.push(cur);
+			continue;
+		}
+		const fixes = samplesInWindow(points, cur).sort((a, b) => a.ts - b.ts);
+		const n = fixes.length;
+		if (n < 8) {
+			out.push(cur);
+			continue;
+		}
+		const stepKmh = (a: number, b: number): number => {
+			const dt = fixes[b].ts - fixes[a].ts;
+			return dt > 0 ? (haversineMeters(fixes[a].lat, fixes[a].lon, fixes[b].lat, fixes[b].lon) / dt) * 3.6 : 0;
+		};
+		// The dwell mass: TIME-weighted component-wise median position. Indoor
+		// GPS is sparse — a multi-hour dwell may be four fixes and a two-hour
+		// gap while the departing tail is a dense fix-per-14s run — so a plain
+		// per-fix median lands in the tail. Weight each fix by how long its
+		// position held (until the next fix) and the dwell dominates again.
+		const holdS = fixes.map((f, j) => (j < n - 1 ? Math.max(fixes[j + 1].ts - f.ts, 1) : 1));
+		const weightedMedian = (values: number[]): number => {
+			const order = values.map((v, j) => ({ v, w: holdS[j] })).sort((a, b) => a.v - b.v);
+			const half = order.reduce((s, e) => s + e.w, 0) / 2;
+			let acc = 0;
+			for (const e of order) {
+				acc += e.w;
+				if (acc >= half) return e.v;
+			}
+			return order[order.length - 1].v;
+		};
+		const dwellLat = weightedMedian(fixes.map((f) => f.lat));
+		const dwellLon = weightedMedian(fixes.map((f) => f.lon));
+		const fromDwell = fixes.map((f) => haversineMeters(f.lat, f.lon, dwellLat, dwellLon));
+		// minFromDwellAfter[j]: the closest any fix from j on comes to the dwell.
+		const minFromDwellAfter = [...fromDwell];
+		for (let j = n - 2; j >= 0; j--) {
+			minFromDwellAfter[j] = Math.min(minFromDwellAfter[j], minFromDwellAfter[j + 1]);
+		}
+		// The ride: first vehicle-paced step whose suffix never returns.
+		let r = -1;
+		for (let j = 1; j < n; j++) {
+			if (stepKmh(j - 1, j) >= RIDE_HEAD_STEP_KMH && minFromDwellAfter[j] > DWELL_RETURN_RADIUS_M) {
+				r = j;
+				break;
+			}
+		}
+		if (r < 1) {
+			out.push(cur);
+			continue;
+		}
+		const rideNetM = haversineMeters(fixes[r - 1].lat, fixes[r - 1].lon, fixes[n - 1].lat, fixes[n - 1].lon);
+		if (rideNetM < RIDE_HEAD_MIN_NET_M) {
+			out.push(cur);
+			continue;
+		}
+		// March end: strip the standing platform wait off the pedestrian run.
+		let m = r - 1;
+		while (m > 0 && stepKmh(m - 1, m) < MARCH_STILL_KMH) m--;
+		// March start: the maximal contiguous moving run ending at m. The step
+		// INTO the dwell's last fix spans the still dwell (often a long indoor
+		// fix gap), so its pace is negligible and the scan stops there — the
+		// walk opens on the stay's final at-dwell fix.
+		let w = m;
+		while (w > 0 && stepKmh(w - 1, w) >= MARCH_STILL_KMH) w--;
+		if (w >= m) {
+			out.push(cur);
+			continue;
+		}
+		// Four-signal walk evidence over the march (the shed pass's bar).
+		const durS = fixes[m].ts - fixes[w].ts;
+		const netM = haversineMeters(fixes[w].lat, fixes[w].lon, fixes[m].lat, fixes[m].lon);
+		const cadence = meanCadenceSpm(steps, fixes[w].ts, fixes[m].ts);
+		let pedestrianPaced = true;
+		for (let j = w + 1; j <= m; j++) {
+			if (stepKmh(j - 1, j) > PEDESTRIAN_STEP_MAX_KMH) pedestrianPaced = false;
+		}
+		if (
+			!pedestrianPaced ||
+			durS < PEDESTRIAN_MIN_RUN_S ||
+			netM < PEDESTRIAN_MIN_RUN_NET_M ||
+			cadence === null ||
+			cadence < PEDESTRIAN_MIN_CADENCE_SPM ||
+			fromDwell[w] > MARCH_START_MAX_FROM_DWELL_M ||
+			fixes[w].ts - cur.startTs < RIDE_HEAD_MIN_REMAINING_STAY_S
+		) {
+			out.push(cur);
+			continue;
+		}
+
+		// Carve: stay | walk (the march) | train (wait + reacquire fixes on).
+		const walkStart = fixes[w].ts;
+		const rideStart = fixes[m].ts;
+		const stayStats = stats(cur.startTs, walkStart);
+		out.push({
+			...cur,
+			endTs: walkStart,
+			avgSpeed: stayStats.avg,
+			maxSpeed: stayStats.max,
+			pointCount: stayStats.count,
+		});
+		out.push(walkRemainder({ ...cur, mode: "walking" }, walkStart, rideStart, points, false));
+		const trainStats = stats(rideStart, next.endTs);
+		const reason = `extended back over the boarding: claimed a ${Math.round(netM)} m station walk + the ride's reacquire fixes out of the preceding stay`;
+		segs[i + 1] = {
+			...next,
+			startTs: rideStart,
+			avgSpeed: trainStats.avg,
+			maxSpeed: trainStats.max,
+			pointCount: trainStats.count,
+			refinedReason: next.refinedReason ? `${next.refinedReason}; ${reason}` : reason,
+		};
+	}
+	return out;
+}

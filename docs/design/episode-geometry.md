@@ -455,11 +455,21 @@ office afternoon whose tail held the departure:
   reconstructed journeys and moved an alight to the wrong station.
 
 Full rationale and constants live on the pass doc-comments
-(`passes/stays.ts`, `biometrics.ts`, `segments.ts`). The residual:
-the ride's true head (the pre-boarding fixes) stays inside the stay —
-stays render as a dot, so nothing false is drawn, but the ride starts
-late until a boarding-side anchor learns to claim a vehicle tail out of
-a stay (the boarding twin of `anchorTrainAlightToWalkedStation`).
+(`passes/stays.ts`, `biometrics.ts`, `segments.ts`). The residual —
+the ride's true head (the pre-boarding fixes) staying inside the stay,
+so the ride started late and the station walk never drew — is claimed
+by `claimRideHeadFromStay` (`stay-split.ts`, #355): a stay followed by
+a train leg is scanned for a departing pedestrian march (the shed
+pass's four-signal bar, judged over the march only — the platform wait
+would dilute a whole-tail cadence mean), an optional standing wait, and
+vehicle-paced reacquire steps that never return to the dwell. The stay
+is cut back to the march's departure fix, the march surfaces as a new
+walking leg, and the train extends back over the wait + reacquire
+fixes. One estimator subtlety earned its own fix: the dwell mass must
+be the TIME-weighted median of the stay's fixes — indoor GPS is sparse
+(a multi-hour dwell can be four fixes and a two-hour gap) while the
+departing tail is dense, so a plain per-fix median lands in the tail
+and every distance-from-dwell gate then measures from the wrong place.
 
 **The symmetric invariant + its repair (#356).** The invariant above
 only catches ride fixes stranded in a *walking* leg. The mirror — the
@@ -484,9 +494,12 @@ departs from, the walk is rebuilt from its own extended fixes and
 re-enriched. Deliberately narrow: it never invents a segment (no
 adjacent walk → the invariant keeps counting) and never consumes the
 ride (the run must terminate at a vehicle-paced step and leave ≥2 min
-of leg). Mid-leg runs and edge runs behind a reacquire blip stay as
-counted ceiling debt — claiming those belongs to the boarding-side
-anchor work.
+of leg). The stay-buried head — no adjacent walk because the whole
+departure is inside the preceding stay — is the one case where a
+segment IS invented: `claimRideHeadFromStay` (#355, above). Mid-leg
+runs remain counted ceiling debt (the 07-07 Met leg carries one:
+a 320 m stepping run mid-ride — a hidden interchange or over-claimed
+ride the anchors cannot see).
 
 **The test is cache-independent and needs no station coordinate** — it
 reads only `speed_kmh`, which is on every fix:

@@ -91,6 +91,7 @@ import {
 	roadSupportedConfidence,
 } from "./segments.js";
 import {
+	claimRideHeadFromStay,
 	reassignVehicleArrivalWalk,
 	reassignWalkTailToVehicle,
 	shedVehiclePedestrianEdges,
@@ -1357,6 +1358,20 @@ export async function computeVelocityFromInputs(
 		{
 			name: "vehicleEdgeShed",
 			run: (segs) => shedVehiclePedestrianEdges(segs, points, biomForStaySplit.steps),
+		},
+
+		// The boarding-side anchor (#355): when GPS dies in the tunnel right
+		// after boarding, the ride's whole head — the walk to the station, the
+		// platform wait, the first reacquire fixes — is buried in the STAY that
+		// precedes the train leg, so there is no walk for the shed pass to hand
+		// anything to. Carve the departure march out of the stay's tail as a
+		// new walking leg and extend the train back over the wait and the
+		// reacquire fixes. Runs before reenrichSplitWalks so the invented walk
+		// gets its own enrichment, and before the boarding anchor / railJourney
+		// so the corrected ride head feeds them.
+		{
+			name: "rideHeadClaim",
+			run: (segs) => claimRideHeadFromStay(segs, points, biomForStaySplit.steps),
 		},
 
 		// Re-enrich the on-foot remainders `vehicleSplit` left behind.
