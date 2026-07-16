@@ -90,8 +90,8 @@ describe("buildSegmentEvidence", () => {
 		const enough = tensor(26, at(0, 0), at(25, 0.012), (m) => (m < 25 ? 72 : 0)); // 1800 total
 		const evShort = buildSegmentEvidence({ observations: short });
 		const evEnough = buildSegmentEvidence({ observations: enough });
-		const wShort = evShort(state("walking"), 25, 25);
-		const wEnough = evEnough(state("walking"), 25, 25);
+		const wShort = evShort(state("walking"), 26, 25);
+		const wEnough = evEnough(state("walking"), 26, 25);
 		expect(wShort).toBeLessThan(-3);
 		expect(wEnough).toBeGreaterThan(-0.5);
 	});
@@ -122,5 +122,34 @@ describe("buildSegmentEvidence", () => {
 		const obs = tensor(61, at(0, 0), at(60, 0.45), () => 0);
 		const ev = buildSegmentEvidence({ observations: obs });
 		expect(ev(state("stationary"), 60, 60)).toBeGreaterThanOrEqual(-6);
+	});
+
+	it("a stale bracket cannot convict a platform wait of the dark ride's displacement", () => {
+		// Measured acceptance-suite shape: last GPS fix hours before the segment
+		// (indoor blackout), next fix on the moving train — 5.8 km of
+		// displacement, none of it attributable to the 5-minute standstill.
+		// The slop time belongs to neighbouring segments; the evidence must
+		// soften to ~nothing rather than clamp the stay to -6.
+		const obs = tensor(6, at(-460, 0), at(6, 0.052), () => null);
+		const ev = buildSegmentEvidence({ observations: obs });
+		expect(ev(state("stationary"), 6, 5)).toBeGreaterThan(-0.1);
+	});
+
+	it("an in-blackout interchange walk with real steps stays cheap despite a journey-sized bracket", () => {
+		// Measured acceptance-suite shape: 3 minutes of genuine cadence between two
+		// dark train legs; brackets span the whole 34-minute journey (10.4 km).
+		// Charging the walk for the trains' displacement made `unknown` (which
+		// pays nothing) win the window.
+		const obs = tensor(4, at(-13, 0), at(3 + 18, 0.094), (m) => [112, 4, 113, 18][m] ?? 0);
+		const ev = buildSegmentEvidence({ observations: obs });
+		expect(ev(state("walking"), 4, 3)).toBeGreaterThan(-1);
+	});
+
+	it("the same displacement with TIGHT brackets still pays — slop softening is not a loophole", () => {
+		// 10.4 km genuinely traversed in the 3 observed minutes: no slop, so
+		// a walking claim is absurd and clamps.
+		const obs = tensor(4, at(0, 0), at(4, 0.094), (m) => [112, 4, 113, 18][m] ?? 0);
+		const ev = buildSegmentEvidence({ observations: obs });
+		expect(ev(state("walking"), 4, 3)).toBeLessThanOrEqual(-6);
 	});
 });

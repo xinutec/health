@@ -136,16 +136,43 @@ loader-gated pattern): one bounded z-penalty per candidate segment
 composed into the duration hook — net bracket displacement vs mode
 (stationary ≈ 0; walking ≈ measured steps × stride, the
 expected-vs-observed step likelihood; vehicles ≈ mode-typical net
-speed). Measured with both flags on: 05-15 gains a journey (2/3), 06-12
-holds 2/3, one line gain; but two undiagnosed leg-mode losses appear
-(05-20, 06-09 — marginal post-train walk windows trade minutes with
-adjacent stays) and the 06-12 drift phantom SURVIVES: drift fixes
-scatter at jog speed, so the segment's own brackets show real local
-motion and stationary pays the displacement penalty too. Confirmed: the
-drift-phantom class is only separable with NEIGHBOUR-STATE context
-(entering a ride from `stationary @P` and returning to `stationary @P`
-minutes later = never left) — C4.2 proper, below, not segment-local
-observables.
+displacement for the segment's duration). First measurement with both
+flags on: 05-15 gains a journey (2/3), 06-12 holds 2/3, one line gain;
+but two leg-mode losses appear (05-20, 06-09) and the 06-12 drift
+phantom SURVIVES: drift fixes scatter at jog speed, so the segment's
+own brackets show real local motion and stationary pays the
+displacement penalty too. Confirmed: the drift-phantom class is only
+separable with NEIGHBOUR-STATE context (entering a ride from
+`stationary @P` and returning to `stationary @P` minutes later = never
+left) — C4.2 proper, below, not segment-local observables.
+
+**Bracket-slop misattribution (diagnosed + fixed 2026-07-16).** Both
+leg-mode losses had one mechanism: deep in a GPS blackout the same
+bracket pair spans *every* candidate sub-segment, so the term charged
+each of them the whole dark journey's displacement. The 05-20
+pre-boarding standstill (last fix 7.5 h stale) paid −6 for the tube
+ride's 5.8 km — killing the platform wait that had let imputation win
+the swallowed hop — and the 06-09 interchange walk (3 min of real
+cadence inside a 34-min bracket, 10.4 km) paid −6 while `unknown`,
+which asserts nothing, took the window. Fix: σ grows in quadrature by
+`SLOP_SPEED_M_PER_MIN` (500 m/min) per minute of bracket slop — time
+between a bracketing fix and the segment boundary belongs to
+NEIGHBOURING segments, so stale brackets assert ~nothing while tight
+brackets (drift bursts have per-minute fixes) stay sharp. Likelihood
+shape, no cutoff.
+
+Post-fix scoreboard (both flags vs blessed baseline): both leg-mode
+losses gone; legs-mode 65→68, legs-line 8→10, new leg gains on
+05-15/05-22; journeys 06-12 0→2. Remaining deltas, all pre-existing
+flag blockers, none from the fix: 05-20 journey 2→1 (the
+imputation-caused walk-to-car swallow), 05-25 1→0, 06-16 1→0, 06-12
+phantomRides 1→2 (drift class). The fix also *dropped* the first
+measurement's 05-15 morning-journey gain — adjudicated as luck, not a
+regression: the whole morning is one blackout (prev fix 01:50 → next
+09:08, 9.9 km), and the dishonest charge that flipped the dark-ride
+stay to train would equally have flipped a real stay anywhere in a
+blackout. Recovering dark rides honestly is C4.2 proper (reachability
+chain context) and C4.3 (station anchors as generator input).
 
 ### C4.2 — exit→entry chain context
 

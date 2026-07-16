@@ -17,10 +17,21 @@
  *     walk is within noise. Encodes the expected-vs-observed step
  *     likelihood the user asked for (steps are the discriminator in
  *     blackouts; speed is structurally blind).
- *   - **vehicles**: predict a mode-typical *net* speed over the bracket
- *     span (net, not instantaneous — stops and indirection included). A
- *     GPS-drift phantom micro-ride (multi-minute "drive" going nowhere)
- *     pays; a real dark tube ride at ~25 km/h net does not.
+ *   - **vehicles**: predict a mode-typical *net* displacement for the
+ *     segment's duration (net, not instantaneous — stops and indirection
+ *     included). A GPS-drift phantom micro-ride (multi-minute "drive"
+ *     going nowhere) pays; a real dark tube ride at ~25 km/h net does not.
+ *
+ * **Bracket slop**: the bracketing fixes can sit well outside the segment
+ * (deep in a GPS blackout the same pair brackets *every* candidate
+ * sub-segment). The time between a bracket fix and the segment boundary
+ * belongs to NEIGHBOURING segments, whose motion is unattributable to
+ * this hypothesis — so σ grows by `SLOP_SPEED_M_PER_MIN` per slop minute
+ * and stale brackets assert ~nothing. Without this, a genuine platform
+ * wait inside a blackout is convicted of the whole dark ride's
+ * displacement (measured 2026-07-16 on the acceptance suite: a
+ * pre-boarding standstill and an interchange walk both clamped to −6
+ * while `unknown`, which pays nothing, won the window).
  *
  * Shape discipline (probabilistic-principles): pure z²/2 penalties with
  * NO normalization constants — a hypothesis consistent with the physics
@@ -52,6 +63,10 @@ const NET_SPEED: Partial<Record<State["mode"], { mean: number; std: number }>> =
 	train: { mean: 28, std: 14 },
 	plane: { mean: 400, std: 250 },
 };
+/** Unattributable-motion spread per minute of bracket slop (m/min).
+ *  Slop time sits in neighbouring segments where anything up to urban
+ *  vehicle pace (~30 km/h) may have happened. */
+const SLOP_SPEED_M_PER_MIN = 500;
 /** Hard clamp on the penalty — evidence, never a veto. */
 const CLAMP_NATS = -6;
 
@@ -106,19 +121,28 @@ export function buildSegmentEvidence(
 		if (before === null || after === null || after.ts <= before.ts) return 0;
 
 		const dispM = haversineMeters(before.lat, before.lon, after.lat, after.lon);
-		const spanH = (after.ts - before.ts) / 3600;
+		// Bracket slop: fix time not covered by the segment's own minutes.
+		// Motion there belongs to neighbouring segments and widens σ.
+		const segStartTs = first.ts;
+		const segEndTs = last.ts + 60;
+		const slopMin = (Math.max(0, segStartTs - before.ts) + Math.max(0, after.ts - segEndTs)) / 60;
+		const slopVar = (SLOP_SPEED_M_PER_MIN * slopMin) ** 2;
+		const withSlop = (sigma: number): number => Math.sqrt(sigma * sigma + slopVar);
 
 		if (state.mode === "stationary") {
-			return zPenalty(dispM, 0, DISP_NOISE_M);
+			return zPenalty(dispM, 0, withSlop(DISP_NOISE_M));
 		}
 		if (state.mode === "walking") {
 			const steps = stepPrefix[Math.min(obs.length, segEndIndex + 1)] - stepPrefix[Math.max(0, startIndex)];
 			const predicted = steps * STRIDE_M;
 			const sigma = Math.max(STRIDE_REL_STD * predicted, DISP_NOISE_M);
-			return zPenalty(dispM, predicted, sigma);
+			return zPenalty(dispM, predicted, withSlop(sigma));
 		}
 		const net = NET_SPEED[state.mode];
 		if (net === undefined) return 0;
-		return zPenalty(dispM / 1000 / spanH, net.mean, net.std);
+		const segH = durationMinutes / 60;
+		const predicted = net.mean * 1000 * segH;
+		const sigma = Math.max(net.std * 1000 * segH, DISP_NOISE_M);
+		return zPenalty(dispM, predicted, withSlop(sigma));
 	};
 }
