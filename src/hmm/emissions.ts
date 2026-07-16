@@ -87,7 +87,42 @@ export interface BuildEmissionFnOpts {
 	 *  set this to `null` when continuity is disabled (the feature
 	 *  flag is off, or no prior-day record exists). */
 	continuityContext?: ContinuityContext | null;
+
+	/** C4.2 reacquire-robust speed (`2026-07-continuity-c4.md`): widen
+	 *  the STATIONARY speed σ on minutes shortly after GPS reacquisition
+	 *  (`Observation.reacquireAgeMin`), decaying as the filter settles.
+	 *  Measured 2026-07-16: indoor reacquire scatter reads 5–14 km/h
+	 *  while genuinely still, and N(0,2) charges that 12–18 nats/minute
+	 *  — enough to buy phantom vehicle micro-rides that no honest
+	 *  segment-level term can counter. Conditioned on an observable
+	 *  (unlike the REFUTED global heavy-tail mixture, which reshaped
+	 *  boundaries corpus-wide): a real ride's 70 km/h reacquire fix
+	 *  still pays hard even at the widened σ. Loader-gated
+	 *  (`USE_REACQUIRE_ROBUST_SPEED=1`); default off keeps the emission
+	 *  byte-identical. */
+	reacquireRobustSpeed?: boolean;
 }
+
+/** Reacquire-robust speed shape: at reacquire age a, the stationary
+ *  speed σ becomes `σ·(1 + REACQ_WIDEN·exp(−a / REACQ_TAU_MIN))` —
+ *  σ=7 km/h at the first post-gap fix, back to ~1.2σ after two τ.
+ *  Calibrated to the measured drift band (5–14 km/h, settling over
+ *  ~6 minutes) while keeping genuine departures convicted: 14 km/h at
+ *  age 0 → z=2 (tolerated), 22 km/h → z≈3.2 (pays — a real ride
+ *  leaving at reacquire, the case that refuted the wider first cut),
+ *  70 km/h → clamp-level absurd.
+ *
+ *  The widening additionally scales DOWN with rail-corridor proximity
+ *  (`1 − exp(−railDist²/2σ²)`): a reacquire fix ON a rail line is
+ *  exactly what a dark tube ride's reacquisition looks like (measured:
+ *  the acceptance-day midday hop reacquires at 0–7 m from the track,
+ *  while indoor drift scatters ~280 m off-rail), so the stationary
+ *  tolerance must not shelter it. Road proximity is NOT used — in
+ *  London everything including indoor drift is within ~25 m of a road,
+ *  so it carries no signal (the #234 lesson). */
+const REACQ_WIDEN = 2.5;
+const REACQ_TAU_MIN = 3;
+const REACQ_RAIL_SIGMA_M = 100;
 
 /** σ for the place-centroid Gaussian. Matches the
  *  `STAY_RADIUS_M = 150` used elsewhere in the pipeline — a fix
@@ -333,6 +368,7 @@ export function buildEmissionFn(opts: BuildEmissionFnOpts = {}): EmissionLogProb
 	const learned = opts.learnedEmissions ?? null;
 	const perPlaceHr = learned?.perPlaceHr ?? null;
 	const continuity = opts.continuityContext ?? null;
+	const reacquireRobust = opts.reacquireRobustSpeed === true;
 
 	// Pre-resolve effective per-mode priors: for each mode, either a
 	// learned fit (when `learnedEmissions.perMode[mode]` is present and
@@ -388,7 +424,17 @@ export function buildEmissionFn(opts: BuildEmissionFnOpts = {}): EmissionLogProb
 
 		// Speed: only if GPS present (no speed without a fix).
 		if (obs.gps !== null) {
-			logProb += logNormalPdf(obs.gps.speedKmh, prior.speedMean, prior.speedStd);
+			let speedStd = prior.speedStd;
+			// Reacquire-robust widening (stationary only — the measured lie
+			// is a still user convicted of moving; genuine movement modes
+			// keep full speed discrimination).
+			if (reacquireRobust && state.mode === "stationary" && obs.reacquireAgeMin != null) {
+				const railDistM = obs.railDistM;
+				const railScale =
+					railDistM == null ? 1 : 1 - Math.exp(-(railDistM * railDistM) / (2 * REACQ_RAIL_SIGMA_M ** 2));
+				speedStd = prior.speedStd * (1 + REACQ_WIDEN * railScale * Math.exp(-obs.reacquireAgeMin / REACQ_TAU_MIN));
+			}
+			logProb += logNormalPdf(obs.gps.speedKmh, prior.speedMean, speedStd);
 		} else if (state.mode === "plane") {
 			// GPS-null cannot reasonably indicate plane — being in the
 			// air is exactly when GPS is most LIKELY to be present

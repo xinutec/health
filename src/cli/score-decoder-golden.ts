@@ -36,7 +36,12 @@ import { countPhantomRides, scoreStations } from "../eval/decoder-scoreboard.js"
 import { parseGroundTruth } from "../eval/ground-truth.js";
 import { decoderJourneys, groundTruthJourneys, scoreJourneys } from "../eval/journey-score.js";
 import { type DecoderMinute, scoreDay } from "../eval/score-day.js";
-import { useCadenceImputation, useChainContext, useSegmentEvidence } from "../geo/factors/feature-flag.js";
+import {
+	useCadenceImputation,
+	useChainContext,
+	useReacquireRobustSpeed,
+	useSegmentEvidence,
+} from "../geo/factors/feature-flag.js";
 import { decodeHsmm } from "../hmm/decode.js";
 import type { HmmSegment } from "../hmm/persist.js";
 import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
@@ -180,6 +185,7 @@ async function main(): Promise<void> {
 				imputeCadence: useCadenceImputation(),
 				segmentEvidence: useSegmentEvidence(),
 				chainContext: useChainContext(),
+				reacquireRobustSpeed: useReacquireRobustSpeed(),
 			}),
 		);
 		const gt = parseGroundTruth(readFileSync(gtPath, "utf8"), date, captured.meta.tz);

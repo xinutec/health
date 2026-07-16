@@ -67,6 +67,18 @@ export function useCadenceImputation(): boolean {
 	return process.env.USE_CADENCE_IMPUTATION === "1";
 }
 
+/** USE_REACQUIRE_ROBUST_SPEED=1 — C4.2 drift-phantom root fix
+ *  (`docs/proposals/2026-07-continuity-c4.md`): widen the STATIONARY
+ *  speed emission σ on minutes shortly after GPS reacquisition
+ *  (`Observation.reacquireAgeMin`), decaying as the Kalman filter
+ *  settles. Measured 2026-07-16: indoor reacquire scatter reads
+ *  5–14 km/h while genuinely still — 12–18 nats/minute of stationary
+ *  over-charge that buys phantom vehicle micro-rides. Shadow-measured
+ *  on the decoder scoreboard; flips on when the scoreboard clears. */
+export function useReacquireRobustSpeed(): boolean {
+	return process.env.USE_REACQUIRE_ROBUST_SPEED === "1";
+}
+
 /** USE_CHAIN_CONTEXT=1 — C4.2 proper
  *  (`docs/proposals/2026-07-continuity-c4.md`): exit→entry chain
  *  context (`src/hmm/chain-context.ts`) — every new-segment transition

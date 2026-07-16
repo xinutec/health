@@ -269,4 +269,55 @@ describe("buildEmissionFn", () => {
 			}
 		}
 	});
+
+	describe("reacquire-robust stationary speed", () => {
+		const robust = buildEmissionFn({ reacquireRobustSpeed: true });
+		const driftObs = (age: number | null) =>
+			obs({ gps: { lat: 51.5, lon: -0.1, speedKmh: 12 }, cadence: 0, reacquireAgeMin: age });
+
+		it("tolerates drift-speed fixes right after reacquisition", () => {
+			// 12 km/h at N(0,2) is z=6 — the measured phantom-buying charge.
+			// At reacquire age 0 the widened σ makes it ordinary noise.
+			const fresh = robust(state("stationary"), driftObs(0));
+			const unconditioned = robust(state("stationary"), driftObs(null));
+			expect(fresh - unconditioned).toBeGreaterThan(10);
+		});
+
+		it("the tolerance decays as the filter settles", () => {
+			const at0 = robust(state("stationary"), driftObs(0));
+			const at4 = robust(state("stationary"), driftObs(4));
+			const at12 = robust(state("stationary"), driftObs(12));
+			expect(at0).toBeGreaterThan(at4);
+			expect(at4).toBeGreaterThan(at12);
+			// Far past the settle window it is barely distinguishable from
+			// the unconditioned charge.
+			expect(at12 - robust(state("stationary"), driftObs(null))).toBeLessThan(3);
+		});
+
+		it("a genuine ride speed stays convicted even at reacquire age 0", () => {
+			const rideObs = obs({ gps: { lat: 51.5, lon: -0.1, speedKmh: 70 }, cadence: 0, reacquireAgeMin: 0 });
+			const still = robust(state("stationary"), rideObs);
+			const train = robust(state("train", null, "Metropolitan Line"), rideObs);
+			expect(train).toBeGreaterThan(still + 5);
+		});
+
+		it("default-off keeps the emission unchanged", () => {
+			const plain = buildEmissionFn({});
+			expect(plain(state("stationary"), driftObs(0))).toBe(plain(state("stationary"), driftObs(null)));
+		});
+
+		it("moving modes are not widened", () => {
+			// Walking at 12 km/h (z=3.5 on N(5,2)) pays the same regardless
+			// of reacquire age — only the still-user lie is corrected.
+			expect(robust(state("walking"), driftObs(0))).toBe(robust(state("walking"), driftObs(null)));
+		});
+
+		it("a reacquire fix ON a rail corridor is not sheltered", () => {
+			// A dark ride's reacquisition looks exactly like this: fresh fix,
+			// moving speed, on the track. Off-rail drift keeps the tolerance.
+			const onRail = obs({ gps: { lat: 51.5, lon: -0.1, speedKmh: 22 }, reacquireAgeMin: 0, railDistM: 5 });
+			const offRail = obs({ gps: { lat: 51.5, lon: -0.1, speedKmh: 22 }, reacquireAgeMin: 0, railDistM: 280 });
+			expect(robust(state("stationary"), offRail) - robust(state("stationary"), onRail)).toBeGreaterThan(20);
+		});
+	});
 });

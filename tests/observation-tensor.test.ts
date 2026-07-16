@@ -240,4 +240,35 @@ describe("buildObservationTensor", () => {
 			expect(tensor[301].cadence).toBe(0);
 		});
 	});
+
+	describe("reacquire age", () => {
+		it("a bright run after a long gap counts 0, 1, 2 … from its first fix", () => {
+			// Fixes at minutes 100-104 (leading overnight stretch = a gap).
+			const points = [100, 101, 102, 103, 104].map((m) => fix(minTs(m) + 10, 51.5, -0.1, 6));
+			const tensor = buildObservationTensor({ date: dateStr, tz, points, hr: [], steps: [] });
+			expect(tensor[100].reacquireAgeMin).toBe(0);
+			expect(tensor[101].reacquireAgeMin).toBe(1);
+			expect(tensor[104].reacquireAgeMin).toBe(4);
+			expect(tensor[99].reacquireAgeMin).toBeNull();
+			expect(tensor[105].reacquireAgeMin).toBeNull();
+		});
+
+		it("a short sampling hiccup does not restart the reacquire clock", () => {
+			// Bright 100-104, dark 105-106 (2 min < REACQUIRE_GAP_MIN), bright
+			// 107-108: the second run follows a sub-threshold gap → null.
+			const points = [100, 101, 102, 103, 104, 107, 108].map((m) => fix(minTs(m) + 10, 51.5, -0.1, 6));
+			const tensor = buildObservationTensor({ date: dateStr, tz, points, hr: [], steps: [] });
+			expect(tensor[104].reacquireAgeMin).toBe(4);
+			expect(tensor[107].reacquireAgeMin).toBeNull();
+			expect(tensor[108].reacquireAgeMin).toBeNull();
+		});
+
+		it("a qualifying mid-day gap restarts the clock at 0", () => {
+			// Bright 100-104, dark 105-112 (8 min), bright 113+.
+			const points = [100, 101, 102, 103, 104, 113, 114].map((m) => fix(minTs(m) + 10, 51.5, -0.1, 6));
+			const tensor = buildObservationTensor({ date: dateStr, tz, points, hr: [], steps: [] });
+			expect(tensor[113].reacquireAgeMin).toBe(0);
+			expect(tensor[114].reacquireAgeMin).toBe(1);
+		});
+	});
 });

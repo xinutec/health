@@ -126,6 +126,11 @@ export interface HsmmInputs {
 	 *  segment's exit evidence. Loader-set from `useChainContext()`;
 	 *  absent/false keeps the prior decode. */
 	chainContext?: boolean;
+	/** C4.2 reacquire-robust stationary speed (`emissions.ts`): widened
+	 *  speed σ while the Kalman filter settles after a GPS blackout.
+	 *  Loader-set from `useReacquireRobustSpeed()`; absent/false keeps
+	 *  the prior decode. */
+	reacquireRobustSpeed?: boolean;
 }
 
 /**
@@ -159,7 +164,11 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 		states,
 		placeNearLine: (placeId, lineName) => inputs.placeNearLine.has(`${placeId}|${lineName}`),
 	});
-	const baseEmission = buildEmissionFn({ placeCoords, continuityContext: inputs.continuityContext });
+	const baseEmission = buildEmissionFn({
+		placeCoords,
+		continuityContext: inputs.continuityContext,
+		reacquireRobustSpeed: inputs.reacquireRobustSpeed === true,
+	});
 	const geometricFn = buildGeometricFeasibility({ placeCoords });
 	// Train-generator soft prior (Phase 1, `decoder-roadmap.md`):
 	// structural `(board, line, alight)` candidates become a per-segment entry

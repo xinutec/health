@@ -39,6 +39,7 @@ import {
 	useCadenceImputation,
 	useChainContext,
 	useContinuityContinuation,
+	useReacquireRobustSpeed,
 	useSegmentEvidence,
 } from "../geo/factors/feature-flag.js";
 import { parseHourProfile } from "../geo/focus-places.js";
@@ -204,6 +205,7 @@ const inputs: HsmmInputs = {
 	imputeCadence: useCadenceImputation(),
 	segmentEvidence: useSegmentEvidence(),
 	chainContext: useChainContext(),
+	reacquireRobustSpeed: useReacquireRobustSpeed(),
 };
 
 const expected = decodeHsmm(inputs);

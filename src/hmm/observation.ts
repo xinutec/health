@@ -76,6 +76,15 @@ export interface Observation {
 	 *  before road proximity existed (then the factor skips the test). */
 	roadDistM?: number | null;
 	railDistM?: number | null;
+	/** Minutes since GPS reacquisition: 0 at the first fix-bearing
+	 *  minute after a gap of ≥ `REACQUIRE_GAP_MIN` fixless minutes,
+	 *  counting up through the bright run. Null when the minute has no
+	 *  fix, or its bright run wasn't preceded by a qualifying gap.
+	 *  Kalman speed right after a long occlusion is dominated by
+	 *  position-jump artefacts (measured 2026-07-16: indoor reacquire
+	 *  scatter reading 5–14 km/h while stationary), so emissions can
+	 *  soften speed assertions while the filter settles. */
+	reacquireAgeMin?: number | null;
 }
 
 export interface ObservationTensorInput {
@@ -119,6 +128,12 @@ const SECONDS_PER_MINUTE = 60;
  *  near-continuously, so a short sampling gap stays covered, while an
  *  off-wrist / charging period fails one side and stays `null`. */
 const WATCH_LIVENESS_WINDOW_MIN = 5;
+
+/** A fixless stretch at least this long counts as a GPS occlusion, so
+ *  the bright run that follows it carries `reacquireAgeMin` (the
+ *  Kalman filter re-converges over the first few fixes; a 1-2 minute
+ *  sampling hiccup does not disturb it). */
+const REACQUIRE_GAP_MIN = 5;
 
 export function median(values: number[]): number {
 	if (values.length === 0) return 0;
@@ -288,6 +303,32 @@ export function buildObservationTensor(input: ObservationTensorInput): Observati
 			) {
 				aggregated[m].cadence = 0;
 			}
+		}
+	}
+
+	// Reacquire age: a bright run following a ≥REACQUIRE_GAP_MIN fixless
+	// gap gets 0, 1, 2, … from its first fix-bearing minute; runs after
+	// shorter gaps (and all fixless minutes) stay null. The leading
+	// overnight stretch counts as a gap — the morning's first fixes are
+	// a reacquisition like any other.
+	{
+		let gapLen = REACQUIRE_GAP_MIN; // day start = "in a gap"
+		let runQualifies = false;
+		let ageInRun = 0;
+		for (let m = 0; m < MINUTES_PER_DAY; m++) {
+			if (aggregated[m].gps === null) {
+				gapLen++;
+				aggregated[m].reacquireAgeMin = null;
+				continue;
+			}
+			if (gapLen > 0) {
+				runQualifies = gapLen >= REACQUIRE_GAP_MIN;
+				ageInRun = 0;
+				gapLen = 0;
+			} else {
+				ageInRun++;
+			}
+			aggregated[m].reacquireAgeMin = runQualifies ? ageInRun : null;
 		}
 	}
 

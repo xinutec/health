@@ -215,12 +215,41 @@ regressions: the first C4 flag that is strictly clean on its own. All
 three flags together reproduce the two-flag result exactly (the
 remaining blockers are imputation/evidence-era, none chain-caused).
 
-Still missing for C4.2 proper: the close-time triple term — a vehicle
-segment entered from `stationary @ P` whose evidence shows it never
-left P's neighbourhood (the 06-12 drift phantom). Needs the closing
-segment's PREDECESSOR state at the duration hook
-(`backPrev[segStart][state]` in the trellis makes this a mechanical
-extension), then a "never left" displacement-from-P likelihood.
+**"Never left the place" close-term REFUTED before building
+(2026-07-16).** Measured the drift-phantom margins directly (per-state
+emission totals over the 06-12 windows): the phantom vehicle minutes
+buy 12–18 nats *per minute* from the stationary speed emission —
+N(0,2) charging 12–14 km/h reacquire drift at z≈6–7 — while an honest
+never-left displacement term computes to only ~−0.9 nats (a 2-minute
+drive predicting 733 m vs ~200 m observed is genuinely mild evidence).
+No bounded per-segment term closes that gap without tuning-to-win. The
+lie is emission-side; chain context cannot fix it.
+
+**Reacquire-robust stationary speed (BUILT, shadow, 2026-07-16).** The
+drift bursts start at the first bright minute after ≥14-minute GPS
+blackouts and settle over ~6 minutes — an observable
+(`Observation.reacquireAgeMin`). Behind `USE_REACQUIRE_ROBUST_SPEED=1`
+the STATIONARY speed σ widens by `1 + 2.5·exp(−age/3)`, scaled DOWN by
+rail-corridor proximity (`1 − exp(−railDist²/2·100m²)`). Both
+conditionings are measured, not tuned blind: drift is 5–14 km/h at
+264–296 m off-rail; the acceptance-day midday hop reacquires at
+22–37 km/h at 0–7 m ON the corridor. The first cut (width 4, no rail
+scaling) reproduced the refuted-mixture failure in miniature — the
+07-15 hop's first three minutes absorbed into the stay, remnant
+fragmented across lines (+1 phantom) — and the speed-only algebra
+proves age-0 22 km/h vs age-2 14 km/h cannot be separated by any
+decaying σ; the rail term is what separates them. Road proximity
+carries no signal (everything in London is within ~25 m of a road —
+the #234 lesson).
+
+Scoreboard with all four flags (imputation + segment evidence + chain
+context + reacquire-robust) vs blessed baseline: legs-mode 65→69,
+legs-line 8→10, 06-12 journeys 0→2 and phantomRides 1→0 (both drift
+phantoms dissolve into the true stay — including the one the BASELINE
+had), corpus phantoms 5→4, 07-15 hop intact as one Jubilee ride, zero
+leg-level losses anywhere. Remaining deltas, both pre-existing
+journey-SHAPE drops whose days' leg scores are equal or better:
+05-25 journeysMatched 1→0 and 06-16 1→0 — diagnose before bless/flip.
 
 ### C4.3 — chained train triples (subsume the anchors)
 
