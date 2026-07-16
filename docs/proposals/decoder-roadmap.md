@@ -178,7 +178,9 @@ slip-prone, subsumes the most heuristics. The 2026-06-16 re-measure confirmed
 the decoder's real weakness is **under-reconstruction** (abandoning legs to
 `unknown`; trips 48%) — that is C4, *not* #238 rail-over-crediting, which is
 demoted to a lower-priority guard already pinned by the 05-25 taxi fixture.
-Status: pending (#224, #225).
+Status: C4 design written 2026-07-16 (`2026-07-continuity-c4.md` — workstreams
+C4.0–C4.4 against the five-day #327 acceptance suite); implementation pending
+(#224, #225).
 
 ## Tube-journey composition (prerequisite of the cutover)
 
