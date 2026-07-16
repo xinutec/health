@@ -54,12 +54,14 @@ const res = await fetch(`${BASE}/api/velocity?date=${date}&tz=Europe/London`, {
 console.log(`GET /api/velocity?date=${date} -> ${res.status}`);
 const body = await res.json();
 const hh = (ts) => new Date(ts * 1000).toISOString().slice(11, 16);
+// The API strips segment-level path arrays (snappedPath etc.) — drawn
+// geometry ships once, in `episodes`. Report the EPISODE kind, which is
+// what the map actually renders.
+const kindAt = (startTs) => (body.episodes ?? []).find((e) => e.startTs === startTs)?.kind ?? "?";
 for (const s of body.segments ?? []) {
 	const mode = s.refinedMode ?? s.mode;
 	if (mode === "sleeping") continue;
-	console.log(
-		`${hh(s.startTs)}-${hh(s.endTs)} ${mode.padEnd(10)} snap=${s.snappedPath ? "Y" : "·"} | ${s.wayName ?? "·"}`,
-	);
+	console.log(`${hh(s.startTs)}-${hh(s.endTs)} ${mode.padEnd(10)} geom=${kindAt(s.startTs).padEnd(8)} | ${s.wayName ?? "·"}`);
 	if (mode === "train") console.log(`    reason: ${(s.refinedReason ?? "·").slice(0, 500)}`);
 }
 process.exit(0);
