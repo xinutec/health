@@ -634,7 +634,7 @@ export function maxPolylineOffRoad(
 }
 
 /** Distance (m) from a single point to the nearest segment of `path`. */
-function pointDistToPolyline(p: Pt, path: readonly Pt[]): number {
+export function pointDistToPolyline(p: Pt, path: readonly Pt[]): number {
 	if (path.length === 0) return Number.POSITIVE_INFINITY;
 	if (path.length === 1) return metersBetween(p.lat, p.lon, path[0].lat, path[0].lon);
 	let best = Number.POSITIVE_INFINITY;
@@ -689,6 +689,148 @@ export function matchImprovesDisplay(
 	const strayM = quantilePointDistToPolyline(fixes, matchedPath, STRAY_QUANTILE);
 	const use = rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM && strayM <= maxStrayM;
 	return { use, rawOffRoadM, matchedOffRoadM, strayM };
+}
+
+/** Below this many fixes a supported/divergent split is noise, not signal. */
+const MIN_SPLICE_FIXES = 4;
+/** A splice must keep the matched line for at least this fraction of fixes;
+ *  below it the divergence is systematic (a parallel-way snap) and the whole
+ *  match is untrustworthy — exactly the case the stray gate exists for. */
+const SPLICE_MIN_SUPPORTED_FRACTION = 0.5;
+/** A divergent fix farther than this from the matched path is a teleport /
+ *  reacquire smear, not walking through an unmapped forecourt beside the
+ *  street (the 2026-05-15 20:18Z indoor-jitter leg strayed 2.3 km) — refuse. */
+const SPLICE_MAX_DIVERGENCE_M = 150;
+/** More contiguous divergent runs than this is jitter straddling the stray
+ *  bound, not one coherent unmapped area — splicing would draw a zigzag. */
+const SPLICE_MAX_DIVERGENT_RUNS = 2;
+/** The spliced line may not be longer than the raw fix line by more than this
+ *  factor (+ the slack below): a forecourt splice keeps ~the raw length, while
+ *  a matcher over-route hidden inside a fix-free supported span inflates it
+ *  (the 2026-05-25 09:43Z leg drew 103 m past its pedometer budget). */
+const SPLICE_MAX_LEN_FACTOR = 1.15;
+const SPLICE_MAX_LEN_SLACK_M = 30;
+
+/** Projection of a point onto a polyline: nearest distance plus the arc-length
+ *  position of that nearest point (`cum` = precomputed cumulative vertex arcs). */
+function projectToPolylineArc(p: Pt, path: readonly Pt[], cum: readonly number[]): { distM: number; arcM: number } {
+	let distM = Number.POSITIVE_INFINITY;
+	let arcM = 0;
+	for (let i = 1; i < path.length; i++) {
+		const proj = projectPointToSegment(p, path[i - 1], path[i]);
+		if (proj.distM < distM) {
+			distM = proj.distM;
+			arcM = cum[i - 1] + (cum[i] - cum[i - 1]) * proj.t;
+		}
+	}
+	return { distM, arcM };
+}
+
+/** The sub-polyline between arc positions `s0 ≤ s1`, endpoints interpolated
+ *  (position and `ts` linearly within their segments). */
+function slicePathByArc(path: readonly MatchedPoint[], cum: readonly number[], s0: number, s1: number): MatchedPoint[] {
+	const at = (s: number): MatchedPoint => {
+		for (let i = 1; i < path.length; i++) {
+			if (s <= cum[i] || i === path.length - 1) {
+				const span = cum[i] - cum[i - 1];
+				const t = span > 0 ? Math.min(1, Math.max(0, (s - cum[i - 1]) / span)) : 0;
+				const a = path[i - 1];
+				const b = path[i];
+				return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t, ts: a.ts + (b.ts - a.ts) * t };
+			}
+		}
+		return path[path.length - 1];
+	};
+	const out: MatchedPoint[] = [at(s0)];
+	for (let i = 0; i < path.length; i++) {
+		if (cum[i] > s0 && cum[i] < s1) out.push(path[i]);
+	}
+	if (s1 > s0) out.push(at(s1));
+	return out;
+}
+
+/**
+ * Salvage a match the stray gate rejected for a LOCAL divergence (#368): keep
+ * the matched line over the spans the fixes support, splice the raw fixes back
+ * in over each contiguous run that genuinely leaves the matched path (an
+ * unmapped station forecourt / courtyard the network has no way through). The
+ * 2026-07-15 morning leg is the motivating case: 26 of 34 fixes ride the
+ * matched line within metres, but the 8-fix forecourt tail pushed the p85
+ * stray past the gate and the WHOLE leg fell back to raw chords.
+ *
+ * Refuses (`null`) when the divergence is systematic rather than local —
+ * fewer than {@link SPLICE_MIN_SUPPORTED_FRACTION} of fixes support the match
+ * (the parallel-way snap the gate exists for), the leg is too short to judge,
+ * there is nothing to splice, or a supported run projects non-monotonically
+ * onto the path. Pure.
+ */
+export function spliceMatchedWithDivergentRuns(
+	fixes: readonly RoadFix[],
+	matchedPath: readonly MatchedPoint[],
+	maxStrayM: number,
+): MatchedPoint[] | null {
+	if (fixes.length < MIN_SPLICE_FIXES || matchedPath.length < 2) return null;
+	const cum: number[] = [0];
+	for (let i = 1; i < matchedPath.length; i++) {
+		cum.push(
+			cum[i - 1] +
+				metersBetween(matchedPath[i - 1].lat, matchedPath[i - 1].lon, matchedPath[i].lat, matchedPath[i].lon),
+		);
+	}
+	const proj = fixes.map((f) => projectToPolylineArc(f, matchedPath, cum));
+	const divergent = proj.map((pr) => pr.distM > maxStrayM);
+	const nDivergent = divergent.filter(Boolean).length;
+	if (nDivergent === 0) return null;
+	if ((fixes.length - nDivergent) / fixes.length < SPLICE_MIN_SUPPORTED_FRACTION) return null;
+	// Forecourt signature only: the divergence must be NEAR the network (not a
+	// teleport smear) and coherent (few contiguous runs, not jitter).
+	for (let k = 0; k < fixes.length; k++) {
+		if (divergent[k] && proj[k].distM > SPLICE_MAX_DIVERGENCE_M) return null;
+	}
+	let nRuns = 0;
+	for (let k = 0; k < fixes.length; k++) {
+		if (divergent[k] && (k === 0 || !divergent[k - 1])) nRuns++;
+	}
+	if (nRuns > SPLICE_MAX_DIVERGENT_RUNS) return null;
+
+	const out: MatchedPoint[] = [];
+	let i = 0;
+	while (i < fixes.length) {
+		let j = i;
+		while (j + 1 < fixes.length && divergent[j + 1] === divergent[i]) j++;
+		if (divergent[i]) {
+			// Divergent run: the honest line is the raw fixes themselves.
+			for (let k = i; k <= j; k++) out.push({ lat: fixes[k].lat, lon: fixes[k].lon, ts: fixes[k].ts });
+		} else {
+			const s0 = proj[i].arcM;
+			const s1 = proj[j].arcM;
+			// A supported run that walks BACKWARD along the path is not a clean
+			// local divergence — bail rather than draw a scrambled line.
+			if (s1 < s0) return null;
+			out.push(...slicePathByArc(matchedPath, cum, s0, s1));
+		}
+		i = j + 1;
+	}
+	// Collapse consecutive near-duplicate vertices from slice endpoints.
+	const deduped: MatchedPoint[] = [];
+	for (const p of out) {
+		const last = deduped[deduped.length - 1];
+		if (last !== undefined && Math.abs(last.lat - p.lat) < 1e-9 && Math.abs(last.lon - p.lon) < 1e-9) continue;
+		deduped.push(p);
+	}
+	if (deduped.length < 2) return null;
+	// Length-honesty guard: refuse when the splice draws meaningfully more
+	// line than the raw fixes support (an over-route inside a fix-free span).
+	let rawLenM = 0;
+	for (let k = 1; k < fixes.length; k++) {
+		rawLenM += metersBetween(fixes[k - 1].lat, fixes[k - 1].lon, fixes[k].lat, fixes[k].lon);
+	}
+	let splicedLenM = 0;
+	for (let k = 1; k < deduped.length; k++) {
+		splicedLenM += metersBetween(deduped[k - 1].lat, deduped[k - 1].lon, deduped[k].lat, deduped[k].lon);
+	}
+	if (splicedLenM > rawLenM * SPLICE_MAX_LEN_FACTOR + SPLICE_MAX_LEN_SLACK_M) return null;
+	return deduped;
 }
 
 interface RoadSegment {

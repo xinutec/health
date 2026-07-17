@@ -20,7 +20,7 @@ import { type StepPoint, stepsInWindow } from "./biometrics.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { holdImplausibleSpeed, rejectSpikes } from "./episode-geometry.js";
 import type { FilteredPoint } from "./kalman.js";
-import { matchImprovesDisplay, type RoadFix } from "./map-match-core.js";
+import { matchImprovesDisplay, type RoadFix, spliceMatchedWithDivergentRuns } from "./map-match-core.js";
 import { MAX_SPEED_FOR_MODE } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
@@ -316,6 +316,45 @@ export async function annotateWalkMatches(
 			}
 			useMatch = decision?.use === true;
 
+			// Local-divergence salvage (#368): when stray was the ONLY failing
+			// condition — the raw line strays off-network and the match follows it
+			// better, but a contiguous fix run (an unmapped station forecourt) sits
+			// past the stray bound — don't throw the whole match away. Splice: the
+			// matched line where the fixes support it, the raw fixes over each
+			// divergent run. A systematic parallel-way snap still rejects wholesale
+			// (the splice refuses below half support), which is what the stray gate
+			// was built to catch. The 2026-07-15 morning leg is the motivating
+			// case: 26/34 fixes ride the match within metres, yet the 8-fix
+			// forecourt tail pushed p85 stray to 51 m and the leg drew raw chords
+			// skimming the Ark Academy landuse polygon.
+			//
+			// Salvage-worthy only when the raw fallback is DRASTICALLY off-network
+			// (2× the needs-match bar — chords through whole blocks) and the match
+			// is clean (½ the bar). Milder cases measured worse under the walk
+			// ratchet when spliced (05-25 09:43Z rawOff=33 stall 47→82; 07-01
+			// 10:44Z/11:25Z matchedOff=14/15 stall+offPath regressions) — GPS
+			// wobble around street corners is not the forecourt signature, and the
+			// raw+corrector line those legs already draw reads better.
+			let spliced: ReturnType<typeof spliceMatchedWithDivergentRuns> = null;
+			if (
+				!useMatch &&
+				result !== null &&
+				decision !== null &&
+				decision.rawOffRoadM > WALK_NEEDS_MATCH_M * 2 &&
+				decision.matchedOffRoadM <= WALK_NEEDS_MATCH_M / 2
+			) {
+				spliced = spliceMatchedWithDivergentRuns(fixes, result.path, WALK_MATCH_MAX_STRAY_M);
+				if (spliced !== null) {
+					useMatch = true;
+					if (process.env.WALK_MATCH_DEBUG === "1") {
+						const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+						console.error(
+							`[walk-match] ${t(seg.startTs)}-${t(seg.endTs)} SPLICE matched+raw (stray=${decision.strayM.toFixed(0)})`,
+						);
+					}
+				}
+			}
+
 			if (useMatch && result) {
 				// De-box the matched line: round its boxy ~90° graph corners toward the
 				// raw GPS with the continuous MAP refinement, keeping the vetted matched
@@ -323,10 +362,11 @@ export async function annotateWalkMatches(
 				// bounds it). Applied only when it actually reduces sharp turns — else the
 				// matched line is already smooth and is kept as-is. `WALK_REFINE_DISABLE=1`
 				// opts out.
-				drawn = result.path;
+				drawn = spliced ?? result.path;
 				if (process.env.WALK_REFINE_DISABLE !== "1") {
-					const refined = refineMatchedPath(walkFixes, result.path);
-					if (refined && countSharpTurns(refined) < countSharpTurns(result.path)) drawn = refined;
+					const base = drawn;
+					const refined = refineMatchedPath(walkFixes, base);
+					if (refined && countSharpTurns(refined) < countSharpTurns(base)) drawn = refined;
 				}
 			} else {
 				// Matcher bailed or the gate rejected: the leg draws as raw GPS — which
