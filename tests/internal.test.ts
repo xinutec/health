@@ -317,6 +317,38 @@ describe("GET /internal/recovery", () => {
 		expect(b.sleepHours).toBeNull();
 	});
 
+	// The mariadb driver returns DATE columns as JS Date objects (local midnight),
+	// not YYYY-MM-DD strings. The date comparisons here assume strings, so an
+	// un-normalised Date coerces every `date >= floor` bound to NaN and silently
+	// drops the whole day — which is why real recovery data came back all-null in
+	// prod while the tables were full. Every other test mocks string dates and so
+	// can't see it; this one feeds Date objects the way the driver actually does.
+	it("handles DATE columns returned as Date objects, not strings", async () => {
+		setMockResult("hrv_daily", [
+			{ user_id: "alice", date: new Date(2026, 6, 1), daily_rmssd: 40 },
+			{ user_id: "alice", date: new Date(2026, 6, 5), daily_rmssd: 55 },
+		]);
+		setMockResult("daily_activity", [
+			{ user_id: "alice", date: new Date(2026, 6, 1), resting_heart_rate: 60 },
+			{ user_id: "alice", date: new Date(2026, 6, 5), resting_heart_rate: 58 },
+		]);
+		setMockResult("sleep", [
+			{ user_id: "alice", date: new Date(2026, 6, 5), minutes_asleep: 450, is_main_sleep: true },
+		]);
+		const res = await makeApp().request("/internal/recovery?user=alice", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(res.status).toBe(200);
+		const b = (await res.json()) as {
+			sleepHours: number | null;
+			hrv: { latest: number; mean: number } | null;
+			restingHr: { latest: number } | null;
+		};
+		expect(b.sleepHours).toBeCloseTo(7.5);
+		expect(b.hrv?.latest).toBe(55);
+		expect(b.restingHr?.latest).toBe(58);
+	});
+
 	it("requires a service token", async () => {
 		const res = await makeApp().request("/internal/recovery?user=alice");
 		expect(res.status).toBe(401);

@@ -63,6 +63,26 @@ function dateRange(from: string, to: string): string[] {
 	return out;
 }
 
+/** A `DATE` cell as a `YYYY-MM-DD` string.
+ *
+ *  The mariadb connector returns `DATE` columns as JS `Date` objects (built at
+ *  *local* midnight — no `dateStrings` on the pool), not the `YYYY-MM-DD` strings
+ *  the `tables.ts` types and every date comparison here assume. Left un-normalised,
+ *  `recoveryAsOf`'s `r.date >= floor` compares a `Date` against a string bound,
+ *  which coerces the string to `NaN` and drops *every* row — so `/recovery` returned
+ *  all-null for real data even though the tables were full. The unit tests missed it
+ *  because they mock the DB with string dates. Normalise from the local components
+ *  the connector built the `Date` from (not `toISOString`, which would shift the day
+ *  in a non-UTC pod). Tolerates a real string too, in case the pool ever sets
+ *  `dateStrings`. */
+function dateCell(v: string | Date): string {
+	if (typeof v === "string") return v.slice(0, 10);
+	const y = v.getFullYear();
+	const m = String(v.getMonth() + 1).padStart(2, "0");
+	const d = String(v.getDate()).padStart(2, "0");
+	return `${y}-${m}-${d}`;
+}
+
 /** One daily metric, nulls (no-wear nights) included — `latestAndBaseline` drops them. */
 interface DailyValue {
 	date: string;
@@ -100,11 +120,11 @@ async function loadRecoveryRows(userId: string, since: string): Promise<Recovery
 		.where("is_main_sleep", "=", true)
 		.execute();
 	return {
-		hrv: hrvRows.map((r) => ({ date: r.date, value: r.daily_rmssd == null ? null : Number(r.daily_rmssd) })),
-		rhr: rhrRows.map((r) => ({ date: r.date, value: r.resting_heart_rate ?? null })),
+		hrv: hrvRows.map((r) => ({ date: dateCell(r.date), value: r.daily_rmssd == null ? null : Number(r.daily_rmssd) })),
+		rhr: rhrRows.map((r) => ({ date: dateCell(r.date), value: r.resting_heart_rate ?? null })),
 		sleep: sleepRows
 			.filter((r) => r.is_main_sleep)
-			.map((r) => ({ date: r.date, value: r.minutes_asleep == null ? null : Number(r.minutes_asleep) / 60 })),
+			.map((r) => ({ date: dateCell(r.date), value: r.minutes_asleep == null ? null : Number(r.minutes_asleep) / 60 })),
 	};
 }
 
