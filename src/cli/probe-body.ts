@@ -1,6 +1,7 @@
 /** One-off probe: what weight/body history do we have for a user. */
 import { z } from "zod";
 import { db, initPool } from "../db/pool.js";
+import { ymd } from "../util/date.js";
 
 const cfg = z
 	.object({
@@ -33,9 +34,9 @@ console.log(`body rows for ${userId}: ${rows.length} total, ${withWeight.length}
 if (withWeight.length > 0) {
 	const f = withWeight[0];
 	const l = withWeight[withWeight.length - 1];
-	console.log(`  range: ${String(f.date).slice(0, 10)} → ${String(l.date).slice(0, 10)}`);
-	console.log("  first :", String(f.date).slice(0, 10), `${f.weight_kg} kg  bmi=${f.bmi}  fat%=${f.body_fat_pct}`);
-	console.log("  latest:", String(l.date).slice(0, 10), `${l.weight_kg} kg  bmi=${l.bmi}  fat%=${l.body_fat_pct}`);
+	console.log(`  range: ${ymd(f.date)} → ${ymd(l.date)}`);
+	console.log("  first :", ymd(f.date), `${f.weight_kg} kg  bmi=${f.bmi}  fat%=${f.body_fat_pct}`);
+	console.log("  latest:", ymd(l.date), `${l.weight_kg} kg  bmi=${l.bmi}  fat%=${l.body_fat_pct}`);
 	const weights = withWeight.map((r) => Number(r.weight_kg));
 	console.log(`  min/max weight: ${Math.min(...weights)} / ${Math.max(...weights)} kg`);
 }

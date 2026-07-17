@@ -2,6 +2,7 @@
  *  next-day dominant place, to check the trailing-stay continuation (#258). */
 import { z } from "zod";
 import { db, initPool } from "../db/pool.js";
+import { ymd } from "../util/date.js";
 
 const cfg = z
 	.object({
@@ -34,7 +35,7 @@ const rows = await db()
 	.execute();
 
 for (const r of rows) {
-	console.log(`${String(r.date).slice(0, 10)}  dominant=${r.dominant_place_id}  end_of_day=${r.end_of_day_place_id}`);
+	console.log(`${ymd(r.date)}  dominant=${r.dominant_place_id}  end_of_day=${r.end_of_day_place_id}`);
 }
 console.log(`(${rows.length} rows)`);
 process.exit(0);
