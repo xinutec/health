@@ -322,3 +322,80 @@ describe("GET /internal/recovery", () => {
 		expect(res.status).toBe(401);
 	});
 });
+
+describe("GET /internal/recovery/history", () => {
+	// Coach's ledger asks what the coach knew on the morning of a past session, so
+	// the answer must reflect only what was known *by then* — not what the backfill
+	// has since filled in after it.
+	it("reports each day from the data available up to that day", async () => {
+		setMockResult("hrv_daily", [
+			{ user_id: "alice", date: "2026-07-01", daily_rmssd: 40 },
+			{ user_id: "alice", date: "2026-07-05", daily_rmssd: 55 },
+		]);
+		setMockResult("daily_activity", [
+			{ user_id: "alice", date: "2026-07-01", resting_heart_rate: 60 },
+			{ user_id: "alice", date: "2026-07-05", resting_heart_rate: 58 },
+		]);
+		setMockResult("sleep", [
+			{ user_id: "alice", date: "2026-07-01", minutes_asleep: 480, is_main_sleep: true },
+			{ user_id: "alice", date: "2026-07-05", minutes_asleep: 300, is_main_sleep: true },
+			{ user_id: "alice", date: "2026-07-05", minutes_asleep: 30, is_main_sleep: false }, // nap
+		]);
+		const res = await makeApp().request("/internal/recovery/history?user=alice&from=2026-07-03&to=2026-07-06", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(res.status).toBe(200);
+		const days = (await res.json()) as {
+			asOf: string;
+			sleepHours: number | null;
+			hrv: { latest: number; mean: number; n: number } | null;
+		}[];
+		expect(days.map((d) => d.asOf)).toEqual(["2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06"]);
+
+		// On the 3rd only the 1st had happened — the 5th is the future and must not leak back.
+		expect(days[0].hrv?.latest).toBe(40);
+		expect(days[0].sleepHours).toBeCloseTo(8);
+		// On the 5th, that day's numbers, with the 1st now the baseline behind them.
+		expect(days[2].hrv?.latest).toBe(55);
+		expect(days[2].hrv?.mean).toBe(40);
+		expect(days[2].sleepHours).toBeCloseTo(5);
+		// On the 6th nothing new arrived: the freshest known reading still stands.
+		expect(days[3].hrv?.latest).toBe(55);
+		expect(days[3].sleepHours).toBeCloseTo(5);
+	});
+
+	it("nulls a metric on days with nothing behind them yet", async () => {
+		setMockResult("hrv_daily", [{ user_id: "alice", date: "2026-07-05", daily_rmssd: 55 }]);
+		setMockResult("daily_activity", []);
+		setMockResult("sleep", []);
+		const res = await makeApp().request("/internal/recovery/history?user=alice&from=2026-07-01&to=2026-07-02", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		const days = (await res.json()) as { hrv: unknown; restingHr: unknown; sleepHours: unknown }[];
+		expect(days).toHaveLength(2);
+		expect(days[0].hrv).toBeNull();
+		expect(days[0].restingHr).toBeNull();
+		expect(days[0].sleepHours).toBeNull();
+	});
+
+	it("rejects a bad range and requires a token", async () => {
+		setMockResult("hrv_daily", []);
+		setMockResult("daily_activity", []);
+		setMockResult("sleep", []);
+		const app = makeApp();
+		const bad = await app.request("/internal/recovery/history?user=alice&from=2026-07-09&to=2026-07-01", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(bad.status).toBe(400);
+		const missing = await app.request("/internal/recovery/history?user=alice", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(missing.status).toBe(400);
+		const wide = await app.request("/internal/recovery/history?user=alice&from=2020-01-01&to=2026-07-01", {
+			headers: { "X-Service-Token": TOKEN },
+		});
+		expect(wide.status).toBe(400);
+		const unauth = await app.request("/internal/recovery/history?user=alice&from=2026-07-01&to=2026-07-02");
+		expect(unauth.status).toBe(401);
+	});
+});
