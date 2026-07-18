@@ -60,6 +60,13 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 - `Verified/Hsmm/Tests.lean` — `#guard` trellis-vs-oracle parity; **the build
   fails if the implementation ever disagrees with the spec** on these
   instances.
+- `Verified/Rail/Graph.lean` — V3 (rail-snap) spec substrate: weighted
+  graphs with `Nat` weights, path cost, and the exhaustive simple-path
+  oracle (`oracleDist`).
+- `Verified/Rail/Dijkstra.lean` — faithful port of `rail-snap.ts`'s
+  `shortestPath` (binary heap tie behaviour included) with honest-`none`
+  contract deltas; `#guard`-pinned against the oracle in
+  `Verified/Rail/Tests.lean`. Theorems next.
 - `Main.lean` — `verified_cli`, the JSON bridge.
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
   problems (run `npm run build` first, then

@@ -174,8 +174,22 @@ a float model. The float bridge is its own later phase.
   flag set too, quantisation still lossless. CI got nix so `verify`'s
   lean-check runs there as well. Remaining V2: UI surfacing (a
   dev-footer badge) once the cron metric has soaked.
-- **V3 — rail-snap.** Small, stable, pure; Dijkstra correctness and the
-  "null over wrong path" contract as theorems.
+- **V3 — rail-snap. Boundary probed; pilot in progress.** The measured
+  shape (railsnap fixture, real corridor): the built graph is ~22k
+  vertices / 55k edges (1–2MB exported, TS Dijkstra 5ms), edge weights
+  are nonnegative and ≤ ~2^35 after ×2²⁰ quantisation — they fit Lean's
+  unboxed `Nat` scalars natively, so V3 needs no packed encoding — and
+  the quantised Dijkstra already returns the *identical* path to the
+  float one on every fixture segment. Boundary: TS keeps the float
+  heuristics (fix-cloud penalties, gap bridging, vertex dedup, station
+  resolution) and exports the finished weighted graph + endpoint
+  vertices; Lean owns shortest-path: a faithful port of the TS binary
+  heap and Dijkstra loop (for tie parity, same playbook as the trellis
+  port) with the goal theorems "the returned path is a valid
+  `from`→`to` path attaining the true minimum weight" and "`none` ⟺
+  disconnected" — the null-over-wrong contract. Pilot = spec + oracle
+  (exhaustive simple-path enumeration) + the port, `#guard`-pinned;
+  theorems upgraded incrementally as V1 was.
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
   two comment-proofs (grid exactness, lazy-Dijkstra refinement) become
   theorems; the honesty guards become verified postconditions.

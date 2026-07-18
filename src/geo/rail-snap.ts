@@ -139,7 +139,7 @@ const MIN_CLOUD_FIXES = 12;
 /** A grid-hashed cloud of historic GPS fixes for fast nearest-fix
  *  distance queries. The cell is CLOUD_FAR_M, so the 3×3 neighbourhood
  *  of any point contains every fix within CLOUD_FAR_M of it. */
-class FixCloud {
+export class FixCloud {
 	private readonly cLat: number;
 	private readonly cLon: number;
 	private readonly buckets = new Map<string, Array<{ lat: number; lon: number }>>();
@@ -224,7 +224,10 @@ export function parseRailWayName(wayName: string): { board: string; alight: stri
  * same `name`; the centroid of the exact-name matches is a stable
  * anchor. Returns null when no node carries that exact name.
  */
-function resolveStation(name: string, stations: OsmStation[]): { name: string; lat: number; lon: number } | null {
+export function resolveStation(
+	name: string,
+	stations: OsmStation[],
+): { name: string; lat: number; lon: number } | null {
 	const matches = stations.filter((s) => s.name === name);
 	if (matches.length === 0) return null;
 	const lat = matches.reduce((a, s) => a + s.lat, 0) / matches.length;
@@ -232,7 +235,7 @@ function resolveStation(name: string, stations: OsmStation[]): { name: string; l
 	return { name, lat, lon };
 }
 
-interface RailGraph {
+export interface RailGraph {
 	vertices: Array<{ lat: number; lon: number }>;
 	adj: Array<Array<{ to: number; w: number }>>;
 }
@@ -246,7 +249,7 @@ interface RailGraph {
  * gap-bridge edges between nearby vertices of different ways (see
  * {@link GAP_BRIDGE_M}). Only train-carrying subtypes are included.
  */
-function buildRailGraph(lines: OsmLine[], cloud: FixCloud): RailGraph {
+export function buildRailGraph(lines: OsmLine[], cloud: FixCloud): RailGraph {
 	const vertices: Array<{ lat: number; lon: number }> = [];
 	const adj: Array<Array<{ to: number; w: number }>> = [];
 	const idByKey = new Map<string, number>();
@@ -379,7 +382,7 @@ class MinHeap {
 
 /** Dijkstra shortest path between two vertices. Returns the vertex-id
  *  sequence from `from` to `to`, or null when they are disconnected. */
-function shortestPath(graph: RailGraph, from: number, to: number): number[] | null {
+export function shortestPath(graph: RailGraph, from: number, to: number): number[] | null {
 	const n = graph.vertices.length;
 	const dist = new Float64Array(n).fill(Number.POSITIVE_INFINITY);
 	const prev = new Int32Array(n).fill(-1);
@@ -413,7 +416,7 @@ function shortestPath(graph: RailGraph, from: number, to: number): number[] | nu
 }
 
 /** Find the rail-graph vertex nearest a point. */
-function nearestVertex(graph: RailGraph, p: { lat: number; lon: number }): { id: number; distM: number } | null {
+export function nearestVertex(graph: RailGraph, p: { lat: number; lon: number }): { id: number; distM: number } | null {
 	let bestId = -1;
 	let bestD = Number.POSITIVE_INFINITY;
 	for (let i = 0; i < graph.vertices.length; i++) {
