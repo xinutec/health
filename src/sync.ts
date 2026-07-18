@@ -27,6 +27,8 @@ import { syncSpO2Daily } from "./fitbit/sync/spo2.js";
 import { syncStepsIntraday } from "./fitbit/sync/steps.js";
 import { syncTemperature } from "./fitbit/sync/temperature.js";
 import { buildForwardTzSource, NULL_TZ_SOURCE, type TzSource } from "./geo/fitbit-tz.js";
+import { runGoogleWeightSync } from "./google/body.js";
+import { googleCredsFromEnv } from "./google/oauth.js";
 import { fetchTrackPointsRange, openPhoneTrack, type RawTrackPoint } from "./nextcloud/phonetrack.js";
 
 function formatDate(d: Date): string {
@@ -269,6 +271,26 @@ const config = loadSyncConfig();
 initPool(config.db);
 
 await withConnection(migrate);
+
+// --- Google Health weight (#260) ---
+// Weight lives only on the Google side (Hume scale → Health Connect →
+// Google Health); the legacy Fitbit feed froze in Apr 2026. Runs before and
+// independently of the Fitbit passes: no Fitbit token or rate budget
+// involved, and the full-history fetch is one page + ~150 idempotent row
+// writes. Inert unless the GH_* creds and GH_USER_ID (the user the Google
+// account belongs to) are configured.
+{
+	const googleCreds = googleCredsFromEnv();
+	const googleUserId = process.env.GH_USER_ID;
+	if (googleCreds && googleUserId) {
+		try {
+			const result = await withConnection((conn) => runGoogleWeightSync(conn, googleCreds, googleUserId, true));
+			console.log(`[${googleUserId}] google weight: ${result.days} weigh-in(s), ${result.earliest} → ${result.latest}`);
+		} catch (e) {
+			console.error(`[${googleUserId}] google weight sync failed: ${e}`);
+		}
+	}
+}
 
 const users = await db()
 	.selectFrom("tokens")

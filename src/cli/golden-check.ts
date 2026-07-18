@@ -227,7 +227,6 @@ let checked = 0;
 // carries a standing per-day count of pre-existing defects and is RATCHETED
 // (can only shrink) against the committed baseline — the same only-shrink
 // discipline as the journey floor.
-let infeasibleDays = 0;
 let hardViolations = 0;
 const kinematicNow: FeasibilityBaseline = {};
 const railTripleNow: FeasibilityBaseline = {};
@@ -304,7 +303,6 @@ for (const file of files) {
 	const lineStations = new Map(Object.entries(captured.inputs.osmTrace.stationsOnLine ?? {}));
 	const violations = checkWorldlineFeasibility(states, dayPoints, dayInputs.biometrics.steps, lineStations);
 	if (violations.length > 0) {
-		infeasibleDays++;
 		const kinematic = violations.filter((v) => v.kind === "impossible-mode-kinematics").length;
 		if (kinematic > 0) kinematicNow[captured.meta.date] = kinematic;
 		const railTriples = violations.filter((v) => v.kind === "invalid-rail-triple").length;

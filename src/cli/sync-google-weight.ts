@@ -10,9 +10,8 @@
  */
 import { z } from "zod";
 import { initPool, withConnection } from "../db/pool.js";
-import { syncGoogleWeight } from "../google/body.js";
-import { fetchAllWeight } from "../google/health.js";
-import { googleAccessToken, googleCredsFromEnv } from "../google/oauth.js";
+import { runGoogleWeightSync } from "../google/body.js";
+import { googleCredsFromEnv } from "../google/oauth.js";
 
 const dbCfg = z
 	.object({
@@ -41,10 +40,7 @@ const userId =
 	process.argv.find((a) => !a.startsWith("-") && a !== process.argv[0] && a !== process.argv[1]) ?? "pippijn";
 const apply = process.argv.includes("--apply");
 
-const token = await googleAccessToken(creds);
-const weight = await fetchAllWeight(token);
-
-const result = await withConnection((conn) => syncGoogleWeight(conn, userId, weight, apply));
+const result = await withConnection((conn) => runGoogleWeightSync(conn, creds, userId, apply));
 
 console.log(`Google Health weight for ${userId}:`);
 console.log(`  fetched ${result.fetched} data points → ${result.days} distinct days`);

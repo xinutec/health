@@ -11,7 +11,8 @@
  */
 
 import type * as mariadb from "mariadb";
-import type { WeightMeasurement } from "./health.js";
+import { fetchAllWeight, type WeightMeasurement } from "./health.js";
+import { type GoogleCreds, googleAccessToken } from "./oauth.js";
 
 /** Collapse to one weigh-in per local date, keeping the latest measurement. */
 export function dedupeByDate(measurements: readonly WeightMeasurement[]): WeightMeasurement[] {
@@ -72,4 +73,20 @@ export async function syncGoogleWeight(
 		earliest,
 		latest,
 	};
+}
+
+/**
+ * Full Google-weight sync round: mint an access token, fetch every weigh-in,
+ * and reconcile the `body` table. Shared by the sync-google-weight CLI and the
+ * health-sync cron (#260).
+ */
+export async function runGoogleWeightSync(
+	conn: mariadb.Connection,
+	creds: GoogleCreds,
+	userId: string,
+	apply: boolean,
+): Promise<WeightSyncResult> {
+	const token = await googleAccessToken(creds);
+	const weight = await fetchAllWeight(token);
+	return syncGoogleWeight(conn, userId, weight, apply);
 }
