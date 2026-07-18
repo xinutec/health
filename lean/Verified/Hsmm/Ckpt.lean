@@ -167,12 +167,13 @@ theorem buildCkpt_fst (P : Problem) (K : Nat) :
         rw [hread]
         exact hsnd s τ hs h1 hm
 
-/-- Last stored entry (scanning backward) whose time is `≤ t`. -/
-def findCk (cks : Array (Nat × Array Score)) (t : Nat) : Nat → Option (Nat × Array Score)
+/-- Last stored entry (scanning backward) whose time is `≤ t`. Generic in the
+column representation so the packed decoder (Packed.lean) can reuse it. -/
+def findCk {α : Type} [Inhabited α] (cks : Array (Nat × α)) (t : Nat) : Nat → Option (Nat × α)
   | 0 => none
   | i + 1 => if (cks[i]!).1 ≤ t then some cks[i]! else findCk cks t i
 
-theorem findCk_spec (cks : Array (Nat × Array Score)) (t : Nat) :
+theorem findCk_spec {α : Type} [Inhabited α] (cks : Array (Nat × α)) (t : Nat) :
     ∀ n, n ≤ cks.size → ∀ e, findCk cks t n = some e →
       (∃ i, i < cks.size ∧ cks[i]! = e) ∧ e.1 ≤ t
   | 0 => by intro _ e h; simp [findCk] at h

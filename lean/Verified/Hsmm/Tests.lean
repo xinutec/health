@@ -4,6 +4,7 @@ import Verified.Hsmm.Trellis
 import Verified.Hsmm.Decode
 import Verified.Hsmm.Memo
 import Verified.Hsmm.Ckpt
+import Verified.Hsmm.Packed
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -134,5 +135,19 @@ def checkTrellis (P : Problem) : Bool :=
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeCk blocked 7 == viterbi blocked
+
+-- The packed decoder (`Nat`-scalar arithmetic through `enc`) is proved equal
+-- to decode under the envelope hypotheses (`pDecode_eq`); the seeded test
+-- family sits comfortably inside the envelope, so it must match exactly.
+#guard (List.range 6).all fun seed =>
+  [0, 1, 7, 64].all fun K =>
+    pDecode (packM (mkP seed 30 4 6)) K == viterbi (mkP seed 30 4 6)
+#guard (List.range 4).all fun seed =>
+  [1, 16].all fun K =>
+    pDecode (packM (mkP seed 60 3 10)) K == viterbi (mkP seed 60 3 10)
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  pDecode (packM blocked) 7 == viterbi blocked
 
 end Verified.Hsmm.Tests

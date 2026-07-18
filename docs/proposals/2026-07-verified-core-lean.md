@@ -139,12 +139,25 @@ a float model. The float bridge is its own later phase.
   haven't occurred yet). `npm run verify` now runs `lean-check` (lake
   build with its `#guard`s + the seeded parity harness); the shadow tool
   itself needs the local (gitignored) corpus, so it stays a tool like
-  `golden-hsmm`. Remaining V2: run the shadow in the decode-recent
-  CronJob with an agreement metric; UI surfacing (a dev-footer badge)
-  once stable. Known cost: the Lean side takes ~20s/day (JSON parse +
-  storing all 54M trellis cells for the walk); column checkpointing or a
-  packed-Int score representation would cut both, without touching the
-  theorems.
+  `golden-hsmm`. **The day-scale cost is fixed** (was ~23s/3.6GB per
+  day): `Ckpt.lean` retains only every `K`-th trellis column and
+  re-derives walk-queried columns from the nearest checkpoint
+  (`decodeCk_eq` — correct for every stride), and `Packed.lean`
+  offset-encodes scores as `Nat` scalars (`v ↦ v + 2^61`, `-∞ ↦ 0`) so
+  the forward pass never touches GMP — Lean boxes any `Int` outside
+  32 bits, and the model's soft-`-∞` emission penalties (~2^48) made
+  nearly every score op a bignum allocation. The packing is *exact*:
+  `enc_add`/`enc_max` are proved homomorphisms under a magnitude
+  envelope established cell-by-cell (`col_bounded`), and the CLI
+  *refuses* inputs outside the envelope (emissions `|v| ≤ 2^49`, other
+  tensors `≤ 2^45`, `T ≤ 2048`) rather than decode where the theorem
+  doesn't apply. `pDecode` inherits the goal theorems via `pDecode_eq`;
+  measured on the heaviest corpus day: **4.4s decode, 87MB peak,
+  byte-identical output** (a GMP footnote: Lean re-parses inlined big
+  literals from *strings* per call — `@[noinline]` on the offset
+  constant was worth 8s/day). Remaining V2: run the shadow in the
+  decode-recent CronJob with an agreement metric; UI surfacing (a
+  dev-footer badge) once stable.
 - **V3 — rail-snap.** Small, stable, pure; Dijkstra correctness and the
   "null over wrong path" contract as theorems.
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the

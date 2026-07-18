@@ -38,10 +38,22 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   and `decode_none_iff` (`none` ⟺ everything is `-∞`). Unmemoised
   specification form; `#guard`s pin it against `viterbi` exactly, paths
   included.
-- `Verified/Hsmm/Memo.lean` — the production form: columns built once as
+- `Verified/Hsmm/Memo.lean` — the memoised form: columns built once as
   arrays (`buildCols`, pointwise-proved equal to `col`), and `decodeFast`
-  inheriting `decode`'s theorems through `decodeFast_eq`. This is what
-  `verified_cli` runs.
+  inheriting `decode`'s theorems through `decodeFast_eq`.
+- `Verified/Hsmm/Ckpt.lean` — checkpointed storage: `buildCkpt` retains only
+  every `K`-th column plus the last; the walk recomputes queried columns
+  from the nearest checkpoint (`colAt`). `decodeCk_eq` holds for *every*
+  stride, so `K` is purely a space/time knob. Also the fold-form column
+  functions (`rangeMax`/`closeRowF`/`colStepF`, proved equal to the
+  list-form ones).
+- `Verified/Hsmm/Packed.lean` — the production form: scores offset-encoded
+  as `Nat` scalars (`enc`: `-∞ ↦ 0`, `v ↦ v + 2^61`) so the forward pass
+  never touches GMP. Exact, not approximate: `enc_add`/`enc_max` are proved
+  homomorphisms under the magnitude envelope that `col_bounded` establishes
+  for every cell (inputs `|v| ≤ 2^49` emissions / `2^45` others, `T ≤ 2048`
+  — the CLI refuses inputs outside it). `pDecode` inherits everything
+  through `pDecode_eq`. This is what `verified_cli` runs.
 - `Verified/Hsmm/Viterbi.lean` — the trellis (faithful port of
   `src/hmm/hsmm-viterbi.ts`, same loop order and tie-breaks; degenerate cases
   return `none` instead of the TS silent fallbacks).

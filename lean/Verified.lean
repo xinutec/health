@@ -8,4 +8,5 @@ import Verified.Hsmm.Viterbi
 import Verified.Hsmm.Decode
 import Verified.Hsmm.Memo
 import Verified.Hsmm.Ckpt
+import Verified.Hsmm.Packed
 import Verified.Hsmm.Tests
