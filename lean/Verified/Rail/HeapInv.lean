@@ -17,10 +17,18 @@ operations, exactly as written:
 * `root_le` — the root of a heap-ordered array is a minimum;
 * `siftUp_isHeap` — sift-up repairs the one violation `UpOK` allows (the
   freshly-appended index), so `push_isHeap` holds;
-* `push_mem` / `push_size` — push bookkeeping.
+* `push_mem` / `push_size` — push bookkeeping;
+* `siftDown_isHeap` — sift-down repairs the one violation `DownOK` allows
+  (the index the popped root's replacement landed on), fuel permitting —
+  `pop` passes the array size, which always suffices;
+* `pop_min` / `pop_top_mem` — the popped entry is a minimum, and was in
+  the heap;
+* `pop_isHeap` / `pop_mem` / `pop_cover` / `pop_size` / `pop_none_iff` —
+  pop bookkeeping: the remainder is a heap, its entries come from the old
+  heap, every old entry is the popped one or still present, and `pop`
+  fails exactly on the empty heap.
 
-The sift-down/pop half follows in the next slice; consumers then rebuild
-the Dijkstra loop invariants on top.
+Consumers now rebuild the Dijkstra loop invariants on top.
 -/
 
 namespace Verified.Rail
@@ -212,7 +220,7 @@ theorem siftUp_isHeap : ∀ (a : Array (Nat × Nat)) (i : Nat), i < a.size → U
         exact siftUp_isHeap _ ((i - 1) / 2)
           (by rw [swap_size]; omega)
           (upok_swap hi (by omega) hok hord)
-  termination_by a i => i
+  termination_by _ i => i
   decreasing_by omega
 
 theorem siftUp_size : ∀ (a : Array (Nat × Nat)) (i : Nat), (Heap.siftUp a i).size = a.size
@@ -225,7 +233,7 @@ theorem siftUp_size : ∀ (a : Array (Nat × Nat)) (i : Nat), (Heap.siftUp a i).
         rw [dif_neg h0, if_pos hord]
       · unfold Heap.siftUp
         rw [dif_neg h0, if_neg hord, siftUp_size _ ((i - 1) / 2), swap_size]
-  termination_by a i => i
+  termination_by _ i => i
   decreasing_by omega
 
 theorem siftUp_mem : ∀ (a : Array (Nat × Nat)) (i : Nat), i < a.size → ∀ z : Nat × Nat,
@@ -241,7 +249,7 @@ theorem siftUp_mem : ∀ (a : Array (Nat × Nat)) (i : Nat), i < a.size → ∀ 
         rw [dif_neg h0, if_neg hord,
           siftUp_mem _ ((i - 1) / 2) (by rw [swap_size]; omega) z]
         exact mem_swap hi (by omega) z
-  termination_by a i => i
+  termination_by _ i => i
   decreasing_by omega
 
 /-! ## Push -/
@@ -273,6 +281,370 @@ theorem push_mem (h : Heap) (p v : Nat) (z : Nat × Nat) :
 theorem push_size (h : Heap) (p v : Nat) : (h.push p v).a.size = h.a.size + 1 := by
   show (Heap.siftUp (h.a.push (p, v)) _).size = _
   rw [siftUp_size, Array.size_push]
+
+/-! ## Sift-down: repairing the root after a pop -/
+
+/-- Heap order everywhere except the edges out of `i`, plus "`i`'s parent
+covers `i`'s children" — the mirror image of `UpOK`, re-established one
+level down by each sift-down swap. -/
+def DownOK (a : Array (Nat × Nat)) (i : Nat) : Prop :=
+  (∀ j : Nat, 0 < j → j < a.size → (j - 1) / 2 ≠ i →
+      (a.getD ((j - 1) / 2) (0, 0)).1 ≤ (a.getD j (0, 0)).1) ∧
+  (0 < i → ∀ j : Nat, j < a.size → (j - 1) / 2 = i →
+      (a.getD ((i - 1) / 2) (0, 0)).1 ≤ (a.getD j (0, 0)).1)
+
+/-- `sDown1` picks the left child exactly when it's in bounds and strictly
+smaller; otherwise it stays put and the left child (if any) is ≥. -/
+private theorem sDown1_lt (a : Array (Nat × Nat)) (i : Nat) :
+    (sDown1 a i = 2 * i + 1 ∧ 2 * i + 1 < a.size ∧
+        (a.getD (2 * i + 1) (0, 0)).1 < (a.getD i (0, 0)).1) ∨
+      (sDown1 a i = i ∧ (2 * i + 1 < a.size →
+        (a.getD i (0, 0)).1 ≤ (a.getD (2 * i + 1) (0, 0)).1)) := by
+  unfold sDown1
+  by_cases h1 : 2 * i + 1 < a.size
+  · by_cases h2 : (a.getD (2 * i + 1) (0, 0)).1 < (a.getD i (0, 0)).1
+    · rw [if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact ⟨h1, h2⟩)]
+      exact Or.inl ⟨rfl, h1, h2⟩
+    · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact fun hc => h2 hc.2)]
+      exact Or.inr ⟨rfl, fun _ => Nat.le_of_not_lt h2⟩
+  · rw [if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact fun hc => h1 hc.1)]
+    exact Or.inr ⟨rfl, fun h => absurd h h1⟩
+
+/-- The full selection: either `sDown` stays put and both children (where
+in bounds) are ≥, or it moves to a strictly smaller child that is minimal
+among the children. -/
+private theorem sDown_cases (a : Array (Nat × Nat)) (i : Nat) :
+    (sDown a i = i ∧
+        (∀ j, j < a.size → j = 2 * i + 1 ∨ j = 2 * i + 2 →
+          (a.getD i (0, 0)).1 ≤ (a.getD j (0, 0)).1)) ∨
+      (2 * i + 1 ≤ sDown a i ∧ sDown a i ≤ 2 * i + 2 ∧ sDown a i < a.size ∧
+        (a.getD (sDown a i) (0, 0)).1 < (a.getD i (0, 0)).1 ∧
+        (∀ j, j < a.size → j = 2 * i + 1 ∨ j = 2 * i + 2 →
+          (a.getD (sDown a i) (0, 0)).1 ≤ (a.getD j (0, 0)).1)) := by
+  rcases sDown1_lt a i with ⟨he, h1, h2⟩ | ⟨he, hge⟩
+  · by_cases h3 : 2 * i + 2 < a.size ∧
+        (a.getD (2 * i + 2) (0, 0)).1 < (a.getD (2 * i + 1) (0, 0)).1
+    · have hs : sDown a i = 2 * i + 2 := by
+        unfold sDown
+        rw [he, if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact h3)]
+      rw [hs]
+      refine Or.inr ⟨by omega, by omega, h3.1, Nat.lt_trans h3.2 h2, ?_⟩
+      intro j hj hc
+      rcases hc with rfl | rfl
+      · exact Nat.le_of_lt h3.2
+      · exact Nat.le_refl _
+    · have hs : sDown a i = 2 * i + 1 := by
+        unfold sDown
+        rw [he, if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact h3)]
+      rw [hs]
+      refine Or.inr ⟨by omega, by omega, h1, h2, ?_⟩
+      intro j hj hc
+      rcases hc with rfl | rfl
+      · exact Nat.le_refl _
+      · exact Nat.le_of_not_lt fun hb => h3 ⟨hj, hb⟩
+  · by_cases h3 : 2 * i + 2 < a.size ∧
+        (a.getD (2 * i + 2) (0, 0)).1 < (a.getD i (0, 0)).1
+    · have hs : sDown a i = 2 * i + 2 := by
+        unfold sDown
+        rw [he, if_pos (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact h3)]
+      rw [hs]
+      refine Or.inr ⟨by omega, by omega, h3.1, h3.2, ?_⟩
+      intro j hj hc
+      rcases hc with rfl | rfl
+      · exact Nat.le_of_lt (Nat.lt_of_lt_of_le h3.2 (hge hj))
+      · exact Nat.le_refl _
+    · have hs : sDown a i = i := by
+        unfold sDown
+        rw [he, if_neg (by simp only [Bool.and_eq_true, decide_eq_true_eq]; exact h3)]
+      rw [hs]
+      refine Or.inl ⟨rfl, ?_⟩
+      intro j hj hc
+      rcases hc with rfl | rfl
+      · exact hge hj
+      · exact Nat.le_of_not_lt fun hb => h3 ⟨hj, hb⟩
+
+private theorem downok_swap {a : Array (Nat × Nat)} {i : Nat}
+    (hok : DownOK a i) (hne : sDown a i ≠ i) :
+    DownOK ((a.setIfInBounds i (a.getD (sDown a i) (0, 0))).setIfInBounds (sDown a i)
+      (a.getD i (0, 0))) (sDown a i) := by
+  rcases sDown_cases a i with ⟨he, _⟩ | ⟨hlo, hhi, hms, hlt, hmin⟩
+  · exact absurd he hne
+  · have his : i < a.size := by omega
+    have hpm : (sDown a i - 1) / 2 = i := by omega
+    constructor
+    · intro j hj hjs hjp
+      rw [swap_size] at hjs
+      rw [getD_swap a his hms, getD_swap a his hms]
+      rw [if_neg hjp]
+      by_cases hjm : j = sDown a i
+      · -- The swapped edge itself, now strictly ordered.
+        rw [if_pos (show (j - 1) / 2 = i by omega), if_pos hjm]
+        omega
+      · rw [if_neg hjm]
+        by_cases hpi : (j - 1) / 2 = i
+        · -- The other child of i: the moved-up minimum still covers it.
+          rw [if_pos hpi, if_neg (show ¬j = i by omega)]
+          exact hmin j hjs (by omega)
+        · by_cases hji : j = i
+          · -- The edge into i: i's parent covered i's children, so it
+            -- covers the value that moved up.
+            rw [if_neg hpi, if_pos hji, hji]
+            exact hok.2 (by omega) (sDown a i) hms hpm
+          · -- Untouched pair.
+            rw [if_neg hpi, if_neg hji]
+            exact hok.1 j hj hjs hpi
+    · intro hm0 j hjs hpj
+      rw [swap_size] at hjs
+      rw [getD_swap a his hms, getD_swap a his hms, hpm]
+      rw [if_neg (show ¬i = sDown a i from fun hh => hne hh.symm), if_pos rfl,
+        if_neg (show ¬j = sDown a i by omega), if_neg (show ¬j = i by omega)]
+      have h1 := hok.1 j (by omega) hjs (by omega)
+      rw [hpj] at h1
+      exact h1
+
+theorem siftDown_size : ∀ (fuel : Nat) (a : Array (Nat × Nat)) (i : Nat),
+    (Heap.siftDown a fuel i).size = a.size
+  | 0, _, _ => rfl
+  | fuel + 1, a, i => by
+    by_cases h : sDown a i = i
+    · simp only [Heap.siftDown, if_pos h]
+    · simp only [Heap.siftDown, if_neg h]
+      rw [siftDown_size fuel, swap_size]
+
+theorem siftDown_mem : ∀ (fuel : Nat) (a : Array (Nat × Nat)) (i : Nat) (z : Nat × Nat),
+    z ∈ Heap.siftDown a fuel i ↔ z ∈ a
+  | 0, _, _, _ => Iff.rfl
+  | fuel + 1, a, i, z => by
+    by_cases h : sDown a i = i
+    · simp only [Heap.siftDown, if_pos h]
+    · rcases sDown_cases a i with ⟨he, _⟩ | ⟨hlo, _, hms, _, _⟩
+      · exact absurd he h
+      · have his : i < a.size := by omega
+        simp only [Heap.siftDown, if_neg h]
+        rw [siftDown_mem fuel]
+        exact mem_swap his hms z
+
+/-- Sift-down repairs the `DownOK` violation, provided the fuel covers the
+distance to the bottom of the array — `a.size` (what `pop` passes) always
+does, since the index at least doubles each step. -/
+theorem siftDown_isHeap : ∀ (fuel : Nat) (a : Array (Nat × Nat)) (i : Nat),
+    a.size ≤ fuel + i → DownOK a i → IsHeapA (Heap.siftDown a fuel i)
+  | 0, a, i, hfi, hok => by
+    -- Out of fuel means i is already past the leaves: no in-bounds children.
+    simp only [Heap.siftDown]
+    intro j hj hjs
+    by_cases hp : (j - 1) / 2 = i
+    · omega
+    · exact hok.1 j hj hjs hp
+  | fuel + 1, a, i, hfi, hok => by
+    rcases sDown_cases a i with ⟨he, hmin⟩ | ⟨hlo, hhi, hms, hlt, hmin⟩
+    · -- No smaller child: DownOK plus the stop condition is the heap order.
+      simp only [Heap.siftDown, if_pos he]
+      intro j hj hjs
+      by_cases hp : (j - 1) / 2 = i
+      · rw [hp]
+        exact hmin j hjs (by omega)
+      · exact hok.1 j hj hjs hp
+    · have hne : sDown a i ≠ i := by omega
+      simp only [Heap.siftDown, if_neg hne]
+      exact siftDown_isHeap fuel _ (sDown a i)
+        (by rw [swap_size]; omega)
+        (downok_swap hok hne)
+
+/-! ## Pop -/
+
+private theorem getD_pop {a : Array (Nat × Nat)} {q : Nat} (hq : q < a.size - 1) :
+    a.pop.getD q (0, 0) = a.getD q (0, 0) := by
+  have h1 : q < a.pop.size := by rw [Array.size_pop]; omega
+  rw [getD_eq_of_lt h1, getD_eq_of_lt (show q < a.size by omega), Array.getElem_pop]
+
+/-- The array `pop` sifts down: the last element moved onto the root of
+everything but the last slot. -/
+private theorem size_moved (a : Array (Nat × Nat)) :
+    (a.pop.setIfInBounds 0 (a.getD (a.size - 1) (0, 0))).size = a.size - 1 := by
+  simp [Array.size_setIfInBounds, Array.size_pop]
+
+private theorem getD_moved {a : Array (Nat × Nat)} {q : Nat}
+    (hq : q < a.size - 1) :
+    (a.pop.setIfInBounds 0 (a.getD (a.size - 1) (0, 0))).getD q (0, 0) =
+      if q = 0 then a.getD (a.size - 1) (0, 0) else a.getD q (0, 0) := by
+  rw [getD_set _ (show 0 < a.pop.size by rw [Array.size_pop]; omega)]
+  by_cases hq0 : q = 0
+  · rw [if_pos hq0, if_pos hq0]
+  · rw [if_neg hq0, if_neg hq0, getD_pop hq]
+
+/-- Moving the last element onto the root leaves heap order intact
+everywhere except the root's own edges — `DownOK _ 0`. -/
+private theorem downok_moved {a : Array (Nat × Nat)} (hh : IsHeapA a) :
+    DownOK (a.pop.setIfInBounds 0 (a.getD (a.size - 1) (0, 0))) 0 := by
+  constructor
+  · intro j hj hjs hjp
+    rw [size_moved] at hjs
+    rw [getD_moved (show (j - 1) / 2 < a.size - 1 by omega), if_neg hjp,
+      getD_moved hjs, if_neg (by omega)]
+    exact hh j hj (by omega)
+  · intro h0
+    omega
+
+private theorem mem_of_getD {a : Array (Nat × Nat)} {q : Nat} (hq : q < a.size) :
+    a.getD q (0, 0) ∈ a := by
+  rw [getD_eq_of_lt hq]
+  exact Array.getElem_mem hq
+
+/-- Structural view of a successful `pop`: the returned entry is the root,
+and the remainder is either the sifted-down moved array (size > 1) or the
+empty array (size 1). -/
+private theorem pop_eq {h : Heap} {t : Nat × Nat} {h' : Heap} (hp : h.pop = some (t, h')) :
+    0 < h.a.size ∧ t = h.a.getD 0 (0, 0) ∧
+      ((1 < h.a.size ∧ h'.a =
+          Heap.siftDown (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0)))
+            (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).size 0) ∨
+        (h.a.size = 1 ∧ h'.a = h.a.pop)) := by
+  unfold Heap.pop at hp
+  split at hp
+  · exact absurd hp (by simp)
+  · next top hz =>
+    obtain ⟨h0, heq⟩ := Array.getElem?_eq_some_iff.mp hz
+    have htop : top = h.a.getD 0 (0, 0) := by
+      rw [getD_eq_of_lt h0]
+      exact heq.symm
+    by_cases hs : h.a.pop.size > 0
+    · rw [if_pos hs, Option.some.injEq, Prod.mk.injEq] at hp
+      obtain ⟨ht, hh⟩ := hp
+      refine ⟨h0, ht ▸ htop, Or.inl ⟨by rw [Array.size_pop] at hs; omega, ?_⟩⟩
+      rw [← hh]
+    · rw [if_neg hs, Option.some.injEq, Prod.mk.injEq] at hp
+      obtain ⟨ht, hh⟩ := hp
+      have hs1 : h.a.size = 1 := by rw [Array.size_pop] at hs; omega
+      exact ⟨h0, ht ▸ htop, Or.inr ⟨hs1, by rw [← hh]⟩⟩
+
+theorem pop_none_iff {h : Heap} : h.pop = none ↔ h.a.size = 0 := by
+  constructor
+  · intro hp
+    unfold Heap.pop at hp
+    split at hp
+    · next hz =>
+      have := Array.getElem?_eq_none_iff.mp hz
+      omega
+    · next top hz =>
+      by_cases hs : h.a.pop.size > 0
+      · rw [if_pos hs] at hp
+        cases hp
+      · rw [if_neg hs] at hp
+        cases hp
+  · intro hs
+    unfold Heap.pop
+    rw [Array.getElem?_eq_none (by omega)]
+
+/-- The popped entry is the root — a minimum of the whole heap. -/
+theorem pop_min {h : Heap} (hh : IsHeap h) {t : Nat × Nat} {h' : Heap}
+    (hp : h.pop = some (t, h')) : ∀ z ∈ h.a, t.1 ≤ z.1 := by
+  obtain ⟨h0, ht, _⟩ := pop_eq hp
+  intro z hz
+  obtain ⟨q, hq⟩ := Array.mem_iff_getElem?.mp hz
+  have hqs : q < h.a.size := by
+    rcases Array.getElem?_eq_some_iff.mp hq with ⟨hlt, _⟩
+    exact hlt
+  have hzq : h.a.getD q (0, 0) = z := by
+    rw [Array.getElem?_eq_getElem hqs] at hq
+    injection hq with hq
+    rw [getD_eq_of_lt hqs]
+    exact hq
+  rw [ht, ← hzq]
+  exact root_le hh q hqs
+
+theorem pop_top_mem {h : Heap} {t : Nat × Nat} {h' : Heap}
+    (hp : h.pop = some (t, h')) : t ∈ h.a := by
+  obtain ⟨h0, ht, _⟩ := pop_eq hp
+  rw [ht]
+  exact mem_of_getD h0
+
+theorem pop_isHeap {h : Heap} (hh : IsHeap h) {t : Nat × Nat} {h' : Heap}
+    (hp : h.pop = some (t, h')) : IsHeap h' := by
+  obtain ⟨h0, _, hrest⟩ := pop_eq hp
+  show IsHeapA h'.a
+  rcases hrest with ⟨hs, hb⟩ | ⟨hs, hb⟩
+  · rw [hb]
+    exact siftDown_isHeap _ _ 0 (by omega) (downok_moved hh)
+  · rw [hb]
+    intro j hj hjs
+    rw [Array.size_pop] at hjs
+    omega
+
+/-- Every entry of the remainder was in the heap. -/
+theorem pop_mem {h : Heap} {t : Nat × Nat} {h' : Heap} (hp : h.pop = some (t, h')) :
+    ∀ z : Nat × Nat, z ∈ h'.a → z ∈ h.a := by
+  obtain ⟨h0, _, hrest⟩ := pop_eq hp
+  intro z hz
+  rcases hrest with ⟨hs, hb⟩ | ⟨hs, hb⟩
+  · rw [hb, siftDown_mem] at hz
+    obtain ⟨q, hq⟩ := Array.mem_iff_getElem?.mp hz
+    have hqs : q < h.a.size - 1 := by
+      rcases Array.getElem?_eq_some_iff.mp hq with ⟨hlt, _⟩
+      rw [size_moved] at hlt
+      exact hlt
+    have hzq :
+        (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).getD q (0, 0) = z := by
+      rcases Array.getElem?_eq_some_iff.mp hq with ⟨hlt, heq⟩
+      rw [getD_eq_of_lt hlt]
+      exact heq
+    rw [getD_moved hqs] at hzq
+    by_cases hq0 : q = 0
+    · rw [if_pos hq0] at hzq
+      rw [← hzq]
+      exact mem_of_getD (by omega)
+    · rw [if_neg hq0] at hzq
+      rw [← hzq]
+      exact mem_of_getD (by omega)
+  · rw [hb] at hz
+    obtain ⟨q, hq⟩ := Array.mem_iff_getElem?.mp hz
+    rcases Array.getElem?_eq_some_iff.mp hq with ⟨hlt, _⟩
+    rw [Array.size_pop] at hlt
+    omega
+
+/-- Every heap entry is the popped one or survives into the remainder. -/
+theorem pop_cover {h : Heap} {t : Nat × Nat} {h' : Heap} (hp : h.pop = some (t, h')) :
+    ∀ z : Nat × Nat, z ∈ h.a → z = t ∨ z ∈ h'.a := by
+  obtain ⟨h0, ht, hrest⟩ := pop_eq hp
+  intro z hz
+  obtain ⟨q, hq⟩ := Array.mem_iff_getElem?.mp hz
+  have hqs : q < h.a.size := by
+    rcases Array.getElem?_eq_some_iff.mp hq with ⟨hlt, _⟩
+    exact hlt
+  have hzq : h.a.getD q (0, 0) = z := by
+    rw [Array.getElem?_eq_getElem hqs] at hq
+    injection hq with hq
+    rw [getD_eq_of_lt hqs]
+    exact hq
+  by_cases hq0 : q = 0
+  · left
+    rw [ht, ← hzq, hq0]
+  · rcases hrest with ⟨hs, hb⟩ | ⟨hs, hb⟩
+    · right
+      rw [hb, siftDown_mem]
+      by_cases hql : q = h.a.size - 1
+      · -- The last element lives on at the root of the moved array.
+        have : (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).getD 0 (0, 0)
+            = z := by
+          rw [getD_moved (show (0 : Nat) < h.a.size - 1 by omega), if_pos rfl, ← hql]
+          exact hzq
+        rw [← this]
+        exact mem_of_getD (by rw [size_moved]; omega)
+      · have : (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).getD q (0, 0)
+            = z := by
+          rw [getD_moved (show q < h.a.size - 1 by omega), if_neg hq0]
+          exact hzq
+        rw [← this]
+        exact mem_of_getD (by rw [size_moved]; omega)
+    · -- Size 1: the only entry is the popped root, contradicting q ≠ 0.
+      omega
+
+theorem pop_size {h : Heap} {t : Nat × Nat} {h' : Heap} (hp : h.pop = some (t, h')) :
+    h'.a.size = h.a.size - 1 := by
+  obtain ⟨h0, _, hrest⟩ := pop_eq hp
+  rcases hrest with ⟨hs, hb⟩ | ⟨hs, hb⟩
+  · rw [hb, siftDown_size, size_moved]
+  · rw [hb, Array.size_pop]
 
 end Heap
 end Verified.Rail

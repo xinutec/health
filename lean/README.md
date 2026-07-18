@@ -68,13 +68,17 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   contract deltas; `#guard`-pinned against the oracle in
   `Verified/Rail/Tests.lean`, and pinned against production on real
   corridors by `npm run compare-rail` (via `verified_cli rail`).
-- `Verified/Rail/HeapInv.lean` — binary-heap invariants (in progress):
+- `Verified/Rail/HeapInv.lean` — binary-heap invariants, both halves:
   `IsHeapA`, `root_le` (the root is a minimum), sift-up repair
-  (`siftUp_isHeap` via `UpOK`), and the `push` theorems
-  (order-preservation, membership, size). The sift-down/pop half and the
-  Dijkstra loop invariants built on top come next — together they retire
-  the two `#guard`-pinned facts (rail `none ⟺ disconnected`, lazy
-  "settled = final").
+  (`siftUp_isHeap` via `UpOK`) with the `push` theorems, and sift-down
+  repair (`siftDown_isHeap` via `DownOK`) with the `pop` theorems —
+  the popped entry is a minimum and was present (`pop_min`,
+  `pop_top_mem`), the remainder is a heap whose entries come from the
+  old one and cover everything but the popped entry (`pop_isHeap`,
+  `pop_mem`, `pop_cover`, `pop_size`), and `pop` fails exactly on empty
+  (`pop_none_iff`). The Dijkstra loop invariants built on top come next
+  — they retire the two `#guard`-pinned facts (rail
+  `none ⟺ disconnected`, lazy "settled = final").
 - `Verified/Rail/Certify.lean` — the V3 goal theorems, by certification
   rather than algorithm invariants: the untrusted search's result is
   validated by a proved O(E) checker (valid simple path costing exactly
