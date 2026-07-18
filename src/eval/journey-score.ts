@@ -303,8 +303,11 @@ export function decoderJourneys(
 		const last = legs[legs.length - 1];
 		if (last !== undefined && last.mode === mode && last.line === line && m.ts <= last.endTs) {
 			last.endTs = m.ts + 60;
+			// A leg spanning several decoded segments boards where the first
+			// one boards and alights where the last one alights.
+			last.alight = m.alight ?? null;
 		} else {
-			legs.push({ startTs: m.ts, endTs: m.ts + 60, mode, line, board: null, alight: null });
+			legs.push({ startTs: m.ts, endTs: m.ts + 60, mode, line, board: m.board ?? null, alight: m.alight ?? null });
 		}
 	}
 	// Group legs into journeys: a gap larger than the tolerance starts a

@@ -118,7 +118,14 @@ function segmentsToMinutes(segs: readonly HmmSegment[]): DecoderMinute[] {
 	const minutes: DecoderMinute[] = [];
 	for (const s of segs) {
 		for (let t = s.startTs; t < s.endTs; t += 60) {
-			minutes.push({ ts: t, mode: s.mode, placeId: s.placeId, lineName: s.lineName });
+			minutes.push({
+				ts: t,
+				mode: s.mode,
+				placeId: s.placeId,
+				lineName: s.lineName,
+				board: s.boardStation ?? null,
+				alight: s.alightStation ?? null,
+			});
 		}
 	}
 	return minutes;
@@ -128,9 +135,18 @@ function pct(n: number, d: number): string {
 	return d === 0 ? "  n/a" : `${((100 * n) / d).toFixed(1)}%`;
 }
 
-/** Compact one-line shape of a journey's legs, e.g. "walking → train:Jubilee Line → walking". */
-function journeyShape(legs: readonly { mode: string; line: string | null }[]): string {
-	return legs.map((l) => l.mode + (l.line !== null ? `:${l.line}` : "")).join(" → ");
+/** Compact one-line shape of a journey's legs, e.g.
+ *  "walking → train:Jubilee Line [Wembley Park→Baker Street] → walking". */
+function journeyShape(
+	legs: readonly { mode: string; line: string | null; board: string | null; alight: string | null }[],
+): string {
+	return legs
+		.map((l) => {
+			const line = l.line !== null ? `:${l.line}` : "";
+			const st = l.board !== null || l.alight !== null ? ` [${l.board ?? "?"}→${l.alight ?? "?"}]` : "";
+			return l.mode + line + st;
+		})
+		.join(" → ");
 }
 
 async function main(): Promise<void> {

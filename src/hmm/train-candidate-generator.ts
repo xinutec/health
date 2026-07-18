@@ -94,8 +94,8 @@ const STATION_LINE_RADIUS_M = 250;
 /** Which lines pass within `STATION_LINE_RADIUS_M` of the station
  *  node. Uses the edge spatial index — robust to the OSM gap
  *  between station-entrance coords and underground-way endpoint
- *  coords. */
-function stationLineMemberships(routeGraph: RouteGraph, node: RouteNode): Set<string> {
+ *  coords. Shared with the C4.3 station-chain resolver. */
+export function stationLineMemberships(routeGraph: RouteGraph, node: RouteNode): Set<string> {
 	const out = new Set<string>();
 	for (const edge of routeGraph.edgesNear(node.point.lat, node.point.lon, STATION_LINE_RADIUS_M)) {
 		for (const line of edge.attrs.lineMemberships) out.add(line);
@@ -105,8 +105,9 @@ function stationLineMemberships(routeGraph: RouteGraph, node: RouteNode): Set<st
 
 /** Station nodes within `radiusM` of `(lat, lon)`. Only nodes with
  *  station metadata count — we don't accept arbitrary way-endpoint
- *  nodes as boarding/alighting points. */
-function stationsNear(
+ *  nodes as boarding/alighting points. Shared with the C4.3
+ *  station-chain resolver. */
+export function stationsNear(
 	routeGraph: RouteGraph,
 	lat: number,
 	lon: number,
@@ -133,8 +134,9 @@ function stationsNear(
 const STATION_FOOTPRINT_M = 200;
 
 /** Every node within `STATION_FOOTPRINT_M` of `station.point`,
- *  including the station's own merged node. */
-function stationFootprintNodes(routeGraph: RouteGraph, station: RouteNode): Set<string> {
+ *  including the station's own merged node. Shared with the C4.3
+ *  station-chain resolver. */
+export function stationFootprintNodes(routeGraph: RouteGraph, station: RouteNode): Set<string> {
 	const out = new Set<string>([station.id]);
 	const stationLat = station.point.lat;
 	const stationLon = station.point.lon;

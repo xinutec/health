@@ -35,6 +35,7 @@ import { groupStatesIntoSegments, type HmmSegment } from "./persist.js";
 import { buildRouteRailEvidence } from "./route-rail-evidence.js";
 import { buildSegmentEvidence } from "./segment-evidence.js";
 import { buildStateSpace, type FocusPlaceRef, type State } from "./state-space.js";
+import { resolveStationChain } from "./station-chain.js";
 import { buildTrainGeneratorPrior } from "./train-generator-prior.js";
 import { buildDurationLogProb } from "./train-hop-duration.js";
 import { buildTransitionMatrix } from "./transitions.js";
@@ -237,5 +238,16 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 		durationLogProb,
 	});
 	const timestamps = tensor.map((o) => o.ts);
-	return groupStatesIntoSegments(hmmStates, timestamps);
+	const segments = groupStatesIntoSegments(hmmStates, timestamps);
+
+	// C4.3 chained train triples: assign board/alight stations to the
+	// decoded train legs, scored jointly along each journey chain
+	// (`station-chain.ts`). Confidence-gated — an ambiguous side stays
+	// null rather than guessing.
+	const stations = resolveStationChain({ segments, observations: tensor, routeGraph: inputs.routeGraph });
+	for (const [segIndex, resolved] of stations) {
+		segments[segIndex].boardStation = resolved.board;
+		segments[segIndex].alightStation = resolved.alight;
+	}
+	return segments;
 }

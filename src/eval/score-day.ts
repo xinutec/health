@@ -48,6 +48,12 @@ export interface DecoderMinute {
 	placeId: number | null;
 	/** Named rail line when mode is train; null otherwise. */
 	lineName: string | null;
+	/** Board/alight station names for train minutes, from the C4.3
+	 *  chained-triple resolver — every minute of a decoded train
+	 *  segment carries its segment's pair. Absent/null when the
+	 *  resolver stayed silent (missing, not wrong). */
+	board?: string | null;
+	alight?: string | null;
 }
 
 /** A row's per-minute scoring outcome. Surfaced so the human report

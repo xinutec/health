@@ -251,7 +251,7 @@ leg-level losses anywhere. Remaining deltas, both pre-existing
 journey-SHAPE drops whose days' leg scores are equal or better:
 05-25 journeysMatched 1→0 and 06-16 1→0 — diagnose before bless/flip.
 
-### C4.3 — chained train triples (subsume the anchors)
+### C4.3 — chained train triples (subsume the anchors) — v1 SHIPPED (2026-07-18)
 
 `enumerateTrainCandidates` scores triples per ride window in isolation.
 Chain them: within a journey, alight(N−1) must be board(N) or connected
@@ -262,6 +262,42 @@ aboard). The anchors' legitimate evidence — walked-to-station endpoints,
 in-tunnel station-coordinate fixes, platform waits — becomes generator
 input scored jointly, instead of post-hoc label rewrites that can
 overwrite a correct answer. Targets mechanisms 2 and 3.
+
+**v1 status (#370):** `src/hmm/station-chain.ts` — post-decode
+per-journey Viterbi over (board, alight) pairs per named-line train
+leg; terms: anchor distance (staleness-slopped σ, candidate radius
+widens with slop so a stale anchor admits rather than excludes),
+along-line path duration (Dijkstra on the line's edges, doubling as
+connectivity), terminal-dwell consistency (an in-leg fix near a
+candidate minutes away from the leg boundary implies an impossible
+through-station dwell), and interchange-feasibility chain terms.
+Emission is confidence-gated per side (max-marginal margin ≥ 1 nat
+AND absolute anchor plausibility) — wrong is worse than missing.
+Stations flow through `HmmSegment.boardStation/alightStation`
+(CLASSIFIER_VERSION 5) into the journey eval legs.
+
+Measured on the 10-day corpus (four C4 flags on): the first station
+pair matches (06-12), **zero wrong stations**, no regressions; 07-16
+resolves the true morning board (Wembley Park) and return alight
+(Wembley Park) and correctly refuses the corrupted-anchor Finchley
+Road alight. Traps found and closed en route: real stations are
+several same-named OSM nodes (margins must compare NAMES); station
+complexes fabricate sub-400 m "hops" via proximity-inferred line
+membership (min-path floor; real membership is #364); a leg boundary
+deep in a blackout makes observed duration a LOWER bound only
+(one-sided term — a decoded bright fragment of a dark ride must not
+be read as the whole ride); a fresh reacquire fix can be km-wrong
+(the 07-16 08:41 jump-back), which the dwell term + margins turn
+into an honest null rather than a lie.
+
+Residuals: most asserted pairs stay `missing` until decode quality
+catches up (fragmented dark rides, wrong line labels, stale
+anchors); recovering the 07-16 Baker Street alight from the
+in-tunnel flicker over the corrupted anchor needs a
+trajectory-coherence term (v2); a phantom ride can still carry a
+station label — the phantom itself is the lie and dies with #366;
+the KX complex's three station names need #364's real membership to
+consolidate.
 
 ### C4.4 — journey-structure authority flip
 

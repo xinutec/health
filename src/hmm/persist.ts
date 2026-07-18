@@ -36,8 +36,10 @@ import type { State } from "./state-space.js";
  *       (route-graph track-geometry, composite-name-aware)
  *  - 4: connectivity check in route-rail-evidence + per-line
  *       GPS-distance factor (line-proximity) at GPS-present
- *       minutes. */
-export const CLASSIFIER_VERSION = 4;
+ *       minutes.
+ *  - 5: C4.3 chained-triple station resolution — train segments
+ *       carry board/alight station names. */
+export const CLASSIFIER_VERSION = 5;
 
 /** Per-segment HSMM decode shape. Same conceptual model as the
  *  pipeline's `EnrichedSegment` but trimmed to the fields the HSMM
@@ -53,6 +55,13 @@ export interface HmmSegment {
 	placeId: number | null;
 	/** Named rail line for train segments; null otherwise. */
 	lineName: string | null;
+	/** Board/alight station names from the C4.3 chained-triple
+	 *  resolver (`station-chain.ts`). Only on named-line train
+	 *  segments, and only where the resolver's confidence gate
+	 *  passed — a side it could not separate stays null/absent
+	 *  (wrong is worse than missing). Absent on pre-v5 rows. */
+	boardStation?: string | null;
+	alightStation?: string | null;
 }
 
 /** Collapse a per-minute state stream into segments. Adjacent
