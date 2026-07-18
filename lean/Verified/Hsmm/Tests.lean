@@ -3,6 +3,7 @@ import Verified.Hsmm.Oracle
 import Verified.Hsmm.Trellis
 import Verified.Hsmm.Decode
 import Verified.Hsmm.Memo
+import Verified.Hsmm.Ckpt
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -120,5 +121,18 @@ def checkTrellis (P : Problem) : Bool :=
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decodeFast blocked == viterbi blocked
+
+-- The checkpointed decoder is proved equal to decode for EVERY stride K
+-- (`decodeCk_eq`); pin a few strides — degenerate (0: `% 0` stores nothing
+-- beyond the t=0 entry), dense (1: every column stored), and sparse (7, 64:
+-- most queried columns recomputed via `colFrom`).
+#guard (List.range 6).all fun seed =>
+  [0, 1, 7, 64].all fun K => decodeCk (mkP seed 30 4 6) K == viterbi (mkP seed 30 4 6)
+#guard (List.range 4).all fun seed =>
+  [0, 1, 7, 64].all fun K => decodeCk (mkP seed 60 3 10) K == viterbi (mkP seed 60 3 10)
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  decodeCk blocked 7 == viterbi blocked
 
 end Verified.Hsmm.Tests
