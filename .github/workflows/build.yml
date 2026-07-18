@@ -29,6 +29,11 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
+      # `npm run verify` ends with lean-check (lake build of the verified
+      # core — every #guard — plus the TS↔Lean parity harness), which runs
+      # under `nix develop`, so CI needs nix. The toolchain download comes
+      # from cache.nixos.org (flake-pinned; a couple of minutes).
+      - uses: cachix/install-nix-action@v31
       - run: npm ci
       - run: npm ci --prefix frontend
       - run: npm run verify

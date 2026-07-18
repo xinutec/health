@@ -155,9 +155,25 @@ a float model. The float bridge is its own later phase.
   measured on the heaviest corpus day: **4.4s decode, 87MB peak,
   byte-identical output** (a GMP footnote: Lean re-parses inlined big
   literals from *strings* per call — `@[noinline]` on the offset
-  constant was worth 8s/day). Remaining V2: run the shadow in the
-  decode-recent CronJob with an agreement metric; UI surfacing (a
-  dev-footer badge) once stable.
+  constant was worth 8s/day). **The cron shadow is wired**: the image
+  carries `verified_cli` (Dockerfile `lean-build` stage — `nix build
+  .#verified-cli` with the flake-pinned toolchain, so the image build
+  re-checks every `#guard`; the `/nix/store` runtime closure is copied
+  into the alpine stage and `LEAN_CLI` names the binary), and
+  `decode-day.js` A/Bs every decoded day through the shared core
+  (`src/hmm/lean-shadow-core.ts`), logging a `lean-shadow <date>
+  EXACT|MISMATCH|SKIPPED` line with the fidelity metric — purely
+  observational, never failing the decode. The cron's C4 flags forced
+  two export extensions (probed on the corpus first): chain-context
+  transitions deviate on a clean pairs×minutes product (~2.1k of 25k
+  pairs), exported as per-pair rows (`transOv`); segment evidence makes
+  ~98% of duration cells `segEnd`-dependent, but the delta factorises
+  by state class (8 classes measured; partition refined AND verified
+  cell-by-cell during export, refusing if it doesn't hold) as
+  `durClass`/`durDelta`. With both, the corpus is EXACT under the C4
+  flag set too, quantisation still lossless. CI got nix so `verify`'s
+  lean-check runs there as well. Remaining V2: UI surfacing (a
+  dev-footer badge) once the cron metric has soaked.
 - **V3 — rail-snap.** Small, stable, pure; Dijkstra correctness and the
   "null over wrong path" contract as theorems.
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the

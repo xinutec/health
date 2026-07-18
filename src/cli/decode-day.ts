@@ -13,6 +13,7 @@
  * a day overwrites the existing row (with current classifier version).
  */
 
+import { existsSync } from "node:fs";
 import { z } from "zod";
 import { initPool, db as kyselyDb, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
@@ -32,8 +33,9 @@ import { bboxFromFixes, loadRouteGraphForBbox } from "../geo/route-graph-loader.
 import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, loadBiometrics } from "../geo/velocity.js";
 import { loadContinuityContext } from "../hmm/continuity-context.js";
-import { decodeHsmm, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
+import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
+import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
 
 const config = z
@@ -110,6 +112,26 @@ async function buildPlaceNearLine(places: readonly HsmmPlace[], lines: readonly 
 	return placeNearLine;
 }
 
+/** V2 shadow (docs/proposals/2026-07-verified-core-lean.md): when the
+ *  image carries the verified Lean decoder (`LEAN_CLI` names the binary),
+ *  A/B every decoded day against it and log the agreement metric. Purely
+ *  observational — a mismatch or an export refusal is logged, never fails
+ *  the decode run. */
+function runLeanShadow(inputs: HsmmInputs, date: string): void {
+	const leanBin = process.env.LEAN_CLI;
+	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) return;
+	try {
+		const r = shadowHsmmDay(buildHsmmModel(inputs), leanBin);
+		console.log(
+			`lean-shadow ${date} ${r.verdict} ` +
+				`float↔quant ${((100 * r.agreeMinutes) / r.totalMinutes).toFixed(2)}% scoreΔ ${r.scoreDelta.toExponential(2)} ` +
+				`[${r.shape} quantise ${r.quantiseMs.toFixed(0)}ms ts ${r.tsMs.toFixed(0)}ms lean ${r.leanMs.toFixed(0)}ms]`,
+		);
+	} catch (err) {
+		console.log(`lean-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 async function decodeAndPersist(
 	userId: string,
 	date: string,
@@ -137,7 +159,7 @@ async function decodeAndPersist(
 	// (chain start) or the flag is off. The flag gate lives here in the
 	// loader; `decodeHsmm` purely consumes whatever context it is given.
 	const continuityContext = useContinuityContinuation() ? await loadContinuityContext(userId, date) : null;
-	const segments = decodeHsmm({
+	const inputs: HsmmInputs = {
 		date,
 		tz,
 		points: velResult.points,
@@ -153,7 +175,8 @@ async function decodeAndPersist(
 		segmentEvidence: useSegmentEvidence(),
 		chainContext: useChainContext(),
 		reacquireRobustSpeed: useReacquireRobustSpeed(),
-	});
+	};
+	const segments = decodeHsmm(inputs);
 	if (dry) {
 		const fmt = (ts: number): string =>
 			new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
@@ -166,6 +189,7 @@ async function decodeAndPersist(
 	} else {
 		await saveDecode(kyselyDb(), userId, date, segments);
 	}
+	runLeanShadow(inputs, date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.

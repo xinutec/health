@@ -22,11 +22,21 @@ Input shape (all scores integers; `null` = `-∞`):
     "emit":  [[..S]  × T],          // emit[t][s]
     "trans": [[..S] × S]            // trans[from][to], time-constant …
            | [[[..S] × S] × T],     // … or trans[t][from][to] per destination t
+    "transOv": [[from,to,[..T]]]?,  // per-t rows for time-varying pairs (chain
+                                    // context); each row overrides the base
+                                    // matrix for that pair at every t
     "dur":   [[..maxD] × S],        // dur[s][d-1]
     "durOverrides": [[s,d,e,v]]?,   // sparse per-segEnd exceptions (v null = -∞)
+    "durClass": [..S]?,             // + "durDelta": class-factorised per-segEnd
+    "durDelta": [[[..T] × maxD]]?,  //   deltas (segment evidence): state s pays
+                                    //   dur[s][d-1] + durDelta[durClass[s]][d-1][e];
+                                    //   requires the -∞ pattern be e-independent
     "init":  [..S]?,                // absent → 0 (uniform), matching the TS default
     "entry": [[..S] × T]?           // absent → 0, matching the TS default
   }
+
+`durOverrides` and `durClass`/`durDelta` are mutually exclusive (the exporter
+picks sparse or class-factorised form).
 
 Output: {"path": [..T], "best": n}
       | {"degenerate": true}       // every path scores -∞
@@ -63,6 +73,37 @@ private def transTensor (j : Json) : Except String (Array (Array (Array Nat))) :
   | .ok _ => outer.mapM (matrix pOB) -- depth 3: per-t
   | .error _ => do return #[← matrix pOB j] -- depth 2: broadcast
 
+/-- Class-factorised duration delta row: raw integers (no `null`s), stored
+shifted by `bound` so the decode-time arithmetic stays in scalar `Nat`
+(an `Int` add at the 2^61 scale would box per call — GMP, measured 5×). -/
+private def deltaRow (bound : Nat) (j : Json) : Except String (Array Nat) := do
+  (← j.getArr?).mapM fun v => do
+    let n ← v.getInt?
+    if n.natAbs > bound then
+      throw s!"delta {n} exceeds the verified envelope (|v| ≤ {bound})"
+    return (n + (bound : Int)).toNat
+
+/-- Per-`t` transition rows for time-varying pairs (chain context): the
+`S*S` pair-index table (sentinel = number of rows) plus the rows. -/
+private def parseTransOv (j : Json) (S T : Nat) :
+    Except String (Array Nat × Array (Array Nat)) := do
+  let arr ← j.getArr?
+  let mut idx := Array.replicate (S * S) arr.size
+  let mut rows : Array (Array Nat) := #[]
+  for entry in arr do
+    let q ← entry.getArr?
+    let some fJ := q[0]? | throw "transOv: bad entry"
+    let some tJ := q[1]? | throw "transOv: bad entry"
+    let some rJ := q[2]? | throw "transOv: bad entry"
+    let f ← fJ.getNat?
+    let t ← tJ.getNat?
+    let r ← row pOB rJ
+    if r.size != T then throw "transOv: row length ≠ T"
+    if f ≥ S ∨ t ≥ S then throw "transOv: pair out of range"
+    idx := idx.setIfInBounds (f * S + t) rows.size
+    rows := rows.push r
+  return (idx, rows)
+
 /-- Sparse per-`segEnd` duration exceptions, keyed `(s * maxD + (d-1)) * T + e`. -/
 private def parseDurOverrides (j : Json) (maxD T : Nat) :
     Except String (Std.HashMap Nat Nat) := do
@@ -94,10 +135,55 @@ private def parseModel (j : Json) : Except String PModel := do
     throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
   let emit ← matrix pEB (← j.getObjVal? "emit")
   let trans ← transTensor (← j.getObjVal? "trans")
-  let dur ← matrix pOB (← j.getObjVal? "dur")
+  let (transIdx, transRows) ←
+    match j.getObjVal? "transOv" with
+    | .ok v => if v.isNull then pure (#[], #[]) else parseTransOv v S T
+    | .error _ => pure (#[], #[])
+  -- Flatten the override rows likewise (read per open cell: S²·T probes).
+  let transFlat : Array Nat := Id.run do
+    let mut a := Array.replicate (transRows.size * T) 0
+    for i in [0:transRows.size] do
+      let r := transRows[i]!
+      for t in [0:min T r.size] do
+        a := a.set! (i * T + t) r[t]!
+    return a
+  -- Class-factorised per-segEnd duration deltas (segment evidence). When
+  -- present, the base matrix and the deltas each get half the envelope so
+  -- their sum stays within `pOB`.
+  let durClass : Array Nat ←
+    match j.getObjVal? "durClass" with
+    | .ok v => if v.isNull then pure #[] else do (← v.getArr?).mapM (·.getNat?)
+    | .error _ => pure #[]
+  let halfOB := pOB / 2
+  let dur ← matrix (if durClass.isEmpty then pOB else halfOB) (← j.getObjVal? "dur")
+  let durDelta : Array (Array (Array Nat)) ←
+    match j.getObjVal? "durDelta" with
+    | .ok v =>
+      if v.isNull then pure #[]
+      else do
+        (← v.getArr?).mapM fun cls => do
+          (← cls.getArr?).mapM (deltaRow halfOB)
+    | .error _ => pure #[]
+  if durClass.isEmpty != durDelta.isEmpty then
+    throw "durClass and durDelta must be given together"
+  -- Flatten the per-class delta rows: the decode reads a delta per
+  -- (s, d, e) cell — one flat-array probe instead of three nested `getD`s.
+  let durDeltaFlat : Array Nat := Id.run do
+    let nC := durDelta.size
+    let mut a := Array.replicate (nC * maxD * T) halfOB
+    for c in [0:nC] do
+      let cls := durDelta[c]!
+      for d0 in [0:min maxD cls.size] do
+        let r := cls[d0]!
+        for e in [0:min T r.size] do
+          a := a.set! ((c * maxD + d0) * T + e) r[e]!
+    return a
   let durOv : Std.HashMap Nat Nat ←
     match j.getObjVal? "durOverrides" with
-    | .ok v => if v.isNull then pure {} else parseDurOverrides v maxD T
+    | .ok v =>
+      if v.isNull then pure {}
+      else if !durClass.isEmpty then throw "durOverrides and durClass are exclusive"
+      else parseDurOverrides v maxD T
     | .error _ => pure {}
   -- `(s, d)` cells that have at least one per-`segEnd` override — a cheap
   -- array probe in front of the HashMap, which the decoder consults
@@ -121,10 +207,21 @@ private def parseModel (j : Json) : Except String PModel := do
     maxD := maxD
     emit := fun t s => ((emit.getD t #[]).getD s 0)
     trans := fun sp s t =>
-      let m := if trans.size == 1 then trans[0]! else trans.getD t #[]
-      (m.getD sp #[]).getD s 0
+      let i := transIdx.getD (sp * S + s) transRows.size
+      if i < transRows.size then transFlat.getD (i * T + t) 0
+      else
+        let m := if trans.size == 1 then trans[0]! else trans.getD t #[]
+        (m.getD sp #[]).getD s 0
     dur := fun s d e =>
       if d == 0 then 0
+      else if !durClass.isEmpty then
+        let b := (dur.getD s #[]).getD (d - 1) 0
+        if b == 0 then 0
+        else
+          let c := durClass.getD s 0
+          -- delta rows are shifted by halfOB at parse; scalar Nat throughout
+          let δn := durDeltaFlat.getD ((c * maxD + (d - 1)) * T + e) halfOB
+          b + δn - halfOB
       else if hasOv.getD (s * maxD + (d - 1)) false then
         match durOv[(s * maxD + (d - 1)) * T + e]? with
         | some v => v
