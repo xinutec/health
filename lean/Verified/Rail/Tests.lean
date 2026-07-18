@@ -1,4 +1,4 @@
-import Verified.Rail.Dijkstra
+import Verified.Rail.Certify
 
 /-!
 # `#guard` parity: Dijkstra vs the exhaustive oracle
@@ -34,15 +34,18 @@ private def mkG (seed n m : Nat) : Graph := Id.run do
   return ⟨adj⟩
 
 /-- One src/dst check: reachability agrees; on `some`, the settled
-distance is the oracle minimum and the path is valid and attains it. -/
+distance is the oracle minimum and the path is valid and attains it.
+`dijkstraC == dijkstra` is the executable stand-in for the unproved
+completeness direction: certification never fires on a real run. -/
 private def check (g : Graph) (src dst : Nat) : Bool :=
-  match dijkstra g src dst, oracleDist g src dst with
-  | none, none => true
-  | some p, some c =>
-    dijkstraDist g src dst == some c
-      && isValidPath g src dst p
-      && pathCost g p == some c
-  | _, _ => false
+  dijkstraC g src dst == dijkstra g src dst &&
+    match dijkstra g src dst, oracleDist g src dst with
+    | none, none => true
+    | some p, some c =>
+      dijkstraDist g src dst == some c
+        && isValidPath g src dst p
+        && pathCost g p == some c
+    | _, _ => false
 
 private def checkAll (seed n m : Nat) : Bool := Id.run do
   let g := mkG seed n m
@@ -61,5 +64,9 @@ private def checkAll (seed n m : Nat) : Bool := Id.run do
 #guard dijkstra ⟨#[#[]]⟩ 0 0 == some [0]
 #guard dijkstra (mkG 0 5 6) 2 2 == some [2]
 #guard dijkstra (mkG 0 5 6) 0 7 == none
+#guard dijkstraC ⟨#[]⟩ 0 0 == none
+#guard dijkstraC ⟨#[#[]]⟩ 0 0 == some [0]
+#guard dijkstraC (mkG 0 5 6) 2 2 == some [2]
+#guard dijkstraC (mkG 0 5 6) 0 7 == none
 
 end Verified.Rail.Tests

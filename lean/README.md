@@ -68,7 +68,16 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   contract deltas; `#guard`-pinned against the oracle in
   `Verified/Rail/Tests.lean`, and pinned against production on real
   corridors by `npm run compare-rail` (via `verified_cli rail`).
-  Theorems next.
+- `Verified/Rail/Certify.lean` — the V3 goal theorems, by certification
+  rather than algorithm invariants: the untrusted search's result is
+  validated by a proved O(E) checker (valid simple path costing exactly
+  the settled distance + a feasible-cut condition over the final arrays),
+  and `cut_bound` shows a passing certificate *forces* the true minimum.
+  `dijkstraC` (what `verified_cli rail` runs) carries `dijkstraC_correct`
+  — any returned path is valid and attains `oracleDist` — and
+  `dijkstraC_disconnected`; a certification failure degrades to `none`
+  (never a wrong path). The converse ("the checker never fires on a real
+  run") is the remaining `#guard`-pinned direction.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random

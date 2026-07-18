@@ -145,7 +145,8 @@ porting float arithmetic.
   days never captured in any fixture. ~50 s/day on the pod, ~6 min per
   nightly window (deadline 1800 s). Remaining V2: UI surfacing (a
   dev-footer badge) once the nightly metric has soaked ~a week.
-- **V3 — rail-snap. Pilot + real-corridor parity SHIPPED.** The measured
+- **V3 — rail-snap. Shortest path PROVED (certified); parity SHIPPED.**
+  The measured
   shape (railsnap fixture, real corridor): the built graph is ~22k
   vertices / 55k edges (1–2MB exported, TS Dijkstra 5ms), edge weights
   are nonnegative and ≤ ~2^35 after ×2²⁰ quantisation — they fit Lean's
@@ -165,9 +166,25 @@ porting float arithmetic.
   train segment's production graph, quantises, and runs TS-float,
   TS-quantised, and `verified_cli rail` on it — **every fixture
   comparison EXACT (both directions per segment), float↔quant
-  path-identical throughout**. Remaining: the theorems themselves,
-  upgraded incrementally as V1 was; then the snap contract layer above
-  the search (label parsing, station resolution, the refusal paths,
+  path-identical throughout**. **The goal theorems are proved** — by
+  *certification* rather than heap/fuel algorithm invariants
+  (`Certify.lean`): the untrusted search's final `done`/`dist` arrays
+  plus its rebuilt path form a certificate a proved O(E) checker
+  validates (valid simple path costing exactly the settled distance,
+  and a feasible-cut condition: every edge out of a settled vertex
+  either doesn't shortcut the settled set or crosses out at cost ≥ D),
+  and `cut_bound` shows a passing certificate forces D to be the true
+  minimum — no reasoning about the search at all. `dijkstraC` (which
+  `verified_cli rail` now runs, and `compare-rail` re-verified EXACT
+  through) carries `dijkstraC_correct` — any returned path is a valid
+  `src → dst` path attaining `oracleDist` — and
+  `dijkstraC_disconnected`; a certification failure degrades to `none`
+  (draw raw GPS), never a wrong line, which is exactly rail-snap's
+  swallow-over-wrong contract. Remaining, in the incremental-upgrade
+  spirit: the completeness direction ("the checker never fires on a
+  real run" — `none ⟺ disconnected` needs the algorithm invariants;
+  today it's `#guard`- and harness-pinned), and the snap contract layer
+  above the search (label parsing, station resolution, refusal paths,
   time interpolation).
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
   two comment-proofs (grid exactness, lazy-Dijkstra refinement) become

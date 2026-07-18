@@ -268,12 +268,14 @@ private def railMain (input : String) : IO UInt32 := do
     IO.println (Json.mkObj [("error", Json.str e)]).compress
     return 1
   | .ok (g, src, dst) =>
-    match Verified.Rail.dijkstra g src dst with
+    -- The certified decoder: any returned path is theorem-backed
+    -- (`dijkstraC_correct`); a certification failure degrades to `none`.
+    match Verified.Rail.dijkstraC g src dst with
     | none => IO.println (Json.mkObj [("none", Json.bool true)]).compress
     | some path =>
       match Verified.Rail.dijkstraDist g src dst with
       | none =>
-        -- Unreachable: `dijkstra` returned a path, so `dst` was settled.
+        -- Unreachable: `dijkstraC` returned a path, so `dst` was settled.
         IO.println (Json.mkObj [("error", Json.str "path without dist")]).compress
         return 1
       | some d =>

@@ -119,12 +119,24 @@ private def loop (g : Graph) (dst : Nat) : Nat → DState → DState
 
 /-- Follow `prev` from `dst` back to the sentinel, accumulating the path
 front-first (the TS builds reversed and flips; same result). -/
-private def rebuild (prev : Array Nat) (n : Nat) : Nat → Nat → List Nat → Option (List Nat)
+def rebuild (prev : Array Nat) (n : Nat) : Nat → Nat → List Nat → Option (List Nat)
   | 0, _, _ => none
   | fuel + 1, v, acc =>
     let pv := prev.getD v n
     if pv = n then some (v :: acc)
     else rebuild prev n fuel pv (v :: acc)
+
+/-- Run the search to completion and return the final working state —
+the substrate both `dijkstra` and the certified wrapper read from. -/
+def dijkstraSt (g : Graph) (src dst : Nat) : DState :=
+  let n := g.n
+  let st0 : DState := {
+    dist := (Array.replicate n none).setIfInBounds src (some 0)
+    prev := Array.replicate n n
+    done := Array.replicate n false
+    heap := Heap.push ⟨#[]⟩ 0 src }
+  let fuel := g.adj.foldl (fun acc r => acc + r.size) 0 + n + 2
+  loop g dst fuel st0
 
 /-- Shortest path `src → dst` as a vertex sequence, `none` when
 disconnected (or endpoints out of range). -/
@@ -132,13 +144,7 @@ def dijkstra (g : Graph) (src dst : Nat) : Option (List Nat) :=
   let n := g.n
   if src ≥ n ∨ dst ≥ n then none
   else
-    let st0 : DState := {
-      dist := (Array.replicate n none).setIfInBounds src (some 0)
-      prev := Array.replicate n n
-      done := Array.replicate n false
-      heap := Heap.push ⟨#[]⟩ 0 src }
-    let fuel := g.adj.foldl (fun acc r => acc + r.size) 0 + n + 2
-    let st := loop g dst fuel st0
+    let st := dijkstraSt g src dst
     match st.dist.getD dst none with
     | none => none
     | some _ => rebuild st.prev n (n + 1) dst []
@@ -147,13 +153,6 @@ def dijkstra (g : Graph) (src dst : Nat) : Option (List Nat) :=
 def dijkstraDist (g : Graph) (src dst : Nat) : Option Nat :=
   let n := g.n
   if src ≥ n ∨ dst ≥ n then none
-  else
-    let st0 : DState := {
-      dist := (Array.replicate n none).setIfInBounds src (some 0)
-      prev := Array.replicate n n
-      done := Array.replicate n false
-      heap := Heap.push ⟨#[]⟩ 0 src }
-    let fuel := g.adj.foldl (fun acc r => acc + r.size) 0 + n + 2
-    (loop g dst fuel st0).dist.getD dst none
+  else (dijkstraSt g src dst).dist.getD dst none
 
 end Verified.Rail

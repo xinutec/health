@@ -12,4 +12,5 @@ import Verified.Hsmm.Packed
 import Verified.Hsmm.Tests
 import Verified.Rail.Graph
 import Verified.Rail.Dijkstra
+import Verified.Rail.Certify
 import Verified.Rail.Tests
