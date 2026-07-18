@@ -17,6 +17,7 @@ Input shape (all scores integers; `null` = `-∞`):
     "trans": [[..S] × S]            // trans[from][to], time-constant …
            | [[[..S] × S] × T],     // … or trans[t][from][to] per destination t
     "dur":   [[..maxD] × S],        // dur[s][d-1]
+    "durOverrides": [[s,d,e,v]]?,   // sparse per-segEnd exceptions (v null = -∞)
     "init":  [..S]?,                // absent → 0 (uniform), matching the TS default
     "entry": [[..S] × T]?           // absent → 0, matching the TS default
   }
@@ -51,6 +52,25 @@ private def transTensor (j : Json) : Except String (Array (Array (Array Score)))
   | .ok _ => outer.mapM matrix -- depth 3: per-t
   | .error _ => do return #[← matrix j] -- depth 2: broadcast
 
+/-- Sparse per-`segEnd` duration exceptions, keyed `(s * maxD + (d-1)) * T + e`. -/
+private def parseDurOverrides (j : Json) (maxD T : Nat) :
+    Except String (Std.HashMap Nat Score) := do
+  let arr ← j.getArr?
+  let mut m : Std.HashMap Nat Score := {}
+  for entry in arr do
+    let q ← entry.getArr?
+    let some sJ := q[0]? | throw "durOverrides: bad entry"
+    let some dJ := q[1]? | throw "durOverrides: bad entry"
+    let some eJ := q[2]? | throw "durOverrides: bad entry"
+    let some vJ := q[3]? | throw "durOverrides: bad entry"
+    let s ← sJ.getNat?
+    let d ← dJ.getNat?
+    let e ← eJ.getNat?
+    let v ← scoreOfJson vJ
+    if d == 0 then throw "durOverrides: d = 0"
+    m := m.insert ((s * maxD + (d - 1)) * T + e) v
+  return m
+
 private def parseProblem (j : Json) : Except String Problem := do
   let T := (← (← j.getObjVal? "T").getNat?)
   let S := (← (← j.getObjVal? "S").getNat?)
@@ -58,6 +78,10 @@ private def parseProblem (j : Json) : Except String Problem := do
   let emit ← matrix (← j.getObjVal? "emit")
   let trans ← transTensor (← j.getObjVal? "trans")
   let dur ← matrix (← j.getObjVal? "dur")
+  let durOv : Std.HashMap Nat Score ←
+    match j.getObjVal? "durOverrides" with
+    | .ok v => if v.isNull then pure {} else parseDurOverrides v maxD T
+    | .error _ => pure {}
   let init : Array Score ←
     match j.getObjVal? "init" with
     | .ok v => if v.isNull then pure #[] else row v
@@ -74,7 +98,12 @@ private def parseProblem (j : Json) : Except String Problem := do
     trans := fun sp s t =>
       let m := if trans.size == 1 then trans[0]! else trans.getD t #[]
       (m.getD sp #[]).getD s .negInf
-    dur := fun s d _ => if d == 0 then .negInf else (dur.getD s #[]).getD (d - 1) .negInf
+    dur := fun s d e =>
+      if d == 0 then .negInf
+      else
+        match durOv[(s * maxD + (d - 1)) * T + e]? with
+        | some v => v
+        | none => (dur.getD s #[]).getD (d - 1) .negInf
     init := fun s => if init.isEmpty then .zero else init.getD s .negInf
     entry := fun s t => if entry.isEmpty then .zero else (entry.getD t #[]).getD s .negInf
   }

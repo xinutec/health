@@ -74,7 +74,7 @@ export interface HsmmInput<State, Obs> {
 	maxDurationMinutes?: number;
 }
 
-const DEFAULT_MAX_DURATION = 240;
+export const DEFAULT_MAX_DURATION = 240;
 
 export function hsmmViterbi<State, Obs>(input: HsmmInput<State, Obs>): State[] {
 	const { observations, states, transitionLogProb, emissionLogProb, durationLogProb, initialLogProb, entryLogProb } =
