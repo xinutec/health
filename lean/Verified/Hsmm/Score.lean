@@ -110,6 +110,30 @@ theorem max_le {a b c : Score} : a ≤ c → b ≤ c → max a b ≤ c := by
 theorem max_eq_or (a b : Score) : max a b = a ∨ max a b = b := by
   unfold max; split <;> simp
 
+theorem max_eq_left {a b : Score} (h : b ≤ a) : max a b = a := by
+  unfold max
+  split
+  · next hab => exact le_antisymm h hab
+  · rfl
+
+theorem max_eq_right {a b : Score} (h : a ≤ b) : max a b = b := by
+  unfold max
+  split
+  · rfl
+  · next hab =>
+    rcases le_total a b with h1 | h2
+    · exact absurd h1 hab
+    · exact le_antisymm h h2
+
+theorem ne_negInf_of_add_left {a b : Score} (h : a + b ≠ negInf) : a ≠ negInf :=
+  fun ha => h (by rw [ha]; exact negInf_add b)
+
+theorem ne_negInf_of_add_right {a b : Score} (h : a + b ≠ negInf) : b ≠ negInf :=
+  fun hb => h (by rw [hb]; exact add_negInf a)
+
+instance : Std.Associative (fun a b : Score => a + b) := ⟨add_assoc⟩
+instance : Std.Commutative (fun a b : Score => a + b) := ⟨add_comm⟩
+
 @[simp] theorem negInf_max (a : Score) : max negInf a = a := rfl
 
 @[simp] theorem max_negInf (a : Score) : max a negInf = a := by
@@ -245,6 +269,12 @@ theorem listMax_add (xs : List Score) (c : Score) :
   apply List.map_congr_left
   intro x _
   exact add_comm c x
+
+/-- Right-constant form of `add_listMax_map`. -/
+theorem listMax_add_map {α : Type} (f : α → Score) (c : Score) (l : List α) :
+    listMax (l.map fun x => f x + c) = listMax (l.map f) + c := by
+  rw [listMax_add, List.map_map]
+  rfl
 
 /-- A `flatMap` of guarded singletons is a `map` with `-∞` in the guarded slots. -/
 theorem listMax_flatMap_ite {α : Type} (l : List α) (p : α → Bool) (f : α → Score) :

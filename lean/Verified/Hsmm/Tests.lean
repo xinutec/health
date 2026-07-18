@@ -1,6 +1,7 @@
 import Verified.Hsmm.Viterbi
 import Verified.Hsmm.Oracle
 import Verified.Hsmm.Trellis
+import Verified.Hsmm.Decode
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -89,5 +90,20 @@ def checkTrellis (P : Problem) : Bool :=
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   checkTrellis blocked
+
+-- The proved decoder must agree with the imperative trellis EXACTLY — same
+-- Option, same best, same path. `pickBest`'s first-best tie-break composes to
+-- the same selection order as the TypeScript argmax loops, so even ties match.
+#guard decode (mkP 0 1 1 1) == viterbi (mkP 0 1 1 1)
+#guard decode (mkP 0 0 3 2) == viterbi (mkP 0 0 3 2)
+#guard decode (mkP 0 4 0 2) == viterbi (mkP 0 4 0 2)
+#guard decode (mkP 0 4 3 0) == viterbi (mkP 0 4 3 0)
+#guard (List.range 8).all fun seed => decode (mkP seed 4 2 2) == viterbi (mkP seed 4 2 2)
+#guard (List.range 8).all fun seed => decode (mkP seed 4 3 2) == viterbi (mkP seed 4 3 2)
+#guard (List.range 6).all fun seed => decode (mkP seed 5 2 3) == viterbi (mkP seed 5 2 3)
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  decode blocked == viterbi blocked
 
 end Verified.Hsmm.Tests
