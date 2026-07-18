@@ -484,4 +484,167 @@ theorem relaxAll_inv {g : Graph} {src u p : Nat} {st : DState} (hwf : WFEdges g)
     exact hsc
   · exact hres.others u' hu' huu
 
+/-! ## The two pop steps -/
+
+/-- Flipping one absent element into a filter grows it by exactly one. -/
+private theorem length_filter_flip :
+    ∀ (l : List Nat) (f f' : Nat → Bool) (u : Nat), l.Nodup → u ∈ l →
+      f u = false → f' u = true → (∀ x, x ≠ u → f' x = f x) →
+      (l.filter f').length = (l.filter f).length + 1
+  | [], _, _, _, _, hmem, _, _, _ => nomatch hmem
+  | a :: t, f, f', u, hnd, hmem, hfu, hfu', hcong => by
+    rcases List.mem_cons.mp hmem with rfl | hmt
+    · have hnotin : ∀ x ∈ t, x ≠ u := by
+        intro x hx he
+        subst he
+        exact (List.nodup_cons.mp hnd).1 hx
+      rw [List.filter_cons, List.filter_cons, if_pos hfu',
+        if_neg (by rw [hfu]; exact Bool.false_ne_true),
+        List.filter_congr (fun x hx => hcong x (hnotin x hx)), List.length_cons]
+    · have hau : a ≠ u := by
+        intro he
+        subst he
+        exact (List.nodup_cons.mp hnd).1 hmt
+      have ih := length_filter_flip t f f' u (List.nodup_cons.mp hnd).2 hmt hfu hfu' hcong
+      rw [List.filter_cons, List.filter_cons, hcong a hau]
+      by_cases hfa : f a = true
+      · rw [if_pos hfa, if_pos hfa, List.length_cons, List.length_cons, ih]
+      · rw [if_neg hfa, if_neg hfa]
+        exact ih
+
+/-- Popping an already-settled entry (lazy deletion) keeps everything. -/
+theorem skip_inv {g : Graph} {src L p u : Nat} {st : DState} {h' : Heap}
+    (hcore : InvCore g src L st) (hpop : st.heap.pop = some ((p, u), h'))
+    (hdone : st.done.getD u false = true) :
+    InvCore g src L { st with heap := h' } := by
+  refine ⟨hcore.dist_size, hcore.prev_size, hcore.done_size, hcore.src_lt, hcore.src_zero,
+    Heap.pop_isHeap hcore.heap_hp hpop, ?_, ?_, hcore.done_lt, hcore.done_le, ?_,
+    hcore.tree⟩
+  · intro z hz
+    exact hcore.heap_wf z (Heap.pop_mem hpop z hz)
+  · intro z hz
+    exact hcore.heap_ge z (Heap.pop_mem hpop z hz)
+  · intro v hvn hvd d hd
+    rcases Heap.pop_cover hpop (d, v) (hcore.undone_heap v hvn hvd d hd) with he | hm
+    · injection he with h1 h2
+      rw [h2] at hvd
+      rw [hvd] at hdone
+      cases hdone
+    · exact hm
+
+/-- Popping a fresh vertex: it was priced exactly at the popped priority,
+the floor advances to it, and the settled state is ready for `relaxAll`. -/
+theorem settle_inv {g : Graph} {src L p u : Nat} {st : DState} {h' : Heap}
+    (hcore : InvCore g src L st) (hrel : Relaxed g st)
+    (hpop : st.heap.pop = some ((p, u), h'))
+    (hund : st.done.getD u false = false) :
+    L ≤ p ∧ u < g.n ∧ st.dist.getD u none = some p ∧
+      RelaxInv g src u p []
+        { st with heap := h', done := st.done.setIfInBounds u true } := by
+  have hmem : (p, u) ∈ st.heap.a := Heap.pop_top_mem hpop
+  obtain ⟨hun, d0, hd0, hd0le⟩ := hcore.heap_wf (p, u) hmem
+  have hLp : L ≤ p := hcore.heap_ge (p, u) hmem
+  have hd0ge : p ≤ d0 :=
+    Heap.pop_min hcore.heap_hp hpop (d0, u) (hcore.undone_heap u hun hund d0 hd0)
+  have hdu : st.dist.getD u none = some p := by
+    rw [hd0]
+    congr 1
+    omega
+  have hdset : ∀ x : Nat, (st.done.setIfInBounds u true).getD x false =
+      if x = u then true else st.done.getD x false :=
+    fun x => getD_set _ (by rw [hcore.done_size]; exact hun) _ x false
+  refine ⟨hLp, hun, hdu, ⟨?_, ?_, ?_, hcore.src_lt, hcore.src_zero,
+      Heap.pop_isHeap hcore.heap_hp hpop, ?_, ?_, ?_, ?_, ?_, ?_⟩,
+    hun, ?_, hdu, ?_, fun tw h => nomatch h⟩
+  · exact hcore.dist_size
+  · exact hcore.prev_size
+  · show (st.done.setIfInBounds u true).size = g.n
+    rw [Array.size_setIfInBounds]
+    exact hcore.done_size
+  · intro z hz
+    exact hcore.heap_wf z (Heap.pop_mem hpop z hz)
+  · intro z hz
+    exact Heap.pop_min hcore.heap_hp hpop z (Heap.pop_mem hpop z hz)
+  · -- done_lt
+    intro v hv
+    rw [hdset v] at hv
+    by_cases hvu : v = u
+    · rw [hvu]
+      exact hun
+    · rw [if_neg hvu] at hv
+      exact hcore.done_lt v hv
+  · -- done_le at the new floor p
+    intro v hv
+    rw [hdset v] at hv
+    by_cases hvu : v = u
+    · rw [hvu]
+      exact ⟨p, hdu, Nat.le_refl _⟩
+    · rw [if_neg hvu] at hv
+      obtain ⟨d, hd, hdle⟩ := hcore.done_le v hv
+      exact ⟨d, hd, by omega⟩
+  · -- undone_heap
+    intro v hvn hvd d hd
+    rw [hdset v] at hvd
+    by_cases hvu : v = u
+    · rw [if_pos hvu] at hvd
+      cases hvd
+    · rw [if_neg hvu] at hvd
+      rcases Heap.pop_cover hpop (d, v) (hcore.undone_heap v hvn hvd d hd) with he | hm
+      · injection he with h1 h2
+        exact absurd h2 hvu
+      · exact hm
+  · -- tree ghost: rank u at c, bump the counter
+    obtain ⟨pos, c, hc, gpos, gtree⟩ := hcore.tree
+    refine ⟨fun x => if x = u then c else pos x, c + 1, ?_, ?_, ?_⟩
+    · -- counter stays below the settled count
+      have : doneCount g { st with heap := h', done := st.done.setIfInBounds u true } =
+          doneCount g st + 1 := by
+        unfold doneCount
+        refine length_filter_flip (List.range g.n) _ _ u List.nodup_range
+          (List.mem_range.mpr hun) hund ?_ ?_
+        · show (st.done.setIfInBounds u true).getD u false = true
+          rw [hdset u, if_pos rfl]
+        · intro x hx
+          show (st.done.setIfInBounds u true).getD x false = st.done.getD x false
+          rw [hdset x, if_neg hx]
+      omega
+    · intro v hv
+      rw [hdset v] at hv
+      dsimp only
+      by_cases hvu : v = u
+      · rw [if_pos hvu]
+        omega
+      · rw [if_neg hvu] at hv
+        rw [if_neg hvu]
+        exact Nat.lt_succ_of_lt (gpos v hv)
+    · intro v hvn d hd
+      obtain ⟨hsent, hstep⟩ := gtree v hvn d hd
+      refine ⟨hsent, ?_⟩
+      intro hne
+      obtain ⟨hpn, hpd, hpp, w, du, hmem', hdu', hsum⟩ := hstep hne
+      have hpvu : ¬st.prev.getD v g.n = u := by
+        intro he
+        rw [he] at hpd
+        rw [hpd] at hund
+        cases hund
+      refine ⟨hpn, ?_, ?_, w, du, hmem', hdu', hsum⟩
+      · rw [hdset _, if_neg hpvu]
+        exact hpd
+      · dsimp only
+        rw [if_neg hpvu]
+        by_cases hvu : v = u
+        · rw [if_pos hvu]
+          exact Nat.lt_of_lt_of_le (gpos _ hpd) (by omega)
+        · rw [if_neg hvu]
+          exact hpp
+  · -- u is settled…
+    show (st.done.setIfInBounds u true).getD u false = true
+    rw [hdset u, if_pos rfl]
+  · -- …and everyone previously settled is still relaxed
+    intro u' hu' huu
+    have hu'o : st.done.getD u' false = true := by
+      rw [hdset u', if_neg huu] at hu'
+      exact hu'
+    exact hrel u' hu'o
+
 end Verified.Rail
