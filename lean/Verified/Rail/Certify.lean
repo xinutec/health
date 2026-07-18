@@ -196,10 +196,10 @@ theorem edgeMinW_le_of_mem {g : Graph} {u v w' : Nat}
 
 /-! ## Small list lemmas -/
 
-private theorem nodupB_cons (a : Nat) (l : List Nat) :
+theorem nodupB_cons (a : Nat) (l : List Nat) :
     nodupB (a :: l) = (!l.contains a && nodupB l) := rfl
 
-private theorem mem_of_getLast? : ∀ {l : List Nat} {x : Nat}, l.getLast? = some x → x ∈ l
+theorem mem_of_getLast? : ∀ {l : List Nat} {x : Nat}, l.getLast? = some x → x ∈ l
   | [], _, h => by cases h
   | [a], x, h => by
     simp only [List.getLast?_singleton, Option.some.injEq] at h
@@ -241,7 +241,7 @@ private theorem le_foldl_min :
     exact ih _ b (Nat.le_min.mpr ⟨hb, hall x (.head _)⟩) fun y hy => hall y (.tail _ hy)
 
 /-- One-step unfolding of `pathCost` on two or more vertices. -/
-private theorem pathCost_cons_cons (g : Graph) (a b : Nat) (rest : List Nat) :
+theorem pathCost_cons_cons (g : Graph) (a b : Nat) (rest : List Nat) :
     pathCost g (a :: b :: rest) =
       match edgeMinW g a b, pathCost g (b :: rest) with
       | some w, some c => some (w + c)
@@ -325,7 +325,7 @@ private theorem cut_bound {g : Graph} {done : Array Bool} {dist : Array (Option 
 /-! ## Oracle enumeration: soundness and completeness -/
 
 /-- Every enumerated cost is over-approximated by a real path's cost. -/
-private theorem enum_sound {g : Graph} {dst : Nat} :
+theorem enum_sound {g : Graph} {dst : Nat} :
     ∀ (fuel cur : Nat) (visited : List Nat) (c : Nat),
       c ∈ simplePathCosts g dst fuel cur visited →
       ∃ (p : List Nat) (C : Nat), p.head? = some cur ∧ p.getLast? = some dst ∧

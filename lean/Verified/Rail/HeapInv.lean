@@ -43,12 +43,12 @@ def IsHeap (h : Heap) : Prop := IsHeapA h.a
 
 /-! ## `getD` plumbing -/
 
-private theorem getD_eq_of_lt {α : Type} {a : Array α} {i : Nat} (hi : i < a.size) (d : α) :
+theorem getD_eq_of_lt {α : Type} {a : Array α} {i : Nat} (hi : i < a.size) (d : α) :
     a.getD i d = a[i] := by
   rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hi]
   rfl
 
-private theorem getD_set {α : Type} (a : Array α) {i : Nat} (hi : i < a.size) (x : α)
+theorem getD_set {α : Type} (a : Array α) {i : Nat} (hi : i < a.size) (x : α)
     (j : Nat) (d : α) :
     (a.setIfInBounds i x).getD j d = if j = i then x else a.getD j d := by
   rw [Array.getD_eq_getD_getElem?, Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds]
@@ -486,7 +486,7 @@ private theorem downok_moved {a : Array (Nat × Nat)} (hh : IsHeapA a) :
   · intro h0
     omega
 
-private theorem mem_of_getD {a : Array (Nat × Nat)} {q : Nat} (hq : q < a.size) :
+theorem mem_of_getD {a : Array (Nat × Nat)} {q : Nat} (hq : q < a.size) :
     a.getD q (0, 0) ∈ a := by
   rw [getD_eq_of_lt hq]
   exact Array.getElem_mem hq
