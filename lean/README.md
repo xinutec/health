@@ -78,6 +78,9 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   `dijkstraC_disconnected`; a certification failure degrades to `none`
   (never a wrong path). The converse ("the checker never fires on a real
   run") is the remaining `#guard`-pinned direction.
+- `Verified/Geo/CellKey.lean` — V4 opener: `map-match-core.ts`'s grid
+  cell-pair key proved collision-free (`cellKey_inj`) and double-exact
+  (`cellKey_magnitude`), with the `2^21` cell-bound premise pinned.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
