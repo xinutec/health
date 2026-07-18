@@ -647,4 +647,219 @@ theorem settle_inv {g : Graph} {src L p u : Nat} {st : DState} {h' : Heap}
       exact hu'
     exact hrel u' hu'o
 
+/-! ## Fuel accounting -/
+
+private theorem relaxAll_eq_foldl (u p : Nat) (edges : Array (Nat × Nat)) (st : DState) :
+    relaxAll u p edges st = edges.toList.foldl (relaxStep u p) st := by
+  unfold relaxAll
+  rw [← Array.foldl_toList]
+
+private theorem relaxStep_done (u p : Nat) (st : DState) (tw : Nat × Nat) :
+    (relaxStep u p st tw).done = st.done := by
+  rcases improves_spec st tw.1 (p + tw.2) with ⟨h, _⟩ | ⟨h, _⟩
+  · rw [relaxStep_true h]
+  · rw [relaxStep_false h]
+
+private theorem relaxList_done (u p : Nat) :
+    ∀ (l : List (Nat × Nat)) (st : DState), (l.foldl (relaxStep u p) st).done = st.done
+  | [], _ => rfl
+  | tw :: l, st => by
+    rw [List.foldl_cons, relaxList_done u p l, relaxStep_done]
+
+private theorem relaxAll_done (u p : Nat) (edges : Array (Nat × Nat)) (st : DState) :
+    (relaxAll u p edges st).done = st.done := by
+  rw [relaxAll_eq_foldl]
+  exact relaxList_done u p _ _
+
+private theorem relaxStep_heap_le (u p : Nat) (st : DState) (tw : Nat × Nat) :
+    (relaxStep u p st tw).heap.a.size ≤ st.heap.a.size + 1 := by
+  rcases improves_spec st tw.1 (p + tw.2) with ⟨h, _⟩ | ⟨h, _⟩
+  · rw [relaxStep_true h]
+    exact Nat.le_of_eq (Heap.push_size st.heap (p + tw.2) tw.1)
+  · rw [relaxStep_false h]
+    exact Nat.le_add_right _ _
+
+private theorem relaxList_heap_le (u p : Nat) :
+    ∀ (l : List (Nat × Nat)) (st : DState),
+      (l.foldl (relaxStep u p) st).heap.a.size ≤ st.heap.a.size + l.length
+  | [], st => Nat.le_add_right _ _
+  | tw :: l, st => by
+    rw [List.foldl_cons]
+    have h1 := relaxList_heap_le u p l (relaxStep u p st tw)
+    have h2 := relaxStep_heap_le u p st tw
+    rw [List.length_cons]
+    omega
+
+/-- Flipping one absent element out of a sum removes exactly its term. -/
+private theorem sum_map_flip :
+    ∀ (l : List Nat) (f f' : Nat → Nat) (u : Nat), l.Nodup → u ∈ l →
+      (∀ x, x ≠ u → f' x = f x) → f' u = 0 →
+      (l.map f').sum + f u = (l.map f).sum
+  | [], _, _, _, _, hmem, _, _ => nomatch hmem
+  | a :: t, f, f', u, hnd, hmem, hcong, hu0 => by
+    rcases List.mem_cons.mp hmem with rfl | hmt
+    · have hnotin : ∀ x ∈ t, x ≠ u := fun x hx he =>
+        (List.nodup_cons.mp hnd).1 (he ▸ hx)
+      rw [List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, hu0,
+        List.map_congr_left (fun x hx => hcong x (hnotin x hx))]
+      omega
+    · have hau : a ≠ u := fun he => (List.nodup_cons.mp hnd).1 (he ▸ hmt)
+      have ih := sum_map_flip t f f' u (List.nodup_cons.mp hnd).2 hmt hcong hu0
+      rw [List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, hcong a hau]
+      omega
+
+/-- Adjacency size still chargeable to future settles. -/
+def undoneOut (g : Graph) (st : DState) : Nat :=
+  ((List.range g.n).map
+    (fun u => if st.done.getD u false then 0 else (g.adj.getD u #[]).size)).sum
+
+/-- Strictly decreases at every pop — the TS fuel `E + n + 2` never runs
+out before the heap does. -/
+def potential (g : Graph) (st : DState) : Nat :=
+  st.heap.a.size + undoneOut g st
+
+private theorem pop_pos {st : DState} {t : Nat × Nat} {h' : Heap}
+    (hpop : st.heap.pop = some (t, h')) : 0 < st.heap.a.size := by
+  rcases Nat.eq_zero_or_pos st.heap.a.size with hz | hp0
+  · rw [Heap.pop_none_iff.mpr hz] at hpop
+    cases hpop
+  · exact hp0
+
+private theorem potential_skip {g : Graph} {st : DState} {t : Nat × Nat} {h' : Heap}
+    (hpop : st.heap.pop = some (t, h')) :
+    potential g { st with heap := h' } + 1 ≤ potential g st := by
+  have h0 := pop_pos hpop
+  have hsz := Heap.pop_size hpop
+  have hout : undoneOut g { st with heap := h' } = undoneOut g st := rfl
+  have hh : ({ st with heap := h' } : DState).heap = h' := rfl
+  unfold potential
+  rw [hh, hout]
+  omega
+
+private theorem potential_settle {g : Graph} {st : DState} {p u : Nat} {h' : Heap}
+    (hpop : st.heap.pop = some ((p, u), h')) (hun : u < g.n)
+    (hund : st.done.getD u false = false) (hn : st.done.size = g.n) :
+    potential g (relaxAll u p (g.adj.getD u #[])
+        { st with heap := h', done := st.done.setIfInBounds u true }) + 1 ≤
+      potential g st := by
+  have h0 := pop_pos hpop
+  have hsz := Heap.pop_size hpop
+  have hheap : (relaxAll u p (g.adj.getD u #[])
+      { st with heap := h', done := st.done.setIfInBounds u true }).heap.a.size ≤
+      h'.a.size + (g.adj.getD u #[]).size := by
+    rw [relaxAll_eq_foldl]
+    have hle := relaxList_heap_le u p (g.adj.getD u #[]).toList
+      { st with heap := h', done := st.done.setIfInBounds u true }
+    have hh : ({ st with heap := h', done := st.done.setIfInBounds u true } : DState).heap
+        = h' := rfl
+    rw [hh, Array.length_toList] at hle
+    exact hle
+  have hd1 : (relaxAll u p (g.adj.getD u #[])
+      { st with heap := h', done := st.done.setIfInBounds u true }).done =
+      st.done.setIfInBounds u true := by
+    rw [relaxAll_eq_foldl]
+    exact relaxList_done u p _ _
+  have hflip := sum_map_flip (List.range g.n)
+    (fun x => if st.done.getD x false then 0 else (g.adj.getD x #[]).size)
+    (fun x => if (st.done.setIfInBounds u true).getD x false then 0
+      else (g.adj.getD x #[]).size)
+    u List.nodup_range (List.mem_range.mpr hun)
+    (fun x hx => by
+      dsimp only
+      rw [getD_set _ (by rw [hn]; exact hun), if_neg hx])
+    (by
+      dsimp only
+      rw [getD_set _ (by rw [hn]; exact hun), if_pos rfl, if_pos rfl])
+  dsimp only at hflip
+  rw [if_neg (show ¬st.done.getD u false = true by rw [hund]; exact Bool.false_ne_true)]
+    at hflip
+  have hout1 : undoneOut g (relaxAll u p (g.adj.getD u #[])
+      { st with heap := h', done := st.done.setIfInBounds u true }) =
+      ((List.range g.n).map (fun x => if (st.done.setIfInBounds u true).getD x false then 0
+        else (g.adj.getD x #[]).size)).sum := by
+    unfold undoneOut
+    rw [hd1]
+  have hout0 : undoneOut g st =
+      ((List.range g.n).map (fun x => if st.done.getD x false then 0
+        else (g.adj.getD x #[]).size)).sum := rfl
+  unfold potential
+  rw [hout1, hout0]
+  omega
+
+/-! ## The loop -/
+
+/-- The master induction: with the invariant and enough fuel, the loop
+lands in one of the two legitimate exits — heap exhausted with everything
+relaxed, or `dst` settled at the final floor price with everything but
+`dst` relaxed. Settled vertices stay settled. -/
+theorem loop_spec (g : Graph) (src dst : Nat) (hwf : WFEdges g) :
+    ∀ (fuel : Nat) (st : DState) (L : Nat),
+      InvCore g src L st → Relaxed g st → potential g st < fuel →
+      ∃ L', L ≤ L' ∧
+        InvCore g src L' (loop g dst fuel st) ∧
+        (∀ v, st.done.getD v false = true →
+          (loop g dst fuel st).done.getD v false = true) ∧
+        (((loop g dst fuel st).heap.pop = none ∧ Relaxed g (loop g dst fuel st)) ∨
+          ((loop g dst fuel st).done.getD dst false = true ∧
+            (loop g dst fuel st).dist.getD dst none = some L' ∧
+            RelaxedExcept g dst (loop g dst fuel st)))
+  | 0, st, L => fun _ _ hfuel => absurd hfuel (Nat.not_lt_zero _)
+  | fuel + 1, st, L => fun hcore hrel hfuel => by
+    simp only [loop]
+    split
+    · -- Heap exhausted.
+      next hpop =>
+      exact ⟨L, Nat.le_refl _, hcore, fun v hv => hv, .inl ⟨hpop, hrel⟩⟩
+    · next p u h' hpop =>
+      by_cases hdone : st.done.getD u false = true
+      · -- Lazy deletion: skip a stale entry.
+        rw [if_pos hdone]
+        have hnext := potential_skip (g := g) hpop
+        obtain ⟨L', hLL', hinv', hmono', hexit'⟩ :=
+          loop_spec g src dst hwf fuel { st with heap := h' } L
+            (skip_inv hcore hpop hdone) hrel (by omega)
+        exact ⟨L', hLL', hinv', fun v hv => hmono' v hv, hexit'⟩
+      · have hund : st.done.getD u false = false := by
+          cases hb : st.done.getD u false with
+          | false => rfl
+          | true => exact absurd hb hdone
+        rw [if_neg hdone]
+        obtain ⟨hLp, hun, hdu, hrinv⟩ := settle_inv hcore hrel hpop hund
+        have hmono2 : ∀ v, st.done.getD v false = true →
+            (st.done.setIfInBounds u true).getD v false = true := by
+          intro v hv
+          rw [getD_set _ (by rw [hcore.done_size]; exact hun)]
+          by_cases hvu : v = u
+          · rw [if_pos hvu]
+          · rw [if_neg hvu]
+            exact hv
+        by_cases hud : u = dst
+        · -- Early exit: dst settled at price p.
+          rw [if_pos hud]
+          refine ⟨p, hLp, hrinv.core, hmono2, .inr ⟨?_, ?_, ?_⟩⟩
+          · show (st.done.setIfInBounds u true).getD dst false = true
+            rw [← hud, getD_set _ (by rw [hcore.done_size]; exact hun), if_pos rfl]
+          · rw [← hud]
+            exact hdu
+          · intro u' hu' hu'd
+            have hu'o : st.done.getD u' false = true := by
+              rw [getD_set _ (by rw [hcore.done_size]; exact hun)] at hu'
+              rw [if_neg (show ¬u' = u from fun he => hu'd (he.trans hud))] at hu'
+              exact hu'
+            exact hrel u' hu'o
+        · -- Settle u, relax its edges, continue.
+          rw [if_neg hud]
+          obtain ⟨hinv2, hrel2⟩ := relaxAll_inv hwf hrinv
+          have hnext := potential_settle hpop hun hund hcore.done_size
+          obtain ⟨L', hpL', hinv', hmono', hexit'⟩ :=
+            loop_spec g src dst hwf fuel
+              (relaxAll u p (g.adj.getD u #[])
+                { st with heap := h', done := st.done.setIfInBounds u true })
+              p hinv2 hrel2 (by omega)
+          refine ⟨L', by omega, hinv', ?_, hexit'⟩
+          intro v hv
+          refine hmono' v ?_
+          rw [relaxAll_done]
+          exact hmono2 v hv
+
 end Verified.Rail
