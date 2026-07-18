@@ -68,6 +68,13 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   contract deltas; `#guard`-pinned against the oracle in
   `Verified/Rail/Tests.lean`, and pinned against production on real
   corridors by `npm run compare-rail` (via `verified_cli rail`).
+- `Verified/Rail/HeapInv.lean` — binary-heap invariants (in progress):
+  `IsHeapA`, `root_le` (the root is a minimum), sift-up repair
+  (`siftUp_isHeap` via `UpOK`), and the `push` theorems
+  (order-preservation, membership, size). The sift-down/pop half and the
+  Dijkstra loop invariants built on top come next — together they retire
+  the two `#guard`-pinned facts (rail `none ⟺ disconnected`, lazy
+  "settled = final").
 - `Verified/Rail/Certify.lean` — the V3 goal theorems, by certification
   rather than algorithm invariants: the untrusted search's result is
   validated by a proved O(E) checker (valid simple path costing exactly

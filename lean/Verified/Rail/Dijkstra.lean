@@ -37,15 +37,15 @@ namespace Heap
 
 def size (h : Heap) : Nat := h.a.size
 
-private def siftUp (a : Array (Nat × Nat)) (i : Nat) : Array (Nat × Nat) :=
+def siftUp (a : Array (Nat × Nat)) (i : Nat) : Array (Nat × Nat) :=
   if _h : i = 0 then a
   else
-    let parent := (i - 1) / 2
-    if (a.getD parent (0, 0)).1 ≤ (a.getD i (0, 0)).1 then a
+    if (a.getD ((i - 1) / 2) (0, 0)).1 ≤ (a.getD i (0, 0)).1 then a
     else
-      let x := a.getD i (0, 0)
-      let y := a.getD parent (0, 0)
-      siftUp ((a.setIfInBounds i y).setIfInBounds parent x) parent
+      siftUp
+        ((a.setIfInBounds i (a.getD ((i - 1) / 2) (0, 0))).setIfInBounds ((i - 1) / 2)
+          (a.getD i (0, 0)))
+        ((i - 1) / 2)
   termination_by i
   decreasing_by omega
 
@@ -53,18 +53,28 @@ def push (h : Heap) (p v : Nat) : Heap :=
   let a := h.a.push (p, v)
   ⟨siftUp a (a.size - 1)⟩
 
-private def siftDown (a : Array (Nat × Nat)) : Nat → Nat → Array (Nat × Nat)
+/-- The left-child step of the TS sift-down selection: the smaller of
+`i` and its left child (left preferred on ties by strict `<`). -/
+def sDown1 (a : Array (Nat × Nat)) (i : Nat) : Nat :=
+  if 2 * i + 1 < a.size && (a.getD (2 * i + 1) (0, 0)).1 < (a.getD i (0, 0)).1 then
+    2 * i + 1
+  else i
+
+/-- The full sift-down selection: the smallest of `i` and its children. -/
+def sDown (a : Array (Nat × Nat)) (i : Nat) : Nat :=
+  if 2 * i + 2 < a.size && (a.getD (2 * i + 2) (0, 0)).1 < (a.getD (sDown1 a i) (0, 0)).1 then
+    2 * i + 2
+  else sDown1 a i
+
+def siftDown (a : Array (Nat × Nat)) : Nat → Nat → Array (Nat × Nat)
   | 0, _ => a
   | fuel + 1, i =>
-    let l := 2 * i + 1
-    let r := 2 * i + 2
-    let s := if l < a.size && (a.getD l (0, 0)).1 < (a.getD i (0, 0)).1 then l else i
-    let s := if r < a.size && (a.getD r (0, 0)).1 < (a.getD s (0, 0)).1 then r else s
-    if s = i then a
+    if sDown a i = i then a
     else
-      let x := a.getD i (0, 0)
-      let y := a.getD s (0, 0)
-      siftDown ((a.setIfInBounds i y).setIfInBounds s x) fuel s
+      siftDown
+        ((a.setIfInBounds i (a.getD (sDown a i) (0, 0))).setIfInBounds (sDown a i)
+          (a.getD i (0, 0)))
+        fuel (sDown a i)
 
 /-- Pop the minimum. Mirrors TS: move the last element to the root and
 sift down (skipped when the heap becomes empty). -/
@@ -72,12 +82,10 @@ def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
   match h.a[0]? with
   | none => none
   | some top =>
-    let last := h.a.getD (h.a.size - 1) (0, 0)
-    let a' := h.a.pop
-    if a'.size > 0 then
-      let a'' := a'.setIfInBounds 0 last
-      some (top, ⟨siftDown a'' a''.size 0⟩)
-    else some (top, ⟨a'⟩)
+    if h.a.pop.size > 0 then
+      some (top, ⟨siftDown (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0)))
+        (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).size 0⟩)
+    else some (top, ⟨h.a.pop⟩)
 
 end Heap
 
