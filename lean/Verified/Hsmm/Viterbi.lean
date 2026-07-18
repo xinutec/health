@@ -17,9 +17,12 @@ Differences from the TypeScript, both deliberate:
     path minutes unfilled (unreachable when the best score is finite — making
     it a visible signal instead of silent corruption).
 
-Target theorem (the pilot's goal, not yet proved): `viterbi P = some r` implies
-`ofPath r.path.toList` is well-formed and `r.best = oracleBest P`; and
-`viterbi P = none` implies `oracleBest P = .negInf`.
+The pilot's goal theorem is proved for the *specification* decoder
+(`Decode.lean`: `decode_correct`, `decode_none_iff`), which `#guard`s pin
+against this implementation exactly — paths included — in `Tests.lean`. This
+array version stays the production decoder until the proved one is memoised;
+its own refinement proof would then be redundant (it would be replaced, not
+verified in place).
 -/
 
 namespace Verified.Hsmm

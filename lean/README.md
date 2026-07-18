@@ -33,6 +33,11 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   a pure function, proved correct: the column invariant (`col_eq_openVal`),
   segment closure (`closeB_eq`), and `trellisScore_eq_oracleBest` for every
   problem shape, degenerate ones included.
+- `Verified/Hsmm/Decode.lean` — the verified decoder: `decode_correct` (any
+  returned path renders a well-formed segmentation achieving `oracleBest`)
+  and `decode_none_iff` (`none` ⟺ everything is `-∞`). Unmemoised, so
+  spec-level for now; `#guard`s pin it against `viterbi` exactly, paths
+  included.
 - `Verified/Hsmm/Viterbi.lean` — the trellis (faithful port of
   `src/hmm/hsmm-viterbi.ts`, same loop order and tie-breaks; degenerate cases
   return `none` instead of the TS silent fallbacks).

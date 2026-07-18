@@ -97,22 +97,27 @@ a float model. The float bridge is its own later phase.
 
 ## Phases
 
-- **V1 — the equivalence theorem.** The score-level mathematics is now
-  fully proved: oracle completeness, the backward Bellman recurrence, the
-  forward (Viterbi-principle) DP, **and the trellis's own τ-indexed
-  column recurrence** (`Trellis.lean`: `col_eq_openVal` gives every cell
-  its open-segment meaning, `closeB_eq` shows closing a run recovers
-  `bestEnd`, and `trellisScore_eq_oracleBest` — no side conditions,
-  degenerate shapes included — proves the recurrence's final closure is
-  the true optimum). The `viterbi`↔`trellisScore` link is `#guard`-pinned
-  in `Tests.lean`. What remains: **path attainment** — replace/refine the
-  imperative decoder with a fold-form one whose returned path is proved
-  well-formed and achieving `oracleBest` (argmax-with-witness through the
-  backpointer chain), with `none` exactly when `oracleBest = -∞`; TS
-  tie-break parity stays pinned by the compare harness. Then genericise
-  `Score` so the theorem is parametric over any linearly ordered additive
-  monoid with bottom — model churn (emissions, priors, flags) can never
-  invalidate it.
+- **V1 — the equivalence theorem. PROVED at the spec level.** The full
+  chain is theorem-backed: oracle completeness; the backward Bellman
+  recurrence; the forward (Viterbi-principle) DP; the trellis's τ-indexed
+  column recurrence (`Trellis.lean`: `col_eq_openVal`, `closeB_eq`,
+  `trellisScore_eq_oracleBest` — no side conditions, degenerate shapes
+  included); and **the pilot's goal theorem** (`Decode.lean`):
+  `decode_correct` — any decoded path is the rendering of a well-formed
+  segmentation achieving `oracleBest` — and `decode_none_iff` —
+  `none` exactly when everything scores `-∞`. `decode` picks the final
+  cell with `pickBest` (a first-best argmax with a proved attainment
+  lemma) and reconstructs by re-searching each boundary argmax against
+  the proved `col` recurrence, so no backpointer invariants were needed.
+  Its first-best tie-breaks compose to the same selection order as the
+  TypeScript loops — `#guard`s pin `decode == viterbi` *exactly* (paths
+  included) on the test family. What remains of V1, now purely
+  mechanical: **efficiency** — memoise `col` into per-`t` arrays (a
+  pointwise refinement that cannot disturb the theorems; today `decode`
+  recomputes `col` exponentially, so the proved decoder is exact only on
+  small instances while `viterbi` remains the production path), then
+  genericise `Score` so the theorems are parametric over any linearly
+  ordered additive monoid with bottom.
 - **V2 — real-data shadow.** Export integer-scaled (×2²⁰, exactly
   representable) emission/transition/duration tensors from the decode loader
   behind an env flag; A/B the Lean decoder against the TS trellis on the
