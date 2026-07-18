@@ -2,6 +2,7 @@ import Verified.Hsmm.Viterbi
 import Verified.Hsmm.Oracle
 import Verified.Hsmm.Trellis
 import Verified.Hsmm.Decode
+import Verified.Hsmm.Memo
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -105,5 +106,19 @@ def checkTrellis (P : Problem) : Bool :=
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   decode blocked == viterbi blocked
+
+-- The memoised decoder inherits decode's theorems via `decodeFast_eq`; these
+-- pin it against the imperative trellis on larger instances than the
+-- exponential spec decoder can reach (decodeFast is polynomial).
+#guard decodeFast (mkP 0 1 1 1) == viterbi (mkP 0 1 1 1)
+#guard decodeFast (mkP 0 0 3 2) == viterbi (mkP 0 0 3 2)
+#guard decodeFast (mkP 0 4 0 2) == viterbi (mkP 0 4 0 2)
+#guard decodeFast (mkP 0 4 3 0) == viterbi (mkP 0 4 3 0)
+#guard (List.range 6).all fun seed => decodeFast (mkP seed 30 4 6) == viterbi (mkP seed 30 4 6)
+#guard (List.range 4).all fun seed => decodeFast (mkP seed 60 3 10) == viterbi (mkP seed 60 3 10)
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  decodeFast blocked == viterbi blocked
 
 end Verified.Hsmm.Tests

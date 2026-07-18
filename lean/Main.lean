@@ -4,10 +4,11 @@ import Lean.Data.Json
 /-!
 # `verified_cli` — JSON decode interface
 
-Reads one HSMM problem as JSON on stdin, decodes it, writes the result as JSON
-on stdout. This is the experimental bridge for A/B-ing the verified decoder
-against `src/hmm/hsmm-viterbi.ts` on identical integer-scaled scores — see
-`lean/experiments/compare.mjs`.
+Reads one HSMM problem as JSON on stdin, decodes it with `decodeFast` — the
+memoised decoder whose output is theorem-backed (`decodeFast_correct`,
+`decodeFast_none_iff`) — and writes the result as JSON on stdout. The bridge
+for A/B-ing against `src/hmm/hsmm-viterbi.ts` on identical integer-scaled
+scores: see `lean/experiments/compare.mjs`.
 
 Input shape (all scores integers; `null` = `-∞`):
   {
@@ -85,12 +86,12 @@ def main : IO UInt32 := do
     IO.println (Json.mkObj [("error", Json.str e)]).compress
     return 1
   | .ok P =>
-    match viterbi P with
+    match decodeFast P with
     | none => IO.println (Json.mkObj [("degenerate", Json.bool true)]).compress
     | some r =>
       let path := Json.arr (r.path.map fun s => Lean.toJson s)
       let best := match r.best with
         | .val v => Lean.toJson v
-        | .negInf => Json.null -- unreachable: `viterbi` returns none instead
+        | .negInf => Json.null -- unreachable: `decodeFast` returns none instead
       IO.println (Json.mkObj [("path", path), ("best", best)]).compress
     return 0

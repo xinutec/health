@@ -6,4 +6,5 @@ import Verified.Hsmm.Forward
 import Verified.Hsmm.Trellis
 import Verified.Hsmm.Viterbi
 import Verified.Hsmm.Decode
+import Verified.Hsmm.Memo
 import Verified.Hsmm.Tests
