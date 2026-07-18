@@ -134,10 +134,23 @@ export interface HsmmInputs {
 	reacquireRobustSpeed?: boolean;
 }
 
-/**
- * Decode one day to HSMM segments. Pure: same inputs → same output.
- */
-export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
+/** The assembled per-day model: the observation tensor, the state space,
+ *  and the score callbacks exactly as the trellis consumes them. Split
+ *  from `decodeHsmm` so the Lean shadow (`lean-shadow.ts`) quantises the
+ *  very same model the production decode runs — never a re-derivation
+ *  that could drift. */
+export interface HsmmModel {
+	tensor: readonly Observation[];
+	states: readonly State[];
+	transitionLogProb: (from: State, to: State, obs: Observation) => number;
+	emissionLogProb: (state: State, obs: Observation) => number;
+	initialLogProb: (state: State) => number;
+	entryLogProb: (state: State, obs: Observation) => number;
+	durationLogProb: (state: State, d: number, segEndIndex: number) => number;
+}
+
+/** Assemble one day's decode model. Pure: same inputs → same model. */
+export function buildHsmmModel(inputs: HsmmInputs): HsmmModel {
 	const cleanedPoints = dropGpsOutliers(inputs.points);
 	const tensor = buildObservationTensor({
 		date: inputs.date,
@@ -228,23 +241,43 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 					return t + chainFn(from, to, obs);
 				};
 
-	const hmmStates = hsmmViterbi({
-		observations: tensor,
+	return {
+		tensor,
 		states,
 		transitionLogProb,
 		emissionLogProb: emission,
 		initialLogProb,
 		entryLogProb,
 		durationLogProb,
+	};
+}
+
+/**
+ * Decode one day to HSMM segments. Pure: same inputs → same output.
+ */
+export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
+	const model = buildHsmmModel(inputs);
+	const hmmStates = hsmmViterbi({
+		observations: model.tensor,
+		states: model.states,
+		transitionLogProb: model.transitionLogProb,
+		emissionLogProb: model.emissionLogProb,
+		initialLogProb: model.initialLogProb,
+		entryLogProb: model.entryLogProb,
+		durationLogProb: model.durationLogProb,
 	});
-	const timestamps = tensor.map((o) => o.ts);
+	const timestamps = model.tensor.map((o) => o.ts);
 	const segments = groupStatesIntoSegments(hmmStates, timestamps);
 
 	// C4.3 chained train triples: assign board/alight stations to the
 	// decoded train legs, scored jointly along each journey chain
 	// (`station-chain.ts`). Confidence-gated — an ambiguous side stays
 	// null rather than guessing.
-	const stations = resolveStationChain({ segments, observations: tensor, routeGraph: inputs.routeGraph });
+	const stations = resolveStationChain({
+		segments,
+		observations: model.tensor,
+		routeGraph: inputs.routeGraph,
+	});
 	for (const [segIndex, resolved] of stations) {
 		segments[segIndex].boardStation = resolved.board;
 		segments[segIndex].alightStation = resolved.alight;
