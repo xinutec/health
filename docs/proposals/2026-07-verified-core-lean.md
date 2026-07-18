@@ -97,20 +97,22 @@ a float model. The float bridge is its own later phase.
 
 ## Phases
 
-- **V1 — the equivalence theorem.** The spec layer is done: oracle
-  completeness, the backward Bellman recurrence, and the forward
-  (Viterbi-principle) DP are all proved equal to `oracleBest`. What
-  remains is the **array refinement** — the pilot's goal theorem:
-  `viterbi` returns a well-formed path achieving `oracleBest`, and
-  returns `none` exactly when `oracleBest = -∞`. Plan: relate the
-  trellis's τ-indexed columns to `bestEnd` (the open-segment column value
-  is a closed formula over `bestEnd`: best-closing-predecessor +
-  transition + entry + an emission run), reasoning about the `Id.run do`
-  loops either via loop-invariant lemmas over `Std.Range.forIn` or by
-  restating the column computation as a fold; then backtrack correctness.
-  Then genericise `Score` so the theorem is parametric over any linearly
-  ordered additive monoid with bottom — model churn (emissions, priors,
-  flags) can never invalidate it.
+- **V1 — the equivalence theorem.** The score-level mathematics is now
+  fully proved: oracle completeness, the backward Bellman recurrence, the
+  forward (Viterbi-principle) DP, **and the trellis's own τ-indexed
+  column recurrence** (`Trellis.lean`: `col_eq_openVal` gives every cell
+  its open-segment meaning, `closeB_eq` shows closing a run recovers
+  `bestEnd`, and `trellisScore_eq_oracleBest` — no side conditions,
+  degenerate shapes included — proves the recurrence's final closure is
+  the true optimum). The `viterbi`↔`trellisScore` link is `#guard`-pinned
+  in `Tests.lean`. What remains: **path attainment** — replace/refine the
+  imperative decoder with a fold-form one whose returned path is proved
+  well-formed and achieving `oracleBest` (argmax-with-witness through the
+  backpointer chain), with `none` exactly when `oracleBest = -∞`; TS
+  tie-break parity stays pinned by the compare harness. Then genericise
+  `Score` so the theorem is parametric over any linearly ordered additive
+  monoid with bottom — model churn (emissions, priors, flags) can never
+  invalidate it.
 - **V2 — real-data shadow.** Export integer-scaled (×2²⁰, exactly
   representable) emission/transition/duration tensors from the decode loader
   behind an env flag; A/B the Lean decoder against the TS trellis on the
