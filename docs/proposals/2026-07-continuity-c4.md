@@ -1,6 +1,6 @@
 ---
 created: 2026-07-16
-status: draft
+status: active
 references:
   - decoder-roadmap.md
   - ../design/probabilistic-principles.md
@@ -276,11 +276,19 @@ AND absolute anchor plausibility) — wrong is worse than missing.
 Stations flow through `HmmSegment.boardStation/alightStation`
 (CLASSIFIER_VERSION 5) into the journey eval legs.
 
-Measured on the 10-day corpus (four C4 flags on): the first station
-pair matches (06-12), **zero wrong stations**, no regressions; 07-16
+Measured on the 10-day corpus (four C4 flags on): **1/32 asserted
+station pairs match (06-12), zero wrong, no regressions.** v1 is
+infrastructure ahead of payoff, deliberately: the deliverables are
+the emission plumbing (decoder → journey eval legs), the per-side
+confidence gates, and the wrong-station ratchet now having something
+to ratchet — coverage is expected from v2 and decode-quality work
+(un-fragmented dark rides, correct line labels), not from v1.
+Emitted-but-not-scored signal that v1 behaves correctly: 07-16
 resolves the true morning board (Wembley Park) and return alight
-(Wembley Park) and correctly refuses the corrupted-anchor Finchley
-Road alight. Traps found and closed en route: real stations are
+(Wembley Park) — the scoreboard scores the full pair, so these
+single-sided emissions count as missing, not matching — and
+correctly refuses the corrupted-anchor Finchley Road alight.
+Traps found and closed en route: real stations are
 several same-named OSM nodes (margins must compare NAMES); station
 complexes fabricate sub-400 m "hops" via proximity-inferred line
 membership (min-path floor; real membership is #364); a leg boundary
