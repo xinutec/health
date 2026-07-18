@@ -198,9 +198,36 @@ porting float arithmetic.
   eventually define the label grammar and both generate and parse it,
   making TS the conforming side. Everything here graduates into the
   core on the V4/V5 arc; nothing is permanently TS except effects.
-- **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
-  two comment-proofs (grid exactness, lazy-Dijkstra refinement) become
-  theorems; the honesty guards become verified postconditions.
+- **V4 — map-match-core + geometry substrate. UNBLOCKED 2026-07-18.**
+  The #330 gate inverted: the walk-matcher retirement verdict failed twice
+  (07-08, 07-15) and its trigger (G3 true-heading) needs a capture change
+  plus weeks of collection, so trim/despike/correctWalkPath + the Viterbi
+  matcher + `map-match-core` are the shipping draw for months — a stable
+  port target. Agreed sequencing (2026-07-18, coordinated with the
+  decoder session):
+  - *Portable now*: the geometry substrate (haversine/projection/
+    polyline/grid primitives, rail-snap internals) and the GPS
+    pre-filters (outlier drop, spike rejection, speed caps — stable,
+    pure, small). Substrate first — it is where the ε-budget/quantised
+    arithmetic decision gets made, and everything else consumes it.
+  - *Walk/road matcher*: green once #347 (correctWalkPath invents
+    distance — recorded defect) and #369 (matched polyline too sparse)
+    are fixed in TS, so the port targets intended behaviour rather than
+    faithfully reproducing a bug for parity and fixing it twice.
+  - *Shadow only (moving target)*: the HSMM decoder — C4.4/#364/#366/
+    Phase 4-5 keep reshaping it; the cron shadow tracks it instead of
+    freezing it. Full ownership waits for the C4 program to settle.
+  - *Don't port (scheduled to die)*: the ~38-pass `velocity.ts` cascade
+    and the boarding/alight anchors (Phase 5 deletes them as the decoder
+    absorbs their wins); the bus matcher (#254/#255/#328) and the
+    venue/place scorer cluster (#341/#343/#344/#345) — actively
+    contested, verdicts pending.
+  The two load-bearing comment-proofs (grid exactness, lazy-Dijkstra
+  refinement) become theorems; the honesty guards become verified
+  postconditions; the certify-don't-verify pattern from V3 applies to
+  the lazy Dijkstra. Rail V3's deferred completeness direction
+  (`none ⟺ disconnected` via algorithm invariants) stays queued behind
+  this — V4 substrate is the higher-value work.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
