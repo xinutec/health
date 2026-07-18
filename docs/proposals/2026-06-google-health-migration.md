@@ -42,7 +42,9 @@ that path switched, while the real weigh-ins only existed on the Google side.
 - Scope for body metrics:
   `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
   (sleep / activity / ecg have their own `googlehealth.*.readonly` scopes).
-- Google Cloud project **"Xinutec Health"**; Desktop OAuth client
+- Google Cloud project **"Tox Chat"** (`tox-chat`, project number 553831388950 —
+  the client-ID prefix); "Xinutec Health" / "Health" are the OAuth *client*
+  names inside it, not the project. Desktop OAuth client
   `553831388950-nb9umruv42dqlpnk1986t46h2j9bjv98.apps.googleusercontent.com`.
 - Client **secret** and **refresh token** live in **k8s secret
   `health/health-google`** (keys `GH_CLIENT_ID` / `GH_CLIENT_SECRET` /
@@ -57,35 +59,28 @@ that path switched, while the real weigh-ins only existed on the Google side.
   polls, so a sync run right after weighing can miss it — re-run
   `sync-google-weight --apply` a little later.
 
-## Durability — DEFERRED (use the 7-day token until it breaks)
+## Durability — DONE (app published 2026-07-18, long-lived token)
 
-The OAuth app is in **Testing** publishing status, where Google **revokes
-refresh tokens after 7 days**. So headless sync stops roughly weekly until
-re-auth.
-
-**Decision (2026-06-19): do not productionize yet.** Use the 7-day token; when
-it expires and weight stops updating, either re-auth manually (below) or, if it
-becomes annoying, do the one-time permanent fix. Don't build a cron that would
-silently rot in 7 days.
-
-### Permanent fix (when we want it) — free, no verification
-
-1. OAuth consent screen → **Publish app** (Testing → In production), at
-   `console.cloud.google.com/auth/audience`. Free; **no CASA verification**
-   needed for personal use — you just click through a one-time "unverified app"
-   warning at consent. In-production refresh tokens **persist long-term**, like
-   the old Fitbit token did.
-2. Re-auth once to mint a long-lived refresh token.
-3. Store `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN` as a k8s
-   secret; add a daily CronJob running `sync-google-weight --apply`.
+The OAuth app is **In production** (published 2026-07-18 after the second
+7-day-token expiry made Testing mode annoying). In-production refresh tokens
+**persist long-term**, like the old Fitbit token did. Publishing was free —
+**no CASA verification** for personal use; the one-time "unverified app"
+warning was clicked through during the re-auth that minted the current
+long-lived token, now stored in the `health/health-google` k8s secret.
 
 The paid **CASA** security assessment ($500–$4,500+/yr, recurring) is **only**
 for removing the warning / going multi-user public — irrelevant here.
 
-### How to re-auth manually (when the 7-day token expires)
+Weight still only updates when `sync-google-weight --apply` is run by hand;
+wiring it into the app's automatic sync is part of the full migration
+(Remaining, below).
 
-The Mac is **headless**, so the loopback redirect can't reach it; use the
-copy-the-`code` path:
+### How to re-auth manually (should the token ever be revoked)
+
+If a Chrome that Claude can drive runs **on the Mac itself**, the
+`127.0.0.1:8765` loopback redirect completes the flow automatically — just
+approve the consent screen and the spike prints the token. Otherwise (approving
+from another device) use the copy-the-`code` path:
 
 ```
 cd ~/Code/health
@@ -108,7 +103,6 @@ curl -sS -G http://127.0.0.1:8765/ --data-urlencode 'code=<CODE>'
 
 Then update the stored token so the next run starts from a live one:
 `kubectl -n health create secret generic health-google --from-env-file=<file> --dry-run=client -o yaml | kubectl apply -f -`
-(the token is still 7-day until the app is Published — see the permanent fix above).
 
 ## Remaining (before Sep 2026)
 
