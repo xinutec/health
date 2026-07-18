@@ -222,12 +222,24 @@ porting float arithmetic.
     absorbs their wins); the bus matcher (#254/#255/#328) and the
     venue/place scorer cluster (#341/#343/#344/#345) — actively
     contested, verdicts pending.
-  The two load-bearing comment-proofs (grid exactness, lazy-Dijkstra
-  refinement) become theorems; the honesty guards become verified
-  postconditions; the certify-don't-verify pattern from V3 applies to
-  the lazy Dijkstra. Rail V3's deferred completeness direction
-  (`none ⟺ disconnected` via algorithm invariants) stays queued behind
-  this — V4 substrate is the higher-value work.
+  **The three load-bearing comment-proofs are theorems**
+  (`lean/Verified/Geo/`): `cellKey` collision-freedom + double-exactness
+  (`CellKey.lean`); `SegmentNearGrid` ring-search exactness
+  (`RingSearch.lean` — order-theoretic: the geometric chain
+  (rasterisation ≤ cell/2, in-cell offset, cos drift) is the named
+  hypothesis `hgeom` for the future analytic substrate to discharge,
+  the early-stop search logic is proved exact against it); and the
+  lazy-Dijkstra refinement (`LazyDijkstra.lean` — the search is a
+  deterministic target-free step sequence, so `settle` is exactly the
+  eager run-to-break prefix, and settles commute/idempote, making the
+  per-source memoised cache sound; the classic "settled = final" fact
+  and fuel sufficiency stay `#guard`-pinned pending the heap-min
+  invariants, which one future effort shares with rail completeness).
+  Next V4 slices: the matcher-level TS↔Lean parity harness once
+  #347/#369 land in TS; then porting the matcher passes over the
+  quantised substrate; the honesty guards become verified
+  postconditions. Rail V3's deferred completeness direction stays
+  queued behind this — V4 substrate is the higher-value work.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).

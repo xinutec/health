@@ -16,3 +16,4 @@ import Verified.Rail.Certify
 import Verified.Rail.Tests
 import Verified.Geo.CellKey
 import Verified.Geo.RingSearch
+import Verified.Geo.LazyDijkstra

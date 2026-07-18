@@ -89,6 +89,15 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   the named hypothesis `hgeom`, which the future analytic substrate
   discharges; the search logic itself is proved today. `#guard`s include
   a toy instance where the early stop demonstrably fires.
+- `Verified/Geo/LazyDijkstra.lean` — `LazyDijkstra`'s refinement
+  comment-proof: the search is a deterministic, target-free step
+  sequence, so `settle(t)` is exactly the eager run-to-break prefix
+  (`lsettle_eq_iter`), stops are monotone along the trajectory, and
+  settles commute and are idempotent (`lsettle_comm`, `lsettle_idem`) —
+  pause/resume with per-source memoisation is sound. The "settled
+  `dist`/`prev` are final" fact (heap-min invariants) and fuel
+  sufficiency stay `#guard`-pinned on seeded graphs, radius cutoffs
+  included.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
