@@ -1,5 +1,6 @@
 import Verified.Hsmm.Viterbi
 import Verified.Hsmm.Oracle
+import Verified.Hsmm.Trellis
 
 /-!
 # Compile-time parity checks: trellis vs brute-force oracle
@@ -69,5 +70,24 @@ def mkP (seed T S maxD : Nat) : Problem where
   let blocked : Problem :=
     { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
   check blocked
+
+/-- The still-unproved V1 link, checked executably: the imperative array
+trellis reports exactly the (proved-correct) functional recurrence's score.
+Instances stay tiny — `trellisScore` recomputes columns without memoisation. -/
+def checkTrellis (P : Problem) : Bool :=
+  match viterbi P with
+  | some r => trellisScore P == r.best
+  | none => trellisScore P == Score.negInf
+
+#guard checkTrellis (mkP 0 1 1 1)
+#guard checkTrellis (mkP 0 0 3 2)
+#guard checkTrellis (mkP 0 4 0 2)
+#guard checkTrellis (mkP 0 4 3 0)
+#guard (List.range 8).all fun seed => checkTrellis (mkP seed 4 2 2)
+#guard (List.range 8).all fun seed => checkTrellis (mkP seed 4 3 2)
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  checkTrellis blocked
 
 end Verified.Hsmm.Tests

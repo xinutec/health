@@ -237,6 +237,50 @@ theorem add_listMax_map {α : Type} (c : Score) (f : α → Score) (l : List α)
   rw [add_listMax, List.map_map]
   rfl
 
+/-- Right-constant form of `add_listMax`. -/
+theorem listMax_add (xs : List Score) (c : Score) :
+    listMax xs + c = listMax (xs.map (· + c)) := by
+  rw [add_comm, add_listMax]
+  apply congrArg
+  apply List.map_congr_left
+  intro x _
+  exact add_comm c x
+
+/-- A `flatMap` of guarded singletons is a `map` with `-∞` in the guarded slots. -/
+theorem listMax_flatMap_ite {α : Type} (l : List α) (p : α → Bool) (f : α → Score) :
+    listMax (l.flatMap fun x => if p x then [] else [f x])
+      = listMax (l.map fun x => if p x then negInf else f x) := by
+  rw [listMax_flatMap]
+  apply congrArg
+  apply List.map_congr_left
+  intro x _
+  cases h : p x
+  · simp [listMax_cons]
+  · simp
+
+/-- A range maximum is unchanged by trimming a `-∞` tail (the shorter range
+must be nonempty so a `-∞` element still has something to be dominated by). -/
+theorem listMax_map_range_pad (f : Nat → Score) {n k : Nat} (hnk : n ≤ k)
+    (hn : 1 ≤ n) (hpad : ∀ i, n ≤ i → i < k → f i = negInf) :
+    listMax ((List.range k).map f) = listMax ((List.range n).map f) := by
+  apply listMax_eq_of_exists
+  · intro x hx
+    obtain ⟨i, hi, hfi⟩ := List.mem_map.mp hx
+    rw [List.mem_range] at hi
+    by_cases hin : i < n
+    · exact ⟨x, hfi ▸ List.mem_map_of_mem (List.mem_range.mpr hin), le_refl x⟩
+    · refine ⟨f 0, List.mem_map_of_mem (List.mem_range.mpr (by omega)), ?_⟩
+      rw [← hfi, hpad i (by omega) hi]
+      exact negInf_le _
+  · intro y hy
+    obtain ⟨i, hi, hfi⟩ := List.mem_map.mp hy
+    rw [List.mem_range] at hi
+    exact ⟨y, hfi ▸ List.mem_map_of_mem (List.mem_range.mpr (by omega)), le_refl y⟩
+
+theorem listMax_eq_negInf_of_all {xs : List Score} (h : ∀ x ∈ xs, x = negInf) :
+    listMax xs = negInf :=
+  le_antisymm (listMax_le fun x hx => by rw [h x hx]; exact le_refl _) (negInf_le _)
+
 end Score
 
 end Verified.Hsmm
