@@ -79,6 +79,37 @@ def wellFormed (P : Problem) (segs : List Seg) : Bool :=
     && segs.all (fun seg => 1 ≤ seg.dur && seg.dur ≤ P.maxD && seg.state < P.S)
     && adjDistinct segs
 
+theorem adjDistinct_append_singleton (ys : List Seg) (x : Seg) :
+    adjDistinct (ys ++ [x])
+      = (adjDistinct ys
+          && match ys.getLast? with
+             | some z => z.state != x.state
+             | none => true) := by
+  induction ys with
+  | nil => simp [adjDistinct]
+  | cons y ys ih =>
+    cases ys with
+    | nil => simp [adjDistinct]
+    | cons z zs =>
+      simp only [List.cons_append] at ih ⊢
+      simp only [adjDistinct, ih, List.getLast?_cons_cons, Bool.and_assoc]
+
+/-- Adjacent-distinctness is direction-agnostic. -/
+theorem adjDistinct_reverse (l : List Seg) : adjDistinct l.reverse = adjDistinct l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    rw [List.reverse_cons, adjDistinct_append_singleton, ih, List.getLast?_reverse]
+    cases xs with
+    | nil => rfl
+    | cons z zs =>
+      simp only [List.head?_cons, adjDistinct]
+      rw [Bool.and_comm]
+      congr 1
+      rw [Bool.eq_iff_iff]
+      simp only [bne_iff_ne, ne_eq]
+      exact ⟨fun h e => h e.symm, fun h e => h e.symm⟩
+
 /-- The per-minute path a segmentation induces (state repeated `dur` times). -/
 def toPath (segs : List Seg) : List Nat :=
   segs.flatMap (fun seg => List.replicate seg.dur seg.state)

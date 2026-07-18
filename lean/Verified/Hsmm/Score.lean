@@ -173,6 +173,26 @@ score and the maximum is `-∞`). -/
 theorem listMax_mem_or_negInf (xs : List Score) : listMax xs ∈ xs ∨ listMax xs = negInf :=
   foldl_max_attained negInf xs
 
+/-- An upper bound on every element bounds the list maximum. -/
+theorem listMax_le {xs : List Score} {c : Score} (h : ∀ x ∈ xs, x ≤ c) :
+    listMax xs ≤ c := by
+  rcases listMax_mem_or_negInf xs with hm | hm
+  · exact h _ hm
+  · rw [hm]; exact negInf_le c
+
+/-- Two lists dominate each other elementwise-by-existence → equal maxima.
+(In particular: membership-equal lists have equal maxima.) -/
+theorem listMax_eq_of_exists {xs ys : List Score}
+    (hxy : ∀ x ∈ xs, ∃ y ∈ ys, x ≤ y) (hyx : ∀ y ∈ ys, ∃ x ∈ xs, y ≤ x) :
+    listMax xs = listMax ys := by
+  apply le_antisymm
+  · refine listMax_le fun x hx => ?_
+    obtain ⟨y, hy, hle⟩ := hxy x hx
+    exact le_trans hle (listMax_ge hy)
+  · refine listMax_le fun y hy => ?_
+    obtain ⟨x, hx, hle⟩ := hyx y hy
+    exact le_trans hle (listMax_ge hx)
+
 /-- Folding from any seed equals `max seed (fold from -∞)`. -/
 theorem foldl_max_eq (acc : Score) (xs : List Score) :
     xs.foldl max acc = max acc (xs.foldl max negInf) := by
