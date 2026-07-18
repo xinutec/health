@@ -35,8 +35,9 @@ private def mkG (seed n m : Nat) : Graph := Id.run do
 
 /-- One src/dst check: reachability agrees; on `some`, the settled
 distance is the oracle minimum and the path is valid and attains it.
-`dijkstraC == dijkstra` is the executable stand-in for the unproved
-completeness direction: certification never fires on a real run. -/
+`dijkstraC == dijkstra` is now a theorem (`dijkstraC_eq_dijkstra` in
+`LoopInv.lean`, given in-range adjacency — `mkG` graphs satisfy it);
+the check stays as a smoke test of the executable path. -/
 private def check (g : Graph) (src dst : Nat) : Bool :=
   dijkstraC g src dst == dijkstra g src dst &&
     match dijkstra g src dst, oracleDist g src dst with

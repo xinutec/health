@@ -180,10 +180,19 @@ porting float arithmetic.
   `src → dst` path attaining `oracleDist` — and
   `dijkstraC_disconnected`; a certification failure degrades to `none`
   (draw raw GPS), never a wrong line, which is exactly rail-snap's
-  swallow-over-wrong contract. Remaining, in the incremental-upgrade
-  spirit: the completeness direction ("the checker never fires on a
-  real run" — `none ⟺ disconnected` needs the algorithm invariants;
-  today it's `#guard`- and harness-pinned). The snap contract layer
+  swallow-over-wrong contract. **The completeness direction is now
+  proved too** (`HeapInv.lean` + `LoopInv.lean`): the ported binary
+  heap's invariants (sift-up/sift-down repair, pop-min), the classical
+  loop invariants (lazy deletion, monotone pop floor, unsettled-finite
+  vertices hold live heap entries, a ghost prev-tree ranked by settle
+  order), and a potential argument showing the TS fuel `E + n + 2`
+  never exhausts, give `dijkstraC_eq_dijkstra` (the checker never
+  fires on a real run), `dijkstra_complete`, and `dijkstra_none_iff`
+  (`none ⟺ disconnected`) — under `WFEdges` (in-range adjacency
+  targets, true of production graphs by construction; `relaxAll`
+  silently drops out-of-range targets, so it is a real hypothesis).
+  The `Tests.lean` guard and `compare-rail` stay as smoke tests. The
+  snap contract layer
   above the search (label parsing, station resolution, refusal gates,
   time interpolation) **stays in TS for now — deferred, not exempted**.
   The principle: port a component when Lean can own its *meaning*, not
@@ -233,13 +242,14 @@ porting float arithmetic.
   deterministic target-free step sequence, so `settle` is exactly the
   eager run-to-break prefix, and settles commute/idempote, making the
   per-source memoised cache sound; the classic "settled = final" fact
-  and fuel sufficiency stay `#guard`-pinned pending the heap-min
-  invariants, which one future effort shares with rail completeness).
+  and fuel sufficiency stay `#guard`-pinned — the heap theorems and
+  the loop-invariant playbook they need now exist in
+  `Verified/Rail/{HeapInv,LoopInv}.lean`, built for the rail
+  completeness upgrade, which is done).
   Next V4 slices: the matcher-level TS↔Lean parity harness once
   #347/#369 land in TS; then porting the matcher passes over the
   quantised substrate; the honesty guards become verified
-  postconditions. Rail V3's deferred completeness direction stays
-  queued behind this — V4 substrate is the higher-value work.
+  postconditions.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).

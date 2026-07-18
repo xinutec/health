@@ -3,11 +3,11 @@ import Verified.Rail.Dijkstra
 /-!
 # Binary-heap invariants — the machinery behind "settled = final"
 
-The two facts still `#guard`-pinned in `Verified/Rail/Certify.lean` and
-`Verified/Geo/LazyDijkstra.lean` — `none ⟺ disconnected` for the raw
-search, and a settled vertex's `dist`/`prev` being final — both reduce to
-classical Dijkstra ordering arguments, and those start here: the ported
-`Heap` really is a binary min-heap.
+The classical Dijkstra ordering arguments — `none ⟺ disconnected` for
+the rail search (`LoopInv.lean`, done) and a settled vertex's
+`dist`/`prev` being final (`Verified/Geo/LazyDijkstra.lean`, still
+`#guard`-pinned) — start here: the ported `Heap` really is a binary
+min-heap.
 
 `IsHeapA` is the parent-ordering invariant (`(j-1)/2` is the parent index,
 written out everywhere so `omega` can reason about it directly). This file

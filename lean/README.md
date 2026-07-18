@@ -76,9 +76,16 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   `pop_top_mem`), the remainder is a heap whose entries come from the
   old one and cover everything but the popped entry (`pop_isHeap`,
   `pop_mem`, `pop_cover`, `pop_size`), and `pop` fails exactly on empty
-  (`pop_none_iff`). The Dijkstra loop invariants built on top come next
-  — they retire the two `#guard`-pinned facts (rail
-  `none ⟺ disconnected`, lazy "settled = final").
+  (`pop_none_iff`).
+- `Verified/Rail/LoopInv.lean` — the Dijkstra loop invariants on top of
+  the heap theorems: lazy deletion, the monotone pop floor, the
+  unsettled-finite/heap correspondence, a ghost prev-tree ranked by
+  settle order, and a potential proving the TS fuel sufficient. Together
+  they retire the rail `#guard` pin: `dijkstraC_eq_dijkstra` (the
+  checker never fires on a real run), `dijkstra_complete`, and
+  `dijkstra_none_iff` (`none ⟺ disconnected`) — all under `WFEdges`
+  (in-range adjacency, true of production graphs by construction). The
+  lazy-Dijkstra "settled = final" pin in `Verified/Geo` still stands.
 - `Verified/Rail/Certify.lean` — the V3 goal theorems, by certification
   rather than algorithm invariants: the untrusted search's result is
   validated by a proved O(E) checker (valid simple path costing exactly
@@ -88,7 +95,7 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   — any returned path is valid and attains `oracleDist` — and
   `dijkstraC_disconnected`; a certification failure degrades to `none`
   (never a wrong path). The converse ("the checker never fires on a real
-  run") is the remaining `#guard`-pinned direction.
+  run") is proved in `LoopInv.lean`.
 - `Verified/Geo/CellKey.lean` — V4 opener: `map-match-core.ts`'s grid
   cell-pair key proved collision-free (`cellKey_inj`) and double-exact
   (`cellKey_magnitude`), with the `2^21` cell-bound premise pinned.

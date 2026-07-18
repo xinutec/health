@@ -28,9 +28,9 @@ returned path is valid and attains `oracleDist` — and
 `dijkstraC_disconnected` — disconnected endpoints yield `none` — are the
 null-over-wrong contract: a certification failure degrades to `none`
 (draw raw GPS), never to a wrong line. The converse ("the checker never
-fires on a real run") is `#guard`-pinned in `Tests.lean` and pinned on
-real corridors by `npm run compare-rail`, pending the algorithm-invariant
-upgrade.
+fires on a real run") is proved in `LoopInv.lean`
+(`dijkstraC_eq_dijkstra`, `dijkstra_none_iff` — given in-range
+adjacency), with `Tests.lean` and `npm run compare-rail` as smoke tests.
 -/
 
 namespace Verified.Rail

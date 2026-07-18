@@ -1063,4 +1063,303 @@ theorem exit_certify {g : Graph} {src dst L D : Nat} {st : DState} (hwf : WFEdge
     hcore.src_zero⟩, hdd⟩, hsrcdone⟩, hfeas⟩
   rw [hcost, hCD]
 
+/-! ## The full run
+
+`dijkstraSt` seeds the heap with exactly `(0, src)`, so the first
+iteration settles the source; from there `loop_spec` carries the
+invariant to an exit. The TS fuel covers the whole run because the
+potential starts at `1 + Σ out-degrees ≤ E + 1 < E + n + 2`. -/
+
+private theorem foldl_add_sum : ∀ (l : List (Array (Nat × Nat))) (acc : Nat),
+    l.foldl (fun a r => a + r.size) acc = acc + (l.map Array.size).sum
+  | [], acc => by
+    rw [List.foldl_nil, List.map_nil, List.sum_nil]
+    omega
+  | r :: l, acc => by
+    rw [List.foldl_cons, List.map_cons, List.sum_cons, foldl_add_sum l (acc + r.size)]
+    omega
+
+private theorem map_range_getD : ∀ (l : List (Array (Nat × Nat))),
+    (List.range l.length).map (fun u => (l.getD u #[]).size) = l.map Array.size
+  | [] => rfl
+  | a :: t => by
+    rw [List.length_cons, List.range_succ_eq_map, List.map_cons, List.map_map,
+      List.map_cons]
+    congr 1
+    rw [← map_range_getD t]
+    refine List.map_congr_left ?_
+    intro u _
+    show ((a :: t).getD (u + 1) #[]).size = (t.getD u #[]).size
+    rw [List.getD_cons_succ]
+
+private theorem getD_toList (a : Array (Array (Nat × Nat))) (i : Nat) :
+    a.toList.getD i #[] = a.getD i #[] := by
+  rw [List.getD_eq_getElem?_getD, Array.getD_eq_getD_getElem?, Array.getElem?_toList]
+
+private theorem sum_map_le : ∀ (l : List Nat) (f f' : Nat → Nat),
+    (∀ x ∈ l, f x ≤ f' x) → (l.map f).sum ≤ (l.map f').sum
+  | [], _, _, _ => Nat.le_refl _
+  | a :: t, f, f', h => by
+    rw [List.map_cons, List.map_cons, List.sum_cons, List.sum_cons]
+    have h1 := h a (.head _)
+    have h2 := sum_map_le t f f' (fun x hx => h x (.tail _ hx))
+    omega
+
+private theorem undoneOut_le (g : Graph) (st : DState) :
+    undoneOut g st ≤ g.adj.foldl (fun acc r => acc + r.size) 0 := by
+  have h1 : g.adj.foldl (fun acc r => acc + r.size) 0 =
+      (g.adj.toList.map Array.size).sum := by
+    rw [← Array.foldl_toList, foldl_add_sum]
+    omega
+  have h3 : g.adj.toList.length = g.n := Array.length_toList
+  have h2 := map_range_getD g.adj.toList
+  rw [h3] at h2
+  rw [h1, ← h2]
+  unfold undoneOut
+  refine sum_map_le _ _ _ ?_
+  intro x _
+  rw [getD_toList]
+  by_cases hb : st.done.getD x false = true
+  · rw [if_pos hb]
+    exact Nat.zero_le _
+  · rw [if_neg hb]
+    exact Nat.le_refl _
+
+private theorem first_pop (g : Graph) (src : Nat) :
+    (initState g src).heap.pop = some ((0, src), ⟨#[]⟩) := by
+  have h : (initState g src).heap = ⟨#[(0, src)]⟩ := by
+    rw [initState_heap, ← initHeap_a 0 src]
+  rw [h]
+  rfl
+
+private theorem initHeap_size (g : Graph) (src : Nat) :
+    (initState g src).heap.a.size = 1 := by
+  rw [initState_heap, initHeap_a]
+  rfl
+
+/-- Every real run ends in one of the two legitimate exits, with the
+source settled. -/
+theorem run_exits {g : Graph} {src dst : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) :
+    ∃ L', InvCore g src L' (dijkstraSt g src dst) ∧
+      (dijkstraSt g src dst).done.getD src false = true ∧
+      (((dijkstraSt g src dst).heap.pop = none ∧ Relaxed g (dijkstraSt g src dst)) ∨
+        ((dijkstraSt g src dst).done.getD dst false = true ∧
+          (dijkstraSt g src dst).dist.getD dst none = some L' ∧
+          RelaxedExcept g dst (dijkstraSt g src dst))) := by
+  obtain ⟨hcore0, hrel0⟩ := inv_init g src hsrc
+  have hpot : potential g (initState g src) ≤
+      g.adj.foldl (fun acc r => acc + r.size) 0 + 1 := by
+    unfold potential
+    rw [initHeap_size]
+    have := undoneOut_le g (initState g src)
+    omega
+  rw [dijkstraSt_eq]
+  rw [show g.adj.foldl (fun acc r => acc + r.size) 0 + g.n + 2 =
+      (g.adj.foldl (fun acc r => acc + r.size) 0 + g.n + 1) + 1 from by omega]
+  simp only [loop]
+  split
+  · next hpop =>
+    rw [first_pop g src] at hpop
+    cases hpop
+  · next p u h' hpop =>
+    rw [first_pop g src] at hpop
+    injection hpop with hpu
+    injection hpu with hp1 hh'
+    injection hp1 with hp hu
+    subst hp
+    subst hu
+    subst hh'
+    rw [if_neg (show ¬(initState g src).done.getD src false = true by
+      rw [initDone_getD]; exact Bool.false_ne_true)]
+    have hund : (initState g src).done.getD src false = false := initDone_getD g src src
+    obtain ⟨hLp, hun, hdu, hrinv⟩ := settle_inv hcore0 hrel0 (first_pop g src) hund
+    by_cases hsd : src = dst
+    · -- src = dst: the very first settle is the early exit.
+      rw [if_pos hsd]
+      refine ⟨0, hrinv.core, ?_, .inr ⟨?_, ?_, ?_⟩⟩
+      · show ((initState g src).done.setIfInBounds src true).getD src false = true
+        rw [getD_set _ (by rw [hcore0.done_size]; exact hun), if_pos rfl]
+      · show ((initState g src).done.setIfInBounds src true).getD dst false = true
+        rw [← hsd, getD_set _ (by rw [hcore0.done_size]; exact hun), if_pos rfl]
+      · rw [← hsd]
+        exact hdu
+      · intro u' hu' hu'd
+        have : (initState g src).done.getD u' false = true := by
+          rw [getD_set _ (by rw [hcore0.done_size]; exact hun)] at hu'
+          rw [if_neg (show ¬u' = src from fun he => hu'd (he.trans hsd))] at hu'
+          exact hu'
+        rw [initDone_getD] at this
+        cases this
+    · rw [if_neg hsd]
+      obtain ⟨hinv1, hrel1⟩ := relaxAll_inv hwf hrinv
+      have hless := potential_settle (first_pop g src) hun hund hcore0.done_size
+      obtain ⟨L', h0L', hinv', hmono', hexit'⟩ :=
+        loop_spec g src dst hwf
+          (g.adj.foldl (fun acc r => acc + r.size) 0 + g.n + 1)
+          _ 0 hinv1 hrel1 (by omega)
+      refine ⟨L', hinv', ?_, hexit'⟩
+      refine hmono' src ?_
+      rw [relaxAll_done]
+      show ((initState g src).done.setIfInBounds src true).getD src false = true
+      rw [getD_set _ (by rw [hcore0.done_size]; exact hun), if_pos rfl]
+
+/-! ## The goal theorems -/
+
+/-- On any run whose settled `dist` prices `dst`, the rebuilt path passes
+the full certificate — the checker never fires on a real run. -/
+theorem dijkstra_certifies {g : Graph} {src dst : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) (hdst : dst < g.n) {D : Nat}
+    (hD : (dijkstraSt g src dst).dist.getD dst none = some D) :
+    ∃ p, rebuild (dijkstraSt g src dst).prev g.n (g.n + 1) dst [] = some p ∧
+      certify g src dst (dijkstraSt g src dst).done (dijkstraSt g src dst).dist D p
+        = true := by
+  obtain ⟨L', hcore, hsrcdone, hexit⟩ := run_exits (dst := dst) hwf hsrc
+  rcases hexit with ⟨hempty, hrel⟩ | ⟨hdstdone, hdstL, hexc⟩
+  · -- Heap exhausted: no unsettled vertex is finite, so dst is settled.
+    have hnomem : ∀ z : Nat × Nat, z ∈ (dijkstraSt g src dst).heap.a → False := by
+      intro z hz
+      have hsz := Heap.pop_none_iff.mp hempty
+      obtain ⟨q0, hq0⟩ := Array.mem_iff_getElem?.mp hz
+      rw [Array.getElem?_eq_none (by omega)] at hq0
+      cases hq0
+    have hnocheap : ∀ v, v < g.n → (dijkstraSt g src dst).done.getD v false = false →
+        ∀ d', (dijkstraSt g src dst).dist.getD v none = some d' → D ≤ d' := by
+      intro v hvn hvd d' hd'
+      exact absurd (hcore.undone_heap v hvn hvd d' hd') (hnomem _)
+    have hdstdone : (dijkstraSt g src dst).done.getD dst false = true := by
+      cases hb : (dijkstraSt g src dst).done.getD dst false with
+      | true => rfl
+      | false => exact absurd (hcore.undone_heap dst hdst hb D hD) (hnomem _)
+    exact exit_certify hwf hcore hsrcdone hdstdone hD (Relaxed.except hrel dst)
+      (.inr (hrel dst hdstdone)) hnocheap
+  · have hDL : D = L' := Option.some.inj (hD.symm.trans hdstL)
+    have hnocheap : ∀ v, v < g.n → (dijkstraSt g src dst).done.getD v false = false →
+        ∀ d', (dijkstraSt g src dst).dist.getD v none = some d' → D ≤ d' := by
+      intro v hvn hvd d' hd'
+      have := hcore.heap_ge (d', v) (hcore.undone_heap v hvn hvd d' hd')
+      omega
+    exact exit_certify hwf hcore hsrcdone hdstdone hD hexc (.inl hDL) hnocheap
+
+/-- **The pin, retired.** On in-range adjacency the checker never
+changes the answer: `dijkstraC = dijkstra`. -/
+theorem dijkstraC_eq_dijkstra {g : Graph} (hwf : WFEdges g) (src dst : Nat) :
+    dijkstraC g src dst = dijkstra g src dst := by
+  by_cases hoob : src ≥ g.n ∨ dst ≥ g.n
+  · simp only [dijkstraC, dijkstra]
+    rw [if_pos hoob, if_pos hoob]
+  · have hsrc : src < g.n := by omega
+    have hdst : dst < g.n := by omega
+    simp only [dijkstraC, dijkstra]
+    rw [if_neg hoob, if_neg hoob]
+    cases hd : (dijkstraSt g src dst).dist.getD dst none with
+    | none => rfl
+    | some D =>
+      obtain ⟨p, hreb, hcert⟩ := dijkstra_certifies hwf hsrc hdst hd
+      rw [hreb]
+      show (if certify g src dst (dijkstraSt g src dst).done (dijkstraSt g src dst).dist
+          D p then some p else none) = some p
+      rw [if_pos hcert]
+
+/-- All settled vertices reachable along a path from a settled source are
+settled once the heap runs dry. -/
+private theorem closure_done {g : Graph} {src L : Nat} {st : DState}
+    (hwf : WFEdges g) (hcore : InvCore g src L st) (hrel : Relaxed g st)
+    (hempty : st.heap.pop = none) :
+    ∀ (q : List Nat) (a b : Nat), q.head? = some a → q.getLast? = some b →
+      (pathCost g q).isSome = true → st.done.getD a false = true →
+      st.done.getD b false = true
+  | [], _, _, h, _, _, _ => nomatch h
+  | [a'], a, b, hh, hl, _, hda => by
+    have he1 : a' = a := by simpa using hh
+    have he2 : a' = b := by simpa using hl
+    rw [← he2, he1]
+    exact hda
+  | a' :: b' :: q', a, b, hh, hl, hcs, hda => by
+    have he1 : a' = a := by simpa using hh
+    have hda' : st.done.getD a' false = true := by
+      rw [he1]
+      exact hda
+    rw [List.getLast?_cons_cons] at hl
+    rw [pathCost_cons_cons] at hcs
+    cases hw : edgeMinW g a' b' with
+    | none =>
+      rw [hw] at hcs
+      simp at hcs
+    | some w =>
+      cases hc2 : pathCost g (b' :: q') with
+      | none =>
+        rw [hw, hc2] at hcs
+        simp at hcs
+      | some C2 =>
+        have hmem := edgeMinW_mem hw
+        have han : a' < g.n := hcore.done_lt a' hda'
+        obtain ⟨da, hdda, _⟩ := hcore.done_le a' hda'
+        obtain ⟨dv, hdv, _⟩ := hrel a' hda' da hdda (b', w) hmem
+        have hbn : b' < g.n := hwf a' han (b', w) hmem
+        have hbdone : st.done.getD b' false = true := by
+          cases hb : st.done.getD b' false with
+          | true => rfl
+          | false =>
+            have hin := hcore.undone_heap b' hbn hb dv hdv
+            have hsz := Heap.pop_none_iff.mp hempty
+            obtain ⟨q0, hq0⟩ := Array.mem_iff_getElem?.mp hin
+            rw [Array.getElem?_eq_none (by omega)] at hq0
+            cases hq0
+        exact closure_done hwf hcore hrel hempty (b' :: q') b' b rfl hl
+          (by rw [hc2]; rfl) hbdone
+
+/-- **Completeness**: a connected pair always yields a path. -/
+theorem dijkstra_complete {g : Graph} {src dst : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) (hdst : dst < g.n) {D : Nat}
+    (hor : oracleDist g src dst = some D) :
+    ∃ p, dijkstra g src dst = some p := by
+  obtain ⟨c0, hc0⟩ : ∃ c, c ∈ simplePathCosts g dst (g.n + 1) src [src] := by
+    unfold oracleDist at hor
+    cases henum : simplePathCosts g dst (g.n + 1) src [src] with
+    | nil =>
+      rw [henum] at hor
+      cases hor
+    | cons c cs =>
+      exact ⟨c, .head _⟩
+  obtain ⟨q, C, hqh, hql, hqc, _⟩ := enum_sound (g.n + 1) src [src] c0 hc0
+  obtain ⟨L', hcore, hsrcdone, hexit⟩ := run_exits (dst := dst) hwf hsrc
+  have hfin : ∃ D', (dijkstraSt g src dst).dist.getD dst none = some D' := by
+    rcases hexit with ⟨hempty, hrel⟩ | ⟨hdstdone, hdstL, _⟩
+    · have hdstdone := closure_done hwf hcore hrel hempty q src dst hqh hql
+        (by rw [hqc]; rfl) hsrcdone
+      obtain ⟨d, hd, _⟩ := hcore.done_le dst hdstdone
+      exact ⟨d, hd⟩
+    · exact ⟨L', hdstL⟩
+  obtain ⟨D', hD'⟩ := hfin
+  obtain ⟨p, hreb, _⟩ := dijkstra_certifies hwf hsrc hdst hD'
+  refine ⟨p, ?_⟩
+  simp only [dijkstra]
+  rw [if_neg (show ¬(src ≥ g.n ∨ dst ≥ g.n) by omega), hD', hreb]
+
+/-- **The V3 contract, proved end to end**: `none` exactly on
+disconnection. -/
+theorem dijkstra_none_iff {g : Graph} (hwf : WFEdges g) {src dst : Nat}
+    (hsrc : src < g.n) (hdst : dst < g.n) :
+    dijkstra g src dst = none ↔ oracleDist g src dst = none := by
+  constructor
+  · intro hnone
+    cases hor : oracleDist g src dst with
+    | none => rfl
+    | some D =>
+      obtain ⟨p, hp⟩ := dijkstra_complete hwf hsrc hdst hor
+      rw [hp] at hnone
+      cases hnone
+  · intro hor
+    rw [← dijkstraC_eq_dijkstra hwf src dst]
+    exact dijkstraC_disconnected hor
+
+/-- `dijkstraC` inherits completeness through the equality. -/
+theorem dijkstraC_complete {g : Graph} {src dst : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) (hdst : dst < g.n) {D : Nat}
+    (hor : oracleDist g src dst = some D) :
+    ∃ p, dijkstraC g src dst = some p := by
+  rw [dijkstraC_eq_dijkstra hwf src dst]
+  exact dijkstra_complete hwf hsrc hdst hor
+
 end Verified.Rail
