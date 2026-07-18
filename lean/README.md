@@ -81,6 +81,14 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 - `Verified/Geo/CellKey.lean` — V4 opener: `map-match-core.ts`'s grid
   cell-pair key proved collision-free (`cellKey_inj`) and double-exact
   (`cellKey_magnitude`), with the `2^21` cell-bound premise pinned.
+- `Verified/Geo/RingSearch.lean` — `SegmentNearGrid`'s exactness
+  comment-proof as a theorem (`ringSearch_exact`): the early-stopping
+  expanding-ring search equals the clamped minimum over **all** chords.
+  Order-theoretic — the stop-margin curve and the geometric chain
+  (rasterisation spacing, in-cell offset, cos drift) are abstracted into
+  the named hypothesis `hgeom`, which the future analytic substrate
+  discharges; the search logic itself is proved today. `#guard`s include
+  a toy instance where the early stop demonstrably fires.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
