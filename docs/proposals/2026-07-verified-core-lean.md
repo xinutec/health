@@ -47,53 +47,19 @@ arithmetic); Idris 2/Agda (purest totality, weak automation and analysis
 libraries); Rocq+Flocq (true IEEE-754 proofs at a much higher proof cost than
 this project needs — the margins are already explicit in the constants).
 
-## What exists (V0 + the V1 spec layer, shipped 2026-07-18)
+## What exists
 
 `lean/` is a Lake package pinned by the repo flake (`nix develop` provides
 `lean`/`lake` 4.30.0; no elan, no `lean-toolchain` file). Sorry-free policy:
-theorems are stated only when proved; goals live in docs.
+theorems are stated only when proved; goals live in docs. The
+module-by-module inventory lives in `lean/README.md` (kept current there,
+not duplicated here); the phase status below is the roadmap view.
 
-- `Verified/Hsmm/Score.lean` — integer log-prob scores with `-∞`; the order
-  and algebra lemmas (assoc/comm/identity, total order, fold-max bounds and
-  attainment) are proved.
-- `Verified/Hsmm/Spec.lean` — the meaning of `src/hmm/hsmm-viterbi.ts`,
-  independent of any algorithm: segmentations, well-formedness, the score a
-  segmentation earns (init/entry/emissions/duration/transition composition).
-- `Verified/Hsmm/Oracle.lean` — exhaustive enumeration of well-formed
-  segmentations; `enum_sound` and `enum_complete` are proved, so
-  `enumAll` is *exactly* the well-formed segmentations (`enum_iff`) and
-  `oracleBest` is a true, attained upper bound (`oracleBest_ge`,
-  `oracleBest_attained`).
-- `Verified/Hsmm/Bellman.lean` — the backward Bellman recurrence
-  (`bestFrom`, choice-for-choice mirror of the enumerator) with
-  `bestFrom_eq` / `oracleBest_eq_bestFrom` proved: because `Score.add`
-  distributes over `Score.max`, "max over all segmentations" factors
-  through the first segment's choice.
-- `Verified/Hsmm/Forward.lean` — the **Viterbi principle**, proved: the
-  forward DP `bestEnd P s m` (best over segmentations of `[0, m)` whose
-  last segment has state exactly `s` — the parameterisation that lets
-  transitions be paid at segment starts, as the trellis does) satisfies
-  `forwardBest_eq_oracleBest`. The proof runs through a reversed-list
-  representation (`scoreRev`, bridged to the spec score by the snoc
-  lemma `scoreAux_append_single`) and reversal-closure of the
-  enumeration (`adjDistinct_reverse` et al.).
-- `Verified/Hsmm/Viterbi.lean` — the trellis, a faithful port of the TS loop
-  order and strict-`>` tie-breaks. Two deliberate contract changes: degenerate
-  input returns `none` (TS silently returns an all-`states[0]` path), and a
-  broken backtrack chain returns `none` (TS leaves minutes unfilled).
-- `Verified/Hsmm/Tests.lean` — `#guard` parity checks (trellis vs oracle,
-  ~78 seeded instances with hard `-∞` zeros) that run inside `lake build`:
-  the build fails if the trellis ever disagrees with the spec's oracle.
-- `Main.lean` / `lean/experiments/compare.mjs` — a JSON stdin/stdout decode
-  CLI and a TS↔Lean parity harness: 42 seeded problems decoded by both
-  `dist/hmm/hsmm-viterbi.js` and the Lean binary, re-scored by an independent
-  referee in the harness. All agree exactly — identical paths, identical best
-  scores, including a day-scale problem (T=1440, S=8, maxD=120) and
-  degenerate all-`-∞` cases.
-
-Integer scores are the deliberate v0 substrate: integers are exact in IEEE
-doubles, so TS and Lean agree bit-for-bit and every lemma is provable without
-a float model. The float bridge is its own later phase.
+Integer scores are the deliberate substrate: integers are exact in IEEE
+doubles, so TS and Lean agree bit-for-bit and every lemma is provable
+without a float model. Floats are bridged by quantising at the tensor
+boundary (×2²⁰ — measured lossless on every real day so far), never by
+porting float arithmetic.
 
 ## Phases
 
@@ -172,8 +138,13 @@ a float model. The float bridge is its own later phase.
   cell-by-cell during export, refusing if it doesn't hold) as
   `durClass`/`durDelta`. With both, the corpus is EXACT under the C4
   flag set too, quantisation still lossless. CI got nix so `verify`'s
-  lean-check runs there as well. Remaining V2: UI surfacing (a
-  dev-footer badge) once the cron metric has soaked.
+  lean-check runs there as well. **Deployed 2026-07-18 and
+  soak-verified in production**: a manual decode-recent run on live
+  prod data (C4 flags on) logged `lean-shadow <date> EXACT
+  float↔quant 100.00% scoreΔ 0` for all 7 window days — including
+  days never captured in any fixture. ~50 s/day on the pod, ~6 min per
+  nightly window (deadline 1800 s). Remaining V2: UI surfacing (a
+  dev-footer badge) once the nightly metric has soaked ~a week.
 - **V3 — rail-snap. Boundary probed; pilot in progress.** The measured
   shape (railsnap fixture, real corridor): the built graph is ~22k
   vertices / 55k edges (1–2MB exported, TS Dijkstra 5ms), edge weights

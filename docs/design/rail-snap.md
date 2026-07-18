@@ -69,6 +69,11 @@ recordings that predate the coordinate fields skip the retry.
 The frontend renders a `snappedPath` as a distinct dashed polyline so
 it reads as inferred, not measured.
 
+A verified Lean port of the shortest-path core (V3 of
+[`../proposals/2026-07-verified-core-lean.md`](../proposals/2026-07-verified-core-lean.md))
+is in progress under `lean/Verified/Rail/`; production behaviour is
+unchanged until that lands.
+
 ## Testing
 
 `tests/railsnap-e2e.test.ts` runs the snapper against a captured
