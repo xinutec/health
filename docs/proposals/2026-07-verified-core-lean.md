@@ -183,9 +183,21 @@ porting float arithmetic.
   swallow-over-wrong contract. Remaining, in the incremental-upgrade
   spirit: the completeness direction ("the checker never fires on a
   real run" — `none ⟺ disconnected` needs the algorithm invariants;
-  today it's `#guard`- and harness-pinned), and the snap contract layer
-  above the search (label parsing, station resolution, refusal paths,
-  time interpolation).
+  today it's `#guard`- and harness-pinned). The snap contract layer
+  above the search (label parsing, station resolution, refusal gates,
+  time interpolation) **stays in TS for now — deferred, not exempted**.
+  The principle: port a component when Lean can own its *meaning*, not
+  just mimic its bytes. The float geometry (centroids, nearest-vertex,
+  interpolation, gate thresholds) waits for the V4 arithmetic substrate
+  — integer micro-degree coordinates or Mathlib ℝ with explicit
+  ε-budgets — at which point the gates become verified postconditions
+  for free. Label parsing waits for an *authority flip*: porting
+  `parseRailWayName` today would mean bit-matching JS UTF-16 string
+  semantics on unicode-bearing labels (the ` → ` separator itself) —
+  verifying against the wrong spec. Instead the Lean core will
+  eventually define the label grammar and both generate and parse it,
+  making TS the conforming side. Everything here graduates into the
+  core on the V4/V5 arc; nothing is permanently TS except effects.
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
   two comment-proofs (grid exactness, lazy-Dijkstra refinement) become
   theorems; the honesty guards become verified postconditions.
