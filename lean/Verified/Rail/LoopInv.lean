@@ -862,4 +862,205 @@ theorem loop_spec (g : Graph) (src dst : Nat) (hwf : WFEdges g) :
           rw [relaxAll_done]
           exact hmono2 v hv
 
+/-! ## Rebuilding the path
+
+The ghost ranks make the `prev` walk terminate without repeating: every
+hop strictly descends `pos`, every visited vertex is settled, and each
+hop's recorded edge telescopes the cost. The walk's cost lands `≤ D`; the
+exact `= D` comes later from `cut_bound` — the certificate corrects any
+cheaper parallel edge the recorded hop missed. -/
+
+private theorem pathCost_singleton (g : Graph) (v : Nat) : pathCost g [v] = some 0 := rfl
+
+private theorem rebuild_walk {g : Graph} {src : Nat} {st : DState}
+    {pos : Nat → Nat} {c : Nat} {dstv D : Nat}
+    (hgtree : TreeGhost g src st pos c)
+    (hD : st.dist.getD dstv none = some D) :
+    ∀ (fuel v d : Nat) (acc : List Nat) (C : Nat),
+      v < g.n → st.done.getD v false = true → st.dist.getD v none = some d →
+      pos v + 1 ≤ fuel →
+      (v :: acc).getLast? = some dstv →
+      nodupB (v :: acc) = true →
+      (∀ x ∈ acc, x < g.n ∧ st.done.getD x false = true ∧ pos v < pos x) →
+      pathCost g (v :: acc) = some C → C + d ≤ D →
+      acc.length + pos v + 1 ≤ c →
+      ∃ p C', rebuild st.prev g.n fuel v acc = some p ∧
+        p.head? = some src ∧ p.getLast? = some dstv ∧
+        pathCost g p = some C' ∧ C' ≤ D ∧ nodupB p = true ∧ p.length ≤ c
+  | 0, v, d, acc, C => fun _ _ _ hfuel _ _ _ _ _ _ => by omega
+  | fuel + 1, v, d, acc, C => fun hvn hvdone hvd hfuel hlast hnd hacc hcost hCd hlen => by
+    simp only [rebuild]
+    obtain ⟨hsent, hstep⟩ := hgtree.2 v hvn d hvd
+    by_cases hpv : st.prev.getD v g.n = g.n
+    · -- Sentinel: this is the source, cost telescope complete.
+      rw [if_pos hpv]
+      obtain ⟨hvsrc, hd0⟩ := hsent hpv
+      refine ⟨v :: acc, C, rfl, ?_, hlast, hcost, by omega, hnd, ?_⟩
+      · rw [hvsrc]
+        rfl
+      · rw [List.length_cons]
+        omega
+    · rw [if_neg hpv]
+      obtain ⟨hun, hud, hpp, w, du, hmem, hdu, hsum⟩ := hstep hpv
+      obtain ⟨wm, hwm, hwmle⟩ := edgeMinW_le_of_mem hmem
+      have hcost' : pathCost g (st.prev.getD v g.n :: v :: acc) = some (wm + C) := by
+        simp only [pathCost_cons_cons, hwm, hcost]
+      have hnotmem : ∀ x ∈ v :: acc, st.prev.getD v g.n ≠ x := by
+        intro x hx
+        rcases List.mem_cons.mp hx with rfl | hxa
+        · exact fun he => absurd (he ▸ hpp) (Nat.lt_irrefl _)
+        · obtain ⟨_, _, hvx⟩ := hacc x hxa
+          intro he
+          have hpp' := he ▸ hpp
+          omega
+      have hnd' : nodupB (st.prev.getD v g.n :: v :: acc) = true := by
+        rw [nodupB_cons, Bool.and_eq_true]
+        refine ⟨?_, hnd⟩
+        rw [Bool.not_eq_true']
+        cases hb : (v :: acc).contains (st.prev.getD v g.n) with
+        | false => rfl
+        | true =>
+          have hm := List.contains_iff_mem.mp hb
+          exact absurd rfl (hnotmem _ hm)
+      have hacc' : ∀ x ∈ v :: acc, x < g.n ∧ st.done.getD x false = true ∧
+          pos (st.prev.getD v g.n) < pos x := by
+        intro x hx
+        rcases List.mem_cons.mp hx with rfl | hxa
+        · exact ⟨hvn, hvdone, hpp⟩
+        · obtain ⟨h1, h2, h3⟩ := hacc x hxa
+          exact ⟨h1, h2, by omega⟩
+      have hlast' : (st.prev.getD v g.n :: v :: acc).getLast? = some dstv := by
+        rw [List.getLast?_cons_cons]
+        exact hlast
+      exact rebuild_walk hgtree hD fuel (st.prev.getD v g.n) du (v :: acc) (wm + C)
+        hun hud hdu (by omega) hlast' hnd' hacc' hcost' (by omega)
+        (by rw [List.length_cons]; omega)
+
+/-- Walking `prev` from any settled vertex succeeds within the `n + 1`
+fuel, producing a nodup `src → dstv` path costing at most the settled
+distance. -/
+theorem rebuild_spec {g : Graph} {src L dstv D : Nat} {st : DState}
+    (hcore : InvCore g src L st) (hdone : st.done.getD dstv false = true)
+    (hD : st.dist.getD dstv none = some D) :
+    ∃ p C, rebuild st.prev g.n (g.n + 1) dstv [] = some p ∧
+      p.head? = some src ∧ p.getLast? = some dstv ∧
+      pathCost g p = some C ∧ C ≤ D ∧ nodupB p = true ∧ p.length ≤ g.n := by
+  obtain ⟨pos, c, hc, gpos, gtree⟩ := hcore.tree
+  have hdn := hcore.done_lt dstv hdone
+  have hcn : c ≤ g.n := by
+    have h1 : doneCount g st ≤ g.n := by
+      unfold doneCount
+      have h2 := List.length_filter_le (fun v => st.done.getD v false) (List.range g.n)
+      rw [List.length_range] at h2
+      exact h2
+    omega
+  obtain ⟨p, C', hreb, hhead, hlast, hcost, hCle, hnd, hplen⟩ :=
+    rebuild_walk ⟨gpos, gtree⟩ hD (g.n + 1) dstv D [] 0
+      hdn hdone hD
+      (by have := gpos dstv hdone; omega)
+      rfl rfl
+      (fun x hx => nomatch hx)
+      (pathCost_singleton g dstv)
+      (by omega)
+      (by have := gpos dstv hdone; simp only [List.length_nil]; omega)
+  exact ⟨p, C', hreb, hhead, hlast, hcost, hCle, hnd, by omega⟩
+
+/-! ## The certificate passes on a legitimate exit -/
+
+/-- The final `done`/`dist` arrays form a feasible cut. At the `dst` early
+exit, `dst`'s own edges are covered not by relaxation but by every settled
+price being `≤ D` (the floor); everywhere else the relaxation clause and
+the no-cheap-unsettled fact close the two branches. -/
+private theorem feasibleCut_exit {g : Graph} {src L D dst : Nat} {st : DState}
+    (hwf : WFEdges g) (hcore : InvCore g src L st)
+    (hexc : RelaxedExcept g dst st)
+    (hdd : st.dist.getD dst none = some D)
+    (hcase : D = L ∨ RelaxedAt g st dst)
+    (hnocheap : ∀ v, v < g.n → st.done.getD v false = false →
+      ∀ d', st.dist.getD v none = some d' → D ≤ d') :
+    feasibleCut g st.done st.dist D = true := by
+  unfold feasibleCut
+  rw [List.all_eq_true]
+  intro u hu
+  have hun := List.mem_range.mp hu
+  cases hd : st.done.getD u false with
+  | false => rfl
+  | true =>
+    obtain ⟨du, hdu, hdule⟩ := hcore.done_le u hd
+    rw [hdu]
+    simp only [Bool.not_true, Bool.false_or]
+    rw [List.all_eq_true]
+    intro tw htw
+    rw [Bool.and_eq_true]
+    have htn := hwf u hun tw htw
+    refine ⟨decide_eq_true htn, ?_⟩
+    -- Either u's edges are relaxed, or u is dst priced at the floor.
+    have hedge : (∃ dv, st.dist.getD tw.1 none = some dv ∧ dv ≤ du + tw.2) ∨
+        (du = D ∧ D = L) := by
+      by_cases hud : u = dst
+      · rcases hcase with hDL | hrat
+        · right
+          rw [hud] at hdu
+          exact ⟨Option.some.inj (hdu.symm.trans hdd), hDL⟩
+        · left
+          rw [hud] at hdu htw
+          exact hrat du hdu tw htw
+      · left
+        exact hexc u hd hud du hdu tw htw
+    by_cases hdv : st.done.getD tw.1 false = true
+    · rw [if_pos hdv]
+      rcases hedge with ⟨dv, hdvd, hdvle⟩ | ⟨hduD, hDL⟩
+      · rw [hdvd]
+        exact decide_eq_true hdvle
+      · obtain ⟨dv, hdvd, hdvle⟩ := hcore.done_le tw.1 hdv
+        rw [hdvd]
+        exact decide_eq_true (by omega)
+    · rw [if_neg hdv]
+      have hdvf : st.done.getD tw.1 false = false := by
+        cases hb : st.done.getD tw.1 false with
+        | false => rfl
+        | true => exact absurd hb hdv
+      rcases hedge with ⟨dv, hdvd, hdvle⟩ | ⟨hduD, hDL⟩
+      · have := hnocheap tw.1 htn hdvf dv hdvd
+        exact decide_eq_true (by omega)
+      · exact decide_eq_true (by omega)
+
+/-- On any exit state that keeps the invariant, the rebuilt path passes
+the full certificate — `cut_bound` closes the gap between the walk's
+`≤ D` cost and the exact `= D` the checker demands. -/
+theorem exit_certify {g : Graph} {src dst L D : Nat} {st : DState} (hwf : WFEdges g)
+    (hcore : InvCore g src L st)
+    (hsrcdone : st.done.getD src false = true)
+    (hdstdone : st.done.getD dst false = true)
+    (hdd : st.dist.getD dst none = some D)
+    (hexc : RelaxedExcept g dst st)
+    (hcase : D = L ∨ RelaxedAt g st dst)
+    (hnocheap : ∀ v, v < g.n → st.done.getD v false = false →
+      ∀ d', st.dist.getD v none = some d' → D ≤ d') :
+    ∃ p, rebuild st.prev g.n (g.n + 1) dst [] = some p ∧
+      certify g src dst st.done st.dist D p = true := by
+  obtain ⟨p, C, hreb, hhead, hlast, hcost, hCle, hnd, hplen⟩ := rebuild_spec hcore hdstdone hdd
+  have hfeas := feasibleCut_exit hwf hcore hexc hdd hcase hnocheap
+  have hlow := cut_bound hfeas hdd p src 0 C hhead hlast hcost hsrcdone hcore.src_lt
+    hcore.src_zero
+  have hCD : C = D := by omega
+  refine ⟨p, hreb, ?_⟩
+  have hvalid : isValidPath g src dst p = true := by
+    cases p with
+    | nil => cases hhead
+    | cons a rest =>
+      have ha : a = src := by simpa using hhead
+      simp only [isValidPath, Bool.and_eq_true]
+      refine ⟨⟨?_, ?_⟩, ?_⟩
+      · rw [ha]
+        exact beq_self_eq_true src
+      · rw [List.getLast!_of_getLast? hlast]
+        exact beq_self_eq_true dst
+      · rw [hcost]
+        rfl
+  simp only [certify, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
+  refine ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hvalid, hhead⟩, hlast⟩, ?_⟩, hnd⟩, by omega⟩, hcore.src_lt⟩,
+    hcore.src_zero⟩, hdd⟩, hsrcdone⟩, hfeas⟩
+  rw [hcost, hCD]
+
 end Verified.Rail

@@ -281,7 +281,7 @@ private theorem feasibleCut_spec {g : Graph} {done : Array Bool}
 lower-bound the cost of **every** path from a settled, correctly-priced
 vertex to `dst` — walk the path while it stays settled (chaining the
 no-shortcut inequality), and the first crossing edge already costs `≥ D`. -/
-private theorem cut_bound {g : Graph} {done : Array Bool} {dist : Array (Option Nat)}
+theorem cut_bound {g : Graph} {done : Array Bool} {dist : Array (Option Nat)}
     {D : Nat} {dst : Nat} (hfeas : feasibleCut g done dist D = true)
     (hdst : dist.getD dst none = some D) :
     ∀ (p : List Nat) (u du C : Nat), p.head? = some u → p.getLast? = some dst →

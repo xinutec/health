@@ -136,9 +136,8 @@ front-first (the TS builds reversed and flips; same result). -/
 def rebuild (prev : Array Nat) (n : Nat) : Nat → Nat → List Nat → Option (List Nat)
   | 0, _, _ => none
   | fuel + 1, v, acc =>
-    let pv := prev.getD v n
-    if pv = n then some (v :: acc)
-    else rebuild prev n fuel pv (v :: acc)
+    if prev.getD v n = n then some (v :: acc)
+    else rebuild prev n fuel (prev.getD v n) (v :: acc)
 
 /-- Run the search to completion and return the final working state —
 the substrate both `dijkstra` and the certified wrapper read from. -/
