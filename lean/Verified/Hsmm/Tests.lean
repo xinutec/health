@@ -1,0 +1,73 @@
+import Verified.Hsmm.Viterbi
+import Verified.Hsmm.Oracle
+
+/-!
+# Compile-time parity checks: trellis vs brute-force oracle
+
+Every `#guard` here is evaluated during `lake build` — the build FAILS if the
+trellis ever disagrees with the exhaustive oracle on these instances. This is
+the executable stand-in for the equivalence theorem until it is proved.
+
+The check is tie-break-independent: rather than comparing paths (two optimal
+paths may differ), it demands (1) the trellis's best score equals the oracle's
+best score, (2) the trellis's returned path actually achieves that score, and
+(3) the path's segmentation is well-formed.
+-/
+
+namespace Verified.Hsmm.Tests
+
+/-- The decoder contract, checked executably against the oracle. -/
+def check (P : Problem) : Bool :=
+  match viterbi P with
+  | none => oracleBest P == Score.negInf
+  | some r =>
+    r.best == oracleBest P
+      && score P (ofPath r.path.toList) == r.best
+      && wellFormed P (ofPath r.path.toList)
+      && r.path.size == P.T
+
+/-- Deterministic pseudo-random problem family (no I/O, no clock — a seeded
+integer hash), with hard `-∞` zeros sprinkled through every factor. -/
+def mkP (seed T S maxD : Nat) : Problem where
+  T := T
+  S := S
+  maxD := maxD
+  emit := fun t s =>
+    if (t * 31 + s * 17 + seed) % 11 == 0 then .negInf
+    else .val (Int.ofNat ((t * 13 + s * 7 + seed * 5) % 23) - 11)
+  trans := fun sp s t =>
+    if (sp * 29 + s * 23 + t * 19 + seed) % 13 == 0 then .negInf
+    else .val (Int.ofNat ((sp * 11 + s * 3 + t + seed) % 17) - 8)
+  dur := fun s d e =>
+    if (s * 7 + d * 5 + e + seed) % 19 == 0 then .negInf
+    else .val (Int.ofNat ((s * 5 + d * 3 + seed) % 9) - 4)
+  init := fun s => .val (Int.ofNat ((s + seed) % 5) - 2)
+  entry := fun s t =>
+    if (s * 13 + t * 11 + seed) % 17 == 0 then .negInf
+    else .val (Int.ofNat ((s * 3 + t * 2 + seed) % 7) - 3)
+
+-- Hand-shaped smoke cases.
+#guard check (mkP 0 1 1 1)
+#guard check (mkP 1 1 3 2)
+#guard check (mkP 2 4 1 4)
+-- Degenerate shapes: an empty window decodes to the empty path; an empty
+-- state space or zero duration cap cannot cover a non-empty window.
+#guard (viterbi (mkP 0 0 3 2)) == some ⟨#[], Score.zero⟩
+#guard (viterbi (mkP 0 4 0 2)) == none
+#guard (viterbi (mkP 0 4 3 0)) == none
+-- A duration cap below the window length forces multi-segment paths.
+#guard check (mkP 3 5 2 2)
+-- Sweeps: many seeds across small shapes (kept tiny — the oracle is
+-- exponential in T).
+#guard (List.range 25).all fun seed => check (mkP seed 4 2 2)
+#guard (List.range 25).all fun seed => check (mkP seed 5 3 3)
+#guard (List.range 15).all fun seed => check (mkP seed 6 2 4)
+#guard (List.range 10).all fun seed => check (mkP seed 6 4 2)
+-- All-blocked family: every transition -∞, so any T > maxD window with S ≥ 1
+-- has no multi-segment escape once a single segment cannot cover it.
+#guard
+  let blocked : Problem :=
+    { mkP 0 5 2 3 with trans := fun _ _ _ => .negInf }
+  check blocked
+
+end Verified.Hsmm.Tests

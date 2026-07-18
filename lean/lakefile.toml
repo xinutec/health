@@ -1,0 +1,12 @@
+name = "verified"
+defaultTargets = ["Verified", "verified_cli"]
+
+# No lean-toolchain file on purpose: the toolchain is pinned by the repo flake
+# (nix develop provides lean/lake), not by elan.
+
+[[lean_lib]]
+name = "Verified"
+
+[[lean_exe]]
+name = "verified_cli"
+root = "Main"

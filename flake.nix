@@ -18,6 +18,7 @@
           packages = [
             pkgs.nodejs_24 # backend (Hono) + Angular 22 frontend (needs >=24.15)
             pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
+            pkgs.lean4 # verified core (lean/) — includes lake; toolchain comes from nix, not elan
           ];
         };
       });

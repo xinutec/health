@@ -46,3 +46,6 @@ tests/fixtures/route-graphs/
 # road-vehicle segments, and the OSM drivable-road geometry around them.
 # Real coords / journeys — local only. Captured by capture-roadmatch-fixture.js.
 tests/fixtures/roadmatch/
+
+# Lean build artifacts (lean/ verified core)
+lean/.lake/
