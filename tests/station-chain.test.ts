@@ -68,6 +68,20 @@ const CARFAX = { lat: 51.5226, lon: -0.1571 };
 const EASTCARFAX = { lat: 51.5226, lon: -0.15277 };
 const FARVALE = { lat: 51.5067, lon: -0.1428 };
 
+/** Ashvale→Brookden ≈ 7.05 km, Brookden→Carfax ≈ 3.21 km (haversine). */
+const AB_KM = 7.05;
+const BC_KM = 3.21;
+
+/** Point on the Ashvale—Brookden—Carfax track at `sKm` along it. */
+function alongTrack(sKm: number): { lat: number; lon: number } {
+	const lerp = (a: { lat: number; lon: number }, b: { lat: number; lon: number }, t: number) => ({
+		lat: a.lat + t * (b.lat - a.lat),
+		lon: a.lon + t * (b.lon - a.lon),
+	});
+	if (sKm <= AB_KM) return lerp(ASHVALE, BROOKDEN, sKm / AB_KM);
+	return lerp(BROOKDEN, CARFAX, (sKm - AB_KM) / BC_KM);
+}
+
 /** EastCarfax (300 m from Carfax on the same Met track) exists only in
  *  the ambiguity scenario — with it in the graph, "alight EastCarfax and
  *  walk" is genuinely indistinguishable from "alight Carfax", which is
@@ -199,6 +213,54 @@ describe("resolveStationChain", () => {
 		const segments = [seg(0, 5, "stationary"), seg(5, 23, "train", "unknown_rail"), seg(23, 27, "walking")];
 		const resolved = resolveStationChain({ segments, observations, routeGraph: graph });
 		expect(resolved.size).toBe(0);
+	});
+
+	it("recovers the true down-line alight from in-leg progression when the anchor is a stale jump-back", () => {
+		// The 2026-07-16 morning class: the ride's fixes track down the line
+		// (Ashvale → past Brookden → two-thirds of the way to Carfax), then
+		// the last in-leg fix AND the post-leg reacquire fix jump BACK to the
+		// stale Brookden position. The anchor asserts Brookden; the
+		// trajectory asserts Carfax. Brookden is also dwell-disqualified
+		// (the ride passed it 6 minutes before the leg end), and Carfax is
+		// outside the anchor's candidate radius — only trajectory admission
+		// and the trajectory-coherence term can recover it.
+		const graph = buildScenarioGraph();
+		const observations = buildObservations(27, [
+			{ from: 0, to: 5, at: ASHVALE, speedKmh: 2 },
+			// On-track progression consistent with one Ashvale → Carfax ride
+			// at ~34 km/h (0.567 km/min from the leg start at minute 5).
+			{ from: 8, to: 9, at: alongTrack(1.7), speedKmh: 34 },
+			{ from: 10, to: 11, at: alongTrack(2.83), speedKmh: 34 },
+			{ from: 12, to: 13, at: alongTrack(3.97), speedKmh: 34 },
+			{ from: 14, to: 15, at: alongTrack(5.1), speedKmh: 34 },
+			{ from: 16, to: 17, at: alongTrack(6.23), speedKmh: 34 },
+			{ from: 17, to: 18, at: BROOKDEN, speedKmh: 34 },
+			{ from: 21, to: 22, at: alongTrack(8.97), speedKmh: 34 },
+			// Stale jump-back: re-emission of the Brookden position.
+			{ from: 22, to: 23, at: BROOKDEN, speedKmh: 0 },
+			{ from: 23, to: 27, at: BROOKDEN, speedKmh: 0 },
+		]);
+		const segments = [seg(0, 5, "stationary"), seg(5, 23, "train", "Metropolitan Line"), seg(23, 27, "walking")];
+		const resolved = resolveStationChain({ segments, observations, routeGraph: graph });
+		expect(resolved.get(1)).toEqual({ board: "Ashvale", alight: "Carfax" });
+	});
+
+	it("emits no alight when in-leg evidence is too thin to out-vote a stale anchor", () => {
+		// Same stale-anchor shape, but only two in-leg fixes — not enough
+		// for a trajectory fit. The passed-through Brookden is
+		// dwell-disqualified and Carfax has no supporting channel, so the
+		// honest answer is null, not a guess.
+		const graph = buildScenarioGraph();
+		const observations = buildObservations(27, [
+			{ from: 0, to: 5, at: ASHVALE, speedKmh: 2 },
+			{ from: 17, to: 18, at: BROOKDEN, speedKmh: 34 },
+			{ from: 21, to: 22, at: alongTrack(8.97), speedKmh: 34 },
+			{ from: 23, to: 27, at: BROOKDEN, speedKmh: 0 },
+		]);
+		const segments = [seg(0, 5, "stationary"), seg(5, 23, "train", "Metropolitan Line"), seg(23, 27, "walking")];
+		const resolved = resolveStationChain({ segments, observations, routeGraph: graph });
+		expect(resolved.get(1)?.board).toBe("Ashvale");
+		expect(resolved.get(1)?.alight ?? null).toBeNull();
 	});
 
 	it("resolves nothing when no station is near a fresh anchor", () => {

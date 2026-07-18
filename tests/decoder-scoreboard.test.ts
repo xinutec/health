@@ -130,6 +130,18 @@ describe("scoreStations", () => {
 		expect(s).toEqual({ stationsAsserted: 0, stationsMatching: 0, stationsMissing: 0 });
 	});
 
+	it("a neighbouring ride's boundary sliver cannot convict: sub-majority overlap is missing", () => {
+		// The truth's second ride (3–13) brushes the decoder's FIRST ride
+		// (which ends at 4) by one boundary minute. That decoder leg
+		// represents the previous ride, not this one — matching it here
+		// would score its stations as "wrong" off pure boundary slop
+		// (same rationale as countPhantomRides' majority rule).
+		const s = scoreStations(gt({ from: "Ashvale", to: "Carfax" }), [
+			decJourney([{ s: 0, e: 4, mode: "train", board: "Deepwell", alight: "Ashvale" }]),
+		]);
+		expect(s).toEqual({ stationsAsserted: 1, stationsMatching: 0, stationsMissing: 1 });
+	});
+
 	it("picks the best-overlapping decoder leg when the ride is fragmented", () => {
 		// Fragmented decode: a 2-min head + the 7-min body. The body has the
 		// right stations; the head must not shadow it.

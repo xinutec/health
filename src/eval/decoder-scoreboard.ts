@@ -63,7 +63,11 @@ export function scoreStations(gtJourneys: readonly Journey[], decJourneys: reado
 	return { stationsAsserted, stationsMatching, stationsMissing };
 }
 
-/** The same-mode decoder leg with the most temporal overlap, or null. */
+/** The same-mode decoder leg with the most temporal overlap, or null.
+ *  The overlap must cover a MAJORITY of the truth leg — a neighbouring
+ *  ride brushing the boundary by a minute does not represent this leg,
+ *  and matching it would convict its stations on pure boundary slop
+ *  (the same rationale as `countPhantomRides`' majority rule). */
 function bestOverlappingLeg(gt: Leg, decLegs: readonly Leg[]): Leg | null {
 	let best: Leg | null = null;
 	let bestOv = 0;
@@ -75,7 +79,7 @@ function bestOverlappingLeg(gt: Leg, decLegs: readonly Leg[]): Leg | null {
 			best = d;
 		}
 	}
-	return best;
+	return bestOv * 2 > gt.endTs - gt.startTs ? best : null;
 }
 
 /** Vehicle modes — a phantom "ride" is one of these; walking is not a

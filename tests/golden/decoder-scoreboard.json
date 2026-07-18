@@ -127,8 +127,8 @@
 		"legLineScorable": 2,
 		"legLineMatching": 2,
 		"stationsAsserted": 4,
-		"stationsMatching": 0,
-		"stationsMissing": 4,
+		"stationsMatching": 1,
+		"stationsMissing": 3,
 		"phantomRides": 1
 	}
 }

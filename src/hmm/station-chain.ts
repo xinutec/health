@@ -32,17 +32,31 @@
  *     over: alight(N−1) at/near board(N), or a transfer walkable within
  *     the observed gap. This is what recovers an interchange the GPS
  *     never saw.
+ *   - **Trajectory coherence (v2).** In-leg fixes projected onto the
+ *     line's own track vote on each side: for a candidate, the fixes'
+ *     along-line distances to it must fall to ~zero at the leg boundary.
+ *     A Theil–Sen fit (median of pairwise slopes) extrapolates the
+ *     approach, so a MINORITY of corrupted fixes — the stale
+ *     reacquire jump-back class — cannot steer it, and a candidate the
+ *     ride sailed past extrapolates kilometres NEGATIVE and pays.
+ *     Trajectory also ADMITS candidates the anchor cannot see: stations
+ *     along-line reachable from a near-boundary on-track fix within the
+ *     remaining ride time (the anchor may be km-wrong; the track isn't).
  *
  * A small Viterbi over pairs per journey maximises the joint score;
  * emission is **confidence-gated per side** via max-marginals: a side is
  * emitted only when every alternative station is at least `MARGIN_NATS`
  * worse (the scoreboard treats a wrong station as worse than a missing
- * one, so ambiguity must yield null, not a guess).
+ * one, so ambiguity must yield null, not a guess), at least one evidence
+ * channel (anchor or trajectory) actively supports the winner, and the
+ * winner is not terminal-dwell-disqualified (fixes prove the ride passed
+ * it mid-leg).
  *
  * Pure module. No DB, no IO, no flags.
  */
 
-import type { RouteGraph, RouteNode } from "../geo/route-graph.js";
+import { projectPointToSegment } from "../geo/map-match-core.js";
+import type { RouteEdge, RouteGraph, RouteNode } from "../geo/route-graph.js";
 import { nodeKey } from "../geo/route-graph.js";
 import type { Observation } from "./observation.js";
 import type { HmmSegment } from "./persist.js";
@@ -110,6 +124,36 @@ const BOUNDARY_UNOBSERVED_MIN = 5;
  *  candidate (typically: the leg's line label is wrong, so the true
  *  station was never in the candidate set). Emit nothing. */
 const ABS_ANCHOR_FLOOR = -4;
+/** An in-leg fix further off the line's track than this does not project
+ *  onto the trajectory (surface street reacquires, scatter). */
+const TRAJ_OFFLINE_MAX_M = 400;
+/** A trajectory fit needs at least this many on-track fixes spanning at
+ *  least this long — below it, the term asserts nothing. */
+const TRAJ_MIN_FIXES = 4;
+const TRAJ_MIN_SPAN_MIN = 5;
+/** The fit only asserts a boundary within this extrapolation horizon of
+ *  the nearest on-track fix — a leg dark near its boundary is dark
+ *  (C4.2 discipline), no matter how clean the earlier progression. */
+const TRAJ_MAX_EXTRAP_MIN = 4;
+/** σ floor (m) on the predicted boundary miss; widened by the fit's own
+ *  residual spread so a polluted fit asserts weakly. */
+const TRAJ_SIGMA_BASE_M = 500;
+const TRAJ_MAD_SCALE = 2.5;
+const TRAJ_CLAMP = -6;
+/** Trajectory support strong enough to rescue a side whose anchor is
+ *  contradicted (the corrupted-reacquire case): the predicted miss must
+ *  be within ~1.7σ. */
+const TRAJ_SUPPORT_FLOOR = -1.5;
+/** Trajectory candidate admission: an on-track fix within this many
+ *  minutes of the leg boundary admits stations along-line reachable at
+ *  an upper-bound tube pace in the time that remains. */
+const TRAJ_ADMIT_WINDOW_MIN = 6;
+const TRAJ_ADMIT_SPEED_M_PER_MIN = 1_000;
+/** A side whose winner carries a terminal-dwell penalty past this is
+ *  disqualified outright: fixes prove the ride passed it minutes before
+ *  the boundary, so however good its anchor looks, it is not the
+ *  boundary station (the stale-anchor-at-a-passed-station class). */
+const DWELL_DISQUALIFY = -3;
 
 export interface ResolvedStations {
 	board: string | null;
@@ -176,8 +220,16 @@ interface SideCandidate {
  *  nodes (entrances, merged endpoints), and the margin gate compares
  *  stations, not nodes. Keeps the best-scoring node per name. A missing
  *  anchor admits every station on the line with a flat penalty — the
- *  chain and duration terms then carry the choice. */
-function sideCandidates(routeGraph: RouteGraph, line: string, anchor: Anchor | null): SideCandidate[] {
+ *  chain and duration terms then carry the choice. Trajectory-admitted
+ *  stations (`extra`) join AFTER the anchor-plausibility cap — an
+ *  anchor-implausible candidate the track vouches for must not be
+ *  crowded out; that is the point of trajectory admission. */
+function sideCandidates(
+	routeGraph: RouteGraph,
+	line: string,
+	anchor: Anchor | null,
+	extra: readonly RouteNode[],
+): SideCandidate[] {
 	const byName = new Map<string, SideCandidate>();
 	const admit = (node: RouteNode, anchorPenalty: number): void => {
 		const name = node.stationName;
@@ -200,21 +252,31 @@ function sideCandidates(routeGraph: RouteGraph, line: string, anchor: Anchor | n
 	}
 	const all = [...byName.values()];
 	all.sort((a, b) => b.anchorPenalty - a.anchorPenalty);
-	return all.slice(0, MAX_CANDIDATES_PER_SIDE);
+	const merged = new Map<string, SideCandidate>();
+	for (const c of all.slice(0, MAX_CANDIDATES_PER_SIDE)) merged.set(c.node.stationName ?? "", c);
+	for (const node of extra) {
+		const name = node.stationName;
+		if (name === undefined || merged.has(name)) continue;
+		const anchorPenalty =
+			anchor === null
+				? 0
+				: slopZPenalty(
+						haversineMeters(anchor.lat, anchor.lon, node.point.lat, node.point.lon),
+						STATION_SIGMA_M,
+						anchor.slopMin,
+						ANCHOR_CLAMP,
+					);
+		merged.set(name, { node, anchorPenalty });
+	}
+	return [...merged.values()];
 }
 
-/** Shortest along-line path length (m) between two stations' footprints
- *  on `line`'s edge subgraph, or null when unreachable. Dijkstra over
- *  the line's own edges — doubles as the connectivity constraint. */
-function linePathMeters(routeGraph: RouteGraph, line: string, from: RouteNode, to: RouteNode): number | null {
-	const start = stationFootprintNodes(routeGraph, from);
-	const goal = stationFootprintNodes(routeGraph, to);
-	if (start.size === 0 || goal.size === 0) return null;
-	for (const id of start) if (goal.has(id)) return 0;
-
-	const dist = new Map<string, number>();
+/** Dijkstra over `line`'s own edges from arbitrary seed nodes (node id →
+ *  initial distance, m). Returns distances for every reached node.
+ *  Linear-scan extraction — line subgraphs are small. */
+function lineSssp(routeGraph: RouteGraph, line: string, seeds: ReadonlyMap<string, number>): Map<string, number> {
+	const dist = new Map<string, number>(seeds);
 	const done = new Set<string>();
-	for (const id of start) dist.set(id, 0);
 	for (;;) {
 		let bestId: string | null = null;
 		let bestD = Number.POSITIVE_INFINITY;
@@ -224,8 +286,7 @@ function linePathMeters(routeGraph: RouteGraph, line: string, from: RouteNode, t
 				bestId = id;
 			}
 		}
-		if (bestId === null) return null;
-		if (goal.has(bestId)) return bestD;
+		if (bestId === null) return dist;
 		done.add(bestId);
 		const node = routeGraph.nodes.get(bestId);
 		if (node === undefined) continue;
@@ -243,15 +304,187 @@ function linePathMeters(routeGraph: RouteGraph, line: string, from: RouteNode, t
 	}
 }
 
+/** Shortest along-line path length (m) between two stations' footprints
+ *  on `line`'s edge subgraph, or null when unreachable. Doubles as the
+ *  connectivity constraint. */
+function linePathMeters(routeGraph: RouteGraph, line: string, from: RouteNode, to: RouteNode): number | null {
+	const start = stationFootprintNodes(routeGraph, from);
+	const goal = stationFootprintNodes(routeGraph, to);
+	if (start.size === 0 || goal.size === 0) return null;
+	for (const id of start) if (goal.has(id)) return 0;
+
+	const seeds = new Map<string, number>();
+	for (const id of start) seeds.set(id, 0);
+	const dist = lineSssp(routeGraph, line, seeds);
+	let best: number | null = null;
+	for (const id of goal) {
+		const d = dist.get(id);
+		if (d !== undefined && (best === null || d < best)) best = d;
+	}
+	return best;
+}
+
+/** An in-leg fix projected onto the leg line's track. */
+interface TrackFix {
+	ts: number;
+	edge: RouteEdge;
+	/** Arc distance (m) from the edge geometry's first vertex to the
+	 *  projected point. */
+	alongM: number;
+}
+
+/** Project each in-leg fix onto the nearest point of `line`'s track,
+ *  dropping fixes further than `TRAJ_OFFLINE_MAX_M` off it. Scans the
+ *  line's own edge set directly — `edgesNear`'s grid only indexes
+ *  geometry vertices, which goes blind mid-span of a sparse edge. */
+function projectFixesToLine(routeGraph: RouteGraph, line: string, fixes: readonly InLegFix[]): TrackFix[] {
+	const lineEdges: RouteEdge[] = [];
+	for (const edge of routeGraph.edges.values()) {
+		if (edge.attrs.lineMemberships.has(line)) lineEdges.push(edge);
+	}
+	const out: TrackFix[] = [];
+	for (const f of fixes) {
+		let best: TrackFix | null = null;
+		let bestDist = TRAJ_OFFLINE_MAX_M;
+		for (const edge of lineEdges) {
+			const g = edge.geometry;
+			let arc = 0;
+			for (let i = 1; i < g.length; i++) {
+				const segLen = haversineMeters(g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon);
+				const proj = projectPointToSegment({ lat: f.lat, lon: f.lon }, g[i - 1], g[i]);
+				if (proj.distM < bestDist) {
+					bestDist = proj.distM;
+					best = { ts: f.ts, edge, alongM: arc + proj.t * segLen };
+				}
+				arc += segLen;
+			}
+		}
+		if (best !== null) out.push(best);
+	}
+	return out;
+}
+
+/** Along-line distance (m) from a projected fix to the SSSP's seed
+ *  station, entering the fix's edge at whichever endpoint is closer. */
+function trackFixDistM(sssp: ReadonlyMap<string, number>, tf: TrackFix): number | null {
+	const du = sssp.get(nodeKey(tf.edge.startPoint.lat, tf.edge.startPoint.lon));
+	const dv = sssp.get(nodeKey(tf.edge.endPoint.lat, tf.edge.endPoint.lon));
+	const viaU = du === undefined ? null : du + tf.alongM;
+	const viaV = dv === undefined ? null : dv + Math.max(0, tf.edge.attrs.lengthM - tf.alongM);
+	if (viaU === null) return viaV;
+	if (viaV === null) return viaU;
+	return Math.min(viaU, viaV);
+}
+
+function median(xs: readonly number[]): number {
+	const s = [...xs].sort((a, b) => a - b);
+	const mid = s.length >> 1;
+	return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/** Theil–Sen robust line fit d = v·t + c: slope = median of pairwise
+ *  slopes, intercept and residual scale = medians. A minority of
+ *  corrupted fixes (the stale jump-back class) cannot steer it. */
+function theilSen(pts: readonly { t: number; d: number }[]): { v: number; c: number; madM: number } {
+	const slopes: number[] = [];
+	for (let i = 0; i < pts.length; i++) {
+		for (let j = i + 1; j < pts.length; j++) {
+			if (pts[j].t !== pts[i].t) slopes.push((pts[j].d - pts[i].d) / (pts[j].t - pts[i].t));
+		}
+	}
+	const v = slopes.length === 0 ? 0 : median(slopes);
+	const c = median(pts.map((p) => p.d - v * p.t));
+	const madM = median(pts.map((p) => Math.abs(p.d - (v * p.t + c))));
+	return { v, c, madM };
+}
+
+/** Trajectory-coherence term for one side of a leg: fit the on-track
+ *  fixes' along-line distances to the candidate over time and score how
+ *  far from the candidate the fit lands at the leg boundary. ~0 when the
+ *  trajectory arrives at (board: departs from) the candidate on time;
+ *  kilometres of predicted miss — including a NEGATIVE overshoot past a
+ *  station the ride sailed through — pay quadratically. Null = the fixes
+ *  cannot support a fit (too few, too clustered, boundary too dark):
+ *  the term asserts nothing. */
+function trajectoryPenalty(
+	trackFixes: readonly TrackFix[],
+	sssp: ReadonlyMap<string, number>,
+	legStartTs: number,
+	legEndTs: number,
+	side: "board" | "alight",
+): number | null {
+	const pts: { t: number; d: number }[] = [];
+	let firstTs = Number.POSITIVE_INFINITY;
+	let lastTs = Number.NEGATIVE_INFINITY;
+	for (const tf of trackFixes) {
+		const d = trackFixDistM(sssp, tf);
+		if (d === null) continue;
+		pts.push({ t: (tf.ts - legStartTs) / 60, d });
+		if (tf.ts < firstTs) firstTs = tf.ts;
+		if (tf.ts > lastTs) lastTs = tf.ts;
+	}
+	if (pts.length < TRAJ_MIN_FIXES) return null;
+	if ((lastTs - firstTs) / 60 < TRAJ_MIN_SPAN_MIN) return null;
+	if (side === "alight" && (legEndTs - lastTs) / 60 > TRAJ_MAX_EXTRAP_MIN) return null;
+	if (side === "board" && (firstTs - legStartTs) / 60 > TRAJ_MAX_EXTRAP_MIN) return null;
+	const { v, c, madM } = theilSen(pts);
+	const targetT = side === "alight" ? (legEndTs - legStartTs) / 60 : 0;
+	const predictedM = v * targetT + c;
+	const sigma = Math.max(TRAJ_SIGMA_BASE_M, TRAJ_MAD_SCALE * madM);
+	const z = Math.abs(predictedM) / sigma;
+	return Math.max(TRAJ_CLAMP, -0.5 * z * z);
+}
+
+/** Stations admissible for one side purely from the trajectory: along-
+ *  line reachable from a near-boundary on-track fix within the ride time
+ *  that boundary leaves. This is what gets the true station into the
+ *  candidate set when the anchor fix is km-wrong. */
+function trajectoryAdmits(
+	routeGraph: RouteGraph,
+	line: string,
+	trackFixes: readonly TrackFix[],
+	legStartTs: number,
+	legEndTs: number,
+	side: "board" | "alight",
+): RouteNode[] {
+	const byName = new Map<string, RouteNode>();
+	for (const tf of trackFixes) {
+		const boundaryMin = side === "alight" ? (legEndTs - tf.ts) / 60 : (tf.ts - legStartTs) / 60;
+		if (boundaryMin < 0 || boundaryMin > TRAJ_ADMIT_WINDOW_MIN) continue;
+		const seeds = new Map<string, number>();
+		seeds.set(nodeKey(tf.edge.startPoint.lat, tf.edge.startPoint.lon), tf.alongM);
+		const endKey = nodeKey(tf.edge.endPoint.lat, tf.edge.endPoint.lon);
+		const endSeed = Math.max(0, tf.edge.attrs.lengthM - tf.alongM);
+		const cur = seeds.get(endKey);
+		if (cur === undefined || endSeed < cur) seeds.set(endKey, endSeed);
+		const reachM = boundaryMin * TRAJ_ADMIT_SPEED_M_PER_MIN + CAND_BASE_RADIUS_M;
+		for (const [id, d] of lineSssp(routeGraph, line, seeds)) {
+			if (d > reachM) continue;
+			const node = routeGraph.nodes.get(id);
+			if (node?.stationName === undefined) continue;
+			if (!stationLineMemberships(routeGraph, node).has(line)) continue;
+			if (!byName.has(node.stationName)) byName.set(node.stationName, node);
+		}
+	}
+	return [...byName.values()];
+}
+
+/** One side's candidate with every side-local evidence term, kept for
+ *  the per-side emission gates. */
+interface SideEval {
+	node: RouteNode;
+	anchorPen: number;
+	dwellPen: number;
+	/** Null = the trajectory cannot support a fit for this side. */
+	trajPen: number | null;
+}
+
 interface PairCandidate {
-	board: RouteNode;
-	alight: RouteNode;
-	/** Anchor + duration + dwell terms — everything local to the leg. */
+	board: SideEval;
+	alight: SideEval;
+	/** Anchor + trajectory + dwell + duration terms — everything local
+	 *  to the leg. */
 	legScore: number;
-	/** Per-side anchor penalties, kept for the absolute-plausibility
-	 *  emission gate. */
-	boardAnchorPen: number;
-	alightAnchorPen: number;
 }
 
 interface ChainLeg {
@@ -350,6 +583,20 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 		}
 		return v;
 	};
+	// Single-source along-line distances from a candidate station's
+	// footprint — the trajectory term's lookup table, shared across legs.
+	const ssspCache = new Map<string, Map<string, number>>();
+	const cachedSssp = (line: string, node: RouteNode): Map<string, number> => {
+		const key = `${line}|${node.id}`;
+		let v = ssspCache.get(key);
+		if (v === undefined) {
+			const seeds = new Map<string, number>();
+			for (const id of stationFootprintNodes(routeGraph, node)) seeds.set(id, 0);
+			v = lineSssp(routeGraph, line, seeds);
+			ssspCache.set(key, v);
+		}
+		return v;
+	};
 
 	// Build the resolvable legs with their local candidate pairs.
 	const legs: ChainLeg[] = [];
@@ -362,8 +609,6 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 
 		const bAnchor = boardAnchor(observations, firstIdx, seg.startTs);
 		const aAnchor = alightAnchor(observations, lastIdx, seg.endTs);
-		const boards = sideCandidates(routeGraph, seg.lineName, bAnchor);
-		const alights = sideCandidates(routeGraph, seg.lineName, aAnchor);
 		const observedMin = (seg.endTs - seg.startTs) / 60;
 		const boundaryUnobserved =
 			bAnchor === null ||
@@ -375,24 +620,49 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 			const g = observations[i].gps;
 			if (g !== null) inLegFixes.push({ ts: observations[i].ts, lat: g.lat, lon: g.lon });
 		}
+		const line = seg.lineName;
+		const trackFixes = projectFixesToLine(routeGraph, line, inLegFixes);
+		const boards = sideCandidates(
+			routeGraph,
+			line,
+			bAnchor,
+			trajectoryAdmits(routeGraph, line, trackFixes, seg.startTs, seg.endTs, "board"),
+		);
+		const alights = sideCandidates(
+			routeGraph,
+			line,
+			aAnchor,
+			trajectoryAdmits(routeGraph, line, trackFixes, seg.startTs, seg.endTs, "alight"),
+		);
+		const evalSide = (c: SideCandidate, side: "board" | "alight"): SideEval => ({
+			node: c.node,
+			anchorPen: c.anchorPenalty,
+			dwellPen: terminalDwellPenalty(inLegFixes, c.node, seg.startTs, seg.endTs, side),
+			trajPen:
+				trackFixes.length === 0
+					? null
+					: trajectoryPenalty(trackFixes, cachedSssp(line, c.node), seg.startTs, seg.endTs, side),
+		});
+		const boardEvals = boards.map((c) => evalSide(c, "board"));
+		const alightEvals = alights.map((c) => evalSide(c, "alight"));
 
 		const pairs: PairCandidate[] = [];
-		for (const b of boards) {
-			for (const a of alights) {
+		for (const b of boardEvals) {
+			for (const a of alightEvals) {
 				if (b.node.stationName === a.node.stationName) continue;
-				const pathM = cachedPathMeters(seg.lineName, b.node, a.node);
+				const pathM = cachedPathMeters(line, b.node, a.node);
 				if (pathM === null || pathM < MIN_PATH_M) continue;
 				pairs.push({
-					board: b.node,
-					alight: a.node,
+					board: b,
+					alight: a,
 					legScore:
-						b.anchorPenalty +
-						a.anchorPenalty +
-						durationPenalty(observedMin, pathM, boundaryUnobserved) +
-						terminalDwellPenalty(inLegFixes, b.node, seg.startTs, seg.endTs, "board") +
-						terminalDwellPenalty(inLegFixes, a.node, seg.startTs, seg.endTs, "alight"),
-					boardAnchorPen: b.anchorPenalty,
-					alightAnchorPen: a.anchorPenalty,
+						b.anchorPen +
+						b.dwellPen +
+						(b.trajPen ?? 0) +
+						a.anchorPen +
+						a.dwellPen +
+						(a.trajPen ?? 0) +
+						durationPenalty(observedMin, pathM, boundaryUnobserved),
 				});
 			}
 		}
@@ -432,7 +702,8 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 					const gapMin = (leg.startTs - chain[i - 1].endTs) / 60;
 					best = Number.NEGATIVE_INFINITY;
 					for (let q = 0; q < chain[i - 1].pairs.length; q++) {
-						const via = forward[i - 1][q] + chainPenalty(chain[i - 1].pairs[q].alight, leg.pairs[p].board, gapMin);
+						const via =
+							forward[i - 1][q] + chainPenalty(chain[i - 1].pairs[q].alight.node, leg.pairs[p].board.node, gapMin);
 						if (via > best) best = via;
 					}
 				}
@@ -447,7 +718,8 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 					const gapMin = (chain[i + 1].startTs - leg.endTs) / 60;
 					best = Number.NEGATIVE_INFINITY;
 					for (let q = 0; q < chain[i + 1].pairs.length; q++) {
-						const via = backward[i + 1][q] + chainPenalty(leg.pairs[p].alight, chain[i + 1].pairs[q].board, gapMin);
+						const via =
+							backward[i + 1][q] + chainPenalty(leg.pairs[p].alight.node, chain[i + 1].pairs[q].board.node, gapMin);
 						if (via > best) best = via;
 					}
 				}
@@ -468,24 +740,31 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 			let bestAltBoard = Number.NEGATIVE_INFINITY;
 			let bestAltAlight = Number.NEGATIVE_INFINITY;
 			for (let p = 0; p < leg.pairs.length; p++) {
-				if (leg.pairs[p].board.stationName !== best.board.stationName && through[p] > bestAltBoard)
+				if (leg.pairs[p].board.node.stationName !== best.board.node.stationName && through[p] > bestAltBoard)
 					bestAltBoard = through[p];
-				if (leg.pairs[p].alight.stationName !== best.alight.stationName && through[p] > bestAltAlight)
+				if (leg.pairs[p].alight.node.stationName !== best.alight.node.stationName && through[p] > bestAltAlight)
 					bestAltAlight = through[p];
 			}
 			// A side emits only when (a) every alternative trails by the
-			// margin AND (b) the winner itself is plausible against its
-			// anchor — a "best of an implausible field" (wrong line label,
-			// true station absent from the candidate set) must stay silent.
+			// margin, (b) at least one evidence channel actively supports
+			// the winner — anchor plausibility, or trajectory support
+			// strong enough to out-vote a corrupted anchor — and (c) the
+			// winner is not terminal-dwell-disqualified (fixes prove the
+			// ride passed it mid-leg). A "best of an implausible field"
+			// (wrong line label, true station absent from the candidate
+			// set) must stay silent.
+			const sidePlausible = (s: SideEval): boolean =>
+				(s.anchorPen > ABS_ANCHOR_FLOOR || (s.trajPen !== null && s.trajPen > TRAJ_SUPPORT_FLOOR)) &&
+				s.dwellPen > DWELL_DISQUALIFY;
 			const board =
 				(bestAltBoard === Number.NEGATIVE_INFINITY || through[bestP] - bestAltBoard >= MARGIN_NATS) &&
-				best.boardAnchorPen > ABS_ANCHOR_FLOOR
-					? (best.board.stationName ?? null)
+				sidePlausible(best.board)
+					? (best.board.node.stationName ?? null)
 					: null;
 			const alight =
 				(bestAltAlight === Number.NEGATIVE_INFINITY || through[bestP] - bestAltAlight >= MARGIN_NATS) &&
-				best.alightAnchorPen > ABS_ANCHOR_FLOOR
-					? (best.alight.stationName ?? null)
+				sidePlausible(best.alight)
+					? (best.alight.node.stationName ?? null)
 					: null;
 			if (board !== null || alight !== null) result.set(leg.segIndex, { board, alight });
 		}

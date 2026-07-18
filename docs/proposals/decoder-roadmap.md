@@ -181,9 +181,13 @@ demoted to a lower-priority guard already pinned by the 05-25 taxi fixture.
 Status: C4.0–C4.2 DONE and LIVE in prod (the four continuity flags flipped
 2026-07-17, scoreboard blessed); C4.3 v1 shipped 2026-07-18 (chained-triple
 station resolver — the decoder emits confidence-gated board/alight,
-CLASSIFIER_VERSION 5, full `decoded_days` backfill re-decoded). Next: C4.3 v2
-(trajectory-coherence vs corrupted reacquire anchors) and C4.4 (journey
-authority flip). Details + measured numbers in `2026-07-continuity-c4.md`
+CLASSIFIER_VERSION 5, full `decoded_days` backfill re-decoded); C4.3 v2
+shipped 2026-07-18 (trajectory coherence — in-leg on-track fixes admit and
+vote on boundary stations via a robust Theil–Sen fit, out-voting corrupted
+reacquire anchors; dwell-disqualify emission gate; CLASSIFIER_VERSION 6;
+corpus stations 2 matched / 0 wrong, the 07-16 morning pair recovered).
+Next: C4.4 (journey authority flip); #364 stop membership sharpens the
+candidate sets. Details + measured numbers in `2026-07-continuity-c4.md`
 (#224, #225).
 
 ## Tube-journey composition (prerequisite of the cutover)

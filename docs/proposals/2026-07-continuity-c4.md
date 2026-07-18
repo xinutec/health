@@ -298,14 +298,44 @@ be read as the whole ride); a fresh reacquire fix can be km-wrong
 (the 07-16 08:41 jump-back), which the dwell term + margins turn
 into an honest null rather than a lie.
 
+**v2 status (#372, shipped 2026-07-18): trajectory coherence.** The
+07-16 morning alight anchor is a fresh-but-km-wrong stale reacquire
+jump-back — v1's honest null. v2 lets the in-leg fixes out-vote it:
+fixes are projected onto the line's own track, and for each side
+candidate the along-line distances to it over time get a Theil–Sen
+fit (median of pairwise slopes — a MINORITY of corrupted fixes
+cannot steer it) whose extrapolation to the leg boundary is scored;
+a candidate the ride sailed past extrapolates kilometres negative
+and pays. Trajectory also ADMITS candidates the anchor cannot see
+(along-line reachable from a near-boundary on-track fix within the
+remaining ride time), and the emission gate becomes: margin ≥ 1 nat
+AND at least one channel (anchor plausibility OR strong trajectory
+support) actively backs the winner AND the winner is not
+terminal-dwell-disqualified. That last clause closes a v1 hazard the
+new unit test pins: a stale anchor whose SOLE candidate is a station
+the ride demonstrably passed used to emit it — wrong — instead of
+staying silent. Guards: fit needs ≥4 on-track fixes spanning ≥5 min,
+and only asserts a boundary within 4 min of the nearest fix (a dark
+boundary stays dark, the C4.2 discipline). CLASSIFIER_VERSION 6.
+
+Measured: 07-16 morning resolves **Wembley Park → Baker Street**
+over the corrupted anchor — the full truth pair matches. Corpus:
+stations 2 matched (06-12, 07-16) / zero wrong / no regressions;
+scoreboard re-blessed. The first ratchet run caught an EVAL defect
+en route: the truth's second ride (Baker St → Euston Square) brushes
+the decoder's first ride by one boundary minute, and any-overlap leg
+matching scored the now-emitted (WP, Baker St) pair as that leg's
+"wrong" answer. `bestOverlappingLeg` now requires majority overlap
+of the truth leg — the same boundary-slop rule `countPhantomRides`
+already documents.
+
 Residuals: most asserted pairs stay `missing` until decode quality
 catches up (fragmented dark rides, wrong line labels, stale
-anchors); recovering the 07-16 Baker Street alight from the
-in-tunnel flicker over the corrupted anchor needs a
-trajectory-coherence term (v2); a phantom ride can still carry a
+anchors); a phantom ride can still carry a
 station label — the phantom itself is the lie and dies with #366;
 the KX complex's three station names need #364's real membership to
-consolidate.
+consolidate (it also blocks the 07-16 return board: the anchor sits
+at KX but three same-complex names split the margin).
 
 ### C4.4 — journey-structure authority flip
 
