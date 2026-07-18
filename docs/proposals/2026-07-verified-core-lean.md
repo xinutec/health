@@ -123,14 +123,28 @@ a float model. The float bridge is its own later phase.
   optimisable later without touching the theorems). Remaining V1 nicety:
   genericise `Score` so the theorems are parametric over any linearly
   ordered additive monoid with bottom.
-- **V2 — real-data shadow.** Export integer-scaled (×2²⁰, exactly
-  representable) emission/transition/duration tensors from the decode loader
-  behind an env flag; A/B the Lean decoder against the TS trellis on the
-  golden `decoded_days` corpus via `score-decoder`'s replay, then as a shadow
-  in the decode-recent CronJob with an agreement metric. Rounding may
-  legitimately flip near-ties, so the referee compares achieved scores, not
-  paths. UI surfacing (a dev-footer agreement badge) comes only once the
-  shadow is stable.
+- **V2 — real-data shadow. First slice SHIPPED.** `npm run lean-shadow`
+  (`src/cli/lean-shadow.ts`): for every golden `decoded_days` fixture,
+  `buildHsmmModel` (extracted from `decodeHsmm` so the shadow quantises
+  the *very* model production runs) is quantised to ×2²⁰ integer tensors
+  — `emit`/`entry` per minute, time-constant `trans` (the tool refuses
+  chain-context days rather than shadowing a different model), `dur` as
+  an `S×maxD` baseline plus sparse per-`segEnd` overrides (the train-hop
+  relaxation; `verified_cli` grew a `durOverrides` input) — and decoded
+  by both the TS trellis and the verified Lean decoder, with an
+  independent referee. **Result: 12/12 corpus days EXACT** (identical
+  paths and best scores, S≈155 × T=1440 × maxD=240), and quantisation is
+  lossless on this corpus (float↔quant 100.00% minute agreement, zero
+  float-score delta — the near-tie flips the referee design anticipated
+  haven't occurred yet). `npm run verify` now runs `lean-check` (lake
+  build with its `#guard`s + the seeded parity harness); the shadow tool
+  itself needs the local (gitignored) corpus, so it stays a tool like
+  `golden-hsmm`. Remaining V2: run the shadow in the decode-recent
+  CronJob with an agreement metric; UI surfacing (a dev-footer badge)
+  once stable. Known cost: the Lean side takes ~20s/day (JSON parse +
+  storing all 54M trellis cells for the walk); column checkpointing or a
+  packed-Int score representation would cut both, without touching the
+  theorems.
 - **V3 — rail-snap.** Small, stable, pure; Dijkstra correctness and the
   "null over wrong path" contract as theorems.
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
@@ -155,6 +169,6 @@ a float model. The float bridge is its own later phase.
   event — fix proofs in the same commit that bumps the pin.
 - **`#guard` cost.** The oracle is exponential; keep guard instances tiny
   (they run on every `lake build`).
-- The parity harness is not yet part of `npm run verify` — wiring it (and a
-  `lake build` step) into the verify path is open, pending a decision on
-  build-time cost in CI.
+- ~~The parity harness is not yet part of `npm run verify`~~ — wired:
+  `npm run lean-check` (lake build + harness) is the last step of
+  `verify`. Cost ≈ seconds warm; a cold `lean/.lake` rebuild is ~1–2 min.
