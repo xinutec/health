@@ -97,33 +97,39 @@ structure DState where
   done : Array Bool
   heap : Heap
 
-/-- Relax every edge out of `u` (settled at distance `p`), in adjacency
-order, strict `<` — the TS inner loop. -/
-private def relaxAll (u p : Nat) (edges : Array (Nat × Nat)) (st : DState) : DState :=
-  edges.foldl (init := st) fun st tw =>
-    let nd := p + tw.2
-    let better := match st.dist.getD tw.1 none with
-      | none => true
-      | some dv => nd < dv
-    if better then
-      { st with
-        dist := st.dist.setIfInBounds tw.1 (some nd)
-        prev := st.prev.setIfInBounds tw.1 u
-        heap := st.heap.push nd tw.1 }
-    else st
+/-- The TS `nd < (dist[v] ?? Infinity)`. -/
+def improves (st : DState) (v nd : Nat) : Bool :=
+  match st.dist.getD v none with
+  | none => true
+  | some dv => nd < dv
 
-private def loop (g : Graph) (dst : Nat) : Nat → DState → DState
+/-- One edge relaxation — the body of the TS inner loop, strict `<`. -/
+def relaxStep (u p : Nat) (st : DState) (tw : Nat × Nat) : DState :=
+  if improves st tw.1 (p + tw.2) then
+    { st with
+      dist := st.dist.setIfInBounds tw.1 (some (p + tw.2))
+      prev := st.prev.setIfInBounds tw.1 u
+      heap := st.heap.push (p + tw.2) tw.1 }
+  else st
+
+/-- Relax every edge out of `u` (settled at distance `p`), in adjacency
+order — the TS inner loop. -/
+def relaxAll (u p : Nat) (edges : Array (Nat × Nat)) (st : DState) : DState :=
+  edges.foldl (init := st) (relaxStep u p)
+
+def loop (g : Graph) (dst : Nat) : Nat → DState → DState
   | 0, st => st
   | fuel + 1, st =>
     match st.heap.pop with
     | none => st
     | some ((p, u), h') =>
-      let st := { st with heap := h' }
-      if st.done.getD u false then loop g dst fuel st
+      if st.done.getD u false then loop g dst fuel { st with heap := h' }
+      else if u = dst then
+        { st with heap := h', done := st.done.setIfInBounds u true }
       else
-        let st := { st with done := st.done.setIfInBounds u true }
-        if u = dst then st
-        else loop g dst fuel (relaxAll u p (g.adj.getD u #[]) st)
+        loop g dst fuel
+          (relaxAll u p (g.adj.getD u #[])
+            { st with heap := h', done := st.done.setIfInBounds u true })
 
 /-- Follow `prev` from `dst` back to the sentinel, accumulating the path
 front-first (the TS builds reversed and flips; same result). -/
