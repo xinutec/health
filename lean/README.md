@@ -66,8 +66,11 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 - `Verified/Rail/Dijkstra.lean` — faithful port of `rail-snap.ts`'s
   `shortestPath` (binary heap tie behaviour included) with honest-`none`
   contract deltas; `#guard`-pinned against the oracle in
-  `Verified/Rail/Tests.lean`. Theorems next.
-- `Main.lean` — `verified_cli`, the JSON bridge.
+  `Verified/Rail/Tests.lean`, and pinned against production on real
+  corridors by `npm run compare-rail` (via `verified_cli rail`).
+  Theorems next.
+- `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
+  default; `verified_cli rail` for the V3 shortest path).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
   problems (run `npm run build` first, then
   `nix develop -c node lean/experiments/compare.mjs` from the repo root).

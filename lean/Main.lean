@@ -41,6 +41,21 @@ picks sparse or class-factorised form).
 Output: {"path": [..T], "best": n}
       | {"degenerate": true}       // every path scores -∞
       | {"error": "..."}           (exit 1)
+
+## Rail mode (`verified_cli rail`)
+
+V3: shortest path over a TS-exported rail graph. Input is the adjacency
+structure verbatim — entry order per vertex is the TS insertion order, which
+the tie-parity claim depends on — with ×2²⁰-quantised nonnegative integer
+weights. `Nat` weights are exact at any magnitude, so unlike the packed HSMM
+scores there is no envelope to refuse on.
+
+  { "adj": [[[to, w], ..] × n],   // adj[u] = directed edges out of u
+    "src": n, "dst": n }
+
+Output: {"path": [..], "dist": n}
+      | {"none": true}            // disconnected or endpoint out of range
+      | {"error": "..."}          (exit 1)
 -/
 
 open Lean (Json)
@@ -236,10 +251,42 @@ and each decoded segment recomputes `< K` columns during the walk.
 `pDecode_eq` holds for every stride, so this is purely a space/time knob. -/
 def ckptStride : Nat := 16
 
+private def parseRail (j : Json) : Except String (Verified.Rail.Graph × Nat × Nat) := do
+  let adj : Array (Array (Nat × Nat)) ← (← (← j.getObjVal? "adj").getArr?).mapM fun r => do
+    (← r.getArr?).mapM fun e => do
+      let a ← e.getArr?
+      let some tJ := a[0]? | throw "adj: bad edge"
+      let some wJ := a[1]? | throw "adj: bad edge"
+      return (← tJ.getNat?, ← wJ.getNat?)
+  let src ← (← j.getObjVal? "src").getNat?
+  let dst ← (← j.getObjVal? "dst").getNat?
+  return (⟨adj⟩, src, dst)
+
+private def railMain (input : String) : IO UInt32 := do
+  match Json.parse input >>= parseRail with
+  | .error e =>
+    IO.println (Json.mkObj [("error", Json.str e)]).compress
+    return 1
+  | .ok (g, src, dst) =>
+    match Verified.Rail.dijkstra g src dst with
+    | none => IO.println (Json.mkObj [("none", Json.bool true)]).compress
+    | some path =>
+      match Verified.Rail.dijkstraDist g src dst with
+      | none =>
+        -- Unreachable: `dijkstra` returned a path, so `dst` was settled.
+        IO.println (Json.mkObj [("error", Json.str "path without dist")]).compress
+        return 1
+      | some d =>
+        IO.println (Json.mkObj [
+          ("path", Json.arr (path.toArray.map fun v => Lean.toJson v)),
+          ("dist", Lean.toJson d)]).compress
+    return 0
+
 def main (args : List String) : IO UInt32 := do
   let timing := args.contains "--timing"
   let t0 ← IO.monoMsNow
   let input ← (← IO.getStdin).readToEnd
+  if args.contains "rail" then return ← railMain input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
   | .error e =>

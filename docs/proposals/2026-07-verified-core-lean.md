@@ -145,7 +145,7 @@ porting float arithmetic.
   days never captured in any fixture. ~50 s/day on the pod, ~6 min per
   nightly window (deadline 1800 s). Remaining V2: UI surfacing (a
   dev-footer badge) once the nightly metric has soaked ~a week.
-- **V3 — rail-snap. Boundary probed; pilot in progress.** The measured
+- **V3 — rail-snap. Pilot + real-corridor parity SHIPPED.** The measured
   shape (railsnap fixture, real corridor): the built graph is ~22k
   vertices / 55k edges (1–2MB exported, TS Dijkstra 5ms), edge weights
   are nonnegative and ≤ ~2^35 after ×2²⁰ quantisation — they fit Lean's
@@ -158,9 +158,17 @@ porting float arithmetic.
   heap and Dijkstra loop (for tie parity, same playbook as the trellis
   port) with the goal theorems "the returned path is a valid
   `from`→`to` path attaining the true minimum weight" and "`none` ⟺
-  disconnected" — the null-over-wrong contract. Pilot = spec + oracle
-  (exhaustive simple-path enumeration) + the port, `#guard`-pinned;
-  theorems upgraded incrementally as V1 was.
+  disconnected" — the null-over-wrong contract. The pilot (spec + oracle
+  (exhaustive simple-path enumeration) + the port, `#guard`-pinned over
+  seeded random multigraphs and degenerate shapes) is done, and so is
+  the real-data harness: `npm run compare-rail` rebuilds each fixture
+  train segment's production graph, quantises, and runs TS-float,
+  TS-quantised, and `verified_cli rail` on it — **every fixture
+  comparison EXACT (both directions per segment), float↔quant
+  path-identical throughout**. Remaining: the theorems themselves,
+  upgraded incrementally as V1 was; then the snap contract layer above
+  the search (label parsing, station resolution, the refusal paths,
+  time interpolation).
 - **V4 — map-match-core.** After the walk-geometry churn settles (#330): the
   two comment-proofs (grid exactness, lazy-Dijkstra refinement) become
   theorems; the honesty guards become verified postconditions.

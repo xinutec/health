@@ -31,7 +31,8 @@
 		"capture-golden": "scripts/capture-golden.sh",
 		"backtest": "scripts/backtest.sh",
 		"lean-check": "scripts/lean-check.sh",
-		"lean-shadow": "scripts/lean-shadow.sh"
+		"lean-shadow": "scripts/lean-shadow.sh",
+		"compare-rail": "scripts/compare-rail.sh"
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.13.0",
