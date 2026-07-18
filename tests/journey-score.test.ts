@@ -25,13 +25,14 @@ function gtRow(
 	mode: GroundTruthMode,
 	line: string | null = null,
 	status: GroundTruthRow["status"] = "correct",
+	fromTo: { from: string; to: string } | null = null,
 ): GroundTruthRow {
 	const truth: ParsedTruth = {
 		mode,
 		place: null,
 		wayName: null,
 		placeQualifier: null,
-		trainFromTo: null,
+		trainFromTo: fromTo,
 		lineName: line,
 	};
 	return {
@@ -143,6 +144,48 @@ describe("groundTruthJourneys", () => {
 			gtRow(15, 20, "stationary", null, "unclear"),
 		];
 		expect(groundTruthJourneys(rows)).toHaveLength(0);
+	});
+
+	// One physical ride can span two audit rows when the pipeline lies about
+	// the boundary: a correct head row + a wrong tail row (the 2026-07-14
+	// ride-tail stranding). Same mode + line + station pair, contiguous →
+	// ONE leg, or the metric double-counts the ride and its station pair.
+	it("merges contiguous rows of the same ride (mode+line+pair) into one leg", () => {
+		const pair = { from: "Wembley Park", to: "Euston Square" };
+		const head = gtRow(0, 13, "train", "Metropolitan Line", "correct", pair);
+		const tail = gtRow(13, 18, "train", "Metropolitan Line", "wrong", pair);
+		const rows = [gtRow(-10, 0, "walking"), head, tail, gtRow(18, 25, "walking"), gtRow(25, 100, "stationary")];
+		const journeys = groundTruthJourneys(rows);
+		expect(journeys).toHaveLength(1);
+		expect(journeys[0].legs.map((l) => l.mode)).toEqual(["walking", "train", "walking"]);
+		const train = journeys[0].legs[1];
+		expect(train.startTs).toBe(T0 + 0 * 60);
+		expect(train.endTs).toBe(T0 + 18 * 60);
+		expect(train.board).toBe("Wembley Park");
+		expect(train.alight).toBe("Euston Square");
+	});
+
+	// Two DIFFERENT consecutive rides never merge — differing line or pair
+	// keeps them distinct legs even when contiguous.
+	it("does not merge contiguous train rows with different pairs", () => {
+		const a = gtRow(0, 10, "train", "Metropolitan Line", "correct", { from: "Wembley Park", to: "Baker Street" });
+		const b = gtRow(10, 15, "train", "Metropolitan Line", "correct", { from: "Baker Street", to: "Euston Square" });
+		const journeys = groundTruthJourneys([a, b]);
+		expect(journeys).toHaveLength(1);
+		expect(journeys[0].legs).toHaveLength(2);
+	});
+
+	// Minute-quantised audit tables can leave a 1-min seam inside one ride
+	// (the 2026-07-15 evening rows 19:40–19:42 / 19:43–19:53). A ≤60 s gap
+	// between same-pair rows still merges — no real ride cycles that fast.
+	it("merges same-ride rows across a one-minute quantisation gap", () => {
+		const pair = { from: "King's Cross St Pancras", to: "Wembley Park" };
+		const a = gtRow(0, 8, "train", "Metropolitan Line", "wrong", pair);
+		const b = gtRow(9, 19, "train", "Metropolitan Line", "correct", pair);
+		const journeys = groundTruthJourneys([a, b]);
+		expect(journeys).toHaveLength(1);
+		expect(journeys[0].legs).toHaveLength(1);
+		expect(journeys[0].legs[0].endTs).toBe(T0 + 19 * 60);
 	});
 
 	it("a wrong row is a true leg the pipeline misses — it seeds and shapes the journey", () => {

@@ -187,6 +187,28 @@ export function groundTruthJourneys(rows: readonly GroundTruthRow[]): Journey[] 
 		// mismatch.
 		const definite = row.status === "correct" || row.status === "wrong";
 		const fromTo = definite ? b.trainFromTo : null;
+		// One physical ride can span several audit rows when the pipeline
+		// lies about leg boundaries (a correct head row + wrong tail rows —
+		// the 07-14 / 07-15 stranding cases). Rows naming the same mode,
+		// line, and station pair are that one ride — extend the leg instead
+		// of double-counting it (and demanding the fragmentation as the
+		// truth shape). Tolerate a ≤60 s gap from minute-quantised audit
+		// windows: no real ride of the same pair can cycle that fast.
+		const last = current[current.length - 1];
+		if (
+			last !== undefined &&
+			row.startTs - last.endTs >= 0 &&
+			row.startTs - last.endTs <= 60 &&
+			canonicalMode(b.mode) === last.mode &&
+			lineOf(b.mode, b.lineName) === last.line &&
+			fromTo !== null &&
+			fromTo.from === last.board &&
+			fromTo.to === last.alight
+		) {
+			last.endTs = row.endTs;
+			if (definite) currentHasDefinite = true;
+			continue;
+		}
 		current.push({
 			startTs: row.startTs,
 			endTs: row.endTs,

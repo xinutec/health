@@ -95,16 +95,28 @@
 		"stationsMissing": 5,
 		"phantomRides": 0
 	},
+	"2026-07-14": {
+		"journeysExpected": 3,
+		"journeysMatched": 1,
+		"legModeScorable": 9,
+		"legModeMatching": 7,
+		"legLineScorable": 1,
+		"legLineMatching": 1,
+		"stationsAsserted": 3,
+		"stationsMatching": 0,
+		"stationsMissing": 3,
+		"phantomRides": 0
+	},
 	"2026-07-15": {
 		"journeysExpected": 3,
 		"journeysMatched": 0,
-		"legModeScorable": 11,
-		"legModeMatching": 9,
-		"legLineScorable": 3,
-		"legLineMatching": 3,
-		"stationsAsserted": 5,
+		"legModeScorable": 9,
+		"legModeMatching": 7,
+		"legLineScorable": 1,
+		"legLineMatching": 1,
+		"stationsAsserted": 3,
 		"stationsMatching": 0,
-		"stationsMissing": 5,
+		"stationsMissing": 3,
 		"phantomRides": 1
 	},
 	"2026-07-16": {
