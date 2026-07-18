@@ -21,7 +21,14 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 - `Verified/Hsmm/Spec.lean` — what the HSMM decoder *means*: segmentations,
   well-formedness, their score. The algorithm-independent contract.
 - `Verified/Hsmm/Oracle.lean` — exhaustive enumeration + best score;
-  `enum_sound` proved.
+  `enum_sound` and `enum_complete` proved (`enum_iff`: the enumeration is
+  exactly the well-formed segmentations).
+- `Verified/Hsmm/Bellman.lean` — the backward Bellman recurrence, proved
+  equal to the oracle (`oracleBest_eq_bestFrom`).
+- `Verified/Hsmm/Forward.lean` — the forward DP over exact last states (the
+  Viterbi principle), proved equal to the oracle
+  (`forwardBest_eq_oracleBest`); reversed-list scoring + the `scoreAux` snoc
+  lemma bridge the two directions.
 - `Verified/Hsmm/Viterbi.lean` — the trellis (faithful port of
   `src/hmm/hsmm-viterbi.ts`, same loop order and tie-breaks; degenerate cases
   return `none` instead of the TS silent fallbacks).

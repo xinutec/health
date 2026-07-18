@@ -47,7 +47,7 @@ arithmetic); Idris 2/Agda (purest totality, weak automation and analysis
 libraries); Rocq+Flocq (true IEEE-754 proofs at a much higher proof cost than
 this project needs — the margins are already explicit in the constants).
 
-## What exists (V0, shipped 2026-07-18)
+## What exists (V0 + the V1 spec layer, shipped 2026-07-18)
 
 `lean/` is a Lake package pinned by the repo flake (`nix develop` provides
 `lean`/`lake` 4.30.0; no elan, no `lean-toolchain` file). Sorry-free policy:
@@ -60,8 +60,23 @@ theorems are stated only when proved; goals live in docs.
   independent of any algorithm: segmentations, well-formedness, the score a
   segmentation earns (init/entry/emissions/duration/transition composition).
 - `Verified/Hsmm/Oracle.lean` — exhaustive enumeration of well-formed
-  segmentations; `enum_sound` (everything enumerated is well-formed) is
-  proved.
+  segmentations; `enum_sound` and `enum_complete` are proved, so
+  `enumAll` is *exactly* the well-formed segmentations (`enum_iff`) and
+  `oracleBest` is a true, attained upper bound (`oracleBest_ge`,
+  `oracleBest_attained`).
+- `Verified/Hsmm/Bellman.lean` — the backward Bellman recurrence
+  (`bestFrom`, choice-for-choice mirror of the enumerator) with
+  `bestFrom_eq` / `oracleBest_eq_bestFrom` proved: because `Score.add`
+  distributes over `Score.max`, "max over all segmentations" factors
+  through the first segment's choice.
+- `Verified/Hsmm/Forward.lean` — the **Viterbi principle**, proved: the
+  forward DP `bestEnd P s m` (best over segmentations of `[0, m)` whose
+  last segment has state exactly `s` — the parameterisation that lets
+  transitions be paid at segment starts, as the trellis does) satisfies
+  `forwardBest_eq_oracleBest`. The proof runs through a reversed-list
+  representation (`scoreRev`, bridged to the spec score by the snoc
+  lemma `scoreAux_append_single`) and reversal-closure of the
+  enumeration (`adjDistinct_reverse` et al.).
 - `Verified/Hsmm/Viterbi.lean` — the trellis, a faithful port of the TS loop
   order and strict-`>` tie-breaks. Two deliberate contract changes: degenerate
   input returns `none` (TS silently returns an all-`states[0]` path), and a
@@ -82,11 +97,17 @@ a float model. The float bridge is its own later phase.
 
 ## Phases
 
-- **V1 — the equivalence theorem.** Oracle completeness (`enum_complete`:
-  every well-formed segmentation is enumerated), then the pilot's goal
-  theorem: `viterbi` returns a well-formed path achieving `oracleBest`, and
-  returns `none` exactly when `oracleBest = -∞`. Restate the trellis in a
-  provable functional form and show the array implementation refines it.
+- **V1 — the equivalence theorem.** The spec layer is done: oracle
+  completeness, the backward Bellman recurrence, and the forward
+  (Viterbi-principle) DP are all proved equal to `oracleBest`. What
+  remains is the **array refinement** — the pilot's goal theorem:
+  `viterbi` returns a well-formed path achieving `oracleBest`, and
+  returns `none` exactly when `oracleBest = -∞`. Plan: relate the
+  trellis's τ-indexed columns to `bestEnd` (the open-segment column value
+  is a closed formula over `bestEnd`: best-closing-predecessor +
+  transition + entry + an emission run), reasoning about the `Id.run do`
+  loops either via loop-invariant lemmas over `Std.Range.forIn` or by
+  restating the column computation as a fold; then backtrack correctness.
   Then genericise `Score` so the theorem is parametric over any linearly
   ordered additive monoid with bottom — model churn (emissions, priors,
   flags) can never invalidate it.

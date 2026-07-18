@@ -9,10 +9,11 @@ but obviously correct. The trellis is checked against it: same best score, and
 the trellis's returned path must itself score that maximum (self-consistency),
 which pins the decoder without depending on tie-breaking order.
 
-`enum_sound` proves everything the enumerator returns is well-formed; the
-completeness direction (every well-formed segmentation is enumerated) and the
-trellis equivalence theorem are the pilot's next milestones — see the roadmap
-in `docs/proposals/2026-07-verified-core-lean.md`.
+`enum_sound` and `enum_complete` together (`enum_iff`) prove the enumeration
+is *exactly* the well-formed segmentations, so `oracleBest` is a genuine,
+attained maximum (`oracleBest_ge`, `oracleBest_attained`). The remaining
+pilot milestone is the trellis-refinement theorem — see the roadmap in
+`docs/proposals/2026-07-verified-core-lean.md`.
 -/
 
 namespace Verified.Hsmm
