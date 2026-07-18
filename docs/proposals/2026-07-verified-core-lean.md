@@ -111,11 +111,16 @@ a float model. The float bridge is its own later phase.
   the proved `col` recurrence, so no backpointer invariants were needed.
   Its first-best tie-breaks compose to the same selection order as the
   TypeScript loops — `#guard`s pin `decode == viterbi` *exactly* (paths
-  included) on the test family. What remains of V1, now purely
-  mechanical: **efficiency** — memoise `col` into per-`t` arrays (a
-  pointwise refinement that cannot disturb the theorems; today `decode`
-  recomputes `col` exponentially, so the proved decoder is exact only on
-  small instances while `viterbi` remains the production path), then
+  included) on the test family. **The memoisation is also done**
+  (`Memo.lean`): `buildCols` computes the columns once as flat arrays in
+  the imperative trellis's exact layout, `buildCols_get` proves every
+  cell pointwise equal to `col`, and `decodeFast_eq` (via a `pickBest`
+  congruence) transfers `decode`'s theorems verbatim to the
+  `O(T·S·(S+maxD))` decoder — `decodeFast_correct`,
+  `decodeFast_none_iff`. `verified_cli` now runs `decodeFast`; the
+  42-case TS harness agrees exactly at day scale (T=1440 ≈ 180ms of
+  compute vs ~13ms for the TS trellis — Score-list allocations per cell;
+  optimisable later without touching the theorems). Remaining V1 nicety:
   genericise `Score` so the theorems are parametric over any linearly
   ordered additive monoid with bottom.
 - **V2 — real-data shadow.** Export integer-scaled (×2²⁰, exactly

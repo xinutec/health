@@ -35,9 +35,13 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   problem shape, degenerate ones included.
 - `Verified/Hsmm/Decode.lean` — the verified decoder: `decode_correct` (any
   returned path renders a well-formed segmentation achieving `oracleBest`)
-  and `decode_none_iff` (`none` ⟺ everything is `-∞`). Unmemoised, so
-  spec-level for now; `#guard`s pin it against `viterbi` exactly, paths
+  and `decode_none_iff` (`none` ⟺ everything is `-∞`). Unmemoised
+  specification form; `#guard`s pin it against `viterbi` exactly, paths
   included.
+- `Verified/Hsmm/Memo.lean` — the production form: columns built once as
+  arrays (`buildCols`, pointwise-proved equal to `col`), and `decodeFast`
+  inheriting `decode`'s theorems through `decodeFast_eq`. This is what
+  `verified_cli` runs.
 - `Verified/Hsmm/Viterbi.lean` — the trellis (faithful port of
   `src/hmm/hsmm-viterbi.ts`, same loop order and tie-breaks; degenerate cases
   return `none` instead of the TS silent fallbacks).
