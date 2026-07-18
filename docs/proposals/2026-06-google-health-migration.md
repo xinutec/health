@@ -71,9 +71,11 @@ long-lived token, now stored in the `health/health-google` k8s secret.
 The paid **CASA** security assessment ($500–$4,500+/yr, recurring) is **only**
 for removing the warning / going multi-user public — irrelevant here.
 
-Weight still only updates when `sync-google-weight --apply` is run by hand;
-wiring it into the app's automatic sync is part of the full migration
-(Remaining, below).
+Weight auto-syncs: the 15-minute `health-sync` CronJob runs
+`runGoogleWeightSync` at the top of every tick (independent of Fitbit tokens
+and rate budget), with the `GH_*` creds wired in from the `health-google`
+secret (`04-cronjob.yaml`). The `sync-google-weight` CLI remains for manual
+runs and dry-runs.
 
 ### How to re-auth manually (should the token ever be revoked)
 
