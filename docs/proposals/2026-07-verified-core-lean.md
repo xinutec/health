@@ -321,12 +321,30 @@ porting float arithmetic.
   passes 173/173 legs bit-EXACT quant↔Lean**; float↔quant flips are
   the simplify-1.5 near-tie plus two trim divergences (2/173 —
   trim's threshold count widens the tie class; display-only, gate
-  unaffected). Remaining V4, in order: the matcher-level parity
-  harness (unblocked — #347/#369 landed 2026-07-19) and the matcher
-  core itself (candidates/Viterbi/routing) over this substrate (the
-  splice twin rides in with it — its inputs are matcher internals);
-  `RingSearch.lean`'s `hgeom` discharge rides on the substrate's
-  future analytic layer.
+  unaffected).
+  **The MATCHER twin is BUILT and MEASURED** (2026-07-19,
+  `src/geo/match-twin.ts` + `npm run compare-match`): the full
+  `matchTrajectory`/`matchWalkSegment` pipeline in the pinned integer
+  semantics — graph build with 1e-7° vertex keys (`vertexDp: 7` makes
+  the float `toFixed(7)` key the same grid), gap bridging, corridor
+  ramp weights scaled exactly by `S = far − near`, building penalty
+  with grid-quantised 3 m samples and cross-multiplied ray casts,
+  candidates by spec-form scan (the float grids are exact-conservative
+  by their own arguments), BigInt lazy Dijkstra, and the Viterbi with
+  scores scaled exactly by `2σ²β` (emission `−d²β`, transition
+  `−|Δ|·2σ²`). Measured over the same 173 golden walking legs:
+  **decision layer (`coarsePath`) 165 EXACT / 5 NEAR (≤30 cm drift,
+  same decisions) / 3 DIFF; null-gate 100% agreement** (7 both-null,
+  0 flips). The 3 decision flips are route-choice near-ties — the
+  diagnosed one flips a single 25× building-penalty edge sample
+  in/out of a ring, a discrete class inherent to sampling quantised
+  positions; the 11 path-level DIFFs are dominated by sub-tolerance
+  route variation the 5 m simplify hides from `coarsePath` and the
+  detail splice re-surfaces. `qSpliceRouteDetail` (the splice twin)
+  rode in as planned. Remaining V4, in order: Lean port of the
+  matcher passes against this twin (three-arm gate at bit-exact,
+  like compare-geo), then `RingSearch.lean`'s `hgeom` discharge on
+  the substrate's future analytic layer.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
