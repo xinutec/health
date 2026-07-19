@@ -27,11 +27,11 @@ step sequence** that never consults the target — `settle(t)` only chooses
 
 The classic "settled = final" fact — a settled vertex's `dist`/`prev`
 never change afterwards — is proved in `LazyInv.lean`
-(`settled_final`/`settled_final_settle`, under `WFEdges`), completing
-the memoised-cache soundness story; the `#guard`s below stay as smoke
-tests. Fuel sufficiency (a loop bound always reaches the stop
-condition) remains a hypothesis here (`stopAt … (iter … k …) = true`
-with `k ≤ fuel`), not a theorem.
+(`settled_final`/`settled_final_settle`, under `WFEdges`), and the
+stop-reachability hypothesis used below (`stopAt … (iter … k …) = true`
+with `k ≤ fuel`) is discharged in `LazyFuel.lean` for any fuel ≥ `E + 1`
+(`lsettle_stops`/`all_settles_stop`), so no assumption about the lazy
+search remains unproved; the `#guard`s below stay as smoke tests.
 
 Weights are `Nat` (the quantised substrate, as in `Verified/Rail`); the
 TS radius check `cur.p > maxRadiusM` is ported strictly.
@@ -363,7 +363,7 @@ run's — holds on every instance, radius cutoffs included. -/
 
 private def lcg (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648
 
-private def mkG (seed n m : Nat) : Graph := Id.run do
+def mkG (seed n m : Nat) : Graph := Id.run do
   let mut adj : Array (Array (Nat × Nat)) := Array.replicate n #[]
   let mut s := lcg (seed + 1)
   for _ in [0:m] do

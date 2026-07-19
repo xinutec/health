@@ -170,8 +170,14 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   needed): `settled_final` / `settled_final_settle` under `WFEdges`,
   with `linit_inv` starting the chain and `lsettle_inv` re-establishing
   the bundle after every settle, so the per-source cache never serves a
-  value a later resume could change. Fuel sufficiency stays
-  `#guard`-pinned on seeded graphs, radius cutoffs included.
+  value a later resume could change.
+- `Verified/Geo/LazyFuel.lean` — fuel sufficiency: the potential
+  `heap size + Σ undone out-degrees` strictly decreases at every live
+  step, so any fuel ≥ `E + 1` reaches the stop condition — from the
+  initial state and through any interleaving of memoised settles
+  (`lsettle_stops`, `all_settles_stop`). Discharges the last
+  stop-reachability hypothesis of the refinement theorems: the TS
+  unfueled `while (heap.size)` loop always terminates in the model.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path;
   `verified_cli geo` for the V4 display passes over quantised points).

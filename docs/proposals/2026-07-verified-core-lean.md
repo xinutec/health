@@ -252,11 +252,18 @@ porting float arithmetic.
   lazy-Dijkstra refinement (`LazyDijkstra.lean` — the search is a
   deterministic target-free step sequence, so `settle` is exactly the
   eager run-to-break prefix, and settles commute/idempote, making the
-  per-source memoised cache sound; the classic "settled = final" fact
-  and fuel sufficiency stay `#guard`-pinned — the heap theorems and
-  the loop-invariant playbook they need now exist in
-  `Verified/Rail/{HeapInv,LoopInv}.lean`, built for the rail
-  completeness upgrade, which is done).
+  per-source memoised cache sound). **Both former `#guard` pins are now
+  theorems** (2026-07-19): the classic "settled = final" fact
+  (`LazyInv.lean` — a slim cut of the rail `LoopInv` bundle: lazy
+  deletion, monotone pop floor, settled-prices-below-the-floor; a done
+  vertex's price is `≤` every later popped price, so no relaxation can
+  beat it — `settled_final`/`settled_final_settle` under `WFEdges`),
+  and fuel sufficiency (`LazyFuel.lean` — the rail potential argument
+  ported: `heap size + Σ undone out-degrees` strictly decreases at
+  every live step, so any fuel ≥ `E + 1` stops, from the initial state
+  and through any interleaving of memoised settles —
+  `lsettle_stops`/`all_settles_stop`). No hypothesis about the lazy
+  search remains unproved; the `#guard`s stay as smoke tests.
   **The display-pass layer is PROVED, metric-parametrically**
   (2026-07-19, `lean/Verified/Geo/{Simplify,Splice,Prefilter}.lean`).
   The probe found the clean seam: every display pass is purely

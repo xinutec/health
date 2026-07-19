@@ -691,7 +691,7 @@ private theorem relaxList_heap_le (u p : Nat) :
     omega
 
 /-- Flipping one absent element out of a sum removes exactly its term. -/
-private theorem sum_map_flip :
+theorem sum_map_flip :
     ∀ (l : List Nat) (f f' : Nat → Nat) (u : Nat), l.Nodup → u ∈ l →
       (∀ x, x ≠ u → f' x = f x) → f' u = 0 →
       (l.map f').sum + f u = (l.map f).sum
@@ -1070,7 +1070,7 @@ iteration settles the source; from there `loop_spec` carries the
 invariant to an exit. The TS fuel covers the whole run because the
 potential starts at `1 + Σ out-degrees ≤ E + 1 < E + n + 2`. -/
 
-private theorem foldl_add_sum : ∀ (l : List (Array (Nat × Nat))) (acc : Nat),
+theorem foldl_add_sum : ∀ (l : List (Array (Nat × Nat))) (acc : Nat),
     l.foldl (fun a r => a + r.size) acc = acc + (l.map Array.size).sum
   | [], acc => by
     rw [List.foldl_nil, List.map_nil, List.sum_nil]
@@ -1079,7 +1079,7 @@ private theorem foldl_add_sum : ∀ (l : List (Array (Nat × Nat))) (acc : Nat),
     rw [List.foldl_cons, List.map_cons, List.sum_cons, foldl_add_sum l (acc + r.size)]
     omega
 
-private theorem map_range_getD : ∀ (l : List (Array (Nat × Nat))),
+theorem map_range_getD : ∀ (l : List (Array (Nat × Nat))),
     (List.range l.length).map (fun u => (l.getD u #[]).size) = l.map Array.size
   | [] => rfl
   | a :: t => by
@@ -1092,11 +1092,11 @@ private theorem map_range_getD : ∀ (l : List (Array (Nat × Nat))),
     show ((a :: t).getD (u + 1) #[]).size = (t.getD u #[]).size
     rw [List.getD_cons_succ]
 
-private theorem getD_toList (a : Array (Array (Nat × Nat))) (i : Nat) :
+theorem getD_toList (a : Array (Array (Nat × Nat))) (i : Nat) :
     a.toList.getD i #[] = a.getD i #[] := by
   rw [List.getD_eq_getElem?_getD, Array.getD_eq_getD_getElem?, Array.getElem?_toList]
 
-private theorem sum_map_le : ∀ (l : List Nat) (f f' : Nat → Nat),
+theorem sum_map_le : ∀ (l : List Nat) (f f' : Nat → Nat),
     (∀ x ∈ l, f x ≤ f' x) → (l.map f).sum ≤ (l.map f').sum
   | [], _, _, _ => Nat.le_refl _
   | a :: t, f, f', h => by

@@ -29,8 +29,8 @@ targets — `setIfInBounds` silently drops out-of-range updates, so this
 is a real assumption, true of production graphs by construction) and an
 in-range source for `linit`.
 
-Fuel sufficiency (the TS loop bound always reaches the stop condition)
-remains future work; the `#guard`s stay as smoke tests.
+Fuel sufficiency (the TS loop always reaches the stop condition) is
+proved in `LazyFuel.lean`; the `#guard`s stay as smoke tests.
 -/
 
 namespace Verified.Geo
