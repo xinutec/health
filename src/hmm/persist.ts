@@ -41,8 +41,12 @@ import type { State } from "./state-space.js";
  *       carry board/alight station names.
  *  - 6: C4.3 v2 trajectory coherence — in-leg on-track fixes vote on
  *       board/alight (admission + Theil–Sen boundary fit), corrupted
- *       reacquire anchors out-voted; dwell-disqualify emission gate. */
-export const CLASSIFIER_VERSION = 6;
+ *       reacquire anchors out-voted; dwell-disqualify emission gate.
+ *  - 7: #364 served-station membership — station-chain candidates the
+ *       line's mirrored route relations do not stop at pay a penalty
+ *       (unsplits co-located station-complex names; passing-without-
+ *       stopping stations demoted). */
+export const CLASSIFIER_VERSION = 7;
 
 /** Per-segment HSMM decode shape. Same conceptual model as the
  *  pipeline's `EnrichedSegment` but trimmed to the fields the HSMM

@@ -204,6 +204,67 @@ describe("resolveStationChain", () => {
 		expect(resolved.get(1)?.alight).toBeNull();
 	});
 
+	it("served-station membership unsplits co-located candidates the margin cannot (#364)", () => {
+		// Same geometry as the indistinguishable-alights case, but the
+		// mirrored route relations say the Metropolitan STOPS at Carfax and
+		// not at East Carfax (the station-complex / passing-without-stopping
+		// class). The not-served penalty separates what distance evidence
+		// cannot, so the alight emits instead of staying null.
+		const graph = buildScenarioGraph(true);
+		const midpoint = { lat: 51.5226, lon: (CARFAX.lon + EASTCARFAX.lon) / 2 };
+		const observations = buildObservations(27, [
+			{ from: 0, to: 5, at: ASHVALE, speedKmh: 2 },
+			{ from: 23, to: 27, at: midpoint, speedKmh: 3 },
+		]);
+		const segments = [seg(0, 5, "stationary"), seg(5, 23, "train", "Metropolitan Line"), seg(23, 27, "walking")];
+		const railStopRelations = [
+			{
+				osmRelationId: 900,
+				routeType: "subway",
+				lineRef: "Metropolitan",
+				lineName: "Metropolitan line: Ashvale → Northgate",
+				stops: ["Ashvale", "Brookden", "Carfax", "Northgate", "Southgate"].map((name, i) => ({
+					name,
+					lat: 51.5 + i * 0.01,
+					lon: -0.2,
+					seq: i,
+				})),
+			},
+		];
+		const resolved = resolveStationChain({ segments, observations, routeGraph: graph, railStopRelations });
+		expect(resolved.get(1)).toEqual({ board: "Ashvale", alight: "Carfax" });
+	});
+
+	it("stays inert when the mirror has no data for the leg's line", () => {
+		// Relations exist but none match "Metropolitan Line" → no membership
+		// evidence → the ambiguous alight stays null exactly as with no
+		// relations at all (empty match means no data, never "serves nothing").
+		const graph = buildScenarioGraph(true);
+		const midpoint = { lat: 51.5226, lon: (CARFAX.lon + EASTCARFAX.lon) / 2 };
+		const observations = buildObservations(27, [
+			{ from: 0, to: 5, at: ASHVALE, speedKmh: 2 },
+			{ from: 23, to: 27, at: midpoint, speedKmh: 3 },
+		]);
+		const segments = [seg(0, 5, "stationary"), seg(5, 23, "train", "Metropolitan Line"), seg(23, 27, "walking")];
+		const railStopRelations = [
+			{
+				osmRelationId: 901,
+				routeType: "subway",
+				lineRef: "Jubilee",
+				lineName: "Jubilee line: Carfax → Farvale",
+				stops: ["Carfax", "Farvale", "Westgate", "Northgate", "Southgate"].map((name, i) => ({
+					name,
+					lat: 51.5 + i * 0.01,
+					lon: -0.2,
+					seq: i,
+				})),
+			},
+		];
+		const resolved = resolveStationChain({ segments, observations, routeGraph: graph, railStopRelations });
+		expect(resolved.get(1)?.board).toBe("Ashvale");
+		expect(resolved.get(1)?.alight).toBeNull();
+	});
+
 	it("does not resolve legs without a named line", () => {
 		const graph = buildScenarioGraph();
 		const observations = buildObservations(27, [

@@ -46,6 +46,7 @@ import { parseHourProfile } from "../geo/focus-places.js";
 import { stationsOnLine } from "../geo/line-stations.js";
 import { dbOsmAdapter } from "../geo/osm-adapter.js";
 import { computeMinuteProximity } from "../geo/rail-road-proximity.js";
+import { loadAllRailStopRelations } from "../geo/rail-stops-cache.js";
 import { buildRouteGraph } from "../geo/route-graph.js";
 import { bboxFromFixes, loadRawOsmForBbox } from "../geo/route-graph-loader.js";
 import { dateBoundsUtc } from "../geo/timezone.js";
@@ -189,6 +190,9 @@ const routeGraph = buildRouteGraph(rawOsm.lines, rawOsm.points);
 
 const proximityByMinute = await computeMinuteProximity(dbOsmAdapter, date, tz, dropGpsOutliers(velResult.points));
 const continuityContext = useContinuityContinuation() ? await loadContinuityContext(user, date) : null;
+// Served-station membership (#364) — captured into the fixture so a
+// replay reproduces the same station-chain evidence.
+const railStopRelations = await loadAllRailStopRelations();
 
 const inputs: HsmmInputs = {
 	date,
@@ -206,6 +210,7 @@ const inputs: HsmmInputs = {
 	segmentEvidence: useSegmentEvidence(),
 	chainContext: useChainContext(),
 	reacquireRobustSpeed: useReacquireRobustSpeed(),
+	railStopRelations,
 };
 
 const expected = decodeHsmm(inputs);

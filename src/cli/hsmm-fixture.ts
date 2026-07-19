@@ -15,6 +15,7 @@
 
 import type { HrPoint, SleepStageRecord, StepPoint } from "../geo/biometrics.js";
 import type { FilteredPoint } from "../geo/kalman.js";
+import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import { buildRouteGraph, type RawOsmLine, type RawOsmPoint } from "../geo/route-graph.js";
 import type { HsmmInputs, HsmmPlace } from "../hmm/decode.js";
 import type { ContinuityContext } from "../hmm/factors/presence-continuity.js";
@@ -50,6 +51,10 @@ export interface HsmmCapturedDay {
 		rawOsmPoints: SerializedRawOsmPoint[];
 		continuityContext: ContinuityContext | null;
 		proximityByMinute: Array<[number, { railDistM: number | null; roadDistM: number | null }]>;
+		/** Mirrored rail route relations (#364). Optional: fixtures
+		 *  captured before the field replay with no served-station
+		 *  evidence — the pre-#364 decode. */
+		railStopRelations?: RailStopRelation[];
 	};
 	/** The decode this fixture was blessed to expect. */
 	expected: HmmSegment[];
@@ -72,6 +77,7 @@ export function toSerializedHsmmInputs(
 		rawOsmPoints: rawOsm.points.map((p) => ({ ...p, osm_id: p.osm_id.toString() })),
 		continuityContext: inputs.continuityContext,
 		proximityByMinute: [...(inputs.proximityByMinute ?? new Map())],
+		railStopRelations: inputs.railStopRelations === undefined ? undefined : [...inputs.railStopRelations],
 	};
 }
 
@@ -92,5 +98,6 @@ export function hsmmInputsFromFixture(captured: HsmmCapturedDay): HsmmInputs {
 		routeGraph: buildRouteGraph(lines, points),
 		continuityContext: captured.inputs.continuityContext,
 		proximityByMinute: new Map(captured.inputs.proximityByMinute),
+		railStopRelations: captured.inputs.railStopRelations,
 	};
 }

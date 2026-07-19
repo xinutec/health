@@ -186,9 +186,12 @@ shipped 2026-07-18 (trajectory coherence — in-leg on-track fixes admit and
 vote on boundary stations via a robust Theil–Sen fit, out-voting corrupted
 reacquire anchors; dwell-disqualify emission gate; CLASSIFIER_VERSION 6;
 corpus stations 2 matched / 0 wrong, the 07-16 morning pair recovered).
-Next: C4.4 (journey authority flip); #364 stop membership sharpens the
-candidate sets. Details + measured numbers in `2026-07-continuity-c4.md`
-(#224, #225).
+#364 served-station membership shipped 2026-07-19
+(rail_stops_cache mirror + station-chain not-served penalty,
+CLASSIFIER_VERSION 7; corpus A/B: +6 station emissions, one
+wrong-in-waiting corrected, 0 wrong, scoreboard aggregate unchanged).
+Next: C4.4 (journey authority flip). Details + measured numbers in
+`2026-07-continuity-c4.md` (#224, #225).
 
 ## Tube-journey composition (prerequisite of the cutover)
 

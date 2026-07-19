@@ -42,6 +42,13 @@
  *     Trajectory also ADMITS candidates the anchor cannot see: stations
  *     along-line reachable from a near-boundary on-track fix within the
  *     remaining ride time (the anchor may be km-wrong; the track isn't).
+ *   - **Served-station membership (#364).** When the mirrored route
+ *     relations (`rail_stops_cache`) have data for the leg's line, a
+ *     candidate the line does not actually STOP at pays a penalty —
+ *     proximity membership cannot tell a served station from one the
+ *     fast tracks pass, nor split a station complex's co-located names
+ *     by which services call there. Weighted, not a veto (the mirror
+ *     can be incomplete); inert when the mirror has no data.
  *
  * A small Viterbi over pairs per journey maximises the joint score;
  * emission is **confidence-gated per side** via max-marginals: a side is
@@ -56,10 +63,12 @@
  */
 
 import { projectPointToSegment } from "../geo/map-match-core.js";
+import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import type { RouteEdge, RouteGraph, RouteNode } from "../geo/route-graph.js";
 import { nodeKey } from "../geo/route-graph.js";
 import type { Observation } from "./observation.js";
 import type { HmmSegment } from "./persist.js";
+import { servedStationSet, stationNameServed } from "./served-stations.js";
 import { stationFootprintNodes, stationLineMemberships, stationsNear } from "./train-candidate-generator.js";
 
 /** σ (m) on "the anchor fix is at this station": platform-to-entrance
@@ -154,6 +163,15 @@ const TRAJ_ADMIT_SPEED_M_PER_MIN = 1_000;
  *  the boundary, so however good its anchor looks, it is not the
  *  boundary station (the stale-anchor-at-a-passed-station class). */
 const DWELL_DISQUALIFY = -3;
+/** Served-station membership (#364): a candidate the line's mirrored
+ *  route relations do NOT stop at pays this. Weighted, not a veto — the
+ *  mirror can be incomplete (a relation missing from OSM, a name-match
+ *  miss) — but strong enough to unsplit the margin at a station complex
+ *  where co-located differently-named candidates (King's Cross St
+ *  Pancras / London King's Cross / London St Pancras) all pass
+ *  proximity membership while only one is actually served. Applies only
+ *  when the mirror HAS data for the line (see `served-stations.ts`). */
+const NOT_SERVED_PENALTY = -3;
 
 export interface ResolvedStations {
 	board: string | null;
@@ -164,6 +182,11 @@ export interface ResolveStationChainOpts {
 	segments: readonly HmmSegment[];
 	observations: readonly Observation[];
 	routeGraph: RouteGraph;
+	/** Mirrored rail route relations (`rail_stops_cache`, #364) — the
+	 *  served-station ground truth. Optional: absent (fixtures captured
+	 *  before the field, an empty mirror) means no membership evidence
+	 *  and the resolve is unchanged. */
+	railStopRelations?: readonly RailStopRelation[];
 }
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -477,6 +500,9 @@ interface SideEval {
 	dwellPen: number;
 	/** Null = the trajectory cannot support a fit for this side. */
 	trajPen: number | null;
+	/** `NOT_SERVED_PENALTY` when the line's mirrored relations have data
+	 *  and none stops at this station; 0 when served or no data. */
+	servedPen: number;
 }
 
 interface PairCandidate {
@@ -564,9 +590,22 @@ function chainPenalty(prevAlight: RouteNode, board: RouteNode, gapMin: number): 
  * resolved are absent from the map.
  */
 export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, ResolvedStations> {
-	const { segments, observations, routeGraph } = opts;
+	const { segments, observations, routeGraph, railStopRelations } = opts;
 	const result = new Map<number, ResolvedStations>();
 	if (observations.length === 0) return result;
+
+	// Served-station sets per line (#364), computed lazily — null when the
+	// mirror has no trustworthy data for the line (then every candidate's
+	// servedPen is 0 and the resolve is unchanged).
+	const servedCache = new Map<string, ReadonlySet<string> | null>();
+	const servedFor = (line: string): ReadonlySet<string> | null => {
+		let entry = servedCache.get(line);
+		if (entry === undefined) {
+			entry = railStopRelations === undefined ? null : servedStationSet(railStopRelations, line);
+			servedCache.set(line, entry);
+		}
+		return entry;
+	};
 
 	const idxByTs = new Map<number, number>();
 	for (let i = 0; i < observations.length; i++) idxByTs.set(observations[i].ts, i);
@@ -634,6 +673,7 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 			aAnchor,
 			trajectoryAdmits(routeGraph, line, trackFixes, seg.startTs, seg.endTs, "alight"),
 		);
+		const served = servedFor(line);
 		const evalSide = (c: SideCandidate, side: "board" | "alight"): SideEval => ({
 			node: c.node,
 			anchorPen: c.anchorPenalty,
@@ -642,6 +682,10 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 				trackFixes.length === 0
 					? null
 					: trajectoryPenalty(trackFixes, cachedSssp(line, c.node), seg.startTs, seg.endTs, side),
+			servedPen:
+				served !== null && c.node.stationName !== undefined && !stationNameServed(served, c.node.stationName)
+					? NOT_SERVED_PENALTY
+					: 0,
 		});
 		const boardEvals = boards.map((c) => evalSide(c, "board"));
 		const alightEvals = alights.map((c) => evalSide(c, "alight"));
@@ -659,9 +703,11 @@ export function resolveStationChain(opts: ResolveStationChainOpts): Map<number, 
 						b.anchorPen +
 						b.dwellPen +
 						(b.trajPen ?? 0) +
+						b.servedPen +
 						a.anchorPen +
 						a.dwellPen +
 						(a.trajPen ?? 0) +
+						a.servedPen +
 						durationPenalty(observedMin, pathM, boundaryUnobserved),
 				});
 			}

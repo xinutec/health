@@ -18,6 +18,7 @@
 
 import type { HrPoint, SleepStageRecord, StepPoint } from "../geo/biometrics.js";
 import type { FilteredPoint } from "../geo/kalman.js";
+import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import type { RouteGraph } from "../geo/route-graph.js";
 import { buildChainContext } from "./chain-context.js";
 import { DEFAULT_MIN_DURATION_BY_MODE, type GammaFit } from "./duration-dist.js";
@@ -132,6 +133,11 @@ export interface HsmmInputs {
 	 *  Loader-set from `useReacquireRobustSpeed()`; absent/false keeps
 	 *  the prior decode. */
 	reacquireRobustSpeed?: boolean;
+	/** Mirrored rail route relations (`rail_stops_cache`, #364): the
+	 *  served-station ground truth the station-chain resolver weighs
+	 *  candidates with. Optional — absent (fixtures captured before the
+	 *  field, an empty mirror) decodes unchanged. */
+	railStopRelations?: readonly RailStopRelation[];
 }
 
 /** The assembled per-day model: the observation tensor, the state space,
@@ -277,6 +283,7 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 		segments,
 		observations: model.tensor,
 		routeGraph: inputs.routeGraph,
+		railStopRelations: inputs.railStopRelations,
 	});
 	for (const [segIndex, resolved] of stations) {
 		segments[segIndex].boardStation = resolved.board;

@@ -332,10 +332,27 @@ already documents.
 Residuals: most asserted pairs stay `missing` until decode quality
 catches up (fragmented dark rides, wrong line labels, stale
 anchors); a phantom ride can still carry a
-station label — the phantom itself is the lie and dies with #366;
-the KX complex's three station names need #364's real membership to
-consolidate (it also blocks the 07-16 return board: the anchor sits
-at KX but three same-complex names split the margin).
+station label — the phantom itself is the lie and dies with #366.
+
+#364 served-station membership (shipped 2026-07-19, CLASSIFIER_VERSION
+7): station-chain candidates the line's mirrored route relations do not
+stop at pay −3 nats (`served-stations.ts`; name-only matching — stop
+POSITIONS of different stations in a complex sit within ~150 m, so a
+coordinate fallback would re-merge what the names separate). Measured
+A/B on the corpus: scoreboard aggregate unchanged (2 matched / 0 wrong
+— the affected legs are not truth-asserted), but 6 new station
+emissions on 4 days (05-15 H&C alight Baker St; 06-16 Victoria alight
+KX St Pancras; 07-15 Met board KX St Pancras; 07-16 the 09:15 hop's
+full Euston Square → KX St Pancras pair) and one WRONG-in-waiting
+corrected: 05-15's Jubilee board emitted Regent's Park (Bakerloo-only —
+proximity membership let it in near Baker Street) and now emits Baker
+Street. The KX-complex name-split hypothesis for the 07-16 RETURN board
+was measured half-right: the NR names are now demoted 3 nats, but the
+residual margin-splitters there are Farringdon / Euston Square —
+genuinely served stations under a ~flat (dark) board anchor, where null
+is the correct emission. That class needs boarding-side evidence
+(occupancy/#366, or C4.4-era walk-to-platform context), not membership
+data.
 
 ### C4.4 — journey-structure authority flip
 

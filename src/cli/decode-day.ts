@@ -27,7 +27,9 @@ import {
 import { parseHourProfile } from "../geo/focus-places.js";
 import { stationsOnLine } from "../geo/line-stations.js";
 import { dbOsmAdapter, type OsmAdapter } from "../geo/osm-adapter.js";
+import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import { computeMinuteProximity } from "../geo/rail-road-proximity.js";
+import { loadAllRailStopRelations } from "../geo/rail-stops-cache.js";
 import type { RouteGraph } from "../geo/route-graph.js";
 import { bboxFromFixes, loadRouteGraphForBbox } from "../geo/route-graph-loader.js";
 import { dateBoundsUtc } from "../geo/timezone.js";
@@ -139,6 +141,7 @@ async function decodeAndPersist(
 	places: readonly HsmmPlace[],
 	placeNearLine: Set<string>,
 	routeGraph: RouteGraph,
+	railStopRelations: readonly RailStopRelation[],
 	osm: OsmAdapter,
 	dry: boolean,
 ): Promise<{ segmentCount: number; minuteCount: number; durationMs: number }> {
@@ -175,6 +178,7 @@ async function decodeAndPersist(
 		segmentEvidence: useSegmentEvidence(),
 		chainContext: useChainContext(),
 		reacquireRobustSpeed: useReacquireRobustSpeed(),
+		railStopRelations,
 	};
 	const segments = decodeHsmm(inputs);
 	if (dry) {
@@ -260,13 +264,27 @@ async function main(): Promise<void> {
 	}
 	const t0Graph = Date.now();
 	const routeGraph = await loadRouteGraphForBbox(bbox, { featureTypes: ["railway"] });
+	// Served-station membership (#364) — day-invariant like the route
+	// graph, loaded once per run. Empty (missing table, empty mirror)
+	// decodes unchanged.
+	const railStopRelations = await loadAllRailStopRelations();
 	console.error(
-		`# loaded ${places.length} focus_places, ${placeNearLine.size} place-line pairs, ${routeGraph.edges.size} rail edges in ${Date.now() - t0Graph}ms`,
+		`# loaded ${places.length} focus_places, ${placeNearLine.size} place-line pairs, ${routeGraph.edges.size} rail edges, ${railStopRelations.length} rail stop relations in ${Date.now() - t0Graph}ms`,
 	);
 
 	for (const date of dates) {
 		try {
-			const result = await decodeAndPersist(userId, date, tz, places, placeNearLine, routeGraph, dbOsmAdapter, dry);
+			const result = await decodeAndPersist(
+				userId,
+				date,
+				tz,
+				places,
+				placeNearLine,
+				routeGraph,
+				railStopRelations,
+				dbOsmAdapter,
+				dry,
+			);
 			console.log(
 				`  ${date}: ${result.segmentCount} segments / ${result.minuteCount} minutes in ${result.durationMs}ms`,
 			);
