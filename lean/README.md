@@ -127,12 +127,16 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   equirectangular projection with a Q20 fixed-point degree-6 minimax
   cos (integer Horner) — no float transcendental anywhere; division
   semantics (`Int.fdiv` ↔ BigInt `>>`, `Int.tdiv` ↔ BigInt `/`) are
-  part of the contract with the TS twin, and `#guard` vectors computed
-  by the twin arithmetic pin the two sides together. Instantiates the
-  pass layer (`qSimplify`/`qSplice`/`qHoldSpeed`/`qRejectSpikes`), so
-  the pass theorems specialise for free. Representation chosen by
-  corpus probe (`experiments/quant-probe.mjs`: 173 legs, zero
-  keep-set flips at 5 m/speed/spikes, one near-tie at 1.5 m).
+  part of the contract with the TS twin (`src/geo/quant-twin.ts`), and
+  `#guard` vectors computed by the twin arithmetic pin the two sides.
+  Instantiates the pass layer
+  (`qSimplify`/`qSplice`/`qHoldSpeed`/`qRejectSpikes`), so the pass
+  theorems specialise for free. Representation chosen by corpus probe
+  (`experiments/quant-probe.mjs`), and pinned at scale by
+  `npm run compare-geo`: every golden walking leg through
+  `verified_cli geo` vs the twin — 173/173 legs bit-EXACT, float↔quant
+  flips zero everywhere except one near-threshold tie at the 1.5 m
+  display tolerance.
 - `Verified/Geo/Prefilter.lean` — part 3, the GPS pre-filters
   (`episode-geometry.ts`): `holdImplausibleSpeed` with the kinematic
   honesty invariant as a theorem (`holdSpeed_chain`: every consecutive
@@ -150,7 +154,8 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   sufficiency stay `#guard`-pinned on seeded graphs, radius cutoffs
   included.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
-  default; `verified_cli rail` for the V3 shortest path).
+  default; `verified_cli rail` for the V3 shortest path;
+  `verified_cli geo` for the V4 display passes over quantised points).
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
   problems (run `npm run build` first, then
   `nix develop -c node lean/experiments/compare.mjs` from the repo root).

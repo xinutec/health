@@ -262,6 +262,71 @@ private def parseRail (j : Json) : Except String (Verified.Rail.Graph × Nat × 
   let dst ← (← j.getObjVal? "dst").getNat?
   return (⟨adj⟩, src, dst)
 
+/-- Points for the geo mode: `[[la, lo, ts], ...]` in 1e-7° units /
+epoch seconds. -/
+private def parsePts (j : Json) : Except String (Array Verified.Geo.QPt) := do
+  (← j.getArr?).mapM fun p => do
+    let a ← p.getArr?
+    let some laJ := a[0]? | throw "pt: expected [la, lo, ts]"
+    let some loJ := a[1]? | throw "pt: expected [la, lo, ts]"
+    let some tsJ := a[2]? | throw "pt: expected [la, lo, ts]"
+    return { la := ← laJ.getInt?, lo := ← loJ.getInt?, ts := ← tsJ.getInt? }
+
+private inductive GeoReq where
+  | simplify (pts : Array Verified.Geo.QPt) (tol : Nat)
+  | hold (pts : Array Verified.Geo.QPt) (cap : Nat)
+  | spikes (pts : Array Verified.Geo.QPt)
+  | splice (coarse route : Array Verified.Geo.QPt) (tol drop : Nat)
+
+private def parseGeo (j : Json) : Except String GeoReq := do
+  match ← (← j.getObjVal? "op").getStr? with
+  | "simplify" =>
+    return .simplify (← parsePts (← j.getObjVal? "pts"))
+      (← (← j.getObjVal? "tol").getNat?)
+  | "hold" =>
+    return .hold (← parsePts (← j.getObjVal? "pts"))
+      (← (← j.getObjVal? "cap").getNat?)
+  | "spikes" => return .spikes (← parsePts (← j.getObjVal? "pts"))
+  | "splice" =>
+    return .splice (← parsePts (← j.getObjVal? "coarse"))
+      (← parsePts (← j.getObjVal? "route"))
+      (← (← j.getObjVal? "tol").getNat?)
+      (← (← j.getObjVal? "drop").getNat?)
+  | op => throw s!"unknown geo op {op}"
+
+private def ptJson (p : Verified.Geo.QPt) : Json :=
+  Json.arr #[Lean.toJson p.la, Lean.toJson p.lo, Lean.toJson p.ts]
+
+/-- `verified_cli geo`: one display pass over quantised points — the
+Lean side of the `compare-geo` harness. -/
+private def geoMain (input : String) : IO UInt32 := do
+  match Json.parse input >>= parseGeo with
+  | .error e =>
+    IO.println (Json.mkObj [("error", Json.str e)]).compress
+    return 1
+  | .ok req =>
+    let out : Json :=
+      match req with
+      | .simplify pts tol =>
+        Json.mkObj [("keep", Json.arr
+          ((Verified.Geo.qSimplify (fun i => pts.getD i default) pts.size
+            tol).toArray.map Lean.toJson))]
+      | .hold pts cap =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qHoldSpeed cap (fun i => pts.getD i default)
+            pts.size).toArray.map ptJson))]
+      | .spikes pts =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qRejectSpikes (fun i => pts.getD i default)
+            pts.size).toArray.map ptJson))]
+      | .splice coarse route tol drop =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qSplice (fun i => route.getD i default) route.size
+            tol drop (fun i => coarse.getD i default)
+            coarse.size).toArray.map ptJson))]
+    IO.println out.compress
+    return 0
+
 private def railMain (input : String) : IO UInt32 := do
   match Json.parse input >>= parseRail with
   | .error e =>
@@ -289,6 +354,7 @@ def main (args : List String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   let input ← (← IO.getStdin).readToEnd
   if args.contains "rail" then return ← railMain input
+  if args.contains "geo" then return ← geoMain input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
   | .error e =>

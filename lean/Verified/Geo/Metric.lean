@@ -44,7 +44,7 @@ structure QPt where
   la : Int
   lo : Int
   ts : Int
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 /-- Newton floor square root, mirroring the twin's BigInt loop exactly
 (`x = n; y = (n+1)/2; while (y < x) { x = y; y = (x + n/x)/2 }`). The

@@ -290,14 +290,21 @@ porting float arithmetic.
   tolerance, the documented tie class the harness referee reports
   rather than fails on (the lean-shadow near-tie design). Coarser
   scales lose: µ-degrees flips 35/173 legs at 1.5 m.
-  Remaining V4 slices, in order: `Metric.lean` (the pinned integer
-  primitives in Lean + pass instantiation), the TS-quant twin
-  (BigInt) + `compare-geometry` harness on the compare-rail pattern
-  (quant↔Lean must be exact, float↔quant measured); then the
-  matcher-level parity harness (unblocked — #347/#369 landed
-  2026-07-19) and the matcher passes over that substrate;
-  `RingSearch.lean`'s `hgeom` discharge rides on the substrate's
-  analytic layer.
+  **The substrate is SHIPPED end-to-end** (2026-07-19):
+  `Verified/Geo/Metric.lean` implements the pinned primitives (with
+  division semantics — `Int.fdiv` ↔ BigInt `>>`, `Int.tdiv` ↔ BigInt
+  `/` — as an explicit part of the twin contract) and instantiates the
+  pass layer, so the pass theorems specialise to the real metric for
+  free; `verified_cli geo` exposes the passes over quantised points;
+  `src/geo/quant-twin.ts` is the BigInt twin; and `npm run
+  compare-geo` replays every golden walking leg through all three
+  arms — **173/173 legs bit-EXACT quant↔Lean on every pass, float↔
+  quant flips zero except the one probed near-tie** (simplify-1.5 m,
+  display-only). Remaining V4, in order: the matcher-level parity
+  harness (unblocked — #347/#369 landed 2026-07-19) and the matcher
+  passes over this substrate (the splice twin rides in with it — its
+  inputs are matcher internals); `RingSearch.lean`'s `hgeom`
+  discharge rides on the substrate's future analytic layer.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).

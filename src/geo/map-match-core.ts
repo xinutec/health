@@ -1274,7 +1274,7 @@ function dedupeConsecutive(pts: readonly Pt[]): Pt[] {
  * kept. Retained vertices keep their interpolated timestamps, so the result
  * stays monotonic and window-anchored.
  */
-function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): MatchedPoint[] {
+export function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): MatchedPoint[] {
 	if (pts.length <= 2) return [...pts];
 	const keep = new Uint8Array(pts.length);
 	keep[0] = 1;

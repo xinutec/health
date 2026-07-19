@@ -32,7 +32,8 @@
 		"backtest": "scripts/backtest.sh",
 		"lean-check": "scripts/lean-check.sh",
 		"lean-shadow": "scripts/lean-shadow.sh",
-		"compare-rail": "scripts/compare-rail.sh"
+		"compare-rail": "scripts/compare-rail.sh",
+		"compare-geo": "scripts/compare-geo.sh"
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.13.0",
