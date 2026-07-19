@@ -63,6 +63,10 @@ export interface MatchedPoint {
 export interface MatchResult {
 	/** The leg routed onto the ways, time-interpolated across the window. */
 	path: MatchedPoint[];
+	/** The full assembled route (every way vertex the Viterbi traversed),
+	 *  before simplification — the geometry source for
+	 *  {@link spliceRouteDetail} (#369). */
+	routeDetail: MatchedPoint[];
 }
 
 /**
@@ -1318,6 +1322,61 @@ function removeSpurs(pts: readonly MatchedPoint[], returnM: number, maxSpan: num
 	return out;
 }
 
+/** A curve deeper than this (m, per chord) is drawn as its way geometry rather
+ *  than a straight chord — see {@link spliceRouteDetail}. */
+const DETAIL_TOLERANCE_M = 1.5;
+
+/**
+ * Carry the route's way geometry back into a cleaned matched line (#369): for
+ * each chord of `coarse`, re-insert the assembled route's vertices between the
+ * chord's endpoints when the route curves away from it by more than
+ * {@link DETAIL_TOLERANCE_M} — but no more than `simplifyDropM`. The bound is
+ * exact, not heuristic: a chord over SIMPLIFY-dropped geometry deviates at
+ * most the simplify tolerance (the Douglas-Peucker guarantee), while a chord
+ * over a DELIBERATE excision (spur removal, over-route trim, despiked apex)
+ * deviates beyond it — that is why simplify had kept the excised vertices. So
+ * this pass restores exactly what simplification flattened — a 100 m chord
+ * that cut a bending pavement (through the school-grounds polygon on
+ * 2026-07-15) now follows the bend — and every artifact excision stays
+ * excised.
+ */
+export function spliceRouteDetail(
+	coarse: readonly MatchedPoint[],
+	route: readonly MatchedPoint[],
+	simplifyDropM: number,
+): MatchedPoint[] {
+	if (coarse.length < 2 || route.length < 2) return [...coarse];
+	const indexOf = (p: MatchedPoint, from: number): number => {
+		for (let k = from; k < route.length; k++) {
+			if (Math.abs(route[k].lat - p.lat) < 1e-9 && Math.abs(route[k].lon - p.lon) < 1e-9) return k;
+		}
+		return -1;
+	};
+	const out: MatchedPoint[] = [coarse[0]];
+	let ia = indexOf(coarse[0], 0);
+	for (let i = 1; i < coarse.length; i++) {
+		const a = coarse[i - 1];
+		const b = coarse[i];
+		const ib = ia >= 0 ? indexOf(b, ia + 1) : -1;
+		if (ia >= 0 && ib > ia + 1) {
+			let maxDev = 0;
+			for (let k = ia + 1; k < ib; k++) maxDev = Math.max(maxDev, projectPointToSegment(route[k], a, b).distM);
+			if (maxDev > DETAIL_TOLERANCE_M && maxDev <= simplifyDropM) {
+				for (let k = ia + 1; k < ib; k++) {
+					const prev = out[out.length - 1];
+					if (metersBetween(prev.lat, prev.lon, route[k].lat, route[k].lon) < 0.5) continue;
+					// Keep timestamps monotone inside the chord window.
+					const ts = Math.min(Math.max(route[k].ts, a.ts), b.ts);
+					out.push({ lat: route[k].lat, lon: route[k].lon, ts });
+				}
+			}
+		}
+		out.push(b);
+		ia = ib >= 0 ? ib : indexOf(b, 0);
+	}
+	return out;
+}
+
 /** Polyline length in metres. */
 export function pathLength(pts: readonly Pt[]): number {
 	let total = 0;
@@ -1677,5 +1736,5 @@ export function matchTrajectory(
 	const rawLen = pathLength(fixes.map((f) => ({ lat: f.lat, lon: f.lon })));
 	if (pathLength(matched) > rawLen * profile.maxLenFactor + profile.maxLenSlackM) return null;
 
-	return { path: cleaned };
+	return { path: cleaned, routeDetail: out };
 }

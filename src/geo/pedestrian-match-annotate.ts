@@ -305,8 +305,11 @@ export async function annotateWalkMatches(
 			// unsupported through-building edge is routed around at graph level, so
 			// most crossings never reach the corrector below.
 			const result = matchWalkSegment(fixes, { ways, buildings });
+			// Decision parity (#369): the display gate, the splice salvage, and
+			// refine engagement below all consume `coarsePath` — the line their
+			// thresholds were tuned against — never the finer display line.
 			const decision = result
-				? matchImprovesDisplay(fixes, result.path, { ways }, WALK_NEEDS_MATCH_M, WALK_MATCH_MAX_STRAY_M)
+				? matchImprovesDisplay(fixes, result.coarsePath, { ways }, WALK_NEEDS_MATCH_M, WALK_MATCH_MAX_STRAY_M)
 				: null;
 			if (process.env.WALK_MATCH_DEBUG === "1" && result && decision) {
 				const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
@@ -343,7 +346,7 @@ export async function annotateWalkMatches(
 				decision.rawOffRoadM > WALK_NEEDS_MATCH_M * 2 &&
 				decision.matchedOffRoadM <= WALK_NEEDS_MATCH_M / 2
 			) {
-				spliced = spliceMatchedWithDivergentRuns(fixes, result.path, WALK_MATCH_MAX_STRAY_M);
+				spliced = spliceMatchedWithDivergentRuns(fixes, result.coarsePath, WALK_MATCH_MAX_STRAY_M);
 				if (spliced !== null) {
 					useMatch = true;
 					if (process.env.WALK_MATCH_DEBUG === "1") {
@@ -362,9 +365,14 @@ export async function annotateWalkMatches(
 				// bounds it). Applied only when it actually reduces sharp turns — else the
 				// matched line is already smooth and is kept as-is. `WALK_REFINE_DISABLE=1`
 				// opts out.
+				// Refine consumes the coarse line — its engagement test and its own
+				// #361 route-splice were tuned on it, and a refined leg is already
+				// route-faithful to ~2.5 m. Only a leg refine leaves alone draws the
+				// full-fidelity matched line (#369) — the exact class whose chords
+				// used to cut curves.
+				const base = spliced ?? result.coarsePath;
 				drawn = spliced ?? result.path;
 				if (process.env.WALK_REFINE_DISABLE !== "1") {
-					const base = drawn;
 					const refined = refineMatchedPath(walkFixes, base);
 					if (refined && countSharpTurns(refined) < countSharpTurns(base)) drawn = refined;
 				}

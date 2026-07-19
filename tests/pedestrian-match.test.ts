@@ -84,6 +84,62 @@ describe("matchWalkSegment", () => {
 		expect(matchedOff).toBeLessThan(8);
 	});
 
+	it("carries a gentle curve's way geometry instead of chording it (#369)", () => {
+		// A way that bows 4 m north of the straight 200 m chord — under the road
+		// simplify tolerance (5 m) the bulge apex was dropped and the drawn line
+		// cut inside the curve; the walk tolerance must keep it.
+		const bowed = way(1, "Bridge Road", [
+			[0, 0],
+			[1, 25],
+			[2, 50],
+			[3, 75],
+			[4, 100],
+			[3, 125],
+			[2, 150],
+			[1, 175],
+			[0, 200],
+		]);
+		const fixes = [fix(0, 10, 0), fix(2, 50, 40), fix(4, 100, 80), fix(2, 150, 120), fix(0, 190, 160)];
+		const result = matchWalkSegment(fixes, { ways: [bowed] });
+		expect(result).not.toBeNull();
+		const path = result?.path ?? [];
+		// The curve apex must be on (or within ~the simplify tolerance of) the
+		// drawn line — a 5 m tolerance chord sits 4 m off it.
+		const apex = at(4, 100);
+		let best = Number.POSITIVE_INFINITY;
+		for (let i = 1; i < path.length; i++) {
+			const [aLat, aLon] = [path[i - 1].lat, path[i - 1].lon];
+			const [bLat, bLon] = [path[i].lat, path[i].lon];
+			const ax = (aLon - apex[1]) * LON_M;
+			const ay = (aLat - apex[0]) * 111_320;
+			const bx = (bLon - apex[1]) * LON_M;
+			const by = (bLat - apex[0]) * 111_320;
+			const dx = bx - ax;
+			const dy = by - ay;
+			const l2 = dx * dx + dy * dy;
+			const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, (-ax * dx - ay * dy) / l2));
+			best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+		}
+		expect(best).toBeLessThan(2);
+
+		// Decision parity: the coarse line still chords the bulge (it is exactly
+		// the pre-#369 output the downstream thresholds were tuned on).
+		const coarse = result?.coarsePath ?? [];
+		let coarseBest = Number.POSITIVE_INFINITY;
+		for (let i = 1; i < coarse.length; i++) {
+			const ax = (coarse[i - 1].lon - apex[1]) * LON_M;
+			const ay = (coarse[i - 1].lat - apex[0]) * 111_320;
+			const bx = (coarse[i].lon - apex[1]) * LON_M;
+			const by = (coarse[i].lat - apex[0]) * 111_320;
+			const dx = bx - ax;
+			const dy = by - ay;
+			const l2 = dx * dx + dy * dy;
+			const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, (-ax * dx - ay * dy) / l2));
+			coarseBest = Math.min(coarseBest, Math.hypot(ax + t * dx, ay + t * dy));
+		}
+		expect(coarseBest).toBeGreaterThan(2);
+	});
+
 	it("bails when the leg spans a gap wider than the bridge (no invented link)", () => {
 		// Two collinear footways separated by a 40 m gap (> gapBridgeM 18): the
 		// graph is disconnected, so a leg crossing the gap cannot route honestly.

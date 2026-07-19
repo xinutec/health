@@ -30,6 +30,7 @@ import {
 	matchTrajectory,
 	type RoadFix,
 	type RoadGeometry,
+	spliceRouteDetail,
 	trimOverRouteExcursions,
 } from "./map-match-core.js";
 import { ROAD_PROFILE } from "./road-match.js";
@@ -85,6 +86,16 @@ export interface WalkMatchOpts {
 	matchRadiusM?: number;
 }
 
+export interface WalkMatchResult {
+	/** The display line: the cleaned matched line with the route's curve
+	 *  geometry spliced back into its chords (#369). */
+	path: MatchResult["path"];
+	/** The cleaned matched line exactly as every downstream threshold (display
+	 *  gate, splice salvage, refine engagement) was tuned against — decisions
+	 *  consume this, never the finer display line. */
+	coarsePath: MatchResult["path"];
+}
+
 /**
  * Map-match a walking leg onto the walkable network. Returns the leg routed onto
  * the pavement/footway network and time-interpolated across the fix window, or
@@ -94,7 +105,7 @@ export function matchWalkSegment(
 	fixes: readonly RoadFix[],
 	geo: RoadGeometry,
 	opts: WalkMatchOpts = {},
-): MatchResult | null {
+): WalkMatchResult | null {
 	const profile = opts.matchRadiusM !== undefined ? { ...WALK_PROFILE, matchRadiusM: opts.matchRadiusM } : WALK_PROFILE;
 	const result = matchTrajectory(fixes, geo, profile);
 	if (result === null) return null;
@@ -103,5 +114,8 @@ export function matchWalkSegment(
 	// tight apex spikes where the snapper amplified GPS jitter into a triangle that
 	// hugs the noisy fixes too closely for the corridor tests to see.
 	const trimmed = trimOverRouteExcursions(fixes, result.path);
-	return { ...result, path: despikeUnsupportedApexes(trimmed, fixes) };
+	const cleaned = despikeUnsupportedApexes(trimmed, fixes);
+	// Then carry the way geometry back into the surviving chords (#369) — pure
+	// curve fidelity; every deliberate excision above stays excised.
+	return { path: spliceRouteDetail(cleaned, result.routeDetail, profile.simplifyToleranceM), coarsePath: cleaned };
 }
