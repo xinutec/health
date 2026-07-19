@@ -115,6 +115,13 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   lies within the tolerance of the retained chord spanning it — the
   load-bearing bound behind `spliceRouteDetail` (#369). Plus range,
   endpoint-survival, and ascending-chain lemmas.
+- `Verified/Geo/Splice.lean` — part 2, `spliceRouteDetail` itself (the
+  #369 fix), same metric-parametric treatment: `splice_sound` (every
+  output vertex is a coarse vertex or a timestamp-clamped route vertex
+  within `dropM` of its chord — so an excision window past `dropM`
+  inserts nothing) and `splice_coarse_sublist` (the coarse line
+  survives in order; the pass only inserts, so the decision layers keep
+  consuming exactly the tuned coarse geometry).
 - `Verified/Geo/LazyDijkstra.lean` — `LazyDijkstra`'s refinement
   comment-proof: the search is a deterministic, target-free step
   sequence, so `settle(t)` is exactly the eager run-to-break prefix
