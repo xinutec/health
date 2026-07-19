@@ -365,6 +365,28 @@ a time once the scoreboard proves the decoder reproduces their wins).
 Gate: journey-level truth parity on the full corpus — clears ≥
 regressions, invariants at zero, per the roadmap's shadow discipline.
 
+Phased plan (seam study 2026-07-18; the seams are the `boardingAnchor`
+pass at velocity.ts:1443, `alightAnchor` at :1459, and the existing
+decoder→pipeline bridge `hsmmOverride` at :1603 →
+`applyHsmmPlaceOverride`):
+
+- **C4.4a — station/line authority + anchor gating (first).** Authority
+  is per-SIDE, not per-leg: a decoder train leg is authoritative on a
+  side iff that side's station is non-null — the station-chain emission
+  gates ARE the confidence bar. The two anchor passes take a per-side
+  predicate: skip rewriting a pipeline train leg's board (alight) when
+  it majority-overlaps a decoder leg whose board (alight) is emitted
+  (majority-overlap discipline as in the scoreboard's
+  `bestOverlappingLeg`). Label authority extends the hsmmOverride
+  bridge: rewrite the leg's `From → To · Line` endpoints from decoder
+  board/alight where emitted; the pipeline keeps the LINE label (it is
+  the better line labeller) unless a decideHsmmTrainOverride-style
+  weighing says otherwise.
+- **C4.4b — leg-boundary adoption (later, separate gate).** velocity
+  takes train leg start/end from decoder segment boundaries where BOTH
+  sides are authoritative. Riskier: interacts with vehicleSplit /
+  shedVehiclePedestrianEdges / railJourney ordering.
+
 ## Order and dependencies
 
 C4.0 → C4.1 → C4.2 → C4.3 → C4.4, each measured on the suite before the
