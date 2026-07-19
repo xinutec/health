@@ -274,19 +274,30 @@ porting float arithmetic.
   (with the kinematic honesty invariant as a theorem: no adjacent
   output pair violates the plausibility predicate) and `rejectSpikes`
   (both drop-only subsequences, endpoints kept).
-  Remaining V4 slices, in order: the **arithmetic instantiation** —
-  integer fixed-point primitives (scaled integer coordinates,
-  `Nat.sqrt` distances, a fixed-point cos; the float transcendentals
-  never enter Lean) with scales fixed by a corpus probe (measure
-  decision-flips of the quantised passes vs the float ones on real
-  legs before committing the representation — the ratio thresholds and
-  the `acos` turn test become exact cross-multiplied integer
-  comparisons) and a TS-quant twin + `compare-geometry` harness on the
-  compare-rail pattern (TS-float vs TS-quant vs Lean; quant↔Lean must
-  be exact, float↔quant measured); then the matcher-level parity
-  harness (unblocked — #347/#369 landed 2026-07-19) and the matcher
-  passes over that substrate; `RingSearch.lean`'s `hgeom` discharge
-  rides on the substrate's analytic layer.
+  **The arithmetic representation is PINNED by corpus probe**
+  (2026-07-19, `lean/experiments/quant-probe.mjs` — 173 walking legs
+  across all 31 golden days, integer twin vs float per candidate
+  scale/cos): coordinates as **1e-7° integers** (OSM-native, ~11 mm),
+  distances in **µm via integer floor-sqrt**, equirectangular with a
+  **Q20 fixed-point degree-6 minimax cos** evaluated by integer
+  Horner, round-to-nearest foot projection; ratio thresholds and the
+  `acos` turn test become exact cross-multiplied integer comparisons.
+  Measured against float: max |Δdist| 38 mm / mean 0.24 mm (1.65 mm
+  max under an ideally-rounded cos — the Q20 poly is not the binding
+  constraint), and **zero keep-set flips** on simplify-5 m, the
+  12 km/h speed hold, and spike rejection; exactly 1/173 legs flips
+  simplify-1.5 m — a near-threshold tie on the display-only detail
+  tolerance, the documented tie class the harness referee reports
+  rather than fails on (the lean-shadow near-tie design). Coarser
+  scales lose: µ-degrees flips 35/173 legs at 1.5 m.
+  Remaining V4 slices, in order: `Metric.lean` (the pinned integer
+  primitives in Lean + pass instantiation), the TS-quant twin
+  (BigInt) + `compare-geometry` harness on the compare-rail pattern
+  (quant↔Lean must be exact, float↔quant measured); then the
+  matcher-level parity harness (unblocked — #347/#369 landed
+  2026-07-19) and the matcher passes over that substrate;
+  `RingSearch.lean`'s `hgeom` discharge rides on the substrate's
+  analytic layer.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
