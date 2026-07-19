@@ -715,6 +715,28 @@ const MIGRATIONS: readonly string[] = [
 	// Dropped rather than left dormant: a table that exists is a table someone
 	// will wire back up.
 	`DROP TABLE IF EXISTS place_confirmations`,
+
+	// rail_stops_cache — one row per OSM rail route relation
+	// (subway/train/light_rail/tram): the line's ref/name and its ORDERED
+	// stop-role members — the stations the service actually calls at
+	// (#364). This is what proximity inference (`stationsOnLine`, 300 m)
+	// structurally cannot express: a line passing a station without
+	// stopping (Dollis Hill sits within 300 m of the Metropolitan's fast
+	// tracks; only the Jubilee stops there). Mirrored offline by the
+	// refresh-rail-stops CLI (tiled Overpass, same discipline as
+	// bus_route_cache — NEVER populated from the request path; that was
+	// the osm_way_routes write-storm). Each OSM direction/service variant
+	// is its own relation → its own row. Pure cache — rebuildable from
+	// scratch, safe to truncate.
+	`CREATE TABLE IF NOT EXISTS rail_stops_cache (
+    osm_relation_id BIGINT NOT NULL,
+    route_type VARCHAR(32) NOT NULL,
+    line_ref VARCHAR(64) NULL,
+    line_name VARCHAR(255) NULL,
+    stops_json LONGTEXT NOT NULL,
+    computed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (osm_relation_id)
+  )`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {

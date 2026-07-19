@@ -388,6 +388,21 @@ export interface BusRouteCacheTable {
 	computed_at: Generated<Date>;
 }
 
+/** One OSM rail route relation (subway/train/light_rail/tram): line
+ *  ref/name + ordered stop-role members — the stations the service
+ *  actually calls at (#364). Written by refresh-rail-stops (offline
+ *  tiled Overpass mirror); read as served-station membership. Relation
+ *  ids narrow to number like the bus cache. Pure cache — safe to
+ *  truncate and rebuild. */
+export interface RailStopsCacheTable {
+	osm_relation_id: bigint;
+	route_type: string;
+	line_ref: string | null;
+	line_name: string | null;
+	stops_json: string;
+	computed_at: Generated<Date>;
+}
+
 /** Per-day HMM decode cache. Each row holds the MAP segment sequence
  *  produced by the joint-sequence model for one (user, date). Cached
  *  so a request for a previously-decoded day serves directly from
@@ -503,6 +518,7 @@ export interface Database {
 	mode_biometrics: ModeBiometricsTable;
 	rail_route_cache: RailRouteCacheTable;
 	bus_route_cache: BusRouteCacheTable;
+	rail_stops_cache: RailStopsCacheTable;
 	decoded_days: DecodedDaysTable;
 	presence_log: PresenceLogTable;
 	learned_hmm_models: LearnedHmmModelsTable;

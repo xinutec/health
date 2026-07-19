@@ -106,8 +106,9 @@ async function loadRailwayLineNames(): Promise<string[]> {
 
 /** A line's base token: its name with any trailing " line"/" lines …"
  *  qualifier stripped. "Victoria Line" → "Victoria"; "Circle and
- *  District Lines" → "Circle and District". */
-function lineBaseToken(lineName: string): string {
+ *  District Lines" → "Circle and District". Exported for the rail-stops
+ *  cache, whose relation matching uses the same normalization. */
+export function lineBaseToken(lineName: string): string {
 	return lineName.replace(/\s+lines?\b.*$/i, "").trim();
 }
 

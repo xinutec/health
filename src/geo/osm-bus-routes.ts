@@ -3,7 +3,9 @@
  * the mirror-ingestion half of C-bus (`bus-route-match.ts` is the matcher
  * that consumes them). Pure, like `extractLineNames` in `osm.ts`: it takes
  * a decoded Overpass response and returns routes, so the parsing is
- * testable without a network or a database.
+ * testable without a network or a database. The member-walk itself
+ * (node indexing, stop-role preference, platform fallback) lives in
+ * `osm-route-members.ts`, shared with the rail-stops extractor.
  *
  * The expected Overpass query outputs each route relation (ordered
  * members + tags) followed by the relation's member nodes (id + lat/lon +
@@ -22,7 +24,8 @@
  * wants.
  */
 
-import type { BusRoute, BusStop } from "./bus-route-match.js";
+import type { BusRoute } from "./bus-route-match.js";
+import { indexMemberNodes, type OverpassElement, resolveOrderedStops } from "./osm-route-members.js";
 
 /** Build the Overpass QL that the refresh-bus-routes mirror runs: every
  *  `route=bus` relation intersecting the bbox, its ordered members, then
@@ -40,51 +43,6 @@ export function buildBusRouteOverpassQuery(bbox: {
 	return `[out:json][timeout:180];relation[route=bus](${box});out body;node(r);out body;`;
 }
 
-interface OverpassMember {
-	type?: string;
-	ref?: number;
-	role?: string;
-}
-
-interface OverpassElement {
-	type?: string;
-	id?: number;
-	lat?: number;
-	lon?: number;
-	tags?: Record<string, string | undefined>;
-	members?: readonly OverpassMember[];
-}
-
-/** PT-v2 member roles that mark where riders board/alight (the node the
- *  vehicle actually stops at). Platforms are the fallback when a route is
- *  mapped without `stop_position` nodes. */
-const STOP_ROLES = new Set(["stop", "stop_entry_only", "stop_exit_only"]);
-const PLATFORM_ROLES = new Set(["platform", "platform_entry_only", "platform_exit_only"]);
-
-interface ResolvedNode {
-	lat: number;
-	lon: number;
-	name: string | null;
-}
-
-/** Collect the ordered, resolvable stop nodes for one relation under a
- *  given set of accepted roles. */
-function stopsForRoles(
-	members: readonly OverpassMember[],
-	nodes: ReadonlyMap<number, ResolvedNode>,
-	roles: ReadonlySet<string>,
-): BusStop[] {
-	const stops: BusStop[] = [];
-	for (const m of members) {
-		if (m.type !== "node" || m.ref === undefined || m.role === undefined) continue;
-		if (!roles.has(m.role)) continue;
-		const node = nodes.get(m.ref);
-		if (!node) continue;
-		stops.push({ name: node.name, lat: node.lat, lon: node.lon, seq: stops.length });
-	}
-	return stops;
-}
-
 /**
  * Extract every nameable bus route from an Overpass response. A relation
  * is kept only when it carries a route `ref` (the rider-facing number,
@@ -93,15 +51,8 @@ function stopsForRoles(
  */
 export function extractBusRoutes(data: { elements?: readonly OverpassElement[] }): BusRoute[] {
 	const elements = data.elements ?? [];
+	const nodes = indexMemberNodes(elements);
 
-	// Pass 1: index member nodes by id (lat/lon + name).
-	const nodes = new Map<number, ResolvedNode>();
-	for (const el of elements) {
-		if (el.type !== "node" || el.id === undefined || el.lat === undefined || el.lon === undefined) continue;
-		nodes.set(el.id, { lat: el.lat, lon: el.lon, name: el.tags?.name ?? null });
-	}
-
-	// Pass 2: build a route per qualifying relation.
 	const routes: BusRoute[] = [];
 	for (const el of elements) {
 		if (el.type !== "relation" || el.id === undefined || !el.members) continue;
@@ -110,11 +61,8 @@ export function extractBusRoutes(data: { elements?: readonly OverpassElement[] }
 		const routeRef = tags.ref;
 		if (!routeRef) continue;
 
-		// Prefer stop_position nodes; fall back to platforms when a route
-		// is mapped without them.
-		let stops = stopsForRoles(el.members, nodes, STOP_ROLES);
-		if (stops.length < 2) stops = stopsForRoles(el.members, nodes, PLATFORM_ROLES);
-		if (stops.length < 2) continue;
+		const stops = resolveOrderedStops(el.members, nodes);
+		if (stops.length === 0) continue;
 
 		routes.push({
 			routeRef,
