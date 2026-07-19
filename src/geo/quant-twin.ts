@@ -75,7 +75,7 @@ export function qDistA(a: QPt, b: QPt): bigint {
 	return isqrt(dla * dla + dlo * dlo);
 }
 
-function roundDiv(p: bigint, q: bigint): bigint {
+export function roundDiv(p: bigint, q: bigint): bigint {
 	return p >= 0n ? (p + q / 2n) / q : -((-p + q / 2n) / q);
 }
 
