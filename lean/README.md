@@ -122,6 +122,13 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   inserts nothing) and `splice_coarse_sublist` (the coarse line
   survives in order; the pass only inserts, so the decision layers keep
   consuming exactly the tuned coarse geometry).
+- `Verified/Geo/Prefilter.lean` — part 3, the GPS pre-filters
+  (`episode-geometry.ts`): `holdImplausibleSpeed` with the kinematic
+  honesty invariant as a theorem (`holdSpeed_chain`: every consecutive
+  output pair satisfies the plausibility predicate — the drawn leg
+  never contains an impossible hop) and `rejectSpikes`; both proved
+  subsequences of their input (drop-only, never invent), spike
+  rejection keeps its endpoints.
 - `Verified/Geo/LazyDijkstra.lean` — `LazyDijkstra`'s refinement
   comment-proof: the search is a deterministic, target-free step
   sequence, so `settle(t)` is exactly the eager run-to-break prefix

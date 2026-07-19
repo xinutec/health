@@ -57,6 +57,17 @@ theorem adjPairs_append : ∀ (xs : List α) (y : α) (ys : List α),
        = (x, z) :: (adjPairs ((z :: xs) ++ [y]) ++ adjPairs (y :: ys))
     exact congrArg (List.cons (x, z)) (adjPairs_append (z :: xs) y ys)
 
+/-- Appending one element extends the chords by exactly the final pair
+(stated over an explicit last element to avoid `getLast?`). -/
+theorem adjPairs_concat : ∀ (front : List α) (last a : α),
+    adjPairs ((front ++ [last]) ++ [a]) = adjPairs (front ++ [last]) ++ [(last, a)]
+  | [], _, _ => rfl
+  | [_], _, _ => rfl
+  | x :: z :: front, last, a => by
+    show (x, z) :: adjPairs (((z :: front) ++ [last]) ++ [a])
+       = (x, z) :: (adjPairs ((z :: front) ++ [last]) ++ [(last, a)])
+    exact congrArg (List.cons (x, z)) (adjPairs_concat (z :: front) last a)
+
 /-- First-argmax scan of the chord deviation `cd (pts i) (pts a) (pts b)`
 over `i ∈ [i₀, b)` — the TS `for (i = a+1; i < b; i++) if (d > maxd)`
 loop, carried as `(maxd, idx)`. -/
