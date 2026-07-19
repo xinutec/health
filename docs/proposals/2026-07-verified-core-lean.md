@@ -300,11 +300,26 @@ porting float arithmetic.
   compare-geo` replays every golden walking leg through all three
   arms — **173/173 legs bit-EXACT quant↔Lean on every pass, float↔
   quant flips zero except the one probed near-tie** (simplify-1.5 m,
-  display-only). Remaining V4, in order: the matcher-level parity
+  display-only).
+  **The display-pass layer is COMPLETE** (same day): `Clean.lean`
+  (dedupe with the no-adjacent-near chain theorem; `removeSpurs` as
+  recursion over the mutated suffix, farthest return winning; despike
+  as a pure indexed filter against original neighbours) and
+  `Trim.lean` (`trimOverRouteExcursions` — `corridorPositions`'
+  monotone-floor projections, both excision passes, ratio thresholds
+  as exact cross-multiplied rationals) — all proved drop-only,
+  instantiated over the metric (`qPerp`; the ≥140° turn test as an
+  exact squared comparison, `round(cos²140°·10⁹)` pinned; `qArcPos`),
+  exposed via `verified_cli geo`, twinned, and harnessed: **all 8
+  passes 173/173 legs bit-EXACT quant↔Lean**; float↔quant flips are
+  the simplify-1.5 near-tie plus two trim divergences (2/173 —
+  trim's threshold count widens the tie class; display-only, gate
+  unaffected). Remaining V4, in order: the matcher-level parity
   harness (unblocked — #347/#369 landed 2026-07-19) and the matcher
-  passes over this substrate (the splice twin rides in with it — its
-  inputs are matcher internals); `RingSearch.lean`'s `hgeom`
-  discharge rides on the substrate's future analytic layer.
+  core itself (candidates/Viterbi/routing) over this substrate (the
+  splice twin rides in with it — its inputs are matcher internals);
+  `RingSearch.lean`'s `hgeom` discharge rides on the substrate's
+  future analytic layer.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
