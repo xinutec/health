@@ -25,14 +25,13 @@ step sequence** that never consults the target — `settle(t)` only chooses
   any interleaving of settle calls lands on `iter (max of the first-hit
   indices)`, independent of order.
 
-What is **not** proved here (and is `#guard`-pinned instead, same status
-as the rail completeness direction): that a settled vertex's `dist`/
-`prev` never change afterwards. That is the classic "settled = final"
-fact and needs the heap-min invariants; the refactor-specific claim —
-lazy pausing/resuming traverses the same states the eager run does — is
-fully proved. Fuel sufficiency (`E + n + 2` covers every run) is likewise
-a hypothesis here (`stopAt … (iter … k …) = true` with `k ≤ fuel`), not a
-theorem.
+The classic "settled = final" fact — a settled vertex's `dist`/`prev`
+never change afterwards — is proved in `LazyInv.lean`
+(`settled_final`/`settled_final_settle`, under `WFEdges`), completing
+the memoised-cache soundness story; the `#guard`s below stay as smoke
+tests. Fuel sufficiency (a loop bound always reaches the stop
+condition) remains a hypothesis here (`stopAt … (iter … k …) = true`
+with `k ≤ fuel`), not a theorem.
 
 Weights are `Nat` (the quantised substrate, as in `Verified/Rail`); the
 TS radius check `cur.p > maxRadiusM` is ported strictly.
@@ -113,7 +112,7 @@ def linit (n src : Nat) : LState :=
 
 /-! ## Step lemmas: what one iteration can never undo -/
 
-private theorem getD_set_true {a : Array Bool} (u v : Nat)
+theorem getD_set_true {a : Array Bool} (u v : Nat)
     (h : a.getD v false = true) : (a.setIfInBounds u true).getD v false = true := by
   rw [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds]
   rw [Array.getD_eq_getD_getElem?] at h
@@ -127,17 +126,17 @@ private theorem getD_set_true {a : Array Bool} (u v : Nat)
   · rw [if_neg huv]
     exact h
 
-private theorem relaxStep_done (u p : Nat) (s : LState) (tw : Nat × Nat) :
+theorem relaxStep_done (u p : Nat) (s : LState) (tw : Nat × Nat) :
     (relaxStep u p s tw).done = s.done := by
   unfold relaxStep
   split <;> first | rfl | (split <;> rfl)
 
-private theorem relaxStep_exhausted (u p : Nat) (s : LState) (tw : Nat × Nat) :
+theorem relaxStep_exhausted (u p : Nat) (s : LState) (tw : Nat × Nat) :
     (relaxStep u p s tw).exhausted = s.exhausted := by
   unfold relaxStep
   split <;> first | rfl | (split <;> rfl)
 
-private theorem relaxL_done (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) :
+theorem relaxL_done (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) :
     (relaxL u p edges s).done = s.done := by
   unfold relaxL
   rw [← Array.foldl_toList]
@@ -147,7 +146,7 @@ private theorem relaxL_done (u p : Nat) (edges : Array (Nat × Nat)) (s : LState
     rw [List.foldl_cons]
     rw [ih (relaxStep u p s tw), relaxStep_done]
 
-private theorem relaxL_exhausted (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) :
+theorem relaxL_exhausted (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) :
     (relaxL u p edges s).exhausted = s.exhausted := by
   unfold relaxL
   rw [← Array.foldl_toList]

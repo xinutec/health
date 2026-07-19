@@ -25,3 +25,4 @@ import Verified.Geo.Trim
 import Verified.Geo.Metric
 import Verified.Geo.RingSearch
 import Verified.Geo.LazyDijkstra
+import Verified.Geo.LazyInv

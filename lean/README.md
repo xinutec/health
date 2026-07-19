@@ -163,10 +163,15 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   sequence, so `settle(t)` is exactly the eager run-to-break prefix
   (`lsettle_eq_iter`), stops are monotone along the trajectory, and
   settles commute and are idempotent (`lsettle_comm`, `lsettle_idem`) —
-  pause/resume with per-source memoisation is sound. The "settled
-  `dist`/`prev` are final" fact (heap-min invariants) and fuel
-  sufficiency stay `#guard`-pinned on seeded graphs, radius cutoffs
-  included.
+  pause/resume with per-source memoisation is sound.
+- `Verified/Geo/LazyInv.lean` — the "settled `dist`/`prev` are final"
+  fact, proved (a slim cut of the rail `LoopInv` bundle: lazy deletion,
+  monotone pop floor, settled-prices-below-the-floor — no ghost tree
+  needed): `settled_final` / `settled_final_settle` under `WFEdges`,
+  with `linit_inv` starting the chain and `lsettle_inv` re-establishing
+  the bundle after every settle, so the per-source cache never serves a
+  value a later resume could change. Fuel sufficiency stays
+  `#guard`-pinned on seeded graphs, radius cutoffs included.
 - `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
   default; `verified_cli rail` for the V3 shortest path;
   `verified_cli geo` for the V4 display passes over quantised points).
