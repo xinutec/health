@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildingCrossingM } from "../src/eval/walk-buildings.js";
 import type { BuildingFootprint } from "../src/geo/osm-local.js";
 import type { RoadGeometry } from "../src/geo/road-match.js";
-import { correctWalkPath, snapPassages } from "../src/geo/walk-building-escape.js";
+import { correctWalkPath, DEFAULT_CORRECT_OPTIONS, snapPassages } from "../src/geo/walk-building-escape.js";
 
 /**
  * `correctWalkPath` — the full case-based corrector: densify → escape vertices
@@ -502,5 +502,44 @@ describe("correctWalkPath — off-network chord in built surroundings (urban blo
 			expect(out[i].lat).toBeCloseTo(drawn[i].lat, 10);
 			expect(out[i].lon).toBeCloseTo(drawn[i].lon, 10);
 		}
+	});
+});
+
+describe("correctWalkPath — step-budget honesty invariant (#347)", () => {
+	// The chord through the block (~80 m) versus its street route around
+	// (~136 m): the pedometer bar decides whether the reroute's distance was
+	// real. The bar the caller passes is steps × stride × slack.
+	const chord = [
+		{ lat: LAT, lon: rW, ts: 1000 },
+		{ lat: LAT, lon: rE, ts: 1120 },
+	];
+
+	it("reverts corrections that push the leg from within its step budget to beyond it", () => {
+		const out = correctWalkPath(chord, streetRing, [block], { ...DEFAULT_CORRECT_OPTIONS, stepBudgetM: 100 });
+		// The route around (~136 m) exceeds the 100 m bar the 80 m input fit —
+		// the correction bought its building fix with distance the pedometer
+		// says was never walked. The input chord comes back unchanged.
+		expect(out.length).toBe(2);
+		expect(out[0].lon).toBeCloseTo(chord[0].lon, 10);
+		expect(out[1].lon).toBeCloseTo(chord[1].lon, 10);
+	});
+
+	it("keeps corrections that fit the step budget", () => {
+		const out = correctWalkPath(chord, streetRing, [block], { ...DEFAULT_CORRECT_OPTIONS, stepBudgetM: 250 });
+		expect(buildingCrossingM(out, [block])).toBeLessThan(2);
+		expect(out.length).toBeGreaterThan(2);
+	});
+
+	it("does not fire on a leg already over budget (only under→over is the lie)", () => {
+		// A sparse-fix leg whose GPS chords already exceed the pedometer bar:
+		// the corrector's reroute cannot make the budget verdict WORSE, and the
+		// building fix stands.
+		const out = correctWalkPath(chord, streetRing, [block], { ...DEFAULT_CORRECT_OPTIONS, stepBudgetM: 60 });
+		expect(buildingCrossingM(out, [block])).toBeLessThan(2);
+	});
+
+	it("is off without step data", () => {
+		const out = correctWalkPath(chord, streetRing, [block]);
+		expect(buildingCrossingM(out, [block])).toBeLessThan(2);
 	});
 });

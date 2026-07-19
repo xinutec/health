@@ -270,6 +270,11 @@ export interface CorrectOptions extends EscapeOptions {
 	 *  station concourse — and is NOT badness: OSM says you walk there. Beyond
 	 *  it, in-building is the containment defect. */
 	onWayM: number;
+	/** Pedometer length bar for the whole leg (m; steps × stride × slack), when
+	 *  step data exists. A correction may not push the leg from within this bar
+	 *  to beyond it — building fixes must not be bought with invented distance
+	 *  (#347). `undefined` = no step data, invariant off. */
+	stepBudgetM?: number;
 }
 
 export const DEFAULT_CORRECT_OPTIONS: CorrectOptions = {
@@ -643,7 +648,7 @@ function densify(drawn: readonly CorrectedPoint[], stepM: number): CorrectedPoin
  *  crossing stands); `invariant-revert` = the whole leg was discarded because
  *  corrections made it worse overall. */
 export interface CorrectRunDiag {
-	outcome: "routed" | "cornered" | "escaped" | "trustGPS" | "invariant-revert";
+	outcome: "routed" | "cornered" | "escaped" | "trustGPS" | "invariant-revert" | "budget-revert";
 	straightM: number;
 	runBadM: number;
 	routeFound: boolean;
@@ -915,6 +920,34 @@ export function correctWalkPath(
 			anchorBSnapM: null,
 		});
 		return drawn.map((p) => ({ ...p }));
+	}
+
+	// Step-budget honesty invariant (#347): the pedometer is the one length
+	// witness independent of GPS. The per-run guards cannot see compounding —
+	// 26 individually-legal reroutes once inflated a leg 1008 → 1353 m against
+	// a 1211 m budget — so the whole-leg bar is enforced here: a correction may
+	// not take the leg from WITHIN its step budget to BEYOND it. A leg already
+	// over the bar (GPS-long by nature, sparse-fix chords) keeps its
+	// corrections — only the under→over transition is the invented-distance
+	// signature.
+	if (opts.stepBudgetM !== undefined && originalLenM <= opts.stepBudgetM) {
+		let outLenM = 0;
+		for (let k = 1; k < out.length; k++)
+			outLenM += metersBetween(out[k - 1].lat, out[k - 1].lon, out[k].lat, out[k].lon);
+		if (outLenM > opts.stepBudgetM) {
+			diag?.({
+				outcome: "budget-revert",
+				straightM: 0,
+				runBadM: 0,
+				routeFound: false,
+				routeBadM: null,
+				addedM: outLenM - originalLenM,
+				budgetM,
+				anchorASnapM: null,
+				anchorBSnapM: null,
+			});
+			return drawn.map((p) => ({ ...p }));
+		}
 	}
 	return out;
 }

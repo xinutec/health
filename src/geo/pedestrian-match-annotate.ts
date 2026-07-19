@@ -25,9 +25,10 @@ import { MAX_SPEED_FOR_MODE } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
 import { effectiveMode } from "./segment-util.js";
-import { type CorrectRunDiag, correctWalkPath, snapPassages } from "./walk-building-escape.js";
+import { type CorrectRunDiag, correctWalkPath, DEFAULT_CORRECT_OPTIONS, snapPassages } from "./walk-building-escape.js";
 import {
 	countSharpTurns,
+	DEFAULT_RECONSTRUCT_PROFILE,
 	reconstructWalk,
 	refineMatchedPath,
 	type WalkAnchor,
@@ -440,7 +441,17 @@ export async function annotateWalkMatches(
 				process.env.WALK_CORRECT_DIAG === "1"
 					? (rec: CorrectRunDiag) => walkCorrectDiag.push({ ...rec, startTs: seg.startTs })
 					: undefined;
-			const fixed = correctWalkPath(drawn, { ways }, buildings, undefined, diag);
+			// The step-budget invariant (#347) gets the same bar the walk ratchet
+			// and the reconstruction's step factor use: steps × stride × slack.
+			const correctOpts =
+				stepsWalked !== null
+					? {
+							...DEFAULT_CORRECT_OPTIONS,
+							stepBudgetM:
+								stepsWalked * DEFAULT_RECONSTRUCT_PROFILE.stepStrideM * DEFAULT_RECONSTRUCT_PROFILE.stepSlackRatio,
+						}
+					: undefined;
+			const fixed = correctWalkPath(drawn, { ways }, buildings, correctOpts, diag);
 			corrected =
 				fixed.length !== drawn.length || fixed.some((p, k) => p.lat !== drawn[k].lat || p.lon !== drawn[k].lon);
 			if (corrected) drawn = fixed;
