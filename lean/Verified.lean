@@ -20,5 +20,6 @@ import Verified.Geo.CellKey
 import Verified.Geo.Simplify
 import Verified.Geo.Splice
 import Verified.Geo.Prefilter
+import Verified.Geo.Metric
 import Verified.Geo.RingSearch
 import Verified.Geo.LazyDijkstra
