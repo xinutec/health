@@ -17,5 +17,6 @@ import Verified.Rail.HeapInv
 import Verified.Rail.LoopInv
 import Verified.Rail.Tests
 import Verified.Geo.CellKey
+import Verified.Geo.Simplify
 import Verified.Geo.RingSearch
 import Verified.Geo.LazyDijkstra

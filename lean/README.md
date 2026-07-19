@@ -107,6 +107,14 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   the named hypothesis `hgeom`, which the future analytic substrate
   discharges; the search logic itself is proved today. `#guard`s include
   a toy instance where the early stop demonstrably fires.
+- `Verified/Geo/Simplify.lean` — V4 display-pass layer, part 1:
+  `simplifyPath`'s Douglas-Peucker recursion, *parametric over the
+  metric* (the pass layer is purely combinatorial over point↔chord
+  distance, so the theorems need no arithmetic substrate and no metric
+  axioms). `simplifyIdx_dropped_le` is the goal: every dropped vertex
+  lies within the tolerance of the retained chord spanning it — the
+  load-bearing bound behind `spliceRouteDetail` (#369). Plus range,
+  endpoint-survival, and ascending-chain lemmas.
 - `Verified/Geo/LazyDijkstra.lean` — `LazyDijkstra`'s refinement
   comment-proof: the search is a deterministic, target-free step
   sequence, so `settle(t)` is exactly the eager run-to-break prefix
