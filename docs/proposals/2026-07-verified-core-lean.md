@@ -219,10 +219,21 @@ porting float arithmetic.
     pre-filters (outlier drop, spike rejection, speed caps — stable,
     pure, small). Substrate first — it is where the ε-budget/quantised
     arithmetic decision gets made, and everything else consumes it.
-  - *Walk/road matcher*: green once #347 (correctWalkPath invents
-    distance — recorded defect) and #369 (matched polyline too sparse)
-    are fixed in TS, so the port targets intended behaviour rather than
-    faithfully reproducing a bug for parity and fixing it twice.
+  - *Walk/road matcher*: **green as of 2026-07-19** — #369 (matched
+    polyline too sparse) fixed by `spliceRouteDetail` (38001cf: decisions
+    stay on the tuned coarse line, only the drawn line re-inserts route
+    vertices where the route deviates 1.5–5 m from a chord — the bounds
+    come from the Douglas-Peucker guarantee, not tuning) and #347
+    (correctWalkPath invents distance) fixed by the whole-leg step-budget
+    invariant (a844d2f: a correction may not push a leg from within the
+    pedometer bar to beyond it, else the leg's corrections revert
+    wholesale, mirroring the badness invariant-revert). The port target
+    is settled intended behaviour: `matchTrajectory` + `matchWalkSegment`
+    with the path/coarsePath contract, `spliceRouteDetail` as the
+    display-fidelity pass, and the corrector carrying both honesty
+    invariants. The `velocity.ts` cascade and `correctWalkPath` itself
+    stay non-port material per #330's standing verdict — but what stays
+    in TS no longer lies about distance.
   - *Shadow only (moving target)*: the HSMM decoder — C4.4/#364/#366/
     Phase 4-5 keep reshaping it; the cron shadow tracks it instead of
     freezing it. Full ownership waits for the C4 program to settle.
@@ -246,10 +257,12 @@ porting float arithmetic.
   the loop-invariant playbook they need now exist in
   `Verified/Rail/{HeapInv,LoopInv}.lean`, built for the rail
   completeness upgrade, which is done).
-  Next V4 slices: the matcher-level TS↔Lean parity harness once
-  #347/#369 land in TS; then porting the matcher passes over the
-  quantised substrate; the honesty guards become verified
-  postconditions.
+  Next V4 slices, in order: the geometry substrate (the ε-budget /
+  quantised-arithmetic decision everything else consumes — and what
+  discharges `RingSearch.lean`'s `hgeom`); then the matcher-level
+  TS↔Lean parity harness (unblocked — #347/#369 landed 2026-07-19) and
+  porting the matcher passes over that substrate; the honesty guards
+  become verified postconditions.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
