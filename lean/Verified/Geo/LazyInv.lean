@@ -39,28 +39,6 @@ open Verified.Rail (Graph WFEdges Heap)
 open Verified.Rail.Heap (IsHeap push_isHeap push_mem pop_min pop_top_mem
   pop_isHeap pop_mem)
 
-/-- `getD` through an out-of-place `setIfInBounds` is unchanged. -/
-theorem getD_sib_ne {α : Type} {a : Array α} {i j : Nat} (h : i ≠ j)
-    (x d : α) : (a.setIfInBounds i x).getD j d = a.getD j d := by
-  rw [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds,
-    Array.getD_eq_getD_getElem?, if_neg h]
-
-/-- `getD` at an in-bounds `setIfInBounds` reads the new value. -/
-theorem getD_sib_lt {α : Type} {a : Array α} {i : Nat} (h : i < a.size)
-    (x d : α) : (a.setIfInBounds i x).getD i d = x := by
-  rw [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds,
-    if_pos rfl, if_pos h]
-  rfl
-
-/-- A set `done` bit came from the write or was already set. -/
-theorem getD_sib_true {a : Array Bool} {u v : Nat}
-    (h : (a.setIfInBounds u true).getD v false = true) :
-    v = u ∨ a.getD v false = true := by
-  by_cases huv : v = u
-  · exact Or.inl huv
-  · rw [getD_sib_ne (fun he => huv he.symm)] at h
-    exact Or.inr h
-
 /-- The lazy-search invariant at pop floor `L`: well-shaped heap, lazy
 deletion, floor-bounded entries, settled prices below the floor, and
 in-range arrays. -/

@@ -41,12 +41,6 @@ def enumAll (P : Problem) : List (List Seg) :=
 def oracleBest (P : Problem) : Score :=
   Score.listMax ((enumAll P).map (score P))
 
-/-- A best-scoring segmentation, when any scores above `-∞`. -/
-def oracleArgmax (P : Problem) : Option (List Seg) :=
-  let best := oracleBest P
-  if best == Score.negInf then none
-  else (enumAll P).find? (fun segs => score P segs == best)
-
 /-- Everything `enumFrom` produces for a window of `r` remaining minutes:
 durations sum to `r`, every segment is in bounds, adjacent states differ, and
 the head does not repeat the preceding segment's state. -/

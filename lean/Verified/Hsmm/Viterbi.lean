@@ -17,12 +17,14 @@ Differences from the TypeScript, both deliberate:
     path minutes unfilled (unreachable when the best score is finite — making
     it a visible signal instead of silent corruption).
 
-The pilot's goal theorem is proved for the *specification* decoder
-(`Decode.lean`: `decode_correct`, `decode_none_iff`), which `#guard`s pin
-against this implementation exactly — paths included — in `Tests.lean`. This
-array version stays the production decoder until the proved one is memoised;
-its own refinement proof would then be redundant (it would be replaced, not
-verified in place).
+The goal theorem is proved for the *specification* decoder (`Decode.lean`:
+`decode_correct`, `decode_none_iff`) and inherited by the memoised production
+forms (`Memo.decodeFast` → `Ckpt.decodeCk` → `Packed.pDecode`, the last being
+what `verified_cli` runs). This array `viterbi` is **not** itself proved and is
+**not** on the production path: it is the TS-faithful reference that `Tests.lean`
+`#guard`-pins the spec decoder against — paths included — so a divergence
+between the ported loop and the verified spec fails the build. It exists to
+cross-check faithfulness, not to decode in production.
 -/
 
 namespace Verified.Hsmm

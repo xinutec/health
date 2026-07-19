@@ -1,4 +1,5 @@
 import Verified.Rail.Dijkstra
+import Verified.Geo.ArrayLemmas
 
 /-!
 # Lazy-vs-eager Dijkstra — `LazyDijkstra`'s refinement comment-proof
@@ -111,20 +112,6 @@ def linit (n src : Nat) : LState :=
     exhausted := false }
 
 /-! ## Step lemmas: what one iteration can never undo -/
-
-theorem getD_set_true {a : Array Bool} (u v : Nat)
-    (h : a.getD v false = true) : (a.setIfInBounds u true).getD v false = true := by
-  rw [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds]
-  rw [Array.getD_eq_getD_getElem?] at h
-  by_cases huv : u = v
-  · subst huv
-    by_cases hlt : u < a.size
-    · simp [hlt]
-    · rw [if_pos rfl, if_neg hlt]
-      rw [Array.getElem?_eq_none (by omega)] at h
-      exact h
-  · rw [if_neg huv]
-    exact h
 
 theorem relaxStep_done (u p : Nat) (s : LState) (tw : Nat × Nat) :
     (relaxStep u p s tw).done = s.done := by

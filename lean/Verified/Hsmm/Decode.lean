@@ -141,10 +141,6 @@ theorem scoreRev_close (P : Problem) (m s d : Nat) (rest : List Seg) (hdm : d �
     rw [harg]
     ac_rfl
 
-theorem toPath_length (segs : List Seg) :
-    (toPath segs).length = (segs.map (·.dur)).sum := by
-  simp [toPath]
-
 /-- The walk's per-step re-search space equals the `openVal` predecessor
 maximum: candidates `(sp, τ')` scored by "close `sp`'s run at `t'`, then
 transition into `s`" reach exactly `bestEnd + trans` per predecessor state. -/

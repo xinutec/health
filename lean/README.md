@@ -23,8 +23,9 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 - `Verified/Hsmm/Oracle.lean` — exhaustive enumeration + best score;
   `enum_sound` and `enum_complete` proved (`enum_iff`: the enumeration is
   exactly the well-formed segmentations).
-- `Verified/Hsmm/Bellman.lean` — the backward Bellman recurrence, proved
-  equal to the oracle (`oracleBest_eq_bestFrom`).
+- `Verified/Hsmm/Bellman.lean` — the per-segment score decomposition
+  (`segScore` and the `scoreAux_cons` split) that the forward DP, trellis,
+  and decoder all reason through.
 - `Verified/Hsmm/Forward.lean` — the forward DP over exact last states (the
   Viterbi principle), proved equal to the oracle
   (`forwardBest_eq_oracleBest`); reversed-list scoring + the `scoreAux` snoc
@@ -96,6 +97,9 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   `dijkstraC_disconnected`; a certification failure degrades to `none`
   (never a wrong path). The converse ("the checker never fires on a real
   run") is proved in `LoopInv.lean`.
+- `Verified/Geo/ArrayLemmas.lean` — shared `getD`/`setIfInBounds`
+  read-after-write lemmas the Lazy-Dijkstra chain (and the matcher passes
+  over it) reuse.
 - `Verified/Geo/CellKey.lean` — V4 opener: `map-match-core.ts`'s grid
   cell-pair key proved collision-free (`cellKey_inj`) and double-exact
   (`cellKey_magnitude`), with the `2^21` cell-bound premise pinned.
