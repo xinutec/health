@@ -1258,7 +1258,7 @@ function routeBetween(
 }
 
 /** Drop consecutive near-duplicate vertices. */
-function dedupeConsecutive(pts: readonly Pt[]): Pt[] {
+export function dedupeConsecutive(pts: readonly Pt[]): Pt[] {
 	const out: Pt[] = [];
 	for (const p of pts) {
 		const last = out[out.length - 1];
@@ -1309,7 +1309,7 @@ export function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): 
  * excursion (and the near-duplicate return vertex) is dropped. Retained vertices
  * keep their timestamps, so the result stays monotonic.
  */
-function removeSpurs(pts: readonly MatchedPoint[], returnM: number, maxSpan: number): MatchedPoint[] {
+export function removeSpurs(pts: readonly MatchedPoint[], returnM: number, maxSpan: number): MatchedPoint[] {
 	const out = [...pts];
 	for (let i = 0; i < out.length - 2; i++) {
 		for (let j = Math.min(i + maxSpan, out.length - 1); j >= i + 2; j--) {

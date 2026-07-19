@@ -24,8 +24,24 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { holdImplausibleSpeed, rejectSpikes } from "../geo/episode-geometry.js";
-import { simplifyPath } from "../geo/map-match-core.js";
-import { type QPt, qHoldSpeedKeep, qRejectSpikesKeep, qSimplifyKeep, quantPt } from "../geo/quant-twin.js";
+import {
+	dedupeConsecutive,
+	despikeUnsupportedApexes,
+	removeSpurs,
+	simplifyPath,
+	trimOverRouteExcursions,
+} from "../geo/map-match-core.js";
+import {
+	type QPt,
+	qDedupeKeep,
+	qDespikeKeep,
+	qHoldSpeedKeep,
+	qRejectSpikesKeep,
+	qRemoveSpurs,
+	qSimplifyKeep,
+	qTrim,
+	quantPt,
+} from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -73,7 +89,7 @@ const files = readdirSync("tests/golden/days")
 
 let legs = 0;
 let mismatches = 0;
-const flips = { simp15: 0, simp50: 0, hold: 0, spikes: 0 };
+const flips = { simp15: 0, simp50: 0, hold: 0, spikes: 0, dedupe: 0, spurs: 0, despike: 0, trim: 0 };
 
 for (const file of files) {
 	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${file}`, "utf8"));
@@ -135,12 +151,77 @@ for (const file of files) {
 			const float = keptIdx(legFixes, rejectSpikes(legFixes));
 			if (!eqNums(float, twin)) flips.spikes++;
 		}
+
+		{
+			const twin = qDedupeKeep(q);
+			const lean = leanGeo({ op: "dedupe", pts: ptsIn }).pts ?? [];
+			if (
+				!eqRows(
+					twin.map((i) => ptRow(q[i])),
+					lean,
+				)
+			) {
+				mismatches++;
+				console.log(`MISMATCH ${file.slice(0, 10)} dedupe`);
+			}
+			const float = keptIdx(legFixes, dedupeConsecutive(legFixes));
+			if (!eqNums(float, twin)) flips.dedupe++;
+		}
+
+		{
+			// Walk-profile spur parameters: 25 m return, 4-vertex span.
+			const twin = qRemoveSpurs(q, 25000000n, 4);
+			const lean = leanGeo({ op: "spurs", ret: 25000000, span: 4, pts: ptsIn }).pts ?? [];
+			if (!eqRows(twin.map(ptRow), lean)) {
+				mismatches++;
+				console.log(`MISMATCH ${file.slice(0, 10)} spurs`);
+			}
+			const float = removeSpurs(legFixes, 25, 4).map((p) => [p.lat, p.lon]);
+			const twinDeg = twin.map((p) => [Number(p.la) / 1e7, Number(p.lo) / 1e7]);
+			if (float.length !== twinDeg.length) flips.spurs++;
+		}
+
+		{
+			// Raw window = the even-indexed fixes, so the apex-excess test
+			// sees genuine (decimated) jitter.
+			const raw = legFixes.filter((_, i) => i % 2 === 0);
+			const qraw = raw.map((p) => quantPt(p));
+			const twin = qDespikeKeep(q, qraw, 15000000n, 12000000n);
+			const lean =
+				leanGeo({ op: "despike", apex: 15000000, excess: 12000000, pts: ptsIn, raw: qraw.map(ptRow) }).pts ?? [];
+			if (
+				!eqRows(
+					twin.map((i) => ptRow(q[i])),
+					lean,
+				)
+			) {
+				mismatches++;
+				console.log(`MISMATCH ${file.slice(0, 10)} despike`);
+			}
+			const float = keptIdx(legFixes, despikeUnsupportedApexes(legFixes, raw));
+			if (!eqNums(float, twin)) flips.despike++;
+		}
+
+		{
+			// Trim the drawn line against its own GPS corridor.
+			const drawn = ep.points.map((p, i) => ({ lat: p.lat, lon: p.lon, ts: p.ts ?? i }));
+			const qd = drawn.map((p) => quantPt(p));
+			const twin = qTrim(q, qd);
+			const lean = leanGeo({ op: "trim", path: qd.map(ptRow), fixes: ptsIn }).pts ?? [];
+			if (!eqRows(twin.map(ptRow), lean)) {
+				mismatches++;
+				console.log(`MISMATCH ${file.slice(0, 10)} trim`);
+			}
+			const float = trimOverRouteExcursions(legFixes, drawn);
+			if (float.length !== twin.length) flips.trim++;
+		}
 	}
 	console.log(`${file.slice(0, 10)}: ${dayLegs} leg(s) ${mismatches === 0 ? "EXACT" : "MISMATCHED"}`);
 }
 
 console.log(
 	`\ncompare-geo: ${legs} legs, quant↔lean ${mismatches === 0 ? "EXACT" : `${mismatches} MISMATCH(ES)`}; ` +
-		`float↔quant flips: simplify1.5=${flips.simp15} simplify5=${flips.simp50} hold=${flips.hold} spikes=${flips.spikes}`,
+		`float↔quant flips: simplify1.5=${flips.simp15} simplify5=${flips.simp50} hold=${flips.hold} ` +
+		`spikes=${flips.spikes} dedupe=${flips.dedupe} spurs=${flips.spurs} despike=${flips.despike} trim=${flips.trim}`,
 );
 process.exit(mismatches === 0 ? 0 : 1);

@@ -277,6 +277,10 @@ private inductive GeoReq where
   | hold (pts : Array Verified.Geo.QPt) (cap : Nat)
   | spikes (pts : Array Verified.Geo.QPt)
   | splice (coarse route : Array Verified.Geo.QPt) (tol drop : Nat)
+  | dedupe (pts : Array Verified.Geo.QPt)
+  | spurs (pts : Array Verified.Geo.QPt) (ret span : Nat)
+  | despike (pts raw : Array Verified.Geo.QPt) (apex excess : Nat)
+  | trim (path fixes : Array Verified.Geo.QPt)
 
 private def parseGeo (j : Json) : Except String GeoReq := do
   match ← (← j.getObjVal? "op").getStr? with
@@ -292,6 +296,19 @@ private def parseGeo (j : Json) : Except String GeoReq := do
       (← parsePts (← j.getObjVal? "route"))
       (← (← j.getObjVal? "tol").getNat?)
       (← (← j.getObjVal? "drop").getNat?)
+  | "dedupe" => return .dedupe (← parsePts (← j.getObjVal? "pts"))
+  | "spurs" =>
+    return .spurs (← parsePts (← j.getObjVal? "pts"))
+      (← (← j.getObjVal? "ret").getNat?)
+      (← (← j.getObjVal? "span").getNat?)
+  | "despike" =>
+    return .despike (← parsePts (← j.getObjVal? "pts"))
+      (← parsePts (← j.getObjVal? "raw"))
+      (← (← j.getObjVal? "apex").getNat?)
+      (← (← j.getObjVal? "excess").getNat?)
+  | "trim" =>
+    return .trim (← parsePts (← j.getObjVal? "path"))
+      (← parsePts (← j.getObjVal? "fixes"))
   | op => throw s!"unknown geo op {op}"
 
 private def ptJson (p : Verified.Geo.QPt) : Json :=
@@ -324,6 +341,21 @@ private def geoMain (input : String) : IO UInt32 := do
           ((Verified.Geo.qSplice (fun i => route.getD i default) route.size
             tol drop (fun i => coarse.getD i default)
             coarse.size).toArray.map ptJson))]
+      | .dedupe pts =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qDedupe (fun i => pts.getD i default)
+            pts.size).toArray.map ptJson))]
+      | .spurs pts ret span =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qRemoveSpurs ret span pts.toList).toArray.map ptJson))]
+      | .despike pts raw apex excess =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qDespike apex excess raw.toList
+            (fun i => pts.getD i default) pts.size).toArray.map ptJson))]
+      | .trim path fixes =>
+        Json.mkObj [("pts", Json.arr
+          ((Verified.Geo.qTrim (fun i => fixes.getD i default) fixes.size
+            (fun i => path.getD i default) path.size).toArray.map ptJson))]
     IO.println out.compress
     return 0
 

@@ -129,14 +129,28 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   semantics (`Int.fdiv` ↔ BigInt `>>`, `Int.tdiv` ↔ BigInt `/`) are
   part of the contract with the TS twin (`src/geo/quant-twin.ts`), and
   `#guard` vectors computed by the twin arithmetic pin the two sides.
-  Instantiates the pass layer
-  (`qSimplify`/`qSplice`/`qHoldSpeed`/`qRejectSpikes`), so the pass
-  theorems specialise for free. Representation chosen by corpus probe
+  Instantiates the whole pass layer (`qSimplify`/`qSplice`/
+  `qHoldSpeed`/`qRejectSpikes`/`qDedupe`/`qRemoveSpurs`/`qDespike`/
+  `qTrim` — the last three via `qPerp`, the ≥140° turn test as an exact
+  squared comparison, and `qArcPos`), so the pass theorems specialise
+  for free. Representation chosen by corpus probe
   (`experiments/quant-probe.mjs`), and pinned at scale by
   `npm run compare-geo`: every golden walking leg through
   `verified_cli geo` vs the twin — 173/173 legs bit-EXACT, float↔quant
   flips zero everywhere except one near-threshold tie at the 1.5 m
   display tolerance.
+- `Verified/Geo/Clean.lean` — part 4, the small cleaning passes:
+  `dedupeConsecutive` (with the no-adjacent-near chain theorem),
+  `removeSpurs` (the splice loop as recursion over the mutated suffix;
+  farthest return wins), and `despikeUnsupportedApexes` (a pure indexed
+  filter against original neighbours; apex/turn/raw-excess tests are
+  parametric primitives). All proved drop-only; despike keeps its
+  endpoints.
+- `Verified/Geo/Trim.lean` — part 5, `trimOverRouteExcursions`: the
+  spatial and temporal (#362) excision passes over the GPS corridor,
+  with `corridorPositions`' monotone-floor projections, ratio
+  thresholds as exact cross-multiplied rationals, and the rebuild's
+  `≤ 0.5 m` dedupe. Proved drop-only (`trim_sublist`).
 - `Verified/Geo/Prefilter.lean` — part 3, the GPS pre-filters
   (`episode-geometry.ts`): `holdImplausibleSpeed` with the kinematic
   honesty invariant as a theorem (`holdSpeed_chain`: every consecutive

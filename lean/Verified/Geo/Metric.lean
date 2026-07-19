@@ -1,6 +1,8 @@
 import Verified.Geo.Simplify
 import Verified.Geo.Splice
 import Verified.Geo.Prefilter
+import Verified.Geo.Clean
+import Verified.Geo.Trim
 
 /-!
 # The pinned integer metric — V4's arithmetic substrate
@@ -113,6 +115,49 @@ def qChordDist (p a b : QPt) : Nat :=
         lo := a.lo + roundDiv (dot * (b.lo - a.lo)) len2
         ts := 0 }
 
+/-- µm from `p` to the infinite line `a`–`b` — mirrors `perpDistM`
+(`|cross| / len` with the chord-frame degenerate fallback; both the
+cross and the length live in the chord's equirectangular frame). -/
+def qPerp (p a b : QPt) : Nat :=
+  let c : Int := cosQ ((a.la + b.la).tdiv 2)
+  let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
+  let vy : Int := (b.la - a.la) * 11132
+  let px : Int := ((p.lo - a.lo) * 11132 * c).fdiv 1048576
+  let py : Int := (p.la - a.la) * 11132
+  if bx * bx + vy * vy = 0 then isqrt (px * px + py * py).toNat
+  else (px * vy - py * bx).natAbs / isqrt (bx * bx + vy * vy).toNat
+
+/-- The TS ≥140° turn test (`acos(dot/(|u|·|v|)) ≥ 140`) as an exact
+squared comparison: `dot ≤ 0 ∧ dot²·10⁹ ≥ round(cos²140°·10⁹)·|u|²·|v|²`
+(`586824089 = round(cos²140° · 10⁹)`). Vectors in the TS frame — Δlon
+scaled by the apex-latitude cos (Q20), Δlat by `2^20` to match.
+Degenerate legs keep the vertex, like the TS `1e-12` guard. -/
+def qTurnOk (a c b : QPt) : Bool :=
+  let cl : Int := cosQ c.la
+  let ux : Int := (c.lo - a.lo) * cl
+  let uy : Int := (c.la - a.la) * 1048576
+  let vx : Int := (b.lo - c.lo) * cl
+  let vy : Int := (b.la - c.la) * 1048576
+  let un2 : Int := ux * ux + uy * uy
+  let vn2 : Int := vx * vx + vy * vy
+  if un2 = 0 || vn2 = 0 then false
+  else
+    let dot : Int := ux * vx + uy * vy
+    dot ≤ 0 && dot * dot * 1000000000 ≥ 586824089 * un2 * vn2
+
+/-- The corridor-position arc interpolation — mirrors
+`fArc[i] + proj.t · (fArc[i+1] − fArc[i])` with the clamped rational
+`t = dot/len²` applied by rounded division. -/
+def qArcPos (v a b : QPt) (arcA arcB : Int) : Int :=
+  let c : Int := cosQ ((a.la + b.la).tdiv 2)
+  let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
+  let vy : Int := (b.la - a.la) * 11132
+  let px : Int := ((v.lo - a.lo) * 11132 * c).fdiv 1048576
+  let py : Int := (v.la - a.la) * 11132
+  let len2 : Int := bx * bx + vy * vy
+  if len2 = 0 then arcA
+  else arcA + roundDiv (max 0 (min (px * bx + py * vy) len2) * (arcB - arcA)) len2
+
 -- ---------------------------------------------------------------
 -- Pass instantiations: the metric-parametric layer over this metric.
 -- ---------------------------------------------------------------
@@ -158,6 +203,34 @@ def qSpike (prev cur next : QPt) : Bool :=
 def qRejectSpikes (pts : Nat → QPt) (n : Nat) : List QPt :=
   rejectSpikes qSpike pts n
 
+/-- `dedupeConsecutive` over the pinned metric (strict `< 0.5 m`). -/
+def qDedupe (pts : Nat → QPt) (n : Nat) : List QPt :=
+  dedupe (fun a b => qDist a b < 500000) pts n
+
+/-- `removeSpurs` over the pinned metric (thresholds in µm / steps). -/
+def qRemoveSpurs (retUm maxSpan : Nat) (l : List QPt) : List QPt :=
+  spurGo qDist retUm maxSpan l
+
+/-- `despikeUnsupportedApexes` over the pinned metric (µm thresholds;
+the 140° turn is baked into `qTurnOk`). -/
+def qDespike (minApexUm excessUm : Nat) (raw : List QPt) (path : Nat → QPt)
+    (n : Nat) : List QPt :=
+  despike qPerp qTurnOk (·.ts) minApexUm excessUm raw path n
+
+/-- The TS `trimOverRouteExcursions` default thresholds, in µm. -/
+def qTrimP : TrimP :=
+  { offM := 30000000, detourNum := 1, detourDen := 2, minStall := 80000000
+    returnNum := 7, returnDen := 20, stallNum := 3, stallDen := 20
+    slack := 1000000 }
+
+/-- The trim rebuild's `> 0.5 m` push guard (`≤` skip semantics). -/
+def qNearLe (a b : QPt) : Bool := qDist a b ≤ 500000
+
+/-- `trimOverRouteExcursions` over the pinned metric. -/
+def qTrim (fx : Nat → QPt) (nf : Nat) (path : Nat → QPt) (n : Nat) :
+    List QPt :=
+  trim qTrimP qDist qChordDist qArcPos qNearLe fx nf path n
+
 -- ---------------------------------------------------------------
 -- The pass theorems, specialised for free.
 -- ---------------------------------------------------------------
@@ -197,6 +270,31 @@ theorem qHoldSpeed_chain (cap : Nat) (fixes : Nat → QPt) (n : Nat) :
 theorem qHoldSpeed_sublist (cap : Nat) (fixes : Nat → QPt) (n : Nat) :
     (qHoldSpeed cap fixes n).Sublist ((List.range n).map fixes) :=
   holdSpeed_sublist (qSpeedOk cap) fixes n
+
+/-- No adjacent deduped pair is within 0.5 m. -/
+theorem qDedupe_chain (pts : Nat → QPt) (n : Nat) :
+    ∀ p ∈ adjPairs (qDedupe pts n), (qDist p.1 p.2 < 500000 : Bool) = false :=
+  dedupe_chain _ pts n
+
+/-- The cleaning passes are drop-only over the pinned metric. -/
+theorem qDedupe_sublist (pts : Nat → QPt) (n : Nat) :
+    (qDedupe pts n).Sublist ((List.range n).map pts) :=
+  dedupe_sublist _ pts n
+
+theorem qRemoveSpurs_sublist (retUm maxSpan : Nat) (l : List QPt) :
+    (qRemoveSpurs retUm maxSpan l).Sublist l :=
+  spurGo_sublist qDist retUm maxSpan l
+
+theorem qDespike_sublist (minApexUm excessUm : Nat) (raw : List QPt)
+    (path : Nat → QPt) (n : Nat) :
+    (qDespike minApexUm excessUm raw path n).Sublist
+      ((List.range n).map path) :=
+  despike_sublist qPerp qTurnOk (·.ts) minApexUm excessUm raw path n
+
+theorem qTrim_sublist (fx : Nat → QPt) (nf : Nat) (path : Nat → QPt)
+    (n : Nat) :
+    (qTrim fx nf path n).Sublist ((List.range n).map path) :=
+  trim_sublist qTrimP qDist qChordDist qArcPos qNearLe fx nf path n
 
 -- ---------------------------------------------------------------
 -- Cross-language pin: values computed by the BigInt twin arithmetic
