@@ -58,6 +58,20 @@ def cumArc (pd : π → π → Nat) (pts : Nat → π) : Nat → Nat
   | 0 => 0
   | i + 1 => cumArc pd pts i + pd (pts i) (pts (i + 1))
 
+/-- `cumArc` materialised as an array (`arcArr[i] = cumArc i` for
+`i < n`) — the passes query positions many times, and recomputing the
+prefix per query is quadratic. -/
+def arcArrGo (pd : π → π → Nat) (pts : Nat → π) (n i last : Nat)
+    (acc : Array Nat) : Array Nat :=
+  if _h : i < n then
+    arcArrGo pd pts n (i + 1) (last + pd (pts (i - 1)) (pts i))
+      (acc.push (last + pd (pts (i - 1)) (pts i)))
+  else acc
+termination_by n - i
+
+def arcArr (pd : π → π → Nat) (pts : Nat → π) (n : Nat) : Array Nat :=
+  arcArrGo pd pts n 1 0 #[0]
+
 /-- Is some fix within `offM` of `v` (the TS min-over-fixes test)? -/
 def anyFix (pd : π → π → Nat) (fx : Nat → π) (nf offM : Nat) (v : π)
     (i : Nat) : Bool :=
@@ -169,19 +183,20 @@ def trimRebuild (nearLe : π → π → Bool) (path : Nat → π) (n : Nat)
   else acc
 termination_by n - i
 
-/-- The removal flags after both passes. -/
+/-- The removal flags after both passes (positions materialised once —
+value-identical to querying `cumArc`/`cpGo` directly, which
+`arcArr`/`cpArr` compute). -/
 def trimFlags (P : TrimP) (pd : π → π → Nat) (projD : π → π → π → Nat)
     (arcPos : π → π → π → Int → Int → Int) (fx : Nat → π) (nf : Nat)
     (path : Nat → π) (n : Nat) : Array Bool :=
-  pass2 P pd path n (cumArc pd path)
-    (fun j =>
-      (cpGo projD arcPos fx (fun i => (cumArc pd fx i : Int)) nf path n 0 0
-        P.slack #[]).getD j 0)
+  let fa := arcArr pd fx nf
+  let cu := arcArr pd path n
+  let cp := cpGo projD arcPos fx (fun i => (fa.getD i 0 : Int)) nf path n 0 0
+    P.slack #[]
+  pass2 P pd path n (fun j => cu.getD j 0) (fun j => cp.getD j 0)
     (n + 1) 0
-    (pass1 P n (fun k => anyFix pd fx nf P.offM (path k) 0) (cumArc pd path)
-      (fun j =>
-        (cpGo projD arcPos fx (fun i => (cumArc pd fx i : Int)) nf path n 0 0
-          P.slack #[]).getD j 0)
+    (pass1 P n (fun k => anyFix pd fx nf P.offM (path k) 0)
+      (fun j => cu.getD j 0) (fun j => cp.getD j 0)
       (n + 1) 0 (Array.replicate n false))
 
 /-- The TS `trimOverRouteExcursions` over `n` path vertices and `nf`
