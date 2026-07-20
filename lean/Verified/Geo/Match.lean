@@ -2,6 +2,7 @@ import Verified.Geo.Metric
 import Verified.Geo.LazyFuel
 import Verified.Geo.LazyResume
 import Verified.Geo.LazyPrev
+import Verified.Geo.LazyEdge
 import Verified.Geo.MatchViterbi
 
 /-!
@@ -1219,5 +1220,64 @@ private def co : QCorridor := mkQCorridor #[] 25000000 80000000 40
 #guard co.penScaled 10000000 == co.S
 #guard co.penScaled 90000000 == co.S * 40
 #guard co.S == 55000000
+
+/-! ## The reconstructed route is a valid costed path (routing-optimality, brick 1)
+
+`reconGo` (the accumulator-threaded `prev`-walk) computes exactly `LazyEdge`'s
+accumulator-free `chainList`, so the reconstructed vertex list is the reversed
+chain. Composing with `LazyEdge`'s `chainList_reverse_pathCost_isSome` lifts
+the per-`prev`-link edge fact (`EInv`) to the whole route: **under `EInv`, and
+from any seed below the sentinel, `qReconstruct`'s output has a defined
+`pathCost` in the shared `Verified.Rail.Graph` spec** — every step is a real
+edge, so the matcher's route is a genuine costed walk of `g`, the "valid path"
+half of the routing-optimality contract (`dijkstraC_correct`'s
+`isValidPath`). The remaining half — that the cost equals `oracleDist` — is
+the LoopInv-scale weight-optimality brick still to come. -/
+
+/-- `reconGo` is `chainList` prepended by its accumulator. -/
+theorem reconGo_toList_chainList (prev : Array Nat) (n : Nat) :
+    ∀ (fuel v : Nat) (acc : Array Nat),
+      (reconGo prev n fuel v acc).toList = acc.toList ++ chainList prev n fuel v := by
+  intro fuel
+  induction fuel with
+  | zero => intro v acc; simp [reconGo, chainList]
+  | succ fuel ih =>
+    intro v acc
+    show ((if v ≥ n then acc else reconGo prev n fuel (prev.getD v n) (acc.push v)) : Array Nat).toList
+      = acc.toList ++ chainList prev n (fuel + 1) v
+    have hcl : chainList prev n (fuel + 1) v
+        = if v ≥ n then [] else v :: chainList prev n fuel (prev.getD v n) := rfl
+    by_cases hv : v ≥ n
+    · rw [if_pos hv, hcl, if_pos hv, List.append_nil]
+    · rw [if_neg hv, ih (prev.getD v n) (acc.push v), Array.toList_push, hcl, if_neg hv,
+        List.append_assoc, List.singleton_append]
+
+/-- `qReconstruct`'s output as a list: the reversed chain. -/
+theorem qReconstruct_toList (prev : Array Nat) (start n : Nat) :
+    (qReconstruct prev start n).toList = (chainList prev n n start).reverse := by
+  unfold qReconstruct
+  rw [Array.toList_reverse, reconGo_toList_chainList]
+  simp
+
+/-- **The matcher's reconstructed route is a valid costed path.** Under the
+edge-provenance invariant `EInv` (which holds along every lazy-search
+trajectory — `iter_einv`/`linit_einv`), for any seed `start` below the
+sentinel `g.n`, the reconstructed route has a defined `pathCost`: every
+consecutive step is a genuine edge of `g`. -/
+theorem qReconstruct_pathCost_isSome {g : Graph} {s : LState} (hE : EInv g s)
+    {start : Nat} (hstart : start < g.n) :
+    (Verified.Rail.pathCost g (qReconstruct s.prev start g.n).toList).isSome := by
+  rw [qReconstruct_toList]
+  exact chainList_reverse_pathCost_isSome hE g.n start
+    (chainList_ne_nil hstart (by omega))
+
+/-- Specialised to a concrete search trajectory: the route reconstructed from
+any `iter`-reached state of a per-source lazy search is a valid costed path.
+This is the form the matcher's cache states (`OnTrajCache`) satisfy. -/
+theorem qReconstruct_pathCost_isSome_iter {g : Graph} {maxR src start k : Nat}
+    (hstart : start < g.n) :
+    (Verified.Rail.pathCost g
+      (qReconstruct (iter g maxR k (linit g.n src)).prev start g.n).toList).isSome :=
+  qReconstruct_pathCost_isSome (iter_einv k linit_einv) hstart
 
 end Verified.Geo

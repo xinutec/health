@@ -1,4 +1,5 @@
 import Verified.Geo.LazyDijkstra
+import Verified.Rail.Graph
 
 /-!
 # Lazy Dijkstra: the prev-edge provenance invariant
@@ -31,7 +32,7 @@ bundle, and is the next brick.
 
 namespace Verified.Geo
 
-open Verified.Rail (Graph)
+open Verified.Rail (Graph edgeMinW pathCost)
 
 /-- Every vertex with a non-sentinel `prev` is a real out-neighbour of that
 `prev`: `prev[v] = u ≠ g.n` implies `g` has an edge `u → v`. -/
@@ -175,5 +176,167 @@ theorem iter_einv_edge {g : Graph} {maxR src : Nat} (k : Nat) {v : Nat}
     ∃ w, (v, w) ∈
       (g.adj.getD ((iter g maxR k (linit g.n src)).prev.getD v g.n) #[]).toList :=
   iter_einv k linit_einv v hv
+
+/-! ## Lifting edge provenance to a well-formed path cost
+
+`EInv` gives one edge per `prev` link; the route reconstruction turns the
+whole `prev`-chain into a vertex list. Here the per-edge fact is lifted to
+the reconstructed path as a whole: its `pathCost` (the rail spec's cost, the
+same one `dijkstraC_correct` uses) is *defined* — every consecutive step is a
+real edge, so the route has a genuine total weight. This is the matcher's
+route expressed in, and validated against, the shared `Verified.Rail.Graph`
+spec.
+
+`chainList` mirrors `Match.lean`'s `reconGo` without the accumulator (the
+`prev`-walk as a plain cons list); `Match.lean` bridges the two. -/
+
+/-- The `prev`-walk from `v`, budget `fuel`, stopping at the `≥ n` sentinel —
+`reconGo`'s output as a plain list (no accumulator). -/
+def chainList (prev : Array Nat) (n : Nat) : Nat → Nat → List Nat
+  | 0, _ => []
+  | fuel + 1, v => if v ≥ n then [] else v :: chainList prev n fuel (prev.getD v n)
+
+/-- A nonempty chain starts at its seed (which is then below the sentinel). -/
+theorem chainList_head? {prev : Array Nat} {n fuel v : Nat}
+    (h : chainList prev n fuel v ≠ []) : (chainList prev n fuel v).head? = some v := by
+  cases fuel with
+  | zero => exact absurd rfl h
+  | succ fuel =>
+    unfold chainList at h ⊢
+    by_cases hv : v ≥ n
+    · rw [if_pos hv] at h; exact absurd rfl h
+    · rw [if_neg hv]; rfl
+
+/-- A nonempty chain's seed is below the sentinel. -/
+theorem chainList_seed_lt {prev : Array Nat} {n fuel v : Nat}
+    (h : chainList prev n fuel v ≠ []) : v < n := by
+  cases fuel with
+  | zero => exact absurd rfl h
+  | succ fuel =>
+    unfold chainList at h
+    by_cases hv : v ≥ n
+    · rw [if_pos hv] at h; exact absurd rfl h
+    · omega
+
+/-- Conversely, a seed below the sentinel with a positive budget yields a
+nonempty chain (its head is the seed). -/
+theorem chainList_ne_nil {prev : Array Nat} {n fuel v : Nat}
+    (hv : v < n) (hf : 0 < fuel) : chainList prev n fuel v ≠ [] := by
+  obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by omega⟩
+  show (if v ≥ n then [] else v :: chainList prev n f (prev.getD v n)) ≠ []
+  rw [if_neg (by omega)]
+  exact List.cons_ne_nil _ _
+
+/-! ### `edgeMinW` is defined whenever the target is a listed neighbour -/
+
+private def emwStep (v : Nat) : Option Nat → Nat × Nat → Option Nat :=
+  fun acc tw => if tw.1 = v then (match acc with | none => some tw.2 | some w => some (Nat.min w tw.2)) else acc
+
+private theorem emwFold_pres {v : Nat} :
+    ∀ (l : List (Nat × Nat)) {init : Option Nat}, init.isSome →
+      (l.foldl (emwStep v) init).isSome := by
+  intro l
+  induction l with
+  | nil => intro init h; exact h
+  | cons tw l ih =>
+    intro init h
+    rw [List.foldl_cons]
+    refine ih ?_
+    unfold emwStep
+    by_cases hc : tw.1 = v
+    · rw [if_pos hc]; cases init <;> simp
+    · rw [if_neg hc]; exact h
+
+private theorem emwFold_isSome {v : Nat} :
+    ∀ (l : List (Nat × Nat)), (∃ tw ∈ l, tw.1 = v) →
+      (l.foldl (emwStep v) none).isSome := by
+  intro l
+  induction l with
+  | nil => intro ⟨tw, htw, _⟩; exact absurd htw (List.not_mem_nil)
+  | cons tw l ih =>
+    intro ⟨tw', htw', hv'⟩
+    rw [List.foldl_cons]
+    by_cases hc : tw.1 = v
+    · refine emwFold_pres l ?_
+      unfold emwStep; rw [if_pos hc]; simp
+    · rcases List.mem_cons.mp htw' with rfl | hmem
+      · exact absurd hv' hc
+      · have : emwStep v none tw = none := by unfold emwStep; rw [if_neg hc]
+        rw [this]; exact ih ⟨tw', hmem, hv'⟩
+
+/-- `edgeMinW g u v` is defined when `v` is a listed out-neighbour of `u`. -/
+theorem edgeMinW_isSome_of_mem {g : Graph} {u v w : Nat}
+    (h : (v, w) ∈ (g.adj.getD u #[]).toList) : (edgeMinW g u v).isSome := by
+  unfold edgeMinW
+  rw [← Array.foldl_toList]
+  exact emwFold_isSome _ ⟨(v, w), h, rfl⟩
+
+/-! ### `pathCost` is defined on an all-edges list, and on a snoc -/
+
+/-- Appending one edge to a costed path keeps the cost defined. -/
+theorem pathCost_snoc_isSome {g : Graph} :
+    ∀ (l : List Nat) {y x : Nat}, l.getLast? = some y →
+      (pathCost g l).isSome → (edgeMinW g y x).isSome →
+      (pathCost g (l ++ [x])).isSome := by
+  intro l
+  induction l with
+  | nil => intro y x hlast _ _; simp at hlast
+  | cons a rest ih =>
+    intro y x hlast hpc he
+    cases rest with
+    | nil =>
+      rw [List.getLast?_singleton, Option.some.injEq] at hlast
+      cases hw : edgeMinW g a x with
+      | none => rw [← hlast, hw] at he; simp at he
+      | some w => simp [pathCost, hw]
+    | cons b rest' =>
+      have hlast' : (b :: rest').getLast? = some y := by
+        rw [← hlast, List.getLast?_cons_cons]
+      cases hw : edgeMinW g a b with
+      | none => rw [pathCost, hw] at hpc; simp at hpc
+      | some w =>
+        have hpc' : (pathCost g (b :: rest')).isSome := by
+          rw [pathCost, hw] at hpc
+          cases hc : pathCost g (b :: rest') with
+          | none => rw [hc] at hpc; simp at hpc
+          | some c => simp
+        have hrec := ih hlast' hpc' he
+        rw [List.cons_append, List.cons_append, pathCost, hw]
+        rw [List.cons_append] at hrec
+        cases hc : pathCost g (b :: (rest' ++ [x])) with
+        | none => rw [hc] at hrec; simp at hrec
+        | some c => simp
+
+/-- **The reconstructed route has a defined cost.** Under `EInv`, the reversed
+`prev`-chain (`reconGo`'s output; `Match.lean` bridges `chainList` to it) is a
+path every step of which is a real edge, so its `pathCost` in the shared rail
+spec is `some`. This is the per-route lift of `EInv`: the matcher's route is a
+genuine costed walk of `g`, not a bag of vertices. -/
+theorem chainList_reverse_pathCost_isSome {g : Graph} {s : LState} (hE : EInv g s) :
+    ∀ (fuel v : Nat), chainList s.prev g.n fuel v ≠ [] →
+      (pathCost g (chainList s.prev g.n fuel v).reverse).isSome := by
+  intro fuel
+  induction fuel with
+  | zero => intro v h; exact absurd rfl h
+  | succ fuel ih =>
+    intro v h
+    have hv : v < g.n := chainList_seed_lt h
+    have hcons : chainList s.prev g.n (fuel + 1) v
+        = v :: chainList s.prev g.n fuel (s.prev.getD v g.n) := by
+      show (if v ≥ g.n then [] else v :: chainList s.prev g.n fuel (s.prev.getD v g.n)) = _
+      rw [if_neg (by omega)]
+    rw [hcons, List.reverse_cons]
+    by_cases hT : chainList s.prev g.n fuel (s.prev.getD v g.n) = []
+    · rw [hT]; simp [pathCost]
+    · -- the tail chain is nonempty: its head is `s.prev.getD v g.n`, so the
+      -- reverse ends there, and `EInv` supplies the closing edge back to `v`.
+      have hlast : ((chainList s.prev g.n fuel (s.prev.getD v g.n)).reverse).getLast?
+          = some (s.prev.getD v g.n) := by
+        rw [List.getLast?_reverse, chainList_head? hT]
+      have hpne : s.prev.getD v g.n ≠ g.n := by
+        have := chainList_seed_lt hT; omega
+      obtain ⟨w, hw⟩ := hE v hpne
+      have he : (edgeMinW g (s.prev.getD v g.n) v).isSome := edgeMinW_isSome_of_mem hw
+      exact pathCost_snoc_isSome _ hlast (ih (s.prev.getD v g.n) hT) he
 
 end Verified.Geo

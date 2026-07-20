@@ -364,15 +364,22 @@ porting float arithmetic.
   **Routing-optimality — the meaning layer — is now in progress.** The
   matcher's routing is proved *pure* and *resume-stable*, but not yet
   *optimal* (the rail analogue is `dijkstraC_correct`). Two bricks:
-  - *Valid-path half — LANDED* (`Verified/Geo/LazyEdge.lean`, 2026-07-20):
-    `EInv` — the prev-**edge provenance** invariant `LazyInv`/`LazyPrev`
-    deliberately cut — proves every `prev` link is a real graph edge
-    (`prev[v]=u≠sentinel → (v,w) ∈ g.adj[u]`), carried along the whole
-    search trajectory (`iter_einv`, from `linit_einv`) and read off by
-    `iter_einv_edge`. So the reconstructed route (`qReconstruct` over
-    `(iter …).prev`) is a genuine connected `src → tgt` walk of real
-    edges — the positive half of null-over-wrong, needing no `LInv`,
-    `done`, or `WFEdges`.
+  - *Valid-path half — LANDED* (`Verified/Geo/LazyEdge.lean` +
+    `Match.lean`, 2026-07-20): `EInv` — the prev-**edge provenance**
+    invariant `LazyInv`/`LazyPrev` deliberately cut — proves every `prev`
+    link is a real graph edge (`prev[v]=u≠sentinel → (v,w) ∈ g.adj[u]`),
+    carried along the whole search trajectory (`iter_einv`, from
+    `linit_einv`; needs no `LInv`/`done`/`WFEdges`). This lifts to the
+    whole route over the **shared `Verified.Rail.Graph` spec**
+    (`pathCost`/`isValidPath`/`oracleDist`, the same one
+    `dijkstraC_correct` uses): `chainList_reverse_pathCost_isSome` +
+    the `reconGo = chainList` bridge give **`qReconstruct_pathCost_isSome`
+    / `_iter`** — under `EInv`, from any seed below the sentinel, the
+    reconstructed route has a *defined* `pathCost`, i.e. every step is a
+    genuine edge and the matcher's route is a real costed walk of `g`
+    (the `isValidPath` positive half of null-over-wrong). Proof is
+    reverse-free (accumulator-free `chainList` + a `pathCost` snoc lemma),
+    Mathlib-free.
   - *Weight-optimality half — next* (`dist[tgt] = trueShortestDist`): the
     LoopInv-scale fact the rail eager search has but the lazy bundle does
     not; transferable through the lazy=eager bridge (`lsettle_eq_iter`)
