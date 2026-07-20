@@ -5,18 +5,27 @@
  * synchronous bridge, `lean-core.ts`) in place of the TS implementation,
  * staged behind the `LEAN_PASSES` env flag:
  *
- *   off    (default) — pure TS, zero behaviour change.
- *   shadow — run both, SERVE the TS output, compare byte-wise, log
+ *   off    (default) — pure TS, zero behaviour change. The bridge is never
+ *            touched; no measurement.
+ *   shadow — run BOTH, SERVE the TS output, compare byte-wise, log
  *            divergence. The lean-shadow discipline on the request path.
- *   on     — SERVE the verified Lean output; fall back to TS on any bridge
- *            failure (swallow-over-wrong, execution edition).
+ *   on     — run BOTH, SERVE the verified Lean output, still compare and
+ *            record. Fall back to TS on any bridge failure (swallow-over-
+ *            wrong, execution edition).
+ *
+ * `shadow` and `on` take the SAME measurements (calls / bridge-failures /
+ * divergences) — they differ only in which result is returned. So the ledger
+ * is a faithful record of what the bridge did regardless of which output was
+ * served, and a green `on` run PROVES the bridge actually executed (calls > 0,
+ * failures == 0) rather than having silently fallen back to TS.
  *
  * Inputs are quantised to the pinned 1e-7° integers on the way in, so the
  * bridge sees exactly what the `compare-geo` referee sees — the 173/173 gate
  * is the judge of what `on` mode serves. Note that `on` adopts quantised
  * geometry as truth, which differs from the TS floats on the corpus's known
- * near-tie legs (1 simplify, 2 trim); `shadow` surfaces exactly those before
- * any flip.
+ * near-tie legs (Douglas-Peucker single-vertex flips); those wash out of the
+ * final golden output (golden is 31/31 byte-identical under `on`), but the
+ * ledger surfaces them so the flip is never blind.
  */
 
 import { quantPt } from "../geo/quant-twin.js";
@@ -30,19 +39,32 @@ export function leanPassMode(): LeanPassMode {
 }
 
 interface PassStat {
+	/** Successful bridge calls (the verified pass ran and returned). */
 	calls: number;
+	/** Bridge failures caught and fallen back to TS (LeanBridgeError). */
+	fails: number;
+	/** Calls where the Lean output differed from the TS output. */
 	diffs: number;
 }
 const stats = new Map<string, PassStat>();
 
-function record(op: string, diverged: boolean): void {
-	const s = stats.get(op) ?? { calls: 0, diffs: 0 };
-	s.calls += 1;
-	if (diverged) s.diffs += 1;
+function stat(op: string): PassStat {
+	const s = stats.get(op) ?? { calls: 0, fails: 0, diffs: 0 };
 	stats.set(op, s);
+	return s;
 }
 
-/** Per-op shadow tallies (calls / divergences) since process start. */
+function recordCall(op: string, diverged: boolean): void {
+	const s = stat(op);
+	s.calls += 1;
+	if (diverged) s.diffs += 1;
+}
+
+function recordFail(op: string): void {
+	stat(op).fails += 1;
+}
+
+/** Per-op tallies (calls / failures / divergences) since the last reset. */
 export function leanPassStats(): Record<string, PassStat> {
 	return Object.fromEntries(stats);
 }
@@ -59,7 +81,7 @@ function recordDivergence(op: string, n: number, note: string): void {
 	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note });
 }
 
-/** Structured shadow divergences (bounded) — the flip-decision ledger. */
+/** Structured divergences (bounded) — the flip-decision ledger. */
 export function leanPassDivergences(): readonly Divergence[] {
 	return divergences;
 }
@@ -121,59 +143,58 @@ function subsequenceKept<T extends LatLonTs>(pts: readonly T[], leanRows: number
 /**
  * Douglas–Peucker path simplify through the verified core.
  *
- * `tsResult` is the TS output the call site already computed — served in
- * `off`/`shadow`, and the fallback when the bridge is unavailable. In `on`
- * mode the returned subset is the verified `keep` set (a subsequence of
- * `pts`, so downstream sees the same object identities).
+ * `tsResult` is the TS output the call site already computed. Both `shadow`
+ * and `on` run the Lean pass and compare against it; `shadow` serves
+ * `tsResult`, `on` serves the verified `keep` subset (a subsequence of `pts`,
+ * so downstream sees the same object identities). Any bridge failure is
+ * recorded and falls back to `tsResult`.
  */
 export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], toleranceM: number, tsResult: T[]): T[] {
 	const mode = leanPassMode();
 	if (mode === "off" || pts.length <= 2) return tsResult;
+	let keep: number[];
 	try {
-		const keep = leanGeo({ op: "simplify", tol: Math.round(toleranceM * 1e6), pts: rows(pts) }).keep ?? [];
-		if (mode === "shadow") {
-			const tsIdx = keptIndices(pts, tsResult);
-			const diverged = !eqNum(tsIdx, keep);
-			record("simplify", diverged);
-			if (diverged) {
-				const note = symdiffNote(tsIdx, keep);
-				recordDivergence("simplify", pts.length, note);
-				console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ${note}`);
-			}
-			return tsResult;
-		}
-		return keep.map((i) => pts[i]);
+		keep = leanGeo({ op: "simplify", tol: Math.round(toleranceM * 1e6), pts: rows(pts) }).keep ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("simplify");
 		return tsResult;
 	}
+	const tsIdx = keptIndices(pts, tsResult);
+	const diverged = !eqNum(tsIdx, keep);
+	recordCall("simplify", diverged);
+	if (diverged) {
+		const note = symdiffNote(tsIdx, keep);
+		recordDivergence("simplify", pts.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ${note}`);
+	}
+	return mode === "on" ? keep.map((i) => pts[i]) : tsResult;
 }
 
 /**
  * Geometric spike rejection through the verified core (`qRejectSpikes`).
  * The `spikes` op returns quantised rows; `on` mode recovers the kept
- * original objects by subsequence match. Shadow-compares the quantised TS
- * keep-set to the Lean keep-set. (compare-geo measures zero float↔quant
- * flips for this pass, so shadow should stay clean.)
+ * original objects by subsequence match. Both modes compare the quantised TS
+ * keep-set to the Lean keep-set. (compare-geo measures zero float↔quant flips
+ * for this pass, so the ledger should stay clean.)
  */
 export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], tsResult: T[]): T[] {
 	const mode = leanPassMode();
 	if (mode === "off" || pts.length < 3) return tsResult;
+	let leanRows: number[][];
 	try {
-		const leanRows = leanGeo({ op: "spikes", pts: rows(pts) }).pts ?? [];
-		if (mode === "shadow") {
-			const diverged = !eqRows(rows(tsResult), leanRows);
-			record("spikes", diverged);
-			if (diverged) {
-				const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
-				recordDivergence("spikes", pts.length, note);
-				console.warn(`[lean-passes] spikes divergence (n=${pts.length}): ${note}`);
-			}
-			return tsResult;
-		}
-		return subsequenceKept(pts, leanRows);
+		leanRows = leanGeo({ op: "spikes", pts: rows(pts) }).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("spikes");
 		return tsResult;
 	}
+	const diverged = !eqRows(rows(tsResult), leanRows);
+	recordCall("spikes", diverged);
+	if (diverged) {
+		const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
+		recordDivergence("spikes", pts.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] spikes divergence (n=${pts.length}): ${note}`);
+	}
+	return mode === "on" ? subsequenceKept(pts, leanRows) : tsResult;
 }
