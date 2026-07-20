@@ -272,6 +272,36 @@ private def parsePts (j : Json) : Except String (Array Verified.Geo.QPt) := do
     let some tsJ := a[2]? | throw "pt: expected [la, lo, ts]"
     return { la := ← laJ.getInt?, lo := ← loJ.getInt?, ts := ← tsJ.getInt? }
 
+/-- Way / building coordinates for the match mode: `[[la, lo], ...]` in
+1e-7° units (timestamp implicitly 0). -/
+private def parseLatLon (j : Json) : Except String (Array Verified.Geo.QPt) := do
+  (← j.getArr?).mapM fun p => do
+    let a ← p.getArr?
+    let some laJ := a[0]? | throw "coord: expected [la, lo]"
+    let some loJ := a[1]? | throw "coord: expected [la, lo]"
+    return ({ la := ← laJ.getInt?, lo := ← loJ.getInt?, ts := 0 } : Verified.Geo.QPt)
+
+private def parseWays (j : Json) : Except String (Array Verified.Geo.QWay) := do
+  (← j.getArr?).mapM fun w => do
+    let coords ← parseLatLon (← w.getObjVal? "coords")
+    let name : Option String :=
+      match w.getObjVal? "name" >>= (·.getStr?) with
+      | .ok s => some s
+      | .error _ => none
+    return ({ coords, name } : Verified.Geo.QWay)
+
+private def parseBuildings (j : Json) : Except String (Array (Array Verified.Geo.QPt)) := do
+  (← j.getArr?).mapM parseLatLon
+
+/-- `verified_cli match` input: fixes (`[la, lo, ts]`), ways, buildings. -/
+private def parseMatch (j : Json) :
+    Except String (Array Verified.Geo.QPt × Array Verified.Geo.QWay ×
+      Array (Array Verified.Geo.QPt)) := do
+  let fixes ← parsePts (← j.getObjVal? "fixes")
+  let ways ← parseWays (← j.getObjVal? "ways")
+  let buildings ← parseBuildings (← j.getObjVal? "buildings")
+  return (fixes, ways, buildings)
+
 private inductive GeoReq where
   | simplify (pts : Array Verified.Geo.QPt) (tol : Nat)
   | hold (pts : Array Verified.Geo.QPt) (cap : Nat)
@@ -359,6 +389,22 @@ private def geoMain (input : String) : IO UInt32 := do
     IO.println out.compress
     return 0
 
+/-- `verified_cli match`: the walk map-matcher over quantised input — the
+Lean side of the `compare-match` harness. -/
+private def matchMain (input : String) : IO UInt32 := do
+  match Json.parse input >>= parseMatch with
+  | .error e =>
+    IO.println (Json.mkObj [("error", Json.str e)]).compress
+    return 1
+  | .ok (fixes, ways, buildings) =>
+    match Verified.Geo.qMatchWalkSegment fixes ways buildings with
+    | none => IO.println (Json.mkObj [("none", Json.bool true)]).compress
+    | some r =>
+      IO.println (Json.mkObj [
+        ("path", Json.arr (r.path.map ptJson)),
+        ("coarse", Json.arr (r.coarsePath.map ptJson))]).compress
+    return 0
+
 private def railMain (input : String) : IO UInt32 := do
   match Json.parse input >>= parseRail with
   | .error e =>
@@ -387,6 +433,7 @@ def main (args : List String) : IO UInt32 := do
   let input ← (← IO.getStdin).readToEnd
   if args.contains "rail" then return ← railMain input
   if args.contains "geo" then return ← geoMain input
+  if args.contains "match" then return ← matchMain input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
   | .error e =>

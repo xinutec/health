@@ -24,7 +24,10 @@ import Verified.Geo.Prefilter
 import Verified.Geo.Clean
 import Verified.Geo.Trim
 import Verified.Geo.Metric
+import Verified.Geo.Match
 import Verified.Geo.RingSearch
 import Verified.Geo.LazyDijkstra
 import Verified.Geo.LazyInv
 import Verified.Geo.LazyFuel
+import Verified.Geo.LazyResume
+import Verified.Geo.LazyPrev

@@ -15,7 +15,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-echo "==> building (ts)"
+echo "==> building (ts + lean)"
 npm run build >/dev/null
+(cd lean && lake build >/dev/null)
 
 exec node dist/cli/compare-match.js "$@"

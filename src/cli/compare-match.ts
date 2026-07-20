@@ -24,7 +24,9 @@
  * Usage: node dist/cli/compare-match.js [date ...]
  */
 
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { rejectSpikes } from "../geo/episode-geometry.js";
 import type { BuildingRing, RoadFix } from "../geo/map-match-core.js";
 import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "../geo/match-twin.js";
@@ -119,6 +121,42 @@ function legClasses(
 	};
 }
 
+/** The Lean arm: `verified_cli match` on the same quantised input. */
+const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
+
+interface LeanMatchResp {
+	path?: number[][];
+	coarse?: number[][];
+	none?: boolean;
+	error?: string;
+}
+
+function leanMatch(req: object): LeanMatchResp {
+	const res = spawnSync(LEAN_BIN, ["match"], {
+		input: JSON.stringify(req),
+		encoding: "utf8",
+		maxBuffer: 256 * 1024 * 1024,
+	});
+	if (res.status !== 0) throw new Error(`verified_cli match failed: ${res.stderr || res.stdout}`);
+	const parsed = JSON.parse(res.stdout) as LeanMatchResp;
+	if (parsed.error) throw new Error(`verified_cli match: ${parsed.error}`);
+	return parsed;
+}
+
+const ptRow = (p: QPt): number[] => [Number(p.la), Number(p.lo), Number(p.ts)];
+const eqNums = (a: readonly number[], b: readonly number[]): boolean =>
+	a.length === b.length && a.every((x, i) => x === b[i]);
+const eqRows = (a: readonly number[][], b: readonly number[][]): boolean =>
+	a.length === b.length && a.every((x, i) => eqNums(x, b[i]));
+
+/** The gate: quant and Lean agree bit-for-bit (both null, or identical
+ *  path AND coarse vertex rows). */
+function quantLeanExact(quant: QWalkMatchResult | null, lean: LeanMatchResp): boolean {
+	if (quant === null) return lean.none === true;
+	if (lean.none === true || lean.path === undefined || lean.coarse === undefined) return false;
+	return eqRows(quant.path.map(ptRow), lean.path) && eqRows(quant.coarsePath.map(ptRow), lean.coarse);
+}
+
 const argDates = process.argv.slice(2);
 const files = readdirSync("tests/golden/days")
 	.filter((f) => f.endsWith(".json"))
@@ -130,6 +168,8 @@ const coarseTotals = { EXACT: 0, NEAR: 0, DIFF: 0 };
 const pathTotals = { EXACT: 0, NEAR: 0, DIFF: 0 };
 let nullBoth = 0;
 let nullFlips = 0;
+let leanExact = 0;
+const leanMismatches: string[] = [];
 
 for (const file of files) {
 	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${file}`, "utf8"));
@@ -159,6 +199,16 @@ for (const file of files) {
 		const qBuildings = buildings.map((r) => r.map((p) => quantPt(p)));
 		const quant = qMatchWalkSegment(qFixes, qWays, qBuildings);
 
+		// The gate: run the Lean matcher on the identical quantised input
+		// and demand bit-exact agreement with the twin.
+		const lean = leanMatch({
+			fixes: qFixes.map((p) => [Number(p.la), Number(p.lo), Number(p.ts)]),
+			ways: qWays.map((w) => ({ coords: w.coords.map((c) => [Number(c.la), Number(c.lo)]), name: w.name ?? null })),
+			buildings: qBuildings.map((r) => r.map((p) => [Number(p.la), Number(p.lo)])),
+		});
+		if (quantLeanExact(quant, lean)) leanExact++;
+		else leanMismatches.push(`${file.slice(0, 10)} ${new Date(ep.startTs * 1000).toISOString().slice(11, 16)}`);
+
 		const cls = legClasses(float, quant);
 		coarseTotals[cls.coarse]++;
 		pathTotals[cls.path]++;
@@ -181,4 +231,8 @@ console.log(
 		`DIFF=${coarseTotals.DIFF}; path EXACT=${pathTotals.EXACT} NEAR=${pathTotals.NEAR} ` +
 		`DIFF=${pathTotals.DIFF} (both-null ${nullBoth}, null-flips ${nullFlips})`,
 );
-process.exit(0);
+console.log(
+	`compare-match: quant↔lean ${leanExact}/${legs} EXACT, ${leanMismatches.length} mismatch` +
+		(leanMismatches.length > 0 ? ` — ${leanMismatches.join(", ")}` : ""),
+);
+process.exit(leanMismatches.length === 0 ? 0 : 1);
