@@ -448,13 +448,28 @@ porting float arithmetic.
   sites stay synchronous. **0.28 ms/call** (500 sequential), any failure →
   `LeanBridgeError` → TS fallback. Inputs are the pinned 1e-7° integers, so the
   bridge output is exactly the `compare-geo` referee's: `compare-geo --bridge`
-  runs all 173 golden legs through the worker, **173/173 EXACT**. First prod
-  tenant: `src/lean/lean-passes.ts` shadow-executes the verified `rejectSpikes`
-  in `episode-geometry` behind `LEAN_PASSES` (off/shadow/on) — golden 31/31
-  byte-identical flag-off, shadow 0 divergences. `map-match-core.ts` stays
-  import-free (the pure fixture core), so its high-frequency passes need a
-  dependency-injection hook next; `on` mode adopts quantised geometry as truth
-  (the 1 simplify + 2 trim near-ties re-blessed or accepted before any flip).
+  runs all 173 golden legs through the worker, **173/173 EXACT**.
+
+  **Serving tenants — FIVE proved geometry passes (2026-07-20).**
+  `src/lean/lean-passes.ts` runs the verified passes behind `LEAN_PASSES`
+  (off/shadow/on): `rejectSpikes` (episode-geometry), and — via a
+  dependency-injection hook that keeps the import-free `map-match-core.ts`
+  clean — `simplify` + `removeSpurs` (matched-path assembly) and `trim` +
+  `despike` (pedestrian-match). One corpus replay drives **739 verified Lean
+  calls** (simplify 185 / spurs 183 / trim 166 / despike 166 / spikes 39).
+  **Golden is 31/31 byte-identical both flag-off AND under `LEAN_PASSES=on`** —
+  serving the verified geometry changes no final output. The only measured
+  divergences are 2 accepted Douglas-Peucker single-vertex near-ties on
+  simplify (`src/lean/accepted-deltas.ts`), which wash out downstream.
+
+  **Honest flip gate.** `shadow` and `on` take the SAME measurements
+  (calls / bridge-failures / divergences); a green `on` run therefore *proves*
+  the bridge served every call rather than silently falling back to TS. The
+  gate (`npm run shadow-passes [--on]`) is RED unless coverage > 0 AND
+  failures == 0 AND every divergence is in the accepted manifest — closing the
+  earlier false-CLEAN bug where a dead bridge read as ready-to-flip. The
+  remaining step to serve Lean in production is a deploy decision
+  (`LEAN_PASSES=on`), not a code gap.
 
 ## Landmines
 
