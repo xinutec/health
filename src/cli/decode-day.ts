@@ -48,6 +48,7 @@ import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINE
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
+import { leanPassDivergences, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
 
 const config = z
 	.object({
@@ -179,6 +180,26 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 	}
 }
 
+/** Request-path pass shadow (docs/proposals/2026-07-verified-core-lean.md):
+ *  when `LEAN_PASSES=shadow` is set on the cron image, the wired geometry
+ *  passes (simplify, rejectSpikes) execute the verified Lean implementation via
+ *  the in-process bridge alongside the TS during the day's velocity runs,
+ *  serving the TS output. Log the accumulated per-op ledger for the day and
+ *  reset for the next. No-op unless the flag is set — never touches the
+ *  interactive path or the default pipeline. This is the soak that gates the
+ *  serve-Lean flip. */
+function logLeanPassLedger(date: string): void {
+	if (process.env.LEAN_PASSES !== "shadow") return;
+	const stats = leanPassStats();
+	const tally = Object.entries(stats)
+		.map(([op, s]) => `${op} ${s.calls}/${s.diffs}`)
+		.join(" ");
+	const divs = leanPassDivergences();
+	const detail = divs.length > 0 ? ` — ${divs.map((d) => `${d.op} n=${d.n} ${d.note}`).join("; ")}` : " EXACT";
+	console.log(`lean-passes ${date} ${tally === "" ? "(no calls)" : tally}${detail}`);
+	resetLeanPassStats();
+}
+
 async function decodeAndPersist(
 	userId: string,
 	date: string,
@@ -240,6 +261,7 @@ async function decodeAndPersist(
 	}
 	runLeanShadow(inputs, date);
 	await runWalkShadow(userId, date, tz, osm);
+	logLeanPassLedger(date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.
