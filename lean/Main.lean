@@ -344,15 +344,24 @@ private def parseGeo (j : Json) : Except String GeoReq := do
 private def ptJson (p : Verified.Geo.QPt) : Json :=
   Json.arr #[Lean.toJson p.la, Lean.toJson p.lo, Lean.toJson p.ts]
 
-/-- `verified_cli geo`: one display pass over quantised points — the
-Lean side of the `compare-geo` harness. -/
-private def geoMain (input : String) : IO UInt32 := do
-  match Json.parse input >>= parseGeo with
+/-- Run one pure JSON→JSON handler in one-shot mode: parse stdin, print the
+result, exit non-zero iff it carries an `error`. -/
+private def runOne (f : Json → Json) (input : String) : IO UInt32 := do
+  match Json.parse input with
   | .error e =>
     IO.println (Json.mkObj [("error", Json.str e)]).compress
     return 1
+  | .ok j =>
+    let out := f j
+    IO.println out.compress
+    return (if (out.getObjVal? "error").toOption.isSome then 1 else 0)
+
+/-- One display pass over quantised points as a pure result — the Lean side
+of the `compare-geo` harness, and a `serve`-mode handler. -/
+private def geoResult (j : Json) : Json :=
+  match parseGeo j with
+  | .error e => Json.mkObj [("error", Json.str e)]
   | .ok req =>
-    let out : Json :=
       match req with
       | .simplify pts tol =>
         Json.mkObj [("keep", Json.arr
@@ -386,48 +395,90 @@ private def geoMain (input : String) : IO UInt32 := do
         Json.mkObj [("pts", Json.arr
           ((Verified.Geo.qTrim (fun i => fixes.getD i default) fixes.size
             (fun i => path.getD i default) path.size).toArray.map ptJson))]
-    IO.println out.compress
-    return 0
 
-/-- `verified_cli match`: the walk map-matcher over quantised input — the
-Lean side of the `compare-match` harness. -/
-private def matchMain (input : String) : IO UInt32 := do
-  match Json.parse input >>= parseMatch with
-  | .error e =>
-    IO.println (Json.mkObj [("error", Json.str e)]).compress
-    return 1
+private def geoMain (input : String) : IO UInt32 :=
+  runOne geoResult input
+
+/-- The walk map-matcher over quantised input as a pure result — the Lean
+side of the `compare-match` harness, and a `serve`-mode handler. -/
+private def matchResult (j : Json) : Json :=
+  match parseMatch j with
+  | .error e => Json.mkObj [("error", Json.str e)]
   | .ok (fixes, ways, buildings) =>
     match Verified.Geo.qMatchWalkSegment fixes ways buildings with
-    | none => IO.println (Json.mkObj [("none", Json.bool true)]).compress
+    | none => Json.mkObj [("none", Json.bool true)]
     | some r =>
-      IO.println (Json.mkObj [
+      Json.mkObj [
         ("path", Json.arr (r.path.map ptJson)),
-        ("coarse", Json.arr (r.coarsePath.map ptJson))]).compress
-    return 0
+        ("coarse", Json.arr (r.coarsePath.map ptJson))]
 
-private def railMain (input : String) : IO UInt32 := do
-  match Json.parse input >>= parseRail with
-  | .error e =>
-    IO.println (Json.mkObj [("error", Json.str e)]).compress
-    return 1
+private def matchMain (input : String) : IO UInt32 :=
+  runOne matchResult input
+
+/-- The certified rail shortest-path as a pure result: any returned path is
+theorem-backed (`dijkstraC_correct`); a certification failure degrades to
+`none`. Lean side of `compare-rail`, and a `serve`-mode handler. -/
+private def railResult (j : Json) : Json :=
+  match parseRail j with
+  | .error e => Json.mkObj [("error", Json.str e)]
   | .ok (g, src, dst) =>
-    -- The certified decoder: any returned path is theorem-backed
-    -- (`dijkstraC_correct`); a certification failure degrades to `none`.
     match Verified.Rail.dijkstraC g src dst with
-    | none => IO.println (Json.mkObj [("none", Json.bool true)]).compress
+    | none => Json.mkObj [("none", Json.bool true)]
     | some path =>
       match Verified.Rail.dijkstraDist g src dst with
-      | none =>
-        -- Unreachable: `dijkstraC` returned a path, so `dst` was settled.
-        IO.println (Json.mkObj [("error", Json.str "path without dist")]).compress
-        return 1
+      | none => Json.mkObj [("error", Json.str "path without dist")]
       | some d =>
-        IO.println (Json.mkObj [
+        Json.mkObj [
           ("path", Json.arr (path.toArray.map fun v => Lean.toJson v)),
-          ("dist", Lean.toJson d)]).compress
-    return 0
+          ("dist", Lean.toJson d)]
+
+private def railMain (input : String) : IO UInt32 :=
+  runOne railResult input
+
+/-- One HSMM decode as a pure result (`serve`-mode handler). The one-shot
+`main` path keeps its own timing-instrumented copy. -/
+private def hsmmResult (j : Json) : Json :=
+  match parseModel j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok m =>
+    match pDecode m ckptStride with
+    | none => Json.mkObj [("degenerate", Json.bool true)]
+    | some r =>
+      Json.mkObj [
+        ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
+        ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+
+/-- Persistent request loop: one NDJSON request per line
+(`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
+(`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
+many calls without a process spawn each — the request-path execution
+substrate the TS bridge drives. -/
+private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
+  let line ← stdin.getLine
+  if line.isEmpty then return  -- EOF: the worker closed our stdin
+  let resp : Json :=
+    match Json.parse line with
+    | .error e => Json.mkObj [("id", Json.null), ("error", Json.str s!"parse: {e}")]
+    | .ok j =>
+      let id := match j.getObjVal? "id" with | .ok v => v | .error _ => Json.null
+      let body : Json :=
+        match (j.getObjVal? "mode" >>= (·.getStr?)) with
+        | .ok "geo" => geoResult j
+        | .ok "match" => matchResult j
+        | .ok "rail" => railResult j
+        | .ok "hsmm" => hsmmResult j
+        | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
+        | .error _ => Json.mkObj [("error", Json.str "missing mode")]
+      Json.mkObj [("id", id), ("result", body)]
+  stdout.putStr resp.compress
+  stdout.putStr "\n"
+  stdout.flush
+  serveLoop stdin stdout
 
 def main (args : List String) : IO UInt32 := do
+  if args.contains "serve" then
+    serveLoop (← IO.getStdin) (← IO.getStdout)
+    return 0
   let timing := args.contains "--timing"
   let t0 ← IO.monoMsNow
   let input ← (← IO.getStdin).readToEnd
