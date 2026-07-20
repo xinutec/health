@@ -23,6 +23,7 @@ import Verified.Geo.Splice
 import Verified.Geo.Prefilter
 import Verified.Geo.Clean
 import Verified.Geo.Trim
+import Verified.Geo.LazyEdge
 import Verified.Geo.Metric
 import Verified.Geo.Match
 import Verified.Geo.RingSearch

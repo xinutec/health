@@ -348,10 +348,44 @@ porting float arithmetic.
   positions; the 11 path-level DIFFs are dominated by sub-tolerance
   route variation the 5 m simplify hides from `coarsePath` and the
   detail splice re-surfaces. `qSpliceRouteDetail` (the splice twin)
-  rode in as planned. Remaining V4, in order: Lean port of the
-  matcher passes against this twin (three-arm gate at bit-exact,
-  like compare-geo), then `RingSearch.lean`'s `hgeom` discharge on
-  the substrate's future analytic layer.
+  rode in as planned.
+  **The matcher Lean port is LANDED and bit-exact-gated** (2026-07-20):
+  `Match.lean` implements `qMatchTrajectory`/`qMatchWalkSegment` (the
+  Lean twin of `match-twin.ts`), reusing the fully-proved `LazyDijkstra`
+  machinery for routing and running the proved `MatchViterbi.decodeFast`
+  for the trellis; `verified_cli match` A/Bs every golden walking leg
+  against the BigInt twin and `npm run compare-match` **gates at
+  173/173 quant↔Lean EXACT**, with the same per-leg A/B wired as a live
+  nightly prod shadow (`decode-day` walk-shadow, LEAN_CLI-gated). So the
+  matcher now *ships* Lean-decoded results bit-for-bit and is
+  theorem-backed at its two hardest stages (route purity
+  `qRouteBetween_route_pure`; Viterbi argmax `decode_argmax` /
+  `decode_none_iff`).
+  **Routing-optimality — the meaning layer — is now in progress.** The
+  matcher's routing is proved *pure* and *resume-stable*, but not yet
+  *optimal* (the rail analogue is `dijkstraC_correct`). Two bricks:
+  - *Valid-path half — LANDED* (`Verified/Geo/LazyEdge.lean`, 2026-07-20):
+    `EInv` — the prev-**edge provenance** invariant `LazyInv`/`LazyPrev`
+    deliberately cut — proves every `prev` link is a real graph edge
+    (`prev[v]=u≠sentinel → (v,w) ∈ g.adj[u]`), carried along the whole
+    search trajectory (`iter_einv`, from `linit_einv`) and read off by
+    `iter_einv_edge`. So the reconstructed route (`qReconstruct` over
+    `(iter …).prev`) is a genuine connected `src → tgt` walk of real
+    edges — the positive half of null-over-wrong, needing no `LInv`,
+    `done`, or `WFEdges`.
+  - *Weight-optimality half — next* (`dist[tgt] = trueShortestDist`): the
+    LoopInv-scale fact the rail eager search has but the lazy bundle does
+    not; transferable through the lazy=eager bridge (`lsettle_eq_iter`)
+    rather than rebuilt.
+  Then `RingSearch.lean`'s `hgeom` discharge — reclassified, honestly, as
+  its own project: it needs the **analytic (error-bound) substrate** the
+  shipped *integer* substrate does NOT provide — a proved Lipschitz/error
+  bound on `cosQ` (today only `#guard`-pinned pointwise), a
+  segment-sampling-density lemma (rasteriser step ≤ cell/2), and the
+  equirectangular cos-drift bound (the "0.25·cell margin" in the
+  `SegmentNearGrid` comment). That is real ε-budget analysis (Mathlib ℝ
+  or a heavy integer interval-arithmetic build), the port's long pole,
+  not a near-term slice.
 - **V5 — the shell.** As the decoder-roadmap folds passes into the decoder,
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
