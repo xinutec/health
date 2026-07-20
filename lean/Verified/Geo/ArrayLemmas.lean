@@ -53,4 +53,14 @@ theorem getD_set_true {a : Array Bool} (u v : Nat)
   · rw [if_neg huv]
     exact h
 
+/-- At an in-bounds index, `getD` does not depend on the default — the
+matcher's reconstruction reads `prev` with the sentinel default `n`, while
+the Dijkstra invariants freeze it with default `0`; both agree on the
+settled vertices (all in range). -/
+theorem getD_lt_indep {α : Type} {a : Array α} {i : Nat} (h : i < a.size)
+    (d₁ d₂ : α) : a.getD i d₁ = a.getD i d₂ := by
+  rw [Array.getD_eq_getD_getElem?, Array.getD_eq_getD_getElem?,
+    Array.getElem?_eq_getElem h]
+  rfl
+
 end Verified.Geo

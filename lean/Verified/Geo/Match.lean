@@ -55,14 +55,23 @@ deliverable; the theorem arc on top of it, easiest first:
     instances: `P v =` "settled at the reference state", discharged by
     `iter_done_stable` (agree) + `PInv.done_prev` (closed).
 
-  `qRouteBetween`'s 2×2 loop is now a `List.foldl` of `comboStep` over
+  `qRouteBetween`'s 2×2 loop is a `List.foldl` of `comboStep` over
   `routeCombos` (gate re-verified bit-exact), the structural form the purity
-  induction needs. *Remaining*: `comboStep` best-purity (its `best` output,
-  under a valid cache, equals the fresh-settle `comboStepPure` — via the
-  `settleTo` reads-equality: `dist` at the target by `lsettle_read_stable`,
-  the reconstructed `verts` by `qReconstruct_congr`) + `OnTrajCache`
-  preservation, folded over the combo list ⇒ route-result purity. Then the
-  trellis `forIn` invariant and the argmax DP.
+  induction needs. **Route-result purity — landed** (`qRouteBetween_route_pure`):
+  the route result is the same for any two valid caches — a pure function of
+  the graph, not of the trellis's fill order. The chain, each atom proved:
+  - `settleTo_reads_eq` — a source's target `dist` and reconstructed chain
+    read the same from any valid cache as from a fresh per-source settle
+    (`iter_stop_read_stable` for `dist`, `qReconstruct_resume_stable` for the
+    chain; `lsettle_stops` discharges stop-reachability at `totalOut+1` fuel);
+  - `comboStep_best_indep` — hence one endpoint combo's `best` update is
+    cache-independent (factored through the pure `comboBest`);
+  - `comboStep_onTraj` — `comboStep` preserves `OnTrajCache` (its cache output
+    is `settleTo`'s);
+  - `comboFold_best_indep` — folding the two over the combo list carries both:
+    each step's `best` is cache-invariant while the cache stays valid.
+
+  *Remaining*: the trellis `forIn` invariant and the argmax DP.
 - **Flagship — Viterbi argmax** (planned): the returned coarse chain attains
   the maximum declarative score over all route-connected candidate chains,
   with the `none ⟺ no finite-score chain` companion — the matcher analogue
@@ -263,7 +272,7 @@ adjacency, `Nat` scalars) with weights precomputed eagerly in the µm·S
 scale — memo-transparent to the twin's lazy `weightOf`, and routing then
 reuses the fully-proved `LazyDijkstra` machinery (`linit`/`lsettle`). -/
 
-open Verified.Rail (Graph)
+open Verified.Rail (Graph WFEdges)
 
 /-- A way: its coordinate polyline and optional name. -/
 structure QWay where
@@ -502,6 +511,116 @@ theorem qReconstruct_congr {prev₁ prev₂ : Array Nat} {start n : Nat} {P : Na
   unfold qReconstruct
   rw [reconGo_congr hagree hclosed n start #[] hstart]
 
+/-! ### Cache purity, step 2: the reconstruction is resume-stable
+
+The reconstructed `prev`-chain to `tgt`, read at a later trajectory point,
+is the same as at the fresh first-stop — either the target *settled* (its
+whole `prev` chain is done, frozen by `iter_done_stable`, closed by
+`PInv.done_prev`) or the search *terminated* (a fixpoint, so the two states
+coincide). This lifts the single-vertex `iter_stop_read_stable` to the whole
+path the route result depends on. -/
+
+/-- The reconstructed chain to `tgt` is identical at `iter (max m k)` and at
+the fresh first-stop `iter k`. -/
+theorem qReconstruct_resume_stable {g : Graph} {maxR src tgt k m : Nat}
+    (hwf : WFEdges g) (hsrc : src < g.n)
+    (hstop : stopAt tgt (iter g maxR k (linit g.n src)) = true) :
+    qReconstruct (iter g maxR (Nat.max m k) (linit g.n src)).prev tgt g.n
+      = qReconstruct (iter g maxR k (linit g.n src)).prev tgt g.n := by
+  have hLinit : LInv g 0 (linit g.n src) := linit_inv hsrc
+  by_cases hdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true
+  · -- Target settled: reconstruction walks only frozen, done vertices.
+    have hbdsz : (iter g maxR k (linit g.n src)).done.size = g.n := by
+      rw [iter_done_size, linit_done_size]
+    have hdone_lt : ∀ v, (iter g maxR k (linit g.n src)).done.getD v false = true →
+        v < g.n := by
+      intro v hv
+      rcases Nat.lt_or_ge v g.n with h | h
+      · exact h
+      · exfalso
+        rw [Array.getD_eq_getD_getElem?,
+          Array.getElem?_eq_none (by rw [hbdsz]; omega)] at hv
+        exact absurd hv (by simp)
+    obtain ⟨La, _, hLa⟩ := (iter_inv (maxR := maxR) hwf (Nat.max m k) hLinit).1
+    obtain ⟨Lb, _, hLb⟩ := (iter_inv (maxR := maxR) hwf k hLinit).1
+    have hPb : PInv g src (iter g maxR k (linit g.n src)) :=
+      iter_pinv hwf k (linit_done_size g.n src) hLinit linit_pinv
+    have hagree : ∀ v, (iter g maxR k (linit g.n src)).done.getD v false = true →
+        (iter g maxR (Nat.max m k) (linit g.n src)).prev.getD v g.n
+          = (iter g maxR k (linit g.n src)).prev.getD v g.n := by
+      intro v hv
+      have hvn := hdone_lt v hv
+      have hfrz := iter_done_stable (maxR := maxR) hwf hLinit hv (Nat.max m k)
+      have hmk : Nat.max (Nat.max m k) k = Nat.max m k :=
+        Nat.max_eq_left (Nat.le_max_right m k)
+      rw [hmk] at hfrz
+      have hpa : (iter g maxR (Nat.max m k) (linit g.n src)).prev.getD v g.n
+          = (iter g maxR (Nat.max m k) (linit g.n src)).prev.getD v 0 :=
+        getD_lt_indep (by rw [hLa.psz]; exact hvn) g.n 0
+      have hpb : (iter g maxR k (linit g.n src)).prev.getD v g.n
+          = (iter g maxR k (linit g.n src)).prev.getD v 0 :=
+        getD_lt_indep (by rw [hLb.psz]; exact hvn) g.n 0
+      rw [hpa, hpb]; exact hfrz.2.1
+    apply qReconstruct_congr
+      (P := fun v => (iter g maxR k (linit g.n src)).done.getD v false = true)
+    · exact fun _ => hdone
+    · exact hagree
+    · intro v hv
+      rcases PInv.done_prev hPb hv hLb with hsent | hnext
+      · have hag := hagree v hv
+        exact Or.inl (by omega)
+      · exact Or.inr (by rw [hagree v hv]; exact hnext)
+  · -- Target never settled: the stop was a termination, hence a fixpoint.
+    have hterm : lterminal (iter g maxR k (linit g.n src)) = true := by
+      unfold stopAt at hstop
+      rcases Bool.or_eq_true _ _ ▸ hstop with h | h
+      · exact absurd h hdone
+      · exact h
+    have hcoin : iter g maxR (Nat.max m k) (linit g.n src)
+        = iter g maxR k (linit g.n src) := by
+      obtain ⟨d, hd⟩ : ∃ d, Nat.max m k = k + d :=
+        ⟨Nat.max m k - k, (Nat.add_sub_cancel' (Nat.le_max_right m k)).symm⟩
+      rw [hd, iter_add, iter_terminal_fix d hterm]
+    rw [hcoin]
+
+/-! ### Cache purity, step 3: `settleTo` reads-equality
+
+The target `dist` and the whole reconstructed `prev`-chain that `settleTo`
+returns from a valid (on-trajectory) cache are identical to those of a fresh
+per-source settle — the route result reads nothing the cache's fill order
+could vary. `dist` at the target is `iter_stop_read_stable`; the chain is
+`qReconstruct_resume_stable`. Enough fuel (`totalOut g + 1`) discharges the
+stop-reachability the resume lemmas assume. -/
+
+/-- **`settleTo` reads-equality.** Under `OnTrajCache` and sufficient fuel,
+`settleTo`'s target-distance read and reconstructed chain equal the fresh
+per-source settle's. -/
+theorem settleTo_reads_eq {g : Graph} {maxR fuel src tgt : Nat} {c : RouteCache}
+    (hwf : WFEdges g) (hsrc : src < g.n) (hfuel : totalOut g + 1 ≤ fuel)
+    (hc : OnTrajCache g maxR g.n c) :
+    (settleTo g maxR fuel g.n src tgt c).1.dist.getD tgt none
+        = (lsettle g maxR tgt fuel (linit g.n src)).dist.getD tgt none ∧
+    qReconstruct (settleTo g maxR fuel g.n src tgt c).1.prev tgt g.n
+        = qReconstruct (lsettle g maxR tgt fuel (linit g.n src)).prev tgt g.n := by
+  obtain ⟨m, hm⟩ : ∃ m, (c.getD src none).getD (linit g.n src)
+      = iter g maxR m (linit g.n src) := by
+    cases hcs : c.getD src none with
+    | none => exact ⟨0, rfl⟩
+    | some s0 => obtain ⟨m, hm0⟩ := hc src s0 hcs; exact ⟨m, hm0⟩
+  obtain ⟨k, hkf, hlseq, hmin, -⟩ := lsettle_spec g maxR tgt fuel (linit g.n src)
+  have hstop : stopAt tgt (iter g maxR k (linit g.n src)) = true := by
+    have hs0 := lsettle_stops (g := g) (maxR := maxR) (t := tgt) (src := src)
+      (m := 0) (fuel := fuel) hfuel
+    rw [show iter g maxR 0 (linit g.n src) = linit g.n src from rfl, hlseq] at hs0
+    exact hs0
+  have hS1 : (settleTo g maxR fuel g.n src tgt c).1
+      = iter g maxR (Nat.max m k) (linit g.n src) := by
+    rw [settleTo_fst, hm]
+    exact lsettle_from_iter (m := m) hkf hstop hmin
+  rw [hS1, hlseq]
+  exact ⟨(iter_stop_read_stable hwf (linit_inv hsrc) hstop m).1,
+    qReconstruct_resume_stable hwf hsrc hstop⟩
+
 def qOffsetFactor (bld : Option QBuildings) (gr : QGraph) (c : QCand) (vid : Nat) : Nat :=
   match bld with
   | some bl => bl.factor (candPt c) (gr.vertices.getD vid default)
@@ -578,6 +697,151 @@ def qRouteBetween (a b : QCand) (gr : QGraph) (bld : Option QBuildings)
     match res.1 with
     | some (_, verts) => (some ((qPathLength verts : Int), verts), res.2)
     | none => (none, res.2)
+
+/-! ### Cache purity, step 4: `comboStep`, the fold, and the route result
+
+`comboStep`'s cache output is exactly `settleTo`'s, so `OnTrajCache` is
+preserved (`comboStep_onTraj`); its `best` output reads the cache only
+through the target `dist` and the reconstructed chain, both cache-invariant
+(`settleTo_reads_eq`), so it is independent of which valid cache is threaded
+(`comboStep_best_indep`). Folding those two facts over the combo list gives
+`comboFold_best_indep`, and hence `qRouteBetween_route_pure`: the route
+result is a pure function of the graph — not of the trellis's fill order —
+which is what makes the matcher's declarative score model well-defined. -/
+
+/-- The `best`-update `comboStep` computes from an already-settled state,
+factored out so the `best` output is visibly a function of the target `dist`
+and the reconstructed chain — the two reads `settleTo_reads_eq` pins. -/
+def comboBest (a b : QCand) (gr : QGraph) (n : Nat)
+    (best : Option (Int × Array QPt))
+    (combo : (Nat × Int) × (Nat × Int)) (st : LState) : Option (Int × Array QPt) :=
+  match st.dist.getD combo.2.1 none with
+  | none => best
+  | some mid =>
+    let weighted : Int := combo.1.2 + (mid : Int) + combo.2.2
+    let worse := match best with | some (bw, _) => decide (weighted ≥ bw) | none => false
+    if worse then best
+    else
+      let idPath := qReconstruct st.prev combo.2.1 n
+      if idPath.size == 0 || idPath.getD 0 0 ≠ combo.1.1 then best
+      else some (weighted, buildVerts a b gr idPath)
+
+/-- `comboStep`'s `best` output is `comboBest` applied to the settled state. -/
+theorem comboStep_fst {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
+    {acc : Option (Int × Array QPt) × RouteCache}
+    {combo : (Nat × Int) × (Nat × Int)} :
+    (comboStep a b gr n maxR fuel acc combo).1
+      = comboBest a b gr n acc.1 combo
+          (settleTo gr.g maxR fuel n combo.1.1 combo.2.1 acc.2).1 := by
+  unfold comboStep comboBest
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- `comboStep`'s cache output is `settleTo`'s (every branch returns it). -/
+theorem comboStep_snd {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
+    {acc : Option (Int × Array QPt) × RouteCache}
+    {combo : (Nat × Int) × (Nat × Int)} :
+    (comboStep a b gr n maxR fuel acc combo).2
+      = (settleTo gr.g maxR fuel n combo.1.1 combo.2.1 acc.2).2 := by
+  unfold comboStep
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- `comboStep` preserves the on-trajectory cache invariant. -/
+theorem comboStep_onTraj {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
+    {acc : Option (Int × Array QPt) × RouteCache}
+    {combo : (Nat × Int) × (Nat × Int)}
+    (hc : OnTrajCache gr.g maxR n acc.2) :
+    OnTrajCache gr.g maxR n (comboStep a b gr n maxR fuel acc combo).2 := by
+  rw [comboStep_snd]; exact settleTo_onTraj hc
+
+/-- `comboStep`'s `best` output is independent of which valid cache it
+threads: both resolve to the fresh per-source settle's reads. -/
+theorem comboStep_best_indep {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
+    {best : Option (Int × Array QPt)} {c₁ c₂ : RouteCache}
+    {combo : (Nat × Int) × (Nat × Int)}
+    (hwf : WFEdges gr.g) (hfuel : totalOut gr.g + 1 ≤ fuel) (hn : n = gr.g.n)
+    (hsrc : combo.1.1 < gr.g.n)
+    (hc₁ : OnTrajCache gr.g maxR n c₁) (hc₂ : OnTrajCache gr.g maxR n c₂) :
+    (comboStep a b gr n maxR fuel (best, c₁) combo).1
+      = (comboStep a b gr n maxR fuel (best, c₂) combo).1 := by
+  subst hn
+  rw [comboStep_fst, comboStep_fst]
+  have hd₁ := settleTo_reads_eq (g := gr.g) (maxR := maxR) (fuel := fuel)
+    (src := combo.1.1) (tgt := combo.2.1) (c := c₁) hwf hsrc hfuel hc₁
+  have hd₂ := settleTo_reads_eq (g := gr.g) (maxR := maxR) (fuel := fuel)
+    (src := combo.1.1) (tgt := combo.2.1) (c := c₂) hwf hsrc hfuel hc₂
+  unfold comboBest
+  dsimp only
+  rw [hd₁.1, hd₁.2, hd₂.1, hd₂.2]
+
+/-- **Combo-fold cache-independence.** Folding `comboStep` over the combos
+from a valid cache yields a `best` independent of the cache (both stay valid
+via `comboStep_onTraj`; each step's `best` is cache-invariant via
+`comboStep_best_indep`). -/
+theorem comboFold_best_indep {a b : QCand} {gr : QGraph} {n maxR fuel : Nat}
+    (hwf : WFEdges gr.g) (hfuel : totalOut gr.g + 1 ≤ fuel) (hn : n = gr.g.n) :
+    ∀ (combos : List ((Nat × Int) × (Nat × Int)))
+      (best : Option (Int × Array QPt)) (c₁ c₂ : RouteCache),
+      OnTrajCache gr.g maxR n c₁ → OnTrajCache gr.g maxR n c₂ →
+      (∀ combo ∈ combos, combo.1.1 < gr.g.n) →
+      (combos.foldl (comboStep a b gr n maxR fuel) (best, c₁)).1
+        = (combos.foldl (comboStep a b gr n maxR fuel) (best, c₂)).1 := by
+  intro combos
+  induction combos with
+  | nil => intro best c₁ c₂ _ _ _; rfl
+  | cons combo rest ih =>
+    intro best c₁ c₂ hc₁ hc₂ hsrc
+    rw [List.foldl_cons, List.foldl_cons]
+    have hbest := comboStep_best_indep (a := a) (b := b) (best := best)
+      (combo := combo) hwf hfuel hn (hsrc combo (List.mem_cons_self ..)) hc₁ hc₂
+    have hv₁ := comboStep_onTraj (a := a) (b := b) (n := n) (maxR := maxR)
+      (fuel := fuel) (acc := (best, c₁)) (combo := combo) hc₁
+    have hv₂ := comboStep_onTraj (a := a) (b := b) (n := n) (maxR := maxR)
+      (fuel := fuel) (acc := (best, c₂)) (combo := combo) hc₂
+    have hsrc' : ∀ combo ∈ rest, combo.1.1 < gr.g.n :=
+      fun combo hc => hsrc combo (List.mem_cons_of_mem _ hc)
+    have key := ih (comboStep a b gr n maxR fuel (best, c₁) combo).1
+      (comboStep a b gr n maxR fuel (best, c₁) combo).2
+      (comboStep a b gr n maxR fuel (best, c₂) combo).2 hv₁ hv₂ hsrc'
+    refine Eq.trans key ?_
+    rw [hbest]
+
+/-- **Route-result purity.** `qRouteBetween`'s route result is the same for
+any two valid caches — it is a pure function of the graph, not of the
+trellis's fill order. -/
+theorem qRouteBetween_route_pure {a b : QCand} {gr : QGraph}
+    {bld : Option QBuildings} {S maxR fuel : Nat} {c₁ c₂ : RouteCache}
+    (hwf : WFEdges gr.g) (hfuel : totalOut gr.g + 1 ≤ fuel)
+    (hn : gr.vertices.size = gr.g.n)
+    (hsrc : ∀ combo ∈ routeCombos a b (gr.segments.getD a.si default)
+      (gr.segments.getD b.si default) gr bld S, combo.1.1 < gr.g.n)
+    (hc₁ : OnTrajCache gr.g maxR gr.vertices.size c₁)
+    (hc₂ : OnTrajCache gr.g maxR gr.vertices.size c₂) :
+    (qRouteBetween a b gr bld S maxR fuel c₁).1
+      = (qRouteBetween a b gr bld S maxR fuel c₂).1 := by
+  unfold qRouteBetween
+  cases bld with
+  | none =>
+    dsimp only
+    split
+    · rfl
+    · rw [comboFold_best_indep hwf hfuel hn
+        (routeCombos a b (gr.segments.getD a.si default)
+          (gr.segments.getD b.si default) gr none S)
+        _ c₁ c₂ hc₁ hc₂ hsrc]
+      split <;> rfl
+  | some bl =>
+    dsimp only
+    split
+    · rfl
+    · rw [comboFold_best_indep hwf hfuel hn
+        (routeCombos a b (gr.segments.getD a.si default)
+          (gr.segments.getD b.si default) gr (some bl) S)
+        _ c₁ c₂ hc₁ hc₂ hsrc]
+      split <;> rfl
 
 /-! ## Trajectory Viterbi + walk pipeline (part 3) -/
 
