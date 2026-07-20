@@ -12,8 +12,8 @@
  * when the flag is on. Idempotent — the first call wins.
  */
 
-import { setSimplifyHook } from "../geo/map-match-core.js";
-import { simplifyViaLean } from "./lean-passes.js";
+import { setSimplifyHook, setSpursHook } from "../geo/map-match-core.js";
+import { removeSpursViaLean, simplifyViaLean } from "./lean-passes.js";
 
 let installed = false;
 
@@ -21,4 +21,5 @@ export function installLeanPasses(): void {
 	if (installed) return;
 	installed = true;
 	setSimplifyHook((pts, toleranceM, tsResult) => simplifyViaLean(pts, toleranceM, tsResult));
+	setSpursHook((pts, returnM, maxSpan, tsResult) => removeSpursViaLean(pts, returnM, maxSpan, tsResult));
 }

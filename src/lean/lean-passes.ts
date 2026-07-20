@@ -172,6 +172,39 @@ export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], tolerance
 }
 
 /**
+ * Dead-end spur removal through the verified core (`qRemoveSpurs`, op
+ * `spurs`). Drop-only over the mutated suffix; `on` mode recovers the kept
+ * original objects by subsequence match. `returnM` is the metric return
+ * threshold (µm on the wire, matching the compare-geo referee), `maxSpan`
+ * the excursion vertex budget.
+ */
+export function removeSpursViaLean<T extends LatLonTs>(
+	pts: readonly T[],
+	returnM: number,
+	maxSpan: number,
+	tsResult: T[],
+): T[] {
+	const mode = leanPassMode();
+	if (mode === "off" || pts.length < 3) return tsResult;
+	let leanRows: number[][];
+	try {
+		leanRows = leanGeo({ op: "spurs", ret: Math.round(returnM * 1e6), span: maxSpan, pts: rows(pts) }).pts ?? [];
+	} catch (e) {
+		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("spurs");
+		return tsResult;
+	}
+	const diverged = !eqRows(rows(tsResult), leanRows);
+	recordCall("spurs", diverged);
+	if (diverged) {
+		const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
+		recordDivergence("spurs", pts.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] spurs divergence (n=${pts.length}): ${note}`);
+	}
+	return mode === "on" ? subsequenceKept(pts, leanRows) : tsResult;
+}
+
+/**
  * Geometric spike rejection through the verified core (`qRejectSpikes`).
  * The `spikes` op returns quantised rows; `on` mode recovers the kept
  * original objects by subsequence match. Both modes compare the quantised TS

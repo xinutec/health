@@ -1294,6 +1294,22 @@ export function setSimplifyHook(hook: SimplifyHook | null): void {
 	simplifyHook = hook;
 }
 
+/** Dependency-injection seam for {@link removeSpurs} — mirrors
+ *  {@link SimplifyHook}. Lets the verified core serve this pass without the
+ *  import-free pure core taking a bridge dependency. */
+export type SpursHook = (
+	pts: readonly MatchedPoint[],
+	returnM: number,
+	maxSpan: number,
+	tsResult: MatchedPoint[],
+) => MatchedPoint[];
+
+let spursHook: SpursHook | null = null;
+
+export function setSpursHook(hook: SpursHook | null): void {
+	spursHook = hook;
+}
+
 export function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): MatchedPoint[] {
 	if (pts.length <= 2) return [...pts];
 	const keep = new Uint8Array(pts.length);
@@ -1749,7 +1765,14 @@ export function matchTrajectory(
 	const simplified = simplifyHook
 		? simplifyHook(out, profile.simplifyToleranceM, simplifyPath(out, profile.simplifyToleranceM))
 		: simplifyPath(out, profile.simplifyToleranceM);
-	const cleaned = removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts);
+	const cleaned = spursHook
+		? spursHook(
+				simplified,
+				profile.spurReturnM,
+				profile.spurMaxSpanVerts,
+				removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts),
+			)
+		: removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts);
 	if (cleaned.length < 2) return null;
 	const matched = cleaned.map((p) => ({ lat: p.lat, lon: p.lon }));
 	const rawLen = pathLength(fixes.map((f) => ({ lat: f.lat, lon: f.lon })));
