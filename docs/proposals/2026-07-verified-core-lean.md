@@ -438,6 +438,24 @@ porting float arithmetic.
   the Lean core absorbs them; when the TS remnant is small, choose the
   permanent shell (thin TS as-is, or Rust linking the Lean core in-process).
 
+  **Request-path execution substrate — LANDED (2026-07-20).** The prerequisite
+  for the Lean core to *execute* (not just check) on the request path: an
+  in-process synchronous bridge. `verified_cli serve` is a persistent NDJSON
+  request loop (geo/match/rail/hsmm handlers refactored to pure `Json → Json`).
+  `src/lean/lean-core.ts` drives it — a `worker_thread` owns the long-lived
+  child and does async pipe I/O; the caller blocks on `Atomics.wait` over a
+  `SharedArrayBuffer` and reads the response out, so the synchronous pass call
+  sites stay synchronous. **0.28 ms/call** (500 sequential), any failure →
+  `LeanBridgeError` → TS fallback. Inputs are the pinned 1e-7° integers, so the
+  bridge output is exactly the `compare-geo` referee's: `compare-geo --bridge`
+  runs all 173 golden legs through the worker, **173/173 EXACT**. First prod
+  tenant: `src/lean/lean-passes.ts` shadow-executes the verified `rejectSpikes`
+  in `episode-geometry` behind `LEAN_PASSES` (off/shadow/on) — golden 31/31
+  byte-identical flag-off, shadow 0 divergences. `map-match-core.ts` stays
+  import-free (the pure fixture core), so its high-frequency passes need a
+  dependency-injection hook next; `on` mode adopts quantised geometry as truth
+  (the 1 simplify + 2 trim near-ties re-blessed or accepted before any flip).
+
 ## Landmines
 
 - **Proof cost is the budget item.** The pilot took one session; the V1
