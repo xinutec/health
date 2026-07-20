@@ -1,161 +1,40 @@
 /**
- * CLI: the matcher-level float↔quant parity probe (the V4 matcher arc of
+ * CLI: the matcher-level parity gate (the V4 matcher arc of
  * `docs/proposals/2026-07-verified-core-lean.md`).
  *
  * For every walking leg of every golden day fixture (zero DB — the
- * `score-walk-match` replay chassis): run the production
- * `matchWalkSegment` (float) and the BigInt twin `qMatchWalkSegment`
- * (`geo/match-twin.ts`) on identical inputs — the leg's spike-cleaned
- * fixes and the fixture's leg-windowed walkable ways + building
- * footprints — and compare the (path, coarsePath) decisions.
+ * `score-walk-match` replay chassis): run the production `matchWalkSegment`
+ * (float), the BigInt twin `qMatchWalkSegment`, and the verified Lean matcher
+ * (`verified_cli match`) on identical leg-windowed input, via the shared
+ * `walk-shadow-core` (the same per-leg A/B the `decode-day` cron shadow runs
+ * on live days). Reports the float↔quant decision classes and GATES on
+ * quant↔Lean bit-exactness.
  *
- * Classes per leg:
- *   EXACT     — both null, or both non-null with bit-identical
- *               quantised vertex rows (coords and timestamps);
- *   NEAR      — same null-ness and vertex counts, coords within 30 cm
- *               (rounding drift on identical decisions);
- *   DIFF      — different null-ness or different geometry (a genuine
- *               decision flip — candidate tie, weight near-tie, …).
+ * float↔quant classes per leg:
+ *   EXACT — both null, or bit-identical quantised vertex rows;
+ *   NEAR  — same null-ness + vertex counts, coords within 30 cm;
+ *   DIFF  — different null-ness or geometry (a genuine decision flip).
  *
- * This is the measurement that pins the matcher representation before
- * the Lean port; the later three-arm harness will gate quant↔Lean at
- * bit-exact, like `compare-geo`.
+ * Exit 0 = every leg's Lean output matches the twin bit-for-bit; exit 1 on any
+ * quant↔Lean mismatch. (The float↔quant classes are diagnostic, never gated.)
  *
  * Usage: node dist/cli/compare-match.js [date ...]
  */
 
-import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { rejectSpikes } from "../geo/episode-geometry.js";
-import type { BuildingRing, RoadFix } from "../geo/map-match-core.js";
-import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "../geo/match-twin.js";
-import { matchWalkSegment, type WalkMatchResult } from "../geo/pedestrian-match.js";
-import { type QPt, quantPt } from "../geo/quant-twin.js";
-import type { OsmRoadWay } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import { type CapturedDay, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
+import {
+	extractWalkLegs,
+	flattenBuildings,
+	flattenWalkable,
+	shadowWalkLeg,
+	type WalkEpisode,
+} from "../geo/walk-shadow-core.js";
+import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
-/** Geometry margin around the leg bbox (deg-lat metres) — covers the
- *  candidate radius, gap bridging and any plausible routing detour.
- *  Driver-level and identical for both arms. */
-const WINDOW_MARGIN_M = 500;
-
-function allWalkable(captured: CapturedDay): OsmRoadWay[] {
-	const section = captured.inputs.osmTrace.walkableRoads;
-	if (section === undefined) return [];
-	const out: OsmRoadWay[] = [];
-	for (const ways of Object.values(section)) out.push(...ways);
-	return out;
-}
-
-function allBuildings(captured: CapturedDay): BuildingRing[] {
-	const section = captured.inputs.osmTrace.buildingsNear;
-	if (section === undefined) return [];
-	const out: BuildingRing[] = [];
-	for (const rings of Object.values(section)) out.push(...rings);
-	return out;
-}
-
-interface BBox {
-	minLat: number;
-	maxLat: number;
-	minLon: number;
-	maxLon: number;
-}
-
-function legBBox(fixes: readonly RoadFix[]): BBox {
-	let minLat = fixes[0].lat;
-	let maxLat = fixes[0].lat;
-	let minLon = fixes[0].lon;
-	let maxLon = fixes[0].lon;
-	for (const f of fixes) {
-		if (f.lat < minLat) minLat = f.lat;
-		if (f.lat > maxLat) maxLat = f.lat;
-		if (f.lon < minLon) minLon = f.lon;
-		if (f.lon > maxLon) maxLon = f.lon;
-	}
-	const dLat = WINDOW_MARGIN_M / 111_320;
-	const dLon = WINDOW_MARGIN_M / (111_320 * Math.cos((minLat * Math.PI) / 180));
-	return { minLat: minLat - dLat, maxLat: maxLat + dLat, minLon: minLon - dLon, maxLon: maxLon + dLon };
-}
-
-const inBox = (lat: number, lon: number, b: BBox): boolean =>
-	lat >= b.minLat && lat <= b.maxLat && lon >= b.minLon && lon <= b.maxLon;
-
-/** 30 cm in 1e-7° latitude units — the NEAR coordinate tolerance. */
-const NEAR_UNITS = 30n;
-
-type LegClass = "EXACT" | "NEAR" | "DIFF";
-
-function comparePaths(float: ReadonlyArray<{ lat: number; lon: number; ts: number }>, quant: readonly QPt[]): LegClass {
-	const qf = float.map((p) => quantPt(p));
-	if (qf.length !== quant.length) return "DIFF";
-	let cls: LegClass = "EXACT";
-	for (let i = 0; i < qf.length; i++) {
-		const dLa = qf[i].la - quant[i].la;
-		const dLo = qf[i].lo - quant[i].lo;
-		const dTs = qf[i].ts - quant[i].ts;
-		if (dLa === 0n && dLo === 0n && dTs === 0n) continue;
-		const abs = (x: bigint): bigint => (x < 0n ? -x : x);
-		if (abs(dLa) <= NEAR_UNITS && abs(dLo) <= NEAR_UNITS && abs(dTs) <= 1n) cls = "NEAR";
-		else return "DIFF";
-	}
-	return cls;
-}
-
-/** Per-leg verdict, coarse (decision layer) and path (display splice)
- *  separately — a coarse flip is a matcher decision divergence, a
- *  path-only flip is the known splice detail near-tie class. */
-function legClasses(
-	float: WalkMatchResult | null,
-	quant: QWalkMatchResult | null,
-): { coarse: LegClass; path: LegClass } {
-	if (float === null || quant === null) {
-		const cls: LegClass = float === quant ? "EXACT" : "DIFF";
-		return { coarse: cls, path: cls };
-	}
-	return {
-		coarse: comparePaths(float.coarsePath, quant.coarsePath),
-		path: comparePaths(float.path, quant.path),
-	};
-}
-
-/** The Lean arm: `verified_cli match` on the same quantised input. */
+/** The Lean arm binary — `LEAN_CLI` in the built image, else the local build. */
 const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
-
-interface LeanMatchResp {
-	path?: number[][];
-	coarse?: number[][];
-	none?: boolean;
-	error?: string;
-}
-
-function leanMatch(req: object): LeanMatchResp {
-	const res = spawnSync(LEAN_BIN, ["match"], {
-		input: JSON.stringify(req),
-		encoding: "utf8",
-		maxBuffer: 256 * 1024 * 1024,
-	});
-	if (res.status !== 0) throw new Error(`verified_cli match failed: ${res.stderr || res.stdout}`);
-	const parsed = JSON.parse(res.stdout) as LeanMatchResp;
-	if (parsed.error) throw new Error(`verified_cli match: ${parsed.error}`);
-	return parsed;
-}
-
-const ptRow = (p: QPt): number[] => [Number(p.la), Number(p.lo), Number(p.ts)];
-const eqNums = (a: readonly number[], b: readonly number[]): boolean =>
-	a.length === b.length && a.every((x, i) => x === b[i]);
-const eqRows = (a: readonly number[][], b: readonly number[][]): boolean =>
-	a.length === b.length && a.every((x, i) => eqNums(x, b[i]));
-
-/** The gate: quant and Lean agree bit-for-bit (both null, or identical
- *  path AND coarse vertex rows). */
-function quantLeanExact(quant: QWalkMatchResult | null, lean: LeanMatchResp): boolean {
-	if (quant === null) return lean.none === true;
-	if (lean.none === true || lean.path === undefined || lean.coarse === undefined) return false;
-	return eqRows(quant.path.map(ptRow), lean.path) && eqRows(quant.coarsePath.map(ptRow), lean.coarse);
-}
 
 const argDates = process.argv.slice(2);
 const files = readdirSync("tests/golden/days")
@@ -175,51 +54,28 @@ for (const file of files) {
 	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${file}`, "utf8"));
 	const inputs = inputsFromFixture(captured);
 	const run = await computeVelocityFromInputs(inputs, { walkMatch: true });
-	const walks = run.episodes.filter((e) => e.mode === "walking" && e.points.length >= 2);
-	const fixes = inputs.phonetrack.today;
-	const dayWays = allWalkable(captured);
-	const dayBuildings = allBuildings(captured);
+	const legInputs = extractWalkLegs(
+		run.episodes as WalkEpisode[],
+		inputs.phonetrack.today,
+		flattenWalkable(captured.inputs.osmTrace),
+		flattenBuildings(captured.inputs.osmTrace),
+	);
 	const perDay: string[] = [];
-	for (const ep of walks) {
-		const legFixes = fixes.filter((f) => f.ts >= ep.startTs && f.ts <= ep.endTs);
-		if (legFixes.length < 3) continue;
-		const clean = rejectSpikes(legFixes).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
-		if (clean.length < 3) continue;
-		const box = legBBox(clean);
-		const ways = dayWays.filter((w) => w.coords.some(([lat, lon]) => inBox(lat, lon, box)));
-		const buildings = dayBuildings.filter((r) => r.some((p) => inBox(p.lat, p.lon, box)));
+	for (const leg of legInputs) {
+		const r = shadowWalkLeg(leg, LEAN_BIN);
 		legs++;
-
-		const float = matchWalkSegment(clean, { ways, buildings });
-		const qFixes = clean.map((p) => quantPt(p));
-		const qWays: QWay[] = ways.map((w) => ({
-			coords: w.coords.map(([lat, lon]) => quantPt({ lat, lon })),
-			name: w.name,
-		}));
-		const qBuildings = buildings.map((r) => r.map((p) => quantPt(p)));
-		const quant = qMatchWalkSegment(qFixes, qWays, qBuildings);
-
-		// The gate: run the Lean matcher on the identical quantised input
-		// and demand bit-exact agreement with the twin.
-		const lean = leanMatch({
-			fixes: qFixes.map((p) => [Number(p.la), Number(p.lo), Number(p.ts)]),
-			ways: qWays.map((w) => ({ coords: w.coords.map((c) => [Number(c.la), Number(c.lo)]), name: w.name ?? null })),
-			buildings: qBuildings.map((r) => r.map((p) => [Number(p.la), Number(p.lo)])),
-		});
-		if (quantLeanExact(quant, lean)) leanExact++;
-		else leanMismatches.push(`${file.slice(0, 10)} ${new Date(ep.startTs * 1000).toISOString().slice(11, 16)}`);
-
-		const cls = legClasses(float, quant);
-		coarseTotals[cls.coarse]++;
-		pathTotals[cls.path]++;
-		if (float === null && quant === null) nullBoth++;
-		if ((float === null) !== (quant === null)) nullFlips++;
-		const hhmm = new Date(ep.startTs * 1000).toISOString().slice(11, 16);
+		const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
+		if (r.exact) leanExact++;
+		else leanMismatches.push(`${file.slice(0, 10)} ${hhmm}`);
+		coarseTotals[r.coarse]++;
+		pathTotals[r.path]++;
+		if (r.float === null && r.quant === null) nullBoth++;
+		if ((r.float === null) !== (r.quant === null)) nullFlips++;
 		perDay.push(
-			`${hhmm} coarse=${cls.coarse}/path=${cls.path}` +
-				`${float === null ? " float=null" : ""}${quant === null ? " quant=null" : ""}` +
-				((cls.coarse === "DIFF" || cls.path === "DIFF") && float !== null && quant !== null
-					? ` (coarse ${float.coarsePath.length}v vs ${quant.coarsePath.length}v, path ${float.path.length}v vs ${quant.path.length}v)`
+			`${hhmm} coarse=${r.coarse}/path=${r.path}` +
+				`${r.float === null ? " float=null" : ""}${r.quant === null ? " quant=null" : ""}` +
+				((r.coarse === "DIFF" || r.path === "DIFF") && r.float !== null && r.quant !== null
+					? ` (coarse ${r.float.coarsePath.length}v vs ${r.quant.coarsePath.length}v, path ${r.float.path.length}v vs ${r.quant.path.length}v)`
 					: ""),
 		);
 	}
