@@ -180,23 +180,24 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 	}
 }
 
-/** Request-path pass shadow (docs/proposals/2026-07-verified-core-lean.md):
- *  when `LEAN_PASSES=shadow` is set on the cron image, the wired geometry
- *  passes (simplify, rejectSpikes) execute the verified Lean implementation via
- *  the in-process bridge alongside the TS during the day's velocity runs,
- *  serving the TS output. Log the accumulated per-op ledger for the day and
- *  reset for the next. No-op unless the flag is set — never touches the
- *  interactive path or the default pipeline. This is the soak that gates the
- *  serve-Lean flip. */
+/** Request-path pass ledger (docs/proposals/2026-07-verified-core-lean.md):
+ *  when `LEAN_PASSES` is `shadow` or `on`, the wired geometry passes execute
+ *  the verified Lean implementation via the in-process bridge during the day's
+ *  velocity runs (`shadow` serves TS, `on` serves Lean). Log the accumulated
+ *  per-op ledger for the day (calls/failures/divergences) and reset. No-op with
+ *  the flag off. In `on` mode this keeps the soak visible while production
+ *  serves Lean — the same measurement, so a run of clean `EXACT` days is the
+ *  continuous evidence the flip stays honest. */
 function logLeanPassLedger(date: string): void {
-	if (process.env.LEAN_PASSES !== "shadow") return;
+	const mode = process.env.LEAN_PASSES;
+	if (mode !== "shadow" && mode !== "on") return;
 	const stats = leanPassStats();
 	const tally = Object.entries(stats)
-		.map(([op, s]) => `${op} ${s.calls}/${s.diffs}`)
+		.map(([op, s]) => `${op} ${s.calls}/${s.fails}f/${s.diffs}d`)
 		.join(" ");
 	const divs = leanPassDivergences();
 	const detail = divs.length > 0 ? ` — ${divs.map((d) => `${d.op} n=${d.n} ${d.note}`).join("; ")}` : " EXACT";
-	console.log(`lean-passes ${date} ${tally === "" ? "(no calls)" : tally}${detail}`);
+	console.log(`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally}${detail}`);
 	resetLeanPassStats();
 }
 
