@@ -108,9 +108,12 @@ Known residuals in the current draw (re-measured 2026-07-14 via
   straight anchor chord crosses nothing; not a detour problem at all).
   Both point at the reconstruction (buildings-as-hard-constraint), not
   at more corrector cases.
-- **Corrector buys building fixes with invented distance** (#347): open,
-  with both obvious guards measured and refuted — see the task before
-  touching it. Points at retirement (#330), not a third guard.
+- **Corrector buys building fixes with invented distance** (#347): FIXED
+  in place by the whole-leg step-budget invariant (a844d2f) — a correction
+  may not push a leg from within the pedometer bar to beyond it, else the
+  leg's corrections revert wholesale. The corrector STAYS: #330 is rescoped
+  (matcher + corrector are the intended draw, not death-row), so its
+  honesty is fixed in place, not deferred to a retirement that isn't coming.
 - **Walks drawn across UNMAPPED housing blocks are invisible to every
   building-aware pass** — measured 2026-07-14: a user-flagged diagonal cut
   across terraced blocks scored offPath 0 m and all visible crossing-runs
@@ -280,16 +283,35 @@ along the way and stalled every anchor correction. Measured: the 07-06 smear
 pins at Euston Square and draws ~714 m; 06-16's 17.6 km/h fragment collapses
 2493→1028 m; legit legs byte-identical.
 
-## Phase G2 — flip (#321) — flip DONE 2026-07-08; retirement DEFERRED
+## Phase G2 — flip (#321) DONE 2026-07-08; retirement CLOSED / RESCOPED 2026-07-20
 
 Flipped: `WALK_RECON` on by default; the swap fired on exactly the two
 confirmed smears (07-06 09:16Z, 06-16 15:48Z) and nothing else; walk floor
 re-blessed against the narratives; deployed.
 
-Deferred: retiring `trim/despike/correctWalkPath` and the Viterbi walk
-matcher. The smoother-primary arm does not yet beat the matched line
-corpus-wide, so only the swap ships — the retirement verdict re-runs under
-the reframed (G0) gate when the reconstruction wins outright.
+**RESCOPED 2026-07-20 (#330): the hybrid IS the architecture, not a
+way-station.** Retiring `trim/despike/correctWalkPath` + the Viterbi walk
+matcher was a hypothesis — that recon-primary would beat the matched line
+corpus-wide. The G0 gate, the arbiter this roadmap installed for exactly
+this decision, has now tested it three times (07-08, 07-15, 07-20; the dated
+records below) and it lost every time on the ordinary-leg class that
+dominates real usage: the Viterbi's discrete on-network routing is simply the
+better draw there, and recon only wins the phantom-smear class — which the
+shipped conditional `WALK_RECON` swap already captures. So the shipped state
+is the measured optimum, not a compromise: each leg class is drawn by the
+algorithm that demonstrably wins it. **The Viterbi matcher, `map-match-core`,
+and `correctWalkPath` come OFF the death-row list.** The matcher's semantics
+are now also theorem-pinned (`decode_argmax`, cache-purity, honesty
+corollaries) and bit-exact-gated (173/173 quant↔Lean), so it is the *cheaper*
+component to keep, not the dearer.
+
+**Reopen criterion (explicit).** Reopen only when recon beats the matcher on
+the ordinary-leg ratchet — the `SMOOTHER-PRIMARY vs CURRENT` block emitted by
+`score-walk-match.js` — AFTER a genuinely new capability lands. G3 true
+heading (#322) is the plausible one; more soft factors are not (measured
+three times: the loss is a routing gap, not a factor gap). The G0 gate
+machinery stays live as the standing referee precisely so this criterion is
+testable, not rhetorical — do not dismantle the `walkDraw: "recon"` arm.
 
 **Retirement verdict re-run 2026-07-08 (#330): still deferred, now measured
 honestly.** The recon-primary draw is wired into the pipeline as
@@ -327,7 +349,8 @@ recon wanders where the matcher routes. Priority therefore shifted to
 fixing the shipping matcher path's own degrader (#359, below) rather
 than adding recon factors that don't address routing.
 
-**Re-run 2026-07-20 (174 corpus walks): still deferred — the gap WIDENED.**
+**Re-run 2026-07-20 (174 corpus walks): the gap WIDENED — the third loss,
+and the basis for the RESCOPE above.**
 Corridor-stall mean 29→41 m (better >15 m on 19, worse on 48);
 route-correctness better >5 % on 5, worse on 14; offWalkP90 worse >3 m on
 73 (was 39). Nothing on the recon side changed since 07-15; the widening is

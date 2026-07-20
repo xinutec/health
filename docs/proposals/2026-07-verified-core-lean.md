@@ -207,13 +207,17 @@ porting float arithmetic.
   eventually define the label grammar and both generate and parse it,
   making TS the conforming side. Everything here graduates into the
   core on the V4/V5 arc; nothing is permanently TS except effects.
-- **V4 — map-match-core + geometry substrate. UNBLOCKED 2026-07-18.**
-  The #330 gate inverted: the walk-matcher retirement verdict failed twice
-  (07-08, 07-15) and its trigger (G3 true-heading) needs a capture change
-  plus weeks of collection, so trim/despike/correctWalkPath + the Viterbi
-  matcher + `map-match-core` are the shipping draw for months — a stable
-  port target. Agreed sequencing (2026-07-18, coordinated with the
-  decoder session):
+- **V4 — map-match-core + geometry substrate. UNBLOCKED 2026-07-18;
+  matcher confirmed the PERMANENT draw 2026-07-20.**
+  The #330 gate rendered the same verdict a third time (07-08, 07-15,
+  07-20) and #330 was RESCOPED (geometry-roadmap G2): recon-primary loses
+  the ordinary-leg class corpus-wide on a routing gap, so matcher-primary +
+  recon-on-confirmed-smears is the intended architecture, not a way-station.
+  trim/despike/correctWalkPath + the Viterbi matcher + `map-match-core` are
+  therefore the PERMANENT walk draw — a stable port target whose ownership by
+  the verified core is now doubly motivated (it ships indefinitely AND its
+  semantics are theorem-pinned). Agreed sequencing (2026-07-18, coordinated
+  with the decoder session):
   - *Portable now*: the geometry substrate (haversine/projection/
     polyline/grid primitives, rail-snap internals) and the GPS
     pre-filters (outlier drop, spike rejection, speed caps — stable,
@@ -231,8 +235,11 @@ porting float arithmetic.
     is settled intended behaviour: `matchTrajectory` + `matchWalkSegment`
     with the path/coarsePath contract, `spliceRouteDetail` as the
     display-fidelity pass, and the corrector carrying both honesty
-    invariants. The `velocity.ts` cascade and `correctWalkPath` itself
-    stay non-port material per #330's standing verdict — but what stays
+    invariants. The `velocity.ts` cascade stays non-port on its own merits
+    (Phase 5 deletes it as the decoder absorbs it), and `correctWalkPath`
+    is simply not yet a port priority — neither now leans on #330, which is
+    RESCOPED: the matcher draw (corrector included) is permanent, so the
+    corrector only becomes MORE port-worthy over time, not less. What stays
     in TS no longer lies about distance.
   - *Shadow only (moving target)*: the HSMM decoder — C4.4/#364/#366/
     Phase 4-5 keep reshaping it; the cron shadow tracks it instead of
