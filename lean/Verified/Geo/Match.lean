@@ -71,13 +71,26 @@ deliverable; the theorem arc on top of it, easiest first:
   - `comboFold_best_indep` — folding the two over the combo list carries both:
     each step's `best` is cache-invariant while the cache stays valid.
 
-  *Remaining*: the trellis `forIn` invariant and the argmax DP.
-- **Flagship — Viterbi argmax** (planned): the returned coarse chain attains
-  the maximum declarative score over all route-connected candidate chains,
-  with the `none ⟺ no finite-score chain` companion — the matcher analogue
-  of the HSMM `decode_correct`. First-order (no duration dimension), so a
-  strictly simpler induction than the HSMM one; the one genuinely new
-  obligation is the cache-purity bridge above.
+  Route-result purity is what makes the trellis's edge weights (`τ(i,j)`, from
+  `qRouteBetween`'s `distUm`) a well-defined *pure function of the graph*, so
+  the declarative score model below is well-formed.
+- **Flagship — Viterbi argmax — landed** (`MatchViterbi.lean`): on an abstract
+  first-order max-sum `Trellis` (the matcher's trajectory decoder shape, one
+  dimension simpler than the HSMM — no durations):
+  - `cell_eq_listMax` — the forward DP cell equals the max declarative
+    `pathScore` over all enumerated chains reaching it (the tropical-semiring
+    heart: `+` distributes over the running max, reusing `Hsmm.Score`);
+  - `decode_argmax` — the backtracked decoder's chain attains the maximum
+    `pathScore` over every full candidate chain;
+  - `decode_none_iff` — the decoder returns `none` exactly when no candidate
+    chain has a finite score.
+
+  These are the matcher analogue of the HSMM `decode_correct` / `decode_none_iff`.
+  *Remaining* (wiring, not new maths): instantiate the abstract `Trellis` from
+  `qMatchTrajectory`'s `obs`/candidates/`qRouteBetween` (emit = `emissionScaled`,
+  step = `τ − switchPen`, `-∞` when unrouteable — well-defined via
+  `qRouteBetween_route_pure`), then relate the imperative `Id.run do` trellis to
+  `decode` (full equivalence, or `#guard`-pinned like the HSMM array `viterbi`).
 
 Sorry-free convention: a theorem is stated only when proved.
 -/
