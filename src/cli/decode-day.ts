@@ -26,14 +26,23 @@ import {
 } from "../geo/factors/feature-flag.js";
 import { parseHourProfile } from "../geo/focus-places.js";
 import { stationsOnLine } from "../geo/line-stations.js";
+import { loadClassificationInputs } from "../geo/load-classification-inputs.js";
 import { dbOsmAdapter, type OsmAdapter } from "../geo/osm-adapter.js";
+import { RecordingOsmAdapter } from "../geo/osm-adapter-recording.js";
 import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import { computeMinuteProximity } from "../geo/rail-road-proximity.js";
 import { loadAllRailStopRelations } from "../geo/rail-stops-cache.js";
 import type { RouteGraph } from "../geo/route-graph.js";
 import { bboxFromFixes, loadRouteGraphForBbox } from "../geo/route-graph-loader.js";
 import { dateBoundsUtc } from "../geo/timezone.js";
-import { computeVelocity, loadBiometrics } from "../geo/velocity.js";
+import { computeVelocity, computeVelocityFromInputs, loadBiometrics } from "../geo/velocity.js";
+import {
+	extractWalkLegs,
+	flattenBuildings,
+	flattenWalkable,
+	shadowWalkDay,
+	type WalkEpisode,
+} from "../geo/walk-shadow-core.js";
 import { loadContinuityContext } from "../hmm/continuity-context.js";
 import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
@@ -134,6 +143,42 @@ function runLeanShadow(inputs: HsmmInputs, date: string): void {
 	}
 }
 
+/** Matcher shadow (docs/proposals/2026-07-verified-core-lean.md): when the
+ *  image carries the verified Lean matcher (`LEAN_CLI`), replay the day's
+ *  walking legs through `verified_cli match` and the BigInt twin on identical
+ *  quantised input and log the bit-exact agreement — continuous live
+ *  verification of `MatchViterbi.decodeFast`, beyond the 31 golden legs the
+ *  `compare-match` gate covers. Purely observational: a mismatch is logged,
+ *  never fails the decode. A `RecordingOsmAdapter` (like `capture-golden`)
+ *  captures the day's ways/buildings in one extra velocity run, then the
+ *  shared `walk-shadow-core` runs the same per-leg A/B as the gate. Only fires
+ *  when `LEAN_CLI` is set (the cron image), so it never touches the
+ *  interactive `/api/velocity` path. */
+async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmAdapter): Promise<void> {
+	const leanBin = process.env.LEAN_CLI;
+	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) return;
+	try {
+		const t0 = Date.now();
+		const recorder = new RecordingOsmAdapter(osm);
+		const inputs = await loadClassificationInputs(config, { userId, date, displayTz: tz }, recorder);
+		const run = await computeVelocityFromInputs(inputs, { walkMatch: true });
+		const legs = extractWalkLegs(
+			run.episodes as WalkEpisode[],
+			inputs.phonetrack.today,
+			flattenWalkable(recorder.trace),
+			flattenBuildings(recorder.trace),
+		);
+		const s = shadowWalkDay(legs, leanBin);
+		console.log(
+			`walk-shadow ${date} quant↔lean ${s.exact}/${s.legs} EXACT` +
+				(s.mismatches.length > 0 ? ` — MISMATCH ${s.mismatches.join(", ")}` : "") +
+				` [float↔quant coarse ${s.coarse.EXACT}/${s.coarse.NEAR}/${s.coarse.DIFF}, ${Date.now() - t0}ms]`,
+		);
+	} catch (err) {
+		console.log(`walk-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
 async function decodeAndPersist(
 	userId: string,
 	date: string,
@@ -194,6 +239,7 @@ async function decodeAndPersist(
 		await saveDecode(kyselyDb(), userId, date, segments);
 	}
 	runLeanShadow(inputs, date);
+	await runWalkShadow(userId, date, tz, osm);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.
