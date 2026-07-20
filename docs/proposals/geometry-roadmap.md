@@ -327,6 +327,19 @@ recon wanders where the matcher routes. Priority therefore shifted to
 fixing the shipping matcher path's own degrader (#359, below) rather
 than adding recon factors that don't address routing.
 
+**Re-run 2026-07-20 (174 corpus walks): still deferred — the gap WIDENED.**
+Corridor-stall mean 29→41 m (better >15 m on 19, worse on 48);
+route-correctness better >5 % on 5, worse on 14; offWalkP90 worse >3 m on
+73 (was 39). Nothing on the recon side changed since 07-15; the widening is
+the matcher getting a BETTER draw in the interim (#359 corner-localized
+refine, #361/#362 route-vertex-drop fixes, #369 sparse-polyline
+densification), so recon now loses the off-network axis on nearly every
+walk. Confirms the standing read: the retirement is routing-blocked, not
+factor-blocked — it unlocks on G3 true heading (#322) or a routing-shaped
+recon change (a network-follow prior that makes the smoother route on ways
+the way the matcher does), never on more soft factors. Retirement remains
+earned-not-given.
+
 ## Phase G3 — PDR / true heading (#322, #297)
 
 `motion_log.cog` is GPS-derived course, correlated with the noise it should
