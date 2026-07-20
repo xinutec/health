@@ -408,8 +408,23 @@ porting float arithmetic.
     → `chainList_pathCost_eq` / `iter_route_pathCost_eq` /
     `qReconstruct_pathCost_eq_iter`: the matcher's reconstructed route costs
     *exactly* the search's own `dist[tgt]`, in the shared `Rail.Graph` spec.
-    *Remaining:* the lower-bound (`dist ≤ every path`) → `= oracleDist` (the
-    search's answer is *the* shortest).
+  - *Weight-optimality lower bound — LANDED* (`Verified/Geo/LazyLower.lean`,
+    2026-07-20): `dist[tgt] ≤ pathCost(p)` for every valid `src → tgt` path. The
+    feasible-cut walk (rail `Certify.cut_bound`), made radius-honest: rail reuses
+    `feasibleCut` over the bare `done`/`dist` arrays, but the lazy machine has
+    settled-*unrelaxed* exhaust vertices (`dist > maxR`) that falsify it.
+    `cut_walk` instead threads `du ≤ prefix-cost` and branches on `du ≤ maxR` —
+    within the radius `UInv` supplies the no-shortcut step; a settled vertex
+    *beyond* it short-circuits (`D ≤ maxR < du ≤ du+C`). Honest precondition:
+    `D ≤ maxR` (the bound is claimed only inside the searched radius). The
+    "nothing cheaper still unsettled" fact is not an assumption — `nocheap_of_inv`
+    reads it off the existing invariants (unsettled finite ⇒ live heap entry
+    (`HInv`) priced `≥ L` (`LInv.ge`); settled target priced `≤ L` (`LInv.dle`);
+    so `D ≤ L ≤ dv`). `iter_route_optimal` ties both halves: the reconstructed
+    route is a *minimum-cost* path.
+    *Remaining:* discharge `done[src]` (source settled) and bridge the bound to
+    `= oracleDist` via the enumeration lemmas (`enum_sound`/`enum_complete`,
+    reusable as-is over the bare graph) — the search's answer is *the* shortest.
   Then `RingSearch.lean`'s `hgeom` discharge — reclassified, honestly, as
   its own project: it needs the **analytic (error-bound) substrate** the
   shipped *integer* substrate does NOT provide — a proved Lipschitz/error
