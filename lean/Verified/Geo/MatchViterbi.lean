@@ -1,5 +1,6 @@
 import Verified.Hsmm.Score
 import Verified.Hsmm.Decode
+import Verified.Hsmm.Memo
 
 /-!
 # Abstract first-order Viterbi optimality
@@ -385,5 +386,184 @@ theorem decode_none_iff (Tr : Trellis) :
       apply h
       simp only [allFullPaths, List.mem_flatMap]
       exact ⟨j, hj, hq_mem⟩)]
+
+/-! ## The memoised decoder — production-grade, inherits the flagship
+
+`decode` recomputes `cell` exponentially (it is the *specification* decoder).
+This layer computes the forward rows once — `buildRows` produces row `t` as a
+flat `Array Score` indexed by candidate `j`, exactly the imperative trellis's
+`score[t]` row — and proves every cell pointwise equal to `cell`
+(`buildRows_get`). `decodeFast` is `decode` with array lookups in place of
+`cell` calls; `decodeFast_eq` shows the two are *equal as functions of the
+trellis* (via `pickBest_congr`), so `decodeFast_argmax` and
+`decodeFast_none_iff` are inherited outright.
+
+`decodeFast` runs in `O(T·W²)` — the imperative trellis's cost. This is the
+`Memo.lean` playbook, one dimension simpler (no `τ` duration index). It is the
+decoder the production matcher instantiates and runs. -/
+
+open Verified.Hsmm (pickBest_congr)
+
+/-- Row `0`: the layer-0 emissions. -/
+def row0 (Tr : Trellis) : Array Score :=
+  Array.ofFn (n := Tr.width 0) fun j => emitG Tr 0 j
+
+/-- Row `t + 1` from row `t`: the forward DP recurrence, reading `prev`. -/
+def rowStep (Tr : Trellis) (t : Nat) (prev : Array Score) : Array Score :=
+  Array.ofFn (n := Tr.width (t + 1)) fun j =>
+    Score.listMax ((List.range (Tr.width t)).map fun i => prev[i]! + Tr.step (t + 1) i j)
+      + emitG Tr (t + 1) j
+
+/-- Rows `0 … t`, in order. -/
+def buildRows (Tr : Trellis) : Nat → Array (Array Score)
+  | 0 => #[row0 Tr]
+  | t + 1 =>
+    let cs := buildRows Tr t
+    cs.push (rowStep Tr t cs[t]!)
+
+theorem row0_get (Tr : Trellis) {j : Nat} (hj : j < Tr.width 0) :
+    (row0 Tr)[j]! = cell Tr 0 j := by
+  rw [row0, getElem!_pos (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
+  rfl
+
+theorem rowStep_get (Tr : Trellis) (t : Nat) (prev : Array Score)
+    (hprev : ∀ i, i < Tr.width t → prev[i]! = cell Tr t i)
+    {j : Nat} (hj : j < Tr.width (t + 1)) :
+    (rowStep Tr t prev)[j]! = cell Tr (t + 1) j := by
+  rw [rowStep, getElem!_pos (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
+  show Score.listMax ((List.range (Tr.width t)).map (fun i => prev[i]! + Tr.step (t + 1) i j))
+        + emitG Tr (t + 1) j = cell Tr (t + 1) j
+  rw [cell]
+  congr 1
+  congr 1
+  apply List.map_congr_left
+  intro i hi
+  rw [List.mem_range] at hi
+  rw [hprev i hi]
+
+theorem buildRows_size (Tr : Trellis) : ∀ t, (buildRows Tr t).size = t + 1
+  | 0 => rfl
+  | t + 1 => by simp only [buildRows, Array.size_push, buildRows_size Tr t]
+
+/-- Every stored cell is the corresponding `cell` value. -/
+theorem buildRows_get (Tr : Trellis) :
+    ∀ (tmax t : Nat), t ≤ tmax → ∀ (j : Nat), j < Tr.width t →
+      ((buildRows Tr tmax)[t]!)[j]! = cell Tr t j := by
+  intro tmax
+  induction tmax with
+  | zero =>
+    intro t ht j hj
+    have ht0 : t = 0 := Nat.le_zero.mp ht
+    subst ht0
+    have h0 : (buildRows Tr 0)[0]! = row0 Tr := rfl
+    rw [h0]
+    exact row0_get Tr hj
+  | succ tmax ih =>
+    intro t ht j hj
+    have hsz : (buildRows Tr tmax).size = tmax + 1 := buildRows_size Tr tmax
+    by_cases htt : t = tmax + 1
+    · subst htt
+      have hread : (buildRows Tr (tmax + 1))[tmax + 1]!
+          = rowStep Tr tmax (buildRows Tr tmax)[tmax]! := by
+        simp only [buildRows]
+        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+          Array.getElem_push, dif_neg (by omega)]
+      rw [hread]
+      exact rowStep_get Tr tmax _ (fun i hi => ih tmax (Nat.le_refl _) i hi) hj
+    · have htle : t ≤ tmax := by omega
+      have hread : (buildRows Tr (tmax + 1))[t]! = (buildRows Tr tmax)[t]! := by
+        simp only [buildRows]
+        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+          Array.getElem_push, dif_pos (by omega)]
+        exact (getElem!_pos _ _ (by omega)).symm
+      rw [hread]
+      exact ih t htle j hj
+
+/-- Cell lookup in the prebuilt rows. The `Trellis` is carried for call-site
+symmetry with `cell`/`step` (the lookup itself needs only the row array). -/
+def lookupRow (_Tr : Trellis) (rows : Array (Array Score)) (t j : Nat) : Score :=
+  (rows[t]!)[j]!
+
+/-- `decodeTo`, reading the prebuilt rows instead of recomputing `cell`. -/
+def decodeToFast (Tr : Trellis) (rows : Array (Array Score)) :
+    Nat → Nat → Option (List Nat)
+  | 0, j => if j < Tr.width 0 then some [j] else none
+  | t + 1, j =>
+    match pickBest (fun i => lookupRow Tr rows t i + Tr.step (t + 1) i j)
+        (List.range (Tr.width t)) with
+    | none => none
+    | some (i, _) =>
+      match decodeToFast Tr rows t i with
+      | none => none
+      | some p => if j < Tr.width (t + 1) then some (p ++ [j]) else none
+
+theorem decodeToFast_eq (Tr : Trellis) (rows : Array (Array Score)) (tmax : Nat)
+    (hrows : ∀ t j, t ≤ tmax → j < Tr.width t → lookupRow Tr rows t j = cell Tr t j) :
+    ∀ (t j : Nat), t ≤ tmax → decodeToFast Tr rows t j = decodeTo Tr t j := by
+  intro t
+  induction t with
+  | zero => intro j _; rfl
+  | succ t ih =>
+    intro j ht
+    rw [decodeToFast, decodeTo]
+    have hpick :
+        pickBest (fun i => lookupRow Tr rows t i + Tr.step (t + 1) i j)
+            (List.range (Tr.width t))
+          = pickBest (fun i => cell Tr t i + Tr.step (t + 1) i j) (List.range (Tr.width t)) := by
+      apply pickBest_congr
+      intro i hi
+      rw [List.mem_range] at hi
+      rw [hrows t i (by omega) hi]
+    rw [hpick]
+    cases hq : pickBest (fun i => cell Tr t i + Tr.step (t + 1) i j) (List.range (Tr.width t)) with
+    | none => rfl
+    | some q =>
+      obtain ⟨i, sc⟩ := q
+      dsimp only
+      rw [ih i (by omega)]
+
+/-- The memoised verified decoder — `O(T·W²)`, same asymptotics as the
+imperative trellis. -/
+def decodeFast (Tr : Trellis) : Option (List Nat) :=
+  let rows := buildRows Tr (Tr.T - 1)
+  match pickBest (fun j => lookupRow Tr rows (Tr.T - 1) j)
+      (List.range (Tr.width (Tr.T - 1))) with
+  | none => none
+  | some (j, _) => decodeToFast Tr rows (Tr.T - 1) j
+
+theorem decodeFast_eq (Tr : Trellis) : decodeFast Tr = decode Tr := by
+  have hrows : ∀ t j, t ≤ Tr.T - 1 → j < Tr.width t →
+      lookupRow Tr (buildRows Tr (Tr.T - 1)) t j = cell Tr t j := by
+    intro t j ht hj
+    rw [lookupRow]
+    exact buildRows_get Tr (Tr.T - 1) t ht j hj
+  simp only [decodeFast, decode]
+  have hpick :
+      pickBest (fun j => lookupRow Tr (buildRows Tr (Tr.T - 1)) (Tr.T - 1) j)
+          (List.range (Tr.width (Tr.T - 1)))
+        = pickBest (fun j => cell Tr (Tr.T - 1) j) (List.range (Tr.width (Tr.T - 1))) := by
+    apply pickBest_congr
+    intro j hj
+    rw [List.mem_range] at hj
+    exact hrows (Tr.T - 1) j (Nat.le_refl _) hj
+  rw [hpick]
+  cases hq : pickBest (fun j => cell Tr (Tr.T - 1) j) (List.range (Tr.width (Tr.T - 1))) with
+  | none => rfl
+  | some q =>
+    obtain ⟨j, sc⟩ := q
+    dsimp only
+    exact decodeToFast_eq Tr (buildRows Tr (Tr.T - 1)) (Tr.T - 1) hrows (Tr.T - 1) j (Nat.le_refl _)
+
+/-- **Viterbi argmax, memoised decoder.** The `O(T·W²)` decoded chain attains
+the maximum declarative `pathScore` over every full candidate chain. -/
+theorem decodeFast_argmax (Tr : Trellis) {p : List Nat} (h : decodeFast Tr = some p) :
+    p ∈ allFullPaths Tr ∧ ∀ c ∈ allFullPaths Tr, pathScore Tr c ≤ pathScore Tr p :=
+  decode_argmax Tr (decodeFast_eq Tr ▸ h)
+
+/-- **`none` characterisation, memoised decoder.** -/
+theorem decodeFast_none_iff (Tr : Trellis) :
+    decodeFast Tr = none ↔ ∀ c ∈ allFullPaths Tr, pathScore Tr c = Score.negInf := by
+  rw [decodeFast_eq]
+  exact decode_none_iff Tr
 
 end Verified.Geo.MatchViterbi

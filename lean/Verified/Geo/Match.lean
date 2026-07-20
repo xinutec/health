@@ -2,6 +2,7 @@ import Verified.Geo.Metric
 import Verified.Geo.LazyFuel
 import Verified.Geo.LazyResume
 import Verified.Geo.LazyPrev
+import Verified.Geo.MatchViterbi
 
 /-!
 # Matcher core
@@ -86,11 +87,20 @@ deliverable; the theorem arc on top of it, easiest first:
     chain has a finite score.
 
   These are the matcher analogue of the HSMM `decode_correct` / `decode_none_iff`.
-  *Remaining* (wiring, not new maths): instantiate the abstract `Trellis` from
-  `qMatchTrajectory`'s `obs`/candidates/`qRouteBetween` (emit = `emissionScaled`,
-  step = `τ − switchPen`, `-∞` when unrouteable — well-defined via
-  `qRouteBetween_route_pure`), then relate the imperative `Id.run do` trellis to
-  `decode` (full equivalence, or `#guard`-pinned like the HSMM array `viterbi`).
+- **Wired into production — landed.** `qMatchTrajectory` no longer runs an
+  unverified imperative Viterbi. It hoists the route matrix (`routeOf[t-1][j][i]`,
+  filled in the trellis's exact `(t, j, i)` order — the same `qRouteBetween` call
+  sequence, so the cache and every value are unchanged; `qRouteBetween_route_pure`
+  shows the order never mattered), instantiates a concrete `MatchViterbi.Trellis`
+  (node score = `emissionScaled`, edge weight = `τ − switchPen`, `-∞` when
+  unrouteable, read from that finished array), and *runs* the verified
+  `MatchViterbi.decodeFast` — the `O(T·W²)` memoised decoder (`decodeFast_eq :
+  decodeFast = decode`, so `decodeFast_argmax` / `decodeFast_none_iff` hold). The
+  returned chain is thus, by construction, the maximum-`pathScore` candidate
+  chain; the display tail then reads it against the same matrix. The
+  `compare-match` gate (173/173 quant↔Lean EXACT) confirms the restructure is
+  bit-identical to the old imperative trellis — the referee that the rewiring
+  did not drift.
 
 Sorry-free convention: a theorem is stated only when proved.
 -/
@@ -964,72 +974,61 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   let emissionScaled := fun (d : Nat) => -((d * d * P.betaUm : Nat) : Int)
 
   let nObs := obs.size
-  let mut score : Array (Array (Option Int)) := #[]
-  let mut back : Array (Array Int) := #[]
-  let mut routeOf : Array (Array (Array (Option (Int × Array QPt)))) := #[]
-  score := score.push ((obs.getD 0 default).cands.map (fun c => some (emissionScaled c.dist)))
-  back := back.push ((obs.getD 0 default).cands.map (fun _ => (-1 : Int)))
 
+  -- Phase A — route matrix. Fill `routeOf[t-1][j][i]` = the route from
+  -- candidate `i` at layer `t-1` to candidate `j` at layer `t`, in the
+  -- trellis's exact `(t, j, i)` order, threading the per-source cache. This is
+  -- the same sequence of `qRouteBetween` calls the fused loop made — so the
+  -- cache evolution and every route value are unchanged — hoisted ahead of the
+  -- scoring so the trellis's edge weights are a pure function of a finished
+  -- array (`qRouteBetween_route_pure` shows the fill order never mattered).
+  let mut routeAcc : Array (Array (Array (Option (Int × Array QPt)))) := #[]
   for t in [1:nObs] do
     let prev := obs.getD (t - 1) default
     let cur := obs.getD t default
-    let gpsStep := qDist prev.fix cur.fix
-    let mut row : Array (Option Int) := #[]
-    let mut brow : Array Int := #[]
     let mut rmat : Array (Array (Option (Int × Array QPt))) := #[]
     for j in [0:cur.cands.size] do
-      let mut bestScore : Option Int := none
-      let mut bestPrev : Int := -1
       let mut rrow : Array (Option (Int × Array QPt)) := #[]
       for i in [0:prev.cands.size] do
         let (route, rc) := qRouteBetween (prev.cands.getD i default) (cur.cands.getD j default)
           graph bld S maxR fuel routeCache
         routeCache := rc
         rrow := rrow.push route
-        match route with
-        | none => pure ()
-        | some (distUm, _) =>
-          match (score.getD (t - 1) #[]).getD i none with
-          | none => pure ()
-          | some ps =>
-            let trans : Int := -(((distUm - (gpsStep : Int)).natAbs : Int) * (sig2x2 : Int))
-            let wa := (graph.segments.getD (prev.cands.getD i default).si default).name
-            let wb := (graph.segments.getD (cur.cands.getD j default).si default).name
-            let switchPen : Int :=
-              match wa, wb with
-              | some sa, some sb => if sa ≠ "" && sb ≠ "" && sa ≠ sb then switchPenScaled else 0
-              | _, _ => 0
-            let s := ps + trans - switchPen + emissionScaled (cur.cands.getD j default).dist
-            match bestScore with
-            | none => bestScore := some s; bestPrev := (i : Int)
-            | some bs => if s > bs then bestScore := some s; bestPrev := (i : Int)
-      row := row.push bestScore
-      brow := brow.push bestPrev
       rmat := rmat.push rrow
-    if row.all (·.isNone) then return none
-    score := score.push row
-    back := back.push brow
-    routeOf := routeOf.push rmat
+    routeAcc := routeAcc.push rmat
+  let routeOf := routeAcc
 
-  -- Terminal argmax + backtrack.
-  let lastRow := score.getD (nObs - 1) #[]
-  let mut endJ : Nat := 0
-  let mut endBest : Option Int := none
-  for j in [0:lastRow.size] do
-    match lastRow.getD j none with
-    | none => pure ()
-    | some s =>
-      match endBest with
-      | none => endBest := some s; endJ := j
-      | some eb => if s > eb then endBest := some s; endJ := j
-  if endBest.isNone then return none
-  let mut chosen : Array Nat := Array.replicate nObs 0
-  chosen := chosen.setIfInBounds (nObs - 1) endJ
-  for k in [0:nObs - 1] do
-    let t := nObs - 1 - k
-    let bp := (back.getD t #[]).getD (chosen.getD t 0) (-1)
-    if bp < 0 then return none
-    chosen := chosen.setIfInBounds (t - 1) bp.toNat
+  -- Phase B — the concrete first-order max-sum trellis (`MatchViterbi`): node
+  -- score = the `2σ²β`-scaled emission, edge weight = transition − switch
+  -- penalty (`-∞` when unrouteable), both read from the hoisted matrix. The
+  -- production matcher *runs* the verified decoder `decodeFast`, whose returned
+  -- chain is proved to attain the maximum declarative `pathScore` over every
+  -- candidate chain (`MatchViterbi.decodeFast_argmax`) — no unverified
+  -- imperative backtrack in the trust path. `none` (no finite-scoring chain)
+  -- returns `none`, exactly the old terminal-argmax / all-unreachable bail.
+  let Tr : MatchViterbi.Trellis := {
+    T := nObs
+    width := fun t => (obs.getD t default).cands.size
+    emit := fun t j =>
+      Verified.Hsmm.Score.val (emissionScaled ((obs.getD t default).cands.getD j default).dist)
+    step := fun t i j =>
+      match ((routeOf.getD (t - 1) #[]).getD j #[]).getD i none with
+      | none => Verified.Hsmm.Score.negInf
+      | some (distUm, _) =>
+        let prev := obs.getD (t - 1) default
+        let cur := obs.getD t default
+        let gpsStep := qDist prev.fix cur.fix
+        let trans : Int := -(((distUm - (gpsStep : Int)).natAbs : Int) * (sig2x2 : Int))
+        let wa := (graph.segments.getD (prev.cands.getD i default).si default).name
+        let wb := (graph.segments.getD (cur.cands.getD j default).si default).name
+        let switchPen : Int :=
+          match wa, wb with
+          | some sa, some sb => if sa ≠ "" && sb ≠ "" && sa ≠ sb then switchPenScaled else 0
+          | _, _ => 0
+        Verified.Hsmm.Score.val (trans - switchPen) }
+  let decoded := MatchViterbi.decodeFast Tr
+  if decoded.isNone then return none
+  let chosen : Array Nat := (decoded.getD []).toArray
 
   -- Assemble the interpolated route detail.
   let first := (obs.getD 0 default).cands.getD (chosen.getD 0 0) default
