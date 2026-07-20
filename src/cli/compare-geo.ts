@@ -43,6 +43,7 @@ import {
 	quantPt,
 } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
+import { leanGeo as leanGeoBridge } from "../lean/lean-core.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
 const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
@@ -54,7 +55,7 @@ interface LeanGeoResp {
 	error?: string;
 }
 
-function leanGeo(req: object): LeanGeoResp {
+function leanGeoSpawn(req: object): LeanGeoResp {
 	const res = spawnSync(LEAN_BIN, ["geo"], {
 		input: JSON.stringify(req),
 		encoding: "utf8",
@@ -65,6 +66,14 @@ function leanGeo(req: object): LeanGeoResp {
 	if (parsed.error) throw new Error(`verified_cli geo: ${parsed.error}`);
 	return parsed;
 }
+
+// `--bridge` routes every pass through the persistent synchronous worker
+// (`lean/lean-core.ts`) instead of a spawn per call — the request-path
+// executor, validated against the same 173/173 referee.
+const useBridge = process.argv.includes("--bridge");
+const leanGeo: (req: object) => LeanGeoResp = useBridge
+	? (req) => leanGeoBridge(req as Record<string, unknown>)
+	: leanGeoSpawn;
 
 const ptRow = (p: QPt): number[] => [Number(p.la), Number(p.lo), Number(p.ts)];
 const eqNums = (a: readonly number[], b: readonly number[]): boolean =>
@@ -81,7 +90,7 @@ function keptIdx<T>(all: readonly T[], kept: readonly T[]): number[] {
 	return out;
 }
 
-const argDates = process.argv.slice(2);
+const argDates = process.argv.slice(2).filter((a) => a !== "--bridge");
 const files = readdirSync("tests/golden/days")
 	.filter((f) => f.endsWith(".json"))
 	.filter((f) => argDates.length === 0 || argDates.some((d) => f.startsWith(d)))
