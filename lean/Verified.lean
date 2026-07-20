@@ -25,6 +25,8 @@ import Verified.Geo.Clean
 import Verified.Geo.Trim
 import Verified.Geo.LazyEdge
 import Verified.Geo.LazyLive
+import Verified.Geo.LazyUpper
+import Verified.Geo.LazyWeight
 import Verified.Geo.Metric
 import Verified.Geo.Match
 import Verified.Geo.RingSearch

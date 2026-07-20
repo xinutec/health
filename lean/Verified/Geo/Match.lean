@@ -3,6 +3,7 @@ import Verified.Geo.LazyFuel
 import Verified.Geo.LazyResume
 import Verified.Geo.LazyPrev
 import Verified.Geo.LazyEdge
+import Verified.Geo.LazyWeight
 import Verified.Geo.MatchViterbi
 
 /-!
@@ -1279,5 +1280,25 @@ theorem qReconstruct_pathCost_isSome_iter {g : Graph} {maxR src start k : Nat}
     (Verified.Rail.pathCost g
       (qReconstruct (iter g maxR k (linit g.n src)).prev start g.n).toList).isSome :=
   qReconstruct_pathCost_isSome (iter_einv k linit_einv) hstart
+
+/-- **The matcher's reconstructed route costs exactly the search's answer.**
+Composing `qReconstruct_toList` (the reconstruction is the reversed `prev`-chain)
+with `iter_route_pathCost_eq` (the chain telescopes to the target distance): at
+any trajectory state of a per-source lazy search, once the target `start` is
+settled and its `prev`-chain has completed (enough reconstruction fuel — `g.n`),
+the route's `pathCost` in the shared `Verified.Rail.Graph` spec is exactly
+`dist[start]`. This is the exact-cost half of the null-over-wrong routing
+contract: not just a valid path (`qReconstruct_pathCost_isSome_iter`) but a path
+whose cost *is* the distance the search recorded. -/
+theorem qReconstruct_pathCost_eq_iter {g : Graph} {maxR src start k dt : Nat}
+    (hwf : WFEdges g) (hsrc : src < g.n)
+    (hdone : (iter g maxR k (linit g.n src)).done.getD start false = true)
+    (hcomp : chainList (iter g maxR k (linit g.n src)).prev g.n g.n start
+           = chainList (iter g maxR k (linit g.n src)).prev g.n (g.n + 1) start)
+    (hdt : (iter g maxR k (linit g.n src)).dist.getD start none = some dt) :
+    Verified.Rail.pathCost g
+      (qReconstruct (iter g maxR k (linit g.n src)).prev start g.n).toList = some dt := by
+  rw [qReconstruct_toList]
+  exact iter_route_pathCost_eq hwf hsrc k hdone hcomp hdt
 
 end Verified.Geo

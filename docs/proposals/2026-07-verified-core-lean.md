@@ -391,9 +391,25 @@ porting float arithmetic.
     the search settles each vertex at exactly the distance the relaxations
     recorded. Native to the lazy machine (the rail `dijkstra_complete` is on the
     rail `DState`) but reuses the shared `HeapInv` lemmas over the shared
-    `Heap`. *Remaining:* `dist`-tightness along `prev` (`dist[v]=dist[u]+w`,
-    from `settle_price`) → telescope with `EInv` to `pathCost(route)=dist[tgt]`,
-    then the lower-bound (`dist ≤ every path`) → `= oracleDist`.
+    `Heap`. Native to the lazy machine (the rail `dijkstra_complete` is on the
+    rail `DState`) but reuses the shared `HeapInv` lemmas over the shared `Heap`.
+  - *Weight-optimality value half — LANDED* (`Verified/Geo/LazyUpper.lean` +
+    `LazyWeight.lean`, 2026-07-20): `pathCost(route) = dist[tgt]`. Two coupled
+    invariants bound each settled step from both sides. `UInv` (upper): every
+    edge `(v,w)` out of a done, within-radius `u` has `dist[v] ≤ dist[u]+w` —
+    "relaxation reached everyone"; the `dist[u] ≤ maxR` gate excludes the single
+    radius-exhausted vertex (settled unrelaxed, never a `prev`). `WInv` (lower):
+    the recorded provenance `dist[v] = dist[prev[v]]+w` with `w` a real edge
+    (`settle_price` makes the written `p` equal `dist[prev[v]]`). Combined —
+    `edgeMinW ≤ w` (`WInv`) and `dist[v] ≤ dist[u]+edgeMinW` (`UInv` at the
+    min-realising edge) — pin each step to its cheapest edge: `done_dist_step`,
+    `dist[v] = dist[prev[v]]+edgeMinW(prev[v],v)`. Telescoped over `chainList`
+    (`PInv` keeps the chain inside done vertices; `SInv` anchors `dist[src]=0`)
+    → `chainList_pathCost_eq` / `iter_route_pathCost_eq` /
+    `qReconstruct_pathCost_eq_iter`: the matcher's reconstructed route costs
+    *exactly* the search's own `dist[tgt]`, in the shared `Rail.Graph` spec.
+    *Remaining:* the lower-bound (`dist ≤ every path`) → `= oracleDist` (the
+    search's answer is *the* shortest).
   Then `RingSearch.lean`'s `hgeom` discharge — reclassified, honestly, as
   its own project: it needs the **analytic (error-bound) substrate** the
   shipped *integer* substrate does NOT provide — a proved Lipschitz/error
