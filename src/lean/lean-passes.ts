@@ -47,6 +47,29 @@ export function leanPassStats(): Record<string, PassStat> {
 	return Object.fromEntries(stats);
 }
 
+interface Divergence {
+	op: string;
+	n: number;
+	note: string;
+}
+const divergences: Divergence[] = [];
+const MAX_DIVERGENCES = 500;
+
+function recordDivergence(op: string, n: number, note: string): void {
+	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note });
+}
+
+/** Structured shadow divergences (bounded) — the flip-decision ledger. */
+export function leanPassDivergences(): readonly Divergence[] {
+	return divergences;
+}
+
+/** Clear stats + divergences (the ledger CLI resets between runs). */
+export function resetLeanPassStats(): void {
+	stats.clear();
+	divergences.length = 0;
+}
+
 type LatLonTs = { lat: number; lon: number; ts?: number };
 
 function rows(pts: readonly LatLonTs[]): number[][] {
@@ -70,6 +93,15 @@ const eqNum = (a: readonly number[], b: readonly number[]): boolean =>
 
 const eqRows = (a: readonly number[][], b: readonly number[][]): boolean =>
 	a.length === b.length && a.every((r, i) => eqNum(r, b[i]));
+
+/** Compact description of how two keep-index sets differ (for the ledger). */
+function symdiffNote(ts: readonly number[], lean: readonly number[]): string {
+	const tsSet = new Set(ts);
+	const leanSet = new Set(lean);
+	const tsOnly = ts.filter((i) => !leanSet.has(i));
+	const leanOnly = lean.filter((i) => !tsSet.has(i));
+	return `ts-only=[${tsOnly}] lean-only=[${leanOnly}]`;
+}
 
 /** Recover the kept ORIGINAL objects from a drop-only, order-preserving
  *  pass that returned quantised rows: walk both in lock-step. */
@@ -104,7 +136,9 @@ export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], tolerance
 			const diverged = !eqNum(tsIdx, keep);
 			record("simplify", diverged);
 			if (diverged) {
-				console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ts=[${tsIdx}] lean=[${keep}]`);
+				const note = symdiffNote(tsIdx, keep);
+				recordDivergence("simplify", pts.length, note);
+				console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ${note}`);
 			}
 			return tsResult;
 		}
@@ -131,9 +165,9 @@ export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], tsRes
 			const diverged = !eqRows(rows(tsResult), leanRows);
 			record("spikes", diverged);
 			if (diverged) {
-				console.warn(
-					`[lean-passes] spikes divergence (n=${pts.length}): ts=${tsResult.length} lean=${leanRows.length}`,
-				);
+				const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
+				recordDivergence("spikes", pts.length, note);
+				console.warn(`[lean-passes] spikes divergence (n=${pts.length}): ${note}`);
 			}
 			return tsResult;
 		}
