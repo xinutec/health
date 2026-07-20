@@ -380,10 +380,20 @@ porting float arithmetic.
     (the `isValidPath` positive half of null-over-wrong). Proof is
     reverse-free (accumulator-free `chainList` + a `pathCost` snoc lemma),
     Mathlib-free.
-  - *Weight-optimality half — next* (`dist[tgt] = trueShortestDist`): the
-    LoopInv-scale fact the rail eager search has but the lazy bundle does
-    not; transferable through the lazy=eager bridge (`lsettle_eq_iter`)
-    rather than rebuilt.
+  - *Weight-optimality half — keystone LANDED* (`Verified/Geo/LazyLive.lean`,
+    2026-07-20): `HInv`, the **live-heap-entry** invariant `LazyInv` omits —
+    every unsettled vertex with a defined `dist` holds a heap entry *at* that
+    `dist` (`push` maintains it, `pop_cover` shows only the popped top leaves).
+    Carried along the trajectory (`iter_hinv` from `linit_hinv`). Payoff
+    `settle_price`: when `lstep` settles `u`, it pops it at price = `dist[u]`
+    (a smaller live entry would have popped first — `HInv` + `pop_min`; bounded
+    below by `LazyInv.wf`). This is the fact the whole value theorem rests on —
+    the search settles each vertex at exactly the distance the relaxations
+    recorded. Native to the lazy machine (the rail `dijkstra_complete` is on the
+    rail `DState`) but reuses the shared `HeapInv` lemmas over the shared
+    `Heap`. *Remaining:* `dist`-tightness along `prev` (`dist[v]=dist[u]+w`,
+    from `settle_price`) → telescope with `EInv` to `pathCost(route)=dist[tgt]`,
+    then the lower-bound (`dist ≤ every path`) → `= oracleDist`.
   Then `RingSearch.lean`'s `hgeom` discharge — reclassified, honestly, as
   its own project: it needs the **analytic (error-bound) substrate** the
   shipped *integer* substrate does NOT provide — a proved Lipschitz/error
