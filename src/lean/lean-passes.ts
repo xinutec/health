@@ -231,3 +231,73 @@ export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], tsRes
 	}
 	return mode === "on" ? subsequenceKept(pts, leanRows) : tsResult;
 }
+
+/**
+ * Over-route excursion trim through the verified core (`qTrim`, op `trim`).
+ * Drop-only over the drawn `path`, judged against the raw `fixes`; `on` mode
+ * recovers the kept path objects by subsequence match.
+ */
+export function trimViaLean<P extends LatLonTs, F extends LatLonTs>(
+	path: readonly P[],
+	fixes: readonly F[],
+	tsResult: P[],
+): P[] {
+	const mode = leanPassMode();
+	if (mode === "off" || path.length < 3) return tsResult;
+	let leanRows: number[][];
+	try {
+		leanRows = leanGeo({ op: "trim", path: rows(path), fixes: rows(fixes) }).pts ?? [];
+	} catch (e) {
+		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("trim");
+		return tsResult;
+	}
+	const diverged = !eqRows(rows(tsResult), leanRows);
+	recordCall("trim", diverged);
+	if (diverged) {
+		const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
+		recordDivergence("trim", path.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] trim divergence (n=${path.length}): ${note}`);
+	}
+	return mode === "on" ? subsequenceKept(path, leanRows) : tsResult;
+}
+
+/**
+ * Unsupported-apex despike through the verified core (`qDespike`, op
+ * `despike`). Drop-only over `path`, judged against the raw `fixes`. The turn
+ * threshold (140°) is baked into the verified twin; only the apex/excess
+ * metric thresholds cross the wire (µm), matching the compare-geo referee.
+ */
+export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
+	path: readonly P[],
+	fixes: readonly F[],
+	tsResult: P[],
+	minApexM = 15,
+	excessM = 12,
+): P[] {
+	const mode = leanPassMode();
+	if (mode === "off" || path.length < 3) return tsResult;
+	let leanRows: number[][];
+	try {
+		leanRows =
+			leanGeo({
+				op: "despike",
+				apex: Math.round(minApexM * 1e6),
+				excess: Math.round(excessM * 1e6),
+				pts: rows(path),
+				raw: rows(fixes),
+			}).pts ?? [];
+	} catch (e) {
+		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("despike");
+		return tsResult;
+	}
+	const diverged = !eqRows(rows(tsResult), leanRows);
+	recordCall("despike", diverged);
+	if (diverged) {
+		const note = `ts=${tsResult.length} lean=${leanRows.length} kept`;
+		recordDivergence("despike", path.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] despike divergence (n=${path.length}): ${note}`);
+	}
+	return mode === "on" ? subsequenceKept(path, leanRows) : tsResult;
+}

@@ -23,6 +23,7 @@
  * to fall back to the pedestrian smoother, never to invent an on-pavement path.
  */
 
+import { despikeViaLean, trimViaLean } from "../lean/lean-passes.js";
 import {
 	despikeUnsupportedApexes,
 	type MatchProfile,
@@ -113,8 +114,8 @@ export function matchWalkSegment(
 	// wide over-route detours (a loop out and back the corridor tests catch), then
 	// tight apex spikes where the snapper amplified GPS jitter into a triangle that
 	// hugs the noisy fixes too closely for the corridor tests to see.
-	const trimmed = trimOverRouteExcursions(fixes, result.path);
-	const cleaned = despikeUnsupportedApexes(trimmed, fixes);
+	const trimmed = trimViaLean(result.path, fixes, trimOverRouteExcursions(fixes, result.path));
+	const cleaned = despikeViaLean(trimmed, fixes, despikeUnsupportedApexes(trimmed, fixes));
 	// Then carry the way geometry back into the surviving chords (#369) — pure
 	// curve fidelity; every deliberate excision above stays excised.
 	return { path: spliceRouteDetail(cleaned, result.routeDetail, profile.simplifyToleranceM), coarsePath: cleaned };
