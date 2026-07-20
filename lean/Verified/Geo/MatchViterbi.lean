@@ -1,4 +1,5 @@
 import Verified.Hsmm.Score
+import Verified.Hsmm.Decode
 
 /-!
 # Abstract first-order Viterbi optimality
@@ -196,5 +197,193 @@ theorem cell_eq_listMax (Tr : Trellis) :
           = (fun i => (fun i => cell Tr t i + Tr.step (t + 1) i j) i + emitG Tr (t + 1) j) from rfl,
       listMax_add_map]
     rfl
+
+/-! ## The decoder, its optimality, and the `none` characterisation -/
+
+open Verified.Hsmm (pickBest pickBest_some pickBest_none)
+
+/-- `listMax = -∞` forces every element to `-∞`. -/
+private theorem listMax_negInf_all {xs : List Score} (h : listMax xs = Score.negInf) :
+    ∀ x ∈ xs, x = Score.negInf := fun x hx =>
+  Score.le_antisymm (h ▸ listMax_ge hx) (Score.negInf_le x)
+
+/-- `pickBest` finds nothing exactly when every element scores `-∞`. -/
+private theorem pickBest_none_of_all {α : Type} (f : α → Score) :
+    ∀ (l : List α), (∀ x ∈ l, f x = Score.negInf) → pickBest f l = none := by
+  intro l
+  induction l with
+  | nil => intro _; rfl
+  | cons y ys ih =>
+    intro h
+    simp only [pickBest, ih (fun x hx => h x (List.mem_cons_of_mem _ hx)),
+      h y (List.mem_cons_self ..), beq_self_eq_true, if_true]
+
+/-- Backtracked optimal chain to `(t, j)`: pick the best predecessor by
+`pickBest`, recurse, and append `j`. `none` when the layer is unreachable. -/
+def decodeTo (Tr : Trellis) : Nat → Nat → Option (List Nat)
+  | 0, j => if j < Tr.width 0 then some [j] else none
+  | t + 1, j =>
+    match pickBest (fun i => cell Tr t i + Tr.step (t + 1) i j) (List.range (Tr.width t)) with
+    | none => none
+    | some (i, _) =>
+      match decodeTo Tr t i with
+      | none => none
+      | some p => if j < Tr.width (t + 1) then some (p ++ [j]) else none
+
+/-- Whatever `decodeTo` returns is a valid chain to `(t, j)` attaining the
+cell value. -/
+theorem decodeTo_score (Tr : Trellis) :
+    ∀ (t j : Nat) (p : List Nat), decodeTo Tr t j = some p →
+      p ∈ pathsTo Tr t j ∧ pathScore Tr p = cell Tr t j := by
+  intro t
+  induction t with
+  | zero =>
+    intro j p h
+    simp only [decodeTo] at h
+    by_cases hj : j < Tr.width 0
+    · rw [if_pos hj] at h
+      injection h with hp; subst hp
+      refine ⟨by simp [pathsTo], ?_⟩
+      show pathScore Tr [j] = cell Tr 0 j
+      simp [pathScore, scoreAux, cell, emitG, hj, Score.zero_add, Score.add_zero]
+    · rw [if_neg hj] at h; exact absurd h (by simp)
+  | succ t ih =>
+    intro j p h
+    rw [decodeTo] at h
+    cases hpb : pickBest (fun i => cell Tr t i + Tr.step (t + 1) i j) (List.range (Tr.width t)) with
+    | none => simp only [hpb] at h; exact absurd h (by simp)
+    | some q =>
+      obtain ⟨i, sc⟩ := q
+      simp only [hpb] at h
+      cases hdt : decodeTo Tr t i with
+      | none => simp only [hdt] at h; exact absurd h (by simp)
+      | some r =>
+        simp only [hdt] at h
+        by_cases hj : j < Tr.width (t + 1)
+        · rw [if_pos hj] at h
+          injection h with hp; subst hp
+          obtain ⟨hrmem, hrsc⟩ := ih i r hdt
+          obtain ⟨hscf, hi_mem, -, hi_max⟩ := pickBest_some _ _ i sc hpb
+          rw [List.mem_range] at hi_mem
+          refine ⟨?_, ?_⟩
+          · simp only [pathsTo, List.mem_map, List.mem_flatMap, List.mem_range]
+            exact ⟨r, ⟨i, hi_mem, hrmem⟩, rfl⟩
+          · rw [pathScore_snoc Tr hrmem, hrsc]
+            show cell Tr t i + Tr.step (t + 1) i j + emitG Tr (t + 1) j = cell Tr (t + 1) j
+            rw [cell, ← hscf, hi_max]
+        · rw [if_neg hj] at h; simp at h
+
+/-- A finite cell is reachable: `decodeTo` returns a chain. -/
+theorem decodeTo_some_of_ne (Tr : Trellis) :
+    ∀ (t j : Nat), cell Tr t j ≠ Score.negInf → ∃ p, decodeTo Tr t j = some p := by
+  intro t
+  induction t with
+  | zero =>
+    intro j h
+    rcases Nat.lt_or_ge j (Tr.width 0) with hj | hj
+    · exact ⟨[j], by simp [decodeTo, hj]⟩
+    · rw [cell, emitG, if_neg (Nat.not_lt.mpr hj)] at h; exact absurd rfl h
+  | succ t ih =>
+    intro j h
+    rw [cell] at h
+    have hlm : listMax ((List.range (Tr.width t)).map
+        (fun i => cell Tr t i + Tr.step (t + 1) i j)) ≠ Score.negInf := by
+      intro he; rw [he] at h; exact h (Score.negInf_add _)
+    have hj : j < Tr.width (t + 1) := by
+      rcases Nat.lt_or_ge j (Tr.width (t + 1)) with hj | hj
+      · exact hj
+      · rw [emitG, if_neg (Nat.not_lt.mpr hj)] at h; exact absurd (Score.add_negInf _) h
+    cases hpb : pickBest (fun i => cell Tr t i + Tr.step (t + 1) i j) (List.range (Tr.width t)) with
+    | none =>
+      exact absurd (Score.listMax_eq_negInf_of_all (by
+        intro x hx
+        obtain ⟨i, hi, hfi⟩ := List.mem_map.mp hx
+        rw [← hfi]; exact pickBest_none _ _ hpb i hi)) hlm
+    | some q =>
+      obtain ⟨i, sc⟩ := q
+      obtain ⟨hscf, -, hscne, -⟩ := pickBest_some _ _ i sc hpb
+      have hci : cell Tr t i ≠ Score.negInf := by
+        intro he; rw [hscf, he, Score.negInf_add] at hscne; exact hscne rfl
+      obtain ⟨r, hr⟩ := ih i hci
+      exact ⟨r ++ [j], by simp [decodeTo, hpb, hr, hj]⟩
+
+/-- All in-range candidate chains of length `T` (one choice per layer). -/
+def allFullPaths (Tr : Trellis) : List (List Nat) :=
+  (List.range (Tr.width (Tr.T - 1))).flatMap (pathsTo Tr (Tr.T - 1))
+
+/-- The terminal best score equals the max declarative score over every full
+candidate chain (via `cell_eq_listMax`, folded across the last layer). -/
+theorem bestScore_eq (Tr : Trellis) :
+    listMax ((List.range (Tr.width (Tr.T - 1))).map (fun j => cell Tr (Tr.T - 1) j))
+      = listMax ((allFullPaths Tr).map (pathScore Tr)) := by
+  rw [List.map_congr_left (fun j _ => cell_eq_listMax Tr (Tr.T - 1) j)]
+  rw [← listMax_flatMap, allFullPaths, List.map_flatMap]
+
+/-- The verified decoder: the terminal `pickBest` over the last layer, then
+backtrack. -/
+def decode (Tr : Trellis) : Option (List Nat) :=
+  match pickBest (fun j => cell Tr (Tr.T - 1) j) (List.range (Tr.width (Tr.T - 1))) with
+  | none => none
+  | some (j, _) => decodeTo Tr (Tr.T - 1) j
+
+/-- **Viterbi argmax.** The decoded chain is a full candidate chain and attains
+the maximum declarative score over every full candidate chain. -/
+theorem decode_argmax (Tr : Trellis) {p : List Nat} (h : decode Tr = some p) :
+    p ∈ allFullPaths Tr ∧ ∀ c ∈ allFullPaths Tr, pathScore Tr c ≤ pathScore Tr p := by
+  unfold decode at h
+  cases hpb : pickBest (fun j => cell Tr (Tr.T - 1) j) (List.range (Tr.width (Tr.T - 1))) with
+  | none => rw [hpb] at h; exact absurd h (by simp)
+  | some q =>
+    obtain ⟨j, sc⟩ := q
+    rw [hpb] at h
+    obtain ⟨hscf, hj_mem, -, hscmax⟩ := pickBest_some _ _ j sc hpb
+    rw [List.mem_range] at hj_mem
+    obtain ⟨hpmem, hpsc⟩ := decodeTo_score Tr (Tr.T - 1) j p h
+    have hp_full : p ∈ allFullPaths Tr := by
+      simp only [allFullPaths, List.mem_flatMap, List.mem_range]
+      exact ⟨j, hj_mem, hpmem⟩
+    refine ⟨hp_full, fun c hc => ?_⟩
+    have hpscore : pathScore Tr p = listMax ((allFullPaths Tr).map (pathScore Tr)) := by
+      rw [hpsc, ← hscf, hscmax, bestScore_eq]
+    rw [hpscore]
+    exact listMax_ge (List.mem_map_of_mem hc)
+
+/-- **The decoder returns `none` exactly when no full candidate chain has a
+finite score.** -/
+theorem decode_none_iff (Tr : Trellis) :
+    decode Tr = none ↔ ∀ c ∈ allFullPaths Tr, pathScore Tr c = Score.negInf := by
+  constructor
+  · intro h
+    cases hpb : pickBest (fun j => cell Tr (Tr.T - 1) j) (List.range (Tr.width (Tr.T - 1))) with
+    | some q =>
+      -- A finite terminal cell would decode, contradicting `none`.
+      obtain ⟨j, sc⟩ := q
+      obtain ⟨hscf, -, hscne, -⟩ := pickBest_some _ _ j sc hpb
+      obtain ⟨r, hr⟩ := decodeTo_some_of_ne Tr (Tr.T - 1) j (by rw [← hscf]; exact hscne)
+      have hsome : decode Tr = some r := by unfold decode; rw [hpb]; exact hr
+      rw [hsome] at h; exact absurd h (by simp)
+    | none =>
+      have hall : ∀ j ∈ List.range (Tr.width (Tr.T - 1)), cell Tr (Tr.T - 1) j = Score.negInf :=
+        pickBest_none _ _ hpb
+      intro c hc
+      have hlm : listMax ((allFullPaths Tr).map (pathScore Tr)) = Score.negInf := by
+        rw [← bestScore_eq]
+        exact Score.listMax_eq_negInf_of_all (by
+          intro x hx
+          obtain ⟨j, hj, hfj⟩ := List.mem_map.mp hx
+          rw [← hfj]; exact hall j hj)
+      exact listMax_negInf_all hlm _ (List.mem_map_of_mem hc)
+  · intro h
+    unfold decode
+    rw [pickBest_none_of_all _ _ (by
+      intro j hj
+      rw [cell_eq_listMax Tr (Tr.T - 1) j]
+      apply Score.listMax_eq_negInf_of_all
+      intro x hx
+      obtain ⟨q, hq_mem, hq_score⟩ := List.mem_map.mp hx
+      rw [← hq_score]
+      apply h
+      simp only [allFullPaths, List.mem_flatMap]
+      exact ⟨j, hj, hq_mem⟩)]
 
 end Verified.Geo.MatchViterbi
