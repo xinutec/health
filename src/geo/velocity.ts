@@ -10,6 +10,7 @@ import { db } from "../db/pool.js";
 import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
+import { installLeanPasses } from "../lean/install.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
 import { detectKnownPlaceStays, type StayCandidate } from "../sleep/known-place-stays.js";
@@ -592,6 +593,7 @@ export async function computeVelocityFromInputs(
 	inputs: ClassificationInputs,
 	options: { enrich?: boolean; walkMatch?: boolean; walkDraw?: "matcher" | "recon" } = {},
 ): Promise<VelocityResult> {
+	installLeanPasses();
 	const { userId, date, displayTz: tz } = inputs.identity;
 	const t0 = Date.now();
 	const phaseTimes: Record<string, number> = {};

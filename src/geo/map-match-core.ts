@@ -1274,6 +1274,26 @@ export function dedupeConsecutive(pts: readonly Pt[]): Pt[] {
  * kept. Retained vertices keep their interpolated timestamps, so the result
  * stays monotonic and window-anchored.
  */
+/**
+ * Optional injection point for a verified simplify implementation. This module
+ * is import-free by design (the deterministic fixture core), so it cannot pull
+ * in the Lean bridge; instead a non-pure layer may install a hook (see
+ * `src/lean/install.ts`) that routes the coarse-path simplify through the
+ * proved Lean pass. Null by default → pure TS, fixtures unaffected. The hook
+ * receives the TS result too, so it can shadow-compare or fall back.
+ */
+export type SimplifyHook = (
+	pts: readonly MatchedPoint[],
+	toleranceM: number,
+	tsResult: MatchedPoint[],
+) => MatchedPoint[];
+
+let simplifyHook: SimplifyHook | null = null;
+
+export function setSimplifyHook(hook: SimplifyHook | null): void {
+	simplifyHook = hook;
+}
+
 export function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): MatchedPoint[] {
 	if (pts.length <= 2) return [...pts];
 	const keep = new Uint8Array(pts.length);
@@ -1726,11 +1746,10 @@ export function matchTrajectory(
 		appendInterpolated(out, route.verts, obs[t - 1].fix.ts, obs[t].fix.ts);
 	}
 
-	const cleaned = removeSpurs(
-		simplifyPath(out, profile.simplifyToleranceM),
-		profile.spurReturnM,
-		profile.spurMaxSpanVerts,
-	);
+	const simplified = simplifyHook
+		? simplifyHook(out, profile.simplifyToleranceM, simplifyPath(out, profile.simplifyToleranceM))
+		: simplifyPath(out, profile.simplifyToleranceM);
+	const cleaned = removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts);
 	if (cleaned.length < 2) return null;
 	const matched = cleaned.map((p) => ({ lat: p.lat, lon: p.lon }));
 	const rawLen = pathLength(fixes.map((f) => ({ lat: f.lat, lon: f.lon })));
