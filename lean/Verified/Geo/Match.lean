@@ -157,16 +157,59 @@ def latGapUm (p a b : QPt) : Nat :=
 
 /-! ## `QCorridor` — the GPS-corridor penalty -/
 
-/-- The corridor's tuned parameters, `S = farUm − nearUm` precomputed. -/
+/-- The corridor's tuned parameters, `S = farUm − nearUm` precomputed, plus the
+chord index `distToFast` reads.
+
+`cellLa`/`cellLo` are one `farUm` step in latitude / longitude coordinate units
+(the longitude step uses `cmin`, a corridor-wide `cosQ` lower bound, so it is
+never too narrow). `grid` files each chord `i` (`fixes[i-1] → fixes[i]`) in every
+cell its bounding box **dilated by one cell** touches. Consequence — the whole
+basis for `distToFast`: any chord within `farUm` of a point `p` differs from
+`p` by at most `cellLa`/`cellLo` per axis, so `p` lies in that chord's dilated
+box, so the chord is filed in `p`'s own cell. One bucket therefore holds every
+chord that could beat the `farUm` clamp. -/
 structure QCorridor where
   fixes : Array QPt
   nearUm : Nat
   farUm : Nat
   maxPen : Nat
   S : Nat
+  cellLa : Int
+  cellLo : Int
+  grid : Std.HashMap Int (Array Nat)
 
-def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor :=
-  { fixes, nearUm, farUm, maxPen, S := farUm - nearUm }
+def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := Id.run do
+  -- Corridor-wide cos lower bound (≥ 1 so the cell stays finite).
+  let mut cmin : Int := 1048576
+  for f in fixes do
+    let c := cosQ f.la
+    if c < cmin then cmin := c
+  if cmin < 1 then cmin := 1
+  let cellLa : Int := (farUm : Int) / 11132 + 1
+  let cellLo : Int := ((farUm : Int) * 1048576) / (11132 * cmin) + 1
+  let mut grid : Std.HashMap Int (Array Nat) := ∅
+  for i in [1:fixes.size] do
+    let a := fixes.getD (i - 1) default
+    let b := fixes.getD i default
+    let loLa := (min a.la b.la) - cellLa
+    let hiLa := (max a.la b.la) + cellLa
+    let loLo := (min a.lo b.lo) - cellLo
+    let hiLo := (max a.lo b.lo) + cellLo
+    let cy0 := loLa.fdiv cellLa
+    let cy1 := hiLa.fdiv cellLa
+    let cx0 := loLo.fdiv cellLo
+    let cx1 := hiLo.fdiv cellLo
+    let mut cy := cy0
+    while cy ≤ cy1 do
+      let mut cx := cx0
+      while cx ≤ cx1 do
+        let key := cellKey cy cx
+        let b2 := grid.getD key #[]
+        if b2.isEmpty || b2.getD (b2.size - 1) 0 != i then
+          grid := grid.insert key (b2.push i)
+        cx := cx + 1
+      cy := cy + 1
+  return { fixes, nearUm, farUm, maxPen, S := farUm - nearUm, cellLa, cellLo, grid }
 
 /-- Brute-force nearest-chord distance (the float grid is exact by its
 own argument), clamped at `farUm` (`QCorridor.distTo`). -/
@@ -175,6 +218,38 @@ def QCorridor.distTo (co : QCorridor) (p : QPt) : Nat := Id.run do
   if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
   let mut best : Nat := co.farUm
   for i in [1:co.fixes.size] do
+    let a := co.fixes.getD (i - 1) default
+    let b := co.fixes.getD i default
+    if latGapUm p a b ≥ best then continue
+    let c : Int := cosQ ((a.la + b.la).tdiv 2)
+    let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
+    let vy : Int := (b.la - a.la) * 11132
+    let px : Int := ((p.lo - a.lo) * 11132 * c).fdiv 1048576
+    let py : Int := (p.la - a.la) * 11132
+    let len2 : Int := bx * bx + vy * vy
+    let d : Nat :=
+      if len2 = 0 then qDist p a
+      else
+        let dot : Int := max 0 (min (px * bx + py * vy) len2)
+        qDist p { la := a.la + roundDiv (dot * (b.la - a.la)) len2
+                  lo := a.lo + roundDiv (dot * (b.lo - a.lo)) len2, ts := 0 }
+    if d < best then best := d
+  return best
+
+/-- **Grid-indexed `distTo`** — same value, one bucket instead of every chord.
+`distTo` was the matcher's hot spot (O(chords) per graph edge, and there is one
+`distTo` per edge weight); the float matcher hit the same wall and answered it
+with a chord grid. Reading only `p`'s own cell is exact here because the bucket
+holds every chord within `farUm` (see `QCorridor`), and `distTo` clamps at
+`farUm`: a chord filed elsewhere is ≥ `farUm` away, and `latGapUm` lower-bounds
+the chord distance, so neither the running `best` reject nor the final minimum
+can differ. -/
+def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
+  if co.fixes.size == 0 then return 0
+  if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
+  let cands := co.grid.getD (cellKey (p.la.fdiv co.cellLa) (p.lo.fdiv co.cellLo)) #[]
+  let mut best : Nat := co.farUm
+  for i in cands do
     let a := co.fixes.getD (i - 1) default
     let b := co.fixes.getD i default
     if latGapUm p a b ≥ best then continue
@@ -205,7 +280,7 @@ def QCorridor.penScaled (co : QCorridor) (d : Nat) : Nat :=
 (`QCorridor.edgeWeightScaled`). -/
 def QCorridor.edgeWeightScaled (co : QCorridor) (a b : QPt) : Nat :=
   let mid : QPt := { la := (a.la + b.la).tdiv 2, lo := (a.lo + b.lo).tdiv 2, ts := 0 }
-  qDist a b * co.penScaled (co.distTo mid)
+  qDist a b * co.penScaled (co.distToFast mid)
 
 /-! ## `QBuildings` — the impassable-footprint penalty -/
 

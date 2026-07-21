@@ -103,10 +103,18 @@ def cosQ (la : Int) : Int :=
 `metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm
 exactly. -/
 def qDist (a b : QPt) : Nat :=
-  let dla : Int := (b.la - a.la) * 11132
+  -- Carried as `Nat` magnitudes, not `Int`: the intermediates here reach ≈2⁴⁸
+  -- (`Δlo·11132·c`) and ≈2⁵⁶ (the squares), which is inside `Nat`'s unboxed
+  -- range but *not* `Int`'s — as `Int` every one of these allocated a GMP
+  -- bignum, the matcher's dominant cost. Only the squares are used, so the sign
+  -- drops out; `fdiv`'s magnitude is the floor when the product is ≥ 0 and the
+  -- ceiling when it is negative, which is what `dloAbs` reproduces exactly.
+  let dlaAbs : Nat := (b.la - a.la).natAbs * 11132
   let c : Int := cosQ ((a.la + b.la).tdiv 2)
-  let dlo : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
-  isqrt (dla * dla + dlo * dlo).toNat
+  let yAbs : Nat := (b.lo - a.lo).natAbs * 11132 * c.natAbs
+  let negY : Bool := decide ((b.lo - a.lo) < 0) != decide (c < 0)
+  let dloAbs : Nat := if negY then (yAbs + 1048575) / 1048576 else yAbs / 1048576
+  isqrt (dlaAbs * dlaAbs + dloAbs * dloAbs)
 
 /-- µm between two points, cos at the first point — mirrors
 `equirectMeters` (`episode-geometry.ts`'s variant). -/
