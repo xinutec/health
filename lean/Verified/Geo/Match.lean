@@ -1,4 +1,6 @@
+import Std.Data.HashMap
 import Verified.Geo.Metric
+import Verified.Geo.CellKey
 import Verified.Geo.LazyFuel
 import Verified.Geo.LazyResume
 import Verified.Geo.LazyPrev
@@ -367,6 +369,89 @@ def buildQGraph (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
   for i in [0:vertices.size] do
     let vi := vertices.getD i default
     for j in [i + 1:vertices.size] do
+      let vj := vertices.getD j default
+      let dla : Int := (vj.la - vi.la) * 11132
+      if dla.natAbs > gapUm then continue
+      let c : Int := cosQ ((vi.la + vj.la).tdiv 2)
+      let dlo : Int := ((vj.lo - vi.lo) * 11132 * c).fdiv 1048576
+      if dla * dla + dlo * dlo > gapSq then continue
+      if (adj.getD i #[]).any (fun e => e.1 == j) then continue
+      let w := wt vi vj
+      adj := adj.setIfInBounds i ((adj.getD i #[]).push (j, w))
+      adj := adj.setIfInBounds j ((adj.getD j #[]).push (i, w))
+  return { vertices, segments, g := ⟨adj⟩ }
+
+/-- **The O(V) executable twin of `buildQGraph`.** Same graph, byte-identical,
+but linear instead of quadratic: the two O(V²) hotspots of `buildQGraph` are
+replaced by hash indices.
+
+* **Vertex dedup** — a `(la, lo) → id` hash replaces the per-coordinate linear
+  `findIdx?` scan. First-seen order (and hence vertex numbering) is unchanged.
+* **`bridgeGaps`** — candidate pairs come from a spatial grid keyed by `cellKey`
+  (cells span `gapUm` µm) instead of the all-pairs scan. A within-`gapUm` pair
+  lands within the 3×3 cell neighbourhood: the latitude cell is `gapUm`-wide by
+  construction, and the longitude cell uses a corridor-wide cos lower bound
+  `cmin` (`cosQ` only grows toward any pair's mid-latitude, so the cell is never
+  too narrow). Grid `cellKey` collisions can only *add* candidates, never drop
+  them, so they cost an extra exact check but never a missed edge.
+
+The exact accept/reject predicate and the ascending-`(i, j)` push order are
+copied verbatim from `buildQGraph`, so the output is identical (the intended
+`buildQGraphFast = buildQGraph` refinement; the executable path uses this, every
+theorem still speaks of `buildQGraph` via that equality). -/
+def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuildings)
+    (gapUm : Nat) : QGraph := Id.run do
+  let mut vertices : Array QPt := #[]
+  let mut adj : Array (Array (Nat × Nat)) := #[]
+  let mut segments : Array QSeg := #[]
+  let mut vidx : Std.HashMap (Int × Int) Nat := ∅
+  let wt := fun (ap bp : QPt) =>
+    co.edgeWeightScaled ap bp * (match bld with | some bl => bl.factor ap bp | none => 1)
+  for way in ways do
+    let mut prev : Int := -1
+    let mut prevPt : QPt := default
+    for p in way.coords do
+      let found := vidx.get? (p.la, p.lo)
+      let id : Nat := found.getD vertices.size
+      if found.isNone then
+        vertices := vertices.push { la := p.la, lo := p.lo, ts := 0 }
+        adj := adj.push #[]
+        vidx := vidx.insert (p.la, p.lo) id
+      if prev ≥ 0 && (id : Int) ≠ prev then
+        let a := prev.toNat
+        let w := wt prevPt p
+        adj := adj.setIfInBounds a ((adj.getD a #[]).push (id, w))
+        adj := adj.setIfInBounds id ((adj.getD id #[]).push (a, w))
+        segments := segments.push { u := a, v := id, lenUm := qDist prevPt p, name := way.name }
+      prev := (id : Int)
+      prevPt := p
+  -- bridgeGaps via a spatial grid.
+  let gapSq : Int := (gapUm : Int) * (gapUm : Int) + 2 * (gapUm : Int)
+  let gY : Int := if gapUm == 0 then 1 else (gapUm : Int)
+  let gX : Int := if gapUm == 0 then 1 else (gapUm : Int) * 1048576
+  -- conservative cos lower bound over the vertices (≥ 1 so the cell is finite).
+  let mut cmin : Int := 1048576
+  for v in vertices do
+    let c := cosQ v.la
+    if c < cmin then cmin := c
+  if cmin < 1 then cmin := 1
+  let cellY := fun (v : QPt) => (v.la * 11132).fdiv gY
+  let cellX := fun (v : QPt) => (v.lo * 11132 * cmin).fdiv gX
+  let mut grid : Std.HashMap Int (Array Nat) := ∅
+  for i in [0:vertices.size] do
+    let v := vertices.getD i default
+    let key := cellKey (cellY v) (cellX v)
+    grid := grid.insert key ((grid.getD key #[]).push i)
+  for i in [0:vertices.size] do
+    let vi := vertices.getD i default
+    let byc := cellY vi
+    let bxc := cellX vi
+    let mut cand : Array Nat := #[]
+    for dy in [(-1 : Int), 0, 1] do
+      for dx in [(-1 : Int), 0, 1] do
+        for j in grid.getD (cellKey (byc + dy) (bxc + dx)) #[] do
+          if j > i then cand := cand.push j
+    for j in cand.qsort (· < ·) do
       let vj := vertices.getD j default
       let dla : Int := (vj.la - vi.la) * 11132
       if dla.natAbs > gapUm then continue
@@ -946,7 +1031,7 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
     if P.buildingCrossFactor > 1 && buildings.size > 0 then
       some (mkQBuildings buildings fixes P.buildingCrossFactor P.buildingSupportUm)
     else none
-  let graph := buildQGraph ways co bld P.gapBridgeUm
+  let graph := buildQGraphFast ways co bld P.gapBridgeUm
   if graph.segments.size == 0 then return none
 
   let mut obs : Array QObs := #[]
