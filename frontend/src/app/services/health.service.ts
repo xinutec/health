@@ -257,6 +257,15 @@ export interface ShareStatus {
   lastAccessedAt?: string | null;
 }
 
+/** The verified-Lean-core master toggle state (GET/PUT /api/verified-core).
+ *  `override` null = following the deploy-time env flags; true/false = the live
+ *  override. `effective` is what the server is actually serving right now. */
+export interface VerifiedCoreStatus {
+  override: boolean | null;
+  effective: { passes: string; matcher: string };
+  defaults: { passes: string; matcher: string };
+}
+
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -280,6 +289,8 @@ export class HealthService {
    *  settings page read one source of truth — creating, rotating or
    *  revoking a share anywhere updates the toolbar immediately. */
   readonly shareStatus = signal<ShareStatus | null>(null);
+  /** The verified-Lean-core toggle state, or null until first loaded. */
+  readonly verifiedCore = signal<VerifiedCoreStatus | null>(null);
   private readonly connection = inject(ConnectionStateService);
 
   /** All HTTP calls go through here so the connection-state service
@@ -463,6 +474,25 @@ export class HealthService {
     const res = await this.fetch("/api/share", { method: "DELETE" });
     if (!res.ok && res.status !== 204) throw new Error(`share revoke failed: ${res.status}`);
     this.shareStatus.set({ active: false });
+  }
+
+  // ─── Verified-Lean-core master toggle (owner only) ────────────
+  async refreshVerifiedCore(): Promise<void> {
+    const res = await this.fetch("/api/verified-core");
+    if (!res.ok) throw new Error(`verified-core status failed: ${res.status}`);
+    this.verifiedCore.set(await HealthService.body<VerifiedCoreStatus>(res));
+  }
+
+  /** Set (true/false) or clear (null → follow the deploy default) the master
+   *  override. Publishes the returned effective state on the signal. */
+  async setVerifiedCore(enabled: boolean | null): Promise<void> {
+    const res = await this.fetch("/api/verified-core", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) throw new Error(`verified-core update failed: ${res.status}`);
+    this.verifiedCore.set(await HealthService.body<VerifiedCoreStatus>(res));
   }
 
   /** Diagnostic logging: post `event` + arbitrary `data` to the

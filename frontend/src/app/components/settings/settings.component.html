@@ -69,4 +69,38 @@
 			</mat-card-actions>
 		}
 	</mat-card>
+
+	<mat-card>
+		<mat-card-header>
+			<mat-card-title>Verified Lean core</mat-card-title>
+			<mat-card-subtitle>
+				Serve the map's walk geometry from the proved Lean core, or fall back to TS — live, no redeploy.
+			</mat-card-subtitle>
+		</mat-card-header>
+		<mat-card-content>
+			@if (health.verifiedCore(); as v) {
+				<mat-slide-toggle [checked]="leanOn()" (change)="toggleVerifiedCore($event.checked)">
+					Use verified Lean core
+				</mat-slide-toggle>
+				<p class="core-state">
+					Serving now — passes <strong>{{ v.effective.passes }}</strong>, matcher
+					<strong>{{ v.effective.matcher }}</strong>.
+					@if (v.override === null) {
+						Following the deploy default.
+					} @else {
+						Overriding the deploy default (passes {{ v.defaults.passes }}, matcher {{ v.defaults.matcher }}).
+					}
+				</p>
+			} @else if (!loading()) {
+				<p>Verified-core status unavailable.</p>
+			}
+		</mat-card-content>
+		@if (health.verifiedCore(); as v) {
+			@if (v.override !== null) {
+				<mat-card-actions align="end">
+					<button mat-stroked-button (click)="resetVerifiedCore()">Reset to deploy default</button>
+				</mat-card-actions>
+			}
+		}
+	</mat-card>
 </div>

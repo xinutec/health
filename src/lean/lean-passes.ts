@@ -30,10 +30,14 @@
 
 import { quantPt } from "../geo/quant-twin.js";
 import { LeanBridgeError, leanGeo } from "./lean-core.js";
+import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanPassMode = "off" | "shadow" | "on";
 
 export function leanPassMode(): LeanPassMode {
+	// The settings-UI master override wins over the env default when set.
+	const o = verifiedCoreOverride();
+	if (o !== null) return o ? "on" : "off";
 	const v = process.env.LEAN_PASSES;
 	return v === "on" || v === "shadow" ? v : "off";
 }

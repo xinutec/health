@@ -7,6 +7,9 @@ import { loadWatchBattery } from "../fitbit/watch-battery.js";
 import { scheduleRailRouteFill, unsnappedTrainRoutes } from "../geo/rail-route-fill.js";
 import { dateBoundsUtc, isValidTimezone } from "../geo/timezone.js";
 import { computeVelocity } from "../geo/velocity.js";
+import { leanMatchMode } from "../lean/lean-match.js";
+import { leanPassMode } from "../lean/lean-passes.js";
+import { setVerifiedCoreOverride, verifiedCoreOverride } from "../lean/runtime-mode.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireOwnerOnly } from "../middleware/share-auth.js";
 import { NextcloudClient } from "../nextcloud/client.js";
@@ -450,6 +453,35 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		const uid = c.get("session").userId;
 		const rows = await db().selectFrom("sync_state").selectAll().where("user_id", "=", uid).execute();
 		return c.json(rows);
+	});
+
+	// ─── Verified Lean core master toggle (owner only) ────────────────
+	// A live override that switches the WHOLE verified core (the geometry
+	// passes + the walk matcher) between Lean and TS without a redeploy — a
+	// transition affordance for building confidence on real data and a
+	// one-click fallback. Process-global (single-user); the decode cron is a
+	// separate process and stays on the deploy-time env flags. See
+	// src/lean/runtime-mode.ts.
+	//   GET → { override, effective, defaults }
+	//   PUT → body { enabled: boolean | null }; null resets to the env default.
+	const verifiedCoreState = (): Record<string, unknown> => ({
+		override: verifiedCoreOverride(),
+		effective: { passes: leanPassMode(), matcher: leanMatchMode() },
+		defaults: { passes: process.env.LEAN_PASSES ?? "off", matcher: process.env.LEAN_MATCH ?? "off" },
+	});
+
+	app.get("/verified-core", (c) => c.json(verifiedCoreState()));
+
+	app.put("/verified-core", async (c) => {
+		let enabled: boolean | null = null;
+		try {
+			const body = (await c.req.json()) as { enabled?: unknown };
+			enabled = body.enabled === true ? true : body.enabled === false ? false : null;
+		} catch {
+			// no / invalid body → clear the override (fall back to the env default)
+		}
+		setVerifiedCoreOverride(enabled);
+		return c.json(verifiedCoreState());
 	});
 
 	// ─── Share-link management ────────────────────────────────────────

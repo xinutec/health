@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, ChangeDetectionStrategy } from "@angular/core";
+import { Component, OnInit, computed, inject, signal, ChangeDetectionStrategy } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { MatButtonModule } from "@angular/material/button";
 import { MatCardModule } from "@angular/material/card";
@@ -6,6 +6,7 @@ import { MatFormFieldModule } from "@angular/material/form-field";
 import { MatIconModule } from "@angular/material/icon";
 import { MatInputModule } from "@angular/material/input";
 import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
+import { MatSlideToggleModule } from "@angular/material/slide-toggle";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
 import { MatTooltipModule } from "@angular/material/tooltip";
 import { RouterLink } from "@angular/router";
@@ -36,6 +37,7 @@ import { HealthService } from "../../services/health.service";
 		MatIconModule,
 		MatInputModule,
 		MatProgressSpinnerModule,
+		MatSlideToggleModule,
 		MatSnackBarModule,
 		MatTooltipModule,
 		RouterLink,
@@ -54,6 +56,16 @@ export class SettingsComponent implements OnInit {
 	 *  loaded status so "Update days" can change it without rotating. */
 	readonly editDays = signal(7);
 
+	/** Whether the verified Lean core is effectively serving now: the explicit
+	 *  override when set, else "both layers non-off" under the deploy default
+	 *  (so the matcher being off by default reads as not-fully-Lean). */
+	readonly leanOn = computed(() => {
+		const v = this.health.verifiedCore();
+		if (!v) return false;
+		if (v.override !== null) return v.override;
+		return v.effective.passes !== "off" && v.effective.matcher !== "off";
+	});
+
 	ngOnInit(): void {
 		// Angular calls the hook expecting void: an async ngOnInit is never
 		// awaited, so a rejection here would go unhandled. refresh() already
@@ -68,10 +80,33 @@ export class SettingsComponent implements OnInit {
 			await this.health.refreshShareStatus();
 			const s = this.health.shareStatus();
 			if (s?.active && typeof s.daysBack === "number") this.editDays.set(s.daysBack);
+			await this.health.refreshVerifiedCore();
 		} catch (e) {
 			this.error.set((e as Error).message);
 		} finally {
 			this.loading.set(false);
+		}
+	}
+
+	/** Flip the whole verified core to Lean (true) or TS (false). */
+	async toggleVerifiedCore(enabled: boolean): Promise<void> {
+		this.error.set(null);
+		try {
+			await this.health.setVerifiedCore(enabled);
+			this.snackBar.open(enabled ? "Serving verified Lean core" : "Serving TS", "Dismiss", { duration: 2000 });
+		} catch (e) {
+			this.error.set((e as Error).message);
+		}
+	}
+
+	/** Clear the override — fall back to the deploy-time env default. */
+	async resetVerifiedCore(): Promise<void> {
+		this.error.set(null);
+		try {
+			await this.health.setVerifiedCore(null);
+			this.snackBar.open("Following deploy default", "Dismiss", { duration: 2000 });
+		} catch (e) {
+			this.error.set((e as Error).message);
 		}
 	}
 

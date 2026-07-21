@@ -21,6 +21,12 @@
 .error {
 	color: var(--mat-sys-error);
 }
+/* Effective serving-state line under the verified-core toggle: quiet,
+ * secondary — Material's on-surface-variant + body-small. */
+.core-state {
+	color: var(--mat-sys-on-surface-variant);
+	font: var(--mat-sys-body-small);
+}
 /* Let the action buttons wrap with spacing on narrow screens instead of
  * crammed into one row that collides with the content above. */
 mat-card-actions {
