@@ -43,28 +43,62 @@ function defaultBin(): string {
 	return process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
 }
 
+/** After this many CONSECUTIVE failures (with no success between), stop
+ *  rebuilding and fall back to TS permanently — bounds rebuild thrash when the
+ *  binary is genuinely missing/broken, while a lone transient blip (a cold
+ *  first-call timeout) stays recoverable. */
+const MAX_CONSECUTIVE_FAILS = 3;
+
 class LeanCore {
 	private worker: Worker | null = null;
 	private control: Int32Array | null = null;
 	private lenView: Int32Array | null = null;
 	private body: Uint8Array | null = null;
+	/** Permanent give-up (only after MAX_CONSECUTIVE_FAILS). */
 	private dead = false;
-	private announced = false;
+	private fails = 0;
+	/** Last health state announced, so we log serve↔degrade TRANSITIONS (a
+	 *  transient blip that recovers should not leave a stale "falling back"). */
+	private lastServing: boolean | null = null;
+
 	private readonly decoder = new TextDecoder();
 
-	/** Emit a single process-lifetime line the first time the bridge either
-	 *  serves or fails — so a long-lived server (which keeps no per-call
-	 *  ledger) still makes it observable in its logs whether the verified core
-	 *  is actually serving or has silently fallen back to TS. */
+	/** Log serve↔fallback transitions so a long-lived server (which keeps no
+	 *  per-call ledger) makes it observable whether the verified core is
+	 *  serving or has fallen back to TS — and, crucially, whether it recovered. */
 	private announce(serving: boolean, detail: string): void {
-		if (this.announced) return;
-		this.announced = true;
+		if (this.lastServing === serving) return;
+		this.lastServing = serving;
 		if (serving) console.error(`lean-bridge: serving verified core (${detail})`);
-		else console.error(`lean-bridge: unavailable — falling back to TS (${detail})`);
+		else console.error(`lean-bridge: degraded — falling back to TS (${detail})`);
 	}
 
-	/** Lazily start the worker + child. Returns false (permanently) if the
-	 *  worker cannot be created. */
+	/** Tear down the current worker (terminating its child) so the NEXT call
+	 *  rebuilds a fresh worker over a fresh SharedArrayBuffer. Guarded by
+	 *  identity so a late error/exit event from an already-replaced worker is a
+	 *  no-op. A fresh SAB per rebuild is what makes recovery safe: a terminated
+	 *  worker can never flip a control word the new call is waiting on. */
+	private teardown(w: Worker | null): void {
+		if (w !== null && this.worker !== w) return;
+		if (this.worker) void this.worker.terminate();
+		this.worker = null;
+		this.control = null;
+		this.lenView = null;
+		this.body = null;
+	}
+
+	/** Record a failure: tear down for rebuild, announce degraded, and trip the
+	 *  permanent breaker only after MAX_CONSECUTIVE_FAILS in a row. Throws. */
+	private fail(detail: string): never {
+		this.fails += 1;
+		this.teardown(null);
+		if (this.fails >= MAX_CONSECUTIVE_FAILS) this.dead = true;
+		this.announce(false, detail);
+		throw new LeanBridgeError(detail);
+	}
+
+	/** Lazily start the worker + child. Returns false if the bridge has
+	 *  permanently given up or the worker cannot be created. */
 	private ensure(): boolean {
 		if (this.dead) return false;
 		if (this.worker) return true;
@@ -72,12 +106,10 @@ class LeanCore {
 			const sab = new SharedArrayBuffer(SAB_BYTES);
 			const workerUrl = new URL("./lean-core-worker.js", import.meta.url);
 			const worker = new Worker(workerUrl, { workerData: { bin: defaultBin(), sab } });
-			worker.on("error", () => {
-				this.dead = true;
-			});
-			worker.on("exit", () => {
-				this.dead = true;
-			});
+			// A worker crash/exit tears down for rebuild (not permanent death) —
+			// identity-guarded so it only affects THIS worker.
+			worker.on("error", () => this.teardown(worker));
+			worker.on("exit", () => this.teardown(worker));
 			// Don't let the idle bridge keep the process (a CLI) alive; during a
 			// call the main thread is blocked in Atomics.wait so it can't exit.
 			worker.unref();
@@ -87,7 +119,7 @@ class LeanCore {
 			this.body = new Uint8Array(sab, HEADER_BYTES);
 			return true;
 		} catch {
-			this.dead = true;
+			this.worker = null;
 			return false;
 		}
 	}
@@ -101,32 +133,32 @@ class LeanCore {
 	 * Run one verified-core request synchronously. `mode` selects the
 	 * handler (`"geo" | "match" | "rail" | "hsmm"`); `payload` is the
 	 * mode-specific body (already quantised to 1e-7° integers). Returns the
-	 * parsed `result` object, or throws `LeanBridgeError` on any failure.
+	 * parsed `result` object, or throws `LeanBridgeError` on any failure. A
+	 * single failure is recoverable: the worker is rebuilt on the next call.
 	 */
 	call(mode: string, payload: Record<string, unknown>): unknown {
 		if (!this.ensure() || !this.worker || !this.control || !this.lenView || !this.body) {
-			this.announce(false, "worker unavailable");
-			throw new LeanBridgeError("lean bridge unavailable");
+			this.fail("worker unavailable");
 		}
+		// Capture as locals: the guard narrowed these non-null, but the
+		// intermediate `this.fail()` calls below are method calls that would
+		// otherwise invalidate the property narrowing.
+		const worker = this.worker;
 		const control = this.control;
+		const lenView = this.lenView;
+		const body = this.body;
 		Atomics.store(control, 0, CTRL_PENDING);
-		this.worker.postMessage({ mode, payload });
+		worker.postMessage({ mode, payload });
 		const woke = Atomics.wait(control, 0, CTRL_PENDING, CALL_TIMEOUT_MS);
-		if (woke === "timed-out") {
-			this.dead = true;
-			this.announce(false, "call timed out");
-			throw new LeanBridgeError("lean bridge timed out");
-		}
+		if (woke === "timed-out") this.fail("call timed out");
 		const status = Atomics.load(control, 0);
-		if (status !== CTRL_READY) {
-			this.announce(false, `error status ${status}`);
-			throw new LeanBridgeError(`lean bridge error status ${status}`);
-		}
-		const len = Atomics.load(this.lenView, 0);
+		if (status !== CTRL_READY) this.fail(`error status ${status}`);
+		const len = Atomics.load(lenView, 0);
 		// Copy out of the shared buffer before decoding (TextDecoder refuses
 		// SharedArrayBuffer-backed views).
-		const copy = this.body.slice(0, len);
+		const copy = body.slice(0, len);
 		const result = JSON.parse(this.decoder.decode(copy));
+		this.fails = 0;
 		this.announce(true, `bin=${defaultBin()}`);
 		return result;
 	}
