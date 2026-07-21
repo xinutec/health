@@ -49,7 +49,19 @@ class LeanCore {
 	private lenView: Int32Array | null = null;
 	private body: Uint8Array | null = null;
 	private dead = false;
+	private announced = false;
 	private readonly decoder = new TextDecoder();
+
+	/** Emit a single process-lifetime line the first time the bridge either
+	 *  serves or fails — so a long-lived server (which keeps no per-call
+	 *  ledger) still makes it observable in its logs whether the verified core
+	 *  is actually serving or has silently fallen back to TS. */
+	private announce(serving: boolean, detail: string): void {
+		if (this.announced) return;
+		this.announced = true;
+		if (serving) console.error(`lean-bridge: serving verified core (${detail})`);
+		else console.error(`lean-bridge: unavailable — falling back to TS (${detail})`);
+	}
 
 	/** Lazily start the worker + child. Returns false (permanently) if the
 	 *  worker cannot be created. */
@@ -93,6 +105,7 @@ class LeanCore {
 	 */
 	call(mode: string, payload: Record<string, unknown>): unknown {
 		if (!this.ensure() || !this.worker || !this.control || !this.lenView || !this.body) {
+			this.announce(false, "worker unavailable");
 			throw new LeanBridgeError("lean bridge unavailable");
 		}
 		const control = this.control;
@@ -101,17 +114,21 @@ class LeanCore {
 		const woke = Atomics.wait(control, 0, CTRL_PENDING, CALL_TIMEOUT_MS);
 		if (woke === "timed-out") {
 			this.dead = true;
+			this.announce(false, "call timed out");
 			throw new LeanBridgeError("lean bridge timed out");
 		}
 		const status = Atomics.load(control, 0);
 		if (status !== CTRL_READY) {
+			this.announce(false, `error status ${status}`);
 			throw new LeanBridgeError(`lean bridge error status ${status}`);
 		}
 		const len = Atomics.load(this.lenView, 0);
 		// Copy out of the shared buffer before decoding (TextDecoder refuses
 		// SharedArrayBuffer-backed views).
 		const copy = this.body.slice(0, len);
-		return JSON.parse(this.decoder.decode(copy));
+		const result = JSON.parse(this.decoder.decode(copy));
+		this.announce(true, `bin=${defaultBin()}`);
+		return result;
 	}
 }
 
