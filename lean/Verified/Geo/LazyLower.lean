@@ -38,7 +38,9 @@ hypotheses here.
 
 namespace Verified.Geo
 
-open Verified.Rail (Graph Heap WFEdges edgeMinW pathCost pathCost_cons_cons)
+open Verified.Rail (Graph Heap WFEdges edgeMinW pathCost pathCost_cons_cons
+  oracleDist simplePathCosts nodupB enum_sound enum_complete oracleDist_eq
+  nodupB_head_notin_tail)
 
 /-! ## Discharging `done[src]` — the source is always settled
 
@@ -242,5 +244,66 @@ theorem iter_route_optimal {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
       pathCost g p = some C → dt ≤ C := by
   refine ⟨iter_route_pathCost_eq hwf hsrc k htgtdone hcomp hdt, ?_⟩
   exact iter_lower_bound hwf hsrc k htgtdone hdt hDR
+
+/-! ## Bridge to the shared enumeration oracle
+
+`iter_route_optimal` says the route is a minimum over *valid* paths. The rail
+flagship is certified against `Rail.oracleDist` — the minimum over *simple*
+paths of bounded length. This bridge closes the gap, pinning the lazy search's
+answer to the very same oracle: `oracleDist g src tgt = some dt`.
+
+Two directions, both radius-honest:
+
+* **Lower bound** — every enumerated (simple-path) cost is a valid-path cost
+  (`enum_sound`), and `iter_lower_bound` floors every valid `src → tgt` path at
+  `dt`. No feasible cut needed; the radius bound `dt ≤ maxR` carries it.
+* **Membership** — the reconstructed route itself is enumerated
+  (`enum_complete`) at cost `dt`, so the running minimum can be no larger.
+
+The route's simplicity (`nodupB`) and length (`≤ g.n + 1`) are taken as
+hypotheses — cheap, executable checks the caller witnesses per route, exactly
+as the rail `certify` gate does — rather than proved from a settle-order ghost
+invariant the lazy machine does not carry. The endpoints and cost are proved:
+`iter_route_pathCost_eq` (cost `dt`), `chainList_head?` (far end `tgt`),
+`iter_route_head?_src` (near end `src`). -/
+
+/-- **The lazy search's route attains the shared oracle distance.** For a
+settled, chain-completed, within-radius target whose reconstructed route is
+simple and short (both executable checks), the route's cost `dt` is exactly
+`Rail.oracleDist g src tgt` — the same simple-path minimum the rail flagship is
+certified against. -/
+theorem iter_route_oracle {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) (k : Nat) {tgt dt : Nat}
+    (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
+    (hcomp : chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt
+           = chainList (iter g maxR k (linit g.n src)).prev g.n (g.n + 1) tgt)
+    (hdt : (iter g maxR k (linit g.n src)).dist.getD tgt none = some dt)
+    (hDR : dt ≤ maxR)
+    (hnd : nodupB (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse = true)
+    (hlen : (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse.length ≤ g.n + 1) :
+    oracleDist g src tgt = some dt := by
+  have hdsk : (iter g maxR k (linit g.n src)).done.size = g.n :=
+    (iter_done_size k _).trans (linit_done_size g.n src)
+  have htgtlt : tgt < g.n := done_lt hdsk htgtdone
+  have hne : chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt ≠ [] :=
+    chainList_ne_nil htgtlt (by omega)
+  have hpc : pathCost g (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse
+      = some dt := iter_route_pathCost_eq hwf hsrc k htgtdone hcomp hdt
+  have hhead : (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse.head?
+      = some src := iter_route_head?_src hwf hsrc k htgtdone hcomp
+  have hlast : (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse.getLast?
+      = some tgt := by rw [List.getLast?_reverse]; exact chainList_head? hne
+  -- Lower bound: every enumerated cost is a valid-path cost, floored at `dt`.
+  have hlow : ∀ c ∈ simplePathCosts g tgt (g.n + 1) src [src], dt ≤ c := by
+    intro c hc
+    obtain ⟨q, C, hqh, hql, hqc, hqle⟩ := enum_sound _ _ _ _ hc
+    have := iter_lower_bound hwf hsrc k htgtdone hdt hDR q C hqh hql hqc
+    omega
+  -- Membership: the route itself is enumerated, at its own cost `dt`.
+  have hdisj := nodupB_head_notin_tail hnd hhead
+  obtain ⟨c0, hc0mem, hc0le⟩ :=
+    enum_complete _ (g.n + 1) src [src] dt hhead hlast hpc hnd hdisj hlen
+  have hc0 : c0 = dt := Nat.le_antisymm hc0le (hlow c0 hc0mem)
+  exact oracleDist_eq hlow (hc0 ▸ hc0mem)
 
 end Verified.Geo

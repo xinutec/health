@@ -362,7 +362,7 @@ theorem enum_sound {g : Graph} {dst : Nat} :
 
 /-- Every short-enough simple path is matched (or beaten, via cheapest
 parallel edges) by an enumerated cost. -/
-private theorem enum_complete {g : Graph} {dst : Nat} :
+theorem enum_complete {g : Graph} {dst : Nat} :
     ∀ (p : List Nat) (fuel cur : Nat) (visited : List Nat) (C : Nat),
       p.head? = some cur → p.getLast? = some dst → pathCost g p = some C →
       nodupB p = true → (∀ x ∈ p.tail, ¬ x ∈ visited) → p.length ≤ fuel →
@@ -428,6 +428,49 @@ private theorem enum_complete {g : Graph} {dst : Nat} :
             rw [if_neg hvc]
             exact List.mem_map.mpr ⟨c', hc'mem, rfl⟩
 
+/-- The running minimum of the simple-path enumeration is pinned to `D` by
+two facts: `D` lower-bounds every enumerated cost, and `D` is itself an
+enumerated cost. Factored out so both the full-cut certificate
+(`certify_oracle`) and the radius-honest lazy bridge
+(`Verified.Geo.iter_route_oracle`) share one assembly — they differ only in
+how they establish the lower bound (`cut_bound` vs `iter_lower_bound`). -/
+theorem oracleDist_eq {g : Graph} {src dst D : Nat}
+    (hlow : ∀ c ∈ simplePathCosts g dst (g.n + 1) src [src], D ≤ c)
+    (hmem : D ∈ simplePathCosts g dst (g.n + 1) src [src]) :
+    oracleDist g src dst = some D := by
+  unfold oracleDist
+  cases henum : simplePathCosts g dst (g.n + 1) src [src] with
+  | nil => rw [henum] at hmem; cases hmem
+  | cons c cs =>
+    rw [henum] at hmem hlow
+    have hcD : D ≤ c := hlow c (.head _)
+    have hup : cs.foldl Nat.min c ≤ D := by
+      rcases List.mem_cons.mp hmem with he | ht
+      · rw [he]; exact foldl_min_le_self cs c
+      · exact foldl_min_le_mem cs c D ht
+    have hdown : D ≤ cs.foldl Nat.min c :=
+      le_foldl_min cs c D hcD fun x hx => hlow x (.tail _ hx)
+    show some (cs.foldl Nat.min c) = some D
+    rw [Nat.le_antisymm hup hdown]
+
+/-- A nodup path's tail avoids its head — the disjointness `enum_complete`
+wants for the initial `visited = [head]`. -/
+theorem nodupB_head_notin_tail {a : Nat} {p : List Nat}
+    (hnd : nodupB p = true) (hh : p.head? = some a) :
+    ∀ x ∈ p.tail, ¬ x ∈ ([a] : List Nat) := by
+  cases p with
+  | nil => simp at hh
+  | cons b rest =>
+    obtain rfl : b = a := by simpa using hh
+    rw [nodupB_cons, Bool.and_eq_true] at hnd
+    have hnc := hnd.1
+    rw [Bool.not_eq_true'] at hnc
+    intro x hx hmem
+    rw [List.tail_cons] at hx
+    obtain rfl : x = b := by simpa using hmem
+    rw [← List.contains_iff_mem, hnc] at hx
+    cases hx
+
 /-! ## The goal theorems -/
 
 /-- A passing certificate pins the oracle: the path is valid, costs `D`,
@@ -450,39 +493,12 @@ theorem certify_oracle {g : Graph} {src dst : Nat} {done : Array Bool}
     omega
   -- Membership: the certified path itself is enumerated (at cost ≤ D, so
   -- with the lower bound, exactly D).
-  have hdisj : ∀ x ∈ p.tail, ¬ x ∈ ([src] : List Nat) := by
-    cases p with
-    | nil => cases hhead
-    | cons a rest =>
-      obtain rfl : a = src := by simpa using hhead
-      rw [nodupB_cons, Bool.and_eq_true] at hnd
-      have hnc := hnd.1
-      rw [Bool.not_eq_true'] at hnc
-      intro x hx hmem
-      rw [List.tail_cons] at hx
-      obtain rfl : x = a := by simpa using hmem
-      rw [← List.contains_iff_mem, hnc] at hx
-      cases hx
+  have hdisj : ∀ x ∈ p.tail, ¬ x ∈ ([src] : List Nat) := nodupB_head_notin_tail hnd hhead
   obtain ⟨c0, hc0mem, hc0le⟩ :=
     enum_complete p (g.n + 1) src [src] D hhead hlast hcost hnd hdisj hlen
   have hc0 : c0 = D := Nat.le_antisymm hc0le (hlow c0 hc0mem)
   -- Assemble: the enumeration is nonempty and its running minimum is D.
-  unfold oracleDist
-  cases henum : simplePathCosts g dst (g.n + 1) src [src] with
-  | nil => rw [henum] at hc0mem; cases hc0mem
-  | cons c cs =>
-    rw [henum] at hc0mem hlow
-    have hcD : D ≤ c := hlow c (.head _)
-    have hup : cs.foldl Nat.min c ≤ D := by
-      rcases List.mem_cons.mp hc0mem with he | ht
-      · have hcD' : c = D := by omega
-        rw [← hcD']
-        exact foldl_min_le_self cs c
-      · rw [← hc0]; exact foldl_min_le_mem cs c c0 ht
-    have hdown : D ≤ cs.foldl Nat.min c :=
-      le_foldl_min cs c D hcD fun x hx => hlow x (.tail _ hx)
-    show some (cs.foldl Nat.min c) = some D
-    rw [Nat.le_antisymm hup hdown]
+  exact oracleDist_eq hlow (hc0 ▸ hc0mem)
 
 /-- **V3 goal theorem (soundness).** Any path `dijkstraC` returns is a
 valid `src → dst` path attaining the true simple-path minimum. -/

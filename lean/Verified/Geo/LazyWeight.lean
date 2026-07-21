@@ -547,4 +547,92 @@ theorem iter_route_pathCost_eq {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
   rw [show dv = dt from Option.some.inj (hdv.symm.trans hdt)] at hpc
   exact hpc
 
+/-! ## The chain terminates at the source
+
+`chainList_pathCost_eq` gives the route's *cost*; the enumeration bridge
+(`oracleDist`) also needs its *far endpoint*. `PInv` says a done vertex's
+`prev` is either the sentinel (and the vertex is `src`) or another done
+vertex, so walking `prev` back from a done target can only stop at `src` —
+i.e. the chain's last element (the route's head, once reversed) is `src`. -/
+
+/-- The completed `prev`-chain from a done vertex ends at `src`. -/
+theorem chainList_getLast?_src {g : Graph} {src L : Nat} {s : LState}
+    (hP : PInv g src s) (hL : LInv g L s) (hds : s.done.size = g.n) :
+    ∀ (fuel v : Nat), s.done.getD v false = true →
+      chainList s.prev g.n fuel v = chainList s.prev g.n (fuel + 1) v →
+      (chainList s.prev g.n fuel v).getLast? = some src := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro v hvdone hcomp
+    exfalso
+    have hvn : v < g.n := done_lt hds hvdone
+    rw [show chainList s.prev g.n 1 v = [v] by
+        show (if v ≥ g.n then [] else v :: chainList s.prev g.n 0 (s.prev.getD v g.n)) = [v]
+        rw [if_neg (by omega)]; rfl,
+      show chainList s.prev g.n 0 v = [] from rfl] at hcomp
+    exact absurd hcomp (by simp)
+  | succ fuel ih =>
+    intro v hvdone hcomp
+    have hvn : v < g.n := done_lt hds hvdone
+    have hcons : chainList s.prev g.n (fuel + 1) v
+        = v :: chainList s.prev g.n fuel (s.prev.getD v g.n) := by
+      show (if v ≥ g.n then [] else v :: chainList s.prev g.n fuel (s.prev.getD v g.n)) = _
+      rw [if_neg (by omega)]
+    have hcomp_rest : chainList s.prev g.n fuel (s.prev.getD v g.n)
+        = chainList s.prev g.n (fuel + 1) (s.prev.getD v g.n) := by
+      have h3 : chainList s.prev g.n (fuel + 2) v
+          = v :: chainList s.prev g.n (fuel + 1) (s.prev.getD v g.n) := by
+        show (if v ≥ g.n then [] else v :: chainList s.prev g.n (fuel + 1) (s.prev.getD v g.n)) = _
+        rw [if_neg (by omega)]
+      rw [hcons, h3] at hcomp
+      exact ((List.cons.injEq _ _ _ _).mp hcomp).2
+    have hvdist_ne : s.dist.getD v none ≠ none := by
+      obtain ⟨d, hd, _⟩ := hL.dle v hvdone; rw [hd]; simp
+    rw [hcons]
+    by_cases hpsent : s.prev.getD v g.n ≥ g.n
+    · -- sentinel: `v = src` and the tail is empty, so `getLast? [v] = some src`
+      have hvsrc : v = src := by
+        rcases hP v hvdist_ne with ⟨h1, _⟩ | h2
+        · exact h1
+        · exact absurd (done_lt hds h2) (by omega)
+      have hrest : chainList s.prev g.n fuel (s.prev.getD v g.n) = [] := by
+        cases fuel with
+        | zero => rfl
+        | succ f =>
+          show (if s.prev.getD v g.n ≥ g.n then [] else _) = []
+          rw [if_pos hpsent]
+      rw [hrest]; simp [hvsrc]
+    · -- interior: `getLast? (v :: rest) = getLast? rest`, recurse on `prev v`
+      have hpne : s.prev.getD v g.n ≠ g.n := by omega
+      have hdone_prev : s.done.getD (s.prev.getD v g.n) false = true := by
+        rcases hP v hvdist_ne with ⟨_, hpn⟩ | hpd
+        · exact absurd hpn hpne
+        · exact hpd
+      have hprevlt : s.prev.getD v g.n < g.n := done_lt hds hdone_prev
+      have hrest_ne : chainList s.prev g.n fuel (s.prev.getD v g.n) ≠ [] := by
+        rw [hcomp_rest]; exact chainList_ne_nil hprevlt (Nat.succ_pos _)
+      obtain ⟨b, rest', hbr⟩ := List.exists_cons_of_ne_nil hrest_ne
+      rw [hbr, List.getLast?_cons_cons, ← hbr]
+      exact ih (s.prev.getD v g.n) hdone_prev hcomp_rest
+
+/-- **The route's far endpoint is the source.** Specialised to a search
+trajectory: the reconstructed route (`chainList` reversed) from a done,
+chain-completed target has `head? = some src`. -/
+theorem iter_route_head?_src {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
+    (hsrc : src < g.n) (k : Nat) {tgt : Nat}
+    (htgt : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
+    (hcomp : chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt
+           = chainList (iter g maxR k (linit g.n src)).prev g.n (g.n + 1) tgt) :
+    (chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt).reverse.head? = some src := by
+  have hds0 : (linit g.n src).done.size = g.n := linit_done_size g.n src
+  have hL0 : LInv g 0 (linit g.n src) := linit_inv hsrc
+  have hP0 : PInv g src (linit g.n src) := linit_pinv
+  have hdsk : (iter g maxR k (linit g.n src)).done.size = g.n :=
+    (iter_done_size k _).trans hds0
+  obtain ⟨L, _, hLk⟩ := (iter_inv (maxR := maxR) hwf k hL0).1
+  have hPk := iter_pinv (maxR := maxR) hwf k hds0 hL0 hP0
+  rw [List.head?_reverse]
+  exact chainList_getLast?_src hPk hLk hdsk g.n tgt htgt hcomp
+
 end Verified.Geo
