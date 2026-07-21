@@ -48,6 +48,7 @@ import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINE
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
+import { leanMatchMode, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
 import { leanPassDivergences, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
 
 const config = z
@@ -201,6 +202,23 @@ function logLeanPassLedger(date: string): void {
 	resetLeanPassStats();
 }
 
+/** Request-path MATCHER ledger — the serve-path analogue of the always-on
+ *  `walk-shadow` (which spawns `verified_cli match` per leg). When `LEAN_MATCH`
+ *  is `shadow` or `on`, the walk matcher runs the proved Lean Viterbi over the
+ *  persistent bridge during the day's velocity runs; log the accumulated
+ *  serve-path ledger (calls/failures/decision-divergences) and reset. No-op with
+ *  the flag off (the default) — the plumbing is dormant until the matcher flip,
+ *  independent of `LEAN_PASSES`. See `src/lean/lean-match.ts`. */
+function logLeanMatchLedger(date: string): void {
+	const mode = leanMatchMode();
+	if (mode === "off") return;
+	const s = leanMatchStats();
+	const clean = s.coarseDiffs === 0 && s.pathDiffs === 0 && s.nullFlips === 0;
+	const detail = clean ? " EXACT" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
+	console.log(`lean-match[${mode}] ${date} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail}`);
+	resetLeanMatchStats();
+}
+
 async function decodeAndPersist(
 	userId: string,
 	date: string,
@@ -263,6 +281,7 @@ async function decodeAndPersist(
 	runLeanShadow(inputs, date);
 	await runWalkShadow(userId, date, tz, osm);
 	logLeanPassLedger(date);
+	logLeanMatchLedger(date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.

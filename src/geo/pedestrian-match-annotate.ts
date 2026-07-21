@@ -16,6 +16,7 @@
  * `walkMatchedPath` undefined and the raw track draws instead.
  */
 
+import { matchWalkSegmentViaLean } from "../lean/lean-match.js";
 import { type StepPoint, stepsInWindow } from "./biometrics.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { holdImplausibleSpeed, rejectSpikes } from "./episode-geometry.js";
@@ -305,7 +306,12 @@ export async function annotateWalkMatches(
 			// Buildings ride along as the matcher's impassable layer (#304): an
 			// unsupported through-building edge is routed around at graph level, so
 			// most crossings never reach the corrector below.
-			const result = matchWalkSegment(fixes, { ways, buildings });
+			//
+			// Behind `LEAN_MATCH` (default off → the TS result, unchanged), route
+			// the leg through the proved Lean Viterbi matcher over the persistent
+			// bridge; `on` serves the verified decision, TS fallback on any bridge
+			// failure. See `lean-match.ts`.
+			const result = matchWalkSegmentViaLean(fixes, { ways, buildings }, matchWalkSegment(fixes, { ways, buildings }));
 			// Decision parity (#369): the display gate, the splice salvage, and
 			// refine engagement below all consume `coarsePath` — the line their
 			// thresholds were tuned against — never the finer display line.

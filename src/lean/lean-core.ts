@@ -199,3 +199,25 @@ export interface LeanGeoResp {
 export function leanGeo(req: Record<string, unknown>): LeanGeoResp {
 	return leanCore.call("geo", req) as LeanGeoResp;
 }
+
+/** Result shape of a `match` walk-matcher pass (mirrors `verified_cli match`
+ *  and the `serveLoop` `matchResult` handler): quantised path + coarse vertex
+ *  rows, or `none` when the leg cannot be matched. */
+export interface LeanMatchResp {
+	path?: number[][];
+	coarse?: number[][];
+	none?: boolean;
+	error?: string;
+}
+
+/**
+ * Run one verified walk-match through the persistent core, synchronously.
+ * `req` is the same object `compare-match` sends
+ * (`{ fixes, ways, buildings }`, all quantised 1e-7° integer rows) — a
+ * drop-in for the spawn-based `verified_cli match`, but over the long-lived
+ * worker so the request path pays no per-call process spawn. Throws
+ * `LeanBridgeError` on any bridge failure; the caller falls back to TS.
+ */
+export function leanMatchServe(req: Record<string, unknown>): LeanMatchResp {
+	return leanCore.call("match", req) as LeanMatchResp;
+}
