@@ -60,14 +60,40 @@ termination_by x
 def isqrt (n : Nat) : Nat :=
   if n < 2 then n else isqrtGo n n ((n + 1) / 2)
 
+/-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
+(for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
+and onto a GMP bignum on every call — the dominant matcher hotspot. Done in
+`UInt64` it is exact (the product `≤ 9·10⁸ · 19190098069 ≈ 1.73·10¹⁹ < 2⁶⁴`)
+and allocation-free; past that bound it falls back to `Nat` so the value is
+unconditionally the same (`cosMul_eq`). -/
+@[inline] def cosMul (la : Int) : Nat :=
+  if la.natAbs ≤ 900000000 then
+    (la.natAbs.toUInt64 * 19190098069 / 10485760000000).toNat
+  else la.natAbs * 19190098069 / 10485760000000
+
+theorem cosMul_eq (la : Int) : cosMul la = la.natAbs * 19190098069 / 10485760000000 := by
+  unfold cosMul
+  split
+  · next h =>
+    have hn : la.natAbs < 18446744073709551616 := by omega
+    have hmul : la.natAbs * 19190098069 < 18446744073709551616 :=
+      Nat.lt_of_le_of_lt (Nat.mul_le_mul_right _ h) (by omega)
+    rw [UInt64.toNat_div, UInt64.toNat_mul,
+      show (la.natAbs.toUInt64).toNat = la.natAbs by
+        rw [UInt64.toNat_ofNat']; exact Nat.mod_eq_of_lt hn,
+      show (19190098069 : UInt64).toNat = 19190098069 from rfl,
+      show (10485760000000 : UInt64).toNat = 10485760000000 from rfl,
+      Nat.mod_eq_of_lt hmul]
+  · rfl
+
 /-- Q20 fixed-point cosine of a 1e-7°-unit latitude, by integer Horner
 over a degree-6 minimax polynomial (|poly err| ≈ 1e-7; the Q20 width,
 not the polynomial, is the binding precision). Constants:
 `19190098069 = round(π/180 · 2^40)`, coefficients `round(cᵢ · 2^20)` of
 the Hastings minimax for `cos` on `[0, π/2]`;
-`10485760000000 = 1e7 · 2^20`. -/
+`10485760000000 = 1e7 · 2^20`. The wide first multiply is `cosMul`. -/
 def cosQ (la : Int) : Int :=
-  let x : Nat := la.natAbs * 19190098069 / 10485760000000
+  let x : Nat := cosMul la
   let x2 : Nat := x * x / 1048576
   let s1 : Int := (-1453 * (x2 : Int)).fdiv 1048576 + 43687
   let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
