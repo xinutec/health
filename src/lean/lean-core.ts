@@ -30,7 +30,15 @@ const HEADER_BYTES = 8;
 /** Response cap: a walking leg's passes emit ≤ a few hundred points; 8 MiB
  *  is comfortably beyond any real payload. Oversize → fall back to TS. */
 const SAB_BYTES = 8 * 1024 * 1024;
+/** Timeout for a WARM call (child already running): a warm serve answers in
+ *  well under a millisecond, so 5 s is a generous liveness ceiling. */
 const CALL_TIMEOUT_MS = 5000;
+/** Timeout for the FIRST call over a freshly (re)built worker: it must absorb
+ *  the cold `verified_cli serve` spawn — ~1.5 s idle, but several times that on
+ *  a CPU-throttled pod under load. A tight 5 s here risks tripping the breaker
+ *  on a cold start and dropping to TS-only for the whole process lifetime; the
+ *  headroom only ever applies to the one cold call (warm calls stay at 5 s). */
+const FIRST_CALL_TIMEOUT_MS = 20000;
 
 export class LeanBridgeError extends Error {
 	constructor(message: string) {
@@ -57,6 +65,9 @@ class LeanCore {
 	/** Permanent give-up (only after MAX_CONSECUTIVE_FAILS). */
 	private dead = false;
 	private fails = 0;
+	/** False until this worker has answered once — gates the cold vs warm
+	 *  call timeout. A fresh (re)built worker is cold; reset in `teardown`. */
+	private warm = false;
 	/** Last health state announced, so we log serve↔degrade TRANSITIONS (a
 	 *  transient blip that recovers should not leave a stale "falling back"). */
 	private lastServing: boolean | null = null;
@@ -85,6 +96,7 @@ class LeanCore {
 		this.control = null;
 		this.lenView = null;
 		this.body = null;
+		this.warm = false;
 	}
 
 	/** Record a failure: tear down for rebuild, announce degraded, and trip the
@@ -149,7 +161,8 @@ class LeanCore {
 		const body = this.body;
 		Atomics.store(control, 0, CTRL_PENDING);
 		worker.postMessage({ mode, payload });
-		const woke = Atomics.wait(control, 0, CTRL_PENDING, CALL_TIMEOUT_MS);
+		const timeout = this.warm ? CALL_TIMEOUT_MS : FIRST_CALL_TIMEOUT_MS;
+		const woke = Atomics.wait(control, 0, CTRL_PENDING, timeout);
 		if (woke === "timed-out") this.fail("call timed out");
 		const status = Atomics.load(control, 0);
 		if (status !== CTRL_READY) this.fail(`error status ${status}`);
@@ -159,6 +172,7 @@ class LeanCore {
 		const copy = body.slice(0, len);
 		const result = JSON.parse(this.decoder.decode(copy));
 		this.fails = 0;
+		this.warm = true;
 		this.announce(true, `bin=${defaultBin()}`);
 		return result;
 	}
