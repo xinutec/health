@@ -38,7 +38,80 @@ hypotheses here.
 
 namespace Verified.Geo
 
-open Verified.Rail (Graph WFEdges edgeMinW pathCost pathCost_cons_cons)
+open Verified.Rail (Graph Heap WFEdges edgeMinW pathCost pathCost_cons_cons)
+
+/-! ## Discharging `done[src]` — the source is always settled
+
+`iter_route_optimal` below assumed `done[src]` ("the search settled the
+source"). It is not an assumption: `linit`'s heap is seeded `#[(0, src)]`, so
+the very first `lstep` pops `(0, src)` at price `0 ≤ maxR` (never radius-
+exhausted, since `maxR : Nat`) and settles it; `done` only ever grows
+(`lstep_done_mono`), so `src` stays settled for every `k ≥ 1`. And any `k` that
+settled `tgt` is `≥ 1`. -/
+
+/-- `linit`'s `done` array is all-false. -/
+private theorem linit_done_getD (n src v : Nat) :
+    (linit n src).done.getD v false = false := by
+  show (Array.replicate n false).getD v false = false
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
+  split <;> rfl
+
+/-- The first `lstep` from `linit` pops the seeded `(0, src)` and settles it. -/
+private theorem first_lstep_done_src {g : Graph} {maxR src : Nat}
+    (hsrc : src < g.n) :
+    (lstep g maxR (linit g.n src)).done.getD src false = true := by
+  have hpop : (linit g.n src).heap.pop = some ((0, src), (⟨#[]⟩ : Heap)) := by
+    have ha : Heap.push (⟨#[]⟩ : Heap) 0 src = (⟨#[(0, src)]⟩ : Heap) := by
+      have h1 : (Heap.push (⟨#[]⟩ : Heap) 0 src).a = #[(0, src)] := by
+        show Heap.siftUp (Array.push #[] ((0 : Nat), src))
+            ((Array.push #[] ((0 : Nat), src)).size - 1) = #[(0, src)]
+        unfold Heap.siftUp
+        rw [dif_pos (show (Array.push #[] ((0 : Nat), src)).size - 1 = 0 from rfl)]
+        rfl
+      show Heap.push (⟨#[]⟩ : Heap) 0 src = ⟨#[(0, src)]⟩
+      rw [← h1]
+    show (Heap.push (⟨#[]⟩ : Heap) 0 src).pop = some ((0, src), ⟨#[]⟩)
+    rw [ha]
+    rfl
+  unfold lstep
+  split
+  · next hc => exact absurd hc Bool.false_ne_true
+  · rw [hpop]
+    dsimp only
+    rw [if_neg (show ¬ (linit g.n src).done.getD src false = true by
+      rw [linit_done_getD]; decide)]
+    rw [if_neg (show ¬ (0 > maxR) from Nat.not_lt.mpr (Nat.zero_le maxR))]
+    rw [relaxL_done]
+    exact getD_sib_lt (show src < (linit g.n src).done.size by
+      show src < (Array.replicate g.n false).size
+      rw [Array.size_replicate]; exact hsrc) true false
+
+/-- `done` is monotone along `iter`: a settled vertex stays settled. -/
+theorem iter_done_mono {g : Graph} {maxR : Nat} {s : LState} {v : Nat}
+    (k : Nat) (h : s.done.getD v false = true) :
+    (iter g maxR k s).done.getD v false = true := by
+  induction k generalizing s with
+  | zero => exact h
+  | succ k ih => rw [iter_succ]; exact ih (lstep_done_mono h)
+
+/-- After any `k + 1` steps from `linit`, the source is settled. -/
+theorem iter_src_done {g : Graph} {maxR src : Nat} (hsrc : src < g.n) (k : Nat) :
+    (iter g maxR (k + 1) (linit g.n src)).done.getD src false = true := by
+  rw [iter_succ]
+  exact iter_done_mono k (first_lstep_done_src hsrc)
+
+/-- If some vertex `tgt` is settled at `iter k (linit …)`, then so is `src`
+(that `k` ran at least one step). -/
+theorem iter_src_done_of_tgt {g : Graph} {maxR src : Nat} (hsrc : src < g.n)
+    {k tgt : Nat}
+    (htgt : (iter g maxR k (linit g.n src)).done.getD tgt false = true) :
+    (iter g maxR k (linit g.n src)).done.getD src false = true := by
+  cases k with
+  | zero =>
+      rw [show iter g maxR 0 (linit g.n src) = linit g.n src from rfl,
+        linit_done_getD] at htgt
+      exact absurd htgt (by decide)
+  | succ k' => exact iter_src_done hsrc k'
 
 /-! ## The radius-aware cut walk -/
 
@@ -130,12 +203,13 @@ route a minimum-cost path. `done[src]` (the source was settled) is the only
 discharged internally. -/
 theorem iter_lower_bound {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt D : Nat}
-    (hsrcdone : (iter g maxR k (linit g.n src)).done.getD src false = true)
     (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
     (hD : (iter g maxR k (linit g.n src)).dist.getD tgt none = some D)
     (hDR : D ≤ maxR) :
     ∀ (p : List Nat) (C : Nat), p.head? = some src → p.getLast? = some tgt →
       pathCost g p = some C → D ≤ C := by
+  have hsrcdone : (iter g maxR k (linit g.n src)).done.getD src false = true :=
+    iter_src_done_of_tgt hsrc htgtdone
   have hds0 : (linit g.n src).done.size = g.n := linit_done_size g.n src
   have hL0 : LInv g 0 (linit g.n src) := linit_inv hsrc
   have hH0 : HInv g (linit g.n src) := linit_hinv hsrc
@@ -157,7 +231,6 @@ that cost lower-bounds every valid `src → tgt` path (this file) — so the rou
 a minimum-cost path. -/
 theorem iter_route_optimal {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     (hsrc : src < g.n) (k : Nat) {tgt dt : Nat}
-    (hsrcdone : (iter g maxR k (linit g.n src)).done.getD src false = true)
     (htgtdone : (iter g maxR k (linit g.n src)).done.getD tgt false = true)
     (hcomp : chainList (iter g maxR k (linit g.n src)).prev g.n g.n tgt
            = chainList (iter g maxR k (linit g.n src)).prev g.n (g.n + 1) tgt)
@@ -168,6 +241,6 @@ theorem iter_route_optimal {g : Graph} {maxR src : Nat} (hwf : WFEdges g)
     ∀ (p : List Nat) (C : Nat), p.head? = some src → p.getLast? = some tgt →
       pathCost g p = some C → dt ≤ C := by
   refine ⟨iter_route_pathCost_eq hwf hsrc k htgtdone hcomp hdt, ?_⟩
-  exact iter_lower_bound hwf hsrc k hsrcdone htgtdone hdt hDR
+  exact iter_lower_bound hwf hsrc k htgtdone hdt hDR
 
 end Verified.Geo
