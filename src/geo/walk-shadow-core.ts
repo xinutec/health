@@ -19,6 +19,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { rejectSpikes } from "./episode-geometry.js";
 import type { BuildingRing, RoadFix } from "./map-match-core.js";
 import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "./match-twin.js";
@@ -106,9 +108,18 @@ interface LeanMatchResp {
 /** The Lean arm: `verified_cli match` on the same quantised input. `leanBin`
  *  is the compiled `verified_cli` path (env `LEAN_CLI` in the cron image,
  *  the built binary under `lean/.lake` for the gate). */
+let dumpSeq = 0;
+
 function leanMatch(leanBin: string, req: object): LeanMatchResp {
+	const body = JSON.stringify(req);
+	// Profiling aid: `LEAN_MATCH_DUMP=<dir>` keeps every request body on disk so a
+	// single leg can be replayed under a profiler without re-running the pipeline.
+	if (process.env.LEAN_MATCH_DUMP) {
+		const n = (req as { fixes?: unknown[] }).fixes?.length ?? 0;
+		writeFileSync(path.join(process.env.LEAN_MATCH_DUMP, `leg-${n}-${dumpSeq++}.json`), body);
+	}
 	const res = spawnSync(leanBin, ["match"], {
-		input: JSON.stringify(req),
+		input: body,
 		encoding: "utf8",
 		maxBuffer: 256 * 1024 * 1024,
 	});

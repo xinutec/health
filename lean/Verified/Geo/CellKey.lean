@@ -25,6 +25,28 @@ namespace Verified.Geo
 /-- The grid-cell pair key, exactly as the TS computes it. -/
 def cellKey (cy cx : Int) : Int := cy * 4194304 + cx
 
+/-- The same pairing as a `Nat`, with both coordinates biased into the
+non-negative range first. Lean's `Int` is a GMP bignum past `2^31`
+(`LEAN_MAX_SMALL_INT = INT_MAX`) whereas `Nat` is an unboxed scalar to `2^63`,
+and a cell key is `≈ cy · 2^22` — comfortably over `2^31`. So `cellKey`'s own
+arithmetic allocates, and so does every hash and comparison of it. This form
+keeps each step small: the bias is an `Int` add on a `|·| < 2^21` coordinate,
+and the pairing itself is `Nat`. It is the key for the matcher's internal grids,
+which need only *a* collision-free cell identity — `cellKey` stays the shape the
+TS computes, for the grids whose values are compared against it. -/
+def cellKeyN (cy cx : Int) : Nat :=
+  (cy + 2097152).toNat * 4194304 + (cx + 2097152).toNat
+
+/-- Collision-freedom for the `Nat` form, over the same `2^21` box. (One row
+bound suffices: a `cy` below the box saturates to bucket 0, which no in-box
+`cy'` can reach.) -/
+theorem cellKeyN_inj {cy cx cy' cx' : Int}
+    (hx : cx.natAbs < 2097152)
+    (hy' : cy'.natAbs < 2097152) (hx' : cx'.natAbs < 2097152)
+    (h : cellKeyN cy cx = cellKeyN cy' cx') : cy = cy' ∧ cx = cx' := by
+  unfold cellKeyN at h
+  omega
+
 /-- Collision-freedom: within `|cx| < 2^21` the key determines the pair.
 (The multiplier is `2^22`, so distinct `cy` are `2^22` apart while the
 `cx` contribution spans less than `2^22`.) -/

@@ -95,9 +95,24 @@ the Hastings minimax for `cos` on `[0, π/2]`;
 def cosQ (la : Int) : Int :=
   let x : Nat := cosMul la
   let x2 : Nat := x * x / 1048576
-  let s1 : Int := (-1453 * (x2 : Int)).fdiv 1048576 + 43687
-  let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
-  (s2 * (x2 : Int)).fdiv 1048576 + 1048576
+  if x2 ≤ 4000000 then
+    -- Every Horner product here lands between 2^31 and 2^41, and Lean's `Int`
+    -- is a GMP bignum past 2^31 (`LEAN_MAX_SMALL_INT = INT_MAX`) while `Nat`
+    -- stays an unboxed scalar to 2^63 — so the same three multiplies cost three
+    -- heap allocations as `Int` and none as `Nat`. The signs are static, so they
+    -- can be carried in the shape instead of the values: `fdiv` by a positive
+    -- divisor is `⌊·⌋` on a non-negative numerator and `−⌈·⌉` on a negative one,
+    -- which is what the ceilings below spell out. Both subtractions stay in
+    -- `Nat`: over `x2 ≤ 4·10^6`, `⌈1453·x2/2^20⌉ ≤ 5544 < 43687` and
+    -- `⌊s1·x2/2^20⌋ ≤ 166 553 < 524 287`. The final value may still be slightly
+    -- negative (the minimax polynomial undershoots at 90°), so it is an `Int`.
+    let s1 : Nat := 43687 - (1453 * x2 + 1048575) / 1048576
+    let s2 : Nat := 524287 - s1 * x2 / 1048576
+    (1048576 : Int) - (((s2 * x2 + 1048575) / 1048576 : Nat) : Int)
+  else
+    let s1 : Int := (-1453 * (x2 : Int)).fdiv 1048576 + 43687
+    let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
+    (s2 * (x2 : Int)).fdiv 1048576 + 1048576
 
 /-- µm between two points, cos at the mid-latitude — mirrors
 `metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm

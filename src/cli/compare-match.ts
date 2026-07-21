@@ -113,7 +113,7 @@ for (const file of files) {
 			divergent.push({ date, hhmm, coarse: r.coarse, path: r.path, note });
 		}
 		perDay.push(
-			`${hhmm} coarse=${r.coarse}/path=${r.path}` + (r.coarse !== "EXACT" || r.path !== "EXACT" ? ` (${note})` : ""),
+			`${hhmm} coarse=${r.coarse}/path=${r.path}${r.coarse !== "EXACT" || r.path !== "EXACT" ? ` (${note})` : ""}`,
 		);
 	}
 	console.log(`${file.slice(0, 10)}: ${perDay.length} leg(s) — ${perDay.join(", ") || "none"}`);

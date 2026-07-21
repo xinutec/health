@@ -415,6 +415,66 @@ private def matchResult (j : Json) : Json :=
 private def matchMain (input : String) : IO UInt32 :=
   runOne matchResult input
 
+/-- `verified_cli matchprof` — the matcher's phases run one at a time with
+wall-clock between them, plus the shape of the graph they produced. Attributes a
+slow leg to a phase without a sampling profiler (which mis-attributes across
+Lean's inlined loop closures). Each `IO.lazyPure` pins one phase's evaluation
+between two timestamps; `full` re-runs the whole matcher, so the phases before
+it are *included* in its own cost, not additional to it. -/
+private def matchProfMain (input : String) : IO UInt32 := do
+  match Json.parse input >>= parseMatch with
+  | .error e => IO.eprintln s!"error: {e}"; return 1
+  | .ok (fixes, ways, buildings) =>
+    let P := Verified.Geo.WALK_QPROFILE
+    let t0 ← IO.monoMsNow
+    let co ← IO.lazyPure fun _ =>
+      Verified.Geo.mkQCorridor fixes P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty
+    let t1 ← IO.monoMsNow
+    let bld ← IO.lazyPure fun _ =>
+      if P.buildingCrossFactor > 1 && buildings.size > 0 then
+        some (Verified.Geo.mkQBuildings buildings fixes P.buildingCrossFactor P.buildingSupportUm)
+      else none
+    let t2 ← IO.monoMsNow
+    let graph ← IO.lazyPure fun _ => Verified.Geo.buildQGraphFast ways co bld P.gapBridgeUm
+    let t3 ← IO.monoMsNow
+    let idx ← IO.lazyPure fun _ => Verified.Geo.mkQSegIndex graph P.radiusUm co.cmin
+    -- Two counterfactual builds, for attribution only: without the buildings
+    -- penalty, and with an empty corridor (`distToFast` returns at once). Their
+    -- *values* are wrong; only their cost is read.
+    let t3b ← IO.monoMsNow
+    let _ ← IO.lazyPure fun _ =>
+      (Verified.Geo.buildQGraphFast ways co none P.gapBridgeUm).segments.size
+    let t3c ← IO.monoMsNow
+    let _ ← IO.lazyPure fun _ =>
+      (Verified.Geo.buildQGraphFast ways
+        (Verified.Geo.mkQCorridor #[] P.corridorNearUm P.corridorFarUm P.corridorMaxPenalty)
+        none P.gapBridgeUm).segments.size
+    let t3d ← IO.monoMsNow
+    let t4 ← IO.monoMsNow
+    let nCand ← IO.lazyPure fun _ =>
+      fixes.foldl (init := 0) fun acc f =>
+        acc + (Verified.Geo.qCandidatesForFixFast f graph idx P.radiusUm P.maxCandidatesPerFix).size
+    let t5 ← IO.monoMsNow
+    let full ← IO.lazyPure fun _ => Verified.Geo.qMatchWalkSegment fixes ways buildings
+    let t6 ← IO.monoMsNow
+    IO.println s!"fixes={fixes.size} ways={ways.size} rings={buildings.size} \
+vertices={graph.vertices.size} segments={graph.segments.size} \
+edges={Verified.Geo.totalOut graph.g} chords={co.chords.size} cands={nCand} \
+matched={full.isSome}"
+    IO.println s!"corridor={t1 - t0}ms buildings={t2 - t1}ms graph={t3 - t2}ms \
+segidx={t3b - t3}ms cands={t5 - t4}ms full={t6 - t5}ms"
+    IO.println s!"graph-no-buildings={t3c - t3b}ms graph-no-corridor={t3d - t3c}ms"
+    let stat (name : String) (g : Std.HashMap Nat (Array Nat)) : String :=
+      let tot := g.fold (init := 0) fun a _ v => a + v.size
+      let mx := g.fold (init := 0) fun a _ v => max a v.size
+      s!"{name}: cells={g.size} filed={tot} mean={tot / max 1 g.size} max={mx}"
+    IO.println (stat "corridor-grid" co.grid)
+    IO.println (stat "segment-grid" idx.grid)
+    match bld with
+    | some b => IO.println (stat "building-grid" b.grid)
+    | none => pure ()
+    return 0
+
 /-- The certified rail shortest-path as a pure result: any returned path is
 theorem-backed (`dijkstraC_correct`); a certification failure degrades to
 `none`. Lean side of `compare-rail`, and a `serve`-mode handler. -/
@@ -484,6 +544,7 @@ def main (args : List String) : IO UInt32 := do
   let input ← (← IO.getStdin).readToEnd
   if args.contains "rail" then return ← railMain input
   if args.contains "geo" then return ← geoMain input
+  if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "match" then return ← matchMain input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with

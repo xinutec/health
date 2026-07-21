@@ -151,11 +151,43 @@ and the clamped foot's latitude lies between the endpoints'). -/
 def latGapUm (p a b : QPt) : Nat :=
   let lo : Int := if a.la < b.la then a.la else b.la
   let hi : Int := if a.la < b.la then b.la else a.la
-  if p.la < lo then ((lo - p.la) * 11132).toNat
-  else if p.la > hi then ((p.la - hi) * 11132).toNat
+  -- `.toNat` before the scale, not after: the µm product runs to ~10^13 and
+  -- Lean's `Int` is a GMP bignum past 2^31, while `Nat` is a scalar to 2^63.
+  if p.la < lo then (lo - p.la).toNat * 11132
+  else if p.la > hi then (p.la - hi).toNat * 11132
   else 0
 
 /-! ## `QCorridor` — the GPS-corridor penalty -/
+
+/-- One corridor chord `fixes[i-1] → fixes[i]` with its projection frame solved
+once instead of once per query: `c` is `cosQ` at the chord's mid-latitude, `bx`
+/ `vy` the chord vector in that local µm frame, `len2` its squared length.
+`loLa`…`hiLo` is the endpoint bounding box **dilated by one coordinate unit** —
+the clamped foot is a rounded convex combination of the endpoints, so it can sit
+at most half a unit outside the raw box. -/
+structure QChord where
+  a : QPt
+  b : QPt
+  c : Int
+  bx : Int
+  vy : Int
+  len2 : Int
+  loLa : Int
+  hiLa : Int
+  loLo : Int
+  hiLo : Int
+  deriving Inhabited
+
+/-- Gap from `x` to the interval `[lo, hi]` in µm **times `2^20`**, with `k` the
+Q20 cos it is projected through (`2^20` itself for latitude, a `cosQ` lower bound
+for longitude). Kept scaled so the hot reject `gap ≥ best` is
+`gapScaled ≥ best · 2^20` — a comparison, not a division: for integers,
+`⌊S/2^20⌋ ≥ best ↔ S ≥ best · 2^20`. A `Nat`: the value runs to ~10^16, past
+the `2^31` where Lean's `Int` turns into a GMP bignum. -/
+def boxGapScaled (x lo hi k : Int) : Nat :=
+  if x < lo then (lo - x).toNat * 11132 * k.toNat
+  else if x > hi then (x - hi).toNat * 11132 * k.toNat
+  else 0
 
 /-- The corridor's tuned parameters, `S = farUm − nearUm` precomputed, plus the
 chord index `distToFast` reads.
@@ -167,7 +199,12 @@ cell its bounding box **dilated by one cell** touches. Consequence — the whole
 basis for `distToFast`: any chord within `farUm` of a point `p` differs from
 `p` by at most `cellLa`/`cellLo` per axis, so `p` lies in that chord's dilated
 box, so the chord is filed in `p`'s own cell. One bucket therefore holds every
-chord that could beat the `farUm` clamp. -/
+chord that could beat the `farUm` clamp.
+
+`cmin` lower-bounds `cosQ` over the whole corridor **plus a 0.1° latitude
+margin** — far more than any point `distToFast` is asked about can stray — so it
+is a sound cos bound for the longitude gap as well as a safe (never too narrow)
+cell width. `chords` carries each chord's solved projection frame. -/
 structure QCorridor where
   fixes : Array QPt
   nearUm : Nat
@@ -176,21 +213,40 @@ structure QCorridor where
   S : Nat
   cellLa : Int
   cellLo : Int
-  grid : Std.HashMap Int (Array Nat)
+  cmin : Int
+  grid : Std.HashMap Nat (Array Nat)
+  chords : Array QChord
 
 def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := Id.run do
-  -- Corridor-wide cos lower bound (≥ 1 so the cell stays finite).
-  let mut cmin : Int := 1048576
-  for f in fixes do
-    let c := cosQ f.la
-    if c < cmin then cmin := c
+  -- Corridor-wide cos lower bound (≥ 1 so the cell stays finite). `cosQ` falls
+  -- with |latitude|, so the extreme of the margin-widened band is the minimum.
+  let mut mnLa : Int := 0
+  let mut mxLa : Int := 0
+  if 0 < fixes.size then
+    mnLa := (fixes.getD 0 default).la
+    mxLa := mnLa
+    for f in fixes do
+      if f.la < mnLa then mnLa := f.la
+      if f.la > mxLa then mxLa := f.la
+  let margin : Int := 1000000
+  let loEnd : Int := mnLa - margin
+  let hiEnd : Int := mxLa + margin
+  let mut cmin : Int := cosQ (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd)
   if cmin < 1 then cmin := 1
   let cellLa : Int := (farUm : Int) / 11132 + 1
   let cellLo : Int := ((farUm : Int) * 1048576) / (11132 * cmin) + 1
-  let mut grid : Std.HashMap Int (Array Nat) := ∅
+  let mut grid : Std.HashMap Nat (Array Nat) := ∅
+  let mut chords : Array QChord := #[default]
   for i in [1:fixes.size] do
     let a := fixes.getD (i - 1) default
     let b := fixes.getD i default
+    let c : Int := cosQ ((a.la + b.la).tdiv 2)
+    let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
+    let vy : Int := (b.la - a.la) * 11132
+    chords := chords.push
+      { a, b, c, bx, vy, len2 := bx * bx + vy * vy
+        loLa := (min a.la b.la) - 1, hiLa := (max a.la b.la) + 1
+        loLo := (min a.lo b.lo) - 1, hiLo := (max a.lo b.lo) + 1 }
     let loLa := (min a.la b.la) - cellLa
     let hiLa := (max a.la b.la) + cellLa
     let loLo := (min a.lo b.lo) - cellLo
@@ -203,13 +259,13 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
     while cy ≤ cy1 do
       let mut cx := cx0
       while cx ≤ cx1 do
-        let key := cellKey cy cx
+        let key := cellKeyN cy cx
         let b2 := grid.getD key #[]
         if b2.isEmpty || b2.getD (b2.size - 1) 0 != i then
           grid := grid.insert key (b2.push i)
         cx := cx + 1
       cy := cy + 1
-  return { fixes, nearUm, farUm, maxPen, S := farUm - nearUm, cellLa, cellLo, grid }
+  return { fixes, nearUm, farUm, maxPen, S := farUm - nearUm, cellLa, cellLo, cmin, grid, chords }
 
 /-- Brute-force nearest-chord distance (the float grid is exact by its
 own argument), clamped at `farUm` (`QCorridor.distTo`). -/
@@ -241,30 +297,46 @@ def QCorridor.distTo (co : QCorridor) (p : QPt) : Nat := Id.run do
 `distTo` per edge weight); the float matcher hit the same wall and answered it
 with a chord grid. Reading only `p`'s own cell is exact here because the bucket
 holds every chord within `farUm` (see `QCorridor`), and `distTo` clamps at
-`farUm`: a chord filed elsewhere is ≥ `farUm` away, and `latGapUm` lower-bounds
+`farUm`: a chord filed elsewhere is ≥ `farUm` away, and the box gap lower-bounds
 the chord distance, so neither the running `best` reject nor the final minimum
-can differ. -/
+can differ.
+
+Two further departures from the spec's shape, both value-preserving:
+
+* the projection frame (`c`, `bx`, `vy`, `len2`) is read from `co.chords`
+  instead of recomputed — same numbers, solved once per chord in `mkQCorridor`
+  rather than once per (chord, query) pair;
+* the reject is the **two-axis** box gap, not `latGapUm`'s latitude alone. The
+  foot lies in the chord's unit-dilated box, `qDist` is `isqrt` of the sum of
+  the two axis components, and `cmin ≤ cosQ` everywhere it is applied, so
+  `gLa² + gLo²` under-estimates `qDist(p, foot)²`. A chord it rejects has
+  `d ≥ best`, so it could not have lowered `best` — dropping it leaves both the
+  `best` sequence and the minimum unchanged. -/
 def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
   if co.fixes.size == 0 then return 0
   if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
-  let cands := co.grid.getD (cellKey (p.la.fdiv co.cellLa) (p.lo.fdiv co.cellLo)) #[]
+  let cands := co.grid.getD (cellKeyN (p.la.fdiv co.cellLa) (p.lo.fdiv co.cellLo)) #[]
   let mut best : Nat := co.farUm
   for i in cands do
-    let a := co.fixes.getD (i - 1) default
-    let b := co.fixes.getD i default
-    if latGapUm p a b ≥ best then continue
-    let c : Int := cosQ ((a.la + b.la).tdiv 2)
-    let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
-    let vy : Int := (b.la - a.la) * 11132
-    let px : Int := ((p.lo - a.lo) * 11132 * c).fdiv 1048576
-    let py : Int := (p.la - a.la) * 11132
-    let len2 : Int := bx * bx + vy * vy
+    let ch := co.chords.getD i default
+    let bestS : Nat := best * 1048576
+    let gLaS := boxGapScaled p.la ch.loLa ch.hiLa 1048576
+    if gLaS ≥ bestS then continue
+    let gLoS := boxGapScaled p.lo ch.loLo ch.hiLo co.cmin
+    if gLoS ≥ bestS then continue
+    -- Both axes are inside `best`, so the (rarer) combined test can afford the
+    -- two divisions back to µm, where the squares stay well inside `Nat`.
+    let gLa := gLaS / 1048576
+    let gLo := gLoS / 1048576
+    if gLa * gLa + gLo * gLo ≥ best * best then continue
     let d : Nat :=
-      if len2 = 0 then qDist p a
+      if ch.len2 = 0 then qDist p ch.a
       else
-        let dot : Int := max 0 (min (px * bx + py * vy) len2)
-        qDist p { la := a.la + roundDiv (dot * (b.la - a.la)) len2
-                  lo := a.lo + roundDiv (dot * (b.lo - a.lo)) len2, ts := 0 }
+        let px : Int := ((p.lo - ch.a.lo) * 11132 * ch.c).fdiv 1048576
+        let py : Int := (p.la - ch.a.la) * 11132
+        let dot : Int := max 0 (min (px * ch.bx + py * ch.vy) ch.len2)
+        qDist p { la := ch.a.la + roundDiv (dot * (ch.b.la - ch.a.la)) ch.len2
+                  lo := ch.a.lo + roundDiv (dot * (ch.b.lo - ch.a.lo)) ch.len2, ts := 0 }
     if d < best then best := d
   return best
 
@@ -311,14 +383,30 @@ structure QBox where
   maxLo : Int
   deriving Repr, Inhabited
 
+/-- Side of one footprint-grid cell, in µm. A pure bucketing knob: `inAnyRingFast`
+files a ring into every cell its bbox meets and reads only the query point's own
+cell, so *any* positive side gives the identical answer — this one is chosen to
+sit near a typical building's own size, which keeps both the filing and the
+buckets small. -/
+def buildingCellUm : Nat := 30000000
+
 /-- Prepared building set: rings (≥ 3 vertices), their bounding boxes,
-the fixes, and the two tuned thresholds (`QBuildings` constructor). -/
+the fixes, and the two tuned thresholds (`QBuildings` constructor), plus the
+footprint index `inAnyRingFast` reads.
+
+`grid` files ring `i` in every cell its bounding box meets. So if `p` is inside
+ring `i`'s box it is inside one of those cells, i.e. ring `i` is in `p`'s own
+bucket — the bucket therefore holds every ring that survives the box reject,
+which is exactly the set `inAnyRing`'s scan would test. -/
 structure QBuildings where
   rings : Array (Array QPt)
   boxes : Array QBox
   fixes : Array QPt
   crossFactor : Nat
   supportUm : Nat
+  cellLa : Int
+  cellLo : Int
+  grid : Std.HashMap Nat (Array Nat)
 
 def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
     (crossFactor supportUm : Nat) : QBuildings := Id.run do
@@ -337,10 +425,49 @@ def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
         if p.lo > maxLo then maxLo := p.lo
       rings := rings.push r
       boxes := boxes.push { minLa, maxLa, minLo, maxLo }
-  return { rings, boxes, fixes, crossFactor, supportUm }
+  -- Cell sides in coordinate units. The longitude side uses a corridor-wide
+  -- `cosQ` lower bound purely so the cell stays roughly square in metres.
+  let mut cmin : Int := 1048576
+  for f in fixes do
+    let c := cosQ f.la
+    if c < cmin then cmin := c
+  if cmin < 1 then cmin := 1
+  let cellLa : Int := (buildingCellUm : Int) / 11132 + 1
+  let cellLo : Int := ((buildingCellUm : Int) * 1048576) / (11132 * cmin) + 1
+  let mut grid : Std.HashMap Nat (Array Nat) := ∅
+  for i in [0:boxes.size] do
+    let b := boxes.getD i default
+    let mut cy := b.minLa.fdiv cellLa
+    let cy1 := b.maxLa.fdiv cellLa
+    let cx0 := b.minLo.fdiv cellLo
+    let cx1 := b.maxLo.fdiv cellLo
+    while cy ≤ cy1 do
+      let mut cx := cx0
+      while cx ≤ cx1 do
+        let key := cellKeyN cy cx
+        grid := grid.insert key ((grid.getD key #[]).push i)
+        cx := cx + 1
+      cy := cy + 1
+  return { rings, boxes, fixes, crossFactor, supportUm, cellLa, cellLo, grid }
 
+/-- Brute-force footprint test — box reject, then the exact ray cast. -/
 def QBuildings.inAnyRing (bld : QBuildings) (p : QPt) : Bool := Id.run do
   for i in [0:bld.rings.size] do
+    let b := bld.boxes.getD i default
+    if p.la < b.minLa || p.la > b.maxLa || p.lo < b.minLo || p.lo > b.maxLo then
+      continue
+    if qPointInRing p (bld.rings.getD i default) then return true
+  return false
+
+/-- **Grid-indexed `inAnyRing`** — same value, one bucket instead of every ring.
+The brute-force scan was the matcher's dominant cost (two `factor` samples per
+graph edge, each scanning all ~3k corridor footprints); `p`'s bucket contains
+every ring whose box contains `p` (see `QBuildings`), and a ring the scan would
+reject on its box cannot change a disjunction of ray casts, so the two agree.
+Bucket order is ascending ring index, as in the scan. -/
+def QBuildings.inAnyRingFast (bld : QBuildings) (p : QPt) : Bool := Id.run do
+  let cands := bld.grid.getD (cellKeyN (p.la.fdiv bld.cellLa) (p.lo.fdiv bld.cellLo)) #[]
+  for i in cands do
     let b := bld.boxes.getD i default
     if p.la < b.minLa || p.la > b.maxLa || p.lo < b.minLo || p.lo > b.maxLo then
       continue
@@ -364,7 +491,7 @@ def QBuildings.factor (bld : QBuildings) (a b : QPt) : Nat := Id.run do
   for k in [0:n + 1] do
     let s : QPt := { la := a.la + roundDiv ((k : Int) * (b.la - a.la)) (n : Int)
                      lo := a.lo + roundDiv ((k : Int) * (b.lo - a.lo)) (n : Int), ts := 0 }
-    if bld.inAnyRing s && !bld.fixSupports s then return bld.crossFactor
+    if bld.inAnyRingFast s && !bld.fixSupports s then return bld.crossFactor
   return 1
 
 /-! ## Graph build (part 2)
@@ -462,12 +589,12 @@ replaced by hash indices.
 
 * **Vertex dedup** — a `(la, lo) → id` hash replaces the per-coordinate linear
   `findIdx?` scan. First-seen order (and hence vertex numbering) is unchanged.
-* **`bridgeGaps`** — candidate pairs come from a spatial grid keyed by `cellKey`
+* **`bridgeGaps`** — candidate pairs come from a spatial grid keyed by `cellKeyN`
   (cells span `gapUm` µm) instead of the all-pairs scan. A within-`gapUm` pair
   lands within the 3×3 cell neighbourhood: the latitude cell is `gapUm`-wide by
   construction, and the longitude cell uses a corridor-wide cos lower bound
   `cmin` (`cosQ` only grows toward any pair's mid-latitude, so the cell is never
-  too narrow). Grid `cellKey` collisions can only *add* candidates, never drop
+  too narrow). Grid `cellKeyN` collisions can only *add* candidates, never drop
   them, so they cost an extra exact check but never a missed edge.
 
 The exact accept/reject predicate and the ascending-`(i, j)` push order are
@@ -501,21 +628,31 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       prev := (id : Int)
       prevPt := p
   -- bridgeGaps via a spatial grid.
-  let gapSq : Int := (gapUm : Int) * (gapUm : Int) + 2 * (gapUm : Int)
-  let gY : Int := if gapUm == 0 then 1 else (gapUm : Int)
-  let gX : Int := if gapUm == 0 then 1 else (gapUm : Int) * 1048576
+  -- Everything below the cell index is carried as a `Nat` magnitude with the
+  -- sign in the shape: these products reach ~10^13 (cells) and ~10^15 (the gap
+  -- test), and Lean's `Int` is a GMP bignum past 2^31 while `Nat` is an unboxed
+  -- scalar to 2^63. `Int.fdiv` by a positive divisor is `⌊·⌋` on a non-negative
+  -- numerator and `−⌈·⌉` on a negative one, which is what the branches spell out.
+  let gapSq : Nat := gapUm * gapUm + 2 * gapUm
+  let gY : Nat := if gapUm == 0 then 1 else gapUm
+  let gX : Nat := gY * 1048576
   -- conservative cos lower bound over the vertices (≥ 1 so the cell is finite).
   let mut cmin : Int := 1048576
   for v in vertices do
     let c := cosQ v.la
     if c < cmin then cmin := c
   if cmin < 1 then cmin := 1
-  let cellY := fun (v : QPt) => (v.la * 11132).fdiv gY
-  let cellX := fun (v : QPt) => (v.lo * 11132 * cmin).fdiv gX
-  let mut grid : Std.HashMap Int (Array Nat) := ∅
+  let cminN : Nat := cmin.toNat
+  let cellY := fun (v : QPt) =>
+    let m : Nat := v.la.natAbs * 11132
+    if v.la ≥ 0 then ((m / gY : Nat) : Int) else -(((m + gY - 1) / gY : Nat) : Int)
+  let cellX := fun (v : QPt) =>
+    let m : Nat := v.lo.natAbs * 11132 * cminN
+    if v.lo ≥ 0 then ((m / gX : Nat) : Int) else -(((m + gX - 1) / gX : Nat) : Int)
+  let mut grid : Std.HashMap Nat (Array Nat) := ∅
   for i in [0:vertices.size] do
     let v := vertices.getD i default
-    let key := cellKey (cellY v) (cellX v)
+    let key := cellKeyN (cellY v) (cellX v)
     grid := grid.insert key ((grid.getD key #[]).push i)
   for i in [0:vertices.size] do
     let vi := vertices.getD i default
@@ -524,14 +661,16 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
     let mut cand : Array Nat := #[]
     for dy in [(-1 : Int), 0, 1] do
       for dx in [(-1 : Int), 0, 1] do
-        for j in grid.getD (cellKey (byc + dy) (bxc + dx)) #[] do
+        for j in grid.getD (cellKeyN (byc + dy) (bxc + dx)) #[] do
           if j > i then cand := cand.push j
     for j in cand.qsort (· < ·) do
       let vj := vertices.getD j default
-      let dla : Int := (vj.la - vi.la) * 11132
-      if dla.natAbs > gapUm then continue
+      let dla : Nat := (vj.la - vi.la).natAbs * 11132
+      if dla > gapUm then continue
       let c : Int := cosQ ((vi.la + vj.la).tdiv 2)
-      let dlo : Int := ((vj.lo - vi.lo) * 11132 * c).fdiv 1048576
+      let y : Nat := (vj.lo - vi.lo).natAbs * 11132 * c.natAbs
+      let negY : Bool := decide ((vj.lo - vi.lo) < 0) != decide (c < 0)
+      let dlo : Nat := if negY then (y + 1048575) / 1048576 else y / 1048576
       if dla * dla + dlo * dlo > gapSq then continue
       if (adj.getD i #[]).any (fun e => e.1 == j) then continue
       let w := wt vi vj
@@ -548,6 +687,64 @@ def qCandidatesForFix (fix : QPt) (gr : QGraph) (radiusUm maxCands : Nat) :
     Array QCand := Id.run do
   let mut cands : Array QCand := #[]
   for si in [0:gr.segments.size] do
+    let s := gr.segments.getD si default
+    let a := gr.vertices.getD s.u default
+    let b := gr.vertices.getD s.v default
+    if latGapUm fix a b > radiusUm then continue
+    let proj := qProject fix a b
+    if proj.dist ≤ radiusUm then
+      cands := cands.push { la := proj.la, lo := proj.lo, dist := proj.dist, si, tn := proj.tn, td := proj.td }
+  let sorted := cands.qsort (fun p q => p.dist < q.dist || (p.dist == q.dist && p.si < q.si))
+  return sorted.extract 0 maxCands
+
+/-- Spatial index over a graph's segments, cells one `radiusUm` wide, each
+segment filed in every cell its endpoint box **dilated by one cell** touches. A
+segment within `radiusUm` of `fix` is within `radiusUm` of its own box, hence at
+most one cell away from it on each axis, hence filed in `fix`'s own cell — so
+one bucket holds every segment `qCandidatesForFix` could keep. -/
+structure QSegIndex where
+  cellLa : Int
+  cellLo : Int
+  grid : Std.HashMap Nat (Array Nat)
+
+def mkQSegIndex (gr : QGraph) (radiusUm : Nat) (cmin : Int) : QSegIndex := Id.run do
+  let cellLa : Int := (radiusUm : Int) / 11132 + 1
+  let cellLo : Int := ((radiusUm : Int) * 1048576) / (11132 * cmin) + 1
+  let mut grid : Std.HashMap Nat (Array Nat) := ∅
+  for si in [0:gr.segments.size] do
+    let s := gr.segments.getD si default
+    let a := gr.vertices.getD s.u default
+    let b := gr.vertices.getD s.v default
+    let cy1 := ((max a.la b.la) + cellLa).fdiv cellLa
+    let cx0 := ((min a.lo b.lo) - cellLo).fdiv cellLo
+    let cx1 := ((max a.lo b.lo) + cellLo).fdiv cellLo
+    let mut cy := ((min a.la b.la) - cellLa).fdiv cellLa
+    while cy ≤ cy1 do
+      let mut cx := cx0
+      while cx ≤ cx1 do
+        let key := cellKeyN cy cx
+        -- `alter`, not `insert (getD … |>.push …)`: the latter holds a second
+        -- reference to the bucket while pushing, so every push copies the whole
+        -- bucket — quadratic in bucket size. Same value, one owner.
+        grid := grid.alter key fun o =>
+          let bkt := o.getD #[]
+          if bkt.isEmpty || bkt.getD (bkt.size - 1) 0 != si then some (bkt.push si) else some bkt
+        cx := cx + 1
+      cy := cy + 1
+  return { cellLa, cellLo, grid }
+
+/-- **Grid-indexed `qCandidatesForFix`** — same value, one bucket instead of
+every segment. The all-segments scan is `candidatesForFix`'s shape and was the
+matcher's largest single cost once the corridor was indexed (one scan of ~25 k
+segments per GPS fix). The bucket holds every segment that can pass the radius
+test (see `QSegIndex`), and the `(dist, si)` order the result is sorted by is
+*strict total* (`si` is unique), so the sorted prefix does not depend on the
+order candidates were collected in. -/
+def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
+    (radiusUm maxCands : Nat) : Array QCand := Id.run do
+  let cands0 := idx.grid.getD (cellKeyN (fix.la.fdiv idx.cellLa) (fix.lo.fdiv idx.cellLo)) #[]
+  let mut cands : Array QCand := #[]
+  for si in cands0 do
     let s := gr.segments.getD si default
     let a := gr.vertices.getD s.u default
     let b := gr.vertices.getD s.v default
@@ -1109,10 +1306,11 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   let graph := buildQGraphFast ways co bld P.gapBridgeUm
   if graph.segments.size == 0 then return none
 
+  let segIdx := mkQSegIndex graph P.radiusUm co.cmin
   let mut obs : Array QObs := #[]
   let mut roadless : Nat := 0
   for fix in fixes do
-    let cands := qCandidatesForFix fix graph P.radiusUm P.maxCandidatesPerFix
+    let cands := qCandidatesForFixFast fix graph segIdx P.radiusUm P.maxCandidatesPerFix
     if cands.size == 0 then roadless := roadless + 1
     else obs := obs.push { fix, cands }
   if roadless * P.maxRoadlessDen > fixes.size * P.maxRoadlessNum then return none
