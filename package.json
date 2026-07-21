@@ -35,6 +35,7 @@
 		"compare-rail": "scripts/compare-rail.sh",
 		"compare-geo": "scripts/compare-geo.sh",
 		"compare-match": "scripts/compare-match.sh",
+		"render-match-compare": "node dist/cli/render-match-compare.js",
 		"shadow-passes": "node dist/cli/shadow-passes.js"
 	},
 	"dependencies": {
