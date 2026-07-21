@@ -30,9 +30,16 @@ const HEADER_BYTES = 8;
 /** Response cap: a walking leg's passes emit ≤ a few hundred points; 8 MiB
  *  is comfortably beyond any real payload. Oversize → fall back to TS. */
 const SAB_BYTES = 8 * 1024 * 1024;
-/** Timeout for a WARM call (child already running): a warm serve answers in
- *  well under a millisecond, so 5 s is a generous liveness ceiling. */
-const CALL_TIMEOUT_MS = 5000;
+/** Timeout for a WARM call (child already running). The geometry passes answer
+ *  in well under a millisecond, but the walk matcher (`LEAN_MATCH`) is a real
+ *  computation — ~0.4 s per leg unthrottled, several seconds on the heaviest
+ *  legs when the pod is CPU-throttled — so this is a genuine compute ceiling,
+ *  not just a liveness one. A leg that exceeds it falls back to TS
+ *  (swallow-over-wrong), which costs verified coverage on exactly the biggest
+ *  legs, so the batch decode path (no user waiting) raises it via
+ *  `LEAN_CALL_TIMEOUT_MS`; the interactive `/api/velocity` path leaves it tight
+ *  so a slow leg never stalls a request. */
+const CALL_TIMEOUT_MS = Number(process.env.LEAN_CALL_TIMEOUT_MS) || 5000;
 /** Timeout for the FIRST call over a freshly (re)built worker: it must absorb
  *  the cold `verified_cli serve` spawn — ~1.5 s idle, but several times that on
  *  a CPU-throttled pod under load. A tight 5 s here risks tripping the breaker
