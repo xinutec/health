@@ -164,14 +164,22 @@ once instead of once per query: `c` is `cosQ` at the chord's mid-latitude, `bx`
 / `vy` the chord vector in that local µm frame, `len2` its squared length.
 `loLa`…`hiLo` is the endpoint bounding box **dilated by one coordinate unit** —
 the clamped foot is a rounded convex combination of the endpoints, so it can sit
-at most half a unit outside the raw box. -/
+at most half a unit outside the raw box.
+
+`len2` is a `Nat` (`bx`/`vy` are µm, so it reaches ~10^13) and the chord deltas
+are carried pre-split into magnitude and sign, because the projection multiplies
+them: as `Int` every one of those products would be a GMP bignum. -/
 structure QChord where
   a : QPt
   b : QPt
   c : Int
   bx : Int
   vy : Int
-  len2 : Int
+  len2 : Nat
+  dLaAbs : Nat
+  dLaNeg : Bool
+  dLoAbs : Nat
+  dLoNeg : Bool
   loLa : Int
   hiLa : Int
   loLo : Int
@@ -244,7 +252,10 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
     let bx : Int := ((b.lo - a.lo) * 11132 * c).fdiv 1048576
     let vy : Int := (b.la - a.la) * 11132
     chords := chords.push
-      { a, b, c, bx, vy, len2 := bx * bx + vy * vy
+      { a, b, c, bx, vy
+        len2 := bx.natAbs * bx.natAbs + vy.natAbs * vy.natAbs
+        dLaAbs := (b.la - a.la).natAbs, dLaNeg := b.la < a.la
+        dLoAbs := (b.lo - a.lo).natAbs, dLoNeg := b.lo < a.lo
         loLa := (min a.la b.la) - 1, hiLa := (max a.la b.la) + 1
         loLo := (min a.lo b.lo) - 1, hiLo := (max a.lo b.lo) + 1 }
     let loLa := (min a.la b.la) - cellLa
@@ -260,9 +271,9 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
       let mut cx := cx0
       while cx ≤ cx1 do
         let key := cellKeyN cy cx
-        let b2 := grid.getD key #[]
-        if b2.isEmpty || b2.getD (b2.size - 1) 0 != i then
-          grid := grid.insert key (b2.push i)
+        grid := grid.alter key fun o =>
+          let b2 := o.getD #[]
+          if b2.isEmpty || b2.getD (b2.size - 1) 0 != i then some (b2.push i) else some b2
         cx := cx + 1
       cy := cy + 1
   return { fixes, nearUm, farUm, maxPen, S := farUm - nearUm, cellLa, cellLo, cmin, grid, chords }
@@ -332,11 +343,28 @@ def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
     let d : Nat :=
       if ch.len2 = 0 then qDist p ch.a
       else
+        -- The spec's `max 0 (min (px·bx + py·vy) len2)` and its two `roundDiv`s,
+        -- with every product carried as a `Nat` magnitude and the sign in the
+        -- shape: `px·bx` reaches ~10^14 and `dot·Δ` ~10^16, both far past the
+        -- `2^31` where an `Int` becomes a GMP bignum, and `Nat` keeps the exact
+        -- value at any size (it degrades to a bignum too, just far later).
         let px : Int := ((p.lo - ch.a.lo) * 11132 * ch.c).fdiv 1048576
         let py : Int := (p.la - ch.a.la) * 11132
-        let dot : Int := max 0 (min (px * ch.bx + py * ch.vy) ch.len2)
-        qDist p { la := ch.a.la + roundDiv (dot * (ch.b.la - ch.a.la)) ch.len2
-                  lo := ch.a.lo + roundDiv (dot * (ch.b.lo - ch.a.lo)) ch.len2, ts := 0 }
+        let m1 : Nat := px.natAbs * ch.bx.natAbs
+        let n1 : Bool := decide (px < 0) != decide (ch.bx < 0)
+        let m2 : Nat := py.natAbs * ch.vy.natAbs
+        let n2 : Bool := decide (py < 0) != decide (ch.vy < 0)
+        let dot : Nat :=
+          if n1 == n2 then (if n1 then 0 else min (m1 + m2) ch.len2)
+          else if n1 then (if m2 ≥ m1 then min (m2 - m1) ch.len2 else 0)
+          else (if m1 ≥ m2 then min (m1 - m2) ch.len2 else 0)
+        -- `roundDiv (dot·Δ) len2` with `dot ≥ 0` and `len2 > 0`: half-away-from-
+        -- zero is `⌊(dot·|Δ| + ⌊len2/2⌋)/len2⌋`, negated iff `Δ` is.
+        let half : Nat := ch.len2 / 2
+        let sLa : Nat := (dot * ch.dLaAbs + half) / ch.len2
+        let sLo : Nat := (dot * ch.dLoAbs + half) / ch.len2
+        qDist p { la := ch.a.la + (if ch.dLaNeg then -(sLa : Int) else (sLa : Int))
+                  lo := ch.a.lo + (if ch.dLoNeg then -(sLo : Int) else (sLo : Int)), ts := 0 }
     if d < best then best := d
   return best
 
@@ -445,7 +473,7 @@ def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
       let mut cx := cx0
       while cx ≤ cx1 do
         let key := cellKeyN cy cx
-        grid := grid.insert key ((grid.getD key #[]).push i)
+        grid := grid.alter key fun o => some ((o.getD #[]).push i)
         cx := cx + 1
       cy := cy + 1
   return { rings, boxes, fixes, crossFactor, supportUm, cellLa, cellLo, grid }
@@ -622,8 +650,11 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       if prev ≥ 0 && (id : Int) ≠ prev then
         let a := prev.toNat
         let w := wt prevPt p
-        adj := adj.setIfInBounds a ((adj.getD a #[]).push (id, w))
-        adj := adj.setIfInBounds id ((adj.getD id #[]).push (a, w))
+        -- `modify`, not `setIfInBounds (getD … |>.push …)`: the latter holds a
+        -- second reference to the row while pushing, so every push reallocates
+        -- and copies the whole row. Same value, one owner.
+        adj := adj.modify a (·.push (id, w))
+        adj := adj.modify id (·.push (a, w))
         segments := segments.push { u := a, v := id, lenUm := qDist prevPt p, name := way.name }
       prev := (id : Int)
       prevPt := p
@@ -653,7 +684,7 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
   for i in [0:vertices.size] do
     let v := vertices.getD i default
     let key := cellKeyN (cellY v) (cellX v)
-    grid := grid.insert key ((grid.getD key #[]).push i)
+    grid := grid.alter key fun o => some ((o.getD #[]).push i)
   for i in [0:vertices.size] do
     let vi := vertices.getD i default
     let byc := cellY vi
@@ -674,8 +705,8 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
       if dla * dla + dlo * dlo > gapSq then continue
       if (adj.getD i #[]).any (fun e => e.1 == j) then continue
       let w := wt vi vj
-      adj := adj.setIfInBounds i ((adj.getD i #[]).push (j, w))
-      adj := adj.setIfInBounds j ((adj.getD j #[]).push (i, w))
+      adj := adj.modify i (·.push (j, w))
+      adj := adj.modify j (·.push (i, w))
   return { vertices, segments, g := ⟨adj⟩ }
 
 /-! ## Candidates -/

@@ -48,17 +48,26 @@ structure QPt where
   ts : Int
   deriving BEq, Repr, Inhabited
 
-/-- Newton floor square root, mirroring the twin's BigInt loop exactly
-(`x = n; y = (n+1)/2; while (y < x) { x = y; y = (x + n/x)/2 }`). The
-iterate strictly decreases, and the fixed point of the loop is
-`⌊√n⌋`. -/
+/-- Newton's descent for the floor square root, as the twin's BigInt loop
+(`while (y < x) { x = y; y = (x + n/x)/2 }`). The iterate strictly decreases,
+and the fixed point of the loop is `⌊√n⌋` from any start `x₀ ≥ √n`. -/
 def isqrtGo (n x y : Nat) : Nat :=
   if _h : y < x then isqrtGo n y ((y + n / y) / 2) else x
 termination_by x
 
-/-- Integer floor square root (twin-identical). -/
+/-- Integer floor square root — the same value as the twin, reached in far fewer
+steps. The twin seeds the descent at `x₀ = n`, which costs one halving per bit of
+`n`: for the ~10¹⁴ operands here (µm², squared), ~24 big divisions per call, and
+`qDist` is called several times per graph edge. Seeding instead at the next power
+of two above `√n` — `2^⌈bits(n)/2⌉`, so `x₀² ≥ 2^bits(n) > n` — puts the start
+within a factor of √2 and Newton then doubles the correct digits each step, ~4
+iterations. The precondition for the descent is exactly `x₀ ≥ √n`, so the fixed
+point, and hence the value, is unchanged. -/
 def isqrt (n : Nat) : Nat :=
-  if n < 2 then n else isqrtGo n n ((n + 1) / 2)
+  if n < 2 then n
+  else
+    let s := 1 <<< ((n.log2 + 2) / 2)
+    isqrtGo n s ((s + n / s) / 2)
 
 /-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
 (for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
@@ -104,7 +113,7 @@ def cosQ (la : Int) : Int :=
     -- divisor is `⌊·⌋` on a non-negative numerator and `−⌈·⌉` on a negative one,
     -- which is what the ceilings below spell out. Both subtractions stay in
     -- `Nat`: over `x2 ≤ 4·10^6`, `⌈1453·x2/2^20⌉ ≤ 5544 < 43687` and
-    -- `⌊s1·x2/2^20⌋ ≤ 166 553 < 524 287`. The final value may still be slightly
+    -- `⌊s1·x2/2^20⌋ ≤ 166 653 < 524 287`. The final value may still be slightly
     -- negative (the minimax polynomial undershoots at 90°), so it is an `Int`.
     let s1 : Nat := 43687 - (1453 * x2 + 1048575) / 1048576
     let s2 : Nat := 524287 - s1 * x2 / 1048576
