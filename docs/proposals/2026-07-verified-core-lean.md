@@ -637,6 +637,41 @@ porting float arithmetic.
   vs 52.9s). That variance is the still-unexplained drift noted against the
   30-minute deadline; it moves independently of this change.
 
+- **Rail: the proof had no caller.** `Verified.Rail.dijkstraC` has been proved
+  correct (`dijkstraC_correct`) and complete (`dijkstra_complete`,
+  `dijkstra_none_iff` under `WFEdges`) for a while, `verified_cli rail` exposes
+  it, and `serveLoop` already routed `"rail"` to it — but the only TS caller was
+  the `compare-rail` referee, so the proved search never ran on a real journey.
+  `src/lean/lean-rail.ts` is that caller, behind `LEAN_RAIL` (off/shadow/on).
+
+  What `on` adopts is narrower than for the other two tenants: the result is a
+  list of vertex INDICES into the caller's own graph, not geometry, so there is
+  no dequantisation on the way out and no sub-millimetre drift class. The only
+  thing ×2²⁰ weight quantisation can change is which of two near-tied routes
+  wins — which, unlike a 5 mm shift, redraws a whole route, so it earns a soak.
+
+  It does not run in the decode. Production's `railSnap` pass is an indexed
+  lookup into `rail_route_cache`; the search runs when that cache is FILLED —
+  the offline `refresh-rail-routes` job and the serving path's miss-driven fill
+  for a first-seen route (#363). Hence the ledger prints from the refresh CLI.
+
+  **SHADOW in production since 2026-07-22**, on both the refresh job and the
+  auth pod. First production run: `lean-rail[shadow] 21d-window 25/0f EXACT` —
+  25 real routes, 0 bridge failures, 0 divergences, on top of `compare-rail`'s
+  6/6. No accepted-delta manifest, deliberately: there is nothing to accept, and
+  the first real divergence should read loud rather than pre-blessed.
+
+- **MariaDB 12.3 broke every OSM spatial query** (found while landing the
+  above, unrelated to it). `ST_Buffer` returns SRID 0 on 12.3 even for a 4326
+  input, and 12.3 — unlike 11.8 — rejects mixed-SRID geometry comparisons, so
+  `MBRIntersects(geom, ST_Buffer(point, d))` raised `ER_GIS_DIFFERENT_SRIDS`
+  everywhere. Rail routes went 25 → 0 and OSM enrichment failed per segment;
+  the next decode would have run with no ways for the walk matcher. Neither the
+  column nor the stored rows were at fault (both 4326), and MariaDB's `ST_SRID`
+  is read-only so the buffer could not be restamped. Fixed by building the MBR
+  box directly at 4326 (`mbrBoxWkt`) — exactly the buffer's envelope, and
+  cheaper. See `src/geo/osm-local.ts`.
+
 ## Landmines
 
 - **Proof cost is the budget item.** The pilot took one session; the V1
