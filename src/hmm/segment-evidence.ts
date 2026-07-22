@@ -108,33 +108,60 @@ export function buildSegmentEvidence(
 		stepPrefix[i + 1] = stepPrefix[i] + (obs[i].cadence ?? 0);
 	}
 
-	return (state, durationMinutes, segEndIndex) => {
-		if (state.mode === "unknown") return 0;
-		const startIndex = segEndIndex - durationMinutes + 1;
+	// Everything about a candidate segment's *geometry* — the bracketing
+	// fixes, their separation, the slop variance, the measured step total —
+	// depends on the window (startIndex, segEndIndex) and not at all on which
+	// state is being hypothesised. Both callers hold the window fixed while
+	// sweeping every state (the HSMM trellis loops (t, tau, s); the Lean
+	// exporter loops (d, e, s)), so a one-entry cache keyed on the window
+	// turns S haversines per cell into one. `null` means "assert nothing" —
+	// the unobservable-displacement case the body used to return 0 for.
+	interface Window {
+		dispM: number;
+		slopVar: number;
+		steps: number;
+	}
+	let cachedStart = Number.NaN;
+	let cachedEnd = Number.NaN;
+	let cached: Window | null = null;
+	const windowFor = (startIndex: number, segEndIndex: number): Window | null => {
+		if (startIndex === cachedStart && segEndIndex === cachedEnd) return cached;
+		cachedStart = startIndex;
+		cachedEnd = segEndIndex;
+		cached = null;
 		const first = obs[Math.max(0, startIndex)];
 		const last = obs[segEndIndex];
-		if (first === undefined || last === undefined) return 0;
+		if (first === undefined || last === undefined) return null;
 		const before = first.prevGpsFix;
 		const after = last.nextGpsFix;
 		// No bracketing fixes on one side → the net displacement is
 		// unobservable; assert nothing.
-		if (before === null || after === null || after.ts <= before.ts) return 0;
-
-		const dispM = haversineMeters(before.lat, before.lon, after.lat, after.lon);
+		if (before === null || after === null || after.ts <= before.ts) return null;
 		// Bracket slop: fix time not covered by the segment's own minutes.
 		// Motion there belongs to neighbouring segments and widens σ.
 		const segStartTs = first.ts;
 		const segEndTs = last.ts + 60;
 		const slopMin = (Math.max(0, segStartTs - before.ts) + Math.max(0, after.ts - segEndTs)) / 60;
-		const slopVar = (SLOP_SPEED_M_PER_MIN * slopMin) ** 2;
+		cached = {
+			dispM: haversineMeters(before.lat, before.lon, after.lat, after.lon),
+			slopVar: (SLOP_SPEED_M_PER_MIN * slopMin) ** 2,
+			steps: stepPrefix[Math.min(obs.length, segEndIndex + 1)] - stepPrefix[Math.max(0, startIndex)],
+		};
+		return cached;
+	};
+
+	return (state, durationMinutes, segEndIndex) => {
+		if (state.mode === "unknown") return 0;
+		const w = windowFor(segEndIndex - durationMinutes + 1, segEndIndex);
+		if (w === null) return 0;
+		const { dispM, slopVar } = w;
 		const withSlop = (sigma: number): number => Math.sqrt(sigma * sigma + slopVar);
 
 		if (state.mode === "stationary") {
 			return zPenalty(dispM, 0, withSlop(DISP_NOISE_M));
 		}
 		if (state.mode === "walking") {
-			const steps = stepPrefix[Math.min(obs.length, segEndIndex + 1)] - stepPrefix[Math.max(0, startIndex)];
-			const predicted = steps * STRIDE_M;
+			const predicted = w.steps * STRIDE_M;
 			const sigma = Math.max(STRIDE_REL_STD * predicted, DISP_NOISE_M);
 			return zPenalty(dispM, predicted, withSlop(sigma));
 		}
