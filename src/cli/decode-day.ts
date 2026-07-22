@@ -244,8 +244,10 @@ function logLeanMatchLedger(date: string): void {
 	const mode = leanMatchMode();
 	if (mode === "off") return;
 	const s = leanMatchStats();
+	// Counts breakdown only when there is something to break down; the verdict
+	// below already says EXACT, and printing both read "EXACT EXACT".
 	const clean = s.coarseDiffs === 0 && s.pathDiffs === 0 && s.nullFlips === 0;
-	const detail = clean ? " EXACT" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
+	const detail = clean ? "" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
 	// Which run each divergence came from. `decode` is the persisted, served
 	// output; `shadow` is `runWalkShadow`'s extra velocity run over the same
 	// legs. Pooled, the served count read roughly double and a shadow-only
