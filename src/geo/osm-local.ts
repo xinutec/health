@@ -87,6 +87,34 @@ function metersPerDegLon(lat: number): number {
 }
 
 /**
+ * WKT for the MBR pre-filter box around (lat, lon): the square
+ * `[lon ± dDeg] × [lat ± dDeg]`.
+ *
+ * This used to be `ST_Buffer(point, dDeg)`. MariaDB 12.3 returns SRID **0**
+ * from `ST_Buffer` even when the input is SRID 4326, and 12.3 — unlike 11.8 —
+ * rejects a binary geometry comparison between different SRIDs
+ * (`ER_GIS_DIFFERENT_SRIDS`). Since the stored rows are SRID 4326, every OSM
+ * spatial query started failing the moment the server was upgraded. MariaDB's
+ * `ST_SRID` is read-only (no two-argument setter, unlike MySQL), so the buffer's
+ * SRID cannot simply be restamped.
+ *
+ * Building the box directly is exactly equivalent, not an approximation:
+ * `MBRIntersects` compares minimum bounding rectangles, and the MBR of a
+ * radius-`d` buffer around a point IS that square (verified on the server —
+ * `ST_Envelope(ST_Buffer(p, d))` returns precisely these corners). The bounds
+ * are computed here in JS doubles, the same arithmetic `ST_Buffer` did
+ * internally, so the box is bit-identical to the envelope it replaces. It is
+ * also cheaper: no circle to approximate and immediately discard.
+ */
+export function mbrBoxWkt(lat: number, lon: number, dDeg: number): string {
+	const w = lon - dDeg;
+	const e = lon + dDeg;
+	const s = lat - dDeg;
+	const n = lat + dDeg;
+	return `POLYGON((${w} ${s},${e} ${s},${e} ${n},${w} ${n},${w} ${s}))`;
+}
+
+/**
  * Is the search circle around (lat, lon) with `radiusM` fully inside
  * any of the given coverage rows? Boxes are inclusive on both ends;
  * the search circle is approximated as an axis-aligned bounding box
@@ -523,7 +551,7 @@ export function buildLocalDataProbeQuery(
 		.selectFrom(table)
 		.select(sql<number>`1`.as("exists_marker"))
 		.where("feature_type", "=", featureType)
-		.where(sql<boolean>`MBRIntersects(geom, ST_Buffer(${point}, ${dDeg}))`)
+		.where(sql<boolean>`MBRIntersects(geom, ST_GeomFromText(${mbrBoxWkt(lat, lon, dDeg)}, 4326))`)
 		.limit(1);
 }
 
@@ -659,7 +687,7 @@ export function buildPointsQuery(
 		// MBR pre-filter first — index-accelerated, drops from 5k
 		// rows to a few candidates. The exact distance check after
 		// keeps the great-circle accuracy.
-		.where(sql<boolean>`MBRIntersects(geom, ST_Buffer(${point}, ${dDeg}))`)
+		.where(sql<boolean>`MBRIntersects(geom, ST_GeomFromText(${mbrBoxWkt(lat, lon, dDeg)}, 4326))`)
 		.where(sql<boolean>`ST_Distance_Sphere(geom, ${point}) < ${radiusM}`);
 	if (subtypes && subtypes.length > 0) {
 		q = q.where("subtype", "in", subtypes);
@@ -741,7 +769,7 @@ export function buildLinesQuery(
 		// via idx_feature_type (verified via EXPLAIN on 2026-05-13).
 		// MBRIntersects uses the SPATIAL index and drops the
 		// candidate set to a few rows before the distance check.
-		.where(sql<boolean>`MBRIntersects(geom, ST_Buffer(${point}, ${dDeg}))`)
+		.where(sql<boolean>`MBRIntersects(geom, ST_GeomFromText(${mbrBoxWkt(lat, lon, dDeg)}, 4326))`)
 		.where(sql<boolean>`ST_Distance(geom, ${point}) < ${dDeg}`);
 	if (subtypes && subtypes.length > 0) {
 		q = q.where("subtype", "in", subtypes);
