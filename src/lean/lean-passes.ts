@@ -30,6 +30,7 @@
 
 import { quantPt } from "../geo/quant-twin.js";
 import { LeanBridgeError, leanGeo } from "./lean-core.js";
+import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanPassMode = "off" | "shadow" | "on";
@@ -51,29 +52,11 @@ interface PassStat {
 	diffs: number;
 }
 
-/**
- * Which run the current calls belong to.
- *
- * `decode` is the run whose output is persisted and served; `shadow` is the
- * observational machinery (`runWalkShadow`'s extra velocity run and its per-leg
- * A/B) that re-processes the same legs purely to measure. They were summed into
- * one tally, so a divergence in throwaway measurement code was indistinguishable
- * from one in served output — the ledger's whole job is to tell those apart.
- */
-export type LeanPassScope = "decode" | "shadow";
-
-let scope: LeanPassScope = "decode";
-
-/** Label subsequent pass calls. Callers that never set it stay in `decode`. */
-export function setLeanPassScope(s: LeanPassScope): void {
-	scope = s;
-}
-
 /** Keyed `${scope}|${op}` so one op can be tallied per run. */
 const stats = new Map<string, PassStat>();
 
 function stat(op: string): PassStat {
-	const key = `${scope}|${op}`;
+	const key = `${leanRunScope()}|${op}`;
 	const s = stats.get(key) ?? { calls: 0, fails: 0, diffs: 0 };
 	stats.set(key, s);
 	return s;
@@ -123,13 +106,13 @@ interface Divergence {
 	n: number;
 	note: string;
 	/** Which run produced it — a `decode` divergence affects served output. */
-	scope: LeanPassScope;
+	scope: LeanRunScope;
 }
 const divergences: Divergence[] = [];
 const MAX_DIVERGENCES = 500;
 
 function recordDivergence(op: string, n: number, note: string): void {
-	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note, scope });
+	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note, scope: leanRunScope() });
 }
 
 /** Structured divergences (bounded) — the flip-decision ledger. */
@@ -142,7 +125,7 @@ export function leanPassDivergences(): readonly Divergence[] {
 export function resetLeanPassStats(): void {
 	stats.clear();
 	divergences.length = 0;
-	scope = "decode";
+	resetLeanRunScope();
 }
 
 type LatLonTs = { lat: number; lon: number; ts?: number };

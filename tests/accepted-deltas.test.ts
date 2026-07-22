@@ -12,9 +12,9 @@ import {
 	leanPassScopeTotals,
 	leanPassStats,
 	resetLeanPassStats,
-	setLeanPassScope,
 	simplifyViaLean,
 } from "../src/lean/lean-passes.js";
+import { leanRunScope, setLeanRunScope } from "../src/lean/run-scope.js";
 
 const anAccepted = ACCEPTED_DELTAS[0];
 
@@ -93,11 +93,10 @@ describe("lean-pass ledger scoping", () => {
 	});
 
 	it("reset clears the tallies and returns the scope to decode", () => {
-		setLeanPassScope("shadow");
+		setLeanRunScope("shadow");
 		resetLeanPassStats();
 		expect(leanPassStats()).toEqual({});
 		expect(leanPassScopeTotals()).toEqual({});
-		// Scope is private; its reset is observable through where the next
-		// recorded call lands, which the end-to-end decode check exercises.
+		expect(leanRunScope()).toBe("decode");
 	});
 });

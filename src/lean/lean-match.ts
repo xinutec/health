@@ -37,6 +37,7 @@ import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
+import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanMatchMode = "off" | "shadow" | "on";
@@ -62,19 +63,41 @@ interface MatchStat {
 	nullFlips: number;
 }
 
-const stat: MatchStat = { calls: 0, fails: 0, coarseDiffs: 0, pathDiffs: 0, nullFlips: 0 };
+const empty = (): MatchStat => ({ calls: 0, fails: 0, coarseDiffs: 0, pathDiffs: 0, nullFlips: 0 });
 
-/** Matcher serve-path tallies since the last reset. */
+/** Tallies per run scope. Pooled into one counter, the observational
+ *  `runWalkShadow` velocity run's legs were summed with the persisted decode's,
+ *  so the ledger reported roughly double the served call count and could not say
+ *  whether a divergence reached served output. */
+const stats = new Map<LeanRunScope, MatchStat>();
+
+function stat(): MatchStat {
+	const s = stats.get(leanRunScope()) ?? empty();
+	stats.set(leanRunScope(), s);
+	return s;
+}
+
+/** Matcher tallies since the last reset, summed across scopes. */
 export function leanMatchStats(): Readonly<MatchStat> {
-	return stat;
+	const out = empty();
+	for (const s of stats.values()) {
+		out.calls += s.calls;
+		out.fails += s.fails;
+		out.coarseDiffs += s.coarseDiffs;
+		out.pathDiffs += s.pathDiffs;
+		out.nullFlips += s.nullFlips;
+	}
+	return out;
+}
+
+/** Per-scope matcher tallies — what separates served output from measurement. */
+export function leanMatchScopeTotals(): Readonly<Partial<Record<LeanRunScope, Readonly<MatchStat>>>> {
+	return Object.fromEntries(stats);
 }
 
 export function resetLeanMatchStats(): void {
-	stat.calls = 0;
-	stat.fails = 0;
-	stat.coarseDiffs = 0;
-	stat.pathDiffs = 0;
-	stat.nullFlips = 0;
+	stats.clear();
+	resetLeanRunScope();
 }
 
 const row = (p: QPt): number[] => [Number(p.la), Number(p.lo), Number(p.ts)];
@@ -138,10 +161,10 @@ export function matchWalkSegmentViaLean(
 		lean = leanMatchServe(quantReq(fixes, geo));
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
-		stat.fails += 1;
+		stat().fails += 1;
 		return tsResult;
 	}
-	stat.calls += 1;
+	stat().calls += 1;
 
 	// Compare quantised-TS against the verified rows, splitting the DECISION
 	// layer (coarse) from the display splice (path): a coarse flip is a real
@@ -149,15 +172,15 @@ export function matchWalkSegmentViaLean(
 	// class. A null-vs-matched flip is its own (loudest) bucket.
 	const leanResult = leanToResult(lean);
 	if ((tsResult === null) !== (leanResult === null)) {
-		stat.nullFlips += 1;
+		stat().nullFlips += 1;
 		if (mode === "shadow") {
 			console.warn(`[lean-match] null-flip (ts=${tsResult === null ? "null" : "match"} n=${fixes.length})`);
 		}
 	} else if (tsResult !== null && leanResult !== null) {
 		const coarseDiff = !eqRows(qRows(tsResult.coarsePath), lean.coarse ?? []);
 		const pathDiff = !eqRows(qRows(tsResult.path), lean.path ?? []);
-		if (coarseDiff) stat.coarseDiffs += 1;
-		else if (pathDiff) stat.pathDiffs += 1;
+		if (coarseDiff) stat().coarseDiffs += 1;
+		else if (pathDiff) stat().pathDiffs += 1;
 		if ((coarseDiff || pathDiff) && mode === "shadow") {
 			console.warn(
 				`[lean-match] divergence (n=${fixes.length}) coarse=${coarseDiff} path=${pathDiff} ` +

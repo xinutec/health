@@ -49,14 +49,9 @@ import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
-import { leanMatchMode, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
-import {
-	leanPassDivergences,
-	leanPassScopeTotals,
-	leanPassStats,
-	resetLeanPassStats,
-	setLeanPassScope,
-} from "../lean/lean-passes.js";
+import { leanMatchMode, leanMatchScopeTotals, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
+import { leanPassDivergences, leanPassScopeTotals, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
+import { setLeanRunScope } from "../lean/run-scope.js";
 
 const config = z
 	.object({
@@ -253,7 +248,21 @@ function logLeanMatchLedger(date: string): void {
 	const s = leanMatchStats();
 	const clean = s.coarseDiffs === 0 && s.pathDiffs === 0 && s.nullFlips === 0;
 	const detail = clean ? " EXACT" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
-	console.log(`lean-match[${mode}] ${date} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail}`);
+	// Which run each divergence came from. `decode` is the persisted, served
+	// output; `shadow` is `runWalkShadow`'s extra velocity run over the same
+	// legs. Pooled, the served count read roughly double and a shadow-only
+	// divergence was indistinguishable from one a reader would actually see.
+	const scopes = leanMatchScopeTotals();
+	const byScope = Object.entries(scopes)
+		.map(([sc, t]) => `${sc} ${t.calls}/${t.fails}f/${t.coarseDiffs}c/${t.pathDiffs}p/${t.nullFlips}n`)
+		.join(" · ");
+	const servedDiffs =
+		(scopes.decode?.coarseDiffs ?? 0) + (scopes.decode?.pathDiffs ?? 0) + (scopes.decode?.nullFlips ?? 0);
+	const servedNote = servedDiffs === 0 ? "" : ` ${servedDiffs} IN SERVED OUTPUT`;
+	console.log(
+		`lean-match[${mode}] ${date} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
+			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail}${servedNote}`,
+	);
 	resetLeanMatchStats();
 }
 
@@ -319,7 +328,7 @@ async function decodeAndPersist(
 	// Everything from here is observational: it re-processes the same legs to
 	// measure, and its output is discarded. Label it so the ledger can keep it
 	// out of the served-path tally.
-	setLeanPassScope("shadow");
+	setLeanRunScope("shadow");
 	runLeanShadow(inputs, date);
 	await runWalkShadow(userId, date, tz, osm);
 	logLeanPassLedger(date);
