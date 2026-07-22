@@ -1029,15 +1029,27 @@ def qCandidatesForFix (fix : QPt) (gr : QGraph) (radiusUm maxCands : Nat) :
 segment filed in every cell its endpoint box **dilated by one cell** touches. A
 segment within `radiusUm` of `fix` is within `radiusUm` of its own box, hence at
 most one cell away from it on each axis, hence filed in `fix`'s own cell — so
-one bucket holds every segment `qCandidatesForFix` could keep. -/
+one bucket holds every segment `qCandidatesForFix` could keep
+(`near_segment_cell_range`).
+
+The longitude cell is stepped by `(radiusUm + 1)·2^20`, not `radiusUm·2^20`,
+and the extra unit is not decoration. The corridor grid gets away without it
+because a chord only matters when its distance is *strictly* under the clamp,
+and that strictness is what absorbs `qDist`'s floor. Here the radius test is
+inclusive (`proj.dist ≤ radiusUm`), so the floor has to be paid for explicitly:
+without the `+1` the cell is a unit too narrow whenever `11132·cmin < 2^20 − 1`,
+i.e. `cmin ≤ 94`, and the bucket can then miss a segment it should have
+returned. That is `cos(lat) ≤ 9·10⁻⁵` — within 0.005° of a pole, so unreachable
+for real fixes and never seen by the gate, but wrong, and the cost of being
+right is one coordinate unit (~1 cm) on a cell tens of metres wide. -/
 structure QSegIndex where
   cellLa : Int
   cellLo : Int
   grid : Std.HashMap Nat (Array Nat)
 
 def mkQSegIndex (gr : QGraph) (radiusUm : Nat) (cmin : Int) : QSegIndex := Id.run do
-  let cellLa : Int := (radiusUm : Int) / 11132 + 1
-  let cellLo : Int := ((radiusUm : Int) * 1048576) / (11132 * cmin) + 1
+  let cellLa : Int := ((radiusUm / 11132 : Nat) : Int) + 1
+  let cellLo : Int := (((radiusUm + 1) * 1048576 / (11132 * cmin.toNat) : Nat) : Int) + 1
   let mut grid : Std.HashMap Nat (Array Nat) := ∅
   for si in [0:gr.segments.size] do
     let s := gr.segments.getD si default
@@ -1061,13 +1073,65 @@ def mkQSegIndex (gr : QGraph) (radiusUm : Nat) (cmin : Int) : QSegIndex := Id.ru
       cy := cy + 1
   return { cellLa, cellLo, grid }
 
+/-- Latitude reach under the *inclusive* radius test. -/
+theorem la_within_cell_le {p f : QPt} {radiusUm : Nat} (h : qDist p f ≤ radiusUm) :
+    (f.la - p.la).natAbs ≤ radiusUm / 11132 := by
+  have := le_qDist_la p f
+  omega
+
+/-- Longitude reach under the inclusive radius test. The numerator carries
+`radiusUm + 1` because `≤ radiusUm` on a floored component only bounds the
+unfloored product by `(radiusUm + 1)·2^20`; see `QSegIndex` for why the
+corridor's strict `<` does not need this. -/
+theorem lo_within_cell_le {p f : QPt} {radiusUm : Nat} {cmin : Int}
+    (hc : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
+    (h : qDist p f ≤ radiusUm) :
+    (f.lo - p.lo).natAbs ≤ (radiusUm + 1) * 1048576 / (11132 * cmin.toNat) := by
+  have hlo := le_qDist_lo p f
+  have hA : (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs
+      < (radiusUm + 1) * 1048576 := by omega
+  have hcm : cmin.toNat ≤ (cosQ ((p.la + f.la).tdiv 2)).natAbs := by omega
+  have hmono := Nat.mul_le_mul (Nat.le_refl ((f.lo - p.lo).natAbs * 11132)) hcm
+  have hassoc : (f.lo - p.lo).natAbs * 11132 * cmin.toNat
+      = (f.lo - p.lo).natAbs * (11132 * cmin.toNat) := Nat.mul_assoc _ _ _
+  exact (Nat.le_div_iff_mul_le (by omega)).mpr (by omega)
+
+/-- **The bucket `qCandidatesForFixFast` reads holds every segment that could be
+kept.** `qProject`'s foot lies between the segment's endpoints (either `a`
+itself, when the segment is degenerate, or the clamped rounded combination), and
+`proj.dist` is `qDist` to it — so a segment passing `proj.dist ≤ radiusUm`
+supplies a box point within `radiusUm` of the fix, whose cell index is inside
+the range `mkQSegIndex` filed that segment under. -/
+theorem near_segment_cell_range {p f : QPt} {radiusUm : Nat}
+    {cmin loLa hiLa loLo hiLo cellLa cellLo : Int}
+    (hLaDef : cellLa = ((radiusUm / 11132 : Nat) : Int) + 1)
+    (hLoDef : cellLo = (((radiusUm + 1) * 1048576 / (11132 * cmin.toNat) : Nat) : Int) + 1)
+    (hcm : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
+    (hnear : qDist p f ≤ radiusUm)
+    (hfLa : loLa ≤ f.la) (hfLa' : f.la ≤ hiLa)
+    (hfLo : loLo ≤ f.lo) (hfLo' : f.lo ≤ hiLo) :
+    ((loLa - cellLa).fdiv cellLa ≤ p.la.fdiv cellLa
+      ∧ p.la.fdiv cellLa ≤ (hiLa + cellLa).fdiv cellLa)
+    ∧ ((loLo - cellLo).fdiv cellLo ≤ p.lo.fdiv cellLo
+      ∧ p.lo.fdiv cellLo ≤ (hiLo + cellLo).fdiv cellLo) := by
+  have hla := la_within_cell_le hnear
+  have hlo := lo_within_cell_le hcm hcos hnear
+  exact ⟨cell_mem_range (by omega) (by omega) (by omega),
+    cell_mem_range (by omega) (by omega) (by omega)⟩
+
 /-- **Grid-indexed `qCandidatesForFix`** — same value, one bucket instead of
 every segment. The all-segments scan is `candidatesForFix`'s shape and was the
 matcher's largest single cost once the corridor was indexed (one scan of ~25 k
 segments per GPS fix). The bucket holds every segment that can pass the radius
-test (see `QSegIndex`), and the `(dist, si)` order the result is sorted by is
-*strict total* (`si` is unique), so the sorted prefix does not depend on the
-order candidates were collected in. -/
+test (`near_segment_cell_range`), so both arms sort the same candidate set.
+
+That the sorted *prefix* is then the same is a second claim, and it is the one
+still argued rather than proved: the comparator `(dist, si)` is a strict total
+order because `si` is unique, so a sorted permutation of a given set is unique
+and the collection order cannot matter — but "`qsort` returns a sorted
+permutation" is a property of Lean's `qsort`, and bare core ships no lemma for
+it. Closing this honestly means either proving that or sorting with something
+defined here; the candidate arrays are small enough that the second is cheap. -/
 def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
     (radiusUm maxCands : Nat) : Array QCand := Id.run do
   let cands0 := idx.grid.getD (cellKeyN (fix.la.fdiv idx.cellLa) (fix.lo.fdiv idx.cellLo)) #[]
