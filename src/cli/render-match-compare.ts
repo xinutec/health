@@ -22,16 +22,11 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { BuildingRing, RoadFix } from "../geo/map-match-core.js";
 import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "../geo/match-twin.js";
 import { matchWalkSegment, type WalkMatchResult } from "../geo/pedestrian-match.js";
+import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import type { OsmRoadWay } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import {
-	extractWalkLegs,
-	flattenBuildings,
-	flattenWalkable,
-	type WalkEpisode,
-	type WalkLegInput,
-} from "../geo/walk-shadow-core.js";
+import type { WalkLegInput } from "../geo/walk-shadow-core.js";
 import { ACCEPTED_MATCH_DELTAS } from "../lean/accepted-match-deltas.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -88,13 +83,9 @@ const rendered: RenderedLeg[] = [];
 for (const date of days) {
 	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${fileForDate(date)}`, "utf8"));
 	const inputs = inputsFromFixture(captured);
-	const run = await computeVelocityFromInputs(inputs, { walkMatch: true });
-	const legInputs = extractWalkLegs(
-		run.episodes as WalkEpisode[],
-		inputs.phonetrack.today,
-		flattenWalkable(captured.inputs.osmTrace),
-		flattenBuildings(captured.inputs.osmTrace),
-	);
+	const capture = beginWalkLegCapture();
+	await computeVelocityFromInputs(inputs, { walkMatch: true });
+	const legInputs = endWalkLegCapture(capture);
 	for (const leg of legInputs) {
 		const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
 		const entry = wanted.get(`${date}|${hhmm}`);

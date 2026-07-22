@@ -35,14 +35,9 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import {
-	extractWalkLegs,
-	flattenBuildings,
-	flattenWalkable,
-	shadowWalkLeg,
-	type WalkEpisode,
-} from "../geo/walk-shadow-core.js";
+import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
 import { isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -89,13 +84,9 @@ const leanMismatches: string[] = [];
 for (const file of files) {
 	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${file}`, "utf8"));
 	const inputs = inputsFromFixture(captured);
-	const run = await computeVelocityFromInputs(inputs, { walkMatch: true });
-	const legInputs = extractWalkLegs(
-		run.episodes as WalkEpisode[],
-		inputs.phonetrack.today,
-		flattenWalkable(captured.inputs.osmTrace),
-		flattenBuildings(captured.inputs.osmTrace),
-	);
+	const capture = beginWalkLegCapture();
+	await computeVelocityFromInputs(inputs, { walkMatch: true });
+	const legInputs = endWalkLegCapture(capture);
 	const perDay: string[] = [];
 	for (const leg of legInputs) {
 		const r = shadowWalkLeg(leg, LEAN_BIN);

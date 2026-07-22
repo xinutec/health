@@ -30,19 +30,14 @@ import { loadClassificationInputs } from "../geo/load-classification-inputs.js";
 import { dbOsmAdapter, type OsmAdapter } from "../geo/osm-adapter.js";
 import { RecordingOsmAdapter } from "../geo/osm-adapter-recording.js";
 import type { RailStopRelation } from "../geo/osm-rail-stops.js";
+import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { computeMinuteProximity } from "../geo/rail-road-proximity.js";
 import { loadAllRailStopRelations } from "../geo/rail-stops-cache.js";
 import type { RouteGraph } from "../geo/route-graph.js";
 import { bboxFromFixes, loadRouteGraphForBbox } from "../geo/route-graph-loader.js";
 import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, computeVelocityFromInputs, loadBiometrics } from "../geo/velocity.js";
-import {
-	extractWalkLegs,
-	flattenBuildings,
-	flattenWalkable,
-	shadowWalkDay,
-	type WalkEpisode,
-} from "../geo/walk-shadow-core.js";
+import { shadowWalkDay } from "../geo/walk-shadow-core.js";
 import { loadContinuityContext } from "../hmm/continuity-context.js";
 import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
@@ -165,13 +160,9 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 		const t0 = Date.now();
 		const recorder = new RecordingOsmAdapter(osm);
 		const inputs = await loadClassificationInputs(config, { userId, date, displayTz: tz }, recorder);
-		const run = await computeVelocityFromInputs(inputs, { walkMatch: true });
-		const legs = extractWalkLegs(
-			run.episodes as WalkEpisode[],
-			inputs.phonetrack.today,
-			flattenWalkable(recorder.trace),
-			flattenBuildings(recorder.trace),
-		);
+		const capture = beginWalkLegCapture();
+		await computeVelocityFromInputs(inputs, { walkMatch: true });
+		const legs = endWalkLegCapture(capture);
 		const s = shadowWalkDay(legs, leanBin);
 		console.log(
 			`walk-shadow ${date} quant↔lean ${s.exact}/${s.legs} EXACT` +

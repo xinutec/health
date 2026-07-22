@@ -493,42 +493,55 @@ porting float arithmetic.
   served output. Still open: nothing *alerts* on an unexplained divergence; it
   is labelled in the log and depends on someone reading it.
 
-  **The matcher gate judges a different leg population than production serves
-  (measured 2026-07-22, OPEN).** The same scope split applied to the matcher
-  ledger — `lean-match[on] 2026-07-17 18/0f [by run: decode 9/… · shadow 9/…]`
-  — but adjudication could NOT follow the passes' fix, and the reason is
-  structural rather than mechanical. `accepted-match-deltas.ts` is keyed by
-  golden day + leg start `hh:mm`, and that key does not exist at the matcher
-  call site: episode `startTs` comes from HSMM *states*, and `buildEpisodes`
-  runs *after* `annotateWalkMatches`. Re-keying on an intrinsic leg fingerprint
-  would fix the key but not the premise, because the two sides do not window
-  the same legs. `extractWalkLegs` (the gate and `walk-shadow`) differs from
-  `annotateWalkMatches` (production) in four ways:
+  **The matcher gate judged a different leg population than production serves
+  — found and fixed 2026-07-22.** The same scope split applied to the matcher
+  ledger (`lean-match[on] 2026-07-17 18/0f [by run: decode 9/… · shadow 9/…]`),
+  but adjudication could not follow, and chasing why turned up something worse
+  than a plumbing gap: the gate was not measuring what production serves.
+  `extractWalkLegs` RECONSTRUCTED a leg set, and differed from
+  `annotateWalkMatches` five ways at once:
 
-  1. it iterates HSMM **episodes**, production iterates **enriched segments**;
-  2. it reads the **raw** `phonetrack.today` track, production reads the
+  1. it iterated HSMM **episodes** — which do not exist yet when the matcher
+     runs, since `buildEpisodes` runs *after* `annotateWalkMatches` — while
+     production iterates **enriched segments**;
+  2. it read the **raw** `phonetrack.today` track, production the
      GPS-quality-cleaned `displayFixes`;
-  3. production drops fixes above `WALK_SPEED_CAP_KMH`, the gate does not;
-  4. the minimum leg size is **3** in the gate, `MIN_LEG_FIXES = 4` in
-     production.
+  3. production drops fixes above `WALK_SPEED_CAP_KMH`, the gate did not;
+  4. minimum leg size **3** in the gate, `MIN_LEG_FIXES = 4` in production;
+  5. it fed the matcher a **bbox slice of the whole day's** recorded OSM trace
+     instead of the leg's own centroid disc — a different candidate way set,
+     so even a leg both sides agreed existed could be matched against
+     different roads.
 
-  Measured in one process on 2026-07-17: `walk-shadow` extracted **8** legs
-  (float↔quant coarse 8/0/0 — a clean day) while the production matcher ran
-  **9**, of which 2 diverged on the display path and reached served output.
-  So a clean gate does not imply a clean production run, and the 173-leg
-  corpus figure is a count over the gate's population, not the served one.
-  This is the `feedback_parity_tools_must_mirror_env` failure mode in the
-  matcher's verification layer.
+  Measured in one process on 2026-07-17: `walk-shadow` extracted **8** legs and
+  called the day clean (float↔quant coarse 8/0/0) while the production matcher
+  ran **9**, of which 2 diverged on the display path and reached served output.
+  This is the `feedback_parity_tools_must_mirror_env` failure mode inside the
+  matcher's own verification layer.
 
-  The divergences themselves remain display-only — `walkMatchedPath` feeds no
-  decision — so this is a gap in the *evidence*, not a known wrong output. The
-  fix is to make `extractWalkLegs` mirror `annotateWalkMatches`, which changes
-  the corpus leg population and therefore re-derives both the 173-leg figure
-  and the accepted manifest: a deliberate re-opening of the flip's evidence
-  base, not a mechanical edit. Until then the matcher ledger reports counts and
-  scope but deliberately renders **no accepted/UNEXPLAINED verdict**, because a
-  verdict from a manifest that cannot cover the served population would read as
-  authority it does not have.
+  **Fixed by deleting the second definition, not realigning it.**
+  `annotateWalkMatches` now records each leg as it feeds it
+  (`beginWalkLegCapture` / `endWalkLegCapture`) and the gate, `walk-shadow` and
+  `render-match-compare` consume exactly those — the same reason
+  `RecordingOsmAdapter` records queries rather than predicting them. Two
+  reconstructions cannot drift if there is only one. `walk-shadow` now reports
+  9/9 on 2026-07-17, matching production.
+
+  **The evidence base was re-derived on the corrected population**
+  (`compare-match --gate`): **185 legs** (was 173), quant↔Lean **185/185
+  bit-EXACT** — the verified core's actual claim survives the change intact —
+  and 21 float↔quant deltas, 18 of which the old manifest did not cover. The
+  old numbers are not comparable; they measured a different population. Almost
+  every manifest entry moved: different vertex counts from the different
+  candidate way sets, two legs dropped out, two new ones appeared. Cross-check
+  that the population is now the served one: the gate finds exactly the two
+  divergent legs on 2026-07-17 that production reports serving, where before it
+  found none.
+
+  All 21 remain display-only (`walkMatchedPath` feeds no decision). The two
+  `coarse DIFF` route-choice flips (06-28 10:35, 06-29 08:43) are accepted on
+  that safety basis and are explicitly marked **not yet visually reviewed** —
+  eyeballing them is the outstanding human step.
 
 ## Landmines
 

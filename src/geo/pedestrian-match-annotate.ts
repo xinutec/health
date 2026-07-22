@@ -21,10 +21,16 @@ import { type StepPoint, stepsInWindow } from "./biometrics.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { holdImplausibleSpeed, rejectSpikes } from "./episode-geometry.js";
 import type { FilteredPoint } from "./kalman.js";
-import { matchImprovesDisplay, type RoadFix, spliceMatchedWithDivergentRuns } from "./map-match-core.js";
+import {
+	type BuildingRing,
+	matchImprovesDisplay,
+	type RoadFix,
+	spliceMatchedWithDivergentRuns,
+} from "./map-match-core.js";
 import { MAX_SPEED_FOR_MODE } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { matchWalkSegment } from "./pedestrian-match.js";
+import type { OsmRoadWay } from "./road-match.js";
 import { effectiveMode } from "./segment-util.js";
 import { type CorrectRunDiag, correctWalkPath, DEFAULT_CORRECT_OPTIONS, snapPassages } from "./walk-building-escape.js";
 import {
@@ -55,6 +61,50 @@ const walkCorrectDiag: Array<CorrectRunDiag & { startTs: number }> = [];
 export function drainWalkCorrectDiag(): Array<CorrectRunDiag & { startTs: number }> {
 	return walkCorrectDiag.splice(0, walkCorrectDiag.length);
 }
+/**
+ * One matcher leg exactly as production fed it: the spike-cleaned fixes and the
+ * walkable ways + building footprints read for that leg's disc.
+ */
+export interface CapturedWalkLeg {
+	startTs: number;
+	clean: RoadFix[];
+	ways: OsmRoadWay[];
+	buildings: BuildingRing[];
+}
+
+/**
+ * Capture sink for the verification layer.
+ *
+ * The shadow/gate needs the legs the matcher actually ran on. It used to
+ * RECONSTRUCT them — window HSMM episodes, bbox-slice the day's OSM trace — and
+ * the reconstruction did not agree with production: different iteration unit
+ * (episodes, which do not exist yet when this pass runs), different fix source,
+ * no speed cap, a looser minimum, and a bbox of the whole day instead of the
+ * leg's own disc. Measured on 2026-07-17 that was 8 reconstructed legs against
+ * 9 real ones, so a clean gate did not imply a clean served day.
+ *
+ * Recording removes the second definition rather than trying to keep two in
+ * step — the same reason `RecordingOsmAdapter` records queries instead of
+ * predicting them. Off (and free) unless a caller opts in.
+ */
+let legCapture: CapturedWalkLeg[] | null = null;
+
+/** Start recording matched legs. Returns the previous sink so a caller can
+ *  restore it; the shadow runs one velocity pass at a time, but nesting is
+ *  cheap to support and impossible to get wrong. */
+export function beginWalkLegCapture(): CapturedWalkLeg[] | null {
+	const prev = legCapture;
+	legCapture = [];
+	return prev;
+}
+
+/** Stop recording and return the legs this capture collected, in pass order. */
+export function endWalkLegCapture(restore: CapturedWalkLeg[] | null = null): CapturedWalkLeg[] {
+	const captured = legCapture ?? [];
+	legCapture = restore;
+	return captured;
+}
+
 /** Slack added to the leg's centroid→farthest-fix radius for the walkable-network
  *  read, so the disc comfortably covers the matcher's reach. Same shape as the
  *  smoother's query (one disc around the centroid) — walks are short, so a single
@@ -303,6 +353,7 @@ export async function annotateWalkMatches(
 			}
 		} else {
 			const fixes: RoadFix[] = clean.map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
+			if (legCapture !== null) legCapture.push({ startTs: seg.startTs, clean: fixes, ways, buildings });
 			// Buildings ride along as the matcher's impassable layer (#304): an
 			// unsupported through-building edge is routed around at graph level, so
 			// most crossings never reach the corrector below.

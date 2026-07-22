@@ -21,46 +21,15 @@
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { rejectSpikes } from "./episode-geometry.js";
 import type { BuildingRing, RoadFix } from "./map-match-core.js";
 import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "./match-twin.js";
-import type { OsmTrace } from "./osm-adapter-recording.js";
 import { matchWalkSegment, type WalkMatchResult } from "./pedestrian-match.js";
 import { type QPt, quantPt } from "./quant-twin.js";
 import type { OsmRoadWay } from "./road-match.js";
 
-/** Geometry margin around the leg bbox (deg-lat metres) — covers the candidate
- *  radius, gap bridging and any plausible routing detour. Driver-level and
- *  identical for both arms. */
-export const WINDOW_MARGIN_M = 500;
-
+/** Per-leg float↔quant verdict: identical, within the NEAR tolerance, or a
+ *  genuine difference. */
 export type LegClass = "EXACT" | "NEAR" | "DIFF";
-
-interface BBox {
-	minLat: number;
-	maxLat: number;
-	minLon: number;
-	maxLon: number;
-}
-
-function legBBox(fixes: readonly RoadFix[]): BBox {
-	let minLat = fixes[0].lat;
-	let maxLat = fixes[0].lat;
-	let minLon = fixes[0].lon;
-	let maxLon = fixes[0].lon;
-	for (const f of fixes) {
-		if (f.lat < minLat) minLat = f.lat;
-		if (f.lat > maxLat) maxLat = f.lat;
-		if (f.lon < minLon) minLon = f.lon;
-		if (f.lon > maxLon) maxLon = f.lon;
-	}
-	const dLat = WINDOW_MARGIN_M / 111_320;
-	const dLon = WINDOW_MARGIN_M / (111_320 * Math.cos((minLat * Math.PI) / 180));
-	return { minLat: minLat - dLat, maxLat: maxLat + dLat, minLon: minLon - dLon, maxLon: maxLon + dLon };
-}
-
-const inBox = (lat: number, lon: number, b: BBox): boolean =>
-	lat >= b.minLat && lat <= b.maxLat && lon >= b.minLon && lon <= b.maxLon;
 
 /** 30 cm in 1e-7° latitude units — the NEAR coordinate tolerance. */
 const NEAR_UNITS = 30n;
@@ -143,15 +112,6 @@ function quantLeanExact(quant: QWalkMatchResult | null, lean: LeanMatchResp): bo
 	return eqRows(quant.path.map(ptRow), lean.path) && eqRows(quant.coarsePath.map(ptRow), lean.coarse);
 }
 
-/** A single walking episode, minimally typed against `computeVelocityFromInputs`'s
- *  result so this module needn't import the whole velocity surface. */
-export interface WalkEpisode {
-	mode: string;
-	startTs: number;
-	endTs: number;
-	points: ReadonlyArray<{ lat: number; lon: number }>;
-}
-
 /** One walking leg's matcher input — the spike-cleaned fixes and the
  *  leg-windowed walkable ways + building footprints, exactly as both arms
  *  and the gate consume them. */
@@ -162,49 +122,25 @@ export interface WalkLegInput {
 	buildings: BuildingRing[];
 }
 
-/** Every walkable way anywhere in a day's OSM trace, flattened across query
- *  keys — the universe a drawn line is scored/matched against. Mirrors the
- *  gate's `allWalkable`; `undefined` section (fixture predates the field) → []. */
-export function flattenWalkable(osmTrace: OsmTrace): OsmRoadWay[] {
-	const section = osmTrace.walkableRoads;
-	if (section === undefined) return [];
-	const out: OsmRoadWay[] = [];
-	for (const ways of Object.values(section)) out.push(...ways);
-	return out;
-}
-
-/** Every building footprint anywhere in a day's OSM trace, flattened. */
-export function flattenBuildings(osmTrace: OsmTrace): BuildingRing[] {
-	const section = osmTrace.buildingsNear;
-	if (section === undefined) return [];
-	const out: BuildingRing[] = [];
-	for (const rings of Object.values(section)) out.push(...rings);
-	return out;
-}
-
-/** Window a day's walking episodes into per-leg matcher inputs: fixes clipped
- *  to each leg's span, spike-cleaned, with ways/buildings filtered to the
- *  leg bbox. Legs with < 3 clean fixes are dropped (matcher needs ≥ 3). */
-export function extractWalkLegs(
-	episodes: readonly WalkEpisode[],
-	fixes: readonly RoadFix[],
-	dayWays: readonly OsmRoadWay[],
-	dayBuildings: readonly BuildingRing[],
-): WalkLegInput[] {
-	const out: WalkLegInput[] = [];
-	for (const ep of episodes) {
-		if (ep.mode !== "walking" || ep.points.length < 2) continue;
-		const legFixes = fixes.filter((f) => f.ts >= ep.startTs && f.ts <= ep.endTs);
-		if (legFixes.length < 3) continue;
-		const clean = rejectSpikes(legFixes).map((p) => ({ lat: p.lat, lon: p.lon, ts: p.ts }));
-		if (clean.length < 3) continue;
-		const box = legBBox(clean);
-		const ways = dayWays.filter((w) => w.coords.some(([lat, lon]) => inBox(lat, lon, box)));
-		const buildings = dayBuildings.filter((r) => r.some((p) => inBox(p.lat, p.lon, box)));
-		out.push({ startTs: ep.startTs, clean, ways, buildings });
-	}
-	return out;
-}
+/**
+ * A day's matcher legs come from `annotateWalkMatches` recording them as it
+ * feeds them (`beginWalkLegCapture` / `endWalkLegCapture` in
+ * `pedestrian-match-annotate.ts`), NOT from reconstructing a leg set here.
+ *
+ * The reconstruction this replaces rebuilt legs from HSMM episodes and a bbox
+ * slice of the day's OSM trace, and disagreed with production five ways at once
+ * — different iteration unit, fix source, speed cap, minimum leg size, and
+ * candidate way set. Measured on 2026-07-17: 8 reconstructed legs against
+ * production's 9. A gate that measures a different population than production
+ * serves cannot certify what production serves, so the second definition is
+ * gone rather than realigned.
+ *
+ * Callers wrap their own velocity run:
+ *
+ *     const prev = beginWalkLegCapture();
+ *     await computeVelocityFromInputs(inputs, { walkMatch: true });
+ *     const legs = endWalkLegCapture(prev);
+ */
 
 /** One leg's A/B outcome. `float`/`quant` are the raw matcher results, carried
  *  for callers (the gate) that report richer per-leg detail; the shadow reads
