@@ -95,6 +95,39 @@ theorem cosMul_eq (la : Int) : cosMul la = la.natAbs * 19190098069 / 10485760000
       Nat.mod_eq_of_lt hmul]
   · rfl
 
+/-- `⌊m/d⌋` on a non-negative numerator is just `Nat` division. -/
+theorem fdiv_natCast (m d : Nat) : ((m : Int)).fdiv (d : Int) = ((m / d : Nat) : Int) := by
+  cases m with
+  | zero => simp
+  | succ m' => rfl
+
+/-- `⌊−m/d⌋ = −⌈m/d⌉`, with the ceiling written the usual `(m + d − 1)/d` way.
+This is the identity that lets a signed `fdiv` be carried as a `Nat` magnitude
+plus a sign — the rewrite the matcher's hot path depends on. -/
+theorem fdiv_neg_natCast (m d : Nat) (hd : 0 < d) :
+    (-(m : Int)).fdiv (d : Int) = -(((m + d - 1) / d : Nat) : Int) := by
+  obtain ⟨d', rfl⟩ : ∃ d', d = d' + 1 := ⟨d - 1, by omega⟩
+  cases m with
+  | zero =>
+    have h0 : (0 + (d' + 1) - 1) / (d' + 1) = 0 := by
+      rw [show 0 + (d' + 1) - 1 = d' by omega]
+      exact Nat.div_eq_of_lt (by omega)
+    rw [h0]
+    rfl
+  | succ m' =>
+    -- `-(ofNat (m'+1))` is `negSucc m'` definitionally, and `fdiv` on that pair
+    -- is `-[m' / (d'+1) + 1]` — the ceiling, already.
+    show Int.fdiv (Int.negSucc m') (Int.ofNat (d' + 1)) = _
+    rw [show m' + 1 + (d' + 1) - 1 = m' + (d' + 1) by omega,
+      Nat.add_div_right m' (by omega : 0 < d' + 1)]
+    rfl
+
+/-- `fdiv_neg_natCast` with the `d − 1` supplied as its own literal, so a call
+site can state the ceiling as e.g. `(m + 1048575) / 1048576` and still unify. -/
+theorem fdiv_neg_natCast' (m d e : Nat) (hd : 0 < d) (he : e + 1 = d) :
+    (-(m : Int)).fdiv (d : Int) = -(((m + e) / d : Nat) : Int) := by
+  rw [fdiv_neg_natCast m d hd, show m + d - 1 = m + e by omega]
+
 /-- Q20 fixed-point cosine of a 1e-7°-unit latitude, by integer Horner
 over a degree-6 minimax polynomial (|poly err| ≈ 1e-7; the Q20 width,
 not the polynomial, is the binding precision). Constants:
@@ -122,6 +155,68 @@ def cosQ (la : Int) : Int :=
     let s1 : Int := (-1453 * (x2 : Int)).fdiv 1048576 + 43687
     let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
     (s2 * (x2 : Int)).fdiv 1048576 + 1048576
+
+/-- The reference Horner, exactly as the BigInt twin writes it: signed `Int`
+throughout, no case split. `cosQ` runs the `Nat`-magnitude form instead, for
+speed; `cosQ_eq` proves the two agree at every latitude. -/
+def cosQSpec (la : Int) : Int :=
+  let x2 : Nat := cosMul la * cosMul la / 1048576
+  let s1 : Int := (-1453 * (x2 : Int)).fdiv 1048576 + 43687
+  let s2 : Int := (s1 * (x2 : Int)).fdiv 1048576 + -524287
+  (s2 * (x2 : Int)).fdiv 1048576 + 1048576
+
+/-- **`cosQ` computes the reference Horner.** The fast branch replaces three
+signed `fdiv`s by `Nat` divisions with the signs moved into the term's shape;
+this discharges that rewrite, including the two `Nat` subtractions, which
+truncate at zero rather than going negative and so would silently return a
+different cosine if the `x2 ≤ 4·10^6` guard did not bound them. Neither branch
+is assumed: the guard is what makes the bounds hold, and it is discharged here
+rather than argued in a comment. -/
+theorem cosQ_eq (la : Int) : cosQ la = cosQSpec la := by
+  unfold cosQ cosQSpec
+  simp only []
+  generalize cosMul la * cosMul la / 1048576 = x2
+  split
+  · next hbnd =>
+    -- Step 1. `(-1453·x2).fdiv 2^20 = -⌈1453·x2/2^20⌉`, and the ceiling is at
+    -- most 5544, so `43687 - ⌈·⌉` does not truncate.
+    have hc1 : (1453 * x2 + 1048575) / 1048576 ≤ 5544 :=
+      Nat.div_le_of_le_mul (by
+        have h : 1453 * x2 ≤ 1453 * 4000000 := Nat.mul_le_mul_left 1453 hbnd
+        omega)
+    have h1 : (-1453 * (x2 : Int)).fdiv 1048576
+        = -(((1453 * x2 + 1048575) / 1048576 : Nat) : Int) := by
+      rw [show (-1453 * (x2 : Int)) = -((1453 * x2 : Nat) : Int) by
+        rw [Int.natCast_mul]; rfl]
+      exact fdiv_neg_natCast' (1453 * x2) 1048576 1048575 (by omega) (by omega)
+    have hb1 : (1453 * x2 + 1048575) / 1048576 ≤ 43687 := by omega
+    have hs1 : (-1453 * (x2 : Int)).fdiv 1048576 + 43687
+        = ((43687 - (1453 * x2 + 1048575) / 1048576 : Nat) : Int) := by
+      rw [h1, Int.natCast_sub hb1]; omega
+    rw [hs1]
+    -- Step 2. `s1 ≥ 0`, so its `fdiv` is plain `Nat` division; bound it so
+    -- `524287 - ⌊·⌋` does not truncate either.
+    generalize hs1d : 43687 - (1453 * x2 + 1048575) / 1048576 = s1
+    have hs1le : s1 ≤ 43687 := by omega
+    have hc2 : s1 * x2 / 1048576 ≤ 166653 :=
+      Nat.div_le_of_le_mul (Nat.le_trans (Nat.mul_le_mul hs1le hbnd) (by omega))
+    have h2 : ((s1 : Int) * (x2 : Int)).fdiv 1048576 = ((s1 * x2 / 1048576 : Nat) : Int) := by
+      rw [← Int.natCast_mul]; exact fdiv_natCast _ _
+    have hb2 : s1 * x2 / 1048576 ≤ 524287 := by omega
+    have hs2 : ((s1 : Int) * (x2 : Int)).fdiv 1048576 + -524287
+        = -((524287 - s1 * x2 / 1048576 : Nat) : Int) := by
+      rw [h2, Int.natCast_sub hb2]; omega
+    rw [hs2]
+    -- Step 3. Negative again, so `fdiv` is the ceiling once more.
+    generalize 524287 - s1 * x2 / 1048576 = s2
+    rw [show (-((s2 : Nat) : Int)) * (x2 : Int) = -((s2 * x2 : Nat) : Int) by
+      rw [Int.natCast_mul]; exact Int.neg_mul _ _]
+    have h3 : (-((s2 * x2 : Nat) : Int)).fdiv 1048576
+        = -(((s2 * x2 + 1048575) / 1048576 : Nat) : Int) :=
+      fdiv_neg_natCast' (s2 * x2) 1048576 1048575 (by omega) (by omega)
+    rw [h3]
+    omega
+  · rfl
 
 /-- µm between two points, cos at the mid-latitude — mirrors
 `metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm
