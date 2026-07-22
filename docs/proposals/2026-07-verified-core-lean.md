@@ -458,18 +458,40 @@ porting float arithmetic.
   `despike` (pedestrian-match). One corpus replay drives **739 verified Lean
   calls** (simplify 185 / spurs 183 / trim 166 / despike 166 / spikes 39).
   **Golden is 31/31 byte-identical both flag-off AND under `LEAN_PASSES=on`** —
-  serving the verified geometry changes no final output. The only measured
-  divergences are 2 accepted Douglas-Peucker single-vertex near-ties on
-  simplify (`src/lean/accepted-deltas.ts`), which wash out downstream.
+  serving the verified geometry changes no final output. The only divergences
+  the corpus measures are 2 accepted Douglas-Peucker single-vertex near-ties on
+  simplify (`src/lean/accepted-deltas.ts`), which wash out downstream. The
+  manifest carries a third entry observed by the production ledger on a day the
+  corpus does not cover — see the soak note below.
 
   **Honest flip gate.** `shadow` and `on` take the SAME measurements
   (calls / bridge-failures / divergences); a green `on` run therefore *proves*
   the bridge served every call rather than silently falling back to TS. The
   gate (`npm run shadow-passes [--on]`) is RED unless coverage > 0 AND
   failures == 0 AND every divergence is in the accepted manifest — closing the
-  earlier false-CLEAN bug where a dead bridge read as ready-to-flip. The
-  remaining step to serve Lean in production is a deploy decision
-  (`LEAN_PASSES=on`), not a code gap.
+  earlier false-CLEAN bug where a dead bridge read as ready-to-flip.
+
+  **Flipped and soaking (2026-07-22).** `LEAN_PASSES=on` is live on both
+  workloads, so the gate is no longer the only adjudicator — and it never could
+  be for the days that matter, since it replays `tests/golden/days` (corpus
+  ending 2026-07-16) while the decode cron runs the trailing 7 days. Two gaps
+  that opened once production started serving, both now closed:
+
+  - The production ledger printed divergences without checking them against the
+    manifest, so a signed-off near-tie and a real behaviour change read alike.
+    It now adjudicates through the same `unexplainedDeltas` the gate uses.
+  - The per-day tally summed every velocity run, including the extra one
+    `runWalkShadow` makes purely to extract legs. Calls now carry a scope
+    (`decode` = persisted/served, `shadow` = observational), so the line reads
+    `[all ops by run: decode … · shadow …]` and flags `IN SERVED OUTPUT` only
+    when the decode itself diverged.
+
+  The one divergence the soak has produced (2026-07-17, simplify n=115) is a DP
+  argmax tie: float separates the candidate vertices by 3.77 mm, both quantise
+  to exactly 7063019 µm — under the 1e-7° representation's resolving power, so
+  the served metric cannot order them. It arises in the `shadow` scope, not in
+  served output. Still open: nothing *alerts* on an unexplained divergence; it
+  is labelled in the log and depends on someone reading it.
 
 ## Landmines
 
