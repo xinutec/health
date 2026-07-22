@@ -338,10 +338,11 @@ gap an under-estimate (`boxRejects_sound`). -/
 can change neither the running minimum nor the final answer.
 
 The one premise that is not local is `hcos`: `cmin` must lower-bound `cosQ` at
-the *query's* mid-latitude, not merely over the chord. `mkQCorridor` establishes
-it by taking the corridor's latitude band, widening it by 0.1°, and subtracting
-`cosSlack` — and that step is measured rather than proved, which is why it is
-carried here as a hypothesis instead of being assumed away. -/
+the *query's* mid-latitude, not merely over the chord. `mkQCorridor` supplies it
+from `cosQLowerBound`, which `cosQLowerBound_le` proves sits under `cosQ`
+throughout the band — so all that is left to assume is that the query's
+mid-latitude lies in the margin-widened band at all, which is a fact about where
+the matcher looks, not about arithmetic. -/
 theorem boxRejects_sound {p f : QPt} {ch : QChord} {cmin : Int} {best : Nat}
     (hLa : ch.loLa ≤ f.la) (hLa' : f.la ≤ ch.hiLa)
     (hLo : ch.loLo ≤ f.lo) (hLo' : f.lo ≤ ch.hiLo)
@@ -391,9 +392,8 @@ range that chord was filed under.
 `cmin` lower-bounds `cosQ` over the whole corridor **plus a 0.1° latitude
 margin** — far more than any point `distToFast` is asked about can stray — so it
 is a sound cos bound for the longitude gap as well as a safe (never too narrow)
-cell width. That last step is the one the proofs take as a hypothesis rather
-than establish: see `boxRejects_sound`. `chords` carries each chord's solved
-projection frame. -/
+cell width — proved, via `cosQLowerBound_le`, rather than sampled. `chords`
+carries each chord's solved projection frame. -/
 structure QCorridor where
   fixes : Array QPt
   nearUm : Nat
@@ -413,16 +413,12 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
   -- high is not — it would narrow a cell below `farUm` or over-estimate a
   -- distance that is supposed to be a lower bound).
   --
-  -- `cosQ` is *morally* decreasing in |latitude|, so the extreme of the
-  -- margin-widened band is the minimum — but it is NOT exactly decreasing. It is
-  -- a floor-rounded minimax polynomial, and when the `-1453·x2` term steps down
-  -- it drags `s1·x2` down with it, so `cosQ` can tick back UP as |la| grows.
-  -- Measured over the whole latitude range at 1e-4° resolution (and exhaustively
-  -- over a London-width band) the largest such rise above the running minimum is
-  -- **2** Q20 units. `cosSlack` is three orders of magnitude above that, which
-  -- also swallows the polynomial's own ~1e-7 error; it costs 0.04% on cell width
-  -- and reject strength, i.e. nothing measurable.
-  let cosSlack : Int := 256
+  -- Taken from `cosQLowerBound`, which is proved (`cosQLowerBound_le`) to sit
+  -- under `cosQ` at every latitude in the band. It does NOT go via "cosQ falls
+  -- with |latitude|", which is false — see the discussion at `cosQLowerBound`.
+  -- The bound is ~4% loose, so cells are ~4% wider and the longitude reject ~4%
+  -- weaker than a tight bound would give; both are value-preserving, and that is
+  -- the whole cost of not having to sample a constant.
   let mut mnLa : Int := 0
   let mut mxLa : Int := 0
   if 0 < fixes.size then
@@ -435,7 +431,7 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
   let loEnd : Int := mnLa - margin
   let hiEnd : Int := mxLa + margin
   let mut cmin : Int :=
-    cosQ (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd) - cosSlack
+    cosQLowerBound (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd)
   if cmin < 1 then cmin := 1
   -- Stated as `Nat` divisions cast up, which is both what the machine wants and
   -- the exact form `near_chord_cell_range` is proved about.
@@ -548,8 +544,8 @@ lies inside the range `mkQCorridor` filed that chord under — on both axes. Wit
 than the `farUm` clamp is necessarily in `p`'s own bucket, so reading one bucket
 loses nothing.
 
-`hcos` is the same corridor-wide cosine bound `boxRejects_sound` needs, and is
-open for the same reason. -/
+`hcos` is the same corridor-wide cosine bound `boxRejects_sound` needs, and
+`cosQLowerBound_le` discharges it the same way. -/
 theorem near_chord_cell_range {p f : QPt} {farUm : Nat}
     {cmin loLa hiLa loLo hiLo cellLa cellLo : Int}
     (hLaDef : cellLa = ((farUm / 11132 : Nat) : Int) + 1)
@@ -608,9 +604,9 @@ Two further departures from the spec's shape, both value-preserving:
   sound by `chordReject_sound`: a rejected chord has `d ≥ best`, so dropping it
   leaves both the `best` sequence and the minimum unchanged.
 
-Both of those theorems, and nothing else here, take the corridor's cosine bound
-`cmin ≤ cosQ` as a hypothesis. That is the one link in the chain still resting
-on measurement — `scripts/probe-cosq-monotonicity.py`. -/
+Both of those theorems take the corridor's cosine bound `cmin ≤ cosQ` as a
+hypothesis, and `cosQLowerBound_le` discharges it for every latitude in the
+band. -/
 def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
   if co.fixes.size == 0 then return 0
   if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)

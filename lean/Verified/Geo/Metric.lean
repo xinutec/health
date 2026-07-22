@@ -356,6 +356,66 @@ theorem cosQ_eq (la : Int) : cosQ la = cosQSpec la := by
     omega
   · rfl
 
+/-! ### A *provable* floor under `cosQ`
+
+The corridor needs a `cosQ` lower bound valid over a whole latitude band. The
+obvious route — evaluate `cosQ` at the band's extreme |latitude| and rely on
+`cosQ` falling with |latitude| — is **not sound**: `cosQ` is a floor-rounded
+minimax polynomial and ticks back up by up to 2 Q20 units
+(`scripts/probe-cosq-monotonicity.py`). Those dips are not noise. `cosQ` is
+`2^20 − ⌈s2(t)·t/2^20⌉` with `t` the squared argument, and each step of the
+inner `⌊s1(t)·t/2^20⌋` drops `s2(t)·t` by about `t`, which is millions — so the
+ceiling really does fall back by a unit or two. Bounding that globally is cubic
+interval analysis.
+
+None of which is needed, because the bound does not have to be tight. `s2(t)`
+is `524287 − ⌊s1(t)·t/2^20⌋`, hence never exceeds `524287`, so replacing it by
+that constant gives a floor under `cosQ` that depends on the band only through
+`t` — and `t` *is* monotone in |latitude|, trivially. No property of `cosQ`
+itself is used.
+
+The price is looseness: at 51.5° this returns 624 968 against a true 652 731,
+about 4.3% low, which widens grid cells and weakens the longitude reject by the
+same 4.3%. Both stay sound (a smaller cos bound only ever widens a cell and
+loosens a reject) and neither changes a returned value. That is the trade — a
+few percent of candidate pruning, for a bound that is proved rather than
+sampled. -/
+
+/-- Lower bound on `cosQ` at every latitude of magnitude at most `|la|`.
+Sound for `|la| ≤ 10^9`, which covers every latitude plus the corridor's
+margin; beyond that `s1` can go negative and the bound is meaningless. -/
+def cosQLowerBound (la : Int) : Int :=
+  let t : Nat := cosMul la * cosMul la / 1048576
+  (1048576 : Int) - (((524287 * t + 1048575) / 1048576 : Nat) : Int)
+
+/-- `cosMul` is monotone in |latitude| — a floor of a scaled magnitude. -/
+theorem cosMul_le_cosMul {m e : Int} (h : m.natAbs ≤ e.natAbs) : cosMul m ≤ cosMul e := by
+  rw [cosMul_eq, cosMul_eq]
+  exact Nat.div_le_div_right (Nat.mul_le_mul h (Nat.le_refl _))
+
+/-- **`cosQLowerBound e` really is below `cosQ` everywhere in the band.** The
+whole proof is: the squared argument is monotone in |latitude|, and `s2` never
+exceeds `524287`. `cosQ`'s own shape is never appealed to. -/
+theorem cosQLowerBound_le {m e : Int} (hm : m.natAbs ≤ e.natAbs)
+    (he : e.natAbs ≤ 1000000000) : cosQLowerBound e ≤ cosQ m := by
+  unfold cosQ cosQLowerBound
+  simp only []
+  -- `t` is monotone in |latitude|, and bounded well inside the fast branch.
+  have hmul := cosMul_le_cosMul hm
+  have hmono : cosMul m * cosMul m / 1048576 ≤ cosMul e * cosMul e / 1048576 :=
+    Nat.div_le_div_right (Nat.mul_le_mul hmul hmul)
+  have hcap : cosMul e ≤ 1830147 := by
+    rw [cosMul_eq]
+    exact Nat.le_trans (Nat.div_le_div_right (Nat.mul_le_mul he (Nat.le_refl _)))
+      (by decide)
+  have hbnd : cosMul e * cosMul e / 1048576 ≤ 4000000 :=
+    Nat.le_trans (Nat.div_le_div_right (Nat.mul_le_mul hcap hcap)) (by decide)
+  rw [if_pos (Nat.le_trans hmono hbnd)]
+  -- `s2 ≤ 524287`, so the ceiling at the band extreme dominates.
+  refine Int.sub_le_sub_left ?_ _
+  refine Int.ofNat_le.mpr (Nat.div_le_div_right (Nat.add_le_add_right ?_ _))
+  exact Nat.mul_le_mul (Nat.sub_le _ _) hmono
+
 /-- µm between two points, cos at the mid-latitude — mirrors
 `metersBetween` (`map-match-core.ts`). One latitude unit = 11 132 µm
 exactly. -/
