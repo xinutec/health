@@ -575,6 +575,53 @@ porting float arithmetic.
   `all accepted 2 IN SERVED OUTPUT` with per-leg `[accepted][decode]` tags.
   Same key, same rule, both sides.
 
+- **The HSMM's cost was mostly not the Lean decoder.** The cron's shadow line
+  reported `quantise ~30s  ts ~3.3s  lean ~12s` per day. The quantise step is
+  what marshals a day's model into integer tensors for the verified decoder —
+  it exists *only* to feed Lean, so it is a hard prerequisite of ever serving
+  the decode from Lean, and at 2.5x the Lean decode it was the larger obstacle.
+  It is also TypeScript, so it was the tractable one.
+
+  Ninety percent of it was the duration tensor: 55M `(state, duration,
+  segment-end)` cells (S≈159, maxD=240, T=1440), swept twice. Three fixes, none
+  of which change a single exported value:
+
+  1. `logDurationProb` re-ran a 9-term Lanczos series for `log Γ(α)` — with a
+     fresh coefficient array each call — on every one of those cells, for one
+     of ~7 fitted α, then two string-keyed record lookups for a value that
+     depends on nothing but mode and duration. Memoised (`64 -> 14 ns/cell`).
+  2. `buildSegmentEvidence` recomputed a haversine per *state*, though the
+     segment geometry depends only on the window `(startIndex, segEndIndex)`.
+     Both callers hold the window fixed across the state sweep, so a one-entry
+     cache collapses S haversines to one (`53 -> 21 ns/cell`).
+  3. The class-factorised export swept the tensor twice. Pass 1's `!split` test
+     *is* the class verification; cells after the final split were already
+     checked under the final partition, so pass 2 needs only the class
+     representatives there. The partition settles inside the first 0.32% of
+     cells on every corpus day.
+
+  `quantizeModel` 14.1s -> 4.5s on a production-shaped day. Fixes 1 and 2 are
+  in the model's own closures, so the production TS decode gets them too — one
+  definition, no exporter-local copy to drift.
+
+  Two coverage gaps surfaced doing it, both still open:
+
+  - `npm run lean-shadow` runs the corpus *without* the c4 flags, so its
+    duration export always takes the **sparse** branch (`ov=…`). The
+    class-factorised branch production takes every day (`durClasses=8`) has no
+    gate. Fix 3 was verified against a purpose-built referee re-deriving every
+    delta exhaustively (12 days, ~640M cells, agreeing everywhere) — that
+    referee is not yet wired into `verify`.
+  - `npm run golden-hsmm` fails 3 of 12 fixtures (2026-05-15, 07-12, 07-14) and
+    is **not** part of `npm run verify`, so nothing catches it. Confirmed
+    pre-existing by running it on the unmodified tree; the failures are
+    single-segment boundary shifts. Unrelated to the above, but nothing is
+    watching it.
+
+  What this does *not* fix: the Lean decoder itself is still ~8.6s against TS's
+  ~1.2s on the same day. Quantise is no longer the dominant term; the decoder
+  is.
+
 ## Landmines
 
 - **Proof cost is the budget item.** The pilot took one session; the V1
