@@ -26,17 +26,29 @@
  * — fails the gate. That is the honest boundary between "known, bounded,
  * signed-off" and "a real behaviour change we have not reviewed".
  *
- * Each entry is keyed by golden day + leg start (hh:mm UTC) + the coarse/path
- * classes, so a match is an exact fingerprint of the divergence, not a fuzzy
- * "some leg of this day".
+ * Each entry is keyed by the leg's OWN fingerprint (`legFingerprint`: a digest
+ * of its quantised input fixes) plus the coarse/path classes and the vertex
+ * note — an exact fingerprint of the divergence, not a fuzzy "some leg of this
+ * day". The key was previously golden day + `hh:mm`, which only the gate could
+ * compute: the decode cron runs the *trailing* 7 days, which stay ahead of any
+ * fixed corpus, so every live divergence missed the manifest and would have
+ * read UNEXPLAINED. Keying on the leg itself means ONE rule — the
+ * `isAcceptedMatchDelta` below — adjudicates both the gate and the production
+ * ledger, as `accepted-deltas.ts` already does for the geometry passes. `date`
+ * and `hhmm` remain as the audit trail, not as the key.
  */
 
 export type MatchLegClass = "EXACT" | "NEAR" | "DIFF";
 
 export interface AcceptedMatchDelta {
-	/** Golden day (YYYY-MM-DD) of the diverging leg. */
+	/** THE KEY: `legFingerprint` of the leg's quantised input fixes — its own
+	 *  identity, independent of which day it fell on. See `legFingerprint` for
+	 *  why the key is intrinsic rather than calendar-positional. */
+	leg: string;
+	/** Golden day (YYYY-MM-DD) the leg was measured on. Documentation and audit
+	 *  trail only — NOT part of the key, so a live day matches too. */
 	date: string;
-	/** Leg start, hh:mm UTC (as `compare-match` prints it). */
+	/** Leg start, hh:mm UTC (as `compare-match` prints it). Documentation only. */
 	hhmm: string;
 	/** The coarse (decision-layer) float↔quant class. */
 	coarse: MatchLegClass;
@@ -95,6 +107,7 @@ export interface AcceptedMatchDelta {
 export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	// ── coarse DIFF — genuine route-choice flips (NOT yet eyeballed) ────────────
 	{
+		leg: "91167e4cf16f9ea8",
 		date: "2026-06-28",
 		hhmm: "10:35",
 		coarse: "DIFF",
@@ -104,6 +117,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"Route-choice flip: float and quant pick different corridors at a candidate-cost near-threshold. NOT yet visually reviewed — flagged for a before/after eyeball. Accepted on the display-only safety basis below, not on inspection.",
 	},
 	{
+		leg: "77277765451f43f5",
 		date: "2026-06-29",
 		hhmm: "08:43",
 		coarse: "DIFF",
@@ -114,6 +128,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	},
 	// ── coarse NEAR — same route, vertices within 30 cm ─────────────────────────
 	{
+		leg: "cf8fa2efd60d5dc6",
 		date: "2026-04-30",
 		hhmm: "15:16",
 		coarse: "NEAR",
@@ -122,6 +137,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
 	},
 	{
+		leg: "2742a9a5725284a7",
 		date: "2026-05-22",
 		hhmm: "14:14",
 		coarse: "NEAR",
@@ -130,6 +146,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
 	},
 	{
+		leg: "c404de72018eedd8",
 		date: "2026-06-16",
 		hhmm: "16:07",
 		coarse: "NEAR",
@@ -138,6 +155,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
 	},
 	{
+		leg: "2e242afcfc715c06",
 		date: "2026-06-28",
 		hhmm: "11:17",
 		coarse: "NEAR",
@@ -146,6 +164,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
 	},
 	{
+		leg: "e571f151028d7d64",
 		date: "2026-07-02",
 		hhmm: "14:36",
 		coarse: "NEAR",
@@ -154,6 +173,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
 	},
 	{
+		leg: "dad09ddcae17b2ba",
 		date: "2026-07-06",
 		hhmm: "10:34",
 		coarse: "NEAR",
@@ -163,6 +183,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	},
 	// ── coarse EXACT, path DIFF — display-splice vertex near-ties ───────────────
 	{
+		leg: "8bfdeba62a10b7f3",
 		date: "2026-05-11",
 		hhmm: "19:59",
 		coarse: "EXACT",
@@ -172,6 +193,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
 	},
 	{
+		leg: "687ab4f68894ac57",
 		date: "2026-06-09",
 		hhmm: "17:45",
 		coarse: "EXACT",
@@ -181,6 +203,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
 	},
 	{
+		leg: "00b8496c5887cdd5",
 		date: "2026-06-16",
 		hhmm: "15:48",
 		coarse: "EXACT",
@@ -190,6 +213,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
 	},
 	{
+		leg: "cbfa6bda70d457a7",
 		date: "2026-07-12",
 		hhmm: "14:02",
 		coarse: "EXACT",
@@ -200,6 +224,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	},
 	// ── coarse EXACT, path NEAR — spliced display curve within 30 cm ────────────
 	{
+		leg: "eea8cfc6b2703872",
 		date: "2026-04-29",
 		hhmm: "14:19",
 		coarse: "EXACT",
@@ -208,6 +233,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "ec77d1b73443d289",
 		date: "2026-04-29",
 		hhmm: "14:50",
 		coarse: "EXACT",
@@ -216,6 +242,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "2a5348e4330c8502",
 		date: "2026-05-25",
 		hhmm: "11:25",
 		coarse: "EXACT",
@@ -224,6 +251,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "fcb19c04f6001234",
 		date: "2026-06-15",
 		hhmm: "16:41",
 		coarse: "EXACT",
@@ -232,6 +260,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "69e5896e7e0da12b",
 		date: "2026-06-17",
 		hhmm: "10:03",
 		coarse: "EXACT",
@@ -240,6 +269,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "738a577a85c566fc",
 		date: "2026-07-02",
 		hhmm: "07:45",
 		coarse: "EXACT",
@@ -248,6 +278,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "47ca83265d3d73c5",
 		date: "2026-07-02",
 		hhmm: "15:10",
 		coarse: "EXACT",
@@ -256,6 +287,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "e25c46e909145d80",
 		date: "2026-07-17",
 		hhmm: "09:31",
 		coarse: "EXACT",
@@ -264,6 +296,7 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
 	},
 	{
+		leg: "a28db136844e4ddf",
 		date: "2026-07-17",
 		hhmm: "14:33",
 		coarse: "EXACT",
@@ -273,21 +306,29 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	},
 ];
 
-const key = (date: string, hhmm: string): string => `${date}|${hhmm}`;
-const accepted = new Map<string, AcceptedMatchDelta>(ACCEPTED_MATCH_DELTAS.map((d) => [key(d.date, d.hhmm), d]));
+const accepted = new Map<string, AcceptedMatchDelta>(ACCEPTED_MATCH_DELTAS.map((d) => [d.leg, d]));
 
 /**
- * True iff this measured leg divergence is in the accepted manifest — same
- * day+leg AND the same coarse/path classes AND the same note. A leg that flips
- * to a different class, or a leg not in the manifest at all, is NOT accepted.
+ * True iff this measured leg divergence is in the accepted manifest — same leg
+ * fingerprint AND the same coarse/path classes AND the same note. A leg that
+ * flips to a different class, or a leg not in the manifest at all, is NOT
+ * accepted.
+ *
+ * Keyed on the leg's own input (`legFingerprint`), not on its position in the
+ * golden calendar, so the SAME call adjudicates the gate (golden days) and the
+ * production ledger (live days the corpus does not contain).
  */
-export function isAcceptedMatchDelta(
-	date: string,
-	hhmm: string,
+export function isAcceptedMatchDelta(leg: string, coarse: MatchLegClass, path: MatchLegClass, note: string): boolean {
+	const d = accepted.get(leg);
+	return d !== undefined && d.coarse === coarse && d.path === path && d.note === note;
+}
+
+/** Tag a measured divergence for a ledger line. */
+export function matchDeltaTag(
+	leg: string,
 	coarse: MatchLegClass,
 	path: MatchLegClass,
 	note: string,
-): boolean {
-	const d = accepted.get(key(date, hhmm));
-	return d !== undefined && d.coarse === coarse && d.path === path && d.note === note;
+): "accepted" | "UNEXPLAINED" {
+	return isAcceptedMatchDelta(leg, coarse, path, note) ? "accepted" : "UNEXPLAINED";
 }

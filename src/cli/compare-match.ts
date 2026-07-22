@@ -35,6 +35,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { legFingerprint, legNote } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
@@ -48,19 +49,9 @@ const allArgs = process.argv.slice(2);
 const gate = allArgs.includes("--gate");
 const argDates = allArgs.filter((a) => a !== "--gate");
 
-/** Canonical vertex-count fingerprint of a leg's two matcher arms — the manifest
- *  `note` for a diverging leg, stable across runs. */
-const legNote = (
-	float: { coarsePath: unknown[]; path: unknown[] } | null,
-	quant: { coarsePath: unknown[]; path: unknown[] } | null,
-): string => {
-	const c = (r: { coarsePath: unknown[]; path: unknown[] } | null, k: "coarsePath" | "path"): string =>
-		r === null ? "null" : `${r[k].length}v`;
-	return `coarse ${c(float, "coarsePath")} vs ${c(quant, "coarsePath")}, path ${c(float, "path")} vs ${c(quant, "path")}`;
-};
-
 /** A measured float↔quant divergence, for the --gate manifest check. */
 interface DivergentLeg {
+	leg: string;
 	date: string;
 	hhmm: string;
 	coarse: MatchLegClass;
@@ -101,7 +92,7 @@ for (const file of files) {
 		if ((r.float === null) !== (r.quant === null)) nullFlips++;
 		const note = legNote(r.float, r.quant);
 		if (r.coarse !== "EXACT" || r.path !== "EXACT") {
-			divergent.push({ date, hhmm, coarse: r.coarse, path: r.path, note });
+			divergent.push({ leg: legFingerprint(leg.clean), date, hhmm, coarse: r.coarse, path: r.path, note });
 		}
 		perDay.push(
 			`${hhmm} coarse=${r.coarse}/path=${r.path}${r.coarse !== "EXACT" || r.path !== "EXACT" ? ` (${note})` : ""}`,
@@ -128,12 +119,12 @@ if (!gate) {
 // --gate: the matcher FLIP gate. Three honest conditions, mirroring
 // shadow-passes: coverage, no-fallback (quant↔Lean exact), manifest agreement.
 console.log(`\n=== matcher flip gate ===`);
-const unexplained = divergent.filter((d) => !isAcceptedMatchDelta(d.date, d.hhmm, d.coarse, d.path, d.note));
+const unexplained = divergent.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
 if (divergent.length > 0) {
 	console.log(`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained):`);
 	for (const d of divergent) {
-		const tag = isAcceptedMatchDelta(d.date, d.hhmm, d.coarse, d.path, d.note) ? "accepted" : "UNEXPLAINED";
-		console.log(`  [${tag}] ${d.date} ${d.hhmm} coarse=${d.coarse}/path=${d.path} (${d.note})`);
+		const tag = isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note) ? "accepted" : "UNEXPLAINED";
+		console.log(`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})`);
 	}
 }
 

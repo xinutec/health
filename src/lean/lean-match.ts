@@ -33,9 +33,11 @@
  * blind.
  */
 
+import { legClasses, legFingerprint, legNote } from "../geo/leg-compare.js";
 import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.js";
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
+import type { MatchLegClass } from "./accepted-match-deltas.js";
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -95,8 +97,27 @@ export function leanMatchScopeTotals(): Readonly<Partial<Record<LeanRunScope, Re
 	return Object.fromEntries(stats);
 }
 
+/** A measured per-leg divergence, fingerprinted so the ledger can adjudicate it
+ *  against `accepted-match-deltas.ts` — the same call the gate makes. */
+export interface MatchDivergence {
+	leg: string;
+	coarse: MatchLegClass;
+	path: MatchLegClass;
+	note: string;
+	scope: LeanRunScope;
+}
+
+const divergences: MatchDivergence[] = [];
+const MAX_DIVERGENCES = 500;
+
+/** Structured matcher divergences (bounded) since the last reset. */
+export function leanMatchDivergences(): readonly MatchDivergence[] {
+	return divergences;
+}
+
 export function resetLeanMatchStats(): void {
 	stats.clear();
+	divergences.length = 0;
 	resetLeanRunScope();
 }
 
@@ -130,6 +151,9 @@ const qRows = (pts: readonly { lat: number; lon: number; ts: number }[]): number
 /** Dequantise a verified `match` response back to a `WalkMatchResult`.
  *  `on` mode serves this: the 1e-7° integers become floats (a ≤ 5e-8° /
  *  ~5 mm shift — the "quantised geometry as truth" the doc note describes). */
+/** A verified response row as the quantised point the classifier compares. */
+const toQPt = (r: readonly number[]): QPt => ({ la: BigInt(r[0]), lo: BigInt(r[1]), ts: BigInt(r[2]) });
+
 const deq = (r: readonly number[]): { lat: number; lon: number; ts: number } => ({
 	lat: r[0] / 1e7,
 	lon: r[1] / 1e7,
@@ -181,11 +205,28 @@ export function matchWalkSegmentViaLean(
 		const pathDiff = !eqRows(qRows(tsResult.path), lean.path ?? []);
 		if (coarseDiff) stat().coarseDiffs += 1;
 		else if (pathDiff) stat().pathDiffs += 1;
-		if ((coarseDiff || pathDiff) && mode === "shadow") {
-			console.warn(
-				`[lean-match] divergence (n=${fixes.length}) coarse=${coarseDiff} path=${pathDiff} ` +
-					`ts=${tsResult.coarsePath.length} lean=${(lean.coarse ?? []).length}`,
-			);
+		if (coarseDiff || pathDiff) {
+			// Classify and fingerprint EXACTLY as the gate does, so the ledger can
+			// adjudicate this leg against the same manifest the gate enforces. The
+			// quant arm here is Lean's own rows; quant↔Lean is gated bit-exact, so
+			// this is the gate's float↔quant comparison on the served leg.
+			const quantArm = { coarsePath: (lean.coarse ?? []).map(toQPt), path: (lean.path ?? []).map(toQPt) };
+			const cls = legClasses(tsResult, quantArm);
+			if (divergences.length < MAX_DIVERGENCES) {
+				divergences.push({
+					leg: legFingerprint(fixes),
+					coarse: cls.coarse,
+					path: cls.path,
+					note: legNote(tsResult, quantArm),
+					scope: leanRunScope(),
+				});
+			}
+			if (mode === "shadow") {
+				console.warn(
+					`[lean-match] divergence (n=${fixes.length}) coarse=${coarseDiff} path=${pathDiff} ` +
+						`ts=${tsResult.coarsePath.length} lean=${(lean.coarse ?? []).length}`,
+				);
+			}
 		}
 	}
 

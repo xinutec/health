@@ -473,9 +473,10 @@ porting float arithmetic.
 
   **Flipped and soaking (2026-07-22).** `LEAN_PASSES=on` is live on both
   workloads, so the gate is no longer the only adjudicator — and it never could
-  be for the days that matter, since it replays `tests/golden/days` (corpus
-  ending 2026-07-16) while the decode cron runs the trailing 7 days. Two gaps
-  that opened once production started serving, both now closed:
+  be for the days that matter, since it replays a fixed corpus
+  (`tests/golden/days`, 32 days ending 2026-07-17) while the decode cron runs
+  the *trailing* 7 days — which run ahead of the corpus and keep doing so. Two
+  gaps that opened once production started serving, both now closed:
 
   - The production ledger printed divergences without checking them against the
     manifest, so a signed-off near-tie and a real behaviour change read alike.
@@ -486,12 +487,17 @@ porting float arithmetic.
     `[all ops by run: decode … · shadow …]` and flags `IN SERVED OUTPUT` only
     when the decode itself diverged.
 
-  The one divergence the soak has produced (2026-07-17, simplify n=115) is a DP
+  The one divergence the soak produced (2026-07-17, simplify n=115) is a DP
   argmax tie: float separates the candidate vertices by 3.77 mm, both quantise
   to exactly 7063019 µm — under the 1e-7° representation's resolving power, so
-  the served metric cannot order them. It arises in the `shadow` scope, not in
-  served output. Still open: nothing *alerts* on an unexplained divergence; it
-  is labelled in the log and depends on someone reading it.
+  the served metric cannot order them. It arose in the `shadow` scope, never in
+  served output, and **it no longer reproduces at all**: the shadow was
+  replaying a reconstructed leg set (see below), and on production's own legs
+  2026-07-17 is EXACT across every pass op. The manifest entry is kept as an
+  audit record of a real measurement, flagged as a divergence of the old
+  harness rather than of served output. Still open: nothing *alerts* on an
+  unexplained divergence; it is labelled in the log and depends on someone
+  reading it.
 
   **The matcher gate judged a different leg population than production serves
   — found and fixed 2026-07-22.** The same scope split applied to the matcher
@@ -543,22 +549,31 @@ porting float arithmetic.
   that safety basis and are explicitly marked **not yet visually reviewed** —
   eyeballing them is the outstanding human step.
 
-  **Why the matcher ledger still prints no accepted/UNEXPLAINED verdict.** The
-  fix removed the structural blocker — captured legs carry `seg.startTs`, which
-  is what `compare-match` derives the manifest's `hh:mm` from, so the key is now
-  computable where the matcher runs. What remains is that the key is the wrong
-  SHAPE for production. It is `golden date + hh:mm`; the gate replays golden
-  days so it matches there, but the decode cron runs live days the corpus does
-  not contain, and a live leg can never match a golden key. Adjudicating
-  production against it would stamp `UNEXPLAINED` on every live divergence —
-  noise, not signal, and worse than the counts-and-scope line it replaced. The
-  passes manifest does not have this problem because it is keyed intrinsically
-  (`op|n|note`, no date), which is exactly why it could absorb a
-  production-observed entry on a day outside the corpus. Closing this properly
-  means re-keying the matcher manifest the same way — on the leg's own shape
-  (fix count + class + vertex signature) rather than its position in the golden
-  calendar — after which one rule adjudicates both the gate and production, as
-  it already does for the passes.
+  **The matcher ledger now adjudicates (2026-07-22).** Two things had to change.
+  The population fix removed the structural blocker — captured legs carry
+  `seg.startTs`, which is what `compare-match` derives `hh:mm` from — but the
+  key was still the wrong SHAPE: `golden date + hh:mm` matches only inside the
+  corpus, while the decode cron runs the *trailing* 7 days, which stay
+  permanently ahead of it. Adjudicating against a calendar key would have
+  stamped `UNEXPLAINED` on every live divergence regardless of merit: noise,
+  and worse than no verdict.
+
+  So the manifest is re-keyed on `legFingerprint` — a digest of the leg's own
+  quantised input fixes — with `date`/`hhmm` demoted to audit trail. This is
+  what `accepted-deltas.ts` already does for the passes (`op|n|note`, no date),
+  and why that manifest could absorb a production-observed entry. A digest
+  rather than a fix count because two short legs can share a count *and* a
+  vertex signature, and a route flip auto-accepted by collision is exactly what
+  the manifest exists to prevent; it also keeps raw positions out of a
+  committed file. All 21 corpus fingerprints are distinct.
+
+  The gate and the request path now call the same `isAcceptedMatchDelta`, over
+  the same `legClasses`/`legNote` in `src/geo/leg-compare.ts`. Verified
+  end-to-end on 2026-07-17: production emitted `e25c46e909145d80` and
+  `a28db136844e4ddf`, byte-identical to the fingerprints the gate emits for
+  09:31 and 14:33, with matching classes and notes — so the ledger reads
+  `all accepted 2 IN SERVED OUTPUT` with per-leg `[accepted][decode]` tags.
+  Same key, same rule, both sides.
 
 ## Landmines
 

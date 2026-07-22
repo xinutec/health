@@ -21,51 +21,12 @@
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { type LegClass, legClasses } from "./leg-compare.js";
 import type { BuildingRing, RoadFix } from "./map-match-core.js";
 import { type QWalkMatchResult, type QWay, qMatchWalkSegment } from "./match-twin.js";
 import { matchWalkSegment, type WalkMatchResult } from "./pedestrian-match.js";
 import { type QPt, quantPt } from "./quant-twin.js";
 import type { OsmRoadWay } from "./road-match.js";
-
-/** Per-leg float↔quant verdict: identical, within the NEAR tolerance, or a
- *  genuine difference. */
-export type LegClass = "EXACT" | "NEAR" | "DIFF";
-
-/** 30 cm in 1e-7° latitude units — the NEAR coordinate tolerance. */
-const NEAR_UNITS = 30n;
-
-function comparePaths(float: ReadonlyArray<{ lat: number; lon: number; ts: number }>, quant: readonly QPt[]): LegClass {
-	const qf = float.map((p) => quantPt(p));
-	if (qf.length !== quant.length) return "DIFF";
-	let cls: LegClass = "EXACT";
-	for (let i = 0; i < qf.length; i++) {
-		const dLa = qf[i].la - quant[i].la;
-		const dLo = qf[i].lo - quant[i].lo;
-		const dTs = qf[i].ts - quant[i].ts;
-		if (dLa === 0n && dLo === 0n && dTs === 0n) continue;
-		const abs = (x: bigint): bigint => (x < 0n ? -x : x);
-		if (abs(dLa) <= NEAR_UNITS && abs(dLo) <= NEAR_UNITS && abs(dTs) <= 1n) cls = "NEAR";
-		else return "DIFF";
-	}
-	return cls;
-}
-
-/** Per-leg float↔quant verdict, coarse (decision layer) and path (display
- *  splice) separately — a coarse flip is a matcher decision divergence, a
- *  path-only flip is the known splice-detail near-tie class. */
-export function legClasses(
-	float: WalkMatchResult | null,
-	quant: QWalkMatchResult | null,
-): { coarse: LegClass; path: LegClass } {
-	if (float === null || quant === null) {
-		const cls: LegClass = float === quant ? "EXACT" : "DIFF";
-		return { coarse: cls, path: cls };
-	}
-	return {
-		coarse: comparePaths(float.coarsePath, quant.coarsePath),
-		path: comparePaths(float.path, quant.path),
-	};
-}
 
 interface LeanMatchResp {
 	path?: number[][];

@@ -64,10 +64,16 @@ export const ACCEPTED_DELTAS: readonly AcceptedDelta[] = [
 			"(7.060161943 m) by 3.77 mm, but both quantise to exactly 7063019 µm, so first-argmax takes 62. " +
 			"The gap is under the 1e-7° representation's ~3-7 mm resolving power — the served metric cannot " +
 			"order these two points. Both deviations far exceed tol, so both sides split and keep 47 vertices; " +
-			"only which vertex anchors the split differs. Observed by the production ledger on 2026-07-17 " +
-			"(outside the golden corpus, which ends 2026-07-16); reproduced read-only via decode-day --dry. " +
-			"It arises in the extra velocity run `runWalkShadow` does to extract legs, not in the decode run " +
-			"whose output is persisted — that run is 8/8 exact on this day.",
+			"only which vertex anchors the split differs. Observed by the production ledger on 2026-07-17 and " +
+			"reproduced read-only via decode-day --dry. " +
+			"NO LONGER REPRODUCED as of 2026-07-22: it arose in the walk shadow's extra velocity run, and that " +
+			"run used a RECONSTRUCTED leg set the matcher never actually matched (8 invented legs vs the 9 " +
+			"production feeds). With the shadow now replaying production's own recorded legs, 2026-07-17 is " +
+			"EXACT across all pass ops. The entry is kept because the measurement is real and documents the " +
+			"representation's resolving power, but it is a divergence of the old harness, not of served " +
+			"output — the decode run was already 8/8 exact on this day when it was first recorded. " +
+			"(An earlier revision also called 2026-07-17 'outside the golden corpus, which ends 2026-07-16'. " +
+			"That was wrong: the day had already been captured as a fixture.)",
 	},
 ];
 

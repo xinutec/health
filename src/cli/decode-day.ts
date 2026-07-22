@@ -44,7 +44,14 @@ import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
-import { leanMatchMode, leanMatchScopeTotals, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
+import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
+import {
+	leanMatchDivergences,
+	leanMatchMode,
+	leanMatchScopeTotals,
+	leanMatchStats,
+	resetLeanMatchStats,
+} from "../lean/lean-match.js";
 import { leanPassDivergences, leanPassScopeTotals, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
 import { setLeanRunScope } from "../lean/run-scope.js";
 
@@ -250,9 +257,27 @@ function logLeanMatchLedger(date: string): void {
 	const servedDiffs =
 		(scopes.decode?.coarseDiffs ?? 0) + (scopes.decode?.pathDiffs ?? 0) + (scopes.decode?.nullFlips ?? 0);
 	const servedNote = servedDiffs === 0 ? "" : ` ${servedDiffs} IN SERVED OUTPUT`;
+	// Adjudicate each measured leg against the accepted manifest — the same
+	// `isAcceptedMatchDelta` the gate enforces, now reachable because the
+	// manifest is keyed on the leg's own fingerprint rather than on a golden
+	// date the cron's live days can never match.
+	const divs = leanMatchDivergences();
+	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
+	const verdict =
+		divs.length === 0 ? "EXACT" : unexplained.length === 0 ? "all accepted" : `${unexplained.length} UNEXPLAINED`;
+	const legDetail =
+		divs.length === 0
+			? ""
+			: ` — ${divs
+					.map(
+						(d) =>
+							`[${matchDeltaTag(d.leg, d.coarse, d.path, d.note)}][${d.scope}] leg=${d.leg} ` +
+							`coarse=${d.coarse}/path=${d.path} ${d.note}`,
+					)
+					.join("; ")}`;
 	console.log(
 		`lean-match[${mode}] ${date} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
-			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail}${servedNote}`,
+			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedNote}${legDetail}`,
 	);
 	resetLeanMatchStats();
 }
