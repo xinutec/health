@@ -543,6 +543,23 @@ porting float arithmetic.
   that safety basis and are explicitly marked **not yet visually reviewed** —
   eyeballing them is the outstanding human step.
 
+  **Why the matcher ledger still prints no accepted/UNEXPLAINED verdict.** The
+  fix removed the structural blocker — captured legs carry `seg.startTs`, which
+  is what `compare-match` derives the manifest's `hh:mm` from, so the key is now
+  computable where the matcher runs. What remains is that the key is the wrong
+  SHAPE for production. It is `golden date + hh:mm`; the gate replays golden
+  days so it matches there, but the decode cron runs live days the corpus does
+  not contain, and a live leg can never match a golden key. Adjudicating
+  production against it would stamp `UNEXPLAINED` on every live divergence —
+  noise, not signal, and worse than the counts-and-scope line it replaced. The
+  passes manifest does not have this problem because it is keyed intrinsically
+  (`op|n|note`, no date), which is exactly why it could absorb a
+  production-observed entry on a day outside the corpus. Closing this properly
+  means re-keying the matcher manifest the same way — on the leg's own shape
+  (fix count + class + vertex signature) rather than its position in the golden
+  calendar — after which one rule adjudicates both the gate and production, as
+  it already does for the passes.
+
 ## Landmines
 
 - **Proof cost is the budget item.** The pilot took one session; the V1
