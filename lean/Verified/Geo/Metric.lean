@@ -61,13 +61,151 @@ steps. The twin seeds the descent at `x₀ = n`, which costs one halving per bit
 `qDist` is called several times per graph edge. Seeding instead at the next power
 of two above `√n` — `2^⌈bits(n)/2⌉`, so `x₀² ≥ 2^bits(n) > n` — puts the start
 within a factor of √2 and Newton then doubles the correct digits each step, ~4
-iterations. The precondition for the descent is exactly `x₀ ≥ √n`, so the fixed
-point, and hence the value, is unchanged. -/
+iterations. The precondition for the descent is exactly `x₀ ≥ √n`, and
+`isqrt_isSqrt` discharges it for this seed, so the fixed point — and hence the
+value — is the twin's. -/
 def isqrt (n : Nat) : Nat :=
   if n < 2 then n
   else
     let s := 1 <<< ((n.log2 + 2) / 2)
     isqrtGo n s ((s + n / s) / 2)
+
+/-! ### `isqrt` is the floor square root
+
+The seed change above is a claim about a numeric algorithm, not a rearrangement
+of one expression into another, so the twin comparison cannot check it: both
+sides would have to be wrong in the same way to agree, and they are different
+programs. It is discharged here instead. Everything the matcher measures —
+`qDist`, `qDistA`, `qChordDist` — bottoms out in `isqrt`, so this is the
+foundation the rest of the geometry stands on. -/
+
+/-- `r` is the integer floor square root of `n`: the largest `r` with `r² ≤ n`.
+Stated as a two-sided bracket rather than as a maximum so that both halves are
+directly usable — the lower half bounds distances from below (the matcher's
+rejects), the upper half from above. -/
+def IsSqrt (n r : Nat) : Prop := r * r ≤ n ∧ n < (r + 1) * (r + 1)
+
+/-- The bracket pins a unique value, so "the" floor square root is well defined
+and any two routes to it agree. -/
+theorem IsSqrt.unique {n r r' : Nat} (h : IsSqrt n r) (h' : IsSqrt n r') : r = r' := by
+  rcases Nat.lt_trichotomy r r' with hlt | heq | hgt
+  · exact absurd (Nat.le_trans (Nat.mul_le_mul hlt hlt) h'.1) (Nat.not_le.mpr h.2)
+  · exact heq
+  · exact absurd (Nat.le_trans (Nat.mul_le_mul hgt hgt) h.1) (Nat.not_le.mpr h'.2)
+
+/-- AM–GM over `Nat`: a product is at most the square of the mean. This is what
+makes Newton's step land above the root — `x` and `n/x` bracket `√n`, so their
+mean cannot fall below it. -/
+theorem mul_le_sq_of_add_eq {a b r : Nat} (h : a + b = 2 * r) : a * b ≤ r * r := by
+  rcases Nat.le_total a r with hr | hr
+  · obtain ⟨d, hd⟩ : ∃ d, r = a + d := ⟨r - a, by omega⟩
+    have hb : b = a + d + d := by omega
+    subst hb; subst hd
+    have h1 : a * (a + d + d) = a * a + a * d + a * d := by
+      rw [Nat.mul_add, Nat.mul_add]
+    have h2 : (a + d) * (a + d) = a * a + d * a + (a * d + d * d) := by
+      rw [Nat.add_mul, Nat.mul_add, Nat.mul_add]; omega
+    have h3 : a * d = d * a := Nat.mul_comm a d
+    omega
+  · obtain ⟨d, hd⟩ : ∃ d, r = b + d := ⟨r - b, by omega⟩
+    have ha : a = b + d + d := by omega
+    subst ha; subst hd
+    have h1 : (b + d + d) * b = b * b + d * b + d * b := by
+      rw [Nat.add_mul, Nat.add_mul]
+    have h2 : (b + d) * (b + d) = b * b + d * b + (b * d + d * d) := by
+      rw [Nat.add_mul, Nat.mul_add, Nat.mul_add]; omega
+    have h3 : b * d = d * b := Nat.mul_comm b d
+    omega
+
+/-- **The descent never overshoots.** A Newton step from any positive `x` stays
+at or above every `r` with `r² ≤ n` — in particular above the root itself. This
+is the loop invariant: it is what stops the iterate from sliding past `⌊√n⌋` and
+converging to something smaller. -/
+theorem le_newtonStep {n x r : Nat} (hx : 0 < x) (hr : r * r ≤ n) :
+    r ≤ (x + n / x) / 2 := by
+  rcases Nat.le_total (2 * r) x with h | h
+  · have h2 : x / 2 ≤ (x + n / x) / 2 := Nat.div_le_div_right (Nat.le_add_right _ _)
+    omega
+  · have hk : (2 * r - x) * x ≤ n :=
+      Nat.le_trans (mul_le_sq_of_add_eq (by omega)) hr
+    have := (Nat.le_div_iff_mul_le hx).mpr hk
+    omega
+
+/-- **The descent makes progress.** Strictly above the root, a Newton step
+strictly decreases — so the loop cannot stall before reaching it. -/
+theorem newtonStep_lt {n x : Nat} (h : n < x * x) : (x + n / x) / 2 < x := by
+  have : n / x < x := Nat.div_lt_of_lt_mul h
+  omega
+
+/-- The loop returns `⌊√n⌋` from any start at or above it. `hge` is the seed
+precondition, stated as "no `r` with `r² ≤ n` exceeds `x`"; the two Newton
+lemmas above carry it through each step, and the exit test `¬ y < x` is exactly
+what forces `x² ≤ n` at the end. -/
+theorem isqrtGo_spec (n x : Nat) (hn : 0 < n) (hx : 0 < x)
+    (hge : ∀ r, r * r ≤ n → r ≤ x) :
+    IsSqrt n (isqrtGo n x ((x + n / x) / 2)) := by
+  unfold isqrtGo
+  split
+  · next hlt =>
+    have hge' : ∀ r, r * r ≤ n → r ≤ (x + n / x) / 2 := fun r hr => le_newtonStep hx hr
+    have hy : 0 < (x + n / x) / 2 := hge' 1 (by omega)
+    exact isqrtGo_spec n _ hn hy hge'
+  · next hnl =>
+    refine ⟨?_, ?_⟩
+    · exact Nat.not_lt.mp fun hlt => hnl (newtonStep_lt hlt)
+    · exact Nat.not_le.mp fun hle => absurd (hge (x + 1) hle) (by omega)
+termination_by x
+
+/-- **`isqrt n = ⌊√n⌋.`** The seed `2^⌈bits(n)/2⌉` is above the root — that is
+the `n ≤ s·s` step, and it is the whole content of the optimisation — so the
+descent's precondition holds and the loop lands on the floor square root. -/
+theorem isqrt_isSqrt (n : Nat) : IsSqrt n (isqrt n) := by
+  unfold isqrt
+  split
+  · next h =>
+    have : n = 0 ∨ n = 1 := by omega
+    rcases this with rfl | rfl
+    · exact ⟨by omega, by omega⟩
+    · exact ⟨by omega, by omega⟩
+  · next h =>
+    have hn : 0 < n := by omega
+    have hs : 1 <<< ((n.log2 + 2) / 2) = 2 ^ ((n.log2 + 2) / 2) := by
+      rw [Nat.shiftLeft_eq]; omega
+    -- `n < 2^(log2 n + 1) ≤ 2^k · 2^k`, since `2·⌊(log2 n + 2)/2⌋ ≥ log2 n + 1`
+    -- whether `log2 n` is even or odd — the ceiling in `⌈bits/2⌉`.
+    have hsq : n ≤ 2 ^ ((n.log2 + 2) / 2) * 2 ^ ((n.log2 + 2) / 2) := by
+      have h1 : n < 2 ^ (n.log2 + 1) := Nat.lt_log2_self
+      have h2 : 2 ^ (n.log2 + 1)
+          ≤ 2 ^ ((n.log2 + 2) / 2) * 2 ^ ((n.log2 + 2) / 2) := by
+        rw [← Nat.pow_add]
+        exact Nat.pow_le_pow_right (by omega) (by omega)
+      omega
+    simp only [hs]
+    refine isqrtGo_spec n _ hn Nat.one_le_two_pow ?_
+    intro r hr
+    refine Nat.not_lt.mp fun hgt => ?_
+    have hgt' : 2 ^ ((n.log2 + 2) / 2) + 1 ≤ r := hgt
+    have hle := Nat.mul_le_mul hgt' hgt'
+    have e : (2 ^ ((n.log2 + 2) / 2) + 1) * (2 ^ ((n.log2 + 2) / 2) + 1)
+        = 2 ^ ((n.log2 + 2) / 2) * 2 ^ ((n.log2 + 2) / 2)
+          + 2 ^ ((n.log2 + 2) / 2) + 2 ^ ((n.log2 + 2) / 2) + 1 := by
+      rw [Nat.add_mul, Nat.mul_add, Nat.mul_add]; omega
+    have hpos : 1 ≤ 2 ^ ((n.log2 + 2) / 2) := Nat.one_le_two_pow
+    omega
+
+/-- The form the distance rejects need: a squared bound transfers through
+`isqrt` without a square root ever being taken exactly. -/
+theorem le_isqrt {k n : Nat} (h : k * k ≤ n) : k ≤ isqrt n :=
+  Nat.not_lt.mp fun hgt =>
+    absurd (Nat.le_trans (Nat.mul_le_mul hgt hgt) h) (Nat.not_le.mpr (isqrt_isSqrt n).2)
+
+theorem isqrt_le {k n : Nat} (h : n < (k + 1) * (k + 1)) : isqrt n ≤ k :=
+  Nat.not_lt.mp fun hgt =>
+    absurd (Nat.le_trans (Nat.mul_le_mul hgt hgt) (isqrt_isSqrt n).1) (Nat.not_le.mpr h)
+
+/-- `isqrt` is monotone — a bigger squared sum is a bigger distance. -/
+theorem isqrt_le_isqrt {m n : Nat} (h : m ≤ n) : isqrt m ≤ isqrt n :=
+  le_isqrt (Nat.le_trans (isqrt_isSqrt m).1 h)
 
 /-- The one wide multiply inside `cosQ`: `|la| · 19190098069` reaches ≈ 2⁶³
 (for a real latitude `|la| ≤ 9·10⁸`), which tips `Nat` off its unboxed range
