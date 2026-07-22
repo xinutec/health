@@ -7,6 +7,14 @@
 
 import { describe, expect, it } from "vitest";
 import { ACCEPTED_DELTAS, deltaTag, isAcceptedDelta, unexplainedDeltas } from "../src/lean/accepted-deltas.js";
+import {
+	leanPassDivergences,
+	leanPassScopeTotals,
+	leanPassStats,
+	resetLeanPassStats,
+	setLeanPassScope,
+	simplifyViaLean,
+} from "../src/lean/lean-passes.js";
 
 const anAccepted = ACCEPTED_DELTAS[0];
 
@@ -53,5 +61,43 @@ describe("accepted-delta adjudication", () => {
 	it("holds no duplicate fingerprints", () => {
 		const keys = ACCEPTED_DELTAS.map((d) => `${d.op}|${d.n}|${d.note}`);
 		expect(new Set(keys).size).toBe(keys.length);
+	});
+});
+
+/**
+ * The counters themselves are only reachable through the bridge, so these pin
+ * the bridge-free properties: with the flag off the wrappers must be inert
+ * (that is what makes `LEAN_PASSES` unset a true no-op), and a reset must clear
+ * the scope as well as the tallies — otherwise a day that ended in the shadow
+ * harness would misattribute the next day's decode calls.
+ */
+describe("lean-pass ledger scoping", () => {
+	const pts = [
+		{ lat: 51.5, lon: -0.1, ts: 0 },
+		{ lat: 51.5001, lon: -0.1001, ts: 1 },
+		{ lat: 51.5002, lon: -0.1002, ts: 2 },
+		{ lat: 51.5003, lon: -0.1003, ts: 3 },
+	];
+
+	it("records nothing and serves TS when the flag is off", () => {
+		const prev = process.env.LEAN_PASSES;
+		process.env.LEAN_PASSES = undefined;
+		delete process.env.LEAN_PASSES;
+		resetLeanPassStats();
+		const tsResult = [pts[0], pts[3]];
+		expect(simplifyViaLean(pts, 5, tsResult)).toBe(tsResult);
+		expect(leanPassStats()).toEqual({});
+		expect(leanPassScopeTotals()).toEqual({});
+		expect(leanPassDivergences()).toEqual([]);
+		if (prev !== undefined) process.env.LEAN_PASSES = prev;
+	});
+
+	it("reset clears the tallies and returns the scope to decode", () => {
+		setLeanPassScope("shadow");
+		resetLeanPassStats();
+		expect(leanPassStats()).toEqual({});
+		expect(leanPassScopeTotals()).toEqual({});
+		// Scope is private; its reset is observable through where the next
+		// recorded call lands, which the end-to-end decode check exercises.
 	});
 });

@@ -50,7 +50,13 @@ import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { leanMatchMode, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
-import { leanPassDivergences, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
+import {
+	leanPassDivergences,
+	leanPassScopeTotals,
+	leanPassStats,
+	resetLeanPassStats,
+	setLeanPassScope,
+} from "../lean/lean-passes.js";
 
 const config = z
 	.object({
@@ -196,10 +202,11 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
  *  premise ("every divergence is a signed-off near-tie") still holds on days
  *  the corpus does not cover.
  *
- *  Caveat on the tally: it sums every velocity run the day made, which includes
- *  the extra run `runWalkShadow` does purely to extract legs. So a divergence
- *  here does not by itself mean the persisted decode diverged — re-run with
- *  `LEAN_CLI` unset to count only the decode's own calls. */
+ *  The day makes several velocity runs — the decode itself, plus the extra one
+ *  `runWalkShadow` does purely to extract legs — so the line breaks the tally
+ *  down by scope and flags `IN SERVED OUTPUT` when a divergence came from the
+ *  decode rather than from throwaway measurement. Summing them hid that
+ *  distinction, which is the one the reader actually needs. */
 function logLeanPassLedger(date: string): void {
 	const mode = process.env.LEAN_PASSES;
 	if (mode !== "shadow" && mode !== "on") return;
@@ -212,13 +219,24 @@ function logLeanPassLedger(date: string): void {
 	// on an uncaptured day can surface — logging one without saying whether it
 	// is signed off makes an accepted near-tie and a genuine behaviour change
 	// read identically.
+	const scopes = leanPassScopeTotals();
+	const byScope = Object.entries(scopes)
+		.map(([sc, s]) => `${sc} ${s.calls}/${s.fails}f/${s.diffs}d`)
+		.join(" · ");
 	const divs = leanPassDivergences();
 	const unexplained = unexplainedDeltas(divs);
+	const served = divs.filter((d) => d.scope === "decode");
 	const verdict =
 		divs.length === 0 ? "EXACT" : unexplained.length === 0 ? "all accepted" : `${unexplained.length} UNEXPLAINED`;
+	const servedNote = served.length === 0 ? "" : ` ${served.length} IN SERVED OUTPUT`;
 	const detail =
-		divs.length === 0 ? "" : ` — ${divs.map((d) => `[${deltaTag(d)}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
-	console.log(`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally} ${verdict}${detail}`);
+		divs.length === 0
+			? ""
+			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
+	console.log(
+		`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally}` +
+			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedNote}${detail}`,
+	);
 	resetLeanPassStats();
 }
 
@@ -298,6 +316,10 @@ async function decodeAndPersist(
 	} else {
 		await saveDecode(kyselyDb(), userId, date, segments);
 	}
+	// Everything from here is observational: it re-processes the same legs to
+	// measure, and its output is discarded. Label it so the ledger can keep it
+	// out of the served-path tally.
+	setLeanPassScope("shadow");
 	runLeanShadow(inputs, date);
 	await runWalkShadow(userId, date, tz, osm);
 	logLeanPassLedger(date);

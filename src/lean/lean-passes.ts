@@ -50,11 +50,32 @@ interface PassStat {
 	/** Calls where the Lean output differed from the TS output. */
 	diffs: number;
 }
+
+/**
+ * Which run the current calls belong to.
+ *
+ * `decode` is the run whose output is persisted and served; `shadow` is the
+ * observational machinery (`runWalkShadow`'s extra velocity run and its per-leg
+ * A/B) that re-processes the same legs purely to measure. They were summed into
+ * one tally, so a divergence in throwaway measurement code was indistinguishable
+ * from one in served output — the ledger's whole job is to tell those apart.
+ */
+export type LeanPassScope = "decode" | "shadow";
+
+let scope: LeanPassScope = "decode";
+
+/** Label subsequent pass calls. Callers that never set it stay in `decode`. */
+export function setLeanPassScope(s: LeanPassScope): void {
+	scope = s;
+}
+
+/** Keyed `${scope}|${op}` so one op can be tallied per run. */
 const stats = new Map<string, PassStat>();
 
 function stat(op: string): PassStat {
-	const s = stats.get(op) ?? { calls: 0, fails: 0, diffs: 0 };
-	stats.set(op, s);
+	const key = `${scope}|${op}`;
+	const s = stats.get(key) ?? { calls: 0, fails: 0, diffs: 0 };
+	stats.set(key, s);
 	return s;
 }
 
@@ -68,21 +89,47 @@ function recordFail(op: string): void {
 	stat(op).fails += 1;
 }
 
-/** Per-op tallies (calls / failures / divergences) since the last reset. */
+/** Sum the per-`${scope}|${op}` tallies into buckets named by `bucketOf`. */
+function foldStats(bucketOf: (scope: string, op: string) => string): Record<string, PassStat> {
+	const out: Record<string, PassStat> = {};
+	for (const [key, s] of stats) {
+		const bar = key.indexOf("|");
+		const bucket = bucketOf(key.slice(0, bar), key.slice(bar + 1));
+		let acc = out[bucket];
+		if (acc === undefined) {
+			acc = { calls: 0, fails: 0, diffs: 0 };
+			out[bucket] = acc;
+		}
+		acc.calls += s.calls;
+		acc.fails += s.fails;
+		acc.diffs += s.diffs;
+	}
+	return out;
+}
+
+/** Per-op tallies (calls / failures / divergences) since the last reset,
+ *  summed across scopes — the whole-run view the flip gate adjudicates. */
 export function leanPassStats(): Record<string, PassStat> {
-	return Object.fromEntries(stats);
+	return foldStats((_scope, op) => op);
+}
+
+/** Totals per scope — what separates served output from measurement noise. */
+export function leanPassScopeTotals(): Record<string, PassStat> {
+	return foldStats((scope) => scope);
 }
 
 interface Divergence {
 	op: string;
 	n: number;
 	note: string;
+	/** Which run produced it — a `decode` divergence affects served output. */
+	scope: LeanPassScope;
 }
 const divergences: Divergence[] = [];
 const MAX_DIVERGENCES = 500;
 
 function recordDivergence(op: string, n: number, note: string): void {
-	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note });
+	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note, scope });
 }
 
 /** Structured divergences (bounded) — the flip-decision ledger. */
@@ -90,10 +137,12 @@ export function leanPassDivergences(): readonly Divergence[] {
 	return divergences;
 }
 
-/** Clear stats + divergences (the ledger CLI resets between runs). */
+/** Clear stats + divergences (the ledger CLI resets between runs). Also
+ *  returns the scope to `decode`, so a new day starts attributing afresh. */
 export function resetLeanPassStats(): void {
 	stats.clear();
 	divergences.length = 0;
+	scope = "decode";
 }
 
 type LatLonTs = { lat: number; lon: number; ts?: number };
