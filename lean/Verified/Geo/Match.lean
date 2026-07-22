@@ -1073,6 +1073,71 @@ def mkQSegIndex (gr : QGraph) (radiusUm : Nat) (cmin : Int) : QSegIndex := Id.ru
       cy := cy + 1
   return { cellLa, cellLo, grid }
 
+/-- Two strictly increasing lists of naturals with the same members are equal.
+Ascending order plus set equality pins the sequence — the fact that lets a
+grid-indexed scan be compared to a full scan without any appeal to how either
+one was built. -/
+theorem eq_of_pairwise_lt {l₁ l₂ : List Nat}
+    (h₁ : l₁.Pairwise (· < ·)) (h₂ : l₂.Pairwise (· < ·))
+    (hmem : ∀ a, a ∈ l₁ ↔ a ∈ l₂) : l₁ = l₂ := by
+  induction l₁ generalizing l₂ with
+  | nil =>
+    cases l₂ with
+    | nil => rfl
+    | cons b t => exact absurd ((hmem b).mpr (List.mem_cons_self ..)) (by simp)
+  | cons a t ih =>
+    cases l₂ with
+    | nil => exact absurd ((hmem a).mp (List.mem_cons_self ..)) (by simp)
+    | cons b t₂ =>
+      rw [List.pairwise_cons] at h₁ h₂
+      -- Both heads are their list's minimum and each lies in the other list,
+      -- so neither can be the strictly smaller one.
+      have hab : a = b := by
+        have ha2 : a ∈ b :: t₂ := (hmem a).mp (List.mem_cons_self ..)
+        have hb1 : b ∈ a :: t := (hmem b).mpr (List.mem_cons_self ..)
+        rcases List.mem_cons.mp ha2 with h | h
+        · exact h
+        · rcases List.mem_cons.mp hb1 with h' | h'
+          · exact h'.symm
+          · have p1 := h₁.1 b h'
+            have p2 := h₂.1 a h
+            omega
+      subst hab
+      have htail : ∀ x, x ∈ t ↔ x ∈ t₂ := by
+        intro x
+        constructor
+        · intro hx
+          rcases List.mem_cons.mp ((hmem x).mp (List.mem_cons_of_mem _ hx)) with h | h
+          · have := h₁.1 x hx; omega
+          · exact h
+        · intro hx
+          rcases List.mem_cons.mp ((hmem x).mpr (List.mem_cons_of_mem _ hx)) with h | h
+          · have := h₂.1 x hx; omega
+          · exact h
+      rw [ih h₁.2 h₂.2 htail]
+
+/-- **One bucket equals the full scan.** If a bucket lists indices in strictly
+ascending order, stays inside `[0, n)`, and omits nothing that passes `keep`,
+then filtering it gives exactly the sequence a full `[0, n)` scan would — same
+elements, same order.
+
+This is the bridge every grid-indexed path in this file needs, and it is where
+the ascending, deduplicated fill order earns its keep: without it the bucket
+would still hold the right *set* but not the right sequence, and downstream
+code that is order-sensitive (a `qsort` with ties, an `extract` prefix) could
+diverge. With it, the fast and slow arms are comparing identical arrays. -/
+theorem filter_eq_filter_range {n : Nat} {bkt : List Nat} {keep : Nat → Bool}
+    (hasc : bkt.Pairwise (· < ·))
+    (hsub : ∀ i ∈ bkt, i < n)
+    (hsup : ∀ i, i < n → keep i = true → i ∈ bkt) :
+    bkt.filter keep = (List.range n).filter keep := by
+  refine eq_of_pairwise_lt (hasc.filter _) (List.pairwise_lt_range.filter _) ?_
+  intro a
+  simp only [List.mem_filter, List.mem_range]
+  constructor
+  · rintro ⟨h1, h2⟩; exact ⟨hsub a h1, h2⟩
+  · rintro ⟨h1, h2⟩; exact ⟨hsup a h1 h2, h2⟩
+
 /-- Latitude reach under the *inclusive* radius test. -/
 theorem la_within_cell_le {p f : QPt} {radiusUm : Nat} (h : qDist p f ≤ radiusUm) :
     (f.la - p.la).natAbs ≤ radiusUm / 11132 := by
@@ -1125,13 +1190,13 @@ matcher's largest single cost once the corridor was indexed (one scan of ~25 k
 segments per GPS fix). The bucket holds every segment that can pass the radius
 test (`near_segment_cell_range`), so both arms sort the same candidate set.
 
-That the sorted *prefix* is then the same is a second claim, and it is the one
-still argued rather than proved: the comparator `(dist, si)` is a strict total
-order because `si` is unique, so a sorted permutation of a given set is unique
-and the collection order cannot matter — but "`qsort` returns a sorted
-permutation" is a property of Lean's `qsort`, and bare core ships no lemma for
-it. Closing this honestly means either proving that or sorting with something
-defined here; the candidate arrays are small enough that the second is cheap. -/
+That the sorted *prefix* is the same needs nothing at all about `qsort`. The two
+arms never hand it differently-ordered arrays: `mkQSegIndex` fills each bucket
+with `si` ascending (the outer loop is ascending and the push dedups against the
+bucket's last entry), this loop walks the bucket in index order, and the scan
+walks `[0, segments.size)` — so by `filter_eq_filter_range` the two collect the
+*same* array, and whatever `qsort` then does to it, it does to both. Bare core
+ships no `qsort` correctness lemma, and this path does not need one. -/
 def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
     (radiusUm maxCands : Nat) : Array QCand := Id.run do
   let cands0 := idx.grid.getD (cellKeyN (fix.la.fdiv idx.cellLa) (fix.lo.fdiv idx.cellLo)) #[]
