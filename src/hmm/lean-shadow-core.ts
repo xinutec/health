@@ -204,8 +204,13 @@ export function quantizeModel(model: HsmmModel): QuantProblem {
 	let classOf = new Array<number>(S).fill(0);
 	let reps: number[] = [0];
 	const deltas = new Array<number>(S);
+	// Linear index ((d−1)·T + e) of the last cell that refined the partition,
+	// or −1 if it never did. See pass 2 for what this licenses.
+	let lastSplitCell = -1;
+	let cell = -1;
 	for (let d = 1; d <= maxD; d++) {
 		for (let e = 0; e < T; e++) {
+			cell++;
 			for (let si = 0; si < S; si++) deltas[si] = deltaAt(si, d, e);
 			let split = false;
 			for (let si = 0; si < S; si++) {
@@ -215,6 +220,7 @@ export function quantizeModel(model: HsmmModel): QuantProblem {
 				}
 			}
 			if (!split) continue;
+			lastSplitCell = cell;
 			const remap = new Map<string, number>();
 			const newClass = new Array<number>(S);
 			const newReps: number[] = [];
@@ -236,13 +242,29 @@ export function quantizeModel(model: HsmmModel): QuantProblem {
 		}
 	}
 	// Pass 2 — fill per-class delta rows from the representatives and verify
-	// every state against its class (cells seen before a split re-checked
-	// here against the final partition).
+	// every state against its class.
+	//
+	// Pass 1's `!split` test IS the class verification: at every cell it fell
+	// through, it had just compared all S states against their class
+	// representative. For cells after `lastSplitCell` the partition it
+	// compared under never changed again, so it was the final partition —
+	// those cells are already verified and re-deriving all S deltas here
+	// would only repeat the same comparison. They need the representatives'
+	// values and nothing more (reps.length is ≤ CLASS_CAP and measured at 7–8
+	// across the corpus, against S ≈ 150). Cells at or before
+	// `lastSplitCell` were checked against a coarser partition, so those are
+	// re-verified in full, exactly as before.
 	const durDelta: number[][][] = Array.from({ length: reps.length }, () =>
 		Array.from({ length: maxD }, () => new Array<number>(T).fill(0)),
 	);
+	cell = -1;
 	for (let d = 1; d <= maxD; d++) {
 		for (let e = 0; e < T; e++) {
+			cell++;
+			if (cell > lastSplitCell) {
+				for (let c = 0; c < reps.length; c++) durDelta[c][d - 1][e] = deltaAt(reps[c], d, e);
+				continue;
+			}
 			for (let si = 0; si < S; si++) deltas[si] = deltaAt(si, d, e);
 			for (let c = 0; c < reps.length; c++) durDelta[c][d - 1][e] = deltas[reps[c]];
 			for (let si = 0; si < S; si++) {
