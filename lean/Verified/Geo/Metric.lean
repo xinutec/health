@@ -373,6 +373,42 @@ def qDist (a b : QPt) : Nat :=
   let dloAbs : Nat := if negY then (yAbs + 1048575) / 1048576 else yAbs / 1048576
   isqrt (dlaAbs * dlaAbs + dloAbs * dloAbs)
 
+/-- **Per-axis under-estimates compose into a distance under-estimate.** `qDist`
+is `isqrt` of the sum of two squared axis components, so anything that
+under-estimates each component separately bounds the distance from below —
+without ever taking a square root. This is what lets a matcher reject a
+candidate on cheap axis-aligned arithmetic and still be sure it could not have
+won: `gLa`/`gLo` are the caller's bounds, `b` the incumbent best.
+
+The longitude bound is stated against the *floor* of the scaled product because
+that is the weaker of `qDist`'s two roundings — the ceiling branch only ever
+makes the true component larger. -/
+theorem le_qDist_of_axes {p f : QPt} {gLa gLo b : Nat}
+    (hLa : gLa ≤ (f.la - p.la).natAbs * 11132)
+    (hLo : gLo ≤ (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs
+                   / 1048576)
+    (h : b * b ≤ gLa * gLa + gLo * gLo) : b ≤ qDist p f := by
+  unfold qDist
+  refine le_isqrt (Nat.le_trans h (Nat.add_le_add (Nat.mul_le_mul hLa hLa) ?_))
+  have hLo' : gLo ≤ (if decide ((f.lo - p.lo) < 0) != decide (cosQ ((p.la + f.la).tdiv 2) < 0)
+      then ((f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs + 1048575) / 1048576
+      else (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs / 1048576) := by
+    split <;> omega
+  exact Nat.mul_le_mul hLo' hLo'
+
+/-- `qDist` dominates its latitude component on its own. This is the direction
+the cell-width argument needs: two points closer than `d` cannot differ by more
+than `d` worth of latitude, so a grid stepped by `d` puts them within one cell. -/
+theorem le_qDist_la (a b : QPt) : (b.la - a.la).natAbs * 11132 ≤ qDist a b :=
+  le_qDist_of_axes (Nat.le_refl _) (Nat.zero_le _) (by omega)
+
+/-- The same for longitude, through the cosine — stated at the floor, which is
+the weaker of `qDist`'s two roundings. -/
+theorem le_qDist_lo (a b : QPt) :
+    (b.lo - a.lo).natAbs * 11132 * (cosQ ((a.la + b.la).tdiv 2)).natAbs / 1048576
+      ≤ qDist a b :=
+  le_qDist_of_axes (Nat.zero_le _) (Nat.le_refl _) (by omega)
+
 /-- µm between two points, cos at the first point — mirrors
 `equirectMeters` (`episode-geometry.ts`'s variant). -/
 def qDistA (a b : QPt) : Nat :=

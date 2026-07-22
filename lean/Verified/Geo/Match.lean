@@ -186,6 +186,105 @@ structure QChord where
   hiLo : Int
   deriving Inhabited
 
+/-- A chord's derived fields agree with its endpoints. `QChord` is a cache of
+quantities solved once in `mkQCorridor`, so nothing in the type stops a caller
+from building an inconsistent one; this is the contract the box argument needs,
+and it is exactly what `mkQCorridor` fills in. -/
+structure QChord.WF (ch : QChord) : Prop where
+  dLaAbs : ch.dLaAbs = (ch.b.la - ch.a.la).natAbs
+  dLaNeg : ch.dLaNeg = decide (ch.b.la < ch.a.la)
+  dLoAbs : ch.dLoAbs = (ch.b.lo - ch.a.lo).natAbs
+  dLoNeg : ch.dLoNeg = decide (ch.b.lo < ch.a.lo)
+  loLa : ch.loLa = min ch.a.la ch.b.la - 1
+  hiLa : ch.hiLa = max ch.a.la ch.b.la + 1
+  loLo : ch.loLo = min ch.a.lo ch.b.lo - 1
+  hiLo : ch.hiLo = max ch.a.lo ch.b.lo + 1
+
+/-- The spec's `max 0 (min (px·bx + py·vy) len2)` — the projection parameter,
+clamped to the chord — with every product carried as a `Nat` magnitude and the
+sign in the term's shape. `px·bx` reaches ~10¹⁴, far past the `2^31` where
+Lean's `Int` becomes a GMP bignum, while `Nat` stays unboxed to 2⁶³. The cases
+are the sign combinations of the two products: agreeing and negative means the
+whole sum is negative, which `max 0` sends to zero; disagreeing means the
+smaller magnitude is subtracted from the larger. -/
+@[inline] def qDot (px py : Int) (ch : QChord) : Nat :=
+  let m1 : Nat := px.natAbs * ch.bx.natAbs
+  let n1 : Bool := decide (px < 0) != decide (ch.bx < 0)
+  let m2 : Nat := py.natAbs * ch.vy.natAbs
+  let n2 : Bool := decide (py < 0) != decide (ch.vy < 0)
+  if n1 == n2 then (if n1 then 0 else min (m1 + m2) ch.len2)
+  else if n1 then (if m2 ≥ m1 then min (m2 - m1) ch.len2 else 0)
+  else (if m1 ≥ m2 then min (m1 - m2) ch.len2 else 0)
+
+/-- **The clamp holds.** Every branch is either `0` or a `min` against `len²`,
+so the parameter never leaves `[0, len²]` — which is what keeps the foot on the
+chord instead of running off its extension. -/
+theorem qDot_le (px py : Int) (ch : QChord) : qDot px py ch ≤ ch.len2 := by
+  unfold qDot
+  simp only []
+  split
+  · split
+    · exact Nat.zero_le _
+    · exact Nat.min_le_right _ _
+  · split <;> split
+    · exact Nat.min_le_right _ _
+    · exact Nat.zero_le _
+    · exact Nat.min_le_right _ _
+    · exact Nat.zero_le _
+
+/-- The foot of the projection at parameter `dot`: the spec's two `roundDiv`s.
+With `dot ≥ 0` and `len² > 0`, half-away-from-zero is `⌊(dot·|Δ| + ⌊len²/2⌋)/len²⌋`,
+negated exactly when `Δ` is. -/
+@[inline] def QChord.foot (ch : QChord) (dot : Nat) : QPt :=
+  let half : Nat := ch.len2 / 2
+  let sLa : Nat := (dot * ch.dLaAbs + half) / ch.len2
+  let sLo : Nat := (dot * ch.dLoAbs + half) / ch.len2
+  { la := ch.a.la + (if ch.dLaNeg then -(sLa : Int) else (sLa : Int))
+    lo := ch.a.lo + (if ch.dLoNeg then -(sLo : Int) else (sLo : Int)), ts := 0 }
+
+/-- Rounding a fraction of `Δ` cannot overshoot `Δ`: with `0 ≤ dot ≤ len²`, the
+rounded step lands in `[0, |Δ|]`. The `+ ⌊len²/2⌋` is what makes this tight —
+it is still strictly under `len²·(|Δ|+1)`. -/
+theorem roundedStep_le {dot dAbs len2 : Nat} (hlen : 0 < len2) (hdot : dot ≤ len2) :
+    (dot * dAbs + len2 / 2) / len2 ≤ dAbs := by
+  have h1 : dot * dAbs ≤ len2 * dAbs := Nat.mul_le_mul hdot (Nat.le_refl _)
+  have hlt : dot * dAbs + len2 / 2 < len2 * (dAbs + 1) := by
+    rw [Nat.mul_add]; omega
+  exact Nat.le_of_lt_succ (Nat.div_lt_of_lt_mul hlt)
+
+/-- One axis of the foot lies between the two endpoints (and so inside the
+stored box, which is dilated by a further unit). -/
+theorem foot_axis_mem {a b : Int} {s : Nat} {neg : Bool} (hneg : neg = decide (b < a))
+    (h : s ≤ (b - a).natAbs) :
+    min a b - 1 ≤ a + (if neg then -(s : Int) else (s : Int))
+    ∧ a + (if neg then -(s : Int) else (s : Int)) ≤ max a b + 1 := by
+  cases neg with
+  | false =>
+    have hb : ¬ (b < a) := by simp at hneg; omega
+    rw [show (if (false : Bool) then -(s : Int) else (s : Int)) = (s : Int) from rfl]
+    exact ⟨by omega, by omega⟩
+  | true =>
+    have hb : b < a := by simp at hneg; omega
+    rw [show (if (true : Bool) then -(s : Int) else (s : Int)) = -(s : Int) from rfl]
+    exact ⟨by omega, by omega⟩
+
+/-- **The foot never leaves the chord's box.** This is the premise
+`boxRejects_sound` needs, and the reason the box may simply be the endpoint
+box: the clamped, rounded foot is a genuine convex combination of the
+endpoints, so the one-unit dilation is slack rather than necessity. -/
+theorem foot_mem_box {ch : QChord} (wf : ch.WF) {dot : Nat}
+    (hlen : 0 < ch.len2) (hdot : dot ≤ ch.len2) :
+    ch.loLa ≤ (ch.foot dot).la ∧ (ch.foot dot).la ≤ ch.hiLa ∧
+    ch.loLo ≤ (ch.foot dot).lo ∧ (ch.foot dot).lo ≤ ch.hiLo := by
+  have h1 : (dot * ch.dLaAbs + ch.len2 / 2) / ch.len2 ≤ (ch.b.la - ch.a.la).natAbs := by
+    rw [← wf.dLaAbs]; exact roundedStep_le hlen hdot
+  have h2 : (dot * ch.dLoAbs + ch.len2 / 2) / ch.len2 ≤ (ch.b.lo - ch.a.lo).natAbs := by
+    rw [← wf.dLoAbs]; exact roundedStep_le hlen hdot
+  have ka := foot_axis_mem wf.dLaNeg h1
+  have ko := foot_axis_mem wf.dLoNeg h2
+  simp only [QChord.foot, wf.loLa, wf.hiLa, wf.loLo, wf.hiLo]
+  exact ⟨ka.1, ka.2, ko.1, ko.2⟩
+
 /-- Gap from `x` to the interval `[lo, hi]` in µm **times `2^20`**, with `k` the
 Q20 cos it is projected through (`2^20` itself for latitude, a `cosQ` lower bound
 for longitude). Kept scaled so the hot reject `gap ≥ best` is
@@ -197,22 +296,104 @@ def boxGapScaled (x lo hi k : Int) : Nat :=
   else if x > hi then (x - hi).toNat * 11132 * k.toNat
   else 0
 
+/-- **The box gap really is a gap**: it never exceeds the separation from `x` to
+any point `f` of `[lo, hi]`, at the same `k` scale. Both the reject below and
+the cell widths lean on this direction and only this direction — an
+over-estimate here would drop a chord that could have won. -/
+theorem boxGapScaled_le {x lo hi f k : Int} (hf : lo ≤ f) (hf' : f ≤ hi) :
+    boxGapScaled x lo hi k ≤ (f - x).natAbs * 11132 * k.toNat := by
+  unfold boxGapScaled
+  split
+  · next h =>
+    exact Nat.mul_le_mul (Nat.mul_le_mul (by omega) (Nat.le_refl 11132)) (Nat.le_refl k.toNat)
+  · split
+    · next h =>
+      exact Nat.mul_le_mul (Nat.mul_le_mul (by omega) (Nat.le_refl 11132)) (Nat.le_refl k.toNat)
+    · exact Nat.zero_le _
+
+/-- The reject `QCorridor.distToFast` applies before it will pay for a
+projection: the chord's box gap from `p`, per axis, against the incumbent
+`best`. Each axis is tried alone first — a single gap already exceeding `best`
+settles it — and only if both are inside does it pay for the two divisions back
+to µm and the combined test.
+
+Kept scaled by `2^20` for as long as possible so the first two tests are
+comparisons rather than divisions: for naturals `⌊S/2^20⌋ ≥ best ↔ S ≥ best·2^20`.
+`cmin` is the corridor's `cosQ` lower bound, which is what makes the longitude
+gap an under-estimate (`boxRejects_sound`). -/
+@[inline] def boxRejects (p : QPt) (ch : QChord) (cmin : Int) (best : Nat) : Bool :=
+  let bestS : Nat := best * 1048576
+  let gLaS := boxGapScaled p.la ch.loLa ch.hiLa 1048576
+  if gLaS ≥ bestS then true
+  else
+    let gLoS := boxGapScaled p.lo ch.loLo ch.hiLo cmin
+    if gLoS ≥ bestS then true
+    else
+      let gLa := gLaS / 1048576
+      let gLo := gLoS / 1048576
+      gLa * gLa + gLo * gLo ≥ best * best
+
+/-- **The reject only ever discards losers.** If `boxRejects` fires for a point
+`f` in the chord's box, then `f` is at least `best` away — so skipping the chord
+can change neither the running minimum nor the final answer.
+
+The one premise that is not local is `hcos`: `cmin` must lower-bound `cosQ` at
+the *query's* mid-latitude, not merely over the chord. `mkQCorridor` establishes
+it by taking the corridor's latitude band, widening it by 0.1°, and subtracting
+`cosSlack` — and that step is measured rather than proved, which is why it is
+carried here as a hypothesis instead of being assumed away. -/
+theorem boxRejects_sound {p f : QPt} {ch : QChord} {cmin : Int} {best : Nat}
+    (hLa : ch.loLa ≤ f.la) (hLa' : f.la ≤ ch.hiLa)
+    (hLo : ch.loLo ≤ f.lo) (hLo' : f.lo ≤ ch.hiLo)
+    (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
+    (h : boxRejects p ch cmin best = true) :
+    best ≤ qDist p f := by
+  -- Each axis gap, divided back to µm, under-estimates that axis of `qDist`.
+  have hgLa : boxGapScaled p.la ch.loLa ch.hiLa 1048576 / 1048576
+      ≤ (f.la - p.la).natAbs * 11132 := by
+    have := Nat.div_le_div_right (c := 1048576) (boxGapScaled_le (x := p.la) (k := 1048576) hLa hLa')
+    rwa [show ((1048576 : Int)).toNat = 1048576 from rfl,
+      Nat.mul_div_cancel _ (by omega)] at this
+  have hgLo : boxGapScaled p.lo ch.loLo ch.hiLo cmin / 1048576
+      ≤ (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs / 1048576 :=
+    Nat.div_le_div_right
+      (Nat.le_trans (boxGapScaled_le (x := p.lo) hLo hLo')
+        (Nat.mul_le_mul (Nat.le_refl _) (by omega)))
+  refine le_qDist_of_axes hgLa hgLo ?_
+  -- All three exits imply the same squared bound; the first two are one axis on
+  -- its own, which is only a weaker version of the combined test.
+  unfold boxRejects at h
+  simp only [] at h
+  split at h
+  · next hr =>
+    have : best ≤ boxGapScaled p.la ch.loLa ch.hiLa 1048576 / 1048576 :=
+      (Nat.le_div_iff_mul_le (by omega)).mpr hr
+    exact Nat.le_trans (Nat.mul_le_mul this this) (Nat.le_add_right _ _)
+  · split at h
+    · next hr =>
+      have : best ≤ boxGapScaled p.lo ch.loLo ch.hiLo cmin / 1048576 :=
+        (Nat.le_div_iff_mul_le (by omega)).mpr hr
+      exact Nat.le_trans (Nat.mul_le_mul this this) (Nat.le_add_left _ _)
+    · exact of_decide_eq_true h
+
 /-- The corridor's tuned parameters, `S = farUm − nearUm` precomputed, plus the
 chord index `distToFast` reads.
 
 `cellLa`/`cellLo` are one `farUm` step in latitude / longitude coordinate units
 (the longitude step uses `cmin`, a corridor-wide `cosQ` lower bound, so it is
 never too narrow). `grid` files each chord `i` (`fixes[i-1] → fixes[i]`) in every
-cell its bounding box **dilated by one cell** touches. Consequence — the whole
-basis for `distToFast`: any chord within `farUm` of a point `p` differs from
-`p` by at most `cellLa`/`cellLo` per axis, so `p` lies in that chord's dilated
-box, so the chord is filed in `p`'s own cell. One bucket therefore holds every
-chord that could beat the `farUm` clamp.
+cell its bounding box **dilated by one cell** touches. That is the whole basis
+for `distToFast` reading a single bucket, and it is discharged by
+`near_chord_cell_range`: a chord within `farUm` of a point `p` differs from `p`
+by less than `cellLa`/`cellLo` per axis, so `p`'s cell index lies inside the
+range that chord was filed under.
 
 `cmin` lower-bounds `cosQ` over the whole corridor **plus a 0.1° latitude
 margin** — far more than any point `distToFast` is asked about can stray — so it
 is a sound cos bound for the longitude gap as well as a safe (never too narrow)
-cell width. `chords` carries each chord's solved projection frame. -/
+cell width. That last step is the one the proofs take as a hypothesis rather
+than establish: see `boxRejects_sound`. `chords` carries each chord's solved
+projection frame. -/
 structure QCorridor where
   fixes : Array QPt
   nearUm : Nat
@@ -256,8 +437,10 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
   let mut cmin : Int :=
     cosQ (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd) - cosSlack
   if cmin < 1 then cmin := 1
-  let cellLa : Int := (farUm : Int) / 11132 + 1
-  let cellLo : Int := ((farUm : Int) * 1048576) / (11132 * cmin) + 1
+  -- Stated as `Nat` divisions cast up, which is both what the machine wants and
+  -- the exact form `near_chord_cell_range` is proved about.
+  let cellLa : Int := ((farUm / 11132 : Nat) : Int) + 1
+  let cellLo : Int := ((farUm * 1048576 / (11132 * cmin.toNat) : Nat) : Int) + 1
   let mut grid : Std.HashMap Nat (Array Nat) := ∅
   let mut chords : Array QChord := #[default]
   for i in [1:fixes.size] do
@@ -293,6 +476,97 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
       cy := cy + 1
   return { fixes, nearUm, farUm, maxPen, S := farUm - nearUm, cellLa, cellLo, cmin, grid, chords }
 
+/-! ### The corridor grid holds every chord that could win
+
+`distToFast` reads a single bucket, which is exact only if that bucket contains
+every chord able to beat the `farUm` clamp. That is the conjunction of three
+things: the cell widths are at least the reach (`la_near_within_cell`,
+`lo_near_within_cell`), a query within one cell of a box lands inside the filed
+cell range (`cell_mem_range`), and the fill loop runs over exactly that range —
+the last read off `mkQCorridor` directly.
+
+Dilating the box by a cell before filing is what makes the middle step pure
+interval containment. The alternative — filing the raw box and arguing that a
+nearby query still rasterises into some filed cell — is the density argument
+`RingSearch.lean` never managed to discharge. -/
+
+/-- Floor division is monotone: a smaller coordinate cannot land in a later
+cell. Every grid here rests on this. -/
+theorem fdiv_le_fdiv {a b c : Int} (hc : 0 < c) (h : a ≤ b) : a.fdiv c ≤ b.fdiv c := by
+  rw [Int.fdiv_eq_ediv, Int.fdiv_eq_ediv, if_pos (Or.inl (Int.le_of_lt hc)),
+    if_pos (Or.inl (Int.le_of_lt hc))]
+  have := Int.ediv_le_ediv hc h
+  omega
+
+/-- A point of `[lo, hi]` has a cell index inside the range that interval's
+endpoints were filed under. Every grid in this file reduces to this: file an
+item across the cells its interval spans, and any query inside the interval is
+found in one bucket. Grids that answer *proximity* rather than *containment*
+(the corridor's) dilate the interval by a cell first, and then apply this to the
+dilated one — which is why none of them needs a rasterisation-density argument
+(cf. `RingSearch.lean`'s undischarged `hgeom`). -/
+theorem fdiv_mem_range {lo hi p cell : Int} (hcell : 0 < cell)
+    (h1 : lo ≤ p) (h2 : p ≤ hi) :
+    lo.fdiv cell ≤ p.fdiv cell ∧ p.fdiv cell ≤ hi.fdiv cell :=
+  ⟨fdiv_le_fdiv hcell h1, fdiv_le_fdiv hcell h2⟩
+
+/-- The dilated form, as the corridor grid files chords. -/
+theorem cell_mem_range {lo hi p cell : Int} (hcell : 0 < cell)
+    (h1 : lo - cell ≤ p) (h2 : p ≤ hi + cell) :
+    (lo - cell).fdiv cell ≤ p.fdiv cell ∧ p.fdiv cell ≤ (hi + cell).fdiv cell :=
+  fdiv_mem_range hcell h1 h2
+
+/-- Latitude reach: closer than `farUm` means less than one `cellLa` apart. One
+latitude unit is 11 132 µm flat, so this needs no cosine. -/
+theorem la_near_within_cell {p f : QPt} {farUm : Nat} (h : qDist p f < farUm) :
+    (f.la - p.la).natAbs ≤ farUm / 11132 := by
+  have := le_qDist_la p f
+  omega
+
+/-- Longitude reach: closer than `farUm` means less than one `cellLo` apart,
+where the cell is stepped through `cmin` — any lower bound on the cosine will
+do, and a smaller one only widens the cell. The `< farUm` (rather than `≤`) is
+load-bearing: it is what absorbs `qDist`'s floor, and it is exactly the
+condition under which a chord can still lower `distToFast`'s running best. -/
+theorem lo_near_within_cell {p f : QPt} {farUm : Nat} {cmin : Int}
+    (hc : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
+    (h : qDist p f < farUm) :
+    (f.lo - p.lo).natAbs ≤ farUm * 1048576 / (11132 * cmin.toNat) := by
+  have hlo := le_qDist_lo p f
+  have hA : (f.lo - p.lo).natAbs * 11132 * (cosQ ((p.la + f.la).tdiv 2)).natAbs
+      < farUm * 1048576 := by omega
+  have hcm : cmin.toNat ≤ (cosQ ((p.la + f.la).tdiv 2)).natAbs := by omega
+  have hmono := Nat.mul_le_mul (Nat.le_refl ((f.lo - p.lo).natAbs * 11132)) hcm
+  have hassoc : (f.lo - p.lo).natAbs * 11132 * cmin.toNat
+      = (f.lo - p.lo).natAbs * (11132 * cmin.toNat) := Nat.mul_assoc _ _ _
+  exact (Nat.le_div_iff_mul_le (by omega)).mpr (by omega)
+
+/-- **The bucket `distToFast` reads holds every chord that matters.** Given a
+point `f` of the chord's box within `farUm` of the query `p`, the query's cell
+lies inside the range `mkQCorridor` filed that chord under — on both axes. With
+`foot_mem_box` supplying such an `f` for the chord's own foot, a chord closer
+than the `farUm` clamp is necessarily in `p`'s own bucket, so reading one bucket
+loses nothing.
+
+`hcos` is the same corridor-wide cosine bound `boxRejects_sound` needs, and is
+open for the same reason. -/
+theorem near_chord_cell_range {p f : QPt} {farUm : Nat}
+    {cmin loLa hiLa loLo hiLo cellLa cellLo : Int}
+    (hLaDef : cellLa = ((farUm / 11132 : Nat) : Int) + 1)
+    (hLoDef : cellLo = ((farUm * 1048576 / (11132 * cmin.toNat) : Nat) : Int) + 1)
+    (hcm : 0 < cmin) (hcos : cmin ≤ cosQ ((p.la + f.la).tdiv 2))
+    (hnear : qDist p f < farUm)
+    (hfLa : loLa ≤ f.la) (hfLa' : f.la ≤ hiLa)
+    (hfLo : loLo ≤ f.lo) (hfLo' : f.lo ≤ hiLo) :
+    ((loLa - cellLa).fdiv cellLa ≤ p.la.fdiv cellLa
+      ∧ p.la.fdiv cellLa ≤ (hiLa + cellLa).fdiv cellLa)
+    ∧ ((loLo - cellLo).fdiv cellLo ≤ p.lo.fdiv cellLo
+      ∧ p.lo.fdiv cellLo ≤ (hiLo + cellLo).fdiv cellLo) := by
+  have hla := la_near_within_cell hnear
+  have hlo := lo_near_within_cell hcm hcos hnear
+  exact ⟨cell_mem_range (by omega) (by omega) (by omega),
+    cell_mem_range (by omega) (by omega) (by omega)⟩
+
 /-- Brute-force nearest-chord distance (the float grid is exact by its
 own argument), clamped at `farUm` (`QCorridor.distTo`). -/
 def QCorridor.distTo (co : QCorridor) (p : QPt) : Nat := Id.run do
@@ -321,23 +595,22 @@ def QCorridor.distTo (co : QCorridor) (p : QPt) : Nat := Id.run do
 /-- **Grid-indexed `distTo`** — same value, one bucket instead of every chord.
 `distTo` was the matcher's hot spot (O(chords) per graph edge, and there is one
 `distTo` per edge weight); the float matcher hit the same wall and answered it
-with a chord grid. Reading only `p`'s own cell is exact here because the bucket
-holds every chord within `farUm` (see `QCorridor`), and `distTo` clamps at
-`farUm`: a chord filed elsewhere is ≥ `farUm` away, and the box gap lower-bounds
-the chord distance, so neither the running `best` reject nor the final minimum
-can differ.
+with a chord grid. Reading only `p`'s own cell is exact because the bucket holds
+every chord within `farUm` (`near_chord_cell_range`), and `distTo` clamps at
+`farUm`, so a chord filed elsewhere could not have lowered the answer anyway.
 
 Two further departures from the spec's shape, both value-preserving:
 
 * the projection frame (`c`, `bx`, `vy`, `len2`) is read from `co.chords`
   instead of recomputed — same numbers, solved once per chord in `mkQCorridor`
   rather than once per (chord, query) pair;
-* the reject is the **two-axis** box gap, not `latGapUm`'s latitude alone. The
-  foot lies in the chord's unit-dilated box, `qDist` is `isqrt` of the sum of
-  the two axis components, and `cmin ≤ cosQ` everywhere it is applied, so
-  `gLa² + gLo²` under-estimates `qDist(p, foot)²`. A chord it rejects has
-  `d ≥ best`, so it could not have lowered `best` — dropping it leaves both the
-  `best` sequence and the minimum unchanged. -/
+* the reject is the **two-axis** box gap, not `latGapUm`'s latitude alone —
+  sound by `chordReject_sound`: a rejected chord has `d ≥ best`, so dropping it
+  leaves both the `best` sequence and the minimum unchanged.
+
+Both of those theorems, and nothing else here, take the corridor's cosine bound
+`cmin ≤ cosQ` as a hypothesis. That is the one link in the chain still resting
+on measurement — `scripts/probe-cosq-monotonicity.py`. -/
 def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
   if co.fixes.size == 0 then return 0
   if co.fixes.size == 1 then return qDist p (co.fixes.getD 0 default)
@@ -345,43 +618,35 @@ def QCorridor.distToFast (co : QCorridor) (p : QPt) : Nat := Id.run do
   let mut best : Nat := co.farUm
   for i in cands do
     let ch := co.chords.getD i default
-    let bestS : Nat := best * 1048576
-    let gLaS := boxGapScaled p.la ch.loLa ch.hiLa 1048576
-    if gLaS ≥ bestS then continue
-    let gLoS := boxGapScaled p.lo ch.loLo ch.hiLo co.cmin
-    if gLoS ≥ bestS then continue
-    -- Both axes are inside `best`, so the (rarer) combined test can afford the
-    -- two divisions back to µm, where the squares stay well inside `Nat`.
-    let gLa := gLaS / 1048576
-    let gLo := gLoS / 1048576
-    if gLa * gLa + gLo * gLo ≥ best * best then continue
+    if boxRejects p ch co.cmin best then continue
     let d : Nat :=
       if ch.len2 = 0 then qDist p ch.a
       else
-        -- The spec's `max 0 (min (px·bx + py·vy) len2)` and its two `roundDiv`s,
-        -- with every product carried as a `Nat` magnitude and the sign in the
-        -- shape: `px·bx` reaches ~10^14 and `dot·Δ` ~10^16, both far past the
-        -- `2^31` where an `Int` becomes a GMP bignum, and `Nat` keeps the exact
-        -- value at any size (it degrades to a bignum too, just far later).
         let px : Int := ((p.lo - ch.a.lo) * 11132 * ch.c).fdiv 1048576
         let py : Int := (p.la - ch.a.la) * 11132
-        let m1 : Nat := px.natAbs * ch.bx.natAbs
-        let n1 : Bool := decide (px < 0) != decide (ch.bx < 0)
-        let m2 : Nat := py.natAbs * ch.vy.natAbs
-        let n2 : Bool := decide (py < 0) != decide (ch.vy < 0)
-        let dot : Nat :=
-          if n1 == n2 then (if n1 then 0 else min (m1 + m2) ch.len2)
-          else if n1 then (if m2 ≥ m1 then min (m2 - m1) ch.len2 else 0)
-          else (if m1 ≥ m2 then min (m1 - m2) ch.len2 else 0)
-        -- `roundDiv (dot·Δ) len2` with `dot ≥ 0` and `len2 > 0`: half-away-from-
-        -- zero is `⌊(dot·|Δ| + ⌊len2/2⌋)/len2⌋`, negated iff `Δ` is.
-        let half : Nat := ch.len2 / 2
-        let sLa : Nat := (dot * ch.dLaAbs + half) / ch.len2
-        let sLo : Nat := (dot * ch.dLoAbs + half) / ch.len2
-        qDist p { la := ch.a.la + (if ch.dLaNeg then -(sLa : Int) else (sLa : Int))
-                  lo := ch.a.lo + (if ch.dLoNeg then -(sLo : Int) else (sLo : Int)), ts := 0 }
+        qDist p (ch.foot (qDot px py ch))
     if d < best then best := d
   return best
+
+/-- **`distToFast`'s reject only ever drops chords that could not have won** —
+the loop body's soundness, assembled from the parts. The clamp keeps the
+projection parameter in range (`qDot_le`), rounding keeps each step inside the
+endpoint delta (`roundedStep_le`), so the foot lies in the chord's stored box
+(`foot_mem_box`), so a firing reject puts the foot at least `best` away
+(`boxRejects_sound`). A chord at distance `≥ best` cannot lower `best`, so
+skipping it changes neither the running minimum nor the returned value.
+
+What is still assumed, and deliberately left visible as a hypothesis: `hcos`,
+that the corridor's `cmin` really does lower-bound `cosQ` at this query's
+mid-latitude. `mkQCorridor` arranges that by band-widening and `cosSlack`, on
+measured rather than proved grounds. -/
+theorem chordReject_sound {p : QPt} {ch : QChord} {cmin : Int} {best dot : Nat}
+    (wf : ch.WF) (hlen : 0 < ch.len2) (hdot : dot ≤ ch.len2)
+    (hcos : cmin ≤ cosQ ((p.la + (ch.foot dot).la).tdiv 2))
+    (h : boxRejects p ch cmin best = true) :
+    best ≤ qDist p (ch.foot dot) := by
+  obtain ⟨hb1, hb2, hb3, hb4⟩ := foot_mem_box wf hlen hdot
+  exact boxRejects_sound hb1 hb2 hb3 hb4 hcos h
 
 /-- The ramp times `S`: `S` at/below `nearUm`, `S·maxPen` at/above
 `farUm`, linear between — the float penalty's exact total order
@@ -437,10 +702,11 @@ def buildingCellUm : Nat := 30000000
 the fixes, and the two tuned thresholds (`QBuildings` constructor), plus the
 footprint index `inAnyRingFast` reads.
 
-`grid` files ring `i` in every cell its bounding box meets. So if `p` is inside
-ring `i`'s box it is inside one of those cells, i.e. ring `i` is in `p`'s own
-bucket — the bucket therefore holds every ring that survives the box reject,
-which is exactly the set `inAnyRing`'s scan would test. -/
+`grid` files ring `i` in every cell its bounding box meets. Because the test
+here is *containment* rather than proximity, no dilation is needed: a `p` inside
+ring `i`'s box is inside one of those cells, so ring `i` is in `p`'s own bucket
+(`ring_box_cell_range`). The bucket therefore holds every ring that survives the
+box reject, which is exactly the set `inAnyRing`'s scan would test. -/
 structure QBuildings where
   rings : Array (Array QPt)
   boxes : Array QBox
@@ -493,6 +759,22 @@ def mkQBuildings (buildings : Array (Array QPt)) (fixes : Array QPt)
       cy := cy + 1
   return { rings, boxes, fixes, crossFactor, supportUm, cellLa, cellLo, grid }
 
+/-- **The bucket `inAnyRingFast` reads holds every ring whose box contains the
+query.** A ring filed in some other cell fails `inAnyRing`'s own box reject, and
+a ray cast the scan never performs cannot change a disjunction — so scanning one
+bucket and scanning all rings return the same `Bool`.
+
+Both cell widths are positive as `mkQBuildings` computes them (a non-negative
+division plus one, with `cmin` clamped to at least 1); that is read off the
+constructor rather than proved, and it is the only structural step here. -/
+theorem ring_box_cell_range {p : QPt} {b : QBox} {cellLa cellLo : Int}
+    (hLa : 0 < cellLa) (hLo : 0 < cellLo)
+    (h1 : b.minLa ≤ p.la) (h2 : p.la ≤ b.maxLa)
+    (h3 : b.minLo ≤ p.lo) (h4 : p.lo ≤ b.maxLo) :
+    (b.minLa.fdiv cellLa ≤ p.la.fdiv cellLa ∧ p.la.fdiv cellLa ≤ b.maxLa.fdiv cellLa)
+    ∧ (b.minLo.fdiv cellLo ≤ p.lo.fdiv cellLo ∧ p.lo.fdiv cellLo ≤ b.maxLo.fdiv cellLo) :=
+  ⟨fdiv_mem_range hLa h1 h2, fdiv_mem_range hLo h3 h4⟩
+
 /-- Brute-force footprint test — box reject, then the exact ray cast. -/
 def QBuildings.inAnyRing (bld : QBuildings) (p : QPt) : Bool := Id.run do
   for i in [0:bld.rings.size] do
@@ -505,9 +787,9 @@ def QBuildings.inAnyRing (bld : QBuildings) (p : QPt) : Bool := Id.run do
 /-- **Grid-indexed `inAnyRing`** — same value, one bucket instead of every ring.
 The brute-force scan was the matcher's dominant cost (two `factor` samples per
 graph edge, each scanning all ~3k corridor footprints); `p`'s bucket contains
-every ring whose box contains `p` (see `QBuildings`), and a ring the scan would
-reject on its box cannot change a disjunction of ray casts, so the two agree.
-Bucket order is ascending ring index, as in the scan. -/
+every ring whose box contains `p` (`ring_box_cell_range`), and a ring the scan
+would reject on its box cannot change a disjunction of ray casts, so the two
+agree. Bucket order is ascending ring index, as in the scan. -/
 def QBuildings.inAnyRingFast (bld : QBuildings) (p : QPt) : Bool := Id.run do
   let cands := bld.grid.getD (cellKeyN (p.la.fdiv bld.cellLa) (p.lo.fdiv bld.cellLo)) #[]
   for i in cands do
