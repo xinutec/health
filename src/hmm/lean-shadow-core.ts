@@ -25,7 +25,9 @@
  *   mode, not its identity), exported as `durClass` + `durDelta`
  *   (class × d × e). The class partition is verified cell-by-cell during
  *   export — this module REFUSES shapes it cannot represent faithfully
- *   rather than shadowing a different model.
+ *   rather than shadowing a different model. `refereeDurationExport`
+ *   re-checks that export independently (pass 2 trusts pass 1 for most
+ *   cells; the referee trusts neither), gated by the corpus tool.
  */
 
 import { spawnSync } from "node:child_process";
@@ -277,6 +279,85 @@ export function quantizeModel(model: HsmmModel): QuantProblem {
 	return { T, S, maxD, emit, trans, transOv, dur, durOverrides: [], durClass: classOf, durDelta, init, entry };
 }
 
+/** Verdict from the class-factorised duration export referee. */
+export interface DurationExportVerdict {
+	ok: boolean;
+	/** Cells the referee re-derived and compared (0 = branch not exercised). */
+	cellsChecked: number;
+	message: string;
+}
+
+/**
+ * Independent referee for the class-factorised duration export.
+ *
+ * `quantizeModel`'s pass 2 does NOT re-derive every cell: for cells after the
+ * last partition split it fills only the class representatives' deltas and
+ * trusts pass 1's `!split` fall-through as the per-state verification
+ * (`cbb94f5`). That optimisation has no other gate — `shadowHsmmDay` decodes
+ * the *exported* tensor two ways and demands they agree, but both decoders read
+ * the same `durDelta`, so an export that misrepresents the float model would
+ * pass silently as long as it misrepresents it identically to both.
+ *
+ * This closes that gap the way `scoreQuant` referees the decoder: re-derive the
+ * baseline row and every `(s,d,e)` delta straight from the float model — with
+ * no reference to how the export was built — and demand
+ * `durDelta[class[s]][d][e]` equals it for every state. A no-op (cellsChecked 0)
+ * when the sparse branch was taken; the sparse overrides are already an
+ * exhaustive per-cell list, so they carry no equivalent trust.
+ */
+export function refereeDurationExport(model: HsmmModel, q: QuantProblem): DurationExportVerdict {
+	if (q.durClass === null || q.durDelta === null) {
+		return { ok: true, cellsChecked: 0, message: "sparse branch — no class export to referee" };
+	}
+	const { T, S, maxD, durClass, durDelta } = q;
+	const st = model.states;
+	// Re-derive the baseline row independently rather than trust `q.dur`: a wrong
+	// baseline would otherwise cancel out of every delta below.
+	const refDur = st.map((s) =>
+		Array.from({ length: maxD }, (_, d0) => quantize(model.durationLogProb(s, d0 + 1, REF_E))),
+	);
+	for (let si = 0; si < S; si++) {
+		for (let d0 = 0; d0 < maxD; d0++) {
+			if (q.dur[si][d0] !== refDur[si][d0]) {
+				return {
+					ok: false,
+					cellsChecked: 0,
+					message: `baseline row s=${si} d=${d0 + 1}: referee ${refDur[si][d0]} ≠ export ${q.dur[si][d0]}`,
+				};
+			}
+		}
+	}
+	const deltaAt = (si: number, d: number, e: number): number => {
+		const base = refDur[si][d - 1];
+		const v = quantize(model.durationLogProb(st[si], d, e));
+		if (base === null && v === null) return 0;
+		// A finite↔−∞ flip a scalar delta cannot encode — the export should have
+		// refused it. NaN never equals the exported integer, so this fails.
+		if (base === null || v === null) return Number.NaN;
+		return v - base;
+	};
+	for (let d = 1; d <= maxD; d++) {
+		for (let e = 0; e < T; e++) {
+			for (let si = 0; si < S; si++) {
+				const want = deltaAt(si, d, e);
+				const got = durDelta[durClass[si]][d - 1][e];
+				if (want !== got) {
+					return {
+						ok: false,
+						cellsChecked: (d - 1) * T * S + e * S + si,
+						message: `delta s=${si} d=${d} e=${e}: referee ${want} ≠ export ${got}`,
+					};
+				}
+			}
+		}
+	}
+	return {
+		ok: true,
+		cellsChecked: T * S * maxD,
+		message: `all ${T * S * maxD} cells agree, classes=${durDelta.length}`,
+	};
+}
+
 /** Independent referee: score a per-minute path under the quantised model. */
 export function scoreQuant(q: QuantProblem, pathStates: readonly number[]): number {
 	if (pathStates.length !== q.T) return NEG;
@@ -393,11 +474,21 @@ export interface ShadowReport {
 	quantiseMs: number;
 	tsMs: number;
 	leanMs: number;
+	/** Class-export referee verdict — present only when requested (it costs a
+	 *  full 55M-cell re-derivation, so the daily cron shadow omits it). */
+	durationExport?: DurationExportVerdict;
 }
 
 /** Run the full A/B for one day's model. Throws only on export refusal or a
- *  crashed CLI — a wrong decode is reported, not thrown. */
-export function shadowHsmmDay(model: HsmmModel, leanBin: string): ShadowReport {
+ *  crashed CLI — a wrong decode is reported, not thrown. When
+ *  `opts.refereeDurations` is set, also re-derives the class-factorised
+ *  duration export cell-by-cell (a no-op on sparse days) — the corpus tool
+ *  turns this on; the per-day cron leaves it off to avoid the extra pass. */
+export function shadowHsmmDay(
+	model: HsmmModel,
+	leanBin: string,
+	opts: { refereeDurations?: boolean } = {},
+): ShadowReport {
 	const t0 = performance.now();
 	const q = quantizeModel(model);
 	const t1 = performance.now();
@@ -441,5 +532,6 @@ export function shadowHsmmDay(model: HsmmModel, leanBin: string): ShadowReport {
 		quantiseMs: t1 - t0,
 		tsMs: t2 - t1,
 		leanMs: t3 - t2,
+		durationExport: opts.refereeDurations === true ? refereeDurationExport(model, q) : undefined,
 	};
 }

@@ -10,9 +10,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Needs the local decoded_days corpus (gitignored, real data) — so this
 # is a tool like golden-hsmm, not part of `npm run verify`.
 #
+# With --c4-flags this also gates the class-factorised duration export:
+# per day it re-derives the whole duration tensor independently and demands
+# the export matches (the class branch's only gate — the shadow decode reads
+# the exported tensor, so it can't catch an export that misrepresents the
+# model identically to both decoders).
+#
 # Usage:
 #   scripts/lean-shadow.sh                # every captured day
 #   scripts/lean-shadow.sh 2026-05-25    # one day
+#   scripts/lean-shadow.sh --c4-flags    # force prod flags + class-export gate
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."

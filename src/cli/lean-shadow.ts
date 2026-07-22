@@ -13,10 +13,14 @@
  * (chain context / segment evidence / cadence imputation /
  * reacquire-robust speed) onto every fixture regardless of what was
  * captured — exercising the time-varying transition and class-factorised
- * duration export paths the cron shadow needs.
+ * duration export paths the cron shadow needs. Under those flags this is
+ * also the gate for the class export itself: it runs `refereeDurationExport`
+ * per day, an independent cell-by-cell re-derivation of the duration tensor
+ * that the shadow decode (which reads the exported tensor) cannot provide.
  *
  * Usage: node dist/cli/lean-shadow.js [YYYY-MM-DD] [--c4-flags]
- * Exit 0 = every day's Lean↔TS-quantised decode agrees exactly.
+ * Exit 0 = every day's Lean↔TS-quantised decode agrees exactly AND the
+ *          class export matches the referee (a no-op without --c4-flags).
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -48,13 +52,25 @@ async function main(): Promise<void> {
 		}
 		const model = buildHsmmModel(inputs);
 		try {
-			const r = shadowHsmmDay(model, LEAN_BIN);
-			if (!r.exact) failures++;
+			const r = shadowHsmmDay(model, LEAN_BIN, { refereeDurations: true });
+			// The class-export referee is an independent re-derivation of the
+			// duration tensor; a mismatch is as much a failure as a divergent
+			// decode. It is a no-op on sparse days (only --c4-flags takes the
+			// class branch), so `cellsChecked` doubles as "did it run".
+			const de = r.durationExport;
+			const refFail = de !== undefined && !de.ok;
+			if (!r.exact || refFail) failures++;
+			const refNote =
+				de === undefined || de.cellsChecked === 0
+					? ""
+					: de.ok
+						? `  classExport: OK (${(de.cellsChecked / 1e6).toFixed(1)}M cells)`
+						: `  classExport: MISMATCH ${de.message}`;
 			console.log(
 				`${captured.meta.date}  lean↔tsQuant: ${r.verdict.padEnd(16)} ` +
 					`float↔quant: ${r.agreeMinutes}/${r.totalMinutes} minutes (${((100 * r.agreeMinutes) / r.totalMinutes).toFixed(2)}%), ` +
 					`scoreΔ ${r.scoreDelta.toExponential(2)}  ` +
-					`[${r.shape} quantise ${r.quantiseMs.toFixed(0)}ms, ts ${r.tsMs.toFixed(0)}ms, lean ${r.leanMs.toFixed(0)}ms]`,
+					`[${r.shape} quantise ${r.quantiseMs.toFixed(0)}ms, ts ${r.tsMs.toFixed(0)}ms, lean ${r.leanMs.toFixed(0)}ms]${refNote}`,
 			);
 		} catch (err) {
 			failures++;
