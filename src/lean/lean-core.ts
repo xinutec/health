@@ -228,3 +228,29 @@ export interface LeanMatchResp {
 export function leanMatchServe(req: Record<string, unknown>): LeanMatchResp {
 	return leanCore.call("match", req) as LeanMatchResp;
 }
+
+/** Result shape of a `rail` shortest path (mirrors `verified_cli rail` and the
+ *  `serveLoop` `railResult` handler): the settled vertex sequence and its
+ *  distance, or `none` when the two vertices are disconnected.
+ *
+ *  Unlike `geo` and `match`, nothing here is a coordinate — `path` is a list of
+ *  vertex indices into the caller's own graph, so an `on`-mode flip serves an
+ *  EXACT sequence with no dequantisation step and no sub-millimetre drift. The
+ *  only thing quantisation can change is WHICH path wins a near-tie on weight. */
+export interface LeanRailResp {
+	path?: number[];
+	dist?: number;
+	none?: boolean;
+	error?: string;
+}
+
+/**
+ * Run one verified rail shortest path through the persistent core,
+ * synchronously. `req` is the same object `compare-rail` sends
+ * (`{ adj, src, dst }`, adjacency already quantised to ×2²⁰ integers, in the
+ * TS builder's per-vertex insertion order). Throws `LeanBridgeError` on any
+ * bridge failure; the caller falls back to TS.
+ */
+export function leanRailServe(req: Record<string, unknown>): LeanRailResp {
+	return leanCore.call("rail", req) as LeanRailResp;
+}

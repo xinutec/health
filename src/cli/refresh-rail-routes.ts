@@ -35,6 +35,7 @@ import { migrate } from "../db/schema.js";
 import { getSyncState } from "../db/sync-state.js";
 import { computeRailRoute } from "../geo/rail-route-fill.js";
 import { computeVelocity } from "../geo/velocity.js";
+import { logLeanRailLedger } from "../lean/lean-rail.js";
 
 const config = z
 	.object({
@@ -167,6 +168,12 @@ for (const [key, acc] of byRoute) {
 		console.log(`  route left un-snapped (${acc.fixes.length} historic fixes — thin or disconnected)`);
 	}
 }
+
+// This job is where the rail shortest path actually runs in bulk — the decode's
+// `railSnap` pass is only an indexed lookup into the cache this fills. So the
+// verified-core ledger for `LEAN_RAIL` is printed here rather than per-day in
+// `decode-day`. No-op with the flag off (the default).
+logLeanRailLedger(`${windowDays}d-window`);
 
 console.log(`Computed ${routes.size} route geometries; upserting into rail_route_cache`);
 await withConnection(async (conn) => {

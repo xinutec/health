@@ -36,6 +36,7 @@
  * path between the correct two stations.
  */
 
+import { shortestPathViaLean } from "../lean/lean-rail.js";
 import { parseLineMemberships } from "./route-graph.js";
 
 /** A rail way from the OSM mirror. `coords` is an ordered `[lat, lon]`
@@ -501,7 +502,7 @@ export function snapTrainSegment(
 	if (fromV.distM > MAX_STATION_TO_RAIL_M || toV.distM > MAX_STATION_TO_RAIL_M) return null;
 	if (fromV.id === toV.id) return null;
 
-	const idPath = shortestPath(graph, fromV.id, toV.id);
+	const idPath = shortestPathViaLean(graph, fromV.id, toV.id, shortestPath(graph, fromV.id, toV.id));
 	if (!idPath || idPath.length < 2) return null;
 
 	const coords = idPath.map((i) => graph.vertices[i]);
@@ -557,7 +558,7 @@ export function snapTrainSegmentOnLine(seg: TrainSegment, geo: RailGeometry): Sn
 	if (fromV.distM > MAX_STATION_TO_RAIL_M || toV.distM > MAX_STATION_TO_RAIL_M) return null;
 	if (fromV.id === toV.id) return null;
 
-	const idPath = shortestPath(graph, fromV.id, toV.id);
+	const idPath = shortestPathViaLean(graph, fromV.id, toV.id, shortestPath(graph, fromV.id, toV.id));
 	if (!idPath || idPath.length < 2) return null;
 
 	const coords = idPath.map((i) => graph.vertices[i]);
