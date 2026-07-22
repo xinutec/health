@@ -600,9 +600,17 @@ porting float arithmetic.
      representatives there. The partition settles inside the first 0.32% of
      cells on every corpus day.
 
-  `quantizeModel` 14.1s -> 4.5s on a production-shaped day. Fixes 1 and 2 are
-  in the model's own closures, so the production TS decode gets them too — one
-  definition, no exporter-local copy to drift.
+  `quantizeModel` 14.1s -> 4.5s on a production-shaped day; measured in the
+  cluster on 2026-07-22, `quantise` went from 28–36s to **8.0–9.9s** per day
+  across the trailing week, every verdict still EXACT. Roughly 2.3 minutes off
+  the decode cron.
+
+  Fixes 1 and 2 live in the model's own closures rather than in the exporter,
+  so there is one definition and no exporter-local copy to drift. That means
+  the production TS decode calls the same cheapened code — but its `ts` timing
+  did **not** move (3.0–3.5s before and after), so whatever dominates the
+  Viterbi's own cost, it is not the duration hook. Stated because it was
+  predicted and did not happen.
 
   Two coverage gaps surfaced doing it, both still open:
 
@@ -618,9 +626,16 @@ porting float arithmetic.
     single-segment boundary shifts. Unrelated to the above, but nothing is
     watching it.
 
-  What this does *not* fix: the Lean decoder itself is still ~8.6s against TS's
-  ~1.2s on the same day. Quantise is no longer the dominant term; the decoder
-  is.
+  What this does *not* fix: the Lean decoder itself is unchanged at ~10–12s in
+  the cluster against TS's ~3s. Quantise is no longer the dominant term in the
+  Lean HSMM path — the decoder is, and the path as a whole went from ~13x TS to
+  ~6.6x. Further HSMM-flip work has to go into the decoder.
+
+  Nor does it change the cron's wall clock much: the run that measured this took
+  17 minutes against the 06:00 run's 15, because `walk-shadow` swung by more
+  than quantise saved (2026-07-20: 173.7s here vs 90.8s at 06:00; 07-15: 112.7s
+  vs 52.9s). That variance is the still-unexplained drift noted against the
+  30-minute deadline; it moves independently of this change.
 
 ## Landmines
 
