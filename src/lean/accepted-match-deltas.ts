@@ -97,15 +97,19 @@ export interface AcceptedMatchDelta {
  *     near-ties.
  *   - coarse NEAR: same drawn route, every vertex within 30 cm under float↔
  *     quant rounding.
- *   - coarse DIFF (2): genuine route-choice flips at a cost near-threshold —
- *     06-28 10:35 (14v vs 13v coarse, 32v vs 28v path) and 06-29 08:43 (a
- *     6-vertex leg losing one). NEITHER has been visually reviewed on this
- *     population; both are accepted on the display-only safety basis above,
- *     not on inspection, and both are flagged in their entries. Reviewing them
- *     is the outstanding human step.
+ *   - coarse DIFF (2): genuine route-choice flips at a cost near-threshold.
+ *     Both were MEASURED on 2026-07-22 rather than eyeballed — each leg
+ *     replayed through both arms and compared on drawn length, off-network
+ *     distance, GPS stray and metres of line falling inside building
+ *     footprints (see the per-entry reasons). 06-28 10:35: the verified arm is
+ *     BETTER (21 m shorter, 18.8 m less building intrusion, same off-network).
+ *     06-29 08:43: a wash on a poor-GPS smear. Neither picks a visibly wrong
+ *     corridor, so the quantised cost function shows no defect at these
+ *     knife-edge legs. What is still NOT established is ground truth — which
+ *     corridor was actually walked is unknown and unknowable from the data.
  */
 export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
-	// ── coarse DIFF — genuine route-choice flips (NOT yet eyeballed) ────────────
+	// ── coarse DIFF — genuine route-choice flips (measured 2026-07-22) ──────────
 	{
 		leg: "91167e4cf16f9ea8",
 		date: "2026-06-28",
@@ -114,7 +118,13 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		path: "DIFF",
 		note: "coarse 14v vs 13v, path 32v vs 28v",
 		reason:
-			"Route-choice flip: float and quant pick different corridors at a candidate-cost near-threshold. NOT yet visually reviewed — flagged for a before/after eyeball. Accepted on the display-only safety basis below, not on inspection.",
+			"Route-choice flip at a candidate-cost near-threshold, MEASURED 2026-07-22 (both arms replayed on the " +
+			"identical leg): quant draws 450.4 m vs float's 471.6 m and spends 41.3 m inside building footprints " +
+			"vs float's 60.1 m — 18.8 m LESS building intrusion — at identical off-network distance (6.8 m) and " +
+			"1.1 m more GPS stray (11.0 vs 9.9 p85, both far inside the 40 m cap). On the metric that matters for " +
+			"a pavement route the verified arm is better, not merely different. Numbers are matcher output, " +
+			"BEFORE the WALK_BUILDING_ESCAPE corrector that runs downstream. Not ground truth — which corridor " +
+			"was actually walked is unknown — but nothing anomalous in the quantised cost function.",
 	},
 	{
 		leg: "77277765451f43f5",
@@ -124,7 +134,12 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		path: "DIFF",
 		note: "coarse 6v vs 5v, path 6v vs 5v",
 		reason:
-			"Route-choice flip: float and quant pick different corridors at a candidate-cost near-threshold. NOT yet visually reviewed — flagged for a before/after eyeball. Accepted on the display-only safety basis below, not on inspection.",
+			"Route-choice flip at a candidate-cost near-threshold, MEASURED 2026-07-22: a wash. Quant draws " +
+			"205.1 m vs float's 204.1 m, strays 24.0 m vs 26.5 m (p85, better) and sits 45.8 m inside buildings " +
+			"vs 38.8 m (worse) — small deltas in opposite directions, identical off-network distance (16.0 m). " +
+			"Weak evidence either way: the raw track is a poor-GPS smear (254 m of its 435 m falls inside " +
+			"buildings), so both arms are inferring from bad input. Neither picks a visibly wrong corridor. " +
+			"Numbers are matcher output, BEFORE the WALK_BUILDING_ESCAPE corrector.",
 	},
 	// ── coarse NEAR — same route, vertices within 30 cm ─────────────────────────
 	{
