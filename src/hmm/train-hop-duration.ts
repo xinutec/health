@@ -48,14 +48,40 @@ export interface DurationPriorOpts {
 export function buildDurationLogProb(
 	opts: DurationPriorOpts,
 ): (state: State, durationMinutes: number, segEndIndex: number) => number {
+	// Outside the relaxation branch below, the prior is `logDurationProb(d,
+	// mode, fits[mode], minByMode[mode])` — a function of the mode and the
+	// duration and nothing else. The HSMM asks for it once per (state,
+	// duration, segment-end) cell, so at S=159 / maxD=240 / T=1440 the same
+	// few thousand values were being recomputed ~55M times, each recompute
+	// paying two string-keyed record lookups and a Gamma evaluation. Cache
+	// per mode, indexed by duration; the table is bounded by maxD.
+	const byMode = new Map<State["mode"], number[]>();
+	const priorFor = (mode: State["mode"], d: number): number => {
+		let row = byMode.get(mode);
+		if (row === undefined) {
+			row = [];
+			byMode.set(mode, row);
+		}
+		const hit = row[d];
+		if (hit !== undefined) return hit;
+		const v = logDurationProb(d, mode, opts.fits[mode], opts.minByMode[mode]);
+		row[d] = v;
+		return v;
+	};
 	return (state, d, segEndIndex) => {
-		const minDuration = opts.minByMode[state.mode];
 		// Relax the floor only for a sub-floor train segment on a named
-		// line that the generator vouches — the one-stop-hop case.
-		if (state.mode === "train" && state.lineName !== null && state.lineName !== "unknown_rail" && d < minDuration) {
+		// line that the generator vouches — the one-stop-hop case. This is
+		// the only part that depends on `segEndIndex`, so it stays outside
+		// the cache.
+		if (
+			state.mode === "train" &&
+			state.lineName !== null &&
+			state.lineName !== "unknown_rail" &&
+			d < opts.minByMode.train
+		) {
 			const ts = opts.tsAt(segEndIndex);
 			if (ts !== undefined && opts.isTrainCovered(ts)) return 0;
 		}
-		return logDurationProb(d, state.mode, opts.fits[state.mode], minDuration);
+		return priorFor(state.mode, d);
 	};
 }

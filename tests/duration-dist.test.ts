@@ -109,3 +109,56 @@ describe("DEFAULT_MIN_DURATION_BY_MODE", () => {
 		expect(DEFAULT_MIN_DURATION_BY_MODE.walking).toBeLessThan(5);
 	});
 });
+
+/**
+ * Exact-value pins. The tests above are all relative (this is bigger than
+ * that, this is finite, this beats the floor), so an implementation change
+ * that shifted every value by a constant would pass all of them. These pin
+ * the actual doubles, so caching `log Γ(α)` — or any other rearrangement of
+ * the Gamma evaluation — has to reproduce them bit for bit.
+ */
+describe("logDurationProb exact values", () => {
+	const DS = [1, 2, 3, 7, 30, 240];
+	const CASES = [
+		{
+			mode: "stationary",
+			fit: { alpha: 1.5, beta: 0.02, sampleCount: 100 },
+			expected: [-10, -10, -5.257946126172919, -4.914297195979317, -4.646653579675895, -7.8069328088359775],
+		},
+		{
+			mode: "walking",
+			fit: { alpha: 2.3, beta: 0.31, sampleCount: 100 },
+			expected: [-10, -10, -2.3497143371478626, -2.488227118644498, -7.726353716255604, -70.12307971207183],
+		},
+		{
+			mode: "train",
+			fit: { alpha: 0.7, beta: 0.11, sampleCount: 100 },
+			expected: [-10, -10, -2.4655433723649036, -3.159732730481065, -6.126318900263118, -29.85015136276707],
+		},
+		{
+			mode: "driving",
+			fit: { alpha: 9.5, beta: 1.05, sampleCount: 100 },
+			expected: [-10, -10, -5.037622407508737, -2.035590594217507, -13.815649117059344, -216.64039601278074],
+		},
+	] as const;
+
+	for (const c of CASES) {
+		it(`reproduces the Gamma log-pdf exactly for ${c.mode}`, () => {
+			const got = DS.map((d) => logDurationProb(d, c.mode, c.fit as GammaFit, 3));
+			expect(got).toEqual([...c.expected]);
+		});
+	}
+
+	it("is insensitive to call order, so a cache cannot leak between fits", () => {
+		const a = { alpha: 1.5, beta: 0.02, sampleCount: 100 };
+		const b = { alpha: 9.5, beta: 1.05, sampleCount: 100 };
+		// Interleave two fits: a per-alpha cache keyed wrongly (or a
+		// last-call cache) would return b's Γ term for a's evaluation.
+		const straight = DS.map((d) => logDurationProb(d, "stationary", a, 3));
+		const interleaved = DS.map((d) => {
+			logDurationProb(d, "driving", b, 3);
+			return logDurationProb(d, "stationary", a, 3);
+		});
+		expect(interleaved).toEqual(straight);
+	});
+});
