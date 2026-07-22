@@ -226,8 +226,22 @@ structure QCorridor where
   chords : Array QChord
 
 def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := Id.run do
-  -- Corridor-wide cos lower bound (≥ 1 so the cell stays finite). `cosQ` falls
-  -- with |latitude|, so the extreme of the margin-widened band is the minimum.
+  -- Corridor-wide `cosQ` LOWER bound, used both for the longitude leg of
+  -- `distToFast`'s reject and for the cell widths (a too-small `cmin` only ever
+  -- widens cells and loosens the reject, so erring low is always safe; erring
+  -- high is not — it would narrow a cell below `farUm` or over-estimate a
+  -- distance that is supposed to be a lower bound).
+  --
+  -- `cosQ` is *morally* decreasing in |latitude|, so the extreme of the
+  -- margin-widened band is the minimum — but it is NOT exactly decreasing. It is
+  -- a floor-rounded minimax polynomial, and when the `-1453·x2` term steps down
+  -- it drags `s1·x2` down with it, so `cosQ` can tick back UP as |la| grows.
+  -- Measured over the whole latitude range at 1e-4° resolution (and exhaustively
+  -- over a London-width band) the largest such rise above the running minimum is
+  -- **2** Q20 units. `cosSlack` is three orders of magnitude above that, which
+  -- also swallows the polynomial's own ~1e-7 error; it costs 0.04% on cell width
+  -- and reject strength, i.e. nothing measurable.
+  let cosSlack : Int := 256
   let mut mnLa : Int := 0
   let mut mxLa : Int := 0
   if 0 < fixes.size then
@@ -239,7 +253,8 @@ def mkQCorridor (fixes : Array QPt) (nearUm farUm maxPen : Nat) : QCorridor := I
   let margin : Int := 1000000
   let loEnd : Int := mnLa - margin
   let hiEnd : Int := mxLa + margin
-  let mut cmin : Int := cosQ (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd)
+  let mut cmin : Int :=
+    cosQ (if loEnd.natAbs ≥ hiEnd.natAbs then loEnd else hiEnd) - cosSlack
   if cmin < 1 then cmin := 1
   let cellLa : Int := (farUm : Int) / 11132 + 1
   let cellLo : Int := ((farUm : Int) * 1048576) / (11132 * cmin) + 1
