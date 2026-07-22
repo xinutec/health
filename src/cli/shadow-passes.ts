@@ -25,7 +25,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import { isAcceptedDelta } from "../lean/accepted-deltas.js";
+import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { leanPassDivergences, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -60,13 +60,10 @@ for (const [op, s] of Object.entries(stats)) {
 }
 
 const divs = leanPassDivergences();
-const unexplained = divs.filter((d) => !isAcceptedDelta(d.op, d.n, d.note));
+const unexplained = unexplainedDeltas(divs);
 if (divs.length > 0) {
 	console.log(`\ndivergences (${divs.length}; ${unexplained.length} unexplained):`);
-	for (const d of divs) {
-		const tag = isAcceptedDelta(d.op, d.n, d.note) ? "accepted" : "UNEXPLAINED";
-		console.log(`  [${tag}] ${d.op} n=${d.n}: ${d.note}`);
-	}
+	for (const d of divs) console.log(`  [${deltaTag(d)}] ${d.op} n=${d.n}: ${d.note}`);
 }
 
 // Three honest conditions — all must hold to call the passes ready to flip.

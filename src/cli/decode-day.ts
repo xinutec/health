@@ -48,6 +48,7 @@ import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINE
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
+import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { leanMatchMode, leanMatchStats, resetLeanMatchStats } from "../lean/lean-match.js";
 import { leanPassDivergences, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
 
@@ -188,7 +189,17 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
  *  per-op ledger for the day (calls/failures/divergences) and reset. No-op with
  *  the flag off. In `on` mode this keeps the soak visible while production
  *  serves Lean — the same measurement, so a run of clean `EXACT` days is the
- *  continuous evidence the flip stays honest. */
+ *  continuous evidence the flip stays honest.
+ *
+ *  Divergences are adjudicated against `accepted-deltas.ts`, the same manifest
+ *  the `shadow-passes` gate uses, so the daily line states whether the flip's
+ *  premise ("every divergence is a signed-off near-tie") still holds on days
+ *  the corpus does not cover.
+ *
+ *  Caveat on the tally: it sums every velocity run the day made, which includes
+ *  the extra run `runWalkShadow` does purely to extract legs. So a divergence
+ *  here does not by itself mean the persisted decode diverged — re-run with
+ *  `LEAN_CLI` unset to count only the decode's own calls. */
 function logLeanPassLedger(date: string): void {
 	const mode = process.env.LEAN_PASSES;
 	if (mode !== "shadow" && mode !== "on") return;
@@ -196,9 +207,18 @@ function logLeanPassLedger(date: string): void {
 	const tally = Object.entries(stats)
 		.map(([op, s]) => `${op} ${s.calls}/${s.fails}f/${s.diffs}d`)
 		.join(" ");
+	// Adjudicate against the same manifest the flip gate uses. The gate only
+	// replays the golden corpus, so production is the only place a divergence
+	// on an uncaptured day can surface — logging one without saying whether it
+	// is signed off makes an accepted near-tie and a genuine behaviour change
+	// read identically.
 	const divs = leanPassDivergences();
-	const detail = divs.length > 0 ? ` — ${divs.map((d) => `${d.op} n=${d.n} ${d.note}`).join("; ")}` : " EXACT";
-	console.log(`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally}${detail}`);
+	const unexplained = unexplainedDeltas(divs);
+	const verdict =
+		divs.length === 0 ? "EXACT" : unexplained.length === 0 ? "all accepted" : `${unexplained.length} UNEXPLAINED`;
+	const detail =
+		divs.length === 0 ? "" : ` — ${divs.map((d) => `[${deltaTag(d)}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
+	console.log(`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally} ${verdict}${detail}`);
 	resetLeanPassStats();
 }
 
