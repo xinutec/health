@@ -493,6 +493,43 @@ porting float arithmetic.
   served output. Still open: nothing *alerts* on an unexplained divergence; it
   is labelled in the log and depends on someone reading it.
 
+  **The matcher gate judges a different leg population than production serves
+  (measured 2026-07-22, OPEN).** The same scope split applied to the matcher
+  ledger — `lean-match[on] 2026-07-17 18/0f [by run: decode 9/… · shadow 9/…]`
+  — but adjudication could NOT follow the passes' fix, and the reason is
+  structural rather than mechanical. `accepted-match-deltas.ts` is keyed by
+  golden day + leg start `hh:mm`, and that key does not exist at the matcher
+  call site: episode `startTs` comes from HSMM *states*, and `buildEpisodes`
+  runs *after* `annotateWalkMatches`. Re-keying on an intrinsic leg fingerprint
+  would fix the key but not the premise, because the two sides do not window
+  the same legs. `extractWalkLegs` (the gate and `walk-shadow`) differs from
+  `annotateWalkMatches` (production) in four ways:
+
+  1. it iterates HSMM **episodes**, production iterates **enriched segments**;
+  2. it reads the **raw** `phonetrack.today` track, production reads the
+     GPS-quality-cleaned `displayFixes`;
+  3. production drops fixes above `WALK_SPEED_CAP_KMH`, the gate does not;
+  4. the minimum leg size is **3** in the gate, `MIN_LEG_FIXES = 4` in
+     production.
+
+  Measured in one process on 2026-07-17: `walk-shadow` extracted **8** legs
+  (float↔quant coarse 8/0/0 — a clean day) while the production matcher ran
+  **9**, of which 2 diverged on the display path and reached served output.
+  So a clean gate does not imply a clean production run, and the 173-leg
+  corpus figure is a count over the gate's population, not the served one.
+  This is the `feedback_parity_tools_must_mirror_env` failure mode in the
+  matcher's verification layer.
+
+  The divergences themselves remain display-only — `walkMatchedPath` feeds no
+  decision — so this is a gap in the *evidence*, not a known wrong output. The
+  fix is to make `extractWalkLegs` mirror `annotateWalkMatches`, which changes
+  the corpus leg population and therefore re-derives both the 173-leg figure
+  and the accepted manifest: a deliberate re-opening of the flip's evidence
+  base, not a mechanical edit. Until then the matcher ledger reports counts and
+  scope but deliberately renders **no accepted/UNEXPLAINED verdict**, because a
+  verdict from a manifest that cannot cover the served population would read as
+  authority it does not have.
+
 ## Landmines
 
 - **Proof cost is the budget item.** The pilot took one session; the V1
