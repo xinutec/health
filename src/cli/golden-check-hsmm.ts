@@ -31,7 +31,12 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { decodeHsmm } from "../hmm/decode.js";
 import type { HmmSegment } from "../hmm/persist.js";
-import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
+import {
+	decodeFlagsFor,
+	HSMM_FIXTURE_FORMAT_VERSION,
+	type HsmmCapturedDay,
+	hsmmInputsFromFixture,
+} from "./hsmm-fixture.js";
 
 const DECODED_DIR = path.join(process.cwd(), "tests", "golden", "decoded_days");
 
@@ -79,9 +84,19 @@ async function main(): Promise<void> {
 
 		const inputs = hsmmInputsFromFixture(captured);
 		const decode = decodeHsmm(inputs);
+		// Which C4 configuration this day replayed under. A v1 fixture recorded
+		// none, so it is being replayed under production's — say so per day
+		// rather than let the assumption hide, because an unrecorded
+		// configuration is exactly what split this corpus in two.
+		const cfg = decodeFlagsFor(captured);
+		const cfgNote = cfg.recorded
+			? ""
+			: "  [v1 fixture: no recorded flags, replayed under production defaults — re-bless to pin]";
 
 		if (bless) {
 			captured.expected = decode;
+			captured.meta.fixtureFormatVersion = HSMM_FIXTURE_FORMAT_VERSION;
+			captured.inputs.decodeFlags = cfg.flags;
 			await writeFile(path.join(DECODED_DIR, file), `${JSON.stringify(captured, null, "\t")}\n`, "utf8");
 			console.log(`BLESSED  ${captured.meta.date} ${captured.meta.user} — train: ${trainLines(decode)}`);
 			continue;
@@ -89,10 +104,10 @@ async function main(): Promise<void> {
 
 		const diff = firstDiff(captured.expected, decode);
 		if (diff === null) {
-			console.log(`PASS     ${captured.meta.date} ${captured.meta.user} — train: ${trainLines(decode)}`);
+			console.log(`PASS     ${captured.meta.date} ${captured.meta.user} — train: ${trainLines(decode)}${cfgNote}`);
 		} else {
 			failures++;
-			console.log(`FAIL     ${captured.meta.date} ${captured.meta.user}`);
+			console.log(`FAIL     ${captured.meta.date} ${captured.meta.user}${cfgNote}`);
 			console.log(`    ${diff}`);
 			console.log(`    expected train: ${trainLines(captured.expected)}`);
 			console.log(`    got      train: ${trainLines(decode)}`);

@@ -191,17 +191,34 @@ async function main(): Promise<void> {
 			continue;
 		}
 
-		// Shadow-measure flag: `USE_CADENCE_IMPUTATION=1 npm run score-decoder`
-		// re-decodes the same fixtures with C4.1 cadence imputation, so the
-		// candidate can be scored against the blessed flag-off baseline
-		// (expect the ratchet to report the diff; bless only when clean).
+		// Each day decodes under the configuration its fixture records — for a
+		// v1 fixture, production's (see `decodeFlagsFor`). The env vars stay as
+		// an EXPLICIT A/B override for shadow-measuring a candidate flag
+		// (`USE_CADENCE_IMPUTATION=1 npm run score-decoder`), but they no longer
+		// decide the default.
+		//
+		// They used to. The baseline was blessed "with the four continuity flags
+		// on" (2026-07-17) while a bare `npm run score-decoder` still decoded
+		// with all four OFF, so the ratchet reported eleven regressions across
+		// six days — including 2026-06-12 losing both matched journeys and
+		// gaining a phantom ride. None were real: with the flags on the ratchet
+		// passes and every aggregate metric beats the baseline. A scoring tool
+		// that measures a configuration nobody runs cannot be believed in either
+		// direction. See `feedback_parity_tools_must_mirror_env`.
+		const fixtureInputs = hsmmInputsFromFixture(captured);
+		const envOr = (name: string, read: () => boolean, fromFixture: boolean | undefined): boolean =>
+			process.env[name] === undefined ? fromFixture === true : read();
 		const minutes = segmentsToMinutes(
 			decodeHsmm({
-				...hsmmInputsFromFixture(captured),
-				imputeCadence: useCadenceImputation(),
-				segmentEvidence: useSegmentEvidence(),
-				chainContext: useChainContext(),
-				reacquireRobustSpeed: useReacquireRobustSpeed(),
+				...fixtureInputs,
+				imputeCadence: envOr("USE_CADENCE_IMPUTATION", useCadenceImputation, fixtureInputs.imputeCadence),
+				segmentEvidence: envOr("USE_SEGMENT_EVIDENCE", useSegmentEvidence, fixtureInputs.segmentEvidence),
+				chainContext: envOr("USE_CHAIN_CONTEXT", useChainContext, fixtureInputs.chainContext),
+				reacquireRobustSpeed: envOr(
+					"USE_REACQUIRE_ROBUST_SPEED",
+					useReacquireRobustSpeed,
+					fixtureInputs.reacquireRobustSpeed,
+				),
 			}),
 		);
 		const gt = parseGroundTruth(readFileSync(gtPath, "utf8"), date, captured.meta.tz);

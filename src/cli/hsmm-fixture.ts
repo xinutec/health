@@ -21,7 +21,50 @@ import type { HsmmInputs, HsmmPlace } from "../hmm/decode.js";
 import type { ContinuityContext } from "../hmm/factors/presence-continuity.js";
 import type { HmmSegment } from "../hmm/persist.js";
 
-export const HSMM_FIXTURE_FORMAT_VERSION = 1;
+/** v2 adds `inputs.decodeFlags`. v1 fixtures recorded no configuration at all,
+ *  so a replay silently decoded with every C4 flag OFF while production ran
+ *  them ON — see `DEFAULT_DECODE_FLAGS`. */
+export const HSMM_FIXTURE_FORMAT_VERSION = 2;
+
+/**
+ * The four C4 continuity flags. They gate the HSMM decode itself, so a replay
+ * that does not set them decodes a DIFFERENT MODEL from the one production
+ * runs — and, worse, from the one the fixture's `expected` was blessed under.
+ *
+ * This is not hypothetical. Before `decodeFlags` existed the corpus had
+ * silently split in two: days blessed before the flags went live in production
+ * encoded flags-off, `2026-07-12` and `2026-07-14` (blessed 2026-07-17/18)
+ * encoded flags-on, and no single run of `golden-hsmm` could be green — it sat
+ * at 9/12 with nobody able to say why. The same omission had
+ * `score-decoder` reporting eleven regressions across six days that did not
+ * exist: with the flags on, the ratchet passes and every metric is BETTER than
+ * the blessed baseline. Recording the configuration in the fixture is what
+ * makes a red gate mean something. See `feedback_parity_tools_must_mirror_env`.
+ */
+export interface DecodeFlags {
+	imputeCadence: boolean;
+	segmentEvidence: boolean;
+	chainContext: boolean;
+	reacquireRobustSpeed: boolean;
+}
+
+/** Production's configuration (kubes `03-auth.yaml` / `08-decode-recent.yaml`:
+ *  all four `USE_*` vars set to "1"). What a fixture SHOULD be blessed under,
+ *  and what a v1 fixture is assumed to want. */
+export const DEFAULT_DECODE_FLAGS: DecodeFlags = {
+	imputeCadence: true,
+	segmentEvidence: true,
+	chainContext: true,
+	reacquireRobustSpeed: true,
+};
+
+/** The flags a fixture replays under, and whether they were recorded or
+ *  assumed. A v1 fixture has none, so the caller is told rather than quietly
+ *  handed production defaults — the gate reports it per day. */
+export function decodeFlagsFor(captured: HsmmCapturedDay): { flags: DecodeFlags; recorded: boolean } {
+	const f = captured.inputs.decodeFlags;
+	return f === undefined ? { flags: { ...DEFAULT_DECODE_FLAGS }, recorded: false } : { flags: f, recorded: true };
+}
 
 interface SerializedRawOsmLine extends Omit<RawOsmLine, "osm_id"> {
 	osm_id: string;
@@ -55,6 +98,9 @@ export interface HsmmCapturedDay {
 		 *  captured before the field replay with no served-station
 		 *  evidence — the pre-#364 decode. */
 		railStopRelations?: RailStopRelation[];
+		/** The C4 flag configuration `expected` was blessed under (v2+).
+		 *  Absent in v1 fixtures; see `decodeFlagsFor`. */
+		decodeFlags?: DecodeFlags;
 	};
 	/** The decode this fixture was blessed to expect. */
 	expected: HmmSegment[];
@@ -78,6 +124,14 @@ export function toSerializedHsmmInputs(
 		continuityContext: inputs.continuityContext,
 		proximityByMinute: [...(inputs.proximityByMinute ?? new Map())],
 		railStopRelations: inputs.railStopRelations === undefined ? undefined : [...inputs.railStopRelations],
+		// Record the configuration this day was decoded under, so the replay
+		// can never drift from it the way the v1 corpus did.
+		decodeFlags: {
+			imputeCadence: inputs.imputeCadence === true,
+			segmentEvidence: inputs.segmentEvidence === true,
+			chainContext: inputs.chainContext === true,
+			reacquireRobustSpeed: inputs.reacquireRobustSpeed === true,
+		},
 	};
 }
 
@@ -99,5 +153,8 @@ export function hsmmInputsFromFixture(captured: HsmmCapturedDay): HsmmInputs {
 		continuityContext: captured.inputs.continuityContext,
 		proximityByMinute: new Map(captured.inputs.proximityByMinute),
 		railStopRelations: captured.inputs.railStopRelations,
+		// The flags gate the decode itself. Leaving them undefined here is what
+		// made the replay decode a different model from production's.
+		...decodeFlagsFor(captured).flags,
 	};
 }
