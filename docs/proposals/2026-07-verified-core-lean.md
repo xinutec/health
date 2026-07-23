@@ -52,6 +52,16 @@ so the work does not drift back toward the narrower/proof-first reading.
   Lean grows; the shell is the *last* thing replaced (by Lean, or by a minimal
   fallback), never a big-bang cutover.
 
+- **Float parity is ULP-close, NOT universally bit-identical (measured 2026-07-23).**
+  Early ports matched TS to the bit on the inputs tested, but `haversineMeters`
+  (and any sin/cos/atan2/log-heavy value) can differ from V8 by **≤1 ULP** on
+  *some* inputs — Lean's libm and V8's are not the same implementation. So the
+  scoring is *numerically equivalent* (agrees to ~1 ULP), and the decode will see
+  occasional ULP-driven **near-ties**, the same accepted class the quant flip
+  already tolerates — NOT zero divergence. Parity `#guard`s therefore assert
+  ULP-closeness (`approx`) for transcendental-heavy values, exact `==` only for
+  the discrete/rational ones.
+
 - **First keystone (in progress): HSMM scoring in Lean.** Port the emission /
   transition / duration scoring (`src/hmm/emissions.ts`, `transitions.ts`,
   `duration-dist.ts`, ~900 lines of `Float` math) into Lean so a single
