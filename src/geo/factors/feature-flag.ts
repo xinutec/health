@@ -79,6 +79,27 @@ export function useReacquireRobustSpeed(): boolean {
 	return process.env.USE_REACQUIRE_ROBUST_SPEED === "1";
 }
 
+/** USE_PLACE_REACHABILITY=1 — restrict the decoder's stationary state space to
+ *  the focus places reachable that day: within `PLACE_REACHABILITY_RADIUS_M`
+ *  metres of a fix, plus the high-dwell anchors and the continuity prior-day
+ *  place (see `src/hmm/place-reachability.ts`). A place the user was never near
+ *  cannot be a stationary destination, so its state is dead weight in the
+ *  O(T·S²)/O(T·S·maxD) trellis — dropping it cuts ~135→~40 places, shrinking
+ *  BOTH the quantise pass and the decode. Near-exact, not exact: pruning shifts
+ *  a genuine near-tie on ~0.1% of minutes (place-vs-off-network-stationary at a
+ *  GPS gap; parallel track-sharing lines) — the same class the quant flip
+ *  accepts. Shadow-measure before flipping on. Off keeps the full place set. */
+export function usePlaceReachability(): boolean {
+	return process.env.USE_PLACE_REACHABILITY === "1";
+}
+
+/** Reachability radius in metres (default 2000). Generous — dropped places are
+ *  km+ off, so the win is robust to the exact value. */
+export function placeReachabilityRadiusM(): number {
+	const v = Number(process.env.PLACE_REACHABILITY_RADIUS_M);
+	return Number.isFinite(v) && v > 0 ? v : 2000;
+}
+
 /** USE_CHAIN_CONTEXT=1 — C4.2 proper
  *  (`docs/proposals/2026-07-continuity-c4.md`): exit→entry chain
  *  context (`src/hmm/chain-context.ts`) — every new-segment transition

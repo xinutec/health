@@ -18,9 +18,11 @@ import { z } from "zod";
 import { initPool, db as kyselyDb, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
 import {
+	placeReachabilityRadiusM,
 	useCadenceImputation,
 	useChainContext,
 	useContinuityContinuation,
+	usePlaceReachability,
 	useReacquireRobustSpeed,
 	useSegmentEvidence,
 } from "../geo/factors/feature-flag.js";
@@ -42,6 +44,7 @@ import { loadContinuityContext } from "../hmm/continuity-context.js";
 import { type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { saveDecode } from "../hmm/persist.js";
+import { reachablePlacesForDay } from "../hmm/place-reachability.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
 import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
@@ -303,6 +306,18 @@ async function decodeAndPersist(
 	// (chain start) or the flag is off. The flag gate lives here in the
 	// loader; the decoder purely consumes whatever context it is given.
 	const continuityContext = useContinuityContinuation() ? await loadContinuityContext(userId, date) : null;
+	// Per-day stationary state-space reduction: drop focus places the user was
+	// never near (dead trellis states), keeping high-dwell anchors + the
+	// continuity place. Off by default — production behaviour is the full set.
+	const decodePlaces = usePlaceReachability()
+		? reachablePlacesForDay(places, velResult.points, {
+				radiusM: placeReachabilityRadiusM(),
+				continuityPlaceId: continuityContext?.priorPlaceId ?? null,
+			})
+		: places;
+	if (usePlaceReachability() && decodePlaces.length < places.length) {
+		console.log(`place-reachability ${date} ${places.length}→${decodePlaces.length} places`);
+	}
 	const inputs: HsmmInputs = {
 		date,
 		tz,
@@ -310,7 +325,7 @@ async function decodeAndPersist(
 		hr: biom.hr,
 		steps: biom.steps,
 		sleep: biom.sleep,
-		places,
+		places: decodePlaces,
 		placeNearLine,
 		routeGraph,
 		continuityContext,
