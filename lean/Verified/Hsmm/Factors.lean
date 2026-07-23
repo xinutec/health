@@ -13,6 +13,7 @@ import Verified.Hsmm.TrainGenerator
 import Verified.Hsmm.TrainHopDuration
 import Verified.Hsmm.StateSpace
 import Verified.Hsmm.Observation
+import Verified.Hsmm.GpsOutliers
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
