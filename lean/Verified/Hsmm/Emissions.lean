@@ -22,7 +22,7 @@ open Verified.Hsmm.FloatScore
 
 inductive Mode
   | stationary | walking | cycling | driving | train | plane | unknown
-  deriving DecidableEq, BEq, Repr
+  deriving DecidableEq, BEq, Repr, Inhabited
 
 structure ModePrior where
   gpsPresentProb : Float
@@ -95,6 +95,11 @@ structure Observation where
 structure State where
   mode : Mode
   placeId : Option Int
+  /-- Rail line for a `train` state; `none` for non-train states. Unused by the
+      emission (which never reads it) but part of the shared state identity that
+      the transition matrix compares on. -/
+  lineName : Option String := none
+  deriving Inhabited
 
 /-- Speed / GPS-null-plane term. -/
 private def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
@@ -147,7 +152,7 @@ def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float ×
 -- Parity with the real `buildEmissionFn` (base path; values from Node/V8):
 private def g (lat lon spd : Float) : Gps := ⟨lat, lon, spd⟩
 private def obs (gps : Option Gps) (hr cad : Option Float) (inBed : Bool) : Observation := ⟨gps, hr, cad, inBed⟩
-private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid⟩
+private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
 private def place5 : Option (Float × Float) := some (51.52, -0.13)
 
 #guard emissionLogProb (stt .stationary (some 5)) (obs (some (g 51.5201 (-0.1301) 0)) (some 70) (some 0) false)
