@@ -32,7 +32,8 @@ Input shape (all scores integers; `null` = `-∞`):
     "dur":   [[..maxD] × S],        // dur[s][d-1]
     "durOverrides": [[s,d,e,v]]?,   // sparse per-segEnd exceptions (v null = -∞)
     "durClass": [..S]?,             // + "durDelta": class-factorised per-segEnd
-    "durDelta": [[[..T] × maxD]]?,  //   deltas (segment evidence): state s pays
+    "durDelta": [[[[v,len]..] × maxD]]?, // deltas (segment evidence),
+                                    //   run-length-encoded over e: state s pays
                                     //   dur[s][d-1] + durDelta[durClass[s]][d-1][e];
                                     //   requires the -∞ pattern be e-independent
     "init":  [..S]?,                // absent → 0 (uniform), matching the TS default
@@ -92,15 +93,21 @@ private def transTensor (j : Json) : Except String (Array (Array (Array Nat))) :
   | .ok _ => outer.mapM (matrix pOB) -- depth 3: per-t
   | .error _ => do return #[← matrix pOB j] -- depth 2: broadcast
 
-/-- Class-factorised duration delta row: raw integers (no `null`s), stored
-shifted by `bound` so the decode-time arithmetic stays in scalar `Nat`
-(an `Int` add at the 2^61 scale would box per call — GMP, measured 5×). -/
-private def deltaRow (bound : Nat) (j : Json) : Except String (Array Nat) := do
-  (← j.getArr?).mapM fun v => do
-    let n ← v.getInt?
+/-- One run-length-encoded row of the class-factorised duration deltas:
+`[[value, runLength], …]` over `e`. Rows are piecewise-constant over `e`, so
+the exporter ships runs instead of `T` raw cells — smaller wire payload and,
+the point, less for Lean's JSON parser to walk. `value` is shifted by `bound`
+(as the tensors are) so decode-time arithmetic stays scalar `Nat` (an `Int` add
+at the 2^61 scale would box per call — GMP, measured 5×). -/
+private def deltaRunsRow (bound : Nat) (j : Json) : Except String (Array (Nat × Nat)) := do
+  (← j.getArr?).mapM fun pair => do
+    let a ← pair.getArr?
+    let some vJ := a[0]? | throw "durDelta run: expected [value, runLength]"
+    let some lJ := a[1]? | throw "durDelta run: expected [value, runLength]"
+    let n ← vJ.getInt?
     if n.natAbs > bound then
       throw s!"delta {n} exceeds the verified envelope (|v| ≤ {bound})"
-    return (n + (bound : Int)).toNat
+    return ((n + (bound : Int)).toNat, ← lJ.getNat?)
 
 /-- Per-`t` transition rows for time-varying pairs (chain context): the
 `S*S` pair-index table (sentinel = number of rows) plus the rows. -/
@@ -175,27 +182,30 @@ private def parseModel (j : Json) : Except String PData := do
     | .error _ => pure #[]
   let halfOB := pOB / 2
   let dur ← matrix (if durClass.isEmpty then pOB else halfOB) (← j.getObjVal? "dur")
-  let durDelta : Array (Array (Array Nat)) ←
+  let durDelta : Array (Array (Array (Nat × Nat))) ←
     match j.getObjVal? "durDelta" with
     | .ok v =>
       if v.isNull then pure #[]
       else do
         (← v.getArr?).mapM fun cls => do
-          (← cls.getArr?).mapM (deltaRow halfOB)
+          (← cls.getArr?).mapM (deltaRunsRow halfOB)
     | .error _ => pure #[]
   if durClass.isEmpty != durDelta.isEmpty then
     throw "durClass and durDelta must be given together"
-  -- Flatten the per-class delta rows: the decode reads a delta per
-  -- (s, d, e) cell — one flat-array probe instead of three nested `getD`s.
+  -- Expand the RLE rows into the flat per-(class, d, e) tensor the decode
+  -- reads (one flat-array probe per cell). Each `(v, len)` run writes `v` to
+  -- the next `len` cells along `e`; runs cover exactly `T`.
   let durDeltaFlat : Array Nat := Id.run do
     let nC := durDelta.size
     let mut a := Array.replicate (nC * maxD * T) halfOB
     for c in [0:nC] do
       let cls := durDelta[c]!
       for d0 in [0:min maxD cls.size] do
-        let r := cls[d0]!
-        for e in [0:min T r.size] do
-          a := a.set! ((c * maxD + d0) * T + e) r[e]!
+        let mut e := 0
+        for (v, len) in cls[d0]! do
+          for _ in [0:len] do
+            if e < T then a := a.set! ((c * maxD + d0) * T + e) v
+            e := e + 1
     return a
   let durOv : Std.HashMap Nat Nat ←
     match j.getObjVal? "durOverrides" with

@@ -417,6 +417,29 @@ export function decodeTsQuant(q: QuantProblem): number[] {
 	});
 }
 
+/**
+ * Run-length encode each innermost row of the class-factorised duration delta
+ * tensor over `e`: `[class][d][e]` (T values per row) becomes `[class][d][run]`
+ * of `[value, runLength]`. The rows are piecewise-constant over `e` (~10%
+ * distinct runs on real days), so this shrinks the JSON payload — and, the
+ * point, Lean's parse of it, which was ~2.2s of the day-scale decode dominated
+ * by this tensor. The Lean parser expands it back to the identical flat tensor
+ * before decoding; the verified decoder is untouched.
+ */
+export function rleDurDelta(durDelta: readonly number[][][]): [number, number][][][] {
+	return durDelta.map((cls) =>
+		cls.map((row) => {
+			const runs: [number, number][] = [];
+			for (const v of row) {
+				const last = runs[runs.length - 1];
+				if (last !== undefined && last[0] === v) last[1]++;
+				else runs.push([v, 1]);
+			}
+			return runs;
+		}),
+	);
+}
+
 export function decodeLean(
 	leanBin: string,
 	q: QuantProblem,
@@ -433,9 +456,9 @@ export function decodeLean(
 	};
 	if (q.durOverrides.length > 0) payload.durOverrides = q.durOverrides;
 	if (q.transOv.length > 0) payload.transOv = q.transOv;
-	if (q.durClass !== null) {
+	if (q.durClass !== null && q.durDelta !== null) {
 		payload.durClass = q.durClass;
-		payload.durDelta = q.durDelta;
+		payload.durDelta = rleDurDelta(q.durDelta);
 	}
 	const res = spawnSync(leanBin, [], {
 		input: JSON.stringify(payload),
