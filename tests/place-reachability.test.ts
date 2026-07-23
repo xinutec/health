@@ -16,6 +16,7 @@ import { type HsmmCapturedDay, hsmmInputsFromFixture } from "../src/cli/hsmm-fix
 import { decodeHsmm } from "../src/hmm/decode.js";
 import type { HmmSegment } from "../src/hmm/persist.js";
 import { reachablePlaces, reachablePlacesForDay } from "../src/hmm/place-reachability.js";
+import { describeWithFixture } from "./helpers/describe-with-fixture.js";
 
 const p = (id: number, lat: number, lon: number) => ({ id, lat, lon });
 
@@ -55,12 +56,22 @@ function minuteLabels(segs: readonly HmmSegment[]): Map<number, string> {
 	return m;
 }
 
-describe("reachability safety gate (golden corpus)", () => {
-	it("decodes near-identically with the reduced place set on every golden day", () => {
-		const dir = fileURLToPath(new URL("./golden/decoded_days/", import.meta.url));
-		const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
-		expect(files.length).toBeGreaterThan(0);
+// The corpus is gitignored (private location traces), so it is absent in CI
+// and on fresh checkouts — gate the whole suite on its presence rather than
+// letting readdir throw ENOENT and redden the build.
+function loadCorpus(): { dir: string; files: string[] } | null {
+	const dir = fileURLToPath(new URL("./golden/decoded_days/", import.meta.url));
+	let files: string[];
+	try {
+		files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+	} catch {
+		return null;
+	}
+	return files.length > 0 ? { dir, files } : null;
+}
 
+describeWithFixture("reachability safety gate (golden corpus)", loadCorpus(), ({ dir, files }) => {
+	it("decodes near-identically with the reduced place set on every golden day", () => {
 		for (const f of files) {
 			const captured = JSON.parse(readFileSync(join(dir, f), "utf8")) as HsmmCapturedDay;
 			const inputs = hsmmInputsFromFixture(captured);
