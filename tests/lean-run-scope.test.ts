@@ -17,11 +17,28 @@ import {
 	resetLeanMatchStats,
 } from "../src/lean/lean-match.js";
 import { resetLeanPassStats } from "../src/lean/lean-passes.js";
-import { leanRunScope, resetLeanRunScope, setLeanRunScope } from "../src/lean/run-scope.js";
+import { leanRunScope, leanShadowEnabled, resetLeanRunScope, setLeanRunScope } from "../src/lean/run-scope.js";
 
 afterEach(() => {
 	resetLeanPassStats();
 	resetLeanMatchStats();
+	delete process.env.LEAN_SHADOW;
+});
+
+describe("leanShadowEnabled gate", () => {
+	it("is off by default, so the daily serve cron skips the expensive walk replay", () => {
+		delete process.env.LEAN_SHADOW;
+		expect(leanShadowEnabled()).toBe(false);
+	});
+
+	it("only 1 enables it — any other value stays off (no accidental truthy-string)", () => {
+		process.env.LEAN_SHADOW = "1";
+		expect(leanShadowEnabled()).toBe(true);
+		process.env.LEAN_SHADOW = "on";
+		expect(leanShadowEnabled()).toBe(false);
+		process.env.LEAN_SHADOW = "0";
+		expect(leanShadowEnabled()).toBe(false);
+	});
 });
 
 describe("shared run scope", () => {

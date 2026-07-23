@@ -56,7 +56,7 @@ import {
 	resetLeanMatchStats,
 } from "../lean/lean-match.js";
 import { leanPassDivergences, leanPassScopeTotals, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
-import { setLeanRunScope } from "../lean/run-scope.js";
+import { leanShadowEnabled, setLeanRunScope } from "../lean/run-scope.js";
 
 const config = z
 	.object({
@@ -357,8 +357,15 @@ async function decodeAndPersist(
 	// measure, and its output is discarded. Label it so the ledger can keep it
 	// out of the served-path tally.
 	setLeanRunScope("shadow");
+	// HSMM float↔quant shadow (~19s): the only check on the served verified
+	// decode against its float twin, so it runs every day.
 	runLeanShadow(inputs, date);
-	await runWalkShadow(userId, date, tz, osm);
+	// Walk-matcher shadow (~74s): an EXTRA velocity pass replaying every leg
+	// through the lean matcher. Redundant with the served path's own matcher
+	// tally — which the ledgers below still report — so gate it behind
+	// LEAN_SHADOW to keep the daily serve cron fast; a periodic audit run
+	// re-exercises the full A/B.
+	if (leanShadowEnabled()) await runWalkShadow(userId, date, tz, osm);
 	logLeanHsmmLedger(date);
 	logLeanPassLedger(date);
 	logLeanMatchLedger(date);

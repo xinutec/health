@@ -35,3 +35,12 @@ export function leanRunScope(): LeanRunScope {
 export function resetLeanRunScope(): void {
 	scope = "decode";
 }
+
+/** LEAN_SHADOW=1 — run the expensive observational A/B replays (currently the
+ *  walk-matcher shadow's extra per-day velocity pass, ~74s/day). Off by default
+ *  so the daily serve cron pays only for what it serves; the served path's own
+ *  matcher/pass calls are still tallied and reported by the ledgers regardless.
+ *  A periodic `LEAN_SHADOW=1` audit run re-exercises the full replay. */
+export function leanShadowEnabled(): boolean {
+	return process.env.LEAN_SHADOW === "1";
+}
