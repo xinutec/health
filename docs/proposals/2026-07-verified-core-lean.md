@@ -7,6 +7,64 @@ decoding; glue (HTTP, cookies, SQL execution, OAuth, sync clocks) in a small
 server-capable layer that only ferries bytes and executes plans the core
 emits.
 
+## Strategic direction (owner decision, 2026-07-23)
+
+The scope below is broader than the original framing above, and the near-term
+emphasis is different. Both come from the project owner directly; recorded here
+so the work does not drift back toward the narrower/proof-first reading.
+
+- **Target: almost everything in Lean — including the server and the DB.** Not
+  just the decision logic. If Lean supports HTTP serving and DB access *at all*,
+  those go in Lean too, and the system is **100% Lean**. A non-Lean layer exists
+  **only** for what Lean genuinely cannot do — "little boundaries," not a
+  co-equal shell. This supersedes the intro's "glue in a small server-capable
+  layer": glue moves into Lean wherever Lean can host it.
+
+- **Implementation-first; theorems are deferred.** The immediate goal is a
+  *working* Lean implementation, not a proved one. Proofs remain the long-run
+  ceiling (the rest of this document), but they are **not** the current focus and
+  must not gate progress now. Concretely: it is fine — expected — to write the
+  messy stages in Lean using `Float`, matching the current TS math exactly and
+  *unproven*, and to layer fixed-point representations and theorems on afterward,
+  stage by stage, where they earn their cost. "Make it work in Lean" comes first;
+  "make it proved" comes later.
+
+- **Feasibility of HTTP + DB in Lean (research, 2026-07-23 — label: inference).**
+  Lean 4 can host both, via thin FFI to the same C libraries every language
+  ultimately calls:
+  - HTTP: experimental but real — Axiomed `Http.lean` (client+server on libuv),
+    the `Ash` Express-style framework, and socket bindings.
+  - DB: `leanprover/leansqlite` (bundled SQLite FFI); `lean-postgres` is ~100
+    lines Lean + ~150 C++. No off-the-shelf **MariaDB** driver, but a thin
+    `@[extern]` wrapper over `libmariadb` (the C client) is the same ~250-line
+    shape. The health DB is MariaDB, so this wrapper is the one piece of new
+    FFI infra the server needs.
+  So the only irreducible boundary is **FFI to C** (libuv/libmariadb) — which is
+  not a language boundary in the "port to Rust" sense; it is how any language
+  reaches the OS and the DB. The plan is therefore **100% Lean with a C-FFI
+  underside**, not Lean+Rust. A separate Rust/other server is the *fallback*,
+  taken only if the Lean HTTP/DB libraries prove unworkable in practice — decided
+  by a spike (below), not assumed.
+
+- **Migration shape.** Keep the current TS backend as the thin shell while the
+  algorithm is lifted into Lean **one stage at a time**, each shadow-validated
+  against TS output the way the HSMM flip and matcher already are. TS shrinks as
+  Lean grows; the shell is the *last* thing replaced (by Lean, or by a minimal
+  fallback), never a big-bang cutover.
+
+- **First keystone (in progress): HSMM scoring in Lean.** Port the emission /
+  transition / duration scoring (`src/hmm/emissions.ts`, `transitions.ts`,
+  `duration-dist.ts`, ~900 lines of `Float` math) into Lean so a single
+  `verified_cli decode <raw observations>` builds+scores+decodes internally.
+  This (a) extends the already-Lean trellis by exactly one stage, (b) deletes the
+  ~48 MB quantised-tensor payload TS currently ships to Lean (Lean scores from
+  raw observations instead), and (c) is done Float-first, unproven, per the
+  implementation-first rule above.
+
+- **Next infra spike:** a Lean walking skeleton — serve one HTTP request and run
+  one `libmariadb` query from Lean — to convert the HTTP/DB feasibility
+  *inference* above into a *verified* yes/no before committing to 100% Lean.
+
 ## Why this codebase, why now
 
 - **The boundary already exists.** Of the ~44k-line backend (excluding CLI
