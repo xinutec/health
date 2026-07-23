@@ -30,8 +30,10 @@
  * behaviour that does not exist yet.
  */
 
-import { buildHsmmModel, type HsmmInputs } from "../hmm/decode.js";
-import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
+import { existsSync } from "node:fs";
+import { buildHsmmModel, decodeHsmm, type HsmmInputs } from "../hmm/decode.js";
+import { decodeHsmmViaLean, shadowHsmmDay } from "../hmm/lean-shadow-core.js";
+import type { HmmSegment } from "../hmm/persist.js";
 import { leanRunScope } from "./run-scope.js";
 
 export type LeanHsmmMode = "off" | "shadow" | "on";
@@ -39,6 +41,35 @@ export type LeanHsmmMode = "off" | "shadow" | "on";
 export function leanHsmmMode(): LeanHsmmMode {
 	const v = process.env.LEAN_HSMM;
 	return v === "on" || v === "shadow" ? v : "off";
+}
+
+/**
+ * Serve the day's segments through the decoder `LEAN_HSMM` selects — the flip
+ * point that makes the verified Lean decode authoritative instead of shadow.
+ *   off / shadow → the TS float decode (production behaviour unchanged; a
+ *                  `shadow` run still A/Bs observationally alongside).
+ *   on           → the VERIFIED Lean decode (`decodeHsmmViaLean`), with a TS
+ *                  fallback on ANY bridge failure (LEAN_CLI missing, spawn or
+ *                  parse error, degenerate/short path). A verified-core hiccup
+ *                  must never crash or corrupt the served decode — the same
+ *                  fail-safe the rail/passes/match tenants use. Each fallback is
+ *                  warned so a silently-degrading serve path stays visible.
+ */
+export function decodeServed(inputs: HsmmInputs, date: string): HmmSegment[] {
+	if (leanHsmmMode() !== "on") return decodeHsmm(inputs);
+	const leanBin = process.env.LEAN_CLI;
+	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) {
+		console.warn(`[lean-hsmm] on but LEAN_CLI missing — serving TS decode for ${date}`);
+		return decodeHsmm(inputs);
+	}
+	try {
+		return decodeHsmmViaLean(inputs, leanBin);
+	} catch (err) {
+		console.warn(
+			`[lean-hsmm] on but bridge failed for ${date} (${err instanceof Error ? err.message : String(err)}) — serving TS decode`,
+		);
+		return decodeHsmm(inputs);
+	}
 }
 
 interface HsmmStats {

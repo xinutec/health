@@ -39,12 +39,12 @@ import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, computeVelocityFromInputs, loadBiometrics } from "../geo/velocity.js";
 import { shadowWalkDay } from "../geo/walk-shadow-core.js";
 import { loadContinuityContext } from "../hmm/continuity-context.js";
-import { decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
+import { type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { saveDecode } from "../hmm/persist.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
-import { logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
+import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
 import {
 	leanMatchDivergences,
 	leanMatchMode,
@@ -301,7 +301,7 @@ async function decodeAndPersist(
 	// on, read the prior day's presence_log row to set the
 	// continuation context. Silent fallback if the row doesn't exist
 	// (chain start) or the flag is off. The flag gate lives here in the
-	// loader; `decodeHsmm` purely consumes whatever context it is given.
+	// loader; the decoder purely consumes whatever context it is given.
 	const continuityContext = useContinuityContinuation() ? await loadContinuityContext(userId, date) : null;
 	const inputs: HsmmInputs = {
 		date,
@@ -321,7 +321,10 @@ async function decodeAndPersist(
 		reacquireRobustSpeed: useReacquireRobustSpeed(),
 		railStopRelations,
 	};
-	const segments = decodeHsmm(inputs);
+	// LEAN_HSMM=on serves the verified Lean trellis (TS fallback on bridge
+	// failure); off/shadow keep the TS float decode. The shadow A/B below is
+	// unaffected — it still measures both paths regardless of what is served.
+	const segments = decodeServed(inputs, date);
 	if (dry) {
 		const fmt = (ts: number): string =>
 			new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" });

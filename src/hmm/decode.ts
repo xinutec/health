@@ -272,6 +272,18 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
 		entryLogProb: model.entryLogProb,
 		durationLogProb: model.durationLogProb,
 	});
+	return segmentsFromStates(model, hmmStates, inputs);
+}
+
+/**
+ * Turn a decoded per-minute state path into labelled segments. The tail shared
+ * by the TS float decode (`decodeHsmm`, path from `hsmmViterbi`) and the
+ * verified Lean decode (`decodeHsmmViaLean`, path from the bridge): both produce
+ * a state path over the SAME model, then tile and station-label it identically,
+ * so the served output depends only on WHICH decoder produced the path, not on
+ * two divergent segmentisers. Pure — no flags, no bridge.
+ */
+export function segmentsFromStates(model: HsmmModel, hmmStates: readonly State[], inputs: HsmmInputs): HmmSegment[] {
 	const timestamps = model.tensor.map((o) => o.ts);
 	const segments = groupStatesIntoSegments(hmmStates, timestamps);
 

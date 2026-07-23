@@ -31,9 +31,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import type { HsmmModel } from "./decode.js";
+import { buildHsmmModel, type HsmmInputs, type HsmmModel, segmentsFromStates } from "./decode.js";
 import { DEFAULT_MAX_DURATION, hsmmViterbi } from "./hsmm-viterbi.js";
 import type { Observation } from "./observation.js";
+import type { HmmSegment } from "./persist.js";
 import type { State } from "./state-space.js";
 
 export const SCALE = 2 ** 20;
@@ -467,6 +468,37 @@ export function decodeLean(
 	});
 	if (res.status !== 0) throw new Error(`verified_cli failed: ${res.stderr || res.stdout}`);
 	return JSON.parse(res.stdout);
+}
+
+/**
+ * Decode a day to segments through the VERIFIED Lean trellis instead of the TS
+ * float trellis — the `LEAN_HSMM=on` serve path. Builds the same model as
+ * `decodeHsmm`, quantises it, decodes the integer tensors in Lean, then maps
+ * the returned state-index path back to `State`s and runs the SHARED
+ * `segmentsFromStates` tail. So the only difference from the TS decode is which
+ * trellis produced the path; segmentation + station labelling are identical.
+ *
+ * Throws on any bridge anomaly (no path, degenerate, wrong length, out-of-range
+ * index) so the caller can fall back to the TS decode — a verified-core bridge
+ * failure must never corrupt or crash the served decode.
+ */
+export function decodeHsmmViaLean(inputs: HsmmInputs, leanBin: string): HmmSegment[] {
+	const model = buildHsmmModel(inputs);
+	const q = quantizeModel(model);
+	const res = decodeLean(leanBin, q);
+	if (res.error !== undefined || res.path === undefined) {
+		throw new Error(`lean decode returned no path: ${res.error ?? "missing path"}`);
+	}
+	if (res.degenerate === true) throw new Error("lean decode degenerate");
+	if (res.path.length !== model.tensor.length) {
+		throw new Error(`lean path length ${res.path.length} != T ${model.tensor.length}`);
+	}
+	const states = res.path.map((i) => {
+		const s = model.states[i];
+		if (s === undefined) throw new Error(`lean path state index ${i} out of range (S=${model.states.length})`);
+		return s;
+	});
+	return segmentsFromStates(model, states, inputs);
 }
 
 /** Decode with the float model — the production trellis path. */
