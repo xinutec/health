@@ -824,7 +824,67 @@ theorem pBuildCkptD_eq (d : PData) (K : Nat) :
   | t + 1 => by
     simp only [pBuildCkptD, pBuildCkpt, pBuildCkptD_eq d K t, pColStepD_eq]
 
-/-- The CLI decoder: fast forward pass, shared backtrace. -/
+/-- Fast `pColFrom`. -/
+def pColFromD (d : PData) (b : Nat) (c : Array Nat) : Nat → Array Nat
+  | 0 => c
+  | k + 1 => pColStepD d (b + k) (pColFromD d b c k)
+
+theorem pColFromD_eq (d : PData) (b : Nat) (c : Array Nat) :
+    ∀ k, pColFromD d b c k = pColFrom (toModel d) b c k
+  | 0 => rfl
+  | k + 1 => by simp only [pColFromD, pColFrom, pColFromD_eq d b c k, pColStepD_eq]
+
+/-- Fast `pColAt`. -/
+def pColAtD (d : PData) (cks : Array (Nat × Array Nat)) (t : Nat) : Array Nat :=
+  match findCk cks t cks.size with
+  | some (b, c) => pColFromD d b c (t - b)
+  | none => pColFromD d 0 (pCol0D d) t
+
+theorem pColAtD_eq (d : PData) (cks : Array (Nat × Array Nat)) (t : Nat) :
+    pColAtD d cks t = pColAt (toModel d) cks t := by
+  rw [pColAtD, pColAt]
+  cases findCk cks t cks.size with
+  | some e => obtain ⟨b, c⟩ := e; simp only [pColFromD_eq]
+  | none => simp only [pColFromD_eq, pCol0D_eq]
+
+/-- Fast `pWalk`. -/
+def pWalkD (d : PData) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Option (List Seg)
+  | t, s, τ =>
+    if _hτ : τ = 0 then none
+    else if _hs0 : t + 1 - τ = 0 then some [⟨s, τ⟩]
+    else
+      let c := pColAtD d cks (t + 1 - τ - 1)
+      match pickBest
+          (fun p : Nat × Nat =>
+            dec c[p.1 * d.maxD + (p.2 - 1)]! + dec (d.durAt p.1 p.2 (t + 1 - τ - 1))
+              + dec (d.transAt p.1 s (t + 1 - τ - 1 + 1)))
+          ((List.range d.S).flatMap fun sp =>
+            if sp == s then []
+            else (List.range d.maxD).map fun τ0 => (sp, τ0 + 1)) with
+      | none => none
+      | some ((sp, τ'), _) => (pWalkD d cks (t + 1 - τ - 1) sp τ').map (⟨s, τ⟩ :: ·)
+  termination_by t _ _ => t
+  decreasing_by omega
+
+theorem pWalkD_eq (d : PData) (cks : Array (Nat × Array Nat)) :
+    ∀ (t s τ : Nat), pWalkD d cks t s τ = pWalk (toModel d) cks t s τ
+  | t, s, τ => by
+    rw [pWalkD, pWalk]
+    by_cases hτ : τ = 0
+    · rw [dif_pos hτ, dif_pos hτ]
+    · rw [dif_neg hτ, dif_neg hτ]
+      by_cases hs0 : t + 1 - τ = 0
+      · rw [dif_pos hs0, dif_pos hs0]
+      · rw [dif_neg hs0, dif_neg hs0]
+        simp only [toModel, pColAtD_eq]
+        split
+        · rfl
+        · rw [pWalkD_eq d cks (t + 1 - τ - 1)]
+          simp only [toModel]
+  termination_by t _ _ => t
+  decreasing_by omega
+
+/-- The CLI decoder: fast forward pass, fast backtrace. -/
 def pDecodeFast (d : PData) (K : Nat) : Option DecodeResult :=
   if d.T = 0 then some ⟨#[], Score.zero⟩
   else
@@ -836,12 +896,12 @@ def pDecodeFast (d : PData) (K : Nat) : Option DecodeResult :=
           (List.range d.maxD).map fun τ0 => (s, τ0 + 1)) with
     | none => none
     | some ((s, τ), best) =>
-      match pWalk (toModel d) bc.1 (d.T - 1) s τ with
+      match pWalkD d bc.1 (d.T - 1) s τ with
       | none => none
       | some rsegs => some ⟨(toPath rsegs.reverse).toArray, best⟩
 
 theorem pDecodeFast_eq (d : PData) (K : Nat) : pDecodeFast d K = pDecode (toModel d) K := by
-  simp only [pDecodeFast, pDecode, toModel, pBuildCkptD_eq]
+  simp only [pDecodeFast, pDecode, toModel, pBuildCkptD_eq, pWalkD_eq]
 
 /-- `decode_correct`, inherited by the fast decoder. -/
 theorem pDecodeFast_correct {d : PData} {P : Problem} (hag : Agrees (toModel d) P)
