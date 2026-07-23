@@ -39,12 +39,12 @@ import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, computeVelocityFromInputs, loadBiometrics } from "../geo/velocity.js";
 import { shadowWalkDay } from "../geo/walk-shadow-core.js";
 import { loadContinuityContext } from "../hmm/continuity-context.js";
-import { buildHsmmModel, decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
+import { decodeHsmm, type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
-import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { saveDecode } from "../hmm/persist.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
+import { logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
 import {
 	leanMatchDivergences,
 	leanMatchMode,
@@ -129,24 +129,15 @@ async function buildPlaceNearLine(places: readonly HsmmPlace[], lines: readonly 
 	return placeNearLine;
 }
 
-/** V2 shadow (docs/proposals/2026-07-verified-core-lean.md): when the
- *  image carries the verified Lean decoder (`LEAN_CLI` names the binary),
- *  A/B every decoded day against it and log the agreement metric. Purely
- *  observational — a mismatch or an export refusal is logged, never fails
- *  the decode run. */
+/** V2 shadow (docs/proposals/2026-07-verified-core-lean.md), now staged behind
+ *  `LEAN_HSMM` (off/shadow/on) with an accumulating ledger — see `lean-hsmm.ts`.
+ *  Needs the cron image's verified binary (`LEAN_CLI`). Purely observational:
+ *  a mismatch or export refusal is recorded, never fails the decode run. The
+ *  `on` path (serving the verified decode) is not wired yet. */
 function runLeanShadow(inputs: HsmmInputs, date: string): void {
 	const leanBin = process.env.LEAN_CLI;
 	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) return;
-	try {
-		const r = shadowHsmmDay(buildHsmmModel(inputs), leanBin);
-		console.log(
-			`lean-shadow ${date} ${r.verdict} ` +
-				`float↔quant ${((100 * r.agreeMinutes) / r.totalMinutes).toFixed(2)}% scoreΔ ${r.scoreDelta.toExponential(2)} ` +
-				`[${r.shape} quantise ${r.quantiseMs.toFixed(0)}ms ts ${r.tsMs.toFixed(0)}ms lean ${r.leanMs.toFixed(0)}ms]`,
-		);
-	} catch (err) {
-		console.log(`lean-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
-	}
+	shadowHsmmViaLean(inputs, leanBin, date);
 }
 
 /** Matcher shadow (docs/proposals/2026-07-verified-core-lean.md): when the
@@ -349,6 +340,7 @@ async function decodeAndPersist(
 	setLeanRunScope("shadow");
 	runLeanShadow(inputs, date);
 	await runWalkShadow(userId, date, tz, osm);
+	logLeanHsmmLedger(date);
 	logLeanPassLedger(date);
 	logLeanMatchLedger(date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
