@@ -12,6 +12,7 @@ import Verified.Hsmm.SegmentEvidence
 import Verified.Hsmm.TrainGenerator
 import Verified.Hsmm.TrainHopDuration
 import Verified.Hsmm.StateSpace
+import Verified.Hsmm.Observation
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
