@@ -135,8 +135,9 @@ async function buildPlaceNearLine(places: readonly HsmmPlace[], lines: readonly 
 /** V2 shadow (docs/proposals/2026-07-verified-core-lean.md), now staged behind
  *  `LEAN_HSMM` (off/shadow/on) with an accumulating ledger — see `lean-hsmm.ts`.
  *  Needs the cron image's verified binary (`LEAN_CLI`). Purely observational:
- *  a mismatch or export refusal is recorded, never fails the decode run. The
- *  `on` path (serving the verified decode) is not wired yet. */
+ *  a mismatch or export refusal is recorded, never fails the decode run — the
+ *  serving decision (TS vs the verified decode) is `decodeServed`'s, made from
+ *  the same `LEAN_HSMM` mode, independent of this A/B. */
 function runLeanShadow(inputs: HsmmInputs, date: string): void {
 	const leanBin = process.env.LEAN_CLI;
 	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) return;

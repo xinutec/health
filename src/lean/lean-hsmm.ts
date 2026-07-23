@@ -137,9 +137,6 @@ export function shadowHsmmViaLean(inputs: HsmmInputs, leanBin: string, date: str
 				`float↔quant ${((100 * r.agreeMinutes) / r.totalMinutes).toFixed(2)}% scoreΔ ${r.scoreDelta.toExponential(2)} ` +
 				`[${r.shape} quantise ${r.quantiseMs.toFixed(0)}ms ts ${r.tsMs.toFixed(0)}ms lean ${r.leanMs.toFixed(0)}ms]`,
 		);
-		if (mode === "on") {
-			console.warn("[lean-hsmm] LEAN_HSMM=on requested but the on-path is not wired yet — serving TS.");
-		}
 	} catch (err) {
 		stats.skipped += 1;
 		record(date, "skip", err instanceof Error ? err.message : String(err));
