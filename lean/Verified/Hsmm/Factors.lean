@@ -11,14 +11,16 @@ import Verified.Hsmm.ChainContext
 import Verified.Hsmm.SegmentEvidence
 import Verified.Hsmm.TrainGenerator
 import Verified.Hsmm.TrainHopDuration
+import Verified.Hsmm.StateSpace
 /-!
-# HSMM scoring-factor ports (aggregator)
+# HSMM port aggregator (scoring factors + structural resolvers)
 
-The Lean-Float re-implementations of the TypeScript HSMM scoring factors, each
-pinned to V8 by `#guard` parity checks. Importing them here pulls every module
-(and therefore every guard) into the default `Verified` library build, so
-`npm run verify` (`lake build`) fails on any TS↔Lean scoring divergence — the
-guards are worthless if they never run.
+The Lean re-implementations of the TypeScript HSMM — the scoring-factor kernels
+and the structural resolvers (state-space enumeration, …) — each pinned to V8 by
+`#guard` parity checks. Importing them here pulls every module (and therefore
+every guard) into the default `Verified` library build, so `npm run verify`
+(`lake build`) fails on any TS↔Lean divergence — the guards are worthless if
+they never run.
 
 Implementation-first: these compute in Lean `Float` to match TS bit-for-bit
 (exactly, for `sqrt`/arithmetic/discrete factors; ≤1-ULP where a factor uses
