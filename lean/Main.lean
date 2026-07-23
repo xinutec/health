@@ -4,11 +4,15 @@ import Lean.Data.Json
 /-!
 # `verified_cli` — JSON decode interface
 
-Reads one HSMM problem as JSON on stdin, decodes it with `pDecode` — the
-packed, checkpointed decoder whose output is theorem-backed
-(`pDecode_correct`, `pDecode_none_iff`) — and writes the result as JSON on
-stdout. The bridge for A/B-ing against `src/hmm/hsmm-viterbi.ts` on identical
-integer-scaled scores: see `lean/experiments/compare.mjs`.
+Reads one HSMM problem as JSON on stdin, decodes it with `pDecodeFast` — the
+flat-array decoder proved equal to the packed, checkpointed `pDecode`
+(`pDecodeFast_eq`), so its output stays theorem-backed
+(`pDecodeFast_correct`) — and writes the result as JSON on stdout. The parser
+lays the tensors out as the flat `Array Nat`s `PData` reads through direct,
+inlinable accessors (the forward pass' hot path), instead of the `PModel`
+closure fields it used to build. The bridge for A/B-ing against
+`src/hmm/hsmm-viterbi.ts` on identical integer-scaled scores: see
+`lean/experiments/compare.mjs`.
 
 Scores are parsed straight into the packed encoding (`enc`: `-∞ ↦ 0`,
 `v ↦ v + 2^61` as a `Nat` scalar), and the parser REFUSES inputs outside the
@@ -142,7 +146,7 @@ private def parseDurOverrides (j : Json) (maxD T : Nat) :
 matching the TS decoder's implicit 0. -/
 private def encZero : Nat := pOff
 
-private def parseModel (j : Json) : Except String PModel := do
+private def parseModel (j : Json) : Except String PData := do
   let T := (← (← j.getObjVal? "T").getNat?)
   let S := (← (← j.getObjVal? "S").getNat?)
   let maxD := (← (← j.getObjVal? "maxD").getNat?)
@@ -216,34 +220,46 @@ private def parseModel (j : Json) : Except String PModel := do
     match j.getObjVal? "entry" with
     | .ok v => if v.isNull then pure #[] else matrix pOB v
     | .error _ => pure #[]
+  -- Flatten the remaining nested tensors so the decode reads one flat-array
+  -- probe per cell through `PData`'s monomorphic accessors (the accessors
+  -- carry the same lookup these closures used to; here we only lay out the
+  -- data they read). `emit`/`entry`/`dur` were `Array (Array Nat)`; `trans`
+  -- is the per-`t` (or single broadcast) base matrix.
+  let emitFlat : Array Nat := Id.run do
+    let mut a := Array.replicate (T * S) 0
+    for t in [0:T] do
+      let r := emit.getD t #[]
+      for s in [0:S] do a := a.set! (t * S + s) (r.getD s 0)
+    return a
+  let entryFlat : Array Nat := Id.run do
+    if entry.isEmpty then return #[]
+    let mut a := Array.replicate (T * S) encZero
+    for t in [0:T] do
+      let r := entry.getD t #[]
+      for s in [0:S] do a := a.set! (t * S + s) (r.getD s encZero)
+    return a
+  let durBaseFlat : Array Nat := Id.run do
+    let mut a := Array.replicate (S * maxD) 0
+    for s in [0:S] do
+      let r := dur.getD s #[]
+      for d0 in [0:maxD] do a := a.set! (s * maxD + d0) (r.getD d0 0)
+    return a
+  let transBase : Array Nat := Id.run do
+    let nTB := trans.size
+    let mut a := Array.replicate (nTB * (S * S)) 0
+    for k in [0:nTB] do
+      let mk := trans.getD k #[]
+      for sp in [0:S] do
+        let r := mk.getD sp #[]
+        for s in [0:S] do a := a.set! (k * (S * S) + sp * S + s) (r.getD s 0)
+    return a
   return {
-    T := T
-    S := S
-    maxD := maxD
-    emit := fun t s => ((emit.getD t #[]).getD s 0)
-    trans := fun sp s t =>
-      let i := transIdx.getD (sp * S + s) transRows.size
-      if i < transRows.size then transFlat.getD (i * T + t) 0
-      else
-        let m := if trans.size == 1 then trans[0]! else trans.getD t #[]
-        (m.getD sp #[]).getD s 0
-    dur := fun s d e =>
-      if d == 0 then 0
-      else if !durClass.isEmpty then
-        let b := (dur.getD s #[]).getD (d - 1) 0
-        if b == 0 then 0
-        else
-          let c := durClass.getD s 0
-          -- delta rows are shifted by halfOB at parse; scalar Nat throughout
-          let δn := durDeltaFlat.getD ((c * maxD + (d - 1)) * T + e) halfOB
-          b + δn - halfOB
-      else if hasOv.getD (s * maxD + (d - 1)) false then
-        match durOv[(s * maxD + (d - 1)) * T + e]? with
-        | some v => v
-        | none => (dur.getD s #[]).getD (d - 1) 0
-      else (dur.getD s #[]).getD (d - 1) 0
-    init := fun s => if init.isEmpty then encZero else init.getD s 0
-    entry := fun s t => if entry.isEmpty then encZero else (entry.getD t #[]).getD s 0
+    T := T, S := S, maxD := maxD, halfOB := halfOB
+    emit := emitFlat, entry := entryFlat, init := init
+    transBase := transBase, nTB := trans.size
+    transIdx := transIdx, transFlat := transFlat, nRows := transRows.size
+    durBase := durBaseFlat, durClass := durClass, durDelta := durDeltaFlat
+    hasOv := hasOv, durOv := durOv
   }
 
 /-- Checkpoint stride for `pDecode`: retained cells scale as `T/K` columns
@@ -501,7 +517,7 @@ private def hsmmResult (j : Json) : Json :=
   match parseModel j with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok m =>
-    match pDecode m ckptStride with
+    match pDecodeFast m ckptStride with
     | none => Json.mkObj [("degenerate", Json.bool true)]
     | some r =>
       Json.mkObj [
@@ -555,7 +571,7 @@ def main (args : List String) : IO UInt32 := do
     let t2 ← IO.monoMsNow
     -- `IO.lazyPure` pins the evaluation between the two timestamps; a plain
     -- pure `let` gets floated into the match by the compiler.
-    let r ← IO.lazyPure fun _ => pDecode m ckptStride
+    let r ← IO.lazyPure fun _ => pDecodeFast m ckptStride
     let t3 ← IO.monoMsNow
     match r with
     | none => IO.println (Json.mkObj [("degenerate", Json.bool true)]).compress

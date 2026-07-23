@@ -1,4 +1,5 @@
 import Verified.Hsmm.Ckpt
+import Std.Data.HashMap
 
 /-!
 # Packed scores: trellis columns as unboxed `Nat` scalars
@@ -708,5 +709,148 @@ def packM (P : Problem) : PModel where
 theorem packM_agrees (P : Problem) : Agrees (packM P) P :=
   ⟨rfl, rfl, rfl, fun _ _ => rfl, fun _ _ _ => rfl, fun _ _ _ => rfl,
     fun _ => rfl, fun _ _ => rfl⟩
+
+/-! ## Fast path: flat-array data model
+
+`PModel` stores its tensors as `Nat → … → Nat` *closure fields*; the forward
+pass reads them through indirect struct-field calls, which the compiler cannot
+inline (measured ~1.8× slower on the 55M-cell hot loop than a direct read).
+`PData` stores the same pre-encoded tensors as flat `Array Nat`s read through
+monomorphic top-level accessors — so the hot loop is direct, inlinable calls.
+
+`toModel` is the `PModel` a `PData` denotes (its accessors wrapped as fields);
+each fast forward def is *definitionally* the `PModel` one under `toModel`
+(pure β), so the equivalence is `rfl` for the columns and a one-step induction
+for the checkpoint builder. `pDecodeFast` runs the fast forward pass and reuses
+the shared (slow, but small) backtrace, and `pDecodeFast_eq` proves it equal to
+`pDecode (toModel d)` — so `decode_correct` transfers verbatim. -/
+
+structure PData where
+  T : Nat
+  S : Nat
+  maxD : Nat
+  halfOB : Nat
+  emit : Array Nat
+  entry : Array Nat
+  init : Array Nat
+  transBase : Array Nat
+  nTB : Nat
+  transIdx : Array Nat
+  transFlat : Array Nat
+  nRows : Nat
+  durBase : Array Nat
+  durClass : Array Nat
+  durDelta : Array Nat
+  hasOv : Array Bool
+  durOv : Std.HashMap Nat Nat
+
+@[inline] def PData.emitAt (d : PData) (t s : Nat) : Nat := d.emit.getD (t * d.S + s) 0
+@[inline] def PData.entryAt (d : PData) (s t : Nat) : Nat :=
+  if d.entry.isEmpty then pOff else d.entry.getD (t * d.S + s) pOff
+@[inline] def PData.initAt (d : PData) (s : Nat) : Nat :=
+  if d.init.isEmpty then pOff else d.init.getD s pOff
+@[inline] def PData.transAt (d : PData) (sp s t : Nat) : Nat :=
+  let i := d.transIdx.getD (sp * d.S + s) d.nRows
+  if i < d.nRows then d.transFlat.getD (i * d.T + t) 0
+  else d.transBase.getD ((if d.nTB == 1 then 0 else t) * (d.S * d.S) + sp * d.S + s) 0
+@[inline] def PData.durAt (d : PData) (s dd e : Nat) : Nat :=
+  if dd == 0 then 0
+  else if !d.durClass.isEmpty then
+    let b := d.durBase.getD (s * d.maxD + (dd - 1)) 0
+    if b == 0 then 0
+    else b + d.durDelta.getD ((d.durClass.getD s 0 * d.maxD + (dd - 1)) * d.T + e) d.halfOB - d.halfOB
+  else if d.hasOv.getD (s * d.maxD + (dd - 1)) false then
+    d.durOv.getD ((s * d.maxD + (dd - 1)) * d.T + e) (d.durBase.getD (s * d.maxD + (dd - 1)) 0)
+  else d.durBase.getD (s * d.maxD + (dd - 1)) 0
+
+/-- The `PModel` a `PData` denotes. Each accessor becomes a field closure that
+β-reduces to the accessor, making the fast defs definitionally the slow ones. -/
+def toModel (d : PData) : PModel where
+  T := d.T
+  S := d.S
+  maxD := d.maxD
+  emit := fun t s => d.emitAt t s
+  trans := fun sp s t => d.transAt sp s t
+  dur := fun s dd e => d.durAt s dd e
+  init := fun s => d.initAt s
+  entry := fun s t => d.entryAt s t
+
+/-- Fast `pCol0`. -/
+def pCol0D (d : PData) : Array Nat :=
+  Array.ofFn (n := d.S * d.maxD) fun i =>
+    if i.val % d.maxD = 0 then
+      pAdd (pAdd (d.initAt (i.val / d.maxD)) (d.entryAt (i.val / d.maxD) 0))
+        (d.emitAt 0 (i.val / d.maxD))
+    else 0
+
+/-- Fast `pCloseRow`. -/
+def pCloseRowD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
+  Array.ofFn (n := d.S) fun sp =>
+    pRangeMax (fun τ0 => pAdd prev[sp.val * d.maxD + τ0]! (d.durAt sp.val (τ0 + 1) t)) d.maxD
+
+/-- Fast `pColStep`. -/
+def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
+  let emitR : Array Nat := Array.ofFn (n := d.S) fun s => d.emitAt (t + 1) s.val
+  let entryR : Array Nat := Array.ofFn (n := d.S) fun s => d.entryAt s.val (t + 1)
+  let closeA := pCloseRowD d t prev
+  Array.ofFn (n := d.S * d.maxD) fun i =>
+    let s := i.val / d.maxD
+    if i.val % d.maxD = 0 then
+      pAdd (pAdd
+        (pRangeMax (fun sp => if sp == s then 0 else pAdd closeA[sp]! (d.transAt sp s (t + 1)))
+          d.S)
+        entryR[s]!) emitR[s]!
+    else pAdd prev[i.val - 1]! emitR[s]!
+
+/-- Fast `pBuildCkpt`. -/
+def pBuildCkptD (d : PData) (K : Nat) : Nat → Array (Nat × Array Nat) × Array Nat
+  | 0 =>
+    let c0 := pCol0D d
+    (#[(0, c0)], c0)
+  | t + 1 =>
+    let prev := pBuildCkptD d K t
+    let next := pColStepD d t prev.2
+    (if (t + 1) % K = 0 then prev.1.push (t + 1, next) else prev.1, next)
+
+theorem pCol0D_eq (d : PData) : pCol0D d = pCol0 (toModel d) := rfl
+theorem pCloseRowD_eq (d : PData) (t : Nat) (prev : Array Nat) :
+    pCloseRowD d t prev = pCloseRow (toModel d) t prev := rfl
+theorem pColStepD_eq (d : PData) (t : Nat) (prev : Array Nat) :
+    pColStepD d t prev = pColStep (toModel d) t prev := rfl
+
+theorem pBuildCkptD_eq (d : PData) (K : Nat) :
+    ∀ t, pBuildCkptD d K t = pBuildCkpt (toModel d) K t
+  | 0 => rfl
+  | t + 1 => by
+    simp only [pBuildCkptD, pBuildCkpt, pBuildCkptD_eq d K t, pColStepD_eq]
+
+/-- The CLI decoder: fast forward pass, shared backtrace. -/
+def pDecodeFast (d : PData) (K : Nat) : Option DecodeResult :=
+  if d.T = 0 then some ⟨#[], Score.zero⟩
+  else
+    let bc := pBuildCkptD d K (d.T - 1)
+    match pickBest
+        (fun p : Nat × Nat =>
+          dec (bc.2)[p.1 * d.maxD + (p.2 - 1)]! + dec (d.durAt p.1 p.2 (d.T - 1)))
+        ((List.range d.S).flatMap fun s =>
+          (List.range d.maxD).map fun τ0 => (s, τ0 + 1)) with
+    | none => none
+    | some ((s, τ), best) =>
+      match pWalk (toModel d) bc.1 (d.T - 1) s τ with
+      | none => none
+      | some rsegs => some ⟨(toPath rsegs.reverse).toArray, best⟩
+
+theorem pDecodeFast_eq (d : PData) (K : Nat) : pDecodeFast d K = pDecode (toModel d) K := by
+  simp only [pDecodeFast, pDecode, toModel, pBuildCkptD_eq]
+
+/-- `decode_correct`, inherited by the fast decoder. -/
+theorem pDecodeFast_correct {d : PData} {P : Problem} (hag : Agrees (toModel d) P)
+    (hin : InBounds P) (K : Nat) (hT : P.T ≤ pTMax) {r : DecodeResult}
+    (h : pDecodeFast d K = some r) :
+    ∃ segs, wellFormed P segs = true
+      ∧ score P segs = r.best
+      ∧ r.best = oracleBest P
+      ∧ r.path = (toPath segs).toArray :=
+  pDecode_correct hag hin K hT (pDecodeFast_eq d K ▸ h)
 
 end Verified.Hsmm
