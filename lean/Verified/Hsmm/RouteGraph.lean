@@ -31,7 +31,7 @@ def DIRECTIONALS : List String :=
 /-- Strip a trailing directional (first match), re-trimming after. -/
 def stripDirectional (s : String) : String :=
   match DIRECTIONALS.find? (fun d => s.endsWith d) with
-  | some d => (s.dropRight d.length).trim
+  | some d => (s.dropEnd d.length).trimAscii.toString
   | none => s
 
 /-- Append-preserving dedup (mirrors JS `Set` insertion-order iteration). -/
@@ -45,17 +45,17 @@ def parseLineMemberships (name : Option String) : List String :=
   | none => []
   | some n =>
     if n == "" then [] else
-    let cleaned := stripDirectional n.trim
+    let cleaned := stripDirectional n.trimAscii.toString
     let stripped? : Option String :=
-      if cleaned.endsWith " Lines" then some (cleaned.dropRight " Lines".length)
-      else if cleaned.endsWith " Line" then some (cleaned.dropRight " Line".length)
+      if cleaned.endsWith " Lines" then some (cleaned.dropEnd " Lines".length).toString
+      else if cleaned.endsWith " Line" then some (cleaned.dropEnd " Line".length).toString
       else none
     match stripped? with
     | none => []
     | some stripped =>
       let parts := (stripped.splitOn " and ").flatMap (fun andPart => andPart.splitOn ", ")
       dedup (parts.filterMap (fun commaPart =>
-        let trimmed := commaPart.trim
+        let trimmed := commaPart.trimAscii.toString
         if trimmed.isEmpty then none else some (trimmed ++ " Line")))
 
 -- Parity with the real `parseLineMemberships` (Node/V8; Set → insertion-ordered list).
