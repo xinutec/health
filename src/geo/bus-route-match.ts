@@ -132,7 +132,7 @@ const BUS_SPEED_SCALE_KMH = 6;
 /** P(speed | bus) as a soft plausibility in (0, 1]: ~1 at bus pace, decaying
  *  smoothly toward 0 as speed climbs — a logistic, never a hard cutoff. Neutral
  *  (1) when no speed is supplied. A London bus averages ~15–25 km/h (dwells +
- *  traffic), so e.g. 62 km/h → ~0.003: the leg is almost certainly not a bus. */
+ *  traffic), so e.g. 62 km/h → ~0.018: the leg is almost certainly not a bus. */
 function busSpeedPlausibility(speedKmh: number | undefined): number {
 	if (speedKmh === undefined) return 1;
 	return 1 / (1 + Math.exp((speedKmh - BUS_SPEED_MID_KMH) / BUS_SPEED_SCALE_KMH));
