@@ -41,3 +41,4 @@ import Verified.Geo.MatchViterbi
 import Verified.Geo.Kalman
 import Verified.Geo.GpsQuality
 import Verified.Geo.RailRoadProximity
+import Verified.Geo.Velocity
