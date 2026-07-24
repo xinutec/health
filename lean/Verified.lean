@@ -38,3 +38,4 @@ import Verified.Geo.LazyFuel
 import Verified.Geo.LazyResume
 import Verified.Geo.LazyPrev
 import Verified.Geo.MatchViterbi
+import Verified.Geo.Kalman
