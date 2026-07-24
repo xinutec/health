@@ -38,6 +38,7 @@ namespace Verified.Hsmm.Assembly
 
 open Verified.Hsmm.FloatScore (negInf)
 open Verified.Hsmm.Emissions (Mode State)
+open Verified.Hsmm.Observation (ObsRow Fix)
 open Verified.Hsmm.Duration (GammaFit)
 open Verified.Hsmm.Quantize (quantize)
 
@@ -56,13 +57,15 @@ def entryLogProbFull (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
 def initialLogProbFull (s : State) : Float := Entry.initialStateLogProb s
 
 /-- `durationLogProb = durationPrior(s,d,e) (+ segmentEvidence(s,d,e))`. The
-    train-hop relaxation's `covered`/`fit`/floors and segment-evidence's `Window`
-    arrive resolved; `segEvidenceOn` gates the second summand (the C4.2 flag). -/
-def durationLogProbFull (s : State) (d : Float) (covered : Bool)
-    (fit : GammaFit) (minForMode trainMin : Float)
-    (segEvidenceOn : Bool) (window : SegmentEvidence.Window) : Float :=
-  TrainHopDuration.trainHopDurationLogProb s d covered fit minForMode trainMin
-    + (if segEvidenceOn then SegmentEvidence.segmentEvidence s.mode d window else 0.0)
+    train-hop relaxation's `covered`/`fit`/floors arrive resolved; the segment
+    evidence resolves its own `Window` from the observation tensor
+    (`segmentEvidenceAt`), so nothing about scoring is caller-stubbed. `segEvidenceOn`
+    gates the second summand (the C4.2 flag). `pref` is `stepPrefix obs` (built once). -/
+def durationLogProbFull (obs : Array ObsRow) (pref : Array Float)
+    (s : State) (d segEnd : Nat) (covered : Bool)
+    (fit : GammaFit) (minForMode trainMin : Float) (segEvidenceOn : Bool) : Float :=
+  TrainHopDuration.trainHopDurationLogProb s d.toFloat covered fit minForMode trainMin
+    + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
 
 /-- `transitionLogProb = transition(from,to) (+ chainContext)`, with the
     `t === −∞ ⇒ −∞` short-circuit (a hard-zero transition stays hard-zero; the
@@ -93,7 +96,6 @@ private def approxF (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 private def stt (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
 private def prof : Array Float := ((Array.range 24).map (fun i => (i.toFloat + 1) / 300)).set! 3 0.0005
 private def gf (a b : Float) : GammaFit := ⟨a, b, 10⟩
-private def win (dispM slopVar steps : Float) : SegmentEvidence.Window := ⟨dispM, slopVar, steps⟩
 
 -- entry = entryPrior + trainGen.entry
 #guard entryLogProbFull (stt .stationary (some 5) none) 14 true (some prof) 2 (some 0.3) false false
@@ -106,13 +108,22 @@ private def win (dispM slopVar steps : Float) : SegmentEvidence.Window := ⟨dis
 -- initial = 0
 #guard initialLogProbFull (stt .stationary (some 5) none) == 0
 
--- duration = trainHopDuration (+ segmentEvidence)
-#guard durationLogProbFull (stt .train none (some "Jubilee")) 1 true (gf 4 0.1333) 2 2 false (win 0 0 0)
+-- duration = trainHopDuration (+ segmentEvidence). Fixture: bracketed blackout
+-- [1..5] (890 m, 500 steps), the same one SegmentEvidence pins its window on.
+private def dsev (i : Nat) (prev next : Option Fix) : ObsRow :=
+  { ts := 1000 + (i : Int) * 60, gps := none, hr := none, cadence := some 100,
+    hourLocal := 0, dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none,
+    reacquireAgeMin := none, prevGpsFix := prev, nextGpsFix := next }
+private def dObs : Array ObsRow := #[
+  dsev 0 none none, dsev 1 (some ⟨1060, 51.5, -0.1⟩) none, dsev 2 none none,
+  dsev 3 none none, dsev 4 none none, dsev 5 none (some ⟨1360, 51.508, -0.1⟩)]
+private def dPref : Array Float := SegmentEvidence.stepPrefix dObs
+#guard durationLogProbFull dObs dPref (stt .train none (some "Jubilee")) 1 1 true (gf 4 0.1333) 2 2 false
   == 0                                                 -- hop relaxation, segEv off
-#guard durationLogProbFull (stt .train none (some "Jubilee")) 1 false (gf 4 0.1333) 2 2 false (win 0 0 0)
+#guard durationLogProbFull dObs dPref (stt .train none (some "Jubilee")) 1 1 false (gf 4 0.1333) 2 2 false
   == -10                                               -- uncovered → floor, segEv off
-#guard approxF (durationLogProbFull (stt .driving none none) 30 false (gf 4 0.13333333333333333) 2 2 true (win 5000 0 0))
-  (-4.147779406410647)                                 -- logDur -3.6477… + segEv -0.5
+#guard approxF (durationLogProbFull dObs dPref (stt .train none (some "Jubilee")) 5 5 false (gf 4 0.13333333333333333) 2 2 true)
+  (-6.455452978444667)                                 -- logDur(5) -5.6897… + segEv(train,5,5) -0.7657…
 
 -- transition = transition (+ chainContext), with the −∞ short-circuit
 private def space : List State :=
