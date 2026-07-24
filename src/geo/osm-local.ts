@@ -544,7 +544,6 @@ export function buildLocalDataProbeQuery(
 	radiusM: number,
 	featureType: string,
 ) {
-	const point = sql`ST_GeomFromText(${`POINT(${lon} ${lat})`}, 4326)`;
 	const mPerDeg = Math.min(METERS_PER_DEG_LAT, metersPerDegLon(lat));
 	const dDeg = radiusM / mPerDeg;
 	return k
