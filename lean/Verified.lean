@@ -51,3 +51,4 @@ import Verified.Geo.DwellContinuation
 import Verified.Geo.BiometricCoherence
 import Verified.Geo.ModeBiometrics
 import Verified.Geo.Bus
+import Verified.Geo.OpeningHours
