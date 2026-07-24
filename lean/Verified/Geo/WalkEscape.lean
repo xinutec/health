@@ -485,6 +485,26 @@ private def polylineLenM (pts : Array Pt) : Float := Id.run do
     len := len + metersBetween pts[k-1]! pts[k]!
   return len
 
+/-- Cumulative along-path distances (`cum[0] = 0`) and the total. -/
+private def cumLengths (pts : Array Pt) : Array Float × Float := Id.run do
+  let mut total := 0.0
+  let mut cum : Array Float := #[0.0]
+  for k in [1:pts.size] do
+    total := total + metersBetween pts[k-1]! pts[k]!
+    cum := cum.push total
+  return (cum, total)
+
+/-- A replacement path's vertices, timestamps interpolated along it by cumulative
+    distance between the two anchors' real times. The route's (street-snapped)
+    start supersedes the copied anchor position; its timestamp is kept. -/
+private def timedAlong (pts : Array Pt) (cum : Array Float) (total tsA tsB : Float) :
+    Array TPt := Id.run do
+  let mut out : Array TPt := #[]
+  for k in [0:pts.size] do
+    let f := if total > 0 then cum[k]! / total else 0
+    out := out.push ⟨pts[k]!.lat, pts[k]!.lon, tsA + (tsB - tsA) * f⟩
+  return out
+
 /-- Repair a chord recursively: replace each pass-through with the shorter
     crossing-free corner path around that ring, then fix the sub-chords the
     corners created. `fuel` counts down from `CORNER_MAX_DEPTH`. `none` when no
@@ -677,11 +697,7 @@ def correctWalkPath (drawn : Array TPt) (net : WalkNet) (buildings : Array Ring)
         | some r =>
           if r.size ≥ 2 then
             let routeBadM := pathBadnessM r ctx
-            let mut total := 0.0
-            let mut cum : Array Float := #[0.0]
-            for k in [1:r.size] do
-              total := total + metersBetween r[k-1]! r[k]!
-              cum := cum.push total
+            let (cum, total) := cumLengths r
             let addedM := total - straightM
             dRouteFound := true
             dRouteBadM := some routeBadM
@@ -692,12 +708,8 @@ def correctWalkPath (drawn : Array TPt) (net : WalkNet) (buildings : Array Ring)
                   routeBadM := some routeBadM, addedM := some addedM, budgetM,
                   anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
               budgetM := budgetM - max 0 addedM
-              -- Timestamps interpolate along the route by cumulative distance;
-              -- the street-snapped start supersedes the copied anchor position.
               out := out.pop
-              for k in [0:r.size] do
-                let f := if total > 0 then cum[k]! / total else 0
-                out := out.push ⟨r[k]!.lat, r[k]!.lon, anchorA.ts + (anchorB.ts - anchorA.ts) * f⟩
+              out := out ++ timedAlong r cum total anchorA.ts anchorB.ts
               replaced := true
 
       -- CASE 2.5 — corner detour around the footprint(s) themselves. Accepted
@@ -708,11 +720,7 @@ def correctWalkPath (drawn : Array TPt) (net : WalkNet) (buildings : Array Ring)
         | none => pure ()
         | some detour =>
           if detour.size > 2 then
-            let mut total := 0.0
-            let mut cum : Array Float := #[0.0]
-            for k in [1:detour.size] do
-              total := total + metersBetween detour[k-1]! detour[k]!
-              cum := cum.push total
+            let (cum, total) := cumLengths detour
             let addedM := total - dStraightM
             let lenOK := total ≤ max opts.minRouteBudgetM (dStraightM * opts.maxDetourRatio)
             let detourBadM := pathBadnessM detour ctx
@@ -724,10 +732,7 @@ def correctWalkPath (drawn : Array TPt) (net : WalkNet) (buildings : Array Ring)
                   anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
               budgetM := budgetM - max 0 addedM
               out := out.pop
-              for k in [0:detour.size] do
-                let f := if total > 0 then cum[k]! / total else 0
-                out := out.push ⟨detour[k]!.lat, detour[k]!.lon,
-                                 anchorA.ts + (anchorB.ts - anchorA.ts) * f⟩
+              out := out ++ timedAlong detour cum total anchorA.ts anchorB.ts
               replaced := true
 
       -- CASE 1 FALLBACK — escape each interior vertex onto its near-side

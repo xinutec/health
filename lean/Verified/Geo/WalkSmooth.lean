@@ -48,6 +48,21 @@ private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
 
+/-- The local equirectangular frame (metres) a leg is solved in, anchored at its
+    first fix. Both entry points build the same one; it is a structure so the four
+    projection formulas have a single home. -/
+structure Frame where
+  lat0 : Float
+  lon0 : Float
+  cosLat : Float
+  deriving Inhabited
+
+def Frame.of (lat0 lon0 : Float) : Frame := ⟨lat0, lon0, Float.cos (lat0 * pi / 180)⟩
+def Frame.toE (f : Frame) (lon : Float) : Float := (lon - f.lon0) * 111320.0 * f.cosLat
+def Frame.toN (f : Frame) (lat : Float) : Float := (lat - f.lat0) * 111320.0
+def Frame.toLon (f : Frame) (e : Float) : Float := f.lon0 + e / (111320.0 * f.cosLat)
+def Frame.toLat (f : Frame) (m : Float) : Float := f.lat0 + m / 111320.0
+
 /-- One GPS fix to reconstruct. `accuracyM` is the reported horizontal accuracy;
     when absent the profile fallback σ is used. -/
 structure WalkFix where
@@ -202,13 +217,11 @@ def smoothWalkMap (fixes : Array WalkFix) (walkable : Ways)
   if n < profile.minFixes then return none
 
   -- Local equirectangular frame (metres) anchored at the first fix.
-  let lat0 := fixes[0]!.lat
-  let lon0 := fixes[0]!.lon
-  let cosLat := Float.cos (lat0 * pi / 180)
-  let toE := fun (lon : Float) => (lon - lon0) * 111320.0 * cosLat
-  let toN := fun (lat : Float) => (lat - lat0) * 111320.0
-  let toLon := fun (e : Float) => lon0 + e / (111320.0 * cosLat)
-  let toLat := fun (m : Float) => lat0 + m / 111320.0
+  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+  let toE := fr.toE
+  let toN := fr.toN
+  let toLon := fr.toLon
+  let toLat := fr.toLat
 
   let mut ze := Array.replicate n 0.0
   let mut zn := Array.replicate n 0.0
@@ -769,25 +782,35 @@ def WalkGrid.ringContaining (g : WalkGrid) (px py : Float) : Int := Id.run do
     cx := cx + 1
   return -1
 
-/-- Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
-    One vertex per fix, timestamps preserved; `none` when too short. -/
-def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Ring)
-    (profile : ReconstructProfile := {}) (evidence : WalkEvidence := {}) :
-    Option (Array SmoothedPoint) := Id.run do
-  if fixes.size < profile.minFixes then return none
+/-! ### The stages of `reconstructWalk`
 
-  let lat0 := fixes[0]!.lat
-  let lon0 := fixes[0]!.lon
-  let cosLat := Float.cos (lat0 * pi / 180)
-  let toE := fun (lon : Float) => (lon - lon0) * 111320.0 * cosLat
-  let toN := fun (lat : Float) => (lat - lat0) * 111320.0
-  let toLon := fun (e : Float) => lon0 + e / (111320.0 * cosLat)
-  let toLat := fun (m : Float) => lat0 + m / 111320.0
+Split out as STAGES, not as a decomposition of the solver: each is a contiguous
+prefix or suffix of the TS function with clean inputs and outputs, so reading the
+Lean one-to-one against `walk-smooth-map.ts` still works. The GNC/IRLS core stays
+whole — it threads too much shared mutable state to divide without inventing a
+state record that exists in neither language.
+-/
 
-  -- Densify: keep every fix as an OBSERVED state and insert FREE states (no GPS
-  -- term) so the spacing is ≤ targetSpacingM. Free states are placed purely by
-  -- smoothness + network + building, so the line can bend AROUND a block between
-  -- two fixes.
+/-- The state chain the solver runs over. -/
+structure StateChain where
+  seedE : Array Float
+  seedN : Array Float
+  /-- GPS target; only meaningful where `obsW > 0`. -/
+  obsE : Array Float
+  obsN : Array Float
+  /-- Weak accuracy prior; `0` marks a FREE state (no GPS emission). -/
+  obsW : Array Float
+  ts : Array Float
+  deriving Inhabited
+
+def StateChain.size (c : StateChain) : Nat := c.seedE.size
+
+/-- Densify: keep every fix as an OBSERVED state and insert FREE states so the
+    spacing is ≤ `targetSpacingM`. Free states are placed purely by smoothness +
+    network + building, so the line can bend AROUND a block between two fixes — a
+    straight chord would otherwise cut through it with no vertex inside to repel. -/
+def buildStateChain (fixes : Array WalkFix) (fr : Frame) (profile : ReconstructProfile) :
+    StateChain := Id.run do
   let mut seedE : Array Float := #[]
   let mut seedN : Array Float := #[]
   let mut obsE : Array Float := #[]
@@ -795,8 +818,8 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
   let mut obsW : Array Float := #[]
   let mut ts : Array Float := #[]
   for i in [0:fixes.size] do
-    let fe := toE fixes[i]!.lon
-    let fn := toN fixes[i]!.lat
+    let fe := fr.toE fixes[i]!.lon
+    let fn := fr.toN fixes[i]!.lat
     let acc := fixes[i]!.accuracyM.getD profile.accFallbackM
     let sigma := min profile.accClampMaxM (max profile.accClampMinM acc)
     seedE := seedE.push fe
@@ -806,8 +829,8 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
     obsW := obsW.push (1 / (sigma * sigma))
     ts := ts.push fixes[i]!.ts
     if i + 1 < fixes.size then
-      let ne := toE fixes[i+1]!.lon
-      let nn2 := toN fixes[i+1]!.lat
+      let ne := fr.toE fixes[i+1]!.lon
+      let nn2 := fr.toN fixes[i+1]!.lat
       let segLen := hyp (ne - fe) (nn2 - fn)
       let kF := max 0 (Float.floor (segLen / profile.targetSpacingM) - 1)
       let k := kF.toUInt64.toNat
@@ -819,61 +842,142 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
         obsN := obsN.push 0
         obsW := obsW.push 0   -- free state — no GPS emission
         ts := ts.push (jsRound (fixes[i]!.ts + (fixes[i+1]!.ts - fixes[i]!.ts) * f))
-  let m := seedE.size
+  return { seedE, seedN, obsE, obsN, obsW, ts }
+
+/-- The leg's spatial index in the metric frame: walkable segments plus building
+    rings (a ring with fewer than 3 points is not a polygon and is dropped).
+    `none` when the leg has neither — what makes the per-state lookups
+    near-constant instead of a whole-network scan. -/
+def buildLegGrid (ways : Ways) (buildings : Array Ring) (fr : Frame) (cell : Float) :
+    Option WalkGrid := Id.run do
+  let mut segs : Array (Array Float) := #[]
+  for w in ways do
+    for i in [1:w.size] do
+      segs := segs.push #[fr.toE w[i-1]!.lon, fr.toN w[i-1]!.lat, fr.toE w[i]!.lon, fr.toN w[i]!.lat]
+  let mut ringPts : Array (Array Float) := #[]
+  for ring in buildings do
+    if ring.size ≥ 3 then
+      let mut arr := Array.replicate (ring.size * 2) 0.0
+      for k in [0:ring.size] do
+        arr := arr.set! (k*2) (fr.toE ring[k]!.lon)
+        arr := arr.set! (k*2+1) (fr.toN ring[k]!.lat)
+      ringPts := ringPts.push arr
+  if segs.size > 0 || ringPts.size > 0 then
+    return some (mkWalkGrid segs ringPts cell)
+  return none
+
+/-- Indoor-presence exemption: a run of ≥ `minFixes` consecutive OBSERVED fixes
+    whose RAW positions sit inside the SAME footprint is evidence of genuine entry
+    (a café, a shop, a mall walkway) — for those states, and the free states
+    between them, the building is occupied space rather than an obstacle: no
+    clearance pull, no hard projection, no corner routing. Weight-don't-filter:
+    many points inside beat the impossibility prior; an isolated point or an
+    interpolated chord does not. Judged on the RAW observations, so the exemption
+    is stable evidence the solver cannot drag. -/
+def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat) :
+    Array Bool := Id.run do
+  let m := chain.size
+  let mut exempt := Array.replicate m false
+  let some g := grid | return exempt
+  let mut obsIdx : Array Nat := #[]
+  for i in [0:m] do
+    if chain.obsW[i]! > 0 then obsIdx := obsIdx.push i
+  let mut runStart := 0
+  let mut runRing : Int := -2
+  -- from/to index into obsIdx, inclusive; exempt every STATE between the run's
+  -- first and last observed state (free states included).
+  let markRun := fun (ex : Array Bool) (from_ to : Nat) => Id.run do
+    let mut ex := ex
+    if to + 1 ≥ from_ + minFixes then
+      for s in [obsIdx[from_]!:obsIdx[to]! + 1] do
+        ex := ex.set! s true
+    return ex
+  for k in [0:obsIdx.size] do
+    let i := obsIdx[k]!
+    let ring := g.ringContaining chain.seedE[i]! chain.seedN[i]!
+    if ring != runRing || ring == -1 then
+      if runRing ≥ 0 && k ≥ 1 then exempt := markRun exempt runStart (k-1)
+      runStart := k
+      runRing := ring
+  if runRing ≥ 0 && obsIdx.size ≥ 1 then exempt := markRun exempt runStart (obsIdx.size - 1)
+  return exempt
+
+/-- Along-chain drawn length (m) in the metric frame. -/
+def chainLenM (e nn : Array Float) : Float := Id.run do
+  let mut len := 0.0
+  for i in [0:e.size] do
+    if i + 1 < e.size then len := len + hyp (e[i+1]! - e[i]!) (nn[i+1]! - nn[i]!)
+  return len
+
+/-- Corner insertion: the clearance field keeps VERTICES out of footprints, but an
+    edge between two exterior vertices can still pass through one (the
+    between-vertex gap). Route each such edge around the ring's own corners — only
+    when a bounded, crossing-free corner path exists, and never across a
+    presence-exempt endpoint (an edge entering an occupied café is honest). -/
+def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
+    (exempt : Array Bool) (fr : Frame) : Array SmoothedPoint := Id.run do
+  let CORNER_DETOUR_MAX_RATIO := 2.5
+  let m := out.size
+  let mut repaired : Array SmoothedPoint := #[out[0]!]
+  for i in [0:m] do
+    if i + 1 < m then
+      let a := out[i]!
+      let b := out[i+1]!
+      if !exempt[i]! && !exempt[i+1]! then
+        let chordM := hyp (fr.toE b.lon - fr.toE a.lon) (fr.toN b.lat - fr.toN a.lat)
+        let path := if chordM > 1 then routeChordAroundBuildings a.pt b.pt buildings else none
+        match path with
+        | none => pure ()
+        | some path =>
+          if path.size > 2 then
+            let mut lenM := 0.0
+            for k in [1:path.size] do
+              lenM := lenM + hyp (fr.toE path[k]!.lon - fr.toE path[k-1]!.lon)
+                                 (fr.toN path[k]!.lat - fr.toN path[k-1]!.lat)
+            if lenM ≤ chordM * CORNER_DETOUR_MAX_RATIO then
+              -- Interior corners, timestamps interpolated by along-path distance.
+              let mut acc := 0.0
+              for k in [1:path.size] do
+                if k + 1 < path.size then
+                  acc := acc + hyp (fr.toE path[k]!.lon - fr.toE path[k-1]!.lon)
+                                   (fr.toN path[k]!.lat - fr.toN path[k-1]!.lat)
+                  repaired := repaired.push
+                    ⟨path[k]!.lat, path[k]!.lon, jsRound (a.ts + (b.ts - a.ts) * (acc / lenM))⟩
+      repaired := repaired.push b
+  return repaired
+
+/-- Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
+    One vertex per fix, timestamps preserved; `none` when too short. -/
+def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Ring)
+    (profile : ReconstructProfile := {}) (evidence : WalkEvidence := {}) :
+    Option (Array SmoothedPoint) := Id.run do
+  if fixes.size < profile.minFixes then return none
+
+  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+  let toE := fr.toE
+  let toN := fr.toN
+  let toLon := fr.toLon
+  let toLat := fr.toLat
+
+  let chain := buildStateChain fixes fr profile
+  let m := chain.size
+  let seedE := chain.seedE
+  let seedN := chain.seedN
+  let obsE := chain.obsE
+  let obsN := chain.obsN
+  let obsW := chain.obsW
+  let ts := chain.ts
 
   let wSmooth := 1 / (profile.smoothSigmaM * profile.smoothSigmaM)
   let wNet := 1 / (profile.networkSigmaM * profile.networkSigmaM)
   let wBuild := 1 / (profile.buildingSigmaM * profile.buildingSigmaM)
   let wFreeTether := 1 / (profile.freeTetherSigmaM * profile.freeTetherSigmaM)
 
-  -- The spatial index (metric frame): walkable segments + building rings.
-  let mut segs : Array (Array Float) := #[]
-  for w in ways do
-    for i in [1:w.size] do
-      segs := segs.push #[toE w[i-1]!.lon, toN w[i-1]!.lat, toE w[i]!.lon, toN w[i]!.lat]
-  let mut ringPts : Array (Array Float) := #[]
-  for ring in buildings do
-    if ring.size ≥ 3 then
-      let mut arr := Array.replicate (ring.size * 2) 0.0
-      for k in [0:ring.size] do
-        arr := arr.set! (k*2) (toE ring[k]!.lon)
-        arr := arr.set! (k*2+1) (toN ring[k]!.lat)
-      ringPts := ringPts.push arr
-  let grid : Option WalkGrid :=
-    if segs.size > 0 || ringPts.size > 0 then
-      some (mkWalkGrid segs ringPts (max profile.networkRadiusM 15))
-    else none
+  let grid := buildLegGrid ways buildings fr (max profile.networkRadiusM 15)
+  let exempt := presenceExempt chain grid profile.indoorPresenceMinFixes
 
-  -- Indoor-presence exemption: a run of ≥ indoorPresenceMinFixes consecutive
-  -- OBSERVED fixes whose RAW positions sit inside the SAME footprint is evidence
-  -- of genuine entry — for those states (and the free states between them) the
-  -- building is occupied space, not an obstacle.
-  let mut exempt := Array.replicate m false
-  match grid with
-  | none => pure ()
-  | some g =>
-    let mut obsIdx : Array Nat := #[]
-    for i in [0:m] do
-      if obsW[i]! > 0 then obsIdx := obsIdx.push i
-    let mut runStart := 0
-    let mut runRing : Int := -2
-    let markRun := fun (ex : Array Bool) (from_ to : Nat) => Id.run do
-      let mut ex := ex
-      if to + 1 ≥ from_ + profile.indoorPresenceMinFixes then
-        for s in [obsIdx[from_]!:obsIdx[to]! + 1] do
-          ex := ex.set! s true
-      return ex
-    for k in [0:obsIdx.size] do
-      let i := obsIdx[k]!
-      let ring := g.ringContaining seedE[i]! seedN[i]!
-      if ring != runRing || ring == -1 then
-        if runRing ≥ 0 && k ≥ 1 then exempt := markRun exempt runStart (k-1)
-        runStart := k
-        runRing := ring
-    if runRing ≥ 0 && obsIdx.size ≥ 1 then exempt := markRun exempt runStart (obsIdx.size - 1)
-
-  let mut e := seedE
-  let mut nn := seedN
+  let mut e := chain.seedE
+  let mut nn := chain.seedN
 
   -- Step-magnitude displacement budget: the drawn length may not grossly exceed
   -- what the pedometer says was walked. Soft, never a gate.
@@ -896,11 +1000,7 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
     if !halted then
       -- Is a piece of hard evidence still grossly unsatisfied? Length beyond the
       -- step budget (>5 %), or a terminal state further than 3σ from its anchor.
-      let pathLen : Float := Id.run do
-        let mut len := 0.0
-        for i in [0:m] do
-          if i + 1 < m then len := len + hyp (e[i+1]! - e[i]!) (nn[i+1]! - nn[i]!)
-        return len
+      let pathLen := chainLenM e nn
       let off := fun (a : Option WalkAnchor) (i : Nat) =>
         match a with
         | none => false
@@ -928,12 +1028,7 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
           match stepTargetM with
           | none => pure ()
           | some target =>
-            let curLen : Float := Id.run do
-              let mut len := 0.0
-              for i in [0:m] do
-                if i + 1 < m then len := len + hyp (e[i+1]! - e[i]!) (nn[i+1]! - nn[i]!)
-              return len
-            let excess := curLen / target
+            let excess := chainLenM e nn / target
             if excess > 1 then
               let over := (excess - 1) / profile.stepRampWidthRatio
               let ramp := min profile.stepRampCap (over * over)
@@ -1038,40 +1133,8 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
   for i in [0:m] do
     out := out.push ⟨toLat nn[i]!, toLon e[i]!, ts[i]!⟩
 
-  -- Corner insertion: the clearance field keeps VERTICES out of footprints, but
-  -- an edge between two exterior vertices can still pass through one (the
-  -- between-vertex gap). Route each such edge around the ring's own corners —
-  -- only when a bounded, crossing-free corner path exists, and never across a
-  -- presence-exempt endpoint (an edge entering an occupied café is honest).
   if profile.insertCornerDetours && !buildings.isEmpty then
-    let CORNER_DETOUR_MAX_RATIO := 2.5
-    let mut repaired : Array SmoothedPoint := #[out[0]!]
-    for i in [0:m] do
-      if i + 1 < m then
-        let a := out[i]!
-        let b := out[i+1]!
-        if !exempt[i]! && !exempt[i+1]! then
-          let chordM := hyp (toE b.lon - toE a.lon) (toN b.lat - toN a.lat)
-          let path := if chordM > 1 then routeChordAroundBuildings a.pt b.pt buildings else none
-          match path with
-          | none => pure ()
-          | some path =>
-            if path.size > 2 then
-              let mut lenM := 0.0
-              for k in [1:path.size] do
-                lenM := lenM + hyp (toE path[k]!.lon - toE path[k-1]!.lon)
-                                   (toN path[k]!.lat - toN path[k-1]!.lat)
-              if lenM ≤ chordM * CORNER_DETOUR_MAX_RATIO then
-                -- Interior corners, timestamps interpolated by along-path distance.
-                let mut acc := 0.0
-                for k in [1:path.size] do
-                  if k + 1 < path.size then
-                    acc := acc + hyp (toE path[k]!.lon - toE path[k-1]!.lon)
-                                     (toN path[k]!.lat - toN path[k-1]!.lat)
-                    repaired := repaired.push
-                      ⟨path[k]!.lat, path[k]!.lon, jsRound (a.ts + (b.ts - a.ts) * (acc / lenM))⟩
-        repaired := repaired.push b
-    return some repaired
+    return some (spliceCornerDetours out buildings exempt fr)
   return some out
 
 /-! ## Parity with Node/V8 (`lean/experiments/walk-smooth-refs.mts`)
