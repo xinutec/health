@@ -16,6 +16,7 @@ import Verified.Hsmm.Observation
 import Verified.Hsmm.GpsOutliers
 import Verified.Hsmm.RouteGraph
 import Verified.Hsmm.RouteConnectivity
+import Verified.Hsmm.RouteModel
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
