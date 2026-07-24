@@ -69,6 +69,7 @@ structure ModelContext where
   visitWeights : Std.HashMap Int Float
   nPlaces : Nat
   coverage : Std.HashMap Int (List String)
+  placeNearLine : Std.HashSet String
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
   segEvidenceOn : Bool
@@ -81,7 +82,7 @@ structure ModelContext where
     dwell-normalised (`1/nPlaces` when total dwell is 0). -/
 def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
-    (coverage : Std.HashMap Int (List String))
+    (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
     (reacquireRobust segEvidenceOn chainOn : Bool) : ModelContext :=
   let totalDwell := places.foldl (fun a (_, _, _, _, dwell) => a + dwell) 0.0
@@ -100,7 +101,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
-    placeCoords, hourProfiles, visitWeights, nPlaces, coverage, continuity
+    placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop }
@@ -150,7 +151,8 @@ def transAt (c : ModelContext) (a b t : Nat) : Float :=
       let o := c.obs[t]!
       RouteModel.chainContext c.edgesByLine c.placeCoords src dst o (coveredAt c o.ts)
     else 0.0
-  Assembly.transitionLogProbFull c.states.toList c.selfLoop src dst c.chainOn chainVal
+  let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
+  Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn chainVal
 
 /-- Quantised emission tensor `emit[t][s]`. -/
 def buildEmit (c : ModelContext) : Array (Array (Option Float)) :=
@@ -177,10 +179,10 @@ private def obsTrain : ObsRow :=
 private def places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float) :=
   [(⟨5, some "Home"⟩, 51.52, -0.13, none, 100.0)]
 -- Uncovered day, and a day where the generator vouches "Jubilee Line" at ts 1600.
-private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} none false false false
+private def ctxU : ModelContext := buildContext #[obsTrain] jm places {} {} none false false false
 private def ctxC : ModelContext :=
   buildContext #[obsTrain] jm places (({} : Std.HashMap Int (List String)).insert 1600 ["Jubilee Line"])
-    none false false false
+    {} none false false false
 private def jubIdx : Nat := (ctxU.states.findIdx? (fun s => s.lineName == some "Jubilee Line")).getD 0
 private def statIdx : Nat := (ctxU.states.findIdx? (fun s => s.placeId == some 5)).getD 0
 private def noneIdx : Nat := (ctxU.states.findIdx? (fun s => s.mode == .stationary && s.placeId == none)).getD 0

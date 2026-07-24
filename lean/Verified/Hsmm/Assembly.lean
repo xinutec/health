@@ -69,11 +69,12 @@ def durationLogProbFull (obs : Array ObsRow) (pref : Array Float)
 
 /-- `transitionLogProb = transition(from,to) (+ chainContext)`, with the
     `t === −∞ ⇒ −∞` short-circuit (a hard-zero transition stays hard-zero; the
-    chain penalty is never added to it). `chainOn` gates the C4.2 flag; `chainVal`
-    is the caller-resolved per-transition penalty (`0` when off). -/
-def transitionLogProbFull (states : List State) (selfLoop : Float)
+    chain penalty is never added to it). The base transition carries the
+    station-graph `placeNear` hard-zero (served `buildTransitionMatrix`). `chainOn`
+    gates the C4.2 flag; `chainVal` is the caller-resolved per-transition penalty. -/
+def transitionLogProbFull (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
     (src dst : State) (chainOn : Bool) (chainVal : Float) : Float :=
-  let t := Transitions.transitionLogProb states selfLoop src dst
+  let t := Transitions.transitionLogProbP placeNear states selfLoop src dst
   if !chainOn then t
   else if t == negInf then t
   else t + chainVal
@@ -130,10 +131,11 @@ private def space : List State :=
   [stt .stationary (some 5) none, stt .stationary (some 7) none, stt .walking none none,
    stt .train none (some "Central"), stt .driving none none]
 private def sl : Float := Transitions.defaultSelfLoop
-#guard transitionLogProbFull space sl space[0]! space[2]! false 0 == -4.0943445622220995   -- chain off → base
-#guard approxF (transitionLogProbFull space sl space[0]! space[2]! true (-0.05555555555555555))
+private def allNear : Int → String → Bool := fun _ _ => true
+#guard transitionLogProbFull allNear space sl space[0]! space[2]! false 0 == -4.0943445622220995   -- chain off → base
+#guard approxF (transitionLogProbFull allNear space sl space[0]! space[2]! true (-0.05555555555555555))
   (-4.149900117777655)                                  -- base + chain penalty
-#guard transitionLogProbFull space sl space[0]! space[1]! true (-0.05555555555555555) == negInf  -- hard-zero short-circuits chain
+#guard transitionLogProbFull allNear space sl space[0]! space[1]! true (-0.05555555555555555) == negInf  -- hard-zero short-circuits chain
 
 -- tensor assembly: dense quantise over the grid; −∞ → none.
 #guard buildCellTensor 2 2 (fun i j => if i == 1 && j == 1 then negInf else 0.0)

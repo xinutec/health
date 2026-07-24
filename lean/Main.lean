@@ -534,6 +534,165 @@ private def hsmmResult (j : Json) : Json :=
         ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
         ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
+/-! ## Assemble mode (`verified_cli assemble`)
+
+Build the HSMM model FROM PARSED INPUTS in Lean — the `buildHsmmModel` twin
+(`Verified.Hsmm.Assemble`) — and emit the quantised tensors, so the marshalled
+`QuantProblem` payload is no longer produced TS-side. Input is the post-boundary
+structured day (past the tz / WKT / `toFixed` boundary the shell owns): the
+observation tensor, the parsed route edges, the focus places, the train-generator
+coverage map, continuity, and the C4 flags. Output is the dense quantised
+`emit`/`entry`/`init`/`trans`/`dur` tensors, compared cell-for-cell against TS
+`quantizeModel` by `lean/experiments/compare-assemble.mjs`.
+
+  { "maxD": n,
+    "obs": [{ts, gps:{lat,lon,speedKmh}|null, hr, cadence, hourLocal, dayOfWeekLocal,
+              inBed, roadDistM, railDistM, reacquireAgeMin, prevGpsFix, nextGpsFix}],
+    "edges": [{id, geometry:[{lat,lon}], lineMemberships:[str], underground, startNode, endNode}],
+    "places": [{id, name, lat, lon, hourProfile:[num]|null, dwell}],
+    "coverage": [[ts, [lines]]],                         // ts → generator-vouched lines
+    "continuity": {priorPlaceId, priorPlaceCoord:[lat,lon]|null, hoursSince, priorPosterior}|null,
+    "flags": {reacquireRobust, segEvidence, chainContext} }
+
+Output: { T, S, maxD, emit[t][s], entry[t][s], init[s], trans[t][a][b], dur[s][d-1][e] }
+(all quantised ints, `null` = -∞). -/
+
+private def jFloat (j : Json) : Except String Float := do return (← j.getNum?).toFloat
+private def jFloatField (j : Json) (k : String) : Except String Float := do jFloat (← j.getObjVal? k)
+private def jOptFloat (j : Json) (k : String) : Except String (Option Float) :=
+  match j.getObjVal? k with
+  | .ok v => if v.isNull then .ok none else do return some (← jFloat v)
+  | .error _ => .ok none
+private def jOptInt (j : Json) (k : String) : Except String (Option Int) :=
+  match j.getObjVal? k with
+  | .ok v => if v.isNull then .ok none else do return some (← v.getInt?)
+  | .error _ => .ok none
+
+private def parseFix (j : Json) : Except String Verified.Hsmm.Observation.Fix := do
+  return ⟨← (← j.getObjVal? "ts").getInt?, ← jFloatField j "lat", ← jFloatField j "lon"⟩
+private def parseOptFix (j : Json) (k : String) : Except String (Option Verified.Hsmm.Observation.Fix) :=
+  match j.getObjVal? k with
+  | .ok v => if v.isNull then .ok none else do return some (← parseFix v)
+  | .error _ => .ok none
+
+private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.ObsRow := do
+  let gps : Option Verified.Hsmm.Observation.GpsAgg ←
+    match j.getObjVal? "gps" with
+    | .ok v => if v.isNull then pure none
+               else pure (some ⟨← jFloatField v "lat", ← jFloatField v "lon", ← jFloatField v "speedKmh"⟩)
+    | .error _ => pure none
+  return {
+    ts := ← (← j.getObjVal? "ts").getInt?, gps
+    hr := ← jOptFloat j "hr", cadence := ← jOptFloat j "cadence"
+    hourLocal := ← (← j.getObjVal? "hourLocal").getNat?
+    dayOfWeekLocal := ← (← j.getObjVal? "dayOfWeekLocal").getNat?
+    inBed := ← (← j.getObjVal? "inBed").getBool?
+    roadDistM := ← jOptFloat j "roadDistM", railDistM := ← jOptFloat j "railDistM"
+    reacquireAgeMin := ← jOptInt j "reacquireAgeMin"
+    prevGpsFix := ← parseOptFix j "prevGpsFix", nextGpsFix := ← parseOptFix j "nextGpsFix" }
+
+private def parseEdge (j : Json) : Except String Verified.Hsmm.RouteModel.RouteEdge := do
+  let geom ← (← (← j.getObjVal? "geometry").getArr?).mapM fun p => do
+    pure (⟨← jFloatField p "lat", ← jFloatField p "lon"⟩ : Verified.Hsmm.RouteGraph.LatLon)
+  let lines ← (← (← j.getObjVal? "lineMemberships").getArr?).mapM (·.getStr?)
+  return ⟨← (← j.getObjVal? "id").getStr?, geom.toList, lines.toList,
+    ← (← j.getObjVal? "underground").getBool?,
+    ← (← j.getObjVal? "startNode").getStr?, ← (← j.getObjVal? "endNode").getStr?⟩
+
+private def parsePlace (j : Json) :
+    Except String (Verified.Hsmm.StateSpace.FocusPlaceRef × Float × Float × Option (Array Float) × Float) := do
+  let name : Option String := match (j.getObjVal? "name" >>= (·.getStr?)) with | .ok s => some s | .error _ => none
+  let prof : Option (Array Float) ←
+    match j.getObjVal? "hourProfile" with
+    | .ok v => if v.isNull then pure none else pure (some (← (← v.getArr?).mapM jFloat))
+    | .error _ => pure none
+  return (⟨← (← j.getObjVal? "id").getInt?, name⟩, ← jFloatField j "lat", ← jFloatField j "lon",
+    prof, ← jFloatField j "dwell")
+
+private def parseCoverage (j : Json) : Except String (Std.HashMap Int (List String)) := do
+  let mut m : Std.HashMap Int (List String) := {}
+  for e in (← j.getArr?) do
+    let a ← e.getArr?
+    let some tsJ := a[0]? | throw "coverage: expected [ts, [lines]]"
+    let some lnJ := a[1]? | throw "coverage: expected [ts, [lines]]"
+    m := m.insert (← tsJ.getInt?) (← (← lnJ.getArr?).mapM (·.getStr?)).toList
+  return m
+
+private def parseContinuity (j : Json) : Except String (Option Verified.Hsmm.Continuity.ContinuityContext) :=
+  match j.getObjVal? "continuity" with
+  | .ok v =>
+    if v.isNull then .ok none else do
+      let pid ← jOptInt v "priorPlaceId"
+      let coord : Option (Float × Float) ←
+        match v.getObjVal? "priorPlaceCoord" with
+        | .ok x => if x.isNull then pure none else do
+            let a ← x.getArr?
+            let some laJ := a[0]? | throw "priorPlaceCoord"
+            let some loJ := a[1]? | throw "priorPlaceCoord"
+            pure (some (← jFloat laJ, ← jFloat loJ))
+        | .error _ => pure none
+      return some ⟨pid, coord, ← jFloatField v "hoursSince", ← jFloatField v "priorPosterior"⟩
+  | .error _ => .ok none
+
+private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
+  let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
+  let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
+  let places ← (← (← j.getObjVal? "places").getArr?).mapM parsePlace
+  let coverage ← match j.getObjVal? "coverage" with
+    | .ok v => if v.isNull then pure {} else parseCoverage v
+    | .error _ => pure {}
+  let continuity ← parseContinuity j
+  let placeNearLine : Std.HashSet String ←
+    match j.getObjVal? "placeNearLine" with
+    | .ok v => if v.isNull then pure {} else do
+        pure (Std.HashSet.ofList (← (← v.getArr?).mapM (·.getStr?)).toList)
+    | .error _ => pure {}
+  let flags ← j.getObjVal? "flags"
+  let maxD ← (← j.getObjVal? "maxD").getNat?
+  return (Verified.Hsmm.Assemble.buildContext obs (Verified.Hsmm.RouteModel.buildRouteGraphModel edges)
+    places.toList coverage placeNearLine continuity
+    (← (← flags.getObjVal? "reacquireRobust").getBool?)
+    (← (← flags.getObjVal? "segEvidence").getBool?)
+    (← (← flags.getObjVal? "chainContext").getBool?), maxD)
+
+/-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
+private def qCell : Option Float → Json
+  | none => Json.null
+  | some v => Lean.toJson (Float.toInt64 v).toInt
+
+/-- `[[a,b,t], …]` probe triples for the sparse `trans`/`dur` checks (the dense
+    tensors are `S·maxD·T` — too large to ship for a full 1440-minute day). -/
+private def triplesOf (j : Json) (k : String) : Array (Nat × Nat × Nat) :=
+  match j.getObjVal? k >>= (·.getArr?) with
+  | .ok arr => arr.filterMap fun e =>
+      match e.getArr? with
+      | .ok a =>
+        match a[0]?, a[1]?, a[2]? with
+        | some x, some y, some z =>
+          match x.getNat?, y.getNat?, z.getNat? with
+          | .ok xn, .ok yn, .ok zn => some (xn, yn, zn)
+          | _, _, _ => none
+        | _, _, _ => none
+      | .error _ => none
+  | .error _ => #[]
+
+/-- Assemble the model from parsed inputs and emit the quantised tensors: dense
+    `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
+private def assembleResult (j : Json) : Json :=
+  match parseAssemble j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok (c, maxD) =>
+    let q := Verified.Hsmm.Quantize.quantize
+    Json.mkObj [
+      ("T", Lean.toJson c.obs.size), ("S", Lean.toJson c.states.size), ("maxD", Lean.toJson maxD),
+      ("emit", Json.arr ((Verified.Hsmm.Assemble.buildEmit c).map (fun r => Json.arr (r.map qCell)))),
+      ("entry", Json.arr ((Verified.Hsmm.Assemble.buildEntry c).map (fun r => Json.arr (r.map qCell)))),
+      ("init", Json.arr ((Verified.Hsmm.Assemble.buildInit c).map qCell)),
+      ("transP", Json.arr ((triplesOf j "transProbes").map
+        (fun (a, b, t) => qCell (q (Verified.Hsmm.Assemble.transAt c a b t))))),
+      ("durP", Json.arr ((triplesOf j "durProbes").map
+        (fun (s, d, e) => qCell (q (Verified.Hsmm.Assemble.durAt c s d e)))))]
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -553,6 +712,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "match" => matchResult j
         | .ok "rail" => railResult j
         | .ok "hsmm" => hsmmResult j
+        | .ok "assemble" => assembleResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -572,6 +732,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "geo" then return ← geoMain input
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "match" then return ← matchMain input
+  if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
   | .error e =>

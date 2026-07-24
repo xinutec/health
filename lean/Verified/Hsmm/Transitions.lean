@@ -66,6 +66,38 @@ def transitionLogProb (states : List State) (selfLoop : Float) (src dst : State)
     if weightSum <= 0.0 then negInf
     else Float.log (crossMass * transitionWeight src dst / weightSum)
 
+/-- `isHardZero` with the station-graph rule: a `train @ L ↔ stationary @ P`
+    transition (either direction, `L` a named line) is impossible when `L` does
+    not serve a station near `P` (`placeNear P L` false). `placeNear` is the
+    served path's `${placeId}|${lineName}` membership; the base (no-`placeNearLine`)
+    path is `isHardZeroP (fun _ _ => true)`. -/
+def isHardZeroP (placeNear : Int → String → Bool) (src dst : State) : Bool :=
+  isHardZero src dst
+  || (match src.mode, dst.mode, src.lineName, dst.placeId with
+      | .train, .stationary, some line, some pid => line != "unknown_rail" && !placeNear pid line
+      | _, _, _, _ => false)
+  || (match src.mode, dst.mode, src.placeId, dst.lineName with
+      | .stationary, .train, some pid, some line => line != "unknown_rail" && !placeNear pid line
+      | _, _, _, _ => false)
+
+/-- `crossWeightSum` under the station-graph hard-zero. -/
+def crossWeightSumP (placeNear : Int → String → Bool) (states : List State) (src : State) : Float :=
+  states.foldl
+    (fun acc dst => if sameState src dst || isHardZeroP placeNear src dst then acc else acc + transitionWeight src dst)
+    0.0
+
+/-- Transition log-probability under the station-graph hard-zero — the served
+    `buildTransitionMatrix` with `placeNearLine`. -/
+def transitionLogProbP (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
+    (src dst : State) : Float :=
+  if sameState src dst then selfLoop
+  else if isHardZeroP placeNear src dst then negInf
+  else
+    let crossMass := 1.0 - Float.exp selfLoop
+    let weightSum := crossWeightSumP placeNear states src
+    if weightSum <= 0.0 then negInf
+    else Float.log (crossMass * transitionWeight src dst / weightSum)
+
 -- Parity with the real `buildTransitionMatrix` (base path; values from Node/V8).
 -- State space: 0 stat@5, 1 stat@7, 2 walk, 3 train@Central, 4 driving.
 private def S (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
@@ -81,5 +113,15 @@ private def tp (src dst : State) : Float := transitionLogProb space defaultSelfL
 #guard tp space[2]! space[0]! == -4.38202663467388       -- walk → stat@5
 #guard tp space[3]! space[2]! == -4.094456376846579      -- train → walk
 #guard tp space[4]! space[3]! == -12.09445637684658      -- driving → train (inter-vehicle)
+
+-- Station-graph hard-zero (`placeNearLine`). `allNear` reproduces the base path;
+-- `noneNear` hard-zeroes every place↔train transition.
+private def allNear : Int → String → Bool := fun _ _ => true
+private def noneNear : Int → String → Bool := fun _ _ => false
+#guard transitionLogProbP allNear space defaultSelfLoop space[0]! space[3]! == tp space[0]! space[3]!  -- allNear ⇒ base
+#guard isHardZeroP noneNear space[0]! space[3]! == true                 -- stat@5 → train@Central: no membership
+#guard isHardZeroP noneNear space[3]! space[0]! == true                 -- train@Central → stat@5 (symmetric)
+#guard transitionLogProbP noneNear space defaultSelfLoop space[0]! space[3]! == negInf
+#guard isHardZeroP noneNear space[0]! space[2]! == false                -- stat@5 → walk unaffected
 
 end Verified.Hsmm.Transitions
