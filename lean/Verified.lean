@@ -54,3 +54,4 @@ import Verified.Geo.Bus
 import Verified.Geo.OpeningHours
 import Verified.Geo.VenuePrior
 import Verified.Geo.PlacePrior
+import Verified.Geo.FocusPlaces
