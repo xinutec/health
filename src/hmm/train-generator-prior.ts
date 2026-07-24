@@ -51,6 +51,9 @@ export interface TrainGeneratorPrior {
 	 *  Passed to the per-minute line factors so they yield to this prior on
 	 *  covered minutes (no double-counting). */
 	isCovered: (ts: number) => boolean;
+	/** Lines the generator vouches at `ts` (empty off-window). Exposes the
+	 *  coverage map for shadowing/export (the Lean assemble path consumes it). */
+	linesAt: (ts: number) => readonly string[];
 }
 
 /**
@@ -93,7 +96,11 @@ export function buildTrainEntryFromCandidates(
 		return lines.has(state.lineName) ? VALID_LINE_BOOST : -INVALID_LINE_PENALTY;
 	};
 
-	return { entry, isCovered: (ts: number) => coverage.has(ts) };
+	return {
+		entry,
+		isCovered: (ts: number) => coverage.has(ts),
+		linesAt: (ts: number) => [...(coverage.get(ts) ?? [])],
+	};
 }
 
 /** Enumerate train candidates from the route graph and build the prior. */
