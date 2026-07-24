@@ -60,3 +60,4 @@ import Verified.Geo.DayState
 import Verified.Geo.Factors
 import Verified.Geo.WalkableRoute
 import Verified.Geo.WalkEscape
+import Verified.Geo.WalkSmooth
