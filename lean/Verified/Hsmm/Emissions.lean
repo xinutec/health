@@ -149,6 +149,34 @@ def emissionLogProb (s : State) (o : Observation) (placeCoord : Option (Float ×
     + pBed
     + placeTerm s o placeCoord
 
+/-- C4.2 reacquire-robust speed widening (`USE_REACQUIRE_ROBUST_SPEED`): widen the
+    STATIONARY speed-emission σ on minutes shortly after GPS reacquisition, decaying
+    as the Kalman filter settles (`exp(−age/τ)`), and scaled down near rail track
+    (`1 − exp(−railDist²/2σ²)` — a reacquire fix ON the line is a real ride, not
+    indoor scatter). `none` age → base σ (the widening only fires when the caller
+    has resolved a reacquire age for a stationary state). ULP-close via `exp`. -/
+def REACQ_WIDEN : Float := 2.5
+def REACQ_TAU_MIN : Float := 3
+def REACQ_RAIL_SIGMA_M : Float := 100
+
+def reacquireWidenedSpeedStd (baseSpeedStd : Float) (reacquireAgeMin railDistM : Option Float) : Float :=
+  match reacquireAgeMin with
+  | none => baseSpeedStd
+  | some age =>
+    let railScale := match railDistM with
+      | none => 1.0
+      | some rd => 1.0 - Float.exp (-(rd * rd) / (2 * REACQ_RAIL_SIGMA_M * REACQ_RAIL_SIGMA_M))
+    baseSpeedStd * (1 + REACQ_WIDEN * railScale * Float.exp (-age / REACQ_TAU_MIN))
+
+private def approxE (a b : Float) : Bool := Float.abs (a - b) < 1e-6
+
+#guard reacquireWidenedSpeedStd 15 none none == 15               -- no reacquire → base σ
+#guard reacquireWidenedSpeedStd 15 (some 0) none == 52.5         -- fresh reacquire, no rail info → ×3.5
+#guard reacquireWidenedSpeedStd 15 (some 0) (some 0) == 15       -- on the track → no widening
+#guard approxE (reacquireWidenedSpeedStd 15 (some 3) none) 28.795479043929088
+#guard approxE (reacquireWidenedSpeedStd 15 (some 0) (some 100)) 29.75510026077625
+#guard approxE (reacquireWidenedSpeedStd 15 (some 2) (some 50)) 17.262303815715864
+
 -- Parity with the real `buildEmissionFn` (base path; values from Node/V8):
 private def g (lat lon spd : Float) : Gps := ⟨lat, lon, spd⟩
 private def obs (gps : Option Gps) (hr cad : Option Float) (inBed : Bool) : Observation := ⟨gps, hr, cad, inBed⟩
