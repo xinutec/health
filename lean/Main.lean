@@ -676,6 +676,95 @@ private def triplesOf (j : Json) (k : String) : Array (Nat × Nat × Nat) :=
       | .error _ => none
   | .error _ => #[]
 
+/-- Encode a quantised score into the packed `Nat` (`enc`: -∞ ↦ 0, `v ↦ v + 2^61`),
+    refusing values outside `bound` (the verified envelope). -/
+private def encScore (bound : Nat) : Option Float → Except String Nat
+  | none => .ok 0
+  | some fv =>
+    let v := (Float.toInt64 fv).toInt
+    if v.natAbs > bound then throw s!"assembled score {v} exceeds envelope {bound}"
+    else .ok (v + (pOff : Int)).toNat
+
+/-- Class key for the duration factorisation. `dur(s,d,e)` depends on the state
+    only through `(mode, isNamedTrain)` — segment evidence sees the mode, and the
+    train-hop relaxation the named-line + coverage (which is line-independent). So
+    this partition is EXACT (no iterative refinement): every state in a class has
+    identical `dur(·,d,e)` at every cell. Named train ⇒ 7; unknown_rail train ⇒ 4. -/
+private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
+  match s.mode with
+  | .stationary => 0 | .walking => 1 | .cycling => 2 | .driving => 3
+  | .plane => 5 | .unknown => 6
+  | .train => match s.lineName with | some l => if l != "unknown_rail" then 7 else 4 | none => 4
+
+/-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
+private def assembleRefE : Nat := 720
+
+/-- Build the packed `PData` directly from the assembled model — the in-process
+    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
+    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
+    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
+    (`durBase` at `REF_E` + `durDelta` per class), the compact form the decoder
+    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
+private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : Except String PData := do
+  let T := c.obs.size
+  let S := c.states.size
+  if T > pTMax then throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
+  let halfOB := pOB / 2
+  let quant := Verified.Hsmm.Quantize.quantize
+  let mut emit : Array Nat := Array.replicate (T * S) 0
+  let mut entry : Array Nat := Array.replicate (T * S) 0
+  for t in [0:T] do
+    for s in [0:S] do
+      emit := emit.set! (t * S + s) (← encScore pEB (quant (Verified.Hsmm.Assemble.emitAt c t s)))
+      entry := entry.set! (t * S + s) (← encScore pOB (quant (Verified.Hsmm.Assemble.entryAt c t s)))
+  let mut transBase : Array Nat := Array.replicate (T * (S * S)) 0
+  for t in [0:T] do
+    for a in [0:S] do
+      for b in [0:S] do
+        transBase := transBase.set! (t * (S * S) + a * S + b) (← encScore pOB (quant (Verified.Hsmm.Assemble.transAt c a b t)))
+  -- Duration: EXACT class partition by (mode, isNamedTrain).
+  let keys : Array Nat := c.states.foldl (fun acc s =>
+    let k := durClassKey s; if acc.contains k then acc else acc.push k) #[]
+  let nC := keys.size
+  let durClass : Array Nat := c.states.map (fun s => (keys.findIdx? (· == durClassKey s)).getD 0)
+  let reps : Array Nat := keys.map (fun k => (c.states.findIdx? (fun s => durClassKey s == k)).getD 0)
+  let mut durBase : Array Nat := Array.replicate (S * maxD) 0
+  for s in [0:S] do
+    for d0 in [0:maxD] do
+      durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durAt c s (d0 + 1) assembleRefE)))
+  let qiOf := fun (x : Float) => (Float.toInt64 x).toInt   -- dur is finite
+  let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
+  for cls in [0:nC] do
+    let rep := reps[cls]!
+    for d0 in [0:maxD] do
+      let qRef := match quant (Verified.Hsmm.Assemble.durAt c rep (d0 + 1) assembleRefE) with
+        | some v => qiOf v | none => 0
+      for e in [0:T] do
+        let qE := match quant (Verified.Hsmm.Assemble.durAt c rep (d0 + 1) e) with
+          | some v => qiOf v | none => 0
+        let delta := qE - qRef
+        if delta.natAbs > halfOB then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
+        durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
+  return {
+    T, S, maxD, halfOB, emit, entry, init := #[]
+    transBase, nTB := T, transIdx := Array.replicate (S * S) 0, transFlat := #[], nRows := 0
+    durBase, durClass, durDelta, hasOv := #[], durOv := {} }
+
+/-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
+    `pDecodeFast` — the full raw-inputs → path serve path, no marshalled payload. -/
+private def assembleDecodeResult (j : Json) : Json :=
+  match parseAssemble j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok (c, maxD) =>
+    match buildPData c maxD with
+    | .error e => Json.mkObj [("error", Json.str e)]
+    | .ok pd =>
+      match pDecodeFast pd ckptStride with
+      | none => Json.mkObj [("degenerate", Json.bool true)]
+      | some r => Json.mkObj [
+          ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
+          ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense
     `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
 private def assembleResult (j : Json) : Json :=
@@ -713,6 +802,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "rail" => railResult j
         | .ok "hsmm" => hsmmResult j
         | .ok "assemble" => assembleResult j
+        | .ok "assembledecode" => assembleDecodeResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -732,6 +822,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "geo" then return ← geoMain input
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "match" then return ← matchMain input
+  if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
