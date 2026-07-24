@@ -4,6 +4,7 @@ import Verified.Hsmm.FloatScore
 import Verified.Hsmm.Emissions
 import Verified.Hsmm.Observation
 import Verified.Hsmm.LineProximity
+import Verified.Hsmm.ChainContext
 /-!
 # Unified route-graph model + fully Lean-computed route-rail factor
 
@@ -222,5 +223,126 @@ private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := no
 #guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 100) (some 300)) false == -2.5  -- unknown, road nearer
 #guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 300) (some 100)) false == 0     -- unknown, rail nearer
 #guard lineProximityFactor lpModel lpLines train lpNullObs false == 0                                       -- gps null
+
+/-! ## Chain-context routing over the model
+
+The exit→entry chain factor: geometric feasibility of a segment change from where
+the previous segment ended (`prevGpsFix`). Entering/leaving a place pays on the
+fix↔place distance; boarding `train @ L` pays on the exit anchor↔L-track distance.
+σ widens with fix staleness. The penalty kernels are `ChainContext.stayPenalty` /
+`boardingPenalty`; this composes them over the model's per-line edges (with bbox
+rejection) and caller-provided place coordinates. -/
+
+def LINE_MISS_DIST_M : Float := 5000
+private def piC : Float := 3.141592653589793
+
+/-- A line's edge with a precomputed bbox for cheap rejection. -/
+structure LineEdge where
+  geometry : List LatLon
+  minLat : Float
+  maxLat : Float
+  minLon : Float
+  maxLon : Float
+  deriving Inhabited
+
+private def bboxOf (geom : List LatLon) : Float × Float × Float × Float :=
+  geom.foldl (fun (b : Float × Float × Float × Float) p =>
+    (min b.1 p.lat, max b.2.1 p.lat, min b.2.2.1 p.lon, max b.2.2.2 p.lon))
+    (1.0/0.0, -1.0/0.0, 1.0/0.0, -1.0/0.0)
+
+/-- Per-line edge index (with bboxes) — the boarding term scans a line's own
+    edges, since the ~750 m grid is too short for a "nowhere near" verdict. -/
+def buildEdgesByLine (g : RouteGraphModel) : Std.HashMap String (List LineEdge) :=
+  g.edges.foldl (fun idx e =>
+    if e.lineMemberships.isEmpty then idx
+    else
+      let (mnLat, mxLat, mnLon, mxLon) := bboxOf e.geometry
+      let le : LineEdge := ⟨e.geometry, mnLat, mxLat, mnLon, mxLon⟩
+      e.lineMemberships.foldl (fun idx line => idx.insert line ((idx.getD line []) ++ [le])) idx)
+    {}
+
+/-- Min distance (m) from an anchor to any of a line's edges, with a bbox lower-
+    bound reject and a `LINE_MISS_DIST_M` early ceiling. -/
+def minDistToLineM (anchorLat anchorLon : Float) (lineEdges : List LineEdge) : Float :=
+  let cosLat := Float.cos (anchorLat * piC / 180)
+  lineEdges.foldl (fun best le =>
+    let dLat := (max 0 (max (le.minLat - anchorLat) (anchorLat - le.maxLat))) * M_PER_DEG_LAT
+    let dLon := (max 0 (max (le.minLon - anchorLon) (anchorLon - le.maxLon))) * M_PER_DEG_LAT * cosLat
+    if max dLat dLon ≥ best then best
+    else
+      let d := pointToPolylineMeters anchorLat anchorLon le.geometry
+      if d < best then d else best) LINE_MISS_DIST_M
+where M_PER_DEG_LAT : Float := 111320
+
+/-- Moving modes (`stationary`/`unknown` excluded) — the leaving-a-place term
+    fires only into one of these. -/
+def isMovingMode : Mode → Bool
+  | .walking | .cycling | .driving | .train | .plane => true
+  | _ => false
+
+/-- `buildChainContext`'s per-transition verdict, with the fix↔place and
+    anchor↔track distances computed in Lean. `placeCoords` (focus-place
+    centroids) and `isTrainCovered` stay caller-side. -/
+def chainContext (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float))
+    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) : Float :=
+  let slopMinOf := fun (fx : Fix) => (max 0 (o.ts - fx.ts)).toNat.toFloat / 60
+  let stayPen := fun (placeId : Int) (fx : Fix) =>
+    match placeCoords.get? placeId with
+    | none => 0.0
+    | some (plat, plon) =>
+      ChainContext.stayPenalty (haversineMeters fx.lat fx.lon plat plon) (slopMinOf fx)
+  let boardAt := fun (lat lon slopMin : Float) (lineEdges : List LineEdge) =>
+    ChainContext.boardingPenalty (minDistToLineM lat lon lineEdges) slopMin
+  if toS.mode == .stationary then
+    match o.prevGpsFix, toS.placeId with
+    | some fx, some pid => stayPen pid fx
+    | _, _ => 0.0
+  else
+    let leaveTerm := match o.prevGpsFix with
+      | some fx =>
+        if fromS.mode == .stationary && isMovingMode toS.mode then
+          match fromS.placeId with | some pid => stayPen pid fx | none => 0.0
+        else 0.0
+      | none => 0.0
+    let boardTerm :=
+      if toS.mode == .train then
+        match toS.lineName with
+        | some line =>
+          if line == "unknown_rail" then 0.0
+          else match edgesByLine.get? line with
+            | none => 0.0
+            | some lineEdges =>
+              if isTrainCovered then 0.0
+              else match fromS.placeId, placeCoords.get? (fromS.placeId.getD 0) with
+                | some _, some (plat, plon) => boardAt plat plon 0 lineEdges          -- place anchor
+                | _, _ => match o.prevGpsFix with                                     -- else fix anchor
+                  | some fx => boardAt fx.lat fx.lon (slopMinOf fx) lineEdges
+                  | none => 0.0
+        | none => 0.0
+      else 0.0
+    leaveTerm + boardTerm
+
+-- Parity with the real `buildChainContext` (decisions/values from Node/V8).
+private def ccModel : RouteGraphModel := buildRouteGraphModel #[
+  edge "way:1" [⟨51.50, -0.101⟩, ⟨51.50, -0.099⟩] false "cA" "cB"]
+private def ccEdgesByLine : Std.HashMap String (List LineEdge) := buildEdgesByLine ccModel
+private def ccPlaces : Std.HashMap Int (Float × Float) :=
+  (({} : Std.HashMap Int (Float × Float)).insert 1 (51.50, -0.10)).insert 2 (51.60, -0.20)
+private def ccObs : ObsRow :=
+  { ts := 1000, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
+    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
+    prevGpsFix := some ⟨940, 51.505, -0.10⟩, nextGpsFix := none }
+private def st (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
+private def approxC (a b : Float) : Bool := Float.abs (a - b) < 1e-6
+
+#guard approxC (chainContext ccEdgesByLine ccPlaces (st .walking none none) (st .stationary (some 1) none) ccObs false) (-0.4545702835110828)
+#guard approxC (chainContext ccEdgesByLine ccPlaces (st .stationary (some 1) none) (st .walking none none) ccObs false) (-0.4545702835110828)
+#guard approxC (chainContext ccEdgesByLine ccPlaces (st .stationary (some 1) none) (st .train none (some "Test Line")) ccObs false) (-0.4545702835110828)
+#guard chainContext ccEdgesByLine ccPlaces (st .stationary (some 2) none) (st .train none (some "Test Line")) ccObs false == -12
+#guard approxC (chainContext ccEdgesByLine ccPlaces (st .walking none none) (st .train none (some "Test Line")) ccObs false) (-0.17404694382040287)
+#guard approxC (chainContext ccEdgesByLine ccPlaces (st .stationary (some 1) none) (st .train none (some "Test Line")) ccObs true) (-0.4545702835110828)  -- covered: boarding skipped
+#guard chainContext ccEdgesByLine ccPlaces (st .walking none none) (st .stationary none none) ccObs false == 0  -- to.placeId null
+#guard chainContext ccEdgesByLine ccPlaces (st .walking none none) (st .train none (some "unknown_rail")) ccObs false == 0
 
 end Verified.Hsmm.RouteModel
