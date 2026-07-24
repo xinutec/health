@@ -634,13 +634,35 @@ private def parseContinuity (j : Json) : Except String (Option Verified.Hsmm.Con
       return some ⟨pid, coord, ← jFloatField v "hoursSince", ← jFloatField v "priorPosterior"⟩
   | .error _ => .ok none
 
+private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandidates.StationNode := do
+  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
+    | .ok s => some s | .error _ => none
+  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
+  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon", name, edgeIds.toList⟩
+
 private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
   let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
   let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
   let places ← (← (← j.getObjVal? "places").getArr?).mapM parsePlace
-  let coverage ← match j.getObjVal? "coverage" with
-    | .ok v => if v.isNull then pure {} else parseCoverage v
-    | .error _ => pure {}
+  let model := Verified.Hsmm.RouteModel.buildRouteGraphModel edges
+  -- Coverage: REBUILD in Lean from the station nodes when present (the
+  -- self-contained serve path), else take the provided coverage map.
+  let nodes ← match j.getObjVal? "nodes" with
+    | .ok v => if v.isNull then pure #[] else (← v.getArr?).mapM parseStationNode
+    | .error _ => pure #[]
+  let coverage ←
+    if nodes.isEmpty then
+      match j.getObjVal? "coverage" with
+      | .ok v => if v.isNull then pure {} else parseCoverage v
+      | .error _ => pure {}
+    else
+      let edgeById : Std.HashMap String Verified.Hsmm.RouteModel.RouteEdge :=
+        edges.foldl (fun m e => m.insert e.id e) {}
+      let nodeById : Std.HashMap String Verified.Hsmm.TrainCandidates.StationNode :=
+        nodes.foldl (fun m n => m.insert n.id n) {}
+      let sg : Verified.Hsmm.TrainCandidates.StationGraph := { model, nodeById, edgeById }
+      pure (Verified.Hsmm.TrainCandidates.buildCoverage
+        (Verified.Hsmm.TrainCandidates.enumerateTrainCandidates sg obs Verified.Hsmm.Assemble.KNOWN_LINES) obs)
   let continuity ← parseContinuity j
   let placeNearLine : Std.HashSet String ←
     match j.getObjVal? "placeNearLine" with
@@ -649,7 +671,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     | .error _ => pure {}
   let flags ← j.getObjVal? "flags"
   let maxD ← (← j.getObjVal? "maxD").getNat?
-  return (Verified.Hsmm.Assemble.buildContext obs (Verified.Hsmm.RouteModel.buildRouteGraphModel edges)
+  return (Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
@@ -689,12 +711,6 @@ boundary).
     "nodes": [{id, lat, lon, stationName|null, edgeIds:[...]}] }
 
 Output: { "coverage": [[ts, [lines]]] }. -/
-
-private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandidates.StationNode := do
-  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
-    | .ok s => some s | .error _ => none
-  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
-  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon", name, edgeIds.toList⟩
 
 private def coverageResult (j : Json) : Json :=
   let parsed : Except String (Std.HashMap Int (List String)) := do
