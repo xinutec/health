@@ -676,6 +676,45 @@ private def triplesOf (j : Json) (k : String) : Array (Nat × Nat × Nat) :=
       | .error _ => none
   | .error _ => #[]
 
+/-! ## Coverage mode (`verified_cli coverage`)
+
+Rebuild the train-generator coverage map IN LEAN from the observation tensor and a
+node-annotated station graph — `enumerateTrainCandidates` + `buildCoverage`, the
+Lean twin of `buildTrainGeneratorPrior`. Checks the REBUILD parity (the assemble
+mode CONSUMES a coverage map; here Lean reconstructs it). The shell supplies the
+station annotation (`nodeKey` ids, station names, incident edge ids — the topology
+boundary).
+
+  { "obs": [...], "edges": [...],
+    "nodes": [{id, lat, lon, stationName|null, edgeIds:[...]}] }
+
+Output: { "coverage": [[ts, [lines]]] }. -/
+
+private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandidates.StationNode := do
+  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
+    | .ok s => some s | .error _ => none
+  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
+  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon", name, edgeIds.toList⟩
+
+private def coverageResult (j : Json) : Json :=
+  let parsed : Except String (Std.HashMap Int (List String)) := do
+    let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
+    let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
+    let nodes ← (← (← j.getObjVal? "nodes").getArr?).mapM parseStationNode
+    let edgeById : Std.HashMap String Verified.Hsmm.RouteModel.RouteEdge :=
+      edges.foldl (fun m e => m.insert e.id e) {}
+    let nodeById : Std.HashMap String Verified.Hsmm.TrainCandidates.StationNode :=
+      nodes.foldl (fun m n => m.insert n.id n) {}
+    let sg : Verified.Hsmm.TrainCandidates.StationGraph :=
+      { model := Verified.Hsmm.RouteModel.buildRouteGraphModel edges, nodeById, edgeById }
+    let cands := Verified.Hsmm.TrainCandidates.enumerateTrainCandidates sg obs Verified.Hsmm.Assemble.KNOWN_LINES
+    return Verified.Hsmm.TrainCandidates.buildCoverage cands obs
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok cov =>
+    Json.mkObj [("coverage", Json.arr (cov.toList.map
+      (fun (ts, lines) => Json.arr #[Lean.toJson ts, Json.arr (lines.map Json.str).toArray])).toArray)]
+
 /-- Encode a quantised score into the packed `Nat` (`enc`: -∞ ↦ 0, `v ↦ v + 2^61`),
     refusing values outside `bound` (the verified envelope). -/
 private def encScore (bound : Nat) : Option Float → Except String Nat
@@ -847,6 +886,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "hsmm" => hsmmResult j
         | .ok "assemble" => assembleResult j
         | .ok "assembledecode" => assembleDecodeResult j
+        | .ok "coverage" => coverageResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -867,6 +907,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "match" then return ← matchMain input
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
+  if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
