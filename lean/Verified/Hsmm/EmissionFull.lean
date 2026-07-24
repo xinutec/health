@@ -2,6 +2,7 @@ import Verified.Hsmm.Emissions
 import Verified.Hsmm.Observation
 import Verified.Hsmm.Geometric
 import Verified.Hsmm.RouteModel
+import Verified.Hsmm.Continuity
 /-!
 # Full HSMM emission composition (implementation-first port of `buildHsmmModel`'s emission)
 
@@ -59,11 +60,12 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
 
 /-- Full per-cell emission log-probability over the model. `placeCoords` resolves
     `s.placeId`; `isCovered` (train-generator) and `reacquireRobust` are caller
-    flags, matching `buildHsmmModel`. -/
+    flags, matching `buildHsmmModel`. `continuity` is the presence-continuity seed
+    (`none` when `USE_CONTINUITY_CONTINUATION` is off). -/
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))
-    (reacquireRobust isCovered : Bool)
+    (reacquireRobust isCovered : Bool) (continuity : Option Continuity.ContinuityContext)
     (s : State) (o : ObsRow) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
   baseEmissionWithReacquire s o placeCoord reacquireRobust
@@ -71,6 +73,8 @@ def emissionLogProbFull
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
     + routeRailEvidence model connGraph s o isCovered
     + lineProximityFactor model modeledLines s o isCovered
+    + Continuity.continuityLogLikelihood s o.gps.isSome
+        (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
 
 -- Parity with `buildHsmmModel`'s emission (base+geo+routeRail+lineProx; Node/V8).
 private def m : RouteGraphModel := buildRouteGraphModel #[
@@ -97,10 +101,17 @@ private def obsReacq : ObsRow :=
   { ts := 1000, gps := some ⟨51.5201, -0.1301, 8⟩, hr := some 70, cadence := some 0, hourLocal := 0,
     dayOfWeekLocal := 0, inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := some 1,
     prevGpsFix := some ⟨1000, 51.5201, -0.1301⟩, nextGpsFix := some ⟨1000, 51.5201, -0.1301⟩ }
+-- Stationary no-fix minute whose most-recent fix is near the prior place → continuity fires.
+private def contCtx : Continuity.ContinuityContext := ⟨some 5, some (51.52, -0.13), 3, 0.95⟩
+private def obsCont : ObsRow :=
+  { ts := 1000, gps := none, hr := none, cadence := none, hourLocal := 0, dayOfWeekLocal := 0,
+    inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
+    prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
 
-#guard approxF (emissionLogProbFull m cg ml pc false false ⟨.train, none, some "Test Line"⟩ obsTrain) (-1.3928522584398717)
-#guard approxF (emissionLogProbFull m cg ml pc false false ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
-#guard approxF (emissionLogProbFull m cg ml pc false false ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
-#guard approxF (emissionLogProbFull m cg ml pc true false ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
+#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.train, none, some "Test Line"⟩ obsTrain) (-1.3928522584398717)
+#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
+#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
+#guard approxF (emissionLogProbFull m cg ml pc true false none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
+#guard approxF (emissionLogProbFull m cg ml pc false false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.173287216286719)
 
 end Verified.Hsmm.EmissionFull
