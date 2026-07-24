@@ -22,6 +22,7 @@ import Verified.Hsmm.EmissionFull
 import Verified.Hsmm.TrainWindows
 import Verified.Hsmm.TrainCandidates
 import Verified.Hsmm.Assembly
+import Verified.Hsmm.Assemble
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
