@@ -98,6 +98,17 @@ def transitionLogProbP (placeNear : Int → String → Bool) (states : List Stat
     if weightSum <= 0.0 then negInf
     else Float.log (crossMass * transitionWeight src dst / weightSum)
 
+/-- `transitionLogProbP` with the per-`src` cross-weight sum precomputed. Building
+    the whole matrix as `transitionLogProbPre placeNear sl (weightSum a) a b` after
+    one O(S²) `crossWeightSumP` pass is O(S²) total, vs O(S³) recomputing the sum
+    per cell (`transAt` does). Identical value — pinned below. -/
+def transitionLogProbPre (placeNear : Int → String → Bool) (selfLoop weightSum : Float)
+    (src dst : State) : Float :=
+  if sameState src dst then selfLoop
+  else if isHardZeroP placeNear src dst then negInf
+  else if weightSum <= 0.0 then negInf
+  else Float.log ((1.0 - Float.exp selfLoop) * transitionWeight src dst / weightSum)
+
 -- Parity with the real `buildTransitionMatrix` (base path; values from Node/V8).
 -- State space: 0 stat@5, 1 stat@7, 2 walk, 3 train@Central, 4 driving.
 private def S (m : Mode) (pid : Option Int) (ln : Option String) : State := ⟨m, pid, ln⟩
@@ -123,5 +134,13 @@ private def noneNear : Int → String → Bool := fun _ _ => false
 #guard isHardZeroP noneNear space[3]! space[0]! == true                 -- train@Central → stat@5 (symmetric)
 #guard transitionLogProbP noneNear space defaultSelfLoop space[0]! space[3]! == negInf
 #guard isHardZeroP noneNear space[0]! space[2]! == false                -- stat@5 → walk unaffected
+
+-- Precomputed-weight-sum matches the full recompute (base matrix build).
+#guard transitionLogProbPre allNear defaultSelfLoop (crossWeightSumP allNear space space[0]!) space[0]! space[2]!
+  == transitionLogProbP allNear space defaultSelfLoop space[0]! space[2]!
+#guard transitionLogProbPre noneNear defaultSelfLoop (crossWeightSumP noneNear space space[0]!) space[0]! space[3]!
+  == transitionLogProbP noneNear space defaultSelfLoop space[0]! space[3]!   -- both negInf
+#guard transitionLogProbPre allNear defaultSelfLoop (crossWeightSumP allNear space space[0]!) space[0]! space[0]!
+  == defaultSelfLoop                                                          -- self-loop
 
 end Verified.Hsmm.Transitions

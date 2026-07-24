@@ -717,11 +717,55 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
     for s in [0:S] do
       emit := emit.set! (t * S + s) (← encScore pEB (quant (Verified.Hsmm.Assemble.emitAt c t s)))
       entry := entry.set! (t * S + s) (← encScore pOB (quant (Verified.Hsmm.Assemble.entryAt c t s)))
-  let mut transBase : Array Nat := Array.replicate (T * (S * S)) 0
-  for t in [0:T] do
+  -- Transitions: the base matrix is time-constant; only chain-context makes a
+  -- transition vary with t, and only for structurally chain-eligible pairs
+  -- (stay into a place, leave a place into a move, board a named line). Build the
+  -- base once with a shared per-src weight sum (O(S²)), then per-t override rows
+  -- for the eligible pairs only — vs a T·S³ dense build.
+  let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
+  let statesL := c.states.toList
+  let weightSum : Array Float := (Array.range S).map fun a =>
+    Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL c.states[a]!
+  let baseTransF := fun (a b : Nat) =>
+    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop weightSum[a]! c.states[a]! c.states[b]!
+  let mut transBase : Array Nat := Array.replicate (S * S) 0
+  for a in [0:S] do
+    for b in [0:S] do
+      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF a b)))
+  -- Override rows for chain-eligible, non-hard-zero pairs (superset of the pairs
+  -- whose chain term can be non-zero — hard-zeros keep their −∞, chain not added).
+  let chainEligible := fun (src dst : Verified.Hsmm.Emissions.State) =>
+    (dst.mode == .stationary && dst.placeId != none)
+    || (src.mode == .stationary && src.placeId != none && Verified.Hsmm.RouteModel.isMovingMode dst.mode)
+    || (dst.mode == .train && (match dst.lineName with | some l => l != "unknown_rail" | none => false))
+  let mut ovPairs : Array (Nat × Nat) := #[]
+  let mut transRows : Array (Array Nat) := #[]
+  if c.chainOn then
     for a in [0:S] do
       for b in [0:S] do
-        transBase := transBase.set! (t * (S * S) + a * S + b) (← encScore pOB (quant (Verified.Hsmm.Assemble.transAt c a b t)))
+        let src := c.states[a]!
+        let dst := c.states[b]!
+        if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
+          let base := baseTransF a b
+          let mut rowr : Array Nat := Array.replicate T 0
+          for t in [0:T] do
+            let o := c.obs[t]!
+            let cv := Verified.Hsmm.RouteModel.chainContext c.edgesByLine c.placeCoords src dst o
+              (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+            rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
+          ovPairs := ovPairs.push (a, b)
+          transRows := transRows.push rowr
+  let nRows := transRows.size
+  let transFlat : Array Nat := Id.run do
+    let mut a := Array.replicate (nRows * T) 0
+    for i in [0:nRows] do
+      let r := transRows[i]!
+      for t in [0:T] do a := a.set! (i * T + t) r[t]!
+    return a
+  let mut transIdx : Array Nat := Array.replicate (S * S) nRows  -- sentinel = nRows ⇒ use base
+  for i in [0:ovPairs.size] do
+    let (a, b) := ovPairs[i]!
+    transIdx := transIdx.set! (a * S + b) i
   -- Duration: EXACT class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
     let k := durClassKey s; if acc.contains k then acc else acc.push k) #[]
@@ -747,7 +791,7 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
         durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
   return {
     T, S, maxD, halfOB, emit, entry, init := #[]
-    transBase, nTB := T, transIdx := Array.replicate (S * S) 0, transFlat := #[], nRows := 0
+    transBase, nTB := 1, transIdx, transFlat, nRows
     durBase, durClass, durDelta, hasOv := #[], durOv := {} }
 
 /-- Assemble the model from parsed inputs, build `PData`, and DECODE it with
