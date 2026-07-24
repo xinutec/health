@@ -44,3 +44,4 @@ import Verified.Geo.RailRoadProximity
 import Verified.Geo.Velocity
 import Verified.Geo.Segments
 import Verified.Geo.Worldline
+import Verified.Geo.PlaceOverride
