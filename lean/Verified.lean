@@ -56,3 +56,4 @@ import Verified.Geo.VenuePrior
 import Verified.Geo.PlacePrior
 import Verified.Geo.FocusPlaces
 import Verified.Geo.BiometricWindows
+import Verified.Geo.DayState

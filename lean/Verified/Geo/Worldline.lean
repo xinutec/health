@@ -88,23 +88,38 @@ def fixDistanceM (a b : FeasibilityFix) : Float :=
   Float.sqrt (dLat * dLat + dLon * dLon) * EARTH_R_M
 
 /-- Parse `Board → Alight · Line`. `none` without the station arrow; the line is
-    optional. Splits on the FIRST separator (tail rejoined), mirroring the TS
-    `indexOf`/`slice`. -/
+    optional.
+
+    Mirrors the TS `indexOf`/`slice` exactly, and the ORDER matters: the line
+    suffix is stripped from the WHOLE string FIRST, then the remainder is split
+    on the station arrow. Doing it the other way round accepts
+    `"A · X → B"` — which the TS rejects, because after stripping ` · X → B`
+    the remainder `"A"` has no arrow left in it.
+
+    Each field is trimmed, an empty board or alight rejects the whole label
+    (`" → B"`, `"A → "` are not station pairs), and a blank line suffix
+    degrades to `none` rather than to a whitespace string. Both separators
+    split on their FIRST occurrence with the tail rejoined, so
+    `"A → B → C"` alights at `"B → C"`. -/
 def parseRailWayName (wayName : Option String) : Option RailTriple :=
   match wayName with
   | none => none
   | some s =>
-    let parts := s.splitOn RAIL_STATION_SEP
-    match parts with
+    -- Strip the ` · Line` suffix from the whole string first (TS order).
+    let (rest, line) :=
+      match s.splitOn RAIL_LINE_SEP with
+      | [] => (s, none)
+      | [_] => (s, none)
+      | head :: lineRest =>
+        let lineStr := (String.intercalate RAIL_LINE_SEP lineRest).trimAscii.toString
+        (head, if lineStr.isEmpty then none else some lineStr)
+    match rest.splitOn RAIL_STATION_SEP with
     | [] => none
     | [_] => none
-    | board :: rest =>
-      let restStr := String.intercalate RAIL_STATION_SEP rest
-      let dotParts := restStr.splitOn RAIL_LINE_SEP
-      match dotParts with
-      | [] => some ⟨board, restStr, none⟩
-      | [alight] => some ⟨board, alight, none⟩
-      | alight :: lineRest => some ⟨board, alight, some (String.intercalate RAIL_LINE_SEP lineRest)⟩
+    | board :: alightRest =>
+      let b := board.trimAscii.toString
+      let a := (String.intercalate RAIL_STATION_SEP alightRest).trimAscii.toString
+      if b.isEmpty || a.isEmpty then none else some ⟨b, a, line⟩
 
 /-- Mean steps/min over `[startTs, endTs]` from per-minute buckets, or `none`
     when no bucket overlaps (no data ≠ zero cadence). -/
@@ -260,6 +275,20 @@ def checkWorldlineFeasibility (legs : List FeasibilityLeg)
 #guard parseRailWayName (some "A → B") == some ⟨"A", "B", none⟩
 #guard parseRailWayName (some "no arrow here") == none
 #guard parseRailWayName none == none
+-- Both separators take their FIRST occurrence, tail rejoined.
+#guard parseRailWayName (some "A → B → C") == some ⟨"A", "B → C", none⟩
+-- The line suffix is stripped BEFORE the arrow split, so a ` · ` ahead of the
+-- arrow consumes it and leaves no station pair behind.
+#guard parseRailWayName (some "A · X → B") == none
+-- An empty endpoint is not a station pair.
+#guard parseRailWayName (some " → B") == none
+#guard parseRailWayName (some "A → ") == none
+-- The separators carry their own spaces; without them there is no pair.
+#guard parseRailWayName (some "A→B") == none
+-- A blank line suffix degrades to `none`, not to a whitespace string.
+#guard parseRailWayName (some "A → B ·  ") == some ⟨"A", "B", none⟩
+-- Every field is trimmed.
+#guard parseRailWayName (some "  A  →  B  · L ") == some ⟨"A", "B", some "L"⟩
 
 private def steps3 : List FeasibilityStepPoint := [⟨0, 100⟩, ⟨60, 110⟩, ⟨120, 0⟩]
 private def approxC (a b : Float) : Bool := Float.abs (a - b) < 1e-9
