@@ -19,6 +19,7 @@ import Verified.Hsmm.RouteConnectivity
 import Verified.Hsmm.RouteModel
 import Verified.Hsmm.Continuity
 import Verified.Hsmm.EmissionFull
+import Verified.Hsmm.TrainWindows
 /-!
 # HSMM port aggregator (scoring factors + structural resolvers)
 
