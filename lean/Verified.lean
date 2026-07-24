@@ -52,3 +52,4 @@ import Verified.Geo.BiometricCoherence
 import Verified.Geo.ModeBiometrics
 import Verified.Geo.Bus
 import Verified.Geo.OpeningHours
+import Verified.Geo.VenuePrior
