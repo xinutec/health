@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 /-!
 # Route-graph primitives (implementation-first port of `route-graph.ts`)
 
@@ -113,5 +114,73 @@ private def geom : List LatLon := [⟨51.5, -0.1⟩, ⟨51.51, -0.1⟩, ⟨51.51
 #guard pointToPolylineMeters 51.51 (-0.09) geom == 0
 #guard approx (pointToPolylineMeters 51.5 (-0.05) geom) 2357.8274447064964
 #guard approx (pointToPolylineMeters 51.52 (-0.08) geom) 1113.2000000005696
+
+/-! ## Spatial index + `edgesNear`
+
+The grid buckets every edge into every ~500 m cell any of its geometry vertices
+touches, so `edgesNear` scans only the local 3×3 cell neighbourhood. The grid is
+COARSE (bucketed by vertices, not swept segments) — that is load-bearing: it can
+miss an edge whose segment crosses the query cell while its vertices don't, and
+this port reproduces that exactly. Cell keys are internal (never cross the
+JS↔Lean boundary), so they use `(Int, Int)` rather than V8's `"cy:cx"` strings.
+-/
+
+/-- A route edge for spatial queries: stable id + ordered geometry. -/
+structure Edge where
+  id : String
+  geometry : List LatLon
+  deriving Inhabited
+
+def GRID_CELL_DEG_LAT : Float := 0.0045
+def GRID_CELL_DEG_LON : Float := 0.007
+
+/-- Grid cell containing a coordinate. `Float.floor` then `toInt64` matches JS
+    `Math.floor` (including for negatives). -/
+def cellOf (lat lon : Float) : Int × Int :=
+  ((lat / GRID_CELL_DEG_LAT).floor.toInt64.toInt, (lon / GRID_CELL_DEG_LON).floor.toInt64.toInt)
+
+/-- The 3×3 cell neighbourhood, in V8's iteration order (dy −1..1 outer,
+    dx −1..1 inner). -/
+def neighborCells (lat lon : Float) : List (Int × Int) :=
+  let (cy, cx) := cellOf lat lon
+  (List.range 3).flatMap (fun dy => (List.range 3).map (fun dx =>
+    (cy + Int.ofNat dy - 1, cx + Int.ofNat dx - 1)))
+
+/-- Unique cells an edge touches (dedup mirrors the TS per-edge `Set`). -/
+def edgeCells (e : Edge) : List (Int × Int) :=
+  e.geometry.foldl (fun acc p =>
+    let c := cellOf p.lat p.lon
+    if acc.contains c then acc else acc ++ [c]) []
+
+/-- Bucket every edge (by index) into each cell it touches, in edge order. -/
+def buildCellIndex (edges : Array Edge) : Std.HashMap (Int × Int) (Array Nat) :=
+  (List.range edges.size).foldl (fun idx i =>
+    (edgeCells edges[i]!).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i)) idx)
+    {}
+
+/-- Edges whose geometry passes within `radiusM` of `(lat, lon)`. Scans the 3×3
+    neighbourhood, dedups by edge (first-seen order), keeps those within radius —
+    same output set AND order as the TS `edgesNear`. -/
+def edgesNear (edges : Array Edge) (idx : Std.HashMap (Int × Int) (Array Nat))
+    (lat lon radiusM : Float) : Array Edge :=
+  ((neighborCells lat lon).foldl (fun (st : Array Edge × Array Nat) c =>
+    (idx.getD c #[]).foldl (fun (st : Array Edge × Array Nat) i =>
+      if st.2.contains i then st
+      else
+        let e := edges[i]!
+        let d := pointToPolylineMeters lat lon e.geometry
+        if d ≤ radiusM then (st.1.push e, st.2.push i) else (st.1, st.2.push i))
+      st) (#[], #[])).1
+
+-- Parity with the real `edgesNear` (ids + order from Node/V8's `buildRouteGraph`).
+private def spatialEdges : Array Edge := #[
+  ⟨"way:1", [⟨51.5, -0.10⟩, ⟨51.5, -0.09⟩, ⟨51.5, -0.08⟩]⟩,
+  ⟨"way:2", [⟨51.505, -0.10⟩, ⟨51.505, -0.08⟩]⟩,
+  ⟨"way:3", [⟨52.0, -0.10⟩, ⟨52.0, -0.08⟩]⟩]
+private def spatialIdx : Std.HashMap (Int × Int) (Array Nat) := buildCellIndex spatialEdges
+
+#guard ((edgesNear spatialEdges spatialIdx 51.501 (-0.095) 300).map Edge.id).toList == ["way:1"]
+#guard ((edgesNear spatialEdges spatialIdx 51.5025 (-0.095) 700).map Edge.id).toList == ["way:1", "way:2"]
+#guard ((edgesNear spatialEdges spatialIdx 51.5025 (-0.095) 100).map Edge.id).toList == []
 
 end Verified.Hsmm.RouteGraph
