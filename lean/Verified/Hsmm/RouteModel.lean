@@ -3,6 +3,7 @@ import Verified.Hsmm.RouteConnectivity
 import Verified.Hsmm.FloatScore
 import Verified.Hsmm.Emissions
 import Verified.Hsmm.Observation
+import Verified.Hsmm.LineProximity
 /-!
 # Unified route-graph model + fully Lean-computed route-rail factor
 
@@ -167,5 +168,59 @@ private def train : State := ⟨.train, none, some "Test Line"⟩
 #guard routeRailEvidence connModel connCg train shortObs false == 0   -- gap 200s < 300
 #guard routeRailEvidence connModel connCg train obs true == 0         -- generator-covered
 #guard routeRailEvidence connModel connCg ⟨.walking, none, none⟩ obs false == 0  -- not train
+
+/-! ## Line-proximity factor over the model
+
+The other GPS-present train term: boost when the fix sits on the modelled line's
+corridor, penalise when the line is modelled but the fix is off it (or is
+road-nearer). `lineModeled` (line appears anywhere in the graph) and `lineNear`
+(a line edge within `NEAR_M`) are computed in Lean; road/rail distances arrive
+on the observation (caller-computed proximity). Delegates the pure decision to
+`LineProximity.lineProximityFactor`. -/
+
+def NEAR_M : Float := 250
+
+/-- Every line that appears anywhere in the graph (gates the far-penalty — don't
+    punish a line the graph doesn't model). -/
+def linesInGraph (g : RouteGraphModel) : List String :=
+  g.edges.foldl (fun acc e => e.lineMemberships.foldl appendDistinct acc) []
+
+/-- Lines with at least one edge within `radiusM` of the fix. -/
+def linesWithinRadius (g : RouteGraphModel) (lat lon radiusM : Float) : List String :=
+  (edgesNearIdx g lat lon radiusM).foldl (fun acc i =>
+    g.edges[i]!.lineMemberships.foldl appendDistinct acc) []
+
+/-- `buildLineProximityFactor`'s per-state verdict, with `lineModeled`/`lineNear`
+    computed in Lean. `modeledLines` is `linesInGraph g` (computed once). -/
+def lineProximityFactor (g : RouteGraphModel) (modeledLines : List String)
+    (s : State) (o : ObsRow) (isCovered : Bool) : Float :=
+  let lineModeled := match s.lineName with
+    | some line => modeledLines.contains line
+    | none => false
+  let lineNear := match o.gps, s.lineName with
+    | some gps, some line => (linesWithinRadius g gps.lat gps.lon NEAR_M).contains line
+    | _, _ => false
+  LineProximity.lineProximityFactor s isCovered o.gps.isSome lineModeled lineNear o.roadDistM o.railDistM
+
+-- Parity with the real `buildLineProximityFactor` (decisions from Node/V8).
+private def lpModel : RouteGraphModel := buildRouteGraphModel #[
+  edge "way:1" [⟨51.50, -0.101⟩, ⟨51.50, -0.099⟩] false "lA" "lB"]
+private def lpLines : List String := linesInGraph lpModel
+
+/-- GPS-present observation at `(lat, lon)` with given road/rail proximity. -/
+private def lpObs (lat lon : Float) (road rail : Option Float) : ObsRow :=
+  { ts := 100, gps := some ⟨lat, lon, 30⟩, hr := none, cadence := none, hourLocal := 0,
+    dayOfWeekLocal := 0, inBed := false, roadDistM := road, railDistM := rail,
+    reacquireAgeMin := none, prevGpsFix := none, nextGpsFix := none }
+private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := none }
+
+#guard lineProximityFactor lpModel lpLines train (lpObs 51.50 (-0.10) (some 300) (some 100)) false == 1.5   -- rail nearer
+#guard lineProximityFactor lpModel lpLines train (lpObs 51.50 (-0.10) (some 100) (some 300)) false == -2.5  -- road nearer
+#guard lineProximityFactor lpModel lpLines train (lpObs 52.0 0.5 none none) false == -2.5                   -- far
+#guard lineProximityFactor lpModel lpLines ⟨.train, none, some "Ghost Line"⟩ (lpObs 51.50 (-0.10) none none) false == 0  -- not modelled
+#guard lineProximityFactor lpModel lpLines train (lpObs 51.50 (-0.10) none none) false == 1.5               -- near, no prox
+#guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 100) (some 300)) false == -2.5  -- unknown, road nearer
+#guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 300) (some 100)) false == 0     -- unknown, rail nearer
+#guard lineProximityFactor lpModel lpLines train lpNullObs false == 0                                       -- gps null
 
 end Verified.Hsmm.RouteModel
