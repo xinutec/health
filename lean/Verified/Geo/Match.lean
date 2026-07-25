@@ -1715,6 +1715,27 @@ def WALK_QPROFILE : QMatchProfile :=
     wayContinuityNats := 0, spurReturnUm := 25000000, spurMaxSpanVerts := 4
     simplifyTolUm := 5000000, buildingCrossFactor := 25, buildingSupportUm := 15000000 }
 
+/-- `ROAD_PROFILE` (`road-match.ts`) in the pinned representation — the
+original road tuning, of which `WALK_QPROFILE` is a delta.
+
+Two fields no walk guard exercises. `wayContinuityNats := 5` is the road
+turn prior: a way change costs 5 nats, which is what keeps a drive on the
+street it started on when the fixes drift onto a parallel service road
+(`qMatchTrajectory` charges it as `nats * 2σ² * β`). And
+`buildingCrossFactor := 1` puts buildings OFF — the `> 1` guard in
+`qMatchTrajectory` skips `mkQBuildings` entirely, so a road caller may pass
+a footprint layer and have it correctly ignored. A vehicle under a mapped
+structure (bridge deck, gate arch) is not a routing error. -/
+def ROAD_QPROFILE : QMatchProfile :=
+  { minFixes := 3, radiusUm := 50000000, maxCandidatesPerFix := 5
+    sigmaUm := 12000000, betaUm := 10000000, gapBridgeUm := 8000000
+    detourFactor := 4, detourSlackUm := 250000000
+    maxLenNum := 9, maxLenDen := 5, maxLenSlackUm := 200000000
+    maxRoadlessNum := 2, maxRoadlessDen := 5
+    corridorNearUm := 25000000, corridorFarUm := 80000000, corridorMaxPenalty := 40
+    wayContinuityNats := 5, spurReturnUm := 25000000, spurMaxSpanVerts := 4
+    simplifyTolUm := 5000000, buildingCrossFactor := 1, buildingSupportUm := 0 }
+
 structure QObs where
   fix : QPt
   cands : Array QCand
@@ -1723,7 +1744,7 @@ structure QObs where
 structure QMatchResult where
   path : Array QPt
   routeDetail : Array QPt
-  deriving Inhabited
+  deriving Inhabited, BEq
 
 structure QWalkMatchResult where
   path : Array QPt
@@ -1875,6 +1896,19 @@ def qMatchWalkSegment (fixes : Array QPt) (ways : Array QWay)
     let path := (qSplice (fun i => r.routeDetail.getD i default) r.routeDetail.size
       1500000 WALK_QPROFILE.simplifyTolUm (fun i => cleaned.getD i default) cleaned.size).toArray
     return some { path, coarsePath := cleaned }
+
+/-- `matchRoadSegment`'s twin. Unlike the walk wrapper this adds nothing to
+the trajectory match — no trim, no despike, no route-detail splice — so the
+road leg is drawn exactly as the Viterbi routed it. `radiusUm` is the one
+knob the road callers have (`RoadMatchOpts.matchRadiusM`), spliced over the
+profile; `none` keeps the profile's 50 m. `none` out means "draw the raw
+fixes", never an invented path. -/
+def qMatchRoadSegment (fixes : Array QPt) (ways : Array QWay)
+    (buildings : Array (Array QPt)) (radiusUm : Option Nat := none) : Option QMatchResult :=
+  let P := match radiusUm with
+    | some r => { ROAD_QPROFILE with radiusUm := r }
+    | none => ROAD_QPROFILE
+  qMatchTrajectory fixes ways buildings P
 
 /-! ## Honesty corollaries
 
@@ -2032,6 +2066,141 @@ private def co : QCorridor := mkQCorridor #[] 25000000 80000000 40
 #guard co.penScaled 10000000 == co.S
 #guard co.penScaled 90000000 == co.S * 40
 #guard co.S == 55000000
+
+/-! ### `ROAD_QPROFILE` and `qMatchRoadSegment`
+
+References: `lean/experiments/road-profile-refs.mts`, which derives the
+quantised fields from the float `ROAD_PROFILE` and runs the scenario below
+through the BigInt twin. -/
+
+-- Every field, against the harness's derivation from `ROAD_PROFILE`.
+#guard ROAD_QPROFILE.minFixes == 3
+#guard ROAD_QPROFILE.radiusUm == 50000000
+#guard ROAD_QPROFILE.maxCandidatesPerFix == 5
+#guard ROAD_QPROFILE.sigmaUm == 12000000
+#guard ROAD_QPROFILE.betaUm == 10000000
+#guard ROAD_QPROFILE.gapBridgeUm == 8000000
+#guard ROAD_QPROFILE.detourFactor == 4
+#guard ROAD_QPROFILE.detourSlackUm == 250000000
+#guard ROAD_QPROFILE.maxLenNum == 9
+#guard ROAD_QPROFILE.maxLenDen == 5
+#guard ROAD_QPROFILE.maxLenSlackUm == 200000000
+#guard ROAD_QPROFILE.maxRoadlessNum == 2
+#guard ROAD_QPROFILE.maxRoadlessDen == 5
+#guard ROAD_QPROFILE.corridorNearUm == 25000000
+#guard ROAD_QPROFILE.corridorFarUm == 80000000
+#guard ROAD_QPROFILE.corridorMaxPenalty == 40
+#guard ROAD_QPROFILE.wayContinuityNats == 5
+#guard ROAD_QPROFILE.spurReturnUm == 25000000
+#guard ROAD_QPROFILE.spurMaxSpanVerts == 4
+#guard ROAD_QPROFILE.simplifyTolUm == 5000000
+#guard ROAD_QPROFILE.buildingCrossFactor == 1
+#guard ROAD_QPROFILE.buildingSupportUm == 0
+
+-- The nine fields where road and walk differ (the walk profile is a delta on
+-- the road one, so the rest must coincide field-for-field).
+#guard ROAD_QPROFILE.radiusUm != WALK_QPROFILE.radiusUm
+#guard ROAD_QPROFILE.maxCandidatesPerFix != WALK_QPROFILE.maxCandidatesPerFix
+#guard ROAD_QPROFILE.sigmaUm != WALK_QPROFILE.sigmaUm
+#guard ROAD_QPROFILE.betaUm != WALK_QPROFILE.betaUm
+#guard ROAD_QPROFILE.gapBridgeUm != WALK_QPROFILE.gapBridgeUm
+#guard ROAD_QPROFILE.maxLenNum != WALK_QPROFILE.maxLenNum
+#guard ROAD_QPROFILE.wayContinuityNats != WALK_QPROFILE.wayContinuityNats
+#guard ROAD_QPROFILE.buildingCrossFactor != WALK_QPROFILE.buildingCrossFactor
+#guard ROAD_QPROFILE.buildingSupportUm != WALK_QPROFILE.buildingSupportUm
+#guard ROAD_QPROFILE.minFixes == WALK_QPROFILE.minFixes
+#guard ROAD_QPROFILE.detourFactor == WALK_QPROFILE.detourFactor
+#guard ROAD_QPROFILE.detourSlackUm == WALK_QPROFILE.detourSlackUm
+#guard ROAD_QPROFILE.maxLenDen == WALK_QPROFILE.maxLenDen
+#guard ROAD_QPROFILE.maxLenSlackUm == WALK_QPROFILE.maxLenSlackUm
+#guard ROAD_QPROFILE.maxRoadlessNum == WALK_QPROFILE.maxRoadlessNum
+#guard ROAD_QPROFILE.maxRoadlessDen == WALK_QPROFILE.maxRoadlessDen
+#guard ROAD_QPROFILE.corridorNearUm == WALK_QPROFILE.corridorNearUm
+#guard ROAD_QPROFILE.corridorFarUm == WALK_QPROFILE.corridorFarUm
+#guard ROAD_QPROFILE.corridorMaxPenalty == WALK_QPROFILE.corridorMaxPenalty
+#guard ROAD_QPROFILE.spurReturnUm == WALK_QPROFILE.spurReturnUm
+#guard ROAD_QPROFILE.spurMaxSpanVerts == WALK_QPROFILE.spurMaxSpanVerts
+#guard ROAD_QPROFILE.simplifyTolUm == WALK_QPROFILE.simplifyTolUm
+
+-- The scenario: `High Street` running 400 m east, and `Service Road` beside
+-- its eastern half 6 m north (inside the 8 m road bridge, so the hop between
+-- them is routable). A drive runs the street, then pulls onto the service road.
+private def rdHigh : QWay :=
+  { coords := #[⟨515200000, -1300000, 0⟩, ⟨515200000, -1292782, 0⟩, ⟨515200000, -1285563, 0⟩,
+      ⟨515200000, -1278345, 0⟩, ⟨515200000, -1271127, 0⟩, ⟨515200000, -1263908, 0⟩,
+      ⟨515200000, -1256690, 0⟩, ⟨515200000, -1249472, 0⟩, ⟨515200000, -1242253, 0⟩]
+    name := some "High Street" }
+private def rdService : QWay :=
+  { coords := #[⟨515200539, -1271127, 0⟩, ⟨515200539, -1263908, 0⟩, ⟨515200539, -1256690, 0⟩,
+      ⟨515200539, -1249472, 0⟩, ⟨515200539, -1242253, 0⟩]
+    name := some "Service Road" }
+private def rdWays : Array QWay := #[rdHigh, rdService]
+
+private def rdDrift : Array QPt :=
+  #[⟨515200000, -1297113, 1000⟩, ⟨515200000, -1288451, 1030⟩, ⟨515200000, -1279789, 1060⟩,
+    ⟨515200000, -1272570, 1090⟩, ⟨515200539, -1270405, 1120⟩, ⟨515200539, -1267517, 1150⟩,
+    ⟨515200539, -1264630, 1180⟩, ⟨515200539, -1261743, 1210⟩, ⟨515200539, -1258855, 1240⟩,
+    ⟨515200539, -1255968, 1270⟩, ⟨515200539, -1253081, 1300⟩, ⟨515200539, -1250193, 1330⟩,
+    ⟨515200539, -1247306, 1360⟩, ⟨515200539, -1244419, 1390⟩]
+
+private def rdStraight : Array QPt :=
+  #[⟨515199820, -1300000, 1000⟩, ⟨515199820, -1295669, 1030⟩, ⟨515199820, -1291338, 1060⟩,
+    ⟨515199820, -1287007, 1090⟩, ⟨515199820, -1282676, 1120⟩, ⟨515199820, -1278345, 1150⟩,
+    ⟨515199820, -1274014, 1180⟩]
+
+private def rdPath (r : Option QMatchResult) : Array QPt := (r.map (·.path)).getD #[]
+private def rdDetail (r : Option QMatchResult) : Array QPt := (r.map (·.routeDetail)).getD #[]
+
+-- **The turn prior decides.** Same fixes, same ways: at 5 nats the drive stays
+-- on `High Street` (latitude 515200000) for its whole length; at 0 nats the
+-- same matcher follows the fixes onto `Service Road` (515200539). This is the
+-- one road field the walk guards can never reach.
+#guard rdPath (qMatchRoadSegment rdDrift rdWays #[]) ==
+  #[⟨515200000, -1297113, 1000⟩, ⟨515200000, -1244419, 1390⟩]
+-- The `routeDetail` is the full route the Viterbi walked, time-interpolated by
+-- cumulative arc length — every `High Street` vertex, and no `Service Road` one.
+#guard rdDetail (qMatchRoadSegment rdDrift rdWays #[]) ==
+  #[⟨515200000, -1297113, 1000⟩, ⟨515200000, -1292782, 1015⟩, ⟨515200000, -1288451, 1030⟩,
+    ⟨515200000, -1285563, 1040⟩, ⟨515200000, -1279789, 1060⟩, ⟨515200000, -1278345, 1066⟩,
+    ⟨515200000, -1272570, 1090⟩, ⟨515200000, -1271127, 1110⟩, ⟨515200000, -1270405, 1120⟩,
+    ⟨515200000, -1267517, 1150⟩, ⟨515200000, -1264630, 1180⟩, ⟨515200000, -1263908, 1188⟩,
+    ⟨515200000, -1261743, 1210⟩, ⟨515200000, -1258855, 1240⟩, ⟨515200000, -1256690, 1262⟩,
+    ⟨515200000, -1255968, 1270⟩, ⟨515200000, -1253081, 1300⟩, ⟨515200000, -1250193, 1330⟩,
+    ⟨515200000, -1249472, 1337⟩, ⟨515200000, -1247306, 1360⟩, ⟨515200000, -1244419, 1390⟩]
+#guard rdPath (qMatchTrajectory rdDrift rdWays #[] { ROAD_QPROFILE with wayContinuityNats := 0 }) ==
+  #[⟨515200000, -1297113, 1000⟩, ⟨515200539, -1244419, 1390⟩]
+
+-- A run down the western half, where only `High Street` exists.
+#guard rdPath (qMatchRoadSegment rdStraight rdWays #[]) ==
+  #[⟨515200000, -1300000, 1000⟩, ⟨515200000, -1274014, 1180⟩]
+
+-- **Buildings are inert at `buildingCrossFactor := 1`.** A footprint over the
+-- eastern half changes nothing, because `qMatchTrajectory` only builds the
+-- penalty when the factor exceeds 1 — so a road caller may pass its geometry
+-- layer wholesale, as `matchRoadSegment` does.
+private def rdBlock : Array QPt :=
+  #[⟨515199102, -1271127, 0⟩, ⟨515200898, -1271127, 0⟩, ⟨515200898, -1242253, 0⟩,
+    ⟨515199102, -1242253, 0⟩, ⟨515199102, -1271127, 0⟩]
+#guard qMatchRoadSegment rdDrift rdWays #[rdBlock] == qMatchRoadSegment rdDrift rdWays #[]
+
+-- The wrapper's bails: below `minFixes`, no network, and off-network past the
+-- radius all draw the raw fixes instead.
+#guard (qMatchRoadSegment (rdStraight.take 2) rdWays #[]).isNone
+#guard (qMatchRoadSegment rdStraight #[] #[]).isNone
+private def rdFar : Array QPt :=
+  #[⟨515226949, -1300000, 1000⟩, ⟨515226949, -1292782, 1030⟩, ⟨515226949, -1285563, 1060⟩,
+    ⟨515226949, -1278345, 1090⟩, ⟨515226949, -1271127, 1120⟩]
+#guard (qMatchRoadSegment rdFar rdWays #[]).isNone
+
+-- `matchRadiusM` is the wrapper's one knob. At 400 m the same 300 m-off track
+-- matches; at 3 m only the way a fix actually sits on is a candidate, so the
+-- drive follows the fixes onto `Service Road` despite the turn prior.
+#guard rdPath (qMatchRoadSegment rdFar rdWays #[] (some 400000000)) ==
+  #[⟨515200000, -1300000, 1000⟩, ⟨515200000, -1271127, 1117⟩, ⟨515200539, -1271127, 1120⟩]
+#guard rdPath (qMatchRoadSegment rdDrift rdWays #[] (some 3000000)) ==
+  #[⟨515200000, -1297113, 1000⟩, ⟨515200539, -1244419, 1390⟩]
+-- The default is the profile's 50 m.
+#guard qMatchRoadSegment rdDrift rdWays #[] == qMatchRoadSegment rdDrift rdWays #[] (some 50000000)
 
 /-! ## The reconstructed route is a valid costed path (routing-optimality, brick 1)
 
