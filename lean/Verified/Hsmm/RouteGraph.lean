@@ -183,4 +183,89 @@ private def spatialIdx : Std.HashMap (Int × Int) (Array Nat) := buildCellIndex 
 #guard ((edgesNear spatialEdges spatialIdx 51.5025 (-0.095) 700).map Edge.id).toList == ["way:1", "way:2"]
 #guard ((edgesNear spatialEdges spatialIdx 51.5025 (-0.095) 100).map Edge.id).toList == []
 
+/-! ## Per-edge attributes
+
+The last two pure leaves of `route-graph.ts`. Both are module-PRIVATE there, so
+the reference values below come from driving `buildRouteGraph` and reading the
+`attrs.underground` / `attrs.lengthM` it publishes — the same approach the
+episode-geometry port used for its three private helpers.
+-/
+
+/-- Great-circle metres. `route-graph.ts` carries its own copy of the same
+formula `place-snap.ts` exports; identical constants, identical result. -/
+def haversineMeters (lat1 lon1 lat2 lon2 : Float) : Float :=
+  let R := 6371000.0
+  let dLat := (lat2 - lat1) * pi / 180.0
+  let dLon := (lon2 - lon1) * pi / 180.0
+  let sLat := Float.sin (dLat / 2.0)
+  let sLon := Float.sin (dLon / 2.0)
+  let a := sLat * sLat + Float.cos (lat1 * pi / 180.0) * Float.cos (lat2 * pi / 180.0) * sLon * sLon
+  R * 2.0 * Float.atan2 (Float.sqrt a) (Float.sqrt (1.0 - a))
+
+/-- JS `Number(s)` narrowed to what an OSM `layer` value can be: an optional
+minus sign and digits. Anything else is `NaN` in the TS, and every comparison
+with `NaN` is false — modelled here as `none`. -/
+private def jsIntegerLayer? (s : String) : Option Float :=
+  let (neg, digits) := if s.startsWith "-" then (true, s.drop 1) else (false, s)
+  if digits.isEmpty || !digits.all Char.isDigit then none
+  else some (if neg then -(Float.ofNat digits.toNat!) else Float.ofNat digits.toNat!)
+
+/-- Whether an OSM way runs below the surface. A SOFT UNION of the four
+conventions OSM uses to mean it, plus the subtype: any `tunnel` value other than
+`"no"`, a negative `layer`, `covered=yes`, `subway=yes`, or `subtype=subway`.
+
+An unparseable `layer` means "not underground" rather than an error, because
+`NaN < 0` is false. And `covered`/`subway` test `=== "yes"` exactly — so
+`covered=no` is not underground — while `tunnel` tests `!== "no"`, so
+`tunnel=building_passage` IS. That asymmetry is in the TS; both arms are pinned.
+
+`tags` is an association list rather than a map because only membership and one
+value are read, and the order the shell parsed them in is irrelevant. -/
+def isUnderground (tags : List (String × String)) (subtype : Option String) : Bool :=
+  let get (k : String) : Option String := (tags.find? (·.1 == k)).map (·.2)
+  if (get "tunnel").any (· != "no") then true
+  else if (get "layer").any (fun l => (jsIntegerLayer? l).any (· < 0)) then true
+  else get "covered" == some "yes" || get "subway" == some "yes" || subtype == some "subway"
+
+/-- Total length (m) of a polyline: the haversine sum over its legs. A geometry
+with fewer than two vertices has no leg and measures 0 — unreachable through
+`buildRouteGraph`, which drops such a way before building an edge at all, so
+that arm is stated by the definition rather than pinned against V8. -/
+def geometryLengthM (geom : List LatLon) : Float :=
+  (List.range (geom.length - 1)).foldl
+    (fun total i => total + haversineMeters geom[i]!.lat geom[i]!.lon geom[i+1]!.lat geom[i+1]!.lon) 0
+
+-- Parity via `buildRouteGraph`'s published `attrs` (Node/V8).
+private def undergroundOf (tunnel layer covered subway subtype : Option String) : Bool :=
+  isUnderground
+    ([("tunnel", tunnel), ("layer", layer), ("covered", covered), ("subway", subway)].filterMap
+      (fun (k, v) => v.map (k, ·)))
+    subtype
+
+#guard undergroundOf (some "yes") none none none none == true
+-- Any non-"no" tunnel value counts.
+#guard undergroundOf (some "building_passage") none none none none == true
+#guard undergroundOf (some "no") none none none none == false
+#guard undergroundOf none (some "-1") none none none == true
+#guard undergroundOf none (some "1") none none none == false
+-- `Number("not-a-number")` is NaN, and `NaN < 0` is false.
+#guard undergroundOf none (some "not-a-number") none none none == false
+#guard undergroundOf none none (some "yes") none none == true
+-- `covered` and `subway` test equality with "yes", unlike `tunnel`'s "≠ no" —
+-- so a THIRD value separates the two rules, and only these two guards do.
+#guard undergroundOf none none (some "no") none none == false
+#guard undergroundOf none none (some "roof") none none == false
+#guard undergroundOf none none none (some "yes") none == true
+#guard undergroundOf none none none (some "maybe") none == false
+#guard undergroundOf none none none none (some "subway") == true
+#guard undergroundOf none none none none none == false
+
+private def track : List LatLon := [⟨51.52, -0.13⟩, ⟨51.53, -0.13⟩, ⟨51.53, -0.11⟩]
+
+#guard approx (geometryLengthM track) 2495.4471666856225
+#guard approx (geometryLengthM [⟨51.52, -0.13⟩, ⟨51.52, -0.129⟩]) 69.19008871082293
+-- No leg, no length. Not reachable through `buildRouteGraph` (see the docstring).
+#guard geometryLengthM [⟨51.52, -0.13⟩] == 0
+#guard geometryLengthM [] == 0
+
 end Verified.Hsmm.RouteGraph
