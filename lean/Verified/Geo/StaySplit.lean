@@ -1021,3 +1021,327 @@ private def REASON : String :=
 end ArrivalGuards
 
 end Arrival
+
+/-! ## `splitWalksOnVehicleLeg`
+
+The only stay-split pass that GROWS the segment list: a walk hiding a ride
+becomes `[walk?, driving, walk?]`. It searches every contiguous fix interval
+(O(n²), n tiny) for the one that best looks like a ride, trims on-foot
+shoulders off it, then refuses outright if the carve would butt against an
+adjacent train.
+
+Details the guards pin:
+
+* The gate is the EFFECTIVE mode. A short urban car ride averages low, so the
+  raw `mode` is often "walking" while OSM refinement has already called it
+  `driving`. Gating on the raw mode made this pass carve a confirmed 14-minute
+  car ride into a walk plus a 3-minute drive (2026-05-25, Fulton Road).
+* Interval choice: most ground wins; on an EXACT tie the shorter duration wins,
+  so flat departure fixes cannot pad the leg outward.
+* SHOULDER TRIMMING CAN SHRINK THE LEG BELOW `VEHICLE_LEG_MIN_DURATION_S`. That
+  bar applies to the SEARCH, not to the result. The `trimBelowMinDuration`
+  guard keeps a 100 s ride — and records the resulting artefact, `avgSpeed`
+  (net/dur) exceeding `maxSpeed` (a speed reading).
+* `pointCount` uses an INCLUSIVE `[driveStart, driveEnd]` window — a THIRD
+  convention in this one file (`sortedIn` inclusive, `stats` half-open).
+  Deliberate: the boundary fixes are the ride's, so the flanking walks must not
+  count them too.
+
+Shell: the `VEHICLE_SPLIT_DEBUG` tracing.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/vehicle-leg-refs.mts`).
+-/
+
+namespace VehicleLeg
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF jsRound segMode sortedIn walkRemainder)
+
+/-- A walk shorter than this is not searched at all. -/
+def VEHICLE_LEG_MIN_SEGMENT_S : Int := 5 * 60
+/-- Mean pace over the interval that marks it as a ride. -/
+def VEHICLE_LEG_MOVE_KMH : Float := 15
+/-- Net displacement floor — deliberately high: nothing corroborates a ride
+hidden in the MIDDLE of a walk, so urban-canyon jitter must not trigger it.
+
+PROVABLY DEAD as written, and no guard pins its value: clearing
+`VEHICLE_LEG_MOVE_KMH` at `VEHICLE_LEG_MIN_DURATION_S` already forces
+`netDist ≥ (15 / 3.6) × 120 = 500 m > 400`. The other two gates subsume it.
+Kept as the TS has it — it documents intent and would bite if either changed. -/
+def VEHICLE_LEG_MIN_DIST_M : Float := 400
+/-- …sustained for at least this long. Applies to the SEARCH only. -/
+def VEHICLE_LEG_MIN_DURATION_S : Int := 120
+/-- …with one unambiguously-motorised instant. -/
+def VEHICLE_LEG_PEAK_KMH : Float := 20
+/-- A sub-minute residual walk is folded into the ride. -/
+def VEHICLE_LEG_MIN_REMAINDER_S : Int := 60
+/-- A carve butting this close to an adjacent train is boundary bleed. -/
+def BLEED_S : Int := 90
+
+private def isTrain (s : Option Seg) : Bool :=
+  match s with | some x => segMode x == "train" | none => false
+
+private def peakBetween (fixes : Array PointF) (a b : Nat) : Float :=
+  (Array.range (b + 1 - a)).foldl (init := (0 : Float)) fun p k => max p fixes[a + k]!.speedKmh
+
+private def stepKmh (fixes : Array PointF) (i j : Nat) : Float :=
+  let dt := fixes[j]!.ts - fixes[i]!.ts
+  if dt > 0 then
+    haversineMeters fixes[i]!.lat fixes[i]!.lon fixes[j]!.lat fixes[j]!.lon / Float.ofInt dt * 3.6
+  else 0
+
+/-- The contiguous interval that best looks like a ride: most ground covered,
+shorter duration breaking an exact tie. -/
+private structure Cand where
+  a : Nat
+  b : Nat
+  netDist : Float
+  dur : Int
+  deriving Inhabited
+
+private def bestInterval (fixes : Array PointF) : Option Cand := Id.run do
+  let mut best : Option Cand := none
+  for a in [0:fixes.size - 1] do
+    for b in [a + 1:fixes.size] do
+      let dur := fixes[b]!.ts - fixes[a]!.ts
+      if dur < VEHICLE_LEG_MIN_DURATION_S then continue
+      let netDist := haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
+      if netDist < VEHICLE_LEG_MIN_DIST_M then continue
+      if netDist / Float.ofInt dur * 3.6 < VEHICLE_LEG_MOVE_KMH then continue
+      if peakBetween fixes a b < VEHICLE_LEG_PEAK_KMH then continue
+      match best with
+      | none => best := some { a, b, netDist, dur }
+      | some cur =>
+        if netDist > cur.netDist || (netDist == cur.netDist && dur < cur.dur) then
+          best := some { a, b, netDist, dur }
+  return best
+
+/-- Split each walking segment that hides a vehicle leg into
+`[walk?, driving, walk?]`. -/
+def splitWalksOnVehicleLeg (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for i in [0:segments.size] do
+    let seg := segments[i]!
+    -- The EFFECTIVE mode: a leg already identified as a vehicle IS the ride.
+    if segMode seg != "walking" || seg.endTs - seg.startTs < VEHICLE_LEG_MIN_SEGMENT_S then
+      out := out.push seg
+      continue
+    let fixes := sortedIn points seg.startTs seg.endTs
+    if fixes.size < 3 then
+      out := out.push seg
+      continue
+    match bestInterval fixes with
+    | none => out := out.push seg
+    | some cand =>
+      -- Trim on-foot shoulders the max-distance interval may have absorbed:
+      -- shrink inward while the boundary step is not itself vehicle-paced.
+      let mut a := cand.a
+      let mut b := cand.b
+      for _ in [0:fixes.size] do
+        if a < b && stepKmh fixes a (a + 1) < VEHICLE_LEG_MOVE_KMH then a := a + 1 else break
+      for _ in [0:fixes.size] do
+        if b > a && stepKmh fixes (b - 1) b < VEHICLE_LEG_MOVE_KMH then b := b - 1 else break
+      let netDist := haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
+      let dur := fixes[b]!.ts - fixes[a]!.ts
+      let peak := peakBetween fixes a b
+      -- Boundaries: fold a sub-minute residual walk into the ride.
+      let driveStart :=
+        if fixes[a]!.ts - seg.startTs < VEHICLE_LEG_MIN_REMAINDER_S then seg.startTs else fixes[a]!.ts
+      let driveEnd :=
+        if seg.endTs - fixes[b]!.ts < VEHICLE_LEG_MIN_REMAINDER_S then seg.endTs else fixes[b]!.ts
+      -- Train-bleed guard: a walk's tail accelerating into the next train (or
+      -- its head decelerating out of the previous one) is the train boundary
+      -- bleeding into the walk, not a separate ride.
+      let nextTrain := isTrain (if i + 1 < segments.size then some segments[i + 1]! else none)
+      let prevTrain := isTrain (if i > 0 then some segments[i - 1]! else none)
+      if (nextTrain && seg.endTs - driveEnd < BLEED_S)
+         || (prevTrain && driveStart - seg.startTs < BLEED_S) then
+        out := out.push seg
+      else
+        let meanKmh := if dur > 0 then jsRound (netDist / Float.ofInt dur * 3.6 * 10) / 10 else 0
+        let drivePart : Seg :=
+          { seg with
+            mode := "driving", refinedMode := none, wayName := none, place := none
+            startTs := driveStart, endTs := driveEnd
+            avgSpeed := meanKmh, maxSpeed := jsRound (peak * 10) / 10, linearity := 1
+            -- INCLUSIVE window: `peakBetween` already counted the boundary
+            -- fixes as the ride's, so the flanking walks must not.
+            -- Filtering `points` rather than `fixes` is PROVABLY the same set —
+            -- `[driveStart, driveEnd] ⊆ [seg.startTs, seg.endTs]`, and `fixes`
+            -- is exactly `points` restricted to the latter — so no guard can
+            -- separate them.
+            pointCount := Int.ofNat (points.filter fun p => p.ts ≥ driveStart && p.ts ≤ driveEnd).size
+            refinedReason := some s!"vehicle-leg split: {toString (jsRound netDist).toInt64.toInt} m net progress in {toString (jsRound (Float.ofInt dur / 60)).toInt64.toInt} min (peak {toString (jsRound peak).toInt64.toInt} km/h) inside a walking segment — a ride, not a walk" }
+        if driveStart > seg.startTs then
+          out := out.push (walkRemainder seg seg.startTs driveStart points false)
+        out := out.push drivePart
+        if driveEnd < seg.endTs then
+          out := out.push (walkRemainder seg driveEnd seg.endTs points true)
+  return out
+
+/-! ### Reference values
+
+Pinned against Node/V8 (`lean/experiments/vehicle-leg-refs.mts`).
+-/
+
+section VehicleLegGuards
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+private def fx (ts : Int) (metresNorth speedKmh : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+#guard (fx 0 3000 0).lat == 51.546949335249735
+
+private def sg (startTs endTs : Int) (mode : String := "walking")
+    (refinedMode : Option String := none) : Seg :=
+  { startTs, endTs, mode, refinedMode
+    avgSpeed := 4, maxSpeed := 6, linearity := 0.5, pointCount := 9
+    wayName := some "Some Footway", place := some "Somewhere" }
+
+/-- A 20-minute "walk" with a 2 km ride buried in the middle. -/
+private def FIXES : Array PointF :=
+  #[fx 1000 0 4, fx 1150 100 4, fx 1300 200 5, fx 1450 1200 45, fx 1600 2200 42,
+    fx 1750 2300 5, fx 1900 2400 4, fx 2050 2500 4, fx 2200 2600 4]
+private def SEGS : Array Seg := #[sg 1000 2200]
+
+private structure VRow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  refinedMode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  linearity : Float
+  wayName : String
+  place : String
+  reenrich : Bool
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def vv (segs : Array Seg) : Array VRow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode
+      refinedMode := s.refinedMode.getD "", pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, linearity := s.linearity
+      wayName := s.wayName.getD "", place := s.place.getD ""
+      reenrich := s.needsReenrich, reason := s.refinedReason.getD "" }
+
+private def vrun (segs : Array Seg := SEGS) (pts : Array PointF := FIXES) : Array VRow :=
+  vv (splitWalksOnVehicleLeg segs pts)
+
+private def RIDE_REASON : String :=
+  "vehicle-leg split: 1998 m net progress in 5 min (peak 45 km/h) inside a walking segment — a ride, not a walk"
+
+private def preWalk : VRow :=
+  { startTs := 1000, endTs := 1300, mode := "walking", refinedMode := "", pointCount := 2,
+    avgSpeed := 4, maxSpeed := 4, linearity := 1, wayName := "", place := "",
+    reenrich := true, reason := "" }
+private def ride : VRow :=
+  { startTs := 1300, endTs := 1600, mode := "driving", refinedMode := "", pointCount := 3,
+    avgSpeed := 24, maxSpeed := 45, linearity := 1, wayName := "", place := "",
+    reenrich := false, reason := RIDE_REASON }
+private def postWalk : VRow :=
+  { startTs := 1600, endTs := 2200, mode := "walking", refinedMode := "", pointCount := 3,
+    avgSpeed := 4, maxSpeed := 5, linearity := 1, wayName := "", place := "",
+    reenrich := true, reason := "" }
+
+-- walk / driving / walk — the list GROWS from 1 to 3. The ride's inherited
+-- on-foot enrichment (footway name, place) is cleared.
+#guard vrun == #[preWalk, ride, postWalk]
+
+-- THE GATE is the EFFECTIVE mode: a leg OSM already called driving IS the ride,
+-- not a walk hiding one. Gating on the raw `mode` here was a real bug.
+#guard vrun #[sg 1000 2200 "walking" (some "driving")] == vv #[sg 1000 2200 "walking" (some "driving")]
+-- A refinedMode-only walk IS eligible, and the remainders keep the raw mode.
+#guard vrun #[sg 1000 2200 "stationary" (some "walking")]
+  == #[{ preWalk with mode := "stationary" }, ride, { postWalk with mode := "stationary" }]
+-- Under VEHICLE_LEG_MIN_SEGMENT_S the pass does not look. The window must
+-- otherwise CONTAIN a qualifying ride, or lowering the constant changes nothing
+-- and the guard pins nothing.
+#guard vrun #[sg 1000 1290] #[fx 1000 0 45, fx 1150 1000 45, fx 1290 2000 42]
+  == vv #[sg 1000 1290]
+-- …and exactly AT the bar it does, finding a ride. (A window that merely fails
+-- to contain one cannot pin the constant — my first attempt made that mistake.)
+#guard vrun #[sg 1000 1300] #[fx 1000 0 45, fx 1150 1000 45, fx 1300 2000 42]
+  == #[{ ride with startTs := 1000, endTs := 1300 }]
+#guard vrun SEGS #[fx 1000 0 4, fx 1600 2200 42] == vv SEGS
+
+-- THE INTERVAL GATES.
+#guard vrun SEGS
+  #[fx 1000 0 4, fx 1150 100 4, fx 1300 200 5, fx 1450 500 45, fx 1600 550 42, fx 2200 600 4]
+  == vv SEGS
+#guard vrun SEGS #[fx 1000 0 4, fx 1100 2000 45, fx 2200 2050 4] == vv SEGS
+#guard vrun SEGS
+  #[fx 1000 0 4, fx 1300 200 5, fx 1600 600 8, fx 1900 1000 8, fx 2200 1400 8] == vv SEGS
+#guard vrun SEGS
+  #[fx 1000 0 4, fx 1150 100 4, fx 1300 200 5, fx 1450 1200 19, fx 1600 2200 19, fx 2200 2300 4]
+  == vv SEGS
+
+-- SHOULDER TRIMMING CAN SHRINK THE LEG BELOW THE SEARCH MINIMUM. The winning
+-- interval spans 250 s; trimming the slow leading shoulder leaves 100 s, under
+-- VEHICLE_LEG_MIN_DURATION_S, and it is kept. Note the artefact this records:
+-- avgSpeed (net/dur) EXCEEDS maxSpeed (a speed reading).
+#guard vrun SEGS
+  #[fx 1000 0 4, fx 1150 100 4, fx 1300 200 5, fx 1400 2200 45, fx 2200 2300 4]
+  == #[preWalk,
+       { ride with
+         endTs := 1400, pointCount := 2, avgSpeed := 71.9
+         reason := "vehicle-leg split: 1998 m net progress in 2 min (peak 45 km/h) inside a walking segment — a ride, not a walk" },
+       { postWalk with
+         startTs := 1400, pointCount := 0, avgSpeed := 4, maxSpeed := 6, linearity := 0.5 }]
+
+-- The ride reaches the segment's start, so there is no leading walk.
+#guard vrun SEGS
+  #[fx 1000 0 45, fx 1150 1000 45, fx 1300 2000 42, fx 1450 2100 5, fx 1600 2200 4, fx 2200 2300 4]
+  == #[{ ride with startTs := 1000, endTs := 1300 },
+       { postWalk with startTs := 1300, pointCount := 2, avgSpeed := 4.5 }]
+-- A sub-minute leading residual is folded into the ride.
+#guard vrun SEGS
+  #[fx 1000 0 4, fx 1050 50 45, fx 1200 1050 45, fx 1400 2200 42, fx 1600 2300 5, fx 2200 2400 4]
+  == #[{ ride with
+         startTs := 1000, endTs := 1400, pointCount := 4, avgSpeed := 22.1
+         reason := "vehicle-leg split: 2148 m net progress in 6 min (peak 45 km/h) inside a walking segment — a ride, not a walk" },
+       { postWalk with
+         startTs := 1400, pointCount := 1, avgSpeed := 4, maxSpeed := 6, linearity := 0.5 }]
+
+-- THE TRAIN-BLEED GUARDS. A carve butting against the FOLLOWING train is
+-- boarding bleed, not a ride…
+-- A qualifying interval MUST exist, or the refusal proves nothing. Here
+-- 1880→2130 clears every gate, and the residual 2200 − 2130 = 70 s sits between
+-- a BLEED_S of 10 and one of 90 — so the constant's value is pinned too.
+private def BLEED_FIXES : Array PointF :=
+  #[fx 1000 0 4, fx 1300 200 5, fx 1880 2200 45, fx 2130 3300 42, fx 2200 3350 40]
+#guard vrun #[sg 1000 2200, sg 2200 3000 "train"] BLEED_FIXES
+  == vv #[sg 1000 2200, sg 2200 3000 "train"]
+-- …and against the PRECEDING train is alighting bleed.
+#guard vrun #[sg 200 1000 "train", sg 1000 2200]
+  #[fx 1000 0 40, fx 1050 800 45, fx 1300 2000 42, fx 1600 2100 5, fx 2200 2200 4]
+  == vv #[sg 200 1000 "train", sg 1000 2200]
+
+-- AN EXACT netDist TIE between two intervals sharing a start fix and ending at
+-- EQUIDISTANT points (+1500 m and −1500 m from the start), so the two
+-- haversines are bit-equal rather than merely close. The TIGHTER interval must
+-- win. The two ends also have to SURVIVE shoulder trimming — a first attempt
+-- put both at the same coordinate, and the trim collapsed the longer interval
+-- back onto the shorter one, so the case pinned nothing.
+#guard vrun SEGS #[fx 1000 0 45, fx 1250 1500 45, fx 1300 (-1500) 45, fx 2200 (-1450) 4]
+  == #[{ ride with
+         startTs := 1000, endTs := 1250, pointCount := 2, avgSpeed := 21.6
+         reason := "vehicle-leg split: 1498 m net progress in 4 min (peak 45 km/h) inside a walking segment — a ride, not a walk" },
+       { postWalk with
+         startTs := 1250, pointCount := 1, avgSpeed := 4, maxSpeed := 6, linearity := 0.5 }]
+-- A train neighbour the carve does NOT butt against is fine.
+#guard vrun #[sg 1000 2200, sg 2200 3000 "train"]
+  == #[preWalk, ride, postWalk] ++ vv #[sg 2200 3000 "train"]
+-- The bleed test reads the neighbour's EFFECTIVE mode too.
+#guard vrun #[sg 1000 2200, sg 2200 3000 "stationary" (some "train")] BLEED_FIXES
+  == vv #[sg 1000 2200, sg 2200 3000 "stationary" (some "train")]
+
+#guard vrun #[] #[] == #[]
+
+end VehicleLegGuards
+
+end VehicleLeg
