@@ -744,3 +744,280 @@ private def REASON : String :=
 end HandoffGuards
 
 end Handoff
+
+/-! ## `reassignVehicleArrivalWalk`
+
+The arrival-side mirror of `reassignWalkTailToVehicle`, but structurally
+different in three ways:
+
+1. `prev` is read from the OUTPUT array, not the input — it is whatever the
+   previous iteration emitted, so an earlier rewrite is visible here.
+2. When it acts it REWRITES that output element and does NOT push `cur`, so the
+   phantom walk is DROPPED and the segment count SHRINKS. Every other pass so
+   far preserved the count.
+3. `prev` is matched on `segMode`, `next` on the RAW `mode` — the opposite
+   pairing to the departure-side pass, and guarded both ways.
+
+The precision gate is `tailParked`: three conjuncts (every residual fix within
+`ARRIVAL_STAY_RADIUS_M` of the stay centroid, net progress ≤
+`ARRIVAL_TAIL_MAX_NET_M`, median speed ≤ `ARRIVAL_TAIL_STATIONARY_KMH`). If the
+residual WALKS — a real walk-in from the kerb — the pass leaves the segment
+entirely alone: a mislabelled vehicle head is a smaller error than an eaten
+walk. Each conjunct has its own guard.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/arrival-walk-refs.mts`).
+-/
+
+namespace Arrival
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF median jsRound segMode sortedIn)
+open Handoff (HANDOFF_VEHICLE_MODES)
+
+/-- Per-step net-progress speed marking the head as travelling. -/
+def ARRIVAL_MOVE_KMH : Float := 15
+/-- Require a sustained run, not one glitchy pair. -/
+def ARRIVAL_MIN_HEAD_STEPS : Nat := 2
+/-- Net displacement floor — corroborated by the adjacent vehicle. -/
+def ARRIVAL_MIN_NET_DIST_M : Float := 80
+/-- …and one unambiguously-motorised instant. -/
+def ARRIVAL_PEAK_KMH : Float := 20
+/-- The residual counts as parked only if every fix sits within this of the
+stay's centroid… -/
+def ARRIVAL_STAY_RADIUS_M : Float := 90
+/-- …its net progress is negligible… -/
+def ARRIVAL_TAIL_MAX_NET_M : Float := 45
+/-- …and its median speed reads as a standstill, not walking. -/
+def ARRIVAL_TAIL_STATIONARY_KMH : Float := 2.5
+
+private def stepKmh (a b : PointF) : Float :=
+  let dt := b.ts - a.ts
+  if dt > 0 then haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 else 0
+
+/-- Walk forward from the first fix over consecutive vehicle-paced steps. -/
+private def headScan (fixes : Array PointF) : Nat × Nat := Id.run do
+  let mut h := 0
+  let mut n := 0
+  for _ in [0:fixes.size] do
+    if h + 1 < fixes.size && stepKmh fixes[h]! fixes[h + 1]! ≥ ARRIVAL_MOVE_KMH then
+      h := h + 1
+      n := n + 1
+    else break
+  return (h, n)
+
+/-- Half-open `[startTs, endTs)` speed stats, as in the departure pass. -/
+private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
+  let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
+  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
+
+private def roundStr (x : Float) : String := toString (jsRound x).toInt64.toInt
+
+/-- Dissolve a phantom walk that is really a vehicle's decelerating arrival. -/
+def reassignVehicleArrivalWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut segs := segments
+  let mut out : Array Seg := #[]
+  for i in [0:segs.size] do
+    let cur := segs[i]!
+    -- `prev` is the last EMITTED segment, not `segs[i-1]`. The TS reads `out`,
+    -- and this mirrors it — but the two are PROVABLY indistinguishable here, so
+    -- no guard pins the choice. They can only diverge on the iteration right
+    -- after a fold, and a fold requires `segs[i+1].mode == "stationary"`; that
+    -- same segment is the next iteration's `cur`, which then fails the
+    -- `cur.mode == "walking"` test either way.
+    let prev? := out.back?
+    let acted : Option (Seg × Seg) := Id.run do
+      if i + 1 ≥ segs.size then return none
+      let next := segs[i + 1]!
+      match prev? with
+      | none => return none
+      | some prev =>
+        -- segMode on the vehicle, RAW mode on the stay.
+        if !(cur.mode == "walking" && HANDOFF_VEHICLE_MODES.contains (segMode prev)
+             && next.mode == "stationary") then return none
+        let fixes := sortedIn points cur.startTs cur.endTs
+        -- PROVABLY shadowed by `ARRIVAL_MIN_HEAD_STEPS = 2`, exactly as in the
+        -- departure pass: two fixes admit at most one step.
+        if fixes.size < 3 then return none
+        let (h, headSteps) := headScan fixes
+        if headSteps < ARRIVAL_MIN_HEAD_STEPS then return none
+        let headNet := haversineMeters fixes[0]!.lat fixes[0]!.lon fixes[h]!.lat fixes[h]!.lon
+        let peak := (Array.range (h + 1)).foldl (init := (0 : Float)) fun a k => max a fixes[k]!.speedKmh
+        if headNet < ARRIVAL_MIN_NET_DIST_M || peak < ARRIVAL_PEAK_KMH then return none
+        let boundaryTs := fixes[h]!.ts
+        -- Stay centroid, falling back to the walk's LAST fix when the stay has
+        -- no fixes of its own.
+        let stayFixes := sortedIn points next.startTs next.endTs
+        let sc : Float × Float :=
+          if stayFixes.isEmpty then (fixes[fixes.size - 1]!.lat, fixes[fixes.size - 1]!.lon)
+          else
+            let n := Float.ofNat stayFixes.size
+            (stayFixes.foldl (fun a p => a + p.lat) 0 / n, stayFixes.foldl (fun a p => a + p.lon) 0 / n)
+        let tail := fixes.extract h fixes.size
+        -- The `≥ 2` here is PROVABLY a no-op: `tail` is `fixes[h:]`, so a
+        -- single-element tail means `h` is the last index, and the distance
+        -- from that fix to itself is 0 — the same value the `else` branch
+        -- supplies. Kept as the TS has it.
+        let tailNet :=
+          if tail.size ≥ 2 then
+            haversineMeters tail[0]!.lat tail[0]!.lon tail[tail.size - 1]!.lat tail[tail.size - 1]!.lon
+          else 0
+        let tailMedianKmh := median (tail.map (·.speedKmh))
+        let tailParked :=
+          tail.all (fun f => haversineMeters f.lat f.lon sc.1 sc.2 ≤ ARRIVAL_STAY_RADIUS_M)
+          && tailNet ≤ ARRIVAL_TAIL_MAX_NET_M
+          && tailMedianKmh ≤ ARRIVAL_TAIL_STATIONARY_KMH
+        -- Precision over recall: a residual that WALKS is a real walk-in, and
+        -- the segment is left entirely alone.
+        if !tailParked then return none
+        let (vc, va, vm) := stats points prev.startTs boundaryTs
+        let (sc2, sa, sm) := stats points boundaryTs next.endTs
+        let head := match prev.refinedReason with | some r => s!"{r}; " | none => ""
+        return some
+          ({ prev with
+             endTs := boundaryTs, avgSpeed := va, maxSpeed := vm, pointCount := Int.ofNat vc
+             refinedReason := some s!"{head}extended forward: absorbed the drive's decelerating arrival tail ({roundStr headNet} m, peak {roundStr peak} km/h) that segmentation glued onto the following walk" },
+           { next with
+             startTs := boundaryTs, avgSpeed := sa, maxSpeed := sm, pointCount := Int.ofNat sc2 })
+    match acted with
+    | none => out := out.push cur
+    | some (p, n) =>
+      -- The walk is DROPPED: `cur` is never pushed.
+      out := out.set! (out.size - 1) p
+      segs := segs.set! (i + 1) n
+  return out
+
+/-! ### Reference values
+
+Pinned against Node/V8 (`lean/experiments/arrival-walk-refs.mts`).
+-/
+
+section ArrivalGuards
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+private def fx (ts : Int) (metresNorth speedKmh : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+#guard (fx 0 1200 0).lat == 51.530779734099895
+
+private def sg (startTs endTs : Int) (mode : String) (avgSpeed maxSpeed : Float := 4)
+    (refinedMode : Option String := none) (refinedReason : Option String := none) : Seg :=
+  { startTs, endTs, mode, refinedMode, refinedReason
+    avgSpeed, maxSpeed, linearity := 0.5, pointCount := 7 }
+
+private def DRIVE : Seg := sg 500 1000 "driving" 30 40
+private def WALK : Seg := sg 1000 1600 "walking" 4 6
+private def STAY : Seg := sg 1600 2200 "stationary" 4 6
+private def SEGS : Array Seg := #[DRIVE, WALK, STAY]
+
+private def FIXES : Array PointF :=
+  #[fx 500 (-2000) 40, fx 700 (-1000) 38, fx 900 (-200) 30,
+    fx 1000 0 25, fx 1100 600 22, fx 1200 1200 21,
+    fx 1300 1210 1, fx 1400 1215 0.5, fx 1500 1212 0.4, fx 1600 1214 0.3,
+    fx 1700 1213 0.2, fx 1800 1215 0.3, fx 1900 1212 0.1]
+
+/-- Replace the parked residual with a real walk-in from the kerb. -/
+private def walkInTail (medianKmh spread : Float) : Array PointF :=
+  FIXES.extract 0 6 ++
+  #[fx 1300 (1200 + spread) medianKmh, fx 1400 (1200 + 2 * spread) medianKmh,
+    fx 1500 (1200 + 3 * spread) medianKmh, fx 1600 (1200 + 4 * spread) medianKmh,
+    fx 1700 (1200 + 4 * spread) 0.2, fx 1800 (1200 + 4 * spread) 0.3,
+    fx 1900 (1200 + 4 * spread) 0.1]
+
+private structure ARow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def av (segs : Array Seg) : Array ARow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, reason := s.refinedReason.getD "" }
+
+private def arun (segs : Array Seg := SEGS) (pts : Array PointF := FIXES) : Array ARow :=
+  av (reassignVehicleArrivalWalk segs pts)
+
+private def REASON : String :=
+  "extended forward: absorbed the drive's decelerating arrival tail (1199 m, peak 25 km/h) that segmentation glued onto the following walk"
+
+-- The drive absorbs its arrival tail, the residual folds into the stay, and the
+-- phantom walk is DROPPED — three segments become TWO.
+#guard arun == #[
+  { startTs := 500, endTs := 1200, mode := "driving", pointCount := 5,
+    avgSpeed := 30, maxSpeed := 40, reason := REASON },
+  { startTs := 1200, endTs := 2200, mode := "stationary", pointCount := 8,
+    avgSpeed := 0.4, maxSpeed := 21, reason := "" }]
+
+-- WHO MAY PARTICIPATE. prev is matched on segMode, so a refinedMode promotion
+-- counts (and the raw mode is left as it was).
+#guard (arun #[sg 500 1000 "stationary" 30 40 (some "driving"), WALK, STAY]).size == 2
+-- train is not in HANDOFF_VEHICLE_MODES.
+#guard arun #[sg 500 1000 "train", WALK, STAY] == av #[sg 500 1000 "train", WALK, STAY]
+-- next is matched on the RAW mode, so a refinedMode-only stay does NOT count.
+#guard arun #[DRIVE, WALK, sg 1600 2200 "walking" 4 6 (some "stationary")]
+  == av #[DRIVE, WALK, sg 1600 2200 "walking" 4 6 (some "stationary")]
+#guard arun #[DRIVE, WALK, sg 1600 2200 "walking"] == av #[DRIVE, WALK, sg 1600 2200 "walking"]
+#guard arun #[DRIVE, sg 1000 1600 "driving", STAY] == av #[DRIVE, sg 1000 1600 "driving", STAY]
+-- No predecessor, and no successor.
+#guard arun #[WALK, STAY] == av #[WALK, STAY]
+#guard arun #[DRIVE, WALK] == av #[DRIVE, WALK]
+
+-- THE HEAD GATES.
+#guard arun SEGS #[fx 500 (-2000) 40, fx 1000 0 25, fx 1200 1200 21, fx 1700 1213 0.2] == av SEGS
+-- One vehicle-paced step only.
+#guard arun SEGS (FIXES.extract 0 4 ++ #[fx 1100 600 22, fx 1200 610 1] ++ FIXES.extract 6 13) == av SEGS
+-- The head's NET displacement is under ARRIVAL_MIN_NET_DIST_M.
+#guard arun SEGS
+  (FIXES.extract 0 4 ++ #[fx 1010 50 22, fx 1020 75 21, fx 1300 70 1, fx 1400 72 0.5,
+                          fx 1500 71 0.4, fx 1600 73 0.3, fx 1700 72 0.2]) == av SEGS
+-- No fix in the head reaches ARRIVAL_PEAK_KMH.
+#guard arun SEGS
+  (#[fx 500 (-2000) 40, fx 900 (-200) 19, fx 1000 0 19, fx 1100 600 19, fx 1200 1200 19]
+   ++ FIXES.extract 6 13) == av SEGS
+
+-- tailParked, ONE CONJUNCT AT A TIME.
+-- A residual fix outside ARRIVAL_STAY_RADIUS_M of the stay centroid.
+#guard arun SEGS (FIXES.extract 0 6 ++ #[fx 1300 1350 1] ++ FIXES.extract 7 13) == av SEGS
+-- The residual's NET progress exceeds ARRIVAL_TAIL_MAX_NET_M.
+#guard arun SEGS (walkInTail 1 15) == av SEGS
+-- The residual MOVES at walking pace — a real walk-in from the kerb. Leaving it
+-- alone is the whole point: a mislabelled vehicle head beats an eaten walk.
+#guard arun SEGS (walkInTail 4.5 5) == av SEGS
+
+-- The stay has NO fixes of its own, so the centroid falls back to the walk's
+-- LAST fix. The fixture must stop BEFORE ts 1600: `sortedIn` is inclusive at
+-- both ends, so a fix AT the stay's startTs is already one of its fixes and the
+-- fallback never fires (my first attempt at this case made exactly that
+-- mistake and pinned nothing).
+#guard arun SEGS (FIXES.extract 0 9) == #[
+  { startTs := 500, endTs := 1200, mode := "driving", pointCount := 5,
+    avgSpeed := 30, maxSpeed := 40, reason := REASON },
+  { startTs := 1200, endTs := 2200, mode := "stationary", pointCount := 4,
+    avgSpeed := 0.8, maxSpeed := 21, reason := "" }]
+
+-- ARRIVAL_MOVE_KMH's VALUE, isolated. The 1200→1300 step runs at 12 km/h:
+-- above walking, below the 15 km/h floor, so the head scan stops at 1200 and
+-- the residual then starts 341 m from the stay centroid — refused. Lower the
+-- floor to 10 and the scan runs on to 1300, where the residual IS parked and
+-- the fold happens.
+#guard arun SEGS
+  #[fx 500 (-2000) 40, fx 900 (-200) 30, fx 1000 0 25, fx 1100 600 22, fx 1200 1200 21,
+    fx 1300 1533 12, fx 1400 1543 1, fx 1500 1540 0.4, fx 1600 1542 0.3, fx 1700 1541 0.2]
+  == av SEGS
+
+-- prev already carries a reason: the new one is APPENDED after "; ".
+#guard (arun #[sg 500 1000 "driving" 30 40 none (some "bus route 38"), WALK, STAY])[0]!.reason
+  == s!"bus route 38; {REASON}"
+
+#guard arun #[] #[] == #[]
+
+end ArrivalGuards
+
+end Arrival
