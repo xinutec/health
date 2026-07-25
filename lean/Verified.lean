@@ -62,3 +62,4 @@ import Verified.Geo.WalkableRoute
 import Verified.Geo.WalkEscape
 import Verified.Geo.WalkSmooth
 import Verified.Geo.DisplayGate
+import Verified.Geo.RailSnap
