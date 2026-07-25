@@ -34,8 +34,8 @@ bit-identical, and the guards below compare with a tolerance rather than `==`.
 
 namespace Verified.Geo.WalkSmooth
 
-open Verified.Geo.WalkableRoute (Pt metersBetween projectPointToSegment)
-open Verified.Geo.WalkEscape (Ring Ways TPt nearestWalkable routeChordAroundBuildings)
+open Verified.Geo.WalkableRoute (Pt Ways metersBetween projectPointToSegment)
+open Verified.Geo.WalkEscape (Ring TPt nearestWalkable routeChordAroundBuildings)
 
 private def pi : Float := 3.14159265358979323846
 private def posInf : Float := 1.0 / 0.0

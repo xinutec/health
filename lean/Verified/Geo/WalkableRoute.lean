@@ -1,3 +1,6 @@
+import Verified.JsNum
+import Std.Data.HashMap
+
 /-!
 # Point-to-point routing on the walkable network (port of `src/geo/walkable-route.ts`)
 
@@ -16,16 +19,15 @@ Both endpoints snap onto the nearest way EDGE — a virtual node spliced into th
 edge, not the nearest graph NODE — so a mid-street start does not first detour
 to a distant junction.
 
-## What the shell supplies
+## Fusion
 
 `buildWalkGraph` fuses way coordinates into graph nodes by `nodeKey`, a
-`toFixed(7)` string. String-keyed topology is shell work under this port's
-standing boundary (same call as WKT parsing and tz resolution), so the shell
-hands Lean the already-fused {@link WalkGraph} plus the {@link SnapEdge} list —
-each snap edge carrying the RAW segment coordinates alongside the resolved node
-ids, because the TS projects onto the raw coordinates while traversing via the
-fused ones. Feeding only the fused coordinates would silently move every
-projection by up to ~1 cm.
+`toFixed(7)` string. That was shell work until `toFixed` was ported exactly
+(`Verified.JsNum`); it is Lean's now, so this module takes the raw way list and
+needs nothing pre-computed. The distinction the fusion demands is still live in
+the code: node COORDINATES are the first way coordinate that mapped to them and
+edge lengths use those, while `snapToEdge` projects onto each way's own RAW
+coordinates — mixing the two would move every projection by up to ~1 cm.
 
 Every `none` returned here is an honest "there is no street path", and the
 caller falls back to trusting the GPS: no way within `snapRadiusM`, a
@@ -87,14 +89,44 @@ structure WalkGraph where
   adj : Array (Array (Nat × Float))
   deriving Inhabited
 
-/-- One way segment available for snapping: the RAW coordinates the TS projects
-    onto, plus the fused node ids it traverses by. In way-iteration order. -/
-structure SnapEdge where
-  a : Pt
-  b : Pt
-  aIdx : Nat
-  bIdx : Nat
-  deriving Inhabited, BEq, Repr
+/-- A way network as coordinate lists, in way-iteration order. Order is
+    load-bearing: it fixes graph-node numbering and breaks nearest-edge ties. -/
+abbrev Ways := Array (Array Pt)
+
+/-- Build the walkable graph: one node per distinct way coordinate, an
+    undirected edge per consecutive pair. Ways connect where they share a
+    junction coordinate — `toFixed(7)` equality, ported exactly in
+    `Verified.JsNum`, which is what makes this fusion Lean's job and not the
+    shell's. -/
+def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
+  let mut nodes : Array Pt := #[]
+  let mut adj : Array (Array (Nat × Float)) := #[]
+  let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
+  for w in ways do
+    for i in [1:w.size] do
+      -- `nodeAt` for each end, earlier coordinate first — that order is what
+      -- numbers the nodes.
+      let mut ids : Array Nat := #[]
+      for c in #[w[i - 1]!, w[i]!] do
+        let key := Verified.JsNum.coordKey7 c.lat c.lon
+        match index[key]? with
+        | some id => ids := ids.push id
+        | none =>
+          let id := nodes.size
+          nodes := nodes.push c
+          adj := adj.push #[]
+          index := index.insert key id
+          ids := ids.push id
+      let a := ids[0]!
+      let b := ids[1]!
+      if a != b then
+        -- The FUSED node coordinates, not the way's raw ones.
+        let d := metersBetween nodes[a]! nodes[b]!
+        if d ≥ 1e-3 then
+          -- Dedupe: ways can overlap on a shared stretch.
+          if !(adj[a]!.any (fun e => e.1 == b)) then adj := adj.set! a (adj[a]!.push (b, d))
+          if !(adj[b]!.any (fun e => e.1 == a)) then adj := adj.set! b (adj[b]!.push (a, d))
+  return { nodes, adj }
 
 /-- Where an endpoint splices into the network. -/
 structure Snap where
@@ -107,20 +139,32 @@ structure Snap where
   distM : Float
   deriving Inhabited, Repr
 
-/-- The nearest point on any way edge to `p`. Strict improvement, so the FIRST
-    edge at the minimum distance wins — way-iteration order is load-bearing. -/
-def snapToEdge (p : Pt) (edges : Array SnapEdge) : Option Snap := Id.run do
+/-- The nearest point on any way edge to `p`, with the edge's two graph-node
+    ids. Strict improvement, so the FIRST edge at the minimum distance wins —
+    way-iteration order is load-bearing. -/
+def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.run do
+  let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
+  for i in [0:graph.nodes.size] do
+    let n := graph.nodes[i]!
+    index := index.insert (Verified.JsNum.coordKey7 n.lat n.lon) i
   let mut best : Option Snap := none
-  for e in edges do
-    let proj := projectPointToSegment p e.a e.b
-    let better := match best with
-      | none => true
-      | some b => proj.distM < b.distM
-    if better then
-      let projPt : Pt := ⟨proj.lat, proj.lon⟩
-      best := some { point := projPt, nodeA := e.aIdx, nodeB := e.bIdx,
-                     toA := metersBetween projPt e.a, toB := metersBetween projPt e.b,
-                     distM := proj.distM }
+  for w in ways do
+    for i in [1:w.size] do
+      let a := w[i - 1]!
+      let b := w[i]!
+      let proj := projectPointToSegment p a b
+      let better := match best with
+        | none => true
+        | some bb => proj.distM < bb.distM
+      if better then
+        match index[Verified.JsNum.coordKey7 a.lat a.lon]?,
+              index[Verified.JsNum.coordKey7 b.lat b.lon]? with
+        | some nodeA, some nodeB =>
+          let projPt : Pt := ⟨proj.lat, proj.lon⟩
+          best := some { point := projPt, nodeA, nodeB,
+                         toA := metersBetween projPt a, toB := metersBetween projPt b,
+                         distM := proj.distM }
+        | _, _ => pure ()
   return best
 
 /-! ## Binary min-heap
@@ -197,14 +241,15 @@ private def posInf : Float := 1.0 / 0.0
 Shortest walkable path from `a` to `b`:
 `[snapped-a, …graph nodes…, snapped-b]`, or `none`.
 
-`edges` must be in way-iteration order (the snap tie-break depends on it) and
-`graph` must be the fused topology those edges index into.
+`ways` must be in way-iteration order — it fixes node numbering and breaks the
+snap tie. The graph is built here, as the TS builds it per call.
 -/
-def routeOnWalkable (a b : Pt) (graph : WalkGraph) (edges : Array SnapEdge)
-    (opts : RouteOptions := {}) : Option (Array Pt) := Id.run do
-  if edges.isEmpty then return none
-  let some from_ := snapToEdge a edges | return none
-  let some to := snapToEdge b edges | return none
+def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
+    Option (Array Pt) := Id.run do
+  if ways.isEmpty then return none
+  let graph := buildWalkGraph ways
+  let some from_ := snapToEdge a ways graph | return none
+  let some to := snapToEdge b ways graph | return none
   if from_.distM > opts.snapRadiusM || to.distM > opts.snapRadiusM then return none
 
   -- Same-edge shortcut: both project onto one edge, so the route is straight
@@ -329,8 +374,27 @@ private def blockGraph : WalkGraph :=
              #[(0, dSide), (3, dNorth)],
              #[(2, dNorth), (1, dSide)]] }
 
-private def blockEdges : Array SnapEdge :=
-  #[⟨n0, n1, 0, 1⟩, ⟨n0, n2, 0, 2⟩, ⟨n2, n3, 2, 3⟩, ⟨n1, n3, 1, 3⟩]
+/-- The same block as four ways. `buildWalkGraph` must fuse the shared corners
+    so this yields exactly `blockGraph` — 8 coordinates down to 4 nodes. -/
+private def blockWays : Ways := #[#[n0, n1], #[n0, n2], #[n2, n3], #[n1, n3]]
+
+private def graphEq (g : WalkGraph) (h : WalkGraph) : Bool :=
+  g.nodes.size == h.nodes.size && g.adj.size == h.adj.size
+    && (Array.range g.nodes.size).all (fun i =>
+        approx g.nodes[i]!.lat h.nodes[i]!.lat && approx g.nodes[i]!.lon h.nodes[i]!.lon)
+    && (Array.range g.adj.size).all (fun i =>
+        g.adj[i]!.size == h.adj[i]!.size
+          && (Array.range g.adj[i]!.size).all (fun k =>
+              g.adj[i]![k]!.1 == h.adj[i]![k]!.1 && approx g.adj[i]![k]!.2 h.adj[i]![k]!.2))
+
+#guard graphEq (buildWalkGraph blockWays) blockGraph
+-- A way repeated shares every node, and the edge dedupe keeps the adjacency
+-- unchanged rather than doubling it.
+#guard graphEq (buildWalkGraph (blockWays.push #[n0, n1])) blockGraph
+-- A zero-length edge (`< 1e-3 m`) is dropped, so a repeated coordinate adds a
+-- node but no edge.
+#guard (buildWalkGraph #[#[n0, n0]]).nodes.size == 1
+#guard (buildWalkGraph #[#[n0, n0]]).adj[0]!.isEmpty
 
 private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
   a.size == b.length && (a.toList.zip b).all (fun (x, y) => approx x.lat y.lat && approx x.lon y.lon)
@@ -338,31 +402,31 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 /-! ### `routeOnWalkable` -/
 
 -- No network at all.
-#guard (routeOnWalkable n0 n2 { nodes := #[], adj := #[] } #[]).isNone
+#guard (routeOnWalkable n0 n2 #[]).isNone
 -- Both endpoints on ONE edge: straight along it, no search.
-#guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.25⟩ ⟨LAT0, LON0 + D * 0.75⟩ blockGraph blockEdges with
+#guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.25⟩ ⟨LAT0, LON0 + D * 0.75⟩ blockWays with
   | some r => ptsApprox r [⟨LAT0, LON0 + D * 0.25⟩, ⟨LAT0, LON0 + D * 0.75⟩]
   | none => false
 -- Around one corner: snapped-start, the shared junction, snapped-end.
-#guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩ blockGraph blockEdges with
+#guard match routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩ blockWays with
   | some r => ptsApprox r [⟨LAT0, LON0 + D * 0.5⟩, n0, ⟨LAT0 + D * 0.5, LON0⟩]
   | none => false
 -- Diagonally opposite corners. The two ways round are NOT equal-cost: the north
 -- edge is ~1 mm shorter than the south because `cos(lat)` differs, so the
 -- west-then-north route wins deterministically.
-#guard match routeOnWalkable n0 n3 blockGraph blockEdges with
+#guard match routeOnWalkable n0 n3 blockWays with
   | some r => ptsApprox r [n0, n2, n3]
   | none => false
 -- An endpoint with no way in range.
-#guard (routeOnWalkable ⟨LAT0 + 0.01, LON0⟩ ⟨LAT0, LON0 + D⟩ blockGraph blockEdges).isNone
+#guard (routeOnWalkable ⟨LAT0 + 0.01, LON0⟩ ⟨LAT0, LON0 + D⟩ blockWays).isNone
 -- The snap radius is a real gate: ~2.2 m off the way passes at 5 m, fails at 1 m.
 #guard (routeOnWalkable ⟨LAT0 + 0.00002, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩
-  blockGraph blockEdges { snapRadiusM := 5 }).isSome
+  blockWays { snapRadiusM := 5 }).isSome
 #guard (routeOnWalkable ⟨LAT0 + 0.00002, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩
-  blockGraph blockEdges { snapRadiusM := 1 }).isNone
+  blockWays { snapRadiusM := 1 }).isNone
 -- The corner route is ~81 m, so a 50 m bound refuses it rather than detouring.
 #guard (routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩
-  blockGraph blockEdges { maxRouteM := 50 }).isNone
+  blockWays { maxRouteM := 50 }).isNone
 
 /-! ### A disconnected network
 
@@ -375,10 +439,11 @@ private def splitGraph : WalkGraph :=
   { nodes := #[n0, n1, s2, s3],
     adj := #[#[(1, dSouth)], #[(0, dSouth)],
              #[(3, 62.334963032503580)], #[(2, 62.334963032503580)]] }
-private def splitEdges : Array SnapEdge := #[⟨n0, n1, 0, 1⟩, ⟨s2, s3, 2, 3⟩]
+private def splitWays : Ways := #[#[n0, n1], #[s2, s3]]
+#guard graphEq (buildWalkGraph splitWays) splitGraph
 
-#guard (routeOnWalkable n0 s2 splitGraph splitEdges { snapRadiusM := 2000 }).isNone
+#guard (routeOnWalkable n0 s2 splitWays { snapRadiusM := 2000 }).isNone
 -- ...while each component still routes within itself.
-#guard (routeOnWalkable ⟨LAT0, LON0 + D * 0.25⟩ ⟨LAT0, LON0 + D * 0.75⟩ splitGraph splitEdges).isSome
+#guard (routeOnWalkable ⟨LAT0, LON0 + D * 0.25⟩ ⟨LAT0, LON0 + D * 0.75⟩ splitWays).isSome
 
 end Verified.Geo.WalkableRoute
