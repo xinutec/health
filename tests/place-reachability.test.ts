@@ -71,8 +71,16 @@ function loadCorpus(): { dir: string; files: string[] } | null {
 }
 
 describeWithFixture("reachability safety gate (golden corpus)", loadCorpus(), ({ dir, files }) => {
-	it("decodes near-identically with the reduced place set on every golden day", () => {
+	it("decodes near-identically with the reduced place set on every golden day", async () => {
 		for (const f of files) {
+			// Yield to the event loop before each day. Every decode is seconds of
+			// unbroken synchronous CPU, and the whole corpus back-to-back pins the
+			// worker for ~100 s — long enough that vitest's reporter channel times
+			// out (`Unhandled Error: [vitest-worker]: Timeout calling
+			// "onTaskUpdate"`) and FAILS THE RUN with every assertion passed. The
+			// yield lets the pending RPC callbacks drain between days; it changes
+			// nothing about what is asserted.
+			await new Promise((resolve) => setImmediate(resolve));
 			const captured = JSON.parse(readFileSync(join(dir, f), "utf8")) as HsmmCapturedDay;
 			const inputs = hsmmInputsFromFixture(captured);
 			// Exercise the SAME entry point production uses, so the gate can't
