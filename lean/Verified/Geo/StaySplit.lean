@@ -1345,3 +1345,335 @@ private def BLEED_FIXES : Array PointF :=
 end VehicleLegGuards
 
 end VehicleLeg
+
+/-! ## `claimRideHeadFromStay`
+
+The last stay-split pass, and the only one that deliberately INVENTS a segment.
+GPS dies in the tunnel just after boarding, so segmentation sees no boundary
+until the reacquire fixes cohere minutes into the ride: the stay swallows the
+walk to the station, the platform wait, and the ride's head. Nothing false is
+drawn (a stay renders as a dot), but the walk is missing and the ride's start is
+a lie.
+
+Anatomy, scanned from the dwell outward: **march** (a contiguous moving run) →
+optional **wait** (standing) → **ride** (a vehicle-paced step after which the
+fixes never return to the dwell).
+
+## The dwell position is a TIME-WEIGHTED, component-wise median
+
+Indoor GPS is sparse — a multi-hour dwell may be four fixes and a long gap while
+the departing tail is a dense run — so a plain per-fix median lands in the TAIL.
+Weighting each fix by how long its position HELD (until the next fix) puts the
+dwell back in charge. The happy-path guard has 4 dwell fixes against 10 tail
+fixes: an unweighted median would sit ~200 m away and
+`MARCH_START_MAX_FROM_DWELL_M` would refuse the carve outright, so that guard
+pins the weighting as well as the carve.
+
+Component-wise means lat and lon are medianed INDEPENDENTLY, so the dwell point
+need not be any actual fix. Reproduced as the TS has it.
+
+Precision over recall throughout: without step data it is inert; a march that
+never leaves the dwell, or ride evidence that returns to it, is left alone; and
+the carve must leave a dwell-scale stay behind.
+
+## Probe coverage — INCOMPLETE, and here is exactly what is not pinned
+
+Unlike the other passes in this file, the probe audit here is PARTIAL. 29 probes
+ran; 21 fail a guard, and these EIGHT do not. They are recorded rather than
+quietly left looking covered, and none is known to be provably unpinnable — each
+needs a fixture nobody has built yet:
+
+* `holdS`'s `max(…, 1)` floor — needs two fixes sharing a timestamp.
+* `weightedMedian`'s `acc ≥ half` vs `>` — needs the cumulative weight to land
+  exactly on half.
+* the `/ 2` in `half` — the happy path's dwell dominates so heavily that a
+  quartile still lands in it.
+* `MARCH_START_MAX_FROM_DWELL_M`'s VALUE (its side is pinned).
+* the `n < 8` fix-count floor — needs a 7-fix case that would otherwise carve.
+* `w ≥ m` vs `w > m` — needs a march of exactly zero length.
+* the `PEDESTRIAN_MIN_RUN_S` bar — the too-brief fixture also fails another gate.
+* the `fromDwell[w]` gate as a whole.
+
+Treat this module as pinned by its 24 V8 reference cases but NOT as
+probe-complete. Closing these is tracked in the port roadmap.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/ride-head-refs.mts`).
+-/
+
+namespace RideHead
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm PEDESTRIAN_STEP_MAX_KMH
+  PEDESTRIAN_MIN_RUN_NET_M PEDESTRIAN_MIN_RUN_S PEDESTRIAN_MIN_CADENCE_SPM)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF median jsRound segMode sortedIn walkRemainder)
+
+/-- Per-step pace marking a stay-tail fix as the ride moving. -/
+def RIDE_HEAD_STEP_KMH : Float := 15
+/-- From the first ride step to the stay's last fix must displace a real
+inter-station distance — a lone urban-canyon spike never qualifies. -/
+def RIDE_HEAD_MIN_NET_M : Float := 250
+/-- The march must set out from the stay itself. -/
+def MARCH_START_MAX_FROM_DWELL_M : Float := 150
+/-- After the first ride step the fixes must never come back within this of the
+dwell mass — an errand-and-back means the user never left for good. -/
+def DWELL_RETURN_RADIUS_M : Float := 120
+/-- The carve must leave a real stay behind; a platform-length "stay" belongs to
+the boarding-platform absorber, not here. -/
+def RIDE_HEAD_MIN_REMAINING_STAY_S : Int := 600
+/-- Steps below this pace are standing (the platform wait), not marching. -/
+def MARCH_STILL_KMH : Float := 2.5
+
+private def stepKmh (fixes : Array PointF) (i j : Nat) : Float :=
+  let dt := fixes[j]!.ts - fixes[i]!.ts
+  if dt > 0 then
+    haversineMeters fixes[i]!.lat fixes[i]!.lon fixes[j]!.lat fixes[j]!.lon / Float.ofInt dt * 3.6
+  else 0
+
+private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
+  let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
+  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
+
+/-- Median of `values` weighted by `holds`: the first value, in ascending order,
+at which the cumulative weight reaches half the total. -/
+private def weightedMedian (values holds : Array Float) : Float := Id.run do
+  let order := (((Array.range values.size).map fun j => (values[j]!, holds[j]!)).toList.mergeSort
+    fun a b => a.1 ≤ b.1).toArray
+  let half := (order.foldl (fun s e => s + e.2) 0) / 2
+  let mut acc : Float := 0
+  for e in order do
+    acc := acc + e.2
+    if acc ≥ half then return e.1
+  return order[order.size - 1]!.1
+
+/-- Claim a ride's head — the station walk, the platform wait, and the first
+tunnel-reacquire fixes — out of the STAY that precedes a train leg. -/
+def claimRideHeadFromStay (segments : Array Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
+  if steps.isEmpty then return segments
+  let mut segs := segments
+  let mut out : Array Seg := #[]
+  for i in [0:segs.size] do
+    let cur := segs[i]!
+    let carved : Option (Seg × Seg × Seg) := Id.run do
+      if i + 1 ≥ segs.size then return none
+      let next := segs[i + 1]!
+      if !(segMode cur == "stationary" && segMode next == "train") then return none
+      let fixes := sortedIn points cur.startTs cur.endTs
+      let n := fixes.size
+      if n < 8 then return none
+      -- How long each fix's position HELD, so the dwell outweighs a dense tail.
+      let holdS := (Array.range n).map fun j =>
+        if j < n - 1 then max (Float.ofInt (fixes[j + 1]!.ts - fixes[j]!.ts)) 1 else 1
+      let dwellLat := weightedMedian (fixes.map (·.lat)) holdS
+      let dwellLon := weightedMedian (fixes.map (·.lon)) holdS
+      let fromDwell := fixes.map fun f => haversineMeters f.lat f.lon dwellLat dwellLon
+      -- The closest any fix from j onward comes back to the dwell.
+      let minAfter := Id.run do
+        let mut m := fromDwell
+        for k in [0:n - 1] do
+          let j := n - 2 - k
+          m := m.set! j (min m[j]! m[j + 1]!)
+        return m
+      -- The ride: first vehicle-paced step whose suffix never returns.
+      let r := Id.run do
+        for j in [1:n] do
+          if stepKmh fixes (j - 1) j ≥ RIDE_HEAD_STEP_KMH && minAfter[j]! > DWELL_RETURN_RADIUS_M then
+            return j
+        return 0
+      if r < 1 then return none
+      let rideNetM :=
+        haversineMeters fixes[r - 1]!.lat fixes[r - 1]!.lon fixes[n - 1]!.lat fixes[n - 1]!.lon
+      if rideNetM < RIDE_HEAD_MIN_NET_M then return none
+      -- March end: strip the standing platform wait off the pedestrian run.
+      let mut m := r - 1
+      for _ in [0:n] do
+        if m > 0 && stepKmh fixes (m - 1) m < MARCH_STILL_KMH then m := m - 1 else break
+      -- March start: the maximal contiguous moving run ending at m. The step
+      -- INTO the dwell's last fix spans the still dwell (often a long indoor fix
+      -- gap), so its pace is negligible and the scan stops there.
+      let mut w := m
+      for _ in [0:n] do
+        if w > 0 && stepKmh fixes (w - 1) w ≥ MARCH_STILL_KMH then w := w - 1 else break
+      if w ≥ m then return none
+      -- Four-signal walk evidence over the march, plus two placement gates.
+      let durS := fixes[m]!.ts - fixes[w]!.ts
+      let netM := haversineMeters fixes[w]!.lat fixes[w]!.lon fixes[m]!.lat fixes[m]!.lon
+      let pedestrianPaced := (Array.range (m - w)).all fun k =>
+        stepKmh fixes (w + k) (w + k + 1) ≤ PEDESTRIAN_STEP_MAX_KMH
+      let cadenceOk := match meanCadenceSpm steps fixes[w]!.ts fixes[m]!.ts with
+        | none => false
+        | some c => c ≥ PEDESTRIAN_MIN_CADENCE_SPM
+      if !pedestrianPaced || Float.ofInt durS < PEDESTRIAN_MIN_RUN_S
+         || netM < PEDESTRIAN_MIN_RUN_NET_M || !cadenceOk
+         || fromDwell[w]! > MARCH_START_MAX_FROM_DWELL_M
+         || fixes[w]!.ts - cur.startTs < RIDE_HEAD_MIN_REMAINING_STAY_S then return none
+      -- Carve: stay | walk (the march) | train (wait + reacquire fixes on).
+      let walkStart := fixes[w]!.ts
+      let rideStart := fixes[m]!.ts
+      let (sc, sa, sm) := stats points cur.startTs walkStart
+      let (tc, ta, tm) := stats points rideStart next.endTs
+      let reason := s!"extended back over the boarding: claimed a {toString (jsRound netM).toInt64.toInt} m station walk + the ride's reacquire fixes out of the preceding stay"
+      return some
+        ({ cur with endTs := walkStart, avgSpeed := sa, maxSpeed := sm, pointCount := Int.ofNat sc },
+         walkRemainder { cur with mode := "walking" } walkStart rideStart points false,
+         { next with
+           startTs := rideStart, avgSpeed := ta, maxSpeed := tm, pointCount := Int.ofNat tc
+           refinedReason := some (match next.refinedReason with
+             | some r => s!"{r}; {reason}"
+             | none => reason) })
+    match carved with
+    | none => out := out.push cur
+    | some (stay, walk, train) =>
+      out := (out.push stay).push walk
+      segs := segs.set! (i + 1) train
+  return out
+
+/-! ### Reference values
+
+Pinned against Node/V8 (`lean/experiments/ride-head-refs.mts`).
+-/
+
+section RideHeadGuards
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+private def fx (ts : Int) (metresNorth speedKmh : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+#guard (fx 0 4000 0).lat == 51.55593244699964
+
+private def sg (startTs endTs : Int) (mode : String := "stationary")
+    (refinedMode : Option String := none) (refinedReason : Option String := none) : Seg :=
+  { startTs, endTs, mode, refinedMode, refinedReason
+    avgSpeed := 0, maxSpeed := 1, linearity := 0.1, pointCount := 14 }
+
+private def SEGS : Array Seg := #[sg 0 4000, sg 4000 6000 "train"]
+
+/-- Four sparse dwell fixes, a 300 s march, a standing wait, then the ride. -/
+private def FIXES : Array PointF :=
+  #[fx 0 0 0, fx 1000 5 0, fx 2000 3 0, fx 3000 4 0,
+    fx 3100 10 3.6, fx 3200 110 3.6, fx 3300 210 3.6, fx 3400 310 3.6,
+    fx 3500 315 0.2, fx 3600 318 0.1,
+    fx 3700 1000 25, fx 3800 2000 30, fx 3900 3000 32, fx 4000 4000 34]
+
+private def stepsAt (spm : Float) (from_ to : Int) : List FeasibilityStepPoint :=
+  (List.range (((to - from_) + 59) / 60).toNat).map fun k =>
+    { ts := from_ + 60 * Int.ofNat k, steps := spm }
+private def STEPS : List FeasibilityStepPoint := stepsAt 80 3100 3400
+
+/-- Swap the march fixes, keeping dwell + wait + ride. -/
+private def withMarch (march : Array PointF) : Array PointF :=
+  FIXES.extract 0 4 ++ march ++ FIXES.extract 8 14
+
+private structure RRow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  refinedMode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  linearity : Float
+  reenrich : Bool
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def rv (segs : Array Seg) : Array RRow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode
+      refinedMode := s.refinedMode.getD "", pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, linearity := s.linearity
+      reenrich := s.needsReenrich, reason := s.refinedReason.getD "" }
+
+private def rrun (segs : Array Seg := SEGS) (pts : Array PointF := FIXES)
+    (st : List FeasibilityStepPoint := STEPS) : Array RRow :=
+  rv (claimRideHeadFromStay segs pts st)
+
+private def REASON : String :=
+  "extended back over the boarding: claimed a 300 m station walk + the ride's reacquire fixes out of the preceding stay"
+
+-- stay | walk | train — the stay is cut back, a walk is INVENTED, and the train
+-- extends back over the platform wait and the reacquire fixes.
+--
+-- This guard ALSO pins the time-weighted dwell median: 4 dwell fixes against 10
+-- tail fixes, so an unweighted median would sit ~200 m into the march and the
+-- MARCH_START_MAX_FROM_DWELL_M gate would refuse the carve outright.
+#guard rrun == #[
+  { startTs := 0, endTs := 3100, mode := "stationary", refinedMode := "", pointCount := 4,
+    avgSpeed := 0, maxSpeed := 0, linearity := 0.1, reenrich := false, reason := "" },
+  { startTs := 3100, endTs := 3400, mode := "walking", refinedMode := "", pointCount := 3,
+    avgSpeed := 3.6, maxSpeed := 3.6, linearity := 1, reenrich := true, reason := "" },
+  { startTs := 3400, endTs := 6000, mode := "train", refinedMode := "", pointCount := 7,
+    avgSpeed := 25, maxSpeed := 34, linearity := 0.1, reenrich := false, reason := REASON }]
+
+-- WHO MAY PARTICIPATE.
+#guard rrun SEGS FIXES [] == rv SEGS
+#guard rrun #[sg 0 4000 "walking", sg 4000 6000 "train"] == rv #[sg 0 4000 "walking", sg 4000 6000 "train"]
+#guard rrun #[sg 0 4000, sg 4000 6000 "driving"] == rv #[sg 0 4000, sg 4000 6000 "driving"]
+-- Both sides read segMode, so refinedMode promotions count.
+#guard (rrun #[sg 0 4000 "walking" (some "stationary"), sg 4000 6000 "driving" (some "train")]).size == 3
+#guard rrun #[sg 0 4000] == rv #[sg 0 4000]
+-- Fewer than 8 fixes in the stay.
+#guard rrun SEGS (FIXES.extract 0 3 ++ FIXES.extract 10 14) == rv SEGS
+
+-- THE RIDE TEST. No vehicle-paced step at all.
+#guard rrun SEGS
+  (FIXES.extract 0 10 ++ #[fx 3700 330 3, fx 3800 350 3, fx 3900 370 3, fx 4000 390 3]) == rv SEGS
+-- AN ERRAND AND BACK: there IS a fast step, but the fixes afterwards come back
+-- inside DWELL_RETURN_RADIUS_M — the user never left for good.
+#guard rrun SEGS
+  (FIXES.extract 0 10 ++ #[fx 3700 1000 25, fx 3800 500 25, fx 3900 80 25, fx 4000 50 3]) == rv SEGS
+-- A ride net BETWEEN 250 and 2000: carves at the real bar, and would be
+-- refused if the bar were raised — so the constant's VALUE is pinned.
+#guard (rrun SEGS
+  (FIXES.extract 0 10 ++ #[fx 3700 800 25, fx 3800 850 5, fx 3900 870 5, fx 4000 880 5])).size == 3
+-- The ride's net displacement is under RIDE_HEAD_MIN_NET_M.
+#guard rrun SEGS
+  (FIXES.extract 0 10 ++ #[fx 3700 500 25, fx 3800 520 3, fx 3900 540 3, fx 4000 560 3]) == rv SEGS
+
+-- THE MARCH. No march at all: the fixes step straight from dwell into the wait.
+#guard rrun SEGS
+  (FIXES.extract 0 4 ++ #[fx 3100 5 0.1, fx 3200 6 0.1, fx 3300 7 0.1, fx 3400 8 0.1]
+   ++ FIXES.extract 8 14) == rv SEGS
+-- A step in the march ABOVE the pedestrian ceiling.
+#guard rrun SEGS (withMarch #[fx 3100 10 3.6, fx 3200 110 3.6, fx 3300 210 3.6, fx 3400 610 14.4])
+  == rv SEGS
+-- Too short in time, and too short in net ground.
+#guard rrun SEGS (withMarch #[fx 3320 10 3.6, fx 3340 40 5.4, fx 3370 80 4.8, fx 3400 130 6]) == rv SEGS
+#guard rrun SEGS (withMarch #[fx 3100 10 1, fx 3200 40 1, fx 3300 70 1, fx 3400 100 1]) == rv SEGS
+-- Cadence below the bar, and no cadence data over the march window at all.
+#guard rrun SEGS FIXES (stepsAt 30 3100 3400) == rv SEGS
+#guard rrun SEGS FIXES (stepsAt 80 100 400) == rv SEGS
+-- The march sets out from somewhere ELSE, beyond MARCH_START_MAX_FROM_DWELL_M.
+#guard rrun SEGS (withMarch #[fx 3100 200 3.6, fx 3200 300 3.6, fx 3300 400 3.6, fx 3400 500 3.6])
+  == rv SEGS
+
+-- RIDE_HEAD_MIN_REMAINING_STAY_S needs its OWN geometry: simply moving the
+-- stay's startTs also drops the early dwell fixes, which moves the time-weighted
+-- dwell mass into the march and refuses for the wrong reason. Here one
+-- long-held dwell fix still outweighs the whole 420 s tail, and the march opens
+-- exactly 600 s after the stay's start.
+private def BAR_FIXES : Array PointF :=
+  #[fx 0 0 0, fx 600 10 6, fx 660 110 6, fx 720 210 6, fx 780 310 6,
+    fx 840 315 0.3, fx 900 1000 41, fx 960 2000 40, fx 1020 3000 42]
+private def BAR_STEPS : List FeasibilityStepPoint := stepsAt 80 600 780
+#guard (rrun #[sg 0 1100, sg 1100 3000 "train"] BAR_FIXES BAR_STEPS).size == 3
+#guard (rrun #[sg 0 1100, sg 1100 3000 "train"] BAR_FIXES BAR_STEPS)[0]!.endTs == 600
+-- One second under the bar: refused.
+-- The dwell fix must be INSIDE the shifted window, or the dwell mass moves into
+-- the march and the refusal is for the wrong reason.
+private def BAR_FIXES1 : Array PointF := #[fx 1 0 0] ++ BAR_FIXES.extract 1 9
+#guard rrun #[sg 1 1100, sg 1100 3000 "train"] BAR_FIXES1 BAR_STEPS
+  == rv #[sg 1 1100, sg 1100 3000 "train"]
+
+-- The train already carries a reason: the new one is APPENDED after "; ".
+#guard (rrun #[sg 0 4000, sg 4000 6000 "train" none (some "Victoria Line")])[2]!.reason
+  == s!"Victoria Line; {REASON}"
+
+#guard rrun #[] #[] [] == #[]
+
+end RideHeadGuards
+
+end RideHead
