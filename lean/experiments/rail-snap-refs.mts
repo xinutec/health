@@ -2,13 +2,10 @@
  * V8 reference values for the Lean port of `src/geo/rail-snap.ts` — the
  * fix-cloud-weighted rail-network snapper.
  *
- * Boundary: `buildRailGraph`'s vertex fusion keys a vertex by
- * `` `${lat.toFixed(7)},${lon.toFixed(7)}` `` — string-keyed coordinate fusion,
- * which stays SHELL exactly as `walkable-route.ts`'s `nodeKey` does. So this
- * harness also emits, for each way, the fused vertex id of each of its
- * coordinates: that is the input the Lean twin is given, and everything
- * downstream of the fusion (edge order, weights, gap bridging, Dijkstra, the
- * snap decisions) is what the port reproduces.
+ * The Lean twin takes the RAW ways and fuses them itself (`toFixed` is ported
+ * exactly in `Verified.JsNum`), so the vertex list and adjacency below are the
+ * reference for the fusion as well as for the weights: vertices are numbered in
+ * first-seen order, so a wrong fusion renumbers every row.
  *
  * `shortestPathViaLean` is a no-op when `LEAN_RAIL` is unset (mode "off"
  * returns the TS path), so these references pin the pure TS search.
@@ -100,27 +97,14 @@ const lines_: string[] = [];
 const say = (label: string, value: string): void => lines_.push(`${label} = ${value}`);
 const section = (name: string): void => lines_.push(`\n=== ${name} ===`);
 
-/**
- * Emit the fused net for a set of ways: the vertex list and, per way, the
- * vertex id of each of its RAW coordinates. This is the shell-side half of
- * `buildRailGraph` — the Lean twin is handed exactly this and rebuilds the
- * adjacency from it, so a net is needed per scenario (a line-restricted search
- * fuses a different way set and therefore numbers its vertices differently).
- */
+/** Emit the graph a set of ways builds: the fused vertex list and the
+ *  adjacency, per scenario (a line-restricted search fuses a different way set
+ *  and therefore numbers its vertices differently). */
 const dumpNet = (label: string, ways: OsmLine[], cloud: FixCloud): void => {
 	const g = buildRailGraph(ways, cloud);
 	say(`${label} vertices`, String(g.vertices.length));
 	g.vertices.forEach((v, i) => say(`${label} v[${i}]`, `${f(v.lat)},${f(v.lon)}`));
 	g.adj.forEach((row, i) => say(`${label} adj[${i}]`, row.map((e) => `${e.to}:${f(e.w)}`).join(" ")));
-	for (const l of ways) {
-		if (!["rail", "subway", "light_rail", "narrow_gauge"].includes(l.subtype ?? "")) continue;
-		const ids = l.coords.map(([lat, lon]) => {
-			const idx = g.vertices.findIndex((v) => v.lat === lat && v.lon === lon);
-			if (idx < 0) throw new Error(`way ${l.osmId} coord not fused to a vertex`);
-			return idx;
-		});
-		say(`${label} vids way ${l.osmId}`, ids.join(","));
-	}
 };
 
 // ------------------------------------------------------------ parsing -----

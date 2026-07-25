@@ -119,7 +119,7 @@ inductive FixedKey where
   /-- `sign` is the spec's step 8 test, which is `false` for `-0`. -/
   | num (neg : Bool) (n : Nat)
   | nonFinite (s : String)
-  deriving BEq, Repr
+  deriving BEq, Hashable, Repr
 
 /--
 The identity `toFixed f` imposes: `toFixedKey a f == toFixedKey b f` exactly
@@ -133,12 +133,23 @@ def toFixedKey (x : Float) (f : Nat) : Option FixedKey :=
   else if x.abs ≥ toFixedMax then none
   else some (.num (x < 0) (toFixedN x f))
 
-/-- The coordinate-fusion key: `` `${lat.toFixed(7)},${lon.toFixed(7)}` `` as a
-    comparable value. The graph builders key vertices with this. -/
-def nodeKey7 (lat lon : Float) : Option (FixedKey × FixedKey) :=
+/-- The coordinate-fusion key that the graph builders hash a vertex by — the
+    comparable form of `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``.
+
+    The `raw` arm is reachable only for a coordinate at or above `10^21`, where
+    the TS key would come from the unported `ToString`. Latitudes and longitudes
+    are bounded by ±90 / ±180, so it cannot arise from real data; it gives such
+    a point its own vertex rather than guessing at a spelling and fusing two
+    points that JS would have kept apart. -/
+inductive CoordKey where
+  | fused (lat lon : FixedKey)
+  | raw (latBits lonBits : UInt64)
+  deriving BEq, Hashable, Repr
+
+def coordKey7 (lat lon : Float) : CoordKey :=
   match toFixedKey lat 7, toFixedKey lon 7 with
-  | some a, some b => some (a, b)
-  | _, _ => none
+  | some a, some b => .fused a b
+  | _, _ => .raw lat.toBits lon.toBits
 
 /-! ## Guards
 
@@ -235,8 +246,8 @@ private def kLon (e : Float) : Option String := toFixed (lon0 + e * mlon) 7
 -- apart does not. This is what `toFixed(7)` is doing in the graph builders.
 #guard toFixed lat0 7 == toFixed (lat0 + 1e-9) 7
 #guard toFixed lat0 7 != toFixed (lat0 + 2e-7) 7
-#guard nodeKey7 lat0 lon0 == nodeKey7 (lat0 + 1e-9) lon0
-#guard nodeKey7 lat0 lon0 != nodeKey7 (lat0 + 2e-7) lon0
+#guard coordKey7 lat0 lon0 == coordKey7 (lat0 + 1e-9) lon0
+#guard coordKey7 lat0 lon0 != coordKey7 (lat0 + 2e-7) lon0
 
 -- `toFixedKey` agrees with the string it stands in for — including the two
 -- zeroes, which share a key, and a positive/negative pair rounding to zero,

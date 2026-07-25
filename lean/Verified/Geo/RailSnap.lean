@@ -1,5 +1,6 @@
 import Verified.Geo.WalkableRoute
 import Verified.Geo.Worldline
+import Verified.JsNum
 import Std.Data.HashMap
 
 /-!
@@ -8,16 +9,17 @@ import Std.Data.HashMap
 Snap a confident train leg onto the rail network, routing between its two named
 stations along the line the user's past journeys actually traced rather than the
 geometrically shortest one. The whole module is pure geometry and graph search,
-so all of it ports, with one boundary and one reuse:
+so all of it ports — including the vertex fusion, which earlier ports left in
+the shell:
 
-* **Boundary — vertex fusion stays SHELL.** `buildRailGraph` keys a vertex by
-  `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``, the same string-keyed coordinate
-  fusion as `walkable-route.ts`'s `nodeKey`, and the same decision is taken
-  here: the shell fuses, and Lean is handed a {@link RailNet} — the fused
-  vertex list plus, per way, the vertex id of each of its RAW coordinates.
-  Both are needed, because the TS computes an edge's weight from the way's raw
-  coordinates while storing the FIRST coordinate that mapped to each vertex; a
-  net carrying only fused coordinates would move every weight.
+* **Fusion is in Lean.** `buildRailGraph` keys a vertex by
+  `` `${lat.toFixed(7)},${lon.toFixed(7)}` ``. That was the last algorithmic
+  reason to hand Lean a pre-built topology; with `toFixed` ported exactly
+  (`Verified.JsNum`) the builder takes RAW ways and fuses them itself, so the
+  shell's only remaining job for this module is reading the rows.
+  {@link Verified.JsNum.coordKey7} stands in for the key string — a graph
+  builder needs only to know when two coordinates agree, and that comparison is
+  exact even where the string rendering is not.
 * **Reuse.** `parseRailWayName` is already ported in `Verified.Geo.Worldline`
   (it is the same `indexOf`/`slice` parser, splitting on the FIRST separator
   with the tail rejoined) and `metersBetween` in `Verified.Geo.WalkableRoute`
@@ -26,7 +28,8 @@ so all of it ports, with one boundary and one reuse:
 `snapTrainSegment` calls `shortestPathViaLean`, which returns the TS path
 unchanged when `LEAN_RAIL` is unset (mode `off`) — the arm ported here, and the
 arm the references pin. `parseLineMemberships` lives in `route-graph.ts` but is
-ported here because `wayOnLine` is its only consumer in this cluster.
+ported here because `wayOnLine` is its only consumer in this cluster — which
+also lets `snapTrainSegmentOnLine` do its own line filtering.
 
 The private helpers `cloudPenalty`, `edgeWeight` and `bridgeGaps` are pinned
 through the adjacency `buildRailGraph` returns, which exposes every weight as an
@@ -65,8 +68,7 @@ def cloudMaxPenalty : Float := 25
 /-- Below this many historic fixes the corridor is too thin to trust. -/
 def minCloudFixes : Nat := 12
 
-/-- Whether a way's OSM subtype carries train traffic. The shell filters ways
-    with this before fusing them into a {@link RailNet}. -/
+/-- Whether a way's OSM subtype carries train traffic. -/
 def isRailSubtype (subtype : Option String) : Bool :=
   railSubtypes.contains (subtype.getD "")
 
@@ -199,18 +201,11 @@ def wayOnLine (osmName : Option String) (line : String) : Bool :=
 
 /-! ## The rail graph -/
 
-/-- One way, as the shell hands it over: its RAW coordinates alongside the
-    fused vertex id each one resolved to. -/
-structure FusedWay where
+/-- An OSM way from the mirror, exactly as loaded. -/
+structure RailWay where
+  name : Option String
+  subtype : Option String
   coords : Array Pt
-  vids : Array Nat
-  deriving Inhabited, Repr
-
-/-- The shell-fused rail network: the deduplicated vertex list (in first-seen
-    order, which fixes the vertex numbering) and the rail-subtype ways. -/
-structure RailNet where
-  vertices : Array Pt
-  ways : Array FusedWay
   deriving Inhabited, Repr
 
 structure Edge where
@@ -260,24 +255,39 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
             adj := adj.set! j (adj[j]!.push ⟨i, w⟩)
   return adj
 
-/-- Build the undirected rail graph over a shell-fused net. Edges are
-    consecutive node pairs within a way, plus gap-bridge edges. -/
-def buildRailGraph (net : RailNet) (cloud : FixCloud) : RailGraph := Id.run do
-  let mut adj : Array (Array Edge) := Array.replicate net.vertices.size #[]
-  for way in net.ways do
-    let mut prev : Option (Nat × Pt) := none
-    for i in [0:way.coords.size] do
-      let id := way.vids[i]!
-      let c := way.coords[i]!
-      match prev with
-      | some (pid, pc) =>
-        if pid != id then
-          let w := edgeWeight pc c cloud
-          adj := adj.set! pid (adj[pid]!.push ⟨id, w⟩)
-          adj := adj.set! id (adj[id]!.push ⟨pid, w⟩)
-      | none => pure ()
-      prev := some (id, c)
-  return { vertices := net.vertices, adj := bridgeGaps net.vertices adj cloud }
+/-- Build the undirected rail graph. Vertices are way nodes deduplicated by
+    rounded coordinate — a node shared by two ways becomes ONE vertex, which is
+    what connects ways into a network — and are numbered in first-seen order.
+    Edges are consecutive node pairs within a way, plus gap-bridge edges. Only
+    train-carrying subtypes are included. -/
+def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) : RailGraph := Id.run do
+  let mut vertices : Array Pt := #[]
+  let mut adj : Array (Array Edge) := #[]
+  let mut idByKey : Std.HashMap Verified.JsNum.CoordKey Nat := {}
+  for line in lines do
+    if !isRailSubtype line.subtype then continue
+    -- `prev < 0` marks "no previous node in this way yet".
+    let mut prev : Int := -1
+    let mut prevPt : Pt := ⟨0, 0⟩
+    for c in line.coords do
+      let key := Verified.JsNum.coordKey7 c.lat c.lon
+      let mut id : Nat := 0
+      match idByKey[key]? with
+      | some i => id := i
+      | none =>
+        id := vertices.size
+        idByKey := idByKey.insert key id
+        -- The vertex keeps the FIRST coordinate that mapped to it, while edge
+        -- weights below use each way's own raw coordinates.
+        vertices := vertices.push c
+        adj := adj.push #[]
+      if prev ≥ 0 && prev.toNat != id then
+        let w := edgeWeight prevPt c cloud
+        adj := adj.set! prev.toNat (adj[prev.toNat]!.push ⟨id, w⟩)
+        adj := adj.set! id (adj[id]!.push ⟨prev.toNat, w⟩)
+      prev := Int.ofNat id
+      prevPt := c
+  return { vertices, adj := bridgeGaps vertices adj cloud }
 
 /-! ## Dijkstra
 
@@ -422,14 +432,15 @@ def interpolateTimes (coords : Array Pt) (startTs endTs : Float) : Array Snapped
     out := out.push ⟨c.lat, c.lon, ts⟩
   return out
 
-/-- The shared tail of both snappers: route between the two resolved stations
-    over `net` and time-interpolate the result. `none` on every refusal — a
-    station off the network, the two stations landing on one vertex, or no
-    path — which means "draw the raw fixes", never a guessed line. -/
-private def routeBetweenStations (seg : TrainSegment) (net : RailNet) (cloud : FixCloud)
+/-- The shared tail of both snappers: build the graph, route between the two
+    resolved stations and time-interpolate the result. `none` on every refusal —
+    no rail geometry, a station off the network, the two stations landing on one
+    vertex, or no path — which means "draw the raw fixes", never a guessed
+    line. -/
+private def routeBetweenStations (seg : TrainSegment) (lines : Array RailWay) (cloud : FixCloud)
     (board alight : ResolvedStation) (line : Option String) : Option SnapResult := Id.run do
-  if net.vertices.isEmpty then return none
-  let graph := buildRailGraph net cloud
+  let graph := buildRailGraph lines cloud
+  if graph.vertices.isEmpty then return none
   match nearestVertex graph ⟨board.lat, board.lon⟩, nearestVertex graph ⟨alight.lat, alight.lon⟩ with
   | some (fromId, fromD), some (toId, toD) =>
     if fromD > maxStationToRailM || toD > maxStationToRailM then return none
@@ -453,7 +464,7 @@ shortest one.
 not a station pair, an unknown or off-network station, or two disconnected
 stations.
 -/
-def snapTrainSegment (seg : TrainSegment) (net : RailNet) (stations : Array OsmStation)
+def snapTrainSegment (seg : TrainSegment) (lines : Array RailWay) (stations : Array OsmStation)
     (corridorFixes : Array Pt) : Option SnapResult := Id.run do
   match parseRailWayName (some seg.wayName) with
   | none => return none
@@ -463,20 +474,19 @@ def snapTrainSegment (seg : TrainSegment) (net : RailNet) (stations : Array OsmS
       if board.name == alight.name then return none
       -- Without enough historic fixes there is no trustworthy corridor.
       if corridorFixes.size < minCloudFixes then return none
-      return routeBetweenStations seg net (FixCloud.ofFixes corridorFixes) board alight parsed.line
+      return routeBetweenStations seg lines (FixCloud.ofFixes corridorFixes) board alight parsed.line
     | _, _ => return none
 
 /--
 Snap a confident train leg onto its KNOWN line, routing between the two named
 stations over ONLY that line's ways, with NO historic fix cloud: when the label
 carries a line name the LINE itself is the disambiguator, so the geometric
-shortest path within that line's ways IS the ridden route. `net` is therefore
-the line-restricted net — the shell filters the ways with {@link wayOnLine}
-before fusing, and an empty `ways` reproduces the TS's `lineLines.length === 0`
-refusal.
+shortest path within that line's ways IS the ridden route. The restriction is
+done here, with {@link wayOnLine} — nothing is asked of the caller beyond the
+full way list.
 -/
-def snapTrainSegmentOnLine (seg : TrainSegment) (net : RailNet) (stations : Array OsmStation) :
-    Option SnapResult := Id.run do
+def snapTrainSegmentOnLine (seg : TrainSegment) (lines : Array RailWay)
+    (stations : Array OsmStation) : Option SnapResult := Id.run do
   match parseRailWayName (some seg.wayName) with
   | none => return none
   | some parsed =>
@@ -486,10 +496,11 @@ def snapTrainSegmentOnLine (seg : TrainSegment) (net : RailNet) (stations : Arra
       match resolveStation parsed.board stations, resolveStation parsed.alight stations with
       | some board, some alight =>
         if board.name == alight.name then return none
-        if net.ways.isEmpty then return none
+        let lineLines := lines.filter (fun l => wayOnLine l.name line)
+        if lineLines.isEmpty then return none
         -- An empty fix cloud gives every edge the same uniform penalty, so the
         -- search returns the geometric shortest path.
-        return routeBetweenStations seg net (FixCloud.ofFixes #[]) board alight (some line)
+        return routeBetweenStations seg lineLines (FixCloud.ofFixes #[]) board alight (some line)
       | _, _ => return none
 
 /-! ## Guards
@@ -513,30 +524,23 @@ private def P (n e : Float) : Pt := ⟨lat0 + n * mlat, lon0 + e * mlon⟩
 
 -- Two parallel lines 300 m apart, joined by connectors at e=500 and e=1000;
 -- SPUR continues MAIN east from 10 m past its end (gap-bridged, not shared).
-private def wMain : Array Pt := #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000]
-private def wNorth : Array Pt := #[P 300 0, P 300 500, P 300 1000]
-private def wConnMid : Array Pt := #[P 0 500, P 150 500, P 300 500]
-private def wConnEnd : Array Pt := #[P 0 1000, P 150 1000, P 300 1000]
-private def wSpur : Array Pt := #[P 0 1010, P 0 1200]
+-- TRAM carries MAIN's endpoints but is not a train subtype, so it contributes
+-- no vertices at all.
+private def wayMain : RailWay :=
+  ⟨some "Metropolitan Line", some "rail", #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000]⟩
+private def wayNorth : RailWay :=
+  ⟨some "Piccadilly Line", some "subway", #[P 300 0, P 300 500, P 300 1000]⟩
+private def wayConnMid : RailWay :=
+  ⟨some "Metropolitan Line", some "rail", #[P 0 500, P 150 500, P 300 500]⟩
+private def wayConnEnd : RailWay :=
+  ⟨some "Metropolitan Line", some "rail", #[P 0 1000, P 150 1000, P 300 1000]⟩
+private def waySpur : RailWay :=
+  ⟨some "Metropolitan Line", some "rail", #[P 0 1010, P 0 1200]⟩
+private def wayTram : RailWay :=
+  ⟨some "Tram Line", some "tram", #[P 0 0, P 0 1000]⟩
 
-private def netAll : RailNet :=
-  { vertices := #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000, P 300 0, P 300 500, P 300 1000,
-                  P 150 500, P 150 1000, P 0 1010, P 0 1200]
-    ways := #[⟨wMain, #[0, 1, 2, 3, 4]⟩, ⟨wNorth, #[5, 6, 7]⟩, ⟨wConnMid, #[2, 8, 6]⟩,
-              ⟨wConnEnd, #[4, 9, 7]⟩, ⟨wSpur, #[10, 11]⟩] }
-
-private def netMetro : RailNet :=
-  { vertices := #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000, P 150 500, P 300 500,
-                  P 150 1000, P 300 1000, P 0 1010, P 0 1200]
-    ways := #[⟨wMain, #[0, 1, 2, 3, 4]⟩, ⟨wConnMid, #[2, 5, 6]⟩, ⟨wConnEnd, #[4, 7, 8]⟩,
-              ⟨wSpur, #[9, 10]⟩] }
-
-private def netPicc : RailNet :=
-  { vertices := #[P 300 0, P 300 500, P 300 1000], ways := #[⟨wNorth, #[0, 1, 2]⟩] }
-
-private def netSplit : RailNet :=
-  { vertices := #[P 0 0, P 0 250, P 0 500, P 0 750, P 0 1000, P 300 0, P 300 500, P 300 1000]
-    ways := #[⟨wMain, #[0, 1, 2, 3, 4]⟩, ⟨wNorth, #[5, 6, 7]⟩] }
+private def allLines : Array RailWay :=
+  #[wayMain, wayNorth, wayConnMid, wayConnEnd, waySpur, wayTram]
 
 /-- `cloudAlong(n, count)` from the harness. -/
 private def cloudAlong (n : Float) (count : Nat) : Array Pt :=
@@ -607,7 +611,7 @@ private def adjOk (g : RailGraph) (i : Nat) (expect : Array (Nat × Float)) : Bo
     (Array.range expect.size).all (fun k =>
       g.adj[i]![k]!.to == expect[k]!.1 && approx g.adj[i]![k]!.w expect[k]!.2)
 
-private def gAll : RailGraph := buildRailGraph netAll cMain
+private def gAll : RailGraph := buildRailGraph allLines cMain
 #guard gAll.vertices.size == 12
 #guard adjOk gAll 0 #[(1, 250.00000000000043)]
 #guard adjOk gAll 1 #[(0, 250.00000000000043), (2, 249.99999999999946)]
@@ -623,7 +627,7 @@ private def gAll : RailGraph := buildRailGraph netAll cMain
 #guard adjOk gAll 10 #[(11, 189.99999999999955), (4, 10.000000000000785)]
 #guard adjOk gAll 11 #[(10, 189.99999999999955)]
 
-private def gNorth : RailGraph := buildRailGraph netAll cNorth
+private def gNorth : RailGraph := buildRailGraph allLines cNorth
 #guard adjOk gNorth 0 #[(1, 2839.2537664545421)]
 #guard adjOk gNorth 1 #[(0, 2839.2537664545421), (2, 2839.2537664545321)]
 #guard adjOk gNorth 2 #[(1, 2839.2537664545321), (3, 2839.2537664545430), (8, 921.42857143066522)]
@@ -637,7 +641,8 @@ private def gNorth : RailGraph := buildRailGraph netAll cNorth
 #guard adjOk gNorth 10 #[(11, 2376.7581001475037), (4, 112.88571061127743)]
 #guard adjOk gNorth 11 #[(10, 2376.7581001475037)]
 
-private def gMetro : RailGraph := buildRailGraph netMetro cEmpty
+private def gMetro : RailGraph :=
+  buildRailGraph #[wayMain, wayConnMid, wayConnEnd, waySpur] cEmpty
 #guard gMetro.vertices.size == 11
 #guard adjOk gMetro 0 #[(1, 6250.0000000000109)]
 #guard adjOk gMetro 1 #[(0, 6250.0000000000109), (2, 6249.9999999999864)]
@@ -651,13 +656,13 @@ private def gMetro : RailGraph := buildRailGraph netMetro cEmpty
 #guard adjOk gMetro 9 #[(10, 4749.9999999999891), (4, 250.00000000001964)]
 #guard adjOk gMetro 10 #[(9, 4749.9999999999891)]
 
-private def gPicc : RailGraph := buildRailGraph netPicc cEmpty
+private def gPicc : RailGraph := buildRailGraph #[wayNorth] cEmpty
 #guard gPicc.vertices.size == 3
 #guard adjOk gPicc 0 #[(1, 12499.260310329435)]
 #guard adjOk gPicc 1 #[(0, 12499.260310329435), (2, 12499.260310329435)]
 #guard adjOk gPicc 2 #[(1, 12499.260310329435)]
 
-private def gSplit : RailGraph := buildRailGraph netSplit cMain
+private def gSplit : RailGraph := buildRailGraph #[wayMain, wayNorth] cMain
 #guard gSplit.vertices.size == 8
 #guard adjOk gSplit 0 #[(1, 250.00000000000043)]
 #guard adjOk gSplit 1 #[(0, 250.00000000000043), (2, 249.99999999999946)]
@@ -668,8 +673,14 @@ private def gSplit : RailGraph := buildRailGraph netSplit cMain
 #guard adjOk gSplit 6 #[(5, 5642.5232257983280), (7, 5642.5232257983280)]
 #guard adjOk gSplit 7 #[(6, 5642.5232257983280)]
 
-private def gEmpty : RailGraph := buildRailGraph ⟨#[], #[]⟩ cMain
+-- A tram is not a train: the subtype filter leaves nothing to fuse.
+private def gEmpty : RailGraph := buildRailGraph #[wayTram] cMain
 #guard gEmpty.vertices.size == 0
+#guard (buildRailGraph #[] cMain).vertices.size == 0
+
+-- Fusion, stated directly: the shared nodes land on the vertices the
+-- adjacency rows above address.
+#guard gAll.vertices[2]! == P 0 500 && gAll.vertices[4]! == P 0 1000
 
 -- nearestVertex
 private def alphaPt : Pt :=
@@ -701,7 +712,7 @@ private def segAB : TrainSegment := ⟨1000, 1300, "Alpha → Beta"⟩
 private def pathTs (r : Option SnapResult) : Array Float := (r.map (·.path.map (·.ts))).getD #[]
 private def pathLon (r : Option SnapResult) : Array Float := (r.map (·.path.map (·.lon))).getD #[]
 
-private def snapMain := snapTrainSegment segAB netAll stations (cloudAlong 0 21)
+private def snapMain := snapTrainSegment segAB allLines stations (cloudAlong 0 21)
 #guard (snapMain.map (·.board.name)) == some "Alpha"
 #guard (snapMain.map (·.alight.name)) == some "Beta"
 #guard (snapMain.bind (·.line)).isNone
@@ -711,33 +722,33 @@ private def snapMain := snapTrainSegment segAB netAll stations (cloudAlong 0 21)
 
 /-- The cloud, not the geometry, picks the route: fixes along the NORTH line
     make the 1600 m detour cheaper than the 1000 m direct run. -/
-private def snapNorth := snapTrainSegment segAB netAll stations (cloudAlong 300 21)
+private def snapNorth := snapTrainSegment segAB allLines stations (cloudAlong 300 21)
 #guard pathTs snapNorth == #[1000, 1047, 1094, 1122, 1150, 1244, 1272, 1300]
 #guard approx (pathLon snapNorth)[3]! (-0.12278165073441279)
 
-#guard (snapTrainSegment segAB netAll stations (cloudAlong 0 11)).isNone
-#guard (snapTrainSegment ⟨1000, 1300, "Alpha - Beta"⟩ netAll stations (cloudAlong 0 21)).isNone
-#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Zeta"⟩ netAll stations (cloudAlong 0 21)).isNone
-#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Alpha"⟩ netAll stations (cloudAlong 0 21)).isNone
-#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Nowhere"⟩ netAll stations (cloudAlong 0 21)).isNone
-#guard (snapTrainSegment segAB ⟨#[], #[]⟩ stations (cloudAlong 0 21)).isNone
+#guard (snapTrainSegment segAB allLines stations (cloudAlong 0 11)).isNone
+#guard (snapTrainSegment ⟨1000, 1300, "Alpha - Beta"⟩ allLines stations (cloudAlong 0 21)).isNone
+#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Zeta"⟩ allLines stations (cloudAlong 0 21)).isNone
+#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Alpha"⟩ allLines stations (cloudAlong 0 21)).isNone
+#guard (snapTrainSegment ⟨1000, 1300, "Alpha → Nowhere"⟩ allLines stations (cloudAlong 0 21)).isNone
+#guard (snapTrainSegment segAB #[wayTram] stations (cloudAlong 0 21)).isNone
 
 -- snapTrainSegmentOnLine
 private def snapMetro :=
-  snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta · Metropolitan Line"⟩ netMetro stations
+  snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta · Metropolitan Line"⟩ allLines stations
 #guard (snapMetro.bind (·.line)) == some "Metropolitan Line"
 #guard pathTs snapMetro == #[1000, 1075, 1150, 1225, 1300]
 
 private def snapPicc :=
-  snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Gamma · Piccadilly Line"⟩ netPicc stations
+  snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Gamma · Piccadilly Line"⟩ allLines stations
 #guard (snapPicc.bind (·.line)) == some "Piccadilly Line"
 #guard pathTs snapPicc == #[1000, 1150, 1300]
 #guard approx (pathLon snapPicc)[0]! (-0.13000000000000000)
 
-#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta"⟩ netMetro stations).isNone
--- An unknown line leaves the shell's `wayOnLine` filter empty.
-#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta · Bakerloo Line"⟩ ⟨#[], #[]⟩ stations).isNone
-#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Alpha · Metropolitan Line"⟩ netMetro stations).isNone
+#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta"⟩ allLines stations).isNone
+-- No way carries this line, so the `wayOnLine` filter empties the network.
+#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Beta · Bakerloo Line"⟩ allLines stations).isNone
+#guard (snapTrainSegmentOnLine ⟨1000, 1300, "Alpha → Alpha · Metropolitan Line"⟩ allLines stations).isNone
 
 end Guards
 
