@@ -1,3 +1,4 @@
+import Verified.JsNum
 import Verified.Geo.Segments
 import Verified.Geo.ModeBiometrics
 /-!
@@ -635,5 +636,175 @@ private def negFactor : Factor := fun _ _ => some ⟨"neg", negInf⟩
   == some (some "Named")
 #guard ((scoreCandidates [C "walking", C "walking" (some "Named")] {} [negFactor]).map
   (fun r => r.margin.isNaN)) == some true
+
+/-! ## Candidate generation (port of `factors/refine-mode-candidates.ts`)
+
+The generator turns nearby OSM ways plus the classifier's `originalMode` into
+the labelling space the aggregator scores. It is deliberately dumb about speed
+and context — it enumerates, it does not decide.
+-/
+
+/-- One nearby OSM way, as `nearbyWays` returns it. -/
+structure NearbyWay where
+  /-- `"highway"`, `"railway"`, `"waterway"`, `"aeroway"`. -/
+  type : String
+  /-- `"motorway"`, `"rail"`, `"subway"`, `"river"`, … -/
+  subtype : String
+  name : Option String := none
+  distanceM : Option Float := none
+  deriving Inhabited, Repr
+
+def driveableHighwaySubtypes : List String :=
+  ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "service",
+   "unclassified", "track", "living_street"]
+def pedestrianHighwaySubtypes : List String :=
+  ["footway", "path", "pedestrian", "bridleway", "steps"]
+
+/-- The modes a way is plausibly compatible with. A way matching nothing (a
+    waterway, a `construction` highway, an unknown type) contributes NO
+    candidates — the fallback still guarantees a non-empty result. -/
+def modesForWay (way : NearbyWay) : List String :=
+  if way.type == "railway" then ["train"]
+  else if way.type == "aeroway" then
+    if way.subtype == "runway" || way.subtype == "taxiway" then ["plane"] else ["stationary"]
+  else if way.type == "highway" then
+    if way.subtype == "cycleway" then ["cycling"]
+    else if pedestrianHighwaySubtypes.contains way.subtype then ["walking"]
+    else if driveableHighwaySubtypes.contains way.subtype then ["driving", "walking", "cycling"]
+    else []
+  else []
+
+/-- Optional per-segment biometric context. Supplying it drops way-attached
+    candidates whose mode is biologically implausible for the observed cadence.
+    HR is deliberately NOT filtered here — that veto over-fires on the sitting
+    modes and the `biometricLL` factor handles HR as a weighted signal. -/
+structure BiometricContext where
+  obs : Verified.Geo.ModeBiometrics.MinuteObservation
+  stats : List Verified.Geo.ModeBiometrics.ModeStats
+
+/-- JS truthiness for an optional name: `undefined` and `""` are both falsy. -/
+private def hasName (n : Option String) : Bool :=
+  match n with
+  | none => false
+  | some s => !s.isEmpty
+
+/--
+Enumerate the plausible labelling space for one set of nearby ways.
+
+Way order and per-way mode order both survive into the result. Two filters run
+over the way-attached candidates — the cadence veto, then a per-MODE
+named-beats-unnamed dedup (the OSM pavement-parallels-road case, where the
+named road is the meaningful label) — and the `originalMode` fallback is
+appended AFTER both, so it always exists even when its own mode was vetoed,
+and may duplicate a way-attached candidate.
+-/
+def generateRefineModeCandidates (originalMode : String) (ways : Array NearbyWay)
+    (biometric : Option BiometricContext := none) : Array Candidate := Id.run do
+  let mut candidates : Array Candidate := #[]
+  for way in ways do
+    for mode in modesForWay way do
+      candidates := candidates.push
+        { mode, wayName := way.name, waySubtype := some way.subtype, wayDistanceM := way.distanceM }
+  let filteredBio := match biometric with
+    | none => candidates
+    | some b =>
+      candidates.filter (fun c =>
+        !Verified.Geo.ModeBiometrics.isCadenceImplausibleForMode c.mode b.obs.cadence b.obs.speed b.stats)
+  let modesWithName := (filteredBio.filter (fun c => hasName c.wayName)).map (·.mode)
+  let filtered := filteredBio.filter (fun c => hasName c.wayName || !modesWithName.contains c.mode)
+  return filtered.push { mode := originalMode }
+
+section CandidateGuards
+
+private def W (type subtype : String) (name : Option String := none)
+    (distanceM : Option Float := none) : NearbyWay := { type, subtype, name, distanceM }
+
+/-- Render as the harness does: `mode|name|subtype|distance`, `-` for absent. -/
+private def render (cs : Array Candidate) : String :=
+  String.intercalate "  " (cs.toList.map (fun c =>
+    let f := fun (o : Option Float) => match o with
+      | none => "-"
+      | some x => (Verified.JsNum.toFixed x 0).getD "?"
+    s!"{c.mode}|{c.wayName.getD "-"}|{c.waySubtype.getD "-"}|{f c.wayDistanceM}"))
+
+private def gen (ways : Array NearbyWay) (original : String := "walking")
+    (bio : Option BiometricContext := none) : String :=
+  render (generateRefineModeCandidates original ways bio)
+
+-- modesForWay, one way at a time.
+#guard gen #[W "railway" "rail" (some "West Coast Main Line") (some 5)]
+  == "train|West Coast Main Line|rail|5  walking|-|-|-"
+#guard gen #[W "railway" "subway" (some "Metropolitan Line") (some 3)]
+  == "train|Metropolitan Line|subway|3  walking|-|-|-"
+#guard gen #[W "aeroway" "runway" (some "09L/27R") (some 20)]
+  == "plane|09L/27R|runway|20  walking|-|-|-"
+#guard gen #[W "aeroway" "taxiway" none (some 20)] == "plane|-|taxiway|20  walking|-|-|-"
+#guard gen #[W "aeroway" "terminal" (some "T5") (some 20)] == "stationary|T5|terminal|20  walking|-|-|-"
+#guard gen #[W "highway" "cycleway" (some "Canal Path") (some 4)]
+  == "cycling|Canal Path|cycleway|4  walking|-|-|-"
+#guard gen #[W "highway" "footway" none (some 2)] == "walking|-|footway|2  walking|-|-|-"
+#guard gen #[W "highway" "path" none (some 2)] == "walking|-|path|2  walking|-|-|-"
+#guard gen #[W "highway" "pedestrian" (some "Market Sq") (some 2)]
+  == "walking|Market Sq|pedestrian|2  walking|-|-|-"
+#guard gen #[W "highway" "bridleway" none (some 2)] == "walking|-|bridleway|2  walking|-|-|-"
+#guard gen #[W "highway" "steps" none (some 2)] == "walking|-|steps|2  walking|-|-|-"
+#guard gen #[W "highway" "motorway" (some "M1") (some 30)]
+  == "driving|M1|motorway|30  walking|M1|motorway|30  cycling|M1|motorway|30  walking|-|-|-"
+#guard gen #[W "highway" "service" none (some 8)]
+  == "driving|-|service|8  walking|-|service|8  cycling|-|service|8  walking|-|-|-"
+#guard gen #[W "highway" "track" none (some 8)]
+  == "driving|-|track|8  walking|-|track|8  cycling|-|track|8  walking|-|-|-"
+#guard gen #[W "highway" "living_street" (some "Woonerf") (some 8)]
+  == "driving|Woonerf|living_street|8  walking|Woonerf|living_street|8  cycling|Woonerf|living_street|8  walking|-|-|-"
+#guard gen #[W "highway" "unclassified" (some "Lane") (some 8)]
+  == "driving|Lane|unclassified|8  walking|Lane|unclassified|8  cycling|Lane|unclassified|8  walking|-|-|-"
+-- Contributing nothing: only the fallback survives.
+#guard gen #[W "highway" "construction" (some "Closed Rd") (some 8)] == "walking|-|-|-"
+#guard gen #[W "waterway" "river" (some "Thames") (some 8)] == "walking|-|-|-"
+#guard gen #[W "power" "line" none (some 8)] == "walking|-|-|-"
+#guard gen #[] == "walking|-|-|-"
+
+-- The fallback carries the ORIGINAL mode, comes last, and may duplicate.
+#guard gen #[W "railway" "rail" (some "WCML") (some 5)] "train" == "train|WCML|rail|5  train|-|-|-"
+#guard gen #[W "highway" "footway" none (some 2)] "walking" == "walking|-|footway|2  walking|-|-|-"
+
+-- Named/unnamed dedup, per mode.
+private def barnRise : NearbyWay := W "highway" "residential" (some "Barn Rise") (some 8)
+#guard gen #[barnRise, W "highway" "footway" none (some 2)]
+  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
+#guard gen #[W "highway" "footway" none (some 2), W "highway" "path" none (some 3)]
+  == "walking|-|footway|2  walking|-|path|3  walking|-|-|-"
+#guard gen #[W "highway" "cycleway" (some "Canal Path") (some 4), W "highway" "footway" none (some 2)]
+  == "cycling|Canal Path|cycleway|4  walking|-|footway|2  walking|-|-|-"
+-- An empty-string name is unnamed, so the `""` residential loses to Barn Rise.
+#guard gen #[W "highway" "residential" (some "") (some 8), W "highway" "residential" (some "Barn Rise") (some 9)]
+  == "driving|Barn Rise|residential|9  walking|Barn Rise|residential|9  cycling|Barn Rise|residential|9  walking|-|-|-"
+
+-- The cadence veto.
+private def vetoStats : List Verified.Geo.ModeBiometrics.ModeStats :=
+  [{ mode := "driving", hrMean := some 80, hrStd := some 8, hrSampleCount := 500,
+     cadenceMean := some 4, cadenceStd := some 3, cadenceSampleCount := 500,
+     speedMean := some 40, speedStd := some 15, speedSampleCount := 500, sampleCount := 500 },
+   { mode := "cycling", hrMean := some 120, hrStd := some 12, hrSampleCount := 300,
+     cadenceMean := some 10, cadenceStd := some 5, cadenceSampleCount := 300,
+     speedMean := some 18, speedStd := some 6, speedSampleCount := 300, sampleCount := 300 }]
+private def bioAt (cadence speed : Option Float) : Option BiometricContext :=
+  some { obs := { hr := some 90, cadence, speed }, stats := vetoStats }
+
+#guard gen #[barnRise] "walking" (bioAt (some 105) (some 4))
+  == "walking|Barn Rise|residential|8  walking|-|-|-"
+-- Above the speed ceiling the veto premise fails and nothing is dropped.
+#guard gen #[barnRise] "walking" (bioAt (some 105) (some 40))
+  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
+#guard gen #[barnRise] "walking" (bioAt none (some 4))
+  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
+-- The fallback survives a veto of its own mode.
+#guard gen #[barnRise] "driving" (bioAt (some 105) (some 4))
+  == "walking|Barn Rise|residential|8  driving|-|-|-"
+-- Both filters together.
+#guard gen #[barnRise, W "highway" "cycleway" none (some 2)] "walking" (bioAt (some 105) (some 4))
+  == "walking|Barn Rise|residential|8  walking|-|-|-"
+
+end CandidateGuards
 
 end Verified.Geo.Factors
