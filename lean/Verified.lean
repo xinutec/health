@@ -76,3 +76,4 @@ import Verified.Geo.WalkAnchors
 import Verified.Geo.TubeHop
 import Verified.Geo.UndergroundRun
 import Verified.Geo.UndergroundJourney
+import Verified.Geo.UndergroundAnnotate
