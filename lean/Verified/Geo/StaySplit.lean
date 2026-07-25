@@ -1,9 +1,16 @@
+import Verified.Geo.SegmentMerge
+import Verified.Geo.Worldline
 /-!
 # Stay-split evidence scorer (port of the pure leaf of `src/geo/stay-split.ts`)
 
 `stay-split.ts` is a suite of `<T extends TrackSegment>` array transforms that
 split/reassign segments over an in-stay gap — record orchestration that stays
-shell. Its one pure decision leaf is `scoreSplitEvidence`: the weighted
+shell — a note that is now SUPERSEDED: under the standing Lean/shell boundary
+(pure record/array work belongs in Lean) those passes are in scope, and they sit
+in the middle of the velocity pass order, so the pipeline cannot fold in Lean
+without them. `shedVehiclePedestrianEdges` is the first of them, below.
+
+Its original pure decision leaf is `scoreSplitEvidence`: the weighted
 log-evidence (nats) that the user *left* during a gap, summed across step
 density (the only direct movement signal), gap-anomaly ratio, HR, and
 post-gap proximity. `> SPLIT_THRESHOLD_NATS` triggers a split.
@@ -77,3 +84,407 @@ private def ev (gap med : Float) (pre : Int) (steps : Float) (hr : Option Float)
 #guard approxS (scoreSplitEvidence (ev 1800 30 3 500 none 0 300)) 2                -- fewPreFix
 
 end Verified.Geo.StaySplit
+
+/-! ## `shedVehiclePedestrianEdges`
+
+A `train` leg whose edge fixes are really the walk to or from the platform.
+Scanning inward from each end, the contiguous run of pedestrian-paced steps is
+handed to the neighbouring walk — but only on FOUR independent signals, and only
+if a real ride is left behind:
+
+* pace  — every step in the run at ≤ `PEDESTRIAN_STEP_MAX_KMH`;
+* time  — the run sustains ≥ `PEDESTRIAN_MIN_RUN_S`;
+* space — it travels ≥ `PEDESTRIAN_MIN_RUN_NET_M` NET;
+* body  — the wearer steps at ≥ `PEDESTRIAN_MIN_CADENCE_SPM` through it.
+
+Precision over recall: with no step data at all the pass is inert.
+
+TAIL runs before HEAD *within one iteration*, and HEAD re-reads the segment — so
+on a leg shed at both ends the head test sees the already-shortened `endTs` and
+measures its remaining ride against that. The `bothEndsShed` guard pins it.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/shed-edges-refs.mts`).
+-/
+
+namespace Shed
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm PEDESTRIAN_STEP_MAX_KMH
+  PEDESTRIAN_MIN_RUN_NET_M PEDESTRIAN_MIN_RUN_S PEDESTRIAN_MIN_CADENCE_SPM)
+open Verified.Hsmm.FloatScore (haversineMeters)
+
+/-- A Kalman-filtered fix as this pass reads it. -/
+structure PointF where
+  ts : Int
+  lat : Float
+  lon : Float
+  speedKmh : Float
+  deriving Inhabited, BEq, Repr
+
+/-- Shedding must leave at least this much ride behind. -/
+def MIN_REMAINING_RIDE_S : Int := 120
+
+/-- `refinedMode ?? mode` — the TS `segMode`. -/
+private def segMode (s : Seg) : String := s.refinedMode.getD s.mode
+
+/-- `Math.round` — halves go UP. Every value rounded here is non-negative. -/
+private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+
+/-- The TS `median`: ascending sort, mean of the middle pair when even. -/
+private def median (values : Array Float) : Float :=
+  if values.isEmpty then 0 else
+  let sorted := (values.toList.mergeSort (· ≤ ·)).toArray
+  let mid := sorted.size / 2
+  if sorted.size % 2 == 0 then (sorted[mid - 1]! + sorted[mid]!) / 2 else sorted[mid]!
+
+/-- Net-progress pace between consecutive fixes. A non-advancing pair reads as
+infinitely fast, so it can never be mistaken for a pedestrian step. -/
+private def stepKmh (a b : PointF) : Float :=
+  let dt := b.ts - a.ts
+  if dt > 0 then haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6
+  else 1.0 / 0.0
+
+/-- The four-signal evidence bar for handing a run to a walk.
+
+The `netM` bar's STRICTNESS (`<` vs `≤`) is unpinnable and no guard claims it:
+separating them needs an input landing exactly on 120 m, and a haversine
+distance is only ULP-close between V8 and Lean, so a knife-edge input could sit
+on opposite sides in the two. The bar's VALUE is pinned by cases either side.
+The `durS` bar has no such problem — it is a difference of integer seconds — and
+`durExactlyAtBar` pins it. -/
+private def qualifies (steps : List FeasibilityStepPoint) (from_ to : PointF) : Bool :=
+  let durS := Float.ofInt (to.ts - from_.ts)
+  let netM := haversineMeters from_.lat from_.lon to.lat to.lon
+  if durS < PEDESTRIAN_MIN_RUN_S || netM < PEDESTRIAN_MIN_RUN_NET_M then false
+  else match meanCadenceSpm steps from_.ts to.ts with
+    | none => false
+    | some c => c ≥ PEDESTRIAN_MIN_CADENCE_SPM
+
+private def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
+  ((points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs).toList.mergeSort
+    fun a b => a.ts ≤ b.ts).toArray
+
+/-- Walk backwards from the last fix while every step is pedestrian-paced.
+
+As with `netM`, the `≤ PEDESTRIAN_STEP_MAX_KMH` comparison's strictness sits on
+a float distance and cannot be pinned; the CONSTANT is, by `paceCeiling` (a
+probe moving it 9 → 10 fails that guard). -/
+private def tailScanStart (fixes : Array PointF) : Nat := Id.run do
+  let mut s := fixes.size - 1
+  for _ in [0:fixes.size] do
+    if s > 0 && stepKmh fixes[s - 1]! fixes[s]! ≤ PEDESTRIAN_STEP_MAX_KMH then s := s - 1
+    else break
+  return s
+
+/-- Walk forwards from the first fix while every step is pedestrian-paced. -/
+private def headScanEnd (fixes : Array PointF) : Nat := Id.run do
+  let mut e := 0
+  for _ in [0:fixes.size] do
+    if e + 1 < fixes.size && stepKmh fixes[e]! fixes[e + 1]! ≤ PEDESTRIAN_STEP_MAX_KMH then e := e + 1
+    else break
+  return e
+
+/--
+Rebuild a walk over a new window from its OWN fixes.
+
+`ridePrecedes` is true for the remainder that begins where a ride ends. The ride
+owns its boundary fixes — the fix *at* the boundary is the one the vehicle
+arrived on and its speed reading is the vehicle's — so the walk must not take
+it. Without this the trailing walk inherits the ride's arrival speed and is
+right back to claiming 34 km/h on foot.
+
+Enrichment computed over the parent's window is not evidence about this stretch,
+so the labels are cleared and `needsReenrich` set.
+-/
+def walkRemainder (seg : Seg) (startTs endTs : Int) (points : Array PointF)
+    (ridePrecedes : Bool := false) : Seg :=
+  let fixes := ((points.filter fun p =>
+    (if ridePrecedes then p.ts > startTs else p.ts ≥ startTs) && p.ts < endTs).toList.mergeSort
+      fun a b => a.ts ≤ b.ts).toArray
+  let base : Seg :=
+    { seg with
+      startTs := startTs, endTs := endTs, pointCount := Int.ofNat fixes.size
+      refinedMode := none, refinedReason := none, wayName := none, place := none
+      needsReenrich := true }
+  if fixes.size ≥ 2 then
+    let speeds := fixes.map (·.speedKmh)
+    let pathDist := (Array.range (fixes.size - 1)).foldl (init := (0 : Float)) fun acc k =>
+      acc + haversineMeters fixes[k]!.lat fixes[k]!.lon fixes[k + 1]!.lat fixes[k + 1]!.lon
+    let straight := haversineMeters fixes[0]!.lat fixes[0]!.lon
+      fixes[fixes.size - 1]!.lat fixes[fixes.size - 1]!.lon
+    { base with
+      avgSpeed := jsRound (median speeds * 10) / 10
+      maxSpeed := jsRound (speeds.foldl max speeds[0]! * 10) / 10
+      -- The `min … 1` clamp is defensive only: a polyline's straight-line
+      -- distance never exceeds its path length, so the ratio is ≤ 1 except for
+      -- float noise on a perfectly straight run. Unpinnable; kept for fidelity.
+      linearity := if pathDist > 0 then jsRound (min (straight / pathDist) 1 * 100) / 100 else 0 }
+  else base
+
+/-- Move a train leg's pedestrian-paced edge runs into the neighbouring walks. -/
+def shedVehiclePedestrianEdges (segments : Array Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
+  -- PROVABLY a short-circuit, not a decision: with no buckets `meanCadenceSpm`
+  -- returns `none`, so `qualifies` refuses every run anyway. No guard can catch
+  -- its removal. Kept as the TS has it.
+  if steps.isEmpty then return segments
+  let mut out := segments
+  for i in [0:out.size] do
+    if segMode out[i]! != "train" then continue
+    -- TAIL → the following walk claims the run.
+    if i + 1 < out.size then
+      let cur := out[i]!
+      let next := out[i + 1]!
+      if segMode next == "walking" then
+        let fixes := sortedIn points cur.startTs cur.endTs
+        if fixes.size > 0 then
+          let s := tailScanStart fixes
+          -- s > 0: the scan stopped at a vehicle-paced step, so a ride remains.
+          -- `s > 0` IS load-bearing (at s = 0 the claimed run is the whole leg,
+          -- a real span that can otherwise pass — `scanReachesZeroWithRideLeft`).
+          -- `s < size - 1` is PROVABLY dead: at s = size - 1 the run is one fix
+          -- to itself, so `durS = 0 < PEDESTRIAN_MIN_RUN_S`. Asymmetric, and the
+          -- asymmetry is the point.
+          if s > 0 && s < fixes.size - 1 && qualifies steps fixes[s]! fixes[fixes.size - 1]! then
+            -- The fix the ride arrived on stays with the ride.
+            let boundary := fixes[s]!.ts
+            if boundary - cur.startTs ≥ MIN_REMAINING_RIDE_S then
+              out := out.set! i { cur with endTs := boundary }
+              out := out.set! (i + 1) (walkRemainder next boundary next.endTs points true)
+    -- HEAD → the preceding walk claims the run (the boarding-side mirror).
+    if i > 0 then
+      let prev := out[i - 1]!
+      if segMode prev == "walking" then
+        let host := out[i]!
+        let fixes := sortedIn points host.startTs host.endTs
+        if fixes.size > 0 then
+          let e := headScanEnd fixes
+          -- BOTH bounds are provably dead here, unlike the tail: at e = 0 the
+          -- run is `fixes[0]` to itself and at e = size - 1 it is the whole leg
+          -- ending at the last fix — the former gives `durS = 0`, and the
+          -- latter cannot arise with a vehicle-paced step present.
+          if e > 0 && e < fixes.size - 1 && qualifies steps fixes[0]! fixes[e]! then
+            -- The fix the ride departs from stays with the ride.
+            let boundary := fixes[e]!.ts
+            if host.endTs - boundary ≥ MIN_REMAINING_RIDE_S then
+              out := out.set! i { host with startTs := boundary }
+              out := out.set! (i - 1) (walkRemainder prev prev.startTs boundary points false)
+  return out
+
+
+/-! ### Reference values
+
+Pinned against Node/V8 (`lean/experiments/shed-edges-refs.mts`). Frame: metres
+north of `51.52, -0.13`.
+-/
+
+section ShedGuards
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+
+private def fx (ts : Int) (metresNorth speedKmh : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+#guard (fx 0 4400 0).lat == 51.559525691699605
+
+private def sg (startTs endTs : Int) (mode : String := "train")
+    (refinedMode : Option String := none) : Seg :=
+  { startTs, endTs, mode, refinedMode
+    avgSpeed := 40, maxSpeed := 60, linearity := 0.9, pointCount := 5
+    wayName := some "A → B · Victoria Line", place := some "Somewhere"
+    refinedReason := some "inherited" }
+
+/-- Steps at 80 spm — comfortably over `PEDESTRIAN_MIN_CADENCE_SPM`. -/
+private def stepsAt (spm : Float) (from_ to : Int) : List FeasibilityStepPoint :=
+  -- Buckets at `from, from+60, …` while STRICTLY below `to` — the TS loop is
+  -- `for (t = from; t < to; t += 60)`, so a partial trailing minute still gets a
+  -- bucket. Plain `(to-from)/60` truncates it away and drops the cadence below
+  -- the bar on an exactly-at-the-bar case.
+  (List.range (((to - from_) + 59) / 60).toNat).map fun k =>
+    { ts := from_ + 60 * Int.ofNat k, steps := spm }
+
+private def WALK_STEPS : List FeasibilityStepPoint := stepsAt 80 1200 1600
+
+/-- A ride 1000→1200 (two 72 km/h steps), then a pedestrian tail 1200→1600 at
+3.6 km/h covering 400 m net. -/
+private def TAIL_FIXES : Array PointF :=
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71,
+    fx 1300 4100 3.6, fx 1400 4200 3.7, fx 1500 4300 3.5, fx 1600 4400 3.6,
+    fx 1700 4500 3.6, fx 1800 4600 3.4, fx 1900 4700 3.8]
+private def TAIL_SEGS : Array Seg := #[sg 1000 1600, sg 1600 2000 "walking"]
+
+private structure Row where
+  startTs : Int
+  endTs : Int
+  mode : String
+  refinedMode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  linearity : Float
+  wayName : String
+  place : String
+  reenrich : Bool
+  deriving Inhabited, BEq, Repr
+
+private def vw (segs : Array Seg) : Array Row :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode
+      refinedMode := s.refinedMode.getD "", pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, linearity := s.linearity
+      wayName := s.wayName.getD "", place := s.place.getD "", reenrich := s.needsReenrich }
+
+private def run (segs : Array Seg := TAIL_SEGS) (pts : Array PointF := TAIL_FIXES)
+    (steps : List FeasibilityStepPoint := WALK_STEPS) : Array Row :=
+  vw (shedVehiclePedestrianEdges segs pts steps)
+
+/-- The input, untouched. -/
+private def PASS : Array Row := vw TAIL_SEGS
+
+-- The tail run is handed to the following walk; the ride keeps its head. The
+-- walk is REBUILT from its own fixes: labels cleared, flagged for re-enrichment,
+-- kinematics recomputed (median speed 3.6, max 3.8, linearity 1).
+#guard run == #[
+  { startTs := 1000, endTs := 1200, mode := "train", refinedMode := "", pointCount := 5,
+    avgSpeed := 40, maxSpeed := 60, linearity := 0.9,
+    wayName := "A → B · Victoria Line", place := "Somewhere", reenrich := false },
+  { startTs := 1200, endTs := 2000, mode := "walking", refinedMode := "", pointCount := 7,
+    avgSpeed := 3.6, maxSpeed := 3.8, linearity := 1,
+    wayName := "", place := "", reenrich := true }]
+
+-- The HEAD mirror: pedestrian 1000→1400, then a ride. The preceding walk grows
+-- backwards-compatibly to 1400 and the train starts there.
+private def HEAD_FIXES : Array PointF :=
+  #[fx 600 (-300) 3.5, fx 800 (-200) 3.6, fx 1000 0 3.6, fx 1100 100 3.6,
+    fx 1200 200 3.7, fx 1300 300 3.5, fx 1400 400 3.6,
+    fx 1500 2400 72, fx 1600 4400 71, fx 1800 6400 70]
+#guard run #[sg 500 1000 "walking", sg 1000 1800] HEAD_FIXES (stepsAt 80 600 1500) == #[
+  { startTs := 500, endTs := 1400, mode := "walking", refinedMode := "", pointCount := 6,
+    avgSpeed := 3.6, maxSpeed := 3.7, linearity := 1,
+    wayName := "", place := "", reenrich := true },
+  { startTs := 1400, endTs := 1800, mode := "train", refinedMode := "", pointCount := 5,
+    avgSpeed := 40, maxSpeed := 60, linearity := 0.9,
+    wayName := "A → B · Victoria Line", place := "Somewhere", reenrich := false }]
+
+-- THE FOUR SIGNALS, one at a time.
+-- No step data at all: the pass is inert (precision over recall).
+#guard run TAIL_SEGS TAIL_FIXES [] == PASS
+-- Cadence below the bar: the body signal fails.
+#guard run TAIL_SEGS TAIL_FIXES (stepsAt 30 1200 1600) == PASS
+-- Cadence exactly AT the bar still qualifies (`≥`).
+#guard (run TAIL_SEGS TAIL_FIXES (stepsAt 60 1200 1600)).size == 2
+#guard (run TAIL_SEGS TAIL_FIXES (stepsAt 60 1200 1600))[0]!.endTs == 1200
+-- Too SHORT in time (80 s < PEDESTRIAN_MIN_RUN_S).
+#guard run #[sg 1000 1280, sg 1280 2000 "walking"]
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71, fx 1280 4200 3.6, fx 1700 4300 3.6]
+  == vw #[sg 1000 1280, sg 1280 2000 "walking"]
+-- Too little NET ground (110 m < PEDESTRIAN_MIN_RUN_NET_M).
+#guard run TAIL_SEGS
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71,
+    fx 1300 4030 1, fx 1400 4060 1, fx 1500 4090 1, fx 1600 4110 1] == PASS
+-- A step just OVER the pace ceiling (9.36 km/h) stops the scan early, leaving a
+-- claimed run too short to qualify. Raising the ceiling to 10 would shed.
+#guard run TAIL_SEGS
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71,
+    fx 1300 4100 3.6, fx 1400 4200 3.6, fx 1500 4460 9.4, fx 1600 4560 3.6] == PASS
+
+-- STRUCTURAL GATES.
+-- Under MIN_REMAINING_RIDE_S of ride would be left: refuse.
+#guard run #[sg 1100 1600, sg 1600 2000 "walking"] == vw #[sg 1100 1600, sg 1600 2000 "walking"]
+-- Exactly at the bar (1200 − 1080 = 120): allowed.
+#guard (run #[sg 1080 1600, sg 1600 2000 "walking"])[0]!.endTs == 1200
+-- Every step pedestrian-paced ⇒ the scan reaches 0: no ride to keep, so the
+-- pass refuses rather than eating the whole leg.
+#guard run TAIL_SEGS #[fx 1000 0 3.6, fx 1200 200 3.6, fx 1400 400 3.6, fx 1600 600 3.6] == PASS
+-- No pedestrian tail at all: the scan never moves.
+#guard run TAIL_SEGS #[fx 1000 0 70, fx 1200 4000 72, fx 1400 8000 71, fx 1600 12000 70] == PASS
+-- The neighbour is not a walk, so there is nobody to hand the run to.
+#guard run #[sg 1000 1600, sg 1600 2000 "stationary"] == vw #[sg 1000 1600, sg 1600 2000 "stationary"]
+-- A non-train host is skipped entirely.
+#guard run #[sg 1000 1600 "driving", sg 1600 2000 "walking"]
+  == vw #[sg 1000 1600 "driving", sg 1600 2000 "walking"]
+-- `segMode` is `refinedMode ?? mode`, so refinedMode decides on BOTH sides.
+#guard (run #[sg 1000 1600 "driving" (some "train"), sg 1600 2000 "walking"])[0]!.endTs == 1200
+#guard (run #[sg 1000 1600, sg 1600 2000 "stationary" (some "walking")])[1]!.pointCount == 7
+
+-- BOTH ends shed on one leg, in ONE iteration. TAIL runs first and shortens the
+-- leg to 1000–1400; HEAD then re-reads it, so its remaining-ride check is
+-- against that 1400, not the original 1800.
+#guard run
+  #[sg 500 1000 "walking", sg 1000 1800, sg 1800 2200 "walking"]
+  #[fx 600 (-300) 3.5, fx 800 (-200) 3.6, fx 1000 0 3.6, fx 1100 100 3.6, fx 1200 200 3.6,
+    fx 1300 2200 72, fx 1400 4200 71,
+    fx 1500 4300 3.6, fx 1600 4400 3.6, fx 1700 4500 3.6, fx 1800 4600 3.6, fx 1900 4700 3.6]
+  (stepsAt 80 600 1900)
+  == #[
+  { startTs := 500, endTs := 1200, mode := "walking", refinedMode := "", pointCount := 4,
+    avgSpeed := 3.6, maxSpeed := 3.6, linearity := 1,
+    wayName := "", place := "", reenrich := true },
+  { startTs := 1200, endTs := 1400, mode := "train", refinedMode := "", pointCount := 5,
+    avgSpeed := 40, maxSpeed := 60, linearity := 0.9,
+    wayName := "A → B · Victoria Line", place := "Somewhere", reenrich := false },
+  { startTs := 1400, endTs := 2200, mode := "walking", refinedMode := "", pointCount := 5,
+    avgSpeed := 3.6, maxSpeed := 3.6, linearity := 1,
+    wayName := "", place := "", reenrich := true }]
+
+-- GAPS THE FIRST PROBE PASS EXPOSED.
+-- Cadence EXACTLY at the bar: the window is 400 s, so 400 steps over the seven
+-- buckets give a mean of exactly 60 and `≥` admits it.
+#guard (run TAIL_SEGS TAIL_FIXES
+  ([(1200, 57), (1260, 57), (1320, 57), (1380, 57), (1440, 57), (1500, 57), (1560, 58)].map
+    fun (t, v) => ({ ts := t, steps := v } : FeasibilityStepPoint)))[0]!.endTs == 1200
+-- Steps exist but NONE overlap the run: `meanCadenceSpm` is `none`, which means
+-- "no data", not "zero cadence" — and no data refuses.
+#guard run TAIL_SEGS TAIL_FIXES (stepsAt 80 100 400) == PASS
+-- The run lasts EXACTLY PEDESTRIAN_MIN_RUN_S (1200→1290 = 90 s).
+#guard (run #[sg 1000 1290, sg 1290 2000 "walking"]
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71, fx 1290 4130 5.2, fx 1700 4200 3.6]
+  (stepsAt 80 1200 1290))[0]!.endTs == 1200
+-- Every step pedestrian-paced AND the cadence passes, so the scan reaches
+-- s = 0. Only the `s > 0` guard stops the whole leg being eaten.
+#guard run TAIL_SEGS
+  #[fx 1000 0 3.6, fx 1200 200 3.6, fx 1400 400 3.6, fx 1600 600 3.6]
+  (stepsAt 80 1000 1600) == PASS
+-- Head side, neighbour is not a walk: nobody to hand the run to.
+#guard run #[sg 500 1000 "stationary", sg 1000 1800] HEAD_FIXES (stepsAt 80 600 1500)
+  == vw #[sg 500 1000 "stationary", sg 1000 1800]
+-- Head side with EXACTLY MIN_REMAINING_RIDE_S left (1520 − 1400 = 120).
+#guard (run #[sg 500 1000 "walking", sg 1000 1520] HEAD_FIXES (stepsAt 80 600 1500))[1]!.startTs == 1400
+-- The rebuilt walk's avgSpeed is a MEDIAN, not a mean: one 40 km/h outlier
+-- among six pedestrian readings must not drag it up (max still records it).
+#guard (run TAIL_SEGS
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71, fx 1300 4100 3.6, fx 1400 4200 3.6,
+    fx 1500 4300 3.6, fx 1600 4400 3.6, fx 1700 4500 3.6, fx 1800 4600 3.6, fx 1900 4700 40])[1]!
+  == { startTs := 1200, endTs := 2000, mode := "walking", refinedMode := "", pointCount := 7,
+       avgSpeed := 3.6, maxSpeed := 40, linearity := 1,
+       wayName := "", place := "", reenrich := true }
+-- The remainder gets exactly ONE fix, so the `≥ 2` guard leaves the parent's
+-- kinematics alone rather than recomputing from a single point — but the labels
+-- are still cleared and the re-enrich flag still set.
+#guard (run #[sg 990 1000 "walking", sg 1000 1800]
+  #[fx 950 (-50) 3.6, fx 1000 0 3.6, fx 1200 200 3.6, fx 1300 2200 72, fx 1400 4200 71]
+  (stepsAt 80 950 1300))[0]!
+  == { startTs := 990, endTs := 1200, mode := "walking", refinedMode := "", pointCount := 1,
+       avgSpeed := 40, maxSpeed := 60, linearity := 0.9,
+       wayName := "", place := "", reenrich := true }
+-- The fix sitting EXACTLY on the host's endTs is load-bearing: without it the
+-- run falls under the net-distance bar. Pins the INCLUSIVE window.
+#guard (run TAIL_SEGS
+  #[fx 1000 0 70, fx 1100 2000 72, fx 1200 4000 71, fx 1300 4050 1.8, fx 1400 4100 1.8,
+    fx 1500 4110 0.4, fx 1600 4200 3.2])[0]!.endTs == 1200
+
+-- The `s > 0` guard, ISOLATED. Where every step is pedestrian-paced the scan
+-- reaches 0, but that alone cannot pin the guard: the boundary then lands on the
+-- leg's own first fix, and MIN_REMAINING_RIDE_S refuses it anyway. Here the
+-- first fix sits 150 s into the leg, so dropping `s > 0` WOULD shed — and eat
+-- the entire ride.
+#guard run TAIL_SEGS
+  #[fx 1150 0 4.8, fx 1300 200 4.8, fx 1450 400 4.8, fx 1600 600 4.8]
+  (stepsAt 80 1150 1600) == PASS
+
+#guard run #[] #[] [] == #[]
+
+end ShedGuards
+
+end Shed

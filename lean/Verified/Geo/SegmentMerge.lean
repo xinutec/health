@@ -68,6 +68,10 @@ structure Seg where
   centroidLat : Option Float := none
   centroidLon : Option Float := none
   focusPlaceId : Option Int := none
+  /-- Set by the stay-split rebuilds (`Verified.Geo.StaySplit`) when a segment's
+  window changed and its inherited enrichment is therefore no longer evidence
+  about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/
+  needsReenrich : Bool := false
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/
