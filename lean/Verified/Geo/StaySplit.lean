@@ -125,13 +125,13 @@ structure PointF where
 def MIN_REMAINING_RIDE_S : Int := 120
 
 /-- `refinedMode ?? mode` — the TS `segMode`. -/
-private def segMode (s : Seg) : String := s.refinedMode.getD s.mode
+def segMode (s : Seg) : String := s.refinedMode.getD s.mode
 
 /-- `Math.round` — halves go UP. Every value rounded here is non-negative. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 
 /-- The TS `median`: ascending sort, mean of the middle pair when even. -/
-private def median (values : Array Float) : Float :=
+def median (values : Array Float) : Float :=
   if values.isEmpty then 0 else
   let sorted := (values.toList.mergeSort (· ≤ ·)).toArray
   let mid := sorted.size / 2
@@ -160,7 +160,7 @@ private def qualifies (steps : List FeasibilityStepPoint) (from_ to : PointF) : 
     | none => false
     | some c => c ≥ PEDESTRIAN_MIN_CADENCE_SPM
 
-private def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
+def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
   ((points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs).toList.mergeSort
     fun a b => a.ts ≤ b.ts).toArray
 
@@ -488,3 +488,259 @@ private def HEAD_FIXES : Array PointF :=
 end ShedGuards
 
 end Shed
+
+/-! ## `reassignWalkTailToVehicle`
+
+A walking segment's vehicle-paced TRAILING run belongs to the road vehicle that
+follows it. The shared boundary advances to where the sustained motion begins;
+the segment COUNT is unchanged, only the boundary and the two segments'
+recomputed stats move.
+
+Three things here are easy to get wrong, and each is pinned:
+
+1. `HANDOFF_VEHICLE_MODES` is `driving | bus | cycling` — a FOURTH vehicle-mode
+   set in this repo. It INCLUDES bus (unlike `SegmentPasses.VEHICLE_MODES`) and
+   EXCLUDES train and plane. Guards cover all five modes.
+2. The walk side is tested on the RAW `mode`, the vehicle side on `segMode`
+   (`refinedMode ?? mode`). Asymmetric, and observable both ways.
+3. `stepKmh` here returns **0** for a non-advancing pair, where the sibling
+   `Shed.stepKmh` returns **+∞** for the same shape. Each fails safe in its own
+   direction: 0 can never clear a vehicle-pace floor, ∞ can never fall under a
+   pedestrian-pace ceiling. The `zeroDtPair` guard reaches the pair with every
+   later step vehicle-paced, so only the 0 stops the walk-back.
+
+Two different windows appear in one function: the fix scan is `samplesInWindow`
+(INCLUSIVE both ends) while the `stats` recompute is half-open `[start, end)`.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/walk-tail-refs.mts`).
+-/
+
+namespace Handoff
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF median jsRound segMode sortedIn)
+
+/-- Per-step net-progress speed marking the tail as travelling, not walking —
+above the 12 km/h walking ceiling so a real walk's GPS noise cannot reach it. -/
+def HANDOFF_MOVE_KMH : Float := 15
+/-- A sustained run, so one glitchy fix pair cannot move the boundary. -/
+def HANDOFF_MIN_TAIL_STEPS : Nat := 2
+/-- Net displacement floor — far below `splitWalksOnVehicleLeg`'s 400 m,
+because the adjacent confirmed vehicle already corroborates the travel. -/
+def HANDOFF_MIN_NET_DIST_M : Float := 80
+/-- …and one unambiguously-motorised instant, as a second signal. -/
+def HANDOFF_PEAK_KMH : Float := 20
+/-- Keep a real walk on the near side rather than swallowing the segment. -/
+def HANDOFF_MIN_WALK_REMAINDER_S : Int := 60
+/-- The road-vehicle successors this pass will hand a run to. -/
+def HANDOFF_VEHICLE_MODES : List String := ["driving", "bus", "cycling"]
+
+/-- Net-progress pace between two fixes. A non-advancing pair reads as 0 — it
+can never clear the vehicle floor, so the scan stops there.
+
+The `≥ HANDOFF_MOVE_KMH` comparison's STRICTNESS is unpinnable: separating `≥`
+from `>` needs a step landing exactly on 15 km/h, and that is a haversine
+distance, only ULP-close between V8 and Lean. The CONSTANT is pinned, by a
+12 km/h step that must not qualify. -/
+private def stepKmh (a b : PointF) : Float :=
+  let dt := b.ts - a.ts
+  if dt > 0 then haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 else 0
+
+/-- Walk back from the last fix over consecutive vehicle-paced steps, returning
+the run's start index and its length in steps. -/
+private def tailScan (fixes : Array PointF) : Nat × Nat := Id.run do
+  let mut s := fixes.size - 1
+  let mut n := 0
+  for _ in [0:fixes.size] do
+    if s > 0 && stepKmh fixes[s - 1]! fixes[s]! ≥ HANDOFF_MOVE_KMH then
+      s := s - 1
+      n := n + 1
+    else break
+  return (s, n)
+
+/-- Recomputed speed stats over a HALF-OPEN `[startTs, endTs)` window — note
+the exclusive end, unlike the inclusive `sortedIn` used for the scan. -/
+private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
+  let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
+  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
+
+private def roundStr (x : Float) : String := toString (jsRound x).toInt64.toInt
+
+/-- Advance a walk→vehicle boundary over the walk's vehicle-paced tail. -/
+def reassignWalkTailToVehicle (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut segs := segments
+  let mut out : Array Seg := #[]
+  for i in [0:segs.size] do
+    -- Read fresh: a previous iteration may have rewritten this slot as its
+    -- successor, and the TS reads `segs[i]` the same way.
+    let cur := segs[i]!
+    let moved : Option (Seg × Seg) := Id.run do
+      if i + 1 ≥ segs.size then return none
+      let next := segs[i + 1]!
+      -- RAW mode on the walk side, `segMode` on the vehicle side.
+      if !(cur.mode == "walking" && HANDOFF_VEHICLE_MODES.contains (segMode next)) then return none
+      let fixes := sortedIn points cur.startTs cur.endTs
+      -- PROVABLY shadowed by `HANDOFF_MIN_TAIL_STEPS = 2`: with two fixes the
+      -- scan can find at most ONE step, so the run is refused there anyway. No
+      -- guard can catch relaxing this to `< 2`. Kept as the TS has it.
+      if fixes.size < 3 then return none
+      let (s, tailSteps) := tailScan fixes
+      if tailSteps < HANDOFF_MIN_TAIL_STEPS then return none
+      let last := fixes.size - 1
+      let netDist := haversineMeters fixes[s]!.lat fixes[s]!.lon fixes[last]!.lat fixes[last]!.lon
+      let peak := (Array.range (last - s + 1)).foldl (init := (0 : Float)) fun a k =>
+        max a fixes[s + k]!.speedKmh
+      let driveStart := fixes[s]!.ts
+      if netDist < HANDOFF_MIN_NET_DIST_M || peak < HANDOFF_PEAK_KMH then return none
+      if driveStart - cur.startTs < HANDOFF_MIN_WALK_REMAINDER_S then return none
+      let (wc, wa, wm) := stats points cur.startTs driveStart
+      let (vc, va, vm) := stats points driveStart next.endTs
+      return some
+        ({ cur with endTs := driveStart, avgSpeed := wa, maxSpeed := wm, pointCount := Int.ofNat wc },
+         { next with
+           startTs := driveStart, avgSpeed := va, maxSpeed := vm, pointCount := Int.ofNat vc
+           refinedReason := some s!"walk→vehicle boundary: {roundStr netDist} m vehicle-paced run (peak {roundStr peak} km/h) reassigned from the preceding walk to this ride" })
+    match moved with
+    | none => out := out.push cur
+    | some (c, n) =>
+      out := out.push c
+      segs := segs.set! (i + 1) n
+  return out
+
+/-! ### Reference values
+
+Pinned against Node/V8 (`lean/experiments/walk-tail-refs.mts`).
+-/
+
+section HandoffGuards
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+private def fx (ts : Int) (metresNorth speedKmh : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+#guard (fx 0 2400 0).lat == 51.541559468199786
+
+private def sg (startTs endTs : Int) (mode : String := "walking")
+    (refinedMode : Option String := none) : Seg :=
+  { startTs, endTs, mode, refinedMode
+    avgSpeed := 4, maxSpeed := 6, linearity := 0.5, pointCount := 7
+    refinedReason := some "inherited" }
+
+/-- Walk 1000–1200 at ~1.8 km/h, then a vehicle-paced run to 1600. -/
+private def FIXES : Array PointF :=
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 600 22, fx 1400 1200 24,
+    fx 1500 1800 23, fx 1600 2400 25, fx 1700 3000 26, fx 1800 3600 27, fx 1900 4200 28]
+private def SEGS : Array Seg := #[sg 1000 1600, sg 1600 2000 "driving"]
+
+private structure HRow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def hv (segs : Array Seg) : Array HRow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, reason := s.refinedReason.getD "" }
+
+private def hrun (segs : Array Seg := SEGS) (pts : Array PointF := FIXES) : Array HRow :=
+  hv (reassignWalkTailToVehicle segs pts)
+
+private def REASON : String :=
+  "walk→vehicle boundary: 2297 m vehicle-paced run (peak 25 km/h) reassigned from the preceding walk to this ride"
+
+-- The boundary advances to 1200; both segments' stats are recomputed from
+-- their new windows and the vehicle gains a reason naming the evidence.
+#guard hrun == #[
+  { startTs := 1000, endTs := 1200, mode := "walking", pointCount := 2,
+    avgSpeed := 3, maxSpeed := 3, reason := "inherited" },
+  { startTs := 1200, endTs := 2000, mode := "driving", pointCount := 8,
+    avgSpeed := 24.5, maxSpeed := 28, reason := REASON }]
+
+-- HANDOFF_VEHICLE_MODES, member by member. bus and cycling are IN…
+#guard (hrun #[sg 1000 1600, sg 1600 2000 "bus"])[0]!.endTs == 1200
+#guard (hrun #[sg 1000 1600, sg 1600 2000 "cycling"])[0]!.endTs == 1200
+-- …train and plane are OUT, unlike other vehicle-mode constants in this repo.
+#guard hrun #[sg 1000 1600, sg 1600 2000 "train"] == hv #[sg 1000 1600, sg 1600 2000 "train"]
+#guard hrun #[sg 1000 1600, sg 1600 2000 "plane"] == hv #[sg 1000 1600, sg 1600 2000 "plane"]
+#guard hrun #[sg 1000 1600, sg 1600 2000 "walking"] == hv #[sg 1000 1600, sg 1600 2000 "walking"]
+-- The vehicle side reads segMode, so a refinedMode promotion counts…
+#guard (hrun #[sg 1000 1600, sg 1600 2000 "stationary" (some "driving")])[0]!.endTs == 1200
+-- …while the WALK side reads the RAW mode, so a refinedMode-only walk is not
+-- a walk here. The asymmetry is real and observable.
+#guard hrun #[sg 1000 1600 "stationary" (some "walking"), sg 1600 2000 "driving"]
+  == hv #[sg 1000 1600 "stationary" (some "walking"), sg 1600 2000 "driving"]
+-- No successor at all.
+#guard hrun #[sg 1000 1600] == hv #[sg 1000 1600]
+
+-- THE GATES. Fewer than three fixes in the walk.
+#guard hrun SEGS #[fx 1000 0 3, fx 1600 2400 25, fx 1700 3000 26] == hv SEGS
+-- Only ONE vehicle-paced step: under HANDOFF_MIN_TAIL_STEPS.
+#guard hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 150 4, fx 1600 2400 25, fx 1700 3000 26]
+  == hv SEGS
+-- EXACTLY two: at the bar, so it moves (and to a later boundary).
+#guard (hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 150 4, fx 1400 800 22,
+    fx 1600 2400 25, fx 1700 3000 26])[0]!.endTs == 1300
+-- The run's NET displacement is under HANDOFF_MIN_NET_DIST_M.
+#guard hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1210 150 22, fx 1220 175 24,
+    fx 1230 160 25, fx 1600 170 26] == hv SEGS
+-- No fix in the run reaches HANDOFF_PEAK_KMH.
+#guard hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 600 19, fx 1400 1200 19,
+    fx 1500 1800 19, fx 1600 2400 19] == hv SEGS
+-- A peak of EXACTLY HANDOFF_PEAK_KMH clears it.
+#guard (hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 600 20, fx 1400 1200 19,
+    fx 1500 1800 19, fx 1600 2400 19])[0]!.endTs == 1200
+-- The run would leave under HANDOFF_MIN_WALK_REMAINDER_S of walk.
+#guard hrun #[sg 1150 1600, sg 1600 2000 "driving"] == hv #[sg 1150 1600, sg 1600 2000 "driving"]
+-- Exactly at the bar (1200 − 1140 = 60): allowed. The walk keeps NO fixes, so
+-- its recomputed stats are the empty-median 0, not its inherited 4/6.
+#guard (hrun #[sg 1140 1600, sg 1600 2000 "driving"])[0]!
+  == { startTs := 1140, endTs := 1200, mode := "walking", pointCount := 0,
+       avgSpeed := 0, maxSpeed := 0, reason := "inherited" }
+
+-- A non-advancing pair reads as 0 km/h, which can never clear the vehicle
+-- floor, so the walk-back stops there. Every step AFTER it is vehicle-paced,
+-- so were `stepKmh` to return +∞ (as the sibling pass does) the scan would run
+-- on to 1200 and the boundary WOULD move.
+#guard hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 600 22, fx 1400 1200 24,
+    fx 1400 1800 23, fx 1500 2400 25] == hv SEGS
+
+-- HANDOFF_MOVE_KMH's VALUE, isolated. The 1200→1300 step runs at 12 km/h —
+-- above walking, below the 15 km/h vehicle floor. At 15 the walk-back stops
+-- there (boundary 1300); lower the floor to 10 and it continues to 1200.
+#guard hrun SEGS
+  #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1300 433 12, fx 1400 1033 22,
+    fx 1500 1633 23, fx 1600 2233 25]
+  == #[{ startTs := 1000, endTs := 1300, mode := "walking", pointCount := 3,
+         avgSpeed := 3, maxSpeed := 4, reason := "inherited" },
+       { startTs := 1300, endTs := 2000, mode := "driving", pointCount := 4,
+         avgSpeed := 22.5, maxSpeed := 25,
+         reason := "walk→vehicle boundary: 1798 m vehicle-paced run (peak 25 km/h) reassigned from the preceding walk to this ride" }]
+
+-- HANDOFF_MIN_NET_DIST_M's VALUE, isolated. Two short vehicle-paced steps cover
+-- ~300 m net: over the 80 m floor, but a floor of 500 would refuse.
+#guard hrun SEGS #[fx 1000 0 3, fx 1100 50 3, fx 1200 100 4, fx 1220 250 27, fx 1240 400 28]
+  == #[{ startTs := 1000, endTs := 1200, mode := "walking", pointCount := 2,
+         avgSpeed := 3, maxSpeed := 3, reason := "inherited" },
+       { startTs := 1200, endTs := 2000, mode := "driving", pointCount := 3,
+         avgSpeed := 27, maxSpeed := 28,
+         reason := "walk→vehicle boundary: 300 m vehicle-paced run (peak 28 km/h) reassigned from the preceding walk to this ride" }]
+
+#guard hrun #[] #[] == #[]
+
+end HandoffGuards
+
+end Handoff
