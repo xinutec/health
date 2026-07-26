@@ -1376,26 +1376,30 @@ Precision over recall throughout: without step data it is inert; a march that
 never leaves the dwell, or ride evidence that returns to it, is left alone; and
 the carve must leave a dwell-scale stay behind.
 
-## Probe coverage — INCOMPLETE, and here is exactly what is not pinned
+## Probe coverage
 
-Unlike the other passes in this file, the probe audit here is PARTIAL. 29 probes
-ran; 21 fail a guard, and these EIGHT do not. They are recorded rather than
-quietly left looking covered, and none is known to be provably unpinnable — each
-needs a fixture nobody has built yet:
+Complete over two passes. The first left EIGHT choices unpinned; the second
+(fixtures under "Second probe pass" below) closed seven of them and proved the
+eighth unpinnable:
 
-* `holdS`'s `max(…, 1)` floor — needs two fixes sharing a timestamp.
-* `weightedMedian`'s `acc ≥ half` vs `>` — needs the cumulative weight to land
-  exactly on half.
-* the `/ 2` in `half` — the happy path's dwell dominates so heavily that a
-  quartile still lands in it.
-* `MARCH_START_MAX_FROM_DWELL_M`'s VALUE (its side is pinned).
-* the `n < 8` fix-count floor — needs a 7-fix case that would otherwise carve.
-* `w ≥ m` vs `w > m` — needs a march of exactly zero length.
-* the `PEDESTRIAN_MIN_RUN_S` bar — the too-brief fixture also fails another gate.
-* the `fromDwell[w]` gate as a whole.
+* `holdS`'s `max(…, 1)` floor, `weightedMedian`'s `acc ≥ half` vs `>`, and the
+  `/ 2` in `half` — pinned by the `southMarch` fixtures, which put the dwell's
+  cumulative weight exactly on half.
+* `MARCH_START_MAX_FROM_DWELL_M`, the `n < 8` floor and the `PEDESTRIAN_MIN_RUN_S`
+  bar — pinned on BOTH sides by straddling pairs, so their values are fixed, not
+  just their directions.
+* the `fromDwell[w]` gate as a whole — pinned by `farMarch 160`.
+* `w ≥ m` vs `w > m` — PROVABLY unpinnable, and documented at the site rather
+  than left looking guarded. `w` only ever decreases from `m`, so `w ≥ m` holds
+  exactly when `w = m`, and there the march spans a single fix: `durS = 0` and
+  `netM = 0` fail the run bars immediately below. The check is a pure
+  short-circuit. Kept as the TS has it.
 
-Treat this module as pinned by its 24 V8 reference cases but NOT as
-probe-complete. Closing these is tracked in the port roadmap.
+Why the first pass could not reach four of these: the dwell tether is invisible
+unless the step INTO the march is slower than `MARCH_STILL_KMH`. A march setting
+out from far away is reached by a FAST step, so the backward scan runs straight
+past it into the dwell and `fromDwell[w]` reads zero — the gate never decides.
+Crossing a long indoor gap first is what makes it decide.
 
 UNPROVEN; pinned against Node/V8 (`lean/experiments/ride-head-refs.mts`).
 -/
@@ -1496,6 +1500,9 @@ def claimRideHeadFromStay (segments : Array Seg) (points : Array PointF)
       let mut w := m
       for _ in [0:n] do
         if w > 0 && stepKmh fixes (w - 1) w ≥ MARCH_STILL_KMH then w := w - 1 else break
+      -- PROVABLY unpinnable (probed at zero): `w` only decreases from `m`, so
+      -- this fires exactly at `w = m`, where the march spans one fix and the
+      -- `durS`/`netM` bars below refuse it anyway. A pure short-circuit.
       if w ≥ m then return none
       -- Four-signal walk evidence over the march, plus two placement gates.
       let durS := fixes[m]!.ts - fixes[w]!.ts
@@ -1591,8 +1598,9 @@ private def rrun (segs : Array Seg := SEGS) (pts : Array PointF := FIXES)
     (st : List FeasibilityStepPoint := STEPS) : Array RRow :=
   rv (claimRideHeadFromStay segs pts st)
 
-private def REASON : String :=
-  "extended back over the boarding: claimed a 300 m station walk + the ride's reacquire fixes out of the preceding stay"
+private def reasonM (m : String) : String :=
+  s!"extended back over the boarding: claimed a {m} m station walk + the ride's reacquire fixes out of the preceding stay"
+private def REASON : String := reasonM "300"
 
 -- stay | walk | train — the stay is cut back, a walk is INVENTED, and the train
 -- extends back over the platform wait and the reacquire fixes.
@@ -1673,6 +1681,106 @@ private def BAR_FIXES1 : Array PointF := #[fx 1 0 0] ++ BAR_FIXES.extract 1 9
   == s!"Victoria Line; {REASON}"
 
 #guard rrun #[] #[] [] == #[]
+
+/-! #### Second probe pass
+
+The eight choices the first pass left unpinned. Each needed a case that reaches
+its gate with every OTHER gate satisfied — the recurring failure above was a
+fixture that refused for the wrong reason.
+
+The shared skeleton is a dwell at the frame origin, a LONG indoor gap, a
+pedestrian march, a standing wait, and a two-fix ride. That gap is the crux and
+is why the first pass could not pin the dwell tether at all: a march setting out
+from far away is reached by a FAST step, so the backward scan runs on past it
+into the dwell and `fromDwell[w]` reads zero. Crossing 600 s of stillness first
+makes the step into the march slower than `MARCH_STILL_KMH`, so `w` stays put
+and the tether is the only thing deciding.
+-/
+
+/-- Dwell → 600 s gap → 200 m march → wait → ride, the march opening `startM`
+north of the dwell. `startM` moves nothing but `fromDwell[w]`. -/
+private def farMarch (startM : Float) : Array PointF :=
+  #[fx 0 0 0, fx 1200 0 0,
+    fx 1800 startM 3.6, fx 1900 (startM + 100) 3.6, fx 2000 (startM + 200) 3.6,
+    fx 2100 (startM + 205) 0.2, fx 2200 (startM + 1100) 30, fx 2300 (startM + 2300) 34]
+private def FAR_SEGS : Array Seg := #[sg 0 2300, sg 2300 4000 "train"]
+private def FAR_STEPS : List FeasibilityStepPoint := stepsAt 80 1800 2000
+
+private def FAR_CARVED : Array RRow :=
+  #[{ startTs := 0, endTs := 1800, mode := "stationary", refinedMode := "", pointCount := 2,
+      avgSpeed := 0, maxSpeed := 0, linearity := 0.1, reenrich := false, reason := "" },
+    { startTs := 1800, endTs := 2000, mode := "walking", refinedMode := "", pointCount := 2,
+      avgSpeed := 3.6, maxSpeed := 3.6, linearity := 1, reenrich := true, reason := "" },
+    { startTs := 2000, endTs := 4000, mode := "train", refinedMode := "", pointCount := 4,
+      avgSpeed := 16.8, maxSpeed := 34, linearity := 0.1, reenrich := false, reason := reasonM "200" }]
+
+-- MARCH_START_MAX_FROM_DWELL_M: a straddling pair, so the VALUE is pinned and
+-- not merely its side. Nothing differs between these but where the march opens.
+#guard rrun FAR_SEGS (farMarch 140) FAR_STEPS == FAR_CARVED
+#guard rrun FAR_SEGS (farMarch 160) FAR_STEPS == rv FAR_SEGS
+
+-- The `n < 8` floor. Drop ONE dwell fix and the same anatomy — same march, same
+-- ride, same dwell position, every other gate still clear — is refused.
+#guard rrun FAR_SEGS ((farMarch 140).extract 0 1 ++ (farMarch 140).extract 2 8) FAR_STEPS
+  == rv FAR_SEGS
+
+/-- The march stretched over `durS` seconds of 150 m ground — clear of
+`PEDESTRIAN_MIN_RUN_NET_M` either way, so only the duration bar is in play. -/
+private def marchOver (durS : Int) : Array PointF :=
+  #[fx 0 0 0, fx 1200 0 0,
+    fx 1800 140 5.4, fx (1800 + durS / 2) 215 5.4, fx (1800 + durS) 290 5.4,
+    fx (1900 + durS) 295 0.2, fx (2000 + durS) 1200 32, fx (2100 + durS) 2400 34]
+private def marchOverSegs (durS : Int) : Array Seg :=
+  #[sg 0 (2100 + durS), sg (2100 + durS) 4000 "train"]
+
+-- PEDESTRIAN_MIN_RUN_S. The `marchTooBrief` case above also fails the net bar
+-- (its 120 m reads 119.9 through the haversine); these clear it by 30 m and
+-- straddle the 90 s bar alone.
+#guard rrun (marchOverSegs 80) (marchOver 80) (stepsAt 80 1800 1880) == rv (marchOverSegs 80)
+#guard rrun (marchOverSegs 100) (marchOver 100) (stepsAt 80 1800 1900) == #[
+  { startTs := 0, endTs := 1800, mode := "stationary", refinedMode := "", pointCount := 2,
+    avgSpeed := 0, maxSpeed := 0, linearity := 0.1, reenrich := false, reason := "" },
+  { startTs := 1800, endTs := 1900, mode := "walking", refinedMode := "", pointCount := 2,
+    avgSpeed := 5.4, maxSpeed := 5.4, linearity := 1, reenrich := true, reason := "" },
+  { startTs := 1900, endTs := 4000, mode := "train", refinedMode := "", pointCount := 4,
+    avgSpeed := 18.7, maxSpeed := 34, linearity := 0.1, reenrich := false, reason := reasonM "150" }]
+
+/-- The march runs SOUTH, so anything pushing the weighted median PAST the dwell
+lands on the ride's far end and the tether refuses. Shared by the two fixtures
+that perturb how `half` is computed. -/
+private def southMarch (head : Array PointF) (lastGapS : Int) : Array PointF :=
+  head ++ #[fx 1800 (-140) 5.4, fx 1850 (-215) 5.4, fx 1900 (-290) 5.4,
+            fx 2000 (-295) 0.2, fx 2100 1200 53, fx (2100 + lastGapS) 2400 20]
+private def SOUTH_STEPS : List FeasibilityStepPoint := stepsAt 80 1800 1900
+
+private def southCarved (stayCount : Int) (trainEnd : Int) (stayMax : Float) : Array RRow :=
+  #[{ startTs := 0, endTs := 1800, mode := "stationary", refinedMode := "", pointCount := stayCount,
+      avgSpeed := 0, maxSpeed := stayMax, linearity := 0.1, reenrich := false, reason := "" },
+    { startTs := 1800, endTs := 1900, mode := "walking", refinedMode := "", pointCount := 2,
+      avgSpeed := 5.4, maxSpeed := 5.4, linearity := 1, reenrich := true, reason := "" },
+    { startTs := 1900, endTs := trainEnd, mode := "train", refinedMode := "", pointCount := 4,
+      avgSpeed := 12.7, maxSpeed := 53, linearity := 0.1, reenrich := false, reason := reasonM "150" }]
+
+-- The `/ 2` in `half`. A 400 m southern outlier holding just over a QUARTER of
+-- the total time: the median stays at the dwell, but a quartile would land on
+-- the outlier and read the march as setting out 540 m from the "dwell".
+#guard rrun #[sg 0 2200, sg 2200 4000 "train"]
+  (southMarch #[fx 0 (-400) 2, fx 700 0 0, fx 1400 0 0] 100) SOUTH_STEPS
+  == southCarved 3 4000 2
+
+-- `acc ≥ half` at an EXACT tie: the dwell holds 2100 s of a 4200 s total, so
+-- the cumulative weight lands on half to the second. Under `>` the median falls
+-- through to the ride's first fix, 1340 m away, and the tether refuses.
+#guard rrun #[sg 0 4199, sg 4199 6000 "train"]
+  (southMarch #[fx 0 0 0, fx 1200 0 0] 2099) SOUTH_STEPS
+  == southCarved 2 6000 0
+
+-- `holdS`'s `max(…, 1)` floor. The same tie, but one unit of the dwell's weight
+-- now comes from a DUPLICATE timestamp: without the floor that fix holds for
+-- zero seconds, the tie breaks the other way, and the carve is refused.
+#guard rrun #[sg 0 4200, sg 4200 6000 "train"]
+  (southMarch #[fx 0 0 0, fx 0 0 0, fx 1200 0 0] 2100) SOUTH_STEPS
+  == southCarved 3 6000 0
 
 end RideHeadGuards
 

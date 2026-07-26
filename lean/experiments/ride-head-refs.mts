@@ -83,6 +83,117 @@ const withMarch = (march: FilteredPoint[]): FilteredPoint[] => [
 	...FIXES.slice(8),
 ];
 
+/* ---------------------------------------------------------------------------
+ * SECOND PROBE PASS — fixtures for the eight choices the first pass left open.
+ *
+ * The recurring failure of the first pass was a case that refused for the WRONG
+ * reason, so each of these must reach the gate under test with every OTHER gate
+ * satisfied. The shared skeleton does that work: a dwell at the frame origin, a
+ * long indoor gap (so the step INTO the march is slower than MARCH_STILL_KMH
+ * and the backward scan stops there rather than running on into the dwell), a
+ * pedestrian march, a standing wait, and a two-fix ride.
+ *
+ * That gap is the crux. A march that sets out from far away is reached by a
+ * FAST step, which drags `w` back to the dwell fix and makes `fromDwell[w]`
+ * zero — which is why the first pass could not pin the tether at all.
+ * ------------------------------------------------------------------------- */
+
+/** Dwell → 600 s gap → 200 m march → wait → ride, the march opening `startM`
+ *  north of the dwell. `startM` moves nothing but `fromDwell[w]`. */
+const farMarch = (startM: number): FilteredPoint[] => [
+	fx(0, 0, 0),
+	fx(1200, 0, 0),
+	fx(1800, startM, 3.6),
+	fx(1900, startM + 100, 3.6),
+	fx(2000, startM + 200, 3.6),
+	fx(2100, startM + 205, 0.2),
+	fx(2200, startM + 1100, 30),
+	fx(2300, startM + 2300, 34),
+];
+const FAR_SEGS = [seg({ startTs: 0, endTs: 2300 }), seg({ mode: "train", startTs: 2300, endTs: 4000 })];
+const FAR_STEPS = stepsAt(80, 1800, 2000);
+
+/** The same anatomy with the march stretched over `durS` seconds of 150 m
+ *  ground — enough net distance to clear PEDESTRIAN_MIN_RUN_NET_M either way,
+ *  so only the duration bar is in play. */
+const marchOver = (durS: number): FilteredPoint[] => [
+	fx(0, 0, 0),
+	fx(1200, 0, 0),
+	fx(1800, 140, 5.4),
+	fx(1800 + durS / 2, 215, 5.4),
+	fx(1800 + durS, 290, 5.4),
+	fx(1900 + durS, 295, 0.2),
+	fx(2000 + durS, 1200, 32),
+	fx(2100 + durS, 2400, 34),
+];
+const marchOverSegs = (durS: number) => [
+	seg({ startTs: 0, endTs: 2100 + durS }),
+	seg({ mode: "train", startTs: 2100 + durS, endTs: 4000 }),
+];
+
+/** The march runs SOUTH, so anything that pushes the weighted median PAST the
+ *  dwell lands on the ride's far end and the tether refuses. Shared by the two
+ *  fixtures that perturb how `half` is computed. */
+const southMarch = (head: FilteredPoint[], lastGapS: number): FilteredPoint[] => [
+	...head,
+	fx(1800, -140, 5.4),
+	fx(1850, -215, 5.4),
+	fx(1900, -290, 5.4),
+	fx(2000, -295, 0.2),
+	fx(2100, 1200, 53),
+	fx(2100 + lastGapS, 2400, 20),
+];
+const SOUTH_STEPS = stepsAt(80, 1800, 1900);
+
+const GAP_CASES: Record<string, Case> = {
+	// MARCH_START_MAX_FROM_DWELL_M — the first pass pinned neither the gate nor
+	// its value. A straddling pair: 140 m carves, 160 m is refused, and nothing
+	// else about the two differs.
+	marchStart140: { segments: FAR_SEGS, points: farMarch(140), steps: FAR_STEPS },
+	marchStart160: { segments: FAR_SEGS, points: farMarch(160), steps: FAR_STEPS },
+
+	// The n < 8 floor. Eight fixes carve; drop one dwell fix and the same
+	// anatomy — same march, same ride, same dwell position — is refused.
+	eightFixes: { segments: FAR_SEGS, points: farMarch(140), steps: FAR_STEPS },
+	sevenFixes: {
+		segments: FAR_SEGS,
+		points: farMarch(140).filter((_, j) => j !== 1),
+		steps: FAR_STEPS,
+	},
+
+	// PEDESTRIAN_MIN_RUN_S. The original too-brief case also failed the net
+	// bar; these two clear it by 30 m and straddle the 90 s bar alone.
+	march80s: { segments: marchOverSegs(80), points: marchOver(80), steps: stepsAt(80, 1800, 1880) },
+	march100s: { segments: marchOverSegs(100), points: marchOver(100), steps: stepsAt(80, 1800, 1900) },
+
+	// The `/ 2` in `half`. A 400 m southern outlier holding just over a QUARTER
+	// of the total time: the median stays at the dwell, but a quartile would
+	// land on the outlier and put the march 540 m from the "dwell".
+	quartileOutlier: {
+		segments: [seg({ startTs: 0, endTs: 2200 }), seg({ mode: "train", startTs: 2200, endTs: 4000 })],
+		points: southMarch([fx(0, -400, 2), fx(700, 0, 0), fx(1400, 0, 0)], 100),
+		steps: SOUTH_STEPS,
+	},
+
+	// `acc >= half` at an EXACT tie: the dwell holds 2100 s of a 4200 s total,
+	// so the cumulative weight lands on half to the second. Under `>` the
+	// median falls through to the ride's first fix, 1340 m away.
+	weightTie: {
+		segments: [seg({ startTs: 0, endTs: 4199 }), seg({ mode: "train", startTs: 4199, endTs: 6000 })],
+		points: southMarch([fx(0, 0, 0), fx(1200, 0, 0)], 2099),
+		steps: SOUTH_STEPS,
+	},
+
+	// holdS's `max(…, 1)` floor. Same tie, but one unit of the dwell's weight
+	// now comes from a DUPLICATE timestamp: without the floor that fix holds
+	// for zero seconds, the tie breaks the other way, and the carve is refused.
+	duplicateTs: {
+		segments: [seg({ startTs: 0, endTs: 4200 }), seg({ mode: "train", startTs: 4200, endTs: 6000 })],
+		points: southMarch([fx(0, 0, 0), fx(0, 0, 0), fx(1200, 0, 0)], 2100),
+		steps: SOUTH_STEPS,
+	},
+};
+
 const CASES: Record<string, Case> = {
 	// stay | walk | train — the stay is cut back, a walk is INVENTED, and the
 	// train extends back over the platform wait and the reacquire fixes.
@@ -197,6 +308,8 @@ const CASES: Record<string, Case> = {
 		segments: [SEGS[0], seg({ mode: "train", startTs: 4000, endTs: 6000, refinedReason: "Victoria Line" })],
 	},
 	empty: { segments: [], points: [], steps: [] },
+
+	...GAP_CASES,
 };
 
 const view = (segs: unknown[]) =>
