@@ -139,9 +139,31 @@ too — but per-leg, bounded by the leg, not per-day.
 Under this design the DB stops computing distances — it ships rows, and Lean's
 haversine becomes the definition of distance. There is therefore no requirement
 to reproduce MariaDB's arithmetic, and the 1e-9 m formula gap is not a defect to
-chase. The cost is a one-time golden re-bless; the deltas are sub-millimetre, so
-few if any decisions should move. Any that do move are worth reading as findings
-rather than fixed away.
+chase.
+
+**MEASURED (`lean/experiments/osm-sphere-delta.mts`): the point side moves
+NOTHING.** The haversine is `R · 2 · atan2(√a, √(1−a))` and `a` depends only on
+the coordinates, so R is a pure scale factor and every distance scales by
+exactly 1 + 2.198e-6. Two consequences:
+
+- **Ordering cannot change** — a uniform positive scaling is order-preserving,
+  so no `ORDER BY distance` result can be permuted and no nearest-feature pick
+  can flip.
+- **Only the radius bar can move a decision**, and only for a feature within
+  `radius · 2.198e-6` of it: 0.22 mm at 100 m, 0.88 mm at 400 m, 1.76 mm at 800.
+
+Across the corpus — 331 point-side queries, 1431 returned features — **zero**
+fall in that window, and the closest any feature comes to its own bar is
+**8.7 cm**, a hundredfold margin. So the re-bless expectation for the point side
+is not "few changes", it is **none**; anything that does move is a finding about
+something else, not expected drift.
+
+**The line side is a separate, still-open question.** `queryLines` never touches
+the sphere — its metric is planar in degree space, rescaled by a fixed
+`min(111000, 111000·cos lat)` — so the radius change is a no-op there by
+construction. What is NOT established is whether MariaDB's `ST_Distance` and
+this port's `segDistDeg` agree bit-for-bit on real geometry. That needs a
+DB-backed comparison and has not been done.
 
 ## Scope
 
