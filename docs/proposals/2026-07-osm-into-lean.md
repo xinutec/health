@@ -158,12 +158,55 @@ fall in that window, and the closest any feature comes to its own bar is
 is not "few changes", it is **none**; anything that does move is a finding about
 something else, not expected drift.
 
-**The line side is a separate, still-open question.** `queryLines` never touches
-the sphere — its metric is planar in degree space, rescaled by a fixed
-`min(111000, 111000·cos lat)` — so the radius change is a no-op there by
-construction. What is NOT established is whether MariaDB's `ST_Distance` and
-this port's `segDistDeg` agree bit-for-bit on real geometry. That needs a
-DB-backed comparison and has not been done.
+### The line side: MariaDB has a defect, and we are not reproducing it
+
+`queryLines` never touches the sphere, so the radius change is a no-op there by
+construction. The open question was whether MariaDB's `ST_Distance` and this
+port's `segDistDeg` agree. **They do not, and MariaDB is the one that is wrong.**
+
+Measured on 12.3.2 — same point, same coordinates:
+
+| geometry | `ST_Distance` |
+| --- | --- |
+| a real 12-vertex OSM way | 0.002419365488074187 |
+| **that way's nearest segment alone** | 0.002405760590290686 |
+| **the way's nearest vertex** | 0.002419365488074187 |
+
+The full-line answer is **bit-identical to the vertex distance**. MariaDB
+computes the true perpendicular for a two-point linestring and the nearest
+VERTEX for a multi-vertex one. `lineDistDeg` computes the true minimum, checked
+against an independent dense-sampling brute force that agrees to 1e-13 and
+locates the minimum mid-segment.
+
+**This one is not reproduced.** The whole point of the port is that Lean's
+version becomes the definition; encoding a database defect into it would make
+every later theorem a theorem about the defect. Note the contrast with the
+planar/anisotropic metric two sections up, which IS reproduced exactly — the
+rule is *reproduce an approximation the corpus was blessed under, do not
+reproduce a defect that makes the definition unstatable*.
+
+Impact, over 3840 real ways at 96 real captured query points:
+
+- **4 ways differ** (0.1%), all multi-vertex; every 2-vertex way agrees exactly.
+  The defect needs a long segment with the query point well off to one side, and
+  OSM ways are usually densely vertexed.
+- **One-directional**: a vertex is never nearer than the true minimum, so this
+  port is never FARTHER than MariaDB. It can only bring ways INTO a radius.
+- **Worst divergence 0.94 m**; **zero** features cross the bar at 50/100/300/400/800.
+
+**Unlike the sphere, this is NOT provably safe.** The nearest a non-flipping way
+sat to a bar was 2.5 cm, well inside the ~1 m the error can reach. Zero flips is
+an empirical result on this corpus, not a guarantee — so at the re-bless, a
+line-side diff is possible and should be read rather than assumed benign.
+
+**How this was missed until now**, because it generalises: the original port
+recorded these semantics as "confirmed against the live server rather than
+assumed" — but the confirmation ran on a two-vertex fixture, and a two-vertex
+line cannot tell "minimum over segments" apart from "distance to the nearest
+vertex". A fixture that cannot distinguish the candidate behaviours does not
+confirm one of them, however real the server it ran against.
+
+`lean/experiments/osm-line-metric-vs-mariadb.mts`.
 
 ## Scope
 

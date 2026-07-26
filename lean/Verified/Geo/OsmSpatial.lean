@@ -258,10 +258,43 @@ approximation the algorithm has always run on and the corpus was blessed under,
 so it is reproduced rather than corrected; changing it would be a behaviour
 change, not a port.
 
-Two semantics confirmed against the live server rather than assumed:
-`ST_Distance` is the planar minimum over segments clamped at the endpoints, and
 `MBRContains` is boundary-INCLUSIVE — a point on the bbox edge, on a corner, or
-on a degenerate zero-extent bbox all return true.
+on a degenerate zero-extent bbox all return true. Confirmed on the live server.
+
+## `lineDistDeg` deliberately does NOT reproduce MariaDB
+
+An earlier version of this comment claimed `ST_Distance` was "the planar minimum
+over segments clamped at the endpoints, confirmed against the live server". The
+confirmation was run on a TWO-VERTEX fixture, which cannot tell that behaviour
+apart from "distance to the nearest vertex". It is the second.
+
+Measured on MariaDB 12.3.2 (2026-07-26), same point, same coordinates:
+
+    full 12-vertex line   0.002419365488074187  = the distance to VERTEX 2
+    its segment 1 alone   0.002405760590290686  = the true perpendicular
+
+So `ST_Distance` is correct for a 2-point linestring and returns the nearest
+VERTEX for a multi-vertex one. `lineDistDeg` computes the true minimum over
+segments — verified against an independent dense-sampling brute force, which
+agrees to 1e-13 and locates the minimum mid-segment.
+
+This is therefore a deliberate BEHAVIOUR CHANGE, not a port, and it is taken
+because encoding a database defect into the definition would make every theorem
+about it a theorem about the defect. The consequences, measured over 3840 real
+ways at 96 real query points:
+
+- only **4** ways (0.1%) differ at all; every 2-vertex way agrees exactly. The
+  defect needs a long segment with the query point well off to one side, and
+  OSM ways are usually densely vertexed.
+- the change is ONE-DIRECTIONAL: a vertex is never nearer than the true
+  minimum, so this port is never FARTHER than MariaDB. It can only bring ways
+  INTO a radius, never push them out.
+- worst divergence **0.94 m**, and **zero** features cross the bar at any radius
+  the pass list uses (50 / 100 / 300 / 400 / 800).
+
+Unlike the sphere change, this is NOT provably safe: the nearest a non-flipping
+way sat to a bar was 2.5 cm, well inside the 0.94 m the error can reach. A flip
+is possible; this corpus simply does not contain one.
 -/
 
 namespace Lines

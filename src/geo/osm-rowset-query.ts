@@ -24,6 +24,19 @@
  * remove a row the distance test would keep. It is an accelerator, not a
  * predicate.
  *
+ * **The multi-vertex line distance.** MariaDB 12.3.2 computes the true
+ * perpendicular for a TWO-POINT linestring but returns the distance to the
+ * nearest VERTEX for a multi-vertex one — measured, same point, same
+ * coordinates: 0.002419365488074187 for a 12-vertex way (bit-identical to its
+ * vertex-2 distance) against 0.002405760590290686 for that way's nearest
+ * segment alone. `lineDistDeg` below computes the true minimum, verified
+ * against a dense-sampling brute force. Encoding a database defect into the
+ * definition would make every later theorem a theorem about the defect, so it
+ * is not reproduced. Impact, over 3840 real ways: 4 differ, all multi-vertex,
+ * worst 0.94 m, one-directional (this is never FARTHER, so it can only bring
+ * ways in), zero bar crossings at any radius the pass list uses. NOT provably
+ * safe though — see `lean/experiments/osm-line-metric-vs-mariadb.mts`.
+ *
  * # Where it does NOT differ, however tempting
  *
  * The line metric is PLANAR, in degree space, rescaled by a single
@@ -33,6 +46,10 @@
  * approximation the algorithm has always run on and the corpus was blessed
  * under it. Reproduced exactly. Fixing it would be a behaviour change, not a
  * port — and it belongs in its own commit with its own re-bless.
+ *
+ * (The contrast with the paragraph above is deliberate and is the rule this
+ * module follows: reproduce an APPROXIMATION the corpus was blessed under,
+ * do not reproduce a DEFECT that makes the definition unstatable.)
  */
 
 import type { LocalFeatureResult } from "./osm-local.js";

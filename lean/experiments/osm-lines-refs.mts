@@ -16,11 +16,28 @@
  * blessed under it, so it is reproduced exactly rather than corrected. Fixing
  * it would be a behaviour change, not a port.
  *
- * Semantics confirmed against the live server rather than assumed:
- *  - `ST_Distance(line, point)` is the planar minimum over segments, clamped at
- *    the endpoints (a point beyond the end measures to the endpoint).
- *  - `MBRContains` is boundary-INCLUSIVE: a point on the bbox edge, on a
- *    corner, or on a degenerate zero-height bbox all return 1.
+ * `MBRContains` is boundary-INCLUSIVE: a point on the bbox edge, on a corner,
+ * or on a degenerate zero-height bbox all return 1. Confirmed on the server.
+ *
+ * CORRECTION (2026-07-26). This header used to also claim `ST_Distance(line,
+ * point)` was "the planar minimum over segments, clamped at the endpoints —
+ * confirmed against the live server rather than assumed". That was wrong, and
+ * wrong in an instructive way: the confirmation ran on a TWO-VERTEX fixture,
+ * and a two-vertex line cannot distinguish "minimum over segments" from
+ * "distance to the nearest vertex". MariaDB 12.3.2 does the latter for
+ * multi-vertex lines — measured, same point, same coordinates:
+ *
+ *     full 12-vertex line   0.002419365488074187   = distance to VERTEX 2
+ *     its segment 1 alone   0.002405760590290686   = the true perpendicular
+ *
+ * `segDist` below computes the true minimum and so does NOT reproduce MariaDB.
+ * That is deliberate — see the discussion in `Verified/Geo/OsmSpatial.lean`,
+ * which carries the impact measurement (4 of 3840 real ways, ≤0.94 m,
+ * one-directional, no observed bar crossings).
+ *
+ * The lesson generalises past this file: a fixture that cannot distinguish the
+ * candidate behaviours does not confirm one of them, however real the server
+ * it was run against.
  *
  * Run: nix develop /Users/pippijn/Code/health --command npx tsx lean/experiments/osm-lines-refs.mts
  */
