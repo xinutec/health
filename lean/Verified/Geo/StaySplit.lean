@@ -1785,3 +1785,310 @@ private def southCarved (stayCount : Int) (trainEnd : Int) (stayMax : Float) : A
 end RideHeadGuards
 
 end RideHead
+
+/-! ## `splitStaysOnEvidence`
+
+A stay is one segment because the GPS never moved — but a phone that sits in a
+pocket through a walk to the shops and back looks exactly like a phone on a
+table, so `findStays` swallows the errand. This pass re-reads each stay's own fix
+sequence and asks, at every gap long enough to hide a departure, whether the
+BIOMETRICS say the wearer left: step density above all, with the gap's anomaly
+against the run's own rhythm, HR elevation and post-gap proximity as supporting
+signals (`scoreSplitEvidence`, at the top of this file).
+
+Where the evidence carries, the stay is cut and an explicit `unknown` segment is
+emitted BETWEEN the sub-stays — the honest "no coverage here" rather than two
+stays that `mergeAdjacent` would quietly stitch back together. The sub-stays
+inherit the parent's metadata so the place label survives the split; the
+`unknown` inherits NOTHING, being built from scratch.
+
+Three details worth naming, each pinned by its own case:
+
+* the run centroid is a RUNNING MEAN over the sub-run so far — not the last fix,
+  not the segment's centroid — so the proximity counter-evidence is measured
+  against where the wearer has actually been sitting;
+* a long gap that does NOT split still joins `priorGapsInRun`, raising the median
+  the NEXT gap is judged against: one unexplained silence makes the next silence
+  less anomalous;
+* the step and HR windows are STRICT at both ends, so a sample landing exactly on
+  a bracketing fix belongs to neither side.
+
+Unlike almost every sibling pass in this file, entry is gated on the RAW
+`seg.mode`, not `segMode` — a refinement in either direction is ignored.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/split-stays-refs.mts`).
+-/
+
+namespace Stays
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF median jsRound sortedIn)
+open Verified.Geo.StaySplit (scoreSplitEvidence SPLIT_THRESHOLD_NATS)
+
+/-- An HR sample as this pass reads it. -/
+structure HrPoint where
+  ts : Int
+  bpm : Float
+  deriving Inhabited, BEq, Repr
+
+/-- The biometric side-channels the split scorer weighs. -/
+structure SplitContext where
+  hr : Array HrPoint := #[]
+  steps : Array FeasibilityStepPoint := #[]
+  deriving Inhabited
+
+/-- Shorter in-stay gaps are ordinary GPS jitter and are never scored. -/
+def MIN_GAP_TO_EVALUATE_S : Int := 15 * 60
+
+/-- Walk the fixes in time order, accumulating into sub-runs; close a run when
+the gap to the next fix scores above `SPLIT_THRESHOLD_NATS`. -/
+def splitByEvidence (fixes : Array PointF) (ctx : SplitContext) : Array (Array PointF) := Id.run do
+  let mut runs : Array (Array PointF) := #[#[fixes[0]!]]
+  let mut priorGaps : Array Float := #[]
+  let mut cLat := fixes[0]!.lat
+  let mut cLon := fixes[0]!.lon
+  for i in [1:fixes.size] do
+    let prev := fixes[i - 1]!
+    let cur := fixes[i]!
+    let gapS := cur.ts - prev.ts
+    -- Only a gap long enough to hide a departure is worth scoring.
+    let split :=
+      if gapS < MIN_GAP_TO_EVALUATE_S then false
+      else
+        let inGap (ts : Int) : Bool := ts > prev.ts && ts < cur.ts
+        let stepsInGap := ctx.steps.foldl (fun s p => if inGap p.ts then s + p.steps else s) 0
+        let hrInGap := ctx.hr.filter fun h => inGap h.ts
+        let score := scoreSplitEvidence
+          { gapDurationS := Float.ofInt gapS
+            medianPriorGapS := if priorGaps.isEmpty then 0 else median priorGaps
+            preGapFixCount := Int.ofNat runs[runs.size - 1]!.size
+            stepsInGap
+            hrMeanInGap :=
+              if hrInGap.isEmpty then none
+              else some ((hrInGap.foldl (fun s h => s + h.bpm) 0) / Float.ofNat hrInGap.size)
+            hrSamplesInGap := Int.ofNat hrInGap.size
+            postGapDistFromCentroidM := haversineMeters cLat cLon cur.lat cur.lon }
+        score > SPLIT_THRESHOLD_NATS
+    if split then
+      runs := runs.push #[cur]
+      priorGaps := #[]
+      cLat := cur.lat
+      cLon := cur.lon
+    else
+      -- Joined: the gap enters the run's rhythm whether it was scored or not.
+      let run := runs[runs.size - 1]!.push cur
+      runs := runs.set! (runs.size - 1) run
+      priorGaps := priorGaps.push (Float.ofInt gapS)
+      cLat := cLat + (cur.lat - cLat) / Float.ofNat run.size
+      cLon := cLon + (cur.lon - cLon) / Float.ofNat run.size
+  return runs
+
+/-- Re-evaluate `findStays` output: split a stay wherever the biometrics say the
+wearer left mid-stay, recording the uncovered interval as an `unknown` segment. -/
+def splitStaysOnEvidence (segments : Array Seg) (points : Array PointF)
+    (ctx : SplitContext) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for seg in segments do
+    let segFixes := sortedIn points seg.startTs seg.endTs
+    let subRuns :=
+      if seg.mode != "stationary" || seg.pointCount < 2 || segFixes.size < 2 then #[]
+      else splitByEvidence segFixes ctx
+    if subRuns.size ≤ 1 then
+      out := out.push seg
+    else
+      for i in [0:subRuns.size] do
+        let run := subRuns[i]!
+        out := out.push
+          { seg with
+            startTs := run[0]!.ts, endTs := run[run.size - 1]!.ts
+            pointCount := Int.ofNat run.size }
+        if i < subRuns.size - 1 then
+          let gapStart := run[run.size - 1]!.ts
+          let gapEnd := subRuns[i + 1]![0]!.ts
+          let mins := toString (jsRound (Float.ofInt (gapEnd - gapStart) / 60)).toInt64.toInt
+          out := out.push
+            { startTs := gapStart, endTs := gapEnd, mode := "unknown"
+              confidence := 0.1, confidenceMargin := 1
+              avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 0
+              refinedReason := some s!"no GPS coverage for {mins} min (mid-stay departure inferred from biometric / fix-density evidence)" }
+  return out
+
+end Stays
+
+section StaysGuards
+
+open Stays
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint)
+open Shed (PointF)
+
+private def lat0 : Float := 51.52
+private def lon0 : Float := -0.13
+private def mlat : Float := 1 / 111320
+private def fx (ts : Int) (metresNorth : Float) : PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh := 0 }
+
+private def stay : Seg :=
+  { startTs := 0, endTs := 100000, mode := "stationary"
+    confidence := 0.8, confidenceMargin := 2
+    avgSpeed := 0, maxSpeed := 1, linearity := 0.1, pointCount := 9, place := some "Home" }
+private def STAY : Array Seg := #[stay]
+
+/-- `n` step buckets of `spm` each, one per minute from `from_`. -/
+private def stepsFrom (spm : Float) (from_ : Int) (n : Nat) : Array FeasibilityStepPoint :=
+  (Array.range n).map fun k => { ts := from_ + 60 * Int.ofNat k, steps := spm }
+private def hrFrom (bpm : Float) (from_ : Int) (n : Nat) : Array HrPoint :=
+  (Array.range n).map fun k => { ts := from_ + 60 * Int.ofNat k, bpm }
+
+/-- Four dense fixes, a `gapS` silence, then three more. -/
+private def acrossGap (gapS : Int) : Array PointF :=
+  #[fx 0 0, fx 300 0, fx 600 0, fx 900 0,
+    fx (900 + gapS) 500, fx (1200 + gapS) 500, fx (1500 + gapS) 500]
+
+private structure SRow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  pointCount : Int
+  confidence : Float
+  confidenceMargin : Float
+  place : String
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def sv (segs : Array Seg) : Array SRow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount
+      confidence := s.confidence, confidenceMargin := s.confidenceMargin
+      place := s.place.getD "", reason := s.refinedReason.getD "" }
+
+private def srun (segs : Array Seg := STAY) (pts : Array PointF := #[])
+    (steps : Array FeasibilityStepPoint := #[]) (hr : Array HrPoint := #[]) : Array SRow :=
+  sv (splitStaysOnEvidence segs pts { hr, steps })
+
+private def gapReason (mins : String) : String :=
+  s!"no GPS coverage for {mins} min (mid-stay departure inferred from biometric / fix-density evidence)"
+
+/-- A sub-stay of the parent: inherits its confidence, margin and place. -/
+private def sub (startTs endTs : Int) (pc : Int) : SRow :=
+  { startTs, endTs, mode := "stationary", pointCount := pc
+    confidence := 0.8, confidenceMargin := 2, place := "Home", reason := "" }
+/-- The interleaved gap: built from scratch, so it inherits NOTHING. -/
+private def gap (startTs endTs : Int) (mins : String) : SRow :=
+  { startTs, endTs, mode := "unknown", pointCount := 0
+    confidence := 0.1, confidenceMargin := 1, place := "", reason := gapReason mins }
+
+-- 800 steps over the 30 min silence = 26.7/min, unambiguous walking: the stay
+-- is cut and an `unknown` segment records the uncovered half hour.
+#guard srun STAY (acrossGap 1800) (stepsFrom 100 960 8)
+  == #[sub 0 900 4, gap 900 2700 "30", sub 2700 3300 3]
+-- The same silence with no steps at all: sitting quietly, left alone.
+#guard srun STAY (acrossGap 1800) == sv STAY
+
+-- WHO PARTICIPATES. `seg.mode` is read RAW, so a refinement in EITHER direction
+-- is ignored — unlike almost every sibling pass in this file.
+#guard srun #[{ stay with mode := "walking" }] (acrossGap 1800) (stepsFrom 100 960 8)
+  == sv #[{ stay with mode := "walking" }]
+#guard srun #[{ stay with mode := "walking", refinedMode := some "stationary" }]
+    (acrossGap 1800) (stepsFrom 100 960 8)
+  == sv #[{ stay with mode := "walking", refinedMode := some "stationary" }]
+#guard (srun #[{ stay with refinedMode := some "walking" }] (acrossGap 1800) (stepsFrom 100 960 8)).size == 3
+-- The segment's own pointCount gates entry, whatever its fixes say.
+#guard srun #[{ stay with pointCount := 1 }] (acrossGap 1800) (stepsFrom 100 960 8)
+  == sv #[{ stay with pointCount := 1 }]
+#guard (srun #[{ stay with pointCount := 2 }] (acrossGap 1800) (stepsFrom 100 960 8)).size == 3
+-- …and the window must actually hold two fixes.
+#guard srun #[{ stay with endTs := 100 }] (acrossGap 1800) (stepsFrom 100 960 8)
+  == sv #[{ stay with endTs := 100 }]
+
+-- MIN_GAP_TO_EVALUATE_S is a floor, not a strict bar: exactly 900 s is scored
+-- (and splits), 899 s is joined without ever being looked at.
+#guard srun STAY (acrossGap 900) (stepsFrom 100 960 8)
+  == #[sub 0 900 4, gap 900 1800 "15", sub 1800 2400 3]
+#guard srun STAY (acrossGap 899) (stepsFrom 100 960 8) == sv STAY
+
+-- SPLIT_THRESHOLD_NATS is strict. 10 steps/min (2.0) with a 20x anomalous gap
+-- (+0.5) lands on 2.5 EXACTLY and is refused; three elevated HR samples (+0.3)
+-- clear it.
+private def NEAR_BAR : Array PointF :=
+  #[fx 0 0, fx 60 0, fx 120 0, fx 180 0, fx 240 0, fx 1440 500, fx 1740 500]
+#guard srun STAY NEAR_BAR (stepsFrom 10 300 20) == sv STAY
+#guard srun STAY NEAR_BAR (stepsFrom 10 300 20) (hrFrom 100 300 3)
+  == #[sub 0 240 5, gap 240 1440 "20", sub 1440 1740 2]
+-- The HR window is STRICT at both ends and needs three samples: pushing one of
+-- the three onto the boundary fix drops the count to two and loses the +0.3.
+#guard srun STAY NEAR_BAR (stepsFrom 10 300 20)
+    #[{ ts := 240, bpm := 100 }, { ts := 360, bpm := 100 }, { ts := 420, bpm := 100 }]
+  == sv STAY
+-- The step window is strict too: 1200 steps sitting exactly ON the bracketing
+-- fixes are not in the gap, and the score falls back to sitting.
+#guard srun STAY (acrossGap 1800) #[{ ts := 900, steps := 600 }, { ts := 2700, steps := 600 }]
+  == sv STAY
+
+-- The run centroid is a RUNNING MEAN over the sub-run. The run sits at 0, 0, 0,
+-- 0 and then 75 m, so its mean is 15 m: the post-gap fix at 25 m is 10 m from
+-- that mean, close enough to spend the -0.5 and land the score on 2.5 exactly.
+-- Measured from the LAST fix (50 m) or the FIRST (25 m) there is no penalty and
+-- the stay splits.
+#guard srun STAY
+    #[fx 0 0, fx 60 0, fx 120 0, fx 180 0, fx 240 75, fx 3840 25, fx 4140 25]
+    (stepsFrom 10 300 60)
+  == sv STAY
+
+-- A long gap that does NOT split still joins the run's rhythm, raising the
+-- median the NEXT gap is judged against from 60 s to 430 s — so the second
+-- silence, 60x the original rhythm on the un-updated median, is no longer
+-- anomalous enough to carry a 10 steps/min run over the bar.
+#guard srun STAY
+    #[fx 0 0, fx 60 0, fx 120 0, fx 920 0, fx 2120 500, fx 5720 1000, fx 6020 1000]
+    (stepsFrom 10 2160 60)
+  == sv STAY
+
+-- Two splits: three sub-stays, two `unknown` segments. The second gap is
+-- 1830 s, so its minutes round HALF UP to 31.
+#guard srun STAY
+    #[fx 0 0, fx 300 0, fx 900 0, fx 2700 500, fx 3000 500, fx 4830 1000, fx 5130 1000]
+    (stepsFrom 100 960 8 ++ stepsFrom 100 3060 30)
+  == #[sub 0 900 3, gap 900 2700 "30", sub 2700 3000 2, gap 3000 4830 "31", sub 4830 5130 2]
+
+-- A synthetic stay whose window holds NO fixes at all. The guard keeping it out
+-- is PROTECTIVE rather than decisive: `splitByEvidence` reads `fixes[0]` before
+-- its loop, which throws in the TS on an empty array. No `#guard` can pin it —
+-- for any array of fewer than two fixes the loop never runs, so the result is a
+-- single run and `subRuns.size ≤ 1` passes the segment through regardless.
+-- Reproduced as the TS has it.
+#guard srun #[{ stay with startTs := 50000, endTs := 60000 }] (acrossGap 1800) (stepsFrom 100 960 8)
+  == sv #[{ stay with startTs := 50000, endTs := 60000 }]
+
+-- The gap's HIGH end is strict too, and here it decides: a 300-step bucket
+-- sitting exactly on the post-gap fix would lift 9.5 steps/min to 24.5 and
+-- carry the score from 2.5 to 4.0.
+#guard srun STAY NEAR_BAR (stepsFrom 10 300 20 ++ #[{ ts := 1440, steps := 300 }]) == sv STAY
+
+-- A split starts a FRESH rhythm: `priorGaps` is cleared, so the new run's 60 s
+-- cadence — not the old run's 800 s one — is what the next silence is judged
+-- against. Carry the old gaps over and the median rises to 800, the anomaly
+-- boost is lost, and this stay splits once instead of twice.
+#guard srun STAY
+    #[fx 0 0, fx 800 0, fx 1600 0, fx 2400 0, fx 3200 0, fx 4000 0,
+      fx 5800 500, fx 5860 500, fx 5920 500, fx 5980 500, fx 6040 500,
+      fx 9640 1000, fx 9940 1000]
+    (stepsFrom 100 4060 8 ++ stepsFrom 10 6060 60)
+  == #[sub 0 4000 6, gap 4000 5800 "30", sub 5800 6040 5, gap 6040 9640 "60", sub 9640 9940 2]
+
+-- …and the centroid is reset to the new run's first fix. The second run sits at
+-- 1000 m and the final fix lands 10 m from it — close enough for the -0.5 that
+-- holds the score at 2.5. Left un-reset the centroid would still be dragging up
+-- from the old run at 800 m, 210 m away, and this would split a second time.
+#guard srun STAY
+    #[fx 0 0, fx 60 0, fx 120 0, fx 180 0,
+      fx 1980 1000, fx 2040 1000, fx 2100 1000, fx 2160 1000, fx 2220 1000,
+      fx 5820 1010, fx 6120 1010]
+    (stepsFrom 100 240 8 ++ stepsFrom 10 2240 60)
+  == #[sub 0 180 4, gap 180 1980 "30", sub 1980 6120 7]
+
+#guard srun #[] #[] == #[]
+
+end StaysGuards
