@@ -75,10 +75,11 @@ structure ScoredPoint where
 /-- `queryPoints`: keep rows strictly inside the radius, of a wanted subtype,
 ordered by distance, capped at 50.
 
-The cap never binds for the station and line lookups the pass list makes — over
-the golden corpus `nearbyStations` returns at most 11 rows and `linesAtPoint`
-at most 14 — but it is reproduced because `walkableRoads` and `buildingsNear`
-run the same shape and do reach their caps. -/
+The cap does not bind for the STATION and LINE-NAME lookups — over the golden
+corpus `nearbyStations` returns at most 11 rows and `linesAtPoint` at most 14.
+It very much binds for `nearbyWays`: its highway bucket comes back at exactly
+50 on every dense-London query examined, which is what makes the line-metric
+change able to LOSE a way (see the `lineDistDeg` note below). -/
 def queryPoints (rows : Array PointRow) (lat lon radiusM : Float)
     (subtypes : Array String := #[]) (R : Float := LEAN_EARTH_R) : Array ScoredPoint :=
   let scored := rows.map fun r => { row := r, distanceM := haversineAt R lat lon r.lat r.lon }
@@ -280,21 +281,44 @@ agrees to 1e-13 and locates the minimum mid-segment.
 
 This is therefore a deliberate BEHAVIOUR CHANGE, not a port, and it is taken
 because encoding a database defect into the definition would make every theorem
-about it a theorem about the defect. The consequences, measured over 3840 real
-ways at 96 real query points:
+about it a theorem about the defect.
 
-- only **4** ways (0.1%) differ at all; every 2-vertex way agrees exactly. The
-  defect needs a long segment with the query point well off to one side, and
-  OSM ways are usually densely vertexed.
-- the change is ONE-DIRECTIONAL: a vertex is never nearer than the true
-  minimum, so this port is never FARTHER than MariaDB. It can only bring ways
-  INTO a radius, never push them out.
-- worst divergence **0.94 m**, and **zero** features cross the bar at any radius
-  the pass list uses (50 / 100 / 300 / 400 / 800).
+### How big is it, really
 
-Unlike the sphere change, this is NOT provably safe: the nearest a non-flipping
-way sat to a bar was 2.5 cm, well inside the 0.94 m the error can reach. A flip
-is possible; this corpus simply does not contain one.
+An earlier note here put the consequences at "4 of 3840 ways, worst 0.94 m,
+zero bar crossings". Those numbers were real but the SAMPLE was not
+representative: it drew only from `highway`/`railway` rows near captured query
+points. Roads are densely vertexed along their curves, so the gap between the
+perpendicular foot and the nearest vertex stays small. Replaying all 2521
+captured kernel queries against the pushed row-set
+(`lean/experiments/osm-rowset-parity.mts`, 2026-07-26) gives the real scale:
+
+- `nearbyLandmarks` — worst **17.67 m**. Landmark rows include closed ways:
+  parks, buildings, car parks. A polygon's long wall carries vertices only at
+  its corners, so standing beside the middle of one, the true distance and the
+  corner distance differ by a large fraction of the wall's length. Measured
+  case: Paleistuin (`osm 86909138`, 59 vertices) — true **2.0687 m**, MariaDB
+  **16.9640 m**, bit-identical to its own nearest vertex.
+- `nearbyWays` — worst **37.96 m**, for the same reason on long straight trunk
+  roads.
+- point-backed methods are untouched, as the sphere argument requires:
+  `nearbyStations` worst **0.0009 m** over 269 differing queries, no membership
+  change anywhere.
+
+The size of the defect is the vertex SPACING along the nearest edge, not
+anything about the corpus — which is why a road-only sample understated it by a
+factor of ~40.
+
+### One-directional, but not monotone in the RESULT
+
+A vertex is never nearer than the true minimum, so this port is never FARTHER
+than MariaDB: as a PREDICATE the change can only bring ways in. The METHOD is
+not monotone, though, because `LIMIT 50` is applied after ordering. Over the
+corpus, `nearbyWays` gained features on 18 queries and LOST them on 9 of those
+same 18 — every loss displaced by the cap, whose highway bucket was already
+saturated at exactly 50 rows in each case. So "features can only be gained" is
+true of the filter and false of the method, and only the filter version is
+safe to reason from.
 -/
 
 namespace Lines

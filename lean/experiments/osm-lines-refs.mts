@@ -32,8 +32,8 @@
  *
  * `segDist` below computes the true minimum and so does NOT reproduce MariaDB.
  * That is deliberate — see the discussion in `Verified/Geo/OsmSpatial.lean`,
- * which carries the impact measurement (4 of 3840 real ways, ≤0.94 m,
- * one-directional, no observed bar crossings).
+ * which carries the impact measurement (up to 17.67 m on landmark polygons and
+ * 37.96 m on ways, over the full 2521-query corpus replay).
  *
  * The lesson generalises past this file: a fixture that cannot distinguish the
  * candidate behaviours does not confirm one of them, however real the server

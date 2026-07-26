@@ -32,10 +32,17 @@
  * segment alone. `lineDistDeg` below computes the true minimum, verified
  * against a dense-sampling brute force. Encoding a database defect into the
  * definition would make every later theorem a theorem about the defect, so it
- * is not reproduced. Impact, over 3840 real ways: 4 differ, all multi-vertex,
- * worst 0.94 m, one-directional (this is never FARTHER, so it can only bring
- * ways in), zero bar crossings at any radius the pass list uses. NOT provably
- * safe though — see `lean/experiments/osm-line-metric-vs-mariadb.mts`.
+ * is not reproduced.
+ *
+ * The impact is NOT small. The gap is the vertex spacing along the nearest
+ * edge, so it is centimetres on a curve-dense road and tens of metres on a
+ * polygon wall: replaying all 2521 captured kernel queries
+ * (`lean/experiments/osm-rowset-parity.mts`) puts `nearbyLandmarks` at up to
+ * 17.67 m and `nearbyWays` at up to 37.96 m. And while the change is
+ * one-directional as a PREDICATE — never farther, so ways can only come in —
+ * the `ROW_LIMIT` below is applied after ordering, and `nearbyWays`' highway
+ * bucket is saturated at exactly 50, so a gain displaces a way off the end.
+ * Nine queries lose a named street that way.
  *
  * # Where it does NOT differ, however tempting
  *
@@ -59,9 +66,11 @@ import type { OsmLineRow, OsmPointRow } from "./osm-rowset.js";
 /** The sphere the Lean kernel adopts as the definition of distance. */
 const EARTH_R = 6_371_000;
 
-/** `SELECT … LIMIT 50` in both query builders. Never binds for the station and
- *  line lookups (at most 11 and 14 rows respectively across the corpus), but a
- *  cap that has never bound is still part of the function being defined. */
+/** `SELECT … LIMIT 50` in both query builders. Does not bind for the station
+ *  and line-name lookups (at most 11 and 14 rows respectively across the
+ *  corpus). It DOES bind for `nearbyWays`, whose highway bucket comes back at
+ *  exactly 50 on dense-London queries — which is the whole reason the line
+ *  metric can lose a way rather than only gain one. See the header. */
 const ROW_LIMIT = 50;
 
 /** Great-circle metres, the same formula `FloatScore.haversineMeters` uses. */

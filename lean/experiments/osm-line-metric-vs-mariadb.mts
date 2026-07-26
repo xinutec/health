@@ -23,6 +23,24 @@
  * candidate behaviours does not confirm one of them, however real the server it
  * ran against.
  *
+ * # And how its SIZE was understated the second time (2026-07-26)
+ *
+ * The corpus-scale section below originally reported "4 of 3840 ways differ,
+ * worst 0.94 m". Those numbers are right for what they sampled and wrong as a
+ * description of the impact: the dump query draws `highway`/`railway` rows, and
+ * roads carry dense vertices along their curves, so the perpendicular foot is
+ * never far from a vertex. The defect's size IS the vertex spacing along the
+ * nearest edge — so it is centimetres on a road and tens of metres on a polygon
+ * wall, where vertices sit only at the corners. `nearbyLandmarks` reads closed
+ * ways (parks, buildings, car parks) and the full-corpus replay in
+ * `osm-rowset-parity.mts` finds 17.67 m there, and 37.96 m on `nearbyWays`.
+ *
+ * The `POLYGON_CASE` below is that case, kept alongside the road case precisely
+ * so the two magnitudes sit next to each other and neither can be quoted as
+ * "the" impact again. The general lesson: when a measurement's spread depends
+ * on a property of the input (here, vertex spacing), sample across that
+ * property — an average over one regime is not a bound.
+ *
  * # Reproducing it
  *
  * Needs the mirror, so it runs in two halves. First, on a host that can reach
@@ -78,6 +96,25 @@ const CASE = {
 	mariaSegment1: 0.002405760590290686,
 };
 
+/**
+ * The polygon case — the same defect where it actually hurts.
+ *
+ * Real measurement, replayed from the golden corpus on 2026-07-26: the query
+ * point sits 2.0687 m from the boundary of Paleistuin (`osm_lines` 86909138, a
+ * 59-vertex closed park way), and 16.9640 m from that boundary's nearest
+ * VERTEX. MariaDB returned 16.9640 m — bit-identical to the vertex distance,
+ * not to the edge.
+ *
+ * `SYNTH` reproduces the mechanism without a DB: a rectangle whose long wall
+ * runs `WALL_M` metres between corners, with the query point `OFFSET_M` from
+ * the middle of that wall. The error is then bounded below by
+ * `sqrt(OFFSET² + (WALL/2)²) − OFFSET`, which grows with wall length — that is
+ * why a park or a car park loses tens of metres and a curved road loses
+ * centimetres.
+ */
+const PALEISTUIN = { trueEdgeM: 2.0687, mariaVertexM: 16.964, verts: 59, osmId: 86909138 };
+const SYNTH = { qlat: 51.5, qlon: -0.13, wallM: 60, offsetM: 3 };
+
 const mine = lineDistDeg(CASE.coords, CASE.qlat, CASE.qlon);
 let nearestVertex = Number.POSITIVE_INFINITY;
 for (const [la, lo] of CASE.coords) {
@@ -95,6 +132,34 @@ console.log(
 );
 console.log(`  and this port matches its SEGMENT answer to ${Math.abs(mine - CASE.mariaSegment1).toExponential(2)}`);
 console.log(`  the gap the defect opens: ${((CASE.mariaFullLine - mine) * mpd).toFixed(4)} m`);
+
+// The polygon case, where the same defect is three orders of magnitude larger.
+{
+	const mpdS = mPerDegAt(SYNTH.qlat);
+	const halfWallDeg = SYNTH.wallM / 2 / mpdS;
+	const offDeg = SYNTH.offsetM / mpdS;
+	// A rectangle sitting `offsetM` north of the query point, its southern wall
+	// running east–west with corners only at the ends.
+	const rect: Array<[number, number]> = [
+		[SYNTH.qlat + offDeg, SYNTH.qlon - halfWallDeg],
+		[SYNTH.qlat + offDeg, SYNTH.qlon + halfWallDeg],
+		[SYNTH.qlat + offDeg + halfWallDeg, SYNTH.qlon + halfWallDeg],
+		[SYNTH.qlat + offDeg + halfWallDeg, SYNTH.qlon - halfWallDeg],
+		[SYNTH.qlat + offDeg, SYNTH.qlon - halfWallDeg],
+	];
+	const edge = lineDistDeg(rect, SYNTH.qlat, SYNTH.qlon) * mpdS;
+	let vtx = Number.POSITIVE_INFINITY;
+	for (const [la, lo] of rect) vtx = Math.min(vtx, Math.hypot(SYNTH.qlon - lo, SYNTH.qlat - la));
+	console.log(`\nthe polygon case — a ${SYNTH.wallM} m wall, query point ${SYNTH.offsetM} m off its middle:`);
+	console.log(`  true distance to the wall  : ${edge.toFixed(4)} m`);
+	console.log(`  distance to nearest CORNER : ${(vtx * mpdS).toFixed(4)} m  <- what MariaDB would return`);
+	console.log(`  the defect                 : ${(vtx * mpdS - edge).toFixed(4)} m`);
+	console.log(
+		`\n  real instance (Paleistuin, osm ${PALEISTUIN.osmId}, ${PALEISTUIN.verts} vertices):` +
+			`\n    true ${PALEISTUIN.trueEdgeM} m vs MariaDB ${PALEISTUIN.mariaVertexM} m — a ${(PALEISTUIN.mariaVertexM - PALEISTUIN.trueEdgeM).toFixed(2)} m error,` +
+			`\n    which crosses venue-prior's NEAR_FIELD_DECISIVE_M = 12 in the wrong direction.`,
+	);
+}
 
 const dumpPath = process.argv[2];
 if (!dumpPath) {

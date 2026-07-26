@@ -49,3 +49,10 @@ tests/fixtures/roadmatch/
 
 # Lean build artifacts (lean/ verified core)
 lean/.lake/
+
+# Parity dump from lean/experiments/osm-rowset-parity.mts: one entry per
+# differing kernel query, ~240 KB. Derived and mirror-dependent — the OSM
+# mirror moves under it, so a committed copy would silently go stale while
+# looking authoritative. The durable numbers live in the proposal; regenerate
+# the detail with `scripts/prod-db.sh npx tsx lean/experiments/osm-rowset-parity.mts`.
+lean/experiments/osm-rowset-parity.json

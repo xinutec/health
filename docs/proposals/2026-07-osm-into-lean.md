@@ -185,26 +185,75 @@ planar/anisotropic metric two sections up, which IS reproduced exactly — the
 rule is *reproduce an approximation the corpus was blessed under, do not
 reproduce a defect that makes the definition unstatable*.
 
-Impact, over 3840 real ways at 96 real captured query points:
+#### Impact — measured twice, understated the first time
 
-- **4 ways differ** (0.1%), all multi-vertex; every 2-vertex way agrees exactly.
-  The defect needs a long segment with the query point well off to one side, and
-  OSM ways are usually densely vertexed.
-- **One-directional**: a vertex is never nearer than the true minimum, so this
-  port is never FARTHER than MariaDB. It can only bring ways INTO a radius.
-- **Worst divergence 0.94 m**; **zero** features cross the bar at 50/100/300/400/800.
+The first measurement drew 3840 ways at 96 captured query points and reported
+**4 differing, worst 0.94 m, zero bar crossings**. Those numbers are correct for
+what they sampled and *wrong as a description of the impact*: the dump query
+selects `highway`/`railway` rows only. The size of this defect is the **vertex
+spacing along the nearest edge** — and roads carry dense vertices around their
+curves, so the perpendicular foot is never far from one.
 
-**Unlike the sphere, this is NOT provably safe.** The nearest a non-flipping way
-sat to a bar was 2.5 cm, well inside the ~1 m the error can reach. Zero flips is
-an empirical result on this corpus, not a guarantee — so at the re-bless, a
-line-side diff is possible and should be read rather than assumed benign.
+Replaying all **2521** captured kernel queries against the pushed row-set
+(`lean/experiments/osm-rowset-parity.mts`) gives the real scale:
 
-**How this was missed until now**, because it generalises: the original port
-recorded these semantics as "confirmed against the live server rather than
-assumed" — but the confirmation ran on a two-vertex fixture, and a two-vertex
-line cannot tell "minimum over segments" apart from "distance to the nearest
-vertex". A fixture that cannot distinguish the candidate behaviours does not
-confirm one of them, however real the server it ran against.
+| method | queries differing | worst Δ | membership changes |
+| --- | --- | --- | --- |
+| `nearbyWays` | 664 | **37.96 m** | 18 (9 gain, 9 gain+lose) |
+| `nearbyLandmarks` | 114 | **17.67 m** | 0 |
+| `nearbyStations` | 269 | 0.0009 m | 0 |
+| `nearbyTransitStops` | 24 | 4.12 m¹ | 0 |
+| `linesAtPoint` | 2 | 0 | 0 |
+
+¹ one query, and NOT the port: point distances differ only by R, bounded at
+0.11 mm at r=50. It is an unnamed `traffic_signals` node the mirror has moved
+since capture — mirror drift, the third contaminant listed in the harness header.
+
+The landmark row is the one that matters. `nearbyLandmarks` reads closed ways —
+parks, buildings, car parks — and a polygon's long wall carries vertices only at
+its corners. Measured: **Paleistuin** (`osm_lines` 86909138, 59 vertices) sits
+**2.0687 m** from the query point by the true metric and **16.9640 m** by
+MariaDB's, bit-identical to its own nearest vertex. Since `venue-prior.ts` uses
+`NEAR_FIELD_DECISIVE_M = 12`, that single geometry crosses the near-field
+short-circuit bar: under the fix, the park decides the venue; under MariaDB, it
+did not even qualify.
+
+#### One-directional as a predicate, NOT as a method
+
+A vertex is never nearer than the true minimum, so this port is never FARTHER
+than MariaDB and the *filter* can only bring ways in. The *method* is not
+monotone, because `LIMIT 50` is applied after ordering. `nearbyWays` lost a named
+street on **9** queries — Marylebone Road, Euston Circus, Finchley Road, Holloway
+Road, A501, and three unnamed footway/cycleway rows — and in every one the
+highway bucket was already saturated at exactly 50 rows, so the gains displaced
+the tail. Reason from the filter version; the method version is false.
+
+**Unlike the sphere, this is NOT provably safe** and the corpus shows it moving
+real answers, so the re-bless must be read rather than assumed benign.
+
+#### What is provably inert
+
+Of `nearbyWays`' 664 differences, **541 are reordering only** — and no consumer
+reads that order. `velocity.ts` folds the list into a `type/subtype/name → min
+distance` map before use; `computeRailRoadProximity`,
+`computeRoadNearestFraction` and `railRoadDistFromWays` take minima;
+`underground-rail.ts` re-sorts by distance itself. `linesAtPoint` returns a
+`Set`, so its 2 reorderings carry no content at all. That leaves distance
+changes and the 18 membership changes as the whole of the behavioural surface.
+
+**How this was missed twice**, because both failures generalise:
+
+1. The original port recorded these semantics as "confirmed against the live
+   server rather than assumed" — but the confirmation ran on a two-vertex
+   fixture, and a two-vertex line cannot tell "minimum over segments" apart from
+   "distance to the nearest vertex". *A fixture that cannot distinguish the
+   candidate behaviours does not confirm one of them, however real the server it
+   ran against.*
+2. The impact was then measured on a road-only sample, which understated it by a
+   factor of ~40. The spread of this error depends on a property of the input —
+   vertex spacing — and the sample covered one regime of that property. *When a
+   measurement's spread is driven by a property of the input, sample across that
+   property; an average over one regime is not a bound.*
 
 `lean/experiments/osm-line-metric-vs-mariadb.mts`.
 
@@ -243,6 +292,24 @@ Staying in the shell:
    500 m for the rest** — serialise raw rows, and record the coverage boxes
    alongside them. DONE: `src/geo/osm-rowset.ts` + `tests/osm-rowset.test.ts`,
    sized by `lean/experiments/osm-buffer-sizing.mts`.
-3. Swap the injected lookups to read the pushed table.
-4. Re-bless the golden corpus; read whatever moves.
+3. Swap the injected lookups to read the pushed table. DONE for the kernel:
+   `src/geo/osm-rowset-query.ts` + `src/geo/osm-adapter-rowset.ts`. NOT yet
+   wired into `loadClassificationInputs` — see step 3b.
+3b. Wire `RowSetOsmAdapter` into `loadClassificationInputs`. Open design
+   question first: the caller passes the adapter in, so a row-set wrapper would
+   sit OUTSIDE the recorder and the five kernel calls would stop being captured
+   — which breaks `FixtureOsmAdapter` replay unless the fixture carries the
+   row-set too. Decide that before writing the wiring.
+4. Re-bless the golden corpus; read whatever moves. **The brief is now measured,
+   not guessed** — `lean/experiments/osm-rowset-parity.mts`, run 2026-07-26 over
+   all 2521 captured kernel queries, 0 uncovered:
+   - the point side must not move: `nearbyStations` worst 0.0009 m, no
+     membership change anywhere. Any point-side movement past the sphere budget
+     is a finding.
+   - the line side moves substantially, and place naming is where it lands:
+     landmark polygons shift by up to 17.67 m and cross
+     `NEAR_FIELD_DECISIVE_M = 12`.
+   - 9 queries LOSE a named street to `LIMIT 50` displacement. Expected, not a
+     regression, but each should be recognisable in the diff.
+   - 541 `nearbyWays` reorderings are inert — no consumer reads that order.
 5. Then the pass-order pipeline, then the `day` serve mode.
