@@ -308,8 +308,48 @@ export function methodIsCovered(
 	return types.every((t) => queryIsCovered(lat, lon, radiusM, coverage[t] ?? []));
 }
 
-/** The box as a closed-ring POLYGON WKT for an MBR spatial filter. */
-function boxWkt(b: CoverageBox): string {
+/**
+ * Does a point lie in the box? Boundary-inclusive, matching `MBRIntersects`
+ * against a POINT geometry.
+ */
+export function boxContainsPoint(b: CoverageBox, lat: number, lon: number): boolean {
+	return lat >= b.minLat && lat <= b.maxLat && lon >= b.minLon && lon <= b.maxLon;
+}
+
+/**
+ * Does a polyline's own bounding rectangle overlap the box? This is exactly what
+ * `MBRIntersects(geom, box)` tests for a LINESTRING, and it is deliberately
+ * weaker than "some vertex is inside": a long road can cross a small box with
+ * every vertex outside it.
+ */
+export function boxIntersectsLine(b: CoverageBox, coords: ReadonlyArray<[number, number]>): boolean {
+	if (coords.length === 0) return false;
+	let minLat = Number.POSITIVE_INFINITY;
+	let maxLat = Number.NEGATIVE_INFINITY;
+	let minLon = Number.POSITIVE_INFINITY;
+	let maxLon = Number.NEGATIVE_INFINITY;
+	for (const [lat, lon] of coords) {
+		if (lat < minLat) minLat = lat;
+		if (lat > maxLat) maxLat = lat;
+		if (lon < minLon) minLon = lon;
+		if (lon > maxLon) maxLon = lon;
+	}
+	return minLat <= b.maxLat && maxLat >= b.minLat && minLon <= b.maxLon && maxLon >= b.minLon;
+}
+
+/**
+ * The box as a closed-ring POLYGON WKT for an MBR spatial filter.
+ *
+ * WKT coordinate order is `x y` = `lon lat`, the reverse of how the box names
+ * its own fields. Exported so the order can be pinned directly, because the
+ * post-conditions in {@link loadOsmRowSet} CANNOT catch getting it wrong: at
+ * these latitudes a swap sends the query to open ocean, the mirror returns no
+ * rows, and a post-condition over an empty result set passes vacuously while
+ * `methodIsCovered` still reports every query answerable from the unchanged
+ * boxes. Silently wrong, in exactly the way this module exists to prevent —
+ * so the guard has to be here, on the conversion itself.
+ */
+export function boxWkt(b: CoverageBox): string {
 	return `POLYGON((${b.minLon} ${b.minLat},${b.maxLon} ${b.minLat},${b.maxLon} ${b.maxLat},${b.minLon} ${b.maxLat},${b.minLon} ${b.minLat}))`;
 }
 
@@ -369,13 +409,29 @@ export async function loadOsmRowSet(track: ReadonlyArray<{ lat: number; lon: num
 				`.execute(db())
 			).rows;
 			for (const r of pointRows) {
+				const lat = Number(r.lat);
+				const lon = Number(r.lon);
+				// Post-condition: the rows we GOT must lie in the box we RECORDED.
+				// The box travels to MariaDB as `lon lat` WKT and comes back as
+				// ST_X/ST_Y, while the box's own fields are named lat/lon — a swap
+				// anywhere along that path returns plausible rows from the wrong
+				// place, and every downstream check would pass on them. This is the
+				// mirror of `methodIsCovered`: that one asks whether a query is
+				// answerable, this one whether the answer came from where it claims.
+				if (!boxContainsPoint(box, lat, lon)) {
+					throw new Error(
+						`loadOsmRowSet: osm_points ${r.osm_id} (${lat}, ${lon}) fell outside the box it was ` +
+							`queried from [${box.minLat}, ${box.maxLat}] x [${box.minLon}, ${box.maxLon}] — ` +
+							"the WKT sent and the box recorded disagree",
+					);
+				}
 				points.set(`${r.osm_id}|${r.feature_type}`, {
 					osmId: Number(r.osm_id),
 					featureType: r.feature_type,
 					subtype: r.subtype,
 					name: r.name,
-					lat: Number(r.lat),
-					lon: Number(r.lon),
+					lat,
+					lon,
 					tags: parseTags(r.tags_json),
 				});
 			}
@@ -398,12 +454,24 @@ export async function loadOsmRowSet(track: ReadonlyArray<{ lat: number; lon: num
 			for (const r of lineRows) {
 				const key = `${r.osm_id}|${r.feature_type}`;
 				if (lines.has(key)) continue;
+				const coords = parseLineStringWkt(r.wkt);
+				// Same post-condition as the points, weakened to what MBRIntersects
+				// actually promises for a linestring. `parseLineStringWkt` is the
+				// second place the coordinate order could invert — WKT is `lon lat`
+				// and it returns `[lat, lon]` — so this is not a redundant check.
+				if (coords.length > 0 && !boxIntersectsLine(box, coords)) {
+					throw new Error(
+						`loadOsmRowSet: osm_lines ${r.osm_id} does not overlap the box it was queried from ` +
+							`[${box.minLat}, ${box.maxLat}] x [${box.minLon}, ${box.maxLon}] — ` +
+							"the WKT sent, the box recorded, or the parsed coordinate order disagree",
+					);
+				}
 				lines.set(key, {
 					osmId: Number(r.osm_id),
 					featureType: r.feature_type,
 					subtype: r.subtype,
 					name: r.name,
-					coords: parseLineStringWkt(r.wkt),
+					coords,
 					tags: parseTags(r.tags_json),
 				});
 			}

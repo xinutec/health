@@ -10,6 +10,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	boxContainsPoint,
+	boxIntersectsLine,
+	boxWkt,
 	coverageBoxesForTrack,
 	coverageForTrack,
 	KERNEL_BUFFER_M,
@@ -156,6 +159,82 @@ describe("methodIsCovered", () => {
 
 	it("gives railway a wider buffer than the dense tables", () => {
 		expect(KERNEL_BUFFER_M.railway).toBeGreaterThan(KERNEL_BUFFER_M.highway);
+	});
+});
+
+describe("boxWkt emits lon-first", () => {
+	// The one coordinate-order site the loader's post-conditions cannot guard.
+	// A swap here at London latitudes queries open ocean, the mirror returns
+	// nothing, the post-condition passes over an empty set, and every query
+	// still reads as "covered" against the unchanged boxes.
+	const box = { minLat: 51.0, maxLat: 52.0, minLon: -1.0, maxLon: 2.0 };
+
+	it("writes each vertex as `lon lat`, closing the ring", () => {
+		expect(boxWkt(box)).toBe("POLYGON((-1 51,2 51,2 52,-1 52,-1 51))");
+	});
+
+	it("puts the longitude range on the x axis, not the latitude range", () => {
+		// Stated as a property rather than a literal, so it survives a
+		// reformat: the box spans 3° of longitude and 1° of latitude, and the
+		// first coordinate of every vertex must be the one from the 3° range.
+		const xs = [...boxWkt(box).matchAll(/(-?[\d.]+) (-?[\d.]+)/g)].map((m) => Number(m[1]));
+		expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(3, 9);
+	});
+});
+
+describe("the loader's post-condition predicates", () => {
+	// These back the check that the rows MariaDB returned came from the box we
+	// recorded. The failure they exist to catch is a coordinate-order inversion:
+	// the box goes out as `lon lat` WKT, points come back as ST_X/ST_Y, lines
+	// come back as WKT parsed to `[lat, lon]`, and the box's own fields are named
+	// lat/lon. A swap anywhere on that path returns plausible rows from the wrong
+	// place, which every downstream check would happily accept.
+	const box = { minLat: 51.0, maxLat: 52.0, minLon: -1.0, maxLon: 1.0 };
+
+	it("accepts a point inside and on the boundary, rejects one outside", () => {
+		expect(boxContainsPoint(box, 51.5, 0)).toBe(true);
+		expect(boxContainsPoint(box, 51.0, -1.0)).toBe(true);
+		expect(boxContainsPoint(box, 52.0, 1.0)).toBe(true);
+		expect(boxContainsPoint(box, 50.9, 0)).toBe(false);
+		expect(boxContainsPoint(box, 51.5, 1.1)).toBe(false);
+	});
+
+	it("rejects a swapped point — the whole reason the check exists", () => {
+		// (51.5, 0.5) is inside; feeding it as (lon, lat) is not. The box is
+		// deliberately NOT square, so the swap is detectable.
+		expect(boxContainsPoint(box, 51.5, 0.5)).toBe(true);
+		expect(boxContainsPoint(box, 0.5, 51.5)).toBe(false);
+	});
+
+	it("accepts a line that crosses the box with no vertex inside it", () => {
+		// The reason the line check is MBR-overlap and not "some vertex inside":
+		// a long road can span the box entirely.
+		const crossing: Array<[number, number]> = [
+			[51.5, -5],
+			[51.5, 5],
+		];
+		expect(boxIntersectsLine(box, crossing)).toBe(true);
+	});
+
+	it("rejects a line whose bounding rectangle misses the box", () => {
+		const elsewhere: Array<[number, number]> = [
+			[40, 10],
+			[41, 11],
+		];
+		expect(boxIntersectsLine(box, elsewhere)).toBe(false);
+	});
+
+	it("rejects a line whose coordinates arrived swapped", () => {
+		const inside: Array<[number, number]> = [
+			[51.2, 0.2],
+			[51.8, 0.8],
+		];
+		expect(boxIntersectsLine(box, inside)).toBe(true);
+		expect(boxIntersectsLine(box, inside.map(([a, b]) => [b, a]) as Array<[number, number]>)).toBe(false);
+	});
+
+	it("treats an empty line as not overlapping", () => {
+		expect(boxIntersectsLine(box, [])).toBe(false);
 	});
 });
 
