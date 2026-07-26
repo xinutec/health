@@ -244,4 +244,178 @@ private def NAMED : Array (String × String × Float) :=
 
 end SpatialGuards
 
+/-! ## The LINE side (`queryLines` / `linesAtPoint`)
+
+A different metric, and deliberately so. MariaDB's `ST_Distance` is PLANAR in
+degree space, and the result is scaled back to metres by a single
+`mPerDeg = min(111000, 111000·cos lat)` — one scale for both axes.
+
+At 51.55°N that is a large distortion, and the guards below state it as a
+number: a way lying 100 true metres due NORTH is scored at 62.1 m, one 100 true
+metres due EAST at 99.8 m — a ratio of 1.608, which is `1 / cos(51.55°)`. The
+search therefore reaches about 1.6× further north than east. This is an
+approximation the algorithm has always run on and the corpus was blessed under,
+so it is reproduced rather than corrected; changing it would be a behaviour
+change, not a port.
+
+Two semantics confirmed against the live server rather than assumed:
+`ST_Distance` is the planar minimum over segments clamped at the endpoints, and
+`MBRContains` is boundary-INCLUSIVE — a point on the bbox edge, on a corner, or
+on a degenerate zero-extent bbox all return true.
+-/
+
+namespace Lines
+
+/-- One scale for both axes, from `METERS_PER_DEG_LAT` and its longitude
+counterpart — the smaller of the two, so the degree circle contains the metre
+circle. -/
+def mPerDegAt (lat : Float) : Float :=
+  min 111000 (111000 * Float.cos (lat * 3.141592653589793 / 180))
+
+/-- A row of `osm_lines`. Coordinates are `(lat, lon)` in OSM order. -/
+structure LineRow where
+  osmId : Int
+  subtype : String
+  name : Option String
+  coords : Array (Float × Float)
+  deriving Inhabited, BEq, Repr
+
+/-- Planar point-to-segment distance in degree space, x = lon and y = lat. -/
+def segDistDeg (px py ax ay bx by_ : Float) : Float :=
+  let dx := bx - ax
+  let dy := by_ - ay
+  let len2 := dx * dx + dy * dy
+  let t := if len2 == 0 then 0 else max 0 (min 1 (((px - ax) * dx + (py - ay) * dy) / len2))
+  let qx := ax + t * dx
+  let qy := ay + t * dy
+  Float.sqrt ((px - qx) * (px - qx) + (py - qy) * (py - qy))
+
+/-- `ST_Distance(linestring, point)` — the minimum over the way's segments. A
+one-vertex way degenerates to the distance to that vertex. -/
+def lineDistDeg (coords : Array (Float × Float)) (lat lon : Float) : Float :=
+  if coords.isEmpty then (1.0 / 0.0)
+  else if coords.size == 1 then
+    let c := coords[0]!
+    Float.sqrt ((lon - c.2) * (lon - c.2) + (lat - c.1) * (lat - c.1))
+  else
+    (Array.range (coords.size - 1)).foldl (init := (1.0 / 0.0)) fun best i =>
+      let a := coords[i]!
+      let b := coords[i + 1]!
+      min best (segDistDeg lon lat a.2 a.1 b.2 b.1)
+
+/-- `MBRContains(linestring, point)` — boundary-inclusive, and true for a
+zero-extent bbox the point lies on. -/
+def mbrContainsPoint (coords : Array (Float × Float)) (lat lon : Float) : Bool :=
+  if coords.isEmpty then false
+  else
+    let lats := coords.map (·.1)
+    let lons := coords.map (·.2)
+    let mn := fun (a : Array Float) => a.foldl min a[0]!
+    let mx := fun (a : Array Float) => a.foldl max a[0]!
+    lat ≥ mn lats && lat ≤ mx lats && lon ≥ mn lons && lon ≤ mx lons
+
+/-- A line with its distance and enclosure resolved. -/
+structure ScoredLine where
+  row : LineRow
+  distanceM : Float
+  encloses : Bool
+  deriving Inhabited, BEq, Repr
+
+/-- `queryLines`: the degree-space radius filter, ordering, and 50-cap. The
+radius is converted to a degree budget with the SAME single scale, so the filter
+carries the same anisotropy as the distance it reports. -/
+def queryLines (rows : Array LineRow) (lat lon radiusM : Float)
+    (subtypes : Array String := #[]) : Array ScoredLine :=
+  let mpd := mPerDegAt lat
+  let dDeg := radiusM / mpd
+  let scored := rows.map fun r =>
+    (r, lineDistDeg r.coords lat lon, mbrContainsPoint r.coords lat lon)
+  let inRadius := scored.filter fun s => s.2.1 < dDeg
+  let wanted :=
+    if subtypes.isEmpty then inRadius
+    else inRadius.filter fun s => subtypes.contains s.1.subtype
+  let ordered := (wanted.toList.mergeSort fun a b => a.2.1 ≤ b.2.1).toArray
+  (ordered.extract 0 (min 50 ordered.size)).map fun s =>
+    { row := s.1, distanceM := s.2.1 * mpd, encloses := s.2.2 }
+
+/-- The rail classes `linesAtPoint` asks for. -/
+def RAIL_SUBTYPES : Array String := #["rail", "subway", "light_rail", "tram", "narrow_gauge"]
+
+/-- `linesAtPoint`: the distinct names of rail-class ways near the point, in
+first-seen (that is, distance) order. Unnamed ways contribute nothing. -/
+def linesAtPoint (rows : Array LineRow) (lat lon radiusM : Float) : Array String := Id.run do
+  let mut names : Array String := #[]
+  for s in queryLines rows lat lon radiusM RAIL_SUBTYPES do
+    match s.row.name with
+    | none => pure ()
+    | some nm => if !names.contains nm then names := names.push nm
+  return names
+
+end Lines
+
+section LineGuards
+
+open Lines
+
+private def LQLAT : Float := 51.5492
+private def LQLON : Float := -0.2215
+private def D_LAT : Float := 100 / 111194.68229846345
+private def D_LON : Float := 100 / (111194.68229846345 * Float.cos (LQLAT * 3.141592653589793 / 180))
+
+private def lr (osmId : Int) (subtype : String) (name : Option String)
+    (coords : Array (Float × Float)) : LineRow := { osmId, subtype, name, coords }
+
+private def LINES : Array LineRow :=
+  #[lr 1 "subway" (some "Jubilee Line") #[(LQLAT + D_LAT, LQLON - 0.01), (LQLAT + D_LAT, LQLON + 0.01)],
+    lr 2 "subway" (some "Metropolitan Line") #[(LQLAT - 0.01, LQLON + D_LON), (LQLAT + 0.01, LQLON + D_LON)],
+    lr 3 "rail" (some "Chiltern Main Line") #[(LQLAT - 0.005, LQLON - 0.005), (LQLAT + 0.005, LQLON + 0.005)],
+    lr 4 "subway" (some "Jubilee Line") #[(LQLAT + 2 * D_LAT, LQLON - 0.01), (LQLAT + 2 * D_LAT, LQLON + 0.01)],
+    lr 5 "tram" none #[(LQLAT, LQLON - 0.002), (LQLAT, LQLON + 0.002)],
+    lr 6 "motorway" (some "North Circular") #[(LQLAT, LQLON - 0.001), (LQLAT, LQLON + 0.001)],
+    lr 7 "rail" (some "Far Line") #[(51.60, -0.30), (51.61, -0.30)],
+    lr 8 "rail" (some "Degenerate") #[(LQLAT, LQLON)],
+    -- A SHORT way lying entirely WEST, at the same 100 m northward offset. Its
+    -- nearest approach is its eastern ENDPOINT (350 m away), so the segment
+    -- clamp decides: unclamped, the infinite line through it runs due east-west
+    -- at that latitude and would measure only the 100 m offset, pulling it into
+    -- both radii below.
+    lr 9 "rail" (some "Stub West") #[(LQLAT + D_LAT, LQLON - 0.01), (LQLAT + D_LAT, LQLON - 0.005)]]
+
+private def lids (q : Array ScoredLine) : Array Int := q.map (·.row.osmId)
+private def approxL (a b : Float) : Bool := Float.abs (a - b) < 1e-9
+
+#guard approxL (mPerDegAt LQLAT) 69024.5041828261
+
+-- THE ANISOTROPY, as a number: both ways lie 100 true metres from the point,
+-- one due north and one due east, and the metric scores them 62.1 m and 99.8 m.
+-- The ratio is 1/cos(51.5492 deg), so the search reaches ~1.6x further north.
+private def R150 : Array ScoredLine := queryLines LINES LQLAT LQLON 150 RAIL_SUBTYPES
+#guard approxL (R150.filter (·.row.osmId == 1))[0]!.distanceM 62.07536435757793
+#guard approxL (R150.filter (·.row.osmId == 2))[0]!.distanceM 99.8249176179657
+
+-- The radius filter inherits that distortion: at 80 m the northward way at a
+-- true 100 m is KEPT and the eastward one at the same true distance is not.
+#guard lids (queryLines LINES LQLAT LQLON 80 RAIL_SUBTYPES) == #[3, 5, 8, 1]
+#guard lids R150 == #[3, 5, 8, 1, 2, 4]
+
+-- The bar is STRICT: with the radius set to the northward way's OWN distance
+-- that way is excluded, where `≤` would keep it.
+#guard lids (queryLines LINES LQLAT LQLON 62.07536435757793 RAIL_SUBTYPES) == #[3, 5, 8]
+
+-- A way through the point measures zero and encloses it; so does the
+-- single-vertex way, whose bbox has zero extent.
+#guard (R150.filter (·.row.osmId == 3))[0]!.encloses == true
+#guard (R150.filter (·.row.osmId == 8))[0]!.encloses == true
+#guard (R150.filter (·.row.osmId == 1))[0]!.encloses == false
+#guard approxL (R150.filter (·.row.osmId == 8))[0]!.distanceM 0
+
+-- `linesAtPoint`: distinct names in distance order. The unnamed tram way
+-- contributes nothing, the motorway is not a rail class, and the second Jubilee
+-- way does not repeat the name.
+#guard linesAtPoint LINES LQLAT LQLON 80 == #["Chiltern Main Line", "Degenerate", "Jubilee Line"]
+#guard linesAtPoint LINES LQLAT LQLON 150
+  == #["Chiltern Main Line", "Degenerate", "Jubilee Line", "Metropolitan Line"]
+
+end LineGuards
+
 end Verified.Geo.OsmSpatial
