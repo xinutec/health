@@ -28,6 +28,7 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
 import {
 	type BuildingFootprint,
 	ensureCovered,
+	type LocalFeatureResult,
 	queryBuildingsNear,
 	queryDrivableRoads,
 	queryLines,
@@ -660,7 +661,31 @@ export function extractLineNames(data: {
  * point. Used to label stationary stays when the centroid lands on a generic
  * residential building adjacent to the actual landmark.
  */
-export async function nearbyLandmarks(lat: number, lon: number, radiusM = 100): Promise<NearbyLandmark[]> {
+/**
+ * Default query radius per kernel lookup, in metres.
+ *
+ * Named rather than left as literals in the signatures because the
+ * pushed-row-set adapter (`osm-adapter-rowset.ts`) must apply the SAME default
+ * when a caller omits the radius. A divergent copy would silently change which
+ * rows come back, and the coverage assertion could not catch it — both radii
+ * are covered, so the answer would just quietly be a different one.
+ *
+ * These are also the ceilings the row-set buffers are sized against; see
+ * `KERNEL_BUFFER_M` in `osm-rowset.ts`.
+ */
+export const DEFAULT_RADIUS_M = {
+	nearbyWays: 50,
+	nearbyStations: 200,
+	nearbyLandmarks: 100,
+	linesAtPoint: 100,
+	nearbyTransitStops: 50,
+} as const;
+
+export async function nearbyLandmarks(
+	lat: number,
+	lon: number,
+	radiusM: number = DEFAULT_RADIUS_M.nearbyLandmarks,
+): Promise<NearbyLandmark[]> {
 	// Local-mirror path: landmarks live in the "landmark" feature_type
 	// bucket which spans amenity / shop / tourism / leisure. Both
 	// tables are queried because OSM has venue POIs (node) and
@@ -672,6 +697,22 @@ export async function nearbyLandmarks(lat: number, lon: number, radiusM = 100): 
 		queryPoints(lat, lon, radiusM, "landmark"),
 		queryLines(lat, lon, radiusM, "landmark"),
 	]);
+	return shapeLandmarks(points, lines);
+}
+
+/**
+ * Turn landmark point + line features into `NearbyLandmark`s.
+ *
+ * Split out from `nearbyLandmarks` so the pushed-row-set adapter
+ * (`osm-adapter-rowset.ts`) shapes its results with THIS code rather than a
+ * second copy — the tag-priority order and the enclosing-institution rule below
+ * are the sort of thing two copies would drift apart on silently, each
+ * continuing to pass its own tests.
+ */
+export function shapeLandmarks(
+	points: readonly LocalFeatureResult[],
+	lines: readonly LocalFeatureResult[],
+): NearbyLandmark[] {
 	const landmarks: NearbyLandmark[] = [];
 	const tagged = [...points.map((f) => ({ f, isPoint: true })), ...lines.map((f) => ({ f, isPoint: false }))];
 	for (const { f, isPoint } of tagged) {
@@ -783,15 +824,29 @@ export interface NearbyTransitStop {
  *  `transit_stop` coverage bucket (see osm-local.ts) — the road-way
  *  queries never fetched these nodes, so the bucket back-fills on
  *  demand like any other feature type. */
-export async function nearbyTransitStops(lat: number, lon: number, radiusM = 50): Promise<NearbyTransitStop[]> {
+export async function nearbyTransitStops(
+	lat: number,
+	lon: number,
+	radiusM: number = DEFAULT_RADIUS_M.nearbyTransitStops,
+): Promise<NearbyTransitStop[]> {
 	await ensureCovered(lat, lon, radiusM, "transit_stop");
 	const features = await queryPoints(lat, lon, radiusM, "transit_stop");
+	return shapeTransitStops(features);
+}
+
+/** Shape `transit_stop` points into `NearbyTransitStop`s. Shared with the
+ *  pushed-row-set adapter — see {@link shapeLandmarks}. */
+export function shapeTransitStops(features: readonly LocalFeatureResult[]): NearbyTransitStop[] {
 	return features
 		.map((f) => ({ name: f.name, subtype: f.subtype ?? "bus_stop", distanceM: f.distance_m }))
 		.sort((a, b) => a.distanceM - b.distanceM);
 }
 
-export async function nearbyStations(lat: number, lon: number, radiusM = 200): Promise<NearbyStation[]> {
+export async function nearbyStations(
+	lat: number,
+	lon: number,
+	radiusM: number = DEFAULT_RADIUS_M.nearbyStations,
+): Promise<NearbyStation[]> {
 	// Local-mirror path: ensure the railway-feature bucket has coverage
 	// for this point, then run a POINT-only spatial query against
 	// osm_points. Stations are stored separately from line features
@@ -806,17 +861,27 @@ export async function nearbyStations(lat: number, lon: number, radiusM = 200): P
 		"tram_stop",
 	]);
 
-	// Collapse multiple entries with the same name (entrances of one
-	// station) by keeping the closest. Subtype mapping mirrors the
-	// previous version exactly. Entrances get their own subtype so
-	// pickBestStation can deprioritise them — entrance nodes are
-	// labelled "A", "B", "C" in OSM and would otherwise beat the real
-	// station node by distance for nearby fixes.
+	return shapeStations(features);
+}
+
+/**
+ * Collapse multiple entries with the same name (entrances of one station) by
+ * keeping the closest. Entrances get their own subtype so `pickBestStation` can
+ * deprioritise them — entrance nodes are labelled "A", "B", "C" in OSM and
+ * would otherwise beat the real station node by distance for nearby fixes.
+ *
+ * Shared with the pushed-row-set adapter. Of everything extracted here this is
+ * the one that most needs a single copy: the station-beats-entrance asymmetry
+ * inside `dedupeStationsByName` exists to stop the caller filtering out the
+ * entrance and losing the station with it, and a second implementation that
+ * quietly did keep-closest would reintroduce exactly that bug.
+ */
+export function shapeStations(features: readonly LocalFeatureResult[]): NearbyStation[] {
 	const typed = features.map((f) => ({ ...f, derivedSubtype: deriveStationSubtype(f) }));
 	return dedupeStationsByName(typed);
 }
 
-function deriveStationSubtype(f: { subtype: string | null; tags: Record<string, string> }): string {
+export function deriveStationSubtype(f: { subtype: string | null; tags: Record<string, string> }): string {
 	if (f.subtype === "subway_entrance") return "subway_entrance";
 	if (f.tags.station === "subway") return "subway";
 	if (f.tags.station === "light_rail") return "light_rail";
@@ -886,7 +951,11 @@ export function dedupeStationsByName(
  * Overpass query: stops/stations near the point → their containing route
  * relations → relation tags. Cached via the standard OSM cache.
  */
-export async function linesAtPoint(lat: number, lon: number, radiusM = 100): Promise<Set<string>> {
+export async function linesAtPoint(
+	lat: number,
+	lon: number,
+	radiusM: number = DEFAULT_RADIUS_M.linesAtPoint,
+): Promise<Set<string>> {
 	// Local-mirror path: shares the `railway` coverage box that
 	// nearbyStations already populated for this area (single Overpass
 	// fetch covers BOTH stations and rail lines). Query osm_lines for
@@ -907,6 +976,12 @@ export async function linesAtPoint(lat: number, lon: number, radiusM = 100): Pro
 		"tram",
 		"narrow_gauge",
 	]);
+	return shapeLineNames(features);
+}
+
+/** The distinct names of rail-class ways, in arrival (distance) order. Unnamed
+ *  ways contribute nothing. Shared with the pushed-row-set adapter. */
+export function shapeLineNames(features: readonly LocalFeatureResult[]): Set<string> {
 	const names = new Set<string>();
 	for (const f of features) {
 		if (f.name) names.add(f.name);
@@ -966,7 +1041,11 @@ export interface NearbyWay {
  * Find ways (roads, rails, waterways) near a point.
  * Used to determine if a moving segment is likely a car, train, etc.
  */
-export async function nearbyWays(lat: number, lon: number, radiusM = 50): Promise<NearbyWay[]> {
+export async function nearbyWays(
+	lat: number,
+	lon: number,
+	radiusM: number = DEFAULT_RADIUS_M.nearbyWays,
+): Promise<NearbyWay[]> {
 	// Local-mirror path: ensure all four feature_type buckets have
 	// coverage for this point, then run a spatial query against the
 	// appropriate table for each. Highway/railway/waterway are line
@@ -992,17 +1071,36 @@ export async function nearbyWays(lat: number, lon: number, radiusM = 50): Promis
 		queryLines(lat, lon, radiusM, "aeroway"),
 		queryPoints(lat, lon, radiusM, "aeroway"),
 	]);
+	return shapeWays({ highways, railways, waterways, aerowayLines, aerowayPoints });
+}
+
+/**
+ * Flatten the five per-bucket result lists into `NearbyWay`s.
+ *
+ * The output is NOT re-sorted: it is grouped by bucket, each group already in
+ * distance order. Callers aggregate by taking the minimum distance per
+ * (type, subtype, name), so the interleaving never mattered — but reproducing
+ * the order exactly is what keeps the pushed-row-set path byte-identical to the
+ * DB path for any caller that does happen to read the first element.
+ */
+export function shapeWays(buckets: {
+	highways: readonly LocalFeatureResult[];
+	railways: readonly LocalFeatureResult[];
+	waterways: readonly LocalFeatureResult[];
+	aerowayLines: readonly LocalFeatureResult[];
+	aerowayPoints: readonly LocalFeatureResult[];
+}): NearbyWay[] {
 	const ways: NearbyWay[] = [];
-	for (const f of highways)
-		ways.push({ type: "highway", subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
-	for (const f of railways)
-		ways.push({ type: "railway", subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
-	for (const f of waterways)
-		ways.push({ type: "waterway", subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
-	for (const f of aerowayLines)
-		ways.push({ type: "aeroway", subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
-	for (const f of aerowayPoints)
-		ways.push({ type: "aeroway", subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
+	const push = (type: string, features: readonly LocalFeatureResult[]) => {
+		for (const f of features) {
+			ways.push({ type, subtype: f.subtype ?? "", name: f.name ?? undefined, distanceM: f.distance_m });
+		}
+	};
+	push("highway", buckets.highways);
+	push("railway", buckets.railways);
+	push("waterway", buckets.waterways);
+	push("aeroway", buckets.aerowayLines);
+	push("aeroway", buckets.aerowayPoints);
 	return ways;
 }
 
