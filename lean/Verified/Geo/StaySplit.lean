@@ -2092,3 +2092,310 @@ private def NEAR_BAR : Array PointF :=
 #guard srun #[] #[] == #[]
 
 end StaysGuards
+
+/-! ## `splitWalksOnEvidence`
+
+The Cleveland-Clinic shape (#245): an hour sitting indoors, where jittery GPS
+never settles, followed by the real ten-minute walk out — segmented as ONE
+walking segment, because the jitter looks like movement all the way through. The
+fix is to stop asking the GPS and ask the STEP COUNTER: bucket cadence per
+minute across the segment and carve the low-cadence edge runs out as sits.
+
+The boundary search is the whole algorithm, and it is deliberately NOT "the
+first minute below a threshold". A real indoor sit is not contiguous zeros — the
+clinic hour has isolated fidget spikes, a walk to the consult room, reception —
+so a threshold walk would cut the sit at the first spike. Instead the sit → walk
+boundary is the first minute `b` that BOTH carries real steps itself and opens a
+forward window averaging sustained-walking cadence, while everything before `b`
+averages at sitting level. A lone spike fails the window; the walk onset passes
+immediately. The suffix search mirrors it.
+
+Carving fires only when what remains still looks like a walk; otherwise the
+segment is left whole for the demotion pass to judge. This one handles only the
+MIXED case, where a real walk hides inside the same segment as a real sit.
+
+The sits come out with their GPS motion stats ZEROED — they are jitter
+artifacts, and the zero is the claim being made about them.
+
+Entry is on the RAW `seg.mode` again, not `segMode`.
+
+Two arithmetic details that a port gets wrong by default:
+
+* the bucket index is a FLOOR division and the row may precede the segment, so
+  a row 30 s early lands in bucket −1 and is dropped. Lean's `/` on `Int` is
+  floor division for a positive divisor and would do here, but `Int.tdiv` — and
+  the `/` of C, Rust and most other languages — truncates toward zero and would
+  file that row under bucket 0. Written as `Int.fdiv` so the intent survives the
+  next port.
+* `Math.ceil` sets the bucket count, so the last bucket can extend past `endTs`.
+
+Shell: the `WALK_SPLIT_DEBUG` tracing.
+
+UNPROVEN; pinned against Node/V8 (`lean/experiments/split-walks-refs.mts`).
+-/
+
+namespace Walks
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint)
+open Shed (PointF)
+open Stays (SplitContext)
+
+/-- Only walks at least this long are evaluated. -/
+def MIN_SEGMENT_S : Int := 20 * 60
+/-- Mean cadence at or below which an edge run is a sit — between stay-split's
+"at-place fidgeting" and "ambiguous" bands. -/
+def SIT_MEAN_MAX : Float := 5
+/-- Forward-looking window (minutes) whose mean must reach `CORE_MIN_CADENCE`
+for a minute to count as the start of sustained walking. -/
+def ONSET_WINDOW_MIN : Nat := 6
+/-- The boundary minute itself must carry this many steps: the window alone
+would anchor the boundary a few zero-step minutes early, because it "sees" the
+walk before it starts. -/
+def ONSET_MIN_CADENCE : Float := 10
+/-- An edge sit must be at least this long to be carved. -/
+def MIN_SIT_S : Int := 15 * 60
+/-- After carving, the remaining core must still look like a walk. -/
+def CORE_MIN_CADENCE : Float := 40
+def CORE_MIN_S : Int := 3 * 60
+/-- A step row must exist in or shortly after the segment to prove the stream
+was alive: without it, zero steps is absence of data, not evidence of sitting. -/
+def FRESHNESS_S : Int := 30 * 60
+
+/-- Carve long low-cadence edge runs out of a "walking" segment as sits. -/
+def splitWalksOnEvidence (segments : Array Seg) (points : Array PointF)
+    (ctx : SplitContext) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for seg in segments do
+    let carved : Array Seg := Id.run do
+      if seg.mode != "walking" || seg.endTs - seg.startTs < MIN_SEGMENT_S then return #[]
+      -- Freshness. PROVABLY a no-op for the result and kept for intent: every
+      -- row that can reach the cadence buckets lies inside this window, so a
+      -- stale stream yields an all-zero cadence, which no boundary can match.
+      if !(ctx.steps.any fun s => s.ts ≥ seg.startTs && s.ts ≤ seg.endTs + FRESHNESS_S) then
+        return #[]
+      -- Per-minute cadence, bucketed from the segment start.
+      let totalMin := (((seg.endTs - seg.startTs) + 59) / 60).toNat
+      let mut cadence : Array Float := Array.replicate totalMin 0
+      for s in ctx.steps do
+        let k := Int.fdiv (s.ts - seg.startTs) 60
+        if k ≥ 0 && k < Int.ofNat totalMin then
+          cadence := cadence.modify k.toNat (· + s.steps)
+      let meanOf (from_ to : Nat) : Float :=
+        if to ≤ from_ then 0
+        else ((Array.range (to - from_)).foldl (fun s j => s + cadence[from_ + j]!) 0)
+          / Float.ofNat (to - from_)
+      let minSitMin := ((MIN_SIT_S + 59) / 60).toNat
+      -- Prefix: the FIRST minute that both steps and opens a walking window,
+      -- with everything before it averaging at sitting level.
+      let mut prefixMin : Nat := 0
+      for b in [minSitMin:totalMin] do
+        if cadence[b]! ≥ ONSET_MIN_CADENCE
+            && meanOf b (min totalMin (b + ONSET_WINDOW_MIN)) ≥ CORE_MIN_CADENCE
+            && meanOf 0 b ≤ SIT_MEAN_MAX then
+          prefixMin := b
+          break
+      -- Suffix: mirrored — the LAST minute whose backward window still walks.
+      let mut suffixMin : Nat := 0
+      let eStart := totalMin - minSitMin
+      for k in [0:eStart] do
+        let e := eStart - k
+        -- Probed at zero, and I could not construct a case: a suffix boundary
+        -- at `e ≤ prefixMin` needs a walking-cadence window inside a stretch
+        -- the prefix search already judged to average sitting level, and the
+        -- prefix's FORWARD window at `e - ONSET_WINDOW_MIN` is that very same
+        -- window — so the prefix claims the boundary first unless the two
+        -- differ in their onset-minute test alone. Not proven unreachable;
+        -- kept as the TS has it, and it would refuse via `coreS` regardless.
+        if e ≤ prefixMin then break
+        -- `e - ONSET_WINDOW_MIN` is Nat subtraction, i.e. the TS `Math.max(0, …)`.
+        if cadence[e - 1]! ≥ ONSET_MIN_CADENCE
+            && meanOf (e - ONSET_WINDOW_MIN) e ≥ CORE_MIN_CADENCE
+            && meanOf e totalMin ≤ SIT_MEAN_MAX then
+          suffixMin := totalMin - e
+          break
+      if prefixMin == 0 && suffixMin == 0 then return #[]
+      -- What is left in the middle must still be a walk.
+      let coreToMin := totalMin - suffixMin
+      let coreS := min seg.endTs (seg.startTs + Int.ofNat coreToMin * 60)
+        - (seg.startTs + Int.ofNat prefixMin * 60)
+      if coreS < CORE_MIN_S then return #[]
+      -- An empty core would divide by zero here, as it does in the TS; `coreS`
+      -- has already refused that case.
+      let coreCad := cadence.extract prefixMin coreToMin
+      let coreMean := (coreCad.foldl (· + ·) 0) / Float.ofNat coreCad.size
+      if coreMean < CORE_MIN_CADENCE then return #[]
+      let b1 := seg.startTs + Int.ofNat prefixMin * 60
+      let b2 := min seg.endTs (seg.startTs + Int.ofNat coreToMin * 60)
+      let countIn (from_ to : Int) : Int :=
+        Int.ofNat (points.filter fun p => p.ts ≥ from_ && p.ts < to).size
+      -- The TS interpolates SIT_MEAN_MAX, which JS renders as `5`.
+      let sitPart (from_ to : Int) (minutes : Nat) : Seg :=
+        { seg with
+          mode := "stationary", startTs := from_, endTs := to
+          avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := countIn from_ to
+          refinedReason := some s!"steps-aware walk split: ≤ 5 steps/min mean for {minutes} min inside a walking segment — a sit, not a walk" }
+      let mut parts : Array Seg := #[]
+      if prefixMin > 0 then parts := parts.push (sitPart seg.startTs b1 prefixMin)
+      parts := parts.push { seg with startTs := b1, endTs := b2, pointCount := countIn b1 b2 }
+      if suffixMin > 0 then parts := parts.push (sitPart b2 seg.endTs suffixMin)
+      return parts
+    out := if carved.isEmpty then out.push seg else out ++ carved
+  return out
+
+end Walks
+
+section WalksGuards
+
+open Walks
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint)
+open Shed (PointF)
+open Stays (SplitContext)
+
+private def wfx (ts : Int) : PointF := { ts, lat := 51.52, lon := -0.13, speedKmh := 1 }
+
+private def walk : Seg :=
+  { startTs := 0, endTs := 1800, mode := "walking"
+    confidence := 0.8, confidenceMargin := 2
+    avgSpeed := 3, maxSpeed := 6, linearity := 0.7, pointCount := 40, place := some "Clinic" }
+
+/-- `n` copies of `v` — a run of per-minute cadences. -/
+private def rep (n : Nat) (v : Float) : Array Float := Array.replicate n v
+/-- One step row per minute from the segment start, INCLUDING the zeros. -/
+private def perMin (cadence : Array Float) : Array FeasibilityStepPoint :=
+  (Array.range cadence.size).map fun k => { ts := 60 * Int.ofNat k, steps := cadence[k]! }
+/-- A fix every 5 minutes across a `mins`-long segment. -/
+private def fixesEvery5 (mins : Nat) : Array PointF :=
+  (Array.range (mins / 5 + 1)).map fun k => wfx (300 * Int.ofNat k)
+
+private structure WRow where
+  startTs : Int
+  endTs : Int
+  mode : String
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  linearity : Float
+  place : String
+  reason : String
+  deriving Inhabited, BEq, Repr
+
+private def wv (segs : Array Seg) : Array WRow :=
+  segs.map fun s =>
+    { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount
+      avgSpeed := s.avgSpeed, maxSpeed := s.maxSpeed, linearity := s.linearity
+      place := s.place.getD "", reason := s.refinedReason.getD "" }
+
+private def wrun (segs : Array Seg) (pts : Array PointF)
+    (steps : Array FeasibilityStepPoint) : Array WRow :=
+  wv (splitWalksOnEvidence segs pts { steps })
+
+private def sitReason (mins : String) : String :=
+  s!"steps-aware walk split: ≤ 5 steps/min mean for {mins} min inside a walking segment — a sit, not a walk"
+/-- A carved sit: motion stats zeroed, place inherited. -/
+private def sit (startTs endTs : Int) (pc : Int) (mins : String) : WRow :=
+  { startTs, endTs, mode := "stationary", pointCount := pc
+    avgSpeed := 0, maxSpeed := 0, linearity := 0, place := "Clinic", reason := sitReason mins }
+/-- The surviving walking core: everything but the window is the parent's. -/
+private def core (startTs endTs : Int) (pc : Int) : WRow :=
+  { startTs, endTs, mode := "walking", pointCount := pc
+    avgSpeed := 3, maxSpeed := 6, linearity := 0.7, place := "Clinic", reason := "" }
+
+/-- 20 min of sitting, then a 10 min walk out — the clinic shape. -/
+private def CLINIC : Array Float := rep 20 0 ++ rep 10 60
+
+-- The shape the pass exists for.
+#guard wrun #[walk] (fixesEvery5 30) (perMin CLINIC) == #[sit 0 1200 4 "20", core 1200 1800 2]
+-- Mirrored: the walk comes first and the sit is carved off the back.
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 10 60 ++ rep 20 0))
+  == #[core 0 600 2, sit 600 1800 4 "20"]
+-- Both ends: three segments out.
+#guard wrun #[{ walk with endTs := 3000 }] (fixesEvery5 50) (perMin (rep 20 0 ++ rep 10 60 ++ rep 20 0))
+  == #[sit 0 1200 4 "20", core 1200 1800 2, sit 1800 3000 4 "20"]
+-- No sit at all: a walk right through is left alone.
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 30 60)) == wv #[walk]
+
+-- WHO PARTICIPATES: `seg.mode` is read RAW here too.
+#guard wrun #[{ walk with mode := "stationary", refinedMode := some "walking" }]
+    (fixesEvery5 30) (perMin CLINIC)
+  == wv #[{ walk with mode := "stationary", refinedMode := some "walking" }]
+#guard (wrun #[{ walk with refinedMode := some "stationary" }] (fixesEvery5 30) (perMin CLINIC)).size == 2
+-- The duration bar is a floor: exactly 20 min is evaluated, one second under
+-- is not.
+#guard wrun #[{ walk with endTs := 1200 }] (fixesEvery5 20) (perMin (rep 15 0 ++ rep 5 60))
+  == #[sit 0 900 3 "15", core 900 1200 1]
+#guard wrun #[{ walk with endTs := 1199 }] (fixesEvery5 20) (perMin (rep 15 0 ++ rep 5 60))
+  == wv #[{ walk with endTs := 1199 }]
+-- FRESHNESS: with the step stream dead around the segment, zero steps is
+-- absence of data. (Documented above as provably result-neutral: an unfresh
+-- stream also leaves the cadence all zero, which no boundary matches.)
+#guard wrun #[walk] (fixesEvery5 30) #[{ ts := -600, steps := 900 }] == wv #[walk]
+
+-- THE SIT MUST BE LONG ENOUGH. The prefix search opens at minute 15, so a
+-- 15 min sit carves and a 14 min one cannot: at b = 15 the walk's own first
+-- minute is already inside the "sit" mean and lifts it over the bar.
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 15 0 ++ rep 15 100))
+  == #[sit 0 900 3 "15", core 900 1800 3]
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 14 0 ++ rep 16 100)) == wv #[walk]
+
+-- A LONE FIDGET SPIKE inside the sit does not move the boundary: minute 20
+-- carries 100 steps but its forward window averages 33, under the
+-- sustained-walking bar, so the boundary waits for the real onset at 25 — where
+-- the spike has diluted into a prefix mean of 4, just inside the sitting bar.
+#guard wrun #[{ walk with endTs := 2100 }] (fixesEvery5 35)
+    (perMin (rep 20 0 ++ #[100] ++ rep 4 0 ++ rep 10 100))
+  == #[sit 0 1500 5 "25", core 1500 2100 2]
+
+-- THE ONSET MINUTE itself must carry steps: exactly 10 is enough, 9 pushes the
+-- boundary a minute later.
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 20 0 ++ #[10] ++ rep 9 100))
+  == #[sit 0 1200 4 "20", core 1200 1800 2]
+#guard wrun #[walk] (fixesEvery5 30) (perMin (rep 20 0 ++ #[9] ++ rep 9 100))
+  == #[sit 0 1260 5 "21", core 1260 1800 1]
+-- Two rows in the same minute ACCUMULATE: 6 + 6 clears a bar neither would.
+#guard wrun #[walk] (fixesEvery5 30)
+    (perMin (rep 20 0 ++ #[0] ++ rep 9 100) ++ #[{ ts := 1200, steps := 6 }, { ts := 1230, steps := 6 }])
+  == #[sit 0 1200 4 "20", core 1200 1800 2]
+
+-- THE CARVED CORE MUST STILL BE A WALK. A 3 min core survives; 2 min is under
+-- the floor and the segment is left intact.
+#guard wrun #[{ walk with endTs := 1980 }] (fixesEvery5 33)
+    (perMin (rep 15 0 ++ rep 3 200 ++ rep 15 0))
+  == #[sit 0 900 3 "15", core 900 1080 1, sit 1080 1980 3 "15"]
+#guard wrun #[{ walk with endTs := 1920 }] (fixesEvery5 32)
+    (perMin (rep 15 0 ++ rep 2 200 ++ rep 15 0))
+  == wv #[{ walk with endTs := 1920 }]
+-- …and it must average sustained-walking cadence. A trailing lull too short to
+-- carve stays INSIDE the core and drags its mean under the bar.
+#guard wrun #[{ walk with endTs := 1740 }] (fixesEvery5 29)
+    (perMin (rep 15 0 ++ rep 6 100 ++ rep 8 0))
+  == #[sit 0 900 3 "15", core 900 1740 3]
+#guard wrun #[{ walk with endTs := 1860 }] (fixesEvery5 31)
+    (perMin (rep 15 0 ++ rep 6 100 ++ rep 10 0))
+  == wv #[{ walk with endTs := 1860 }]
+
+-- Rows outside the segment's own minutes are not bucketed. The row 30 s BEFORE
+-- the start is the one that matters: floor division puts it in bucket -1, while
+-- truncation toward zero would put 900 steps into the sit's first minute.
+#guard wrun #[walk] (fixesEvery5 30)
+    (perMin CLINIC ++ #[{ ts := -30, steps := 900 }, { ts := 1800, steps := 900 }])
+  == #[sit 0 1200 4 "20", core 1200 1800 2]
+
+-- The onset window's LENGTH, from the short side. Four minutes at 50 average
+-- 50 — walking — but stretched over six they average 33, so the boundary waits
+-- for the minute after, where the window reaches past the lull into the real
+-- walk. A shorter window would open the walk a minute early.
+#guard wrun #[{ walk with endTs := 2160 }] (fixesEvery5 36)
+    (perMin (rep 20 0 ++ rep 4 50 ++ rep 2 0 ++ rep 10 100))
+  == #[sit 0 1260 5 "21", core 1260 2160 3]
+
+-- A segment that does not end on a minute boundary: the bucket count is a
+-- CEILING, so the last bucket runs 30 s past `endTs` — and the core's end is
+-- clamped back to `endTs`, not to that overhanging bucket.
+#guard wrun #[{ walk with endTs := 1830 }] (fixesEvery5 30) (perMin CLINIC)
+  == #[sit 0 1200 4 "20", core 1200 1830 3]
+
+#guard wrun #[] #[] #[] == #[]
+
+end WalksGuards
