@@ -40,29 +40,99 @@ that bare `isis` resolves to a different host.
 - **A buffered-track superset is 11k–19k rows per day at a 300 m buffer.** Fixes
   snapped to 150 m cells: 2026-07-06 = 3354 points + 11905 lines, 2026-07-10 =
   4457 + 14991, 2026-06-02 = 2593 + 9064. The naive whole-day bounding box is
-  5.6× worse (07-06: 19968 + 65603).
+  5.6× worse (07-06: 19968 + 65603) — which is why the boxes are per-cell and
+  are NOT merged: a day with a train trip is a continuous chain of cells, and
+  merging collapses it back to the whole-trip bbox.
 - The existing fixture already carries 21,024 distinct rows / 19.7 MB for one
   day, so the superset is **no larger than what already crosses the boundary**.
+  (Row cost at the final 1500 m buffer is measured in step 2 below.)
 
-### Buffer sizing — 300 m is NOT enough
+### Buffer sizing — measured twice, wrong the first time
 
-Of 3619 captured query coordinates across 32 days, 95% lie within 50 m of a raw
-GPS fix and 99.8% within 250 m. That percentile view is misleading for a
-superset, which has to cover 100%: the observed **maximum is 435.5 m**
-(2026-06-29, a `drivableRoads` query), and a 300 m buffer would miss a query on
-**3 of the 32 days**. The far queries are the passes that ask at DERIVED points —
-matched-path vertices and resolved station coordinates — not at fixes.
+The first sizing pass here asked "how far from a fix does the pipeline query?"
+and answered 435.5 m, concluding 500 m. **That was the wrong question.** A query
+needs every row within its OWN RADIUS of its own coordinate, so the requirement
+is
 
-500 m covers all 32 days. Row cost for 2026-07-10 scales as: 300 m = 19,448
-rows, 500 m = 34,487, 1000 m = 63,635. So 500 m costs 1.8× the 300 m figure and
-remains the same order as the fixture already ships.
+    buffer ≥ max over queries of (offset to nearest fix + query radius)
 
-**Empirical sizing is not a guarantee**, so the buffer must be paired with a
-COVERAGE ASSERTION: the pushed table carries the boxes it was built from, and a
-query landing outside them is a hard error rather than a silently short result.
-This is the same shape as the existing `isCovered` check that guards the
-Overpass mirror, and it is what makes an over-fetch safe to rely on — a miss
-becomes loud, exactly as `FixtureOsmAdapter` throws on an uncaptured key.
+and the radius term is the larger one. Re-measured over the 32 golden days
+(`lean/experiments/osm-buffer-sizing.mts`), 500 m is short on **32 of 32 days**,
+not 3. The first pass measured one of the two terms and read the total off it.
+
+The two terms are different kinds of number, and only one is empirical:
+
+- **The radius is a ceiling, not a sample maximum.** Every kernel call site
+  passes a module constant — `RAIL_JOURNEY_LINES_RADIUS_M` (800),
+  `RAIL_RUN_STATION_RADIUS_M` (400), `UNDERGROUND_STATION_RADIUS_M` (350),
+  `UNDERGROUND_LINES_RADIUS_M` / `ENDPOINT_LINES_RADIUS_M` (300),
+  `STATION_AT_ALIGHT_RADIUS_M`, and the `nearbyWays` (50) /
+  `nearbyLandmarks` (100) / `nearbyTransitStops` (50) defaults. None is derived
+  from data, so **800 m bounds it by construction**.
+- **The offset is empirical**: 428 m worst across the corpus, from the passes
+  that query at DERIVED points — matched-path vertices, resolved station
+  coordinates — rather than at fixes.
+
+### The buffer is per feature type, not global
+
+A single buffer would have to be the widest requirement, and every feature type
+would pay it. That is the wrong trade here because **the widest requirement and
+the densest table are not the same one**. Per feature type, worst need across
+the corpus:
+
+| feature type | worst need | asked by |
+| --- | --- | --- |
+| `railway` | 1227.9 m | `linesAtPoint` @ 800 |
+| `landmark` | 282.2 m | `nearbyLandmarks` @ 100 |
+| `highway` / `waterway` / `aeroway` | 262.1 m | `nearbyWays` @ 50 |
+| `transit_stop` | 89.0 m | `nearbyTransitStops` @ 50 |
+
+Only `railway` — a sparse table — needs the wide buffer. `highway`, by far the
+biggest, is asked exclusively at 50 m. So: **`railway` 1500 m, everything else
+500 m.** Measured on 2026-07-10, that is 46,024 rows against 133,284 for a
+uniform 1500 m — a 2.9× cut whose dropped rows no query could ever have reached.
+
+All **2521** captured kernel queries across the 32 days replay as covered
+through the real `methodIsCovered`.
+
+A third of that saving came from the grid cell, not the buffer: each box is
+`cell + 2×buffer` wide, so a coarse cell over-fetches around the parts of itself
+the track never entered (cell 1000 → 75,751 rows; cell 250 → 46,024). Coverage
+is provably independent of cell size, so it is a free knob — confirmed by
+probe: changing it 1000 → 250 leaves every corpus query covered.
+
+Empirical sizing is still not a guarantee, so the buffer is paired with a
+COVERAGE ASSERTION: the row-set carries the boxes it was built from, and a query
+landing outside them is a hard error rather than a silently short result. Same
+shape as the `isCovered` check guarding the Overpass mirror, and the same
+discipline as `FixtureOsmAdapter` throwing on an uncaptured key. That assertion
+is what demotes the buffer from a correctness parameter to a performance one.
+
+### Why the bulk readers are NOT pushed
+
+`queryDrivableRoads`, `queryWalkableRoads` and `queryBuildingsNear` stay on the
+per-query DB path. This is a scope decision, not a deferral, and it survives the
+"prefer Lean" default because pushing them buys nothing:
+
+> Their SQL is `feature_type = … AND subtype IN (…) AND MBRIntersects(geom, box)
+> LIMIT 20000`. No distance, no ordering, no selection. **The answer is "every
+> row in the box", and the box is a parameter the caller chose, not a judgement
+> the database made.** There is no oracle to remove, so no theorem becomes
+> statable by moving them.
+
+Contrast the kernel: `ST_Distance_Sphere(geom, point) < radius ORDER BY
+distance` decides *which feature is nearest*. That is the oracle, and that is
+what moves.
+
+The cost side agrees. Their radii are leg-scaled (120–2240 m measured), so no
+buffer bounds them the way 800 m bounds the kernel; a whole-day 2700 m buffer
+would be needed on this corpus alone, with no ceiling argument behind it. And
+`building` is the density bomb that already forced its own tight 500 m coverage
+box (cf. #255). The determinism they need is already supplied by
+`FixtureOsmAdapter`.
+
+When the map-matchers themselves are ported, they will need this geometry pushed
+too — but per-leg, bounded by the leg, not per-day.
 
 ## Consequence of the radius difference
 
@@ -79,10 +149,10 @@ To port (the `queryPoints` / `queryLines` kernel in `src/geo/osm-local.ts`, and
 its consumers in `src/geo/osm.ts`):
 
 - the MBR box test, `ST_Distance_Sphere < radius`, ordering by distance, and the
-  `LIMIT 50` truncation. The limit never binds for the methods the pass list
-  calls — `nearbyStations` returns at most 11 rows and `linesAtPoint` at most 14
-  across the corpus — but it does bind for `walkableRoads` (up to 20000) and
-  `buildingsNear` (up to 5364), whose own caps need reproducing.
+  `LIMIT 50` truncation. The limit never binds for the methods in scope —
+  `nearbyStations` returns at most 11 rows and `linesAtPoint` at most 14 across
+  the corpus — but it is reproduced anyway, since a cap that has never bound is
+  still part of the function being defined.
 - `deriveStationSubtype` and `dedupeStationsByName`. The latter carries a
   documented trap: a station and its entrances are separate points sharing a
   name, and naive keep-closest picks the entrance, which `pickBestStation` then
@@ -96,13 +166,18 @@ Staying in the shell:
   Remains a pushed answer-table.
 - `stationsOnLine` — keyed by line name rather than coordinates, so there is no
   bbox to take. Also a table, just not a spatial one.
+- `queryDrivableRoads` / `queryWalkableRoads` / `queryBuildingsNear` — see "Why
+  the bulk readers are NOT pushed" above. They ship rows already; there is no
+  decision in them to lift.
 
 ## Order
 
 1. Lean spatial kernel + guards against V8, driven from captured rows. DONE:
    points (`6ea6992`) and lines (`45d830a`), 25 probes.
-2. Capture path: query the buffered track once per day at a 500 m buffer,
-   serialise raw rows, and record the coverage boxes alongside them.
+2. Capture path: query the buffered track once per day — **1500 m for `railway`,
+   500 m for the rest** — serialise raw rows, and record the coverage boxes
+   alongside them. DONE: `src/geo/osm-rowset.ts` + `tests/osm-rowset.test.ts`,
+   sized by `lean/experiments/osm-buffer-sizing.mts`.
 3. Swap the injected lookups to read the pushed table.
 4. Re-bless the golden corpus; read whatever moves.
 5. Then the pass-order pipeline, then the `day` serve mode.

@@ -81,8 +81,8 @@ export interface CoverageRow {
  *  varies with latitude — `111 km · cos(lat)`. Good enough for the
  *  small-radius math we do here; we never operate on degrees that
  *  matter at the poles. */
-const METERS_PER_DEG_LAT = 111_000;
-function metersPerDegLon(lat: number): number {
+export const METERS_PER_DEG_LAT = 111_000;
+export function metersPerDegLon(lat: number): number {
 	return 111_000 * Math.cos((lat * Math.PI) / 180);
 }
 
