@@ -37,14 +37,32 @@ that bare `isis` resolves to a different host.
   differently. This does not constrain the design — see below.
 - Mirror size: `osm_points` 495,905 rows / 230 MB, `osm_lines` 1,813,334 /
   1010 MB.
-- **A buffered-track superset is 11k–19k rows per day.** Fixes snapped to 150 m
-  cells, each cell buffered 300 m: 2026-07-06 = 3354 points + 11905 lines,
-  2026-07-10 = 4457 + 14991, 2026-06-02 = 2593 + 9064. The naive whole-day
-  bounding box is 5.6× worse (07-06: 19968 + 65603).
+- **A buffered-track superset is 11k–19k rows per day at a 300 m buffer.** Fixes
+  snapped to 150 m cells: 2026-07-06 = 3354 points + 11905 lines, 2026-07-10 =
+  4457 + 14991, 2026-06-02 = 2593 + 9064. The naive whole-day bounding box is
+  5.6× worse (07-06: 19968 + 65603).
 - The existing fixture already carries 21,024 distinct rows / 19.7 MB for one
   day, so the superset is **no larger than what already crosses the boundary**.
-- Buffer sizing: of 3619 captured query coordinates across 32 days, 95% lie
-  within 50 m of a raw GPS fix and 99.8% within 250 m.
+
+### Buffer sizing — 300 m is NOT enough
+
+Of 3619 captured query coordinates across 32 days, 95% lie within 50 m of a raw
+GPS fix and 99.8% within 250 m. That percentile view is misleading for a
+superset, which has to cover 100%: the observed **maximum is 435.5 m**
+(2026-06-29, a `drivableRoads` query), and a 300 m buffer would miss a query on
+**3 of the 32 days**. The far queries are the passes that ask at DERIVED points —
+matched-path vertices and resolved station coordinates — not at fixes.
+
+500 m covers all 32 days. Row cost for 2026-07-10 scales as: 300 m = 19,448
+rows, 500 m = 34,487, 1000 m = 63,635. So 500 m costs 1.8× the 300 m figure and
+remains the same order as the fixture already ships.
+
+**Empirical sizing is not a guarantee**, so the buffer must be paired with a
+COVERAGE ASSERTION: the pushed table carries the boxes it was built from, and a
+query landing outside them is a hard error rather than a silently short result.
+This is the same shape as the existing `isCovered` check that guards the
+Overpass mirror, and it is what makes an over-fetch safe to rely on — a miss
+becomes loud, exactly as `FixtureOsmAdapter` throws on an uncaptured key.
 
 ## Consequence of the radius difference
 
@@ -81,8 +99,10 @@ Staying in the shell:
 
 ## Order
 
-1. Lean spatial kernel + guards against V8, driven from captured rows.
-2. Capture path: query the buffered track once per day, serialise raw rows.
+1. Lean spatial kernel + guards against V8, driven from captured rows. DONE:
+   points (`6ea6992`) and lines (`45d830a`), 25 probes.
+2. Capture path: query the buffered track once per day at a 500 m buffer,
+   serialise raw rows, and record the coverage boxes alongside them.
 3. Swap the injected lookups to read the pushed table.
 4. Re-bless the golden corpus; read whatever moves.
 5. Then the pass-order pipeline, then the `day` serve mode.
