@@ -18,6 +18,8 @@ import { z } from "zod";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+import { RowSetOsmAdapter } from "../geo/osm-adapter-rowset.js";
+import type { OsmRowSet } from "../geo/osm-rowset.js";
 import type { NormalizedState } from "./state-diff.js";
 
 /** Bumped only when a schema change alters classifier output. See the
@@ -28,8 +30,22 @@ export const FIXTURE_FORMAT_VERSION = 1;
 
 /** `ClassificationInputs` as stored on disk: every field except the
  *  non-serialisable `osm` adapter, which is replaced by the captured
- *  `osmTrace` that replay rebuilds a `FixtureOsmAdapter` from. */
-export type SerializedInputs = Omit<ClassificationInputs, "osm"> & { osmTrace: OsmTrace };
+ *  `osmTrace` that replay rebuilds a `FixtureOsmAdapter` from.
+ *
+ *  `osmRowSet` is the raw OSM rows within the day's buffered track
+ *  (`docs/proposals/2026-07-osm-into-lean.md`). When present, replay answers
+ *  the five kernel lookups by COMPUTING over those rows instead of replaying
+ *  `osmTrace`'s captured answers — which is the entire point of the row-set
+ *  work: a captured answer keeps the spatial predicate an oracle, and an
+ *  oracle cannot be stated as a definition or carry a theorem.
+ *
+ *  Both are stored, deliberately. The trace remains the record of what MariaDB
+ *  said, so a fixture is self-contained evidence for the comparison rather than
+ *  needing a live mirror to re-derive it. */
+export type SerializedInputs = Omit<ClassificationInputs, "osm"> & {
+	osmTrace: OsmTrace;
+	osmRowSet?: OsmRowSet;
+};
 
 export interface CapturedDay {
 	meta: {
@@ -83,16 +99,41 @@ export function parseCapturedDay(json: string): CapturedDay {
 }
 
 /** Split a loaded `ClassificationInputs` into the serialisable closure,
- *  dropping the live `osm` adapter in favour of the recorded trace. */
-export function toSerializedInputs(inputs: ClassificationInputs, osmTrace: OsmTrace): SerializedInputs {
-	const { osm: _osm, ...rowSet } = inputs;
-	return { ...rowSet, osmTrace };
+ *  dropping the live `osm` adapter in favour of the recorded trace and, when
+ *  the capture path loaded one, the raw OSM rows. */
+export function toSerializedInputs(
+	inputs: ClassificationInputs,
+	osmTrace: OsmTrace,
+	osmRowSet?: OsmRowSet,
+): SerializedInputs {
+	const { osm: _osm, ...rest } = inputs;
+	return osmRowSet ? { ...rest, osmTrace, osmRowSet } : { ...rest, osmTrace };
 }
 
-/** Rebuild a runnable `ClassificationInputs` from a stored closure,
- *  wiring a `FixtureOsmAdapter` over the captured trace. Pure — no DB,
- *  no network. */
+/**
+ * Rebuild a runnable `ClassificationInputs` from a stored closure. Pure — no
+ * DB, no network.
+ *
+ * With a captured row-set the five kernel lookups are COMPUTED from the rows
+ * and everything else (Nominatim, `stationsOnLine`, the bulk geometry readers)
+ * still replays from the trace — `RowSetOsmAdapter` delegates exactly those.
+ * Without one, the whole surface replays from the trace as before, so fixtures
+ * captured before the row-set landed still load and still mean what they meant.
+ *
+ * That fallback is a compatibility path, not a safety net: a day replayed
+ * without rows is answering from the oracle, and the two are NOT equivalent —
+ * see the parity numbers in `docs/proposals/2026-07-osm-into-lean.md`. Which
+ * one a fixture used is visible in the file, and `golden-check` reports it.
+ */
 export function inputsFromFixture(captured: CapturedDay): ClassificationInputs {
-	const { osmTrace, ...rowSet } = captured.inputs;
-	return { ...rowSet, osm: new FixtureOsmAdapter(osmTrace) };
+	const { osmTrace, osmRowSet, ...rest } = captured.inputs;
+	const fixture = new FixtureOsmAdapter(osmTrace);
+	return { ...rest, osm: osmRowSet ? new RowSetOsmAdapter(osmRowSet, fixture) : fixture };
+}
+
+/** Whether a fixture answers its kernel lookups from raw rows or from the
+ *  captured oracle. Reported by the harnesses so a mixed corpus is visible
+ *  rather than something a reader has to infer from a diff. */
+export function fixtureAnswersFromRows(captured: CapturedDay): boolean {
+	return captured.inputs.osmRowSet !== undefined;
 }

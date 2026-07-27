@@ -33,6 +33,7 @@ import { migrate } from "../db/schema.js";
 import { loadClassificationInputs } from "../geo/load-classification-inputs.js";
 import { dbOsmAdapter } from "../geo/osm-adapter.js";
 import { RecordingOsmAdapter } from "../geo/osm-adapter-recording.js";
+import { loadOsmRowSet } from "../geo/osm-rowset.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { type CapturedDay, FIXTURE_FORMAT_VERSION, toSerializedInputs } from "./fixture-day.js";
 import { normalizeStates } from "./state-diff.js";
@@ -115,6 +116,17 @@ const recorder = new RecordingOsmAdapter(dbOsmAdapter);
 const inputs = await loadClassificationInputs(config, { userId: user, date, displayTz: tz }, recorder);
 const result = await computeVelocityFromInputs(inputs);
 
+// The raw OSM rows within the day's buffered track. Captured AFTER the run so
+// the pipeline itself still goes through the recorder against the DB — the two
+// are independent captures of the same day, which is what lets a fixture be
+// its own evidence for the row-set-vs-oracle comparison rather than needing a
+// live mirror to re-derive one side. Heavy (~20-40 s, tens of thousands of
+// rows); this is the offline capture path `loadOsmRowSet` is written for.
+const track = [...inputs.phonetrack.today, ...inputs.phonetrack.morning, ...inputs.phonetrack.priorEvening];
+console.log(`Loading the OSM row-set for ${track.length} fixes…`);
+const osmRowSet = await loadOsmRowSet(track);
+console.log(`  ${osmRowSet.points.length} points / ${osmRowSet.lines.length} lines`);
+
 const captured: CapturedDay = {
 	meta: {
 		fixtureFormatVersion: FIXTURE_FORMAT_VERSION,
@@ -125,7 +137,7 @@ const captured: CapturedDay = {
 		tz,
 		description,
 	},
-	inputs: toSerializedInputs(inputs, recorder.trace),
+	inputs: toSerializedInputs(inputs, recorder.trace, osmRowSet),
 	expected: { velocity: normalizeStates(result.states, tz) },
 };
 

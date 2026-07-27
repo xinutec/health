@@ -45,7 +45,7 @@ import { groundTruthJourneys, journeyShapeResults, statesToJourneys } from "../e
 import { classifyDay, parsePipelineState } from "../eval/truth-check.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import { type CapturedDay, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
+import { type CapturedDay, fixtureAnswersFromRows, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 import { diffStates, normalizeStates } from "./state-diff.js";
 
 const GOLDEN_DIR = path.join(process.cwd(), "tests", "golden");
@@ -221,6 +221,8 @@ if (files.length === 0) {
 let regressions = 0;
 let blessed = 0;
 let checked = 0;
+/** Days whose kernel lookups came from pushed rows rather than the oracle. */
+let fromRows = 0;
 // Worldline-feasibility accounting (Phase 0 of journey-worldline). Two
 // severities: the label-only rail invariants are HARD-ZERO (the corpus has
 // none; any occurrence is a regression), while the kinematic invariant
@@ -245,6 +247,7 @@ for (const file of files) {
 	let dayPoints: Awaited<ReturnType<typeof computeVelocityFromInputs>>["points"];
 	let actual: ReturnType<typeof normalizeStates>;
 	const dayInputs = inputsFromFixture(captured);
+	if (fixtureAnswersFromRows(captured)) fromRows++;
 	try {
 		const result = await computeVelocityFromInputs(dayInputs);
 		states = result.states;
@@ -321,6 +324,15 @@ if (bless) {
 console.log(
 	`\n${checked - regressions}/${checked} fixture(s) match baseline` +
 		(regressions > 0 ? `, ${regressions} regressed.` : "."),
+);
+// Which side of the OSM port each fixture ran on. A day WITHOUT a captured
+// row-set answered its kernel lookups from the recorded MariaDB answers — the
+// oracle the port exists to remove — so a mixed corpus is a real state worth
+// naming rather than something to be inferred from a diff.
+console.log(
+	fromRows === checked
+		? `osm kernel: all ${checked} day(s) answered from pushed rows.`
+		: `osm kernel: ${fromRows}/${checked} day(s) from pushed rows, ${checked - fromRows} still replaying captured answers.`,
 );
 // Rail worldline invariants are a hard gate: the corpus baseline is zero
 // (every blessed day is rail-consistent), so any occurrence is a failure,
