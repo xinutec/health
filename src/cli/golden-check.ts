@@ -45,7 +45,13 @@ import { groundTruthJourneys, journeyShapeResults, statesToJourneys } from "../e
 import { classifyDay, parsePipelineState } from "../eval/truth-check.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import { type CapturedDay, fixtureAnswersFromRows, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
+import {
+	type CapturedDay,
+	fixtureAnswersFromRows,
+	inputsFromFixture,
+	type OsmSource,
+	parseCapturedDay,
+} from "./fixture-day.js";
 import { diffStates, normalizeStates } from "./state-diff.js";
 
 const GOLDEN_DIR = path.join(process.cwd(), "tests", "golden");
@@ -157,7 +163,21 @@ let blessDate: string | null = null;
 let blessJourneys = false;
 let blessFeasibility = false;
 let blessRailTriples = false;
+/** Which OSM path to replay on. See `OsmSource` — `--osm trace` exists to
+ *  attribute a corpus diff, by holding every other input fixed and varying
+ *  only this. It is not a supported way to run the corpus. */
+let osmSource: OsmSource = "rows";
 for (let i = 0; i < args.length; i++) {
+	if (args[i] === "--osm") {
+		const next = args[i + 1];
+		if (next !== "rows" && next !== "trace") {
+			console.error("--osm takes 'rows' or 'trace'");
+			process.exit(2);
+		}
+		osmSource = next;
+		i++;
+		continue;
+	}
 	if (args[i] === "--bless") {
 		bless = true;
 		const next = args[i + 1];
@@ -246,8 +266,8 @@ for (const file of files) {
 	let states: Awaited<ReturnType<typeof computeVelocityFromInputs>>["states"];
 	let dayPoints: Awaited<ReturnType<typeof computeVelocityFromInputs>>["points"];
 	let actual: ReturnType<typeof normalizeStates>;
-	const dayInputs = inputsFromFixture(captured);
-	if (fixtureAnswersFromRows(captured)) fromRows++;
+	const dayInputs = inputsFromFixture(captured, osmSource);
+	if (fixtureAnswersFromRows(captured) && osmSource === "rows") fromRows++;
 	try {
 		const result = await computeVelocityFromInputs(dayInputs);
 		states = result.states;

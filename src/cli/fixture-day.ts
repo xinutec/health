@@ -125,11 +125,27 @@ export function toSerializedInputs(
  * see the parity numbers in `docs/proposals/2026-07-osm-into-lean.md`. Which
  * one a fixture used is visible in the file, and `golden-check` reports it.
  */
-export function inputsFromFixture(captured: CapturedDay): ClassificationInputs {
+export function inputsFromFixture(captured: CapturedDay, osmSource: OsmSource = "rows"): ClassificationInputs {
 	const { osmTrace, osmRowSet, ...rest } = captured.inputs;
 	const fixture = new FixtureOsmAdapter(osmTrace);
-	return { ...rest, osm: osmRowSet ? new RowSetOsmAdapter(osmRowSet, fixture) : fixture };
+	const useRows = osmSource === "rows" && osmRowSet !== undefined;
+	return { ...rest, osm: useRows ? new RowSetOsmAdapter(osmRowSet as OsmRowSet, fixture) : fixture };
 }
+
+/**
+ * Which side of the OSM port to replay on.
+ *
+ * `"trace"` exists for exactly one job: attributing a corpus diff. A re-capture
+ * pulls fresh inputs from prod, so its diff mixes the row-set change with OSM
+ * mirror drift and with whatever else moved (decoded days, re-mined focus
+ * places). Replaying the SAME fixture both ways holds all of that fixed and
+ * varies only the OSM path, so a difference between the two runs is the port
+ * and a regression present in both is drift.
+ *
+ * It is a diagnostic axis, not a supported mode — `"trace"` answers from the
+ * captured oracle, which is the thing the port exists to remove.
+ */
+export type OsmSource = "rows" | "trace";
 
 /** Whether a fixture answers its kernel lookups from raw rows or from the
  *  captured oracle. Reported by the harnesses so a mixed corpus is visible
