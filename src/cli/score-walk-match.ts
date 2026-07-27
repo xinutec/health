@@ -386,13 +386,20 @@ async function main(): Promise<void> {
 	const user = "pippijn";
 	const args = process.argv.slice(2);
 	const bless = args.includes("--bless");
-	const arg = args.find((a) => !a.startsWith("--"));
-	const dates = arg
-		? [arg]
-		: readdirSync("tests/golden/days")
-				.filter((f) => f.endsWith(`-${user}.json`))
-				.map((f) => f.slice(0, 10))
-				.sort();
+	// Every non-flag argument is a date. This used to take only the FIRST
+	// (`args.find`) and silently ignore the rest, which reads as a filter that
+	// worked: `walk-gate.sh 2026-07-06 2026-07-10` scored ONLY 07-06 and
+	// reported a clean bill for a day it never ran. That is how a real
+	// investigation concluded the gate was corpus-order-dependent — it was
+	// comparing two runs that had scored different days.
+	const requested = args.filter((a) => !a.startsWith("--"));
+	const dates =
+		requested.length > 0
+			? requested
+			: readdirSync("tests/golden/days")
+					.filter((f) => f.endsWith(`-${user}.json`))
+					.map((f) => f.slice(0, 10))
+					.sort();
 
 	const all: WalkVerdict[] = [];
 	for (const date of dates) {
@@ -579,11 +586,13 @@ async function main(): Promise<void> {
 	// its own recorded floor — so it can gate deploys.
 	const current = toBaseline(all);
 	if (bless) {
-		// Single-day bless merges into the existing floor; a full sweep replaces it.
+		// A DATE-FILTERED bless merges into the existing floor; only a full sweep
+		// replaces it — otherwise blessing one day would delete every other day's
+		// floor.
 		const existing: WalkBaseline = existsSync(WALK_BASELINE_PATH)
 			? (JSON.parse(readFileSync(WALK_BASELINE_PATH, "utf8")) as WalkBaseline)
 			: {};
-		const next = arg ? { ...existing, ...current } : current;
+		const next = requested.length > 0 ? { ...existing, ...current } : current;
 		writeFileSync(WALK_BASELINE_PATH, `${JSON.stringify(next, null, "\t")}\n`);
 		console.log(`\nRATCHET: blessed ${Object.values(next).flat().length} walk floor(s) → ${WALK_BASELINE_PATH}`);
 		process.exit(0);

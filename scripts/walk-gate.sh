@@ -8,9 +8,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # fixtures it describes).
 #
 # Usage:
-#   npm run walk-gate                    # gate every golden day
-#   npm run walk-gate -- 2026-07-01      # one day
-#   npm run walk-gate -- --bless         # record the current metrics as floor
+#   npm run walk-gate                                # gate every golden day
+#   npm run walk-gate -- 2026-07-01                  # one day
+#   npm run walk-gate -- 2026-07-01 2026-07-06       # several days
+#   npm run walk-gate -- --bless                     # record the current metrics as floor
 #
 # Exit 0 = no walk below its floor. Exit 1 = a walk regressed (or, with no
 # baseline blessed yet, the raw A/B verdict regressed).
