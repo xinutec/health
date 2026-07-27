@@ -309,36 +309,45 @@ export async function anchorTrainBoardingToWalkedStation(
 		// assembleRailJourney's single-line merge downstream. Boarding continuity
 		// here is owned by reconcileAdjacentRailLegs / assembleRailJourney.
 		if (k >= 2 && effectiveMode(out[k - 2]) === "train") continue;
-		const fixes = samplesInWindowExclusiveEnd(points, walk);
+		// INCLUSIVE of the walk's closing fix, like the alight side. The step
+		// that straddles the walk→train boundary is the ride pulling out, and
+		// `checkWorldlineFeasibility` counts it against this leg — so a pass
+		// that cannot see it is blind to exactly the evidence the invariant
+		// reports (the 2026-07-01 Baker Street interchange: an 819 m step
+		// landing ON the boundary, invisible to the exclusive-end window).
+		const fixes = samplesInWindow(points, walk);
 		if (fixes.length < 4) continue;
 
-		// The boarding hop: the FIRST big, fast step — the train pulling out of
-		// the real boarding station toward the first station the GPS surfaced at.
-		// (Not the last fast fix: the surfaced fix often settles into a slow one
-		// as the train decelerates into the next station, so a from-the-end scan
-		// would miss it.)
+		// The boarding hop: the FIRST vehicle-paced RUN covering a real
+		// inter-station distance — the train pulling out of the real boarding
+		// station toward the first station the GPS surfaced at. The FIRST, not
+		// the last: the surfaced fix often settles into a slow one as the train
+		// decelerates into the next station, so a from-the-end scan would miss
+		// it. A RUN, not a single step: coming out of a platform the train is
+		// still accelerating, so the first observed steps are short (76 m, 86 m
+		// on 07-01) and each falls under the inter-station bar on its own while
+		// the run covers 981 m. Contiguous steps at hop pace accumulate, and the
+		// run qualifies once its NET displacement clears the bar — the same rule
+		// `anchorTrainAlightToWalkedStation` applies to its settle run.
 		let split = -1;
+		let hopRunSteps = 0;
+		let runStart = -1;
 		for (let i = 1; i < fixes.length; i++) {
 			const dt = fixes[i].ts - fixes[i - 1].ts;
 			const stepM = haversineMeters(fixes[i - 1].lat, fixes[i - 1].lon, fixes[i].lat, fixes[i].lon);
 			const stepKmh = dt > 0 ? (stepM / dt) * 3.6 : 0;
-			if (stepM >= BOARDING_HOP_MIN_DIST_M && stepKmh >= BOARDING_HOP_MIN_KMH) {
-				split = i;
-				break;
+			if (stepKmh >= BOARDING_HOP_MIN_KMH) {
+				if (runStart < 0) runStart = i - 1;
+				const runNetM = haversineMeters(fixes[runStart].lat, fixes[runStart].lon, fixes[i].lat, fixes[i].lon);
+				if (split < 0 && runNetM >= BOARDING_HOP_MIN_DIST_M) split = runStart + 1;
+				if (split >= 0) hopRunSteps = i - runStart;
+			} else {
+				if (split >= 0) break; // the qualifying run has ended
+				runStart = -1;
 			}
 		}
 		if (split < 1) continue; // no boarding hop
 		const boardFix = fixes[split - 1];
-		// How many consecutive fast steps back the hop — the density the
-		// same-station extension below demands. Mirrors the alight side's
-		// `settleRunSteps`.
-		let hopRunSteps = 0;
-		for (let i = split; i < fixes.length; i++) {
-			const dt = fixes[i].ts - fixes[i - 1].ts;
-			const stepM = haversineMeters(fixes[i - 1].lat, fixes[i - 1].lon, fixes[i].lat, fixes[i].lon);
-			if (dt > 0 && (stepM / dt) * 3.6 >= BOARDING_HOP_MIN_KMH) hopRunSteps++;
-			else break;
-		}
 		// Guard against a lone GPS spike that returns: the walk must actually END
 		// away from the boarding fix (a real relocation onto the tube), not bounce
 		// back to the cluster.

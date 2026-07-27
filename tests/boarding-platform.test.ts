@@ -203,6 +203,31 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 		expect(result[1].startTs).toBe(420);
 	});
 
+	it("accumulates a run of fast steps — no single step need clear the distance bar", async () => {
+		// The 2026-07-01 Baker Street interchange (14:43-14:48 BST). The Met
+		// pulling out of the platform is seen as 76 m, 86 m and then 819 m
+		// steps: 981 m of ride, but the first two are UNDER the 250 m
+		// inter-station bar, and the big one lands ON the segment boundary.
+		// A per-step test sees nothing and the whole ride head stays in the
+		// walk, where the kinematic invariant reads it as 53 km/h "walking".
+		// Contiguous steps at hop pace accumulate instead — the same rule the
+		// alight side already applies to its settle run.
+		const fixes: FilteredPoint[] = [];
+		for (let ts = 0; ts <= 240; ts += 60) fixes.push({ ...at(0, 0), ts, speed_kmh: 3, bearing: 0 }); // at Alpha
+		fixes.push({ ...at(80, 0), ts: 255, speed_kmh: 19, bearing: 0 }); // 80 m in 15 s = 19 km/h
+		fixes.push({ ...at(170, 0), ts: 272, speed_kmh: 19, bearing: 0 }); // +90 m, still under 250 alone
+		fixes.push({ ...at(990, 0), ts: 328, speed_kmh: 53, bearing: 0 }); // +820 m — the run now covers 990 m
+		const segments = [
+			seg({ startTs: 0, endTs: 328, mode: "walking" }),
+			seg({ startTs: 328, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 1" }),
+		];
+		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup);
+		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
+		// Cut at the fix the run set out from (240), not at the segment boundary.
+		expect(result[1].startTs).toBe(240);
+		expect(result[0].endTs).toBe(240);
+	});
+
 	it("extends the boundary when the walked-to station is the one already labelled", async () => {
 		// The 2026-05-18 evening Metropolitan boarding, once the station picker
 		// stopped naming the ride after a National Rail platform node: the
