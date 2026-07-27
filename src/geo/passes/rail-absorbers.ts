@@ -329,6 +329,16 @@ export async function anchorTrainBoardingToWalkedStation(
 		}
 		if (split < 1) continue; // no boarding hop
 		const boardFix = fixes[split - 1];
+		// How many consecutive fast steps back the hop — the density the
+		// same-station extension below demands. Mirrors the alight side's
+		// `settleRunSteps`.
+		let hopRunSteps = 0;
+		for (let i = split; i < fixes.length; i++) {
+			const dt = fixes[i].ts - fixes[i - 1].ts;
+			const stepM = haversineMeters(fixes[i - 1].lat, fixes[i - 1].lon, fixes[i].lat, fixes[i].lon);
+			if (dt > 0 && (stepM / dt) * 3.6 >= BOARDING_HOP_MIN_KMH) hopRunSteps++;
+			else break;
+		}
 		// Guard against a lone GPS spike that returns: the walk must actually END
 		// away from the boarding fix (a real relocation onto the tube), not bounce
 		// back to the cluster.
@@ -341,14 +351,28 @@ export async function anchorTrainBoardingToWalkedStation(
 		if (tailDist < BOARDING_HOP_MIN_DIST_M) continue;
 
 		const station = pickBestStation(await stationsLookup(boardFix.lat, boardFix.lon));
-		if (!station || station.name === rail.board) continue;
+		if (!station) continue;
 
-		const reason = `boarding re-anchored to ${station.name} (walk's terminal station) — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk (was boarding ${rail.board})`;
+		// The scanned station EQUALLING the label is not "nothing to do": the
+		// rename is a no-op but the boarding hop is still stranded in the walk,
+		// where the kinematic invariant reads it as vehicle-paced walking (the
+		// 2026-05-18 evening Met ride, 1.5 km at 60 km/h). Extend the boundary
+		// in both cases — but, exactly as on the alight side, the same-station
+		// extension demands DENSE evidence (>= 2 consecutive fast steps): a
+		// lone fast step landing back at the labelled board is the stuck-GPS
+		// signature, and extending there eats a real walk's tail. The rename
+		// case keeps working on a single blackout hop because it is
+		// additionally anchored by a DIFFERENT station the walk reached.
+		const sameBoard = station.name === rail.board;
+		if (sameBoard && hopRunSteps < 2) continue;
+		const reason = sameBoard
+			? `boarding boundary extended back to the ${station.name} departure — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk`
+			: `boarding re-anchored to ${station.name} (walk's terminal station) — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk (was boarding ${rail.board})`;
 		out[k - 1] = { ...walk, endTs: boardFix.ts };
 		out[k] = {
 			...train,
 			startTs: boardFix.ts,
-			wayName: `${station.name} → ${rail.alight}${rail.line ? ` · ${rail.line}` : ""}`,
+			wayName: sameBoard ? train.wayName : `${station.name} → ${rail.alight}${rail.line ? ` · ${rail.line}` : ""}`,
 			refinedReason: train.refinedReason ? `${train.refinedReason}; ${reason}` : reason,
 		};
 	}

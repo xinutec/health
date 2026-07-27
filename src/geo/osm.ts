@@ -788,26 +788,44 @@ export interface NearbyStation {
 /**
  * Pick the most station-like entry from a `nearbyStations` result list.
  *
- * The complication: OSM tags station entrances as separate nodes (often
- * labelled "A", "B", "C", etc. — one per physical entrance gate). For
- * a station node within walking distance of the user's GPS fix, the
- * entrance labels may be CLOSER than the station node itself. The picker
- * therefore deprioritises:
- *   1. entries with subtype = "subway_entrance"
- *   2. single-letter names (proxy for entrance labels when subtype info
- *      is missing or coincidentally "subway")
+ * The complication: OSM models one station as many nodes, and the node that
+ * NAMES the station is rarely the closest one. Two kinds outrank it by
+ * distance and must not win:
  *
- * Falls through to closest-by-distance for the remaining candidates, or
- * to entrance-letters as a last resort if nothing else is present.
+ *   - **entrances** (`railway=subway_entrance`), one per gate, often labelled
+ *     "A", "B", "C" — so a single-letter name is treated as an entrance too,
+ *     as a proxy for when the subtype is missing or coincidentally "subway";
+ *   - **platform positions** (`public_transport=stop_position`), one per
+ *     platform. A terminus carries a dozen, spread along the trainshed. At an
+ *     interchange this puts the WRONG operator's platforms nearest: the
+ *     2026-05-18 / 2026-07-02 Metropolitan boarding read "London St Pancras"
+ *     (a National Rail platform node 37 m out) instead of King's Cross St
+ *     Pancras (the tube station node 82 m out) — a station the Met does not
+ *     serve, which is a physically impossible ride.
+ *
+ * So the pick is by TIER first — station node, then platform position, then
+ * entrance — and by distance only within a tier. Each lower tier is a genuine
+ * fallback: when no station node is in range, a platform position still names
+ * the place correctly.
+ *
+ * `prefer` splits the station tier when the CALLER knows what kind of station
+ * it is looking for. A big interchange carries one station node per operator —
+ * King's Cross has "London King's Cross" (National Rail) and "King's Cross St
+ * Pancras" (`station=subway`) ~200 m apart — and distance alone picks whichever
+ * the reacquire fix landed nearest, so an underground reconstruction could name
+ * a tube ride after the mainline terminus (2026-07-10 "London King's Cross →
+ * Victoria · Victoria Line"). A caller that is reconstructing an UNDERGROUND
+ * run passes `"subway"`; it is a preference, not a filter, so a complex without
+ * a tube node still resolves to its nearest station.
  */
-export function pickBestStation(stations: NearbyStation[]): NearbyStation | null {
+export function pickBestStation(stations: NearbyStation[], prefer?: string): NearbyStation | null {
 	if (stations.length === 0) return null;
-	const isEntranceLike = (s: NearbyStation): boolean => s.subtype === "subway_entrance" || /^[A-Z]\d?$/.test(s.name);
-	const real = stations.filter((s) => !isEntranceLike(s));
-	if (real.length > 0) {
-		return [...real].sort((a, b) => a.distanceM - b.distanceM)[0];
-	}
-	return [...stations].sort((a, b) => a.distanceM - b.distanceM)[0];
+	const tier = (s: NearbyStation): number => {
+		if (s.subtype === "subway_entrance" || /^[A-Z]\d?$/.test(s.name)) return 3;
+		if (s.subtype === "stop_position") return 2;
+		return prefer !== undefined && s.subtype !== prefer ? 1 : 0;
+	};
+	return [...stations].sort((a, b) => tier(a) - tier(b) || a.distanceM - b.distanceM)[0];
 }
 
 /** A transit/road-furniture node near a coordinate — bus stops and
@@ -887,6 +905,15 @@ export function deriveStationSubtype(f: { subtype: string | null; tags: Record<s
 	if (f.tags.station === "light_rail") return "light_rail";
 	if (f.tags.tram === "yes" || f.subtype === "tram_stop") return "tram";
 	if (f.subtype === "halt") return "halt";
+	// A `public_transport=stop_position` is one node PER PLATFORM, not the
+	// station: a terminus carries a dozen of them, each ~40 m from the
+	// concourse, so the nearest railway node at a big interchange is routinely
+	// a platform of the wrong operator's station. Give them their own subtype
+	// so the picker can rank them below a real station node — the same
+	// asymmetry entrances already get. (`stationsOnLine` has always filtered
+	// to `subtype = 'station'`; this is the other half of the codebase
+	// agreeing with it.)
+	if (f.subtype === "stop" || f.tags.public_transport === "stop_position") return "stop_position";
 	return "rail";
 }
 
@@ -927,13 +954,19 @@ export function dedupeStationsByName(
 			stations.set(f.name, candidate);
 			continue;
 		}
-		const existingIsEntrance = existing.subtype === "subway_entrance";
-		const candidateIsEntrance = candidate.subtype === "subway_entrance";
-		// Prefer station-typed records over entrance-typed ones regardless
-		// of distance; otherwise prefer the closer record of the same kind.
-		if (existingIsEntrance && !candidateIsEntrance) {
+		// Prefer the node kind that NAMES the station over the ones that merely
+		// belong to it — a station node beats both a platform position and an
+		// entrance, regardless of distance; a platform position beats an
+		// entrance. Same tiers `pickBestStation` ranks by, applied here so the
+		// collapse cannot hide the station-typed record from it. Within a tier,
+		// closer wins.
+		const rank = (s: NearbyStation): number =>
+			s.subtype === "subway_entrance" ? 2 : s.subtype === "stop_position" ? 1 : 0;
+		const existingRank = rank(existing);
+		const candidateRank = rank(candidate);
+		if (candidateRank < existingRank) {
 			stations.set(f.name, candidate);
-		} else if (existingIsEntrance === candidateIsEntrance && candidate.distanceM < existing.distanceM) {
+		} else if (candidateRank === existingRank && candidate.distanceM < existing.distanceM) {
 			stations.set(f.name, candidate);
 		}
 	}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	commonCity,
 	dedupeStationsByName,
+	deriveStationSubtype,
 	extractCity,
 	extractLineNames,
 	filterLandmarks,
@@ -768,6 +769,49 @@ describe("pickBestStation", () => {
 		const out = pickBestStation([s("A", "subway", 240), s("Station W", "subway", 260)]);
 		expect(out?.name).toBe("Station W");
 	});
+
+	it("prefers a station node over a closer platform stop_position", () => {
+		// The 2026-05-18 / 2026-07-02 Metropolitan boarding: at the King's
+		// Cross / St Pancras complex the nearest railway node is a
+		// per-platform `public_transport=stop_position` of the National Rail
+		// terminus ("London St Pancras", one node per platform), 37-81 m out,
+		// while the tube station node sits 60-136 m out. A platform position
+		// is not a station — naming the ride after it says the rider boarded
+		// the Metropolitan at St Pancras International, which no Met train
+		// serves.
+		const out = pickBestStation([
+			s("London St Pancras", "stop_position", 37),
+			s("King's Cross St Pancras", "subway", 82),
+		]);
+		expect(out?.name).toBe("King's Cross St Pancras");
+	});
+
+	it("prefers the underground station node when the caller knows the ride is underground", () => {
+		// The King's Cross complex carries two station nodes ~200 m apart:
+		// "London King's Cross" (railway=station, National Rail) and "King's
+		// Cross St Pancras" (railway=station + station=subway). Whichever is
+		// nearer the reacquire fix wins by distance alone — so the 2026-07-10
+		// Victoria Line ride read "London King's Cross → Victoria", naming a
+		// tube journey after the mainline terminus. An underground run boards
+		// at the underground station.
+		const out = pickBestStation(
+			[s("London King's Cross", "rail", 148), s("King's Cross St Pancras", "subway", 210)],
+			"subway",
+		);
+		expect(out?.name).toBe("King's Cross St Pancras");
+	});
+
+	it("takes the nearest station when the preferred kind is not in range", () => {
+		const out = pickBestStation([s("Station W", "rail", 90), s("Station E", "rail", 140)], "subway");
+		expect(out?.name).toBe("Station W");
+	});
+
+	it("falls back to a stop_position when no station node is in range", () => {
+		// A platform position still names the place correctly; it only loses
+		// to a station node, the same way an entrance does.
+		const out = pickBestStation([s("Station P", "stop_position", 120), s("A", "subway_entrance", 40)]);
+		expect(out?.name).toBe("Station P");
+	});
 });
 
 describe("dedupeStationsByName", () => {
@@ -812,6 +856,43 @@ describe("dedupeStationsByName", () => {
 			{ name: "Station Q", derivedSubtype: "subway", distance_m: 50 },
 		];
 		expect(dedupeStationsByName(features)).toEqual([{ name: "Station Q", subtype: "subway", distanceM: 50 }]);
+	});
+
+	it("prefers a station-typed entry over a closer platform stop_position of the same name", () => {
+		// Same asymmetry as the entrance case: OSM gives a big station one
+		// `railway=station` node and one stop_position PER PLATFORM, and the
+		// platforms are closer to a passing rider. Collapsing to the platform
+		// would hide the station node from the picker's station tier.
+		const features: F[] = [
+			{ name: "Station S", derivedSubtype: "stop_position", distance_m: 51 },
+			{ name: "Station S", derivedSubtype: "subway", distance_m: 61 },
+		];
+		const result = dedupeStationsByName(features);
+		expect(result[0].subtype).toBe("subway");
+		expect(result[0].distanceM).toBe(61);
+	});
+});
+
+describe("deriveStationSubtype", () => {
+	it("types a public_transport=stop_position node as a platform position, not a station", () => {
+		// "London St Pancras" ref=5 — one of the National Rail terminus's
+		// per-platform nodes. Without its own subtype it read as plain "rail"
+		// and outranked the actual station nodes around it.
+		expect(
+			deriveStationSubtype({
+				subtype: "stop",
+				tags: { name: "London St Pancras", public_transport: "stop_position", railway: "stop", train: "yes" },
+			}),
+		).toBe("stop_position");
+	});
+
+	it("keeps a railway=station subway node a station", () => {
+		expect(
+			deriveStationSubtype({
+				subtype: "station",
+				tags: { name: "King's Cross St Pancras", railway: "station", station: "subway", subway: "yes" },
+			}),
+		).toBe("subway");
 	});
 });
 

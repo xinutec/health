@@ -143,8 +143,11 @@ export async function reconstructUndergroundRun(
 	if (candidates.size === 0) return null;
 	const line = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0][0];
 
-	const board = pickBestStation(await stationsLookup(boardingFix.lat, boardingFix.lon));
-	const alight = pickBestStation(await stationsLookup(alightingFix.lat, alightingFix.lon));
+	// This run is underground by construction, so its endpoints are underground
+	// stations: at a multi-operator interchange prefer the `station=subway`
+	// node over the mainline terminus sharing the site (see `pickBestStation`).
+	const board = pickBestStation(await stationsLookup(boardingFix.lat, boardingFix.lon), "subway");
+	const alight = pickBestStation(await stationsLookup(alightingFix.lat, alightingFix.lon), "subway");
 	if (!board || !alight) return null;
 
 	// A run must go *between two distinct stations over a real

@@ -157,6 +157,34 @@ type FeasibilityBaseline = Record<string, number>;
  *  visible, blessed into the ceiling rather than hidden. */
 const RAIL_TRIPLE_BASELINE_PATH = path.join(GOLDEN_DIR, "rail-triple-baseline.json");
 
+/**
+ * Merge a fresh per-day count into a committed CEILING, keeping the ratchet
+ * one-way: `min(committed, current)` per day.
+ *
+ * The gate's whole claim is that these ceilings "can only shrink", but until
+ * 2026-07-27 the `--bless-*` flags wrote the current counts WHOLESALE — so a
+ * bless run that fixed four days and left one red silently raised that day's
+ * ceiling and the standing failure disappeared from the gate. A run may fix
+ * some days without fixing all of them; blessing the wins must not also bless
+ * the losses. A day above its ceiling keeps the lower committed value and goes
+ * on failing until it is genuinely fixed.
+ */
+function ratchetDown(committed: FeasibilityBaseline | null, current: FeasibilityBaseline): FeasibilityBaseline {
+	const ordered: FeasibilityBaseline = {};
+	const dates = new Set([...Object.keys(committed ?? {}), ...Object.keys(current)]);
+	for (const date of [...dates].sort()) {
+		// A day MISSING from the committed baseline has a ceiling of ZERO —
+		// that is how the gate reads it everywhere else (`baseline[date] ?? 0`),
+		// so a newly-offending day cannot be blessed in by omission either.
+		// `committed === null` is the distinct bootstrap case (no baseline file
+		// at all): nothing to ratchet against, so the current counts establish
+		// the first ceiling.
+		const floor = committed === null ? (current[date] ?? 0) : Math.min(committed[date] ?? 0, current[date] ?? 0);
+		if (floor > 0) ordered[date] = floor;
+	}
+	return ordered;
+}
+
 const args = process.argv.slice(2);
 let bless = false;
 let blessDate: string | null = null;
@@ -374,11 +402,11 @@ console.log(
 const kinematicTotal = Object.values(kinematicNow).reduce((n, c) => n + c, 0);
 let kinematicRegressed = 0;
 if (blessFeasibility) {
-	const ordered: FeasibilityBaseline = {};
-	for (const date of Object.keys(kinematicNow).sort()) ordered[date] = kinematicNow[date];
+	const ordered = ratchetDown(await loadFeasibilityBaseline(), kinematicNow);
 	await writeFile(FEASIBILITY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
 	console.log(
-		`feasibility (kinematic): blessed ceiling — ${kinematicTotal} standing leg(s) across ${Object.keys(ordered).length} day(s).`,
+		`feasibility (kinematic): blessed ceiling — ${blessedTotal} standing leg(s) across ${Object.keys(ordered).length} day(s).`,
 	);
 	process.exit(0);
 }
@@ -421,11 +449,17 @@ if (feasBaseline === null) {
 const railTripleTotal = Object.values(railTripleNow).reduce((n, c) => n + c, 0);
 let railTripleRegressed = 0;
 if (blessRailTriples) {
-	const ordered: FeasibilityBaseline = {};
-	for (const date of Object.keys(railTripleNow).sort()) ordered[date] = railTripleNow[date];
+	let committed: FeasibilityBaseline | null = null;
+	try {
+		committed = JSON.parse(await readFile(RAIL_TRIPLE_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
+	} catch {
+		committed = null;
+	}
+	const ordered = ratchetDown(committed, railTripleNow);
 	await writeFile(RAIL_TRIPLE_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
 	console.log(
-		`rail triples: blessed ceiling — ${railTripleTotal} standing invalid leg(s) across ${Object.keys(ordered).length} day(s).`,
+		`rail triples: blessed ceiling — ${blessedTotal} standing invalid leg(s) across ${Object.keys(ordered).length} day(s).`,
 	);
 	process.exit(0);
 }
@@ -473,11 +507,20 @@ if (railTripleBaseline === null) {
 // the measurement the joint mode+position model (#257) is built against.
 const totalReconstructed = Object.values(journeysNow).reduce((n, a) => n + a.length, 0);
 if (blessJourneys) {
+	// Ratchet UP, the mirror of `ratchetDown`: the floor is the UNION of the
+	// committed journeys and the ones this run reconstructed. A journey that
+	// used to work and no longer does stays in the floor, so blessing the new
+	// wins cannot quietly drop it — the regression keeps failing the gate
+	// until it is actually fixed.
+	const committed = await loadJourneyBaseline();
 	const ordered: JourneyBaseline = {};
-	for (const date of Object.keys(journeysNow).sort()) ordered[date] = [...journeysNow[date]].sort((a, b) => a - b);
+	for (const date of [...new Set([...Object.keys(committed), ...Object.keys(journeysNow)])].sort()) {
+		ordered[date] = [...new Set([...(committed[date] ?? []), ...(journeysNow[date] ?? [])])].sort((a, b) => a - b);
+	}
 	await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	const blessedTotal = Object.values(ordered).reduce((n, a) => n + a.length, 0);
 	console.log(
-		`journeys: blessed baseline — ${totalReconstructed} reconstructed journey(s) across ${Object.keys(ordered).length} day(s).`,
+		`journeys: blessed floor — ${blessedTotal} reconstructed journey(s) across ${Object.keys(ordered).length} day(s) (union with the committed floor).`,
 	);
 	process.exit(0);
 }

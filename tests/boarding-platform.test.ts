@@ -203,6 +203,43 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 		expect(result[1].startTs).toBe(420);
 	});
 
+	it("extends the boundary when the walked-to station is the one already labelled", async () => {
+		// The 2026-05-18 evening Metropolitan boarding, once the station picker
+		// stopped naming the ride after a National Rail platform node: the
+		// scanned station now EQUALS the labelled board, so the rename is a
+		// no-op — but the 1.5 km boarding hop is still stranded in the walk,
+		// and the kinematic invariant counts its 60 km/h "walking" impossible.
+		// Mirror of the alight side: extend in both cases, rename only when
+		// the station differs.
+		// The walk runs to 420 so BOTH fast steps of the hop fall inside its
+		// (end-exclusive) fix window — the two-step run the extension demands.
+		const segments = [
+			seg({ startTs: 0, endTs: 420, mode: "walking" }),
+			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Alpha → Gamma · Line 1" }),
+		];
+		const result = await anchorTrainBoardingToWalkedStation(segments, walkWithBoardingHop(), stationsLookup);
+		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
+		expect(result[1].startTs).toBe(240);
+		expect(result[0].endTs).toBe(240);
+	});
+
+	it("does not extend to the labelled board on a single fast step (the stuck-GPS signature)", async () => {
+		// One fast step landing back at the labelled boarding station is a
+		// stale-fix teleport, not a reclaimed ride head — the same ≥2-step
+		// density bar the alight side applies to its same-station extension.
+		const fixes: FilteredPoint[] = [];
+		for (let ts = 0; ts <= 240; ts += 60) fixes.push({ ...at(0, 0), ts, speed_kmh: 3, bearing: 0 });
+		fixes.push({ ...at(1000, 0), ts: 300, speed_kmh: 38, bearing: 0 }); // one fast step
+		fixes.push({ ...at(1020, 0), ts: 360, speed_kmh: 2, bearing: 0 }); // then slow
+		const segments = [
+			seg({ startTs: 0, endTs: 420, mode: "walking" }),
+			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Alpha → Gamma · Line 1" }),
+		];
+		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup);
+		expect(result[1].startTs).toBe(420);
+		expect(result[0].endTs).toBe(420);
+	});
+
 	it("leaves a train→sliver-walk→train ride untouched (reconstruction artifact, not a walk-to-station)", async () => {
 		// 2026-06-24 Ashvale → Deepwell: one Metropolitan-line ride the
 		// underground reconstruction shattered into two train legs with a sliver
