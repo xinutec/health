@@ -1504,7 +1504,18 @@ function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, 
 		const hw = pickBestHighway(highways, speedKmh);
 		// The picked way decides the mode. When it is an unnamed pavement, the
 		// street it belongs to supplies the name — see `borrowStreetName`.
-		const hwName = hw.name ?? (speedKmh < WALK_NAME_BORROW_MAX_KMH ? borrowStreetName(highways) : undefined);
+		//
+		// The same distance bar applies when the pick IS named. `borrowStreetName`
+		// already refuses to name a walk after a street more than
+		// WALK_NAME_BORROW_MAX_M away, on the grounds that beyond that it is a
+		// different street; that reasoning is about the DISTANCE, not about how
+		// the name was obtained, so a named pick sitting past the bar is exactly
+		// as wrong. Without this the code is stricter about naming a walk when its
+		// pick is anonymous than when its pick is named-but-far — and a far named
+		// pick displaces a nearer named way that the borrow would have found.
+		const hwFar = (hw.distanceM ?? Number.POSITIVE_INFINITY) > WALK_NAME_BORROW_MAX_M;
+		const hwName =
+			speedKmh < WALK_NAME_BORROW_MAX_KMH ? ((hwFar ? undefined : hw.name) ?? borrowStreetName(highways)) : hw.name;
 		// Pedestrian-only highways
 		if (hw.subtype === "footway" || hw.subtype === "path" || hw.subtype === "pedestrian") {
 			if (speedKmh < 10) return { mode: "walking", confidence: "high", reason: `on ${hw.subtype}`, wayName: hwName };
