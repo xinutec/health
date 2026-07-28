@@ -539,6 +539,17 @@ async function resolveRailRunLabel(
 		const intersection = [...startCanon].filter((l) => endCanon.has(l));
 		if (intersection.length === 1) return `${base} · ${intersection[0]}`;
 
+		// Several lines serve BOTH endpoints, so the endpoints alone cannot say
+		// which was ridden — but the ride's own mid-ride fixes can. Ask which
+		// candidate runs under the track actually observed. On 2026-05-22 the
+		// Green Park → King's Cross ride has one surfaced mid-ride fix, 140 m from
+		// Warren Street: the Victoria line runs under it and the Piccadilly's
+		// corridor is 1.1 km east, so the ambiguity is only in the endpoints.
+		if (intersection.length > 1) {
+			const ridden = await lineUnderTheTrack(intersection, points, slowBefore.ts, after.ts, linesLookup);
+			if (ridden !== null) return `${base} · ${ridden}`;
+		}
+
 		// Fallback: the lookup point for an endpoint can be an
 		// off-corridor fix (a street reacquire after alighting, a stay
 		// centroid a block from the platform) where linesAtPoint finds
@@ -548,7 +559,13 @@ async function resolveRailRunLabel(
 		// their own nodes sit on the corridor: retry the intersection
 		// at the station coordinates (falling back to the original
 		// result for an endpoint whose recording carries no coords).
-		if (startStationCoord || endStationCoord) {
+		// Only when the endpoints yielded NOTHING. An *ambiguous* primary must not
+		// be collapsed by this retry: the station nodes are a different (and here
+		// less trustworthy) lookup — with the alight still resolved to the National
+		// Rail terminus "London King's Cross", the retry returned a confident
+		// singleton of the wrong line while the honest answer was "two candidates,
+		// and the track knows which" (#374).
+		if (intersection.length === 0 && (startStationCoord || endStationCoord)) {
 			const [startRetry, endRetry] = await Promise.all([
 				startStationCoord ? linesLookup(startStationCoord.lat, startStationCoord.lon).then(canonicalLines) : startCanon,
 				endStationCoord ? linesLookup(endStationCoord.lat, endStationCoord.lon).then(canonicalLines) : endCanon,
@@ -560,6 +577,52 @@ async function resolveRailRunLabel(
 	} catch {
 		return base;
 	}
+}
+
+/**
+ * Which of several candidate lines does the ride's own track run along?
+ *
+ * Two lines serving both endpoints are indistinguishable from the endpoints —
+ * that is a fact about the stations, not about the journey. The fixes BETWEEN
+ * them are not ambiguous at all: tube lines diverge between interchanges, often
+ * by a kilometre or more, so a single surfaced mid-ride fix is usually enough.
+ *
+ * Votes rather than distances, using the `linesAtPoint` lookup already in hand:
+ * a fix on the ridden line's corridor has that line in its set and the rival's
+ * only if they happen to share track there. Decides ONLY on a clean winner —
+ * one candidate supported by the track and the rest supported by none. Anything
+ * less returns null and the caller emits a bare station pair, because a missing
+ * line label is honest and a guessed one is not.
+ */
+async function lineUnderTheTrack(
+	candidates: readonly string[],
+	points: readonly FilteredPoint[],
+	boardTs: number,
+	alightTs: number,
+	linesLookup: (lat: number, lon: number) => Promise<Set<string>>,
+): Promise<string | null> {
+	// Strictly between the BOARDING and ALIGHTING fixes, not between the run's
+	// segment bounds. Those endpoint fixes sit at interchanges and carry every
+	// candidate, so including either would make the vote a tie by construction —
+	// and the run's own end can fall exactly ON the one surfaced mid-ride fix,
+	// which an exclusive segment window then discards as the sole evidence.
+	const mid = points.filter((p) => p.ts > boardTs && p.ts < alightTs);
+	if (mid.length === 0) return null;
+	const votes = new Map<string, number>();
+	for (const p of mid) {
+		const here = canonicalLines(await linesLookup(p.lat, p.lon));
+		const supported = candidates.filter((c) => here.has(c));
+		// Only DISCRIMINATING fixes vote. One that names every candidate says
+		// nothing about which was ridden — that is the shared track through an
+		// interchange, and near the alighting station most fixes are of that kind.
+		// One that names none is off-corridor or outside the mirror's coverage.
+		if (supported.length === 0 || supported.length === candidates.length) continue;
+		for (const c of supported) votes.set(c, (votes.get(c) ?? 0) + 1);
+	}
+	const ranked = [...candidates].map((c) => ({ line: c, votes: votes.get(c) ?? 0 })).sort((a, b) => b.votes - a.votes);
+	if (ranked[0].votes === 0) return null; // nothing discriminating was observed
+	if (ranked.length > 1 && ranked[1].votes > 0) return null; // the track backs more than one
+	return ranked[0].line;
 }
 
 /** Canonicalise a raw `linesAtPoint` result into a directionless line set. */

@@ -516,6 +516,31 @@ describe("annotateRailRuns", () => {
 	};
 	const lookup = async (lat: number, lon: number) => [{ name: stationAt(lat, lon), subtype: "subway", distanceM: 50 }];
 
+	it("breaks a two-line tie with the ride's own track, not a coin flip", async () => {
+		// Both candidate lines serve both endpoints — the 2026-05-22 Green Park →
+		// King's Cross case, where Victoria and Piccadilly each connect the two, so
+		// the endpoint intersection cannot separate them. The lines diverge in
+		// between, and one surfaced mid-ride fix is enough: it sits on the ridden
+		// line's corridor and not on the rival's.
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1200, 50.05, 4.9), fix(1600, 50.063, 4.846)];
+		const lines = async (_lat: number, lon: number) =>
+			// Both endpoints carry both lines; the mid-ride fix carries only Red.
+			new Set(Math.abs(lon - 4.9) < 0.001 ? ["Red Line"] : ["Red Line", "Blue Line"]);
+		const out = await annotateRailRuns(segs, points, lookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W · Red Line");
+	});
+
+	it("emits NO line when the track cannot separate the candidates", async () => {
+		// Every fix names both lines — two services sharing track. A missing label
+		// is honest; a guessed one is not.
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1200, 50.05, 4.9), fix(1600, 50.063, 4.846)];
+		const lines = async () => new Set(["Red Line", "Blue Line"]);
+		const out = await annotateRailRuns(segs, points, lookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W");
+	});
+
 	it("annotates a single train segment with its outer-bounding-fix stations", async () => {
 		const segs = [train(1000, 1500)];
 		const points = [fix(900, 50.03, 5.0), fix(1600, 50.063, 4.846)];
