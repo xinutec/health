@@ -40,6 +40,7 @@ import { loadEmptyDayBracket } from "./infer-empty-day.js";
 import type { ModeStats } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
 import { dbOsmAdapter } from "./osm-adapter.js";
+import { loadAllRailStopRelations } from "./rail-stops-cache.js";
 import { dateBoundsUtc } from "./timezone.js";
 import { loadBiometrics } from "./velocity.js";
 import type { VenuePriors } from "./venue-prior.js";
@@ -112,6 +113,7 @@ export async function loadClassificationInputs(
 		hsmmDecode,
 		railRouteCache,
 		busRouteCache,
+		railStopsCache,
 		homeTzRaw,
 		sleepWindows,
 		emptyDayBracket,
@@ -127,6 +129,7 @@ export async function loadClassificationInputs(
 		loadDecode(db(), userId, date),
 		loadRailRouteCacheQuery(),
 		loadAllBusRoutes(),
+		loadAllRailStopRelations(),
 		getSyncState(userId, "home_tz"),
 		loadDaySleepWindows(userId, date),
 		loadEmptyDayBracket(userId, date),
@@ -148,6 +151,7 @@ export async function loadClassificationInputs(
 		hsmmDecode,
 		railRouteCache,
 		busRouteCache,
+		railStopsCache,
 		// OSM / Nominatim adapter — `dbOsmAdapter` in production (delegates
 		// to the top-level functions in `osm.ts`), or a wrapping recorder
 		// during fixture capture. The classification core reaches all OSM

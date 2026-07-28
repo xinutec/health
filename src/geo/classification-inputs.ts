@@ -34,6 +34,7 @@ import type { HrPoint, SleepStageRecord, StepPoint } from "./biometrics.js";
 import type { BusRoute } from "./bus-route-match.js";
 import type { ModeStats } from "./mode-biometrics.js";
 import type { OsmAdapter } from "./osm-adapter.js";
+import type { RailStopRelation } from "./osm-rail-stops.js";
 import type { KnownPlace } from "./place-snap.js";
 import type { VenuePriors } from "./venue-prior.js";
 
@@ -188,6 +189,16 @@ export interface ClassificationInputs {
 	 *  Optional — fixtures captured before the field existed (and any day
 	 *  with an empty mirror) replay as "no bus routes", a no-op. */
 	busRouteCache?: BusRoute[];
+	/** Mirrored OSM rail route relations (`rail_stops_cache`, filled offline
+	 *  by refresh-rail-stops): each service's ORDERED stop-role members — the
+	 *  stations it actually calls at. Proximity membership (`stationsOnLine`)
+	 *  cannot express this: it counts a station as served when the line merely
+	 *  passes within 300 m, which is why the Metropolitan's fast tracks
+	 *  "serve" Dollis Hill. `resolveRailRunLabel` needs the real stopping
+	 *  pattern to tell two lines apart where they share a track (#382 / #364).
+	 *  Optional — fixtures captured before the field existed replay as "no
+	 *  stop data", and the consumer treats that as no evidence, a no-op. */
+	railStopsCache?: RailStopRelation[];
 	/** OSM + Nominatim lookups, as an adapter interface. Production
 	 *  injects `dbOsmAdapter` (delegates to the top-level functions in
 	 *  `osm.ts`); test fixtures will inject `FixtureOsmAdapter`
