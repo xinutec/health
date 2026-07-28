@@ -23,6 +23,30 @@ import type { OsmTrace } from "./osm-adapter-recording.js";
 import type { BuildingFootprint } from "./osm-local.js";
 import type { OsmRoadWay } from "./road-match.js";
 
+/**
+ * Thrown when the pipeline asks for a lookup the capture never saw.
+ *
+ * A distinct type, not a bare `Error`, because it is not a lookup *failure* —
+ * it is "this fixture is stale, re-capture it". Passes that legitimately
+ * tolerate a lookup coming back empty wrap their OSM calls in `try/catch` and
+ * degrade to a coarser answer; those catches would swallow this too, turning a
+ * stale fixture into a silently worse label that the golden gate reads as a
+ * deliberate output. Callers rethrow it via {@link isUncapturedLookup} so the
+ * day fails loudly and names the fix.
+ */
+export class UncapturedLookupError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "UncapturedLookupError";
+	}
+}
+
+/** Is this a stale-fixture error rather than a lookup failure? Any `catch` that
+ *  degrades on OSM failure must rethrow when this is true. */
+export function isUncapturedLookup(e: unknown): boolean {
+	return e instanceof UncapturedLookupError;
+}
+
 function key3(lat: number, lon: number, third: number | undefined): string {
 	return `${lat}|${lon}|${third ?? ""}`;
 }
@@ -35,7 +59,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 	async nearbyWays(lat: number, lon: number, radiusM?: number): Promise<NearbyWay[]> {
 		const result = this.trace.nearbyWays[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured nearbyWays(${lat}, ${lon}, ${radiusM}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured nearbyWays(${lat}, ${lon}, ${radiusM}) — re-capture required`,
+			);
 		}
 		return result;
 	}
@@ -43,7 +69,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 	async nearbyStations(lat: number, lon: number, radiusM?: number): Promise<NearbyStation[]> {
 		const result = this.trace.nearbyStations[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured nearbyStations(${lat}, ${lon}, ${radiusM}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured nearbyStations(${lat}, ${lon}, ${radiusM}) — re-capture required`,
+			);
 		}
 		return result;
 	}
@@ -51,7 +79,7 @@ export class FixtureOsmAdapter implements OsmAdapter {
 	async nearbyLandmarks(lat: number, lon: number, radiusM?: number): Promise<NearbyLandmark[]> {
 		const result = this.trace.nearbyLandmarks[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(
+			throw new UncapturedLookupError(
 				`FixtureOsmAdapter: uncaptured nearbyLandmarks(${lat}, ${lon}, ${radiusM}) — re-capture required`,
 			);
 		}
@@ -61,7 +89,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 	async linesAtPoint(lat: number, lon: number, radiusM?: number): Promise<Set<string>> {
 		const result = this.trace.linesAtPoint[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured linesAtPoint(${lat}, ${lon}, ${radiusM}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured linesAtPoint(${lat}, ${lon}, ${radiusM}) — re-capture required`,
+			);
 		}
 		return new Set(result);
 	}
@@ -69,7 +99,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 	async reverseGeocode(lat: number, lon: number, zoom?: number): Promise<NominatimResult | null> {
 		const k = key3(lat, lon, zoom);
 		if (!(k in this.trace.reverseGeocode)) {
-			throw new Error(`FixtureOsmAdapter: uncaptured reverseGeocode(${lat}, ${lon}, ${zoom}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured reverseGeocode(${lat}, ${lon}, ${zoom}) — re-capture required`,
+			);
 		}
 		return this.trace.reverseGeocode[k];
 	}
@@ -83,7 +115,7 @@ export class FixtureOsmAdapter implements OsmAdapter {
 		if (section === undefined) return [];
 		const result = section[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(
+			throw new UncapturedLookupError(
 				`FixtureOsmAdapter: uncaptured nearbyTransitStops(${lat}, ${lon}, ${radiusM}) — re-capture required`,
 			);
 		}
@@ -95,7 +127,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 		if (section === undefined) return [];
 		const result = section[lineName];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured stationsOnLine(${lineName}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured stationsOnLine(${lineName}) — re-capture required`,
+			);
 		}
 		return result;
 	}
@@ -109,7 +143,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 		if (section === undefined) return [];
 		const result = section[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured drivableRoads(${lat}, ${lon}, ${radiusM}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured drivableRoads(${lat}, ${lon}, ${radiusM}) — re-capture required`,
+			);
 		}
 		return result;
 	}
@@ -124,7 +160,9 @@ export class FixtureOsmAdapter implements OsmAdapter {
 		if (section === undefined) return [];
 		const result = section[key3(lat, lon, radiusM)];
 		if (result === undefined) {
-			throw new Error(`FixtureOsmAdapter: uncaptured walkableRoads(${lat}, ${lon}, ${radiusM}) — re-capture required`);
+			throw new UncapturedLookupError(
+				`FixtureOsmAdapter: uncaptured walkableRoads(${lat}, ${lon}, ${radiusM}) — re-capture required`,
+			);
 		}
 		return result;
 	}

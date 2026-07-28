@@ -11,6 +11,7 @@ import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
 import { type NearbyStation, pickBestStation } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
+import { isUncapturedLookup } from "../osm-adapter-fixture.js";
 import { haversineMeters } from "../place-snap.js";
 import { hasRefinedKind, samplesInWindow, samplesInWindowExclusiveEnd } from "../segment-util.js";
 
@@ -506,7 +507,12 @@ async function resolveRailRunLabel(
 		const bestEnd = pickBestStation(endStations);
 		endStation = bestEnd?.name;
 		endStationCoord = stationCoord(bestEnd);
-	} catch {
+	} catch (e) {
+		// A lookup that legitimately finds nothing degrades to no label. A STALE
+		// FIXTURE is not that — rethrow so the day fails and says re-capture,
+		// instead of quietly emitting a worse label the golden gate then reads as
+		// a deliberate output.
+		if (isUncapturedLookup(e)) throw e;
 		return null;
 	}
 	if (!startStation || !endStation) return null;
@@ -574,7 +580,8 @@ async function resolveRailRunLabel(
 			if (retry.length === 1) return `${base} · ${retry[0]}`;
 		}
 		return base;
-	} catch {
+	} catch (e) {
+		if (isUncapturedLookup(e)) throw e; // stale fixture, not a lookup failure
 		return base;
 	}
 }

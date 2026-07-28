@@ -83,6 +83,13 @@ interface TruthResult {
 	/** Start times (unix seconds) of the ground-truth journeys the PIPELINE
 	 *  reconstructed with the correct mode shape — the ratchet's per-day set. */
 	journeyMatched: number[];
+	/** Start times of EVERY ground-truth journey the narrative describes today,
+	 *  matched or not. The ratchet needs both: a committed key still in this set
+	 *  that is no longer matched is a regression and must keep failing, while one
+	 *  that has left it belongs to a row that no longer exists — correcting a
+	 *  narrative moves a journey's start, and the floor must follow rather than
+	 *  hold a key nothing can ever satisfy again. */
+	journeyAll: number[];
 }
 
 async function truthReport(date: string, tz: string, states: readonly StateWindow[]): Promise<TruthResult | null> {
@@ -102,6 +109,7 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 	const gtJourneys = groundTruthJourneys(gt.rows);
 	const journeyResults = journeyShapeResults(gtJourneys, statesToJourneys(states));
 	const journeyMatched = journeyResults.filter((r) => r.matched).map((r) => r.startTs);
+	const journeyAll = journeyResults.map((r) => r.startTs);
 	const journeysMatchedCount = journeyResults.filter((r) => r.matched).length;
 
 	// Per-row truth verdicts are provenance-gated (regressed/known-error need a
@@ -140,7 +148,7 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 			);
 		}
 	}
-	return { text: lines.join("\n"), journeyMatched };
+	return { text: lines.join("\n"), journeyMatched, journeyAll };
 }
 
 const JOURNEY_BASELINE_PATH = path.join(GOLDEN_DIR, "journey-baseline.json");
@@ -283,6 +291,8 @@ const railTripleNow: FeasibilityBaseline = {};
 // Per-day set of ground-truth journeys the pipeline reconstructs this run —
 // compared against the committed baseline by the journey ratchet gate below.
 const journeysNow: JourneyBaseline = {};
+/** Every ground-truth journey each day DESCRIBES this run, matched or not. */
+const journeysDescribed: JourneyBaseline = {};
 
 for (const file of files) {
 	const full = path.join(DAYS_DIR, file);
@@ -341,6 +351,7 @@ for (const file of files) {
 	if (truth) {
 		console.log(truth.text);
 		journeysNow[captured.meta.date] = truth.journeyMatched;
+		journeysDescribed[captured.meta.date] = truth.journeyAll;
 	}
 
 	// Worldline-feasibility report: physically-impossible outputs the cascade
@@ -515,12 +526,25 @@ if (blessJourneys) {
 	const committed = await loadJourneyBaseline();
 	const ordered: JourneyBaseline = {};
 	for (const date of [...new Set([...Object.keys(committed), ...Object.keys(journeysNow)])].sort()) {
-		ordered[date] = [...new Set([...(committed[date] ?? []), ...(journeysNow[date] ?? [])])].sort((a, b) => a - b);
+		// Keep a committed journey ONLY while the ground truth still describes it.
+		// A key that survives but no longer matches is a regression and must stay
+		// in the floor so it keeps failing; a key the narrative no longer contains
+		// belongs to a row that was rewritten — correcting a day moves a journey's
+		// start, and a floor that held the dead key would fail forever on a journey
+		// nothing can reconstruct because it no longer exists. Days with no truth
+		// file this run report nothing, so their committed floor passes through
+		// untouched rather than being emptied by a missing narrative.
+		const described = journeysDescribed[date];
+		const kept =
+			described === undefined
+				? (committed[date] ?? [])
+				: (committed[date] ?? []).filter((ts) => described.includes(ts));
+		ordered[date] = [...new Set([...kept, ...(journeysNow[date] ?? [])])].sort((a, b) => a - b);
 	}
 	await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
 	const blessedTotal = Object.values(ordered).reduce((n, a) => n + a.length, 0);
 	console.log(
-		`journeys: blessed floor — ${blessedTotal} reconstructed journey(s) across ${Object.keys(ordered).length} day(s) (union with the committed floor).`,
+		`journeys: blessed floor — ${blessedTotal} journey(s) across ${Object.keys(ordered).length} day(s): everything reconstructed now, plus every committed journey the ground truth still describes.`,
 	);
 	process.exit(0);
 }
