@@ -133,13 +133,12 @@ export async function reconstructUndergroundRun(
 	// physical line — the combined relation ("Circle, Hammersmith & City and
 	// Metropolitan Lines" at King's Cross) against the plain name ("Metropolitan
 	// Line" at Finchley Road) — so an intersection can see through the naming.
-	// It is OFF for the through-line question and ON for the halves of an
-	// interchange split, and that asymmetry is deliberate. Expanding here only
-	// ever ADDS a through-line reading the raw names denied, which is how a
-	// parallel corridor gets read as one ride. By the time the split runs, the
-	// evidence has already said no single line serves both ends, each half is
-	// endpoint-anchored, and the disjointness gates below guard the corridor
-	// case — there the naming is the only thing in the way.
+	// It is OFF for the FIRST through-line attempt and ON for the halves of an
+	// interchange split, and that asymmetry is deliberate: expanding only ever
+	// ADDS a through-line reading the raw names denied, and a change of line is
+	// exactly what such a reading would paper over. `reconstructUndergroundJourney`
+	// owns the ordering — raw through-line, then the split, then this as a last
+	// resort — so the naming is only reconciled once no change of line fits.
 	const readLines = (lines: Iterable<string>): Set<string> =>
 		expandSharedTrack ? new Set([...lines].flatMap(expandTubeLineNames)) : new Set(lines);
 	const boardLines = readLines(await linesLookup(boardingFix.lat, boardingFix.lon));
@@ -333,7 +332,30 @@ export async function reconstructUndergroundJourney(
 			return [leg1, leg2];
 		}
 	}
-	return [];
+
+	// Last resort: no line reaches both ends under OSM's own names, and no
+	// change of line fits the evidence either. Now — and only now — reconcile
+	// the two tagging conventions and ask the through-line question again. OSM
+	// tags one physical line two ways, so "no line reaches both ends" can be a
+	// fact about a combined relation name rather than about the journey: the
+	// 2026-05-22 King's Cross St Pancras → Finchley Road ride is Metropolitan
+	// end to end and was lost to that (#185).
+	//
+	// It has to come AFTER the split, because reading through the naming is
+	// exactly what would paper over a real change of line: on 2026-07-07 the
+	// same expansion turns a King's Cross → Euston Square [Northern] → Wembley
+	// Park [Metropolitan] return into one bogus Metropolitan through-ride.
+	return (
+		(await reconstructUndergroundRun(
+			fixes,
+			boardingFix,
+			alightingFix,
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+			true,
+		).then((r) => (r ? [r] : null))) ?? []
+	);
 }
 
 /** Shortest underground run worth carving out (s). Below this, a stray
@@ -349,6 +371,60 @@ const MIN_SIDE_DURATION_S = 60;
  *  separate runs: GPS recovered in between, so a later unrelated coarse
  *  blip (poor indoor GPS at the destination) is not the same journey. */
 const MAX_COARSE_GAP_S = 300;
+
+/** Span (s) of uninterrupted good GPS that ends a blackout rather than
+ *  merely interrupting it. A train passing a vent shaft or a shallow station
+ *  box gives the phone one glimpse of sky and takes it away again — that is
+ *  the same tunnel, not two. Sustained good GPS is a real recovery: whatever
+ *  goes dark afterwards is a different blackout (walking indoors at the
+ *  destination), and annexing it runs the ride past its own alight.
+ *
+ *  Measured over the corpus, the two cases do not overlap: the mid-tunnel
+ *  reacquires a run must grow through are lone fixes spanning 0 s (2026-05-22
+ *  at 19:05:53 and 19:14:07), while every post-arrival gap that must NOT be
+ *  crossed holds 6–22 good fixes spanning 66–257 s (2026-05-20, 06-16, 05-12). */
+const RECOVERY_SPAN_S = 30;
+
+/**
+ * Extend a run of GPS-dark fixes outwards through `all` — the day's dark
+ * fixes — for as long as it is still the same blackout.
+ *
+ * The run was found inside one host segment, so its ends are wherever that
+ * segment happened to be cut. The tunnel's ends are a property of the fix
+ * stream instead: dark fixes past the host boundary can be the same blackout
+ * and belong to the same ride.
+ *
+ * Two things stop the growth — the {@link MAX_COARSE_GAP_S} contiguity rule,
+ * and a sustained good-GPS recovery inside the gap ({@link RECOVERY_SPAN_S}).
+ * The recovery test is asked ONLY here, not of the run's own interior: inside
+ * the host the classifier has already judged this one continuous moving leg,
+ * so a surfacing there is a surfacing. Growth annexes fixes the classifier
+ * gave to a different segment, and that claim has to clear a higher bar.
+ */
+function growThroughDarkness(
+	run: readonly CoarseFix[],
+	all: readonly CoarseFix[],
+	good: readonly CoarseFix[],
+): CoarseFix[] {
+	/** Did GPS genuinely come back between these two dark fixes? */
+	const recovered = (fromTs: number, toTs: number): boolean => {
+		const between = good.filter((f) => f.ts > fromTs && f.ts < toTs);
+		return between.length > 0 && between[between.length - 1].ts - between[0].ts >= RECOVERY_SPAN_S;
+	};
+	let lo = all.findIndex((f) => f.ts >= run[0].ts);
+	if (lo < 0) return [...run]; // the run's fixes are not in `all` — nothing to grow into
+	let hi = all.length - 1;
+	while (hi > lo && all[hi].ts > run[run.length - 1].ts) hi--;
+	while (lo > 0 && all[lo].ts - all[lo - 1].ts <= MAX_COARSE_GAP_S && !recovered(all[lo - 1].ts, all[lo].ts)) lo--;
+	while (
+		hi < all.length - 1 &&
+		all[hi + 1].ts - all[hi].ts <= MAX_COARSE_GAP_S &&
+		!recovered(all[hi].ts, all[hi + 1].ts)
+	) {
+		hi++;
+	}
+	return all.slice(lo, hi + 1);
+}
 
 function equirectMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
 	const dLat = (lat2 - lat1) * 111_320;
@@ -383,6 +459,9 @@ export async function annotateUndergroundRuns(
 	servedLookup: ServedStationsLookup = (line) => dbOsmAdapter.stationsOnLine(line),
 ): Promise<EnrichedSegment[]> {
 	const good = rawFixes.filter((f) => f.accuracy == null || f.accuracy < COARSE_ACCURACY_M);
+	/** Every GPS-dark fix of the day, in order — the stream a host's run is
+	 *  grown back out into once the host has established there IS a ride. */
+	const darkFixes = rawFixes.filter(isUndergroundSignal).sort((a, b) => a.ts - b.ts);
 	const result: EnrichedSegment[] = [];
 
 	for (const host of segments) {
@@ -410,13 +489,23 @@ export async function annotateUndergroundRuns(
 		}
 		const span = (r: CoarseFix[]): number => r[r.length - 1].ts - r[0].ts;
 		// The journey is the longest-spanning run that clears the bar.
-		const runFixes = runs
+		const hostRun = runs
 			.filter((r) => r.length >= MIN_COARSE_FIXES && span(r) >= MIN_RUN_DURATION_S)
 			.sort((a, b) => span(b) - span(a))[0];
-		if (!runFixes) {
+		if (!hostRun) {
 			result.push(host);
 			continue;
 		}
+		// The host said WHETHER there is a ride in here; it does not get to say
+		// how long the tunnel is. GPS goes dark when the train enters and
+		// returns when it surfaces, and where the classifier cut a segment
+		// boundary has nothing to do with either — on 2026-05-22 it cut at two
+		// mid-tunnel reacquires, so the clipped window resolved a King's Cross
+		// St Pancras → Finchley Road ride as "Euston Square → St John's Wood",
+		// a station in at BOTH ends. Grow the run through the day's contiguous
+		// dark fixes under the same gap rule, so its ends are the tunnel's ends.
+		// The train segment written below stays clamped to the host either way.
+		const runFixes = growThroughDarkness(hostRun, darkFixes, good);
 
 		const boarding = [...good].reverse().find((f) => f.ts <= runFixes[0].ts);
 		const alighting = good.find((f) => f.ts >= runFixes[runFixes.length - 1].ts);

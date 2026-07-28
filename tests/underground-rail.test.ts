@@ -210,8 +210,8 @@ describe("reconstructUndergroundRun", () => {
 		// line. Same physical line — the intersection must see through the
 		// naming, and the label must come out as the physical line. Off by
 		// default: expanding the through-line question only ever ADDS a reading
-		// the raw names denied, which is how a parallel corridor becomes one
-		// ride. The interchange split turns it on for each half.
+		// the raw names denied, which is how a change of line becomes one ride.
+		// `reconstructUndergroundJourney` owns when it is turned on.
 		const network: FakeStation[] = [
 			{
 				name: "Cross",
@@ -271,6 +271,47 @@ describe("reconstructUndergroundJourney", () => {
 		expect(legs).toHaveLength(2);
 		expect(legs[0]).toMatchObject({ boardingStation: "Alpha", alightingStation: "Beta", line: "Line 1" });
 		expect(legs[1]).toMatchObject({ boardingStation: "Beta", alightingStation: "Omega", line: "Line 3" });
+	});
+
+	it("reconciles OSM's shared-track naming only after no change of line fits (the 05-22 ride)", async () => {
+		// King's Cross tags the Metropolitan as the combined relation and
+		// Finchley Road as the plain name, so the raw through-line question
+		// answers "no line reaches both ends" about a ride that was Metropolitan
+		// end to end. No interchange fits either — every mid-run surfacing is on
+		// the same line — so the last resort reads through the naming (#185).
+		const network: FakeStation[] = [
+			{
+				name: "Cross",
+				north: 0,
+				east: 0,
+				lines: ["Circle, Hammersmith & City and Metropolitan Lines"],
+				servedBy: ["Metropolitan Line"],
+			},
+			{ name: "Midtown", north: 1500, east: 0, lines: ["Metropolitan Line"] },
+			{ name: "Finchley", north: 3000, east: 0, lines: ["Metropolitan Line"] },
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
+		const coarse = [
+			coarseFix(1700, 1450, 0),
+			coarseFix(1800, 1480, 0),
+			coarseFix(2000, 1520, 0),
+			coarseFix(2100, 1550, 0),
+		];
+		const legs = await reconstructUndergroundJourney(
+			coarse,
+			[coarseFix(1900, 1500, 0, 15)], // a lone mid-ride surfacing at Midtown
+			at(20, 0),
+			at(2980, 0),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
+		expect(legs).toHaveLength(1);
+		expect(legs[0]).toMatchObject({
+			boardingStation: "Cross",
+			alightingStation: "Finchley",
+			line: "Metropolitan Line",
+		});
 	});
 
 	it("returns the single through-line unchanged when one line serves both ends", async () => {
@@ -470,6 +511,87 @@ describe("annotateUndergroundRuns", () => {
 		expect(result[0].endTs).toBe(1500);
 		expect(result[2].startTs).toBe(2450);
 		expect(result[2].endTs).toBe(4600);
+	});
+
+	it("reads the dark window from the FIX STREAM, not from the host's bounds (the 05-22 King's Cross ride)", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// A tube goes dark when it enters the tunnel and surfaces when it leaves
+		// it — wherever the classifier happened to cut a segment. Here GPS
+		// momentarily reacquires at Beta and at Gamma mid-ride, and the
+		// classifier cut the host at exactly those two reacquires. Clipping the
+		// dark run to the host reads both ends off a mid-tunnel surfacing and
+		// resolves the ride one station in at each end — "Beta → Gamma" for a
+		// journey that ran Alpha → Delta (2026-05-22: "Euston Square → St
+		// John's Wood" for King's Cross St Pancras → Finchley Road).
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1100, ...at(20, 10), accuracy: 12 }, // the TRUE boarding end, at Alpha
+			coarseFix(1200, 200, 100),
+			{ ts: 1400, ...at(1000, 500), accuracy: 40 }, // mid-tunnel reacquire at Beta
+			coarseFix(1450, 1050, 525),
+			coarseFix(1700, 1600, 800),
+			{ ts: 1950, ...at(2000, 1000), accuracy: 40 }, // mid-tunnel reacquire at Gamma
+			coarseFix(1990, 2100, 1050),
+			coarseFix(2200, 2600, 1300),
+			{ ts: 2400, ...at(2980, 1490), accuracy: 13 }, // the TRUE alighting end, at Delta
+		];
+		// The host starts and ends ON the two mid-tunnel reacquires.
+		const host = seg({ startTs: 1400, endTs: 1950, mode: "driving" });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["train"]);
+		expect(result[0].wayName).toBe("Alpha → Delta · Line 1");
+	});
+
+	it("stops growing at a real GPS recovery, so the ride does not annex the walk after it", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The ride Alpha → Delta again, but after alighting at Delta the user
+		// walks with good GPS and only THEN goes dark again (indoors at the
+		// destination). That later darkness is a DIFFERENT blackout: the gap to
+		// it is inside the contiguity rule, so only the recovery test can stop
+		// the run annexing it, running the train past its own alight and
+		// swallowing the walk — which is what 2026-05-20 and 06-16 did, for no
+		// gain in the label at all.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1100, ...at(20, 10), accuracy: 12 },
+			coarseFix(1200, 200, 100),
+			coarseFix(1450, 1050, 525),
+			coarseFix(1700, 1600, 800),
+			coarseFix(1990, 2100, 1050),
+			coarseFix(2200, 2600, 1300),
+			{ ts: 2400, ...at(2980, 1490), accuracy: 13 }, // alighted at Delta
+			// A sustained recovery: 60 s of good GPS walking away from Delta.
+			{ ts: 2430, ...at(3040, 1520), accuracy: 14 },
+			{ ts: 2460, ...at(3100, 1550), accuracy: 12 },
+			// …and only then darkness again, indoors — 270 s after the last
+			// tunnel fix, well inside MAX_COARSE_GAP_S.
+			coarseFix(2470, 3200, 1600),
+			coarseFix(2700, 3210, 1610),
+			{ ts: 2900, ...at(3220, 1620), accuracy: 13 },
+		];
+		// The host ends just past the alight, so the darkness after it is the
+		// classifier's next segment — territory the run may only annex on merit.
+		const host = seg({ startTs: 1000, endTs: 2465 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking"]);
+		// The ride still reads end to end — the recovery bound costs no label.
+		expect(result[1].wayName).toBe("Alpha → Delta · Line 1");
+		// …and it ends where the user alighted, not in the indoor darkness after.
+		expect(result[1].endTs).toBe(2400);
 	});
 
 	it("leaves a segment with no coarse-fix run untouched", async () => {
