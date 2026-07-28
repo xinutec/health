@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { pickLineByStoppingPattern } from "../src/geo/line-stopping-pattern.js";
+import { expectedDurationS } from "../src/geo/line-stopping-pattern.js";
 import type { RailStopRelation } from "../src/geo/osm-rail-stops.js";
 
 /** A route relation stopping at `names`, in order. Coordinates are irrelevant
@@ -33,42 +33,26 @@ const ALL_STOPS = relation("Stopping Line", ["Alpha", "Beta", "Gamma", "Delta", 
 const RELATIONS = [FAST, ALL_STOPS];
 const CANDIDATES = ["Fast Line", "Stopping Line"];
 
-describe("pickLineByStoppingPattern", () => {
-	it("picks the fast line when the ride was too quick to have stopped four times", () => {
-		// One hop at ~120 s: only the non-stopping service fits.
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Epsilon", 130, RELATIONS)).toBe("Fast Line");
-	});
-
-	it("picks the all-stops line when the ride took as long as calling everywhere", () => {
-		// Five hops at ~120 s each.
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Epsilon", 600, RELATIONS)).toBe("Stopping Line");
-	});
-
-	it("refuses when the elapsed time fits both candidates about equally", () => {
-		// The two predictions are 120 s (one hop) and 480 s (four), so 300 s
-		// misses both by the same 180 s and is evidence for neither.
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Epsilon", 300, RELATIONS)).toBeNull();
-	});
-
-	it("refuses when the mirror has no stop data for a candidate — unknown is not evidence", () => {
-		// Without the rival's stopping pattern there is nothing to compare
-		// against, so a good fit for the one known line proves nothing.
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Epsilon", 130, [FAST])).toBeNull();
-	});
-
-	it("refuses when a candidate does not stop at both endpoints", () => {
-		// The endpoints are what the ride is anchored to; a line whose stop list
-		// does not contain them cannot be scored on this evidence.
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Omega", 130, RELATIONS)).toBeNull();
+describe("expectedDurationS — hop counting", () => {
+	it("counts the stations a line actually calls at between two stops", () => {
+		// The whole point: same two endpoints, wildly different stopping
+		// patterns. One hop for the fast service, five for the all-stops one.
+		expect(expectedDurationS("Fast Line", "Alpha", "Epsilon", RELATIONS)).toBe(120);
+		expect(expectedDurationS("Stopping Line", "Alpha", "Epsilon", RELATIONS)).toBe(480);
 	});
 
 	it("reads the stop list in either direction — a relation is one direction of the service", () => {
-		// The Jubilee's southbound relation lists Epsilon first; the ride is the
-		// same four stops whichever way round the relation was mapped.
 		const reversed = [
 			relation("Fast Line", ["Epsilon", "Alpha"], 3),
 			relation("Stopping Line", ["Epsilon", "Delta", "Gamma", "Beta", "Alpha"], 4),
 		];
-		expect(pickLineByStoppingPattern(CANDIDATES, "Alpha", "Epsilon", 130, reversed)).toBe("Fast Line");
+		expect(expectedDurationS("Fast Line", "Alpha", "Epsilon", reversed)).toBe(120);
+		expect(expectedDurationS("Stopping Line", "Alpha", "Epsilon", reversed)).toBe(480);
+	});
+
+	it("says nothing when the mirror has no relation stopping at both endpoints", () => {
+		// Unknown is not evidence — the caller must stay inert without data.
+		expect(expectedDurationS("Fast Line", "Alpha", "Omega", RELATIONS)).toBeNull();
+		expect(expectedDurationS("Unmapped Line", "Alpha", "Epsilon", RELATIONS)).toBeNull();
 	});
 });

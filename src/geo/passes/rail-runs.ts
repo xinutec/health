@@ -9,7 +9,6 @@
 
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
-import { pickLineByStoppingPattern } from "../line-stopping-pattern.js";
 import { type NearbyStation, pickBestStation } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
 import { isUncapturedLookup } from "../osm-adapter-fixture.js";
@@ -557,27 +556,6 @@ async function resolveRailRunLabel(
 		if (intersection.length > 1) {
 			const ridden = await lineUnderTheTrack(intersection, points, slowBefore.ts, after.ts, linesLookup);
 			if (ridden !== null) return `${base} · ${ridden}`;
-
-			// The track could not separate them — which, where two lines SHARE
-			// it, is the honest answer to the question asked rather than a
-			// failure. Ask a different one: how long did it take? The
-			// Metropolitan runs fast past the stations the Jubilee calls at, so
-			// the same Wembley Park → Finchley Road rails take one train about
-			// half as long as the other. Measured 2026-06-23: 10.5 min at
-			// 60 km/h, roughly double an all-stops pace — the fast train.
-			//
-			// Last, because it is the weakest of the three: endpoints and track
-			// are geometry, this is a duration model. It only ever fires where
-			// the label would otherwise be dropped, and `pickLineByStoppingPattern`
-			// returns null unless one candidate fits materially better.
-			const byPace = pickLineByStoppingPattern(
-				intersection,
-				startStation,
-				endStation,
-				after.ts - slowBefore.ts,
-				railStops,
-			);
-			if (byPace !== null) return `${base} · ${byPace}`;
 		}
 
 		// Fallback: the lookup point for an endpoint can be an

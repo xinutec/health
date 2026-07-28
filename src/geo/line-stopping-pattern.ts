@@ -1,5 +1,5 @@
 /**
- * Which of several lines sharing a track did the train actually run on?
+ * How many stations does a line actually CALL AT between two stops?
  *
  * `lineUnderTheTrack` separates candidates by where the ride's fixes were, and
  * that works whenever the lines diverge. It cannot work where they DON'T: for
@@ -18,11 +18,24 @@
  * service actually calls at, which is exactly what proximity membership
  * (`stationsOnLine`) structurally cannot express.
  *
- * Deliberately a most-likely call rather than a proof. Two lines that share
- * track are never *definitely* separable from a duration — a held train, a slow
- * approach, a generous segment boundary all blur it — so this returns a winner
- * only when one candidate fits materially better than the rest, and null
- * otherwise. Null leaves the label bare, which is where the caller already was.
+ * MEASURED 2026-07-28: the hop count below is right and discriminates
+ * (Wembley Park → Finchley Road is 1 hop on the Metropolitan and 6 on the
+ * Jubilee), but turning it into a DURATION prediction does not work, and the
+ * duration comparison that used to live here has been removed rather than left
+ * to mislead. Two reasons, both measured on 06-23:
+ *
+ *   - The segment window is not the ride. Its 631 s is ~150 s of platform wait
+ *     plus 413 s moving plus ~90 s of arrival; the train itself averaged
+ *     61.5 km/h over 7.06 km, an express, while the window reads 40 km/h.
+ *   - No per-hop constant fits both fragments of one ride: the same day's
+ *     confidently-Metropolitan Finchley Road → Euston Square leg spends 20.8
+ *     min on ~3 hops.
+ *
+ * What the fix stream DOES show is the stopping pattern directly — 06-23's
+ * interior is six unbroken minutes at 60–95 km/h with not one dwell, where an
+ * all-stops Jubilee would show five. Counting interior dwells against this hop
+ * count is the open work (#382); the hop count is the half that is already
+ * right.
  */
 
 import { normalizeStationName } from "../hmm/served-stations.js";
@@ -74,36 +87,4 @@ export function expectedDurationS(
 		if (fewestHops === null || hops < fewestHops) fewestHops = hops;
 	}
 	return fewestHops === null ? null : fewestHops * PER_STOP_S;
-}
-
-/**
- * The candidate whose stopping pattern best explains a ride of `elapsedS`
- * between the two stations, or null when the evidence does not separate them.
- *
- * Null on: fewer than two candidates the mirror knows (nothing to compare a
- * good fit against — a single line fitting well is not evidence it was ridden
- * rather than its unmapped rival), or a best fit that is not materially better
- * than the runner up.
- */
-export function pickLineByStoppingPattern(
-	candidates: readonly string[],
-	board: string,
-	alight: string,
-	elapsedS: number,
-	relations: readonly RailStopRelation[],
-): string | null {
-	if (elapsedS <= 0) return null;
-	const scored: Array<{ line: string; error: number }> = [];
-	for (const line of candidates) {
-		const expected = expectedDurationS(line, board, alight, relations);
-		if (expected === null) continue;
-		scored.push({ line, error: Math.abs(elapsedS - expected) });
-	}
-	// One known candidate cannot be compared: whatever the rival's stopping
-	// pattern is, the mirror has not got it, and "the only line I can score
-	// fits" is not the same finding as "this line fits best".
-	if (scored.length < 2) return null;
-	scored.sort((x, y) => x.error - y.error);
-	const [best, runnerUp] = scored;
-	return runnerUp.error - best.error >= elapsedS * MIN_SEPARATION_FRACTION ? best.line : null;
 }
