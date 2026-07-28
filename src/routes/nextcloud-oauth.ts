@@ -21,7 +21,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import type { AppEnv } from "../env.js";
-import { consumeState, createState } from "../middleware/oauth-state.js";
+import {
+	acceptPendingLogin,
+	clearPendingLogin,
+	issuePendingLogin,
+	pendingCookie,
+} from "../middleware/pending-login.js";
 import { validateReturnTo } from "../middleware/return-to.js";
 import { clearSessionCookie, createSession, setSessionCookie } from "../middleware/session.js";
 import type { UserSession } from "../types.js";
@@ -55,7 +60,10 @@ export function nextcloudOAuthRoutes(config: Config): Hono<AppEnv> {
 		// Optional return_to lets a banner-driven reconnect from
 		// /your-day?date=... land back there instead of the home page.
 		const returnTo = c.req.query("return_to");
-		const state = createState({ returnTo });
+		// The pending login rides in a signed cookie, not the in-memory state map:
+		// NC's Login Flow drops `state` entirely for a cookie-less browser. See
+		// middleware/pending-login.ts.
+		const state = issuePendingLogin(c, config.sessionSecret, returnTo, Date.now());
 		const url = new URL(`${nc.baseUrl}/index.php/apps/oauth2/authorize`);
 		url.searchParams.set("client_id", ncClientId);
 		url.searchParams.set("response_type", "code");
@@ -65,8 +73,7 @@ export function nextcloudOAuthRoutes(config: Config): Hono<AppEnv> {
 	});
 
 	app.get("/auth/callback", async (c) => {
-		const state = c.req.query("state") ?? "";
-		const pending = consumeState(state);
+		const pending = acceptPendingLogin(config.sessionSecret, pendingCookie(c), c.req.query("state"), Date.now());
 		if (!pending) {
 			return c.text("Invalid or expired OAuth state. Please try logging in again.", 403);
 		}
@@ -119,6 +126,8 @@ export function nextcloudOAuthRoutes(config: Config): Hono<AppEnv> {
 
 		const signedId = await createSession(config.sessionSecret, user);
 		setSessionCookie(c, signedId);
+		// The login is over: drop its cookie so a stale one can't be replayed.
+		clearPendingLogin(c);
 		return c.redirect(validateReturnTo(pending.returnTo));
 	});
 
