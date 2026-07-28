@@ -27,9 +27,10 @@
  */
 
 import type { EnrichedSegment } from "./enriched-segment.js";
+import type { FilteredPoint } from "./kalman.js";
 import { lineCannotServe, type ServedStationsLookup } from "./line-membership.js";
 import type { NearbyStation, NearbyWay } from "./osm.js";
-import { pickBestStation } from "./osm.js";
+import { pickBestStation, refineMode } from "./osm.js";
 import { dbOsmAdapter } from "./osm-adapter.js";
 import { expandTubeLineNames } from "./passes/rail-runs.js";
 
@@ -74,6 +75,11 @@ export const UNDERGROUND_LINES_RADIUS_M = 300;
  *  is meaningless (a total-GPS-loss fix can report a multi-kilometre
  *  radius). Such fixes are ignored entirely. */
 export const COARSE_ACCURACY_MAX_M = 800;
+
+/** How many points along a side piece to sample for its way label. Matches
+ *  `N_SAMPLES` in the OSM enrichment pass, because it is answering that
+ *  pass's question. */
+const SIDE_WAY_SAMPLES = 5;
 
 /** Minimum coarse fixes required to call a stretch an underground run.
  *  One coarse fix is a blip; a run of them is a journey. */
@@ -453,6 +459,7 @@ function equirectMeters(lat1: number, lon1: number, lat2: number, lon2: number):
 export async function annotateUndergroundRuns(
 	segments: EnrichedSegment[],
 	rawFixes: CoarseFix[],
+	points: readonly FilteredPoint[],
 	stationsLookup: StationsLookup = (lat, lon) => dbOsmAdapter.nearbyStations(lat, lon, UNDERGROUND_STATION_RADIUS_M),
 	linesLookup: LinesLookup = (lat, lon) => dbOsmAdapter.linesAtPoint(lat, lon, UNDERGROUND_LINES_RADIUS_M),
 	waysLookup: WaysLookup = (lat, lon) => dbOsmAdapter.nearbyWays(lat, lon),
@@ -556,7 +563,7 @@ export async function annotateUndergroundRuns(
 			result.push({
 				...host,
 				endTs: trainStart,
-				wayName: await sideWayName(good, host.startTs, trainStart, waysLookup),
+				wayName: await sideWayName(points, host.startTs, trainStart, host.mode, waysLookup),
 			});
 		}
 		for (let li = 0; li < legs.length; li++) {
@@ -589,7 +596,7 @@ export async function annotateUndergroundRuns(
 			result.push({
 				...host,
 				startTs: trainEnd,
-				wayName: await sideWayName(good, trainEnd, host.endTs, waysLookup),
+				wayName: await sideWayName(points, trainEnd, host.endTs, host.mode, waysLookup),
 			});
 		}
 	}
@@ -597,31 +604,58 @@ export async function annotateUndergroundRuns(
 	return result;
 }
 
-/** Way label for a side piece of a split host, from the PIECE's own
- *  fixes. The host's wayName was composed across ALL its fixes — both
- *  walks plus the tunnel — so inheriting it stamps the pre-tube walk's
- *  street onto the post-tube walk at the other end of town (measured:
- *  a King's Cross walk labelled with a Belgravia street, task #248).
- *  Undefined when the piece has no fixes or no named way nearby —
- *  honest blank beats a leaked label. */
+/** Way label for a side piece of a split host.
+ *
+ *  The host's own wayName was composed across ALL its fixes — both walks plus
+ *  the tunnel — so inheriting it stamps the pre-tube walk's street onto the
+ *  post-tube walk at the other end of town (measured: a King's Cross walk
+ *  labelled with a Belgravia street, task #248).
+ *
+ *  So the piece is named from the piece's own fixes — but by the SAME rule the
+ *  OSM enricher uses for any other moving segment, not a local one. Sampling
+ *  evenly, deduping ways by MINIMUM distance across samples, and handing the
+ *  result to `refineMode` is exactly what `enrichMovingSegment` does; the only
+ *  parts left out are the city lookup and the mode decision, neither of which a
+ *  carve remainder needs (the carve already settled the mode, and re-deciding
+ *  it here reads a station forecourt as rail).
+ *
+ *  Asking a different question was a real defect, not a stylistic one. The old
+ *  rule — three samples, nearest named highway of any type, ties broken by
+ *  insertion order so the FIRST fix won — named the 2026-07-15 walk from Work
+ *  to King's Cross "Clarence Passage", 14 m from its opening fix, where the
+ *  enricher given the same window says "Argyle Street".
+ *
+ *  Undefined when the piece has no fixes or no named way nearby — an honest
+ *  blank beats a leaked label. */
 async function sideWayName(
-	good: CoarseFix[],
+	points: readonly FilteredPoint[],
 	startTs: number,
 	endTs: number,
+	mode: EnrichedSegment["mode"],
 	waysLookup: WaysLookup,
 ): Promise<string | undefined> {
-	const inPiece = good.filter((f) => f.ts >= startTs && f.ts <= endTs);
+	const inPiece = points.filter((p) => p.ts >= startTs && p.ts <= endTs).sort((a, b) => a.ts - b.ts);
 	if (inPiece.length === 0) return undefined;
-	const sampleCount = Math.min(3, inPiece.length);
-	const votes = new Map<string, number>();
-	for (let i = 0; i < sampleCount; i++) {
-		const f = inPiece[Math.floor((i * (inPiece.length - 1)) / Math.max(1, sampleCount - 1))];
-		const ways = await waysLookup(f.lat, f.lon);
-		const named = ways
-			.filter((w) => w.type === "highway" && w.name)
-			.sort((a, b) => (a.distanceM ?? 0) - (b.distanceM ?? 0))[0];
-		if (named?.name) votes.set(named.name, (votes.get(named.name) ?? 0) + 1);
+	const sampleCount = Math.min(SIDE_WAY_SAMPLES, inPiece.length);
+	const sampled = Array.from(
+		{ length: sampleCount },
+		(_, i) => inPiece[Math.floor((i * (inPiece.length - 1)) / Math.max(1, sampleCount - 1))],
+	);
+	// Dedup by (type, subtype, name) keeping the minimum distance, so a way
+	// brushed past at one sample cannot outweigh one hugged at four others.
+	const byKey = new Map<string, NearbyWay>();
+	for (const ways of await Promise.all(sampled.map((p) => waysLookup(p.lat, p.lon)))) {
+		for (const w of ways) {
+			const key = `${w.type}/${w.subtype}/${w.name ?? ""}`;
+			const existing = byKey.get(key);
+			if (!existing || (w.distanceM ?? Number.POSITIVE_INFINITY) < (existing.distanceM ?? Number.POSITIVE_INFINITY))
+				byKey.set(key, w);
+		}
 	}
-	if (votes.size === 0) return undefined;
-	return [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0];
+	if (byKey.size === 0) return undefined;
+	// The piece's OWN pace — the host's average is the tunnel's, and a walk
+	// handed a train's speed gets refined as one.
+	const speeds = inPiece.map((p) => p.speed_kmh ?? 0).sort((a, b) => a - b);
+	const medianKmh = speeds[Math.floor(speeds.length / 2)] ?? 0;
+	return refineMode(mode, medianKmh, [...byKey.values()]).wayName;
 }

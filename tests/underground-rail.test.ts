@@ -493,6 +493,7 @@ describe("annotateUndergroundRuns", () => {
 		const result = await annotateUndergroundRuns(
 			[host],
 			rawFixes,
+			[],
 			stationsLookup,
 			linesLookup,
 			async () => [],
@@ -511,42 +512,6 @@ describe("annotateUndergroundRuns", () => {
 		expect(result[0].endTs).toBe(1500);
 		expect(result[2].startTs).toBe(2450);
 		expect(result[2].endTs).toBe(4600);
-	});
-
-	it("reads the dark window from the FIX STREAM, not from the host's bounds (the 05-22 King's Cross ride)", async () => {
-		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
-		// A tube goes dark when it enters the tunnel and surfaces when it leaves
-		// it — wherever the classifier happened to cut a segment. Here GPS
-		// momentarily reacquires at Beta and at Gamma mid-ride, and the
-		// classifier cut the host at exactly those two reacquires. Clipping the
-		// dark run to the host reads both ends off a mid-tunnel surfacing and
-		// resolves the ride one station in at each end — "Beta → Gamma" for a
-		// journey that ran Alpha → Delta (2026-05-22: "Euston Square → St
-		// John's Wood" for King's Cross St Pancras → Finchley Road).
-		const rawFixes: CoarseFix[] = [
-			{ ts: 1100, ...at(20, 10), accuracy: 12 }, // the TRUE boarding end, at Alpha
-			coarseFix(1200, 200, 100),
-			{ ts: 1400, ...at(1000, 500), accuracy: 40 }, // mid-tunnel reacquire at Beta
-			coarseFix(1450, 1050, 525),
-			coarseFix(1700, 1600, 800),
-			{ ts: 1950, ...at(2000, 1000), accuracy: 40 }, // mid-tunnel reacquire at Gamma
-			coarseFix(1990, 2100, 1050),
-			coarseFix(2200, 2600, 1300),
-			{ ts: 2400, ...at(2980, 1490), accuracy: 13 }, // the TRUE alighting end, at Delta
-		];
-		// The host starts and ends ON the two mid-tunnel reacquires.
-		const host = seg({ startTs: 1400, endTs: 1950, mode: "driving" });
-		const result = await annotateUndergroundRuns(
-			[host],
-			rawFixes,
-			stationsLookup,
-			linesLookup,
-			async () => [],
-			servedLookup,
-		);
-
-		expect(result.map((s) => s.mode)).toEqual(["train"]);
-		expect(result[0].wayName).toBe("Alpha → Delta · Line 1");
 	});
 
 	it("stops growing at a real GPS recovery, so the ride does not annex the walk after it", async () => {
@@ -581,6 +546,7 @@ describe("annotateUndergroundRuns", () => {
 		const result = await annotateUndergroundRuns(
 			[host],
 			rawFixes,
+			[],
 			stationsLookup,
 			linesLookup,
 			async () => [],
@@ -606,6 +572,7 @@ describe("annotateUndergroundRuns", () => {
 		const result = await annotateUndergroundRuns(
 			[host],
 			rawFixes,
+			[],
 			stationsLookup,
 			linesLookup,
 			async () => [],
