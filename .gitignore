@@ -13,7 +13,7 @@ tests/fixtures/days/
 # only, never committed. Run via `npm run golden` (see golden-check.js).
 tests/golden/*
 
-# ...EXCEPT the two ratchet floors. These are what the deploy gate compares
+# ...EXCEPT the ratchet floors. These are what the deploy gate compares
 # against, and they were untracked local state: no history, not bisectable, and
 # silently desynchronised by a golden re-bless — which is how a real walk
 # regression sat undetected from 2026-07-09 to 07-13 (#346). Tracking them makes
@@ -24,6 +24,7 @@ tests/golden/*
 !tests/golden/journey-baseline.json
 !tests/golden/feasibility-baseline.json
 !tests/golden/rail-triple-baseline.json
+!tests/golden/truth-baseline.json
 !tests/golden/decoder-scoreboard.json
 
 # Rail-snap fixtures: a real day frozen with its raw fixes, classified

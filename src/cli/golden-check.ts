@@ -32,6 +32,12 @@
  * `--bless` re-derives `expected.velocity` from the pipeline run against
  * the ALREADY-CAPTURED inputs; it never re-pulls from prod.
  *
+ * Layered on top of the snapshot diff are four ratchets, each with its own
+ * committed baseline and `--bless-*` flag: `--bless-truth` (confirmed
+ * ground-truth rows the pipeline satisfies), `--bless-journeys` (journeys it
+ * reconstructs), `--bless-feasibility` and `--bless-rail-triples` (standing
+ * counts of physically-impossible legs, which shrink rather than grow).
+ *
  * Exit 0 = every fixture matches (or was blessed).
  * Exit 1 = at least one regressed (or threw an uncaptured-query error).
  * Exit 2 = no corpus.
@@ -39,6 +45,7 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { type FloorBaseline, gateFloor, ratchetUpFloor } from "../eval/floor-gate.js";
 import { parseGroundTruth } from "../eval/ground-truth.js";
 import { gateJourneys, type JourneyBaseline } from "../eval/journey-gate.js";
 import { groundTruthJourneys, journeyShapeResults, statesToJourneys } from "../eval/journey-score.js";
@@ -90,6 +97,18 @@ interface TruthResult {
 	 *  narrative moves a journey's start, and the floor must follow rather than
 	 *  hold a key nothing can ever satisfy again. */
 	journeyAll: number[];
+	/** Window starts of the rows whose verdict is `verified` — an enforceable
+	 *  `correct` row the pipeline still satisfies. The truth floor's per-day set. */
+	truthVerified: number[];
+	/** Window starts of EVERY enforceable `correct` row the narrative states
+	 *  today, satisfied or not — the truth floor's `described` set, playing the
+	 *  same role `journeyAll` plays for journeys. A row honestly re-audited to
+	 *  `wrong` leaves this set, which is what lets its floor key be dropped. */
+	truthCorrect: number[];
+	/** Window starts of the rows whose verdict is `regressed` — standing debt.
+	 *  Not a failure on its own (the floor is what fails); reported so the debt
+	 *  cannot go quiet. */
+	truthRegressed: number[];
 }
 
 async function truthReport(date: string, tz: string, states: readonly StateWindow[]): Promise<TruthResult | null> {
@@ -148,7 +167,18 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 			);
 		}
 	}
-	return { text: lines.join("\n"), journeyMatched, journeyAll };
+	return {
+		text: lines.join("\n"),
+		journeyMatched,
+		journeyAll,
+		truthVerified: res.verdicts.filter((v) => v.verdict === "verified").map((v) => v.row.startTs),
+		// `verified | regressed` IS the enforceable-`correct` set: those are the
+		// only two verdicts `rowVerdict` can give such a row.
+		truthCorrect: res.verdicts
+			.filter((v) => v.verdict === "verified" || v.verdict === "regressed")
+			.map((v) => v.row.startTs),
+		truthRegressed: res.verdicts.filter((v) => v.verdict === "regressed").map((v) => v.row.startTs),
+	};
 }
 
 const JOURNEY_BASELINE_PATH = path.join(GOLDEN_DIR, "journey-baseline.json");
@@ -164,6 +194,16 @@ type FeasibilityBaseline = Record<string, number>;
  *  coverage can surface NEW standing debt — that is a real defect becoming
  *  visible, blessed into the ceiling rather than hidden. */
 const RAIL_TRIPLE_BASELINE_PATH = path.join(GOLDEN_DIR, "rail-triple-baseline.json");
+/** Per-day set of ground-truth rows the pipeline still satisfies — the TRUTH
+ *  FLOOR (#379). The narratives themselves are gitignored (real places, real
+ *  times), so what is committed here is window starts only: enough to name a
+ *  row, not enough to say anything about it.
+ *
+ *  Testimony, not law — so it ratchets rather than trending to zero. A
+ *  confirmed row that stops holding is a regression and fails; a row that
+ *  never held is standing debt, reported every run but not a failure, because
+ *  new testimony revealing an old defect is a measurement, not a breakage. */
+const TRUTH_BASELINE_PATH = path.join(GOLDEN_DIR, "truth-baseline.json");
 
 /**
  * Merge a fresh per-day count into a committed CEILING, keeping the ratchet
@@ -199,6 +239,7 @@ let blessDate: string | null = null;
 let blessJourneys = false;
 let blessFeasibility = false;
 let blessRailTriples = false;
+let blessTruth = false;
 /** Which OSM path to replay on. See `OsmSource` — `--osm trace` exists to
  *  attribute a corpus diff, by holding every other input fixed and varying
  *  only this. It is not a supported way to run the corpus. */
@@ -237,6 +278,13 @@ for (let i = 0; i < args.length; i++) {
 		// after a fix; up only when a re-capture widens membership coverage
 		// and surfaces pre-existing debt.
 		blessRailTriples = true;
+	} else if (args[i] === "--bless-truth") {
+		// Ratchet the truth floor UP to the current run: record which confirmed
+		// ground-truth rows the pipeline now satisfies. Also the only way a row
+		// re-audited from `correct` to `wrong` leaves the floor — and the run
+		// names every key it drops, so a re-audit is a stated act rather than a
+		// quiet one.
+		blessTruth = true;
 	} else {
 		console.error(`unknown argument: ${args[i]}`);
 		process.exit(2);
@@ -293,6 +341,17 @@ const railTripleNow: FeasibilityBaseline = {};
 const journeysNow: JourneyBaseline = {};
 /** Every ground-truth journey each day DESCRIBES this run, matched or not. */
 const journeysDescribed: JourneyBaseline = {};
+/** Per-day set of confirmed truth rows the pipeline satisfies this run, the
+ *  rows it states at all, and the ones it no longer satisfies (standing debt). */
+const truthNow: FloorBaseline = {};
+const truthDescribed: FloorBaseline = {};
+const truthRegressedNow: FloorBaseline = {};
+/** Days that produced a truth report at all. A day whose fixture THREW, or that
+ *  has no narrative, measures nothing — and a floor gate cannot tell a silence
+ *  from a regression, so those dates are excluded from the gate BY NAME rather
+ *  than left to read as 100% regressed (the same trap as the aggregates that
+ *  silently skip a throwing day). */
+const truthReported = new Set<string>();
 
 for (const file of files) {
 	const full = path.join(DAYS_DIR, file);
@@ -352,6 +411,10 @@ for (const file of files) {
 		console.log(truth.text);
 		journeysNow[captured.meta.date] = truth.journeyMatched;
 		journeysDescribed[captured.meta.date] = truth.journeyAll;
+		truthReported.add(captured.meta.date);
+		truthNow[captured.meta.date] = truth.truthVerified;
+		truthDescribed[captured.meta.date] = truth.truthCorrect;
+		if (truth.truthRegressed.length > 0) truthRegressedNow[captured.meta.date] = truth.truthRegressed;
 	}
 
 	// Worldline-feasibility report: physically-impossible outputs the cascade
@@ -509,6 +572,84 @@ if (railTripleBaseline === null) {
 	}
 }
 
+// --- truth ratchet --------------------------------------------------------
+// The row-level counterpart of the journey floor, and the layer that had no
+// gate at all until #379: a `correct {user}` ground-truth row is TESTIMONY, so
+// it ratchets rather than trending to zero. Four confirmed rows rotted through
+// a prod re-capture while the golden stayed green, because the truth report
+// only ever printed them.
+//
+// The floor holds the rows the pipeline satisfies. A row that never held is
+// not in the floor and does not fail — new testimony that reveals an old
+// defect is a measurement, not a breakage — but it IS reported below every
+// run, so standing debt cannot go quiet either.
+let truthRegressedKeys = 0;
+const truthStanding = Object.values(truthRegressedNow).reduce((n, a) => n + a.length, 0);
+const truthHeld = Object.values(truthNow).reduce((n, a) => n + a.length, 0);
+async function loadTruthBaseline(): Promise<FloorBaseline | null> {
+	try {
+		return JSON.parse(await readFile(TRUTH_BASELINE_PATH, "utf8")) as FloorBaseline;
+	} catch {
+		return null; // no baseline yet — first run bootstraps
+	}
+}
+if (blessTruth) {
+	const { floor, dropped } = ratchetUpFloor((await loadTruthBaseline()) ?? {}, truthNow, truthDescribed);
+	await writeFile(TRUTH_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
+	const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
+	console.log(`truth: blessed floor — ${blessedTotal} confirmed row(s) across ${Object.keys(floor).length} day(s).`);
+	// Naming the drops is the point: a row leaves the floor only by leaving the
+	// narrative's `correct` set, which is exactly what an honest re-audit does
+	// and exactly what "flip the row until the gate is green" does too. The gate
+	// cannot tell them apart; stating each one out loud is what makes the
+	// difference reviewable.
+	for (const d of dropped)
+		console.log(
+			`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — no longer a confirmed row`,
+		);
+	process.exit(0);
+}
+const truthBaseline = await loadTruthBaseline();
+if (truthBaseline === null) {
+	console.log(
+		`truth: no floor yet — ${truthHeld} confirmed row(s) held. Establish the floor with: npm run golden -- --bless-truth`,
+	);
+} else {
+	// Only days that actually produced a truth report can be judged. A day whose
+	// fixture threw, or whose narrative is gone, measures nothing — and to a
+	// floor gate "measured nothing" is indistinguishable from "lost everything".
+	// Excluded BY NAME rather than silently.
+	const measured: FloorBaseline = {};
+	const unmeasured: string[] = [];
+	for (const date of Object.keys(truthBaseline)) {
+		if (truthReported.has(date)) measured[date] = truthNow[date] ?? [];
+		else unmeasured.push(date);
+	}
+	for (const [date, keys] of Object.entries(truthNow)) if (!(date in measured)) measured[date] = keys;
+	const truthGate = gateFloor(truthBaseline, measured);
+	truthRegressedKeys = truthGate.regressed.length;
+	if (truthRegressedKeys > 0) {
+		console.log(`truth: FAIL — ${truthRegressedKeys} confirmed row(s) no longer hold:`);
+		for (const r of truthGate.regressed)
+			console.log(`      ✗ ${r.date} @${new Date(r.startTs * 1000).toISOString().slice(11, 16)}Z`);
+	} else {
+		console.log(`truth: ${truthHeld} confirmed row(s) held, none lost.`);
+	}
+	if (truthStanding > 0) {
+		console.log(
+			`truth: ${truthStanding} standing regressed row(s) across ${Object.keys(truthRegressedNow).length} day(s) — below the floor, reported not enforced.`,
+		);
+	}
+	if (unmeasured.length > 0) {
+		console.log(`truth: ${unmeasured.length} day(s) not measured this run, floor unchecked: ${unmeasured.join(", ")}`);
+	}
+	if (truthGate.improved.length > 0) {
+		console.log(`truth: ${truthGate.improved.length} newly held — re-bless to ratchet the floor up (--bless-truth):`);
+		for (const im of truthGate.improved)
+			console.log(`      ✓ ${im.date} @${new Date(im.startTs * 1000).toISOString().slice(11, 16)}Z`);
+	}
+}
+
 // --- journey ratchet -----------------------------------------------------
 // Ratchet the story-correctness of the drawn timeline: a ground-truth journey
 // the pipeline USED to reconstruct correctly (in the committed baseline) that
@@ -523,29 +664,18 @@ if (blessJourneys) {
 	// used to work and no longer does stays in the floor, so blessing the new
 	// wins cannot quietly drop it — the regression keeps failing the gate
 	// until it is actually fixed.
-	const committed = await loadJourneyBaseline();
-	const ordered: JourneyBaseline = {};
-	for (const date of [...new Set([...Object.keys(committed), ...Object.keys(journeysNow)])].sort()) {
-		// Keep a committed journey ONLY while the ground truth still describes it.
-		// A key that survives but no longer matches is a regression and must stay
-		// in the floor so it keeps failing; a key the narrative no longer contains
-		// belongs to a row that was rewritten — correcting a day moves a journey's
-		// start, and a floor that held the dead key would fail forever on a journey
-		// nothing can reconstruct because it no longer exists. Days with no truth
-		// file this run report nothing, so their committed floor passes through
-		// untouched rather than being emptied by a missing narrative.
-		const described = journeysDescribed[date];
-		const kept =
-			described === undefined
-				? (committed[date] ?? [])
-				: (committed[date] ?? []).filter((ts) => described.includes(ts));
-		ordered[date] = [...new Set([...kept, ...(journeysNow[date] ?? [])])].sort((a, b) => a - b);
-	}
-	await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
-	const blessedTotal = Object.values(ordered).reduce((n, a) => n + a.length, 0);
+	// Keep a committed journey ONLY while the ground truth still describes it —
+	// see `ratchetUpFloor`, which owns that rule for both floors.
+	const { floor, dropped } = ratchetUpFloor(await loadJourneyBaseline(), journeysNow, journeysDescribed);
+	await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
+	const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
 	console.log(
-		`journeys: blessed floor — ${blessedTotal} journey(s) across ${Object.keys(ordered).length} day(s): everything reconstructed now, plus every committed journey the ground truth still describes.`,
+		`journeys: blessed floor — ${blessedTotal} journey(s) across ${Object.keys(floor).length} day(s): everything reconstructed now, plus every committed journey the ground truth still describes.`,
 	);
+	for (const d of dropped)
+		console.log(
+			`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — the narrative no longer describes it`,
+		);
 	process.exit(0);
 }
 
@@ -575,6 +705,7 @@ process.exit(
 		hardViolations > 0 ||
 		kinematicRegressed > 0 ||
 		railTripleRegressed > 0 ||
+		truthRegressedKeys > 0 ||
 		gate.regressed.length > 0
 		? 1
 		: 0,

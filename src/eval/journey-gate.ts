@@ -15,20 +15,19 @@
  * working journeys instead of zero, because most journeys are not yet correct.
  * Standing failures are recorded, visible, and can only shrink; a fix is surfaced
  * as an improvement to re-bless into the baseline. Pure: no IO.
+ *
+ * The mechanism is generic — a one-way floor over per-day key sets — and is
+ * shared with the truth-row ratchet; see `floor-gate.ts`. This module is the
+ * journey-shaped name for it.
  */
+
+import { type FloorBaseline, type FloorGateResult, gateFloor } from "./floor-gate.js";
 
 /** Per-date set of ground-truth journey start times (unix seconds) the pipeline
  *  reconstructs with the correct mode shape. The committed floor. */
-export type JourneyBaseline = Record<string, number[]>;
+export type JourneyBaseline = FloorBaseline;
 
-export interface JourneyGateResult {
-	/** Baseline journeys that no longer reconstruct — the regressions that fail
-	 *  the gate. */
-	regressed: { date: string; startTs: number }[];
-	/** Journeys now correct that the baseline didn't have — re-bless to ratchet
-	 *  the floor up. Never a failure. */
-	improved: { date: string; startTs: number }[];
-}
+export type JourneyGateResult = FloorGateResult;
 
 /**
  * Compare the baseline against the current run. A regression is a `(date,
@@ -37,22 +36,4 @@ export interface JourneyGateResult {
  * `current` maps each date to the set of GT-journey start times that matched
  * this run.
  */
-export function gateJourneys(baseline: JourneyBaseline, current: JourneyBaseline): JourneyGateResult {
-	const regressed: { date: string; startTs: number }[] = [];
-	const improved: { date: string; startTs: number }[] = [];
-
-	for (const [date, baseTs] of Object.entries(baseline)) {
-		const now = new Set(current[date] ?? []);
-		for (const ts of baseTs) if (!now.has(ts)) regressed.push({ date, startTs: ts });
-	}
-	for (const [date, nowTs] of Object.entries(current)) {
-		const base = new Set(baseline[date] ?? []);
-		for (const ts of nowTs) if (!base.has(ts)) improved.push({ date, startTs: ts });
-	}
-
-	const byTs = (a: { date: string; startTs: number }, b: { date: string; startTs: number }): number =>
-		a.date === b.date ? a.startTs - b.startTs : a.date < b.date ? -1 : 1;
-	regressed.sort(byTs);
-	improved.sort(byTs);
-	return { regressed, improved };
-}
+export const gateJourneys = gateFloor;

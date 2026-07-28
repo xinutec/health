@@ -170,11 +170,17 @@ captured days** (fixtures gitignored — see
 - `scripts/verify.sh` — typecheck (src + tests), biome, vitest,
   frontend build + e2e. Run by the pre-commit hook.
 - `scripts/golden.sh` — replays the golden day corpus
-  (`tests/golden/days/`) byte-identically, checks confirmed ground
-  truths, worldline feasibility (rail invariants hard-zero; the
-  kinematic invariant ratchets per-day counts against
-  `tests/golden/feasibility-baseline.json`, only-shrink), and the
-  journey ratchet. The same feasibility check also runs on every
+  (`tests/golden/days/`) byte-identically, then applies four gates on
+  top of the snapshot diff. Two are ratcheted FLOORS over confirmed
+  testimony, which can only grow (`floor-gate.ts`): the truth ratchet
+  (`truth-baseline.json` — the ground-truth rows the pipeline
+  satisfies) and the journey ratchet. Two are physical invariants,
+  which trend toward zero: the rail invariants are hard-zero already,
+  while the kinematic one and the rail-triple one still carry standing
+  per-day counts (`feasibility-baseline.json`,
+  `rail-triple-baseline.json`) that can only shrink. The distinction
+  is deliberate — testimony is evidence and gets revised, physical
+  impossibility is not. The same feasibility check also runs on every
   *served* day inside `computeVelocityFromInputs`, logging
   `INFEASIBLE` lines — physically-impossible output is a counted
   defect on ordinary days, not just blessed ones.
