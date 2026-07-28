@@ -296,6 +296,45 @@ function spanDoublesBack(
 	return endD < maxD * REVERSAL_RETURN_FRACTION;
 }
 
+/** How much closer to the run's boarding station a fragment must ALIGHT than it
+ *  BOARDS before the ride counts as turned around. A through ride can still lose
+ *  a little ground — King's Cross St Pancras to Euston Square is one stop west
+ *  and 0.57 km nearer Wembley Park, and that is a real 2026-06-23 merge — while
+ *  a genuine turnaround gives it up wholesale: 4.28 km on 2026-07-07, where the
+ *  same rider went back out to Finchley Road. Everything measured in the corpus
+ *  sits on one side or the other of this margin. */
+const TURNAROUND_MIN_GAIN_M = 2000;
+
+/**
+ * Has this fragment turned the ride around — does it end materially closer to
+ * where the run BOARDED than it started?
+ *
+ * {@link spanDoublesBack} asks the same question of the observed fixes, and
+ * cannot answer it at the moment that matters: a run is extended fragment by
+ * fragment, so when the return's FIRST fragment is offered the return has not
+ * travelled yet and distance from the board still looks like it is growing. The
+ * stations know already — the fragment's own label says where it is heading
+ * (2026-07-07: arrive King's Cross, then board King's Cross for Finchley Road,
+ * which is back the way it came).
+ *
+ * Unknown stations answer `false`: the mirror not knowing a name is not evidence
+ * of a turnaround.
+ */
+function ridesBackTowardBoard(
+	runBoard: string,
+	frag: { board: string; alight: string },
+	onLine: readonly LineStation[],
+): boolean {
+	const at = (name: string): LineStation | undefined => onLine.find((s) => s.name === name);
+	const origin = at(runBoard);
+	const from = at(frag.board);
+	const to = at(frag.alight);
+	if (origin === undefined || from === undefined || to === undefined) return false;
+	const outbound = haversineMeters(from.lat, from.lon, origin.lat, origin.lon);
+	const inbound = haversineMeters(to.lat, to.lon, origin.lat, origin.lon);
+	return outbound - inbound >= TURNAROUND_MIN_GAIN_M;
+}
+
 /** A station-pair-labelled train leg (the only kind the assembler reasons over). */
 function isStationPairTrain(seg: EnrichedSegment | undefined): seg is EnrichedSegment {
 	return seg !== undefined && effectiveMode(seg) === "train" && parseRailWayName(seg.wayName) !== null;
@@ -515,16 +554,24 @@ export async function assembleRailJourney(
 				//      an out-and-back passes all three gates above and merges into a
 				//      degenerate "X → X" leg. Only asked once a second fragment is on
 				//      the table — a lone fragment is not being merged with anything.
+				const runBoard = parseRailWayName(segments[trainPositions[p]].wayName)?.board ?? "";
 				if (
 					c > p &&
 					spanDoublesBack(
 						points,
 						segments[trainPositions[p]].startTs,
 						segments[trainPositions[c]].endTs,
-						parseRailWayName(segments[trainPositions[p]].wayName)?.board ?? "",
+						runBoard,
 						stationsOnLineMemo.get(ln) ?? [],
 					)
 				) {
+					break;
+				}
+				//   5. …and neither does the fragment being added, read from its own
+				//      station pair. Gate 4 watches the fixes, which have not caught up
+				//      when a return's first fragment is offered; the label has.
+				const fragLabel = parseRailWayName(segments[trainPositions[c]].wayName);
+				if (c > p && fragLabel && ridesBackTowardBoard(runBoard, fragLabel, stationsOnLineMemo.get(ln) ?? [])) {
 					break;
 				}
 				groupLine = ln;

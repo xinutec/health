@@ -400,6 +400,46 @@ describe("assembleRailJourney", () => {
 		}
 	});
 
+	it("does NOT merge two rides across a street walk when the second turns the ride around (2026-07-07)", async () => {
+		// The 07-07 King's Cross shape. He rode in, spent nine minutes on the street
+		// outside the station, then rode back out the way he came. Every gate passes:
+		// one line serves every station, both fragments carry compatible labels, and
+		// the walk is a plain street — not a labelled platform interchange — so it
+		// counts as a mid-ride "sliver" under the 10-minute bound.
+		//
+		// `spanDoublesBack` cannot catch it: at the moment of merging, the return has
+		// not travelled yet, so the observed fixes still show distance from the board
+		// growing. The turnaround is visible only in the STATIONS — the second
+		// fragment alights materially closer to where the run boarded than it boards.
+		const stations = [
+			{ name: "Ashvale", lat: 0, lon: 0 },
+			{ name: "Brookden", lat: 0, lon: 0.02 }, // ~2.2 km out
+			{ name: "Carfax", lat: 0, lon: 0.04 },
+			{ name: "Deepwell", lat: 0, lon: 0.06 }, // ~6.7 km out
+		];
+		const osm = {
+			linesAtPoint: async () => new Set(["Metropolitan Line"]),
+			stationsOnLine: async () => stations,
+		};
+		const segs = [
+			seg("train", 0, 10, { wayName: "Ashvale → Deepwell", centroidLat: 0, centroidLon: 0.03 }),
+			seg("walking", 10, 19, { wayName: "High Street", centroidLat: 0, centroidLon: 0.06 }),
+			seg("train", 19, 29, { wayName: "Deepwell → Brookden", centroidLat: 0, centroidLon: 0.04 }),
+		];
+		// Only the outbound and the walk are observed — the return went dark, so the
+		// last fix is still at the far end and nothing looks like doubling back.
+		const points = [];
+		for (let m = 0; m <= 10; m++) points.push(fix(m, 0, (0.06 * m) / 10));
+		for (let m = 11; m <= 19; m++) points.push(fix(m, 0, 0.06));
+
+		const out = await assembleRailJourney([...segs], points, osm);
+		const trains = out.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(2);
+		expect(trains[0].wayName).toBe("Ashvale → Deepwell");
+		// …and the walk survives between them rather than being swallowed.
+		expect(out.some((s) => s.mode === "walking" && s.wayName === "High Street")).toBe(true);
+	});
+
 	it("still merges a one-way ride whose fixes only surface for the first half", async () => {
 		// The reversal gate must not fire on a ride that simply goes dark: the last
 		// OBSERVED fix is then mid-ride, far from the board — which is progress, not
