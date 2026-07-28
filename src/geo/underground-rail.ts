@@ -12,11 +12,13 @@
  * `reconstructUndergroundRun` reads that signal. Given the coarse fixes
  * inside a suspected underground stretch plus the well-located fixes
  * that bracket it (the boarding and alighting ends), it asks: is there
- * a single rail line that (a) serves both the boarding and alighting
- * ends and (b) is hugged by the coarse fixes in between? The coarse
- * fixes are what disambiguate parallel lines — two lines may both
- * connect the endpoints, but only the one actually travelled is the
- * one the mid-journey coarse fixes sit on.
+ * a single rail line that (a) passes both the boarding and alighting
+ * ends, (b) is hugged by the coarse fixes in between, and (c) actually
+ * STOPS at the two stations those ends resolve to? The coarse fixes are
+ * what disambiguate parallel lines — two lines may both connect the
+ * endpoints, but only the one actually travelled is the one the
+ * mid-journey coarse fixes sit on. (c) is what disambiguates a line
+ * that merely runs past one of them (see `line-membership.ts`).
  *
  * This is deliberately a *discrete* inference (which line?), kept
  * separate from smoothing and from quality control. It needs no
@@ -25,6 +27,7 @@
  */
 
 import type { EnrichedSegment } from "./enriched-segment.js";
+import { lineCannotServe, type ServedStationsLookup } from "./line-membership.js";
 import type { NearbyStation, NearbyWay } from "./osm.js";
 import { pickBestStation } from "./osm.js";
 import { dbOsmAdapter } from "./osm-adapter.js";
@@ -118,19 +121,35 @@ export async function reconstructUndergroundRun(
 	alightingFix: { lat: number; lon: number },
 	stationsLookup: StationsLookup,
 	linesLookup: LinesLookup,
+	servedLookup: ServedStationsLookup,
+	expandSharedTrack = false,
 ): Promise<UndergroundRun | null> {
 	const coarse = fixes.filter(isCoarse).sort((a, b) => a.ts - b.ts);
 	if (coarse.length < MIN_COARSE_FIXES) return null;
 
-	// Lines that serve the boarding and alighting ends.
-	const boardLines = await linesLookup(boardingFix.lat, boardingFix.lon);
-	const alightLines = await linesLookup(alightingFix.lat, alightingFix.lon);
+	// Lines that pass the boarding and alighting ends.
+	//
+	// `expandSharedTrack` reconciles OSM's two tagging conventions for the same
+	// physical line — the combined relation ("Circle, Hammersmith & City and
+	// Metropolitan Lines" at King's Cross) against the plain name ("Metropolitan
+	// Line" at Finchley Road) — so an intersection can see through the naming.
+	// It is OFF for the through-line question and ON for the halves of an
+	// interchange split, and that asymmetry is deliberate. Expanding here only
+	// ever ADDS a through-line reading the raw names denied, which is how a
+	// parallel corridor gets read as one ride. By the time the split runs, the
+	// evidence has already said no single line serves both ends, each half is
+	// endpoint-anchored, and the disjointness gates below guard the corridor
+	// case — there the naming is the only thing in the way.
+	const readLines = (lines: Iterable<string>): Set<string> =>
+		expandSharedTrack ? new Set([...lines].flatMap(expandTubeLineNames)) : new Set(lines);
+	const boardLines = readLines(await linesLookup(boardingFix.lat, boardingFix.lon));
+	const alightLines = readLines(await linesLookup(alightingFix.lat, alightingFix.lon));
 	if (boardLines.size === 0 || alightLines.size === 0) return null;
 
 	// Lines under each coarse fix — the path the train actually hugged.
-	const coarseLineSets = await Promise.all(coarse.map((f) => linesLookup(f.lat, f.lon)));
+	const coarseLineSets = (await Promise.all(coarse.map((f) => linesLookup(f.lat, f.lon)))).map(readLines);
 
-	// A candidate line serves both ends AND is hugged by at least one
+	// A candidate line passes both ends AND is hugged by at least one
 	// coarse fix. Score each by how many coarse fixes sit on it, so a
 	// parallel line that merely connects the endpoints loses to the one
 	// the journey actually followed.
@@ -141,7 +160,6 @@ export async function reconstructUndergroundRun(
 		if (onCoarse > 0) candidates.set(line, onCoarse);
 	}
 	if (candidates.size === 0) return null;
-	const line = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0][0];
 
 	// This run is underground by construction, so its endpoints are underground
 	// stations: at a multi-operator interchange prefer the `station=subway`
@@ -158,6 +176,24 @@ export async function reconstructUndergroundRun(
 	if (equirectMeters(boardingFix.lat, boardingFix.lon, alightingFix.lat, alightingFix.lon) < MIN_JOURNEY_M) {
 		return null;
 	}
+
+	// Everything above is proximity: a line qualifies by running NEAR both
+	// ends. That is how the 2026-06-28 return became one "North London line"
+	// leg — the Overground passes Finchley Road on its way to Finchley Road &
+	// Frognal, and parallels the Metropolitan for miles, so it satisfied both
+	// the endpoint and the coarse-fix tests. Membership is the corrective, and
+	// it belongs HERE, before the label is written, not only in the gate that
+	// rejects the finished leg (#377). Losing every candidate is a real answer:
+	// no honest single-line reading exists, which is the signal
+	// `reconstructUndergroundJourney` needs to go looking for the interchange.
+	let line: string | null = null;
+	for (const [candidate] of [...candidates.entries()].sort((a, b) => b[1] - a[1])) {
+		if (await lineCannotServe(candidate, board.name, servedLookup)) continue;
+		if (await lineCannotServe(candidate, alight.name, servedLookup)) continue;
+		line = candidate;
+		break;
+	}
+	if (line === null) return null;
 
 	return {
 		line,
@@ -193,8 +229,16 @@ export async function reconstructUndergroundJourney(
 	alightingFix: { lat: number; lon: number },
 	stationsLookup: StationsLookup,
 	linesLookup: LinesLookup,
+	servedLookup: ServedStationsLookup,
 ): Promise<UndergroundRun[]> {
-	const single = await reconstructUndergroundRun(fixes, boardingFix, alightingFix, stationsLookup, linesLookup);
+	const single = await reconstructUndergroundRun(
+		fixes,
+		boardingFix,
+		alightingFix,
+		stationsLookup,
+		linesLookup,
+		servedLookup,
+	);
 	if (single) return [single];
 
 	const coarse = fixes.filter(isCoarse).sort((a, b) => a.ts - b.ts);
@@ -210,16 +254,34 @@ export async function reconstructUndergroundJourney(
 	const boardLines = await linesLookup(boardingFix.lat, boardingFix.lon);
 	const alightLines = await linesLookup(alightingFix.lat, alightingFix.lon);
 
-	// Candidate interchanges: clusters of good fixes that surfaced mid-run,
-	// each separated by a recovered-GPS gap. Order by time.
+	// Candidate interchanges: clusters of good fixes that surfaced mid-run, each
+	// one PLACE the ride was observed at. Time alone does not separate them —
+	// when GPS is up its fixes are seconds apart, so a purely temporal rule
+	// merges every surfacing along the ride into one blob whose centroid is a
+	// point mid-track, at no station at all (2026-06-28: King's Cross, Great
+	// Portland Street and Baker Street collapsed into one "interchange" out in
+	// Regent's Park). A cluster therefore also ends when the ride has MOVED —
+	// beyond the radius within which fixes still belong to the same station.
 	const mid = interchangeFixes
 		.filter((f) => f.ts > coarse[0].ts && f.ts < coarse[coarse.length - 1].ts)
 		.sort((a, b) => a.ts - b.ts);
 	const clusters: CoarseFix[][] = [];
+	let sumLat = 0;
+	let sumLon = 0;
 	for (const f of mid) {
 		const cur = clusters.at(-1);
-		if (cur && f.ts - cur[cur.length - 1].ts <= MAX_COARSE_GAP_S) cur.push(f);
-		else clusters.push([f]);
+		const nearCentroid =
+			cur !== undefined &&
+			equirectMeters(f.lat, f.lon, sumLat / cur.length, sumLon / cur.length) <= UNDERGROUND_STATION_RADIUS_M;
+		if (cur && f.ts - cur[cur.length - 1].ts <= MAX_COARSE_GAP_S && nearCentroid) {
+			cur.push(f);
+			sumLat += f.lat;
+			sumLon += f.lon;
+		} else {
+			clusters.push([f]);
+			sumLat = f.lat;
+			sumLon = f.lon;
+		}
 	}
 
 	for (const cluster of clusters) {
@@ -231,8 +293,24 @@ export async function reconstructUndergroundJourney(
 		const before = coarse.filter((f) => f.ts < ixTs);
 		const after = coarse.filter((f) => f.ts > ixTs);
 		if (before.length < MIN_COARSE_FIXES || after.length < MIN_COARSE_FIXES) continue;
-		const leg1 = await reconstructUndergroundRun(before, boardingFix, ixPt, stationsLookup, linesLookup);
-		const leg2 = await reconstructUndergroundRun(after, ixPt, alightingFix, stationsLookup, linesLookup);
+		const leg1 = await reconstructUndergroundRun(
+			before,
+			boardingFix,
+			ixPt,
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+			true,
+		);
+		const leg2 = await reconstructUndergroundRun(
+			after,
+			ixPt,
+			alightingFix,
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+			true,
+		);
 		if (!leg1 || !leg2 || leg1.alightingStation !== leg2.boardingStation) continue;
 
 		// Compare PHYSICAL lines, not OSM relation strings: "Metropolitan Line"
@@ -302,6 +380,7 @@ export async function annotateUndergroundRuns(
 	stationsLookup: StationsLookup = (lat, lon) => dbOsmAdapter.nearbyStations(lat, lon, UNDERGROUND_STATION_RADIUS_M),
 	linesLookup: LinesLookup = (lat, lon) => dbOsmAdapter.linesAtPoint(lat, lon, UNDERGROUND_LINES_RADIUS_M),
 	waysLookup: WaysLookup = (lat, lon) => dbOsmAdapter.nearbyWays(lat, lon),
+	servedLookup: ServedStationsLookup = (line) => dbOsmAdapter.stationsOnLine(line),
 ): Promise<EnrichedSegment[]> {
 	const good = rawFixes.filter((f) => f.accuracy == null || f.accuracy < COARSE_ACCURACY_M);
 	const result: EnrichedSegment[] = [];
@@ -356,6 +435,7 @@ export async function annotateUndergroundRuns(
 			alighting,
 			stationsLookup,
 			linesLookup,
+			servedLookup,
 		);
 		if (legs.length === 0) {
 			result.push(host);

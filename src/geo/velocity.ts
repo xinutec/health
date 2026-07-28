@@ -1226,6 +1226,7 @@ export async function computeVelocityFromInputs(
 					(lat, lon) => inputs.osm.nearbyStations(lat, lon, UNDERGROUND_STATION_RADIUS_M),
 					(lat, lon) => inputs.osm.linesAtPoint(lat, lon, UNDERGROUND_LINES_RADIUS_M),
 					(lat, lon) => inputs.osm.nearbyWays(lat, lon),
+					(line) => inputs.osm.stationsOnLine(line),
 				),
 		},
 
@@ -1478,6 +1479,7 @@ export async function computeVelocityFromInputs(
 					points,
 					(lat, lon) => inputs.osm.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
 					(lat, lon) => inputs.osm.linesAtPoint(lat, lon),
+					(line) => inputs.osm.stationsOnLine(line),
 				),
 		},
 

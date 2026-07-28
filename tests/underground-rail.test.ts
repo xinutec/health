@@ -40,7 +40,13 @@ interface FakeStation {
 	name: string;
 	north: number;
 	east: number;
+	/** Lines whose tracks pass near this station — what `linesAtPoint`
+	 *  reports. */
 	lines: string[];
+	/** Lines that actually STOP here — what `stationsOnLine` reports.
+	 *  Defaults to `lines`; they differ only where a line passes a station
+	 *  it does not serve (the Finchley Road / North London Line case). */
+	servedBy?: string[];
 }
 
 /** Build station/line lookups from a synthetic station network. A
@@ -61,7 +67,11 @@ function lookupsFor(stations: FakeStation[], radiusM = 400) {
 		return new Set(stations.filter((s) => nearNames.has(s.name)).flatMap((s) => s.lines));
 	};
 
-	return { stationsLookup, linesLookup };
+	/** The membership direction: which stations does this line serve? */
+	const servedLookup = async (line: string): Promise<Array<{ name: string }>> =>
+		stations.filter((s) => (s.servedBy ?? s.lines).includes(line)).map((s) => ({ name: s.name }));
+
+	return { stationsLookup, linesLookup, servedLookup };
 }
 
 const NETWORK: FakeStation[] = [
@@ -90,7 +100,7 @@ function seg(partial: Partial<EnrichedSegment> & { startTs: number; endTs: numbe
 
 describe("reconstructUndergroundRun", () => {
 	it("identifies the line, excluding a parallel line the journey did not take", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		// Coarse fixes hug Beta and Gamma — stations only Line 1 serves.
 		const fixes = [coarseFix(1700, 1020, 510), coarseFix(2000, 2010, 1010)];
 		const run = await reconstructUndergroundRun(
@@ -99,6 +109,7 @@ describe("reconstructUndergroundRun", () => {
 			at(2980, 1490), // alighting by Delta (also Line 1 AND Line 2)
 			stationsLookup,
 			linesLookup,
+			servedLookup,
 		);
 		expect(run).not.toBeNull();
 		// Both lines connect Alpha↔Delta, but only Line 1 passes the
@@ -111,19 +122,33 @@ describe("reconstructUndergroundRun", () => {
 	});
 
 	it("returns null when there are too few coarse fixes", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		// One coarse fix is a blip, not a journey; the rest are real GPS.
 		const fixes = [coarseFix(1700, 1020, 510), coarseFix(2000, 2010, 1010, 20)];
-		const run = await reconstructUndergroundRun(fixes, at(30, 15), at(2980, 1490), stationsLookup, linesLookup);
+		const run = await reconstructUndergroundRun(
+			fixes,
+			at(30, 15),
+			at(2980, 1490),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
 		expect(run).toBeNull();
 	});
 
 	it("returns null when both ends resolve to the same station (a platform wait, not a journey)", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		// Coarse fixes near Beta, but the user never left Alpha's
 		// vicinity — boarding and alighting both snap to Alpha.
 		const fixes = [coarseFix(1700, 1020, 510), coarseFix(2000, 2010, 1010)];
-		const run = await reconstructUndergroundRun(fixes, at(20, 10), at(40, 25), stationsLookup, linesLookup);
+		const run = await reconstructUndergroundRun(
+			fixes,
+			at(20, 10),
+			at(40, 25),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
 		expect(run).toBeNull();
 	});
 
@@ -137,10 +162,76 @@ describe("reconstructUndergroundRun", () => {
 			{ name: "Gamma", north: 2000, east: 1000, lines: ["Line 1"] },
 			{ name: "Omega", north: 3000, east: 1500, lines: ["Line 2"] },
 		];
-		const { stationsLookup, linesLookup } = lookupsFor(network);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
 		const fixes = [coarseFix(1700, 1020, 510), coarseFix(2000, 2010, 1010)];
-		const run = await reconstructUndergroundRun(fixes, at(30, 15), at(2980, 1490), stationsLookup, linesLookup);
+		const run = await reconstructUndergroundRun(
+			fixes,
+			at(30, 15),
+			at(2980, 1490),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
 		expect(run).toBeNull();
+	});
+
+	it("rejects a line that merely PASSES the alighting station (the 06-28 North London line)", async () => {
+		// The 2026-06-28 shape. A freight/Overground line runs past both ends —
+		// it stops at the boarding station, and near the alighting one its
+		// tracks only pass through on the way to a different station. Endpoint
+		// proximity alone therefore singles it out, and the coarse fixes hug it
+		// too (it parallels the tube for miles). Only membership knows better.
+		const network: FakeStation[] = [
+			{ name: "Islington", north: 0, east: 0, lines: ["Victoria Line", "Ghost line"] },
+			{ name: "Midtown", north: 1500, east: 0, lines: ["Ghost line"] },
+			{
+				name: "Finchley",
+				north: 3000,
+				east: 0,
+				lines: ["Metropolitan Line", "Ghost line"],
+				servedBy: ["Metropolitan Line"], // the Ghost passes; it does not stop
+			},
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
+		const fixes = [coarseFix(1700, 1480, 0), coarseFix(2000, 1520, 0)];
+		const run = await reconstructUndergroundRun(
+			fixes,
+			at(20, 0),
+			at(2980, 0),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
+		expect(run).toBeNull();
+	});
+
+	it("reads through OSM's shared-track relation name when asked to (the split's halves)", async () => {
+		// One end is tagged with the combined relation, the other with the plain
+		// line. Same physical line — the intersection must see through the
+		// naming, and the label must come out as the physical line. Off by
+		// default: expanding the through-line question only ever ADDS a reading
+		// the raw names denied, which is how a parallel corridor becomes one
+		// ride. The interchange split turns it on for each half.
+		const network: FakeStation[] = [
+			{
+				name: "Cross",
+				north: 0,
+				east: 0,
+				lines: ["Circle, Hammersmith & City and Metropolitan Lines"],
+				servedBy: ["Metropolitan Line"],
+			},
+			{ name: "Midtown", north: 1500, east: 0, lines: ["Metropolitan Line"] },
+			{ name: "Finchley", north: 3000, east: 0, lines: ["Metropolitan Line"] },
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
+		const fixes = [coarseFix(1700, 1480, 0), coarseFix(2000, 1520, 0)];
+		const args = [fixes, at(20, 0), at(2980, 0), stationsLookup, linesLookup, servedLookup] as const;
+		expect(await reconstructUndergroundRun(...args)).toBeNull();
+		expect(await reconstructUndergroundRun(...args, true)).toMatchObject({
+			boardingStation: "Cross",
+			alightingStation: "Finchley",
+			line: "Metropolitan Line",
+		});
 	});
 });
 
@@ -158,7 +249,7 @@ describe("reconstructUndergroundJourney", () => {
 	];
 
 	it("splits a multi-line run at the interchange into two single-line legs", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(IX_NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(IX_NETWORK);
 		// Coarse fixes hug Mid1 (Line 1) then Mid2 (Line 3); good GPS surfaced
 		// at Beta in between (the platform change).
 		const coarse = [
@@ -175,6 +266,7 @@ describe("reconstructUndergroundJourney", () => {
 			at(1980, 0), // alighting near Omega
 			stationsLookup,
 			linesLookup,
+			servedLookup,
 		);
 		expect(legs).toHaveLength(2);
 		expect(legs[0]).toMatchObject({ boardingStation: "Alpha", alightingStation: "Beta", line: "Line 1" });
@@ -182,7 +274,7 @@ describe("reconstructUndergroundJourney", () => {
 	});
 
 	it("returns the single through-line unchanged when one line serves both ends", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		const fixes = [coarseFix(1700, 1020, 510), coarseFix(2000, 2010, 1010)];
 		const legs = await reconstructUndergroundJourney(
 			fixes,
@@ -191,6 +283,7 @@ describe("reconstructUndergroundJourney", () => {
 			at(2980, 1490),
 			stationsLookup,
 			linesLookup,
+			servedLookup,
 		);
 		expect(legs).toHaveLength(1);
 		expect(legs[0].line).toBe("Line 1");
@@ -213,7 +306,7 @@ describe("reconstructUndergroundJourney", () => {
 			{ name: "MidB", north: 1500, east: 0, lines: ["Circle, Hammersmith & City and Metropolitan Lines"] },
 			{ name: "Omega", north: 2000, east: 0, lines: ["Circle, Hammersmith & City and Metropolitan Lines"] },
 		];
-		const { stationsLookup, linesLookup } = lookupsFor(network);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
 		const coarse = [
 			coarseFix(1700, 500, 0),
 			coarseFix(1800, 510, 0),
@@ -228,6 +321,7 @@ describe("reconstructUndergroundJourney", () => {
 			at(1980, 0),
 			stationsLookup,
 			linesLookup,
+			servedLookup,
 		);
 		expect(legs).toHaveLength(0);
 	});
@@ -240,16 +334,108 @@ describe("reconstructUndergroundJourney", () => {
 			{ name: "Mid1", north: 500, east: 0, lines: ["Line 1"] },
 			{ name: "Omega", north: 2000, east: 0, lines: ["Line 3"] },
 		];
-		const { stationsLookup, linesLookup } = lookupsFor(network);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
 		const coarse = [coarseFix(1700, 480, 0), coarseFix(1800, 510, 0)];
-		const legs = await reconstructUndergroundJourney(coarse, [], at(20, 0), at(1980, 0), stationsLookup, linesLookup);
+		const legs = await reconstructUndergroundJourney(
+			coarse,
+			[],
+			at(20, 0),
+			at(1980, 0),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
 		expect(legs).toHaveLength(0);
+	});
+
+	it("keeps two surfacings apart even when they are seconds apart in time", async () => {
+		// GPS that comes up mid-ride emits fixes seconds apart, so a time-only
+		// clustering rule welds every surfacing along the route into one blob
+		// whose centroid sits mid-track at no station at all. Here the ride
+		// surfaces at the interchange (Beta) and again one stop later (Mid2):
+		// the change is still at Beta.
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(IX_NETWORK);
+		const coarse = [
+			coarseFix(1700, 500, 0),
+			coarseFix(1800, 510, 0),
+			coarseFix(2300, 1500, 0),
+			coarseFix(2400, 1510, 0),
+		];
+		const surfacings = [
+			coarseFix(2000, 1000, 0, 15),
+			coarseFix(2014, 1010, 0, 15),
+			coarseFix(2150, 1500, 0, 15), // one stop on, still well inside MAX_COARSE_GAP_S
+			coarseFix(2164, 1510, 0, 15),
+		];
+		const legs = await reconstructUndergroundJourney(
+			coarse,
+			surfacings,
+			at(20, 0),
+			at(1980, 0),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
+		expect(legs).toHaveLength(2);
+		expect(legs[0]).toMatchObject({ alightingStation: "Beta", line: "Line 1" });
+		expect(legs[1]).toMatchObject({ boardingStation: "Beta", line: "Line 3" });
+	});
+
+	it("splits the 06-28 return once the passing line stops masquerading as a through-line", async () => {
+		// The whole 2026-06-28 defect in one network. A Ghost line touches both
+		// ends by proximity, so the single-through-line branch used to answer
+		// first and the change at Cross was never looked for. With membership
+		// vetoing the Ghost, the two real legs surface — and the second one
+		// needs the shared-track relation name to resolve at all.
+		const network: FakeStation[] = [
+			{ name: "Islington", north: 0, east: 0, lines: ["Victoria Line", "Ghost line"] },
+			{ name: "Mid1", north: 500, east: 0, lines: ["Victoria Line", "Ghost line"] },
+			{
+				name: "Cross",
+				north: 1000,
+				east: 0,
+				lines: ["Victoria Line", "Circle, Hammersmith & City and Metropolitan Lines"],
+				servedBy: ["Victoria Line", "Metropolitan Line"],
+			},
+			{ name: "Mid2", north: 1500, east: 0, lines: ["Metropolitan Line"] },
+			{
+				name: "Finchley",
+				north: 2000,
+				east: 0,
+				lines: ["Metropolitan Line", "Ghost line"],
+				servedBy: ["Metropolitan Line"], // the Ghost passes on its way elsewhere
+			},
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(network);
+		const coarse = [
+			coarseFix(1700, 500, 0),
+			coarseFix(1800, 510, 0),
+			coarseFix(2300, 1500, 0),
+			coarseFix(2400, 1510, 0),
+		];
+		const interchange = [coarseFix(2000, 1000, 0, 15), coarseFix(2100, 1010, 0, 15)];
+		const legs = await reconstructUndergroundJourney(
+			coarse,
+			interchange,
+			at(20, 0),
+			at(1980, 0),
+			stationsLookup,
+			linesLookup,
+			servedLookup,
+		);
+		expect(legs).toHaveLength(2);
+		expect(legs[0]).toMatchObject({ boardingStation: "Islington", alightingStation: "Cross", line: "Victoria Line" });
+		expect(legs[1]).toMatchObject({
+			boardingStation: "Cross",
+			alightingStation: "Finchley",
+			line: "Metropolitan Line",
+		});
 	});
 });
 
 describe("annotateUndergroundRuns", () => {
 	it("splits a walking host into walk → train → walk around an underground run", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		// One walking segment that secretly contains a tube ride.
 		const host = seg({ startTs: 1000, endTs: 4600, wayName: "High Street" });
 		const rawFixes: CoarseFix[] = [
@@ -263,7 +449,14 @@ describe("annotateUndergroundRuns", () => {
 			{ ts: 2450, ...at(2980, 1490), accuracy: 13 },
 			{ ts: 3000, ...at(2960, 1470), accuracy: 15 },
 		];
-		const result = await annotateUndergroundRuns([host], rawFixes, stationsLookup, linesLookup, async () => []);
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
 
 		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking"]);
 		const train = result[1];
@@ -280,7 +473,7 @@ describe("annotateUndergroundRuns", () => {
 	});
 
 	it("leaves a segment with no coarse-fix run untouched", async () => {
-		const { stationsLookup, linesLookup } = lookupsFor(NETWORK);
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		const host = seg({ startTs: 1000, endTs: 2800 });
 		// All real GPS — an ordinary walk, nothing underground.
 		const rawFixes: CoarseFix[] = [
@@ -288,7 +481,14 @@ describe("annotateUndergroundRuns", () => {
 			{ ts: 1800, ...at(600, 300), accuracy: 14 },
 			{ ts: 2500, ...at(1200, 600), accuracy: 13 },
 		];
-		const result = await annotateUndergroundRuns([host], rawFixes, stationsLookup, linesLookup, async () => []);
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
 		expect(result).toEqual([host]);
 	});
 });

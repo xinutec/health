@@ -9,6 +9,7 @@
 import type { StepPoint } from "../biometrics.js";
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
+import { lineCannotServe, type ServedStationsLookup } from "../line-membership.js";
 import { type NearbyStation, pickBestStation } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
 import { haversineMeters } from "../place-snap.js";
@@ -419,6 +420,7 @@ export async function anchorTrainAlightToWalkedStation(
 	stationsLookup: (lat: number, lon: number) => Promise<NearbyStation[]> = (lat, lon) =>
 		dbOsmAdapter.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
 	linesLookup: (lat: number, lon: number) => Promise<Set<string>> = (lat, lon) => dbOsmAdapter.linesAtPoint(lat, lon),
+	servedLookup: ServedStationsLookup = (line) => dbOsmAdapter.stationsOnLine(line),
 ): Promise<EnrichedSegment[]> {
 	const out = segments.map((s) => ({ ...s }));
 	for (let k = 0; k < out.length - 1; k++) {
@@ -486,6 +488,15 @@ export async function anchorTrainAlightToWalkedStation(
 		const surfacedCanon = new Set([...surfacedLines].flatMap(expandTubeLineNames));
 		const alightCanon = new Set([...alightLines].flatMap(expandTubeLineNames));
 		if (![...alightCanon].some((l) => surfacedCanon.has(l))) continue;
+
+		// The guard above asks whether the two ENDS share a corridor, which a
+		// line running alongside the tube for miles satisfies while saying
+		// nothing about the line this leg is labelled with. Ask that directly:
+		// a leg cannot alight where its own line does not stop. Without it the
+		// anchor turned the 2026-06-28 return into a "North London line" ride
+		// alighting 7.1 km away at Wembley Park — a leg the feasibility gate
+		// could only reject after the fact (#377).
+		if (rail.line && (await lineCannotServe(rail.line, station.name, servedLookup))) continue;
 
 		const hopM = Math.round(haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon));
 		// The rail-run topology often gets the alight NAME right while the cut
