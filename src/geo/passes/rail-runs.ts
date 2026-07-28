@@ -9,6 +9,7 @@
 
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
+import { pickLineByStoppingPattern } from "../line-stopping-pattern.js";
 import { type NearbyStation, pickBestStation } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
 import { isUncapturedLookup } from "../osm-adapter-fixture.js";
@@ -556,6 +557,21 @@ async function resolveRailRunLabel(
 		if (intersection.length > 1) {
 			const ridden = await lineUnderTheTrack(intersection, points, slowBefore.ts, after.ts, linesLookup);
 			if (ridden !== null) return `${base} · ${ridden}`;
+
+			// The track could not separate them, which means they SHARE it —
+			// Wembley Park to Finchley Road is seven kilometres of Metropolitan
+			// and Jubilee on the same rails. Where they differ is where they
+			// stop, and the ride's own speed profile says which pattern it ran.
+			const stopped = pickLineByStoppingPattern(
+				intersection,
+				startStation,
+				endStation,
+				railStops,
+				points,
+				slowBefore.ts,
+				after.ts,
+			);
+			if (stopped !== null) return `${base} · ${stopped}`;
 		}
 
 		// Fallback: the lookup point for an endpoint can be an
