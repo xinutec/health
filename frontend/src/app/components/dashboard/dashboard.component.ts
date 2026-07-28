@@ -2,6 +2,7 @@ import { Component, type OnDestroy, type OnInit, computed, effect, inject, resou
 import { DecimalPipe, KeyValuePipe } from "@angular/common";
 import { ActivatedRoute, Router } from "@angular/router";
 import { Subscription } from "rxjs";
+import { numberField } from "../../narrow";
 import { MatButtonModule } from "@angular/material/button";
 import { MatButtonToggleModule } from "@angular/material/button-toggle";
 import { MatFormFieldModule } from "@angular/material/form-field";
@@ -383,12 +384,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		try {
 			const raw = localStorage.getItem(LIVE_FIX_CACHE_KEY);
 			if (raw === null) return null;
-			const f = JSON.parse(raw) as LatestFix;
-			if (typeof f?.lat !== "number" || typeof f?.lon !== "number" || typeof f?.ts !== "number") {
-				return null;
-			}
-			if (formatDateInTz(new Date(f.ts * 1000), browserTimezone()) !== todayLocal()) return null;
-			return f;
+			// Checked before it is believed, not after: localStorage survives every
+			// deploy this device ever ran, so the blob can be a shape two versions
+			// old. Building the fix from checked fields means the type says only
+			// what was actually verified.
+			const blob: unknown = JSON.parse(raw);
+			const lat = numberField(blob, "lat");
+			const lon = numberField(blob, "lon");
+			const ts = numberField(blob, "ts");
+			if (lat === null || lon === null || ts === null) return null;
+			if (formatDateInTz(new Date(ts * 1000), browserTimezone()) !== todayLocal()) return null;
+			return { lat, lon, ts, accuracy: numberField(blob, "accuracy") };
 		} catch {
 			return null;
 		}

@@ -310,6 +310,7 @@ export class HealthService {
    *  This is the single place where the backend's shape is taken on trust, so
    *  the assertion is stated here once instead of implied at every call. */
   private static async body<T>(res: Response): Promise<T> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the one place, per the doc above
     return (await res.json()) as T;
   }
 
@@ -317,7 +318,7 @@ export class HealthService {
     try {
       const res = await this.fetch("/api/me");
       if (res.ok) {
-        const info = (await res.json()) as UserInfo;
+        const info = await HealthService.body<UserInfo>(res);
         this.user.set(info);
         // Seed connection-state from /api/me so the banner can render
         // on app-load without waiting for the first 409 from a data
@@ -396,7 +397,7 @@ export class HealthService {
     try {
       const res = await this.fetch(`/api/location/latest`);
       if (!res.ok) return null;
-      return (await res.json()) as LatestFix | null;
+      return HealthService.body<LatestFix | null>(res);
     } catch {
       return null;
     }
@@ -409,7 +410,10 @@ export class HealthService {
     try {
       const res = await this.fetch(`/api/location/tail?since=${since}`);
       if (!res.ok) return [];
-      const body = (await res.json()) as unknown;
+      const body = await HealthService.body<unknown>(res);
+      // Same trust as body<T>, taken after a real check that it is a list
+      // at all — a non-array tail would otherwise be drawn as one point.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       return Array.isArray(body) ? (body as TrackTailPoint[]) : [];
     } catch {
       return [];
@@ -451,7 +455,7 @@ export class HealthService {
       body: JSON.stringify({ daysBack }),
     });
     if (!res.ok) throw new Error(`share create failed: ${res.status}`);
-    const status = (await res.json()) as ShareStatus;
+    const status = await HealthService.body<ShareStatus>(res);
     this.shareStatus.set(status);
     return status;
   }
@@ -465,7 +469,7 @@ export class HealthService {
       body: JSON.stringify({ daysBack }),
     });
     if (!res.ok) throw new Error(`share update failed: ${res.status}`);
-    const status = (await res.json()) as ShareStatus;
+    const status = await HealthService.body<ShareStatus>(res);
     this.shareStatus.set(status);
     return status;
   }

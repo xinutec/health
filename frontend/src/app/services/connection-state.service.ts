@@ -19,6 +19,8 @@
 
 import { Injectable, signal } from "@angular/core";
 
+import { stringField } from "../narrow";
+
 export type ConnectionStatus = "active" | "needs_reauth" | "not_linked" | "unknown";
 
 @Injectable({ providedIn: "root" })
@@ -44,8 +46,8 @@ export class ConnectionStateService {
 			// Clone so callers can still read the body if they want to.
 			try {
 				const body = await res.clone().text();
-				const parsed = body.length > 0 ? (JSON.parse(body) as { error?: string }) : null;
-				if (parsed?.error === "nextcloud_reauth_required") {
+				const parsed: unknown = body.length > 0 ? JSON.parse(body) : null;
+				if (stringField(parsed, "error") === "nextcloud_reauth_required") {
 					this.setNextcloudStatus("needs_reauth");
 				}
 			} catch {

@@ -36,6 +36,22 @@ export default tseslint.config(
 			// that fight Angular's idioms (DI via constructor injection still
 			// produces "useless constructor" warnings in some flows).
 			"@typescript-eslint/no-empty-function": "off",
+			// `x as Shape` is a claim, not a check — and it is the one hole left in
+			// the protection against a value reaching the screen in the wrong
+			// shape. The type-aware rules above, and dev-lint's
+			// DL-ANGULAR-STRINGIFIED-OBJECT over the templates, both reason from
+			// the declared types; the only way to fool them is with a type we
+			// manufactured ourselves. Narrow at the boundary instead — ./src/app/narrow.ts.
+			"@typescript-eslint/no-unsafe-type-assertion": "error",
+		},
+	},
+	{
+		// A double asserted into the interface it stands in for is the whole
+		// point of a double; getting it wrong fails a test, it never reaches a
+		// user. App code stays strict.
+		files: ["src/**/*.spec.ts"],
+		rules: {
+			"@typescript-eslint/no-unsafe-type-assertion": "off",
 		},
 	},
 	{

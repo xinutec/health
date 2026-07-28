@@ -46,7 +46,13 @@ export class WeightChartComponent {
       scales: {
         x: {
           type: "linear",
-          ticks: { color: tickColor, maxTicksLimit: 6, callback: (v) => fmt(v as number) },
+          // Chart.js hands a tick value as `string | number`; only the
+          // numeric case is a date this axis can format.
+          ticks: {
+            color: tickColor,
+            maxTicksLimit: 6,
+            callback: (v) => (typeof v === "number" ? fmt(v) : v),
+          },
           grid: { display: false },
         },
         y: {

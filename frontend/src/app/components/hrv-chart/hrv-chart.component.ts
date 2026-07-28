@@ -28,7 +28,17 @@ export class HrvChartComponent {
       maintainAspectRatio: true,
       plugins: {
         legend: { display: true, labels: { color: tickColor } },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${(ctx.raw as number).toFixed(1)} ms` } },
+        // `ctx.raw` is whatever went into the dataset, typed `unknown` by
+        // Chart.js. Asserting `number` and calling .toFixed on a null gap
+        // throws inside the tooltip, which kills the chart, not just the label.
+        tooltip: {
+          callbacks: {
+            label: (ctx) =>
+              typeof ctx.raw === "number"
+                ? `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} ms`
+                : `${ctx.dataset.label}: —`,
+          },
+        },
       },
       scales: {
         x: { ticks: { color: tickColor }, grid: { display: false } },

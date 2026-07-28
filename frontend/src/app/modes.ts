@@ -72,7 +72,11 @@ const FALLBACK: ModeStyle = MODES.unknown;
  *  backend that learns a new mode before this build does should degrade to the
  *  "we don't know" style rather than render a blank row. */
 export function modeStyle(mode: string): ModeStyle {
-	return MODES[mode as DayStateMode] ?? FALLBACK;
+	// Indexed as a plain string dictionary: the point of this function is that
+	// `mode` may be one this build has never heard of, and asserting it into
+	// `DayStateMode` says the opposite of what the doc above promises.
+	const styles: Record<string, ModeStyle | undefined> = MODES;
+	return styles[mode] ?? FALLBACK;
 }
 
 /** Modes that count as travel: eligible to fold into a journey, drawn as a line

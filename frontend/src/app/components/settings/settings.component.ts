@@ -10,6 +10,7 @@ import { MatSlideToggleModule } from "@angular/material/slide-toggle";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
 import { MatTooltipModule } from "@angular/material/tooltip";
 import { RouterLink } from "@angular/router";
+import { errorText } from "../../narrow";
 import { HealthService } from "../../services/health.service";
 
 /**
@@ -82,7 +83,7 @@ export class SettingsComponent implements OnInit {
 			if (s?.active && typeof s.daysBack === "number") this.editDays.set(s.daysBack);
 			await this.health.refreshVerifiedCore();
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		} finally {
 			this.loading.set(false);
 		}
@@ -95,7 +96,7 @@ export class SettingsComponent implements OnInit {
 			await this.health.setVerifiedCore(enabled);
 			this.snackBar.open(enabled ? "Serving verified Lean core" : "Serving TS", "Dismiss", { duration: 2000 });
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 
@@ -106,7 +107,7 @@ export class SettingsComponent implements OnInit {
 			await this.health.setVerifiedCore(null);
 			this.snackBar.open("Following deploy default", "Dismiss", { duration: 2000 });
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 
@@ -115,7 +116,7 @@ export class SettingsComponent implements OnInit {
 		try {
 			await this.health.createOrRotateShare(this.daysInput);
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 
@@ -124,7 +125,7 @@ export class SettingsComponent implements OnInit {
 		try {
 			await this.health.createOrRotateShare(currentDays);
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 
@@ -135,7 +136,7 @@ export class SettingsComponent implements OnInit {
 			await this.health.updateShareDays(this.editDays());
 			this.snackBar.open("Share window updated", "Dismiss", { duration: 2000 });
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 
@@ -144,7 +145,7 @@ export class SettingsComponent implements OnInit {
 		try {
 			await this.health.revokeShare();
 		} catch (e) {
-			this.error.set((e as Error).message);
+			this.error.set(errorText(e));
 		}
 	}
 

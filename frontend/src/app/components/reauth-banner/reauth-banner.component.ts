@@ -2,6 +2,7 @@ import { Component, inject, signal, ChangeDetectionStrategy } from "@angular/cor
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
 import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
+import { errorText, stringField } from "../../narrow";
 import { ConnectionStateService } from "../../services/connection-state.service";
 
 type ConnectState = "idle" | "starting" | "waiting" | "success" | "failed";
@@ -43,7 +44,8 @@ export class ReauthBannerComponent {
 		try {
 			const initRes = await fetch("/api/nextcloud/connect/init", { method: "POST" });
 			if (!initRes.ok) throw new Error(`init returned ${initRes.status}`);
-			const { loginUrl } = (await initRes.json()) as { loginUrl: string };
+			const loginUrl = stringField(await initRes.json(), "loginUrl");
+			if (loginUrl === null) throw new Error("init returned no login URL");
 			// Open in a new tab so the user can grant access without
 			// losing the dashboard context. Pop-up blockers normally
 			// allow this because it's a direct response to a click.
@@ -52,7 +54,7 @@ export class ReauthBannerComponent {
 			await this.pollUntilDone();
 		} catch (e) {
 			this.state.set("failed");
-			this.errorMessage.set((e as Error).message);
+			this.errorMessage.set(errorText(e));
 		}
 	}
 
@@ -63,18 +65,18 @@ export class ReauthBannerComponent {
 			await new Promise((r) => setTimeout(r, 2000));
 			const res = await fetch("/api/nextcloud/connect/status");
 			if (!res.ok) continue;
-			const body = (await res.json()) as
-				| { state: "idle" }
-				| { state: "pending" }
-				| { state: "ready"; loginName: string }
-				| { state: "failed"; error: string };
-			if (body.state === "ready") {
+			// Read the discriminant rather than declaring the union: this poll
+			// decides whether the user is reconnected, and a body that isn't one
+			// of these four shapes must keep polling, not be believed.
+			const body: unknown = await res.json();
+			const state = stringField(body, "state");
+			if (state === "ready") {
 				this.connectionState.setNextcloudStatus("active");
 				this.state.set("success");
 				return;
 			}
-			if (body.state === "failed") {
-				throw new Error(body.error);
+			if (state === "failed") {
+				throw new Error(stringField(body, "error") ?? "Nextcloud refused the grant");
 			}
 		}
 		throw new Error("Timed out waiting for Nextcloud grant");

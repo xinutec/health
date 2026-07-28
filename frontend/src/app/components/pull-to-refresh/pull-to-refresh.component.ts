@@ -109,8 +109,10 @@ export class PullToRefreshComponent implements OnDestroy {
 		// Don't steal the gesture from an element that handles its own drag —
 		// the Leaflet map (pan) or anything that opts out with the attribute.
 		// A downward drag there is panning, not a pull-to-refresh.
-		const target = e.target as Element | null;
-		if (target?.closest(PTR_EXCLUDE_SELECTOR)) {
+		// `instanceof`, not an assertion: a touch can start on a text node, which
+		// has no `closest`, and the exclusion would throw instead of applying.
+		const target = e.target;
+		if (target instanceof Element && target.closest(PTR_EXCLUDE_SELECTOR)) {
 			this.active = false;
 			return;
 		}
