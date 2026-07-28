@@ -192,7 +192,15 @@ type FeasibilityBaseline = Record<string, number>;
  *  Ratcheted like the kinematic ceiling: membership data comes from each
  *  fixture's recorded `stationsOnLine` trace, so a re-capture that widens
  *  coverage can surface NEW standing debt — that is a real defect becoming
- *  visible, blessed into the ceiling rather than hidden. */
+ *  visible, blessed into the ceiling rather than hidden.
+ *
+ *  AT ZERO since 2026-07-28 (#351 closed: the boarding anchor gained the
+ *  membership veto its alight twin had carried since #377). A ceiling of zero
+ *  enforces exactly like the hard-zero rail invariants — every occurrence is
+ *  above it — while keeping `--bless-rail-triples` as the way a widened capture
+ *  records genuinely new debt. The only difference from a bare assertion is
+ *  that raising it leaves a reviewable diff in this file, which is the point.
+ *  It is a physical law, so it belongs at zero and should stay there. */
 const RAIL_TRIPLE_BASELINE_PATH = path.join(GOLDEN_DIR, "rail-triple-baseline.json");
 /** Per-day set of ground-truth rows the pipeline still satisfies — the TRUTH
  *  FLOOR (#379). The narratives themselves are gitignored (real places, real

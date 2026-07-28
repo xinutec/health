@@ -35,6 +35,17 @@ const STATIONS = [
 	{ name: "Gamma", north: 6000, east: 0 },
 ];
 
+/** Which stations each line STOPS at — the membership the boarding re-anchor
+ *  must respect. "Line 1" runs the whole synthetic corridor; "Line 2" skips
+ *  Alpha, so it stands in for the interchange case — a walk ending at a station
+ *  the labelled line does not serve. */
+const SERVED: Record<string, string[]> = {
+	"Line 1": ["Alpha", "Beta", "Gamma", "Delta", "Zeta"],
+	"Line 2": ["Beta", "Gamma"],
+};
+const servedLookup = async (line: string): Promise<{ name: string }[]> =>
+	(SERVED[line] ?? []).map((name) => ({ name }));
+
 const stationsLookup = async (lat: number, lon: number): Promise<NearbyStation[]> =>
 	STATIONS.map((s) => {
 		const p = at(s.north, s.east);
@@ -148,7 +159,12 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 360, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, walkWithBoardingHop(), stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(
+			segments,
+			walkWithBoardingHop(),
+			stationsLookup,
+			servedLookup,
+		);
 		expect(result).toHaveLength(2);
 		// Boarding rewritten to Alpha (where the walk's cluster sat), line kept.
 		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
@@ -170,7 +186,7 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 360, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup, servedLookup);
 		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
 		expect(result[1].startTs).toBe(240);
 		expect(result[0].endTs).toBe(240);
@@ -182,7 +198,7 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Alpha → Gamma · Line 1" }),
 		];
 		const slowWalk = [...Array(7)].map((_, i) => ({ ...at(0, i * 10), ts: i * 60, speed_kmh: 3, bearing: 0 }));
-		const result = await anchorTrainBoardingToWalkedStation(segments, slowWalk, stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(segments, slowWalk, stationsLookup, servedLookup);
 		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
 		expect(result[1].startTs).toBe(420);
 		expect(result[0].endTs).toBe(360);
@@ -198,7 +214,7 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 360, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, far, stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(segments, far, stationsLookup, servedLookup);
 		expect(result[1].wayName).toBe("Beta → Gamma · Line 1");
 		expect(result[1].startTs).toBe(420);
 	});
@@ -221,7 +237,7 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 328, mode: "walking" }),
 			seg({ startTs: 328, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup, servedLookup);
 		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
 		// Cut at the fix the run set out from (240), not at the segment boundary.
 		expect(result[1].startTs).toBe(240);
@@ -242,10 +258,56 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 420, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Alpha → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, walkWithBoardingHop(), stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(
+			segments,
+			walkWithBoardingHop(),
+			stationsLookup,
+			servedLookup,
+		);
 		expect(result[1].wayName).toBe("Alpha → Gamma · Line 1");
 		expect(result[1].startTs).toBe(240);
 		expect(result[0].endTs).toBe(240);
+	});
+
+	it("does NOT re-anchor to a station the leg's OWN line does not serve (the 07-12 interchange)", async () => {
+		// The 2026-07-12 shape: a walk ends at an interchange, so the terminal fix
+		// is near a station of a line the rider took EARLIER — not the one this leg
+		// is labelled with. Reaching Alpha on foot says the rider was there; it
+		// does not say they boarded Line 2 there, and Line 2 does not stop at
+		// Gamma at all. Re-anchoring would erase the interchange between the two
+		// rides and emit an invalid (board, alight, line) triple, which is exactly
+		// what `checkWorldlineFeasibility` then reports from the far end of the
+		// pipeline. The veto belongs here, where the label is written.
+		const segments = [
+			seg({ startTs: 0, endTs: 360, mode: "walking" }),
+			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 2" }),
+		];
+		const result = await anchorTrainBoardingToWalkedStation(
+			segments,
+			walkWithBoardingHop(),
+			stationsLookup,
+			servedLookup,
+		);
+		expect(result[1].wayName).toBe("Beta → Gamma · Line 2");
+		expect(result[1].startTs).toBe(420);
+		expect(result[0].endTs).toBe(360);
+	});
+
+	it("still re-anchors when the mirror has never heard of the line — absence of data is not a veto", async () => {
+		// `lineCannotServe` asserts nothing on an empty served list: an unmirrored
+		// line must not silently disable a correction that is otherwise supported.
+		const segments = [
+			seg({ startTs: 0, endTs: 360, mode: "walking" }),
+			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Beta → Gamma · Line 9" }),
+		];
+		const result = await anchorTrainBoardingToWalkedStation(
+			segments,
+			walkWithBoardingHop(),
+			stationsLookup,
+			servedLookup,
+		);
+		expect(result[1].wayName).toBe("Alpha → Gamma · Line 9");
+		expect(result[1].startTs).toBe(240);
 	});
 
 	it("does not extend to the labelled board on a single fast step (the stuck-GPS signature)", async () => {
@@ -260,7 +322,7 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 420, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Alpha → Gamma · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(segments, fixes, stationsLookup, servedLookup);
 		expect(result[1].startTs).toBe(420);
 		expect(result[0].endTs).toBe(420);
 	});
@@ -279,7 +341,12 @@ describe("anchorTrainBoardingToWalkedStation", () => {
 			seg({ startTs: 0, endTs: 360, mode: "walking" }),
 			seg({ startTs: 420, endTs: 900, mode: "train", wayName: "Gamma → Delta · Line 1" }),
 		];
-		const result = await anchorTrainBoardingToWalkedStation(segments, walkWithBoardingHop(), stationsLookup);
+		const result = await anchorTrainBoardingToWalkedStation(
+			segments,
+			walkWithBoardingHop(),
+			stationsLookup,
+			servedLookup,
+		);
 		expect(result).toHaveLength(3);
 		expect(result[2].wayName).toBe("Gamma → Delta · Line 1");
 		expect(result[2].startTs).toBe(420);

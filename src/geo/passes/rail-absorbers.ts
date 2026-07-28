@@ -286,12 +286,22 @@ const BOARDING_HOP_MIN_DIST_M = 250;
  * reclaims the hop), trim the walk to it, and rewrite the train's boarding. The
  * fix is anchored to the station the walk's own fixes reach — strictly better
  * evidence than a fix a stop or two down the line. Pure given the station lookup.
+ *
+ * The re-anchor may only name a station the leg's OWN line serves. Reaching a
+ * station on foot says the rider was THERE; it does not say they boarded THIS
+ * line there, and a walk that ends at an interchange reaches several lines'
+ * stations at once. Without that check the pass rewrites the boarding to
+ * whichever station the walk touched first and erases the interchange between
+ * them — 2026-07-12, where a Metropolitan-line leg ended up boarding at
+ * Highbury & Islington, which the Metropolitan does not serve (#351). The
+ * ALIGHT twin has carried this veto since #377; this is the symmetric half.
  */
 export async function anchorTrainBoardingToWalkedStation(
 	segments: EnrichedSegment[],
 	points: FilteredPoint[],
 	stationsLookup: (lat: number, lon: number) => Promise<NearbyStation[]> = (lat, lon) =>
 		dbOsmAdapter.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
+	servedLookup: ServedStationsLookup = (line) => dbOsmAdapter.stationsOnLine(line),
 ): Promise<EnrichedSegment[]> {
 	const out = segments.map((s) => ({ ...s }));
 	for (let k = 1; k < out.length; k++) {
@@ -375,6 +385,12 @@ export async function anchorTrainBoardingToWalkedStation(
 		// additionally anchored by a DIFFERENT station the walk reached.
 		const sameBoard = station.name === rail.board;
 		if (sameBoard && hopRunSteps < 2) continue;
+		// A RENAME must name a station this leg's line serves. The scan sees
+		// whatever the walk's terminal fix is near, and at an interchange that is
+		// several lines' stations; being there is not boarding THIS one. Only the
+		// rename is gated — the same-station case changes no name, and a boundary
+		// that reclaims a stranded hop is right whether or not the label is.
+		if (!sameBoard && rail.line && (await lineCannotServe(rail.line, station.name, servedLookup))) continue;
 		const reason = sameBoard
 			? `boarding boundary extended back to the ${station.name} departure — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk`
 			: `boarding re-anchored to ${station.name} (walk's terminal station) — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk (was boarding ${rail.board})`;

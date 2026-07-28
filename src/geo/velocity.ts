@@ -1458,8 +1458,11 @@ export async function computeVelocityFromInputs(
 		{
 			name: "boardingAnchor",
 			run: (segs) =>
-				anchorTrainBoardingToWalkedStation(segs, points, (lat, lon) =>
-					inputs.osm.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
+				anchorTrainBoardingToWalkedStation(
+					segs,
+					points,
+					(lat, lon) => inputs.osm.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
+					(line) => inputs.osm.stationsOnLine(line),
 				),
 		},
 
