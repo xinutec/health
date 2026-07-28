@@ -66,8 +66,15 @@ export type ModelledMode = Exclude<TransportMode, "vehicle" | "boat">;
  *    - `gps-jitter` — a "walking" leg demoted to stationary because the watch
  *      recorded no steps and the path only jittered in place (sitting indoors).
  *    - `low-cadence` — a leg flipped to driving by the low-cadence rule, so a
- *      later pass can revert it when it has no vehicular neighbour. */
-export type RefinedKind = "gps-gap-inferred" | "gps-jitter" | "low-cadence";
+ *      later pass can revert it when it has no vehicular neighbour.
+ *    - `turnaround-alight` / `turnaround-board` — the two halves of a leg cut
+ *      where the track doubled back: the rider got off, crossed the platform,
+ *      and boarded a train going the other way. Finding a turnaround needs the
+ *      whole leg's geometry and is easy to get subtly wrong, so it is decided
+ *      ONCE (`passes/reversal.ts`) and everything downstream reads these tags —
+ *      by the time the station lookup runs, the fixes at the boundary no longer
+ *      show the reversal at all. */
+export type RefinedKind = "gps-gap-inferred" | "gps-jitter" | "low-cadence" | "turnaround-alight" | "turnaround-board";
 
 export interface TrackSegment {
 	startTs: number;

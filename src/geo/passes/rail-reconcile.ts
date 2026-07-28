@@ -240,6 +240,62 @@ function resolveJourneyAlight(
 	return nearest.d <= JOURNEY_ALIGHT_MAX_M ? nearest.s.name : null;
 }
 
+/** How far a candidate ride must reach from its boarding station before "it came
+ *  back" is a meaningful thing to say. Under this, the station's own platform
+ *  geometry and GPS scatter dominate and any return test is noise. */
+const REVERSAL_MIN_SPAN_M = 1500;
+
+/** A ride that ends this fraction (or less) of the way out from its boarding
+ *  station, having once been much further, has doubled back. Half is deliberately
+ *  loose: the test must not fire on a ride whose GPS merely goes dark short of
+ *  the alight, which is the common case and where the ride's last OBSERVED fix
+ *  is still well down the line. */
+const REVERSAL_RETURN_FRACTION = 0.5;
+
+/**
+ * Would merging this span of fragments describe a ride that doubles back?
+ *
+ * The three existing merge gates all pass for an out-and-back on one line, and
+ * necessarily so: one line serves every station touched (it is the same line in
+ * both directions), the labels agree, and there is no interchange walk because
+ * the rider never changed trains. On 2026-07-07 Pippijn rode King's Cross →
+ * Wembley Park, turned round on the platform and rode straight back; the
+ * assembler merged both halves into one leg that boarded and alighted at King's
+ * Cross, which `checkWorldlineFeasibility` rejects as degenerate. The alight
+ * resolver's own "never collapse to X → X" guard cannot help — it falls back to
+ * the last fragment's alight, and on a round trip that is the boarding station
+ * too.
+ *
+ * Only the geometry separates the two cases. Distance from the boarding station
+ * grows along a one-way ride and stays grown; on a round trip it peaks at the
+ * turnaround and returns to nothing. So: reject when the span's LAST observed
+ * fix sits far closer to the board than the span's furthest point ever did.
+ *
+ * Reads only fixes already in hand and the line's station set already fetched to
+ * decide the merge. Unobserved spans return false — a gate that cannot see is
+ * not evidence of a reversal.
+ */
+function spanDoublesBack(
+	points: readonly FilteredPoint[],
+	startTs: number,
+	endTs: number,
+	board: string,
+	onLine: readonly LineStation[],
+): boolean {
+	const boardStation = onLine.find((s) => s.name === board);
+	if (boardStation === undefined) return false;
+	let maxD = 0;
+	let endD: number | null = null;
+	for (const p of points) {
+		if (p.ts < startTs || p.ts > endTs) continue;
+		const d = haversineMeters(p.lat, p.lon, boardStation.lat, boardStation.lon);
+		if (d > maxD) maxD = d;
+		endD = d;
+	}
+	if (endD === null || maxD < REVERSAL_MIN_SPAN_M) return false;
+	return endD < maxD * REVERSAL_RETURN_FRACTION;
+}
+
 /** A station-pair-labelled train leg (the only kind the assembler reasons over). */
 function isStationPairTrain(seg: EnrichedSegment | undefined): seg is EnrichedSegment {
 	return seg !== undefined && effectiveMode(seg) === "train" && parseRailWayName(seg.wayName) !== null;
@@ -455,6 +511,22 @@ export async function assembleRailJourney(
 				const sub = trainPositions.slice(p, c + 1).map((idx) => segments[idx]);
 				const ln = await findThroughLine(sub, stationsOf(sub), points, osm, stationsOnLineMemo);
 				if (ln === null) break;
+				//   4. The span does not double back. A continuous ride goes one way;
+				//      an out-and-back passes all three gates above and merges into a
+				//      degenerate "X → X" leg. Only asked once a second fragment is on
+				//      the table — a lone fragment is not being merged with anything.
+				if (
+					c > p &&
+					spanDoublesBack(
+						points,
+						segments[trainPositions[p]].startTs,
+						segments[trainPositions[c]].endTs,
+						parseRailWayName(segments[trainPositions[p]].wayName)?.board ?? "",
+						stationsOnLineMemo.get(ln) ?? [],
+					)
+				) {
+					break;
+				}
 				groupLine = ln;
 				allowed = nextAllowed;
 				e = c;

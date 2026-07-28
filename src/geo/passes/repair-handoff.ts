@@ -30,7 +30,7 @@
  */
 
 import type { EnrichedSegment } from "../enriched-segment.js";
-import { effectiveMode } from "../segment-util.js";
+import { effectiveMode, hasRefinedKind } from "../segment-util.js";
 import type { TransportMode } from "../segments.js";
 
 /** Modes in which the user is aboard a vehicle (segment-level `TransportMode`;
@@ -58,6 +58,12 @@ function isAbsorbableHandoff(a: EnrichedSegment, b: EnrichedSegment): boolean {
 	const mb = effectiveMode(b);
 	if (!VEHICLE_MODES.has(ma) || !VEHICLE_MODES.has(mb)) return false;
 	if (b.startTs - a.endTs > CONTIGUITY_MAX_GAP_S) return false;
+	// A hand-off between two vehicles is impossible *because you cannot leave one
+	// and be aboard the next with no time in between* — unless you turned round,
+	// which is the one way it happens: you step off, cross the platform, and board
+	// a train going back. Absorbing there welds an out-and-back into a journey
+	// that boards and alights at the same station (2026-07-07 Wembley Park).
+	if (hasRefinedKind(b, "turnaround-board")) return false;
 	// Exactly one side is an identified train: absorb the other into it.
 	return isIdentifiedTrain(a) !== isIdentifiedTrain(b);
 }

@@ -69,6 +69,7 @@ import {
 } from "./passes/rail-reconcile.js";
 import { annotateRailRuns, RAIL_RUN_STATION_RADIUS_M } from "./passes/rail-runs.js";
 import { repairVehicleHandoff } from "./passes/repair-handoff.js";
+import { splitReversingLegs } from "./passes/reversal.js";
 import {
 	absorbFarFocusPlacePhantom,
 	absorbIntraPlaceWalk,
@@ -1187,6 +1188,18 @@ export async function computeVelocityFromInputs(
 		{
 			name: "consolidateJitterStays",
 			run: (segs) => consolidateJitterStays(attachStayCentroids(segs, points), inputs.osm, inputs.venuePriors ?? null),
+		},
+
+		// A ride that doubles back is two rides with a change between them. Must
+		// run BEFORE railRuns: once a run is grown across a turnaround the two
+		// halves are one span, and every downstream gate legitimately passes for
+		// an out-and-back (one line serves both directions, the labels agree, no
+		// interchange walk), yielding a leg that boards and alights at the same
+		// station. Splitting here lets both halves take their own board/alight
+		// labels from the existing machinery.
+		{
+			name: "reversalSplit",
+			run: (segs) => splitReversingLegs(segs, points),
 		},
 
 		{

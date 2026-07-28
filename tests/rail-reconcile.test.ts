@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { FilteredPoint } from "../src/geo/kalman.js";
 import { assembleRailJourney, parseRailWayName, reconcileAdjacentRailLegs } from "../src/geo/passes/rail-reconcile.js";
 import type { EnrichedSegment } from "../src/geo/velocity.js";
 
@@ -34,6 +35,11 @@ function seg(
 }
 
 const ways = (segs: EnrichedSegment[]): (string | undefined)[] => segs.map((s) => s.wayName);
+
+/** A GPS fix at a whole minute, for the geometric gates. */
+function fix(min: number, lat: number, lon: number): FilteredPoint {
+	return { ts: min * 60, lat, lon, speed_kmh: 0, bearing: 0 };
+}
 
 describe("parseRailWayName", () => {
 	it("parses a bare station pair", () => {
@@ -351,6 +357,73 @@ describe("assembleRailJourney", () => {
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Brookden → Deepwell · Metropolitan Line");
+	});
+
+	it("does NOT merge an out-and-back round trip into one degenerate leg (the real 2026-07-07)", async () => {
+		// Pippijn rode King's Cross → Wembley Park on the Metropolitan line, turned
+		// round on the platform (he had left his watch at work and needed it for the
+		// night) and rode straight back. Every existing merge gate legitimately
+		// passes: ONE line serves every station touched, the labels are compatible,
+		// and there is no interchange walk — a round trip is on one line by
+		// definition. Merging yields a leg that boards and alights at the same
+		// station, which `checkWorldlineFeasibility` rejects as degenerate.
+		//
+		// Only the geometry separates the two cases: a one-way ride's distance from
+		// its boarding station grows and stays grown, while a round trip's peaks and
+		// comes back to nothing.
+		const stations = [
+			{ name: "Ashvale", lat: 0, lon: 0 },
+			{ name: "Brookden", lat: 0, lon: 0.02 },
+			{ name: "Carfax", lat: 0, lon: 0.04 },
+			{ name: "Deepwell", lat: 0, lon: 0.06 }, // ~6.7 km out from Ashvale
+		];
+		const osm = {
+			linesAtPoint: async () => new Set(["Metropolitan Line"]),
+			stationsOnLine: async () => stations,
+		};
+		const segs = [
+			seg("train", 0, 10, { wayName: "Ashvale → Deepwell", centroidLat: 0, centroidLon: 0.03 }),
+			seg("walking", 10, 12, { centroidLat: 0, centroidLon: 0.06 }), // the platform turnaround
+			seg("train", 12, 22, { wayName: "Deepwell → Ashvale", centroidLat: 0, centroidLon: 0.03 }),
+		];
+		// Out along the line, then back over the same ground.
+		const points = [];
+		for (let m = 0; m <= 10; m++) points.push(fix(m, 0, (0.06 * m) / 10));
+		for (let m = 12; m <= 22; m++) points.push(fix(m, 0, 0.06 - (0.06 * (m - 12)) / 10));
+
+		const out = await assembleRailJourney([...segs], points, osm);
+		const trains = out.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(2);
+		for (const t of trains) {
+			const r = parseRailWayName(t.wayName);
+			expect(r?.board).not.toBe(r?.alight);
+		}
+	});
+
+	it("still merges a one-way ride whose fixes only surface for the first half", async () => {
+		// The reversal gate must not fire on a ride that simply goes dark: the last
+		// OBSERVED fix is then mid-ride, far from the board — which is progress, not
+		// a return. Guarding on "ends near where it started" rather than "ends short
+		// of its own furthest point" is what keeps these two apart.
+		const stations = [
+			{ name: "Ashvale", lat: 0, lon: 0 },
+			{ name: "Brookden", lat: 0, lon: 0.02 },
+			{ name: "Carfax", lat: 0, lon: 0.04 },
+			{ name: "Deepwell", lat: 0, lon: 0.06 },
+		];
+		const osm = {
+			linesAtPoint: async () => new Set(["Metropolitan Line"]),
+			stationsOnLine: async () => stations,
+		};
+		const segs = [
+			seg("train", 0, 10, { wayName: "Ashvale → Brookden", centroidLat: 0, centroidLon: 0.01 }),
+			seg("walking", 10, 12, { centroidLat: 0, centroidLon: 0.02 }),
+			seg("train", 12, 22, { wayName: "Brookden → Carfax", centroidLat: 0, centroidLon: 0.03 }),
+		];
+		const points = [];
+		for (let m = 0; m <= 14; m++) points.push(fix(m, 0, (0.04 * m) / 14)); // then dark
+		const out = await assembleRailJourney([...segs], points, osm);
+		expect(out.filter((s) => s.mode === "train")).toHaveLength(1);
 	});
 
 	it("does NOT merge across a long stop (a real stopover, not a surfacing sliver)", async () => {

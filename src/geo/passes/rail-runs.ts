@@ -278,6 +278,11 @@ function findRailRuns(segments: EnrichedSegment[], points: FilteredPoint[]): Rai
 		let j = i + 1;
 		const absorbed: number[] = [];
 		while (j < segments.length) {
+			// A run may not grow across a turnaround: what follows is the ride back,
+			// not more of this ride. Read the split pass's tag rather than re-deriving
+			// it — the cut lands on the platform, and from there the approach and the
+			// departure both point home, so the reversal is no longer in the fixes.
+			if (hasRefinedKind(segments[j], "turnaround-board")) break;
 			if (isRailLike(segments[j])) {
 				j++;
 				continue;
@@ -315,7 +320,20 @@ function findRailRuns(segments: EnrichedSegment[], points: FilteredPoint[]): Rai
  * no such pattern exists, we fall through to the latest slow fix at-or-
  * before startTs, then to any fix at-or-before startTs.
  */
-function findRunBoardingFix(points: FilteredPoint[], startTs: number): FilteredPoint | undefined {
+function findRunBoardingFix(
+	points: FilteredPoint[],
+	startTs: number,
+	startsAtTurnaround = false,
+): FilteredPoint | undefined {
+	// The mirror of the alight case: a run cut at a turnaround BOARDS there. The
+	// platform-pattern walkback would otherwise stride back across the turnaround
+	// into the outbound journey and name a station the rider passed through on the
+	// way out — on 2026-07-07 it reached Baker Street, 15 minutes and one whole
+	// direction of travel earlier.
+	if (startsAtTurnaround) {
+		const atStart = [...points].sort((a, b) => Math.abs(a.ts - startTs) - Math.abs(b.ts - startTs))[0];
+		if (atStart !== undefined) return atStart;
+	}
 	const slow = (p: FilteredPoint): boolean => p.speed_kmh < POST_TRANSIT_SPEED_KMH;
 	const platformBoardingFix = findBoardingPlatformFix(points, startTs);
 	return (
@@ -344,7 +362,22 @@ function findRunBoardingFix(points: FilteredPoint[], startTs: number): FilteredP
  * station, not the user getting off. The actual alight is the first slow
  * fix that ISN'T followed by a return to transit speed.
  */
-export function findRunAlightFix(points: readonly FilteredPoint[], endTs: number): FilteredPoint | undefined {
+export function findRunAlightFix(
+	points: readonly FilteredPoint[],
+	endTs: number,
+	endsAtTurnaround = false,
+): FilteredPoint | undefined {
+	// A run cut at a turnaround alights THERE, and by the time this runs nothing
+	// in the fixes still says so: standing on the platform, the rider has already
+	// come back past the outermost point, so the approach and departure both read
+	// as heading home. Scanning forward walks through the interchange and names a
+	// station from the return journey (2026-07-07: the ride out to Wembley Park
+	// alighting at Baker Street, which it had passed through on the way there).
+	// The split pass decided this boundary from the whole leg's geometry; take it.
+	if (endsAtTurnaround) {
+		const atEnd = [...points].sort((a, b) => Math.abs(a.ts - endTs) - Math.abs(b.ts - endTs))[0];
+		if (atEnd !== undefined) return atEnd;
+	}
 	const slow = (p: FilteredPoint): boolean => p.speed_kmh < POST_TRANSIT_SPEED_KMH;
 	const findSustainedAlight = (predicate: (p: FilteredPoint) => boolean): FilteredPoint | undefined => {
 		for (const p of points) {
@@ -383,8 +416,8 @@ async function resolveRailRunLabel(
 ): Promise<string | null> {
 	const startTs = segments[run.from].startTs;
 	const endTs = segments[run.toExclusive - 1].endTs;
-	const slowBefore = findRunBoardingFix(points, startTs);
-	const after = findRunAlightFix(points, endTs);
+	const slowBefore = findRunBoardingFix(points, startTs, hasRefinedKind(segments[run.from], "turnaround-board"));
+	const after = findRunAlightFix(points, endTs, hasRefinedKind(segments[run.toExclusive - 1], "turnaround-alight"));
 	if (!slowBefore || !after) return null;
 
 	// Boarding-station lookup with preceding-stationary preference,
@@ -614,6 +647,11 @@ function applyRailRuns(segments: EnrichedSegment[], runs: RailRun[], runLabels: 
 			linearity: weighted((s) => s.linearity, 2),
 			pointCount: railSegs.reduce((a, s) => a + s.pointCount, 0),
 			refinedReason: "merged rail run (collapsed brief pauses)",
+			// Carry the run's refinement tags through the collapse. Rebuilding the
+			// segment from scratch silently dropped them, so a downstream pass asking
+			// "was this touched by rule X?" got `no` for a run that plainly was —
+			// which is how a turnaround-split half got welded back to its own return.
+			refinedKinds: [...new Set(railSegs.flatMap((s) => s.refinedKinds ?? []))],
 		};
 		if (label) merged.wayName = label;
 		out.push(merged);
