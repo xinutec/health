@@ -881,6 +881,64 @@ private def assembleResult (j : Json) : Json :=
       ("durP", Json.arr ((triplesOf j "durProbes").map
         (fun (s, d, e) => qCell (q (Verified.Hsmm.Assemble.durAt c s d e)))))]
 
+/-! ## Float bit transport
+
+Every other mode quantises before it emits (`qCell`, `ptJson`) because its
+inputs live on a pinned integer grid. The Kalman filter does not: it is a
+covariance recursion over raw degrees, where the seventh decimal of a fix moves
+the gain, so its wire format has to carry Floats exactly.
+
+`Lean.toJson (f : Float)` cannot. `Lean.JsonNumber` is a decimal (mantissa ×
+10⁻ᵉ) and the printer emits six places, so Float → JSON → Float is two
+roundings: `51.50009905063291` comes back `51.500099` and `1e-7` comes back `0`.
+Writing a faithful printer means a shortest-round-trip algorithm (Ryu/Grisu),
+which `JsNum.lean` explicitly declines to port.
+
+So a Float crosses the wire as its IEEE-754 bit pattern, and the pattern is a
+decimal STRING rather than a JSON number: it reaches 2^64, well past the 2^53
+JS integers are exact to, and a bare number would simply be re-rounded by
+`JSON.parse` one layer down. Round-tripping is then exact by construction,
+including `1e-7` and `-0.0`. The TS twin is `src/lean/float-bits.ts`. -/
+
+private def fBits (v : Float) : Json := Json.str (toString v.toBits.toNat)
+
+private def jBits (j : Json) : Except String Float := do
+  let s ← j.getStr?
+  match s.toNat? with
+  | some n => return Float.ofBits (UInt64.ofNat n)
+  | none => throw s!"not a float bit pattern: {s}"
+
+/-! ## Kalman mode (`verified_cli kalman`)
+
+`Verified.Geo.Kalman.filterGpsTrack` — the raw-GPS smoother upstream of the
+observation tensor — over the whole day's track in one call.
+
+  { "pts": [[ts, latBits, lonBits, accBits|null], …] }
+
+Output: `{ "pts": [[ts, latBits, lonBits, speedBits, bearingBits], …] }`. The
+filter DROPS rows (duplicate timestamps, innovation-gated fixes), so the output
+is a subsequence of the input and a length mismatch is meaningful, not a bug. -/
+
+private def parseKalmanPt (j : Json) : Except String Verified.Geo.Kalman.GpsPoint := do
+  let a ← j.getArr?
+  match a[0]?, a[1]?, a[2]? with
+  | some ts, some la, some lo =>
+    let acc ← match a[3]? with
+      | some v => if v.isNull then pure none else some <$> jBits v
+      | none => pure none
+    return ⟨← ts.getInt?, ← jBits la, ← jBits lo, acc⟩
+  | _, _, _ => throw "kalman point must be [ts, latBits, lonBits, accBits|null]"
+
+private def kalmanResult (j : Json) : Json :=
+  let parsed : Except String (Array Verified.Geo.Kalman.FilteredPoint) := do
+    let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseKalmanPt
+    return Verified.Geo.Kalman.filterGpsTrack pts
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out =>
+    Json.mkObj [("pts", Json.arr (out.map fun p =>
+      Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon, fBits p.speedKmh, fBits p.bearing]))]
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -903,6 +961,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "assemble" => assembleResult j
         | .ok "assembledecode" => assembleDecodeResult j
         | .ok "coverage" => coverageResult j
+        | .ok "kalman" => kalmanResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -924,6 +983,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "match" then return ← matchMain input
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input
+  if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with

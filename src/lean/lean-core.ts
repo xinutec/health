@@ -254,3 +254,27 @@ export interface LeanRailResp {
 export function leanRailServe(req: Record<string, unknown>): LeanRailResp {
 	return leanCore.call("rail", req) as LeanRailResp;
 }
+
+/** Result shape of a `kalman` GPS filter (mirrors `verified_cli kalman` and the
+ *  `serveLoop` `kalmanResult` handler): `[ts, latBits, lonBits, speedBits,
+ *  bearingBits]` rows.
+ *
+ *  The only mode whose coordinates are NOT quantised. The filter is a
+ *  covariance recursion over raw degrees, so its wire format carries IEEE-754
+ *  bit patterns as decimal strings instead — see `float-bits.ts` for why a
+ *  string and not a JSON number. Consequently an `on`-mode flip serves EXACTLY
+ *  the doubles TS would have produced, or the ledger says it did not. */
+export interface LeanKalmanResp {
+	pts?: Array<[number, string, string, string, string]>;
+	error?: string;
+}
+
+/**
+ * Run one verified GPS Kalman filter over a whole day's track through the
+ * persistent core, synchronously. `req` is `{ pts: [[ts, latBits, lonBits,
+ * accBits|null], …] }`. Throws `LeanBridgeError` on any bridge failure; the
+ * caller falls back to TS.
+ */
+export function leanKalmanServe(req: Record<string, unknown>): LeanKalmanResp {
+	return leanCore.call("kalman", req) as LeanKalmanResp;
+}

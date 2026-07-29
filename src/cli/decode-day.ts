@@ -48,6 +48,7 @@ import { reachablePlacesForDay } from "../hmm/place-reachability.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
 import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
+import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
 import {
 	leanMatchDivergences,
 	leanMatchMode,
@@ -369,6 +370,7 @@ async function decodeAndPersist(
 	logLeanHsmmLedger(date);
 	logLeanPassLedger(date);
 	logLeanMatchLedger(date);
+	logLeanKalmanLedger(date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.

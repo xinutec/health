@@ -11,6 +11,7 @@ import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
 import { installLeanPasses } from "../lean/install.js";
+import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
 import { detectKnownPlaceStays, type StayCandidate } from "../sleep/known-place-stays.js";
@@ -669,7 +670,7 @@ export async function computeVelocityFromInputs(
 		.filter((p) => p.accuracy === null || p.accuracy <= 200)
 		.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy }));
 
-	const points = timeSync("kalman", () => filterGpsTrack(gpsPoints));
+	const points = timeSync("kalman", () => filterGpsTrackViaLean(gpsPoints, filterGpsTrack(gpsPoints)));
 	const segments = timeSync("segments", () => classifySegments(points, stayPoints));
 
 	if (options.enrich === false) {

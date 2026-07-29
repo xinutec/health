@@ -41,12 +41,52 @@ a tenant in `src/lean/`, and a flag. The entire serve surface today is
 | `LEAN_MATCH` | the walk map-matcher |
 | `LEAN_RAIL` | rail shortest-path |
 | `LEAN_PASSES` | five display-geometry helpers — simplify, spurs, spikes, trim, despike |
+| `LEAN_KALMAN` | the GPS Kalman filter (#387, 2026-07-29) |
 
 Everything else is written-but-idle. The next slices are therefore *execution*
 slices — take a complete module, give it a CLI verb and a shadow tenant,
-validate on the golden corpus, flip — not new ports. `Verified.Geo.Kalman`
-(`filterGpsTrack` + `classifyMode`, 10 guards) is the obvious first: upstream of
-everything, pure over the track, no OSM or DB.
+validate on the golden corpus, flip — not new ports.
+
+### What the first execution slice cost, and what it taught (#387)
+
+`Verified.Geo.Kalman` was the obvious first: upstream of everything, pure over
+the track, no OSM or DB. Writing it was already done; serving it took a
+transport and a measurement.
+
+**Transport.** Every earlier mode quantises to the pinned 1e-7° grid before it
+emits, so no Float ever crosses the wire. The Kalman filter cannot: it is a
+covariance recursion over raw degrees. And `Lean.toJson (f : Float)` prints six
+decimal places — `51.50009905063291` returns as `51.500099`, `1e-7` as `0` —
+because `Lean.JsonNumber` is a decimal and Lean has no shortest-round-trip
+printer (that is Ryu/Grisu, which `JsNum.lean` explicitly declines to port). So
+Floats cross as IEEE-754 bit patterns in decimal STRINGS: a bare JSON integer
+would hit JS's 2^53 limit and be re-rounded by `JSON.parse` one layer down.
+`src/lean/float-bits.ts` + `fBits`/`jBits` in `Main.lean`. Reusable — any future
+mode over unquantised reals wants it.
+
+**Measurement, and a bar that had to move.** The plan said the flip bar was
+bit-exactness: same arithmetic, same bits, so equal output. The corpus refuted
+that. `lon` differs on ~0.5% of rows by ≤1 ULP; the cause, measured over inputs
+carried as exact bits, is that this Lean runtime's `Float.cos` and V8's
+`Math.cos` disagree by 1 ULP on 7.6% of real latitudes. `metersToDegreesLon`
+calls `cos`; `metersToDegreesLat` does not, and `lat` is bit-identical on every
+day — the controlled comparison that makes the attribution solid.
+
+Two consequences for the rest of the port:
+
+- **Expect this wherever `sin`/`cos`/`atan2`/`log`/`exp` enter, and set the bar
+  accordingly.** Bit-exactness is the right bar for discrete and
+  quantised-input modes (`geo`, `match`, `rail`, the HSMM decode — all of which
+  achieve it). For a mode over unquantised reals with transcendentals it is
+  unreachable, and demanding it would either block the flip forever or teach the
+  reader to ignore the ledger. `lean-kalman`'s ledger therefore reports a ULP
+  magnitude and reserves the loud verdict for what no ULP story explains: the
+  two arms keeping *different fixes*.
+- **This is the concrete case for getting off `Float`.** Not a style preference
+  — a fixed-point or rational metre↔degree scaling would agree exactly across
+  runtimes AND be provable, where two IEEE `cos` implementations can never be
+  made to agree. Every transcendental in the served path is a place where the
+  port can be pinned by testing but not proved.
 
 ## Already in Lean (done — do not port)
 

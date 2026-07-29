@@ -15,6 +15,19 @@ and the reset-path speed/bearing are ≤1-ULP close. Normal-path speed/bearing a
 ULP wobble except at a round boundary — the accepted near-tie class. The
 reset path emits speed/bearing UNROUNDED (a TS quirk, mirrored here). UNPROVEN;
 pinned by the `#guard`s against Node/V8.
+
+That "≤1-ULP close" is now MEASURED, not predicted (`npm run compare-kalman`,
+2026-07-29, all 32 golden days). Row counts agree everywhere — the two arms keep
+the same fixes. `lat` is bit-identical everywhere; `lon` differs on ~0.5% of rows
+by ≤1 ULP (worst day 19, where the recursion compounds a run of them); the few
+speed/bearing differences are all reset rows. Root cause, measured over inputs
+carried across as exact bit patterns: this runtime's `Float.cos` and V8's
+`Math.cos` disagree by 1 ULP on 65 of 860 (7.6%) of one real day's latitudes.
+`metersToDegreesLon` calls `cos` and `metersToDegreesLat` does not — which is
+why `lat` is the clean control, and makes that a controlled comparison rather
+than an inference. Two libms cannot be made to agree; the way to make this
+filter *provable* rather than merely pinned is to take the metre↔degree scaling
+off `Float` entirely.
 -/
 
 namespace Verified.Geo.Kalman
