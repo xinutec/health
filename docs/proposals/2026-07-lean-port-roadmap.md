@@ -42,6 +42,7 @@ a tenant in `src/lean/`, and a flag. The entire serve surface today is
 | `LEAN_RAIL` | rail shortest-path |
 | `LEAN_PASSES` | five display-geometry helpers — simplify, spurs, spikes, trim, despike |
 | `LEAN_KALMAN` | the GPS Kalman filter (#387, 2026-07-29) |
+| `LEAN_GPSQUALITY` | the GPS quality pre-filter (#388, 2026-07-30) |
 
 Everything else is written-but-idle. The next slices are therefore *execution*
 slices — take a complete module, give it a CLI verb and a shadow tenant,
@@ -87,6 +88,29 @@ Two consequences for the rest of the port:
   runtimes AND be provable, where two IEEE `cos` implementations can never be
   made to agree. Every transcendental in the served path is a place where the
   port can be pinned by testing but not proved.
+
+### The second slice, and the shape worth preferring (#388)
+
+`Verified.Geo.GpsQuality` — the incoherent-run pre-filter one call ABOVE the
+Kalman filter — went in next and cost almost nothing: the bit transport already
+existed, so it was a verb, a tenant, and a referee. `npm run compare-gpsquality`
+reports **32/32 days agreeing exactly on the keep-set**, and golden under
+`LEAN_GPSQUALITY=on` is 32/32 byte-identical with zero divergence warnings.
+
+The contrast with Kalman is the lesson, and it should steer which modules get
+served next. This filter is **drop-only**: every fix it emits is a *copy of an
+input fix*, never a computed value. Inputs cross as exact bits, so both arms
+select from bit-identical candidates and the output is pure selection; `cos`
+reaches only the threshold comparisons. There is therefore no ULP class to
+grade — any divergence at all is a DECISION flip, and the ledger has two levels
+instead of three.
+
+**Prefer selection-shaped modules when choosing the next slice.** A pass that
+returns a subset of its input (the geometry passes, this filter, the rail path's
+vertex indices) admits an exact gate on any runtime. A pass that returns freshly
+computed reals (Kalman, and most of Tier 2/4) can only ever have a bounded-ULP
+gate plus a structural invariant. Both are shippable; the first is far cheaper
+to be confident about.
 
 ## Already in Lean (done — do not port)
 

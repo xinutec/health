@@ -278,3 +278,26 @@ export interface LeanKalmanResp {
 export function leanKalmanServe(req: Record<string, unknown>): LeanKalmanResp {
 	return leanCore.call("kalman", req) as LeanKalmanResp;
 }
+
+/** Result shape of a `gpsquality` pre-filter pass (mirrors `verified_cli
+ *  gpsquality` and the `serveLoop` `gpsQualityResult` handler): the SURVIVING
+ *  `[ts, latBits, lonBits, accBits|null]` rows.
+ *
+ *  Same bit transport as `kalman`, but nothing here is computed — every row is
+ *  a copy of an input row, so the response is a pure selection. That is what
+ *  makes its gate sharper: there is no numeric near-tie class, only agreement
+ *  or disagreement about which fixes are real. */
+export interface LeanGpsQualityResp {
+	pts?: Array<[number, string, string, string | null]>;
+	error?: string;
+}
+
+/**
+ * Run one verified GPS quality pre-filter over a whole day's track through the
+ * persistent core, synchronously. `req` is `{ pts: [[ts, latBits, lonBits,
+ * accBits|null], …] }`. Throws `LeanBridgeError` on any bridge failure; the
+ * caller falls back to TS.
+ */
+export function leanGpsQualityServe(req: Record<string, unknown>): LeanGpsQualityResp {
+	return leanCore.call("gpsquality", req) as LeanGpsQualityResp;
+}

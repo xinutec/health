@@ -92,5 +92,6 @@ console.log(`
     LEAN_RAIL    rail shortest-path
     LEAN_PASSES  five display-geometry helpers: simplify, spurs, spikes, trim, despike
     LEAN_KALMAN  the GPS Kalman filter
+    LEAN_GPSQUALITY  the GPS quality pre-filter
   Everything else above is written-but-idle. Closing that is the remaining work.
 `);

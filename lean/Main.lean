@@ -939,6 +939,29 @@ private def kalmanResult (j : Json) : Json :=
     Json.mkObj [("pts", Json.arr (out.map fun p =>
       Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon, fBits p.speedKmh, fBits p.bearing]))]
 
+/-! ## GPS quality mode (`verified_cli gpsquality`)
+
+`Verified.Geo.GpsQuality.qualityFilterGps` — the incoherent-run pre-filter that
+runs immediately BEFORE the Kalman filter, over the whole day's track.
+
+  { "pts": [[ts, latBits, lonBits, accBits|null], …] }
+
+Output: the SURVIVING rows, same shape. Unlike `kalman` this emits no computed
+values: every output row is a copy of an input row, so the response is a pure
+selection and the only thing the two arms can disagree about is WHICH fixes
+survive. `cos` reaches only the threshold comparisons, never the output. -/
+
+private def gpsQualityResult (j : Json) : Json :=
+  let parsed : Except String (Array Verified.Geo.Kalman.GpsPoint) := do
+    let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseKalmanPt
+    return Verified.Geo.GpsQuality.qualityFilterGps pts
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out =>
+    Json.mkObj [("pts", Json.arr (out.map fun p =>
+      Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon,
+        match p.accuracy with | none => Json.null | some a => fBits a]))]
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -962,6 +985,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "assembledecode" => assembleDecodeResult j
         | .ok "coverage" => coverageResult j
         | .ok "kalman" => kalmanResult j
+        | .ok "gpsquality" => gpsQualityResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -984,6 +1008,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
+  if args.contains "gpsquality" then return ← runOne gpsQualityResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with

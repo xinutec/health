@@ -11,6 +11,7 @@ import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
 import { installLeanPasses } from "../lean/install.js";
+import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
@@ -629,7 +630,7 @@ export async function computeVelocityFromInputs(
 	// cell-tower garbage) before anything else touches the data. The
 	// dropped fixes leave an honest temporal gap that `inferTransitGaps`
 	// bridges downstream. See src/geo/gps-quality.ts.
-	const cleaned = timeSync("gpsQuality", () => qualityFilterGps(inDay));
+	const cleaned = timeSync("gpsQuality", () => qualityFilterGpsViaLean(inDay, qualityFilterGps(inDay)));
 
 	// Place-snap: if a fix is unambiguously close to a known cluster (home,
 	// work, etc.), pull it to the cluster centroid. Reduces GPS noise around
