@@ -12,8 +12,9 @@
 # (2026-06-29 Angular 21->22 + zoneless migration; Node 22->24.)
 #
 # Runs `npm run verify` (typecheck + lint + tests), then the local
-# fixture gates (`npm run golden` + `npm run walk-gate` — these can
-# only run here, the fixtures are gitignored), commits all changes in
+# fixture gates (`npm run golden` + `npm run walk-gate` +
+# `npm run score-decoder` — these can only run here, the fixtures are
+# gitignored), commits all changes in
 # this repo, pushes to main, waits for CI, then rolls out the new image
 # on isis. The k8s manifests live in the home monorepo (xinutec/pippijn
 # code/kubes/health/k8s); this repo builds xinutec/health-sync:latest.
@@ -79,19 +80,28 @@ echo "==> [1/7] npm run verify (node from flake devShell)"
 cd "$HEALTH_DIR"
 $DEV npm run verify
 
-# --- golden + geometry gates ---------------------------------------------
+# --- golden + geometry + decoder gates ------------------------------------
 # The deterministic fixture gates: day-state snapshot diff (incl. worldline
-# feasibility + the journey ratchet) and the walk-geometry ratchet. Both are
-# zero-DB replays of the local fixtures under tests/golden/ — gitignored, so
-# CI can never run them; the deploy path is the only place they can gate.
-# Skip only with DEPLOY_SKIP_GOLDEN=1 (e.g. an infra-only change while a
-# bless is in flight).
+# feasibility + the journey ratchet), the walk-geometry ratchet, and the
+# decoder scoreboard. All are zero-DB replays of the local fixtures under
+# tests/golden/ — gitignored, so CI can never run them; the deploy path is the
+# only place they can gate. Skip only with DEPLOY_SKIP_GOLDEN=1 (e.g. an
+# infra-only change while a bless is in flight).
+#
+# score-decoder joined this list on 2026-07-29 because it had gone red
+# unnoticed: it was in no gate at all, so a scoreboard regression could sit
+# there indefinitely. It had — 2026-05-22 phantomRides 0 → 1, which turned out
+# to be the NARRATIVE getting sharper (an `unclear` row upgraded to `wrong
+# {user}`, so it became enforceable and could convict a leg) rather than any
+# decoder change. Harmless in the end, but nothing would have said so. Ordered
+# last of the three because it is the newest and the noisiest.
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
-	echo "==> [2/7] golden corpus + walk-geometry ratchet"
+	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard"
 	$DEV npm run golden
 	$DEV npm run walk-gate
+	$DEV npm run score-decoder
 else
-	echo "==> [2/7] SKIPPED golden + walk-gate (DEPLOY_SKIP_GOLDEN=1)"
+	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi
 
 # --- stage + commit ------------------------------------------------------
