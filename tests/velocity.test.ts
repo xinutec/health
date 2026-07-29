@@ -648,6 +648,91 @@ describe("annotateRailRuns", () => {
 		expect(out[0].wayName).toBe("Station K → Station W");
 	});
 
+	it("names the alight after the station the ridden line reaches, not the nearer terminus", async () => {
+		// 2026-05-15 12:36 Victoria → King's Cross St Pancras on the Victoria
+		// line. The street reacquire after alighting landed 126 m from the
+		// National Rail terminus node and 224 m from the tube one, so distance
+		// alone named the ride "Victoria → London King's Cross" — a pair no line
+		// serves — and the terminus node sits on the mainline corridor, so the
+		// line suffix was lost with it.
+		const terminus = { lat: 50.064, lon: 4.848 }; // nearer to the alight fix…
+		const tube = { lat: 50.063, lon: 4.846 }; // …but only this one is on Line M
+		const stationCoordLookup = async (lat: number, _lon: number): Promise<NearbyStation[]> => {
+			if (Math.abs(lat - 50.03) < 0.005)
+				return [{ name: "Station K", subtype: "subway", distanceM: 50, lat: 50.03, lon: 5.0 }];
+			return [
+				{ name: "Terminus T", subtype: "rail", distanceM: 126, ...terminus },
+				{ name: "Station W", subtype: "subway", distanceM: 224, ...tube },
+			];
+		};
+		const near = (a: { lat: number; lon: number }, lat: number, lon: number): boolean =>
+			Math.abs(lat - a.lat) < 0.0005 && Math.abs(lon - a.lon) < 0.0005;
+		const lines = async (lat: number, lon: number): Promise<Set<string>> => {
+			if (Math.abs(lat - 50.03) < 0.005) return new Set(["Line M", "Line J"]); // boarding fix + its node
+			if (near(terminus, lat, lon)) return new Set(["Main Line"]); // the terminus is on the mainline…
+			if (near(tube, lat, lon)) return new Set(["Line M"]); // …and only the tube node is on Line M
+			return new Set(); // the alight fix itself: street level, nothing in range
+		};
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1600, 50.068, 4.852)];
+		const out = await annotateRailRuns(segs, points, stationCoordLookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W · Line M");
+	});
+
+	it("corrects the alight even when two lines reach it, and lets the track name one", async () => {
+		// The real 2026-05-15 shape: Victoria and King's Cross St Pancras are
+		// joined by BOTH the Victoria and the Circle line, so requiring a
+		// singleton would have vetoed the right station for being reachable two
+		// ways. The station question is settled by reachability; the line question
+		// then goes to the ride's own mid-ride fixes, as on the primary path.
+		const terminus = { lat: 50.064, lon: 4.848 };
+		const tube = { lat: 50.063, lon: 4.846 };
+		const stationCoordLookup = async (lat: number, _lon: number): Promise<NearbyStation[]> => {
+			if (Math.abs(lat - 50.03) < 0.005)
+				return [{ name: "Station K", subtype: "subway", distanceM: 50, lat: 50.03, lon: 5.0 }];
+			return [
+				{ name: "Terminus T", subtype: "rail", distanceM: 126, ...terminus },
+				{ name: "Station W", subtype: "subway", distanceM: 224, ...tube },
+			];
+		};
+		const near = (a: { lat: number; lon: number }, lat: number, lon: number): boolean =>
+			Math.abs(lat - a.lat) < 0.0005 && Math.abs(lon - a.lon) < 0.0005;
+		const lines = async (lat: number, lon: number): Promise<Set<string>> => {
+			if (Math.abs(lat - 50.03) < 0.005) return new Set(["Line M", "Line C"]);
+			if (Math.abs(lon - 4.9) < 0.001) return new Set(["Line M"]); // the one surfaced mid-ride fix
+			if (near(terminus, lat, lon)) return new Set(["Main Line"]);
+			if (near(tube, lat, lon)) return new Set(["Line M", "Line C"]); // reachable BOTH ways
+			return new Set();
+		};
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1200, 50.05, 4.9), fix(1600, 50.068, 4.852)];
+		const out = await annotateRailRuns(segs, points, stationCoordLookup, lines);
+		expect(out[0].wayName).toBe("Station K → Station W · Line M");
+	});
+
+	it("keeps the nearest alight when no candidate at the site is reachable", async () => {
+		// The sweep is a veto, not a re-ranking: when nothing the site offers
+		// shares a line with the boarding station, the pick stands and the label
+		// stays bare. A missing line is honest; a renamed station bought with no
+		// evidence is not.
+		const terminus = { lat: 50.064, lon: 4.848 };
+		const tube = { lat: 50.063, lon: 4.846 };
+		const stationCoordLookup = async (lat: number, _lon: number): Promise<NearbyStation[]> => {
+			if (Math.abs(lat - 50.03) < 0.005)
+				return [{ name: "Station K", subtype: "subway", distanceM: 50, lat: 50.03, lon: 5.0 }];
+			return [
+				{ name: "Terminus T", subtype: "rail", distanceM: 126, ...terminus },
+				{ name: "Station W", subtype: "subway", distanceM: 224, ...tube },
+			];
+		};
+		const lines = async (lat: number, _lon: number): Promise<Set<string>> =>
+			Math.abs(lat - 50.03) < 0.005 ? new Set(["Line M", "Line J"]) : new Set(["Main Line"]);
+		const segs = [train(1000, 1500)];
+		const points = [fix(900, 50.03, 5.0), fix(1600, 50.068, 4.852)];
+		const out = await annotateRailRuns(segs, points, stationCoordLookup, lines);
+		expect(out[0].wayName).toBe("Station K → Terminus T");
+	});
+
 	it("leaves non-rail segments alone", async () => {
 		const driving: EnrichedSegment = {
 			startTs: 1000,

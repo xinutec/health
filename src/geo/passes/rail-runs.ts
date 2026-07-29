@@ -10,7 +10,7 @@
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
 import { pickLineByStoppingPattern } from "../line-stopping-pattern.js";
-import { type NearbyStation, pickBestStation } from "../osm.js";
+import { type NearbyStation, pickBestStation, rankStations, stationTier } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
 import { isUncapturedLookup } from "../osm-adapter-fixture.js";
 import type { RailStopRelation } from "../osm-rail-stops.js";
@@ -442,11 +442,13 @@ async function resolveRailRunLabel(
 	let startStation: string | undefined;
 	let beforeLookup = { lat: slowBefore.lat, lon: slowBefore.lon };
 	let endStation: string | undefined;
-	// The resolved stations' own node coordinates (when the adapter
-	// supplies them) — the line-intersection fallback below retries the
-	// lookup there when the fix-point intersection fails.
+	// The boarding station's own node coordinate (when the adapter supplies
+	// it) — the line-intersection fallback below retries the lookup there
+	// when the fix-point intersection fails.
 	let startStationCoord: { lat: number; lon: number } | undefined;
-	let endStationCoord: { lat: number; lon: number } | undefined;
+	// On the alight side the fallback needs every station the site offers, not
+	// just the winner: which one is right is part of what it decides.
+	let endCandidates: readonly NearbyStation[] = [];
 	try {
 		let stationaryCandidate: { name: string; lat: number; lon: number; endTs: number; station: NearbyStation } | null =
 			null;
@@ -509,7 +511,7 @@ async function resolveRailRunLabel(
 		}
 		const bestEnd = pickBestStation(endStations);
 		endStation = bestEnd?.name;
-		endStationCoord = stationCoord(bestEnd);
+		endCandidates = bestEnd ? alightCandidates(endStations, bestEnd) : [];
 	} catch (e) {
 		// A lookup that legitimately finds nothing degrades to no label. A STALE
 		// FIXTURE is not that — rethrow so the day fails and says re-capture,
@@ -574,28 +576,83 @@ async function resolveRailRunLabel(
 			if (stopped !== null) return `${base} · ${stopped}`;
 		}
 
-		// Fallback: the lookup point for an endpoint can be an
-		// off-corridor fix (a street reacquire after alighting, a stay
-		// centroid a block from the platform) where linesAtPoint finds
-		// nothing — the intersection empties and the label loses its
-		// line, which is also the rail_route_cache key, so the ride
-		// draws as raw GPS. The stations themselves were resolved and
-		// their own nodes sit on the corridor: retry the intersection
-		// at the station coordinates (falling back to the original
-		// result for an endpoint whose recording carries no coords).
+		// Fallback: the lookup point for an endpoint can be an off-corridor fix (a
+		// street reacquire after alighting, a stay centroid a block from the
+		// platform) where linesAtPoint finds nothing — the intersection empties and
+		// the label loses its line, which is also the rail_route_cache key, so the
+		// ride draws as raw GPS. The stations themselves were resolved and their own
+		// nodes sit on the corridor: retry the intersection there (falling back to
+		// the original result for a station whose recording carries no coords).
+		//
 		// Only when the endpoints yielded NOTHING. An *ambiguous* primary must not
 		// be collapsed by this retry: the station nodes are a different (and here
 		// less trustworthy) lookup — with the alight still resolved to the National
 		// Rail terminus "London King's Cross", the retry returned a confident
 		// singleton of the wrong line while the honest answer was "two candidates,
 		// and the track knows which" (#374).
-		if (intersection.length === 0 && (startStationCoord || endStationCoord)) {
-			const [startRetry, endRetry] = await Promise.all([
-				startStationCoord ? linesLookup(startStationCoord.lat, startStationCoord.lon).then(canonicalLines) : startCanon,
-				endStationCoord ? linesLookup(endStationCoord.lat, endStationCoord.lon).then(canonicalLines) : endCanon,
-			]);
-			const retry = [...startRetry].filter((l) => endRetry.has(l));
-			if (retry.length === 1) return `${base} · ${retry[0]}`;
+		//
+		// On the alight side the retry sweeps the CANDIDATES, not only the one
+		// `pickBestStation` chose, because at a shared site that choice is itself in
+		// doubt. King's Cross carries a National Rail terminus node ("London King's
+		// Cross") and a tube node ("King's Cross St Pancras") ~200 m apart, both
+		// station-tier, so distance alone decides — and on 2026-05-15 the street
+		// reacquire after a Victoria-line ride landed nearer the terminus. That
+		// named the ride after a station the Victoria line does not reach, and
+		// erased the line too, since the terminus node is on the mainline corridor.
+		// The erasure is what makes it self-concealing: with no line on the leg,
+		// `checkRailTriples` has nothing to assert against, so the invariant that
+		// would have caught the impossible pair is disabled by the very defect it
+		// should catch (#380).
+		//
+		// So: a pair must be REALISABLE. Walk the candidates in `pickBestStation`'s
+		// own order and take the first that shares ANY line with the boarding
+		// station — the #377 veto shape, membership deciding the label instead of
+		// proximity. On 2026-05-15 that separates them cleanly: Victoria's corridor
+		// shares nothing with the terminus node and two lines (Circle, Victoria)
+		// with the tube node. A nearer candidate is only ever overridden by a
+		// farther one that is reachable where the nearer one is not; when none is,
+		// nothing is renamed and the bare pair stands.
+		//
+		// Sharing SOME line, not exactly one, because the station question and the
+		// line question are separate and only the first is what proximity got
+		// wrong. Victoria and King's Cross St Pancras really are joined by both the
+		// Victoria and the Circle line, and "two candidates" is the honest reading
+		// of the endpoints — so the corrected pair is emitted either way and the
+		// suffix goes through the same evidence the primary path uses: the ride's
+		// own track first, its stopping pattern second, and no suffix at all when
+		// neither can separate them.
+		//
+		// The BOARDING side keeps the single-node retry. Its station is chosen from
+		// the preceding stationary segment under a walking-pace gate — anchored on
+		// where the rider actually stood — whereas the alight is a bare lookup at
+		// the reacquire fix, which is precisely the fix that surfaces at street
+		// level away from the platform. The asymmetry is in the evidence, not in the
+		// rule.
+		if (intersection.length === 0) {
+			const startRetry = startStationCoord
+				? await linesLookup(startStationCoord.lat, startStationCoord.lon).then(canonicalLines)
+				: startCanon;
+			for (const candidate of endCandidates) {
+				if (candidate.name === startStation) continue;
+				const coord = stationCoord(candidate);
+				const endRetry = coord ? await linesLookup(coord.lat, coord.lon).then(canonicalLines) : endCanon;
+				const retry = [...startRetry].filter((l) => endRetry.has(l));
+				if (retry.length === 0) continue;
+				const pair = `${startStation} → ${candidate.name}`;
+				if (retry.length === 1) return `${pair} · ${retry[0]}`;
+				const ridden = await lineUnderTheTrack(retry, points, slowBefore.ts, after.ts, linesLookup);
+				if (ridden !== null) return `${pair} · ${ridden}`;
+				const stopped = pickLineByStoppingPattern(
+					retry,
+					startStation,
+					candidate.name,
+					railStops,
+					points,
+					slowBefore.ts,
+					after.ts,
+				);
+				return stopped !== null ? `${pair} · ${stopped}` : pair;
+			}
 		}
 		return base;
 	} catch (e) {
@@ -657,6 +714,31 @@ function canonicalLines(lines: Set<string>): Set<string> {
 
 /** A station's own node coordinates, when the adapter supplied them
  *  (recordings made before `NearbyStation.lat/lon` existed have none). */
+/**
+ * The alight stations a site offers, best first: the pick `pickBestStation`
+ * made, then the other STATION-NODE candidates in its own tier/distance order.
+ *
+ * Platform positions and entrances are dropped. Not because they name the place
+ * wrongly — they are a legitimate last-resort name, which is why
+ * `pickBestStation` keeps them as tiers — but because the sweep asks a
+ * COORDINATE question, and a gate or a platform end sits tens of metres off the
+ * node whose corridor membership is being tested. A terminus has a dozen
+ * platform nodes spread along its trainshed (#373); admitting them would make
+ * the sweep answer about whichever platform happened to be captured.
+ *
+ * The chosen pick leads regardless of tier, so the fallback's first iteration is
+ * exactly what it did before the sweep existed.
+ */
+function alightCandidates(stations: readonly NearbyStation[], chosen: NearbyStation): NearbyStation[] {
+	const out = [chosen];
+	for (const s of rankStations(stations)) {
+		if (stationTier(s) >= 2) continue;
+		if (out.some((k) => k.name === s.name)) continue;
+		out.push(s);
+	}
+	return out;
+}
+
 function stationCoord(s: NearbyStation | null | undefined): { lat: number; lon: number } | undefined {
 	return s && s.lat !== undefined && s.lon !== undefined ? { lat: s.lat, lon: s.lon } : undefined;
 }

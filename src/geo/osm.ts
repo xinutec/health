@@ -819,13 +819,26 @@ export interface NearbyStation {
  * a tube node still resolves to its nearest station.
  */
 export function pickBestStation(stations: NearbyStation[], prefer?: string): NearbyStation | null {
-	if (stations.length === 0) return null;
-	const tier = (s: NearbyStation): number => {
-		if (s.subtype === "subway_entrance" || /^[A-Z]\d?$/.test(s.name)) return 3;
-		if (s.subtype === "stop_position") return 2;
-		return prefer !== undefined && s.subtype !== prefer ? 1 : 0;
-	};
-	return [...stations].sort((a, b) => tier(a) - tier(b) || a.distanceM - b.distanceM)[0];
+	return rankStations(stations, prefer)[0] ?? null;
+}
+
+/** Tiers as {@link pickBestStation} ranks them: 0/1 are the station's own
+ *  NAMING node (1 = the `prefer` split), 2 a platform position, 3 an entrance.
+ *  Exported so a caller that needs more than the winner — the realisable-alight
+ *  sweep in `resolveRailRunLabel` — can tell a station node from a gate without
+ *  restating the rule. */
+export function stationTier(s: NearbyStation, prefer?: string): number {
+	if (s.subtype === "subway_entrance" || /^[A-Z]\d?$/.test(s.name)) return 3;
+	if (s.subtype === "stop_position") return 2;
+	return prefer !== undefined && s.subtype !== prefer ? 1 : 0;
+}
+
+/** {@link pickBestStation}'s full ordering, best first. A site offers several
+ *  named stations and the best one is not always usable — see the alight sweep
+ *  in `resolveRailRunLabel`, which walks this order looking for a pair some
+ *  line can actually realise. */
+export function rankStations(stations: readonly NearbyStation[], prefer?: string): NearbyStation[] {
+	return [...stations].sort((a, b) => stationTier(a, prefer) - stationTier(b, prefer) || a.distanceM - b.distanceM);
 }
 
 /** A transit/road-furniture node near a coordinate — bus stops and
