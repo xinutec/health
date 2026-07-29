@@ -432,6 +432,72 @@ function growThroughDarkness(
 	return all.slice(lo, hi + 1);
 }
 
+/** How close in time and space a well-located fix has to be, on BOTH sides of
+ *  a GPS-dark one, to prove the phone was never actually out of contact with
+ *  the sky. Deliberately tight on distance: on 2026-07-16 the blip sat 24 m
+ *  and 50 m from its neighbours, while every genuine tunnel fix that day sat
+ *  570–3242 m from the nearest good fix. The two populations do not overlap,
+ *  and it is POSITION continuity that separates them — accuracy cannot, since
+ *  the blip's own accuracy is what raised the question. */
+const BLIP_NEIGHBOUR_S = 120;
+const BLIP_NEIGHBOUR_M = 250;
+
+/**
+ * Is this dark fix a lone accuracy wobble inside continuous good coverage,
+ * rather than a tunnel?
+ *
+ * Underground, the phone loses the sky: the fixes around a real blackout are
+ * either dark themselves or hundreds of metres away, because the train covered
+ * that ground while nobody was looking. A fix that reports 134 m of uncertainty
+ * while sitting 30 m from well-located fixes seconds either side reports on the
+ * receiver, not on the journey.
+ */
+function isAccuracyBlip(f: CoarseFix, good: readonly CoarseFix[]): boolean {
+	const near = (g: CoarseFix | undefined): boolean =>
+		g !== undefined &&
+		Math.abs(g.ts - f.ts) <= BLIP_NEIGHBOUR_S &&
+		equirectMeters(f.lat, f.lon, g.lat, g.lon) <= BLIP_NEIGHBOUR_M;
+	return near([...good].reverse().find((g) => g.ts < f.ts)) && near(good.find((g) => g.ts > f.ts));
+}
+
+/**
+ * Drop accuracy blips from the END of a run — the fixes that let it outlive
+ * the ride.
+ *
+ * The run's tail is what sets the alight: the window closes at the first good
+ * fix after the last dark one, so a blip four minutes into the walk away from
+ * the station moves the alight four minutes late and swallows the walk. On
+ * 2026-07-16 that ran the Euston Square ride over a confirmed 07:47–07:54 walk
+ * to UCLH.
+ *
+ * The tail ONLY. Measured over the corpus, blips are not uniformly noise:
+ * filtering them everywhere also drops poor-GPS indoor stays and mid-ride
+ * surfacings, fragmenting runs that are right today (06-16, 06-22, 07-07 each
+ * lost a confirmed row). Trimming both ends is still wrong at the head, where
+ * the boarding anchor already owns the question and a blip trim moved 07-07's
+ * evening boarding six minutes late. What is asymmetric is the consequence: an
+ * over-long tail overwrites a confirmed walk, an over-long head does not.
+ *
+ * Being a blip is necessary but not sufficient: the rider must also have moved
+ * CLEAR of the blackout, by more than a station's own footprint
+ * ({@link UNDERGROUND_STATION_RADIUS_M}). Arriving somewhere is not a tidy
+ * event — the phone reacquires on the platform, loses it again under the
+ * concourse roof, and settles outside, so the fixes just after a ride are a
+ * mixture that looks blip-shaped while still being the arrival. Distance is
+ * what tells the two apart, and the corpus separates cleanly on it: 2026-07-16's
+ * blip is 517 m from the last tunnel fix, four minutes into a walk that had
+ * already left Euston Square, while 2026-07-07's is 119 m — still inside King's
+ * Cross, where the user's own account has him until 17:45. Trimming that one
+ * cut six minutes off a confirmed ride and left a phantom stay in the gap.
+ */
+function trimBlipTail(run: readonly CoarseFix[], good: readonly CoarseFix[]): CoarseFix[] {
+	const movedClear = (f: CoarseFix, prev: CoarseFix): boolean =>
+		equirectMeters(f.lat, f.lon, prev.lat, prev.lon) > UNDERGROUND_STATION_RADIUS_M;
+	let end = run.length;
+	while (end > 1 && isAccuracyBlip(run[end - 1], good) && movedClear(run[end - 1], run[end - 2])) end--;
+	return run.slice(0, end);
+}
+
 function equirectMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
 	const dLat = (lat2 - lat1) * 111_320;
 	const dLon = (lon2 - lon1) * 111_320 * Math.cos((lat1 * Math.PI) / 180);
@@ -512,7 +578,15 @@ export async function annotateUndergroundRuns(
 		// a station in at BOTH ends. Grow the run through the day's contiguous
 		// dark fixes under the same gap rule, so its ends are the tunnel's ends.
 		// The train segment written below stays clamped to the host either way.
-		const runFixes = growThroughDarkness(hostRun, darkFixes, good);
+		// Trimmed AFTER growing, so it catches a blip whichever side annexed it —
+		// the host's own clustering or the growth past the host boundary. What
+		// survives still has to clear the same bar the host run cleared, or the
+		// ride would be reconstructed out of evidence just disowned.
+		const runFixes = trimBlipTail(growThroughDarkness(hostRun, darkFixes, good), good);
+		if (runFixes.length < MIN_COARSE_FIXES || span(runFixes) < MIN_RUN_DURATION_S) {
+			result.push(host);
+			continue;
+		}
 
 		const boarding = [...good].reverse().find((f) => f.ts <= runFixes[0].ts);
 		const alighting = good.find((f) => f.ts >= runFixes[runFixes.length - 1].ts);

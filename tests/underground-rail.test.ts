@@ -560,6 +560,117 @@ describe("annotateUndergroundRuns", () => {
 		expect(result[1].endTs).toBe(2400);
 	});
 
+	it("does not let a lone accuracy blip in good coverage extend the ride past its alight", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The same Alpha → Delta ride, alighting at ts 2400. Four minutes into
+		// the walk away from Delta, ONE fix reports poor accuracy while sitting
+		// among well-located fixes seconds and metres either side of it. GPS
+		// never went dark there — the accuracy figure wobbled — but the gap to
+		// it is inside MAX_COARSE_GAP_S, so the contiguity rule alone lets it
+		// join the tunnel run and drag the train four minutes past the alight,
+		// over a walk that is confirmed truth (2026-07-16 at 07:51:56Z).
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1100, ...at(20, 10), accuracy: 12 },
+			coarseFix(1450, 1050, 525),
+			coarseFix(1700, 1600, 800),
+			coarseFix(1990, 2100, 1050),
+			{ ts: 2400, ...at(2980, 1490), accuracy: 13 }, // alighted at Delta
+			// Walking away from Delta with good GPS throughout…
+			{ ts: 2460, ...at(3040, 1520), accuracy: 14 },
+			{ ts: 2520, ...at(3100, 1550), accuracy: 12 },
+			{ ts: 2580, ...at(3160, 1580), accuracy: 15 },
+			// …and the blip, 30 m from its neighbours on both sides.
+			coarseFix(2640, 3190, 1595),
+			{ ts: 2700, ...at(3220, 1610), accuracy: 13 },
+			{ ts: 2760, ...at(3280, 1640), accuracy: 14 },
+		];
+		const host = seg({ startTs: 1000, endTs: 2800 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking"]);
+		expect(result[1].wayName).toBe("Alpha → Delta · Line 1");
+		expect(result[1].endTs).toBe(2400);
+	});
+
+	it("keeps a blip-shaped fix the rider has not yet walked clear of (the arrival itself)", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// Arriving is not a tidy event. The phone reacquires on the platform at
+		// Delta, loses it again under the concourse roof, and settles outside —
+		// so the last dark fix looks exactly like a blip, with good fixes close
+		// on both sides. It is still the arrival: the rider has moved barely
+		// 100 m, well inside the station's own footprint. Trimming it cost
+		// 2026-07-07 six minutes off a ride the user confirmed ran to 17:45, and
+		// left a phantom stay standing in the gap.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1100, ...at(20, 10), accuracy: 12 },
+			coarseFix(1450, 1050, 525),
+			coarseFix(1700, 1600, 800),
+			coarseFix(1990, 2100, 1050),
+			coarseFix(2280, 2900, 1450), // surfacing into Delta
+			{ ts: 2330, ...at(2940, 1470), accuracy: 40 },
+			{ ts: 2360, ...at(2960, 1480), accuracy: 30 },
+			coarseFix(2390, 2980, 1490), // under the concourse roof — 90 m on
+			{ ts: 2420, ...at(3000, 1500), accuracy: 25 },
+			{ ts: 2600, ...at(3040, 1520), accuracy: 13 },
+		];
+		const host = seg({ startTs: 1000, endTs: 2800 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking"]);
+		// The ride still runs to the far side of the arrival, not to the platform
+		// reacquire 60 s earlier.
+		expect(result[1].endTs).toBe(2420);
+	});
+
+	it("keeps a genuine blackout that a blip merely precedes", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// Only the TAIL is trimmed, and only while it is still blips. A blip
+		// sitting inside the run does not shorten it: what ends the ride is the
+		// last dark fix that GPS coverage cannot explain away.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1100, ...at(20, 10), accuracy: 12 },
+			coarseFix(1450, 1050, 525),
+			// A blip mid-ride, bracketed by a brief surfacing either side.
+			{ ts: 1600, ...at(1580, 790), accuracy: 15 },
+			coarseFix(1700, 1600, 800),
+			{ ts: 1800, ...at(1620, 810), accuracy: 14 },
+			// …then real darkness again, on to the alight.
+			coarseFix(1990, 2100, 1050),
+			coarseFix(2200, 2600, 1300),
+			{ ts: 2400, ...at(2980, 1490), accuracy: 13 },
+		];
+		const host = seg({ startTs: 1000, endTs: 2800 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking"]);
+		expect(result[1].wayName).toBe("Alpha → Delta · Line 1");
+		expect(result[1].endTs).toBe(2400);
+	});
+
 	it("leaves a segment with no coarse-fix run untouched", async () => {
 		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		const host = seg({ startTs: 1000, endTs: 2800 });
