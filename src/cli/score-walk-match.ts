@@ -31,7 +31,6 @@ import { gateWalks, WALK_SPEED_CEIL_KMH, type WalkBaseline, type WalkBaselineEnt
 import { walkPlausibility } from "../eval/walk-plausibility.js";
 import { onNamedWayFraction } from "../eval/walk-route-correctness.js";
 import { stepsInWindow } from "../geo/biometrics.js";
-import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { BuildingFootprint } from "../geo/osm-local.js";
 import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -230,12 +229,19 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 	const offPathM = (pts: readonly { lat: number; lon: number }[]): number | null =>
 		hasBuildings ? offPathBuildingCrossingM(pts, buildings, walkable) : null;
 	const namedWindows = loadNamedWalkWindows(date, captured.meta.tz);
-	const base = inputsFromFixture(captured);
-
-	// Fresh adapter per arm (stateless, but explicit).
-	const offInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
-	const onInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
-	const reconInputs = { ...base, osm: new FixtureOsmAdapter(captured.inputs.osmTrace) };
+	// Fresh inputs per arm (the adapters are stateless, but explicit) — and
+	// built the SAME way `npm run golden` builds them, which means the row-set
+	// kernel with the captured trace only as its fallback. Constructing a bare
+	// `FixtureOsmAdapter` here instead made this gate replay against a strictly
+	// smaller oracle than the corpus does: golden answers every day from pushed
+	// rows, while any lookup the capture did not literally record threw here.
+	// Every pipeline change then moved some lookup and turned the gate red on a
+	// day golden passed — an `UncapturedLookupError` that says "re-capture
+	// required" and is cured by re-capturing that one day, until the next
+	// change moves the next lookup.
+	const offInputs = inputsFromFixture(captured);
+	const onInputs = inputsFromFixture(captured);
+	const reconInputs = inputsFromFixture(captured);
 	const off = await computeVelocityFromInputs(offInputs, { walkMatch: false });
 	const on = await computeVelocityFromInputs(onInputs, { walkMatch: true });
 	// The SMOOTHER-PRIMARY arm as the PIPELINE would ship it (#330): the same
@@ -329,7 +335,7 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 		// pedometer budget as prod, with the honest raw fallback when it bails.
 		// The episode lists align by index (walkMatch changes geometry, never
 		// segmentation).
-		const stepsWalked = stepsInWindow(base.biometrics.steps, onE.startTs, onE.endTs);
+		const stepsWalked = stepsInWindow(onInputs.biometrics.steps, onE.startTs, onE.endTs);
 		const reconE = reconRun.episodes[i];
 		const smoothPts =
 			reconE && reconE.points.length >= 2 ? reconE.points.map((p) => ({ lat: p.lat, lon: p.lon })) : null;
