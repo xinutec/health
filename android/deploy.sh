@@ -33,7 +33,7 @@ for EP in "${CANDIDATES[@]}"; do
   fi
   echo "=== installing to Pixel 9 ($EP) ==="
   "$ADB" -s "$EP" install -r "$APK"
-  "$ADB" -s "$EP" shell am start -n org.xinutec.health/.MainActivity >/dev/null
+  "$ADB" -s "$EP" shell am start -S -n org.xinutec.health/.MainActivity >/dev/null
   echo "  installed + launched on Pixel 9 ($EP)."
   exit 0
 done
