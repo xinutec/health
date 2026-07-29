@@ -10,6 +10,44 @@ decode-day/velocity) done 2026-07-24, not names alone. Line counts are current.
 Items marked *(check)* need a file read to confirm serve-path membership or
 overlap with an existing Lean core before porting.
 
+## Measured state — run the tool, do not trust the list below
+
+    nix develop . --command node scripts/lean-port-coverage.mjs [--all]
+
+**The Tier list below is a plan, not a status, and it has drifted.** On 2026-07-29
+it still called `kalman.ts` "the single best next port" while
+`Verified/Geo/Kalman.lean` had been complete and `#guard`-pinned for some time —
+following it would have meant re-porting finished work. A hand-kept inventory of
+~60 modules cannot stay honest; measure instead.
+
+As measured 2026-07-29, of 39 algorithm-layer files: **15 written, 14 partial,
+10 absent**. Caveats that keep those numbers honest in BOTH directions:
+
+- The tool matches *names*, not behaviour. `#guard` counts are the real evidence
+  — they run inside `lake build`, so a divergence fails the build.
+- It cannot tell algorithm from orchestration, so it OVERSTATES the gap. Several
+  "missing" names belong in the shell for good: `loadBiometrics` / `computeVelocity`
+  (DB/IO), `setSimplifyHook` (hook plumbing), `localHourOf` /
+  `utcSecondsToDatetimeStr` (tz boundary), `stationsOnLine` (cache),
+  `scheduleRailRouteFill` (IO).
+
+**Written is not served, and serving is now the bottleneck.** Writing Lean changes
+nothing on its own: the code has to reach a request through a `verified_cli` verb,
+a tenant in `src/lean/`, and a flag. The entire serve surface today is
+
+| flag | what executes |
+|---|---|
+| `LEAN_HSMM` | the HSMM decode |
+| `LEAN_MATCH` | the walk map-matcher |
+| `LEAN_RAIL` | rail shortest-path |
+| `LEAN_PASSES` | five display-geometry helpers — simplify, spurs, spikes, trim, despike |
+
+Everything else is written-but-idle. The next slices are therefore *execution*
+slices — take a complete module, give it a CLI verb and a shadow tenant,
+validate on the golden corpus, flip — not new ports. `Verified.Geo.Kalman`
+(`filterGpsTrack` + `classifyMode`, 10 guards) is the obvious first: upstream of
+everything, pure over the track, no OSM or DB.
+
 ## Already in Lean (done — do not port)
 
 - **HSMM decode subsystem** (2026-07): observation tensor, gps-outliers,
