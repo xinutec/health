@@ -32,6 +32,15 @@
  * wobble washes out) and raw on the reset path (so it shows) — the handful of
  * speed/bearing divergences are all reset rows.
  *
+ * **`bearing` is measured as an angle, not as bits.** It is modular, so 0° and
+ * 360° are one heading with 4.6e18 ULPs between their bit patterns. The first
+ * real in-cluster soak (2026-07-29) hit exactly that and reported DIVERGED —
+ * the loudest verdict — for two arms that agreed on the direction precisely.
+ * `float-gap.ts` now measures the short way round the circle for `bearing` and
+ * true ULP distance for the rest — the latter via a sign-aware ordinal, which
+ * is a correctness measure rather than a rescue: within one sign, which is
+ * every comparison this ledger has actually made, it changes nothing.
+ *
  * That is a permanent property of running one algorithm on two libms, not a
  * defect to fix: 1 ULP of longitude here is ~1e-17°, femtometres, against a
  * display grid of 1e-7°. It is also the concrete argument for eventually taking
@@ -51,6 +60,7 @@
 
 import type { FilteredPoint, GpsPoint } from "../geo/kalman.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
+import { circularDegGap, ulpGap } from "./float-gap.js";
 import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -80,15 +90,30 @@ interface KalmanStat {
 	 *  presence alone is not a finding — `worstUlp` is what says whether it is
 	 *  still that class. */
 	rowDiffs: number;
-	/** Total differing rows across all calls — the magnitude behind `rowDiffs`. */
-	cells: number;
-	/** Largest bit-pattern distance seen in any differing field. Single digits
+	/** Total differing ROWS across all calls — the magnitude behind `rowDiffs`,
+	 *  which counts calls. Printed as `rows=`; it was printed as `cells=` until
+	 *  2026-07-30, which made a single row look like sixteen findings. */
+	rows: number;
+	/** Largest ULP distance in any differing `lat`/`lon`/`speed`. Single digits
 	 *  is the known libm class; anything larger is a different phenomenon and
-	 *  should be read as one. */
-	worstUlp: number;
+	 *  should be read as one. `bigint` because the gap can exceed 2^53, where
+	 *  `Number` rounds silently. */
+	worstUlp: bigint;
+	/** Largest ANGULAR difference in any differing `bearing`, in degrees.
+	 *  Separate from `worstUlp` because bearing is modular and its bit distance
+	 *  measures nothing — see `float-gap.ts`. */
+	worstBearingDeg: number;
 }
 
-const empty = (): KalmanStat => ({ calls: 0, fails: 0, lenDiffs: 0, rowDiffs: 0, cells: 0, worstUlp: 0 });
+const empty = (): KalmanStat => ({
+	calls: 0,
+	fails: 0,
+	lenDiffs: 0,
+	rowDiffs: 0,
+	rows: 0,
+	worstUlp: 0n,
+	worstBearingDeg: 0,
+});
 
 let stats: KalmanStat = empty();
 
@@ -131,17 +156,20 @@ function wireRow(p: FilteredPoint): [number, string, string, string, string] {
 }
 
 const FIELDS = ["ts", "lat", "lon", "speed", "bearing"] as const;
+/** Index of the one modular field. Everything else is a plain magnitude. */
+const BEARING = 4;
 
-/** Bit-pattern distance between two wire values — the ULP distance, since both
- *  patterns share a sign whenever they are this close. `ts` is an integer field
- *  and has no ULP reading, so it reports 0. */
-function ulpGap(k: number, a: unknown, b: unknown): number {
-	if (k === 0) return 0;
-	return Math.abs(Number(BigInt(String(a)) - BigInt(String(b))));
+/** How wide is this field's divergence, in the units that field understands?
+ *  `ts` is an integer and has no ULP reading; `bearing` is an angle and has no
+ *  meaningful bit distance; the rest are compared as ULPs. */
+function fieldGap(k: number, a: unknown, b: unknown): string {
+	if (k === 0) return "";
+	if (k === BEARING) return `${circularDegGap(String(a), String(b))}°`;
+	return `${ulpGap(String(a), String(b))}ulp`;
 }
 
-/** Name the fields of one row that differ, with both values and the ULP gap —
- *  the ledger's whole diagnosis of a value divergence. The gap is the part that
+/** Name the fields of one row that differ, with both values and the gap — the
+ *  ledger's whole diagnosis of a value divergence. The gap is the part that
  *  distinguishes the known `cos` class from something new. */
 function rowNote(i: number, ts: readonly (number | string)[], lean: readonly unknown[]): string {
 	const parts: string[] = [];
@@ -152,7 +180,7 @@ function rowNote(i: number, ts: readonly (number | string)[], lean: readonly unk
 			continue;
 		}
 		parts.push(
-			`${FIELDS[k]} ${floatFromBits(String(ts[k]))}→${floatFromBits(String(lean[k]))} (${ulpGap(k, ts[k], lean[k])}ulp)`,
+			`${FIELDS[k]} ${floatFromBits(String(ts[k]))}→${floatFromBits(String(lean[k]))} (${fieldGap(k, ts[k], lean[k])})`,
 		);
 	}
 	return `row ${i}: ${parts.join(" ")}`;
@@ -232,13 +260,19 @@ export function filterGpsTrackViaLean(points: readonly GpsPoint[], tsResult: Fil
 			if (a.every((v, k) => String(v) === String(b[k]))) continue;
 			diffRows += 1;
 			for (let k = 1; k < FIELDS.length; k++) {
-				if (String(a[k]) !== String(b[k])) stats.worstUlp = Math.max(stats.worstUlp, ulpGap(k, a[k], b[k]));
+				if (String(a[k]) === String(b[k])) continue;
+				if (k === BEARING) {
+					stats.worstBearingDeg = Math.max(stats.worstBearingDeg, circularDegGap(String(a[k]), String(b[k])));
+				} else {
+					const g = ulpGap(String(a[k]), String(b[k]));
+					if (g > stats.worstUlp) stats.worstUlp = g;
+				}
 			}
 			if (first === "") first = rowNote(i, a, b);
 		}
 		if (diffRows > 0) {
 			stats.rowDiffs += 1;
-			stats.cells += diffRows;
+			stats.rows += diffRows;
 			record(diffRows, first);
 			if (mode === "shadow") console.warn(`[lean-kalman] ${diffRows}/${tsRows.length} rows differ — ${first}`);
 		}
@@ -268,16 +302,29 @@ export function filterGpsTrackViaLean(points: readonly GpsPoint[], tsResult: Fil
 /** Widest bit gap still explained by the `cos` libm difference. Measured worst
  *  over the corpus is 19 (07-14, where the recursion compounds a run of 1-ULP
  *  inputs); this leaves headroom without letting a real defect hide. */
-const ULP_CLASS_MAX = 64;
+const ULP_CLASS_MAX = 64n;
+
+/** Widest ANGULAR gap still explained by the same story. A 1-ULP wobble in a
+ *  bearing is ~1e-14°, so this is generous by nine orders of magnitude and
+ *  still nowhere near a heading anyone could see. Note what it is NOT: a way to
+ *  wave through the 0°/360° wrap, which `circularDegGap` already reports as the
+ *  zero it is. */
+const BEARING_CLASS_MAX_DEG = 1e-6;
 
 export function logLeanKalmanLedger(label: string): void {
 	const mode = leanKalmanMode();
 	if (mode === "off") return;
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.rowDiffs === 0;
-	const ulpOnly = s.lenDiffs === 0 && s.worstUlp <= ULP_CLASS_MAX;
-	const verdict = clean ? "EXACT" : ulpOnly ? `ULP (≤${s.worstUlp})` : `${s.lenDiffs + s.rowDiffs} DIVERGED`;
-	const detail = clean ? "" : ` — len=${s.lenDiffs} rows=${s.rowDiffs} (${s.cells} cells, ≤${s.worstUlp}ulp)`;
+	const ulpOnly = s.lenDiffs === 0 && s.worstUlp <= ULP_CLASS_MAX && s.worstBearingDeg <= BEARING_CLASS_MAX_DEG;
+	const verdict = clean
+		? "EXACT"
+		: ulpOnly
+			? `ULP (≤${s.worstUlp}, ≤${s.worstBearingDeg}°)`
+			: `${s.lenDiffs + s.rowDiffs} DIVERGED`;
+	const detail = clean
+		? ""
+		: ` — len=${s.lenDiffs} calls=${s.rowDiffs} rows=${s.rows} (≤${s.worstUlp}ulp, ≤${s.worstBearingDeg}° bearing)`;
 	// Only shout about served output for a divergence the ULP story does not
 	// cover — every `decode`-scope call diverges by a bit or two, so flagging
 	// those would make the phrase permanent and therefore meaningless.

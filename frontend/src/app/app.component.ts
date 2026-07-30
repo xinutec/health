@@ -10,6 +10,7 @@ import { MatTooltipModule } from "@angular/material/tooltip";
 import { ReauthBannerComponent } from "./components/reauth-banner/reauth-banner.component";
 import { HealthService } from "./services/health.service";
 import { installErrorReporting } from "./client-diagnostics";
+import { Telemetry } from "./telemetry";
 
 /** What kind of view the current URL maps to. Drives toolbar
  *  controls visibility (the share button, gear and Logout disappear
@@ -37,6 +38,9 @@ type AppMode = "dashboard" | "settings" | "share";
 export class AppComponent {
 	readonly health = inject(HealthService);
 	private readonly router = inject(Router);
+	// Instrumented from the shell alone: a trace each screen had to remember to
+	// join would have holes in exactly the screens nobody thought about.
+	private readonly telemetry = inject(Telemetry);
 
 	/** Mirror of `router.url` as a signal, recomputed on every
 	 *  NavigationEnd. `startWith(router.url)` seeds the value so
@@ -88,6 +92,10 @@ export class AppComponent {
 		// Install browser error/unhandledrejection listeners up-front so
 		// any failure during auth or initial render still gets reported.
 		installErrorReporting(this.health);
+
+		// What the person *did*, beside the errors above. Different question,
+		// same stdout.
+		this.telemetry.init();
 
 		// One unauthenticated fetch; failure just leaves the footer empty.
 		fetch("/version")

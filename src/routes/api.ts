@@ -556,6 +556,47 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		return c.body(null, 204);
 	});
 
+	// Client activity trace: the navigations and taps the browser sees and the
+	// API does not. Distinct from /client-log above, which reports *errors* and
+	// boot context — this reports what a person did. Folded into the same stdout
+	// stream as the per-request log, so a session reads as one timeline:
+	// `client-event kind=nav path=/journeys`, then `client-event kind=tap
+	// label="Refresh"`, then the request that tap caused.
+	//
+	// Same line shape as every other app in the fleet, deliberately: the whole
+	// value is being able to grep `client-event` anywhere and get the same
+	// fields. There is NO storage — these are logs, not data.
+	app.post("/telemetry", async (c) => {
+		// A per-batch cap so a buggy or hostile client can't turn one POST into a
+		// log flood, and a label cap so a pathological one can't bloat a line.
+		// Counted in code points, not bytes, to never split a multi-byte glyph.
+		const MAX_EVENTS = 100;
+		const MAX_LABEL = 160;
+
+		const uid = c.get("session").userId;
+		let body: unknown;
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "invalid json" }, 400);
+		}
+		if (!Array.isArray(body)) {
+			return c.json({ error: "expected array" }, 400);
+		}
+		for (const raw of body.slice(0, MAX_EVENTS)) {
+			if (!raw || typeof raw !== "object") continue;
+			const e = raw as { kind?: unknown; path?: unknown; label?: unknown; at?: unknown };
+			const kind = String(e.kind ?? "");
+			const path = String(e.path ?? "");
+			const label = [...String(e.label ?? "")].slice(0, MAX_LABEL).join("");
+			const at = Number(e.at ?? 0);
+			console.log(`client-event user=${uid} kind=${kind} path=${path} label=${label} at=${at}`);
+		}
+		// Always 204: telemetry is best-effort and the client neither reads the
+		// response nor retries.
+		return c.body(null, 204);
+	});
+
 	app.post("/client-log", async (c) => {
 		// Diagnostic logging endpoint: front-end posts a small JSON
 		// blob, we write it to pod stdout where `kubectl logs` (or a
