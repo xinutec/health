@@ -1,0 +1,3 @@
+# dev-lint baseline — known violations grandfathered in. Counts may only
+# decrease. Regenerate: dev-lint --write-baseline <file> <paths>
+56	DL-KYSELY-DRIVER-TYPE	src/db/tables.ts

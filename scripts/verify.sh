@@ -41,4 +41,11 @@ npm run verify "$@"
 dev_lint_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/dev-lint"
 [ -d "$dev_lint_dir" ] || dev_lint_dir="$HOME/Code/dev-lint"
 [ -d "$dev_lint_dir" ] || dev_lint_dir="$HOME/code/dev-lint"
-nix run "$dev_lint_dir" -- . # dev-lint
+# The baseline grandfathers DL-KYSELY-DRIVER-TYPE's 56 pre-existing findings in
+# db/tables.ts — DATE/DATETIME columns typed `string` and DECIMAL typed
+# `number`, none of which is what the mariadb pool actually returns. Counts only
+# ratchet down, so new code is held to the honest types from today. Correcting a
+# column makes tsc surface every read that relied on the wrong one, which is the
+# remediation, not a side effect. Regenerate after fixing a batch:
+#   nix run "$dev_lint_dir" -- --write-baseline .dev-lint-baseline .
+nix run "$dev_lint_dir" -- --baseline .dev-lint-baseline . # dev-lint
