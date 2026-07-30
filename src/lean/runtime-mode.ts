@@ -8,16 +8,33 @@
  * one-click fallback while Lean is young in production. Once TS is retired it
  * comes out.
  *
- *   null  — no override: the deploy-time env flags (`LEAN_PASSES` /
- *           `LEAN_MATCH` / `LEAN_RAIL` / `LEAN_KALMAN`) rule, unchanged.
- *   true  — serve the verified Lean core for every tenant that consults this:
- *           the geometry passes, the walk matcher, the rail shortest path, and
- *           the GPS Kalman filter.
+ *   null  — no override: the deploy-time `LEAN_*` env flag for each tenant
+ *           rules, unchanged. This is the state after every restart.
+ *   true  — serve the verified Lean core for EVERY tenant that consults this,
+ *           including ones still in `shadow`.
  *   false — pure TS for all of them.
  *
- * A tenant joins this switch only once its own soak says `on` is safe, so
- * flipping it is never a way to skip a flip gate. As of 2026-07-29 that is all
- * four; a fifth would stay on its env flag alone until measured.
+ * **`true` deliberately overrides a tenant's soak stage, and that is the
+ * feature, not a hole in it.** The switch exists to build confidence on real
+ * data BEFORE a flip; a version that only affected already-flipped tenants
+ * would do nothing at the moment it is wanted. What the soak gates is the
+ * DEFAULT — the env flag, which governs the nightly cron and every request
+ * after a restart — and this never touches that.
+ *
+ * Three things make it containable, and all three are load-bearing:
+ *   - in-memory and process-global, so it resets to the env default on restart;
+ *   - the nightly decode cron is a SEPARATE process this never reaches, so the
+ *     soak ledger stays driven purely by the env flags;
+ *   - the request path does not persist decodes — `saveDecode` has exactly one
+ *     caller, `cli/decode-day.ts` — so nothing a toggle produces outlives the
+ *     pod. Adding a request-path write would break that, and would make this
+ *     switch genuinely unsafe; check here first if you ever add one.
+ *
+ * (An earlier version of this comment claimed a tenant "joins this switch only
+ * once its own soak says `on` is safe". That was never true of the code —
+ * Kalman consulted it from its first shadow day — and it contradicted the
+ * paragraph above it. Recorded rather than quietly deleted, because the
+ * mismatch is what an audit of this file will most likely turn up again.)
  *
  * In-memory and process-global: health is single-user, so a global toggle needs
  * no per-user plumbing. It resets to the env default on restart (a safe property

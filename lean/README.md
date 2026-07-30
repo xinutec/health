@@ -16,6 +16,10 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
 
 ## Layout
 
+Not an index. The tree carries ~106 modules; what follows is the proved core
+plus the modules that EXECUTE in production, which are the two things worth
+knowing about from outside. `find lean -name '*.lean'` is the index.
+
 - `Verified/Hsmm/Score.lean` — integer log-prob scores with `-∞`; order and
   algebra lemmas (proved).
 - `Verified/Hsmm/Spec.lean` — what the HSMM decoder *means*: segmentations,
@@ -182,9 +186,32 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   (`lsettle_stops`, `all_settles_stop`). Discharges the last
   stop-reachability hypothesis of the refinement theorems: the TS
   unfueled `while (heap.size)` loop always terminates in the model.
-- `Main.lean` — `verified_cli`, the JSON bridge (HSMM decode on stdin by
-  default; `verified_cli rail` for the V3 shortest path;
-  `verified_cli geo` for the V4 display passes over quantised points).
+- `Verified/JsNum.lean` — JS `Number.prototype.toFixed`, to the ECMA-262
+  rule (round against the double's EXACT binary value, ties to the larger),
+  computed in bignum `Nat` so no float arithmetic is involved past the
+  decomposition. Load-bearing twice over: two OSM coordinates fuse into one
+  graph vertex exactly when their `toFixed(7)` strings match, and the ported
+  `reason` / `detail` strings reproduce TS output character for character.
+- `Verified/Geo/Kalman.lean` — the raw-GPS smoother upstream of everything
+  (`LEAN_KALMAN`). The first Float-valued port to be served, and the reason
+  the ULP-graded ledger exists: Lean's `Float.cos` and V8's `Math.cos`
+  differ by 1 ULP on ~7.6% of real latitudes.
+- `Verified/Geo/GpsQuality.lean` — the incoherent-run pre-filter one call
+  above the Kalman filter (`LEAN_GPSQUALITY`). Drop-only, so every output
+  row is a copy of an input row and the gate is EXACT rather than ULP-graded.
+- `Verified/Geo/BiometricWindows.lean` — the per-segment biometric
+  reductions (cadence, peak cadence, step totals) and the stay-bridge
+  decision.
+- `Verified/Geo/BiometricLabels.lean` — the four velocity passes where the
+  step counter overrules GPS (`LEAN_BIOLABELS`). Returns DECISIONS, not
+  records: the shell rewrites the segment, so the port cannot drift on
+  fields it does not model.
+- `Main.lean` — `verified_cli`, the JSON bridge. HSMM decode on stdin by
+  default; the named verbs are `rail` (V3 shortest path), `geo` (V4 display
+  passes over quantised points), `match` (walk map-matcher), `kalman`,
+  `gpsquality`, `biolabels`, `assemble`, `assembledecode` and `coverage`.
+  `verified_cli serve` is the persistent NDJSON loop the TS bridge drives —
+  one long-lived process instead of a spawn per call.
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
   problems (run `npm run build` first, then
   `nix develop -c node lean/experiments/compare.mjs` from the repo root).
@@ -195,5 +222,26 @@ nix develop -c lake exe verified_cli   # JSON decode CLI (stdin → stdout)
   unproved goals live in the proposal doc, not as `sorry`.
 - Executable `#guard` checks are the stand-in for not-yet-proved equivalences
   — spec-checking on every build, upgraded to theorems incrementally.
-- Integer scores only for now: exact in IEEE doubles, so the TS decoder and
-  this one agree bit-for-bit. No float arithmetic gets ported on hope.
+- **The HSMM decoder is integer-scored**, and that is a hard rule rather than
+  a stage: log-probs are exact in IEEE doubles, so the TS decoder and this one
+  agree bit-for-bit, and `Packed.lean` offset-encodes them to `Nat` so the
+  forward pass never touches GMP.
+- **Float IS ported elsewhere, and served** — the geometry and biometrics
+  tenants (`Kalman`, `GpsQuality`, `BiometricWindows`, `BiometricLabels`,
+  `Hsmm/FloatScore`) are Float-valued. That was a deliberate reversal of the
+  earlier "integer only" line, taken because the alternative was leaving those
+  passes unported indefinitely. It has a price, and the price is stated rather
+  than hidden:
+  - Floats cross the bridge as IEEE bit patterns in decimal strings
+    (`src/lean/float-bits.ts`), never as decimal renderings, so both arms
+    compare the same doubles.
+  - A Float-valued port can be pinned by testing but **not proved**: two libm
+    implementations of `cos` are not obliged to agree, and Lean's and V8's
+    differ by 1 ULP on ~7.6% of real latitudes. Ports that return fresh reals
+    get a bounded-ULP gate plus a structural invariant; ports whose output is
+    discrete get an exact one.
+  - The long-term exit is fixed-point or rational metre↔degree scaling, which
+    would agree across runtimes AND admit proof. Until then, every
+    transcendental in the served path is a place the port is tested, not
+    proved. See
+    [`../docs/proposals/2026-07-lean-port-roadmap.md`](../docs/proposals/2026-07-lean-port-roadmap.md).
