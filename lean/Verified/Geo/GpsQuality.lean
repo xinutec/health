@@ -98,4 +98,72 @@ private def track : Array GpsPoint := #[
 #guard (qualityFilterGps track).map (·.ts) == #[0, 10, 30, 40, 160, 170, 180, 190]
 #guard (qualityFilterGps #[gp 0 51.5 (-0.1) 20, gp 10 51.5 (-0.1) 20]).size == 2  -- ≤2 pass through
 
+/-! ### Branch guards
+
+The two guards above pin the shape a real day takes. They do not reach a null
+accuracy, a duplicate timestamp, or a bridge scan that runs past its horizon —
+and 32 days of real London track do not reach those either, so a port could get
+any of them wrong and still measure 32/32 exact against TS.
+
+Every expectation below is what `src/geo/gps-quality.ts` actually returned under
+Node v24.18.0, not a value reasoned about here; regenerate with
+`npx tsx lean/experiments/gpsquality-refs.mts` after any change to the filter.
+A disagreement means the port and the original have diverged, which is the only
+question these guards exist to answer. -/
+
+private def gpn (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, none⟩
+
+-- `inaccurateMotion` → `none ⇒ false`, `trustworthy` → `none ⇒ true`. With no
+-- accuracy anywhere only the speed ceiling can condemn a fix: the t=20 teleport
+-- must still go, and t=30 must be trusted as its bridge with nothing to judge
+-- its accuracy by.
+private def nullAccuracy : Array GpsPoint := #[
+  gpn 0 51.5 (-0.1), gpn 10 51.501 (-0.1), gpn 20 51.6 (-0.1), gpn 30 51.502 (-0.1), gpn 40 51.503 (-0.1)]
+#guard (qualityFilterGps nullAccuracy).map (·.ts) == #[0, 10, 30, 40]
+
+-- `impliedSpeedKmh` → `dt ≤ 0 ⇒ 0`. Note what the expectation says: EVERY fix
+-- survives, teleports included. A fix sharing or preceding its anchor's
+-- timestamp has no defined speed, and the filter's documented choice is to
+-- treat it as reachable rather than infinite — so it is invisible here. That is
+-- the TS behaviour and the port must reproduce it; a port dividing by `dt`
+-- would get `inf`, read it as unreachable, and drop fixes TS keeps.
+private def duplicateTs : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 0 51.6 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 5 51.7 (-0.1) 20, gp 20 51.502 (-0.1) 20]
+#guard (qualityFilterGps duplicateTs).map (·.ts) == #[0, 0, 10, 5, 20]
+
+-- `findBridge` → `none` at the `BRIDGE_WINDOW_S` horizon. The garbage fix at
+-- t=100 has no surfacing fix within 1800 s (the next is t=2000), so the scan
+-- gives up and the candidate is KEPT rather than bridged across half an hour.
+private def bridgeHorizon : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 100 51.52 (-0.1) 100, gp 2000 51.53 (-0.1) 20, gp 2010 51.531 (-0.1) 20]
+#guard (qualityFilterGps bridgeHorizon).map (·.ts) == #[0, 10, 100, 2000, 2010]
+
+-- `findBridge` → `coherentSuccessor` false. t=60 is itself reachable and
+-- trustworthy, so it looks like a bridge — but its own successor at t=70 is a
+-- teleport, so it heads another garbage run and must be passed over for t=120.
+private def incoherentSuccessor : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 20 51.7 (-0.1) 100, gp 60 51.502 (-0.1) 20,
+  gp 70 51.9 (-0.1) 20, gp 120 51.503 (-0.1) 20, gp 130 51.504 (-0.1) 20]
+#guard (qualityFilterGps incoherentSuccessor).map (·.ts) == #[0, 10, 120, 130]
+
+-- `walk` → `speedUnreachable ∨ travelled`, with only the LEFT disjunct true. A
+-- teleport that returns: net displacement across the run is far under
+-- MIN_TRANSIT_DISPLACEMENT_M, so `travelled` is false and the run is bridged on
+-- unreachability alone. A port testing only displacement would keep the
+-- teleport.
+private def unreachableNotTravelled : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 10 51.5005 (-0.1) 20, gp 20 51.9 (-0.1) 20, gp 30 51.501 (-0.1) 20, gp 40 51.5015 (-0.1) 20]
+#guard (qualityFilterGps unreachableNotTravelled).map (·.ts) == #[0, 10, 30, 40]
+
+-- ACCURACY_CEILING_M, both sides. These two tracks differ only in 80 → 80.001
+-- and must NOT agree: `>` keeps the fix at exactly the ceiling and drops the
+-- one a thousandth over. `≥` in either comparison collapses them.
+private def accuracyAtCeiling : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 100 51.52 (-0.1) 80, gp 160 51.53 (-0.1) 20, gp 170 51.531 (-0.1) 20]
+#guard (qualityFilterGps accuracyAtCeiling).map (·.ts) == #[0, 10, 100, 160, 170]
+
+private def accuracyOverCeiling : Array GpsPoint := #[
+  gp 0 51.5 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 100 51.52 (-0.1) 80.001, gp 160 51.53 (-0.1) 20, gp 170 51.531 (-0.1) 20]
+#guard (qualityFilterGps accuracyOverCeiling).map (·.ts) == #[0, 10, 160, 170]
+
 end Verified.Geo.GpsQuality

@@ -197,3 +197,39 @@ Follow the decode playbook: port to a `Verified.*` module in Lean `Float`, pin e
 piece with `#guard` against Node/V8 values, then a shadow harness comparing the Lean
 path to the TS one on real days. Exact for sqrt/arith/discrete; `approx` (≤1 ULP)
 where sin/cos/atan2/log/exp/hypot enter. Keep the tz/WKT/topology boundary shell-side.
+
+### Which gate can actually see your flag
+
+A green gate that never executed the flag proves nothing, and the two ways to get
+one are both easy to walk into.
+
+**Wrong layer.** A velocity-layer flag can only be gated by a harness that enters
+through `computeVelocity` / `computeVelocityFromInputs` — `npm run golden` and
+`npm run walk-gate` (`score-walk-match.ts` calls it directly). `npm run
+score-decoder` replays *captured* HSMM fixtures straight into `decodeHsmm` and
+never enters velocity at all, so for `LEAN_GPSQUALITY` and `LEAN_KALMAN` it is
+identical by construction. I had it on the #388 gate list; running it would have
+been theatre. Decoder-layer harnesses gate decoder-layer flags.
+
+**Silent fallback.** Both `shadow` and `on` swallow a `LeanBridgeError` and
+return the TS result, so a gate can be green because the bridge never ran. The
+positive signal is `lean-bridge: serving verified core` on stderr, with zero
+`degraded` lines; check for it before reading anything into a pass.
+
+### Guards vs the corpus — they fail differently
+
+The corpus is real but it only covers the branches real days happen to take. 32
+days of London never produced a null accuracy, a duplicate timestamp, or a
+bridge scan running past its 30-minute horizon, so `GpsQuality` measured 32/32
+exact with three of its branches untested. `#guard`s are the complement: they
+run inside `lake build`, so a divergence fails the build rather than waiting for
+a day that happens to exercise it. Write one per branch and per threshold
+boundary — a pair straddling the boundary (80 vs 80.001) is what distinguishes
+`>` from `≥`, and the two must NOT agree.
+
+Derive expectations from V8, never by hand: `lean/experiments/*-refs.mts` runs
+the real TS and prints the guard lines to paste. What the port owes is fidelity
+to what TS does, including where that is odd — `impliedSpeedKmh` returns 0 for a
+non-increasing `dt`, so a teleport sharing its anchor's timestamp is invisible
+to the filter. That is TS's documented choice; the guard pins it rather than
+quietly improving on it.
