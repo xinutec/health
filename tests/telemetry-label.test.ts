@@ -31,4 +31,14 @@ describe("oneLine", () => {
 		expect([...flat]).toHaveLength(160);
 		expect(flat).not.toContain("�");
 	});
+
+	it("stops a bidi override disguising what the line says", () => {
+		// The sharper half of the format-character problem. U+202E flips the
+		// rendering of everything after it, so a label can be made to *display*
+		// as something other than its content — Trojan Source, aimed at the
+		// record rather than at source code, and invisible to whoever reads it.
+		const flat = oneLine("Save\u202e\u202dDelete", 160);
+		expect(flat).not.toContain("\u202e");
+		expect(flat).toBe("Save Delete");
+	});
 });
