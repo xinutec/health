@@ -43,6 +43,7 @@ a tenant in `src/lean/`, and a flag. The entire serve surface today is
 | `LEAN_PASSES` | five display-geometry helpers — simplify, spurs, spikes, trim, despike |
 | `LEAN_KALMAN` | the GPS Kalman filter (#387, 2026-07-29) |
 | `LEAN_GPSQUALITY` | the GPS quality pre-filter (#388, 2026-07-30) |
+| `LEAN_BIOLABELS` | four biometric label-rewrite passes, five call sites (#390, 2026-07-30) |
 
 Everything else is written-but-idle. The next slices are therefore *execution*
 slices — take a complete module, give it a CLI verb and a shadow tenant,
@@ -111,6 +112,50 @@ vertex indices) admits an exact gate on any runtime. A pass that returns freshly
 computed reals (Kalman, and most of Tier 2/4) can only ever have a bounded-ULP
 gate plus a structural invariant. Both are shippable; the first is far cheaper
 to be confident about.
+
+### The third slice: decision-shaped, not just selection-shaped (#390)
+
+`Verified.Geo.BiometricLabels` — the four velocity passes where the step counter
+overrules GPS (`cadenceCorrect`, `revertIsolatedCadence`, `jitterWalkToStay`,
+`walkThrough`) — extends the exact-gate class in a way worth naming, because it
+is not selection-shaped. It *returns new values*. It still gets an exact gate,
+because those values are **discrete**: a mode label, a run index, a `toFixed`
+rendering. The generalisation is therefore
+
+> what admits an exact gate is a pass whose output is drawn from a countable
+> set the two runtimes can both name — not merely one that returns a subset.
+
+Four passes rode one flag. That was deliberate: they are one port of one TS
+module sharing every threshold, so splitting them would have bought four soaks
+of the same surface. Five CALL SITES, though —
+`revertIsolatedCadenceDrives` runs twice, once before the rail annotators exist
+and once after, because a flip sandwiched between two underground legs only
+looks isolated once those legs are labelled `train`. Both are served; wiring
+only the first would have left production running TS at a pass the flag claims.
+
+Three things made this slice cheap, and all three are reusable:
+
+- **The dependency was already ported.** `BiometricWindows` had
+  `cadenceForSegment` / `peakCadenceForSegment` with 43 guards. Prefer a slice
+  whose callees are already standing.
+- **`Verified.JsNum.toFixed` already existed** (61 guards), implementing the
+  ECMA-262 rule against the double's exact binary value. The reason strings
+  embed `cadence.toFixed(0)` and `linearity.toFixed(2)`, so without it the
+  strings would have been the port's weakest point instead of a non-issue.
+- **Decisions cross the wire, not records.** The Lean returns a verdict per
+  segment and the shell rewrites the record — the same split as `bridgeStayRuns`.
+  The port cannot drift on fields it does not model, and the comparison asks the
+  only question that matters: did both arms decide the same thing?
+
+Corpus evidence: `npm run golden` under `LEAN_BIOLABELS=on` is 32/32
+byte-identical with the ledger reading `128/0f EXACT` — 32 days × 4 passes,
+every call served, zero failures, zero divergences.
+
+**One gate defect this slice found and fixed.** `golden-check` printed no Lean
+ledger at all, so a green 32/32 was read from SILENCE — and silence is exactly
+what a bridge that failed and fell back also produces, since both `shadow` and
+`on` swallow `LeanBridgeError`. It now prints all three tenants' ledgers, so the
+gate reports a call count instead of an absence.
 
 ## Already in Lean (done — do not port)
 

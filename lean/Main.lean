@@ -962,6 +962,95 @@ private def gpsQualityResult (j : Json) : Json :=
       Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon,
         match p.accuracy with | none => Json.null | some a => fBits a]))]
 
+/-! ## Biometric label rewrites (`verified_cli biolabels`)
+
+`Verified.Geo.BiometricLabels` — the four velocity passes that let the step
+counter overrule what GPS decided about a segment's mode. One verb for all
+four, selected by `pass`, because they share the whole input parse.
+
+  { "pass": "cadence" | "revert" | "jitter" | "walkthrough",
+    "segs":  [{ startTs, endTs, mode, refinedMode?, kinds?, avgSpeed, maxSpeed,
+                linearity, pointCount, place?, wayName? }, …],
+    "steps": [[ts, stepsBits], …],
+    "pts":   [[ts, latBits, lonBits], …] }
+
+Floats cross as bit patterns (`avgSpeed`, `linearity`, …), same as everywhere
+else, so both arms compare the same doubles rather than 6-decimal renderings.
+
+Output: `{ "decisions": [null | [mode, reason, kind|null], …] }`, one per input
+segment — `null` is "unchanged". `walkthrough` additionally returns
+`"runs": [[start, end), …]`, the merge plan over the decided sequence.
+
+The per-segment passes (`cadence`, `jitter`) are mapped over `segs` here rather
+than called one segment at a time, so a day is one bridge call, not fifty. -/
+
+private def parseStepPt (j : Json) : Except String Verified.Geo.BiometricWindows.StepPoint := do
+  let a ← j.getArr?
+  match a[0]?, a[1]? with
+  | some ts, some st => return ⟨← ts.getInt?, ← jBits st⟩
+  | _, _ => throw "step point must be [ts, stepsBits]"
+
+private def parseLabelFix (j : Json) : Except String Verified.Geo.BiometricLabels.Fix := do
+  let a ← j.getArr?
+  match a[0]?, a[1]?, a[2]? with
+  | some ts, some la, some lo => return ⟨← ts.getInt?, ← jBits la, ← jBits lo⟩
+  | _, _, _ => throw "label fix must be [ts, latBits, lonBits]"
+
+/-- An optional string field: absent and `null` both read as `none`. -/
+private def optStr (j : Json) (k : String) : Except String (Option String) :=
+  match j.getObjVal? k with
+  | .error _ => pure none
+  | .ok v => if v.isNull then pure none else some <$> v.getStr?
+
+private def parseLabelSeg (j : Json) : Except String Verified.Geo.BiometricLabels.LabelSeg := do
+  let kinds ← match j.getObjVal? "kinds" with
+    | .error _ => pure []
+    | .ok v => if v.isNull then pure [] else (← v.getArr?).toList.mapM (·.getStr?)
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    mode := ← (← j.getObjVal? "mode").getStr?
+    refinedMode := ← optStr j "refinedMode"
+    refinedKinds := kinds
+    avgSpeed := ← jBits (← j.getObjVal? "avgSpeed")
+    maxSpeed := ← jBits (← j.getObjVal? "maxSpeed")
+    linearity := ← jBits (← j.getObjVal? "linearity")
+    pointCount := (← (← j.getObjVal? "pointCount").getInt?).toNat
+    place := ← optStr j "place"
+    wayName := ← optStr j "wayName"
+  }
+
+private def decisionJson : Verified.Geo.BiometricLabels.Decision → Json
+  | .keep => Json.null
+  | .flip mode reason kind =>
+    Json.arr #[Json.str mode, Json.str reason,
+      match kind with | none => Json.null | some k => Json.str k]
+
+private def bioLabelsResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let pass ← (← j.getObjVal? "pass").getStr?
+    let segs ← (← (← j.getObjVal? "segs").getArr?).toList.mapM parseLabelSeg
+    let steps ← (← (← j.getObjVal? "steps").getArr?).toList.mapM parseStepPt
+    let pts ← match j.getObjVal? "pts" with
+      | .error _ => pure []
+      | .ok v => (← v.getArr?).toList.mapM parseLabelFix
+    let decisions : List Verified.Geo.BiometricLabels.Decision ← match pass with
+      | "cadence" => pure (segs.map (Verified.Geo.BiometricLabels.correctModeFromCadence · steps))
+      | "revert" => pure (Verified.Geo.BiometricLabels.revertIsolatedCadenceDrives segs)
+      | "jitter" => pure (segs.map (Verified.Geo.BiometricLabels.demoteJitterWalkToStationary · steps))
+      | "walkthrough" => pure []  -- handled below; it also returns a merge plan
+      | other => throw s!"unknown biolabels pass {other}"
+    if pass == "walkthrough" then
+      let plan := Verified.Geo.BiometricLabels.applyStationaryWalkThrough segs steps pts
+      return Json.mkObj [
+        ("decisions", Json.arr (plan.decisions.map decisionJson).toArray),
+        ("runs", Json.arr (plan.runs.map fun (s, e) =>
+          Json.arr #[Lean.toJson s, Lean.toJson e]).toArray)]
+    return Json.mkObj [("decisions", Json.arr (decisions.map decisionJson).toArray)]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -986,6 +1075,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "coverage" => coverageResult j
         | .ok "kalman" => kalmanResult j
         | .ok "gpsquality" => gpsQualityResult j
+        | .ok "biolabels" => bioLabelsResult j
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
@@ -1009,6 +1099,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
+  if args.contains "biolabels" then return ← runOne bioLabelsResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with

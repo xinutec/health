@@ -52,6 +52,9 @@ import { groundTruthJourneys, journeyShapeResults, statesToJourneys } from "../e
 import { classifyDay, parsePipelineState } from "../eval/truth-check.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
+import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
+import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
+import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
 import {
 	type CapturedDay,
 	fixtureAnswersFromRows,
@@ -455,6 +458,17 @@ console.log(
 	`\n${checked - regressions}/${checked} fixture(s) match baseline` +
 		(regressions > 0 ? `, ${regressions} regressed.` : "."),
 );
+// Every Lean tenant's ledger, whenever one is not `off`.
+//
+// Without this the corpus gate is read from SILENCE — no divergence warning
+// printed — and silence is exactly what a bridge that failed and fell back to
+// TS also produces, since both `shadow` and `on` swallow `LeanBridgeError`. A
+// green 32/32 then means "the verified core was never consulted", which is the
+// opposite of what it looks like. These lines make the call count and the
+// failure count explicit, so the gate reports evidence rather than absence.
+logLeanKalmanLedger("golden");
+logLeanGpsQualityLedger("golden");
+logLeanBioLabelsLedger("golden");
 // Which side of the OSM port each fixture ran on. A day WITHOUT a captured
 // row-set answered its kernel lookups from the recorded MariaDB answers — the
 // oracle the port exists to remove — so a mixed corpus is a real state worth

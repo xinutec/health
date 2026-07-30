@@ -47,6 +47,7 @@ import { saveDecode } from "../hmm/persist.js";
 import { reachablePlacesForDay } from "../hmm/place-reachability.js";
 import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
 import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
+import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
@@ -373,6 +374,7 @@ async function decodeAndPersist(
 	logLeanMatchLedger(date);
 	logLeanKalmanLedger(date);
 	logLeanGpsQualityLedger(date);
+	logLeanBioLabelsLedger(date);
 	// Per-minute count is purely diagnostic. Segments tile the day's
 	// observed minutes contiguously (each `endTs` = last minute + 60),
 	// so total minutes = Σ (endTs − startTs) / 60.

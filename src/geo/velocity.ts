@@ -11,6 +11,12 @@ import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
 import { installLeanPasses } from "../lean/install.js";
+import {
+	applyStationaryWalkThroughViaLean,
+	correctModeFromCadenceViaLean,
+	demoteJitterWalkToStationaryViaLean,
+	revertIsolatedCadenceDrivesViaLean,
+} from "../lean/lean-biometric-labels.js";
 import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
@@ -1046,18 +1052,32 @@ export async function computeVelocityFromInputs(
 	// is almost certainly a passenger in slow traffic, an escalator, or
 	// similar — relabel before merge so neighbouring drives can absorb it.
 	const { hr, sleep, steps } = await biometricsPromise;
-	const flipped = timeSync("cadenceCorrect", () => enriched.map((s) => correctModeFromCadence(s, steps)));
+	const flipped = timeSync("cadenceCorrect", () =>
+		correctModeFromCadenceViaLean(
+			enriched,
+			steps,
+			enriched.map((s) => correctModeFromCadence(s, steps)),
+		),
+	);
 	// Undo cadence flips with no adjacent real driving: the correction exists so
 	// a neighbouring drive can absorb a slow-traffic leg, so an isolated flip
 	// (a slow walk whose phone didn't count steps) is a false positive. Runs
 	// before merge so surviving flips can still coalesce into their drive.
-	const reverted = timeSync("revertIsolatedCadence", () => revertIsolatedCadenceDrives(flipped));
+	const reverted = timeSync("revertIsolatedCadence", () =>
+		revertIsolatedCadenceDrivesViaLean(flipped, revertIsolatedCadenceDrives(flipped)),
+	);
 	// A "walking" leg with zero recorded steps and a path that just jitters
 	// around one spot is sitting still (a restaurant, a waiting room) where
 	// urban/indoor GPS wandered enough to score as a slow walk. Demote to
 	// stationary so the stays around it coalesce into one clean visit instead
 	// of fragmenting and grabbing wrong place names.
-	const corrected = timeSync("jitterWalkToStay", () => reverted.map((s) => demoteJitterWalkToStationary(s, steps)));
+	const corrected = timeSync("jitterWalkToStay", () =>
+		demoteJitterWalkToStationaryViaLean(
+			reverted,
+			steps,
+			reverted.map((s) => demoteJitterWalkToStationary(s, steps)),
+		),
+	);
 
 	// Biometric-signature correction: re-evaluate ambiguous segments
 	// against the user's per-mode (HR, cadence, speed) signatures from
@@ -1245,7 +1265,7 @@ export async function computeVelocityFromInputs(
 		// avg-speed gate in revertIsolatedCadenceDrives keeps it.
 		{
 			name: "revertIsolatedCadence2",
-			run: (segs) => revertIsolatedCadenceDrives(segs),
+			run: (segs) => revertIsolatedCadenceDrivesViaLean(segs, revertIsolatedCadenceDrives(segs)),
 		},
 
 		// Absorb a platform / concourse wait into the boarding of its train
@@ -1317,7 +1337,8 @@ export async function computeVelocityFromInputs(
 		},
 		{
 			name: "walkThrough",
-			run: (segs) => applyStationaryWalkThrough(segs, steps, points),
+			run: (segs) =>
+				applyStationaryWalkThroughViaLean(segs, steps, points, applyStationaryWalkThrough(segs, steps, points)),
 		},
 
 		// A short walk between two train legs that share a station is the

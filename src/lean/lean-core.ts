@@ -301,3 +301,38 @@ export interface LeanGpsQualityResp {
 export function leanGpsQualityServe(req: Record<string, unknown>): LeanGpsQualityResp {
 	return leanCore.call("gpsquality", req) as LeanGpsQualityResp;
 }
+
+/** One segment's verdict from a `biolabels` pass: `null` is "unchanged",
+ *  otherwise `[newMode, reasonFragment, refinedKind|null]`.
+ *
+ *  The reason is the FRAGMENT to append, not the final string — the TS passes
+ *  join onto any existing `refinedReason` with `"; "`, and that concatenation
+ *  stays in the shell. */
+export type LeanLabelDecision = null | [string, string, string | null];
+
+/** Result shape of a `biolabels` pass (mirrors `verified_cli biolabels` and
+ *  the `serveLoop` `bioLabelsResult` handler): one decision per input segment,
+ *  in order.
+ *
+ *  `runs` is present only for the `walkthrough` pass — the merge plan as
+ *  `[start, end)` ranges over the decided sequence, since that pass also
+ *  coalesces adjacent walking. Every other pass leaves the sequence alone.
+ *
+ *  Nothing here is a computed real: the decisions are labels and the reason
+ *  strings are `toFixed` renderings, so the comparison is EXACT with no
+ *  bounded-ULP class to grade. */
+export interface LeanBioLabelsResp {
+	decisions?: LeanLabelDecision[];
+	runs?: Array<[number, number]>;
+	error?: string;
+}
+
+/**
+ * Run one verified biometric label-rewrite pass over a whole day's segments
+ * through the persistent core, synchronously. `req` carries the pass name, the
+ * segments, the day's step rows and (for `walkthrough`) the filtered fixes.
+ * Throws `LeanBridgeError` on any bridge failure; the caller falls back to TS.
+ */
+export function leanBioLabelsServe(req: Record<string, unknown>): LeanBioLabelsResp {
+	return leanCore.call("biolabels", req) as LeanBioLabelsResp;
+}
