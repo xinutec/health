@@ -103,6 +103,27 @@ interface KalmanStat {
 	 *  Separate from `worstUlp` because bearing is modular and its bit distance
 	 *  measures nothing — see `float-gap.ts`. */
 	worstBearingDeg: number;
+	/** Bearing rows that differ while BOTH runtimes emit speed 0.
+	 *
+	 *  Not a divergence, and not a tolerance either — a category error being
+	 *  retired. Bearing is `atan2(vLon, vLat)`, so at a standstill it is the
+	 *  direction of a vector whose components are both ~0: unconstrained, and a
+	 *  quantity neither runtime can be right about. Speed is quantised to
+	 *  0.1 km/h, so the two arms agree on a rounded `0` while their underlying
+	 *  velocities differ, and bearing — quantised only to 1° — is the one place
+	 *  that shows. Measured on the corpus: 8° vs 351°, at speed 0 (#393).
+	 *
+	 *  Counted rather than ignored, because the number is the evidence for the
+	 *  separate, REAL defect it points at: the pipeline serves a fabricated
+	 *  heading for stationary points, in TS as much as in Lean, to some fifteen
+	 *  downstream modules. That is #394, and it is not the port's doing. */
+	stationaryBearing: number;
+	/** The row that produced {@link worstBearingDeg}, described field-by-field.
+	 *  A magnitude alone names no instance: `≤17° bearing` says a real angular
+	 *  disagreement exists somewhere in the corpus and gives you no way to go
+	 *  look at it — the per-call record only keeps each call's FIRST differing
+	 *  row, which is rarely the worst one. Empty while no bearing has differed. */
+	worstBearingNote: string;
 }
 
 const empty = (): KalmanStat => ({
@@ -113,6 +134,8 @@ const empty = (): KalmanStat => ({
 	rows: 0,
 	worstUlp: 0n,
 	worstBearingDeg: 0,
+	worstBearingNote: "",
+	stationaryBearing: 0,
 });
 
 let stats: KalmanStat = empty();
@@ -258,16 +281,43 @@ export function filterGpsTrackViaLean(points: readonly GpsPoint[], tsResult: Fil
 			const a = tsRows[i];
 			const b = leanRows[i];
 			if (a.every((v, k) => String(v) === String(b[k]))) continue;
-			diffRows += 1;
+			// Differing bits are not yet a differing ROW: a row whose only
+			// disagreement is the heading of a standstill has nothing to disagree
+			// about. Counted only if some field survives that filter.
+			let realDiffs = 0;
 			for (let k = 1; k < FIELDS.length; k++) {
 				if (String(a[k]) === String(b[k])) continue;
 				if (k === BEARING) {
-					stats.worstBearingDeg = Math.max(stats.worstBearingDeg, circularDegGap(String(a[k]), String(b[k])));
+					// A heading that does not exist. Both arms emitted the same speed and
+					// that speed is 0 — so this row disagrees about the direction of a
+					// standstill, which is not a fact either of them can get wrong. Kept
+					// out of the worst-gap statistic so one undefined quantity cannot
+					// mask a real heading divergence behind it; counted so the residue
+					// stays visible. Anything with speed on it falls through and is a
+					// finding, as before.
+					if (String(a[3]) === String(b[3]) && floatFromBits(String(a[3])) === 0) {
+						stats.stationaryBearing += 1;
+						continue;
+					}
+					const gap = circularDegGap(String(a[k]), String(b[k]));
+					if (gap > stats.worstBearingDeg) {
+						stats.worstBearingDeg = gap;
+						// Carry the row's SPEED even though it is not a differing field —
+						// that is the point. Speed is quantised to 0.1 km/h and bearing to
+						// 1°, so near a standstill both runtimes agree on a rounded 0.0
+						// while the direction of a velocity whose components are both ~0
+						// is unconstrained. A large angular gap sitting on an identical
+						// near-zero speed is that story; on a real speed it is not.
+						stats.worstBearingNote = `${rowNote(i, a, b)} @ speed ${floatFromBits(String(a[3]))}`;
+					}
 				} else {
 					const g = ulpGap(String(a[k]), String(b[k]));
 					if (g > stats.worstUlp) stats.worstUlp = g;
 				}
+				realDiffs += 1;
 			}
+			if (realDiffs === 0) continue;
+			diffRows += 1;
 			if (first === "") first = rowNote(i, a, b);
 		}
 		if (diffRows > 0) {
@@ -325,6 +375,17 @@ export function logLeanKalmanLedger(label: string): void {
 	const detail = clean
 		? ""
 		: ` — len=${s.lenDiffs} calls=${s.rowDiffs} rows=${s.rows} (≤${s.worstUlp}ulp, ≤${s.worstBearingDeg}° bearing)`;
+	// Name the worst bearing instance whenever it is the thing that broke the ULP
+	// class. Reporting only the magnitude tells you a real angular disagreement
+	// exists and gives you nothing to go look at — the per-call record keeps each
+	// call's FIRST differing row, which is rarely the worst one.
+	const worstBearing =
+		!clean && s.worstBearingDeg > BEARING_CLASS_MAX_DEG ? ` — worst bearing @ ${s.worstBearingNote}` : "";
+	// Never silent, even when the verdict is EXACT. These rows are excluded from
+	// the divergence count because a standstill has no heading to disagree about
+	// — but the count is the running evidence for #394, and a class that stops
+	// being printed is a class nobody re-examines.
+	const stationary = s.stationaryBearing === 0 ? "" : ` +${s.stationaryBearing} stationary-bearing`;
 	// Only shout about served output for a divergence the ULP story does not
 	// cover — every `decode`-scope call diverges by a bit or two, so flagging
 	// those would make the phrase permanent and therefore meaningless.
@@ -335,7 +396,7 @@ export function logLeanKalmanLedger(label: string): void {
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] in=${d.n} ts=${d.tsLen} lean=${d.leanLen} ${d.first}`).join("; ")}`;
 	console.log(
-		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedNote}${calls}`,
+		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedNote}${worstBearing}${calls}`,
 	);
 	resetLeanKalmanStats();
 }
