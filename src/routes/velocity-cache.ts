@@ -16,6 +16,10 @@
  *     schema-version tag, no stale-cache-after-logic-change risk.
  *     The trade-off: cold cache after each deploy, so the first
  *     view of any day after deploy still pays the full compute.
+ *     One thing does change the pipeline's answer WITHOUT a
+ *     restart — the verified-core master toggle — so it calls
+ *     {@link invalidateVelocityCache}. Any future switch of that
+ *     kind must do the same.
  *
  *   - **Short TTL (5 min).** Today's date keeps accumulating new
  *     Owntracks pushes, and Fitbit sleep sync can land any time.
@@ -69,6 +73,11 @@ const MAX_ENTRIES = 32;
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<VelocityResult>>();
 
+/** Bumped by {@link invalidateVelocityCache}. A compute that started under an
+ *  older generation must not write its result into the cleared cache — see
+ *  there for why clearing the map alone is not enough. */
+let generation = 0;
+
 /** Is `date` the day currently in progress, as the viewer experiences it?
  *
  *  The boundary that matters is the viewer's local midnight, not UTC's — at
@@ -117,8 +126,18 @@ export async function getVelocityCached<T extends VelocityResult>(
 	}
 
 	console.log(`velocity-cache MISS ${key}`);
+	const startedIn = generation;
 	const promise = compute()
 		.then((result) => {
+			// Computed across an invalidation: this result came out of the engine
+			// that was live when it started, which is exactly what the invalidation
+			// was discarding. Return it to the caller who asked before the switch,
+			// but do not seat it in the cache — that would re-admit a pre-switch
+			// answer with a full fresh TTL.
+			if (generation !== startedIn) {
+				console.log(`velocity-cache STALE ${key} — spanned an invalidation, not stored`);
+				return result;
+			}
 			// LRU eviction: if at cap, drop the oldest entry. Map
 			// preserves insertion order; the first key is the oldest.
 			if (cache.size >= MAX_ENTRIES) {
@@ -129,15 +148,48 @@ export async function getVelocityCached<T extends VelocityResult>(
 			return result;
 		})
 		.finally(() => {
-			inFlight.delete(key);
+			// Only retire OUR slot. If an invalidation dropped this promise from
+			// the map and a later caller registered a replacement compute for the
+			// same key under the new engine, a bare delete would evict that live
+			// entry and the caller after it would start a third run.
+			if (inFlight.get(key) === promise) inFlight.delete(key);
 		});
 
 	inFlight.set(key, promise);
 	return promise;
 }
 
-/** Test seam: clear the cache between test runs. */
+/** Drop every cached result — the pipeline's answer just changed under a
+ *  running pod.
+ *
+ *  The cache's per-pod design (see the header) leans on one assumption: only a
+ *  deploy changes what `computeVelocity` returns, and a deploy restarts the pod.
+ *  The verified-core master toggle breaks it — it swaps the Lean core for TS
+ *  inside a live process, so every entry cached before the flip was produced by
+ *  the other engine. Without this the toggle silently does nothing for any day
+ *  already viewed, which is precisely the day the user is looking at when they
+ *  reach for it: the A/B it exists for would compare a day against a cached copy
+ *  of itself. See ../lean/runtime-mode.ts.
+ *
+ *  In-flight computes are dropped too, not just cached ones. A run that began
+ *  before the flip will finish under the old engine; joining it would serve a
+ *  pre-flip answer to a post-flip request. It still completes (nothing here
+ *  cancels it) and still returns to whoever was already awaiting it — they
+ *  asked before the switch — but its result is not seated in the cache. */
+export function invalidateVelocityCache(reason: string): void {
+	const dropped = cache.size;
+	const abandoned = inFlight.size;
+	generation++;
+	cache.clear();
+	inFlight.clear();
+	console.log(`velocity-cache INVALIDATE (${reason}) dropped=${dropped} in-flight=${abandoned}`);
+}
+
+/** Test seam: clear the cache between test runs. Bumps the generation for the
+ *  same reason {@link invalidateVelocityCache} does — a promise still pending
+ *  from the previous test must not write its result into the next one's cache. */
 export function _resetVelocityCache(): void {
+	generation++;
 	cache.clear();
 	inFlight.clear();
 }

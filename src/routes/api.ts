@@ -31,7 +31,7 @@ import {
 import { buildShareUrl, clampShareDaysBack } from "../share/token.js";
 import { clipInferredFuture } from "../sleep/day-state.js";
 import type { UserSession } from "../types.js";
-import { getVelocityCached, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
+import { getVelocityCached, invalidateVelocityCache, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
 
 /** Subset of the full Config that the API routes actually need. Narrowing
  *  the type here keeps test stubs minimal and surfaces dependency drift
@@ -511,7 +511,14 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		} catch {
 			// no / invalid body → clear the override (fall back to the env default)
 		}
+		// Flipping the engine changes what computeVelocity returns, so every
+		// cached result is now the other engine's answer. Clear them, or the
+		// toggle appears to do nothing for exactly the days the user has been
+		// looking at — see routes/velocity-cache.ts (#391). Only on a real
+		// change: a repeat PUT of the current value should not cost a cold cache.
+		const before = verifiedCoreOverride();
 		setVerifiedCoreOverride(enabled);
+		if (before !== enabled) invalidateVelocityCache(`verified-core override ${before} → ${enabled}`);
 		return c.json(verifiedCoreState());
 	});
 

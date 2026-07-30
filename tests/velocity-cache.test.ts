@@ -13,11 +13,16 @@
  *   - In-flight dedup — concurrent calls for the same key share
  *     one compute promise.
  *   - _resetVelocityCache clears both cache and in-flight maps.
+ *   - invalidateVelocityCache drops cached AND in-flight entries,
+ *     and a compute that spans an invalidation is not seated in
+ *     the cache afterwards — see #391: the verified-core toggle
+ *     changes the pipeline's answer without a pod restart, and a
+ *     result computed by the old engine must not outlive the flip.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VelocityResult } from "../src/geo/velocity.js";
-import { _resetVelocityCache, getVelocityCached } from "../src/routes/velocity-cache.js";
+import { _resetVelocityCache, getVelocityCached, invalidateVelocityCache } from "../src/routes/velocity-cache.js";
 
 function makeResult(tag: string): VelocityResult {
 	// Carry a tag so tests can tell different results apart. The shape
@@ -141,5 +146,62 @@ describe("velocity-cache", () => {
 		vi.advanceTimersByTime(5 * 60 * 1000 + 1);
 		await getVelocityCached("u1|2026-05-12|UTC", compute);
 		expect(compute).toHaveBeenCalledTimes(2);
+	});
+
+	// ─── Invalidation (#391) ──────────────────────────────────────────
+	// The engine can change under a running pod (the verified-core master
+	// toggle), so "only a deploy changes the answer" no longer holds on its
+	// own. These pin the three ways a pre-flip result could survive.
+
+	it("invalidation drops cached entries — the next call recomputes inside the TTL", async () => {
+		const compute = vi.fn(async () => makeResult("lean"));
+		await getVelocityCached("u1|2026-05-12|UTC", compute);
+		invalidateVelocityCache("test");
+		// No clock advance: without the invalidation this would be a HIT.
+		const after = await getVelocityCached("u1|2026-05-12|UTC", async () => makeResult("ts"));
+		expect(after.states?.[0].place).toBe("ts");
+		expect(compute).toHaveBeenCalledTimes(1);
+	});
+
+	it("a compute spanning an invalidation is returned but not cached", async () => {
+		let resolveCompute!: (r: VelocityResult) => void;
+		const slow = vi.fn(
+			() =>
+				new Promise<VelocityResult>((resolve) => {
+					resolveCompute = resolve;
+				}),
+		);
+		const inflight = getVelocityCached("u1|2026-05-12|UTC", slow);
+		// Flip mid-compute, then let the old-engine run finish.
+		invalidateVelocityCache("test");
+		resolveCompute(makeResult("pre-flip"));
+		// The caller who asked before the flip still gets their answer …
+		expect((await inflight).states?.[0].place).toBe("pre-flip");
+		// … but it must not be seated in the cache with a fresh TTL.
+		const next = await getVelocityCached("u1|2026-05-12|UTC", async () => makeResult("post-flip"));
+		expect(next.states?.[0].place).toBe("post-flip");
+	});
+
+	it("invalidation drops the in-flight slot — a later caller does not join the old-engine run", async () => {
+		let resolveCompute!: (r: VelocityResult) => void;
+		const slow = vi.fn(
+			() =>
+				new Promise<VelocityResult>((resolve) => {
+					resolveCompute = resolve;
+				}),
+		);
+		const inflight = getVelocityCached("u1|2026-05-12|UTC", slow);
+		invalidateVelocityCache("test");
+		// Arrives after the flip: must start its own compute, not JOIN the
+		// pre-flip promise, which would serve it the other engine's answer.
+		const fresh = getVelocityCached("u1|2026-05-12|UTC", async () => makeResult("post-flip"));
+		expect(await fresh).toMatchObject({ states: [{ place: "post-flip" }] });
+		resolveCompute(makeResult("pre-flip"));
+		expect((await inflight).states?.[0].place).toBe("pre-flip");
+		// The abandoned run's `finally` must not have evicted the replacement's
+		// slot — a third caller inside the TTL is a plain HIT.
+		const third = vi.fn(async () => makeResult("never"));
+		await getVelocityCached("u1|2026-05-12|UTC", third);
+		expect(third).not.toHaveBeenCalled();
 	});
 });

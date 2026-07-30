@@ -30,16 +30,23 @@
  *     pod. Adding a request-path write would break that, and would make this
  *     switch genuinely unsafe; check here first if you ever add one.
  *
+ * Setting the override is NOT enough on its own: `/api/velocity` results are
+ * cached in-process, and that cache assumes only a deploy changes the answer
+ * (deploys restart the pod). The route therefore clears it on every real change
+ * — without that the toggle silently does nothing for any day already viewed,
+ * which is exactly the day you are looking at when you reach for it. See
+ * `routes/velocity-cache.ts`. Anything else that memoises pipeline output must
+ * do the same, so the setter stays a plain assignment and the invalidation is
+ * the caller's job, in one place, where the caches are known.
+ *
  * (An earlier version of this comment claimed a tenant "joins this switch only
  * once its own soak says `on` is safe". That was never true of the code —
  * Kalman consulted it from its first shadow day — and it contradicted the
  * paragraph above it. Recorded rather than quietly deleted, because the
  * mismatch is what an audit of this file will most likely turn up again.)
  *
- * In-memory and process-global: health is single-user, so a global toggle needs
- * no per-user plumbing. It resets to the env default on restart (a safe property
- * for a viewing override), and the nightly decode cron is a SEPARATE process
- * this never touches — so the soak / ledger stay driven purely by the env flags.
+ * Process-global rather than per-session because health is single-user: a global
+ * toggle needs no per-user plumbing.
  */
 let override: boolean | null = null;
 
