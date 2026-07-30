@@ -234,7 +234,13 @@ export function logLeanRailLedger(label: string): void {
 	if (mode === "off") return;
 	const s = stats;
 	const clean = s.pathDiffs === 0 && s.nullFlips === 0 && s.costDiffs === 0;
-	const verdict = clean ? "EXACT" : `${s.pathDiffs + s.nullFlips + s.costDiffs} DIVERGED`;
+	// Zero calls is not a pass — see the note in lean-kalman.ts (#392). This
+	// tenant reads NOT EXERCISED on the golden corpus by construction: the rail
+	// search runs from the route-cache fill, and the corpus preloads
+	// `rail_route_cache`, so no search happens. Its gate is `compare-rail`, not
+	// golden — the corpus cannot speak for it either way.
+	const verdict =
+		s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.pathDiffs + s.nullFlips + s.costDiffs} DIVERGED`;
 	const detail = clean ? "" : ` — path=${s.pathDiffs} null=${s.nullFlips} cost=${s.costDiffs}`;
 	const legs =
 		divergences.length === 0

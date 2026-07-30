@@ -54,7 +54,9 @@ import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
+import { logLeanHsmmLedger } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
+import { logLeanRailLedger } from "../lean/lean-rail.js";
 import {
 	type CapturedDay,
 	fixtureAnswersFromRows,
@@ -469,6 +471,12 @@ console.log(
 logLeanKalmanLedger("golden");
 logLeanGpsQualityLedger("golden");
 logLeanBioLabelsLedger("golden");
+// `hsmm` and `rail` have had ledgers all along and were simply never called
+// here, so two of the seven tenants could serve the whole corpus and report
+// nothing. `match` and `passes` have no ledger at all and remain unaccounted
+// for — see #392, which is about closing all four, not just these two.
+logLeanHsmmLedger("golden");
+logLeanRailLedger("golden");
 // Which side of the OSM port each fixture ran on. A day WITHOUT a captured
 // row-set answered its kernel lookups from the recorded MariaDB answers — the
 // oracle the port exists to remove — so a mixed corpus is a real state worth

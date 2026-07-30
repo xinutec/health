@@ -117,7 +117,14 @@ describe("the ledger", () => {
 			console.log = real;
 		}
 		expect(lines[0]).toContain("(no calls)");
-		expect(lines[0]).toContain("EXACT");
+		// The VERDICT has to carry it too, not just the marker. Until #392 this
+		// line read `0/0f (no calls) EXACT` — the same word a run that checked 160
+		// segments and agreed on all of them prints. A human skimming, and any
+		// gate reading the verdict, both take that for a pass. `lean-hsmm[on]
+		// golden 0d (no days) EXACT` was that failure in the wild: the corpus
+		// replays cached decodes, so the decoder had not run at all.
+		expect(lines[0]).toContain("NOT EXERCISED");
+		expect(lines[0]).not.toContain("EXACT");
 		if (prior === undefined) delete process.env.LEAN_BIOLABELS;
 		else process.env.LEAN_BIOLABELS = prior;
 	});

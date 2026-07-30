@@ -155,7 +155,12 @@ export function logLeanHsmmLedger(label: string): void {
 	if (mode === "off") return;
 	const s = stats;
 	const bad = s.bridgeDiverged + s.quantDrift + s.skipped;
-	const verdict = bad === 0 ? "EXACT" : `${bad} DIVERGED`;
+	// Zero days is not a pass — see the note in lean-kalman.ts (#392). This tenant
+	// reads NOT EXERCISED on the golden corpus by construction: the corpus replays
+	// the 11 cached decodes in `tests/golden/decoded_days` instead of decoding, so
+	// the decoder never runs. That determinism is deliberate (#233); it just means
+	// golden cannot gate this tenant, and a green corpus never could.
+	const verdict = s.days === 0 ? "NOT EXERCISED" : bad === 0 ? "EXACT" : `${bad} DIVERGED`;
 	const detail = bad === 0 ? "" : ` — bridge=${s.bridgeDiverged} quantDrift=${s.quantDrift} skip=${s.skipped}`;
 	const legs =
 		divergences.length === 0

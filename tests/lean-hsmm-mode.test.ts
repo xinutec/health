@@ -74,11 +74,14 @@ describe("logLeanHsmmLedger", () => {
 		expect(spy).not.toHaveBeenCalled();
 	});
 
-	it("reports a clean empty run in the tenant-consistent grep format", () => {
+	// An empty run is NOT a clean one. This tenant reads zero days on the golden
+	// corpus by construction — the corpus replays cached decodes — so `EXACT`
+	// here was a pass reported for work that never happened (#392).
+	it("reports an unexercised run as such, in the tenant-consistent grep format", () => {
 		process.env.LEAN_HSMM = "shadow";
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 		logLeanHsmmLedger("2026-07-16");
-		expect(spy).toHaveBeenCalledWith("lean-hsmm[shadow] 2026-07-16 0d (no days) EXACT");
+		expect(spy).toHaveBeenCalledWith("lean-hsmm[shadow] 2026-07-16 0d (no days) NOT EXERCISED");
 	});
 
 	it("resets after logging, so each day's ledger stands alone", () => {
@@ -86,7 +89,7 @@ describe("logLeanHsmmLedger", () => {
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 		logLeanHsmmLedger("2026-07-16");
 		logLeanHsmmLedger("2026-07-17");
-		expect(spy).toHaveBeenNthCalledWith(2, "lean-hsmm[shadow] 2026-07-17 0d (no days) EXACT");
+		expect(spy).toHaveBeenNthCalledWith(2, "lean-hsmm[shadow] 2026-07-17 0d (no days) NOT EXERCISED");
 	});
 });
 

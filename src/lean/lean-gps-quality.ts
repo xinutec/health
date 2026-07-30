@@ -202,7 +202,8 @@ export function logLeanGpsQualityLedger(label: string): void {
 	if (mode === "off") return;
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.pickDiffs === 0;
-	const verdict = clean ? "EXACT" : `${s.lenDiffs + s.pickDiffs} DIVERGED`;
+	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
+	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.lenDiffs + s.pickDiffs} DIVERGED`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} pick=${s.pickDiffs} (${s.fixes} fixes)`;
 	const served = divergences.filter((d) => d.scope === "decode").length;
 	const servedNote = served === 0 ? "" : ` ${served} IN SERVED OUTPUT`;

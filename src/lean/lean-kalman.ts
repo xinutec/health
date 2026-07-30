@@ -367,11 +367,20 @@ export function logLeanKalmanLedger(label: string): void {
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.rowDiffs === 0;
 	const ulpOnly = s.lenDiffs === 0 && s.worstUlp <= ULP_CLASS_MAX && s.worstBearingDeg <= BEARING_CLASS_MAX_DEG;
-	const verdict = clean
-		? "EXACT"
-		: ulpOnly
-			? `ULP (≤${s.worstUlp}, ≤${s.worstBearingDeg}°)`
-			: `${s.lenDiffs + s.rowDiffs} DIVERGED`;
+	// Nothing ran is not a pass. `EXACT` on zero calls is the silent-fallback
+	// hazard in its purest form: `shadow` and `on` both swallow `LeanBridgeError`,
+	// so a bridge that died on its first call, a tenant whose call site the corpus
+	// never reaches, and a tenant that ran perfectly all printed the same word.
+	// Measured: `lean-hsmm[on] golden 0d (no days) EXACT` — the golden corpus
+	// replays cached decodes, so the decoder had not run at all (#392).
+	const verdict =
+		s.calls === 0
+			? "NOT EXERCISED"
+			: clean
+				? "EXACT"
+				: ulpOnly
+					? `ULP (≤${s.worstUlp}, ≤${s.worstBearingDeg}°)`
+					: `${s.lenDiffs + s.rowDiffs} DIVERGED`;
 	const detail = clean
 		? ""
 		: ` — len=${s.lenDiffs} calls=${s.rowDiffs} rows=${s.rows} (≤${s.worstUlp}ulp, ≤${s.worstBearingDeg}° bearing)`;
