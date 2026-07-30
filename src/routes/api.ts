@@ -30,6 +30,7 @@ import {
 } from "../share/repository.js";
 import { buildShareUrl, clampShareDaysBack } from "../share/token.js";
 import { clipInferredFuture } from "../sleep/day-state.js";
+import type { UserSession } from "../types.js";
 import { getVelocityCached, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
 
 /** Subset of the full Config that the API routes actually need. Narrowing
@@ -121,6 +122,19 @@ export function isDateOutsideShareWindow(
  *  \p{Zp} the separators that are not control characters but still end a line),
  *  runs of whitespace collapse, and the result is capped by *code point* so a
  *  multi-byte glyph is never split down the middle. */
+/** Who is acting, for the telemetry log line.
+ *
+ *  A share recipient's session carries the *owner's* `userId` — that is how
+ *  `shareAuthMiddleware` grants them read access. So logging `user=` alone would
+ *  attribute a stranger's clicks to the owner, which is worse than not logging
+ *  them at all: a gap in a log is visible, a lie in one is not.
+ *
+ *  Exported so it can be tested directly, and so any future line that names a
+ *  user has one place to ask this question. */
+export function actorOf(session: UserSession): "owner" | "share" {
+	return session.shareViewer ? "share" : "owner";
+}
+
 export function oneLine(raw: string, max: number): string {
 	const unbroken = raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ");
 	return [...unbroken.replace(/\s+/g, " ").trim()].slice(0, max).join("");
@@ -590,7 +604,9 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		const MAX_EVENTS = 100;
 		const MAX_LABEL = 160;
 
-		const uid = c.get("session").userId;
+		const session = c.get("session");
+		const uid = session.userId;
+		const actor = actorOf(session);
 		let body: unknown;
 		try {
 			body = await c.req.json();
@@ -607,7 +623,7 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 			const path = String(e.path ?? "");
 			const label = oneLine(String(e.label ?? ""), MAX_LABEL);
 			const at = Number(e.at ?? 0);
-			console.log(`client-event user=${uid} kind=${kind} path=${path} label=${label} at=${at}`);
+			console.log(`client-event user=${uid} actor=${actor} kind=${kind} path=${path} label=${label} at=${at}`);
 		}
 		// Always 204: telemetry is best-effort and the client neither reads the
 		// response nor retries.

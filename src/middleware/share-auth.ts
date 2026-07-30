@@ -61,9 +61,27 @@ export const shareAuthMiddleware = createMiddleware<AppEnv>(async (c, next) => {
 /** Middleware that rejects mutations from share-viewer sessions.
  *  Mount on the /api group AFTER requireAuth so a missing session
  *  is handled there first. */
+/** Paths a share recipient may POST to despite being read-only.
+ *
+ *  Exactly one, and it is not an exception to the rule so much as outside its
+ *  subject: the rule protects the owner's *data*, and telemetry writes to the
+ *  log rather than to the database — `POST /api/telemetry` stores nothing.
+ *
+ *  It is allowed because the alternative is a blind spot exactly where problems
+ *  are least visible. A share recipient is the one person who cannot be asked
+ *  what they saw, and before this their whole session was invisible.
+ *
+ *  Safe only because the line names who acted: a share viewer's session carries
+ *  the owner's `userId`, so the log says `actor=share` (see `actorOf`). Without
+ *  that, opening this path would make the log claim the owner did it.
+ *
+ *  Named here rather than in the route so the exemption is visible where the
+ *  rule is stated, instead of hiding in the one handler it applies to. */
+const WRITES_ONLY_TO_THE_LOG = new Set(["/api/telemetry"]);
+
 export const requireOwnerOnly = createMiddleware<AppEnv>(async (c, next) => {
 	const session = c.get("session");
-	if (session?.shareViewer && c.req.method !== "GET") {
+	if (session?.shareViewer && c.req.method !== "GET" && !WRITES_ONLY_TO_THE_LOG.has(c.req.path)) {
 		return c.json({ error: "read_only_share" }, 403);
 	}
 	await next();
