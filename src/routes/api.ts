@@ -109,6 +109,23 @@ export function isDateOutsideShareWindow(
 	return date < session.shareViewer.from || date > session.shareViewer.to;
 }
 
+/** Flatten a client-supplied label to a single harmless log field.
+ *
+ *  This is the security boundary of the telemetry endpoint, not tidiness. A
+ *  label is verbatim UI text written into a log line as `label=…`, so a newline
+ *  inside it forges *whole log lines* — including further `client-event` lines
+ *  attributed to someone else. The log stops being evidence, which is the one
+ *  thing it exists to be.
+ *
+ *  Control and format characters become spaces (\p{Cc} covers C0/C1, \p{Zl} and
+ *  \p{Zp} the separators that are not control characters but still end a line),
+ *  runs of whitespace collapse, and the result is capped by *code point* so a
+ *  multi-byte glyph is never split down the middle. */
+export function oneLine(raw: string, max: number): string {
+	const unbroken = raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ");
+	return [...unbroken.replace(/\s+/g, " ").trim()].slice(0, max).join("");
+}
+
 export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 	const app = new Hono<AppEnv>();
 
@@ -588,7 +605,7 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 			const e = raw as { kind?: unknown; path?: unknown; label?: unknown; at?: unknown };
 			const kind = String(e.kind ?? "");
 			const path = String(e.path ?? "");
-			const label = [...String(e.label ?? "")].slice(0, MAX_LABEL).join("");
+			const label = oneLine(String(e.label ?? ""), MAX_LABEL);
 			const at = Number(e.at ?? 0);
 			console.log(`client-event user=${uid} kind=${kind} path=${path} label=${label} at=${at}`);
 		}
