@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../src/env.js";
 import { isNamedPlace, pickCurrentPlace, placeLabel } from "../src/geo/current-place.js";
 
@@ -275,7 +275,33 @@ describe("GET /internal/place/current", () => {
 	});
 });
 
+// `/recovery` (unlike `/recovery/history`) takes no date: it answers "as of now",
+// so it reads the wall clock and keeps only the BASELINE_DAYS window behind it.
+// With fixture dates written as literals, that makes every test in here a time
+// bomb — the fixtures stay put while the window walks away from them.
+//
+// It has already gone off once. These rows are 2026-07-01 and 2026-07-05; on
+// 2026-07-30 the floor reached 2026-07-02, the older row fell outside it, the
+// baseline was left empty, and `mean` fell back to `latest` — so the suite failed
+// with `expected 55 to be 40` having passed the day before. The "DATE columns as
+// Date objects" test below was days from the same fate: its newest row is
+// 2026-07-05, which leaves the window on 2026-08-03, and it asserts only `latest`
+// so nothing would have warned sooner.
+//
+// Pinning the clock is what makes these tests say what they mean: given THESE
+// rows and THIS as-of date, compute THIS. Only `Date` is faked — faking timers
+// wholesale would stall the awaits in the route handlers.
 describe("GET /internal/recovery", () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		// One day after the newest fixture row, so "latest" is genuinely the most
+		// recent reading and the 28-day floor (2026-06-08) sits well behind both.
+		vi.setSystemTime(new Date("2026-07-06T12:00:00Z"));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("returns latest + baseline per metric, main-sleep only", async () => {
 		setMockResult("hrv_daily", [
 			{ user_id: "alice", date: "2026-07-01", daily_rmssd: 40 },
