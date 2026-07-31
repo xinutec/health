@@ -56,7 +56,10 @@ import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { logLeanHsmmLedger } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
+import { logLeanMatchLedger } from "../lean/lean-match.js";
+import { logLeanPassLedger } from "../lean/lean-passes.js";
 import { logLeanRailLedger } from "../lean/lean-rail.js";
+import { gateLedgers } from "../lean/ledger-verdict.js";
 import {
 	type CapturedDay,
 	fixtureAnswersFromRows,
@@ -468,15 +471,43 @@ console.log(
 // green 32/32 then means "the verified core was never consulted", which is the
 // opposite of what it looks like. These lines make the call count and the
 // failure count explicit, so the gate reports evidence rather than absence.
-logLeanKalmanLedger("golden");
-logLeanGpsQualityLedger("golden");
-logLeanBioLabelsLedger("golden");
-// `hsmm` and `rail` have had ledgers all along and were simply never called
-// here, so two of the seven tenants could serve the whole corpus and report
-// nothing. `match` and `passes` have no ledger at all and remain unaccounted
-// for — see #392, which is about closing all four, not just these two.
-logLeanHsmmLedger("golden");
-logLeanRailLedger("golden");
+//
+// Each returns its verdict as data as well as printing it, and `gateLedgers`
+// turns that into part of this run's exit code — see the note on
+// `unexercisable` below, and `ledger-verdict.ts` for why printing alone was
+// not enough.
+const leanVerdicts = [
+	logLeanKalmanLedger("golden"),
+	logLeanGpsQualityLedger("golden"),
+	logLeanBioLabelsLedger("golden"),
+	// `hsmm` and `rail` have had ledgers all along and were simply never called
+	// here, so two of the seven tenants could serve the whole corpus and report
+	// nothing.
+	logLeanHsmmLedger("golden"),
+	logLeanRailLedger("golden"),
+	// `match` and `passes` had ledgers too — they were just private functions
+	// inside `decode-day`, so the corpus gate could not reach them however much
+	// it wanted to. Moved to their tenant modules alongside the other five.
+	logLeanMatchLedger("golden"),
+	logLeanPassLedger("golden"),
+];
+// Two tenants this corpus CANNOT exercise, both for the same reason and both by
+// deliberate design rather than oversight: #233 made the corpus deterministic by
+// replaying the cached decodes in `tests/golden/decoded_days` and preloading
+// `rail_route_cache`, which is precisely to stop the decoder and the rail search
+// from running at replay time. So a green golden has never been evidence about
+// either of them, and staging them here must not be read as coverage.
+//
+// Written down rather than silently skipped: the run says so every time, and if
+// the corpus ever grows a path that DOES reach one, the gate reports the waiver
+// as stale instead of quietly continuing to excuse it.
+const GOLDEN_UNEXERCISABLE: Record<string, string> = {
+	hsmm: "the corpus replays cached decodes (#233), so the decoder never runs",
+	rail: "the corpus preloads rail_route_cache (#233), so the Dijkstra never runs",
+};
+const leanGate = gateLedgers(leanVerdicts, GOLDEN_UNEXERCISABLE);
+for (const n of leanGate.notes) console.log(`lean: ${n}`);
+for (const f of leanGate.failures) console.log(`lean: FAIL — ${f}`);
 // Which side of the OSM port each fixture ran on. A day WITHOUT a captured
 // row-set answered its kernel lookups from the recorded MariaDB answers — the
 // oracle the port exists to remove — so a mixed corpus is a real state worth
@@ -736,7 +767,10 @@ process.exit(
 		kinematicRegressed > 0 ||
 		railTripleRegressed > 0 ||
 		truthRegressedKeys > 0 ||
-		gate.regressed.length > 0
+		gate.regressed.length > 0 ||
+		// Costs nothing when every tenant is `off`, which is the default and what
+		// CI runs — `gateLedgers` sees five nulls and returns no failures.
+		leanGate.failures.length > 0
 		? 1
 		: 0,
 );

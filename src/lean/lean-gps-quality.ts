@@ -37,6 +37,7 @@
 import type { GpsPoint } from "../geo/kalman.js";
 import { floatToBits } from "./float-bits.js";
 import { LeanBridgeError, type LeanGpsQualityResp, leanGpsQualityServe } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -197,9 +198,9 @@ export function qualityFilterGpsViaLean(points: readonly GpsPoint[], tsResult: G
  * loud. If one ever appears, adjudicate which arm is right rather than
  * widening the verdict.
  */
-export function logLeanGpsQualityLedger(label: string): void {
+export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 	const mode = leanGpsQualityMode();
-	if (mode === "off") return;
+	if (mode === "off") return null;
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.pickDiffs === 0;
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
@@ -214,5 +215,13 @@ export function logLeanGpsQualityLedger(label: string): void {
 	console.log(
 		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedNote}${calls}`,
 	);
+	const out: LedgerVerdict = {
+		tenant: "gpsquality",
+		mode,
+		calls: s.calls,
+		fails: s.fails,
+		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
+	};
 	resetLeanGpsQualityStats();
+	return out;
 }

@@ -36,6 +36,7 @@ import { addRefinedKind } from "../geo/segment-util.js";
 import type { TransportMode } from "../geo/segments.js";
 import { floatToBits } from "./float-bits.js";
 import { type LeanBioLabelsResp, LeanBridgeError, type LeanLabelDecision, leanBioLabelsServe } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -378,9 +379,9 @@ export function applyStationaryWalkThroughViaLean<T extends LabelSeg>(
  * anything other than EXACT is a decision flip and reads loud. If one appears,
  * adjudicate which arm is right rather than widening the verdict.
  */
-export function logLeanBioLabelsLedger(label: string): void {
+export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 	const mode = leanBioLabelsMode();
-	if (mode === "off") return;
+	if (mode === "off") return null;
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.segs === 0;
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
@@ -395,5 +396,13 @@ export function logLeanBioLabelsLedger(label: string): void {
 	console.log(
 		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedNote}${calls}`,
 	);
+	const out: LedgerVerdict = {
+		tenant: "biolabels",
+		mode,
+		calls: s.calls,
+		fails: s.fails,
+		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
+	};
 	resetLeanBioLabelsStats();
+	return out;
 }

@@ -100,6 +100,54 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	$DEV npm run golden
 	$DEV npm run walk-gate
 	$DEV npm run score-decoder
+	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
+	# by a gate. Everything above runs with all seven flags `off`, so a broken
+	# bridge, a divergence, or a tenant that never ran could all ship — the arm
+	# simply is not consulted (#392).
+	#
+	# `on` rather than `shadow` deliberately. `shadow` runs both arms and serves
+	# TS, so the 32/32 fixture diff would still be measuring TS and only the
+	# ledger would speak. Under `on` the corpus diff is ALSO a statement about
+	# Lean's output: 32/32 means serving the verified core reproduces every
+	# blessed day byte-for-byte.
+	#
+	# Not a substitute for the `compare-*.mts` referees and not substituted BY
+	# them: those feed raw fixes, which is exactly how #393's 17° bearing case
+	# hid from `compare-kalman` while the pipeline exercised it every day. This
+	# runs the real serving path on real days.
+	#
+	# hsmm and rail are staged too even though the corpus cannot reach them —
+	# `gateLedgers` prints their waiver each run, and turns it into a STALE
+	# WAIVER report the moment the corpus does reach one.
+	#
+	# WHAT THIS PASS DOES NOT COVER: `match` and `passes`, which stay off here.
+	# Not because they are fine — the first run of this gate that included them
+	# (2026-07-31) measured 10 UNEXPLAINED matcher legs + 1 UNEXPLAINED
+	# `simplify`, 21 and 3 of them reaching served output, while all 32 fixtures
+	# still matched baseline. Both tenants are `off` in production, so none of
+	# that ships; it is the pre-flip evidence they had never been given, and it
+	# is adjudicated under its own task, not blessed here. Until then this pass
+	# turns on exactly the tenants that are actually staged in production, so
+	# what the gate enforces is what is soaking.
+	#
+	#   DEPLOY_GOLDEN_LEAN_ALL=1 turns all seven on — the run to use while
+	#   adjudicating those deltas. Costs ~4 min on the 32-day corpus.
+	# A word-split string rather than an array: this script's shebang is
+	# `nix-shell`, so the bash running it is not pinned, and expanding an EMPTY
+	# array under `set -u` is an error on the bash 3.2 macOS still ships.
+	LEAN_ALL_FLAGS=""
+	if [[ "${DEPLOY_GOLDEN_LEAN_ALL:-0}" == "1" ]]; then
+		LEAN_ALL_FLAGS="LEAN_MATCH=on LEAN_PASSES=on"
+		echo "==> [2/7] golden corpus again, with ALL SEVEN Lean tenants ON"
+	else
+		echo "==> [2/7] golden corpus again, with the staged Lean tenants ON (match/passes excluded)"
+	fi
+	# `$DEV` already ends in `env HEALTH_DEVSHELL=1`, so these are just more
+	# assignments to the same `env` — no second `env` needed. Both `$DEV` and
+	# `$LEAN_ALL_FLAGS` are deliberately unquoted so they word-split.
+	# shellcheck disable=SC2086
+	$DEV LEAN_KALMAN=on LEAN_GPSQUALITY=on LEAN_BIOLABELS=on LEAN_HSMM=on LEAN_RAIL=on \
+		$LEAN_ALL_FLAGS npm run golden
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

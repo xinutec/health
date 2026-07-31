@@ -38,6 +38,7 @@
 import { createHash } from "node:crypto";
 import type { RailGraph } from "../geo/rail-snap.js";
 import { LeanBridgeError, type LeanRailResp, leanRailServe } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -229,9 +230,9 @@ export function shortestPathViaLean(
  * is EXACT on every fixture in both directions, so there is nothing to accept.
  * The first real one should read loud and be adjudicated, not pre-blessed.
  */
-export function logLeanRailLedger(label: string): void {
+export function logLeanRailLedger(label: string): LedgerVerdict | null {
 	const mode = leanRailMode();
-	if (mode === "off") return;
+	if (mode === "off") return null;
 	const s = stats;
 	const clean = s.pathDiffs === 0 && s.nullFlips === 0 && s.costDiffs === 0;
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392). This
@@ -251,5 +252,13 @@ export function logLeanRailLedger(label: string): void {
 	console.log(
 		`lean-rail[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${legs}`,
 	);
+	const out: LedgerVerdict = {
+		tenant: "rail",
+		mode,
+		calls: s.calls,
+		fails: s.fails,
+		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
+	};
 	resetLeanRailStats();
+	return out;
 }

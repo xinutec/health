@@ -37,8 +37,9 @@ import { legClasses, legFingerprint, legNote } from "../geo/leg-compare.js";
 import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.js";
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
-import type { MatchLegClass } from "./accepted-match-deltas.js";
+import { isAcceptedMatchDelta, type MatchLegClass, matchDeltaTag } from "./accepted-match-deltas.js";
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -231,4 +232,82 @@ export function matchWalkSegmentViaLean(
 	}
 
 	return mode === "on" ? leanResult : tsResult;
+}
+
+/**
+ * Request-path MATCHER ledger — the serve-path analogue of the always-on
+ * `walk-shadow` (which spawns `verified_cli match` per leg). When `LEAN_MATCH`
+ * is `shadow` or `on`, the walk matcher runs the proved Lean Viterbi over the
+ * persistent bridge during the day's velocity runs; log the accumulated
+ * serve-path ledger (calls/failures/decision-divergences) and reset. No-op with
+ * the flag off (the default) — the plumbing is dormant until the matcher flip,
+ * independent of `LEAN_PASSES`.
+ *
+ * Lives here rather than in `decode-day` (where it was until #392) so it sits
+ * beside the tenant it measures and can be called by the corpus gate.
+ */
+export function logLeanMatchLedger(label: string): LedgerVerdict | null {
+	const mode = leanMatchMode();
+	if (mode === "off") return null;
+	const s = leanMatchStats();
+	// Counts breakdown only when there is something to break down; the verdict
+	// below already says EXACT, and printing both read "EXACT EXACT".
+	const clean = s.coarseDiffs === 0 && s.pathDiffs === 0 && s.nullFlips === 0;
+	const detail = clean ? "" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
+	// Which run each divergence came from. `decode` is the persisted, served
+	// output; `shadow` is `runWalkShadow`'s extra velocity run over the same
+	// legs. Pooled, the served count read roughly double and a shadow-only
+	// divergence was indistinguishable from one a reader would actually see.
+	const scopes = leanMatchScopeTotals();
+	const byScope = Object.entries(scopes)
+		.map(([sc, t]) => `${sc} ${t.calls}/${t.fails}f/${t.coarseDiffs}c/${t.pathDiffs}p/${t.nullFlips}n`)
+		.join(" · ");
+	const servedDiffs =
+		(scopes.decode?.coarseDiffs ?? 0) + (scopes.decode?.pathDiffs ?? 0) + (scopes.decode?.nullFlips ?? 0);
+	const servedNote = servedDiffs === 0 ? "" : ` ${servedDiffs} IN SERVED OUTPUT`;
+	// Adjudicate each measured leg against the accepted manifest — the same
+	// `isAcceptedMatchDelta` the gate enforces, now reachable because the
+	// manifest is keyed on the leg's own fingerprint rather than on a golden
+	// date the cron's live days can never match.
+	const divs = leanMatchDivergences();
+	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
+	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
+	const verdict =
+		s.calls === 0
+			? "NOT EXERCISED"
+			: divs.length === 0
+				? "EXACT"
+				: unexplained.length === 0
+					? "all accepted"
+					: `${unexplained.length} UNEXPLAINED`;
+	const legDetail =
+		divs.length === 0
+			? ""
+			: ` — ${divs
+					.map(
+						(d) =>
+							`[${matchDeltaTag(d.leg, d.coarse, d.path, d.note)}][${d.scope}] leg=${d.leg} ` +
+							`coarse=${d.coarse}/path=${d.path} ${d.note}`,
+					)
+					.join("; ")}`;
+	console.log(
+		`lean-match[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
+			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedNote}${legDetail}`,
+	);
+	const out: LedgerVerdict = {
+		tenant: "match",
+		mode,
+		calls: s.calls,
+		fails: s.fails,
+		klass:
+			s.calls === 0
+				? "not-exercised"
+				: divs.length === 0
+					? "exact"
+					: unexplained.length === 0
+						? "accepted"
+						: "diverged",
+	};
+	resetLeanMatchStats();
+	return out;
 }

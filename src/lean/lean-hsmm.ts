@@ -34,6 +34,7 @@ import { existsSync } from "node:fs";
 import { buildHsmmModel, decodeHsmm, type HsmmInputs } from "../hmm/decode.js";
 import { decodeHsmmViaLean, shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import type { HmmSegment } from "../hmm/persist.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { leanRunScope } from "./run-scope.js";
 
 export type LeanHsmmMode = "off" | "shadow" | "on";
@@ -150,9 +151,9 @@ export function shadowHsmmViaLean(inputs: HsmmInputs, leanBin: string, date: str
  * cleared BOTH the bridge (lean↔tsQuant) and the quantisation (float↔quant) —
  * the two conditions a safe flip needs — with nothing skipped.
  */
-export function logLeanHsmmLedger(label: string): void {
+export function logLeanHsmmLedger(label: string): LedgerVerdict | null {
 	const mode = leanHsmmMode();
-	if (mode === "off") return;
+	if (mode === "off") return null;
 	const s = stats;
 	const bad = s.bridgeDiverged + s.quantDrift + s.skipped;
 	// Zero days is not a pass — see the note in lean-kalman.ts (#392). This tenant
@@ -167,5 +168,18 @@ export function logLeanHsmmLedger(label: string): void {
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] ${d.date} ${d.kind}:${d.detail}`).join("; ")}`;
 	console.log(`lean-hsmm[${mode}] ${label} ${s.days}d${s.days === 0 ? " (no days)" : ""}${detail} ${verdict}${legs}`);
+	// This tenant counts DAYS, not bridge calls — one shadow per decoded day —
+	// so that is what `calls` carries. `skipped` is its `fails`: a day whose
+	// shadow threw is a day the verified arm did not run, which is exactly the
+	// swallowed-failure shape the gate is looking for. It is a SUBSET of `days`
+	// rather than a separate tally, so the two must not be added together.
+	const out: LedgerVerdict = {
+		tenant: "hsmm",
+		mode,
+		calls: s.days,
+		fails: s.skipped,
+		klass: s.days === 0 ? "not-exercised" : bad === 0 ? "exact" : "diverged",
+	};
 	resetLeanHsmmStats();
+	return out;
 }

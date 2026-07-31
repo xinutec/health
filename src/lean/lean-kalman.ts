@@ -62,6 +62,7 @@ import type { FilteredPoint, GpsPoint } from "../geo/kalman.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
 import { circularDegGap, ulpGap } from "./float-gap.js";
 import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -361,9 +362,9 @@ const ULP_CLASS_MAX = 64n;
  *  zero it is. */
 const BEARING_CLASS_MAX_DEG = 1e-6;
 
-export function logLeanKalmanLedger(label: string): void {
+export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 	const mode = leanKalmanMode();
-	if (mode === "off") return;
+	if (mode === "off") return null;
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.rowDiffs === 0;
 	const ulpOnly = s.lenDiffs === 0 && s.worstUlp <= ULP_CLASS_MAX && s.worstBearingDeg <= BEARING_CLASS_MAX_DEG;
@@ -407,5 +408,17 @@ export function logLeanKalmanLedger(label: string): void {
 	console.log(
 		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedNote}${worstBearing}${calls}`,
 	);
+	// The class the gate reads, derived from the SAME booleans as the printed
+	// word so the two can never say different things. `ulpOnly` is `accepted`
+	// rather than `exact`: a pass, but one that is passing on a declared,
+	// bounded story rather than on agreement.
+	const out: LedgerVerdict = {
+		tenant: "kalman",
+		mode,
+		calls: s.calls,
+		fails: s.fails,
+		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : ulpOnly ? "accepted" : "diverged",
+	};
 	resetLeanKalmanStats();
+	return out;
 }

@@ -45,20 +45,12 @@ import { type HsmmInputs, type HsmmPlace, KNOWN_LINES } from "../hmm/decode.js";
 import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { saveDecode } from "../hmm/persist.js";
 import { reachablePlacesForDay } from "../hmm/place-reachability.js";
-import { deltaTag, unexplainedDeltas } from "../lean/accepted-deltas.js";
-import { isAcceptedMatchDelta, matchDeltaTag } from "../lean/accepted-match-deltas.js";
 import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
-import {
-	leanMatchDivergences,
-	leanMatchMode,
-	leanMatchScopeTotals,
-	leanMatchStats,
-	resetLeanMatchStats,
-} from "../lean/lean-match.js";
-import { leanPassDivergences, leanPassScopeTotals, leanPassStats, resetLeanPassStats } from "../lean/lean-passes.js";
+import { logLeanMatchLedger } from "../lean/lean-match.js";
+import { logLeanPassLedger } from "../lean/lean-passes.js";
 import { leanShadowEnabled, setLeanRunScope } from "../lean/run-scope.js";
 
 const config = z
@@ -177,109 +169,6 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 	} catch (err) {
 		console.log(`walk-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
 	}
-}
-
-/** Request-path pass ledger (docs/proposals/2026-07-verified-core-lean.md):
- *  when `LEAN_PASSES` is `shadow` or `on`, the wired geometry passes execute
- *  the verified Lean implementation via the in-process bridge during the day's
- *  velocity runs (`shadow` serves TS, `on` serves Lean). Log the accumulated
- *  per-op ledger for the day (calls/failures/divergences) and reset. No-op with
- *  the flag off. In `on` mode this keeps the soak visible while production
- *  serves Lean — the same measurement, so a run of clean `EXACT` days is the
- *  continuous evidence the flip stays honest.
- *
- *  Divergences are adjudicated against `accepted-deltas.ts`, the same manifest
- *  the `shadow-passes` gate uses, so the daily line states whether the flip's
- *  premise ("every divergence is a signed-off near-tie") still holds on days
- *  the corpus does not cover.
- *
- *  The day makes several velocity runs — the decode itself, plus the extra one
- *  `runWalkShadow` does purely to extract legs — so the line breaks the tally
- *  down by scope and flags `IN SERVED OUTPUT` when a divergence came from the
- *  decode rather than from throwaway measurement. Summing them hid that
- *  distinction, which is the one the reader actually needs. */
-function logLeanPassLedger(date: string): void {
-	const mode = process.env.LEAN_PASSES;
-	if (mode !== "shadow" && mode !== "on") return;
-	const stats = leanPassStats();
-	const tally = Object.entries(stats)
-		.map(([op, s]) => `${op} ${s.calls}/${s.fails}f/${s.diffs}d`)
-		.join(" ");
-	// Adjudicate against the same manifest the flip gate uses. The gate only
-	// replays the golden corpus, so production is the only place a divergence
-	// on an uncaptured day can surface — logging one without saying whether it
-	// is signed off makes an accepted near-tie and a genuine behaviour change
-	// read identically.
-	const scopes = leanPassScopeTotals();
-	const byScope = Object.entries(scopes)
-		.map(([sc, s]) => `${sc} ${s.calls}/${s.fails}f/${s.diffs}d`)
-		.join(" · ");
-	const divs = leanPassDivergences();
-	const unexplained = unexplainedDeltas(divs);
-	const served = divs.filter((d) => d.scope === "decode");
-	const verdict =
-		divs.length === 0 ? "EXACT" : unexplained.length === 0 ? "all accepted" : `${unexplained.length} UNEXPLAINED`;
-	const servedNote = served.length === 0 ? "" : ` ${served.length} IN SERVED OUTPUT`;
-	const detail =
-		divs.length === 0
-			? ""
-			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
-	console.log(
-		`lean-passes[${mode}] ${date} ${tally === "" ? "(no calls)" : tally}` +
-			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedNote}${detail}`,
-	);
-	resetLeanPassStats();
-}
-
-/** Request-path MATCHER ledger — the serve-path analogue of the always-on
- *  `walk-shadow` (which spawns `verified_cli match` per leg). When `LEAN_MATCH`
- *  is `shadow` or `on`, the walk matcher runs the proved Lean Viterbi over the
- *  persistent bridge during the day's velocity runs; log the accumulated
- *  serve-path ledger (calls/failures/decision-divergences) and reset. No-op with
- *  the flag off (the default) — the plumbing is dormant until the matcher flip,
- *  independent of `LEAN_PASSES`. See `src/lean/lean-match.ts`. */
-function logLeanMatchLedger(date: string): void {
-	const mode = leanMatchMode();
-	if (mode === "off") return;
-	const s = leanMatchStats();
-	// Counts breakdown only when there is something to break down; the verdict
-	// below already says EXACT, and printing both read "EXACT EXACT".
-	const clean = s.coarseDiffs === 0 && s.pathDiffs === 0 && s.nullFlips === 0;
-	const detail = clean ? "" : ` — coarse=${s.coarseDiffs} path=${s.pathDiffs} null=${s.nullFlips}`;
-	// Which run each divergence came from. `decode` is the persisted, served
-	// output; `shadow` is `runWalkShadow`'s extra velocity run over the same
-	// legs. Pooled, the served count read roughly double and a shadow-only
-	// divergence was indistinguishable from one a reader would actually see.
-	const scopes = leanMatchScopeTotals();
-	const byScope = Object.entries(scopes)
-		.map(([sc, t]) => `${sc} ${t.calls}/${t.fails}f/${t.coarseDiffs}c/${t.pathDiffs}p/${t.nullFlips}n`)
-		.join(" · ");
-	const servedDiffs =
-		(scopes.decode?.coarseDiffs ?? 0) + (scopes.decode?.pathDiffs ?? 0) + (scopes.decode?.nullFlips ?? 0);
-	const servedNote = servedDiffs === 0 ? "" : ` ${servedDiffs} IN SERVED OUTPUT`;
-	// Adjudicate each measured leg against the accepted manifest — the same
-	// `isAcceptedMatchDelta` the gate enforces, now reachable because the
-	// manifest is keyed on the leg's own fingerprint rather than on a golden
-	// date the cron's live days can never match.
-	const divs = leanMatchDivergences();
-	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
-	const verdict =
-		divs.length === 0 ? "EXACT" : unexplained.length === 0 ? "all accepted" : `${unexplained.length} UNEXPLAINED`;
-	const legDetail =
-		divs.length === 0
-			? ""
-			: ` — ${divs
-					.map(
-						(d) =>
-							`[${matchDeltaTag(d.leg, d.coarse, d.path, d.note)}][${d.scope}] leg=${d.leg} ` +
-							`coarse=${d.coarse}/path=${d.path} ${d.note}`,
-					)
-					.join("; ")}`;
-	console.log(
-		`lean-match[${mode}] ${date} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
-			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedNote}${legDetail}`,
-	);
-	resetLeanMatchStats();
 }
 
 async function decodeAndPersist(

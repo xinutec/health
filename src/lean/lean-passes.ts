@@ -29,7 +29,9 @@
  */
 
 import { quantPt } from "../geo/quant-twin.js";
+import { deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { LeanBridgeError, leanGeo } from "./lean-core.js";
+import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -336,4 +338,90 @@ export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
 		if (mode === "shadow") console.warn(`[lean-passes] despike divergence (n=${path.length}): ${note}`);
 	}
 	return mode === "on" ? subsequenceKept(path, leanRows) : tsResult;
+}
+
+/**
+ * Request-path pass ledger (docs/proposals/2026-07-verified-core-lean.md):
+ * when `LEAN_PASSES` is `shadow` or `on`, the wired geometry passes execute
+ * the verified Lean implementation via the in-process bridge during the day's
+ * velocity runs (`shadow` serves TS, `on` serves Lean). Log the accumulated
+ * per-op ledger (calls/failures/divergences) and reset. No-op with the flag
+ * off. In `on` mode this keeps the soak visible while production serves Lean —
+ * the same measurement, so a run of clean `EXACT` days is the continuous
+ * evidence the flip stays honest.
+ *
+ * Divergences are adjudicated against `accepted-deltas.ts`, the same manifest
+ * the `shadow-passes` gate uses, so the line states whether the flip's premise
+ * ("every divergence is a signed-off near-tie") still holds on days the corpus
+ * does not cover.
+ *
+ * The day makes several velocity runs — the decode itself, plus the extra one
+ * `runWalkShadow` does purely to extract legs — so the line breaks the tally
+ * down by scope and flags `IN SERVED OUTPUT` when a divergence came from the
+ * decode rather than from throwaway measurement. Summing them hid that
+ * distinction, which is the one the reader actually needs.
+ *
+ * Lives here rather than in `decode-day` (where it was until #392) for two
+ * reasons: it belongs beside the tenant it measures, like the other six, and
+ * a private function inside one CLI cannot be called by the corpus gate.
+ */
+export function logLeanPassLedger(label: string): LedgerVerdict | null {
+	// `leanPassMode()`, not a bare read of `process.env.LEAN_PASSES` as this did
+	// in `decode-day`: the settings-UI master override can put this tenant into
+	// `on` without the env var, and the old read stayed SILENT through exactly
+	// that case — the tenant serving Lean with no ledger at all.
+	const mode = leanPassMode();
+	if (mode === "off") return null;
+	const stats = leanPassStats();
+	const tally = Object.entries(stats)
+		.map(([op, s]) => `${op} ${s.calls}/${s.fails}f/${s.diffs}d`)
+		.join(" ");
+	// Adjudicate against the same manifest the flip gate uses. The gate only
+	// replays the golden corpus, so production is the only place a divergence
+	// on an uncaptured day can surface — logging one without saying whether it
+	// is signed off makes an accepted near-tie and a genuine behaviour change
+	// read identically.
+	const scopes = leanPassScopeTotals();
+	const byScope = Object.entries(scopes)
+		.map(([sc, s]) => `${sc} ${s.calls}/${s.fails}f/${s.diffs}d`)
+		.join(" · ");
+	const divs = leanPassDivergences();
+	const unexplained = unexplainedDeltas(divs);
+	const served = divs.filter((d) => d.scope === "decode");
+	// This tenant fans out over several ops, so its call count is their sum.
+	const calls = Object.values(stats).reduce((n, s) => n + s.calls, 0);
+	const fails = Object.values(stats).reduce((n, s) => n + s.fails, 0);
+	// Zero calls is not a pass — see the note in lean-kalman.ts (#392). Until
+	// then this printed `(no calls) EXACT`: the marker was already there and the
+	// verdict contradicted it, which is the worst of both.
+	const verdict =
+		calls === 0
+			? "NOT EXERCISED"
+			: divs.length === 0
+				? "EXACT"
+				: unexplained.length === 0
+					? "all accepted"
+					: `${unexplained.length} UNEXPLAINED`;
+	const servedNote = served.length === 0 ? "" : ` ${served.length} IN SERVED OUTPUT`;
+	const detail =
+		divs.length === 0
+			? ""
+			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
+	console.log(
+		`lean-passes[${mode}] ${label} ${tally === "" ? "(no calls)" : tally}` +
+			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedNote}${detail}`,
+	);
+	// An ACCEPTED divergence is `accepted`, not `exact`: it passes, on a manifest
+	// somebody signed. Collapsing it into `exact` would let the gate stop
+	// distinguishing "agreed" from "disagreed in a way we decided to allow".
+	const out: LedgerVerdict = {
+		tenant: "passes",
+		mode,
+		calls,
+		fails,
+		klass:
+			calls === 0 ? "not-exercised" : divs.length === 0 ? "exact" : unexplained.length === 0 ? "accepted" : "diverged",
+	};
+	resetLeanPassStats();
+	return out;
 }
