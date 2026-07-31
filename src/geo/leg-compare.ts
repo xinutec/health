@@ -19,10 +19,17 @@ import { type QPt, quantPt } from "./quant-twin.js";
  * genuine difference.
  *
  * `NEAR` means the two arms drew the SAME LINE — every point of each within
- * ~33 cm of the other — whether or not they sampled it with the same number of
- * vertices. `DIFF` means the line moved. The vertex count is not itself the
- * question (#396); it was until 2026-07-31, and that put a redundant collinear
- * vertex in the same class as a 120 m reroute.
+ * ~33 cm of the other. `DIFF` means the line moved. Neither the vertex COUNT
+ * (#396) nor any single vertex's DISPLACEMENT (#400) is itself the question:
+ * both were, and between them they put a redundant collinear vertex in the same
+ * class as a 120 m reroute, and a vertex sliding 78.7 cm along an unchanged line
+ * in the same class as a 17 m route flip.
+ *
+ * One consequence worth stating, since it is what #400 fixed: the class does not
+ * depend on whether the two arms happened to emit the same number of vertices.
+ * Both branches of {@link comparePaths} now measure the same distance and answer
+ * the same question. Timestamps are still compared wherever a vertex
+ * correspondence exists to compare them across.
  */
 export type LegClass = "EXACT" | "NEAR" | "DIFF";
 
@@ -99,6 +106,23 @@ export function polylineDeviationM(a: readonly LL[], b: readonly LL[]): number {
 	return Math.max(maxDeviationM(a, b), maxDeviationM(b, a));
 }
 
+/**
+ * Greatest distance between CORRESPONDING vertices, in metres, or `null` when
+ * the arms have different vertex counts and no correspondence exists.
+ *
+ * The companion figure to {@link polylineDeviationM}, and reported beside it
+ * rather than instead of it. They answer different questions — "did this vertex
+ * move?" versus "did the line move?" — and they disagree exactly when a vertex
+ * slides ALONG the line. Printing only the one the class is derived from would
+ * hide the disagreement that {@link comparePaths} had to resolve (#400).
+ */
+export function vertexSeparationM(from: readonly LL[], to: readonly LL[]): number | null {
+	if (from.length !== to.length) return null;
+	let worst = 0;
+	for (let i = 0; i < from.length; i++) worst = Math.max(worst, metres(from[i], to[i]));
+	return worst;
+}
+
 interface FloatArm {
 	coarsePath: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
 	path: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
@@ -134,17 +158,46 @@ function comparePaths(float: FloatArm["path"], quant: readonly QPt[]): LegClass 
 		);
 		return dev <= NEAR_DEVIATION_M ? "NEAR" : "DIFF";
 	}
-	let cls: LegClass = "EXACT";
+	// Equal vertex counts. Two separate questions, and they need separate answers
+	// (#400).
+	//
+	// TIME first, because a correspondence exists here that the branch above does
+	// not have: with the same number of vertices each one has a counterpart, so
+	// the `ts` check is available and is kept exactly as it was. Grading the
+	// SPATIAL verdict by distance must not smuggle the timestamp check out with
+	// the per-coordinate one — a leg whose line is identical but whose times have
+	// shifted is a real divergence and stays DIFF.
+	const abs = (x: bigint): bigint => (x < 0n ? -x : x);
+	let identical = true;
 	for (let i = 0; i < qf.length; i++) {
-		const dLa = qf[i].la - quant[i].la;
-		const dLo = qf[i].lo - quant[i].lo;
-		const dTs = qf[i].ts - quant[i].ts;
-		if (dLa === 0n && dLo === 0n && dTs === 0n) continue;
-		const abs = (x: bigint): bigint => (x < 0n ? -x : x);
-		if (abs(dLa) <= NEAR_UNITS && abs(dLo) <= NEAR_UNITS && abs(dTs) <= 1n) cls = "NEAR";
-		else return "DIFF";
+		if (abs(qf[i].ts - quant[i].ts) > 1n) return "DIFF";
+		if (qf[i].la !== quant[i].la || qf[i].lo !== quant[i].lo || qf[i].ts !== quant[i].ts) identical = false;
 	}
-	return cls;
+	if (identical) return "EXACT";
+
+	// SPACE by polyline deviation, not per-coordinate. Per-coordinate distance
+	// answers "did this vertex move?"; the class is documented to mean "did the
+	// LINE move?", and those differ whenever a vertex slides ALONG the line it
+	// sits on. Leg 64c24f8ad38e6fbf is the measured case: one vertex 78.7 cm from
+	// its counterpart — over the 33 cm bar, so the old rule said DIFF — with the
+	// two polylines 0.04 m apart and the display path bit-identical.
+	//
+	// This also removes an incoherence rather than merely relaxing a bound: until
+	// now, two legs whose lines were both 0.04 m apart got OPPOSITE classes
+	// depending on whether the arms happened to emit the same number of vertices,
+	// since the branch above already grades by distance. Same question, same
+	// answer, either way the vertices fall.
+	//
+	// NOT a way to make a red go away: a reclassified leg is still reported, still
+	// needs a manifest entry, and still fails the gate unexplained. Only the
+	// severity word changes, and it changes to the one the measurement supports.
+	// `compare-match` prints the per-vertex separation alongside the deviation
+	// ({@link vertexSeparationM}) so the class is always shown its evidence.
+	const dev = polylineDeviationM(
+		float,
+		quant.map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
+	);
+	return dev <= NEAR_DEVIATION_M ? "NEAR" : "DIFF";
 }
 
 /** Per-leg float↔quant verdict, coarse (decision layer) and path (display

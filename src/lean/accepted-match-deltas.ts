@@ -102,12 +102,13 @@ export interface AcceptedMatchDelta {
 	 * re-derivation existed to remove: the reason field can then only assert,
 	 * and an assertion nobody can check is indistinguishable from a guess.
 	 *
-	 * Note these are LINE-to-line distances, not vertex-to-vertex. A vertex that
-	 * slides along an otherwise identical polyline moves further than the line
-	 * does, which is why leg 64c24f8ad38e6fbf is classed `DIFF` off a 78.7 cm
-	 * vertex while measuring 0.04 m here (#400). The class comes from the
-	 * per-coordinate check; this number says how far the drawn line moved. Both
-	 * are true and they are not the same question.
+	 * These are LINE-to-line distances, not vertex-to-vertex. A vertex that slides
+	 * along an otherwise identical polyline moves further than the line does — on
+	 * leg 64c24f8ad38e6fbf, 0.79 m of vertex against 0.04 m of line. Since #400
+	 * the class is derived from THIS figure at both vertex-count branches, because
+	 * "did the line move?" is what the class is documented to mean. The gate
+	 * prints the per-vertex separation alongside, so the two are never conflated
+	 * and the one the class rests on is never the only one shown.
 	 */
 	coarseDevM: number;
 	pathDevM: number;
@@ -165,25 +166,30 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"both arms are inferring from bad input. Neither picks a visibly wrong corridor. Accepted as a " +
 			"knife-edge with no defect visible, NOT as a near-tie — 14 m is not a near-tie.",
 	},
-	// ── coarse DIFF by the per-coordinate check, but the LINE barely moved ───────
+	// ── a vertex that slid ALONG the line — the #400 case ───────────────────────
 	{
 		leg: "64c24f8ad38e6fbf",
 		date: "2026-05-15",
 		hhmm: "20:47",
-		coarse: "DIFF",
+		coarse: "NEAR",
 		path: "EXACT",
 		note: "coarse 10v vs 10v, path 53v vs 53v",
 		coarseDevM: 0.04,
 		pathDevM: 0.0,
 		reason:
-			"The corpus's third coarse DIFF, and previously unsigned — it had no manifest entry at all while two " +
-			"other coarse DIFFs did. Classed DIFF because one of ten coarse vertices sits 78.7 cm from its " +
-			"counterpart, over the 30-unit (~33 cm) per-coordinate bar. But that vertex slid mostly ALONG the line: " +
-			"the two coarse polylines measure 0.04 m apart, and the display path is BIT-IDENTICAL (53v vs 53v, " +
-			"0.00 m). So this is real, bounded, and changed nothing served — four centimetres against an 18 m " +
-			"trigger and a 40 m cap. Kept as DIFF rather than promoted to NEAR: reclassifying to make a red go " +
-			"away is the move #398 exists to warn about, and the divergence is genuine even though its consequence " +
-			"is nil. The measure-disagreement itself is #400.",
+			"One of ten coarse vertices sits 78.7 cm from its counterpart — but it slid mostly ALONG the line, so " +
+			"the two coarse polylines measure 0.04 m apart and the display path is BIT-IDENTICAL (53v vs 53v, " +
+			"0.00 m). Four centimetres against an 18 m off-road trigger and a 40 m stray cap: real, bounded, " +
+			"changed nothing served. " +
+			"Was the corpus's third coarse DIFF and previously unsigned — it had no manifest entry at all while " +
+			"two other coarse DIFFs did. It read DIFF only because the equal-vertex-count branch graded " +
+			"per-COORDINATE while the length-mismatch branch already graded by line distance, so two legs whose " +
+			"lines were both 0.04 m apart got opposite classes depending on how the arms happened to sample them. " +
+			"#400 made both branches answer the one question the class is documented to answer — did the LINE " +
+			"move? — and this leg is the only one in the corpus the change moves. `compare-match` prints the " +
+			"per-vertex separation (0.79 m) beside the deviation (0.04 m), so the class is shown its evidence and " +
+			"the reclassification hides nothing: this leg is still reported, still needs this entry, and still " +
+			"fails the gate without it.",
 	},
 	// ── sub-decimetre: coarse layer moved, within 4 cm ───────────────────────────
 	{

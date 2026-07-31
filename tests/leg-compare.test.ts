@@ -88,6 +88,52 @@ describe("legClasses", () => {
 		expect(legClasses(arm(f), qArm(truncated)).path).toBe("DIFF");
 	});
 
+	// THE #400 CASE. Equal vertex counts used to be graded per-COORDINATE, so a
+	// vertex that slid ALONG an otherwise identical line read DIFF while the line
+	// itself had barely moved. Measured on leg 64c24f8ad38e6fbf (2026-05-15
+	// 20:47): one vertex 78.7 cm from its counterpart, the two coarse polylines
+	// 0.04 m apart, display path bit-identical.
+	//
+	// The class must answer the question the manifest says it answers — "did the
+	// line move?" — and must not depend on whether the two arms happened to emit
+	// the same number of vertices, which is what decided it before.
+	it("grades a slid-along-the-line vertex by how far the LINE moved, not the vertex", () => {
+		const f = [p(51.53, -0.125), p(51.531, -0.125), p(51.532, -0.125)];
+		// Middle vertex pushed 0.8 m NORTH — along the straight N-S line. Well over
+		// the 33 cm per-coordinate bar, but it stays on the same drawn line.
+		const slid = [q(51.53, -0.125), q(51.531 + mLat(0.8), -0.125), q(51.532, -0.125)];
+		expect(legClasses(arm(f), qArm(slid)).coarse).toBe("NEAR");
+	});
+
+	// The guard on the above, and the reason this is not "making the alert
+	// quieter": the SAME 0.8 m, moved ACROSS the line instead of along it, is a
+	// line that actually moved and stays DIFF.
+	it("keeps an equal-count vertex that moved AWAY from the line DIFF", () => {
+		const f = [p(51.53, -0.125), p(51.531, -0.125), p(51.532, -0.125)];
+		const across = [
+			q(51.53, -0.125),
+			q(51.531, -0.125 + mLat(0.8) / Math.cos((51.531 * Math.PI) / 180)),
+			q(51.532, -0.125),
+		];
+		expect(legClasses(arm(f), qArm(across)).coarse).toBe("DIFF");
+	});
+
+	// Equal counts give a vertex CORRESPONDENCE, so unlike the length-mismatch
+	// branch this one can compare timestamps — and still must. Grading the
+	// spatial verdict by polyline deviation must not quietly drop the `ts` check
+	// along with the per-coordinate one.
+	it("still fails a timestamp shift even when the geometry is identical", () => {
+		const f = [p(51.53, -0.125, 1000), p(51.531, -0.125, 1060)];
+		const shifted = [q(51.53, -0.125, 1000), q(51.531, -0.125, 1062)];
+		expect(legClasses(arm(f), qArm(shifted)).coarse).toBe("DIFF");
+	});
+
+	it("tolerates a one-second timestamp difference, as before", () => {
+		const f = [p(51.53, -0.125, 1000), p(51.531, -0.125, 1060)];
+		const off = [q(51.53, -0.125, 1000), q(51.531, -0.125, 1061)];
+		expect(legClasses(arm(f), qArm(off)).coarse).toBe("NEAR");
+	});
+
 	it("treats one arm matching and the other null as DIFF", () => {
 		const f = [p(51.53, -0.125)];
 		expect(legClasses(arm(f), null)).toEqual({ coarse: "DIFF", path: "DIFF" });

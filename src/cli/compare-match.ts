@@ -54,7 +54,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { legFingerprint, legNote, maxDeviationM, polylineDeviationM } from "../geo/leg-compare.js";
+import { legFingerprint, legNote, maxDeviationM, polylineDeviationM, vertexSeparationM } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -190,6 +190,13 @@ interface DivergentLeg {
 	 *  nothing, and reporting 0 or ∞ would both be a claim. */
 	coarseDevM: number | null;
 	pathDevM: number | null;
+	/** Worst CORRESPONDING-vertex separation, in metres, or `null` when the arms
+	 *  have different vertex counts and no correspondence exists. Printed beside
+	 *  the deviation because the two disagree exactly when a vertex slides ALONG
+	 *  the line, and the class is derived from the deviation — so showing only
+	 *  that one would hide the disagreement it resolves (#400). */
+	coarseVtxM: number | null;
+	pathVtxM: number | null;
 }
 
 /** The measured separation between the two arms at one layer. The gate used to
@@ -204,7 +211,17 @@ function devM(f: FloatArmish, q: QuantArmish, layer: "coarsePath" | "path"): num
 	);
 }
 
-/** Metres to two decimals, or `n/a` for the null-flip case. */
+/** Worst corresponding-vertex separation at one layer — `null` when the counts
+ *  differ (no correspondence) or an arm is missing. */
+function vtxM(f: FloatArmish, q: QuantArmish, layer: "coarsePath" | "path"): number | null {
+	if (f === null || q === null) return null;
+	return vertexSeparationM(
+		f[layer],
+		q[layer].map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
+	);
+}
+
+/** Metres to two decimals, or `n/a` where the figure is undefined. */
 const fmtDev = (d: number | null): string => (d === null ? "n/a" : `${d.toFixed(2)} m`);
 const divergent: DivergentLeg[] = [];
 const files = readdirSync(DAYS_DIR)
@@ -255,6 +272,8 @@ for (const file of files) {
 				note,
 				coarseDevM: devM(r.float, r.quant, "coarsePath"),
 				pathDevM: devM(r.float, r.quant, "path"),
+				coarseVtxM: vtxM(r.float, r.quant, "coarsePath"),
+				pathVtxM: vtxM(r.float, r.quant, "path"),
 			});
 		}
 		perDay.push(
@@ -296,7 +315,8 @@ if (divergent.length > 0) {
 		const tag = isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note) ? "accepted" : "UNEXPLAINED";
 		console.log(
 			`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})` +
-				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}`,
+				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}` +
+				`  vtx coarse=${fmtDev(d.coarseVtxM)} path=${fmtDev(d.pathVtxM)}`,
 		);
 	}
 }
