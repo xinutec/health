@@ -30,7 +30,8 @@
  *                   signed off; a new/unexplained one fails the gate.
  * All three green ⇒ the matcher is ready to serve Lean (LEAN_MATCH=on) in prod.
  *
- * Usage: node dist/cli/compare-match.js [--gate] [--leg <fingerprint>] [date ...]
+ * Usage: node dist/cli/compare-match.js [--gate] [--leg <fingerprint>]
+ *                                       [--days <dir>] [date ...]
  *
  * `--leg <fingerprint>` is the ADJUDICATION view: instead of one line per leg,
  * it prints the named leg's two coarse/display paths vertex by vertex with the
@@ -39,6 +40,15 @@
  * divergence is a signed-off near-tie or a real route difference. Added while
  * adjudicating #395, where a `coarse=DIFF` at equal vertex count could only be
  * told apart from rounding by looking at the vertices.
+ *
+ * `--days <dir>` replays fixtures from somewhere other than the gated corpus.
+ * The divergences that most need adjudicating are the ones the production
+ * ledger reports on LIVE days, and the cron decodes the trailing 7 days — which
+ * are by construction never in `tests/golden/days/`. Without this the only way
+ * to inspect such a leg is to drop its fixture INTO the corpus, which silently
+ * turns the corpus into a 33-day set with no blessed baseline for the new day
+ * and reds every gate that enumerates it. Capture the day, point `--days` at it,
+ * leave the corpus alone.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -63,7 +73,26 @@ if (legIdx !== -1 && legFilter === null) {
 	console.error("--leg takes a leg fingerprint (16 hex chars, as printed by --gate)");
 	process.exit(2);
 }
-const argDates = allArgs.filter((a, i) => a !== "--gate" && a !== "--leg" && i !== legIdx + 1);
+const daysIdx = allArgs.indexOf("--days");
+if (daysIdx !== -1 && allArgs[daysIdx + 1] === undefined) {
+	console.error("--days takes a directory of captured day fixtures");
+	process.exit(2);
+}
+/** Where the day fixtures live — the gated corpus unless `--days` says else. */
+const DAYS_DIR = daysIdx === -1 ? "tests/golden/days" : allArgs[daysIdx + 1];
+// The index after a flag is that flag's VALUE, not a date. Guard each on
+// `!== -1`: with the flag absent `indexOf` returns -1, so an unguarded
+// `i !== idx + 1` drops argv[0] — which silently swallowed the ONLY date on
+// `compare-match 2026-07-30` and replayed the whole corpus instead. Same shape
+// of bug as #375, and just as quiet: the run still looks like it worked.
+const argDates = allArgs.filter(
+	(a, i) =>
+		a !== "--gate" &&
+		a !== "--leg" &&
+		a !== "--days" &&
+		(legIdx === -1 || i !== legIdx + 1) &&
+		(daysIdx === -1 || i !== daysIdx + 1),
+);
 
 /** Metres between two lat/lon points, equirectangular — exact enough at the
  *  sub-kilometre scale a walk leg spans. */
@@ -202,7 +231,7 @@ interface DivergentLeg {
 	note: string;
 }
 const divergent: DivergentLeg[] = [];
-const files = readdirSync("tests/golden/days")
+const files = readdirSync(DAYS_DIR)
 	.filter((f) => f.endsWith(".json"))
 	.filter((f) => argDates.length === 0 || argDates.some((d) => f.startsWith(d)))
 	.sort();
@@ -216,7 +245,7 @@ let leanExact = 0;
 const leanMismatches: string[] = [];
 
 for (const file of files) {
-	const captured = parseCapturedDay(readFileSync(`tests/golden/days/${file}`, "utf8"));
+	const captured = parseCapturedDay(readFileSync(path.join(DAYS_DIR, file), "utf8"));
 	const inputs = inputsFromFixture(captured);
 	const capture = beginWalkLegCapture();
 	await computeVelocityFromInputs(inputs, { walkMatch: true });
