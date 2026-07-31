@@ -4,49 +4,86 @@
  * The matcher analogue of `accepted-deltas.ts` (which covers the geometry
  * passes). When `LEAN_MATCH=on` serves the verified Lean matcher, production
  * adopts the quantised (1e-7° integer) arithmetic as truth. On a handful of
- * golden legs that differs from the TS float matcher:
- *
- *   NEAR — same decision (same null-ness + vertex counts), coordinates within
- *          30 cm: a route near-tie where float vs quant rounding lands the
- *          matched line a few cm apart. Display-only.
- *   DIFF — a genuine decision flip: different null-ness, or different vertex
- *          geometry (e.g. the building-penalty in/out flip, where a
- *          through-building edge's unsupported-crossing cost lands just either
- *          side of the detour threshold under float vs quant arithmetic).
- *
- * The `compare-match` quant↔Lean layer is bit-exact (the BigInt twin and Lean
- * agree 185/185), so serving Lean == serving the quant twin. These float↔quant
- * legs are therefore exactly the legs whose PRODUCTION BEHAVIOUR changes when
- * the flip lands — the set that must be inspected and signed off first.
- *
- * This manifest is the *closed set* of such divergences we have inspected and
- * accept. The flip gate (`compare-match --gate`) asserts the measured float↔
- * quant NEAR/DIFF set is a subset of this manifest: any NEW or unexplained
- * divergence — a different leg, a different class, a different vertex signature
- * — fails the gate. That is the honest boundary between "known, bounded,
- * signed-off" and "a real behaviour change we have not reviewed".
+ * golden legs that differs from the TS float matcher, and this file is the
+ * *closed set* of those divergences we have inspected and accept. The flip gate
+ * (`compare-match --gate`) asserts the measured set is a subset of this
+ * manifest: any new or unexplained divergence — a different leg, a different
+ * class, a different vertex signature — fails. That is the honest boundary
+ * between "known, bounded, signed-off" and "a real behaviour change we have not
+ * reviewed".
  *
  * Each entry is keyed by the leg's OWN fingerprint (`legFingerprint`: a digest
  * of its quantised input fixes) plus the coarse/path classes and the vertex
- * note — an exact fingerprint of the divergence, not a fuzzy "some leg of this
- * day". The key was previously golden day + `hh:mm`, which only the gate could
- * compute: the decode cron runs the *trailing* 7 days, which stay ahead of any
- * fixed corpus, so every live divergence missed the manifest and would have
- * read UNEXPLAINED. Keying on the leg itself means ONE rule — the
- * `isAcceptedMatchDelta` below — adjudicates both the gate and the production
- * ledger, as `accepted-deltas.ts` already does for the geometry passes. `date`
- * and `hhmm` remain as the audit trail, not as the key.
+ * note. Keying on the leg itself means ONE rule — `isAcceptedMatchDelta` —
+ * adjudicates both the gate (golden days) and the production ledger (live days
+ * the corpus does not contain). `date` and `hhmm` are audit trail, not key.
+ *
+ * ── WHY THIS FILE WAS REBUILT FROM SCRATCH (#395, 2026-07-31) ───────────────
+ *
+ * The previous version accepted 14 of its 21 entries with the single word
+ * "Display-only." and a vertex count. Two things were wrong with that.
+ *
+ * FIRST, the safety basis was overstated. It argued that the matcher's output
+ * is `walkMatchedPath`, that no decision reads it, and therefore that "even a
+ * coarse route-choice flip changes only the drawn pavement polyline for one
+ * leg". The narrow claim is true and was re-confirmed on 2026-07-31 — a 7-day
+ * production re-decode under the rolled-back flag produced byte-identical
+ * `decoded_days` rows, so the matcher genuinely cannot reach mode, place or
+ * journey. But the conclusion does not follow. `coarsePath` feeds
+ * `matchImprovesDisplay` (`map-match-core.ts`), a keep/discard gate: it decides
+ * whether a matched line is drawn AT ALL. On leg 71e5544efa614a06 (#398) a
+ * coarse divergence pushed the quant arm's stray to 42.1 m, past the 40 m cap,
+ * and production drew raw GPS through buildings instead of a matched pavement
+ * line. "Display-only" was therefore not a bound on anything; it named the
+ * output but not the size of the change.
+ *
+ * SECOND, and the reason "near-tie" could survive as a sign-off: NOTHING IN
+ * THIS FILE WAS A MEASUREMENT. There was no number saying how far apart the two
+ * lines actually were, so a 0.01 m collinear-vertex artefact and a 17 m route
+ * flip carried the same words. Every entry now records the measured symmetric
+ * polyline deviation (`polylineDeviationM`, #396) that `compare-match --gate`
+ * prints, and no entry may exist without one.
+ *
+ * ── WHAT THE MEASUREMENT SHOWS ──────────────────────────────────────────────
+ *
+ * Re-derived 2026-07-31 over the 32-day corpus: 185 legs, quant↔Lean 185/185
+ * bit-EXACT, 22 float↔quant deltas. The deviations fall into two populations
+ * with nothing between them:
+ *
+ *   20 legs at 0.00–0.04 m — sub-decimetre. The same line, drawn by arithmetic
+ *                            that rounds differently in the last place.
+ *    2 legs at 14.37 m and 17.52 m — genuine route-choice flips.
+ *
+ * That gap is what makes the sub-decimetre class safely acceptable, and it is
+ * an argument about MAGNITUDE, not about which field the output lands in. The
+ * nearest decision threshold downstream is `WALK_NEEDS_MATCH_M` = 18 m of
+ * off-road distance, with a `WALK_MATCH_MAX_STRAY_M` = 40 m stray cap. A line
+ * that moves four centimetres is ~450× short of the tightest of those, so it
+ * cannot change `matchImprovesDisplay`, cannot change whether a match is kept,
+ * and cannot change anything downstream of that. THAT is the bound — a measured
+ * distance against a named threshold — and it is what each sub-decimetre entry
+ * below asserts with its own number.
+ *
+ * The two route flips get no such bound and are signed off individually, on
+ * per-leg quality measurements, in their own reasons.
+ *
+ * ── WHAT THIS FILE STILL DOES NOT ESTABLISH ─────────────────────────────────
+ *
+ * Ground truth. For the two route flips, which corridor was actually walked is
+ * unknown and unknowable from the data; the sign-off says the quantised cost
+ * function shows no defect at these legs, not that it is right. And a manifest
+ * cannot prove the absence of a leg it has never seen: 71e5544efa614a06 was
+ * served in production for ten days before anyone looked at it, on a live day
+ * the corpus does not contain. Coverage is bounded by the corpus, always.
  */
 
 export type MatchLegClass = "EXACT" | "NEAR" | "DIFF";
 
 export interface AcceptedMatchDelta {
 	/** THE KEY: `legFingerprint` of the leg's quantised input fixes — its own
-	 *  identity, independent of which day it fell on. See `legFingerprint` for
-	 *  why the key is intrinsic rather than calendar-positional. */
+	 *  identity, independent of which day it fell on. */
 	leg: string;
-	/** Golden day (YYYY-MM-DD) the leg was measured on. Documentation and audit
-	 *  trail only — NOT part of the key, so a live day matches too. */
+	/** Golden day (YYYY-MM-DD) the leg was measured on. Audit trail only. */
 	date: string;
 	/** Leg start, hh:mm UTC (as `compare-match` prints it). Documentation only. */
 	hhmm: string;
@@ -56,60 +93,40 @@ export interface AcceptedMatchDelta {
 	path: MatchLegClass;
 	/** Vertex-count / geometry fingerprint the gate emits, for the audit trail. */
 	note: string;
-	/** Why this delta is accepted (human sign-off). */
+	/**
+	 * MEASURED symmetric polyline deviation between the two arms, in metres, at
+	 * the coarse (decision) and path (display) layers — the figures
+	 * `compare-match --gate` prints as `dev coarse=… path=…`.
+	 *
+	 * Required, not optional. An entry without a measurement is the thing this
+	 * re-derivation existed to remove: the reason field can then only assert,
+	 * and an assertion nobody can check is indistinguishable from a guess.
+	 *
+	 * Note these are LINE-to-line distances, not vertex-to-vertex. A vertex that
+	 * slides along an otherwise identical polyline moves further than the line
+	 * does, which is why leg 64c24f8ad38e6fbf is classed `DIFF` off a 78.7 cm
+	 * vertex while measuring 0.04 m here (#400). The class comes from the
+	 * per-coordinate check; this number says how far the drawn line moved. Both
+	 * are true and they are not the same question.
+	 */
+	coarseDevM: number;
+	pathDevM: number;
+	/** Why this delta is accepted (human sign-off), citing its own numbers. */
 	reason: string;
 }
 
-/**
- * RE-DERIVED 2026-07-22 on the corrected leg population (`npm run compare-match
- * -- --gate`): **185 legs**, quant↔Lean **185/185** bit-EXACT, 21 float↔quant
- * deltas.
- *
- * The previous set (173 legs) was measured over legs the gate RECONSTRUCTED —
- * windowed from HSMM episodes with a bbox slice of the day's OSM trace — which
- * is not the population production matches. `annotateWalkMatches` now records
- * the legs it actually feeds the matcher and the gate consumes those, so this
- * manifest finally enumerates divergences in SERVED output. The re-derivation
- * moved almost every entry: 12 more legs, different per-leg candidate way sets,
- * and therefore different vertex counts — e.g. 2026-05-11 19:59 went from
- * `path 69v vs 70v` to `75v vs 76v`, 2026-06-23 08:16 and 2026-07-07 08:42
- * dropped out entirely, and 2026-06-16 15:48 / 06-29 08:43 appeared. The old
- * numbers are not comparable to these; they measured a different thing.
- *
- * Cross-check that the population is now the served one: the gate finds exactly
- * two divergent legs on 2026-07-17 (09:31, 14:33), which is exactly what the
- * production ledger reports serving that day (`path=2` per run). Before the
- * fix the gate called that day clean.
- *
- * SAFETY BASIS for accepting all 21: the walk matcher's output is
- * `walkMatchedPath` — DISPLAY geometry only (pedestrian-match-annotate is
- * "purely additive: never rewrites mode or fixes, only adds display geometry").
- * Its only readers are renderers / a debug dump / an api.ts path that strips it;
- * NO decision (HSMM decode, place attribution, mode) reads it. So even a coarse
- * route-choice flip changes only the drawn pavement polyline for one leg, never
- * what a day means. Combined with quant↔Lean bit-exactness, serving Lean is
- * display-safe on the corpus.
- *
- * Three classes (each leg still enumerated individually):
- *   - path-only (coarse EXACT): the route decision is identical; only the
- *     spliced display curve differs — ≤30 cm (NEAR) or a splice-insertion
- *     vertex (DIFF). The matcher analogue of the passes' Douglas-Peucker
- *     near-ties.
- *   - coarse NEAR: same drawn route, every vertex within 30 cm under float↔
- *     quant rounding.
- *   - coarse DIFF (2): genuine route-choice flips at a cost near-threshold.
- *     Both were MEASURED on 2026-07-22 rather than eyeballed — each leg
- *     replayed through both arms and compared on drawn length, off-network
- *     distance, GPS stray and metres of line falling inside building
- *     footprints (see the per-entry reasons). 06-28 10:35: the verified arm is
- *     BETTER (21 m shorter, 18.8 m less building intrusion, same off-network).
- *     06-29 08:43: a wash on a poor-GPS smear. Neither picks a visibly wrong
- *     corridor, so the quantised cost function shows no defect at these
- *     knife-edge legs. What is still NOT established is ground truth — which
- *     corridor was actually walked is unknown and unknowable from the data.
- */
+/** Sub-decimetre sign-off. The measured deviation is the argument; this spells
+ *  out the threshold it is being measured against, so each entry states its own
+ *  number without restating the reasoning 20 times. */
+const bounded = (devM: number, layer: string): string =>
+	`Float↔quant rounding, MEASURED 2026-07-31: the two ${layer} lines are ${devM.toFixed(2)} m apart ` +
+	`(symmetric polyline deviation). The nearest threshold any of this feeds is matchImprovesDisplay's ` +
+	`18 m off-road trigger and 40 m stray cap, so a deviation this size cannot change whether the match is ` +
+	`kept, let alone which corridor is chosen. Bounded by measurement against a named threshold — not ` +
+	`"display-only", which names the output field and bounds nothing (#395).`;
+
 export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
-	// ── coarse DIFF — genuine route-choice flips (measured 2026-07-22) ──────────
+	// ── genuine route-choice flips — signed off individually ────────────────────
 	{
 		leg: "91167e4cf16f9ea8",
 		date: "2026-06-28",
@@ -117,14 +134,18 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "DIFF",
 		path: "DIFF",
 		note: "coarse 14v vs 13v, path 32v vs 28v",
+		coarseDevM: 17.52,
+		pathDevM: 17.52,
 		reason:
-			"Route-choice flip at a candidate-cost near-threshold, MEASURED 2026-07-22 (both arms replayed on the " +
-			"identical leg): quant draws 450.4 m vs float's 471.6 m and spends 41.3 m inside building footprints " +
-			"vs float's 60.1 m — 18.8 m LESS building intrusion — at identical off-network distance (6.8 m) and " +
-			"1.1 m more GPS stray (11.0 vs 9.9 p85, both far inside the 40 m cap). On the metric that matters for " +
-			"a pavement route the verified arm is better, not merely different. Numbers are matcher output, " +
-			"BEFORE the WALK_BUILDING_ESCAPE corrector that runs downstream. Not ground truth — which corridor " +
-			"was actually walked is unknown — but nothing anomalous in the quantised cost function.",
+			"REAL route-choice flip at a candidate-cost near-threshold — the lines are 17.52 m apart, three orders " +
+			"of magnitude above the sub-decimetre class, and this is signed off on quality, not on size. MEASURED " +
+			"2026-07-22 with both arms replayed on the identical leg: quant draws 450.4 m vs float's 471.6 m and " +
+			"spends 41.3 m inside building footprints vs float's 60.1 m — 18.8 m LESS building intrusion — at " +
+			"identical off-network distance (6.8 m) and 1.1 m more GPS stray (11.0 vs 9.9 p85, both far inside the " +
+			"40 m cap, so matchImprovesDisplay holds on both arms). On the metric that matters for a pavement route " +
+			"the verified arm is better, not merely different. Numbers are matcher output, BEFORE the " +
+			"WALK_BUILDING_ESCAPE corrector downstream. NOT ground truth — which corridor was actually walked is " +
+			"unknown — but nothing anomalous in the quantised cost function.",
 	},
 	{
 		leg: "77277765451f43f5",
@@ -133,15 +154,38 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "DIFF",
 		path: "DIFF",
 		note: "coarse 6v vs 5v, path 6v vs 5v",
+		coarseDevM: 14.37,
+		pathDevM: 14.37,
 		reason:
-			"Route-choice flip at a candidate-cost near-threshold, MEASURED 2026-07-22: a wash. Quant draws " +
-			"205.1 m vs float's 204.1 m, strays 24.0 m vs 26.5 m (p85, better) and sits 45.8 m inside buildings " +
-			"vs 38.8 m (worse) — small deltas in opposite directions, identical off-network distance (16.0 m). " +
-			"Weak evidence either way: the raw track is a poor-GPS smear (254 m of its 435 m falls inside " +
-			"buildings), so both arms are inferring from bad input. Neither picks a visibly wrong corridor. " +
-			"Numbers are matcher output, BEFORE the WALK_BUILDING_ESCAPE corrector.",
+			"REAL route-choice flip, lines 14.37 m apart. MEASURED 2026-07-22: a wash. Quant draws 205.1 m vs " +
+			"float's 204.1 m, strays 24.0 m vs 26.5 m (p85, better) and sits 45.8 m inside buildings vs 38.8 m " +
+			"(worse) — small deltas in opposite directions at identical off-network distance (16.0 m); both arms " +
+			"stay inside the 40 m stray cap, so the keep/discard decision is unchanged either way. Weak evidence " +
+			"in both directions: the raw track is a poor-GPS smear (254 m of its 435 m falls inside buildings), so " +
+			"both arms are inferring from bad input. Neither picks a visibly wrong corridor. Accepted as a " +
+			"knife-edge with no defect visible, NOT as a near-tie — 14 m is not a near-tie.",
 	},
-	// ── coarse NEAR — same route, vertices within 30 cm ─────────────────────────
+	// ── coarse DIFF by the per-coordinate check, but the LINE barely moved ───────
+	{
+		leg: "64c24f8ad38e6fbf",
+		date: "2026-05-15",
+		hhmm: "20:47",
+		coarse: "DIFF",
+		path: "EXACT",
+		note: "coarse 10v vs 10v, path 53v vs 53v",
+		coarseDevM: 0.04,
+		pathDevM: 0.0,
+		reason:
+			"The corpus's third coarse DIFF, and previously unsigned — it had no manifest entry at all while two " +
+			"other coarse DIFFs did. Classed DIFF because one of ten coarse vertices sits 78.7 cm from its " +
+			"counterpart, over the 30-unit (~33 cm) per-coordinate bar. But that vertex slid mostly ALONG the line: " +
+			"the two coarse polylines measure 0.04 m apart, and the display path is BIT-IDENTICAL (53v vs 53v, " +
+			"0.00 m). So this is real, bounded, and changed nothing served — four centimetres against an 18 m " +
+			"trigger and a 40 m cap. Kept as DIFF rather than promoted to NEAR: reclassifying to make a red go " +
+			"away is the move #398 exists to warn about, and the divergence is genuine even though its consequence " +
+			"is nil. The measure-disagreement itself is #400.",
+	},
+	// ── sub-decimetre: coarse layer moved, within 4 cm ───────────────────────────
 	{
 		leg: "cf8fa2efd60d5dc6",
 		date: "2026-04-30",
@@ -149,7 +193,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "NEAR",
 		path: "DIFF",
 		note: "coarse 4v vs 4v, path 17v vs 17v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "coarse and display"),
 	},
 	{
 		leg: "2742a9a5725284a7",
@@ -158,16 +204,20 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "NEAR",
 		path: "NEAR",
 		note: "coarse 16v vs 16v, path 56v vs 56v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "coarse and display"),
 	},
 	{
-		leg: "c404de72018eedd8",
+		leg: "40ff0cab9a7f05ff",
 		date: "2026-06-16",
 		hhmm: "16:07",
 		coarse: "NEAR",
 		path: "NEAR",
-		note: "coarse 12v vs 12v, path 42v vs 42v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		note: "coarse 13v vs 13v, path 45v vs 45v",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "coarse and display"),
 	},
 	{
 		leg: "2e242afcfc715c06",
@@ -175,69 +225,34 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		hhmm: "11:17",
 		coarse: "NEAR",
 		path: "NEAR",
-		note: "coarse 22v vs 22v, path 51v vs 51v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		note: "coarse 22v vs 22v, path 40v vs 40v",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "coarse and display"),
 	},
 	{
-		leg: "e571f151028d7d64",
+		leg: "c2a41b102bb69756",
 		date: "2026-07-02",
 		hhmm: "14:36",
 		coarse: "NEAR",
 		path: "NEAR",
 		note: "coarse 13v vs 13v, path 23v vs 23v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "coarse and display"),
 	},
 	{
-		leg: "dad09ddcae17b2ba",
+		leg: "ffe15274e404878f",
 		date: "2026-07-06",
 		hhmm: "10:34",
 		coarse: "NEAR",
 		path: "NEAR",
-		note: "coarse 13v vs 13v, path 36v vs 36v",
-		reason: "Route near-tie: same drawn route, every vertex within 30 cm under float↔quant rounding. Display-only.",
+		note: "coarse 15v vs 15v, path 57v vs 57v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: bounded(0.0, "coarse and display"),
 	},
-	// ── coarse EXACT, path DIFF — display-splice vertex near-ties ───────────────
-	{
-		leg: "8bfdeba62a10b7f3",
-		date: "2026-05-11",
-		hhmm: "19:59",
-		coarse: "EXACT",
-		path: "DIFF",
-		note: "coarse 27v vs 27v, path 75v vs 76v",
-		reason:
-			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
-	},
-	{
-		leg: "687ab4f68894ac57",
-		date: "2026-06-09",
-		hhmm: "17:45",
-		coarse: "EXACT",
-		path: "DIFF",
-		note: "coarse 9v vs 9v, path 40v vs 41v",
-		reason:
-			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
-	},
-	{
-		leg: "00b8496c5887cdd5",
-		date: "2026-06-16",
-		hhmm: "15:48",
-		coarse: "EXACT",
-		path: "DIFF",
-		note: "coarse 41v vs 41v, path 97v vs 98v",
-		reason:
-			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
-	},
-	{
-		leg: "cbfa6bda70d457a7",
-		date: "2026-07-12",
-		hhmm: "14:02",
-		coarse: "EXACT",
-		path: "DIFF",
-		note: "coarse 21v vs 21v, path 58v vs 59v",
-		reason:
-			"Display-splice near-tie: identical route decision; the spliced display line differs by a vertex. Display-only.",
-	},
-	// ── coarse EXACT, path NEAR — spliced display curve within 30 cm ────────────
+	// ── sub-decimetre: coarse decision identical, display splice only ────────────
 	{
 		leg: "eea8cfc6b2703872",
 		date: "2026-04-29",
@@ -245,7 +260,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 12v vs 12v, path 46v vs 46v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "display"),
 	},
 	{
 		leg: "ec77d1b73443d289",
@@ -254,16 +271,44 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 32v vs 32v, path 66v vs 66v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "display"),
 	},
 	{
-		leg: "2a5348e4330c8502",
-		date: "2026-05-25",
-		hhmm: "11:25",
+		leg: "8bfdeba62a10b7f3",
+		date: "2026-05-11",
+		hhmm: "19:59",
 		coarse: "EXACT",
 		path: "NEAR",
-		note: "coarse 11v vs 11v, path 25v vs 25v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		note: "coarse 25v vs 25v, path 81v vs 82v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason:
+			`${bounded(0.0, "display")} The arms disagree by one display vertex (81v vs 82v) — a redundant ` +
+			"collinear point, not a detour; this leg is why the length-mismatch branch grades by distance (#396).",
+	},
+	{
+		leg: "2d288f1de88f721d",
+		date: "2026-05-25",
+		hhmm: "11:31",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 10v vs 10v, path 23v vs 23v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: bounded(0.0, "display"),
+	},
+	{
+		leg: "687ab4f68894ac57",
+		date: "2026-06-09",
+		hhmm: "17:45",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 9v vs 9v, path 40v vs 41v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: `${bounded(0.0, "display")} One redundant collinear display vertex (40v vs 41v), as with 05-11.`,
 	},
 	{
 		leg: "fcb19c04f6001234",
@@ -272,7 +317,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 9v vs 9v, path 62v vs 62v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: bounded(0.0, "display"),
 	},
 	{
 		leg: "69e5896e7e0da12b",
@@ -281,7 +328,20 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 15v vs 15v, path 53v vs 53v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "display"),
+	},
+	{
+		leg: "894321fc1310bf77",
+		date: "2026-06-24",
+		hhmm: "18:33",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 28v vs 28v, path 76v vs 76v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: `${bounded(0.0, "display")} Previously had NO entry — the corpus reached this leg and the manifest never did.`,
 	},
 	{
 		leg: "738a577a85c566fc",
@@ -289,17 +349,34 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		hhmm: "07:45",
 		coarse: "EXACT",
 		path: "NEAR",
-		note: "coarse 11v vs 11v, path 32v vs 32v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		note: "coarse 9v vs 9v, path 36v vs 36v",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "display"),
 	},
 	{
-		leg: "47ca83265d3d73c5",
+		leg: "12bcacd9d10f3e9b",
 		date: "2026-07-02",
 		hhmm: "15:10",
 		coarse: "EXACT",
 		path: "NEAR",
-		note: "coarse 10v vs 10v, path 35v vs 35v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		note: "coarse 10v vs 10v, path 37v vs 37v",
+		coarseDevM: 0.01,
+		pathDevM: 0.0,
+		reason: bounded(0.01, "display"),
+	},
+	{
+		leg: "5acb9ecb0d6ea26f",
+		date: "2026-07-12",
+		hhmm: "14:02",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 23v vs 23v, path 64v vs 65v",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		reason:
+			`${bounded(0.01, "display")} THE #396 REFERENCE LEG: 64v vs 65v, two polylines 0.01 m apart. Graded ` +
+			"DIFF by the old structural rule, which is what put it in the same class as a 120 m reroute.",
 	},
 	{
 		leg: "e25c46e909145d80",
@@ -308,7 +385,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 12v vs 12v, path 42v vs 42v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		reason: bounded(0.01, "display"),
 	},
 	{
 		leg: "a28db136844e4ddf",
@@ -317,7 +396,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarse: "EXACT",
 		path: "NEAR",
 		note: "coarse 13v vs 13v, path 36v vs 36v",
-		reason: "Display-splice near-tie: identical route decision, spliced display curve within 30 cm. Display-only.",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		reason: bounded(0.0, "display"),
 	},
 ];
 
@@ -325,9 +406,7 @@ const accepted = new Map<string, AcceptedMatchDelta>(ACCEPTED_MATCH_DELTAS.map((
 
 /**
  * True iff this measured leg divergence is in the accepted manifest — same leg
- * fingerprint AND the same coarse/path classes AND the same note. A leg that
- * flips to a different class, or a leg not in the manifest at all, is NOT
- * accepted.
+ * fingerprint AND the same coarse/path classes AND the same note.
  *
  * Keyed on the leg's own input (`legFingerprint`), not on its position in the
  * golden calendar, so the SAME call adjudicates the gate (golden days) and the

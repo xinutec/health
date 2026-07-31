@@ -54,7 +54,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { legFingerprint, legNote, maxDeviationM } from "../geo/leg-compare.js";
+import { legFingerprint, legNote, maxDeviationM, polylineDeviationM } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -184,7 +184,28 @@ interface DivergentLeg {
 	coarse: MatchLegClass;
 	path: MatchLegClass;
 	note: string;
+	/** How far the two arms' lines actually are, per layer, in metres —
+	 *  symmetric, so a truncated arm is as loud as a detour. `null` when one arm
+	 *  matched and the other did not: there is no distance between a line and
+	 *  nothing, and reporting 0 or ∞ would both be a claim. */
+	coarseDevM: number | null;
+	pathDevM: number | null;
 }
+
+/** The measured separation between the two arms at one layer. The gate used to
+ *  print only the CLASS and the vertex counts, which is how the manifest came to
+ *  hold entries whose entire justification was the words "near-tie" — a claim
+ *  with no number behind it, and unfalsifiable as a result (#395). */
+function devM(f: FloatArmish, q: QuantArmish, layer: "coarsePath" | "path"): number | null {
+	if (f === null || q === null) return null;
+	return polylineDeviationM(
+		f[layer],
+		q[layer].map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
+	);
+}
+
+/** Metres to two decimals, or `n/a` for the null-flip case. */
+const fmtDev = (d: number | null): string => (d === null ? "n/a" : `${d.toFixed(2)} m`);
 const divergent: DivergentLeg[] = [];
 const files = readdirSync(DAYS_DIR)
 	.filter((f) => f.endsWith(".json"))
@@ -225,7 +246,16 @@ for (const file of files) {
 		if ((r.float === null) !== (r.quant === null)) nullFlips++;
 		const note = legNote(r.float, r.quant);
 		if (r.coarse !== "EXACT" || r.path !== "EXACT") {
-			divergent.push({ leg: legFingerprint(leg.clean), date, hhmm, coarse: r.coarse, path: r.path, note });
+			divergent.push({
+				leg: legFingerprint(leg.clean),
+				date,
+				hhmm,
+				coarse: r.coarse,
+				path: r.path,
+				note,
+				coarseDevM: devM(r.float, r.quant, "coarsePath"),
+				pathDevM: devM(r.float, r.quant, "path"),
+			});
 		}
 		perDay.push(
 			`${hhmm} coarse=${r.coarse}/path=${r.path}${r.coarse !== "EXACT" || r.path !== "EXACT" ? ` (${note})` : ""}`,
@@ -264,7 +294,10 @@ if (divergent.length > 0) {
 	console.log(`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained):`);
 	for (const d of divergent) {
 		const tag = isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note) ? "accepted" : "UNEXPLAINED";
-		console.log(`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})`);
+		console.log(
+			`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})` +
+				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}`,
+		);
 	}
 }
 
