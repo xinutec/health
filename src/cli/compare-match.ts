@@ -30,13 +30,22 @@
  *                   signed off; a new/unexplained one fails the gate.
  * All three green ⇒ the matcher is ready to serve Lean (LEAN_MATCH=on) in prod.
  *
- * Usage: node dist/cli/compare-match.js [--gate] [date ...]
+ * Usage: node dist/cli/compare-match.js [--gate] [--leg <fingerprint>] [date ...]
+ *
+ * `--leg <fingerprint>` is the ADJUDICATION view: instead of one line per leg,
+ * it prints the named leg's two coarse/display paths vertex by vertex with the
+ * separation in metres. The summary verdict says a leg diverges; it cannot say
+ * WHERE or BY HOW MUCH, and that is the whole question when deciding whether a
+ * divergence is a signed-off near-tie or a real route difference. Added while
+ * adjudicating #395, where a `coarse=DIFF` at equal vertex count could only be
+ * told apart from rounding by looking at the vertices.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { legFingerprint, legNote } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
+import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
 import { isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
@@ -47,7 +56,141 @@ const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake
 
 const allArgs = process.argv.slice(2);
 const gate = allArgs.includes("--gate");
-const argDates = allArgs.filter((a) => a !== "--gate");
+const legIdx = allArgs.indexOf("--leg");
+/** Fingerprint to dump vertex-by-vertex, or null for the normal summary. */
+const legFilter = legIdx === -1 ? null : (allArgs[legIdx + 1] ?? null);
+if (legIdx !== -1 && legFilter === null) {
+	console.error("--leg takes a leg fingerprint (16 hex chars, as printed by --gate)");
+	process.exit(2);
+}
+const argDates = allArgs.filter((a, i) => a !== "--gate" && a !== "--leg" && i !== legIdx + 1);
+
+/** Metres between two lat/lon points, equirectangular — exact enough at the
+ *  sub-kilometre scale a walk leg spans. */
+function metres(a: LL, b: LL): number {
+	const R = 6371000;
+	const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+	const dLon = (((b.lon - a.lon) * Math.PI) / 180) * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+	return Math.hypot(dLat, dLon) * R;
+}
+
+/** Shortest distance in metres from `p` to the segment `a`–`b`. */
+function distToSegment(p: LL, a: LL, b: LL): number {
+	const len = metres(a, b);
+	if (len === 0) return metres(p, a);
+	// Project in a local flat frame scaled the same way `metres` scales.
+	const k = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+	const ax = a.lon * k;
+	const ay = a.lat;
+	const bx = b.lon * k;
+	const by = b.lat;
+	const px = p.lon * k;
+	const py = p.lat;
+	const t = Math.max(
+		0,
+		Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)),
+	);
+	return metres(p, { lat: ay + t * (by - ay), lon: (ax + t * (bx - ax)) / k });
+}
+
+/** Greatest distance from any vertex of `from` to the polyline `to`. */
+function maxDeviation(from: readonly LL[], to: readonly LL[]): number {
+	if (to.length === 0) return Number.POSITIVE_INFINITY;
+	if (to.length === 1) return Math.max(...from.map((p) => metres(p, to[0])));
+	let worst = 0;
+	for (const p of from) {
+		let best = Number.POSITIVE_INFINITY;
+		for (let i = 1; i < to.length; i++) best = Math.min(best, distToSegment(p, to[i - 1], to[i]));
+		if (best > worst) worst = best;
+	}
+	return worst;
+}
+
+/**
+ * Vertex-by-vertex dump of one leg's two arms — the `--leg` adjudication view.
+ *
+ * Prints both the decision (`coarsePath`) and display (`path`) layers with the
+ * separation between them, so a divergence can be told apart from a rounding
+ * wobble by looking rather than by guessing. The summary verdict says a leg
+ * diverges; it cannot say where or by how much.
+ *
+ * TWO MEASURES, because a positional one is a trap. When the arms have the SAME
+ * vertex count, `f[i]` vs `q[i]` is meaningful and is reported per vertex in
+ * centimetres against the classifier's 30-unit `NEAR` bar. When the counts
+ * DIFFER, that comparison silently goes off-by-one at the insertion point and
+ * every subsequent row compares two unrelated vertices — it reported a 133 m
+ * "divergence" on 2026-07-12 that was nothing of the kind. So on a length
+ * mismatch this reports the symmetric max deviation between the two POLYLINES
+ * instead: the furthest either line strays from the other, which is the
+ * question actually being asked and is insensitive to how each is sampled.
+ *
+ * Longitude is scaled by cos(lat) throughout: 1e-7° of longitude is ~1.11 cm at
+ * the equator but ~0.69 cm at London's latitude, and not correcting for that
+ * would overstate every east-west separation by ~45%.
+ */
+function dumpLeg(
+	date: string,
+	hhmm: string,
+	fp: string,
+	r: { coarse: string; path: string; exact: boolean; float: FloatArmish; quant: QuantArmish },
+): void {
+	console.log(`\n=== leg ${fp} — ${date} ${hhmm} ===`);
+	console.log(`coarse=${r.coarse} path=${r.path}  quant↔lean ${r.exact ? "EXACT" : "MISMATCH"}`);
+	if (r.float === null || r.quant === null) {
+		console.log(
+			`  one arm is null: float=${r.float === null ? "null" : "path"} quant=${r.quant === null ? "null" : "path"}`,
+		);
+		return;
+	}
+	for (const layer of ["coarsePath", "path"] as const) {
+		const f = r.float[layer];
+		const q = r.quant[layer];
+		const qLL = q.map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 }));
+		console.log(`\n  --- ${layer} — float ${f.length}v, quant ${q.length}v ---`);
+		if (f.length !== q.length) {
+			// Positional comparison is meaningless here; measure line-to-line.
+			const fwd = maxDeviation(f, qLL);
+			const back = maxDeviation(qLL, f);
+			console.log(
+				`  vertex counts differ by ${Math.abs(f.length - q.length)} — comparing POLYLINES, not indices.\n` +
+					`  float strays at most ${fwd.toFixed(2)} m from the quant line\n` +
+					`  quant strays at most ${back.toFixed(2)} m from the float line\n` +
+					`  symmetric max deviation: ${Math.max(fwd, back).toFixed(2)} m`,
+			);
+			continue;
+		}
+		let worst = 0;
+		for (let i = 0; i < f.length; i++) {
+			const a = f[i];
+			const b = q[i];
+			const qa = quantPt(a);
+			const dLa = Number(qa.la - b.la);
+			const dLo = Number(qa.lo - b.lo);
+			const dTs = Number(qa.ts - b.ts);
+			if (dLa === 0 && dLo === 0 && dTs === 0) continue;
+			const cmLa = dLa * 1.11;
+			const cmLo = dLo * 1.11 * Math.cos((a.lat * Math.PI) / 180);
+			const cm = Math.hypot(cmLa, cmLo);
+			if (cm > worst) worst = cm;
+			console.log(
+				`  [${i}] Δlat=${dLa} Δlon=${dLo} Δts=${dTs} units → ${cm.toFixed(1)} cm` +
+					`${cm > 30 * 1.11 ? "   <-- BEYOND the 30-unit NEAR bar" : ""}`,
+			);
+		}
+		console.log(`  worst separation: ${worst.toFixed(1)} cm`);
+	}
+}
+
+interface LL {
+	lat: number;
+	lon: number;
+}
+
+type FloatArmish = {
+	coarsePath: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
+	path: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
+} | null;
+type QuantArmish = { coarsePath: readonly QPt[]; path: readonly QPt[] } | null;
 
 /** A measured float↔quant divergence, for the --gate manifest check. */
 interface DivergentLeg {
@@ -80,10 +223,16 @@ for (const file of files) {
 	const legInputs = endWalkLegCapture(capture);
 	const perDay: string[] = [];
 	for (const leg of legInputs) {
+		const fp = legFingerprint(leg.clean);
+		if (legFilter !== null && fp !== legFilter) continue;
 		const r = shadowWalkLeg(leg, LEAN_BIN);
 		legs++;
 		const date = file.slice(0, 10);
 		const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
+		if (legFilter !== null) {
+			dumpLeg(date, hhmm, fp, r);
+			continue;
+		}
 		if (r.exact) leanExact++;
 		else leanMismatches.push(`${date} ${hhmm}`);
 		coarseTotals[r.coarse]++;
@@ -98,7 +247,14 @@ for (const file of files) {
 			`${hhmm} coarse=${r.coarse}/path=${r.path}${r.coarse !== "EXACT" || r.path !== "EXACT" ? ` (${note})` : ""}`,
 		);
 	}
-	console.log(`${file.slice(0, 10)}: ${perDay.length} leg(s) — ${perDay.join(", ") || "none"}`);
+	// Under --leg the per-day roll-up is noise: 31 of 32 days have nothing to say.
+	if (legFilter === null) console.log(`${file.slice(0, 10)}: ${perDay.length} leg(s) — ${perDay.join(", ") || "none"}`);
+}
+
+if (legFilter !== null) {
+	// Adjudication view: the summary and the gate say nothing useful about one leg.
+	if (legs === 0) console.error(`no leg with fingerprint ${legFilter} in the replayed corpus`);
+	process.exit(legs === 0 ? 2 : 0);
 }
 
 console.log(
