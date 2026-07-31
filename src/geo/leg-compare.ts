@@ -14,12 +14,90 @@
 import { createHash } from "node:crypto";
 import { type QPt, quantPt } from "./quant-twin.js";
 
-/** Per-leg float↔quant verdict: identical, within the NEAR tolerance, or a
- *  genuine difference. */
+/**
+ * Per-leg float↔quant verdict: identical, within the NEAR tolerance, or a
+ * genuine difference.
+ *
+ * `NEAR` means the two arms drew the SAME LINE — every point of each within
+ * ~33 cm of the other — whether or not they sampled it with the same number of
+ * vertices. `DIFF` means the line moved. The vertex count is not itself the
+ * question (#396); it was until 2026-07-31, and that put a redundant collinear
+ * vertex in the same class as a 120 m reroute.
+ */
 export type LegClass = "EXACT" | "NEAR" | "DIFF";
 
 /** 30 cm in 1e-7° latitude units — the NEAR coordinate tolerance. */
 const NEAR_UNITS = 30n;
+
+/** Metres per degree of latitude. Good to ~0.2% anywhere; the bar it scales is
+ *  a third of a metre, so the ellipsoid correction is far below the noise. */
+const M_PER_DEG = 111_320;
+
+/** The same NEAR bar as a distance, for the polyline comparison below. Derived
+ *  from `NEAR_UNITS` rather than written twice — a leg must not be able to pass
+ *  one form of the tolerance and fail the other. ~0.33 m. */
+const NEAR_DEVIATION_M = Number(NEAR_UNITS) * 1e-7 * M_PER_DEG;
+
+interface LL {
+	lat: number;
+	lon: number;
+}
+
+/** Metres between two points, equirectangular — exact enough over a walk leg. */
+function metres(a: LL, b: LL): number {
+	const dLat = (b.lat - a.lat) * M_PER_DEG;
+	const dLon = (b.lon - a.lon) * M_PER_DEG * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+	return Math.hypot(dLat, dLon);
+}
+
+/** Shortest distance in metres from `p` to the segment `a`–`b`. */
+function distToSegment(p: LL, a: LL, b: LL): number {
+	const k = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+	const ax = a.lon * k;
+	const ay = a.lat;
+	const bx = b.lon * k;
+	const by = b.lat;
+	const len2 = (bx - ax) ** 2 + (by - ay) ** 2;
+	if (len2 === 0) return metres(p, a);
+	const px = p.lon * k;
+	const py = p.lat;
+	const t = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / len2));
+	return metres(p, { lat: ay + t * (by - ay), lon: (ax + t * (bx - ax)) / k });
+}
+
+/**
+ * Greatest distance from any vertex of `from` to the polyline `to`.
+ *
+ * Exported because the DIRECTION carries information the symmetric figure
+ * hides: on leg 71e5544efa614a06 the float line strayed 63.7 m from the quant
+ * line while the quant line strayed only 7.8 m from float's — the signature of
+ * an excursion present in one arm and absent from the other. `compare-match
+ * --leg` prints both. For classification use {@link polylineDeviationM}.
+ */
+export function maxDeviationM(from: readonly LL[], to: readonly LL[]): number {
+	if (to.length === 0) return Number.POSITIVE_INFINITY;
+	if (to.length === 1) return Math.max(...from.map((p) => metres(p, to[0])));
+	let worst = 0;
+	for (const p of from) {
+		let best = Number.POSITIVE_INFINITY;
+		for (let i = 1; i < to.length; i++) best = Math.min(best, distToSegment(p, to[i - 1], to[i]));
+		if (best > worst) worst = best;
+	}
+	return worst;
+}
+
+/**
+ * The furthest either polyline strays from the other, in metres.
+ *
+ * SYMMETRIC deliberately. One-way deviation is not a distance between lines: a
+ * truncated arm lies exactly on top of the complete one, so `truncated → full`
+ * is 0 while the lines disagree about most of the leg. Taking the max of both
+ * directions makes a missing tail as loud as a detour.
+ */
+export function polylineDeviationM(a: readonly LL[], b: readonly LL[]): number {
+	if (a.length === 0 || b.length === 0) return a.length === b.length ? 0 : Number.POSITIVE_INFINITY;
+	return Math.max(maxDeviationM(a, b), maxDeviationM(b, a));
+}
 
 interface FloatArm {
 	coarsePath: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
@@ -32,7 +110,30 @@ interface QuantArm {
 
 function comparePaths(float: FloatArm["path"], quant: readonly QPt[]): LegClass {
 	const qf = float.map((p) => quantPt(p));
-	if (qf.length !== quant.length) return "DIFF";
+	if (qf.length !== quant.length) {
+		// A different vertex COUNT is not by itself a different LINE (#396).
+		// Returning DIFF here unconditionally put a redundant collinear vertex
+		// (leg 5acb9ecb0d6ea26f: two polylines 0.01 m apart) in the same class as
+		// a 120 m corridor change that flipped `matchImprovesDisplay` and made
+		// production draw raw GPS (leg 71e5544efa614a06, #398). The manifest then
+		// recorded both under one label and the ledger could not say which had
+		// been served.
+		//
+		// So measure. Within the same NEAR bar the equal-count branch uses, two
+		// differently-sampled polylines of the same route are NEAR; anything that
+		// moves the line further stays DIFF.
+		//
+		// `ts` is deliberately not compared here: with no vertex correspondence
+		// there is nothing to compare it against. A leg whose geometry matches
+		// but whose timestamps have shifted is therefore NEAR by this branch —
+		// acceptable because the display splice is what varies in vertex count,
+		// and its timestamps are interpolated within the coarse chord window.
+		const dev = polylineDeviationM(
+			float,
+			quant.map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
+		);
+		return dev <= NEAR_DEVIATION_M ? "NEAR" : "DIFF";
+	}
 	let cls: LegClass = "EXACT";
 	for (let i = 0; i < qf.length; i++) {
 		const dLa = qf[i].la - quant[i].la;

@@ -12,8 +12,9 @@
  *
  * float↔quant classes per leg:
  *   EXACT — both null, or bit-identical quantised vertex rows;
- *   NEAR  — same null-ness + vertex counts, coords within 30 cm;
- *   DIFF  — different null-ness or geometry (a genuine decision flip).
+ *   NEAR  — the same line drawn within ~33 cm, whether or not the two arms
+ *           sampled it with the same number of vertices (#396);
+ *   DIFF  — different null-ness, or a line that actually moved.
  *
  * Exit 0 = every leg's Lean output matches the twin bit-for-bit; exit 1 on any
  * quant↔Lean mismatch. (The float↔quant classes are diagnostic, never gated.)
@@ -53,7 +54,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { legFingerprint, legNote } from "../geo/leg-compare.js";
+import { legFingerprint, legNote, maxDeviationM } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -93,47 +94,6 @@ const argDates = allArgs.filter(
 		(legIdx === -1 || i !== legIdx + 1) &&
 		(daysIdx === -1 || i !== daysIdx + 1),
 );
-
-/** Metres between two lat/lon points, equirectangular — exact enough at the
- *  sub-kilometre scale a walk leg spans. */
-function metres(a: LL, b: LL): number {
-	const R = 6371000;
-	const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-	const dLon = (((b.lon - a.lon) * Math.PI) / 180) * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
-	return Math.hypot(dLat, dLon) * R;
-}
-
-/** Shortest distance in metres from `p` to the segment `a`–`b`. */
-function distToSegment(p: LL, a: LL, b: LL): number {
-	const len = metres(a, b);
-	if (len === 0) return metres(p, a);
-	// Project in a local flat frame scaled the same way `metres` scales.
-	const k = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
-	const ax = a.lon * k;
-	const ay = a.lat;
-	const bx = b.lon * k;
-	const by = b.lat;
-	const px = p.lon * k;
-	const py = p.lat;
-	const t = Math.max(
-		0,
-		Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)),
-	);
-	return metres(p, { lat: ay + t * (by - ay), lon: (ax + t * (bx - ax)) / k });
-}
-
-/** Greatest distance from any vertex of `from` to the polyline `to`. */
-function maxDeviation(from: readonly LL[], to: readonly LL[]): number {
-	if (to.length === 0) return Number.POSITIVE_INFINITY;
-	if (to.length === 1) return Math.max(...from.map((p) => metres(p, to[0])));
-	let worst = 0;
-	for (const p of from) {
-		let best = Number.POSITIVE_INFINITY;
-		for (let i = 1; i < to.length; i++) best = Math.min(best, distToSegment(p, to[i - 1], to[i]));
-		if (best > worst) worst = best;
-	}
-	return worst;
-}
 
 /**
  * Vertex-by-vertex dump of one leg's two arms — the `--leg` adjudication view.
@@ -178,8 +138,8 @@ function dumpLeg(
 		console.log(`\n  --- ${layer} — float ${f.length}v, quant ${q.length}v ---`);
 		if (f.length !== q.length) {
 			// Positional comparison is meaningless here; measure line-to-line.
-			const fwd = maxDeviation(f, qLL);
-			const back = maxDeviation(qLL, f);
+			const fwd = maxDeviationM(f, qLL);
+			const back = maxDeviationM(qLL, f);
 			console.log(
 				`  vertex counts differ by ${Math.abs(f.length - q.length)} — comparing POLYLINES, not indices.\n` +
 					`  float strays at most ${fwd.toFixed(2)} m from the quant line\n` +
@@ -208,11 +168,6 @@ function dumpLeg(
 		}
 		console.log(`  worst separation: ${worst.toFixed(1)} cm`);
 	}
-}
-
-interface LL {
-	lat: number;
-	lon: number;
 }
 
 type FloatArmish = {
