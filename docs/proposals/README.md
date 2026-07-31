@@ -31,6 +31,8 @@ will find it.
 | `2026-06-presence-continuity.md` | partly shipped | Temporal extension of the magnet: established stays persist across sparse-data days via a `presence_log`, with confidence decay. Phases 1 & 3 shipped; Phase 4 (sleep-inheritance retirement) pending |
 | `2026-05-hmm-learned-emissions.md` | partly shipped | Per-mode emission distributions fit from heuristic labels; supervised-learning pipeline lives at #208 |
 | `2026-06-deterministic-fixtures.md` | design (revised) | Deterministic, zero-DB fixtures for the classification pipeline via an adapter pattern over unbounded sources (OSM, Fitbit, PhoneTrack); the `npm run golden` replay harness |
+| `2026-07-lean-port-roadmap.md` | active | **What remains to move from TS to Lean.** Almost everything algorithmic in Lean; TS (later Rust) a thin shell doing I/O, DB, HTTP, external APIs and the parse/tz/topology boundary. Classification is grounded in an import trace of the served path (2026-07-24), not names — run the measuring tool rather than trusting the list |
+| `2026-07-osm-into-lean.md` | design (no code) | **Push raw OSM rows into Lean instead of captured answers**, so the spatial predicate is a definition Lean can state theorems about (nearest-station selection, dedupe-keeps-closest, monotonicity in radius). The last architectural item before the pass-order pipeline can fold into Lean: 14 of `computeVelocityFromInputs`'s 37 passes thread `inputs.osm` lookups at the call site |
 | `2026-06-google-health-migration.md` | deferred | Fitbit Web API → Google Health API migration ahead of the Sep 2026 sunset (#260). Weight slice shipped; bulk deferred |
 
 Shipped work that used to have a proposal here now lives in
@@ -40,7 +42,8 @@ generator/scorer split, and the route-aware retirement are in
 `timezone.md`; conflated-place splitting and the focus-place
 weighting lessons are in `overview.md`; the pedestrian smoother and
 the `smoothed` geometry kind are in `episode-geometry.md`. The earlier
-2025 model docs are in `docs/archive/`.
+2025 model docs were retired with the monorepo split (2026-07-05) and
+live only in git history — there is no `docs/archive/` in this repo.
 
 **Read `docs/design/probabilistic-principles.md` before adding new
 factors, tuning parameters, or proposing alternatives.** It is the
