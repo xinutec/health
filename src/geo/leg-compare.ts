@@ -123,13 +123,60 @@ export function vertexSeparationM(from: readonly LL[], to: readonly LL[]): numbe
 	return worst;
 }
 
-interface FloatArm {
+export interface FloatArm {
 	coarsePath: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
 	path: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
 }
-interface QuantArm {
+export interface QuantArm {
 	coarsePath: readonly QPt[];
 	path: readonly QPt[];
+}
+
+/**
+ * A per-layer figure in metres. `null` where the figure is not defined — one arm
+ * matched and the other did not, or (for vertex separation) the counts differ.
+ * Reporting `0` or `∞` there would both be a claim.
+ *
+ * The two producers below are NOT symmetric in what they are for, and it is
+ * worth stating so nobody assumes both are gated. {@link legDeviations} is
+ * load-bearing: the class derives from it and `accepted-match-deltas.ts`
+ * enforces it. {@link legVertexSeparations} is measured and printed but nothing
+ * decides on it — which is correct since #400, when the class stopped depending
+ * on how the arms happened to sample the line. It is there so a reader can see
+ * the figure the class is NOT derived from, and tell the two apart.
+ */
+export interface LegMetres {
+	coarse: number | null;
+	path: number | null;
+}
+
+const asLL = (q: readonly QPt[]): LL[] => q.map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 }));
+
+/**
+ * How far the two arms' LINES actually are, per layer, in metres.
+ *
+ * Lives here beside {@link legClasses} and for the same reason: the gate's
+ * figure for a leg and production's figure for the same leg have to be the same
+ * figure, or the manifest's recorded ceilings adjudicate two different
+ * measurements. This is the number `compare-match --gate` prints as
+ * `dev coarse=… path=…` and the number `accepted-match-deltas.ts` records.
+ */
+export function legDeviations(float: FloatArm | null, quant: QuantArm | null): LegMetres {
+	if (float === null || quant === null) return { coarse: null, path: null };
+	return {
+		coarse: polylineDeviationM(float.coarsePath, asLL(quant.coarsePath)),
+		path: polylineDeviationM(float.path, asLL(quant.path)),
+	};
+}
+
+/** Worst corresponding-vertex separation per layer — the companion figure to
+ *  {@link legDeviations}, reported beside it rather than instead of it (#400). */
+export function legVertexSeparations(float: FloatArm | null, quant: QuantArm | null): LegMetres {
+	if (float === null || quant === null) return { coarse: null, path: null };
+	return {
+		coarse: vertexSeparationM(float.coarsePath, asLL(quant.coarsePath)),
+		path: vertexSeparationM(float.path, asLL(quant.path)),
+	};
 }
 
 function comparePaths(float: FloatArm["path"], quant: readonly QPt[]): LegClass {

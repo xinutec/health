@@ -33,7 +33,7 @@
  * blind.
  */
 
-import { legClasses, legFingerprint, legNote } from "../geo/leg-compare.js";
+import { type LegMetres, legClasses, legDeviations, legFingerprint, legNote } from "../geo/leg-compare.js";
 import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.js";
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
@@ -105,6 +105,12 @@ export interface MatchDivergence {
 	coarse: MatchLegClass;
 	path: MatchLegClass;
 	note: string;
+	/** How far the two arms' LINES are, per layer, in metres — the same
+	 *  `legDeviations` figure `compare-match --gate` prints and the manifest
+	 *  records. Carried because the manifest enforces it as a ceiling: without it
+	 *  the ledger could only check vertex counts, and a leg that held its counts
+	 *  while moving 120 m would read `accepted` here (#395, the #398 shape). */
+	devM: LegMetres;
 	scope: LeanRunScope;
 }
 
@@ -219,6 +225,7 @@ export function matchWalkSegmentViaLean(
 					coarse: cls.coarse,
 					path: cls.path,
 					note: legNote(tsResult, quantArm),
+					devM: legDeviations(tsResult, quantArm),
 					scope: leanRunScope(),
 				});
 			}
@@ -270,7 +277,7 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 	// manifest is keyed on the leg's own fingerprint rather than on a golden
 	// date the cron's live days can never match.
 	const divs = leanMatchDivergences();
-	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
+	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note, d.devM));
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
 	const verdict =
 		s.calls === 0
@@ -280,14 +287,19 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 				: unexplained.length === 0
 					? "all accepted"
 					: `${unexplained.length} UNEXPLAINED`;
+	// The deviation is printed, not just used: the manifest now ACCEPTS on this
+	// number, so a reader adjudicating a production line has to be able to see
+	// what it was adjudicated against. Same reason the gate prints it (#400).
+	const m = (x: number | null): string => (x === null ? "n/a" : `${x.toFixed(2)} m`);
 	const legDetail =
 		divs.length === 0
 			? ""
 			: ` — ${divs
 					.map(
 						(d) =>
-							`[${matchDeltaTag(d.leg, d.coarse, d.path, d.note)}][${d.scope}] leg=${d.leg} ` +
-							`coarse=${d.coarse}/path=${d.path} ${d.note}`,
+							`[${matchDeltaTag(d.leg, d.coarse, d.path, d.note, d.devM)}][${d.scope}] leg=${d.leg} ` +
+							`coarse=${d.coarse}/path=${d.path} ${d.note} ` +
+							`dev coarse=${m(d.devM.coarse)} path=${m(d.devM.path)}`,
 					)
 					.join("; ")}`;
 	console.log(

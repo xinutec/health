@@ -54,7 +54,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { legFingerprint, legNote, maxDeviationM, polylineDeviationM, vertexSeparationM } from "../geo/leg-compare.js";
+import { legDeviations, legFingerprint, legNote, legVertexSeparations, maxDeviationM } from "../geo/leg-compare.js";
 import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-annotate.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -199,28 +199,6 @@ interface DivergentLeg {
 	pathVtxM: number | null;
 }
 
-/** The measured separation between the two arms at one layer. The gate used to
- *  print only the CLASS and the vertex counts, which is how the manifest came to
- *  hold entries whose entire justification was the words "near-tie" — a claim
- *  with no number behind it, and unfalsifiable as a result (#395). */
-function devM(f: FloatArmish, q: QuantArmish, layer: "coarsePath" | "path"): number | null {
-	if (f === null || q === null) return null;
-	return polylineDeviationM(
-		f[layer],
-		q[layer].map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
-	);
-}
-
-/** Worst corresponding-vertex separation at one layer — `null` when the counts
- *  differ (no correspondence) or an arm is missing. */
-function vtxM(f: FloatArmish, q: QuantArmish, layer: "coarsePath" | "path"): number | null {
-	if (f === null || q === null) return null;
-	return vertexSeparationM(
-		f[layer],
-		q[layer].map((p) => ({ lat: Number(p.la) / 1e7, lon: Number(p.lo) / 1e7 })),
-	);
-}
-
 /** Metres to two decimals, or `n/a` where the figure is undefined. */
 const fmtDev = (d: number | null): string => (d === null ? "n/a" : `${d.toFixed(2)} m`);
 const divergent: DivergentLeg[] = [];
@@ -263,6 +241,8 @@ for (const file of files) {
 		if ((r.float === null) !== (r.quant === null)) nullFlips++;
 		const note = legNote(r.float, r.quant);
 		if (r.coarse !== "EXACT" || r.path !== "EXACT") {
+			const dev = legDeviations(r.float, r.quant);
+			const vtx = legVertexSeparations(r.float, r.quant);
 			divergent.push({
 				leg: legFingerprint(leg.clean),
 				date,
@@ -270,10 +250,10 @@ for (const file of files) {
 				coarse: r.coarse,
 				path: r.path,
 				note,
-				coarseDevM: devM(r.float, r.quant, "coarsePath"),
-				pathDevM: devM(r.float, r.quant, "path"),
-				coarseVtxM: vtxM(r.float, r.quant, "coarsePath"),
-				pathVtxM: vtxM(r.float, r.quant, "path"),
+				coarseDevM: dev.coarse,
+				pathDevM: dev.path,
+				coarseVtxM: vtx.coarse,
+				pathVtxM: vtx.path,
 			});
 		}
 		perDay.push(
@@ -308,11 +288,16 @@ if (!gate) {
 // --gate: the matcher FLIP gate. Three honest conditions, mirroring
 // shadow-passes: coverage, no-fallback (quant↔Lean exact), manifest agreement.
 console.log(`\n=== matcher flip gate ===`);
-const unexplained = divergent.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note));
+// The measured deviations are part of the test, not decoration beside it: an
+// entry is signed off AT a magnitude, so a leg that keeps its vertex counts and
+// moves further than that is not the leg the sign-off was about (#395).
+const accepts = (d: DivergentLeg): boolean =>
+	isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note, { coarse: d.coarseDevM, path: d.pathDevM });
+const unexplained = divergent.filter((d) => !accepts(d));
 if (divergent.length > 0) {
 	console.log(`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained):`);
 	for (const d of divergent) {
-		const tag = isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note) ? "accepted" : "UNEXPLAINED";
+		const tag = accepts(d) ? "accepted" : "UNEXPLAINED";
 		console.log(
 			`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})` +
 				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}` +

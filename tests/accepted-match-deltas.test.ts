@@ -1,0 +1,180 @@
+/**
+ * The matcher delta manifest is the flip's premise: `LEAN_MATCH=on` is only
+ * honest while every measured divergence is one we have inspected and signed
+ * off. Both `compare-match --gate` and the production matcher ledger adjudicate
+ * through `isAcceptedMatchDelta`, so these pin the decision rule they share.
+ *
+ * The load-bearing case is the LAST one in the first block. Until #395 wired the
+ * measurement in, acceptance turned on `(leg, coarse, path, note)` alone — and
+ * `note` is a vertex COUNT, so a leg could keep its counts, move a hundred
+ * metres, and still be tagged `accepted`. That is not hypothetical: it is the
+ * shape of leg 71e5544efa614a06 (#398), whose coarse note stayed `17v vs 17v`
+ * while the line moved 120 m and production stopped drawing the match at all.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+	ACCEPTED_MATCH_DELTAS,
+	type AcceptedMatchDelta,
+	isAcceptedMatchDelta,
+	matchDeltaTag,
+} from "../src/lean/accepted-match-deltas.js";
+
+/** Find one entry by fingerprint. Pinned by ID rather than by position or by a
+ *  predicate over the array: reordering the manifest must not silently change
+ *  which leg these tests are about. */
+const byLeg = (leg: string): AcceptedMatchDelta => {
+	const d = ACCEPTED_MATCH_DELTAS.find((x) => x.leg === leg);
+	if (d === undefined) throw new Error(`manifest no longer holds leg ${leg}`);
+	return d;
+};
+
+/** 2026-05-22 14:14 — a `magnitude` entry with a non-zero figure at BOTH layers
+ *  (0.01 m each), so "smaller passes / larger fails" is testable in both
+ *  directions on a real signature. */
+const entry = byLeg("2742a9a5725284a7");
+
+/** 2026-06-28 10:35 — the 17.52 m route-choice flip, signed off on the measured
+ *  quality of one replayed corridor, so its figure is an EQUALITY. */
+const flip = byLeg("91167e4cf16f9ea8");
+
+/** Adjudicate a manifest entry at a chosen pair of measured deviations. */
+const at = (d: AcceptedMatchDelta, coarse: number | null, path: number | null): boolean =>
+	isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note, { coarse, path });
+
+describe("accepted-match-delta adjudication", () => {
+	it("accepts an entry measured at exactly its recorded deviation", () => {
+		expect(at(entry, entry.coarseDevM, entry.pathDevM)).toBe(true);
+	});
+
+	it("accepts every entry in the manifest at its own recorded figures", () => {
+		for (const d of ACCEPTED_MATCH_DELTAS) expect(at(d, d.coarseDevM, d.pathDevM)).toBe(true);
+	});
+
+	// A `magnitude` figure is a CEILING: the reason argues that a line this far
+	// apart cannot reach the 18 m / 40 m thresholds downstream, and that argument
+	// only gets stronger as the deviation shrinks. Demanding equality there would
+	// make the manifest reject an improvement.
+	it("accepts a SMALLER deviation than a magnitude entry was signed off at", () => {
+		expect(entry.basis).toBe("magnitude");
+		expect(at(entry, 0, 0)).toBe(true);
+	});
+
+	// A `corridor` figure is NOT a ceiling, and this is the asymmetry: the two
+	// route flips are signed off on the measured quality of ONE replayed route
+	// (building intrusion, stray p85, off-network distance). "Smaller than
+	// 17.52 m" does not imply "the same corridor" — a quant arm that picked a
+	// third route 9 m away would slip under a ceiling carrying a sign-off that
+	// measured something else entirely.
+	it("REJECTS a smaller deviation on a corridor entry — the figure is its identity", () => {
+		expect(flip.basis).toBe("corridor");
+		expect(at(flip, flip.coarseDevM, flip.pathDevM)).toBe(true);
+		expect(at(flip, 9, flip.pathDevM)).toBe(false);
+		expect(at(flip, 0, 0)).toBe(false);
+	});
+
+	// THE #398 SHAPE, and the reason this rule exists. Same leg, same classes,
+	// same vertex counts — a line that moved 120 m.
+	it("REJECTS the same leg and the same vertex counts once the line moves further", () => {
+		expect(at(entry, 120, entry.pathDevM)).toBe(false);
+	});
+
+	it("enforces each layer separately — a clean coarse arm does not cover the display arm", () => {
+		expect(at(entry, entry.coarseDevM, 120)).toBe(false);
+		expect(at(entry, 120, entry.pathDevM)).toBe(false);
+	});
+
+	// A `null` deviation means one arm matched and the other did not, so there is
+	// no distance between the two lines. You cannot bound what was never
+	// measured, so it fails — which also means no null-flip can be waived here.
+	it("rejects an unmeasurable (null) deviation rather than waiving it", () => {
+		expect(at(entry, null, entry.pathDevM)).toBe(false);
+		expect(at(entry, entry.coarseDevM, null)).toBe(false);
+		expect(at(entry, null, null)).toBe(false);
+	});
+
+	// The manifest records what the gate PRINTS (two decimals), so the comparison
+	// is made on the figure the sign-off was written against — not the raw double,
+	// which would fail on a difference the reviewer could never have seen. The
+	// cost is half a printed unit of slop on the measured side; pinned here in
+	// both directions so its MAGNITUDE is a stated property, not a side effect.
+	it("compares at the printed resolution, with half a unit of slop and no more", () => {
+		expect(entry.coarseDevM).toBe(0.01);
+		expect(at(entry, 0.0149, entry.pathDevM)).toBe(true);
+		expect(at(entry, 0.0151, entry.pathDevM)).toBe(false);
+	});
+
+	it("still rejects an unknown leg, a changed class and a changed note", () => {
+		const ok = { coarse: entry.coarseDevM, path: entry.pathDevM };
+		expect(isAcceptedMatchDelta("0000000000000000", entry.coarse, entry.path, entry.note, ok)).toBe(false);
+		expect(isAcceptedMatchDelta(entry.leg, "DIFF", entry.path, `${entry.note} `, ok)).toBe(false);
+		expect(isAcceptedMatchDelta(entry.leg, entry.coarse, entry.path, "coarse 1v vs 1v, path 1v vs 1v", ok)).toBe(false);
+	});
+
+	it("labels each divergence the way both callers print it", () => {
+		expect(matchDeltaTag(entry.leg, entry.coarse, entry.path, entry.note, { coarse: 0, path: 0 })).toBe("accepted");
+		expect(matchDeltaTag(entry.leg, entry.coarse, entry.path, entry.note, { coarse: 120, path: 0 })).toBe(
+			"UNEXPLAINED",
+		);
+	});
+});
+
+/**
+ * Properties of the manifest itself. An entry that cannot be adjudicated — no
+ * reason, a negative or absent measurement, a duplicate key — is worse than no
+ * entry: it reads as a sign-off while bounding nothing, which is exactly the
+ * state #395 found this file in.
+ */
+describe("accepted-match-delta manifest shape", () => {
+	it("gives every entry a non-empty sign-off reason", () => {
+		for (const d of ACCEPTED_MATCH_DELTAS) expect(d.reason.trim()).not.toBe("");
+	});
+
+	it("gives every entry a finite, non-negative measurement at both layers", () => {
+		for (const d of ACCEPTED_MATCH_DELTAS) {
+			expect(Number.isFinite(d.coarseDevM)).toBe(true);
+			expect(Number.isFinite(d.pathDevM)).toBe(true);
+			expect(d.coarseDevM).toBeGreaterThanOrEqual(0);
+			expect(d.pathDevM).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	// `printedM` rounds the MEASURED side to two decimals and compares it against
+	// the RECORDED side raw, so the documented "compare at the resolution the gate
+	// prints" only holds while every recorded figure is itself at that resolution.
+	// A hand-typed 0.015 would quietly create a finer second threshold underneath
+	// the one the header describes. All 22 are ≤2dp today; this keeps it that way.
+	it("records every figure at the printed resolution the comparison assumes", () => {
+		for (const d of ACCEPTED_MATCH_DELTAS) {
+			expect(Number(d.coarseDevM.toFixed(2))).toBe(d.coarseDevM);
+			expect(Number(d.pathDevM.toFixed(2))).toBe(d.pathDevM);
+		}
+	});
+
+	// The manifest is keyed by leg fingerprint, so a duplicate would mean one of
+	// the two entries silently adjudicates nothing — the failure mode that let 11
+	// dead entries accumulate before #395.
+	it("holds no duplicate leg fingerprints", () => {
+		const legs = ACCEPTED_MATCH_DELTAS.map((d) => d.leg);
+		expect(new Set(legs).size).toBe(legs.length);
+	});
+
+	// The review invariant that keeps `basis` honest, and the reason it is a test
+	// rather than a comment: `basis` decides which enforcement rule an entry gets,
+	// so an entry claiming the wrong one is a silently weaker gate. The two
+	// entries above a decimetre are the corpus's genuine route-choice flips —
+	// signed off on one replayed corridor, so `corridor` — and everything at or
+	// below 0.04 m argues from size, so `magnitude`. If a third flip appears it
+	// needs its own per-leg measurement, and this is where that gets noticed.
+	it("ties the enforcement basis to the kind of argument the entry actually makes", () => {
+		const big = ACCEPTED_MATCH_DELTAS.filter((d) => Math.max(d.coarseDevM, d.pathDevM) > 0.1);
+		expect(big.map((d) => d.leg).sort()).toEqual(["77277765451f43f5", "91167e4cf16f9ea8"]);
+		for (const d of big) {
+			expect(d.basis).toBe("corridor");
+			expect(d.reason).toContain("MEASURED 2026-07-22");
+		}
+		for (const d of ACCEPTED_MATCH_DELTAS) {
+			if (Math.max(d.coarseDevM, d.pathDevM) <= 0.1) expect(d.basis).toBe("magnitude");
+		}
+	});
+});
