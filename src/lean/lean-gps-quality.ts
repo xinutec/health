@@ -37,7 +37,7 @@
 import type { GpsPoint } from "../geo/kalman.js";
 import { floatToBits } from "./float-bits.js";
 import { LeanBridgeError, type LeanGpsQualityResp, leanGpsQualityServe } from "./lean-core.js";
-import type { LedgerVerdict } from "./ledger-verdict.js";
+import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -207,13 +207,13 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.lenDiffs + s.pickDiffs} DIVERGED`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} pick=${s.pickDiffs} (${s.fixes} fixes)`;
 	const served = divergences.filter((d) => d.scope === "decode").length;
-	const servedNote = served === 0 ? "" : ` ${served} IN SERVED OUTPUT`;
+	const servedTag = servedNote(mode, served);
 	const calls =
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] n=${d.n} ts=${d.tsKept} lean=${d.leanKept} ${d.note}`).join("; ")}`;
 	console.log(
-		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedNote}${calls}`,
+		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "gpsquality",

@@ -62,7 +62,7 @@ import type { FilteredPoint, GpsPoint } from "../geo/kalman.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
 import { circularDegGap, ulpGap } from "./float-gap.js";
 import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
-import type { LedgerVerdict } from "./ledger-verdict.js";
+import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -400,13 +400,13 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 	// cover — every `decode`-scope call diverges by a bit or two, so flagging
 	// those would make the phrase permanent and therefore meaningless.
 	const served = ulpOnly ? 0 : divergences.filter((d) => d.scope === "decode").length;
-	const servedNote = served === 0 ? "" : ` ${served} IN SERVED OUTPUT`;
+	const servedTag = servedNote(mode, served);
 	const calls =
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] in=${d.n} ts=${d.tsLen} lean=${d.leanLen} ${d.first}`).join("; ")}`;
 	console.log(
-		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedNote}${worstBearing}${calls}`,
+		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedTag}${worstBearing}${calls}`,
 	);
 	// The class the gate reads, derived from the SAME booleans as the printed
 	// word so the two can never say different things. `ulpOnly` is `accepted`

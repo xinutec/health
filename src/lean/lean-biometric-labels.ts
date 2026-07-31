@@ -36,7 +36,7 @@ import { addRefinedKind } from "../geo/segment-util.js";
 import type { TransportMode } from "../geo/segments.js";
 import { floatToBits } from "./float-bits.js";
 import { type LeanBioLabelsResp, LeanBridgeError, type LeanLabelDecision, leanBioLabelsServe } from "./lean-core.js";
-import type { LedgerVerdict } from "./ledger-verdict.js";
+import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -388,13 +388,13 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.lenDiffs + s.segs} DIVERGED`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segs}`;
 	const served = divergences.filter((d) => d.scope === "decode").length;
-	const servedNote = served === 0 ? "" : ` ${served} IN SERVED OUTPUT`;
+	const servedTag = servedNote(mode, served);
 	const calls =
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] ${d.pass}#${d.i} ts=${d.ts} lean=${d.lean}`).join("; ")}`;
 	console.log(
-		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedNote}${calls}`,
+		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "biolabels",

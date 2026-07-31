@@ -39,7 +39,7 @@ import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { isAcceptedMatchDelta, type MatchLegClass, matchDeltaTag } from "./accepted-match-deltas.js";
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
-import type { LedgerVerdict } from "./ledger-verdict.js";
+import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -264,7 +264,7 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 		.join(" · ");
 	const servedDiffs =
 		(scopes.decode?.coarseDiffs ?? 0) + (scopes.decode?.pathDiffs ?? 0) + (scopes.decode?.nullFlips ?? 0);
-	const servedNote = servedDiffs === 0 ? "" : ` ${servedDiffs} IN SERVED OUTPUT`;
+	const servedTag = servedNote(mode, servedDiffs);
 	// Adjudicate each measured leg against the accepted manifest — the same
 	// `isAcceptedMatchDelta` the gate enforces, now reachable because the
 	// manifest is keyed on the leg's own fingerprint rather than on a golden
@@ -292,7 +292,7 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 					.join("; ")}`;
 	console.log(
 		`lean-match[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
-			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedNote}${legDetail}`,
+			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedTag}${legDetail}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "match",

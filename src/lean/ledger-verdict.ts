@@ -52,6 +52,36 @@ export interface LedgerVerdict {
 	klass: LedgerClass;
 }
 
+/**
+ * The phrase that says what a divergence on the PERSISTED run actually means,
+ * given which arm was serving (#399).
+ *
+ * Every tenant used to build this itself, identically and identically wrong:
+ * count the divergences whose run scope is `decode` — the pass whose output is
+ * kept, as against the throwaway observational pass — and print
+ * `N IN SERVED OUTPUT`. But the run scope answers "was this a real leg of the
+ * user's day?", not "did the Lean answer reach them?". That second question is
+ * the MODE's: `on` serves Lean, `shadow` serves TS and keeps Lean purely as
+ * measurement.
+ *
+ * Under `on` the two coincide, which is why five call sites carried it for
+ * months. It goes false the instant a tenant is rolled back — and for `kalman`,
+ * `gpsquality` and `biolabels`, shadow since the day they were staged, it had
+ * never been true at all.
+ *
+ * The COUNT is deliberately identical either way. A rollback narrows what a
+ * divergence costs; it must not narrow what gets reported, or the line becomes
+ * a way to make a tenant quieter by demoting it (#398).
+ */
+export function servedNote(mode: LedgerVerdict["mode"], count: number): string {
+	if (count === 0) return "";
+	// `ON THE SERVED PATH` rather than a bare `observed`: these legs are the
+	// user's real days out of the persisted decode, not measurement scratch, and
+	// that distinction is the one worth keeping greppable. `(TS served)` then
+	// removes any doubt about which arm drew what they actually saw.
+	return mode === "on" ? ` ${count} IN SERVED OUTPUT` : ` ${count} ON THE SERVED PATH (TS served)`;
+}
+
 export interface LedgerGateResult {
 	/** One entry per failing tenant, already worded for the console. Empty means
 	 *  the run may exit 0 as far as the Lean tenants are concerned. */

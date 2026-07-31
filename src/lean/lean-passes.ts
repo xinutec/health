@@ -31,7 +31,7 @@
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { LeanBridgeError, leanGeo } from "./lean-core.js";
-import type { LedgerVerdict } from "./ledger-verdict.js";
+import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
@@ -357,9 +357,13 @@ export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
  *
  * The day makes several velocity runs — the decode itself, plus the extra one
  * `runWalkShadow` does purely to extract legs — so the line breaks the tally
- * down by scope and flags `IN SERVED OUTPUT` when a divergence came from the
- * decode rather than from throwaway measurement. Summing them hid that
- * distinction, which is the one the reader actually needs.
+ * down by scope and calls out divergences that came from the decode rather than
+ * from throwaway measurement. Summing them hid that distinction, which is the
+ * one the reader actually needs.
+ *
+ * That call-out is worded by {@link servedNote}, which takes the MODE too:
+ * being on the persisted run is not the same as having been served, and under
+ * `shadow` it is TS that was served (#399).
  *
  * Lives here rather than in `decode-day` (where it was until #392) for two
  * reasons: it belongs beside the tenant it measures, like the other six, and
@@ -402,14 +406,14 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 				: unexplained.length === 0
 					? "all accepted"
 					: `${unexplained.length} UNEXPLAINED`;
-	const servedNote = served.length === 0 ? "" : ` ${served.length} IN SERVED OUTPUT`;
+	const servedTag = servedNote(mode, served.length);
 	const detail =
 		divs.length === 0
 			? ""
 			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
 	console.log(
 		`lean-passes[${mode}] ${label} ${tally === "" ? "(no calls)" : tally}` +
-			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedNote}${detail}`,
+			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedTag}${detail}`,
 	);
 	// An ACCEPTED divergence is `accepted`, not `exact`: it passes, on a manifest
 	// somebody signed. Collapsing it into `exact` would let the gate stop
