@@ -120,15 +120,22 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `gateLedgers` prints their waiver each run, and turns it into a STALE
 	# WAIVER report the moment the corpus does reach one.
 	#
-	# WHAT THIS PASS DOES NOT COVER: `match` and `passes`, which stay off here.
-	# Not because they are fine — the first run of this gate that included them
-	# (2026-07-31) measured 10 UNEXPLAINED matcher legs + 1 UNEXPLAINED
-	# `simplify`, 21 and 3 of them reaching served output, while all 32 fixtures
-	# still matched baseline. Both tenants are `off` in production, so none of
-	# that ships; it is the pre-flip evidence they had never been given, and it
-	# is adjudicated under its own task, not blessed here. Until then this pass
-	# turns on exactly the tenants that are actually staged in production, so
-	# what the gate enforces is what is soaking.
+	# WHAT THIS PASS DOES NOT COVER: `match` and `passes`, which stay off here —
+	# and this is the gate's weakest point, not a tidy scoping decision.
+	#
+	# Both are `LEAN_MATCH=on` / `LEAN_PASSES=on` in the decode-recent cronjob,
+	# i.e. SERVING the verified core in production. The first run of this gate
+	# that included them (2026-07-31) measured 10 UNEXPLAINED matcher legs and 1
+	# UNEXPLAINED `simplify`, 21 and 3 of them reaching served output — while all
+	# 32 fixtures still matched baseline. The production cron reports the same
+	# shape on four of the last seven days.
+	#
+	# So this is standing debt on a live serving path, and the gate cannot yet
+	# express it: there is no ratcheted ceiling for unexplained Lean deltas the
+	# way there is for kinematic feasibility, rail triples and truth, so turning
+	# these two on here would fail every deploy on a pre-existing condition with
+	# no way to record it. #395 owns both the adjudication and that ratchet. Do
+	# not close this gap by widening the accepted-delta manifests.
 	#
 	#   DEPLOY_GOLDEN_LEAN_ALL=1 turns all seven on — the run to use while
 	#   adjudicating those deltas. Costs ~4 min on the 32-day corpus.
