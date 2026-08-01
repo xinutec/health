@@ -15,6 +15,10 @@ class MainActivity : WebShellActivity() {
     override val shell =
         ShellConfig(
             url = HEALTH_URL,
+            // The dashboard plus the Nextcloud login hop — without the second, the
+            // OAuth round-trip would be ejected to the browser and the app could
+            // never sign in again. Everything else opens in the real browser.
+            allowedHosts = setOf("health.xinutec.org", NC_HOST),
             // Forward the web app's console (console.log/warn/error and uncaught JS
             // errors) to logcat: `adb logcat -s HealthWeb`.
             consoleTag = "HealthWeb",
@@ -28,5 +32,8 @@ class MainActivity : WebShellActivity() {
     private companion object {
         // The health dashboard (HTTPS, behind a Nextcloud-OAuth login).
         const val HEALTH_URL = "https://health.xinutec.org/"
+
+        // The Nextcloud identity provider the login bounces through.
+        const val NC_HOST = "dash.xinutec.org"
     }
 }
