@@ -37,8 +37,8 @@
 
 import { createHash } from "node:crypto";
 import type { RailGraph } from "../geo/rail-snap.js";
-import { formatArmTiming } from "./arm-timing.js";
-import { LeanBridgeError, type LeanRailResp, leanArmTiming, leanRailServe, resetLeanArmTiming } from "./lean-core.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
+import { LeanBridgeError, type LeanRailResp, leanRailServe } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -151,20 +151,23 @@ const eqPath = (a: readonly number[], b: readonly number[]): boolean =>
 
 /**
  * Shortest path over a rail graph through the verified core, staged behind
- * `LEAN_RAIL`. `tsPath` is the output the call site already computed with
- * `shortestPath(graph, from, to)`. Both `shadow` and `on` run the verified
- * search and compare; `shadow` serves `tsPath`, `on` serves the verified
- * sequence. Any bridge failure is recorded and falls back to `tsPath`
- * (swallow-over-wrong, execution edition).
+ * `LEAN_RAIL`. `ts` computes the TS output (`shortestPath(graph, from, to)`).
+ * Both `shadow` and `on` run the verified search and compare; `shadow` serves
+ * the TS path, `on` serves the verified sequence. Any bridge failure is
+ * recorded and falls back to TS (swallow-over-wrong, execution edition). *
+ * The TS arm arrives as a THUNK so both arms can be timed over the same calls
+ * (`arm-timing.ts`) — the RATIO is what a flip decision turns on, and an
+ * eagerly-evaluated argument had already finished before this was entered.
  */
 export function shortestPathViaLean(
 	graph: RailGraph,
 	from: number,
 	to: number,
-	tsPath: number[] | null,
+	ts: () => number[] | null,
 ): number[] | null {
 	const mode = leanRailMode();
-	if (mode === "off") return tsPath;
+	if (mode === "off") return ts();
+	const tsPath = timeTsArm("rail", ts);
 
 	const qadj = quantiseRailAdj(graph.adj);
 	let lean: LeanRailResp;
@@ -250,8 +253,8 @@ export function logLeanRailLedger(label: string): LedgerVerdict | null {
 			: ` — ${divergences
 					.map((d) => `[${d.scope}] graph=${d.graph} ts=${d.tsLen}v/${d.tsCost} lean=${d.leanLen}v/${d.leanCost}`)
 					.join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("rail"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("rail"));
 	console.log(
 		`lean-rail[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${legs}${armMs}`,
 	);
@@ -266,6 +269,6 @@ export function logLeanRailLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanRailStats();
-	resetLeanArmTiming("rail");
+	resetArmPair("rail");
 	return out;
 }

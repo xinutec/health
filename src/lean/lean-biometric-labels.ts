@@ -34,16 +34,9 @@
 
 import { addRefinedKind } from "../geo/segment-util.js";
 import type { TransportMode } from "../geo/segments.js";
-import { formatArmTiming } from "./arm-timing.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
 import { floatToBits } from "./float-bits.js";
-import {
-	type LeanBioLabelsResp,
-	LeanBridgeError,
-	type LeanLabelDecision,
-	leanArmTiming,
-	leanBioLabelsServe,
-	resetLeanArmTiming,
-} from "./lean-core.js";
+import { type LeanBioLabelsResp, LeanBridgeError, type LeanLabelDecision, leanBioLabelsServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -288,16 +281,18 @@ function serve(
 
 /**
  * The shared body of the three passes that rewrite labels without touching the
- * sequence. `tsResult` is what the call site already computed.
+ * sequence. `ts` computes the TS arm; it is a thunk so both arms can be timed
+ * over the same calls (`arm-timing.ts`).
  */
 function viaLean<T extends LabelSeg>(
 	pass: Exclude<LeanLabelPass, "walkthrough">,
 	segments: readonly T[],
 	steps: readonly StepRow[],
-	tsResult: T[],
+	ts: () => T[],
 ): T[] {
 	const mode = leanBioLabelsMode();
-	if (mode === "off" || segments.length === 0) return tsResult;
+	if (mode === "off" || segments.length === 0) return ts();
+	const tsResult = timeTsArm("biolabels", ts);
 
 	const lean = serve(pass, segments, steps, []);
 	if (lean?.decisions === undefined) return tsResult;
@@ -313,23 +308,23 @@ function viaLean<T extends LabelSeg>(
 export function correctModeFromCadenceViaLean<T extends LabelSeg>(
 	segments: readonly T[],
 	steps: readonly StepRow[],
-	tsResult: T[],
+	ts: () => T[],
 ): T[] {
-	return viaLean("cadence", segments, steps, tsResult);
+	return viaLean("cadence", segments, steps, ts);
 }
 
 /** `revertIsolatedCadence` — undo a flip with no vehicular context. */
-export function revertIsolatedCadenceDrivesViaLean<T extends LabelSeg>(segments: readonly T[], tsResult: T[]): T[] {
-	return viaLean("revert", segments, [], tsResult);
+export function revertIsolatedCadenceDrivesViaLean<T extends LabelSeg>(segments: readonly T[], ts: () => T[]): T[] {
+	return viaLean("revert", segments, [], ts);
 }
 
 /** `jitterWalkToStay` — walking → stationary on a jittered zero-step path. */
 export function demoteJitterWalkToStationaryViaLean<T extends LabelSeg>(
 	segments: readonly T[],
 	steps: readonly StepRow[],
-	tsResult: T[],
+	ts: () => T[],
 ): T[] {
-	return viaLean("jitter", segments, steps, tsResult);
+	return viaLean("jitter", segments, steps, ts);
 }
 
 /**
@@ -344,10 +339,11 @@ export function applyStationaryWalkThroughViaLean<T extends LabelSeg>(
 	segments: readonly T[],
 	steps: readonly StepRow[],
 	points: readonly LabelFix[],
-	tsResult: T[],
+	ts: () => T[],
 ): T[] {
 	const mode = leanBioLabelsMode();
-	if (mode === "off" || segments.length === 0) return tsResult;
+	if (mode === "off" || segments.length === 0) return ts();
+	const tsResult = timeTsArm("biolabels", ts);
 
 	const lean = serve("walkthrough", segments, steps, points);
 	if (lean?.decisions === undefined || lean.runs === undefined) return tsResult;
@@ -401,8 +397,8 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] ${d.pass}#${d.i} ts=${d.ts} lean=${d.lean}`).join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("biolabels"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("biolabels"));
 	console.log(
 		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}${armMs}`,
 	);
@@ -417,6 +413,6 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanBioLabelsStats();
-	resetLeanArmTiming("biolabels");
+	resetArmPair("biolabels");
 	return out;
 }

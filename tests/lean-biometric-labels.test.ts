@@ -70,7 +70,7 @@ describe("mode gating", () => {
 		delete process.env.LEAN_BIOLABELS;
 		const input = [seg()];
 		const tsResult = [seg({ refinedMode: "driving" })];
-		expect(correctModeFromCadenceViaLean(input, [], tsResult)).toBe(tsResult);
+		expect(correctModeFromCadenceViaLean(input, [], () => tsResult)).toBe(tsResult);
 		if (prior !== undefined) process.env.LEAN_BIOLABELS = prior;
 	});
 
@@ -80,7 +80,7 @@ describe("mode gating", () => {
 		process.env.LEAN_BIOLABELS = "shadow";
 		resetLeanBioLabelsStats();
 		const tsResult: LabelSeg[] = [];
-		expect(correctModeFromCadenceViaLean([], [], tsResult)).toBe(tsResult);
+		expect(correctModeFromCadenceViaLean([], [], () => tsResult)).toBe(tsResult);
 		if (prior === undefined) delete process.env.LEAN_BIOLABELS;
 		else process.env.LEAN_BIOLABELS = prior;
 	});

@@ -23,7 +23,7 @@
 
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { type ArmTiming, freshArmTiming, timeArm } from "./arm-timing.js";
+import { timeLeanArm } from "./arm-timing.js";
 
 const CTRL_PENDING = 0;
 const CTRL_READY = 1;
@@ -157,7 +157,12 @@ class LeanCore {
 	 * single failure is recoverable: the worker is rebuilt on the next call.
 	 */
 	call(mode: string, payload: Record<string, unknown>): unknown {
-		return timeArm(armTimingFor(mode), () => this.callUncounted(mode, payload));
+		// The Lean half of the arm accounting (`arm-timing.ts`), measured here
+		// because this is the one point every tenant already funnels through and
+		// the request carries the mode that names it. A wrapper-by-wrapper version
+		// would have needed ten edits and — the reason that matters — a new tenant
+		// would arrive silently untimed.
+		return timeLeanArm(mode, () => this.callUncounted(mode, payload));
 	}
 
 	private callUncounted(mode: string, payload: Record<string, unknown>): unknown {
@@ -193,41 +198,6 @@ class LeanCore {
 /** Process-wide singleton: one persistent worker + `verified_cli serve`
  *  child per process. */
 export const leanCore = new LeanCore();
-
-/**
- * Lean-arm wall time per bridge `mode`, for the ledgers to report (#403).
- *
- * Measured HERE rather than in each `*ViaLean` wrapper because this is the one
- * point every tenant already funnels through, and the request carries the mode
- * that names the tenant. A wrapper-by-wrapper version would have needed ten
- * edits, and — the reason that matters — a new tenant would arrive silently
- * untimed, which is exactly how the ledgers ended up able to say "Lean agrees"
- * without anyone knowing what it cost.
- *
- * What this measures is the FULL cost of consulting Lean: quantised payload
- * across the SharedArrayBuffer, the Lean computation, the reply, and the JSON
- * decode. That is the right boundary for a flip decision — it is what serving
- * would actually add — but it is not "how fast Lean is", and the two should not
- * be quoted for each other.
- */
-const armTimings = new Map<string, ArmTiming>();
-
-function armTimingFor(mode: string): ArmTiming {
-	const t = armTimings.get(mode) ?? freshArmTiming();
-	if (!armTimings.has(mode)) armTimings.set(mode, t);
-	return t;
-}
-
-/** This process's Lean-arm cost for one bridge mode; all-zero if never called. */
-export function leanArmTiming(mode: string): ArmTiming {
-	return armTimings.get(mode) ?? freshArmTiming();
-}
-
-/** Clear one mode's timing — each tenant's ledger reset calls this, so a
- *  per-day line reports that day rather than everything since boot. */
-export function resetLeanArmTiming(mode: string): void {
-	armTimings.delete(mode);
-}
 
 /** Result shape of a `geo` display pass (mirrors `verified_cli geo`). */
 export interface LeanGeoResp {

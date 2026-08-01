@@ -30,8 +30,8 @@
 
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
-import { formatArmTiming } from "./arm-timing.js";
-import { LeanBridgeError, leanArmTiming, leanGeo, resetLeanArmTiming } from "./lean-core.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
+import { LeanBridgeError, leanGeo } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -182,15 +182,20 @@ function subsequenceKept<T extends LatLonTs>(pts: readonly T[], leanRows: number
 /**
  * Douglas–Peucker path simplify through the verified core.
  *
- * `tsResult` is the TS output the call site already computed. Both `shadow`
- * and `on` run the Lean pass and compare against it; `shadow` serves
- * `tsResult`, `on` serves the verified `keep` subset (a subsequence of `pts`,
- * so downstream sees the same object identities). Any bridge failure is
- * recorded and falls back to `tsResult`.
+ * `ts` computes the TS output. Both `shadow` and `on` run the Lean pass and
+ * compare against it; `shadow` serves the TS result, `on` serves the verified
+ * `keep` subset (a subsequence of `pts`, so downstream sees the same object
+ * identities). Any bridge failure is recorded and falls back to TS.
+ *
+ * A THUNK rather than a value so the TS arm can be timed against the Lean arm
+ * (`arm-timing.ts`) — the ratio, not the Lean cost, is what a flip decision
+ * turns on. It is invoked on every path, including `off`: `shadow` and `on`
+ * both compare against it, so nothing is skipped by deferring it.
  */
-export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], toleranceM: number, tsResult: T[]): T[] {
+export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], toleranceM: number, ts: () => T[]): T[] {
 	const mode = leanPassMode();
-	if (mode === "off" || pts.length <= 2) return tsResult;
+	if (mode === "off" || pts.length <= 2) return ts();
+	const tsResult = timeTsArm("geo", ts);
 	let keep: number[];
 	try {
 		keep = leanGeo({ op: "simplify", tol: Math.round(toleranceM * 1e6), pts: rows(pts) }).keep ?? [];
@@ -221,10 +226,11 @@ export function removeSpursViaLean<T extends LatLonTs>(
 	pts: readonly T[],
 	returnM: number,
 	maxSpan: number,
-	tsResult: T[],
+	ts: () => T[],
 ): T[] {
 	const mode = leanPassMode();
-	if (mode === "off" || pts.length < 3) return tsResult;
+	if (mode === "off" || pts.length < 3) return ts();
+	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
 		leanRows = leanGeo({ op: "spurs", ret: Math.round(returnM * 1e6), span: maxSpan, pts: rows(pts) }).pts ?? [];
@@ -250,9 +256,10 @@ export function removeSpursViaLean<T extends LatLonTs>(
  * keep-set to the Lean keep-set. (compare-geo measures zero float↔quant flips
  * for this pass, so the ledger should stay clean.)
  */
-export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], tsResult: T[]): T[] {
+export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], ts: () => T[]): T[] {
 	const mode = leanPassMode();
-	if (mode === "off" || pts.length < 3) return tsResult;
+	if (mode === "off" || pts.length < 3) return ts();
+	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
 		leanRows = leanGeo({ op: "spikes", pts: rows(pts) }).pts ?? [];
@@ -279,10 +286,11 @@ export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], tsRes
 export function trimViaLean<P extends LatLonTs, F extends LatLonTs>(
 	path: readonly P[],
 	fixes: readonly F[],
-	tsResult: P[],
+	ts: () => P[],
 ): P[] {
 	const mode = leanPassMode();
-	if (mode === "off" || path.length < 3) return tsResult;
+	if (mode === "off" || path.length < 3) return ts();
+	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
 		leanRows = leanGeo({ op: "trim", path: rows(path), fixes: rows(fixes) }).pts ?? [];
@@ -310,12 +318,13 @@ export function trimViaLean<P extends LatLonTs, F extends LatLonTs>(
 export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
 	path: readonly P[],
 	fixes: readonly F[],
-	tsResult: P[],
+	ts: () => P[],
 	minApexM = 15,
 	excessM = 12,
 ): P[] {
 	const mode = leanPassMode();
-	if (mode === "off" || path.length < 3) return tsResult;
+	if (mode === "off" || path.length < 3) return ts();
+	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
 		leanRows =
@@ -412,8 +421,8 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 		divs.length === 0
 			? ""
 			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("geo"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("geo"));
 	console.log(
 		`lean-passes[${mode}] ${label} ${tally === "" ? "(no calls)" : tally}` +
 			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedTag}${detail}${armMs}`,
@@ -434,6 +443,6 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 			calls === 0 ? "not-exercised" : divs.length === 0 ? "exact" : unexplained.length === 0 ? "accepted" : "diverged",
 	};
 	resetLeanPassStats();
-	resetLeanArmTiming("geo");
+	resetArmPair("geo");
 	return out;
 }

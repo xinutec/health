@@ -165,7 +165,7 @@ function resolveEpisode(
 		// station join points so the whole leg stays train-coloured and its
 		// neighbours bridge from zero — otherwise the adjacent walk draws a green
 		// line across the missing tail (the ~950 m Baker St tail on 2026-06-16).
-		const raw = rejectSpikesViaLean(windowFixes, rejectSpikes(windowFixes)).map(toLatLon);
+		const raw = rejectSpikesViaLean(windowFixes, () => rejectSpikes(windowFixes)).map(toLatLon);
 		return { ...base, kind: "raw", points: stitchTrainEnds(raw, from, to) };
 	}
 
@@ -223,7 +223,7 @@ function resolveEpisode(
 		if (rawFixes) {
 			const sw = samplesInWindow(rawFixes, state);
 			const rawWin = holdImplausibleSpeed(
-				rejectSpikesViaLean(sw, rejectSpikes(sw)),
+				rejectSpikesViaLean(sw, () => rejectSpikes(sw)),
 				MAX_SPEED_FOR_MODE[mode] ?? Number.POSITIVE_INFINITY,
 			);
 			if (rawWin.length >= 2) {
@@ -239,7 +239,11 @@ function resolveEpisode(
 		// rejectSpikes alone would miss it.
 		const cap = MAX_SPEED_FOR_MODE[mode];
 		const plausible = cap === undefined ? windowFixes : windowFixes.filter((p) => p.speed_kmh <= cap);
-		return { ...base, kind: "raw", points: rejectSpikesViaLean(plausible, rejectSpikes(plausible)).map(toLatLon) };
+		return {
+			...base,
+			kind: "raw",
+			points: rejectSpikesViaLean(plausible, () => rejectSpikes(plausible)).map(toLatLon),
+		};
 	}
 
 	if (mode === "stationary" || mode === "sleeping") {

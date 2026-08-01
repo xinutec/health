@@ -20,6 +20,6 @@ let installed = false;
 export function installLeanPasses(): void {
 	if (installed) return;
 	installed = true;
-	setSimplifyHook((pts, toleranceM, tsResult) => simplifyViaLean(pts, toleranceM, tsResult));
-	setSpursHook((pts, returnM, maxSpan, tsResult) => removeSpursViaLean(pts, returnM, maxSpan, tsResult));
+	setSimplifyHook((pts, toleranceM, ts) => simplifyViaLean(pts, toleranceM, ts));
+	setSpursHook((pts, returnM, maxSpan, ts) => removeSpursViaLean(pts, returnM, maxSpan, ts));
 }

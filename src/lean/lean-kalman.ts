@@ -59,16 +59,10 @@
  */
 
 import type { FilteredPoint, GpsPoint } from "../geo/kalman.js";
-import { formatArmTiming } from "./arm-timing.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
 import { circularDegGap, ulpGap } from "./float-gap.js";
-import {
-	LeanBridgeError,
-	type LeanKalmanResp,
-	leanArmTiming,
-	leanKalmanServe,
-	resetLeanArmTiming,
-} from "./lean-core.js";
+import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -236,9 +230,10 @@ function fromWire(r: readonly unknown[]): FilteredPoint {
  * bridge failure is recorded and falls back to `tsResult` (swallow-over-wrong,
  * execution edition).
  */
-export function filterGpsTrackViaLean(points: readonly GpsPoint[], tsResult: FilteredPoint[]): FilteredPoint[] {
+export function filterGpsTrackViaLean(points: readonly GpsPoint[], ts: () => FilteredPoint[]): FilteredPoint[] {
 	const mode = leanKalmanMode();
-	if (mode === "off") return tsResult;
+	if (mode === "off") return ts();
+	const tsResult = timeTsArm("kalman", ts);
 
 	let lean: LeanKalmanResp;
 	try {
@@ -412,8 +407,8 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] in=${d.n} ts=${d.tsLen} lean=${d.leanLen} ${d.first}`).join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("kalman"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("kalman"));
 	console.log(
 		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedTag}${worstBearing}${calls}${armMs}`,
 	);
@@ -432,6 +427,6 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : ulpOnly ? "accepted" : "diverged",
 	};
 	resetLeanKalmanStats();
-	resetLeanArmTiming("kalman");
+	resetArmPair("kalman");
 	return out;
 }

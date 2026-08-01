@@ -138,15 +138,15 @@ describe("shortestPathViaLean with the flag off", () => {
 
 	it("returns the TS path untouched", () => {
 		const ts = [0, 1, 2];
-		expect(shortestPathViaLean(graph([[{ to: 1, w: 1 }], [{ to: 2, w: 1 }], []]), 0, 2, ts)).toBe(ts);
+		expect(shortestPathViaLean(graph([[{ to: 1, w: 1 }], [{ to: 2, w: 1 }], []]), 0, 2, () => ts)).toBe(ts);
 	});
 
 	it("passes a TS null through unchanged", () => {
-		expect(shortestPathViaLean(graph([[], []]), 0, 1, null)).toBeNull();
+		expect(shortestPathViaLean(graph([[], []]), 0, 1, () => null)).toBeNull();
 	});
 
 	it("records nothing at all — no calls, no failures, no divergences", () => {
-		shortestPathViaLean(graph([[{ to: 1, w: 1 }], []]), 0, 1, [0, 1]);
+		shortestPathViaLean(graph([[{ to: 1, w: 1 }], []]), 0, 1, () => [0, 1]);
 		expect(leanRailStats()).toEqual({ calls: 0, fails: 0, pathDiffs: 0, nullFlips: 0, costDiffs: 0 });
 		expect(leanRailDivergences()).toEqual([]);
 	});

@@ -1280,12 +1280,13 @@ export function dedupeConsecutive(pts: readonly Pt[]): Pt[] {
  * in the Lean bridge; instead a non-pure layer may install a hook (see
  * `src/lean/install.ts`) that routes the coarse-path simplify through the
  * proved Lean pass. Null by default → pure TS, fixtures unaffected. The hook
- * receives the TS result too, so it can shadow-compare or fall back.
+ * receives the TS pass as a THUNK, so it can shadow-compare, fall back, and
+ * time the two arms against each other (`src/lean/arm-timing.ts`).
  */
 export type SimplifyHook = (
 	pts: readonly MatchedPoint[],
 	toleranceM: number,
-	tsResult: MatchedPoint[],
+	ts: () => MatchedPoint[],
 ) => MatchedPoint[];
 
 let simplifyHook: SimplifyHook | null = null;
@@ -1301,7 +1302,7 @@ export type SpursHook = (
 	pts: readonly MatchedPoint[],
 	returnM: number,
 	maxSpan: number,
-	tsResult: MatchedPoint[],
+	ts: () => MatchedPoint[],
 ) => MatchedPoint[];
 
 let spursHook: SpursHook | null = null;
@@ -1763,13 +1764,10 @@ export function matchTrajectory(
 	}
 
 	const simplified = simplifyHook
-		? simplifyHook(out, profile.simplifyToleranceM, simplifyPath(out, profile.simplifyToleranceM))
+		? simplifyHook(out, profile.simplifyToleranceM, () => simplifyPath(out, profile.simplifyToleranceM))
 		: simplifyPath(out, profile.simplifyToleranceM);
 	const cleaned = spursHook
-		? spursHook(
-				simplified,
-				profile.spurReturnM,
-				profile.spurMaxSpanVerts,
+		? spursHook(simplified, profile.spurReturnM, profile.spurMaxSpanVerts, () =>
 				removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts),
 			)
 		: removeSpurs(simplified, profile.spurReturnM, profile.spurMaxSpanVerts);

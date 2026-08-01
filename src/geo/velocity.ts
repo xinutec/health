@@ -636,7 +636,7 @@ export async function computeVelocityFromInputs(
 	// cell-tower garbage) before anything else touches the data. The
 	// dropped fixes leave an honest temporal gap that `inferTransitGaps`
 	// bridges downstream. See src/geo/gps-quality.ts.
-	const cleaned = timeSync("gpsQuality", () => qualityFilterGpsViaLean(inDay, qualityFilterGps(inDay)));
+	const cleaned = timeSync("gpsQuality", () => qualityFilterGpsViaLean(inDay, () => qualityFilterGps(inDay)));
 
 	// Place-snap: if a fix is unambiguously close to a known cluster (home,
 	// work, etc.), pull it to the cluster centroid. Reduces GPS noise around
@@ -677,7 +677,7 @@ export async function computeVelocityFromInputs(
 		.filter((p) => p.accuracy === null || p.accuracy <= 200)
 		.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy }));
 
-	const points = timeSync("kalman", () => filterGpsTrackViaLean(gpsPoints, filterGpsTrack(gpsPoints)));
+	const points = timeSync("kalman", () => filterGpsTrackViaLean(gpsPoints, () => filterGpsTrack(gpsPoints)));
 	const segments = timeSync("segments", () => classifySegments(points, stayPoints));
 
 	if (options.enrich === false) {
@@ -1053,18 +1053,14 @@ export async function computeVelocityFromInputs(
 	// similar — relabel before merge so neighbouring drives can absorb it.
 	const { hr, sleep, steps } = await biometricsPromise;
 	const flipped = timeSync("cadenceCorrect", () =>
-		correctModeFromCadenceViaLean(
-			enriched,
-			steps,
-			enriched.map((s) => correctModeFromCadence(s, steps)),
-		),
+		correctModeFromCadenceViaLean(enriched, steps, () => enriched.map((s) => correctModeFromCadence(s, steps))),
 	);
 	// Undo cadence flips with no adjacent real driving: the correction exists so
 	// a neighbouring drive can absorb a slow-traffic leg, so an isolated flip
 	// (a slow walk whose phone didn't count steps) is a false positive. Runs
 	// before merge so surviving flips can still coalesce into their drive.
 	const reverted = timeSync("revertIsolatedCadence", () =>
-		revertIsolatedCadenceDrivesViaLean(flipped, revertIsolatedCadenceDrives(flipped)),
+		revertIsolatedCadenceDrivesViaLean(flipped, () => revertIsolatedCadenceDrives(flipped)),
 	);
 	// A "walking" leg with zero recorded steps and a path that just jitters
 	// around one spot is sitting still (a restaurant, a waiting room) where
@@ -1072,9 +1068,7 @@ export async function computeVelocityFromInputs(
 	// stationary so the stays around it coalesce into one clean visit instead
 	// of fragmenting and grabbing wrong place names.
 	const corrected = timeSync("jitterWalkToStay", () =>
-		demoteJitterWalkToStationaryViaLean(
-			reverted,
-			steps,
+		demoteJitterWalkToStationaryViaLean(reverted, steps, () =>
 			reverted.map((s) => demoteJitterWalkToStationary(s, steps)),
 		),
 	);
@@ -1265,7 +1259,7 @@ export async function computeVelocityFromInputs(
 		// avg-speed gate in revertIsolatedCadenceDrives keeps it.
 		{
 			name: "revertIsolatedCadence2",
-			run: (segs) => revertIsolatedCadenceDrivesViaLean(segs, revertIsolatedCadenceDrives(segs)),
+			run: (segs) => revertIsolatedCadenceDrivesViaLean(segs, () => revertIsolatedCadenceDrives(segs)),
 		},
 
 		// Absorb a platform / concourse wait into the boarding of its train
@@ -1338,7 +1332,7 @@ export async function computeVelocityFromInputs(
 		{
 			name: "walkThrough",
 			run: (segs) =>
-				applyStationaryWalkThroughViaLean(segs, steps, points, applyStationaryWalkThrough(segs, steps, points)),
+				applyStationaryWalkThroughViaLean(segs, steps, points, () => applyStationaryWalkThrough(segs, steps, points)),
 		},
 
 		// A short walk between two train legs that share a station is the

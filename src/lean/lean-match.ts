@@ -38,8 +38,8 @@ import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { isAcceptedMatchDelta, type MatchLegClass, matchDeltaTag } from "./accepted-match-deltas.js";
-import { formatArmTiming } from "./arm-timing.js";
-import { LeanBridgeError, type LeanMatchResp, leanArmTiming, leanMatchServe, resetLeanArmTiming } from "./lean-core.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
+import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -175,19 +175,25 @@ function leanToResult(lean: LeanMatchResp): WalkMatchResult | null {
 
 /**
  * Map-match a walking leg through the verified core, staged behind
- * `LEAN_MATCH`. `tsResult` is the TS output the call site already computed
- * (`matchWalkSegment(...)`). Both `shadow` and `on` run the Lean matcher and
- * compare against it; `shadow` serves `tsResult`, `on` serves the dequantised
- * verified result. Any bridge failure is recorded and falls back to
- * `tsResult` (swallow-over-wrong, execution edition).
+ * `LEAN_MATCH`. `ts` computes the TS output (`matchWalkSegment(...)`). Both
+ * `shadow` and `on` run the Lean matcher and compare against it; `shadow`
+ * serves the TS result, `on` serves the dequantised verified one. Any bridge
+ * failure is recorded and falls back to TS (swallow-over-wrong, execution
+ * edition). *
+ * The TS arm arrives as a THUNK so both arms can be timed over the same calls
+ * (`arm-timing.ts`) — the RATIO is what a flip decision turns on, and an
+ * eagerly-evaluated argument had already finished before this was entered. This is the tenant whose cost the ratio
+ * most needs to state: it is the only one where consulting Lean is a real
+ * computation rather than a sub-millisecond pass.
  */
 export function matchWalkSegmentViaLean(
 	fixes: readonly RoadFix[],
 	geo: RoadGeometry,
-	tsResult: WalkMatchResult | null,
+	ts: () => WalkMatchResult | null,
 ): WalkMatchResult | null {
 	const mode = leanMatchMode();
-	if (mode === "off" || fixes.length < 3) return tsResult;
+	if (mode === "off" || fixes.length < 3) return ts();
+	const tsResult = timeTsArm("match", ts);
 	let lean: LeanMatchResp;
 	try {
 		lean = leanMatchServe(quantReq(fixes, geo));
@@ -303,8 +309,8 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 							`dev coarse=${m(d.devM.coarse)} path=${m(d.devM.path)}`,
 					)
 					.join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("match"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("match"));
 	console.log(
 		`lean-match[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
 			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedTag}${legDetail}${armMs}`,
@@ -328,6 +334,6 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 						: "diverged",
 	};
 	resetLeanMatchStats();
-	resetLeanArmTiming("match");
+	resetArmPair("match");
 	return out;
 }

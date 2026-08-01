@@ -72,7 +72,7 @@ describe("matcher ledger tallies", () => {
 	const geo = { ways: [], buildings: [] };
 
 	it("records nothing with the flag off", () => {
-		expect(matchWalkSegmentViaLean(fixes, geo, null)).toBe(null);
+		expect(matchWalkSegmentViaLean(fixes, geo, () => null)).toBe(null);
 		expect(leanMatchScopeTotals()).toEqual({});
 		expect(leanMatchStats()).toEqual({ calls: 0, fails: 0, coarseDiffs: 0, pathDiffs: 0, nullFlips: 0 });
 	});

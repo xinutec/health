@@ -35,15 +35,9 @@
  */
 
 import type { GpsPoint } from "../geo/kalman.js";
-import { formatArmTiming } from "./arm-timing.js";
+import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
 import { floatToBits } from "./float-bits.js";
-import {
-	LeanBridgeError,
-	type LeanGpsQualityResp,
-	leanArmTiming,
-	leanGpsQualityServe,
-	resetLeanArmTiming,
-} from "./lean-core.js";
+import { LeanBridgeError, type LeanGpsQualityResp, leanGpsQualityServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -136,15 +130,19 @@ function symdiffNote(ts: readonly number[], lean: readonly number[]): string {
 
 /**
  * Quality-filter a raw GPS track through the verified core, staged behind
- * `LEAN_GPSQUALITY`. `tsResult` is what the call site already computed with
- * `qualityFilterGps(points)`. Both `shadow` and `on` run the verified filter
- * and compare; `on` serves the verified selection, recovered as the ORIGINAL
- * input objects so downstream sees the same identities. Any bridge failure is
- * recorded and falls back to `tsResult`.
+ * `LEAN_GPSQUALITY`. `ts` computes the TS arm (`qualityFilterGps(points)`).
+ * Both `shadow` and `on` run the verified filter and compare; `on` serves the
+ * verified selection, recovered as the ORIGINAL input objects so downstream
+ * sees the same identities. Any bridge failure falls back to the TS result.
+ *
+ * The TS arm arrives as a THUNK so both arms can be timed over the same calls
+ * (`arm-timing.ts`) — the RATIO is what a flip decision turns on, and an
+ * eagerly-evaluated argument had already finished before this was entered.
  */
-export function qualityFilterGpsViaLean(points: readonly GpsPoint[], tsResult: GpsPoint[]): GpsPoint[] {
+export function qualityFilterGpsViaLean(points: readonly GpsPoint[], ts: () => GpsPoint[]): GpsPoint[] {
 	const mode = leanGpsQualityMode();
-	if (mode === "off" || points.length <= 2) return tsResult;
+	if (mode === "off" || points.length <= 2) return ts();
+	const tsResult = timeTsArm("gpsquality", ts);
 
 	let lean: LeanGpsQualityResp;
 	try {
@@ -219,8 +217,8 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] n=${d.n} ts=${d.tsKept} lean=${d.leanKept} ${d.note}`).join("; ")}`;
-	// The Lean arm's wall cost this run — read before the reset below.
-	const armMs = formatArmTiming(leanArmTiming("gpsquality"));
+	// Both arms' wall cost this run — read before the reset below.
+	const armMs = formatArmPair(armPair("gpsquality"));
 	console.log(
 		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}${armMs}`,
 	);
@@ -235,6 +233,6 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanGpsQualityStats();
-	resetLeanArmTiming("gpsquality");
+	resetArmPair("gpsquality");
 	return out;
 }

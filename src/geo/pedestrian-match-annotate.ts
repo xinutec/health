@@ -362,7 +362,9 @@ export async function annotateWalkMatches(
 			// the leg through the proved Lean Viterbi matcher over the persistent
 			// bridge; `on` serves the verified decision, TS fallback on any bridge
 			// failure. See `lean-match.ts`.
-			const result = matchWalkSegmentViaLean(fixes, { ways, buildings }, matchWalkSegment(fixes, { ways, buildings }));
+			const result = matchWalkSegmentViaLean(fixes, { ways, buildings }, () =>
+				matchWalkSegment(fixes, { ways, buildings }),
+			);
 			// Decision parity (#369): the display gate, the splice salvage, and
 			// refine engagement below all consume `coarsePath` — the line their
 			// thresholds were tuned against — never the finer display line.

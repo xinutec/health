@@ -85,7 +85,7 @@ describe("lean-pass ledger scoping", () => {
 		delete process.env.LEAN_PASSES;
 		resetLeanPassStats();
 		const tsResult = [pts[0], pts[3]];
-		expect(simplifyViaLean(pts, 5, tsResult)).toBe(tsResult);
+		expect(simplifyViaLean(pts, 5, () => tsResult)).toBe(tsResult);
 		expect(leanPassStats()).toEqual({});
 		expect(leanPassScopeTotals()).toEqual({});
 		expect(leanPassDivergences()).toEqual([]);
