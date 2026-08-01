@@ -30,7 +30,8 @@
 
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
-import { LeanBridgeError, leanGeo } from "./lean-core.js";
+import { formatArmTiming } from "./arm-timing.js";
+import { LeanBridgeError, leanArmTiming, leanGeo, resetLeanArmTiming } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -411,9 +412,11 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 		divs.length === 0
 			? ""
 			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("geo"));
 	console.log(
 		`lean-passes[${mode}] ${label} ${tally === "" ? "(no calls)" : tally}` +
-			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedTag}${detail}`,
+			`${byScope === "" ? "" : ` [all ops by run: ${byScope}]`} ${verdict}${servedTag}${detail}${armMs}`,
 	);
 	// An ACCEPTED divergence is `accepted`, not `exact`: it passes, on a manifest
 	// somebody signed. Collapsing it into `exact` would let the gate stop
@@ -431,5 +434,6 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 			calls === 0 ? "not-exercised" : divs.length === 0 ? "exact" : unexplained.length === 0 ? "accepted" : "diverged",
 	};
 	resetLeanPassStats();
+	resetLeanArmTiming("geo");
 	return out;
 }

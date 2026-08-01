@@ -38,7 +38,8 @@ import type { BuildingRing, RoadFix, RoadGeometry } from "../geo/map-match-core.
 import type { WalkMatchResult } from "../geo/pedestrian-match.js";
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { isAcceptedMatchDelta, type MatchLegClass, matchDeltaTag } from "./accepted-match-deltas.js";
-import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
+import { formatArmTiming } from "./arm-timing.js";
+import { LeanBridgeError, type LeanMatchResp, leanArmTiming, leanMatchServe, resetLeanArmTiming } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -302,9 +303,11 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 							`dev coarse=${m(d.devM.coarse)} path=${m(d.devM.path)}`,
 					)
 					.join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("match"));
 	console.log(
 		`lean-match[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}` +
-			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedTag}${legDetail}`,
+			`${byScope === "" ? "" : ` [by run: ${byScope}]`}${detail} ${verdict}${servedTag}${legDetail}${armMs}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "match",
@@ -325,5 +328,6 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 						: "diverged",
 	};
 	resetLeanMatchStats();
+	resetLeanArmTiming("match");
 	return out;
 }

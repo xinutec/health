@@ -34,8 +34,16 @@
 
 import { addRefinedKind } from "../geo/segment-util.js";
 import type { TransportMode } from "../geo/segments.js";
+import { formatArmTiming } from "./arm-timing.js";
 import { floatToBits } from "./float-bits.js";
-import { type LeanBioLabelsResp, LeanBridgeError, type LeanLabelDecision, leanBioLabelsServe } from "./lean-core.js";
+import {
+	type LeanBioLabelsResp,
+	LeanBridgeError,
+	type LeanLabelDecision,
+	leanArmTiming,
+	leanBioLabelsServe,
+	resetLeanArmTiming,
+} from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -393,8 +401,10 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] ${d.pass}#${d.i} ts=${d.ts} lean=${d.lean}`).join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("biolabels"));
 	console.log(
-		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}`,
+		`lean-biolabels[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}${armMs}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "biolabels",
@@ -407,5 +417,6 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanBioLabelsStats();
+	resetLeanArmTiming("biolabels");
 	return out;
 }

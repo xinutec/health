@@ -59,9 +59,16 @@
  */
 
 import type { FilteredPoint, GpsPoint } from "../geo/kalman.js";
+import { formatArmTiming } from "./arm-timing.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
 import { circularDegGap, ulpGap } from "./float-gap.js";
-import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
+import {
+	LeanBridgeError,
+	type LeanKalmanResp,
+	leanArmTiming,
+	leanKalmanServe,
+	resetLeanArmTiming,
+} from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -405,8 +412,10 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] in=${d.n} ts=${d.tsLen} lean=${d.leanLen} ${d.first}`).join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("kalman"));
 	console.log(
-		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedTag}${worstBearing}${calls}`,
+		`lean-kalman[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${stationary}${servedTag}${worstBearing}${calls}${armMs}`,
 	);
 	// The class the gate reads, derived from the SAME booleans as the printed
 	// word so the two can never say different things. `ulpOnly` is `accepted`
@@ -423,5 +432,6 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : ulpOnly ? "accepted" : "diverged",
 	};
 	resetLeanKalmanStats();
+	resetLeanArmTiming("kalman");
 	return out;
 }

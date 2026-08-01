@@ -11,10 +11,18 @@
  *   off    (default) — no shadow, zero cost.
  *   shadow — decode both ways, compare, record. Production keeps serving the
  *            TS FLOAT decode.
- *   on     — NOT WIRED YET. Would serve the verified QUANTISED decode; held
- *            until the decision to ship the quant decode is made (see below).
- *            For now `on` runs the shadow like `shadow` and warns that it is
- *            not serving Lean, so setting it early is safe, not silently wrong.
+ *   on     — SERVES the verified decode via `decodeHsmmViaLean`, falling back
+ *            to TS on any bridge failure. **This is a WRITE path**: the only
+ *            caller of `saveDecode` is `cli/decode-day.ts`, so under `on` it is
+ *            the Lean decode that gets persisted to `decoded_days`.
+ *
+ * (Until 2026-08-01 this block said `on` was "NOT WIRED YET… runs the shadow
+ * like `shadow` and warns that it is not serving Lean". That stopped being true
+ * when `decodeServed` gained its `!== "on"` branch, and the comment was not
+ * moved with it. It is recorded rather than quietly deleted because of what it
+ * cost: the cron has run `LEAN_HSMM=on` in production, and a reader auditing
+ * "is Lean writing to the database?" from this header would have concluded no.
+ * A staleness that inverts a safety-relevant answer is worth a paragraph.)
  *
  * Two independent things the shadow measures — BOTH must hold before a flip is
  * safe, and they answer different questions:

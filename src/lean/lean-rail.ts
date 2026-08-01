@@ -37,7 +37,8 @@
 
 import { createHash } from "node:crypto";
 import type { RailGraph } from "../geo/rail-snap.js";
-import { LeanBridgeError, type LeanRailResp, leanRailServe } from "./lean-core.js";
+import { formatArmTiming } from "./arm-timing.js";
+import { LeanBridgeError, type LeanRailResp, leanArmTiming, leanRailServe, resetLeanArmTiming } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -249,8 +250,10 @@ export function logLeanRailLedger(label: string): LedgerVerdict | null {
 			: ` — ${divergences
 					.map((d) => `[${d.scope}] graph=${d.graph} ts=${d.tsLen}v/${d.tsCost} lean=${d.leanLen}v/${d.leanCost}`)
 					.join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("rail"));
 	console.log(
-		`lean-rail[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${legs}`,
+		`lean-rail[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${legs}${armMs}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "rail",
@@ -263,5 +266,6 @@ export function logLeanRailLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanRailStats();
+	resetLeanArmTiming("rail");
 	return out;
 }

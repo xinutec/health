@@ -35,8 +35,15 @@
  */
 
 import type { GpsPoint } from "../geo/kalman.js";
+import { formatArmTiming } from "./arm-timing.js";
 import { floatToBits } from "./float-bits.js";
-import { LeanBridgeError, type LeanGpsQualityResp, leanGpsQualityServe } from "./lean-core.js";
+import {
+	LeanBridgeError,
+	type LeanGpsQualityResp,
+	leanArmTiming,
+	leanGpsQualityServe,
+	resetLeanArmTiming,
+} from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
@@ -212,8 +219,10 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 		divergences.length === 0
 			? ""
 			: ` — ${divergences.map((d) => `[${d.scope}] n=${d.n} ts=${d.tsKept} lean=${d.leanKept} ${d.note}`).join("; ")}`;
+	// The Lean arm's wall cost this run — read before the reset below.
+	const armMs = formatArmTiming(leanArmTiming("gpsquality"));
 	console.log(
-		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}`,
+		`lean-gpsquality[${mode}] ${label} ${s.calls}/${s.fails}f${s.calls === 0 ? " (no calls)" : ""}${detail} ${verdict}${servedTag}${calls}${armMs}`,
 	);
 	const out: LedgerVerdict = {
 		tenant: "gpsquality",
@@ -226,5 +235,6 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 	};
 	resetLeanGpsQualityStats();
+	resetLeanArmTiming("gpsquality");
 	return out;
 }
