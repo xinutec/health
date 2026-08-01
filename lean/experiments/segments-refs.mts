@@ -57,3 +57,59 @@ const seg = (mode: string, avgSpeed: number, maxSpeed: number) => ({
 console.log("enforce drive->train:", JSON.stringify(S.enforcePhysicalConstraints(seg("driving", 100, 320) as never)));
 console.log("enforce train->plane:", JSON.stringify(S.enforcePhysicalConstraints(seg("train", 420, 500) as never)));
 console.log("enforce noop:", JSON.stringify(S.enforcePhysicalConstraints(seg("driving", 60, 90) as never)));
+
+// ---------------------------------------------------------------------------
+// Window → segment assembly. extractFeatures and mergeWindows are module-
+// PRIVATE, so they are driven through classifySegments — its only caller —
+// exactly as the Lean port pins them.
+// ---------------------------------------------------------------------------
+
+const P = (ts: number, lat: number, lon: number, speed_kmh: number, bearing = 0) =>
+	({ ts, lat, lon, speed_kmh, bearing }) as never;
+
+// A walk: 8 fixes, 60 s apart, heading steadily north at ~4.5 km/h. One window.
+const walk = Array.from({ length: 8 }, (_, i) => P(i * 60, 51.5 + i * 0.0007, -0.1, 4.5, 10));
+console.log("walk:", JSON.stringify(S.classifySegments(walk)));
+
+// Two stationary clusters 280 m apart inside one mode run — the locationSplit
+// branch of mergeWindows, which exists so two stays do not collapse into one.
+const stayA = Array.from({ length: 6 }, (_, i) => P(i * 60, 51.5, -0.1, 0.2, 0));
+const stayB = Array.from({ length: 6 }, (_, i) => P(360 + i * 60, 51.5025, -0.1, 0.2, 0));
+console.log("twoStays:", JSON.stringify(S.classifySegments([...stayA, ...stayB])));
+
+// smoothSegments: a 60 s "fast" blip between two walks is under MIN_SEGMENT_SEC
+// and must be absorbed by its predecessor (its mode discarded, maxSpeed kept).
+const blip = [
+	...Array.from({ length: 6 }, (_, i) => P(i * 60, 51.5 + i * 0.0007, -0.1, 4.5, 10)),
+	P(360, 51.512, -0.1, 90, 10),
+	...Array.from({ length: 6 }, (_, i) => P(420 + i * 60, 51.52 + i * 0.0007, -0.1, 4.5, 10)),
+];
+console.log("blip:", JSON.stringify(S.classifySegments(blip)));
+
+// findStays over a gap between two classified segments, via the stayPoints arm.
+// The two runs must classify DIFFERENTLY, or mergeWindows joins them into one
+// segment and there is no gap for findStays to work in — the fixture would then
+// pass while pinning nothing.
+const movePts = [
+	...Array.from({ length: 6 }, (_, i) => P(i * 60, 51.5 + i * 0.0007, -0.1, 4.5, 10)),
+	...Array.from({ length: 6 }, (_, i) => P(7200 + i * 60, 51.6 + i * 0.012, -0.1, 60, 10)),
+];
+const dwell = Array.from({ length: 20 }, (_, i) => ({ ts: 1200 + i * 180, lat: 51.55, lon: -0.1 }));
+console.log("stays:", JSON.stringify(S.classifySegments(movePts, [...movePts, ...dwell] as never)));
+
+// inferTransitGaps directly: a 12-minute blackout across 8 km => train by speed,
+// and a 40-minute blackout across 250 m => honest `unknown`.
+const gapSeg = (startTs: number, endTs: number, mode: string, linearity = 0.5, maxSpeed = 5) => ({
+	startTs, endTs, mode, confidence: 0.9, confidenceMargin: 3,
+	avgSpeed: 4, maxSpeed, linearity, pointCount: 5,
+});
+const fastPts = [P(0, 51.5, -0.1, 4), P(60, 51.5, -0.1, 4), P(780, 51.572, -0.1, 4), P(840, 51.572, -0.1, 4)];
+console.log("gapTrain:", JSON.stringify(S.inferTransitGaps(
+	[gapSeg(0, 60, "stationary"), gapSeg(780, 840, "stationary")] as never, fastPts as never)));
+const slowPts = [P(0, 51.5, -0.1, 0), P(60, 51.5, -0.1, 0), P(2460, 51.5023, -0.1, 0), P(2520, 51.5023, -0.1, 0)];
+console.log("gapUnknown:", JSON.stringify(S.inferTransitGaps(
+	[gapSeg(0, 60, "stationary"), gapSeg(2460, 2520, "stationary")] as never, slowPts as never)));
+// Rail-shaped neighbour upgrades a 38 km/h gap from driving to train.
+const railPts = [P(0, 51.5, -0.1, 40), P(60, 51.5, -0.1, 40), P(660, 51.5570, -0.1, 40), P(720, 51.5570, -0.1, 40)];
+console.log("gapRailNeighbour:", JSON.stringify(S.inferTransitGaps(
+	[gapSeg(0, 60, "train", 0.99, 80), gapSeg(660, 720, "stationary")] as never, railPts as never)));
