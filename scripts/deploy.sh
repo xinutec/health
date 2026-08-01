@@ -120,41 +120,31 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `gateLedgers` prints their waiver each run, and turns it into a STALE
 	# WAIVER report the moment the corpus does reach one.
 	#
-	# WHAT THIS PASS DOES NOT COVER: `match` and `passes`, which stay off here —
-	# and this is the gate's weakest point, not a tidy scoping decision.
+	# ALL SEVEN tenants run `on` here as of #403 — `match` and `passes` included,
+	# which they were not until the ceiling existed to hold their standing debt.
 	#
-	# Both are `LEAN_MATCH=on` / `LEAN_PASSES=on` in the decode-recent cronjob,
-	# i.e. SERVING the verified core in production. The first run of this gate
-	# that included them (2026-07-31) measured 10 UNEXPLAINED matcher legs and 1
-	# UNEXPLAINED `simplify`, 21 and 3 of them reaching served output — while all
-	# 32 fixtures still matched baseline. The production cron reports the same
-	# shape on four of the last seven days.
+	# The two were excluded because both serve or shadow in production while
+	# carrying UNEXPLAINED divergences, so staging them failed the run on a
+	# pre-existing condition, and the only lever to hand was widening the
+	# accepted-delta manifests — recording "we checked this and it is fine" about
+	# legs nobody had checked. `tests/golden/lean-delta-baseline.json` is the
+	# honest third option: a one-way ceiling of un-adjudicated fingerprints that
+	# may shrink and never grow. It carries one entry today (a `simplify` DP
+	# near-tie at n=72); `match` is clean on this corpus modulo its signed
+	# manifest. That does NOT retire the instruction below — a ceiling entry is
+	# debt, an accepted delta is a judgement, and the two must not merge.
 	#
-	# So this is standing debt on a live serving path, and the gate cannot yet
-	# express it: there is no ratcheted ceiling for unexplained Lean deltas the
-	# way there is for kinematic feasibility, rail triples and truth, so turning
-	# these two on here would fail every deploy on a pre-existing condition with
-	# no way to record it. #395 owns both the adjudication and that ratchet. Do
-	# not close this gap by widening the accepted-delta manifests.
+	# Do not close a gap here by widening the accepted-delta manifests.
 	#
-	#   DEPLOY_GOLDEN_LEAN_ALL=1 turns all seven on — the run to use while
-	#   adjudicating those deltas. Costs ~4 min on the 32-day corpus.
-	# A word-split string rather than an array: this script's shebang is
-	# `nix-shell`, so the bash running it is not pinned, and expanding an EMPTY
-	# array under `set -u` is an error on the bash 3.2 macOS still ships.
-	LEAN_ALL_FLAGS=""
-	if [[ "${DEPLOY_GOLDEN_LEAN_ALL:-0}" == "1" ]]; then
-		LEAN_ALL_FLAGS="LEAN_MATCH=on LEAN_PASSES=on"
-		echo "==> [2/7] golden corpus again, with ALL SEVEN Lean tenants ON"
-	else
-		echo "==> [2/7] golden corpus again, with the staged Lean tenants ON (match/passes excluded)"
-	fi
-	# `$DEV` already ends in `env HEALTH_DEVSHELL=1`, so these are just more
-	# assignments to the same `env` — no second `env` needed. Both `$DEV` and
-	# `$LEAN_ALL_FLAGS` are deliberately unquoted so they word-split.
-	# shellcheck disable=SC2086
+	# LEAN_CALL_TIMEOUT_MS is raised for the same reason the cron raises it: the
+	# walk matcher is a real computation, and on the heaviest legs the 5 s
+	# request-path default expires and falls back to TS. That fallback is silent
+	# by construction, so at the default this gate FAILED on a swallowed bridge
+	# call roughly at random depending on machine load — a nondeterministic gate,
+	# measuring the host rather than the code.
+	echo "==> [2/7] golden corpus again, with ALL SEVEN Lean tenants ON"
 	$DEV LEAN_KALMAN=on LEAN_GPSQUALITY=on LEAN_BIOLABELS=on LEAN_HSMM=on LEAN_RAIL=on \
-		$LEAN_ALL_FLAGS pnpm run golden
+		LEAN_MATCH=on LEAN_PASSES=on LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

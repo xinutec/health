@@ -417,6 +417,9 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 		mode,
 		calls: s.calls,
 		fails: s.fails,
+		// No per-item fingerprint: this tenant compares whole outputs, so a
+		// divergence of its own cannot be recorded in the ceiling and always fails.
+		unexplained: [],
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : ulpOnly ? "accepted" : "diverged",
 	};
 	resetLeanKalmanStats();

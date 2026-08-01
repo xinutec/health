@@ -32,11 +32,14 @@
  * `--bless` re-derives `expected.velocity` from the pipeline run against
  * the ALREADY-CAPTURED inputs; it never re-pulls from prod.
  *
- * Layered on top of the snapshot diff are four ratchets, each with its own
+ * Layered on top of the snapshot diff are five ratchets, each with its own
  * committed baseline and `--bless-*` flag: `--bless-truth` (confirmed
  * ground-truth rows the pipeline satisfies), `--bless-journeys` (journeys it
  * reconstructs), `--bless-feasibility` and `--bless-rail-triples` (standing
- * counts of physically-impossible legs, which shrink rather than grow).
+ * counts of physically-impossible legs, which shrink rather than grow), and
+ * `--bless-lean-deltas` (unexplained divergences between the TS and Lean arms —
+ * the ceiling that lets a Lean tenant be staged here while it still carries
+ * debt, #403).
  *
  * Exit 0 = every fixture matches (or was blessed).
  * Exit 1 = at least one regressed (or threw an uncaptured-query error).
@@ -52,6 +55,7 @@ import { groundTruthJourneys, journeyShapeResults, statesToJourneys } from "../e
 import { classifyDay, parsePipelineState } from "../eval/truth-check.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
+import { ceilingSize, type DeltaCeiling, gateDeltaCeiling, ratchetDownCeiling } from "../lean/delta-ceiling.js";
 import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { logLeanHsmmLedger } from "../lean/lean-hsmm.js";
@@ -220,6 +224,21 @@ const RAIL_TRIPLE_BASELINE_PATH = path.join(GOLDEN_DIR, "rail-triple-baseline.js
  *  never held is standing debt, reported every run but not a failure, because
  *  new testimony revealing an old defect is a measurement, not a breakage. */
 const TRUTH_BASELINE_PATH = path.join(GOLDEN_DIR, "truth-baseline.json");
+/** Per-tenant set of UNEXPLAINED Lean divergence fingerprints — the ceiling
+ *  that lets a tenant be staged in this gate while it still carries debt
+ *  (#403).
+ *
+ *  `match` and `passes` were held out of the staged set for exactly one reason:
+ *  both carry standing unexplained legs, so staging them failed the run on a
+ *  pre-existing condition, and the only lever to hand was widening the
+ *  accepted-delta manifests — which would have recorded "we checked this and it
+ *  is fine" about legs nobody has checked. This file is the honest third
+ *  option, and its entries mean the opposite of an accepted delta: NOT
+ *  adjudicated, NOT permitted to grow.
+ *
+ *  Safe to commit — a `match` fingerprint is a hash of the quantised leg input
+ *  and a `passes` one is `op/n/note`, so neither says where the user was. */
+const LEAN_DELTA_BASELINE_PATH = path.join(GOLDEN_DIR, "lean-delta-baseline.json");
 
 /**
  * Merge a fresh per-day count into a committed CEILING, keeping the ratchet
@@ -256,6 +275,7 @@ let blessJourneys = false;
 let blessFeasibility = false;
 let blessRailTriples = false;
 let blessTruth = false;
+let blessLeanDeltas = false;
 /** Which OSM path to replay on. See `OsmSource` — `--osm trace` exists to
  *  attribute a corpus diff, by holding every other input fixed and varying
  *  only this. It is not a supported way to run the corpus. */
@@ -301,6 +321,14 @@ for (let i = 0; i < args.length; i++) {
 		// names every key it drops, so a re-audit is a stated act rather than a
 		// quiet one.
 		blessTruth = true;
+	} else if (args[i] === "--bless-lean-deltas") {
+		// Ratchet the Lean delta ceiling DOWN onto the current run: drop the
+		// fingerprints this run no longer produces. It can only shrink — a
+		// divergence seen for the first time in the very run being blessed is
+		// NOT recorded, so a change that fixes one leg and breaks another cannot
+		// launder the breakage through the fix. Adding genuinely new standing
+		// debt is a hand edit of the baseline, and is meant to be.
+		blessLeanDeltas = true;
 	} else {
 		console.error(`unknown argument: ${args[i]}`);
 		process.exit(2);
@@ -320,6 +348,16 @@ async function loadFeasibilityBaseline(): Promise<FeasibilityBaseline | null> {
 		return JSON.parse(await readFile(FEASIBILITY_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
 	} catch {
 		return null; // no baseline yet — first run bootstraps
+	}
+}
+
+/** `null` = no ceiling file at all, the bootstrap case — deliberately distinct
+ *  from an empty ceiling, which asserts every tenant is clean. */
+async function loadLeanDeltaBaseline(): Promise<DeltaCeiling | null> {
+	try {
+		return JSON.parse(await readFile(LEAN_DELTA_BASELINE_PATH, "utf8")) as DeltaCeiling;
+	} catch {
+		return null;
 	}
 }
 
@@ -505,9 +543,42 @@ const GOLDEN_UNEXERCISABLE: Record<string, string> = {
 	hsmm: "the corpus replays cached decodes (#233), so the decoder never runs",
 	rail: "the corpus preloads rail_route_cache (#233), so the Dijkstra never runs",
 };
-const leanGate = gateLedgers(leanVerdicts, GOLDEN_UNEXERCISABLE);
+// The ceiling of un-adjudicated divergences (#403). Read BEFORE the gate runs,
+// because it is what decides whether `match`/`passes` standing debt is a
+// failure or a recorded note — the difference between those two is the whole
+// reason both tenants could not be staged here.
+const leanCeiling = await loadLeanDeltaBaseline();
+const leanUnexplainedNow: DeltaCeiling = {};
+for (const v of leanVerdicts) {
+	if (v !== null && v.unexplained.length > 0) leanUnexplainedNow[v.tenant] = [...v.unexplained];
+}
+if (blessLeanDeltas) {
+	const ordered = ratchetDownCeiling(leanCeiling, leanUnexplainedNow);
+	await writeFile(LEAN_DELTA_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+	console.log(
+		`lean deltas: blessed ceiling — ${ceilingSize(ordered)} standing divergence(s) across ` +
+			`${Object.keys(ordered).length} tenant(s).`,
+	);
+	process.exit(0);
+}
+const leanGate = gateLedgers(leanVerdicts, GOLDEN_UNEXERCISABLE, leanCeiling);
 for (const n of leanGate.notes) console.log(`lean: ${n}`);
 for (const f of leanGate.failures) console.log(`lean: FAIL — ${f}`);
+const ceilingGate = gateDeltaCeiling(leanCeiling, leanUnexplainedNow);
+if (leanCeiling === null && ceilingSize(leanUnexplainedNow) > 0) {
+	console.log(
+		`lean deltas: no ceiling yet — ${ceilingSize(leanUnexplainedNow)} unexplained divergence(s). ` +
+			`Establish it with: npm run golden -- --bless-lean-deltas`,
+	);
+}
+// `cleared` is never a failure — it is the ratchet's payoff, and naming it is
+// what turns "the ceiling can shrink" from a claim into an instruction.
+if (ceilingGate.cleared.length > 0) {
+	console.log(
+		`lean deltas: ${ceilingGate.cleared.length} standing divergence(s) gone — re-bless to ratchet the ceiling down (--bless-lean-deltas):`,
+	);
+	for (const c of ceilingGate.cleared) console.log(`      ✓ ${c.tenant}: ${c.fingerprint}`);
+}
 // Which side of the OSM port each fixture ran on. A day WITHOUT a captured
 // row-set answered its kernel lookups from the recorded MariaDB answers — the
 // oracle the port exists to remove — so a mixed corpus is a real state worth
@@ -770,7 +841,12 @@ process.exit(
 		gate.regressed.length > 0 ||
 		// Costs nothing when every tenant is `off`, which is the default and what
 		// CI runs — `gateLedgers` sees five nulls and returns no failures.
-		leanGate.failures.length > 0
+		leanGate.failures.length > 0 ||
+		// Redundant with `leanGate.failures` for any tenant that fingerprints its
+		// divergences, and deliberately so: this catches a fingerprint arriving
+		// under a tenant the gate never judged — a ceiling entry outliving the
+		// tenant that produced it, or a new tenant appearing with debt already.
+		ceilingGate.fresh.length > 0
 		? 1
 		: 0,
 );

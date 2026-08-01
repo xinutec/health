@@ -6,7 +6,10 @@
  * green with a tenant that never ran, a tenant whose every bridge call failed
  * and fell back to TS, or a tenant serving a real divergence — because
  * `golden-check`'s exit code was computed entirely from the snapshot diff and
- * the four ratchets, none of which can see the Lean arm at all.
+ * the ratchets, none of which could see the Lean arm at all. (There is now a
+ * fifth ratchet that CAN — the delta ceiling in `delta-ceiling.ts`, which this
+ * gate consults. It grades divergences; it does not replace any of the checks
+ * below, which is why a ceiling can never excuse a dead bridge.)
  *
  * That is the same hazard the ledger lines themselves were added for (#387),
  * one layer up: printing evidence is not the same as ENFORCING it. A line
@@ -16,6 +19,8 @@
  * The printed line is unchanged and stays the human-facing artefact; this is
  * the machine-facing one.
  */
+
+import type { DeltaCeiling } from "./delta-ceiling.js";
 
 /**
  * Which of the four outcomes a run landed in. The gate cares about the class,
@@ -50,6 +55,16 @@ export interface LedgerVerdict {
 	 *  `on` swallow `LeanBridgeError`. */
 	fails: number;
 	klass: LedgerClass;
+	/** The content fingerprints of the divergences this run could NOT explain —
+	 *  the ones `isAcceptedMatchDelta` / `unexplainedDeltas` rejected. Empty for
+	 *  every class but `diverged`.
+	 *
+	 *  Carried as data rather than left inside the printed line because the
+	 *  ceiling (`delta-ceiling.ts`) has to compare them set-wise against a
+	 *  committed file. Counting them was not enough: a run that fixed one leg
+	 *  and broke another holds its count steady, which is exactly the case a
+	 *  count-based ceiling cannot see. */
+	unexplained: readonly string[];
 }
 
 /**
@@ -108,6 +123,7 @@ export interface LedgerGateResult {
 export function gateLedgers(
 	verdicts: readonly (LedgerVerdict | null)[],
 	unexercisable: Readonly<Record<string, string>>,
+	ceiling?: DeltaCeiling | null,
 ): LedgerGateResult {
 	const failures: string[] = [];
 	const notes: string[] = [];
@@ -133,7 +149,35 @@ export function gateLedgers(
 			reasons.push(`${v.fails} bridge failure(s) swallowed and fallen back to TS`);
 		}
 		if (v.klass === "diverged") {
-			reasons.push(`diverged — see the ledger line above`);
+			// Split the unexplained set against the committed ceiling. Debt the
+			// ceiling already carries is a NOTE — recorded, not adjudicated, and
+			// not permitted to grow; anything above it is the failure.
+			//
+			// `ceiling` absent (or null, the bootstrap case) keeps the original
+			// behaviour: every divergence fails. A harness that has not opted in
+			// must not be made quieter by this mechanism merely existing.
+			//
+			// A tenant that diverged WITHOUT fingerprints (kalman, rail, hsmm,
+			// gpsquality, biolabels — they compare whole outputs, not per-leg)
+			// cannot be ceilinged at all, and falls through to the unconditional
+			// failure. Anything else would let an unnameable divergence pass on
+			// the strength of an empty set, which is the one outcome a ceiling
+			// must never produce: silence that looks like a clean bill.
+			const known = new Set(ceiling?.[v.tenant] ?? []);
+			const above =
+				ceiling == null || v.unexplained.length === 0 ? [...v.unexplained] : v.unexplained.filter((f) => !known.has(f));
+			if (v.unexplained.length === 0) {
+				reasons.push(`diverged — see the ledger line above`);
+			} else if (above.length > 0) {
+				reasons.push(
+					`diverged — ${above.length} unexplained above the ceiling: ${above.join(", ")}. See the ledger line above`,
+				);
+			} else if (v.unexplained.length > 0) {
+				notes.push(
+					`lean-${v.tenant}: ${v.unexplained.length} unexplained divergence(s) at the committed ceiling — ` +
+						`standing debt, NOT an accepted delta: ${v.unexplained.join(", ")}`,
+				);
+			}
 		}
 		if (reasons.length > 0) failures.push(`lean-${v.tenant}[${v.mode}]: ${reasons.join("; ")}`);
 	}

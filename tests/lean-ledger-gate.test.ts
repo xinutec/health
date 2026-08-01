@@ -17,6 +17,10 @@ const v = (o: Partial<LedgerVerdict> = {}): LedgerVerdict => ({
 	calls: 32,
 	fails: 0,
 	klass: "exact",
+	// No fingerprints by default, so these keep pinning the ORIGINAL contract:
+	// a divergence fails outright. The ceiling's own effect on that is pinned
+	// next door, in `lean-delta-ceiling.test.ts`.
+	unexplained: [],
 	...o,
 });
 

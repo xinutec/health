@@ -178,6 +178,9 @@ export function logLeanHsmmLedger(label: string): LedgerVerdict | null {
 		mode,
 		calls: s.days,
 		fails: s.skipped,
+		// No per-item fingerprint: this tenant compares whole outputs, so a
+		// divergence of its own cannot be recorded in the ceiling and always fails.
+		unexplained: [],
 		klass: s.days === 0 ? "not-exercised" : bad === 0 ? "exact" : "diverged",
 	};
 	resetLeanHsmmStats();

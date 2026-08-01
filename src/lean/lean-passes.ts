@@ -423,6 +423,10 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 		mode,
 		calls,
 		fails,
+		// The same three fields `AcceptedDelta` fingerprints on, in the same
+		// order, so a ceiling entry and a manifest entry name the same thing and
+		// promoting one to the other is a move between files, not a re-derivation.
+		unexplained: unexplained.map((d) => `${d.op}/${d.n}/${d.note}`).sort(),
 		klass:
 			calls === 0 ? "not-exercised" : divs.length === 0 ? "exact" : unexplained.length === 0 ? "accepted" : "diverged",
 	};

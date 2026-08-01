@@ -311,6 +311,10 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 		mode,
 		calls: s.calls,
 		fails: s.fails,
+		// The leg hash alone — it is already a fingerprint of the quantised
+		// input, so it names the leg without naming where the user was, which
+		// is what makes the ceiling file safe to commit.
+		unexplained: unexplained.map((d) => d.leg).sort(),
 		klass:
 			s.calls === 0
 				? "not-exercised"

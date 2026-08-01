@@ -26,6 +26,12 @@ tests/golden/*
 !tests/golden/rail-triple-baseline.json
 !tests/golden/truth-baseline.json
 !tests/golden/decoder-scoreboard.json
+# The Lean delta ceiling carries fingerprints, not measurements: a `match` entry
+# is a hash of the quantised leg input and a `passes` one is `op/n/note`. Neither
+# says where anyone was. Untracked it would be worse than useless — every machine
+# would bootstrap its own empty ceiling and enforce nothing, which is precisely
+# the "no history, silently desynchronised" failure described above.
+!tests/golden/lean-delta-baseline.json
 
 # Rail-snap fixtures: a real day frozen with its raw fixes, classified
 # segments, and the OSM rail geometry of every train corridor. Real

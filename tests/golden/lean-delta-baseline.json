@@ -1,0 +1,5 @@
+{
+	"passes": [
+		"simplify/72/ts-only=[18] lean-only=[17]"
+	]
+}
