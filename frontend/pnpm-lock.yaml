@@ -43,6 +43,9 @@ importers:
       '@types/leaflet':
         specifier: ^1.9.21
         version: 1.9.21
+      '@xinutec/ui-harness':
+        specifier: github:xinutec/ui-harness#1a7b61dad398158611f109964c9778df28e35626
+        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/1a7b61dad398158611f109964c9778df28e35626(@playwright/test@1.61.1)
       chart.js:
         specifier: ^4.5.1
         version: 4.5.1
@@ -71,9 +74,6 @@ importers:
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
-      '@xinutec/ui-harness':
-        specifier: github:xinutec/ui-harness#0350a0577078dc26f40dfdd1c3a6279e7ff95a5c
-        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/0350a0577078dc26f40dfdd1c3a6279e7ff95a5c(@playwright/test@1.61.1)
       angular-eslint:
         specifier: ^22.0.0
         version: 22.0.0(@angular/cli@22.0.5(chokidar@5.0.0))(chokidar@5.0.0)(eslint@10.6.0)(typescript-eslint@8.62.1(eslint@10.6.0)(typescript@6.0.3))(typescript@6.0.3)
@@ -1633,11 +1633,14 @@ packages:
   '@vitest/utils@4.1.9':
     resolution: {integrity: sha512-A51o8ymO5PpqlWNnBP9ZHPXDIpuMtTLlGSjN7la4US+LJzoUMyhwjA5QXlm39JexgwHKW4Xjs8Z2d3dLCXOeuA==}
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/0350a0577078dc26f40dfdd1c3a6279e7ff95a5c':
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/0350a0577078dc26f40dfdd1c3a6279e7ff95a5c}
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/1a7b61dad398158611f109964c9778df28e35626':
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/1a7b61dad398158611f109964c9778df28e35626}
     version: 0.1.0
     peerDependencies:
       '@playwright/test': '>=1.61.0'
+    peerDependenciesMeta:
+      '@playwright/test':
+        optional: true
 
   '@yarnpkg/lockfile@1.1.0':
     resolution: {integrity: sha512-GpSwvyXOcOOlV70vbnzjj4fW5xW/FdUF6nQEt1ENy7m4ZCczi1+/buVUPAqmGfqznsORNFzUMjctTIp8a9tuCQ==}
@@ -4511,8 +4514,8 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/0350a0577078dc26f40dfdd1c3a6279e7ff95a5c(@playwright/test@1.61.1)':
-    dependencies:
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/1a7b61dad398158611f109964c9778df28e35626(@playwright/test@1.61.1)':
+    optionalDependencies:
       '@playwright/test': 1.61.1
 
   '@yarnpkg/lockfile@1.1.0': {}
