@@ -108,9 +108,17 @@ button.entry.journey {
     gap: 6px;
   }
 
+  /* Wraps rather than spilling. The strip refuses to shrink — it has no
+   * `overflow: hidden`, so it keeps its `min-width: auto` floor at the
+   * min-content of a row of non-wrapping icons — and a journey with six legs
+   * then pushed the whole timeline off the right of a 320px screen (twelve legs
+   * reached 530px). Wrapping trades a taller row for a row that fits, which
+   * costs nothing: no icon is dropped, hidden, or scaled. */
   .leg-icons {
-    display: inline-flex;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    min-width: 0;
   }
 
   .leg-icon {
@@ -224,4 +232,13 @@ button.entry.journey {
 /* Tighten spacing when a city header sits right above the first entry */
 .city-header + .entry {
   padding-top: 0;
+}
+
+// An icon has exactly one correct size, so it must never absorb flex shrink.
+// Material gives `mat-icon` `overflow: hidden`, which costs a flex/grid item its
+// `min-width: auto` floor — so beside a text sibling the icon is CLIPPED rather
+// than scaled, and the trigger is how long the neighbouring sentence happens to
+// be (DL-ANGULAR-ICON-SHRINK).
+mat-icon {
+  flex-shrink: 0;
 }
