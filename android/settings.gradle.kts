@@ -22,3 +22,11 @@ dependencyResolutionManagement {
 
 rootProject.name = "health-web"
 include(":app")
+
+// The shared WebView shell, resolved by path against the checkout beside this
+// repo — no publishing, no version, no pin to bump (see ui-harness/android/README.md).
+includeBuild("../../ui-harness/android") {
+    dependencySubstitution {
+        substitute(module("org.xinutec:shell")).using(project(":main"))
+    }
+}

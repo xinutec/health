@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- dev-lint: android-webview (held identical to dev-lint's canonical WebView manifest) -->
+<!-- dev-lint: android-webview allow=application/@android:enableOnBackInvokedCallback
+     (otherwise held identical to dev-lint's canonical WebView manifest. Predictive
+     back: MainActivity is the shared shell, which handles back on
+     OnBackPressedDispatcher. The flag joins the canonical manifest once every
+     wrapper is on the shell — with it on, a legacy onBackPressed stops being called
+     on API 33+, so it must not land in an app that still overrides it.) -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
