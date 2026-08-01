@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # fidelity (float↔quant minute agreement + score delta).
 #
 # Needs the local decoded_days corpus (gitignored, real data) — so this
-# is a tool like golden-hsmm, not part of `npm run verify`.
+# is a tool like golden-hsmm, not part of `pnpm run verify`.
 #
 # With --c4-flags this also gates the class-factorised duration export:
 # per day it re-derives the whole duration tensor independently and demands
@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building (ts + lean)"
-npm run build >/dev/null
+pnpm run build >/dev/null
 (cd lean && lake build >/dev/null)
 
 exec node dist/cli/lean-shadow.js "$@"

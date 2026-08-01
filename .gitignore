@@ -10,7 +10,7 @@ tests/fixtures/days/
 
 # Golden-day regression corpus: real prod days + their blessed
 # day-state baselines. Real coords / place names / journeys — local
-# only, never committed. Run via `npm run golden` (see golden-check.js).
+# only, never committed. Run via `pnpm run golden` (see golden-check.js).
 tests/golden/*
 
 # ...EXCEPT the ratchet floors. These are what the deploy gate compares
@@ -55,5 +55,5 @@ lean/.lake/
 # differing kernel query, ~240 KB. Derived and mirror-dependent — the OSM
 # mirror moves under it, so a committed copy would silently go stale while
 # looking authoritative. The durable numbers live in the proposal; regenerate
-# the detail with `scripts/prod-db.sh npx tsx lean/experiments/osm-rowset-parity.mts`.
+# the detail with `scripts/prod-db.sh pnpm exec tsx lean/experiments/osm-rowset-parity.mts`.
 lean/experiments/osm-rowset-parity.json

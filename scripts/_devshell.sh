@@ -13,7 +13,7 @@ set -euo pipefail # redundant (every caller sets it first) but satisfies DL-SHEL
 #
 # Mechanism: re-exec the CALLING script once inside `nix develop`, marking
 # the environment so this guard is a no-op on the second entry — and so any
-# nested health script (e.g. deploy.sh -> npm run golden -> golden.sh)
+# nested health script (e.g. deploy.sh -> pnpm run golden -> golden.sh)
 # inherits HEALTH_DEVSHELL=1 and does not stack another devShell.
 #
 # Usage, at the top of a script:

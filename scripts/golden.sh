@@ -20,8 +20,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   scripts/golden.sh --bless 2026-05-15   # one day
 #
 # Via npm (note the `--` so npm forwards the flags):
-#   npm run golden
-#   npm run golden -- --bless 2026-05-15
+#   pnpm run golden
+#   pnpm run golden --bless 2026-05-15
 #
 # Exit 0 = every fixture matches its baseline. Exit 1 = a fixture
 # regressed. Exit 2 = no corpus (capture one first).
@@ -32,7 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building"
-npm run build >/dev/null
+pnpm run build >/dev/null
 
 echo "==> replaying golden fixtures (no DB)"
 exec node dist/cli/golden-check.js "$@"

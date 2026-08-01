@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # stays in the single digits.
 #
 # Needs the local golden day fixtures (gitignored, real coordinates) —
-# a tool like golden-hsmm, not part of `npm run verify`.
+# a tool like golden-hsmm, not part of `pnpm run verify`.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
@@ -25,4 +25,4 @@ cd "$SCRIPT_DIR/.."
 echo "==> building (lean)"
 (cd lean && lake build >/dev/null)
 
-exec npx tsx lean/experiments/compare-kalman.mts "$@"
+exec pnpm exec tsx lean/experiments/compare-kalman.mts "$@"

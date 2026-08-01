@@ -10,9 +10,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # `compare-vs-ground-truth.js --source hsmm` (a stale inline decode that
 # needs a live DB), this is the faithful decoder measured offline.
 #
-#   npm run score-decoder                        # every captured day with ground truth
-#   npm run score-decoder -- 2026-05-22          # one day
-#   npm run score-decoder -- --bless-scoreboard  # record the C4.0 ratchet baseline
+#   pnpm run score-decoder                        # every captured day with ground truth
+#   pnpm run score-decoder 2026-05-22          # one day
+#   pnpm run score-decoder --bless-scoreboard  # record the C4.0 ratchet baseline
 #
 # Full-corpus runs compare journey-structure scores (trips, legs,
 # stations, phantom rides) against tests/golden/decoder-scoreboard.json —
@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building" >&2
-npm run build >/dev/null
+pnpm run build >/dev/null
 
 echo "==> scoring real decodeHsmm vs ground truth (no DB)" >&2
 exec node dist/cli/score-decoder-golden.js "$@"

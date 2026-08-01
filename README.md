@@ -35,11 +35,11 @@ log (see `docs/proposals/README.md`).
 
 | Command | What it does |
 |---|---|
-| `npm run verify` | Typecheck (back + front) → schema-types check → format → Biome lint (back) → ESLint (front) → tests. Run before every commit. |
-| `scripts/verify.sh` | Thin wrapper that runs `npm run verify` under a `nix-shell` shebang, so the full check runs directly on a machine without npm on PATH (e.g. the Mac mini). `deploy.sh` already runs verify itself — this is for running it standalone. |
-| `npm test` | Just the backend test suite. |
-| `npm run analyze -- YYYY-MM-DD` | Run the day-analysis CLI. Needs DB + Nextcloud env — easiest via `scripts/prod-db.sh` (below). |
-| `npm run golden` | Golden-day regression check — runs the classification pipeline against a curated set of real days and diffs the day-state timeline against blessed baselines. Run around large classification changes; `npm run golden -- --bless` updates baselines. The corpus under `tests/golden/` is local-only (gitignored). |
+| `pnpm run verify` | Typecheck (back + front) → schema-types check → format → Biome lint (back) → ESLint (front) → tests. Run before every commit. |
+| `scripts/verify.sh` | Thin wrapper that runs `pnpm run verify` under a `nix-shell` shebang, so the full check runs directly on a machine without pnpm on PATH (e.g. the Mac mini). `deploy.sh` already runs verify itself — this is for running it standalone. |
+| `pnpm test` | Just the backend test suite. |
+| `pnpm run analyze YYYY-MM-DD` | Run the day-analysis CLI. Needs DB + Nextcloud env — easiest via `scripts/prod-db.sh` (below). |
+| `pnpm run golden` | Golden-day regression check — runs the classification pipeline against a curated set of real days and diffs the day-state timeline against blessed baselines. Run around large classification changes; `pnpm run golden --bless` updates baselines. The corpus under `tests/golden/` is local-only (gitignored). |
 | `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh node dist/cli/analyze-day.js 2026-05-15 pippijn Europe/London`. |
 | `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → golden + walk gates → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
 
@@ -54,7 +54,7 @@ rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn`
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:
 
 ```
-npm run verify && npm run golden && npm run walk-gate   # in this repo
+pnpm run verify && pnpm run golden && pnpm run walk-gate   # in this repo
 git add -A && git commit -F msg.txt
 git push origin main
 gh run watch --exit-status <run-id>
@@ -68,7 +68,7 @@ ssh root@isis.xinutec.org \
 - **Biome** — backend (`src/`, `tests/`). Format + general TS lint.
 - **ESLint + angular-eslint** — `frontend/src/`. Angular semantics
   (inline-template ban, template a11y, etc.) that Biome can't see.
-  Both run as part of `npm run verify`.
+  Both run as part of `pnpm run verify`.
 
 ## Documentation conventions
 

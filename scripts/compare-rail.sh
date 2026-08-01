@@ -9,13 +9,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # graph; float↔quant path identity is the fidelity metric.
 #
 # Needs the local railsnap fixture (gitignored, real coordinates) — a
-# tool like golden-hsmm, not part of `npm run verify`.
+# tool like golden-hsmm, not part of `pnpm run verify`.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building (ts + lean)"
-npm run build >/dev/null
+pnpm run build >/dev/null
 (cd lean && lake build >/dev/null)
 
 exec node dist/cli/compare-rail.js "$@"

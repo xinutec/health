@@ -15,24 +15,31 @@ RUN mkdir -p /export/nix/store /export/bin && \
 
 FROM node:24-alpine AS backend-build
 WORKDIR /app
-COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci
+# pnpm-workspace.yaml carries the overrides; without it `pnpm import` re-resolves
+# and a constrained package can land below its declared floor. pnpm is taken
+# unpinned — the host gets its copy from the flake, and a second version here
+# would be two numbers held level by hand.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
 COPY src/ src/
-RUN npx tsc
+RUN pnpm exec tsc
 
 FROM node:24-alpine AS frontend-build
 WORKDIR /app
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 # git: the shared layout harness is a git dependency (github:xinutec/ui-harness),
-# so npm ci clones it — node:alpine ships no git.
-RUN apk add --no-cache git ca-certificates && npm ci
+# so the install clones it — node:alpine ships no git.
+RUN apk add --no-cache git ca-certificates \
+    && npm install -g pnpm \
+    && pnpm install --frozen-lockfile
 COPY frontend/ .
-RUN npx ng build --configuration production
+RUN pnpm exec ng build --configuration production
 
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# --prod is pnpm's --omit=dev.
+RUN npm install -g pnpm && pnpm install --frozen-lockfile --prod
 COPY --from=backend-build /app/dist dist/
 COPY --from=frontend-build /app/dist/frontend/browser public/
 # The verified decoder + its /nix/store runtime closure. LEAN_CLI is the

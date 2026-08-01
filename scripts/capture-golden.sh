@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   scripts/capture-golden.sh 2026-05-15 pippijn Europe/London
 #
 # Via npm:
-#   npm run capture-golden -- 2026-05-15 pippijn Europe/London
+#   pnpm run capture-golden 2026-05-15 pippijn Europe/London
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building"
-npm run build >/dev/null
+pnpm run build >/dev/null
 
 echo "==> capturing against prod"
 exec "$SCRIPT_DIR/prod-db.sh" node dist/cli/capture-golden.js "$@"

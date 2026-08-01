@@ -22,21 +22,27 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      # Before setup-node, whose `cache: pnpm` shells out to `pnpm store path`.
+      # The major floats: pinning it would be a second version held level with
+      # the flake's by hand, and the lockfile is what has to match.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            package-lock.json
-            frontend/package-lock.json
-      # `npm run verify` ends with lean-check (lake build of the verified
+            pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+      # `pnpm run verify` ends with lean-check (lake build of the verified
       # core — every #guard — plus the TS↔Lean parity harness), which runs
       # under `nix develop`, so CI needs nix. The toolchain download comes
       # from cache.nixos.org (flake-pinned; a couple of minutes).
       - uses: cachix/install-nix-action@v31
-      - run: npm ci
-      - run: npm ci --prefix frontend
-      - run: npm run verify
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --dir frontend
+      - run: pnpm run verify
 
   image:
     needs: verify

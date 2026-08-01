@@ -11,9 +11,9 @@
 # NOT come from the pinned flake.
 # (2026-06-29 Angular 21->22 + zoneless migration; Node 22->24.)
 #
-# Runs `npm run verify` (typecheck + lint + tests), then the local
-# fixture gates (`npm run golden` + `npm run walk-gate` +
-# `npm run score-decoder` — these can only run here, the fixtures are
+# Runs `pnpm run verify` (typecheck + lint + tests), then the local
+# fixture gates (`pnpm run golden` + `pnpm run walk-gate` +
+# `pnpm run score-decoder` — these can only run here, the fixtures are
 # gitignored), commits all changes in
 # this repo, pushes to main, waits for CI, then rolls out the new image
 # on isis. The k8s manifests live in the home monorepo (xinutec/pippijn
@@ -73,12 +73,12 @@ trap cleanup EXIT
 # The Angular 22 frontend build needs Node >= 24.15; the flake devShell
 # pins it (24.18 at the current lock). Sourced per-command via `nix
 # develop` so it layers over — not shadows — the shebang's gh. HEALTH_DEVSHELL=1
-# tells any nested health script (npm run golden -> golden.sh) it is already
+# tells any nested health script (pnpm run golden -> golden.sh) it is already
 # inside the devShell, so it skips its own re-exec.
 DEV="nix develop $HEALTH_DIR -c env HEALTH_DEVSHELL=1"
-echo "==> [1/7] npm run verify (node from flake devShell)"
+echo "==> [1/7] pnpm run verify (node from flake devShell)"
 cd "$HEALTH_DIR"
-$DEV npm run verify
+$DEV pnpm run verify
 
 # --- golden + geometry + decoder gates ------------------------------------
 # The deterministic fixture gates: day-state snapshot diff (incl. worldline
@@ -97,9 +97,9 @@ $DEV npm run verify
 # last of the three because it is the newest and the noisiest.
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard"
-	$DEV npm run golden
-	$DEV npm run walk-gate
-	$DEV npm run score-decoder
+	$DEV pnpm run golden
+	$DEV pnpm run walk-gate
+	$DEV pnpm run score-decoder
 	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
 	# by a gate. Everything above runs with all seven flags `off`, so a broken
 	# bridge, a divergence, or a tenant that never ran could all ship — the arm
@@ -154,7 +154,7 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `$LEAN_ALL_FLAGS` are deliberately unquoted so they word-split.
 	# shellcheck disable=SC2086
 	$DEV LEAN_KALMAN=on LEAN_GPSQUALITY=on LEAN_BIOLABELS=on LEAN_HSMM=on LEAN_RAIL=on \
-		$LEAN_ALL_FLAGS npm run golden
+		$LEAN_ALL_FLAGS pnpm run golden
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

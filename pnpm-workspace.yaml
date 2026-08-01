@@ -1,0 +1,21 @@
+# The BACKEND's settings. frontend/ has its own pnpm-workspace.yaml and is a
+# separate project with a separate lockfile — this file must not declare
+# `packages:`, or the two would become one workspace and the frontend's
+# dependencies would resolve against the backend's tree.
+#
+# pnpm runs a dependency's install script only if it is listed here; npm runs
+# them all silently. esbuild fetches its platform binary at install time and
+# does not work without it. It is what pnpm named as ignored on a COLD install:
+# a warm one passes without this, because the store already holds the unpacked
+# binary. Test a change here with `pnpm install --store-dir <empty dir>`.
+allowBuilds:
+  esbuild: true
+
+# Carried across from package.json's npm-format `overrides`, which pnpm does not
+# read. Leaving them there does not merely ignore them going forward: `pnpm
+# import` re-resolves, so the constraint is dropped and a package can land BELOW
+# the floor it declares, in a lockfile that looks normal. It happened to home's
+# backend during this rollout — esbuild 0.28.1 became 0.27.7.
+overrides:
+  esbuild: ^0.28.1
+  vite: ^7.3.5

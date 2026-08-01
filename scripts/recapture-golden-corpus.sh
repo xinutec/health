@@ -24,6 +24,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building"
-npm run build >/dev/null
+pnpm run build >/dev/null
 
 exec "$SCRIPT_DIR/prod-db.sh" bash "$SCRIPT_DIR/_recapture-all-inner.sh" "$@"

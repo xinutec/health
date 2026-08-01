@@ -18,8 +18,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   scripts/golden-hsmm.sh --bless 2026-05-25    # one day
 #
 # Via npm (note the `--` so npm forwards the flags):
-#   npm run golden-hsmm
-#   npm run golden-hsmm -- --bless 2026-05-25
+#   pnpm run golden-hsmm
+#   pnpm run golden-hsmm --bless 2026-05-25
 #
 # Exit 0 = every fixture matches its baseline. Exit 1 = a fixture
 # regressed. Exit 2 = no corpus (capture one first).
@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 echo "==> building"
-npm run build >/dev/null
+pnpm run build >/dev/null
 
 echo "==> replaying HSMM decode fixtures (no DB)"
 exec node dist/cli/golden-check-hsmm.js "$@"

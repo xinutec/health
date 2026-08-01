@@ -17,6 +17,7 @@
           # Angular >=24.15 build). Bump with: nix flake update.
           packages = [
             pkgs.nodejs_24 # backend (Hono) + Angular 22 frontend (needs >=24.15)
+            pkgs.pnpm # the frontend's installer; node ships npm too, ignore it
             pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
             pkgs.lean4 # verified core (lean/) — includes lake; toolchain comes from nix, not elan
           ];
