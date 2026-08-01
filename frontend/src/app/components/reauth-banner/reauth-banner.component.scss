@@ -9,9 +9,3 @@
 }
 .icon { color: var(--app-on-warn-container); }
 .message { flex: 1; }
-
-// See timeline.component.scss: an icon must never absorb flex shrink, or
-// Material's `overflow: hidden` clips the glyph (DL-ANGULAR-ICON-SHRINK).
-mat-icon {
-	flex-shrink: 0;
-}

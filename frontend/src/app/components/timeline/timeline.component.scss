@@ -233,12 +233,3 @@ button.entry.journey {
 .city-header + .entry {
   padding-top: 0;
 }
-
-// An icon has exactly one correct size, so it must never absorb flex shrink.
-// Material gives `mat-icon` `overflow: hidden`, which costs a flex/grid item its
-// `min-width: auto` floor — so beside a text sibling the icon is CLIPPED rather
-// than scaled, and the trigger is how long the neighbouring sentence happens to
-// be (DL-ANGULAR-ICON-SHRINK).
-mat-icon {
-  flex-shrink: 0;
-}
