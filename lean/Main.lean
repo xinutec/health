@@ -1076,6 +1076,50 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "kalman" => kalmanResult j
         | .ok "gpsquality" => gpsQualityResult j
         | .ok "biolabels" => bioLabelsResult j
+        -- Ablation mode (#405): accept the request, do nothing, reply empty.
+        -- The payload is still shipped across the SharedArrayBuffer and still
+        -- parsed by `Json.parse line` above — only the ALGORITHM is skipped.
+        -- So a `noop` round trip is the floor every tenant pays for consulting
+        -- Lean at all, and `real − noop` is what the verified code itself costs.
+        --
+        -- This exists because the arm ratios (#404) run inverse to how much
+        -- work the call does — gpsquality is 213x with a 0.05 ms TS arm — which
+        -- says the numbers are measuring the crossing, not the core. That is a
+        -- claim about the staging mechanism, and it has to be measured rather
+        -- than argued: under the Rust-shell architecture there is no crossing,
+        -- so anything below this floor is not a cost the verified core has.
+        | .ok "noop" => Json.mkObj []
+        -- The other half of the ablation. `noop` returns `{}`, so it measures
+        -- only the REQUEST side — the response encode (`resp.compress` below)
+        -- and the caller's `JSON.parse` of it are transport too, and charging
+        -- them to the algorithm would understate the floor. `echo` ships the
+        -- input rows straight back, so a real-sized response crosses the wire
+        -- with no computation behind it.
+        --
+        -- Neither bounds the floor alone: `noop` is a floor for tenants whose
+        -- reply is small (geo returns keep-indices), `echo` is the honest model
+        -- for tenants whose reply is the rows (gpsquality returns a subset of
+        -- its input). Read them as a bracket, not as one number.
+        | .ok "echo" =>
+          match j.getObjVal? "pts" with
+          | .ok pts => Json.mkObj [("pts", pts)]
+          | .error _ => Json.mkObj []
+        -- The third layer. `noop`/`echo` leave the payload as generic `Json`;
+        -- the real handler must still turn it into `GpsPoint`s, which for this
+        -- tenant means a decimal-string → UInt64 → Float parse PER COORDINATE
+        -- (see `fBits`/`parseKalmanPt`). That decode exists only because the
+        -- two arms live in different processes — under a Rust shell the points
+        -- are already in memory — so charging it to the verified algorithm
+        -- would overstate what the algorithm costs.
+        --
+        -- Runs exactly `gpsQualityResult`'s parse and then stops, so
+        -- `real − gqdecode` is the filter itself plus its response encode.
+        | .ok "gqdecode" =>
+          match (do
+            let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseKalmanPt
+            return pts.size : Except String Nat) with
+          | .ok n => Json.mkObj [("n", Lean.toJson n)]
+          | .error e => Json.mkObj [("error", Json.str e)]
         | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
         | .error _ => Json.mkObj [("error", Json.str "missing mode")]
       Json.mkObj [("id", id), ("result", body)]
