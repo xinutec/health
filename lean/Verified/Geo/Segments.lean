@@ -514,7 +514,7 @@ def inferTransitGaps (segments : Array TrackSegment) (points : Array FilteredPoi
     for i in [0:segments.size] do
       let seg := segments[i]!
       result := result.push seg
-      if h : i + 1 < segments.size then
+      if i + 1 < segments.size then
         let next := segments[i+1]!
         let gapDuration := next.startTs - seg.endTs
         if gapDuration ≥ TRANSIT_GAP_MIN_DURATION_S then

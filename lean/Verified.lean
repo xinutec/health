@@ -79,3 +79,4 @@ import Verified.Geo.UndergroundRun
 import Verified.Geo.UndergroundJourney
 import Verified.Geo.UndergroundAnnotate
 import Verified.Geo.OsmSpatial
+import Verified.Geo.LineStoppingPattern
