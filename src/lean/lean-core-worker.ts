@@ -35,7 +35,6 @@ const encoder = new TextEncoder();
 
 let child: ChildProcessWithoutNullStreams | null = null;
 let dead = false;
-let reqId = 0;
 
 // Newline-framed reader over the child's stdout. Serial requests ⇒ at most
 // one response line outstanding, but a line can arrive before `nextLine`
@@ -105,15 +104,26 @@ function startChild(): void {
 	});
 }
 
-parentPort?.on("message", (msg: { mode: string; payload: Record<string, unknown> }) => {
+/**
+ * The message IS the request line — already serialised by the caller, complete
+ * with its `id` and `mode`, so this thread only writes it.
+ *
+ * It used to receive `{mode, payload}` and stringify here, which materialised
+ * the request TWICE: `postMessage` structured-clones the whole payload object
+ * graph into this thread, and then `JSON.stringify` built the wire string from
+ * the copy. Nobody noticed while every tenant's payload was kilobytes. The HSMM
+ * decode ships 33–40 MiB per call (#410) and it cost 187 MB of peak RSS —
+ * measured 634 MB → 821 MB on one day, against a cron pod capped at 1536Mi.
+ * Serialising once on the caller's side and shipping the string makes the clone
+ * a string copy and deletes the second stringify outright.
+ */
+parentPort?.on("message", (req: string) => {
 	void (async () => {
 		try {
 			if (dead || !child) {
 				signal(CTRL_ERROR);
 				return;
 			}
-			reqId += 1;
-			const req = JSON.stringify({ id: reqId, mode: msg.mode, ...msg.payload });
 			child.stdin.write(`${req}\n`);
 			const line = await nextLine();
 			if (line === null) {

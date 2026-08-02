@@ -56,6 +56,18 @@ export function callTimeoutMs(): number {
  *  headroom only ever applies to the one cold call (warm calls stay at 5 s). */
 const FIRST_CALL_TIMEOUT_MS = 20000;
 
+/** The cold ceiling is a FLOOR added to the warm one, never a cap on it. A
+ *  caller that raised `LEAN_CALL_TIMEOUT_MS` did so because its own calls are
+ *  known to take longer than the default — the HSMM decode is 7–8 s per day in
+ *  production — and the cold call is that same work PLUS the child spawn, so
+ *  handing it a smaller budget than the warm calls it precedes is backwards. As
+ *  a bare 20 s constant it was latent (the matcher's heaviest leg is 4.8 s, so
+ *  nothing had yet asked for more than 20 s); the HSMM tenant is the first
+ *  caller for which the cold call is the most expensive one it will make. */
+export function firstCallTimeoutMs(): number {
+	return Math.max(FIRST_CALL_TIMEOUT_MS, callTimeoutMs());
+}
+
 export class LeanBridgeError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -87,6 +99,13 @@ class LeanCore {
 	/** Last health state announced, so we log serve↔degrade TRANSITIONS (a
 	 *  transient blip that recovers should not leave a stale "falling back"). */
 	private lastServing: boolean | null = null;
+
+	/** Wire-format request counter. Lives HERE rather than in the worker because
+	 *  the caller now serialises the request line (see `callUncounted`); calls are
+	 *  strictly serial — the caller blocks in `Atomics.wait` — so a plain counter
+	 *  is enough and nothing correlates on it. It survives worker rebuilds, which
+	 *  is what we want: an id must never be reused against a live child. */
+	private reqId = 0;
 
 	private readonly decoder = new TextDecoder();
 
@@ -185,8 +204,14 @@ class LeanCore {
 		const lenView = this.lenView;
 		const body = this.body;
 		Atomics.store(control, 0, CTRL_PENDING);
-		worker.postMessage({ mode, payload });
-		const timeout = this.warm ? callTimeoutMs() : FIRST_CALL_TIMEOUT_MS;
+		// Serialise HERE, and post the finished line. Posting `{mode, payload}`
+		// instead would structured-clone the whole payload object graph into the
+		// worker and stringify it there, materialising the request twice — 187 MB
+		// of peak RSS on the HSMM tenant's 33–40 MiB payload (#410). A string
+		// clone is one copy, and the worker then only writes it.
+		this.reqId += 1;
+		worker.postMessage(JSON.stringify({ id: this.reqId, mode, ...payload }));
+		const timeout = this.warm ? callTimeoutMs() : firstCallTimeoutMs();
 		const woke = Atomics.wait(control, 0, CTRL_PENDING, timeout);
 		if (woke === "timed-out") this.fail("call timed out");
 		const status = Atomics.load(control, 0);
@@ -271,6 +296,42 @@ export interface LeanRailResp {
  */
 export function leanRailServe(req: Record<string, unknown>): LeanRailResp {
 	return leanCore.call("rail", req) as LeanRailResp;
+}
+
+/** Result shape of an `hsmm` decode (mirrors `verified_cli`'s one-shot decode
+ *  and the `serveLoop` `hsmmResult` handler): the decoded state-index path and
+ *  its integer score, or `degenerate` when no path has finite score.
+ *
+ *  Nothing here is a coordinate or a real — `path` indexes the caller's own
+ *  state list and `best` is the quantised score in the same integer units the
+ *  request carried — so the comparison is EXACT with no near-tie class to
+ *  grade. The near-ties this tenant does have live one layer up, between the
+ *  quantised decode and the FLOAT decode production ships, and the shadow
+ *  measures that separately. */
+export interface LeanHsmmResp {
+	path?: number[];
+	best?: number;
+	degenerate?: boolean;
+	error?: string;
+}
+
+/**
+ * Run one verified HSMM decode through the persistent core, synchronously.
+ * `req` is the quantised trellis (`{ T, S, maxD, emit, trans, dur, init,
+ * entry, … }`) — the same object the spawn path wrote to `verified_cli`'s
+ * stdin. Throws `LeanBridgeError` on any bridge failure; the caller falls back
+ * to TS.
+ *
+ * BY FAR the heaviest request any tenant sends: 33–40 MiB per day against the
+ * matcher's kilobytes (measured over the 11 decode fixtures, 2026-08-02),
+ * because the whole quantised model crosses the wire to decode 1440 minutes.
+ * The reply is the opposite — ~1440 integers — so it is nowhere near the 8 MiB
+ * response cap. That asymmetry is the tenant's defining cost, and deleting it
+ * is what `verified_cli assembledecode` (Lean builds the model from raw inputs)
+ * exists for; this wrapper still ships the marshalled tensors.
+ */
+export function leanHsmmServe(req: Record<string, unknown>): LeanHsmmResp {
+	return leanCore.call("hsmm", req) as LeanHsmmResp;
 }
 
 /** Result shape of a `kalman` GPS filter (mirrors `verified_cli kalman` and the
