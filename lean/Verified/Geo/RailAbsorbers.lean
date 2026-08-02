@@ -1,4 +1,5 @@
 import Verified.Geo.TubeHop
+import Verified.Geo.LineMembership
 /-!
 # Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
@@ -122,6 +123,13 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
       match splitFirst rest RAIL_LINE_SEP with
       | none => some { board, alight := rest }
       | some (alight, line) => some { board, alight, line := some line }
+
+/-- The ` · <line>` suffix a rewritten label carries, or nothing. The TS tests
+`rail.line` for TRUTHINESS, so a label ending in a bare separator — which parses
+to `some ""` — gets no suffix back. -/
+private def lineSuffix : Option String → String
+  | some l => if l == "" then "" else s!"{RAIL_LINE_SEP}{l}"
+  | none => ""
 
 /-! ## `absorbDriveStops` -/
 
@@ -351,6 +359,306 @@ def absorbBoardingPlatform (segments : Array Seg) (points : Array Fix)
     match extendTo.find? (·.1 == idx) with
     | some (_, ts) => out := out.push { segments[idx]! with startTs := ts }
     | none => out := out.push segments[idx]!
+  return out
+
+/-! ## The two walk-anchored re-anchors
+
+`anchorTrainBoardingToWalkedStation` and `anchorTrainAlightToWalkedStation` are
+mirror images: when GPS goes dark in a tunnel the reconstruction pins a rail
+leg's boundary where the fixes are clean, which is a stop or two off the real
+one, and the missing ride is stranded as a vehicle-paced RUN at the tail of the
+preceding walk (boarding) or the head of the following one (alight). Each anchor
+finds that run, moves the boundary to it, and rewrites the label.
+
+Their three OSM lookups all arrive as injected functions, so the decisions port
+whole; only the awaiting is shell.
+
+### They are NOT symmetric, in three ways
+
+1. **Which run.** Boarding takes the FIRST qualifying run and `break`s out of the
+   scan once it has ended — coming out of a platform the train accelerates, so
+   the earliest qualifying run is the departure. Alight takes the LAST, because
+   GPS routinely sticks at an intermediate surfaced station while the train
+   keeps going.
+2. **Where the boundary lands.** Boarding cuts at `fixes[split - 1]`, the fix
+   BEFORE the run; alight cuts at `fixes[settle]`, the fix the run ENDS on.
+3. **When the line veto applies.** Boarding gates `lineCannotServe` on
+   `!sameBoard`, so an unserving label does not stop a same-station extension —
+   that changes no name. Alight tests it BEFORE deciding whether the station is a
+   rename, so an unserving line stops the extension too. Both are guarded.
+
+### `Math.round` on a non-negative distance
+
+The reason strings quote `Math.round(d)`. `jsRound` here is `floor (x + 0.5)`,
+which is `Math.round` exactly; the two differ only at negative halves, and a
+haversine distance is never negative.
+-/
+
+/-- `Math.round` — halves go UP, towards +∞. -/
+private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+private def metres (x : Float) : String := toString (jsRound x).toInt64.toInt
+
+/-- Great-circle metres. Deliberately NOT `Verified.Hsmm.FloatScore`'s: that one
+associates the final product as `((cos·cos)·sin)·sin`, and `place-snap.ts` — the
+copy these passes import — writes `Math.sin(dLon/2) ** 2` as its own factor.
+
+The grouping is UNPINNABLE from here and always will be: it moves the result by
+about one ULP, and everything this module publishes is a distance passed through
+`Math.round`. Faithful anyway, because the value also feeds `≥ 250` and
+`≥ 15 km/h` comparisons, where a fixture sitting exactly on a bar WOULD see it —
+the corpus simply has no such fixture. Do not "simplify" it to the shared copy. -/
+private def haversineMeters (lat1 lon1 lat2 lon2 : Float) : Float :=
+  let R := 6371000.0
+  let pi := 3.141592653589793
+  let dLat := (lat2 - lat1) * pi / 180.0
+  let dLon := (lon2 - lon1) * pi / 180.0
+  let sLat := Float.sin (dLat / 2.0)
+  let sLon := Float.sin (dLon / 2.0)
+  let a := sLat * sLat + Float.cos (lat1 * pi / 180.0) * Float.cos (lat2 * pi / 180.0) * (sLon * sLon)
+  R * 2.0 * Float.atan2 (Float.sqrt a) (Float.sqrt (1.0 - a))
+
+private def fixDist (a b : Fix) : Float := haversineMeters a.lat a.lon b.lat b.lon
+
+/-- Step speed in km/h. A zero-duration step scores 0 rather than dividing —
+`dt > 0 ? … : 0` in the TS. -/
+private def stepKmh (a b : Fix) : Float :=
+  let dt := b.ts - a.ts
+  if dt > 0 then fixDist a b / Float.ofInt dt * 3.6 else 0
+
+/-- INCLUSIVE at both ends, unlike `absorbBoardingPlatform`'s window. The step
+straddling the walk↔train boundary is the ride itself, and the kinematic
+invariant charges it to this leg — a pass that cannot see it is blind to exactly
+the evidence the invariant reports. -/
+private def samplesInWindow (points : Array Fix) (s : Seg) : Array Fix :=
+  points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
+
+/-! ### `anchorTrainBoardingToWalkedStation` -/
+
+/-- Min step speed for a walk-tail fix to count as the train pulling out rather
+than a walking step. Well above any run. -/
+def BOARDING_HOP_MIN_KMH : Float := 15
+/-- …and the run must cover a real inter-station distance, not a few metres of
+acceleration as the doors close. -/
+def BOARDING_HOP_MIN_DIST_M : Float := 250
+
+/-- The index of the fix the train should open at, plus how many consecutive
+fast steps backed the run — the `split` / `hopRunSteps` pair.
+
+The FIRST qualifying run, not the last: the surfaced fix often settles into a
+slow one as the train decelerates into the next station, so a from-the-end scan
+would miss the departure. A RUN, not a single step: coming out of a platform the
+train is still accelerating, so the first observed steps are short (76 m, 86 m on
+2026-07-01) and each falls under the distance bar on its own while the run covers
+981 m. The run qualifies once its NET displacement clears the bar. -/
+private def boardingHop (fixes : Array Fix) : Int × Nat := Id.run do
+  let mut split : Int := -1
+  let mut hopRunSteps : Nat := 0
+  let mut runStart : Int := -1
+  for i in [1 : fixes.size] do
+    if stepKmh fixes[i - 1]! fixes[i]! ≥ BOARDING_HOP_MIN_KMH then
+      if runStart < 0 then runStart := Int.ofNat i - 1
+      let rs := runStart.toNat
+      -- `split < 0` is UNPINNABLE, and doubly so: within one run `runStart` is
+      -- constant, so re-assigning `split` would write the same value, and the
+      -- `break` below means a SECOND run is never reached. The two guards are
+      -- mutually redundant; the break is the one with observable consequences
+      -- (it also freezes `hopRunSteps`), and it is guarded.
+      if split < 0 && fixDist fixes[rs]! fixes[i]! ≥ BOARDING_HOP_MIN_DIST_M then split := runStart + 1
+      if split ≥ 0 then hopRunSteps := i - rs
+    else
+      -- The qualifying run has ended; nothing later can be the departure.
+      if split ≥ 0 then break
+      runStart := -1
+  return (split, hopRunSteps)
+
+/-- Re-anchor an underground train's boarding to the station the preceding walk
+delivered the rider to, reclaiming the first inter-station hop the reconstruction
+stranded in the walk.
+
+When the GPS first surfaces a stop or two into a tunnel, `annotateUndergroundRuns`
+anchors the boarding to the first fix it can snap to the rail line — which can be
+one or two stations past where the rider actually boarded. The walk before it
+keeps a fast tail: the train pulling out of the real boarding station. So the
+drawn walk bleeds hundreds of metres onto the next station (2026-06-23 UCLH →
+Euston Square, where the walk drew on to Great Portland Street and the boarding
+read "Baker Street", two stops late).
+
+The scanned station EQUALLING the label is not "nothing to do": the rename is a
+no-op but the hop is still stranded in the walk, where the kinematic invariant
+reads it as vehicle-paced walking. Extend the boundary in both cases — but the
+same-station extension demands DENSE evidence (≥ 2 consecutive fast steps), since
+a lone fast step landing back at the labelled board is the stuck-GPS signature
+and extending there eats a real walk's tail. -/
+def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fix)
+    (stationsLookup : Float → Float → Array NearbyStation)
+    (servedLookup : String → Array LineMembership.ServedStation) : Array Seg := Id.run do
+  let mut out := segments
+  for k in [1 : out.size] do
+    let train := out[k]!
+    if effectiveMode train != "train" then continue
+    match parseRailWayName train.wayName with
+    | none => continue
+    | some rail =>
+      let walk := out[k - 1]!
+      if effectiveMode walk != "walking" then continue
+      -- Continuity guard (2026-06-24 Wembley Park → Euston Square): a walk
+      -- bracketed by a preceding train is an underground-reconstruction
+      -- artifact, not a walk-to-station. Its "boarding hop" is the SAME ride
+      -- continuing, so re-anchoring here would invent a rail discontinuity —
+      -- which also defeats `assembleRailJourney`'s single-line merge. Boarding
+      -- continuity there is owned by the journey assembler, not by this pass.
+      if k ≥ 2 && effectiveMode out[k - 2]! == "train" then continue
+      let fixes := samplesInWindow points walk
+      if fixes.size < 4 then continue
+      let (split, hopRunSteps) := boardingHop fixes
+      -- `< 1` rather than `< 0`, and UNPINNABLE: `split` is either -1 or
+      -- `runStart + 1` for a non-negative `runStart`, so 0 never occurs. The
+      -- form is the TS's, and it reads as "there is a fix BEFORE the run".
+      if split < 1 then continue
+      let boardFix := fixes[split.toNat - 1]!
+      -- A lone GPS spike that returns is not a relocation onto the tube: the
+      -- walk must actually END away from the boarding fix.
+      let tailDist := fixDist boardFix fixes[fixes.size - 1]!
+      if tailDist < BOARDING_HOP_MIN_DIST_M then continue
+      match pickBestStation (stationsLookup boardFix.lat boardFix.lon) with
+      | none => continue
+      | some station =>
+        let sameBoard := station.name == rail.board
+        if sameBoard && hopRunSteps < 2 then continue
+        -- Only the RENAME is gated. The scan sees whatever the walk's terminal
+        -- fix is near, and at an interchange that is several lines' stations;
+        -- being there is not boarding THIS one. A boundary that reclaims a
+        -- stranded hop is right whether or not the label is, so the
+        -- same-station case skips the veto entirely.
+        if !sameBoard then
+          match rail.line with
+          | some line =>
+            if line != "" && LineMembership.lineCannotServe line station.name servedLookup then continue
+          | none => pure ()
+        let reason :=
+          if sameBoard then
+            s!"boarding boundary extended back to the {station.name} departure — reclaimed a {metres tailDist} m hop the underground reconstruction had left in the walk"
+          else
+            s!"boarding re-anchored to {station.name} (walk's terminal station) — reclaimed a {metres tailDist} m hop the underground reconstruction had left in the walk (was boarding {rail.board})"
+        out := out.set! (k - 1) { walk with endTs := boardFix.ts }
+        out := out.set! k
+          { train with
+              startTs := boardFix.ts
+              wayName :=
+                if sameBoard then train.wayName
+                else some s!"{station.name} → {rail.alight}{lineSuffix rail.line}"
+              refinedReason :=
+                match train.refinedReason with
+                | some r => some s!"{r}; {reason}"
+                | none => some reason }
+  return out
+
+/-! ### `anchorTrainAlightToWalkedStation` -/
+
+/-- Min step speed for a LEADING walk-fix to count as the train still riding in.
+Mirrors `BOARDING_HOP_MIN_KMH`. -/
+def ALIGHT_HOP_MIN_KMH : Float := 15
+/-- The leading fast run must cover a real inter-station distance. -/
+def ALIGHT_HOP_MIN_DIST_M : Float := 250
+
+/-- The index of the fix the train should close at, plus how many consecutive
+fast steps backed it.
+
+The LAST qualifying run — never the first — because GPS routinely "sticks" at an
+intermediate surfaced station (a slow cluster) while the train keeps going. Note
+there is no `break` here and no `split < 0` test on the update: every qualifying
+run overwrites the previous one. -/
+private def alightSettle (fixes : Array Fix) : Int × Nat := Id.run do
+  let mut settle : Int := -1
+  let mut settleRunSteps : Nat := 0
+  let mut runStart : Int := -1
+  for i in [1 : fixes.size] do
+    if stepKmh fixes[i - 1]! fixes[i]! ≥ ALIGHT_HOP_MIN_KMH then
+      if runStart < 0 then runStart := Int.ofNat i - 1
+      let rs := runStart.toNat
+      if fixDist fixes[rs]! fixes[i]! ≥ ALIGHT_HOP_MIN_DIST_M then
+        settle := Int.ofNat i
+        settleRunSteps := i - rs
+    else
+      runStart := -1
+  return (settle, settleRunSteps)
+
+/-- Re-anchor an underground train's ALIGHT to the station the following walk's
+leading hop reached — the mirror of `anchorTrainBoardingToWalkedStation`.
+
+When GPS goes dark in a tunnel the train closes at the last clean fix (the
+surfaced station), and the continued ride to the true disembark a stop or two on
+the SAME line is stranded as the FAST leading fixes of the next "walking"
+segment. The 2026-06-29 outbound: Wembley Park → Baker Street pinned where GPS
+reappeared, then a "15-minute walk" whose first hop is the Metropolitan still
+doing ~50 km/h on to Euston Square.
+
+Two line gates, asking different questions. The first says the hop stayed on the
+run's corridor: the surfaced and settled fixes must share a line, compared after
+`expandTubeLineNames` canonicalises directional and combined relation names. The
+second says this leg can actually stop there: a corridor shared with a line
+running alongside the tube for miles satisfies the first while saying nothing
+about the line the leg is LABELLED with. Without it the anchor turned the
+2026-06-28 return into a "North London line" ride alighting 7.1 km away at
+Wembley Park (#377). -/
+def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
+    (stationsLookup : Float → Float → Array NearbyStation)
+    (linesLookup : Float → Float → Array String)
+    (servedLookup : String → Array LineMembership.ServedStation) : Array Seg := Id.run do
+  let mut out := segments
+  if out.isEmpty then return out
+  for k in [0 : out.size - 1] do
+    let train := out[k]!
+    if effectiveMode train != "train" then continue
+    match parseRailWayName train.wayName with
+    | none => continue
+    | some rail =>
+      let walk := out[k + 1]!
+      if effectiveMode walk != "walking" then continue
+      -- Interchange guard, the mirror of the boarding side: train → walk →
+      -- train is a sliver, and its leading hop is the NEXT train pulling out,
+      -- not this one riding in.
+      if k + 2 < out.size && effectiveMode out[k + 2]! == "train" then continue
+      let fixes := samplesInWindow points walk
+      if fixes.size < 3 then continue
+      let (settle, settleRunSteps) := alightSettle fixes
+      -- Same vacuity as the boarding side: `settle` is -1 or an `i ≥ 1`.
+      if settle < 1 then continue
+      let alightFix := fixes[settle.toNat]!
+      let surfaced := fixes[0]!
+      if fixDist surfaced alightFix < ALIGHT_HOP_MIN_DIST_M then continue
+      match pickBestStation (stationsLookup alightFix.lat alightFix.lon) with
+      | none => continue
+      | some station =>
+        let canon (lat lon : Float) : Array String :=
+          (linesLookup lat lon).flatMap fun l => (RailRuns.expandTubeLineNames l).toArray
+        let surfacedCanon := canon surfaced.lat surfaced.lon
+        let alightCanon := canon alightFix.lat alightFix.lon
+        if !alightCanon.any (surfacedCanon.contains ·) then continue
+        -- Applied BEFORE the rename decision, unlike the boarding side.
+        match rail.line with
+        | some line =>
+          if line != "" && LineMembership.lineCannotServe line station.name servedLookup then continue
+        | none => pure ()
+        let hopM := metres (fixDist surfaced alightFix)
+        let sameAlight := station.name == rail.alight
+        if sameAlight && settleRunSteps < 2 then continue
+        let reason :=
+          if sameAlight then
+            s!"alight boundary extended to the {station.name} arrival — reclaimed a {hopM} m ride tail the early cut left in the walk"
+          else
+            s!"alight re-anchored to {station.name} (walk's leading hop reached it) — reclaimed a {hopM} m hop the GPS blackout left in the walk (was alighting {rail.alight})"
+        out := out.set! k
+          { train with
+              endTs := alightFix.ts
+              wayName :=
+                if sameAlight then train.wayName
+                else some s!"{rail.board} → {station.name}{lineSuffix rail.line}"
+              refinedReason :=
+                match train.refinedReason with
+                | some r => some s!"{r}; {reason}"
+                | none => some reason }
+        out := out.set! (k + 1) { walk with startTs := alightFix.ts }
   return out
 
 /-! ## Guards (V8 reference values) -/
@@ -600,5 +908,338 @@ private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mod
     #[pstay 600 900, { ptrain 900 1800 with refinedReason := some "earlier note" }] platform stationsAt
   == #[{ startTs := 600, endTs := 1800, mode := "train", wayName := some MET_RUN, pointCount := 30,
          refinedReason := some "earlier note" }]
+
+/-! ### The two walk-anchored re-anchors
+
+Every fixture sits on the -0.14 meridian, so the lookups discriminate on
+latitude alone, and every queried coordinate is a fixture LITERAL rather than a
+computed one — nothing has to survive being rendered as a string.
+
+Step geometry, from V8's own `haversineMeters`:
+
+| step                | metres |
+|---------------------|--------|
+| 51.5 → 51.5003      |  33.36 |
+| 51.5 → 51.5014      | 155.67 |
+| 51.5 → 51.5028      | 311.35 |
+| 51.5 → 51.5059      | 656.05 |
+| 51.5006 → 51.502    | 155.67 |
+| 51.5006 → 51.5036   | 333.58 |
+| 51.5006 → 51.5048   | 467.02 |
+| 51.5006 → 51.5008   |  22.24 |
+-/
+
+private def METLINE : String := "Metropolitan Line"
+private def NLL : String := "North London Line"
+
+private def aStations : Float → Float → Array NearbyStation := fun lat lon =>
+  if lon == -0.139 then #[⟨"Euston Square", "station", 20⟩]
+  else if lon != -0.14 then #[]
+  else if lat == 51.5006 then #[⟨"Euston Square", "station", 20⟩]
+  else if lat == 51.5001 then #[⟨"Euston Square", "station", 20⟩]
+  else if lat == 51.5028 then #[⟨"Great Portland Street", "station", 25⟩]
+  else if lat == 51.5031 then #[⟨"Great Portland Street", "station", 30⟩]
+  else if lat == 51.5059 then #[⟨"Baker Street", "station", 15⟩]
+  else #[]
+
+/-- Directional and combined relation names on purpose: the corridor test
+intersects EXPANDED components, not the raw strings. -/
+private def aLines : Float → Float → Array String := fun lat _ =>
+  if lat == 51.5 then #["Metropolitan Line Northbound"]
+  else if lat == 51.5001 then #[METLINE]
+  else if lat == 51.5028 then #["Circle, Hammersmith & City and Metropolitan Lines"]
+  else if lat == 51.5031 then #[METLINE]
+  else if lat == 51.5059 then #[METLINE]
+  else #[]
+
+/-- The EMPTY line name answers a non-empty list excluding every station here,
+so a caller that consults the mirror for a PRESENT-but-empty label gets a veto.
+That is what makes the TS's `rail.line &&` TRUTHINESS test observable: with the
+test, an empty line is never asked about; without it, the rewrite is refused. -/
+private def aServed : String → Array LineMembership.ServedStation := fun line =>
+  if line == METLINE then #[⟨"Euston Square"⟩, ⟨"Great Portland Street"⟩, ⟨"Baker Street"⟩]
+  else if line == NLL then #[⟨"Finchley Road & Frognal"⟩, ⟨"West Hampstead"⟩]
+  else if line == "" then #[⟨"Nowhere"⟩]
+  else #[]
+
+private def f (ts : Int) (lat : Float) : Fix := ⟨ts, lat, -0.14⟩
+/-- An EAST-WEST fix: one latitude throughout, so the haversine's two arguments
+cannot be swapped without the distance changing. -/
+private def ef (ts : Int) (lon : Float) : Fix := ⟨ts, 51.5, lon⟩
+private def aseg (a b : Int) (mode : Mode) (wayName : Option String := none)
+    (refinedMode : Option Mode := none) (refinedReason : Option String := none) : Seg :=
+  { startTs := a, endTs := b, mode, wayName, refinedMode, refinedReason }
+private def awalk (a b : Int) (refinedMode : Option Mode := none) (mode : Mode := "walking") : Seg :=
+  aseg a b mode none refinedMode
+private def atrain (a b : Int) (wayName : Option String) (refinedMode : Option Mode := none)
+    (mode : Mode := "train") (refinedReason : Option String := none) : Seg :=
+  aseg a b mode wayName refinedMode refinedReason
+
+/-- Boundaries, labels and reasons — everything either anchor writes. -/
+private def aview (out : Array Seg) : Array (Int × Int × Option String × Option String) :=
+  out.map fun s => (s.startTs, s.endTs, s.wayName, s.refinedReason)
+
+private def board (segs : Array Seg) (pts : Array Fix) :=
+  aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed)
+private def alight (segs : Array Seg) (pts : Array Fix) (lines : Float → Float → Array String := aLines) :=
+  aview (anchorTrainAlightToWalkedStation segs pts aStations lines aServed)
+
+/-- Slow, slow, then a TWO-step vehicle-paced run: the boarding hop. -/
+private def boardWalk : Array Fix :=
+  #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.502, f 180 51.5034, f 240 51.5048]
+/-- The same, but the run is ONE step long. -/
+private def boardWalk1 : Array Fix := #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.5036, f 210 51.504]
+/-- The hop returns to where it left: a GPS spike, not a relocation. -/
+private def boardBounce : Array Fix := #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.5036, f 210 51.5008]
+
+private def RENAME_467 : String :=
+  "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 467 m hop the underground reconstruction had left in the walk (was boarding Baker Street)"
+private def SAME_467 : String :=
+  "boarding boundary extended back to the Euston Square departure — reclaimed a 467 m hop the underground reconstruction had left in the walk"
+private def BAKER (line : String := s!" · {METLINE}") : Option String := some s!"Baker Street → Wembley Park{line}"
+private def EUSTON (line : String := s!" · {METLINE}") : Option String := some s!"Euston Square → Wembley Park{line}"
+
+-- The walk's tail reached Euston Square: the boundary moves back to the fix
+-- before the hop, and the label is rewritten from two stops down the line.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER)] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON, some RENAME_467)]
+-- The scanned station EQUALLING the label still moves the boundary — the hop is
+-- stranded either way; only the rename is a no-op.
+#guard board #[awalk 0 240, atrain 240 900 (EUSTON)] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON, some SAME_467)]
+-- …but the same-station extension demands a run of at least TWO fast steps: a
+-- lone one landing back at the labelled board is the stuck-GPS signature.
+#guard board #[awalk 0 210, atrain 210 900 (EUSTON)] boardWalk1
+  == #[(0, 210, none, none), (210, 900, EUSTON, none)]
+-- A RENAME keeps working on a single blackout hop: it is anchored by a
+-- DIFFERENT station the walk demonstrably reached.
+#guard board #[awalk 0 210, atrain 210 900 (BAKER)] boardWalk1
+  == #[(0, 120, none, none), (120, 900, EUSTON,
+        some "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 378 m hop the underground reconstruction had left in the walk (was boarding Baker Street)")]
+-- No line in the label: no veto to consult, and no suffix to write back.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER "")] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON "", some RENAME_467)]
+-- THE #351 GUARD: a rename may only name a station this leg's line serves.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER s!" · {NLL}")] boardWalk
+  == #[(0, 240, none, none), (240, 900, BAKER s!" · {NLL}", none)]
+-- …and the veto is gated on `!sameBoard`, so it does NOT stop an extension that
+-- changes no name. Its ALIGHT twin orders these the other way round.
+#guard board #[awalk 0 240, atrain 240 900 (EUSTON s!" · {NLL}")] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON s!" · {NLL}", some SAME_467)]
+-- The walk must END away from the boarding fix: 22 m back is a spike.
+#guard board #[awalk 0 210, atrain 210 900 (BAKER)] boardBounce
+  == #[(0, 210, none, none), (210, 900, BAKER, none)]
+-- Too few fixes, and no vehicle-paced run at all.
+#guard board #[awalk 0 120, atrain 120 900 (BAKER)] boardWalk
+  == #[(0, 120, none, none), (120, 900, BAKER, none)]
+#guard board #[awalk 0 120, atrain 120 900 (BAKER)] #[f 0 51.5, f 30 51.5001, f 60 51.5002, f 90 51.5003]
+  == #[(0, 120, none, none), (120, 900, BAKER, none)]
+-- An unparseable or missing label.
+#guard board #[awalk 0 240, atrain 240 900 (some METLINE)] boardWalk
+  == #[(0, 240, none, none), (240, 900, some METLINE, none)]
+#guard board #[awalk 0 240, atrain 240 900 none] boardWalk
+  == #[(0, 240, none, none), (240, 900, none, none)]
+-- The previous segment is not a walk.
+#guard board #[aseg 0 240 "stationary", atrain 240 900 (BAKER)] boardWalk
+  == #[(0, 240, none, none), (240, 900, BAKER, none)]
+-- THE CONTINUITY GUARD (2026-06-24): train → walk → train is a reconstruction
+-- sliver, and its hop is the SAME ride continuing…
+#guard board #[atrain (-600) 0 (some s!"A → B · {METLINE}"), awalk 0 240, atrain 240 900 (BAKER)] boardWalk
+  == #[(-600, 0, some s!"A → B · {METLINE}", none), (0, 240, none, none), (240, 900, BAKER, none)]
+-- …whereas a STATIONARY two back does not block it.
+#guard board #[aseg (-600) 0 "stationary", awalk 0 240, atrain 240 900 (BAKER)] boardWalk
+  == #[(-600, 0, none, none), (0, 120, none, none), (120, 900, EUSTON, some RENAME_467)]
+-- Both modes are read through `effectiveMode`, unlike `absorbBoardingPlatform`.
+#guard board #[awalk 0 240 (some "walking") "driving",
+               atrain 240 900 (BAKER) (some "train") "driving"] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON, some RENAME_467)]
+-- The window is INCLUSIVE at the close: trimming the walk by one second drops
+-- the tail fix, and the reclaimed distance shrinks 467 m → 311 m.
+#guard board #[awalk 0 239, atrain 239 900 (BAKER)] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON,
+        some "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 311 m hop the underground reconstruction had left in the walk (was boarding Baker Street)")]
+-- An existing reason is appended to, not replaced.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER) none "train" (some "earlier note")] boardWalk
+  == #[(0, 120, none, none), (120, 900, EUSTON, some s!"earlier note; {RENAME_467}")]
+-- Nothing near the board fix.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER)]
+    #[f 0 51.4, f 60 51.4003, f 120 51.4006, f 150 51.402, f 180 51.4034, f 240 51.4048]
+  == #[(0, 240, none, none), (240, 900, BAKER, none)]
+#guard board #[] boardWalk == #[]
+
+/-! #### Boarding: the cases the probe sweep asked for -/
+
+/-- A duplicate timestamp inside what would be the hop. `dt > 0 ? … : 0` scores
+it ZERO — not `+∞`, which is what `Verified.Geo.TubeHop`'s leaf does with the
+same shape. The run therefore never starts. -/
+private def boardZeroDt : Array Fix := #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 120 51.5036, f 210 51.504]
+/-- EAST-WEST, so a transposed haversine changes the distance. -/
+private def boardEast : Array Fix := #[ef 0 (-0.14), ef 60 (-0.1395), ef 120 (-0.139), ef 150 (-0.134), ef 210 (-0.129)]
+/-- A qualifying run, a slow step, then a SECOND qualifying run. -/
+private def boardTwoRuns : Array Fix :=
+  #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.5036, f 210 51.5039, f 240 51.5053, f 270 51.5067]
+/-- A fast step too short to qualify, a slow one, then another short fast step:
+only a STALE run start would let the second qualify. -/
+private def boardStaleRun : Array Fix := #[f 0 51.5006, f 30 51.502, f 90 51.5023, f 120 51.5037, f 180 51.504]
+/-- Three fixes that would anchor if the bar were three rather than four. -/
+private def boardThree : Array Fix := #[f 0 51.5, f 60 51.5006, f 90 51.5036]
+/-- The tail measures 344.7043 m — the only fixture whose fractional part crosses
+a half, so it is the one that tells `Math.round` from truncation. -/
+private def boardHalf : Array Fix := #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.5036, f 210 51.5037]
+
+-- A zero-duration step is not a teleport here: it scores 0 and the run never
+-- opens, so nothing is reclaimed.
+#guard board #[awalk 0 210, atrain 210 900 (BAKER)] boardZeroDt
+  == #[(0, 210, none, none), (210, 900, BAKER, none)]
+-- Moving due EAST instead of due north: the reclaimed distance is 692 m, which
+-- a lat/lon transposition would render as a great circle along the equator.
+#guard board #[awalk 0 210, atrain 210 900 (BAKER)] boardEast
+  == #[(0, 120, none, none), (120, 900, EUSTON,
+        some "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 692 m hop the underground reconstruction had left in the walk (was boarding Baker Street)")]
+-- 344.7043 m rounds UP. Truncation would quote 344.
+#guard board #[awalk 0 210, atrain 210 900 (BAKER)] boardHalf
+  == #[(0, 120, none, none), (120, 900, EUSTON,
+        some "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 345 m hop the underground reconstruction had left in the walk (was boarding Baker Street)")]
+-- THE `break`. The scan stops at the FIRST qualifying run, whose one fast step
+-- is not dense enough for a same-station extension. Running on to the second
+-- run — two steps — would have allowed it.
+#guard board #[awalk 0 270, atrain 270 900 (EUSTON)] boardTwoRuns
+  == #[(0, 270, none, none), (270, 900, EUSTON, none)]
+-- …and the rename off that same first run does go through, so the difference
+-- above really is the density test and not a failure to find a run at all.
+#guard board #[awalk 0 270, atrain 270 900 (BAKER)] boardTwoRuns
+  == #[(0, 120, none, none), (120, 900, EUSTON,
+        some "boarding re-anchored to Euston Square (walk's terminal station) — reclaimed a 678 m hop the underground reconstruction had left in the walk (was boarding Baker Street)")]
+-- A slow step RESETS the run start. Carrying a stale one would let the second
+-- short fast step qualify on displacement it did not earn.
+#guard board #[awalk 0 180, atrain 180 900 (BAKER)] boardStaleRun
+  == #[(0, 180, none, none), (180, 900, BAKER, none)]
+-- Three fixes would anchor on the merits; the bar is what refuses them.
+#guard board #[awalk 0 90, atrain 90 900 (BAKER)] boardThree
+  == #[(0, 90, none, none), (90, 900, BAKER, none)]
+-- A label ending in a BARE separator parses to `line = some ""`. Same board, so
+-- the label is kept verbatim — a rewrite would drop the dangling separator…
+#guard board #[awalk 0 240, atrain 240 900 (some "Euston Square → Wembley Park · ")] boardWalk
+  == #[(0, 120, none, none), (120, 900, some "Euston Square → Wembley Park · ", some SAME_467)]
+-- …and on a RENAME the empty line writes NO suffix back. The mirror answers a
+-- veto for `""`, so this also pins that an empty line is never consulted.
+#guard board #[awalk 0 240, atrain 240 900 (some "Baker Street → Wembley Park · ")] boardWalk
+  == #[(0, 120, none, none), (120, 900, some "Euston Square → Wembley Park", some RENAME_467)]
+
+/-- A leading TWO-step run, then it settles. -/
+private def alightWalk : Array Fix := #[f 0 51.5, f 30 51.5014, f 60 51.5028, f 120 51.5031, f 180 51.5034]
+/-- TWO qualifying runs: the LAST one wins. -/
+private def alightTwo : Array Fix :=
+  #[f 0 51.5, f 30 51.5014, f 60 51.5028, f 120 51.5031, f 150 51.5045, f 180 51.5059]
+/-- One long fast step — a tunnel blackout. -/
+private def alight1 : Array Fix := #[f 0 51.5, f 30 51.5028, f 90 51.5031]
+
+private def WP (alight : String) (line : String := s!" · {METLINE}") : Option String :=
+  some s!"Wembley Park → {alight}{line}"
+private def GPS_RENAME : String :=
+  "alight re-anchored to Great Portland Street (walk's leading hop reached it) — reclaimed a 311 m hop the GPS blackout left in the walk (was alighting Euston Square)"
+private def GPS_SAME : String :=
+  "alight boundary extended to the Great Portland Street arrival — reclaimed a 311 m ride tail the early cut left in the walk"
+
+-- The walk opens with the Metropolitan still riding in: the train closes at the
+-- fix the run SETTLES on, and the walk is trimmed to it.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
+  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+-- THE LAST qualifying run, not the first: GPS sticks at an intermediate
+-- surfaced station while the train keeps going. Note the boarding side takes
+-- the FIRST and breaks.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightTwo
+  == #[(-600, 180, WP "Baker Street",
+        some "alight re-anchored to Baker Street (walk's leading hop reached it) — reclaimed a 656 m hop the GPS blackout left in the walk (was alighting Euston Square)"),
+       (180, 180, none, none)]
+-- A settled station equal to the current label still moves the boundary…
+#guard alight #[atrain (-600) 0 (WP "Great Portland Street"), awalk 0 180] alightWalk
+  == #[(-600, 60, WP "Great Portland Street", some GPS_SAME), (60, 180, none, none)]
+-- …on DENSE evidence only. A single fast step landing at the labelled alight is
+-- the stuck-GPS signature: extending there eats a real walk's head.
+#guard alight #[atrain (-600) 0 (WP "Great Portland Street"), awalk 0 90] alight1
+  == #[(-600, 0, WP "Great Portland Street", none), (0, 90, none, none)]
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 90] alight1
+  == #[(-600, 30, WP "Great Portland Street", some GPS_RENAME), (30, 90, none, none)]
+-- No line in the label: no veto, no suffix.
+#guard alight #[atrain (-600) 0 (WP "Euston Square" "")] alightWalk == #[(-600, 0, WP "Euston Square" "", none)]
+#guard alight #[atrain (-600) 0 (WP "Euston Square" ""), awalk 0 180] alightWalk
+  == #[(-600, 60, WP "Great Portland Street" "", some GPS_RENAME), (60, 180, none, none)]
+-- THE #377 GUARD: a leg cannot alight where its own line does not stop.
+#guard alight #[atrain (-600) 0 (WP "Euston Square" s!" · {NLL}"), awalk 0 180] alightWalk
+  == #[(-600, 0, WP "Euston Square" s!" · {NLL}", none), (0, 180, none, none)]
+-- THE ORDERING DISCRIMINATOR. Here the veto is applied BEFORE the rename
+-- decision, so it stops a same-station extension too — the boarding side, whose
+-- veto is gated on `!sameBoard`, allows the mirror of this case.
+#guard alight #[atrain (-600) 0 (WP "Great Portland Street" s!" · {NLL}"), awalk 0 180] alightWalk
+  == #[(-600, 0, WP "Great Portland Street" s!" · {NLL}", none), (0, 180, none, none)]
+-- Too few fixes, and no vehicle-paced run.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 30] alightWalk
+  == #[(-600, 0, WP "Euston Square", none), (0, 30, none, none)]
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] #[f 0 51.5, f 60 51.5003, f 120 51.5006]
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+-- An unparseable label, and a next segment that is not a walk.
+#guard alight #[atrain (-600) 0 (some METLINE), awalk 0 180] alightWalk
+  == #[(-600, 0, some METLINE, none), (0, 180, none, none)]
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), aseg 0 180 "stationary"] alightWalk
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+-- The mirror of the continuity guard: train → walk → train is an interchange…
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180, atrain 180 600 (some s!"A → B · {METLINE}")] alightWalk
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none), (180, 600, some s!"A → B · {METLINE}", none)]
+-- …and a STATIONARY two on does not block it.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180, aseg 180 600 "stationary"] alightWalk
+  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none), (180, 600, none, none)]
+-- Both modes through `effectiveMode`.
+#guard alight #[atrain (-600) 0 (WP "Euston Square") (some "train") "driving",
+                awalk 0 180 (some "walking") "driving"] alightWalk
+  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+-- An existing reason is appended to.
+#guard alight #[atrain (-600) 0 (WP "Euston Square") none "train" (some "earlier note"), awalk 0 180] alightWalk
+  == #[(-600, 60, WP "Great Portland Street", some s!"earlier note; {GPS_RENAME}"), (60, 180, none, none)]
+-- Nothing at the settle fix: the line lookups are never reached.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180]
+    #[f 0 51.4, f 30 51.4014, f 60 51.4028, f 120 51.4031]
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+#guard alight #[] alightWalk == #[]
+
+/-! #### Alight: the cases the probe sweep asked for -/
+
+/-- Short fast, slow, short fast: only a STALE run start would qualify. -/
+private def alightStaleRun : Array Fix := #[f 0 51.5, f 30 51.5014, f 90 51.5017, f 120 51.5031]
+/-- A long SLOW drift out and a fast return. The run covers 322 m, but the walk
+ends 11 m from where it began, which is not a ride to anywhere — and the run
+started at fix 1, so only the surfaced-to-settled test can see it. -/
+private def alightBounce : Array Fix := #[f 0 51.5, f 600 51.503, f 630 51.5001]
+/-- Two fixes that would anchor if the bar were two rather than three. -/
+private def alightTwoFix : Array Fix := #[f 0 51.5, f 30 51.5028]
+
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 120] alightStaleRun
+  == #[(-600, 0, WP "Euston Square", none), (0, 120, none, none)]
+#guard alight #[atrain (-600) 0 (WP "Great Portland Street"), awalk 0 630] alightBounce
+  == #[(-600, 0, WP "Great Portland Street", none), (0, 630, none, none)]
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 30] alightTwoFix
+  == #[(-600, 0, WP "Euston Square", none), (0, 30, none, none)]
+-- The bare-separator pair, as on the boarding side. Note the mirror answers a
+-- veto for `""`, and BOTH of these go through — so on this side too an empty
+-- line is never consulted, even though the veto here precedes the rename test.
+#guard alight #[atrain (-600) 0 (some "Wembley Park → Great Portland Street · "), awalk 0 180] alightWalk
+  == #[(-600, 60, some "Wembley Park → Great Portland Street · ", some GPS_SAME), (60, 180, none, none)]
+#guard alight #[atrain (-600) 0 (some "Wembley Park → Euston Square · "), awalk 0 180] alightWalk
+  == #[(-600, 60, some "Wembley Park → Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+
+-- THE CORRIDOR GATE. The two ends must share a line…
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
+    (fun lat _ => if lat == 51.5 then #[METLINE] else #["Jubilee Line"])
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+-- …and they may share it only AFTER `expandTubeLineNames` canonicalises a
+-- directional name on one side and a combined relation on the other.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
+    (fun lat _ => if lat == 51.5 then #["Metropolitan Line Southbound"]
+                  else #["Circle, Hammersmith & City and Metropolitan Lines"])
+  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+-- An empty intersection is a REFUSAL, not an abstention: unlike
+-- `lineCannotServe`, "the mirror knows no lines here" stops the anchor.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk (fun _ _ => #[])
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
 
 end Verified.Geo.RailAbsorbers
