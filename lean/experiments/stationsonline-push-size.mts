@@ -45,6 +45,27 @@
  * That reasoning was sound and the number makes it moot — which is the point of
  * measuring the cost of a purity trade before paying for the cheaper one.
  *
+ * # THIS SIZES THE WRONG SET — see `raillineset-push-size.mts`
+ *
+ * The 24 names above are the ones the corpus was observed to ASK about. The
+ * push cannot be keyed on those, because `loadRailLineSet` runs before the
+ * pipeline and does not know what will be asked; it fetches for every
+ * CANDIDATE, meaning every railway name already on a row inside the day's
+ * coverage boxes, each expanded through `lineNamesMatching`. That is 62-371
+ * candidates per day, not 1-15.
+ *
+ * Re-measured properly: **mean 1.14 MiB/day, worst 5.19 MiB** (2026-05-11, 371
+ * candidates expanding to 1082 of the mirror's 1090 names — a day whose track
+ * touches enough distinct rail that base-token expansion nearly saturates).
+ * Roughly 2x what this file's numbers suggest, and the conclusion is unchanged:
+ * still an order of magnitude under the bbox rows those same fixtures already
+ * carry. Option A stands.
+ *
+ * Kept rather than deleted because the per-line breakdown is the useful half —
+ * it is what shows that rail geometry is sparse (224 Northern Line ways in
+ * 60 KiB). Sizing the hit set and calling it the fetch size is the error, and
+ * naming it here is cheaper than someone re-deriving the same wrong number.
+ *
  * Read-only. Counts and byte sizes, no writes, no pipeline.
  *
  * Run: scripts/prod-db.sh npx tsx lean/experiments/stationsonline-push-size.mts

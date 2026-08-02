@@ -153,3 +153,12 @@ export type OsmSource = "rows" | "trace";
 export function fixtureAnswersFromRows(captured: CapturedDay): boolean {
 	return captured.inputs.osmRowSet !== undefined;
 }
+
+/** Whether a fixture computes `stationsOnLine` from pushed rail rows (#414) or
+ *  still replays the captured answers. Tracked separately from
+ *  {@link fixtureAnswersFromRows} because the two arrived in different commits:
+ *  a row-set from before #414 answers the five bbox lookups from rows and this
+ *  one from the trace, so a single "from rows" tally would over-report. */
+export function fixtureAnswersLinesFromRows(captured: CapturedDay): boolean {
+	return captured.inputs.osmRowSet?.railLines !== undefined;
+}

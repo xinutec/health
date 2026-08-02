@@ -10,12 +10,18 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Station } from "../src/geo/line-stations.js";
+import { filterStationsByLineProximity, type Station } from "../src/geo/line-stations.js";
 import type { NominatimResult } from "../src/geo/osm.js";
 import type { OsmAdapter } from "../src/geo/osm-adapter.js";
 import { RowSetOsmAdapter } from "../src/geo/osm-adapter-rowset.js";
 import type { BuildingFootprint } from "../src/geo/osm-local.js";
-import { coverageForTrack, type OsmLineRow, type OsmPointRow, type OsmRowSet } from "../src/geo/osm-rowset.js";
+import {
+	coverageForTrack,
+	type OsmLineRow,
+	type OsmPointRow,
+	type OsmRailLineSet,
+	type OsmRowSet,
+} from "../src/geo/osm-rowset.js";
 import type { OsmRoadWay } from "../src/geo/road-match.js";
 
 const LAT = 51.5492;
@@ -227,6 +233,10 @@ describe("RowSetOsmAdapter answers the kernel lookups from rows", () => {
 });
 
 describe("RowSetOsmAdapter delegates what it does not own", () => {
+	// `makeRowSet()` carries no `railLines`, so `stationsOnLine` delegating here
+	// IS the backwards-compatibility path: a row-set captured before #414 has no
+	// rail rows to compute from and must behave exactly as it always did. The
+	// computed path is exercised in its own block below.
 	it("passes the non-spatial and bulk readers to the inner adapter", async () => {
 		const inner = new RecordingInner();
 		const a = new RowSetOsmAdapter(makeRowSet(), inner);
@@ -253,5 +263,123 @@ describe("RowSetOsmAdapter delegates what it does not own", () => {
 		await a.nearbyLandmarks(LAT, LON, 100);
 		await a.nearbyTransitStops(LAT, LON, 50);
 		expect(inner.calls).toEqual([]);
+	});
+});
+
+/**
+ * `stationsOnLine` from pushed rail rows (#414).
+ *
+ * This lookup is keyed by NAME, not by bbox, so it could not ride on the
+ * coverage boxes and carries its own section and its own coverage predicate.
+ * The refusal matters here for a slightly different reason than it does above:
+ * a short answer does not read as an error, it reads as a line that serves
+ * fewer stations — and the rail-triple invariant treats "not served" as a
+ * VETO, so a missing station turns into a positive assertion that a real
+ * journey was impossible.
+ */
+describe("RowSetOsmAdapter computes stationsOnLine from pushed rail rows", () => {
+	/** A north-south line with two stations on it and one 800 m off it, so the
+	 *  300 m proximity filter has something to reject. */
+	function railSet(): OsmRailLineSet {
+		return {
+			allNames: ["Jubilee Line", "Jubilee Line Northbound", "Bakerloo Line"],
+			fetchedNames: ["Jubilee Line", "Jubilee Line Northbound"],
+			ways: [
+				{
+					name: "Jubilee Line",
+					coords: [
+						[LAT - 0.01, LON],
+						[LAT + 0.01, LON],
+					],
+				},
+			],
+			stations: [
+				{ name: "On The Line", lat: LAT, lon: LON + 50 / MDEG },
+				{ name: "Also On It", lat: LAT + 0.005, lon: LON - 100 / MDEG },
+				{ name: "Far Away", lat: LAT, lon: LON + 800 / MDEG },
+			],
+		};
+	}
+
+	function withRail(rail: OsmRailLineSet): OsmRowSet {
+		return { ...makeRowSet(), railLines: rail };
+	}
+
+	it("keeps the stations within 300 m and drops the rest", async () => {
+		const inner = new RecordingInner();
+		const a = new RowSetOsmAdapter(withRail(railSet()), inner);
+		expect((await a.stationsOnLine("Jubilee Line")).map((s) => s.name)).toEqual(["On The Line", "Also On It"]);
+		expect(inner.calls).toEqual([]);
+	});
+
+	it("agrees with the DB path's own filter on the same inputs", async () => {
+		// The two paths must be ONE decision, not two that happen to agree. The
+		// adapter reaches `filterStationsByLineProximityParsed` directly and the
+		// DB reaches it through a WKT wrapper, so feeding both the same geometry
+		// is what pins that they have not drifted apart.
+		const rail = railSet();
+		const a = new RowSetOsmAdapter(withRail(rail), new RecordingInner());
+		const viaWkt = filterStationsByLineProximity(
+			rail.stations,
+			rail.ways.map((w) => ({ wkt: `LINESTRING(${w.coords.map(([la, lo]) => `${lo} ${la}`).join(",")})` })),
+		);
+		expect(await a.stationsOnLine("Jubilee Line")).toEqual(viaWkt);
+	});
+
+	it("answers a directional variant, which resolves to the same fetched names", async () => {
+		// "Jubilee Line Northbound" strips to the base token "Jubilee", the same
+		// as "Jubilee Line", so it expands to a set already fetched. This is why
+		// candidates derived from the day's own way names cover the labels the
+		// pipeline actually asks about.
+		const a = new RowSetOsmAdapter(withRail(railSet()), new RecordingInner());
+		expect((await a.stationsOnLine("Jubilee Line Northbound")).map((s) => s.name)).toEqual([
+			"On The Line",
+			"Also On It",
+		]);
+	});
+
+	it("REFUSES a line whose ways were never fetched", async () => {
+		const a = new RowSetOsmAdapter(withRail(railSet()), new RecordingInner());
+		await expect(a.stationsOnLine("Bakerloo Line")).rejects.toThrow(/outside the pushed rail-line set/);
+	});
+
+	it("refuses rather than answering empty when the name is merely absent from `ways`", async () => {
+		// "Jubilee Line Northbound" IS in `fetchedNames` but has no way rows —
+		// a legitimate empty. "Bakerloo Line" is in neither, and the difference
+		// between the two is exactly what `fetchedNames` exists to record: an
+		// empty answer and an unfetched one are indistinguishable from `ways`.
+		const rail = railSet();
+		const a = new RowSetOsmAdapter(withRail(rail), new RecordingInner());
+		expect(rail.ways.some((w) => w.name === "Jubilee Line Northbound")).toBe(false);
+		await expect(a.stationsOnLine("Jubilee Line Northbound")).resolves.not.toHaveLength(0);
+		await expect(a.stationsOnLine("Bakerloo Line")).rejects.toThrow();
+	});
+
+	it("matches way names case-INSENSITIVELY, as MariaDB's collation does", async () => {
+		// The mirror really carries both "North London line" and "North London
+		// Line", and `SELECT DISTINCT name` collapses them under
+		// `utf8mb4_general_ci`, so only one spelling reaches `allNames` while the
+		// DB's `name IN (…)` still selects the ways of BOTH. Filtering the pushed
+		// ways by exact string dropped the other spelling's ways and with them two
+		// real stations — 06-23, caught by the parity referee.
+		const rail = railSet();
+		rail.ways.push({
+			name: "JUBILEE LINE",
+			coords: [
+				[LAT + 0.004, LON - 200 / MDEG],
+				[LAT + 0.006, LON - 200 / MDEG],
+			],
+		});
+		rail.stations.push({ name: "Only Near The Shouty Way", lat: LAT + 0.005, lon: LON - 150 / MDEG });
+		const a = new RowSetOsmAdapter(withRail(rail), new RecordingInner());
+		expect((await a.stationsOnLine("Jubilee Line")).map((s) => s.name)).toContain("Only Near The Shouty Way");
+	});
+
+	it("returns empty for a label that resolves to nothing at all", async () => {
+		// A name whose base token matches no mirror name expands to the empty
+		// set, which is vacuously covered — there is nothing missing. That is a
+		// real empty answer, not a refusal.
+		const a = new RowSetOsmAdapter(withRail(railSet()), new RecordingInner());
+		expect(await a.stationsOnLine("Nonexistent Line")).toEqual([]);
 	});
 });

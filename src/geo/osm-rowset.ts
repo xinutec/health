@@ -56,6 +56,7 @@
 
 import { sql } from "kysely";
 import { db } from "../db/pool.js";
+import { lineNamesMatching } from "./line-stations.js";
 import { METERS_PER_DEG_LAT, metersPerDegLon, parseLineStringWkt } from "./osm-local.js";
 
 /** The widest radius any kernel call site passes — `RAIL_JOURNEY_LINES_RADIUS_M`,
@@ -159,11 +160,53 @@ export interface OsmLineRow {
 /** Coverage boxes per feature type — the buffers differ, so the boxes do too. */
 export type OsmCoverage = Record<string, CoverageBox[]>;
 
+/**
+ * The inputs `stationsOnLine` needs, pushed rather than queried (#414).
+ *
+ * This one is not bbox-keyed and so could not ride on the coverage boxes above:
+ * a line is selected by NAME and its ways run the length of the line, far
+ * outside any buffer around a day's track. It is pushed anyway because the key
+ * set turned out to be enumerable in advance — every line name the 33-day
+ * corpus asked for is a name already present on a railway row inside the day's
+ * own boxes (`lean/experiments/delegated-lookup-keys.mts`, 24 of 24) — and
+ * because the geometry is small: under 0.6 MiB for a worst-case day, against
+ * the 20-40 MiB the bbox rows already cost (`stationsonline-push-size.mts`).
+ *
+ * What is pushed is the INPUT, not the answer. The 300 m proximity decision
+ * stays a computation (`filterStationsByLineProximityParsed`), for the reason
+ * the proposal gives for the five kernel lookups: a captured value IS the
+ * answer, and storing it keeps the predicate an oracle.
+ */
+export interface OsmRailLineSet {
+	/** Every distinct `osm_lines` railway name in the mirror. `lineNamesMatching`
+	 *  resolves a line label against this list, and it has to be the WHOLE list
+	 *  or the resolution differs from the DB path's: a name absent here is a
+	 *  match that silently does not happen. ~1090 names, ~17 KiB. */
+	allNames: string[];
+	/** The way names this set was built to answer — the union of
+	 *  `lineNamesMatching(c, allNames)` over the candidate lines. A name may
+	 *  legitimately have no ways, so this records what was ASKED FOR, which is
+	 *  what coverage has to be judged against; deriving it from `ways` instead
+	 *  would read an empty line as an uncovered one. */
+	fetchedNames: string[];
+	/** Railway way geometry for `fetchedNames`, `[lat, lon]` as elsewhere. */
+	ways: Array<{ name: string; coords: Array<[number, number]> }>;
+	/** Every named railway station in the mirror. The DB path filters an
+	 *  in-memory list of all of them per line rather than querying per line —
+	 *  a London-wide MBR scan is slower than the filter — so the pushed set
+	 *  mirrors that and stays a whole-table copy. ~1232 rows. */
+	stations: Array<{ name: string; lat: number; lon: number }>;
+}
+
 /** One day's pushed rows, with the boxes that bound what they cover. */
 export interface OsmRowSet {
 	coverage: OsmCoverage;
 	points: OsmPointRow[];
 	lines: OsmLineRow[];
+	/** Absent in row-sets captured before #414 — those delegate `stationsOnLine`
+	 *  to the recorded trace, exactly as they did. Present means the lookup is
+	 *  computed, and an out-of-coverage line is then a hard error. */
+	railLines?: OsmRailLineSet;
 }
 
 /**
@@ -306,6 +349,33 @@ export function methodIsCovered(
 	const types = METHOD_FEATURE_TYPES[method];
 	if (!types) throw new Error(`methodIsCovered: unknown method ${method}`);
 	return types.every((t) => queryIsCovered(lat, lon, radiusM, coverage[t] ?? []));
+}
+
+/**
+ * Is `stationsOnLine(lineName)` answerable from a pushed rail-line set?
+ *
+ * The test is on the RESOLVED names, not on the label: `stationsOnLine` never
+ * looks a label up directly, it expands it through `lineNamesMatching` and
+ * fetches the ways of everything that comes back. So the set can answer a line
+ * it has never heard of, provided that line resolves to names already fetched —
+ * which is the common case, because a label and its directional variant
+ * ("Victoria Line", "Victoria Line Northbound") share a base token and expand
+ * to the SAME set.
+ *
+ * Conservative in the same direction as {@link queryIsCovered}: a name missing
+ * from `fetchedNames` reads as uncovered even if it happens to have no ways in
+ * the mirror, because "no ways were fetched" and "no ways exist" are the same
+ * observation from here and only one of them is a correct empty answer.
+ *
+ * Exact string comparison is right HERE, unlike in the adapter's way filter,
+ * which has to fold case to match MariaDB's collation: both sides of this test
+ * are produced by `lineNamesMatching` over the same stored `allNames`, so equal
+ * names are the identical string. The fold is only needed where a pushed WAY
+ * name meets a name list, because the DB selected those ways case-insensitively.
+ */
+export function lineIsCovered(lineName: string, set: OsmRailLineSet): boolean {
+	const fetched = new Set(set.fetchedNames);
+	return lineNamesMatching(lineName, set.allNames).every((n) => fetched.has(n));
 }
 
 /**
@@ -478,5 +548,73 @@ export async function loadOsmRowSet(track: ReadonlyArray<{ lat: number; lon: num
 		}
 	}
 
-	return { coverage, points: [...points.values()], lines: [...lines.values()] };
+	const railLines = await loadRailLineSet([...lines.values()]);
+	return { coverage, points: [...points.values()], lines: [...lines.values()], railLines };
+}
+
+/**
+ * The `stationsOnLine` inputs for a day, derived from the day's own railway rows.
+ *
+ * The candidate lines are the distinct names on the railway rows already
+ * fetched — which is not a heuristic but the exact reachable set: `linesAtPoint`
+ * answers out of these same rows, so no name it can ever return for this day is
+ * outside them. Whether the day only ever ASKS about lines it saw is a separate
+ * question, and a measured one — 24 of 24 across the corpus
+ * (`lean/experiments/delegated-lookup-keys.mts`). {@link lineIsCovered} is what
+ * holds that claim to account per call rather than trusting the measurement.
+ *
+ * Offline only, like its caller. Two queries plus one per distinct buffer.
+ */
+async function loadRailLineSet(dayLines: readonly OsmLineRow[]): Promise<OsmRailLineSet> {
+	const allNames = (
+		(await db()
+			.selectFrom("osm_lines")
+			.where("feature_type", "=", "railway")
+			.where("name", "is not", null)
+			.select("name")
+			.distinct()
+			.execute()) as Array<{ name: string | null }>
+	)
+		.map((r) => r.name)
+		.filter((n): n is string => n !== null);
+
+	const candidates = new Set<string>();
+	for (const l of dayLines) {
+		if (l.featureType === "railway" && l.name !== null) candidates.add(l.name);
+	}
+	const fetched = new Set<string>();
+	for (const c of candidates) {
+		for (const n of lineNamesMatching(c, allNames)) fetched.add(n);
+	}
+	const fetchedNames = [...fetched];
+
+	const ways: OsmRailLineSet["ways"] = [];
+	if (fetchedNames.length > 0) {
+		const rows = (await db()
+			.selectFrom("osm_lines")
+			.where("feature_type", "=", "railway")
+			.where("name", "in", fetchedNames)
+			.select(["name", sql<string>`ST_AsText(geom)`.as("wkt")])
+			.execute()) as Array<{ name: string | null; wkt: string }>;
+		for (const r of rows) {
+			if (r.name === null) continue;
+			ways.push({ name: r.name, coords: parseLineStringWkt(r.wkt) });
+		}
+	}
+
+	// The whole station table, matching what the DB path caches process-wide.
+	// Filtering an in-memory list per line is faster than a per-line MBR query
+	// at these bbox sizes, and copying that shape keeps the two paths identical.
+	const stations = (
+		(await db()
+			.selectFrom("osm_points")
+			.where("feature_type", "=", "railway")
+			.where("subtype", "=", "station")
+			.select(["name", sql<number>`ST_Y(geom)`.as("lat"), sql<number>`ST_X(geom)`.as("lon")])
+			.execute()) as Array<{ name: string | null; lat: number; lon: number }>
+	)
+		.filter((r): r is { name: string; lat: number; lon: number } => r.name !== null)
+		.map((r) => ({ name: r.name, lat: Number(r.lat), lon: Number(r.lon) }));
+
+	return { allNames, fetchedNames, ways, stations };
 }

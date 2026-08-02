@@ -48,6 +48,14 @@ export interface WayGeometry {
 	wkt: string;
 }
 
+/** A rail-line way whose geometry is already `[lat, lon]` pairs. The
+ *  pushed row-set (`osm-rowset.ts`) stores coordinates, not WKT, so it
+ *  reaches the proximity filter through this shape rather than
+ *  re-serialising to a string only to parse it straight back. */
+export interface ParsedWayGeometry {
+	coords: ReadonlyArray<readonly [number, number]>;
+}
+
 /** Max metres from a station point to any way of the line for the
  *  station to count as "served by" the line. Sized to absorb the
  *  offset between a station's named node (the named building or
@@ -243,7 +251,7 @@ function pointToSegmentM(
  *  the padded box cannot be within MAX_DIST_M of the way (cheap reject
  *  before the per-segment distance math). */
 interface ParsedWay {
-	coords: Array<[number, number]>;
+	coords: ReadonlyArray<readonly [number, number]>;
 	minLat: number;
 	maxLat: number;
 	minLon: number;
@@ -267,6 +275,22 @@ export function filterStationsByLineProximity(
 	stations: readonly StationCandidate[],
 	ways: readonly WayGeometry[],
 ): Station[] {
+	return filterStationsByLineProximityParsed(
+		stations,
+		ways.map((w) => ({ coords: parseLineStringWkt(w.wkt) })),
+	);
+}
+
+/**
+ * {@link filterStationsByLineProximity} over geometry that is already parsed.
+ * This is where the 300 m decision actually lives; the WKT-taking wrapper above
+ * only parses and delegates, so the DB path and the pushed row-set path are the
+ * same function rather than two that agree today.
+ */
+export function filterStationsByLineProximityParsed(
+	stations: readonly StationCandidate[],
+	ways: readonly ParsedWayGeometry[],
+): Station[] {
 	if (stations.length === 0 || ways.length === 0) return [];
 
 	// MAX_DIST_M as a degree pad. Latitude is uniform; for longitude use the
@@ -276,7 +300,7 @@ export function filterStationsByLineProximity(
 	let maxAbsLat = 0;
 	const parsed: ParsedWay[] = [];
 	for (const w of ways) {
-		const coords = parseLineStringWkt(w.wkt);
+		const coords = w.coords;
 		if (coords.length < 2) continue;
 		let minLat = Infinity;
 		let maxLat = -Infinity;

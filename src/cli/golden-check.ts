@@ -67,6 +67,7 @@ import { gateLedgers } from "../lean/ledger-verdict.js";
 import {
 	type CapturedDay,
 	fixtureAnswersFromRows,
+	fixtureAnswersLinesFromRows,
 	inputsFromFixture,
 	type OsmSource,
 	parseCapturedDay,
@@ -381,6 +382,11 @@ let blessed = 0;
 let checked = 0;
 /** Days whose kernel lookups came from pushed rows rather than the oracle. */
 let fromRows = 0;
+/** Days whose `stationsOnLine` came from pushed rail rows rather than the
+ *  oracle (#414). A subset of `fromRows` — the section is newer than the
+ *  row-set itself, so a corpus can be wholly on rows for the five bbox lookups
+ *  and wholly on the trace for this one. */
+let linesFromRows = 0;
 // Worldline-feasibility accounting (Phase 0 of journey-worldline). Two
 // severities: the label-only rail invariants are HARD-ZERO (the corpus has
 // none; any occurrence is a regression), while the kinematic invariant
@@ -419,6 +425,7 @@ for (const file of files) {
 	let actual: ReturnType<typeof normalizeStates>;
 	const dayInputs = inputsFromFixture(captured, osmSource);
 	const answersFromRows = fixtureAnswersFromRows(captured) && osmSource === "rows";
+	const answersLinesFromRows = fixtureAnswersLinesFromRows(captured) && osmSource === "rows";
 	try {
 		const result = await computeVelocityFromInputs(dayInputs);
 		states = result.states;
@@ -430,6 +437,7 @@ for (const file of files) {
 		// (#408). Same shape as the truth cascade: a tally that survives the
 		// thing it was counting.
 		if (answersFromRows) fromRows++;
+		if (answersLinesFromRows) linesFromRows++;
 	} catch (e) {
 		// An uncaptured-query throw means the pipeline reached an OSM call
 		// site the fixture didn't record — a moved/added call site. That is
@@ -593,6 +601,11 @@ console.log(
 	fromRows === checked
 		? `osm kernel: all ${checked} day(s) answered from pushed rows.`
 		: `osm kernel: ${fromRows}/${checked} day(s) from pushed rows, ${checked - fromRows} still replaying captured answers.`,
+);
+console.log(
+	linesFromRows === checked
+		? `osm lines: all ${checked} day(s) computed stationsOnLine from pushed rail rows.`
+		: `osm lines: ${linesFromRows}/${checked} day(s) computed stationsOnLine from pushed rail rows, ${checked - linesFromRows} still replaying captured answers.`,
 );
 // Rail worldline invariants are a hard gate: the corpus baseline is zero
 // (every blessed day is rail-consistent), so any occurrence is a failure,
