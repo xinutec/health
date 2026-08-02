@@ -59,6 +59,7 @@ import {
 	refineMode,
 	rejectImplausibleDriving,
 } from "./osm.js";
+import { isUncapturedLookup } from "./osm-adapter-fixture.js";
 import { ENRICH_CONCURRENCY, mapLimit, mergeAdjacentMoving } from "./passes/moving.js";
 import {
 	absorbBoardingPlatform,
@@ -1042,6 +1043,11 @@ export async function computeVelocityFromInputs(
 			}
 			return enrichMovingSegment(seg, segPoints);
 		} catch (e) {
+			// A stale fixture is NOT a lookup failure, and degrading on it is how a
+			// gate ends up grading a day it did not actually replay (#408). Only
+			// `FixtureOsmAdapter` raises this, so no production path can reach the
+			// rethrow — live adapters return empty, they do not throw.
+			if (isUncapturedLookup(e)) throw e;
 			console.warn(`OSM enrichment failed for segment ${seg.startTs}: ${e}`);
 			return seg;
 		}
@@ -1443,6 +1449,7 @@ export async function computeVelocityFromInputs(
 						try {
 							redone.set(seg.startTs, await enrichMovingSegment(seg, segPoints));
 						} catch (e) {
+							if (isUncapturedLookup(e)) throw e;
 							console.warn(`re-enrichment failed for split walk ${seg.startTs}: ${e}`);
 						}
 					}),
@@ -1931,8 +1938,14 @@ export async function computeVelocityFromInputs(
 	for (const line of labelledLines) {
 		try {
 			lineStations.set(line, await inputs.osm.stationsOnLine(line));
-		} catch {
-			// Uncaptured in a fixture trace — no membership, no assertion.
+		} catch (e) {
+			// This used to swallow EVERYTHING with the note "uncaptured in a fixture
+			// trace — no membership, no assertion", which is the defect stated as if
+			// it were the design: with no membership the rail-triple check has
+			// nothing to test, so a stale fixture turned the feasibility gate into a
+			// silent pass on exactly the days whose line labels moved. A live
+			// adapter returning nothing is still fine — that is a genuine absence.
+			if (isUncapturedLookup(e)) throw e;
 		}
 	}
 	for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps, lineStations)) {

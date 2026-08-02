@@ -31,6 +31,7 @@ import { gateWalks, WALK_SPEED_CEIL_KMH, type WalkBaseline, type WalkBaselineEnt
 import { walkPlausibility } from "../eval/walk-plausibility.js";
 import { onNamedWayFraction } from "../eval/walk-route-correctness.js";
 import { stepsInWindow } from "../geo/biometrics.js";
+import { isUncapturedLookup } from "../geo/osm-adapter-fixture.js";
 import type { BuildingFootprint } from "../geo/osm-local.js";
 import type { OsmRoadWay, RoadGeometry } from "../geo/road-match.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
@@ -408,8 +409,22 @@ async function main(): Promise<void> {
 					.sort();
 
 	const all: WalkVerdict[] = [];
+	/** Days the replay could not honestly grade — a stale fixture, not a result. */
+	const refused: { date: string; detail: string }[] = [];
 	for (const date of dates) {
-		const verdicts = await scoreDay(date, user);
+		let verdicts: WalkVerdict[];
+		try {
+			verdicts = await scoreDay(date, user);
+		} catch (e) {
+			// REFUSE the day, do not abort the sweep. An uncaptured lookup says the
+			// replay is not the day (#408), which is a verdict about the FIXTURE —
+			// so it must not be reported as geometry, and it must not cost every
+			// other day its verdict either. Anything else is a real crash: rethrow.
+			if (!isUncapturedLookup(e)) throw e;
+			refused.push({ date, detail: e instanceof Error ? e.message : String(e) });
+			console.log(`${date}: REFUSED — ${e instanceof Error ? e.message : String(e)}`);
+			continue;
+		}
 		all.push(...verdicts);
 		if (verdicts.length === 0) {
 			console.log(`${date}: no walking legs`);
@@ -591,6 +606,17 @@ async function main(): Promise<void> {
 	// standing defects), the ratchet fails ONLY on a walk getting worse than
 	// its own recorded floor — so it can gate deploys.
 	const current = toBaseline(all);
+	// Print BEFORE the ratchet block, because every exit below passes through
+	// here — including `--bless`, which must never record a floor from a corpus
+	// it could not fully replay.
+	if (refused.length > 0) {
+		console.log(
+			`\nREFUSED ${refused.length} day(s) — the fixture does not cover the replay, so no verdict is possible:`,
+		);
+		for (const r of refused) console.log(`  ✗ ${r.date}  ${r.detail}`);
+		console.log("  Re-capture those days (scripts/capture-golden.sh) — see #408.");
+		process.exit(1);
+	}
 	if (bless) {
 		// A DATE-FILTERED bless merges into the existing floor; only a full sweep
 		// replaces it — otherwise blessing one day would delete every other day's
