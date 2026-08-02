@@ -228,6 +228,10 @@ private def parseWay (w : WayGeometry) : Option ParsedWay :=
 Keep the station candidates within `MAX_DIST_M` of any of the ways. Dedupes by
 NAME and preserves input order.
 
+Ports the TS `filterStationsByLineProximityParsed` — the geometry decision alone.
+Its sibling `filterStationsByLineProximity` is the WKT wrapper, which parses and
+then calls this; parsing is boundary work, not part of the rule.
+
 Order is part of the answer, not incidental: downstream journey resolution reads
 positional relationships out of this list, so a set-equal-but-reordered result is
 a different result.

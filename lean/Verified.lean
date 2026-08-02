@@ -78,6 +78,7 @@ import Verified.Geo.TubeHop
 import Verified.Geo.UndergroundRun
 import Verified.Geo.UndergroundJourney
 import Verified.Geo.UndergroundAnnotate
+import Verified.Geo.TransitPlace
 import Verified.Geo.OsmSpatial
 import Verified.Geo.LineStoppingPattern
 import Verified.Geo.LineStations
