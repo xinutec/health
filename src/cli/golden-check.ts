@@ -418,12 +418,18 @@ for (const file of files) {
 	let dayPoints: Awaited<ReturnType<typeof computeVelocityFromInputs>>["points"];
 	let actual: ReturnType<typeof normalizeStates>;
 	const dayInputs = inputsFromFixture(captured, osmSource);
-	if (fixtureAnswersFromRows(captured) && osmSource === "rows") fromRows++;
+	const answersFromRows = fixtureAnswersFromRows(captured) && osmSource === "rows";
 	try {
 		const result = await computeVelocityFromInputs(dayInputs);
 		states = result.states;
 		dayPoints = result.points;
 		actual = normalizeStates(states, captured.meta.tz);
+		// Counted only once the day actually replayed. Incremented before the
+		// try, a refused day still scored as "answered from rows" while dropping
+		// out of `checked`, and the summary read `33/31 … -2 still replaying`
+		// (#408). Same shape as the truth cascade: a tally that survives the
+		// thing it was counting.
+		if (answersFromRows) fromRows++;
 	} catch (e) {
 		// An uncaptured-query throw means the pipeline reached an OSM call
 		// site the fixture didn't record — a moved/added call site. That is
@@ -751,14 +757,25 @@ if (truthBaseline === null) {
 	// fixture threw, or whose narrative is gone, measures nothing — and to a
 	// floor gate "measured nothing" is indistinguishable from "lost everything".
 	// Excluded BY NAME rather than silently.
+	// The day must leave BOTH sides. Dropping it only from `current` is what
+	// `gateFloor` documents as the trap — an absent date reads as "satisfied
+	// nothing", so every confirmed row on an unreplayable day reported as LOST
+	// (#408: 26 rows across two days, two lines above a message naming those
+	// same days as not measured). Nothing exercised this until an uncaptured
+	// lookup started throwing, because before that every day was always
+	// measured. A gate that claims 26 confirmed rows broke is one re-bless away
+	// from destroying them.
 	const measured: FloorBaseline = {};
+	const measuredBaseline: FloorBaseline = {};
 	const unmeasured: string[] = [];
 	for (const date of Object.keys(truthBaseline)) {
-		if (truthReported.has(date)) measured[date] = truthNow[date] ?? [];
-		else unmeasured.push(date);
+		if (truthReported.has(date)) {
+			measured[date] = truthNow[date] ?? [];
+			measuredBaseline[date] = truthBaseline[date];
+		} else unmeasured.push(date);
 	}
 	for (const [date, keys] of Object.entries(truthNow)) if (!(date in measured)) measured[date] = keys;
-	const truthGate = gateFloor(truthBaseline, measured);
+	const truthGate = gateFloor(measuredBaseline, measured);
 	truthRegressedKeys = truthGate.regressed.length;
 	if (truthRegressedKeys > 0) {
 		console.log(`truth: FAIL — ${truthRegressedKeys} confirmed row(s) no longer hold:`);
@@ -812,7 +829,18 @@ if (blessJourneys) {
 }
 
 const baseline = await loadJourneyBaseline();
-const gate = gateJourneys(baseline, journeysNow);
+// Same exclusion as the truth floor above, for the same reason: a day the
+// replay refused reconstructed no journeys, and charging its floor entries as
+// regressions reports a failure about work that never ran (#408). `truthReported`
+// is the right predicate — it is set from the same successful replay that fills
+// `journeysNow`.
+const journeyBaselineMeasured: JourneyBaseline = {};
+const journeysUnmeasured: string[] = [];
+for (const [date, keys] of Object.entries(baseline)) {
+	if (truthReported.has(date)) journeyBaselineMeasured[date] = keys;
+	else journeysUnmeasured.push(date);
+}
+const gate = gateJourneys(journeyBaselineMeasured, journeysNow);
 if (Object.keys(baseline).length === 0) {
 	console.log(
 		`journeys: no baseline yet — ${totalReconstructed} reconstructed. Establish the floor with: npm run golden -- --bless-journeys`,
@@ -823,6 +851,11 @@ if (Object.keys(baseline).length === 0) {
 		console.log(`      ✗ ${r.date} @${new Date(r.startTs * 1000).toISOString().slice(11, 16)}Z`);
 } else {
 	console.log(`journeys: ${totalReconstructed} reconstructed, no regressions.`);
+}
+if (journeysUnmeasured.length > 0) {
+	console.log(
+		`journeys: ${journeysUnmeasured.length} day(s) not measured this run, floor unchecked: ${journeysUnmeasured.join(", ")}`,
+	);
 }
 if (gate.improved.length > 0) {
 	console.log(
