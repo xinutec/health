@@ -796,4 +796,169 @@ private def perDwell : Float → Float → Float → Array TransitStop :=
 
 end AnnotateGuards
 
+/-! ## `annotateBusRoutes` — the orchestration over the matcher
+
+The pass that turns a match into a label. Unlike the other passes in this
+tranche it was never `async`: the candidate routes arrive as data (the
+orchestrator reads `bus_route_cache`), so there is nothing to inject and the
+whole pass ports as it stands.
+
+What it decides beyond the matcher is small and all of it is pinned: the leg
+filter reads the EFFECTIVE mode, the fix window is inclusive at BOTH ends, the
+board and alight are the window's first and last fix while the trace is all of
+them, and the speed handed to the matcher is the segment's `avgSpeed`.
+
+Two things the TS does that this cannot express, both harmless:
+
+* `routes.length === 0` returns early. With no routes `matchBusRoute` returns
+  `none` for every leg, so the early return is an optimisation with no
+  observable consequence — kept to mirror the TS, and UNPINNABLE for that
+  reason rather than for want of a case.
+* The TS returns `segments.slice()`, and an unmatched segment is the SAME
+  object while a matched one is a fresh `{ ...seg }`. Arrays and structures
+  are values here, so the distinction does not exist; the TS never mutates a
+  segment either way.
+
+Exact: no arithmetic of its own — the window test is on `Int` timestamps and
+everything else is the matcher's, whose ULP story is above. -/
+
+/-- The segment fields this pass reads and the two it writes. `avgSpeed` is
+soft speed evidence, absent ⇒ neutral. -/
+structure BusRouteSeg where
+  startTs : Int
+  endTs : Int
+  mode : String
+  refinedMode : Option String := none
+  vehicleKind : Option String := none
+  wayName : Option String := none
+  avgSpeed : Option Float := none
+  deriving Inhabited, BEq, Repr
+
+/-- Name the bus route each road-vehicle leg rode. Purely additive: a leg that
+anchors and corroborates gets `vehicleKind := "bus"` and the route label, and
+everything else — wrong mode, too few fixes, no route matched — passes through
+untouched, so an empty route set makes the pass a no-op. -/
+def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes : List BusRoute)
+    (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
+    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE) : Array BusRouteSeg :=
+  if routes.isEmpty then segments
+  else segments.map fun seg =>
+    if seg.refinedMode.getD seg.mode ≠ "driving" then seg
+    else
+      -- `samplesInWindow`: inclusive at both ends, the pipeline's dominant
+      -- convention. A fix on a shared boundary belongs to both neighbours.
+      let legFixes := points.filter fun p =>
+        decide (p.ts ≥ seg.startTs) && decide (p.ts ≤ seg.endTs)
+      if legFixes.length < 2 then seg
+      else
+        let board := legFixes.head!
+        let alight := legFixes.getLast!
+        let leg : VehicleLeg :=
+          { board := ⟨board.lat, board.lon⟩
+            alight := ⟨alight.lat, alight.lon⟩
+            trace := legFixes.map fun p => ⟨p.lat, p.lon⟩
+            speedKmh := seg.avgSpeed }
+        match matchBusRoute leg routes anchorM stopPassM minCoverage with
+        | none => seg
+        | some m =>
+          { seg with
+              vehicleKind := some "bus"
+              wayName := some (busRouteLabel m) }
+
+/-! ### Parity with Node/V8 (`lean/experiments/annotate-bus-routes-refs.mts`) -/
+
+section RouteAnnotateGuards
+
+/-- The matcher fixtures as a day's fixes, 100 s apart so a window edge is easy
+to name: the 38's road past every intermediate stop, and the taxi's direct road
+between the same endpoints. -/
+private def stamp (pts : List LatLon) : List Fix :=
+  pts.mapIdx fun i p => ⟨100 + 100 * Int.ofNat i, p.lat, p.lon⟩
+
+private def busFixes' : List Fix := stamp traceOnRoute
+private def taxiFixes : List Fix := stamp traceDirect
+
+private def R_START : Int := 100
+private def R_END : Int := 900
+
+private def LABEL : String := "Green Park → Victoria Station · 38"
+
+private def rdrive (mode : String := "driving") (refinedMode : Option String := none)
+    (startTs : Int := R_START) (endTs : Int := R_END) (vehicleKind : Option String := none)
+    (wayName : Option String := none) (avgSpeed : Option Float := none) : BusRouteSeg :=
+  { startTs, endTs, mode, refinedMode, vehicleKind, wayName, avgSpeed }
+
+/-- The two fields the pass writes, per segment. -/
+private def cells (segs : Array BusRouteSeg) (fixes : List Fix) (routes : List BusRoute)
+    (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
+    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE) :
+    Array (Option String × Option String) :=
+  (annotateBusRoutes segs fixes routes anchorM stopPassM minCoverage).map
+    fun s => (s.vehicleKind, s.wayName)
+
+#guard cells #[rdrive] busFixes' [route38] == #[(some "bus", some LABEL)]
+-- No routes loaded, and a taxi on the direct road, are the same answer.
+#guard cells #[rdrive] busFixes' [] == #[(none, none)]
+#guard cells #[rdrive] taxiFixes [route38] == #[(none, none)]
+
+-- The leg filter reads the EFFECTIVE mode, both directions.
+#guard cells #[rdrive "stationary" (some "driving")] busFixes' [route38] == #[(some "bus", some LABEL)]
+#guard cells #[rdrive "driving" (some "train")] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive "walking"] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive "stationary"] busFixes' [route38] == #[(none, none)]
+
+-- The window is inclusive at BOTH ends: moving either edge by one second drops
+-- an endpoint fix, and the leg no longer anchors.
+#guard cells #[rdrive (startTs := 101)] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive (endTs := 899)] busFixes' [route38] == #[(none, none)]
+-- Fewer than two fixes in the window is not a leg — one, and none at all.
+#guard cells #[rdrive (endTs := 150)] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive (startTs := 901) (endTs := 1000)] busFixes' [route38] == #[(none, none)]
+-- Two fixes clear the bar and still fail to match: clearing it is not matching.
+#guard cells #[rdrive (endTs := 200)] busFixes' [route38] == #[(none, none)]
+
+/- The two-fix bar is not only guarding the index. `routeTwin` opens with two
+stops 24 m apart, so a ONE-fix leg anchors both ends of an in-order pair whose
+span holds no intermediate stop — coverage 0, which clears a floor of 0 because
+`0 < 0` is false. The matcher underneath does match that leg; the bar is the
+only thing between this fixture and a "bus" named off a single GPS point. -/
+#guard ((matchBusRoute ⟨⟨51.5067, -0.1428⟩, ⟨51.5067, -0.1428⟩, [⟨51.5067, -0.1428⟩], none⟩
+          [routeTwin] (minCoverage := 0)).map busRouteLabel) == some "Twin A → Twin B · C1"
+#guard cells #[rdrive (endTs := 150)] busFixes' [routeTwin] (minCoverage := 0) == #[(none, none)]
+-- …and at the shipping floor the matcher refuses it on its own.
+#guard cells #[rdrive (endTs := 150)] busFixes' [routeTwin] == #[(none, none)]
+
+-- `avgSpeed` is the speed evidence, and it reaches the logistic's decision
+-- boundary intact — the same 35.56/35.57 flip the matcher's own guards pin.
+#guard cells #[rdrive (avgSpeed := some 14)] busFixes' [route38] == #[(some "bus", some LABEL)]
+#guard cells #[rdrive (avgSpeed := some 35.56)] busFixes' [route38] == #[(some "bus", some LABEL)]
+#guard cells #[rdrive (avgSpeed := some 35.57)] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive (avgSpeed := some 62)] busFixes' [route38] == #[(none, none)]
+
+-- A match OVERWRITES an existing `wayName`; a miss leaves it, and leaves an
+-- existing `vehicleKind`, exactly as they were.
+#guard cells #[rdrive (wayName := some "Piccadilly")] busFixes' [route38]
+       == #[(some "bus", some LABEL)]
+#guard cells #[rdrive (wayName := some "Piccadilly")] taxiFixes [route38]
+       == #[(none, some "Piccadilly")]
+#guard cells #[rdrive (vehicleKind := some "bus")] taxiFixes [route38] == #[(some "bus", none)]
+
+-- Every segment is answered in place, so the array keeps its shape.
+#guard cells #[rdrive, rdrive "walking", rdrive (endTs := 150)] busFixes' [route38]
+       == #[(some "bus", some LABEL), (none, none), (none, none)]
+
+-- The three tuning knobs reach the matcher.
+#guard cells #[rdrive] busFixes' [route38] (minCoverage := 1.01) == #[(none, none)]
+#guard cells #[rdrive] busFixes' [route38] (anchorM := 1) == #[(none, none)]
+#guard cells #[rdrive] busFixes' [route38] (stopPassM := 1) == #[(none, none)]
+
+-- Nothing else on the segment moves.
+#guard annotateBusRoutes
+         #[rdrive (refinedMode := some "driving") (wayName := some "Piccadilly")
+             (avgSpeed := some 14)] busFixes' [route38]
+       == #[{ startTs := 100, endTs := 900, mode := "driving", refinedMode := some "driving",
+              vehicleKind := some "bus", wayName := some LABEL, avgSpeed := some 14 }]
+
+end RouteAnnotateGuards
+
 end Verified.Geo.Bus
