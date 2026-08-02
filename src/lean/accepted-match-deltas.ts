@@ -477,6 +477,30 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		basis: "magnitude",
 		reason: bounded(0.0, "display"),
 	},
+	{
+		// The 23rd entry, and the only one not measured in the 2026-07-31
+		// re-derivation — 2026-07-30 was not in the gated corpus then. #407
+		// promoted it; this leg is what the promotion surfaced.
+		leg: "f1a37e256633c480",
+		date: "2026-07-30",
+		hhmm: "09:28",
+		coarse: "NEAR",
+		path: "NEAR",
+		note: "coarse 8v vs 8v, path 14v vs 14v",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		basis: "magnitude",
+		reason:
+			"Float↔quant rounding, MEASURED 2026-08-02 (not in the 2026-07-31 re-derivation — the day was still in " +
+			"adhoc-days/ and ungated). UCLH → Euston Square, the 10:28–10:39 BST walk. Both arms keep the SAME vertex " +
+			"counts at both layers (8v coarse, 14v display) and the two display lines are 0.01 m apart; the coarse " +
+			"lines are identical at the recorded resolution. That is the sub-decimetre population this file " +
+			"documents (20 of 22 legs at 0.00–0.04 m), four orders of magnitude under matchImprovesDisplay's 18 m " +
+			"off-road trigger and 40 m stray cap, so it cannot change whether the match is kept or which corridor " +
+			"is chosen — the failure mode #398 found on 71e5544efa614a06, which is the OTHER 07-30 walk and is now " +
+			"bit-clean after #406. Held in the delta CEILING as un-adjudicated debt from the promotion until this " +
+			"measurement; moved here once measured, which is the direction that file is supposed to flow.",
+	},
 ];
 
 const accepted = new Map<string, AcceptedMatchDelta>(ACCEPTED_MATCH_DELTAS.map((d) => [d.leg, d]));
