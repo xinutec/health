@@ -6,6 +6,7 @@
  */
 
 import { db } from "../db/pool.js";
+import { errorText } from "../util/error-text.js";
 import type { BusRoute, BusStop } from "./bus-route-match.js";
 
 /** The cache columns this module reads/writes (subset of the table). */
@@ -71,7 +72,7 @@ export async function loadAllBusRoutes(): Promise<BusRoute[]> {
 		// degrade to "no routes" — bus naming is purely additive, and it
 		// must NEVER take down the whole day's timeline. Mirrors the
 		// defensive posture of the biometrics/venue-prior loaders.
-		console.warn(`loadAllBusRoutes failed — treating as no bus routes: ${e}`);
+		console.warn(`loadAllBusRoutes failed — treating as no bus routes: ${errorText(e)}`);
 		return [];
 	}
 	const routes: BusRoute[] = [];

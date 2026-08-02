@@ -53,6 +53,7 @@ import { buildRouteRailEvidence } from "../hmm/route-rail-evidence.js";
 import { buildStateSpace, type FocusPlaceRef, type State, stateKey } from "../hmm/state-space.js";
 import { buildTransitionMatrix } from "../hmm/transitions.js";
 import { viterbi } from "../hmm/viterbi.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -582,7 +583,7 @@ async function main(): Promise<void> {
 				console.log(renderMarginalsConfidence(result, focusPlaces, tz));
 			}
 		} catch (e) {
-			console.error(`  [${date}] FAILED: ${e}`);
+			console.error(`  [${date}] FAILED: ${errorText(e)}`);
 		}
 	}
 

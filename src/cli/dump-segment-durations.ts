@@ -17,6 +17,7 @@ import { initPool, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
 import type { TransportMode } from "../geo/segments.js";
 import { computeVelocity, type EnrichedSegment } from "../geo/velocity.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
 			}
 			dayCount++;
 		} catch (e) {
-			console.error(`  [${date}] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+			console.error(`  [${date}] FAILED: ${errorText(e)}`);
 			failedDayCount++;
 		}
 	}

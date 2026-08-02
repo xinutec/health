@@ -43,6 +43,7 @@ import {
 	refineMatchedPath,
 	type WalkFix,
 } from "../geo/walk-smooth-map.js";
+import { errorText } from "../util/error-text.js";
 import { type CapturedDay, inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
 /** Refine profile with env overrides, so the σ balance can be swept without a
@@ -421,8 +422,8 @@ async function main(): Promise<void> {
 			// so it must not be reported as geometry, and it must not cost every
 			// other day its verdict either. Anything else is a real crash: rethrow.
 			if (!isUncapturedLookup(e)) throw e;
-			refused.push({ date, detail: e instanceof Error ? e.message : String(e) });
-			console.log(`${date}: REFUSED — ${e instanceof Error ? e.message : String(e)}`);
+			refused.push({ date, detail: errorText(e) });
+			console.log(`${date}: REFUSED — ${errorText(e)}`);
 			continue;
 		}
 		all.push(...verdicts);

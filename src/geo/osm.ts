@@ -25,6 +25,7 @@ import type { TransportMode } from "./segments.js";
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
 
+import { errorText } from "../util/error-text.js";
 import {
 	type BuildingFootprint,
 	ensureCovered,
@@ -137,7 +138,7 @@ async function withCache<T>(
 				// fetch() throws before any HTTP status. Treat as a transient
 				// failure so subsequent calls within the TTL are short-circuited;
 				// without this we'd thunder on every dashboard reload.
-				console.warn(`OSM fetch threw for ${queryType} ${lat},${lon}: ${e}`);
+				console.warn(`OSM fetch threw for ${queryType} ${lat},${lon}: ${errorText(e)}`);
 				result = { ok: false, status: 0 };
 			}
 			if (result.ok) {

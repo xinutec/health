@@ -41,6 +41,7 @@ import { dateBoundsUtc } from "../geo/timezone.js";
 import { computeVelocity, loadBiometrics } from "../geo/velocity.js";
 import { fitPerModeEmissions, type LabeledSample } from "../hmm/fit-emissions.js";
 import { buildObservationTensor } from "../hmm/observation.js";
+import { errorText } from "../util/error-text.js";
 
 const KNOWN_MODES: ReadonlySet<ModelledMode> = new Set([
 	"stationary",
@@ -294,7 +295,7 @@ async function main(): Promise<void> {
 			allSamples.push(...samples);
 			dayCount++;
 		} catch (e) {
-			console.error(`  [${date}] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+			console.error(`  [${date}] FAILED: ${errorText(e)}`);
 			failedDayCount++;
 		}
 	}

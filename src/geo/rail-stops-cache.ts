@@ -16,6 +16,7 @@
  */
 
 import { db } from "../db/pool.js";
+import { errorText } from "../util/error-text.js";
 import { lineBaseToken } from "./line-stations.js";
 import type { RailStopRelation } from "./osm-rail-stops.js";
 import type { RouteStop } from "./osm-route-members.js";
@@ -85,7 +86,7 @@ export async function loadAllRailStopRelations(): Promise<RailStopRelation[]> {
 		// deploy pre-migration) or any read error must degrade to "no
 		// data" — served-station membership is additive evidence and must
 		// never take down a decode or a timeline.
-		console.warn(`loadAllRailStopRelations failed — treating as no rail stop data: ${e}`);
+		console.warn(`loadAllRailStopRelations failed — treating as no rail stop data: ${errorText(e)}`);
 		return [];
 	}
 	const relations: RailStopRelation[] = [];

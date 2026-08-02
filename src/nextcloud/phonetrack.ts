@@ -1,3 +1,4 @@
+import { errorText } from "../util/error-text.js";
 import { NextcloudClient } from "./client.js";
 import { getCredentials } from "./credentials.js";
 
@@ -84,9 +85,7 @@ export async function fetchTrackPointsRange(
 					}
 				}
 			} catch (e: unknown) {
-				console.warn(
-					`phonetrack: session ${session.id}/device ${device.id} points fetch failed: ${e instanceof Error ? e.message : String(e)}`,
-				);
+				console.warn(`phonetrack: session ${session.id}/device ${device.id} points fetch failed: ${errorText(e)}`);
 			}
 		}
 	}

@@ -36,6 +36,7 @@ import { overpassFetch } from "../geo/osm-overpass.js";
 import { buildRailStopsOverpassQuery, extractRailStopRelations, type RailStopRelation } from "../geo/osm-rail-stops.js";
 import { serializeRailStopRelation } from "../geo/rail-stops-cache.js";
 import { type Bbox, bboxFromFixes, clusterIntoRegions, tileBbox } from "../geo/route-graph-loader.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -121,7 +122,7 @@ for (const [i, tile] of tiles.entries()) {
 		for (const r of relations) byRelation.set(r.osmRelationId, r);
 		console.log(`  tile ${i + 1}/${tiles.length}: ${relations.length} relations (${byRelation.size} unique so far)`);
 	} catch (e) {
-		console.warn(`  tile ${i + 1}/${tiles.length}: ${e instanceof Error ? e.message : String(e)} — skipped`);
+		console.warn(`  tile ${i + 1}/${tiles.length}: ${errorText(e)} — skipped`);
 		tileFailures++;
 	}
 }

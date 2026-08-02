@@ -64,6 +64,7 @@ import { logLeanMatchLedger } from "../lean/lean-match.js";
 import { logLeanPassLedger } from "../lean/lean-passes.js";
 import { logLeanRailLedger } from "../lean/lean-rail.js";
 import { gateLedgers } from "../lean/ledger-verdict.js";
+import { errorText } from "../util/error-text.js";
 import {
 	type CapturedDay,
 	fixtureAnswersFromRows,
@@ -444,7 +445,7 @@ for (const file of files) {
 		// a real change to review, surfaced at its cause.
 		regressions++;
 		console.log(`\nFAIL     ${label}`);
-		console.log(`    ${e instanceof Error ? e.message : String(e)}`);
+		console.log(`    ${errorText(e)}`);
 		console.log(
 			`    re-capture: npm run capture-golden -- ${captured.meta.date} ${captured.meta.user} ${captured.meta.tz}\n`,
 		);

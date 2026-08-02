@@ -25,6 +25,7 @@ import {
 } from "../geo/mode-biometrics.js";
 import { fitbitTsToUnix } from "../geo/timezone.js";
 import { fetchTrackPointsRange, openPhoneTrack } from "../nextcloud/phonetrack.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -197,7 +198,7 @@ async function mineUser(userId: string, days: number): Promise<void> {
 				`  ${new Date(chunkStart * 1000).toISOString().slice(0, 10)} → ${new Date(chunkEnd * 1000).toISOString().slice(0, 10)}: +${labeled.length} labeled minutes (running ${allLabeled.length})`,
 			);
 		} catch (e) {
-			console.warn(`  chunk ${chunkStart}-${chunkEnd} failed: ${e}`);
+			console.warn(`  chunk ${chunkStart}-${chunkEnd} failed: ${errorText(e)}`);
 		}
 	}
 

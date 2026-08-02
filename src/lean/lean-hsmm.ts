@@ -42,6 +42,7 @@ import { existsSync } from "node:fs";
 import { buildHsmmModel, decodeHsmm, type HsmmInputs } from "../hmm/decode.js";
 import { decodeHsmmViaLean, shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import type { HmmSegment } from "../hmm/persist.js";
+import { errorText } from "../util/error-text.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { leanRunScope } from "./run-scope.js";
 
@@ -74,9 +75,7 @@ export function decodeServed(inputs: HsmmInputs, date: string): HmmSegment[] {
 	try {
 		return decodeHsmmViaLean(inputs);
 	} catch (err) {
-		console.warn(
-			`[lean-hsmm] on but bridge failed for ${date} (${err instanceof Error ? err.message : String(err)}) — serving TS decode`,
-		);
+		console.warn(`[lean-hsmm] on but bridge failed for ${date} (${errorText(err)}) — serving TS decode`);
 		return decodeHsmm(inputs);
 	}
 }
@@ -148,8 +147,8 @@ export function shadowHsmmViaLean(inputs: HsmmInputs, date: string): void {
 		);
 	} catch (err) {
 		stats.skipped += 1;
-		record(date, "skip", err instanceof Error ? err.message : String(err));
-		console.log(`lean-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
+		record(date, "skip", errorText(err));
+		console.log(`lean-shadow ${date} SKIPPED: ${errorText(err)}`);
 	}
 }
 

@@ -23,6 +23,7 @@ import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
 import { detectKnownPlaceStays, type StayCandidate } from "../sleep/known-place-stays.js";
 import { enrichSleepWindows } from "../sleep/load.js";
+import { errorText } from "../util/error-text.js";
 import { biometricCoherence } from "./biometric-coherence.js";
 import {
 	applyStationaryWalkThrough,
@@ -1048,7 +1049,7 @@ export async function computeVelocityFromInputs(
 			// `FixtureOsmAdapter` raises this, so no production path can reach the
 			// rethrow — live adapters return empty, they do not throw.
 			if (isUncapturedLookup(e)) throw e;
-			console.warn(`OSM enrichment failed for segment ${seg.startTs}: ${e}`);
+			console.warn(`OSM enrichment failed for segment ${seg.startTs}: ${errorText(e)}`);
 			return seg;
 		}
 	});
@@ -1450,7 +1451,7 @@ export async function computeVelocityFromInputs(
 							redone.set(seg.startTs, await enrichMovingSegment(seg, segPoints));
 						} catch (e) {
 							if (isUncapturedLookup(e)) throw e;
-							console.warn(`re-enrichment failed for split walk ${seg.startTs}: ${e}`);
+							console.warn(`re-enrichment failed for split walk ${seg.startTs}: ${errorText(e)}`);
 						}
 					}),
 				);

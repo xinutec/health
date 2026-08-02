@@ -1,4 +1,5 @@
 import type * as mariadb from "mariadb";
+import { errorText } from "../../util/error-text.js";
 import type { FitbitClient } from "../client.js";
 
 interface TimeSeriesPoint {
@@ -28,7 +29,7 @@ async function bodySeries(
 		);
 		return res[`body-${resource}`] ?? [];
 	} catch (e) {
-		console.warn(`body ${resource} ${start}..${end}: ${e instanceof Error ? e.message : String(e)}`);
+		console.warn(`body ${resource} ${start}..${end}: ${errorText(e)}`);
 		return [];
 	}
 }

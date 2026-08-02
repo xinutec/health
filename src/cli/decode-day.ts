@@ -52,6 +52,7 @@ import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
 import { logLeanMatchLedger } from "../lean/lean-match.js";
 import { logLeanPassLedger } from "../lean/lean-passes.js";
 import { leanShadowEnabled, setLeanRunScope } from "../lean/run-scope.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -167,7 +168,7 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 				` [float↔quant coarse ${s.coarse.EXACT}/${s.coarse.NEAR}/${s.coarse.DIFF}, ${Date.now() - t0}ms]`,
 		);
 	} catch (err) {
-		console.log(`walk-shadow ${date} SKIPPED: ${err instanceof Error ? err.message : String(err)}`);
+		console.log(`walk-shadow ${date} SKIPPED: ${errorText(err)}`);
 	}
 }
 

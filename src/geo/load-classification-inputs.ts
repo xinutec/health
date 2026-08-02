@@ -27,6 +27,7 @@ import { loadDecode } from "../hmm/persist.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { fetchTrackPointsRange, openPhoneTrack } from "../nextcloud/phonetrack.js";
 import { loadDaySleepWindows } from "../sleep/load.js";
+import { errorText } from "../util/error-text.js";
 import { loadAllBusRoutes } from "./bus-route-cache.js";
 import type {
 	ClassificationInputs,
@@ -122,7 +123,7 @@ export async function loadClassificationInputs(
 		loadKnownPlacesQuery(userId),
 		loadModeBiometricsQuery(userId),
 		loadBiometrics(userId, bounds.startUtc, bounds.endUtc, displayTz).catch((e: unknown) => {
-			console.warn(`loadBiometrics failed for user=${userId} date=${date}: ${e}`);
+			console.warn(`loadBiometrics failed for user=${userId} date=${date}: ${errorText(e)}`);
 			return { hr: [], sleep: [], steps: [] };
 		}),
 		loadMotionLogQuery(userId, bounds.startUtc, bounds.endUtc),
@@ -204,7 +205,7 @@ async function loadVenuePriorsQuery(userId: string): Promise<VenuePriors | null>
 	try {
 		return JSON.parse(row.priors_json) as VenuePriors;
 	} catch (e: unknown) {
-		console.warn(`venue_type_priors blob for user=${userId} failed to parse: ${e}`);
+		console.warn(`venue_type_priors blob for user=${userId} failed to parse: ${errorText(e)}`);
 		return null;
 	}
 }

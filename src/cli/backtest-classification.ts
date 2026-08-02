@@ -42,6 +42,7 @@ import { z } from "zod";
 import { initPool, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
 import { computeVelocity } from "../geo/velocity.js";
+import { errorText } from "../util/error-text.js";
 import { diffStates, normalizeStates } from "./state-diff.js";
 
 const config = z
@@ -245,7 +246,7 @@ for (const date of datesInRange(args.from, args.to)) {
 		}
 	} catch (e) {
 		errored++;
-		const message = e instanceof Error ? e.message : String(e);
+		const message = errorText(e);
 		console.log(`ERROR  ${date}: ${message}`);
 	}
 }

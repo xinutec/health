@@ -63,6 +63,7 @@ import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
 import { isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
+import { errorText } from "../util/error-text.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
 /** The Lean arm binary — `LEAN_CLI` in the built image, else the local build.
@@ -448,7 +449,7 @@ for (const file of files) {
 			const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
 			throw new Error(
 				`lean match FAILED on ${date} ${hhmm} leg=${fp} (${leg.clean.length} fixes): ` +
-					`${err instanceof Error ? err.message : String(err)}\n` +
+					`${errorText(err)}\n` +
 					`  replay this leg alone: compare-match --leg ${fp} ${date}`,
 			);
 		}

@@ -28,6 +28,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { buildHsmmModel } from "../hmm/decode.js";
 import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
+import { errorText } from "../util/error-text.js";
 import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
 
 const DECODED_DIR = path.join(process.cwd(), "tests", "golden", "decoded_days");
@@ -98,7 +99,7 @@ async function main(): Promise<void> {
 			);
 		} catch (err) {
 			failures++;
-			console.log(`${captured.meta.date}  SHADOW ERROR: ${err instanceof Error ? err.message : String(err)}`);
+			console.log(`${captured.meta.date}  SHADOW ERROR: ${errorText(err)}`);
 		}
 	}
 	if (checked === 0) {

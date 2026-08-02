@@ -30,6 +30,7 @@ import { buildForwardTzSource, NULL_TZ_SOURCE, type TzSource } from "./geo/fitbi
 import { runGoogleWeightSync } from "./google/body.js";
 import { googleCredsFromEnv } from "./google/oauth.js";
 import { fetchTrackPointsRange, openPhoneTrack, type RawTrackPoint } from "./nextcloud/phonetrack.js";
+import { errorText } from "./util/error-text.js";
 
 function formatDate(d: Date): string {
 	return d.toISOString().slice(0, 10);
@@ -287,7 +288,7 @@ await withConnection(migrate);
 			const result = await withConnection((conn) => runGoogleWeightSync(conn, googleCreds, googleUserId, true));
 			console.log(`[${googleUserId}] google weight: ${result.days} weigh-in(s), ${result.earliest} → ${result.latest}`);
 		} catch (e) {
-			console.error(`[${googleUserId}] google weight sync failed: ${e}`);
+			console.error(`[${googleUserId}] google weight sync failed: ${errorText(e)}`);
 		}
 	}
 }
@@ -316,7 +317,7 @@ const trySync = async (userId: string, name: string, fn: () => Promise<unknown>)
 		// the next cron tick resumes. Everything else is a real per-stream
 		// hiccup we log and move past.
 		if (e instanceof RateLimitExhaustedError) throw e;
-		console.error(`[${userId}] ${name} sync failed: ${e}`);
+		console.error(`[${userId}] ${name} sync failed: ${errorText(e)}`);
 	}
 };
 
@@ -347,7 +348,9 @@ async function buildSyncTzSource(
 				fixes.push(...chunk);
 			}
 		} catch (e) {
-			console.warn(`[${userId}] PhoneTrack fetch for tz inference failed: ${e}. Falling back to profile.tz.`);
+			console.warn(
+				`[${userId}] PhoneTrack fetch for tz inference failed: ${errorText(e)}. Falling back to profile.tz.`,
+			);
 		}
 	}
 	let profileTz: string | null = null;
@@ -355,7 +358,7 @@ async function buildSyncTzSource(
 		const profile = await fitbitClient.get<{ user: { timezone?: string } }>("/1/user/-/profile.json");
 		profileTz = profile.user.timezone ?? null;
 	} catch (e) {
-		console.warn(`[${userId}] Fitbit profile fetch failed: ${e}. Forward-sync rows may get tz=NULL.`);
+		console.warn(`[${userId}] Fitbit profile fetch failed: ${errorText(e)}. Forward-sync rows may get tz=NULL.`);
 	}
 	if (fixes.length === 0 && profileTz === null) {
 		return NULL_TZ_SOURCE;

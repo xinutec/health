@@ -37,6 +37,7 @@ import type { BusRoute } from "../geo/bus-route-match.js";
 import { buildBusRouteOverpassQuery, extractBusRoutes } from "../geo/osm-bus-routes.js";
 import { overpassFetch } from "../geo/osm-overpass.js";
 import { type Bbox, bboxFromFixes, clusterIntoRegions, tileBbox } from "../geo/route-graph-loader.js";
+import { errorText } from "../util/error-text.js";
 
 const config = z
 	.object({
@@ -128,7 +129,7 @@ for (const [i, tile] of tiles.entries()) {
 		for (const r of routes) byRelation.set(r.osmRelationId, r);
 		console.log(`  tile ${i + 1}/${tiles.length}: ${routes.length} routes (${byRelation.size} unique so far)`);
 	} catch (e) {
-		console.warn(`  tile ${i + 1}/${tiles.length}: ${e instanceof Error ? e.message : String(e)} — skipped`);
+		console.warn(`  tile ${i + 1}/${tiles.length}: ${errorText(e)} — skipped`);
 		tileFailures++;
 	}
 }
