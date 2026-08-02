@@ -18,107 +18,155 @@
  * is the honest boundary between "known, bounded near-tie" and "a real
  * behaviour change we have not signed off".
  *
- * Each entry is keyed by `op` + input length `n` + the exact symmetric-
- * difference note the ledger emits, so a match is an exact fingerprint of the
- * divergence, not a fuzzy "some leg of this size".
+ * ## What an entry is keyed on, and why it changed (#409)
  *
- * THE FINGERPRINT MOVES WHEN ITS INPUT DOES, and that is a trap. `n` and the
- * indices describe the path handed to the pass, so any upstream change that
- * adds or drops a single vertex re-keys every signed-off divergence downstream
- * of it, and the gate reports them as brand new. #406 hit exactly this: the
- * tie-inclusive candidate cut lengthened two matched paths by a vertex and two
- * entries here went UNEXPLAINED without anything about the near-ties changing.
+ * Entries were keyed on `op | n | note` — the op, the pass INPUT LENGTH, and
+ * the exact flipped indices. That is a fingerprint of the path handed to the
+ * pass, not of the thing the sign-off is about, and it fails in both
+ * directions:
  *
- * Re-keying such an entry is NOT the manifest-widening `deploy.sh` forbids —
- * the set does not grow and no new phenomenon is signed off. But the two are
- * easy to confuse, so the bar for re-keying is: the op, the flip shape and the
- * count are unchanged, AND the bound is re-verified from the corpus rather than
- * assumed. Record the old key and what re-verified it in `reason`. Anything
- * else — a new leg, a new op, a multi-vertex change — is a new entry, and a new
- * entry needs a real adjudication, not a fingerprint update.
+ *  - It moves when nothing has changed. #406 altered the matcher's candidate
+ *    cut, which lengthened two matched paths by one vertex. `n` went 1235→1236
+ *    and another leg's indices all shifted by one; two signed-off near-ties
+ *    stopped matching their keys and the deploy gate reported them as new. The
+ *    near-ties were identical. Re-keying them by hand cost a full corpus
+ *    bisect to establish that, and could only conclude "same leg" by inference,
+ *    because nothing recorded which leg it was.
+ *  - It collides. Two different legs can share an input length and a flip
+ *    position, and a genuinely new divergence landing on an existing key would
+ *    have been accepted in silence. That is the failure a manifest exists to
+ *    prevent.
  *
- * The reason this costs an investigation each time is that the ledger records
- * only `(op, n, note)`, with no leg or day identity, so "is this the same leg?"
- * can only ever be inferred. See #409.
+ * So an entry now names a LEG and bounds a SHAPE:
+ *
+ *  - `leg` is `legFingerprint` (`leg-compare.ts`) — a digest of the leg's own
+ *    quantised GPS fixes. The matcher may redraw the path however it likes; the
+ *    fixes it was handed are the same fixes, so the key survives exactly the
+ *    changes that used to break it. It is the same key `accepted-match-deltas.ts`
+ *    uses, so both manifests now name a leg the same way, and it keeps raw
+ *    positions out of a committed file.
+ *  - `maxFlips` / `maxShift` bound what may differ: at most this many vertices,
+ *    each moving at most this far in index. A single-vertex DP near-tie moves
+ *    one vertex by one. Anything structurally larger — a vertex genuinely
+ *    added or dropped rather than swapped, or a flip that jumps — is NOT what
+ *    was signed off and fails, on the same leg as before.
+ *
+ * The pair is what makes this safe: the leg is stable but coarse, the shape
+ * bound is strict but position-independent. Keying on the leg alone would
+ * accept any future divergence on a leg once excused.
+ *
+ * A divergence with NO leg (`leg: ""`) is never accepted. Those arise where a
+ * pass runs outside any matcher leg — the episode-geometry `spikes` calls,
+ * which operate on fix windows — and an unattributable divergence must not be
+ * matchable by a manifest entry that names a leg.
  */
+
+/** A divergence as the ledger measures it, before adjudication. */
+export interface MeasuredDelta {
+	op: string;
+	/** Pass input length. Reported, never keyed on — it moves whenever anything
+	 *  upstream adds or drops a vertex, which is the defect #409 fixed. */
+	n: number;
+	note: string;
+	/** `legFingerprint` of the leg, or `""` when the pass ran outside one. */
+	leg: string;
+	/** The flip, structurally — absent for the count-only ops. */
+	tsOnly?: readonly number[];
+	leanOnly?: readonly number[];
+}
 
 export interface AcceptedDelta {
 	op: string;
-	/** Input point count of the diverging leg. */
-	n: number;
-	/** The exact `ts-only=[…] lean-only=[…]` note `leanPassDivergences` emits. */
-	note: string;
+	/** `legFingerprint` of the leg's raw fixes — stable across path changes. */
+	leg: string;
+	/** How many vertices may differ between the arms. */
+	maxFlips: number;
+	/** How far, in indices, a differing vertex may move. */
+	maxShift: number;
 	/** Why this near-tie is accepted (human sign-off, for the audit trail). */
 	reason: string;
 }
 
 /**
- * The first two were measured on the 31-day golden corpus (2026-07-20); the
- * third was observed by the production ledger on a day the corpus does not
- * cover (see its reason). All are single-vertex Douglas-Peucker near-ties on
- * the coarse-path simplify pass: the retained vertex moves, and the dropped
- * one stays within tolerance of the chord either way — `simplifyIdx_dropped_le`
- * (lean/Verified/Geo/Simplify.lean) proves that bound holds for whichever
- * vertex the served side keeps.
+ * Measured on the 32-day golden corpus. Both are single-vertex Douglas-Peucker
+ * near-ties on the coarse-path simplify pass: the retained vertex moves, and
+ * the dropped one stays within tolerance of the chord either way —
+ * `simplifyIdx_dropped_le` (lean/Verified/Geo/Simplify.lean) proves that bound
+ * holds for whichever vertex the served side keeps.
+ *
+ * Two entries the old `op|n|note` keying carried are gone, and neither is a
+ * silent drop:
+ *
+ *  - `simplify/72/ts-only=[18] lean-only=[17]` was never in this manifest — it
+ *    sits in the delta CEILING (`tests/golden/lean-delta-baseline.json`) as
+ *    un-adjudicated debt, and stays there. Debt and judgement must not merge.
+ *  - `simplify/115/ts-only=[64] lean-only=[62]` documented the 1e-7° grid's
+ *    ~3-7 mm resolving power: float separated idx 62 from idx 64 by 3.77 mm,
+ *    but both quantised to exactly 7063019 µm, so first-argmax took 62. It has
+ *    NOT been reproduced since 2026-07-22, when the walk shadow stopped
+ *    replaying a reconstructed leg set the matcher never actually matched. An
+ *    entry that cannot be observed cannot be re-keyed to a leg, and keeping a
+ *    guessed key would be worse than dropping it: the measurement is recorded
+ *    here in prose, and if it ever recurs it will present as a new divergence
+ *    and be adjudicated on its own evidence rather than waved through.
  */
 export const ACCEPTED_DELTAS: readonly AcceptedDelta[] = [
 	{
 		op: "simplify",
-		n: 1236,
-		note: "ts-only=[484,619] lean-only=[485,618]",
+		leg: "826293a6a487b312",
+		maxFlips: 2,
+		maxShift: 1,
 		reason:
 			"DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden. " +
-			"RE-KEYED at #406 from n=1235: the tie-inclusive candidate cut admits one more segment, so the matched " +
-			"path this pass receives is one vertex longer. The flipped indices are UNCHANGED. Same-leg is an " +
-			"inference — the ledger records no leg identity (see #409) — but the bound was re-verified directly: " +
-			"all 32 golden days stay byte-identical under `on`.",
+			"Carried over from the `op|n|note` key `simplify/1235/ts-only=[484,619] lean-only=[485,618]`, which #406 " +
+			"moved to n=1236 by lengthening this path one vertex. The leg is measured, not inferred: the harvest run " +
+			"attributes this divergence to a road-profile leg, which is also why the first attempt at #409 left it " +
+			"unattributed — it never passes through the walk wrapper.",
 	},
 	{
 		op: "simplify",
-		n: 985,
-		note: "ts-only=[654,948] lean-only=[653,947]",
+		leg: "cb4c37b088555857",
+		maxFlips: 2,
+		maxShift: 1,
 		reason:
 			"DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden. " +
-			"RE-KEYED at #406 from ts-only=[653,947] lean-only=[652,946]: `n` is unchanged but every index moved by " +
-			"exactly one, so the path gained a vertex ahead of 653 and lost one past 947. Same-leg is an inference " +
-			"(no leg identity in the ledger, #409); the bound was re-verified directly — 32/32 golden days stay " +
-			"byte-identical under `on`.",
-	},
-	{
-		op: "simplify",
-		n: 115,
-		note: "ts-only=[64] lean-only=[62]",
-		reason:
-			"DP argmax tie on segment (50,68), tol 5 m: float separates idx 62 (7.056392500 m) from idx 64 " +
-			"(7.060161943 m) by 3.77 mm, but both quantise to exactly 7063019 µm, so first-argmax takes 62. " +
-			"The gap is under the 1e-7° representation's ~3-7 mm resolving power — the served metric cannot " +
-			"order these two points. Both deviations far exceed tol, so both sides split and keep 47 vertices; " +
-			"only which vertex anchors the split differs. Observed by the production ledger on 2026-07-17 and " +
-			"reproduced read-only via decode-day --dry. " +
-			"NO LONGER REPRODUCED as of 2026-07-22: it arose in the walk shadow's extra velocity run, and that " +
-			"run used a RECONSTRUCTED leg set the matcher never actually matched (8 invented legs vs the 9 " +
-			"production feeds). With the shadow now replaying production's own recorded legs, 2026-07-17 is " +
-			"EXACT across all pass ops. The entry is kept because the measurement is real and documents the " +
-			"representation's resolving power, but it is a divergence of the old harness, not of served " +
-			"output — the decode run was already 8/8 exact on this day when it was first recorded. " +
-			"(An earlier revision also called 2026-07-17 'outside the golden corpus, which ends 2026-07-16'. " +
-			"That was wrong: the day had already been captured as a fixture.)",
+			"Carried over from `simplify/985/ts-only=[653,947] lean-only=[652,946]`, whose indices #406 shifted by " +
+			"one while `n` stayed put. Also a road-profile leg.",
 	},
 ];
 
-const key = (op: string, n: number, note: string): string => `${op}|${n}|${note}`;
-const acceptedKeys = new Set(ACCEPTED_DELTAS.map((d) => key(d.op, d.n, d.note)));
-
-/** True iff this measured divergence is in the accepted near-tie manifest. */
-export function isAcceptedDelta(op: string, n: number, note: string): boolean {
-	return acceptedKeys.has(key(op, n, note));
+const acceptedByLeg = new Map<string, AcceptedDelta[]>();
+for (const d of ACCEPTED_DELTAS) {
+	const list = acceptedByLeg.get(d.leg);
+	if (list === undefined) acceptedByLeg.set(d.leg, [d]);
+	else list.push(d);
 }
 
-/** A divergence as the ledger measures it, before adjudication. */
-export interface MeasuredDelta {
-	op: string;
-	n: number;
-	note: string;
+/**
+ * Does this divergence's shape sit inside what the entry signed off?
+ *
+ * A near-tie is a SWAP: each arm keeps a different vertex from the same
+ * neighbourhood, so the two symmetric-difference lists have equal length and
+ * pair up in order. Unequal lengths mean a vertex was genuinely added or
+ * dropped, which is a different phenomenon and not what any entry here
+ * describes — reject it even on a signed-off leg.
+ */
+export function shapeWithin(d: MeasuredDelta, a: AcceptedDelta): boolean {
+	const { tsOnly, leanOnly } = d;
+	// An op that reports no index sets (the count-only passes) cannot be
+	// shape-checked, so it cannot be accepted by this rule at all.
+	if (tsOnly === undefined || leanOnly === undefined) return false;
+	if (tsOnly.length !== leanOnly.length) return false;
+	if (tsOnly.length === 0 || tsOnly.length > a.maxFlips) return false;
+	return tsOnly.every((i, k) => Math.abs(i - leanOnly[k]) <= a.maxShift);
+}
+
+/** True iff this measured divergence is in the accepted near-tie manifest. */
+export function isAcceptedDelta(d: MeasuredDelta): boolean {
+	if (d.leg === "") return false;
+	const candidates = acceptedByLeg.get(d.leg);
+	if (candidates === undefined) return false;
+	return candidates.some((a) => a.op === d.op && shapeWithin(d, a));
 }
 
 /**
@@ -129,10 +177,31 @@ export interface MeasuredDelta {
  * disagreeing about what counts as explained.
  */
 export function unexplainedDeltas(divs: readonly MeasuredDelta[]): readonly MeasuredDelta[] {
-	return divs.filter((d) => !isAcceptedDelta(d.op, d.n, d.note));
+	return divs.filter((d) => !isAcceptedDelta(d));
 }
 
 /** Per-divergence label, shared so the gate and the ledger read alike. */
 export function deltaTag(d: MeasuredDelta): "accepted" | "UNEXPLAINED" {
-	return isAcceptedDelta(d.op, d.n, d.note) ? "accepted" : "UNEXPLAINED";
+	return isAcceptedDelta(d) ? "accepted" : "UNEXPLAINED";
+}
+
+/**
+ * The stable fingerprint a divergence is reported and ceilinged by.
+ *
+ * Leg-first, because that is the part that survives an upstream redraw; the
+ * shape follows so a ceiling entry still says what it is tolerating. `n` is
+ * deliberately absent — it was the volatile half of the old key.
+ */
+export function deltaFingerprint(d: MeasuredDelta): string {
+	const leg = d.leg === "" ? "unattributed" : d.leg;
+	const shape =
+		d.tsOnly === undefined || d.leanOnly === undefined
+			? d.note
+			: `flips=${d.tsOnly.length} shift=${maxShiftOf(d.tsOnly, d.leanOnly)}`;
+	return `${d.op}/${leg}/${shape}`;
+}
+
+function maxShiftOf(tsOnly: readonly number[], leanOnly: readonly number[]): number | "n/a" {
+	if (tsOnly.length !== leanOnly.length || tsOnly.length === 0) return "n/a";
+	return tsOnly.reduce((m, i, k) => Math.max(m, Math.abs(i - leanOnly[k])), 0);
 }

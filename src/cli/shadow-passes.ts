@@ -63,7 +63,9 @@ const divs = leanPassDivergences();
 const unexplained = unexplainedDeltas(divs);
 if (divs.length > 0) {
 	console.log(`\ndivergences (${divs.length}; ${unexplained.length} unexplained):`);
-	for (const d of divs) console.log(`  [${deltaTag(d)}] ${d.op} n=${d.n}: ${d.note}`);
+	for (const d of divs) {
+		console.log(`  [${deltaTag(d)}] ${d.op} leg=${d.leg === "" ? "UNATTRIBUTED" : d.leg} n=${d.n}: ${d.note}`);
+	}
 }
 
 // Three honest conditions — all must hold to call the passes ready to flip.

@@ -1446,6 +1446,29 @@ export function setSpursHook(hook: SpursHook | null): void {
 	spursHook = hook;
 }
 
+/**
+ * Called at the start of every {@link matchTrajectory} with that call's fixes,
+ * returning a function to call when it finishes.
+ *
+ * The pass hooks above are handed a point list and nothing else, which is all
+ * they need to compute — but not enough for an observer to say WHICH leg a
+ * divergence came from. That gap is #409: the pass ledger could only describe a
+ * divergence by its input shape, so a signed-off near-tie lost its manifest key
+ * the moment anything upstream added a vertex, and two divergences on different
+ * legs could collide on one key.
+ *
+ * The core neither knows nor cares what a listener does with the fixes — it is
+ * import-free by design. `src/lean/install.ts` wires this to the run-scope
+ * ambient, exactly as it wires the pass hooks to the bridge.
+ */
+export type TrajectoryLegHook = (fixes: readonly RoadFix[]) => () => void;
+
+let trajectoryLegHook: TrajectoryLegHook | null = null;
+
+export function setTrajectoryLegHook(hook: TrajectoryLegHook | null): void {
+	trajectoryLegHook = hook;
+}
+
 export function simplifyPath(pts: readonly MatchedPoint[], toleranceM: number): MatchedPoint[] {
 	if (pts.length <= 2) return [...pts];
 	const keep = new Uint8Array(pts.length);
@@ -1791,6 +1814,21 @@ export function matchTrajectory(
 	geo: RoadGeometry,
 	profile: MatchProfile,
 ): MatchResult | null {
+	// Announce which trajectory is being matched, so an observer can attribute
+	// what the pass hooks below report. Every path through here runs the passes,
+	// including the road profile, and the hooks are fired several frames down
+	// with only a point list to go on — this is the one frame that still knows
+	// whose points they are. The core stays ignorant of who is listening: it
+	// hands over its fixes and gets back a restorer.
+	const endLeg = trajectoryLegHook?.(fixes);
+	try {
+		return matchTrajectoryInner(fixes, geo, profile);
+	} finally {
+		endLeg?.();
+	}
+}
+
+function matchTrajectoryInner(fixes: readonly RoadFix[], geo: RoadGeometry, profile: MatchProfile): MatchResult | null {
 	if (fixes.length < profile.minFixes) return null;
 	const radiusM = profile.matchRadiusM;
 

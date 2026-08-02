@@ -41,7 +41,7 @@ import { isAcceptedMatchDelta, type MatchLegClass, matchDeltaTag } from "./accep
 import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
-import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
+import { type LeanRunScope, leanRunScope, resetLeanRunScope, setLeanLeg } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanMatchMode = "off" | "shadow" | "on";
@@ -187,6 +187,26 @@ function leanToResult(lean: LeanMatchResp): WalkMatchResult | null {
  * computation rather than a sub-millisecond pass.
  */
 export function matchWalkSegmentViaLean(
+	fixes: readonly RoadFix[],
+	geo: RoadGeometry,
+	ts: () => WalkMatchResult | null,
+): WalkMatchResult | null {
+	// Name the leg for everything below, INCLUDING the `off` and too-short early
+	// returns and the TS arm itself. `ts()` is `matchWalkSegment`, and the
+	// geometry passes (simplify and spurs inside `matchTrajectory`, trim and
+	// despike after it) run as hooks underneath — with no way of their own to
+	// know which leg they are on. `LEAN_PASSES` is an independent flag, so the
+	// passes are ledgered on runs where the matcher tenant is off entirely;
+	// attributing only on the non-`off` path would blind exactly those runs.
+	const restoreLeg = setLeanLeg(legFingerprint(fixes));
+	try {
+		return matchWalkSegmentInner(fixes, geo, ts);
+	} finally {
+		restoreLeg();
+	}
+}
+
+function matchWalkSegmentInner(
 	fixes: readonly RoadFix[],
 	geo: RoadGeometry,
 	ts: () => WalkMatchResult | null,

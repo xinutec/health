@@ -6,7 +6,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ACCEPTED_DELTAS, deltaTag, isAcceptedDelta, unexplainedDeltas } from "../src/lean/accepted-deltas.js";
+import {
+	ACCEPTED_DELTAS,
+	type AcceptedDelta,
+	deltaFingerprint,
+	deltaTag,
+	isAcceptedDelta,
+	type MeasuredDelta,
+	shapeWithin,
+	unexplainedDeltas,
+} from "../src/lean/accepted-deltas.js";
 import {
 	leanPassDivergences,
 	leanPassScopeTotals,
@@ -14,52 +23,117 @@ import {
 	resetLeanPassStats,
 	simplifyViaLean,
 } from "../src/lean/lean-passes.js";
-import { leanRunScope, setLeanRunScope } from "../src/lean/run-scope.js";
+import { leanLeg, leanRunScope, setLeanLeg, setLeanRunScope } from "../src/lean/run-scope.js";
 
-const anAccepted = ACCEPTED_DELTAS[0];
+/** A signed-off single-vertex near-tie, as the manifest describes one. */
+const ENTRY: AcceptedDelta = {
+	op: "simplify",
+	leg: "abc123def4567890",
+	maxFlips: 2,
+	maxShift: 1,
+	reason: "test fixture",
+};
+
+const measured = (over: Partial<MeasuredDelta> = {}): MeasuredDelta => ({
+	op: "simplify",
+	n: 1000,
+	note: "ts-only=[484] lean-only=[485]",
+	leg: ENTRY.leg,
+	tsOnly: [484],
+	leanOnly: [485],
+	...over,
+});
+
+describe("accepted-delta shape bound", () => {
+	it("accepts a flip within both bounds", () => {
+		expect(shapeWithin(measured(), ENTRY)).toBe(true);
+	});
+
+	it("accepts the same flip at a different input length — the point of #409", () => {
+		// `n` moved from 1235 to 1236 when an upstream change lengthened the path.
+		// The near-tie did not change, so the adjudication must not either.
+		expect(shapeWithin(measured({ n: 1236 }), ENTRY)).toBe(true);
+		expect(shapeWithin(measured({ n: 12 }), ENTRY)).toBe(true);
+	});
+
+	it("accepts indices shifted wholesale, since only the offset moved", () => {
+		expect(shapeWithin(measured({ tsOnly: [654, 948], leanOnly: [653, 947] }), ENTRY)).toBe(true);
+	});
+
+	it("rejects a flip that jumps further than signed off", () => {
+		expect(shapeWithin(measured({ tsOnly: [64], leanOnly: [62] }), ENTRY)).toBe(false);
+	});
+
+	it("rejects more flips than signed off", () => {
+		expect(shapeWithin(measured({ tsOnly: [1, 5, 9], leanOnly: [2, 6, 10] }), ENTRY)).toBe(false);
+	});
+
+	it("rejects a vertex added or dropped rather than swapped", () => {
+		// Unequal lists are not a near-tie at all: one arm kept something the
+		// other had no counterpart for. Different phenomenon, not signed off.
+		expect(shapeWithin(measured({ tsOnly: [484, 619], leanOnly: [485] }), ENTRY)).toBe(false);
+	});
+
+	it("rejects an op that reports no index sets, since it cannot be shape-checked", () => {
+		expect(shapeWithin(measured({ tsOnly: undefined, leanOnly: undefined }), ENTRY)).toBe(false);
+	});
+});
 
 describe("accepted-delta adjudication", () => {
-	it("accepts an exact op+n+note fingerprint", () => {
-		expect(isAcceptedDelta(anAccepted.op, anAccepted.n, anAccepted.note)).toBe(true);
+	it("never accepts an unattributed divergence, whatever its shape", () => {
+		// A pass that ran outside any leg cannot be matched to a leg-keyed
+		// sign-off. Accepting one would let an unnameable divergence through.
+		expect(isAcceptedDelta(measured({ leg: "" }))).toBe(false);
 	});
 
-	it("rejects the same note at a different input length", () => {
-		expect(isAcceptedDelta(anAccepted.op, anAccepted.n + 1, anAccepted.note)).toBe(false);
-	});
-
-	it("rejects the same note from a different op", () => {
-		expect(isAcceptedDelta("trim", anAccepted.n, anAccepted.note)).toBe(false);
-	});
-
-	it("rejects a divergence whose symmetric difference differs", () => {
-		expect(isAcceptedDelta(anAccepted.op, anAccepted.n, "ts-only=[1] lean-only=[2]")).toBe(false);
+	it("rejects a leg that is not in the manifest", () => {
+		expect(isAcceptedDelta(measured({ leg: "0000000000000000" }))).toBe(false);
 	});
 
 	it("returns only the unexplained divergences, preserving order", () => {
-		const measured = [
-			{ op: anAccepted.op, n: anAccepted.n, note: anAccepted.note },
-			{ op: "simplify", n: 7, note: "ts-only=[3] lean-only=[4]" },
-			{ op: "trim", n: 9, note: "ts-only=[1] lean-only=[]" },
-		];
-		expect(unexplainedDeltas(measured)).toEqual([measured[1], measured[2]]);
+		const divs = [measured({ leg: "" }), measured({ op: "trim", tsOnly: undefined, leanOnly: undefined })];
+		expect(unexplainedDeltas(divs)).toEqual(divs);
 	});
 
-	it("is empty when every divergence is signed off", () => {
-		const measured = ACCEPTED_DELTAS.map((d) => ({ op: d.op, n: d.n, note: d.note }));
-		expect(unexplainedDeltas(measured)).toEqual([]);
+	it("labels an unsigned divergence the way both callers print it", () => {
+		expect(deltaTag(measured({ leg: "0000000000000000" }))).toBe("UNEXPLAINED");
 	});
 
-	it("labels each divergence the way both callers print it", () => {
-		expect(deltaTag(anAccepted)).toBe("accepted");
-		expect(deltaTag({ op: "simplify", n: 7, note: "ts-only=[3] lean-only=[4]" })).toBe("UNEXPLAINED");
+	it("fingerprints by leg and shape, not by input length", () => {
+		// The ceiling keys on this string. It must not move when `n` does, or
+		// standing debt silently reappears as a fresh failure.
+		expect(deltaFingerprint(measured({ n: 1235 }))).toBe(deltaFingerprint(measured({ n: 1236 })));
+		expect(deltaFingerprint(measured())).toBe(`simplify/${ENTRY.leg}/flips=1 shift=1`);
+		expect(deltaFingerprint(measured({ leg: "" }))).toContain("unattributed");
 	});
 
-	it("gives every accepted entry a non-empty sign-off reason", () => {
-		for (const d of ACCEPTED_DELTAS) expect(d.reason.trim()).not.toBe("");
+	it("gives every manifest entry a leg, a sign-off reason and a bounded shape", () => {
+		for (const d of ACCEPTED_DELTAS) {
+			expect(d.leg).not.toBe("");
+			expect(d.reason.trim()).not.toBe("");
+			expect(d.maxFlips).toBeGreaterThan(0);
+			expect(d.maxShift).toBeGreaterThanOrEqual(0);
+		}
 	});
 
-	it("holds no duplicate fingerprints", () => {
-		const keys = ACCEPTED_DELTAS.map((d) => `${d.op}|${d.n}|${d.note}`);
+	it("accepts every entry it lists, against a divergence of the shape it permits", () => {
+		for (const d of ACCEPTED_DELTAS) {
+			const flips = Array.from({ length: d.maxFlips }, (_, i) => i * 10);
+			expect(
+				isAcceptedDelta({
+					op: d.op,
+					n: 1,
+					note: "",
+					leg: d.leg,
+					tsOnly: flips,
+					leanOnly: flips.map((i) => i + d.maxShift),
+				}),
+			).toBe(true);
+		}
+	});
+
+	it("holds no duplicate leg+op pairs", () => {
+		const keys = ACCEPTED_DELTAS.map((d) => `${d.op}|${d.leg}`);
 		expect(new Set(keys).size).toBe(keys.length);
 	});
 });
@@ -94,9 +168,25 @@ describe("lean-pass ledger scoping", () => {
 
 	it("reset clears the tallies and returns the scope to decode", () => {
 		setLeanRunScope("shadow");
+		setLeanLeg("deadbeefdeadbeef");
 		resetLeanPassStats();
 		expect(leanPassStats()).toEqual({});
 		expect(leanPassScopeTotals()).toEqual({});
 		expect(leanRunScope()).toBe("decode");
+		expect(leanLeg()).toBe("");
+	});
+
+	it("restores the enclosing leg rather than clearing it", () => {
+		// The walk shadow re-matches a leg from inside a run already processing
+		// one. Clearing on exit would leave the outer leg's later pass calls
+		// unattributed, which the manifest can never accept.
+		resetLeanPassStats();
+		const restoreOuter = setLeanLeg("outer00000000000");
+		const restoreInner = setLeanLeg("inner00000000000");
+		expect(leanLeg()).toBe("inner00000000000");
+		restoreInner();
+		expect(leanLeg()).toBe("outer00000000000");
+		restoreOuter();
+		expect(leanLeg()).toBe("");
 	});
 });

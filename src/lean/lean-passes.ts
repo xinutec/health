@@ -29,11 +29,11 @@
  */
 
 import { quantPt } from "../geo/quant-twin.js";
-import { deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
+import { deltaFingerprint, deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
 import { LeanBridgeError, leanGeo } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
-import { type LeanRunScope, leanRunScope, resetLeanRunScope } from "./run-scope.js";
+import { type LeanRunScope, leanLeg, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanPassMode = "off" | "shadow" | "on";
@@ -108,14 +108,31 @@ interface Divergence {
 	op: string;
 	n: number;
 	note: string;
+	/** The leg this pass ran on (`legFingerprint`), or `""` if it ran outside
+	 *  any leg — the episode-geometry `spikes` calls, which operate on fix
+	 *  windows rather than matcher legs. Unattributed divergences are never
+	 *  auto-accepted; see `accepted-deltas.ts`. */
+	leg: string;
+	/** The flip, structurally: which indices each arm kept alone. Present only
+	 *  for the index-set ops (`simplify`), whose divergence IS a set of vertex
+	 *  flips; the count-only ops describe theirs in `note` and cannot be shape-
+	 *  checked. Adjudication needs the numbers, not a rendering of them. */
+	tsOnly?: readonly number[];
+	leanOnly?: readonly number[];
 	/** Which run produced it — a `decode` divergence affects served output. */
 	scope: LeanRunScope;
 }
 const divergences: Divergence[] = [];
 const MAX_DIVERGENCES = 500;
 
-function recordDivergence(op: string, n: number, note: string): void {
-	if (divergences.length < MAX_DIVERGENCES) divergences.push({ op, n, note, scope: leanRunScope() });
+function recordDivergence(
+	op: string,
+	n: number,
+	note: string,
+	shape?: { tsOnly: readonly number[]; leanOnly: readonly number[] },
+): void {
+	if (divergences.length >= MAX_DIVERGENCES) return;
+	divergences.push({ op, n, note, leg: leanLeg(), ...shape, scope: leanRunScope() });
 }
 
 /** Structured divergences (bounded) — the flip-decision ledger. */
@@ -155,13 +172,16 @@ const eqNum = (a: readonly number[], b: readonly number[]): boolean =>
 const eqRows = (a: readonly number[][], b: readonly number[][]): boolean =>
 	a.length === b.length && a.every((r, i) => eqNum(r, b[i]));
 
-/** Compact description of how two keep-index sets differ (for the ledger). */
-function symdiffNote(ts: readonly number[], lean: readonly number[]): string {
+/** How two keep-index sets differ: the indices each arm kept alone. */
+function symdiff(ts: readonly number[], lean: readonly number[]): { tsOnly: number[]; leanOnly: number[] } {
 	const tsSet = new Set(ts);
 	const leanSet = new Set(lean);
-	const tsOnly = ts.filter((i) => !leanSet.has(i));
-	const leanOnly = lean.filter((i) => !tsSet.has(i));
-	return `ts-only=[${tsOnly}] lean-only=[${leanOnly}]`;
+	return { tsOnly: ts.filter((i) => !leanSet.has(i)), leanOnly: lean.filter((i) => !tsSet.has(i)) };
+}
+
+/** The same, rendered for the ledger line. */
+function symdiffNote(d: { tsOnly: readonly number[]; leanOnly: readonly number[] }): string {
+	return `ts-only=[${d.tsOnly}] lean-only=[${d.leanOnly}]`;
 }
 
 /** Recover the kept ORIGINAL objects from a drop-only, order-preserving
@@ -208,8 +228,9 @@ export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], tolerance
 	const diverged = !eqNum(tsIdx, keep);
 	recordCall("simplify", diverged);
 	if (diverged) {
-		const note = symdiffNote(tsIdx, keep);
-		recordDivergence("simplify", pts.length, note);
+		const shape = symdiff(tsIdx, keep);
+		const note = symdiffNote(shape);
+		recordDivergence("simplify", pts.length, note, shape);
 		if (mode === "shadow") console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ${note}`);
 	}
 	return mode === "on" ? keep.map((i) => pts[i]) : tsResult;
@@ -420,7 +441,13 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 	const detail =
 		divs.length === 0
 			? ""
-			: ` — ${divs.map((d) => `[${deltaTag(d)}][${d.scope}] ${d.op} n=${d.n} ${d.note}`).join("; ")}`;
+			: ` — ${divs
+					.map(
+						(d) =>
+							`[${deltaTag(d)}][${d.scope}] ${d.op} leg=${d.leg === "" ? "UNATTRIBUTED" : d.leg} ` +
+							`n=${d.n} ${d.note}`,
+					)
+					.join("; ")}`;
 	// Both arms' wall cost this run — read before the reset below.
 	const armMs = formatArmPair(armPair("geo"));
 	console.log(
@@ -435,10 +462,13 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 		mode,
 		calls,
 		fails,
-		// The same three fields `AcceptedDelta` fingerprints on, in the same
-		// order, so a ceiling entry and a manifest entry name the same thing and
-		// promoting one to the other is a move between files, not a re-derivation.
-		unexplained: unexplained.map((d) => `${d.op}/${d.n}/${d.note}`).sort(),
+		// The same fields `AcceptedDelta` adjudicates on, so a ceiling entry and a
+		// manifest entry name the same thing and promoting one to the other is a
+		// move between files, not a re-derivation. Leg-and-shape, NOT `n` and the
+		// literal indices: a ceiling keyed on those went stale the moment anything
+		// upstream added a vertex, silently turning standing debt back into a fresh
+		// failure (#409).
+		unexplained: unexplained.map(deltaFingerprint).sort(),
 		klass:
 			calls === 0 ? "not-exercised" : divs.length === 0 ? "exact" : unexplained.length === 0 ? "accepted" : "diverged",
 	};
