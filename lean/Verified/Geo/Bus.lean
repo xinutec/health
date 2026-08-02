@@ -607,4 +607,193 @@ private def E (waitS : Option Int) (stopM : Option Float) (dwells : List DwellSt
 #guard match scoreBusEvidence (E (some 90) (some 12) [D 40 (some 20) none]) with
        | s => approx s.boarding 1.5 && approx s.dwellCredit 0.8 && s.noStopPenalty == 0
 
+/-! ## `annotateBusEvidence` — the orchestration over the scorer
+
+The pass that turns the evidence into a label. `async` in the TS only because
+`nearbyTransitStops` is injected; modelled here as an ordinary function of
+`(lat, lon, radiusM)`, which is what lets the whole pass be reference-tested.
+
+The one piece of real logic outside the leaves is the per-dwell resolution:
+ask for everything within `TRANSIT_QUERY_RADIUS_M`, keep the requested SUBTYPE,
+take the nearest of those. That is NOT "the nearest stop, if it is a bus stop" —
+a traffic signal three metres away does not hide a bus stop at thirty.
+
+Exact: no arithmetic of its own beyond the duration test and the threshold
+comparison; the ULP story is entirely `scoreBusEvidence`'s.
+
+`TRANSIT_QUERY_RADIUS_M` is pinned by value and cannot be pinned by EFFECT: it
+is handed straight to the adapter, so only the adapter can act on it, and a
+stub that honoured it would be grading the stub. -/
+
+/-- The `nearbyTransitStops` fields this pass reads. -/
+structure TransitStop where
+  subtype : String
+  distanceM : Float
+  deriving Inhabited, BEq, Repr
+
+/-- Query radius for per-dwell stop resolution: a bit beyond
+`TRANSIT_STOP_NEAR_M`, so "nothing within 50 m" is a confident `none`. -/
+def TRANSIT_QUERY_RADIUS_M : Float := 50
+
+/-- Road-vehicle legs shorter than this are not judged — too little room for
+any stop pattern to show. -/
+def MIN_LEG_S : Int := 3 * 60
+
+/-- The segment fields this pass reads and the one it writes. -/
+structure BusSeg where
+  startTs : Int
+  endTs : Int
+  mode : String
+  refinedMode : Option String := none
+  vehicleKind : Option String := none
+  deriving Inhabited, BEq, Repr
+
+/-- The nearest reported distance among stops of one subtype, or `none` when
+that subtype is absent. `Math.min` over the filtered list, so a nearer stop of
+another subtype is invisible here. -/
+def nearestOfSubtype (stops : Array TransitStop) (subtype : String) : Option Float :=
+  let m := stops.filter (·.subtype == subtype)
+  if m.isEmpty then none
+  else some (m.foldl (fun acc s => min acc s.distanceM) (1.0 / 0.0))
+
+/-- Label a refined-driving leg `vehicleKind := "bus"` when the stop-pattern
+evidence clears `BUS_EVIDENCE_THRESHOLD_NATS`. Everything else passes through
+untouched — this pass only ever adds a label. -/
+def annotateBusEvidence (segments : Array BusSeg) (fixes : List Fix)
+    (stopsLookup : Float → Float → Float → Array TransitStop) : Array BusSeg :=
+  segments.map fun seg =>
+    let effective := seg.refinedMode.getD seg.mode
+    if effective ≠ "driving" || decide (seg.endTs - seg.startTs < MIN_LEG_S) then seg
+    else
+      let nearest (lat lon : Float) (subtype : String) : Option Float :=
+        nearestOfSubtype (stopsLookup lat lon TRANSIT_QUERY_RADIUS_M) subtype
+      let wait := detectBoardingWait fixes seg.startTs
+      let dwells := detectVehicleDwells fixes seg.startTs seg.endTs
+      let ev : BusEvidence :=
+        { boardingWaitS := wait.map (·.1)
+          boardingNearestBusStopM :=
+            match wait with
+            | some (_, la, lo) => nearest la lo "bus_stop"
+            | none => none
+          dwells := dwells.map fun d =>
+            ⟨d.durationS, nearest d.lat d.lon "bus_stop", nearest d.lat d.lon "traffic_signals"⟩ }
+      if decide ((scoreBusEvidence ev).total ≥ BUS_EVIDENCE_THRESHOLD_NATS) then
+        { seg with vehicleKind := some "bus" }
+      else seg
+
+/-! ### Parity with Node/V8 (`lean/experiments/annotate-bus-evidence-refs.mts`) -/
+
+section AnnotateGuards
+
+/-- A standstill, then a ride at ~40 km/h with two dwells in it. The latitude
+ACCUMULATES by repeated `+ 0.003`, exactly as the TS fixture does, so the dwell
+centroids land on the same bits. -/
+private def busFixes : List Fix := Id.run do
+  let mut out : Array Fix := #[]
+  for i in [0:10] do
+    out := out.push ⟨Int.ofNat (30 * i), 51.5, -0.2⟩
+  let mut lat : Float := 51.5
+  for i in [0:31] do
+    let t : Int := 300 + Int.ofNat (30 * i)
+    let dwelling := (decide (t ≥ 480) && decide (t ≤ 540)) || (decide (t ≥ 780) && decide (t ≤ 840))
+    if !dwelling then lat := lat + 0.003
+    out := out.push ⟨t, lat, -0.2⟩
+  return out.toList
+
+private def LEG_START : Int := 300
+private def LEG_END : Int := 1200
+
+-- The leaves see exactly what the TS harness printed for the same fixture.
+#guard detectBoardingWait busFixes LEG_START == some (270, 51.5, -0.19999999999999998)
+#guard (detectVehicleDwells busFixes LEG_START LEG_END).map (·.durationS) == [90, 90]
+
+#guard TRANSIT_QUERY_RADIUS_M == 50
+#guard MIN_LEG_S == 180
+
+private def stop (subtype : String) (distanceM : Float) : TransitStop := ⟨subtype, distanceM⟩
+
+/-- The stub answers the SAME list everywhere: what this pass decides is which
+subtype it asks for and how it reduces the answer, not where the query lands. -/
+private def everywhere (stops : Array TransitStop) : Float → Float → Float → Array TransitStop :=
+  fun _ _ _ => stops
+
+private def atStop : Array TransitStop := #[stop "bus_stop" 10]
+private def signalsOnly : Array TransitStop := #[stop "traffic_signals" 8]
+/-- A NEARER signal alongside a further bus stop. -/
+private def mixed : Array TransitStop := #[stop "traffic_signals" 3, stop "bus_stop" 30]
+/-- Two bus stops: the nearer is inside the bar, the further is not. -/
+private def twoStops : Array TransitStop := #[stop "bus_stop" 40, stop "bus_stop" 12]
+/-- Present, but beyond `TRANSIT_STOP_NEAR_M` — near is not the same as there. -/
+private def farStop : Array TransitStop := #[stop "bus_stop" 40]
+
+private def drive (mode : String := "driving") (refinedMode : Option String := none)
+    (startTs : Int := LEG_START) (endTs : Int := LEG_END) : BusSeg :=
+  { startTs, endTs, mode, refinedMode }
+
+private def kinds (segs : Array BusSeg) (stops : Array TransitStop) : Array (Option String) :=
+  (annotateBusEvidence segs busFixes (everywhere stops)).map (·.vehicleKind)
+
+#guard kinds #[drive] atStop == #[some "bus"]
+-- The leg filter reads the EFFECTIVE mode, both directions.
+#guard kinds #[drive "stationary" (some "driving")] atStop == #[some "bus"]
+#guard kinds #[drive "walking"] atStop == #[none]
+#guard kinds #[drive "driving" (some "train")] atStop == #[none]
+-- The duration bar is inclusive: one second under refuses, exactly at it judges.
+#guard kinds #[drive (startTs := LEG_START) (endTs := LEG_START + 179)] atStop == #[none]
+#guard kinds #[drive (startTs := LEG_START) (endTs := LEG_START + 180)] atStop == #[some "bus"]
+-- No stops, and stops of the WRONG subtype, are the same answer: not a bus.
+#guard kinds #[drive] #[] == #[none]
+#guard kinds #[drive] signalsOnly == #[none]
+-- The subtype filter runs BEFORE the nearest reduce: the 3 m signal does not
+-- hide the 30 m bus stop.
+#guard kinds #[drive] mixed == #[some "bus"]
+-- …and the reduce is a MIN, so the 12 m stop beats the 40 m one.
+#guard kinds #[drive] twoStops == #[some "bus"]
+-- A stop beyond the near bar scores as no stop at all.
+#guard kinds #[drive] farStop == #[none]
+-- The dwell window is the SEGMENT's, not the day's. Under `mixed` one dwell
+-- scores 1.9 and two score 2.3, so a leg cut before the second dwell flips.
+#guard kinds #[drive (endTs := 700)] mixed == #[none]
+#guard kinds #[drive (endTs := 900)] mixed == #[some "bus"]
+-- Non-driving segments pass through in place, so the array keeps its shape.
+#guard kinds #[drive, drive "walking"] atStop == #[some "bus", none]
+
+/-! #### Exactly at the threshold
+
+`DWELL_AT_STOP_AND_SIGNAL_NATS` REPLACES the stop credit rather than adding to
+it (0.4 instead of 0.8 — a signal is an alternative explanation for the dwell),
+so the reachable totals are a coarse grid. The ONLY combination that lands on
+exactly `BUS_EVIDENCE_THRESHOLD_NATS` is no boarding wait plus three dwells
+scoring 0.8 + 0.8 + 0.4, which sums to exactly 2 in that order. Without it the
+`≥`-vs-`>` decision at the bar is unpinned, so the fixture is built for it. -/
+
+/-- Three dwells and NO preceding standstill, so `boarding` is 0. -/
+private def barFixes : List Fix := Id.run do
+  let mut out : Array Fix := #[]
+  let mut lat : Float := 51.5
+  for i in [0:41] do
+    let t : Int := 300 + Int.ofNat (30 * i)
+    let dwelling :=
+      (decide (t ≥ 480) && decide (t ≤ 540)) || (decide (t ≥ 780) && decide (t ≤ 840))
+        || (decide (t ≥ 1080) && decide (t ≤ 1140))
+    if !dwelling then lat := lat + 0.003
+    out := out.push ⟨t, lat, -0.2⟩
+  return out.toList
+
+private def BAR_END : Int := 1500
+private def SIGNAL_FROM_LAT : Float := 51.55
+
+/-- A bus stop everywhere, and a traffic signal only at the LAST dwell. -/
+private def perDwell : Float → Float → Float → Array TransitStop :=
+  fun lat _ _ =>
+    if lat < SIGNAL_FROM_LAT then #[stop "bus_stop" 10]
+    else #[stop "bus_stop" 10, stop "traffic_signals" 5]
+
+#guard detectBoardingWait barFixes LEG_START == none
+#guard (detectVehicleDwells barFixes LEG_START BAR_END).map (·.lat) == [51.518, 51.539, 51.56]
+#guard (annotateBusEvidence #[drive (endTs := BAR_END)] barFixes perDwell).map (·.vehicleKind)
+  == #[some "bus"]
+
+end AnnotateGuards
+
 end Verified.Geo.Bus
