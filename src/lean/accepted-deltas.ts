@@ -8,7 +8,7 @@
  * equidistant from the spanning chord and float-vs-quant rounding picks the
  * other one. These are display-only (the drawn polyline shifts by one vertex,
  * well within the simplify tolerance) and provably within bound; they wash out
- * of the final golden output entirely (golden is 31/31 byte-identical under
+ * of the final golden output entirely (golden is 32/32 byte-identical under
  * `on`).
  *
  * This manifest is the *closed set* of such divergences we have inspected and
@@ -21,6 +21,25 @@
  * Each entry is keyed by `op` + input length `n` + the exact symmetric-
  * difference note the ledger emits, so a match is an exact fingerprint of the
  * divergence, not a fuzzy "some leg of this size".
+ *
+ * THE FINGERPRINT MOVES WHEN ITS INPUT DOES, and that is a trap. `n` and the
+ * indices describe the path handed to the pass, so any upstream change that
+ * adds or drops a single vertex re-keys every signed-off divergence downstream
+ * of it, and the gate reports them as brand new. #406 hit exactly this: the
+ * tie-inclusive candidate cut lengthened two matched paths by a vertex and two
+ * entries here went UNEXPLAINED without anything about the near-ties changing.
+ *
+ * Re-keying such an entry is NOT the manifest-widening `deploy.sh` forbids —
+ * the set does not grow and no new phenomenon is signed off. But the two are
+ * easy to confuse, so the bar for re-keying is: the op, the flip shape and the
+ * count are unchanged, AND the bound is re-verified from the corpus rather than
+ * assumed. Record the old key and what re-verified it in `reason`. Anything
+ * else — a new leg, a new op, a multi-vertex change — is a new entry, and a new
+ * entry needs a real adjudication, not a fingerprint update.
+ *
+ * The reason this costs an investigation each time is that the ledger records
+ * only `(op, n, note)`, with no leg or day identity, so "is this the same leg?"
+ * can only ever be inferred. See #409.
  */
 
 export interface AcceptedDelta {
@@ -45,15 +64,25 @@ export interface AcceptedDelta {
 export const ACCEPTED_DELTAS: readonly AcceptedDelta[] = [
 	{
 		op: "simplify",
-		n: 1235,
+		n: 1236,
 		note: "ts-only=[484,619] lean-only=[485,618]",
-		reason: "DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden.",
+		reason:
+			"DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden. " +
+			"RE-KEYED at #406 from n=1235: the tie-inclusive candidate cut admits one more segment, so the matched " +
+			"path this pass receives is one vertex longer. The flipped indices are UNCHANGED. Same-leg is an " +
+			"inference — the ledger records no leg identity (see #409) — but the bound was re-verified directly: " +
+			"all 32 golden days stay byte-identical under `on`.",
 	},
 	{
 		op: "simplify",
 		n: 985,
-		note: "ts-only=[653,947] lean-only=[652,946]",
-		reason: "DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden.",
+		note: "ts-only=[654,948] lean-only=[653,947]",
+		reason:
+			"DP near-tie: two adjacent-vertex flips, each within simplify tol; display-only, washes out of golden. " +
+			"RE-KEYED at #406 from ts-only=[653,947] lean-only=[652,946]: `n` is unchanged but every index moved by " +
+			"exactly one, so the path gained a vertex ahead of 653 and lost one past 947. Same-leg is an inference " +
+			"(no leg identity in the ledger, #409); the bound was re-verified directly — 32/32 golden days stay " +
+			"byte-identical under `on`.",
 	},
 	{
 		op: "simplify",
