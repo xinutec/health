@@ -80,5 +80,6 @@ import Verified.Geo.UndergroundJourney
 import Verified.Geo.UndergroundAnnotate
 import Verified.Geo.OsmSpatial
 import Verified.Geo.LineStoppingPattern
+import Verified.Geo.LineStations
 import Verified.Geo.LineMembership
 import Verified.Geo.BridgeStays
