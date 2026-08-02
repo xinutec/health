@@ -19,10 +19,12 @@ answer, not a by-product.
 * `absorbIntraPlaceWalk` — demote a short walk that never left the building.
 * `absorbFarFocusPlacePhantom` — swallow a stay the focus place's over-long veto
   radius mislabelled, when the same place also appears at its own centroid.
-* `planJitterStayRuns` — index ranges of co-located stay fragments to collapse.
+* `planJitterStayRuns` / `consolidateJitterStays` — plan and then perform the
+  collapse of co-located stay fragments into one re-resolved stay. `async` in
+  the TS only because the venue re-resolution is an OSM call; it appears here as
+  an injected function, so the whole pass ports.
 
-Shell, deliberately: `consolidateJitterStays` (async OSM re-resolution — it
-consumes the PLAN this module computes) and `mapLimit` (a concurrency helper).
+Shell, deliberately: `mapLimit`, a concurrency helper.
 
 ## Exactness
 
@@ -814,5 +816,252 @@ private def jstay (a b : Int) (offsetM : Float) (jitter : Bool := false) : Seg :
     jstay 1300 1900 1000 true, jstay 1900 2500 1020] == #[(0, 1), (3, 4)]
 #guard planJitterStayRuns #[] == #[]
 
+/-! ## `consolidateJitterStays` — the collapse the plan describes
+
+One continuous sit that indoor GPS shattered into several stays, each grabbing a
+different nearest POI, becomes one stay re-resolved from the combined centre.
+The motivating case (2026-06-09) came out as 7 fragments named "The Plumbers
+Arms" / "Keencare Pharmacy" / way-labels; merged, the centre lands 11 m from the
+venue that was actually visited.
+
+The OSM call is modelled as an injected `bestPlace` of `(lat, lon, startUnix,
+endUnix, tz)`, and `tzLookup` as `tzAt`. That is where the boundary falls in the
+TS too — but NOT where it is written: `bestPlace` is a direct import that takes
+the adapter, so the V8 reference could not stub it. It was pinned instead with a
+fake adapter answering an enclosing landmark NAMED AFTER the coordinate it was
+asked about, so the resolved label reports the point the pass chose
+(`lean/experiments/consolidate-jitter-stays-refs.mts`). `placeLabel` and
+`extractCity` are `osm.ts`'s, not this pass's, so they sit inside the injected
+answer; the `?? base.city` fallback around `extractCity` IS this pass's and is
+pinned here.
+
+**A reproduced defect.** `totalPoints` is `reduce(+) || 1`, so a run whose
+fragments all carry `pointCount: 0` divides a zero numerator by 1 and puts the
+combined centroid at (0, 0) — the pass then resolves a venue in the Gulf of
+Guinea and names the stay after it. The `|| 1` prevents a NaN and yields a wrong
+answer instead of no answer. Reproduced deliberately: the twin's job is to agree
+with the TS, and a quietly-better centroid here would read as a Lean divergence.
+
+Exact: the centroid is a weighted mean of `Float` centroids, the base pick and
+the index rewrite are ordering decisions on `Int`, and the two strings are built
+verbatim. -/
+
+/-- What this pass reads off a resolved place. Both fields are computed by
+`osm.ts` (`placeLabel` / `extractCity`) from the Nominatim result, so they arrive
+here already derived. -/
+structure ResolvedPlace where
+  label : String
+  city : Option String := none
+  deriving Inhabited, BEq, Repr
+
+/-- Collapse each planned run into one stay, re-resolving its name from the
+point-count-weighted centre of the run. Everything outside a run is passed
+through in place. -/
+def consolidateJitterStays (segments : Array Seg)
+    (bestPlace : Float → Float → Int → Int → String → Option ResolvedPlace)
+    (tzAt : Float → Float → String) : Array Seg := Id.run do
+  let runs := planJitterStayRuns segments
+  -- UNPINNABLE, and provably: with no runs nothing is merged and nothing is
+  -- dropped, so the rewrite below reproduces the input segment for segment.
+  -- The early return buys a pass over the list, not a decision. Kept to mirror
+  -- the TS.
+  if runs.isEmpty then return segments
+  let mut merged : Array (Nat × Seg) := #[]
+  let mut drop : Array Nat := #[]
+  for (start, stop) in runs do
+    let run := (List.range (stop - start + 1)).map fun k => segments[start + k]!
+    let first := run.head!
+    let last := run.getLast!
+    -- `reduce((s, x) => s + x.pointCount, 0) || 1`. The fallback fires on a
+    -- run of empty fragments and makes the centroid (0, 0) — see the header.
+    let summed := run.foldl (fun s x => s + x.pointCount) 0
+    let totalPoints := if summed == 0 then 1 else summed
+    let denom := Float.ofInt totalPoints
+    -- Every segment in a run has a centroid: `planJitterStayRuns` refuses one
+    -- that does not, which is why the TS casts here rather than testing.
+    let weighted (pick : Seg → Option Float) : Float :=
+      (run.foldl (fun s x => s + (pick x).getD 0 * Float.ofInt x.pointCount) 0) / denom
+    let cLat := weighted (·.centroidLat)
+    let cLon := weighted (·.centroidLon)
+    let place := bestPlace cLat cLon first.startTs last.endTs (tzAt cLat cLon)
+    -- The longest leg is the base. `>` is strict, so a tie keeps the EARLIER.
+    let base := (run.drop 1).foldl
+      (fun a b => if decide (b.endTs - b.startTs > a.endTs - a.startTs) then b else a) first
+    let reason := s!"consolidated {run.length} GPS-jitter stay fragments"
+    merged := merged.push (start,
+      { base with
+          startTs := first.startTs
+          endTs := last.endTs
+          pointCount := totalPoints
+          centroidLat := some cLat
+          centroidLon := some cLon
+          place := match place with | some p => some p.label | none => base.place
+          city := match place with
+                  | some p => match p.city with | some c => some c | none => base.city
+                  | none => base.city
+          wayName := none
+          refinedReason := match base.refinedReason with
+                           | some r => some s!"{r}; {reason}"
+                           | none => some reason })
+    -- From `start + 1`: the head index carries the merged stay. Starting at
+    -- `start` instead is UNPINNABLE, and subsumed by the rewrite's order — it
+    -- consults `merged` BEFORE `drop`, so a head marked dropped is emitted
+    -- anyway. The TS is the same shape (`if (merged.has(i)) … else if
+    -- (!drop.has(i))`), so the redundancy is faithful, not introduced here.
+    for k in [start + 1 : stop + 1] do drop := drop.push k
+  let mut out : Array Seg := #[]
+  for i in [0 : segments.size] do
+    match merged.find? (·.1 == i) with
+    | some (_, m) => out := out.push m
+    | none => if !drop.contains i then out := out.push segments[i]!
+  return out
+
+/-! ### Parity with Node/V8 (`lean/experiments/consolidate-jitter-stays-refs.mts`) -/
+
+section ConsolidateGuards
+
+/-- The V8 harness read the queried coordinate back out of the resolved LABEL,
+naming its landmark after the point it was asked about. That trick does not
+survive the crossing — Lean and V8 render a `Float` differently — so the same
+question is asked the other way round: the stub answers only at the coordinate
+V8 was observed to query, and `none` anywhere else. A pass that computes a
+different centre therefore falls back to the base's own place, which is
+distinguishable. Same discrimination, no float formatting.
+
+It carries NO city, so the `?? base.city` fallback is what decides. -/
+private def resolvesAt (atLat atLon : Float) (label : String) :
+    Float → Float → Int → Int → String → Option ResolvedPlace :=
+  fun lat lon _ _ _ => if lat == atLat && lon == atLon then some { label } else none
+
+/-- The centre V8 asked about for `runOf3`, and for the second run of the
+two-run day. -/
+private def C1_LAT : Float := 51.500280000000004
+private def C1_LON : Float := -0.14014
+private def C2_LAT : Float := 51.60007499999999
+private def C2_LON : Float := -0.200075
+
+/-- Answers at either run's centre, so a two-run day can tell them apart. -/
+private def namedAfter : Float → Float → Int → Int → String → Option ResolvedPlace :=
+  fun lat lon _ _ _ =>
+    if lat == C1_LAT && lon == C1_LON then some { label := "Olivomare" }
+    else if lat == C2_LAT && lon == C2_LON then some { label := "Second venue" }
+    else if lat == 0 && lon == 0 then some { label := "Null Island" }
+    else if lat == 51.500099999999996 && lon == -0.14005 then some { label := "Tie centre" }
+    else if lat == 51.500159999999994 && lon == -0.14008 then some { label := "Pair centre" }
+    else none
+
+/-- Europe/London everywhere. The tz is handed straight to the venue scorer, so
+only the scorer can act on it; what this module can pin is the COORDINATE the tz
+is taken at, which the last guard below does. -/
+private def londonTz : Float → Float → String := fun _ _ => "Europe/London"
+
+/-- A walking leg, for the segments that must survive around a run. -/
+private def walkSeg (a b : Int) (place : Option String := none) : Seg :=
+  { blank with startTs := a, endTs := b, mode := "walking", place }
+
+private def cstay (a b : Int) (lat lon : Float) (n : Int) (jitter : Bool := false)
+    (place city : Option String := none) (reason : Option String := none)
+    (confidence : Float := 0.8) (avgSpeed : Float := 0) : Seg :=
+  { blank with
+    startTs := a, endTs := b, mode := "stationary", pointCount := n,
+    centroidLat := some lat, centroidLon := some lon, place, city, refinedReason := reason,
+    confidence, avgSpeed, refinedKinds := if jitter then #["gps-jitter"] else #[] }
+
+/-- Three co-located fragments; the MIDDLE is longest, so it is the base, and
+the point counts differ, so the centroid is not the plain mean. -/
+private def runOf3 : Array Seg :=
+  #[cstay 0 600 51.5 (-0.14) 10 true none (some "Edge") none 0.1,
+    cstay 600 1500 51.5002 (-0.1401) 40 false (some "Middle") (some "London")
+      (some "earlier note") 0.55 1.25,
+    cstay 1500 1800 51.5004 (-0.1402) 50 false (some "Last") (some "Edge") none 0.9]
+
+private def go (segs : Array Seg) : Array Seg := consolidateJitterStays segs namedAfter londonTz
+
+/-- The fields the collapse writes, per surviving segment. -/
+private def shape (segs : Array Seg) :
+    Array (Int × Int × Int × Option Float × Float × Option String × Option String × Option String ×
+           Option String) :=
+  (go segs).map fun s =>
+    (s.startTs, s.endTs, s.pointCount, s.centroidLat, s.confidence, s.place, s.city, s.wayName,
+     s.refinedReason)
+
+-- One stay, spanning the run, weighted centroid, the MIDDLE's base fields, the
+-- resolved label, the base's city (the stub answers none), no way label, and the
+-- base's own reason with the consolidation appended after it.
+#guard shape runOf3 ==
+  #[(0, 1800, 100, some C1_LAT, 0.55, some "Olivomare", some "London", none,
+     some "earlier note; consolidated 3 GPS-jitter stay fragments")]
+#guard (go runOf3).map (·.centroidLon) == #[some C1_LON]
+#guard (go runOf3).map (·.avgSpeed) == #[1.25]
+-- The weighted centroid is NOT the plain mean of the three fragment centroids.
+#guard C1_LAT != (51.5 + 51.5002 + 51.5004) / 3
+
+-- No jitter tag anywhere: the plan is empty and the day is returned untouched.
+#guard go #[cstay 0 600 51.5 (-0.14) 10, cstay 600 1500 51.5002 (-0.1401) 40]
+       == #[cstay 0 600 51.5 (-0.14) 10, cstay 600 1500 51.5002 (-0.1401) 40]
+
+-- Segments outside a run keep their place in the list, on both sides.
+#guard (go (#[walkSeg (-300) 0 (some "Before")] ++ runOf3
+            ++ #[walkSeg 1800 2100 (some "After")])).map (·.place)
+       == #[some "Before", some "Olivomare", some "After"]
+
+-- Two runs in one day are collapsed independently, each asking about its OWN
+-- centre — the second's label proves the query was not reused.
+#guard (go (runOf3 ++ #[walkSeg 1800 2100, cstay 2100 2700 51.6 (-0.2) 10 true,
+                        cstay 2700 3300 51.6001 (-0.2001) 30 false (some "Second run")])).map
+         (fun s => (s.startTs, s.endTs, s.place))
+       == #[(0, 1800, some "Olivomare"), (1800, 2100, none), (2100, 3300, some "Second venue")]
+-- …and each counts ITS OWN fragments, not the day's segments (3 and 2, of 6).
+#guard (go (runOf3 ++ #[walkSeg 1800 2100, cstay 2100 2700 51.6 (-0.2) 10 true,
+                        cstay 2700 3300 51.6001 (-0.2001) 30 false (some "Second run")])).map
+         (·.refinedReason)
+       == #[some "earlier note; consolidated 3 GPS-jitter stay fragments", none,
+            some "consolidated 2 GPS-jitter stay fragments"]
+
+/- The `|| 1` guard, reproduced. Every fragment carries `pointCount: 0`, so the
+numerator is 0, the denominator falls back to 1, and the combined centroid is
+(0, 0) — the resolver is asked about the Gulf of Guinea and the merged stay is
+named after whatever is there, with a `pointCount` of 1 no fragment contributed.
+This is what the TS does; it is recorded here, not fixed. -/
+#guard shape #[cstay 0 600 51.5 (-0.14) 0 true, cstay 600 1500 51.5002 (-0.1401) 0]
+       == #[(0, 1500, 1, some 0, 0.8, some "Null Island", none, none,
+             some "consolidated 2 GPS-jitter stay fragments")]
+
+-- A tie on duration keeps the EARLIER leg as base: `>` is strict.
+#guard (go #[cstay 0 600 51.5 (-0.14) 10 true none (some "EarlierBase") none 0.11,
+             cstay 600 1200 51.5002 (-0.1401) 10 false none (some "LaterBase") none 0.99]).map
+         (fun s => (s.confidence, s.city, s.place))
+       == #[(0.11, some "EarlierBase", some "Tie centre")]
+
+-- A base with no reason of its own gets the consolidation note alone.
+#guard (go #[cstay 0 600 51.5 (-0.14) 10 true,
+             cstay 600 1500 51.5002 (-0.1401) 40 false (some "Middle")]).map
+         (fun s => (s.refinedReason, s.place))
+       == #[(some "consolidated 2 GPS-jitter stay fragments", some "Pair centre")]
+
+-- An unresolvable centre leaves the base's own place and city standing.
+#guard (consolidateJitterStays runOf3 (fun _ _ _ _ _ => none) londonTz).map
+         (fun s => (s.place, s.city))
+       == #[(some "Middle", some "London")]
+-- A place that DOES carry a city outranks the base's.
+#guard (consolidateJitterStays runOf3
+          (fun _ _ _ _ _ => some { label := "Olivomare", city := some "Westminster" })
+          londonTz).map (fun s => (s.place, s.city))
+       == #[(some "Olivomare", some "Westminster")]
+
+-- The window handed to the resolver is the RUN's OUTER bounds — the first
+-- fragment's start and the last's end, not the base's own window (600..1500).
+#guard (consolidateJitterStays runOf3
+          (fun _ _ a b _ => if a == 0 && b == 1800 then some { label := "outer" } else none)
+          londonTz).map (·.place)
+       == #[some "outer"]
+-- …and the tz is taken at the COMBINED centre, not at any fragment's.
+#guard (consolidateJitterStays runOf3
+          (fun _ _ _ _ tz => if tz == "at-centre" then some { label := "tz ok" } else none)
+          (fun lat lon => if lat == C1_LAT && lon == C1_LON then "at-centre" else "elsewhere")).map
+         (·.place)
+       == #[some "tz ok"]
+
+end ConsolidateGuards
 
 end Verified.Geo.SegmentMerge
