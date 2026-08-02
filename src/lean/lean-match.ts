@@ -11,8 +11,9 @@
  *   off    (default) — pure TS, zero behaviour change. The bridge is never
  *            touched; no measurement.
  *   shadow — run BOTH, SERVE the TS output, compare, log divergence. The
- *            request-path shadow (the cron already shadows via spawnSync;
- *            this measures the SERVE path, over the persistent worker).
+ *            request-path shadow; the cron shadows the same legs separately
+ *            through `walk-shadow-core`. (That used to say "via spawnSync",
+ *            which #402 made false — both now run over the persistent worker.)
  *   on     — run BOTH, SERVE the verified Lean output, still compare and
  *            record. Fall back to TS on any bridge failure.
  *

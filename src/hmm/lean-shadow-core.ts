@@ -30,7 +30,7 @@
  *   cells; the referee trusts neither), gated by the corpus tool.
  */
 
-import { spawnSync } from "node:child_process";
+import { type LeanHsmmResp, leanHsmmServe } from "../lean/lean-core.js";
 import { buildHsmmModel, type HsmmInputs, type HsmmModel, segmentsFromStates } from "./decode.js";
 import { DEFAULT_MAX_DURATION, hsmmViterbi } from "./hsmm-viterbi.js";
 import type { Observation } from "./observation.js";
@@ -441,10 +441,49 @@ export function rleDurDelta(durDelta: readonly number[][][]): [number, number][]
 	);
 }
 
-export function decodeLean(
-	leanBin: string,
-	q: QuantProblem,
-): { path?: number[]; best?: number; degenerate?: boolean; error?: string } {
+/**
+ * The Lean arm: one verified decode over the PERSISTENT core worker.
+ *
+ * This used to `spawnSync(leanBin, [])` once per day — the second, older
+ * mechanism for talking to `verified_cli`, and the one #402 removed from the
+ * walk matcher after a `compare-match --gate` run sat 31 minutes with parent
+ * and child both at 0% CPU. That wedge was never reproducible on demand, so
+ * what settled #402 was not a characterisation but a choice: move onto the path
+ * that carries thousands of calls a run without wedging, and delete the one
+ * that has no such evidence. The same argument decides this call site.
+ *
+ * MEASURED before the move, because the two call sites are not alike and the
+ * differences cut both ways (2026-08-02, 11 decode fixtures):
+ *   - The request is 33–40 MiB per day, ~10⁴× the matcher's. If the wedge lives
+ *     anywhere in sync pipe pumping, this is the more exposed caller, not the
+ *     less.
+ *   - The classic mutual block is NOT the shape here: `verified_cli` cannot
+ *     write a byte until it has read the whole request (the newline is at the
+ *     end), and its reply — ~1440 integers — fits in one pipe buffer. So the
+ *     ordering deadlock is unreachable; only the uncharacterised #402 race is.
+ *   - Blast radius is already bounded: this runs in the decode cron (which sets
+ *     `activeDeadlineSeconds: 1800`) and in `cli/lean-shadow`, never in the
+ *     deploy gate — the corpus replays cached decodes (#233), so the decoder
+ *     never runs there. A hang here fails a Job in 30 minutes; #402's hung the
+ *     gate indefinitely.
+ *
+ * So this is a smaller fix than #402 was, and it is worth stating plainly
+ * rather than inheriting #402's urgency by association. What it buys: one
+ * bridge instead of two, a bounded call, no per-day process spawn, and — the
+ * part that pays now — the decode finally appears in `arm-timing`, which every
+ * other tenant already funnels through and this one bypassed.
+ *
+ * WHAT IT COSTS, since the spawn had one property this does not: isolation.
+ * `leanCore` is a process-wide singleton, so a decode failure now counts toward
+ * the same consecutive-failure breaker as every other tenant's, and tripping it
+ * drops ALL of them to TS for the rest of the process. Three failures IN A ROW
+ * are needed and any success resets the count, so in the decode cron — where
+ * the geometry passes call constantly and succeed — an HSMM timeout is
+ * essentially always followed by a reset. It is a real coupling all the same,
+ * and it is the reason the per-call ceiling has to be sized honestly rather
+ * than left at the interactive default.
+ */
+export function decodeLean(q: QuantProblem): LeanHsmmResp {
 	const payload: Record<string, unknown> = {
 		T: q.T,
 		S: q.S,
@@ -461,13 +500,7 @@ export function decodeLean(
 		payload.durClass = q.durClass;
 		payload.durDelta = rleDurDelta(q.durDelta);
 	}
-	const res = spawnSync(leanBin, [], {
-		input: JSON.stringify(payload),
-		encoding: "utf8",
-		maxBuffer: 1 << 28,
-	});
-	if (res.status !== 0) throw new Error(`verified_cli failed: ${res.stderr || res.stdout}`);
-	return JSON.parse(res.stdout);
+	return leanHsmmServe(payload);
 }
 
 /**
@@ -482,10 +515,10 @@ export function decodeLean(
  * index) so the caller can fall back to the TS decode — a verified-core bridge
  * failure must never corrupt or crash the served decode.
  */
-export function decodeHsmmViaLean(inputs: HsmmInputs, leanBin: string): HmmSegment[] {
+export function decodeHsmmViaLean(inputs: HsmmInputs): HmmSegment[] {
 	const model = buildHsmmModel(inputs);
 	const q = quantizeModel(model);
-	const res = decodeLean(leanBin, q);
+	const res = decodeLean(q);
 	if (res.error !== undefined || res.path === undefined) {
 		throw new Error(`lean decode returned no path: ${res.error ?? "missing path"}`);
 	}
@@ -539,17 +572,13 @@ export interface ShadowReport {
  *  `opts.refereeDurations` is set, also re-derives the class-factorised
  *  duration export cell-by-cell (a no-op on sparse days) — the corpus tool
  *  turns this on; the per-day cron leaves it off to avoid the extra pass. */
-export function shadowHsmmDay(
-	model: HsmmModel,
-	leanBin: string,
-	opts: { refereeDurations?: boolean } = {},
-): ShadowReport {
+export function shadowHsmmDay(model: HsmmModel, opts: { refereeDurations?: boolean } = {}): ShadowReport {
 	const t0 = performance.now();
 	const q = quantizeModel(model);
 	const t1 = performance.now();
 	const tsqPath = decodeTsQuant(q);
 	const t2 = performance.now();
-	const lean = decodeLean(leanBin, q);
+	const lean = decodeLean(q);
 	const t3 = performance.now();
 
 	const tsqScore = scoreQuant(q, tsqPath);

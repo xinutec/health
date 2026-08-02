@@ -17,7 +17,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { callTimeoutMs } from "../src/lean/lean-core.js";
+import { callTimeoutMs, firstCallTimeoutMs } from "../src/lean/lean-core.js";
 
 const ORIGINAL = process.env.LEAN_CALL_TIMEOUT_MS;
 
@@ -54,5 +54,31 @@ describe("lean bridge call timeout", () => {
 		expect(callTimeoutMs()).toBe(5000);
 		process.env.LEAN_CALL_TIMEOUT_MS = "0";
 		expect(callTimeoutMs()).toBe(5000);
+	});
+});
+
+describe("lean bridge cold-start timeout", () => {
+	it("gives the cold call its own headroom when nothing was requested", () => {
+		// The cold call pays the `verified_cli serve` spawn on top of the work, so
+		// it must not inherit the warm default.
+		delete process.env.LEAN_CALL_TIMEOUT_MS;
+		expect(firstCallTimeoutMs()).toBe(20000);
+	});
+
+	it("is a FLOOR on the warm ceiling, never a cap on it", () => {
+		// #410: the HSMM decode is 7–8 s per day in the cron and its FIRST call is
+		// the one that also pays the spawn. A bare 20 s constant would hand the
+		// most expensive call of the run a smaller budget than every call after
+		// it — backwards, and invisible until a caller asks for more than 20 s.
+		process.env.LEAN_CALL_TIMEOUT_MS = "60000";
+		expect(firstCallTimeoutMs()).toBe(60000);
+	});
+
+	it("keeps the cold floor when the caller asks for LESS", () => {
+		// A tight warm ceiling is about not stalling a request; it says nothing
+		// about how long a process spawn may take, so it must not shrink the
+		// cold budget and trip the breaker into TS-only for the whole process.
+		process.env.LEAN_CALL_TIMEOUT_MS = "1000";
+		expect(firstCallTimeoutMs()).toBe(20000);
 	});
 });

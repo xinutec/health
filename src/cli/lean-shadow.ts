@@ -23,6 +23,7 @@
  *          class export matches the referee (a no-op without --c4-flags).
  */
 
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { buildHsmmModel } from "../hmm/decode.js";
@@ -30,7 +31,30 @@ import { shadowHsmmDay } from "../hmm/lean-shadow-core.js";
 import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
 
 const DECODED_DIR = path.join(process.cwd(), "tests", "golden", "decoded_days");
+
+/**
+ * Call ceiling for the decode, set here for the same reason `compare-match`
+ * sets its own (#402): `lean-core`'s 5 s default is tuned so a slow leg never
+ * stalls an interactive request, and this tenant's calls are nothing like a
+ * leg. One HSMM day is 6.0 s on this machine and 6.9–8.4 s in the decode cron
+ * (measured 2026-08-02) — the default would time out EVERY call and quietly
+ * report the corpus as skipped rather than exact.
+ *
+ * `lean-core` reads this lazily, per call, so setting it after the import —
+ * which ESM hoisting forces — is honoured. An explicit `LEAN_CALL_TIMEOUT_MS`
+ * in the environment still wins.
+ */
+const SHADOW_CALL_TIMEOUT_MS = 60_000;
+if (!process.env.LEAN_CALL_TIMEOUT_MS) process.env.LEAN_CALL_TIMEOUT_MS = String(SHADOW_CALL_TIMEOUT_MS);
+
+/** Resolved the same way `lean-core`'s `defaultBin()` does — this copy exists
+ *  only to fail with one sentence naming the path, instead of letting every one
+ *  of the 11 days report its own `LeanBridgeError: worker unavailable`. */
 const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
+if (!existsSync(LEAN_BIN)) {
+	console.error(`verified_cli not found at ${LEAN_BIN} — build it (cd lean && lake build) or set LEAN_CLI`);
+	process.exit(2);
+}
 
 async function main(): Promise<void> {
 	const args = process.argv.slice(2);
@@ -52,7 +76,7 @@ async function main(): Promise<void> {
 		}
 		const model = buildHsmmModel(inputs);
 		try {
-			const r = shadowHsmmDay(model, LEAN_BIN, { refereeDurations: true });
+			const r = shadowHsmmDay(model, { refereeDurations: true });
 			// The class-export referee is an independent re-derivation of the
 			// duration tensor; a mismatch is as much a failure as a divergent
 			// decode. It is a no-op on sparse days (only --c4-flags takes the

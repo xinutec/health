@@ -136,7 +136,7 @@ async function buildPlaceNearLine(places: readonly HsmmPlace[], lines: readonly 
 function runLeanShadow(inputs: HsmmInputs, date: string): void {
 	const leanBin = process.env.LEAN_CLI;
 	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) return;
-	shadowHsmmViaLean(inputs, leanBin, date);
+	shadowHsmmViaLean(inputs, date);
 }
 
 /** Matcher shadow (docs/proposals/2026-07-verified-core-lean.md): when the

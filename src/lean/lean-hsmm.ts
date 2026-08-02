@@ -72,7 +72,7 @@ export function decodeServed(inputs: HsmmInputs, date: string): HmmSegment[] {
 		return decodeHsmm(inputs);
 	}
 	try {
-		return decodeHsmmViaLean(inputs, leanBin);
+		return decodeHsmmViaLean(inputs);
 	} catch (err) {
 		console.warn(
 			`[lean-hsmm] on but bridge failed for ${date} (${err instanceof Error ? err.message : String(err)}) — serving TS decode`,
@@ -127,12 +127,12 @@ function record(date: string, kind: HsmmDivergence["kind"], detail: string): voi
  * corpus gate covers that offline). Never throws: a shadow error is recorded
  * and the decode run continues, exactly as the log-only version did.
  */
-export function shadowHsmmViaLean(inputs: HsmmInputs, leanBin: string, date: string): void {
+export function shadowHsmmViaLean(inputs: HsmmInputs, date: string): void {
 	const mode = leanHsmmMode();
 	if (mode === "off") return;
 	stats.days += 1;
 	try {
-		const r = shadowHsmmDay(buildHsmmModel(inputs), leanBin);
+		const r = shadowHsmmDay(buildHsmmModel(inputs));
 		if (!r.exact) {
 			stats.bridgeDiverged += 1;
 			record(date, "bridge", r.verdict);
