@@ -27,8 +27,11 @@
  * projection feet are quantised to the 1e-7° grid with `roundDiv`
  * (≤ ~6 mm from the float sample; a measured near-tie class, like every
  * float↔quant deviation here). Candidate ties (equal distance) break by
- * segment index; the float side breaks them by grid-discovery order —
- * also a measured class.
+ * segment index in BOTH arms, and the candidate cut is tie-inclusive in
+ * both — the float side used to break ties by grid-discovery order and
+ * cut at a fixed rank, which was recorded here as a measured deviation
+ * class until #398 showed it was not one: two arms cutting the same
+ * distances into different sets put one King's Cross leg 120 m wrong.
  */
 
 import {
@@ -400,9 +403,30 @@ export interface QCand {
 	td: bigint;
 }
 
+/** {@link setCandidateSink}'s twin — same contract, distances in µm. The two
+ *  arms' matcher loops walk `fixes` in the same order, so an observer installed
+ *  on both sides pairs the emissions by call index with no key to join on. */
+export type QCandidateSink = (sortedDistUm: readonly bigint[], sortedSegIds: readonly number[], kept: number) => void;
+
+let qCandidateSink: QCandidateSink | null = null;
+
+/** Install (or clear, with `null`) the quant arm's candidate observer. */
+export function setQCandidateSink(sink: QCandidateSink | null): void {
+	qCandidateSink = sink;
+}
+
+/** `CANDIDATE_TIE_M`'s twin, in µm — see `map-match-core.ts` for the
+ *  derivation and for why the corpus picked 2 cm over 5. Exact here: 2 cm is
+ *  20 000 µm with nothing to round. */
+const CANDIDATE_TIE_UM = 20_000n;
+
+/** `CANDIDATE_TIE_CEILING`'s twin. */
+const CANDIDATE_TIE_CEILING = 2;
+
 /** `candidatesForFix`'s twin: scan every segment (the float grid is a
  *  conservative-exact prefilter), keep projections within the radius,
- *  sort by distance with segment index as the tie-break. */
+ *  sort by distance with segment index as the tie-break, and cut
+ *  tie-inclusively. */
 export function qCandidatesForFix(fix: QPt, graph: QGraph, radiusUm: bigint, maxCandidates: number): QCand[] {
 	const cands: QCand[] = [];
 	for (let si = 0; si < graph.segments.length; si++) {
@@ -414,7 +438,21 @@ export function qCandidatesForFix(fix: QPt, graph: QGraph, radiusUm: bigint, max
 		if (proj.dist <= radiusUm) cands.push({ la: proj.la, lo: proj.lo, dist: proj.dist, si, tn: proj.tn, td: proj.td });
 	}
 	cands.sort((p, q) => (p.dist < q.dist ? -1 : p.dist > q.dist ? 1 : p.si - q.si));
-	return cands.slice(0, maxCandidates);
+	let n = cands.length;
+	if (n > maxCandidates) {
+		const cutoff = cands[maxCandidates - 1].dist + CANDIDATE_TIE_UM;
+		const ceiling = Math.min(cands.length, maxCandidates * CANDIDATE_TIE_CEILING);
+		n = maxCandidates;
+		while (n < ceiling && cands[n].dist <= cutoff) n++;
+	}
+	if (qCandidateSink !== null) {
+		qCandidateSink(
+			cands.map((c) => c.dist),
+			cands.map((c) => c.si),
+			n,
+		);
+	}
+	return cands.slice(0, n);
 }
 
 class QHeap {

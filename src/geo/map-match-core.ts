@@ -1045,9 +1045,117 @@ interface Candidate {
 	seg: RoadSegment;
 	/** Fractional position from `seg.u` to `seg.v`. */
 	t: number;
+	/** Index into `graph.segments` — the segment's identity, and the tie-break
+	 *  that makes the sort a strict total order. `buildRoadGraph` and its twin
+	 *  `buildQGraph` push segments in the same order (way order, consecutive
+	 *  coord pairs, `id !== prev`) over the same deduplicated vertex grid
+	 *  (`vertexDp: 7` ≡ the quantised integer key), so this index means the same
+	 *  segment in both arms. */
+	si: number;
 }
 
-/** The `maxCandidatesPerFix` nearest way projections within radius. */
+/**
+ * Observer for the per-fix candidate list, BEFORE the top-K cut (#406).
+ *
+ * The cut is the one place the matcher turns a continuous quantity into a
+ * discontinuous decision, so it is the one place a 1.1 cm coordinate
+ * perturbation can move the answer 120 m. Deciding what to do about that needs
+ * the shape of the list at the boundary — how far the K-th candidate is from
+ * the (K+1)-th — and that is not recoverable from anything the matcher returns.
+ *
+ * Off by default, and the emission is a single `!== null` test on a path that
+ * already allocated an array, so the hook costs nothing when unset.
+ */
+export type CandidateSink = (sortedDistM: readonly number[], sortedSegIds: readonly number[], kept: number) => void;
+
+let candidateSink: CandidateSink | null = null;
+
+/** Install (or clear, with `null`) the float arm's candidate observer. */
+export function setCandidateSink(sink: CandidateSink | null): void {
+	candidateSink = sink;
+}
+
+/**
+ * How close behind the K-th candidate a rejected one has to sit before the cut
+ * admits it anyway, in metres (#406). Mirrored as `CANDIDATE_TIE_UM` in
+ * `match-twin.ts` and `candidateTieUm` in `Verified/Geo/Match.lean`; the three
+ * are held together by `compare-match --gate`, which reds on any leg where the
+ * arms disagree.
+ *
+ * DERIVED, not chosen. The BigInt twin works on coordinates rounded to 1e-7°,
+ * so relative to the float arm each of the fix and the segment's two endpoints
+ * moves by at most half a unit: 0.56 cm in latitude and 0.35 cm in longitude at
+ * London's latitude, so ≤ 0.66 cm per point. Point-to-segment distance is
+ * 1-Lipschitz in all three, giving ≤ 1.97 cm; the twin's fixed-point arithmetic
+ * (a cos scaled by 2^20, µm rounding) adds under 0.01 cm on a 50 m radius. So
+ * two candidates separated by less than ~2 cm can rank either way, and which
+ * one the cut keeps is then not a decision but an artifact of which arm ran.
+ *
+ * MEASURED, and the measurement agrees with the derivation. Over every walking
+ * leg of the 32 golden days, `compare-match --candidates` puts the worst
+ * float↔quant projection-distance disagreement at **0.649 cm** — a third of the
+ * derived bound. 2 cm is therefore 3x the observed worst case, and sits AT the
+ * worst case arguable from the quantisation rather than above it.
+ *
+ * WHY 2 cm AND NOT 5, WHICH HAS MORE THEORETICAL MARGIN. Because 5 cm was tried
+ * and the corpus rejected it. The tie-tolerance ablation (same sweep; 2835 fixes
+ * where the cut decides anything, "disagree" = the arms kept different segments,
+ * "extra" = candidates admitted beyond K):
+ *
+ *     no tie-break, plain top-K   110 disagree      0 extra   <- before #406
+ *     tie-break, plain top-K       19               0
+ *     tie-break, exact ties only   19             519         <- pure waste
+ *     tie-break + 1 cm             12             643
+ *     tie-break + 2 cm             10             704         <- SHIPPED
+ *     tie-break + 5 cm              4             859
+ *     tie-break + 10 cm             5            1083         <- got WORSE
+ *
+ * By fix-level agreement 5 cm looks strictly better. At LEG level it is not:
+ * 5 cm introduced a brand-new 16.12 m float↔quant divergence on 2026-06-12
+ * (leg 4a4a165dce2ff3df, not in `accepted-match-deltas.ts`) and turned
+ * `compare-match --gate` red. That leg's own boundary gap is 4.968 cm — inside
+ * a 5 cm band, outside a 2 cm one — so the wider tolerance admitted a candidate
+ * there and the Viterbi took a different route with it. Fix-level agreement is
+ * a proxy; the leg is the thing that gets drawn.
+ *
+ * Two further things the table settles. Admitting EXACT ties alone buys nothing
+ * the `si` tie-break has not already bought, at 519 extra candidates — the
+ * obvious cheap rule is the one to reject. And the disagreement count is not
+ * monotone in the tolerance: a wider band creates boundary disagreements as
+ * readily as it removes them. That is #398's lesson in miniature.
+ *
+ * NEITHER LAYER IS SUFFICIENT ALONE. The `si` tie-break removes 83% of the
+ * fix-level disagreements for free, but on its own it leaves the originating
+ * defect exactly as it was: leg 71e5544efa614a06 still diverges by 120.5 m
+ * (float straying 63.8 m from the quant line). The tolerance is what closes it:
+ * at 2 cm that leg goes EXACT, 0.0 cm. Whether 1 cm would also close it was not
+ * measured — 2 cm was reached from 5 by narrowing past the 06-12 boundary gap,
+ * not by a search from below.
+ *
+ * It has to stay far BELOW real separation, or it stops being a tie rule and
+ * becomes `maxCandidatesPerFix + 1` in disguise — which #398 measured and the
+ * walk gate rejected. The corpus median boundary gap is 39.6 cm, twenty times
+ * the tolerance, so on most fixes this changes nothing.
+ */
+const CANDIDATE_TIE_M = 0.02;
+
+/**
+ * Hard ceiling on the tie-inclusive extension, as a multiple of the cut.
+ *
+ * The tolerance is an absolute band below the K-th candidate, not a transitive
+ * chain, so it cannot cascade — but a dense junction can still put many
+ * segments inside one band, and the Viterbi is O(F·K²) in what it is handed.
+ * This bounds the worst case at 4× the work rather than leaving it open.
+ *
+ * It is itself a cut, and so in principle unstable at ITS boundary — reaching
+ * that boundary takes 2K candidates within 2 cm of one another. This is a
+ * safety valve, not a tuned figure: how often it actually binds on the corpus
+ * has not been measured, so do not read it as evidence of anything.
+ */
+const CANDIDATE_TIE_CEILING = 2;
+
+/** The `maxCandidatesPerFix` nearest way projections within radius, plus any
+ *  candidate too close behind the last of them to be told apart from it. */
 function candidatesForFix(
 	fix: RoadFix,
 	graph: RoadGraph,
@@ -1061,10 +1169,37 @@ function candidatesForFix(
 		const a = graph.vertices[seg.u];
 		const b = graph.vertices[seg.v];
 		const proj = projectPointToSegment(fix, a, b);
-		if (proj.distM <= radiusM) cands.push({ lat: proj.lat, lon: proj.lon, distM: proj.distM, seg, t: proj.t });
+		if (proj.distM <= radiusM) cands.push({ lat: proj.lat, lon: proj.lon, distM: proj.distM, seg, t: proj.t, si });
 	}
-	cands.sort((p, q) => p.distM - q.distM);
-	return cands.slice(0, maxCandidates);
+	// Sorted by (distance, segment id). The tie-break is not decoration: exact
+	// distance ties are common — a fix abreast of a shared way node projects onto
+	// both of its segments at the same point, and duplicated OSM geometry ties
+	// outright — and on 2026-07-30 they were 16 of the 93 fixes whose list the cut
+	// actually truncates. Without it the order of a tie class is `index.near`'s
+	// grid-bucket order here and ascending segment index in the twin, so the two
+	// arms cut the SAME distances into different sets, and the Viterbi's strict
+	// `>` (first maximum wins) then propagates the choice. `si` is a strict total
+	// order, so this makes the sort deterministic as well as agreeing.
+	cands.sort((p, q) => (p.distM !== q.distM ? p.distM - q.distM : p.si - q.si));
+	// Tie-inclusive cut: keep the top K, and then keep going while the next
+	// candidate is within the tolerance of the K-th. Where the boundary is a
+	// clean margin — the common case, median gap ~0.5 m — this stops
+	// immediately and the state space is exactly what it was.
+	let n = cands.length;
+	if (n > maxCandidates) {
+		const cutoff = cands[maxCandidates - 1].distM + CANDIDATE_TIE_M;
+		const ceiling = Math.min(cands.length, maxCandidates * CANDIDATE_TIE_CEILING);
+		n = maxCandidates;
+		while (n < ceiling && cands[n].distM <= cutoff) n++;
+	}
+	if (candidateSink !== null) {
+		candidateSink(
+			cands.map((c) => c.distM),
+			cands.map((c) => c.si),
+			n,
+		);
+	}
+	return cands.slice(0, n);
 }
 
 /** A binary min-heap keyed on numeric priority — the Dijkstra queue. */

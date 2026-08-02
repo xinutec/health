@@ -1004,9 +1004,40 @@ def buildQGraphFast (ways : Array QWay) (co : QCorridor) (bld : Option QBuilding
 
 /-! ## Candidates -/
 
+/-- The tie tolerance at the candidate cut, in µm — `CANDIDATE_TIE_M`
+(`map-match-core.ts`) and `CANDIDATE_TIE_UM` (`match-twin.ts`) in this arm's
+units, and derived there: it is the largest amount by which quantising to 1e-7°
+can move a point-to-segment distance (1.97 cm at London's latitude), and three
+times the 0.649 cm actually measured over the golden corpus. Below it, which of
+two candidates is "nearer" is an artifact of which arm computed it. A wider
+band is not safer — 5 cm was tried and introduced a new 16 m float↔quant
+divergence on 2026-06-12; `map-match-core.ts` carries that measurement. -/
+def candidateTieUm : Nat := 20000
+
+/-- Ceiling on the tie-inclusive extension, as a multiple of the cut — keeps
+the decode O(F·K²) when a junction puts many segments inside one band. -/
+def candidateTieCeiling : Nat := 2
+
+/-- Cut a sorted candidate list at `maxCands`, then keep going while the next
+candidate sits within `candidateTieUm` of the **`maxCands`-th** — the twin's
+tie-inclusive `slice`. Measuring from the `maxCands`-th rather than from the
+last kept one is what stops it chaining: the admitted set is an absolute band
+below one fixed distance, not a transitive walk that a run of closely spaced
+candidates could carry arbitrarily far. Where the boundary has a clean margin
+this stops at once and the result is `extract 0 maxCands`, as before. -/
+def cutTieInclusive (sorted : Array QCand) (maxCands : Nat) : Array QCand := Id.run do
+  if sorted.size ≤ maxCands then return sorted
+  let cutoff := (sorted.getD (maxCands - 1) default).dist + candidateTieUm
+  let ceiling := min sorted.size (maxCands * candidateTieCeiling)
+  let mut n := maxCands
+  for i in [maxCands:ceiling] do
+    if (sorted.getD i default).dist ≤ cutoff then n := n + 1 else break
+  return sorted.extract 0 n
+
 /-- `candidatesForFix`'s twin: scan every segment, keep projections
 within the radius, sort by `(dist, si)` (a strict total order — `si`
-distinct — so `qsort` is deterministic), take the first `maxCands`. -/
+distinct — so `qsort` is deterministic), take the first `maxCands` plus
+any tie behind them. -/
 def qCandidatesForFix (fix : QPt) (gr : QGraph) (radiusUm maxCands : Nat) :
     Array QCand := Id.run do
   let mut cands : Array QCand := #[]
@@ -1019,7 +1050,7 @@ def qCandidatesForFix (fix : QPt) (gr : QGraph) (radiusUm maxCands : Nat) :
     if proj.dist ≤ radiusUm then
       cands := cands.push { la := proj.la, lo := proj.lo, dist := proj.dist, si, tn := proj.tn, td := proj.td }
   let sorted := cands.qsort (fun p q => p.dist < q.dist || (p.dist == q.dist && p.si < q.si))
-  return sorted.extract 0 maxCands
+  return cutTieInclusive sorted maxCands
 
 /-- Spatial index over a graph's segments, cells one `radiusUm` wide, each
 segment filed in every cell its endpoint box **dilated by one cell** touches. A
@@ -1186,8 +1217,10 @@ matcher's largest single cost once the corridor was indexed (one scan of ~25 k
 segments per GPS fix). The bucket holds every segment that can pass the radius
 test (`near_segment_cell_range`), so both arms sort the same candidate set.
 
-That the sorted *prefix* is the same needs nothing at all about `qsort`. The two
-arms never hand it differently-ordered arrays: `mkQSegIndex` fills each bucket
+That the kept *prefix* is the same needs nothing at all about `qsort`, and
+`cutTieInclusive` does not change that — it reads only the sorted array, so the
+same array in gives the same cut out. The two arms never hand `qsort`
+differently-ordered arrays: `mkQSegIndex` fills each bucket
 with `si` ascending (the outer loop is ascending and the push dedups against the
 bucket's last entry), this loop walks the bucket in index order, and the scan
 walks `[0, segments.size)` — so by `filter_eq_filter_range` the two collect the
@@ -1206,7 +1239,7 @@ def qCandidatesForFixFast (fix : QPt) (gr : QGraph) (idx : QSegIndex)
     if proj.dist ≤ radiusUm then
       cands := cands.push { la := proj.la, lo := proj.lo, dist := proj.dist, si, tn := proj.tn, td := proj.td }
   let sorted := cands.qsort (fun p q => p.dist < q.dist || (p.dist == q.dist && p.si < q.si))
-  return sorted.extract 0 maxCands
+  return cutTieInclusive sorted maxCands
 
 /-! ## Routing over the LazyDijkstra model
 
