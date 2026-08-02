@@ -160,7 +160,7 @@ async function runWalkShadow(userId: string, date: string, tz: string, osm: OsmA
 		const capture = beginWalkLegCapture();
 		await computeVelocityFromInputs(inputs, { walkMatch: true });
 		const legs = endWalkLegCapture(capture);
-		const s = shadowWalkDay(legs, leanBin);
+		const s = shadowWalkDay(legs);
 		console.log(
 			`walk-shadow ${date} quant↔lean ${s.exact}/${s.legs} EXACT` +
 				(s.mismatches.length > 0 ? ` — MISMATCH ${s.mismatches.join(", ")}` : "") +

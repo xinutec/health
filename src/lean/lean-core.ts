@@ -40,7 +40,15 @@ const SAB_BYTES = 8 * 1024 * 1024;
  *  legs, so the batch decode path (no user waiting) raises it via
  *  `LEAN_CALL_TIMEOUT_MS`; the interactive `/api/velocity` path leaves it tight
  *  so a slow leg never stalls a request. */
-const CALL_TIMEOUT_MS = Number(process.env.LEAN_CALL_TIMEOUT_MS) || 5000;
+/** Read LAZILY, per call, not once at module load. A CLI that wants a different
+ *  ceiling than the request path (`compare-match --gate`, whose legs are the
+ *  heaviest in the corpus) can then set `LEAN_CALL_TIMEOUT_MS` during its own
+ *  startup — after this module is imported, which ESM hoisting makes
+ *  unavoidable — and still be honoured. As a module-load const the assignment
+ *  was simply ignored, so the caller silently got 5 s. */
+export function callTimeoutMs(): number {
+	return Number(process.env.LEAN_CALL_TIMEOUT_MS) || 5000;
+}
 /** Timeout for the FIRST call over a freshly (re)built worker: it must absorb
  *  the cold `verified_cli serve` spawn — ~1.5 s idle, but several times that on
  *  a CPU-throttled pod under load. A tight 5 s here risks tripping the breaker
@@ -178,7 +186,7 @@ class LeanCore {
 		const body = this.body;
 		Atomics.store(control, 0, CTRL_PENDING);
 		worker.postMessage({ mode, payload });
-		const timeout = this.warm ? CALL_TIMEOUT_MS : FIRST_CALL_TIMEOUT_MS;
+		const timeout = this.warm ? callTimeoutMs() : FIRST_CALL_TIMEOUT_MS;
 		const woke = Atomics.wait(control, 0, CTRL_PENDING, timeout);
 		if (woke === "timed-out") this.fail("call timed out");
 		const status = Atomics.load(control, 0);

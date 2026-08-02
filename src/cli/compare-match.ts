@@ -52,7 +52,7 @@
  * leave the corpus alone.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { legDeviations, legFingerprint, legNote, legVertexSeparations, maxDeviationM } from "../geo/leg-compare.js";
 import { setCandidateSink } from "../geo/map-match-core.js";
@@ -65,8 +65,35 @@ import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
 import { isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
-/** The Lean arm binary — `LEAN_CLI` in the built image, else the local build. */
+/** The Lean arm binary — `LEAN_CLI` in the built image, else the local build.
+ *  `lean-core` resolves the same path itself; this is here so a MISSING binary
+ *  fails with one sentence naming the path, rather than as a LeanBridgeError
+ *  from the worker on the first leg — a gate should say what is wrong with the
+ *  environment before it starts replaying days. */
 const LEAN_BIN = process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
+if (!existsSync(LEAN_BIN)) {
+	console.error(`verified_cli not found at ${LEAN_BIN} — build it (lake build) or set LEAN_CLI`);
+	process.exit(2);
+}
+
+/**
+ * The gate's per-call ceiling, and it must be GENEROUS — this is not a liveness
+ * timeout, it is a compute one.
+ *
+ * `lean-core` defaults to 5 s, tuned for the interactive `/api/velocity` path
+ * where a slow leg must never stall a request. The gate's population is the
+ * opposite: the golden corpus's heaviest legs, measured on 2026-08-02 at
+ * `lean avg 275ms max 4843ms` — 97% of that default. Inheriting 5 s here would
+ * turn #402's intermittent HANG into an intermittent TIMEOUT, which is a
+ * different bug wearing the fix's clothes, so the ceiling is set an order of
+ * magnitude clear of the measured maximum.
+ *
+ * `lean-core` reads this lazily, per call, so setting it here — after the
+ * import, which ESM hoisting forces — is honoured. An explicit
+ * `LEAN_CALL_TIMEOUT_MS` in the environment still wins.
+ */
+const GATE_CALL_TIMEOUT_MS = 60_000;
+if (!process.env.LEAN_CALL_TIMEOUT_MS) process.env.LEAN_CALL_TIMEOUT_MS = String(GATE_CALL_TIMEOUT_MS);
 
 const allArgs = process.argv.slice(2);
 const gate = allArgs.includes("--gate");
@@ -408,7 +435,23 @@ for (const file of files) {
 		// the quant arm never will. Drop them: only the A/B's own pair counts.
 		floatObs.length = 0;
 		quantObs.length = 0;
-		const r = shadowWalkLeg(leg, LEAN_BIN);
+		// A bridge failure (timeout, worker death, oversize response) must name the
+		// LEG, not just the tenant. #402's wedge was diagnosable only from a `ps`
+		// CPU column because nothing in the run said which leg it had stopped on;
+		// the fingerprint here is the same key `--leg <fp>` replays, so the error
+		// hands you the reproduction command.
+		let r: ReturnType<typeof shadowWalkLeg>;
+		try {
+			r = shadowWalkLeg(leg);
+		} catch (err) {
+			const date = file.slice(0, 10);
+			const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
+			throw new Error(
+				`lean match FAILED on ${date} ${hhmm} leg=${fp} (${leg.clean.length} fixes): ` +
+					`${err instanceof Error ? err.message : String(err)}\n` +
+					`  replay this leg alone: compare-match --leg ${fp} ${date}`,
+			);
+		}
 		legs++;
 		const date = file.slice(0, 10);
 		const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
