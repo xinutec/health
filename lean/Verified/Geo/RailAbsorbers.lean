@@ -1,8 +1,9 @@
+import Verified.Geo.TubeHop
 /-!
-# Rail absorbers (port of the pure passes in `src/geo/passes/rail-absorbers.ts`)
+# Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
-Three list rewrites that clean up the segments around a rail journey, plus the
-label parser one of them depends on.
+List rewrites that clean up the segments around a rail journey, plus the label
+parser two of them depend on.
 
 * `absorbDriveStops` — a `driving → short stationary → driving` sandwich with
   almost no steps in the middle never opened the vehicle's doors. Absorb it.
@@ -12,6 +13,18 @@ label parser one of them depends on.
 * `relabelWalkingInterchanges` — a short walk between two train legs that share a
   station is the platform-to-platform change, so name it after the station
   rather than whatever street the GPS happened to see.
+* `absorbBoardingPlatform` — a short stationary right before a train, AT that
+  train's boarding station, is the wait on the platform. Drop it and extend the
+  train back over it. `async` in the TS only because the station lookup is an
+  OSM call; it arrives here as an injected function, so the pass ports whole.
+
+## `absorbBoardingPlatform` reads the RAW mode, not `effectiveMode`
+
+Every other mode test in this file — and both anchors further down the TS —
+goes through `effectiveMode`. This one does not: it tests `train.mode` and
+`prev.mode` directly, so a leg the classifier called `driving` and a later pass
+refined to `train` does NOT absorb its platform wait. Two guards below pin that
+asymmetry; it is faithful to the TS, not a simplification.
 
 ## `parseRailWayName` is deliberately NOT reused from `Verified.Geo.Worldline`
 
@@ -41,7 +54,17 @@ against Node/V8 (`lean/experiments/rail-absorbers-refs.mts`).
 
 namespace Verified.Geo.RailAbsorbers
 
+open Verified.Geo.TubeHop (NearbyStation pickBestStation)
+
 abbrev Mode := String
+
+/-- A Kalman-filtered fix. `speed_kmh` and `bearing` are carried by the TS type
+but read by nothing in this file. -/
+structure Fix where
+  ts : Int
+  lat : Float
+  lon : Float
+  deriving Inhabited, BEq, Repr
 
 /-- The `EnrichedSegment` fields these passes read and rewrite. -/
 structure Seg where
@@ -255,6 +278,81 @@ def relabelWalkingInterchanges (segments : Array Seg) : Array Seg :=
           | _, _ => seg
       | _, _ => seg
 
+/-! ## `absorbBoardingPlatform` -/
+
+/-- Longest stationary stretch before a rail run still treated as a platform /
+concourse wait. A longer stay at the station is a state of its own. -/
+def PLATFORM_WAIT_MAX_S : Int := 15 * 60
+
+/-- The new `startTs` for the train at index `k`, when the segment before it is
+this train's platform wait.
+
+The boarding station is read off the train's own label rather than looked up:
+`"<board> → <alight>"` is what `annotateRailRuns` and `annotateUndergroundRuns`
+both write, so the pass works downstream of either. Note the label is split on
+the ARROW alone and nothing is trimmed — the ` · <line>` suffix stays in the
+tail, which is discarded.
+
+The point window is EXCLUSIVE at the closing end: the fix sitting exactly on the
+`stationary → train` boundary is the ride pulling out, and letting it into the
+platform centroid drags the query off the station. -/
+private def platformStart (segments : Array Seg) (points : Array Fix)
+    (stationsLookup : Float → Float → Array NearbyStation) (k : Nat) : Option Int :=
+  let train := segments[k]!
+  -- RAW `mode`, not `effectiveMode` — see the module header.
+  if train.mode != "train" then none
+  else match splitFirst (train.wayName.getD "") RAIL_STATION_SEP with
+  | none => none
+  | some (boardingStation, _) =>
+    let prev := segments[k - 1]!
+    if prev.mode != "stationary" then none
+    else if prev.endTs - prev.startTs > PLATFORM_WAIT_MAX_S then none
+    else
+      let segPoints := points.filter fun p => decide (p.ts ≥ prev.startTs) && decide (p.ts < prev.endTs)
+      if segPoints.isEmpty then none
+      else
+        let n := Float.ofNat segPoints.size
+        let cLat := (segPoints.foldl (fun a p => a + p.lat) 0) / n
+        let cLon := (segPoints.foldl (fun a p => a + p.lon) 0) / n
+        match pickBestStation (stationsLookup cLat cLon) with
+        | none => none
+        | some station => if station.name == boardingStation then some prev.startTs else none
+
+/-- Absorb a platform wait into the boarding of the rail run that follows it.
+
+A short stationary immediately before a `train` whose location resolves to that
+train's boarding station is the wait on the platform or concourse — part of
+catching the train, not a separate stay. Left standalone it is mislabelled: a
+station is not a focus place, so the place-assigner snaps the stay to the
+nearest focus place instead (a King's Cross platform wait surfaced as "@ Work",
+380 m away). Dropping the stationary and extending the train back over it makes
+the timeline read walk → train. -/
+def absorbBoardingPlatform (segments : Array Seg) (points : Array Fix)
+    (stationsLookup : Float → Float → Array NearbyStation) : Array Seg := Id.run do
+  let mut extendTo : Array (Nat × Int) := #[]
+  -- Opening at 1 is load-bearing in the TS — `segments[-1]` is `undefined`
+  -- there and reading `.mode` off it throws — but UNPINNABLE here: `k - 1`
+  -- truncates to `0` on `Nat`, so at `k = 0` the "previous" segment IS the
+  -- train, and no segment is both `train` and `stationary`. Kept as the TS has
+  -- it, and noted so the vacuity is not mistaken for redundancy.
+  for k in [1 : segments.size] do
+    match platformStart segments points stationsLookup k with
+    | none => pure ()
+    | some ts => extendTo := extendTo.push (k, ts)
+  -- UNPINNABLE, and provably: with nothing absorbed the rewrite below pushes
+  -- every segment unchanged, so the early return saves a pass and decides
+  -- nothing. (The TS additionally returns the SAME array object; that identity
+  -- is not observable here, and no caller mutates it.) Kept to mirror the TS.
+  if extendTo.isEmpty then return segments
+  let mut out : Array Seg := #[]
+  for idx in [0 : segments.size] do
+    -- The platform wait for the train at `idx + 1` is this segment: it goes.
+    if extendTo.any (·.1 == idx + 1) then continue
+    match extendTo.find? (·.1 == idx) with
+    | some (_, ts) => out := out.push { segments[idx]! with startTs := ts }
+    | none => out := out.push segments[idx]!
+  return out
+
 /-! ## Guards (V8 reference values) -/
 
 private def T (b a : String) (l : Option String := none) : Option RailTriple := some ⟨b, a, l⟩
@@ -397,5 +495,110 @@ private def rview (out : Array Seg) : Option String × Option String :=
       { startTs := 300, endTs := 900, mode := "train", wayName := some "Baker Street → Wembley Park" }])[0]!.wayName
   == none
 #guard relabelWalkingInterchanges #[] == #[]
+
+/-! ### `absorbBoardingPlatform`
+
+The stub answers a station only at the exact coordinates V8 was observed to
+query, so the point-averaged centroid is pinned by WHICH query succeeds rather
+than asserted — a label built from a `Float` could not cross, since Lean and V8
+render one differently. The literals are V8's own digits.
+-/
+
+private def stationsAt : Float → Float → Array NearbyStation := fun lat lon =>
+  -- At the platform an entrance CODE sits nearer than the station itself, so
+  -- `pickBestStation`'s ranking is exercised rather than assumed.
+  if lat == 51.52539999999999 && lon == -0.1359 then #[⟨"B2", "station", 5⟩, ⟨"Euston Square", "station", 20⟩]
+  else if lat == 51.5271 && lon == -0.1327 then #[⟨"King's Cross St Pancras", "station", 30⟩]
+  else if lat == 51.9999 && lon == -0.9999 then #[⟨"Baker Street", "station", 20⟩]
+  -- A station with an EMPTY name — the only thing that can tell a REJECTED
+  -- missing label apart from one read as an empty boarding station.
+  else if lat == 40 && lon == 40 then #[⟨"", "station", 20⟩]
+  -- A station at the NaN centroid an empty window would produce: reachable only
+  -- if the empty-window guard is gone.
+  else if lat.isNaN then #[⟨"Euston Square", "station", 20⟩]
+  else #[]
+
+/-- Four fixes whose mean is none of them, so the average is observable. The
+last sits exactly ON the stationary's closing boundary, where the exclusive-end
+window excludes it — and it is 50 km away, so an inclusive window would resolve
+a different station outright. -/
+private def platform : Array Fix :=
+  #[⟨600, 51.5254, -0.1359⟩, ⟨660, 51.5256, -0.1361⟩, ⟨720, 51.5252, -0.1357⟩, ⟨900, 51.9999, -0.9999⟩]
+
+private def MET_RUN : String := "Euston Square → Baker Street · Metropolitan Line"
+
+private def pstay (a b : Int) (mode : Mode := "stationary") (refinedMode : Option Mode := none) : Seg :=
+  { startTs := a, endTs := b, mode, refinedMode, pointCount := 4 }
+private def ptrain (a b : Int) (wayName : Option String := some MET_RUN)
+    (mode : Mode := "train") (refinedMode : Option Mode := none) : Seg :=
+  { startTs := a, endTs := b, mode, refinedMode, wayName, pointCount := 30 }
+
+private def bview (out : Array Seg) : Array (Mode × Int × Int) :=
+  out.map fun s => (s.mode, s.startTs, s.endTs)
+private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mode × Int × Int) :=
+  bview (absorbBoardingPlatform segs pts stationsAt)
+
+-- The wait resolves to the train's own boarding station: it goes, and the train
+-- opens where the wait did.
+#guard absorb #[pstay 600 900, ptrain 900 1800] == #[("train", 600, 1800)]
+-- A station that is not THIS train's boarding station changes nothing.
+#guard absorb #[pstay 600 900, ptrain 900 1800 (some "Baker Street → Wembley Park · Metropolitan Line")]
+  == #[("stationary", 600, 900), ("train", 900, 1800)]
+-- Nothing near the centroid.
+#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨600, 0, 0⟩, ⟨660, 0, 0⟩]
+  == #[("stationary", 600, 900), ("train", 900, 1800)]
+
+-- What disqualifies the pair.
+#guard absorb #[pstay 600 900, ptrain 900 1800 (some "Metropolitan Line")]
+  == #[("stationary", 600, 900), ("train", 900, 1800)]
+#guard absorb #[pstay 600 900, ptrain 900 1800 none] == #[("stationary", 600, 900), ("train", 900, 1800)]
+#guard absorb #[pstay 600 900 "walking", ptrain 900 1800] == #[("walking", 600, 900), ("train", 900, 1800)]
+-- The scan opens at index 1, so a train that starts the day has no wait to take.
+#guard absorb #[ptrain 900 1800] == #[("train", 900, 1800)]
+-- An empty window would average 0/0 = NaN. The stub answers a station AT NaN,
+-- so without the guard the pass would absorb off a query it must never make.
+#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨1000, 51.5254, -0.1359⟩]
+  == #[("stationary", 600, 900), ("train", 900, 1800)]
+-- A MISSING label is rejected, not read as an empty boarding station: the
+-- station here really is named `""`, and the wait still survives…
+#guard absorb #[pstay 600 900, ptrain 900 1800 none] #[⟨700, 40, 40⟩]
+  == #[("stationary", 600, 900), ("train", 900, 1800)]
+-- …whereas a label that genuinely parses to an empty board absorbs there.
+#guard absorb #[pstay 600 900, ptrain 900 1800 (some " → Baker Street")] #[⟨700, 40, 40⟩]
+  == #[("train", 600, 1800)]
+
+-- 900 s exactly is still a platform wait; 901 s is a stay of its own.
+#guard absorb #[pstay 0 900, ptrain 900 1800] == #[("train", 0, 1800)]
+#guard absorb #[pstay (-1) 900, ptrain 900 1800] == #[("stationary", -1, 900), ("train", 900, 1800)]
+
+-- RAW mode, not effectiveMode: neither side participates on a refinement alone.
+#guard absorb #[pstay 600 900, ptrain 900 1800 (some MET_RUN) "driving" (some "train")]
+  == #[("stationary", 600, 900), ("driving", 900, 1800)]
+#guard absorb #[pstay 600 900 "walking" (some "stationary"), ptrain 900 1800]
+  == #[("walking", 600, 900), ("train", 900, 1800)]
+
+-- THE WINDOW DISCRIMINATOR. The boundary fix at 900 is excluded above; widen the
+-- stationary by one second so the same fix falls strictly inside, and it is the
+-- ONLY sample — the query moves 50 km and resolves Baker Street instead.
+#guard absorb #[pstay 600 901, ptrain 901 1800 (some "Baker Street → Wembley Park")] #[⟨900, 51.9999, -0.9999⟩]
+  == #[("train", 600, 1800)]
+
+-- Shape: neighbours survive, and two waits in one day both absorb.
+#guard absorb #[{ startTs := 0, endTs := 600, mode := "walking" }, pstay 600 900, ptrain 900 1800,
+                { startTs := 1800, endTs := 2400, mode := "walking" }]
+  == #[("walking", 0, 600), ("train", 600, 1800), ("walking", 1800, 2400)]
+#guard absorb
+    #[pstay 600 900, ptrain 900 1800, pstay 1800 2100,
+      ptrain 2100 3000 (some "King's Cross St Pancras → Farringdon · Circle Line")]
+    (platform ++ #[⟨1800, 51.5271, -0.1327⟩, ⟨1900, 51.5271, -0.1327⟩])
+  == #[("train", 600, 1800), ("train", 1800, 3000)]
+#guard absorb #[{ startTs := 0, endTs := 600, mode := "walking" }] == #[("walking", 0, 600)]
+#guard absorb #[] == #[]
+
+-- The train keeps every other field; only `startTs` moves.
+#guard absorbBoardingPlatform
+    #[pstay 600 900, { ptrain 900 1800 with refinedReason := some "earlier note" }] platform stationsAt
+  == #[{ startTs := 600, endTs := 1800, mode := "train", wayName := some MET_RUN, pointCount := 30,
+         refinedReason := some "earlier note" }]
 
 end Verified.Geo.RailAbsorbers
