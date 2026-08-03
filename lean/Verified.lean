@@ -73,6 +73,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailRuns
 import Verified.Geo.RailReconcile
+import Verified.Geo.RailJourney
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkAnnotate
 import Verified.Geo.TubeHop
