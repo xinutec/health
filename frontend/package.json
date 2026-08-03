@@ -8,7 +8,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test --watch=false",
     "ui-check": "playwright test",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json"
   },
   "private": true,
   "dependencies": {
