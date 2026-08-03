@@ -577,35 +577,42 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	/** The preset windows offered by the Trends range toggle. */
 	readonly trendPresets = TREND_DAY_PRESETS;
 
-	isToday(): boolean {
-		return this.selectedDate() === todayLocal();
-	}
+	/* The date-navigation derivations are `computed`, not methods.
+	 *
+	 * Each was bound twice in the template — the Today pane and the Trends pane
+	 * both draw the same date bar — so every change-detection pass ran the lot
+	 * of them twice over. A method cannot cache; the call sites are unchanged.
+	 *
+	 * They read `todayLocal()`, which is a clock and not a signal, so the day
+	 * boundary does not invalidate them. That was already true: in a zoneless
+	 * app nothing re-evaluates a template expression unless a signal changed, so
+	 * a method offered no freshness here either — only the redundant work. */
+
+	readonly isToday = computed(() => this.selectedDate() === todayLocal());
 
 	/** Earliest navigable date. Owner mode: null (no limit). Share
 	 *  mode: shareWindow.from. */
-	leftEdge(): string | null {
-		return this.health.user()?.shareWindow?.from ?? null;
-	}
+	readonly leftEdge = computed<string | null>(
+		() => this.health.user()?.shareWindow?.from ?? null,
+	);
 
 	/** Latest navigable date. Owner mode: today. Share mode:
 	 *  min(today, shareWindow.to). */
-	rightEdge(): string {
+	readonly rightEdge = computed<string>(() => {
 		const win = this.health.user()?.shareWindow;
 		const t = todayLocal();
 		if (!win) return t;
 		return win.to < t ? win.to : t;
-	}
+	});
 
-	canGoLeft(): boolean {
+	readonly canGoLeft = computed(() => {
 		const left = this.leftEdge();
 		return left === null || this.selectedDate() > left;
-	}
+	});
 
-	canGoRight(): boolean {
-		return this.selectedDate() < this.rightEdge();
-	}
+	readonly canGoRight = computed(() => this.selectedDate() < this.rightEdge());
 
-	formatDisplayDate(): string {
+	readonly formatDisplayDate = computed<string>(() => {
 		const date = this.selectedDate();
 		if (date === todayLocal()) return "Today";
 		const d = new Date(`${date}T12:00:00`);
@@ -613,5 +620,5 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		yesterday.setDate(yesterday.getDate() - 1);
 		if (date === formatDateInTz(yesterday, browserTimezone())) return "Yesterday";
 		return d.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" });
-	}
+	});
 }

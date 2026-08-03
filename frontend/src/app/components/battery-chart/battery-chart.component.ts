@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, type OnDestroy, effect, input, signal, viewChild } from "@angular/core";
+import { ChangeDetectionStrategy, Component, ElementRef, Injector, type OnDestroy, afterNextRender, effect, inject, input, signal, viewChild } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
 import type { BatterySample, VelocityData } from "../../services/health.service";
 import { browserTimezone } from "../../time-utils";
@@ -40,6 +40,9 @@ export class BatteryChartComponent implements OnDestroy {
 	/** Whether the watch series has any points — drives the legend's watch row. */
 	hasWatch = signal(false);
 
+	/** For `afterNextRender` from inside the effect below. */
+	private injector = inject(Injector);
+
 	constructor() {
 		effect(() => {
 			this.redrawTick();
@@ -62,93 +65,106 @@ export class BatteryChartComponent implements OnDestroy {
 			if (!range) return;
 			const { firstTs, lastTs, totalDuration } = range;
 
-			const dpr = window.devicePixelRatio || 1;
-			const rect = canvas.getBoundingClientRect();
-			canvas.width = rect.width * dpr;
-			canvas.height = rect.height * dpr;
-			ctx.scale(dpr, dpr);
-			const w = rect.width;
-			const h = rect.height;
+			// ⚠ Everything from here measures the canvas, and the two writes above
+			// change the layout it sits in — the template hides a placeholder on
+			// `hasData` and a legend row on `hasWatch`. A signal write schedules
+			// change detection rather than performing it, so measuring in the
+			// same pass sizes the canvas to the page as it was BEFORE those rows
+			// appeared: on the first render, to a canvas that has not been laid
+			// out at all. `afterNextRender` is the frame in which those numbers
+			// exist.
+			afterNextRender(
+				() => {
+					const dpr = window.devicePixelRatio || 1;
+					const rect = canvas.getBoundingClientRect();
+					canvas.width = rect.width * dpr;
+					canvas.height = rect.height * dpr;
+					ctx.scale(dpr, dpr);
+					const w = rect.width;
+					const h = rect.height;
 
-			const padTop = 20;
-			const padBottom = 8;
-			const padLeft = 40;
-			// Headroom on the right so the end-of-day "NN%" label fits.
-			const padRight = 34;
-			const drawW = w - padLeft - padRight;
-			const drawH = h - padTop - padBottom;
+					const padTop = 20;
+					const padBottom = 8;
+					const padLeft = 40;
+					// Headroom on the right so the end-of-day "NN%" label fits.
+					const padRight = 34;
+					const drawW = w - padLeft - padRight;
+					const drawH = h - padTop - padBottom;
 
-			const xPos = (ts: number): number => padLeft + ((ts - firstTs) / totalDuration) * drawW;
-			// Battery is a percentage — the Y axis is always a fixed 0–100.
-			const yPos = (level: number): number => padTop + drawH - (level / 100) * drawH;
+					const xPos = (ts: number): number => padLeft + ((ts - firstTs) / totalDuration) * drawW;
+					// Battery is a percentage — the Y axis is always a fixed 0–100.
+					const yPos = (level: number): number => padTop + drawH - (level / 100) * drawH;
 
-			ctx.clearRect(0, 0, w, h);
+					ctx.clearRect(0, 0, w, h);
 
-			// Y-axis grid lines + labels at every 25%.
-			ctx.strokeStyle = "rgba(255,255,255,0.08)";
-			ctx.fillStyle = "rgba(255,255,255,0.4)";
-			ctx.font = "11px sans-serif";
-			ctx.textAlign = "right";
-			for (let level = 0; level <= 100; level += 25) {
-				const y = yPos(level);
-				ctx.beginPath();
-				ctx.moveTo(padLeft, y);
-				ctx.lineTo(w - padRight, y);
-				ctx.stroke();
-				ctx.fillText(`${level}`, padLeft - 4, y + 4);
-			}
-
-			/** Draw one series: an optional fill under the line, the line, and a
-			 *  dot + "NN%" label at its last reading. */
-			const drawSeries = (series: readonly BatterySample[], color: string, fill: string | null): void => {
-				if (series.length === 0) return;
-				if (fill) {
-					ctx.beginPath();
-					for (let i = 0; i < series.length; i++) {
-						const x = xPos(series[i].ts);
-						const y = yPos(series[i].level);
-						if (i === 0) ctx.moveTo(x, y);
-						else ctx.lineTo(x, y);
+					// Y-axis grid lines + labels at every 25%.
+					ctx.strokeStyle = "rgba(255,255,255,0.08)";
+					ctx.fillStyle = "rgba(255,255,255,0.4)";
+					ctx.font = "11px sans-serif";
+					ctx.textAlign = "right";
+					for (let level = 0; level <= 100; level += 25) {
+						const y = yPos(level);
+						ctx.beginPath();
+						ctx.moveTo(padLeft, y);
+						ctx.lineTo(w - padRight, y);
+						ctx.stroke();
+						ctx.fillText(`${level}`, padLeft - 4, y + 4);
 					}
-					ctx.lineTo(xPos(series[series.length - 1].ts), yPos(0));
-					ctx.lineTo(xPos(series[0].ts), yPos(0));
-					ctx.closePath();
-					ctx.fillStyle = fill;
-					ctx.fill();
-				}
 
-				ctx.strokeStyle = color;
-				ctx.lineWidth = 1.75;
-				ctx.lineJoin = "round";
-				ctx.beginPath();
-				for (let i = 0; i < series.length; i++) {
-					const x = xPos(series[i].ts);
-					const y = yPos(series[i].level);
-					if (i === 0) ctx.moveTo(x, y);
-					else ctx.lineTo(x, y);
-				}
-				ctx.stroke();
+					/** Draw one series: an optional fill under the line, the line, and a
+					 *  dot + "NN%" label at its last reading. */
+					const drawSeries = (series: readonly BatterySample[], color: string, fill: string | null): void => {
+						if (series.length === 0) return;
+						if (fill) {
+							ctx.beginPath();
+							for (let i = 0; i < series.length; i++) {
+								const x = xPos(series[i].ts);
+								const y = yPos(series[i].level);
+								if (i === 0) ctx.moveTo(x, y);
+								else ctx.lineTo(x, y);
+							}
+							ctx.lineTo(xPos(series[series.length - 1].ts), yPos(0));
+							ctx.lineTo(xPos(series[0].ts), yPos(0));
+							ctx.closePath();
+							ctx.fillStyle = fill;
+							ctx.fill();
+						}
 
-				const last = batteryMarker(series) ?? series[series.length - 1];
-				const lx = xPos(last.ts);
-				const ly = yPos(last.level);
-				ctx.fillStyle = color;
-				ctx.beginPath();
-				ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-				ctx.fill();
-				ctx.textAlign = "left";
-				ctx.font = "12px sans-serif";
-				ctx.fillText(`${last.level}%`, Math.min(lx + 6, w - padRight + 2), ly + 4);
-			};
+						ctx.strokeStyle = color;
+						ctx.lineWidth = 1.75;
+						ctx.lineJoin = "round";
+						ctx.beginPath();
+						for (let i = 0; i < series.length; i++) {
+							const x = xPos(series[i].ts);
+							const y = yPos(series[i].level);
+							if (i === 0) ctx.moveTo(x, y);
+							else ctx.lineTo(x, y);
+						}
+						ctx.stroke();
 
-			// Phone keeps its filled area; the watch rides on top as a plain line
-			// so the two are distinguishable where they overlap.
-			drawSeries(phone, PHONE_COLOR, "rgba(34, 197, 94, 0.14)");
-			drawSeries(watch, WATCH_COLOR, null);
+						const last = batteryMarker(series) ?? series[series.length - 1];
+						const lx = xPos(last.ts);
+						const ly = yPos(last.level);
+						ctx.fillStyle = color;
+						ctx.beginPath();
+						ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+						ctx.fill();
+						ctx.textAlign = "left";
+						ctx.font = "12px sans-serif";
+						ctx.fillText(`${last.level}%`, Math.min(lx + 6, w - padRight + 2), ly + 4);
+					};
 
-			// Time labels along the X axis (timestamps are absolute epoch; render
-			// in the viewer's local time zone).
-			this.timeLabels.set(batteryTimeLabels(firstTs, lastTs, 6, browserTimezone()));
+					// Phone keeps its filled area; the watch rides on top as a plain line
+					// so the two are distinguishable where they overlap.
+					drawSeries(phone, PHONE_COLOR, "rgba(34, 197, 94, 0.14)");
+					drawSeries(watch, WATCH_COLOR, null);
+
+					// Time labels along the X axis (timestamps are absolute epoch; render
+					// in the viewer's local time zone).
+					this.timeLabels.set(batteryTimeLabels(firstTs, lastTs, 6, browserTimezone()));
+				},
+				{ injector: this.injector },
+			);
 		});
 	}
 
