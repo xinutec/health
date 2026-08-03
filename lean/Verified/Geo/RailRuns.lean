@@ -201,6 +201,25 @@ def POST_TRANSIT_ALIGHT_SPEED_KMH : Float := 5
 at a station, not the user getting off. -/
 def MID_RIDE_DWELL_RESUME_S : Int := 120
 
+/-- The fix CLOSEST to a timestamp, ties keeping input order.
+
+Both turnaround arms use this instead of scanning. By the time they run, nothing
+in the fixes still says a turnaround happened: standing on the platform the
+rider has already come back past the outermost point, so the approach and the
+departure both read as heading home. A scan therefore walks straight through the
+interchange and names a station from the OTHER direction of travel. The split
+pass decided this boundary from the whole leg's geometry; take it.
+
+`[...points].sort((a,b) => |a.ts - t| - |b.ts - t|)[0]` in the TS. The index is
+carried in the key rather than relying on `List.mergeSort` being left-biased, so
+the order is total and matching V8's stable sort is a fact about the comparator. -/
+def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
+  let keyed := (Array.range points.size).map fun i => (points[i]!, i)
+  ((keyed.toList.mergeSort fun a b =>
+    let da := (a.1.ts - t).natAbs
+    let db := (b.1.ts - t).natAbs
+    if da != db then da < db else a.2 ≤ b.2).head?).map (·.1)
+
 /-- The fix at which a ride ended.
 
 Walks past mid-ride dwells: the alight is the first slow fix that is NOT
@@ -208,7 +227,9 @@ followed within 120 s by a return to transit speed. Three arms, in preference
 order — under 5 km/h, then under 15, then simply the first fix after the ride's
 end (the ride ran off the end of the data). Fixes at or before `endTs` are
 skipped entirely. -/
-def findRunAlightFix (points : Array Fix) (endTs : Int) : Option Fix :=
+def findRunAlightFix (points : Array Fix) (endTs : Int)
+    (endsAtTurnaround : Bool := false) : Option Fix :=
+  if endsAtTurnaround then nearestByTs points endTs else
   let findSustained (pred : Fix → Bool) : Option Fix :=
     (points.filter fun p => p.ts > endTs && pred p).find? fun p =>
       let cutoff := p.ts + MID_RIDE_DWELL_RESUME_S
@@ -216,6 +237,32 @@ def findRunAlightFix (points : Array Fix) (endTs : Int) : Option Fix :=
   (findSustained fun p => p.speedKmh < POST_TRANSIT_ALIGHT_SPEED_KMH).orElse fun _ =>
     (findSustained fun p => p.speedKmh < POST_TRANSIT_SPEED_KMH).orElse fun _ =>
       points.find? fun p => p.ts > endTs
+
+/-- The fix at which a ride BEGAN.
+
+Prefer fixes where the rider is not in transit — those are at or near a station
+rather than mid-route. A subway line that surfaces between stations means a fix
+near the run's `startTs` can be a real reading at 30 km/h mid-train; skipping
+transit-speed fixes reaches the actual boarding one.
+
+`findBoardingPlatformFix` runs FIRST, because the classifier's `startTs` is
+often too late: when the per-window scorer averages over a stop-and-go platform
+sequence, the early part of a multi-station ride lands in the preceding
+"walking" segment. Failing that, the latest slow fix at or before `startTs`,
+then any fix at or before it. -/
+def findRunBoardingFix (points : Array Fix) (startTs : Int)
+    (startsAtTurnaround : Bool := false) : Option Fix :=
+  -- The mirror of the alight case: a run cut at a turnaround BOARDS there, and
+  -- the platform walkback would otherwise stride back across the cut into the
+  -- OUTBOUND journey and name a station the rider merely passed through on the
+  -- way out — on 2026-07-07 it reached Baker Street, fifteen minutes and one
+  -- whole direction of travel earlier.
+  if startsAtTurnaround then nearestByTs points startTs else
+  let lastWhere (pred : Fix → Bool) : Option Fix :=
+    (points.filter pred).back?
+  (findBoardingPlatformFix points startTs).orElse fun _ =>
+    (lastWhere fun p => p.ts ≤ startTs && p.speedKmh < POST_TRANSIT_SPEED_KMH).orElse fun _ =>
+      lastWhere fun p => p.ts ≤ startTs
 
 /-! ## Guards (V8 reference values) -/
 

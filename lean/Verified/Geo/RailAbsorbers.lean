@@ -815,15 +815,15 @@ render one differently. The literals are V8's own digits.
 private def stationsAt : Float → Float → Array NearbyStation := fun lat lon =>
   -- At the platform an entrance CODE sits nearer than the station itself, so
   -- `pickBestStation`'s ranking is exercised rather than assumed.
-  if lat == 51.52539999999999 && lon == -0.1359 then #[⟨"B2", "station", 5⟩, ⟨"Euston Square", "station", 20⟩]
-  else if lat == 51.5271 && lon == -0.1327 then #[⟨"King's Cross St Pancras", "station", 30⟩]
-  else if lat == 51.9999 && lon == -0.9999 then #[⟨"Baker Street", "station", 20⟩]
+  if lat == 51.52539999999999 && lon == -0.1359 then #[{ name := "B2", subtype := "station", distanceM := 5 }, { name := "Euston Square", subtype := "station", distanceM := 20 }]
+  else if lat == 51.5271 && lon == -0.1327 then #[{ name := "King's Cross St Pancras", subtype := "station", distanceM := 30 }]
+  else if lat == 51.9999 && lon == -0.9999 then #[{ name := "Baker Street", subtype := "station", distanceM := 20 }]
   -- A station with an EMPTY name — the only thing that can tell a REJECTED
   -- missing label apart from one read as an empty boarding station.
-  else if lat == 40 && lon == 40 then #[⟨"", "station", 20⟩]
+  else if lat == 40 && lon == 40 then #[{ name := "", subtype := "station", distanceM := 20 }]
   -- A station at the NaN centroid an empty window would produce: reachable only
   -- if the empty-window guard is gone.
-  else if lat.isNaN then #[⟨"Euston Square", "station", 20⟩]
+  else if lat.isNaN then #[{ name := "Euston Square", subtype := "station", distanceM := 20 }]
   else #[]
 
 /-- Four fixes whose mean is none of them, so the average is observable. The
@@ -933,13 +933,13 @@ private def METLINE : String := "Metropolitan Line"
 private def NLL : String := "North London Line"
 
 private def aStations : Float → Float → Array NearbyStation := fun lat lon =>
-  if lon == -0.139 then #[⟨"Euston Square", "station", 20⟩]
+  if lon == -0.139 then #[{ name := "Euston Square", subtype := "station", distanceM := 20 }]
   else if lon != -0.14 then #[]
-  else if lat == 51.5006 then #[⟨"Euston Square", "station", 20⟩]
-  else if lat == 51.5001 then #[⟨"Euston Square", "station", 20⟩]
-  else if lat == 51.5028 then #[⟨"Great Portland Street", "station", 25⟩]
-  else if lat == 51.5031 then #[⟨"Great Portland Street", "station", 30⟩]
-  else if lat == 51.5059 then #[⟨"Baker Street", "station", 15⟩]
+  else if lat == 51.5006 then #[{ name := "Euston Square", subtype := "station", distanceM := 20 }]
+  else if lat == 51.5001 then #[{ name := "Euston Square", subtype := "station", distanceM := 20 }]
+  else if lat == 51.5028 then #[{ name := "Great Portland Street", subtype := "station", distanceM := 25 }]
+  else if lat == 51.5031 then #[{ name := "Great Portland Street", subtype := "station", distanceM := 30 }]
+  else if lat == 51.5059 then #[{ name := "Baker Street", subtype := "station", distanceM := 15 }]
   else #[]
 
 /-- Directional and combined relation names on purpose: the corridor test

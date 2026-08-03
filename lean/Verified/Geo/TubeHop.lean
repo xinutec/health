@@ -50,11 +50,19 @@ structure Fix where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-/-- A rail station near a coordinate, as the OSM adapter reports it. -/
+/-- A rail station near a coordinate, as the OSM adapter reports it.
+
+`lat`/`lon` are OPTIONAL, matching the TS interface: fixture recordings made
+before those fields existed replay without them, and a consumer that wants the
+station's own node coordinate must degrade to the query point. The rail-run
+line-intersection retry is the consumer that cares — see
+`Verified.Geo.RailRunAnnotate.stationCoord`. -/
 structure NearbyStation where
   name : String
   subtype : String := "station"
   distanceM : Float
+  lat : Option Float := none
+  lon : Option Float := none
   deriving Inhabited, BEq, Repr
 
 /-- The `EnrichedSegment` fields this pass reads and rewrites. -/
