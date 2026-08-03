@@ -146,12 +146,17 @@ test("dashboard Trends tab — charts must not overflow the phone width", async 
 	await page.locator("app-steps-chart canvas").waitFor();
 	await page.waitForFunction(
 		() => {
-			const c = document.querySelector("app-steps-chart canvas");
+			// The previous width is parked on the canvas rather than on `window`:
+			// `dataset` is typed, so the poll needs no assertion to say what it is
+			// storing, and the value lives on the element it describes.
+			const c = document.querySelector<HTMLCanvasElement>(
+				"app-steps-chart canvas",
+			);
 			if (!c) return false;
-			const w = Math.round(c.getBoundingClientRect().width);
-			const prev = (window as unknown as { __w?: number }).__w;
-			(window as unknown as { __w?: number }).__w = w;
-			return w > 0 && prev === w;
+			const w = String(Math.round(c.getBoundingClientRect().width));
+			const prev = c.dataset["settledWidth"];
+			c.dataset["settledWidth"] = w;
+			return w !== "0" && prev === w;
 		},
 		null,
 		{ polling: 120, timeout: 10_000 },

@@ -55,6 +55,32 @@ export default tseslint.config(
 		},
 	},
 	{
+		// The layout harness and its specs. The block above says `src`, so until
+		// this existed the e2e tree was linted by nothing, on top of being
+		// type-checked by nothing (see tsconfig.e2e.json). It is the only gate
+		// that can see what a phone actually suffers, which makes "nobody checks
+		// it" the wrong property for it to have.
+		//
+		// Type-aware, and that is the point: the rule that pays here is
+		// no-floating-promises. A `route.fulfill(...)` dropped inside a route
+		// handler still mocks the request, so the test passes and nothing says
+		// the handler returned before the fulfilment finished.
+		files: ["e2e/**/*.ts", "playwright.config.ts"],
+		extends: [
+			...tseslint.configs.recommendedTypeChecked,
+			...tseslint.configs.stylisticTypeChecked,
+		],
+		languageOptions: {
+			parserOptions: {
+				projectService: true,
+				tsconfigRootDir: import.meta.dirname,
+			},
+		},
+		rules: {
+			"@typescript-eslint/no-unsafe-type-assertion": "error",
+		},
+	},
+	{
 		files: ["src/**/*.html"],
 		extends: [
 			...angular.configs.templateRecommended,
