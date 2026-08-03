@@ -17,7 +17,7 @@
  */
 
 import type { NearbyStation } from "../../src/geo/osm.js";
-import { pickBestStation } from "../../src/geo/osm.js";
+import { pickBestStation, rankStations, stationTier } from "../../src/geo/osm.js";
 import { upgradeTubeHops } from "../../src/geo/passes/tube-hop.js";
 import type { TransportMode } from "../../src/geo/segments.js";
 
@@ -57,10 +57,68 @@ const PICK_CASES: Record<string, NearbyStation[]> = {
 	// Equal distances: the STABLE sort keeps input order.
 	tieKeepsInputOrder: [st("First", 100), st("Second", 100)],
 	empty: [],
+	// A PLATFORM position is tier 2 — below a real station node and above an
+	// entrance. This is the #373 shape: the Met platform at St Pancras sits
+	// nearer the boarding fix than the tube station node, and naming the ride
+	// after it produced "London St Pancras". Distance does not enter until the
+	// tiers are equal, so the station node wins from four times as far away.
+	platformLosesToStationNode: [st("London St Pancras", 50, "stop_position"), st("King's Cross St Pancras", 200)],
+	// …and beats an entrance, so the three tiers are strictly ordered rather
+	// than platform-vs-entrance being unspecified.
+	platformBeatsEntrance: [st("Gate C", 10, "subway_entrance"), st("Platform", 300, "stop_position")],
+	// With ONLY platforms the nearest platform is still returned — tiering
+	// demotes, it never discards.
+	allPlatforms: [st("Far platform", 300, "stop_position"), st("Near platform", 50, "stop_position")],
 };
 for (const [name, stations] of Object.entries(PICK_CASES)) {
 	show(`pick.${name}`, pickBestStation(stations)?.name ?? null);
 }
+
+/* The `prefer` argument, which only `underground-rail.ts` passes ("subway").
+ * It splits tier 0 into 0/1: a node whose subtype IS the preferred one stays 0,
+ * any other real station drops to 1. So at a shared site the subway node wins
+ * over a mainline node that is nearer, while the platform/entrance tiers are
+ * untouched — `prefer` reorders WITHIN the real-station tier only. */
+const PREFER_CASES: Record<string, NearbyStation[]> = {
+	// Without `prefer` the nearer mainline node wins; with it, the subway node.
+	subwayOverNearerMainline: [st("London Euston", 60, "station"), st("Euston", 250, "subway")],
+	// `prefer` does NOT promote past a platform demotion — a preferred-subtype
+	// platform is still tier 2 (the platform test runs first and returns).
+	preferDoesNotRescuePlatform: [st("Platform", 20, "stop_position"), st("Station", 400, "station")],
+	// Two preferred nodes: distance decides among equals as usual.
+	twoPreferred: [st("Far subway", 300, "subway"), st("Near subway", 50, "subway")],
+};
+for (const [name, stations] of Object.entries(PREFER_CASES)) {
+	show(`pick.noPrefer.${name}`, pickBestStation(stations)?.name ?? null);
+	show(`pick.prefer.${name}`, pickBestStation(stations, "subway")?.name ?? null);
+}
+
+/* `stationTier` and `rankStations` are exported in their own right — the alight
+ * sweep in `rail-runs.ts` walks the full order and cuts at tier >= 2. Pin the
+ * whole ordering, not just its head, so a change to the tail is visible too. */
+const SITE: NearbyStation[] = [
+	st("Gate A", 5, "subway_entrance"),
+	st("Platform 4", 20, "stop_position"),
+	st("London Terminus", 100, "station"),
+	st("Tube Station", 180, "subway"),
+	st("B2", 1, "station"),
+];
+show(
+	"tier.noPrefer",
+	SITE.map((s) => stationTier(s)),
+);
+show(
+	"tier.prefer",
+	SITE.map((s) => stationTier(s, "subway")),
+);
+show(
+	"rank.noPrefer",
+	rankStations(SITE).map((s) => s.name),
+);
+show(
+	"rank.prefer",
+	rankStations(SITE, "subway").map((s) => s.name),
+);
 
 /* ------------------------------------------------------------------ */
 /* 2. upgradeTubeHops                                                  */

@@ -121,8 +121,12 @@ def reconstructUndergroundRun (fixes : Array CoarseFix) (boardingFix alightingFi
   if candidates.isEmpty then none else
   -- Highest count wins; a stable descending sort, so ties keep board-line order.
   let line := ((candidates.toList.mergeSort fun a b => b.2 ≤ a.2).head!).1
-  match pickBestStation (stationsLookup boardingFix.lat boardingFix.lon),
-        pickBestStation (stationsLookup alightingFix.lat alightingFix.lon) with
+  -- `prefer := "subway"`, as `underground-rail.ts:172-173` passes. A shared site
+  -- offers a mainline node and a tube node, and a tube ride is named after the
+  -- tube one even when the mainline node is nearer. This is the ONLY caller in
+  -- the repo that expresses a preference.
+  match pickBestStation (stationsLookup boardingFix.lat boardingFix.lon) (some "subway"),
+        pickBestStation (stationsLookup alightingFix.lat alightingFix.lon) (some "subway") with
   | some board, some alight =>
     if board.name == alight.name then none
     else if equirectMeters boardingFix.lat boardingFix.lon alightingFix.lat alightingFix.lon < MIN_JOURNEY_M
