@@ -372,7 +372,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points
       (fun lat lon => e.nearbyStations lat lon UNDERGROUND_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
-      e.nearbyWays),
+      e.nearbyWays e.servedStations),
 
   -- Second cadence-drive revert. The FIRST runs before the rail passes exist,
   -- so a platform interchange sandwiched between two rides saw `driving`

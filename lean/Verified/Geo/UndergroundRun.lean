@@ -1,4 +1,5 @@
 import Verified.Geo.TubeHop
+import Verified.Geo.LineMembership
 /-!
 # Underground line reconstruction (port of `reconstructUndergroundRun`,
 `src/geo/underground-rail.ts`)
@@ -111,14 +112,30 @@ def equirectMeters (aLat aLon bLat bLon : Float) : Float :=
 is not a journey. -/
 def reconstructUndergroundRun (fixes : Array CoarseFix) (boardingFix alightingFix : LatLon)
     (stationsLookup : Float → Float → Array NearbyStation)
-    (linesLookup : Float → Float → Array String) : Option UndergroundRun :=
+    (linesLookup : Float → Float → Array String)
+    (servedLookup : String → Array Verified.Geo.LineMembership.ServedStation)
+    (expandSharedTrack : Bool := false) : Option UndergroundRun :=
   let coarse := ((fixes.filter isCoarse).toList.mergeSort fun a b => a.ts ≤ b.ts).toArray
   if coarse.size < MIN_COARSE_FIXES then none else
-  let boardLines := linesLookup boardingFix.lat boardingFix.lon
-  let alightLines := linesLookup alightingFix.lat alightingFix.lon
+  -- `expandSharedTrack` reconciles OSM's two tagging conventions for one
+  -- physical line — the combined relation ("Circle, Hammersmith & City and
+  -- Metropolitan Lines" at King's Cross) against the plain name ("Metropolitan
+  -- Line" at Finchley Road) — so an intersection can see through the naming.
+  -- OFF for the first through-line attempt and ON for the halves of an
+  -- interchange split, and that asymmetry is deliberate: expanding only ever
+  -- ADDS a through-line reading the raw names denied, and a change of line is
+  -- exactly what such a reading would paper over. `reconstructUndergroundJourney`
+  -- owns the ordering.
+  let readLines (lines : Array String) : Array String :=
+    if !expandSharedTrack then lines
+    else lines.foldl (init := #[]) fun acc n =>
+      (Verified.Geo.RailRuns.expandTubeLineNames n).foldl
+        (fun a x => if a.contains x then a else a.push x) acc
+  let boardLines := readLines (linesLookup boardingFix.lat boardingFix.lon)
+  let alightLines := readLines (linesLookup alightingFix.lat alightingFix.lon)
   if boardLines.isEmpty || alightLines.isEmpty then none else
   -- Lines under each coarse fix — the path the train actually hugged.
-  let coarseLineSets := coarse.map fun f => linesLookup f.lat f.lon
+  let coarseLineSets := coarse.map fun f => readLines (linesLookup f.lat f.lon)
   -- A candidate serves both ends AND is hugged by at least one coarse fix.
   -- Scored by how many hug it, so a parallel line that merely connects the
   -- endpoints loses to the one the journey followed.
@@ -128,8 +145,6 @@ def reconstructUndergroundRun (fixes : Array CoarseFix) (boardingFix alightingFi
       let onCoarse := coarseLineSets.foldl (fun n s => if s.contains line then n + 1 else n) 0
       if onCoarse > 0 then some (line, onCoarse) else none
   if candidates.isEmpty then none else
-  -- Highest count wins; a stable descending sort, so ties keep board-line order.
-  let line := ((candidates.toList.mergeSort fun a b => b.2 ≤ a.2).head!).1
   -- `prefer := "subway"`, as `underground-rail.ts:172-173` passes. A shared site
   -- offers a mainline node and a tube node, and a tube ride is named after the
   -- tube one even when the mainline node is nearer. This is the ONLY caller in
@@ -140,8 +155,27 @@ def reconstructUndergroundRun (fixes : Array CoarseFix) (boardingFix alightingFi
     if board.name == alight.name then none
     else if equirectMeters boardingFix.lat boardingFix.lon alightingFix.lat alightingFix.lon < MIN_JOURNEY_M
     then none
-    else some { line, boardingStation := board.name, alightingStation := alight.name,
-                startTs := coarse[0]!.ts, endTs := coarse[coarse.size - 1]!.ts }
+    else
+    -- Everything above is PROXIMITY: a line qualifies by running near both ends.
+    -- That is how the 2026-06-28 return became one "North London line" leg — the
+    -- Overground passes Finchley Road on its way to Finchley Road & Frognal and
+    -- parallels the Metropolitan for miles, so it satisfied both the endpoint and
+    -- the coarse-fix tests. Membership is the corrective, and it belongs HERE,
+    -- before the label is written, not only in the gate that rejects the finished
+    -- leg (#377).
+    --
+    -- Highest count first; a stable descending sort, so ties keep board-line
+    -- order. Losing EVERY candidate is a real answer: no honest single-line
+    -- reading exists, which is the signal `reconstructUndergroundJourney` needs
+    -- to go looking for the interchange.
+    let ranked := (candidates.toList.mergeSort fun a b => b.2 ≤ a.2).map (·.1)
+    match ranked.find? fun c =>
+      !Verified.Geo.LineMembership.lineCannotServe c board.name servedLookup
+        && !Verified.Geo.LineMembership.lineCannotServe c alight.name servedLookup with
+    | none => none
+    | some line =>
+      some { line, boardingStation := board.name, alightingStation := alight.name,
+             startTs := coarse[0]!.ts, endTs := coarse[coarse.size - 1]!.ts }
   | _, _ => none
 
 /-! ## Guards (V8 reference values) -/
@@ -183,53 +217,58 @@ private def noLines (_lat _lon : Float) : Array String := #[]
 
 private def COARSE : Array CoarseFix := #[fx 1000 300 (some 200), fx 1100 600 (some 300), fx 1200 1500 (some 250)]
 
+/-- The mirror knows no line's stops, so `lineCannotServe` asserts nothing and
+the membership veto never fires — "unknown is not evidence". These cases are
+about the LINE PICK; the veto has its own guards in `LineMembership`. -/
+private def servedNothing (_line : String) : Array Verified.Geo.LineMembership.ServedStation := #[]
+
 private def RESOLVED : Option UndergroundRun :=
   some { line := "Victoria Line", boardingStation := "Highbury & Islington",
          alightingStation := "Wembley Park", startTs := 1000, endTs := 1200 }
 
 -- The Victoria Line serves both ends and the coarse fixes hug it.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations victoria == RESOLVED
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations victoria servedNothing == RESOLVED
 -- Two lines at both ends, only one hugged: the hugged one wins.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations twoAtEnds == RESOLVED
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations twoAtEnds servedNothing == RESOLVED
 -- Both hugged, but Victoria by two coarse fixes to one — the COUNT decides, so
 -- a parallel line the journey merely brushed cannot win.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations weightedTie == RESOLVED
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations weightedTie servedNothing == RESOLVED
 -- The ends share a line but NO coarse fix hugs it: a parallel line that merely
 -- connects the endpoints.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations noCoarseSupport == none
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations noCoarseSupport servedNothing == none
 -- The ends share nothing; or one end resolves no line at all.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations disjoint == none
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations noLines == none
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations disjoint servedNothing == none
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT stations noLines servedNothing == none
 -- Fewer than two coarse fixes is not enough evidence.
-#guard reconstructUndergroundRun #[fx 1000 300 (some 200)] BOARD ALIGHT stations victoria == none
+#guard reconstructUndergroundRun #[fx 1000 300 (some 200)] BOARD ALIGHT stations victoria servedNothing == none
 -- THE ACCURACY BAND, isolated: each of these leaves only ONE fix in the band,
 -- so a fix admitted or rejected flips the whole result. 100 m exactly is coarse
 -- (`≥`) and 800 m exactly is coarse (`≤`); 99 is a good GPS fix and 801 is
 -- total-loss garbage that cannot locate anything.
-#guard reconstructUndergroundRun #[fx 1000 300 (some 99), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria
+#guard reconstructUndergroundRun #[fx 1000 300 (some 99), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria servedNothing
   == none
 #guard (reconstructUndergroundRun #[fx 1000 300 (some 100), fx 1100 600 (some 300)] BOARD ALIGHT
-    stations victoria).map (·.endTs) == some 1100
+    stations victoria servedNothing).map (·.endTs) == some 1100
 #guard (reconstructUndergroundRun #[fx 1000 300 (some 800), fx 1100 600 (some 300)] BOARD ALIGHT
-    stations victoria).map (·.endTs) == some 1100
-#guard reconstructUndergroundRun #[fx 1000 300 (some 801), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria
+    stations victoria servedNothing).map (·.endTs) == some 1100
+#guard reconstructUndergroundRun #[fx 1000 300 (some 801), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria servedNothing
   == none
 -- A missing accuracy is NOT coarse.
-#guard reconstructUndergroundRun #[fx 1000 300 none, fx 1100 600 (some 300)] BOARD ALIGHT stations victoria == none
+#guard reconstructUndergroundRun #[fx 1000 300 none, fx 1100 600 (some 300)] BOARD ALIGHT stations victoria servedNothing == none
 -- Both ends at the SAME station is a platform wait, not a journey; and a end
 -- with no station at all cannot anchor one.
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT sameStation victoria == none
-#guard reconstructUndergroundRun COARSE BOARD ALIGHT noStations victoria == none
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT sameStation victoria servedNothing == none
+#guard reconstructUndergroundRun COARSE BOARD ALIGHT noStations victoria servedNothing == none
 -- The JOURNEY-LENGTH bar, from either side. A pair rather than a point ON the
 -- bar: the frame's 800 m round-trips through `equirectMeters` a hair short, so
 -- an exactly-at-the-bar case would test the float wobble, not the constant.
-#guard reconstructUndergroundRun COARSE BOARD (north 790) stations victoria == none
-#guard (reconstructUndergroundRun COARSE BOARD (north 810) stations victoria).map (·.alightingStation)
+#guard reconstructUndergroundRun COARSE BOARD (north 790) stations victoria servedNothing == none
+#guard (reconstructUndergroundRun COARSE BOARD (north 810) stations victoria servedNothing).map (·.alightingStation)
   == some "Wembley Park"
 -- The span comes from the SORTED coarse fixes, so input order is irrelevant.
 #guard reconstructUndergroundRun
-  #[fx 1200 1500 (some 250), fx 1000 300 (some 200), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria
+  #[fx 1200 1500 (some 250), fx 1000 300 (some 200), fx 1100 600 (some 300)] BOARD ALIGHT stations victoria servedNothing
   == RESOLVED
-#guard reconstructUndergroundRun #[] BOARD ALIGHT stations victoria == none
+#guard reconstructUndergroundRun #[] BOARD ALIGHT stations victoria servedNothing == none
 
 end Verified.Geo.UndergroundRun

@@ -286,7 +286,8 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
     (points : Array Shed.PointF)
     (stationsLookup : Float → Float → Array NearbyStation)
     (linesLookup : Float → Float → Array String)
-    (waysLookup : Float → Float → Array NearbyWay) : Array Seg :=
+    (waysLookup : Float → Float → Array NearbyWay)
+    (servedLookup : String → Array Verified.Geo.LineMembership.ServedStation) : Array Seg :=
   let good := rawFixes.filter isGood
   -- Every GPS-dark fix of the day, in order — the stream a host's run is grown
   -- back out into once the host has established there IS a ride.
@@ -331,6 +332,7 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
         let midGood := good.filter fun f => f.ts > runStart && f.ts < runEnd
         let legs := reconstructUndergroundJourney runFixes midGood
           ⟨boarding.lat, boarding.lon⟩ ⟨alighting.lat, alighting.lon⟩ stationsLookup linesLookup
+          servedLookup
         if legs.isEmpty then result.push host else
         -- The train window spans the GPS-dark stretch — last good fix before the
         -- run to the first one after, clamped to the host. That covers the real
@@ -490,10 +492,13 @@ private def track (fixes : Array CoarseFix) : Array Shed.PointF :=
   ((fixes.toList.mergeSort fun a b => a.ts ≤ b.ts).map fun f =>
     ({ ts := f.ts, lat := f.lat, lon := f.lon, speedKmh := 4 } : Shed.PointF)).toArray
 
+/-- No line's stops are known, so the membership veto never fires. -/
+private def servedNothing (_line : String) : Array Verified.Geo.LineMembership.ServedStation := #[]
+
 private def run (segments : Array Seg) (fixes : Array CoarseFix)
     (lines : Float → Float → Array String := oneLine)
     (w : Float → Float → Array NearbyWay := ways) : Array Row :=
-  vw (annotateUndergroundRuns segments fixes (track fixes) stations lines w)
+  vw (annotateUndergroundRuns segments fixes (track fixes) stations lines w servedNothing)
 
 /-- The host untouched. -/
 private def PASS : Array Row := vw #[HOST]

@@ -107,7 +107,12 @@ const COARSE: CoarseFix[] = [
 /** A good-fix cluster on the platform at the changeover, mid-run. */
 const INTERCHANGE: CoarseFix[] = [fix(1200, 2000, 20), fix(1250, 2010, 15)];
 
+/** The mirror knows no line's stops, so `lineCannotServe` asserts nothing —
+ *  "unknown is not evidence". These cases are about the SPLIT. */
+const servedNothing = async (_line: string): Promise<{ name: string }[]> => [];
+
 type Case = {
+	served?: typeof servedNothing;
 	fixes?: CoarseFix[];
 	interchange?: CoarseFix[];
 	lines?: typeof changeLines;
@@ -159,6 +164,7 @@ for (const [name, c] of Object.entries(CASES)) {
 		ALIGHT,
 		stations,
 		c.lines ?? changeLines,
+		c.served ?? servedNothing,
 	);
 	show(`journey.${name}`, r);
 }

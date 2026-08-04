@@ -52,7 +52,8 @@ UNPROVEN; pinned against Node/V8 (`lean/experiments/underground-journey-refs.mts
 namespace Verified.Geo.UndergroundJourney
 
 open Verified.Geo.UndergroundRun
-  (CoarseFix LatLon UndergroundRun isCoarse MIN_COARSE_FIXES reconstructUndergroundRun)
+  (CoarseFix LatLon UndergroundRun isCoarse MIN_COARSE_FIXES reconstructUndergroundRun
+   equirectMeters UNDERGROUND_STATION_RADIUS_M)
 open Verified.Geo.RailRuns (expandTubeLineNames)
 open Verified.Geo.TubeHop (NearbyStation)
 
@@ -60,15 +61,33 @@ open Verified.Geo.TubeHop (NearbyStation)
 platform cluster. Beyond it they are separate candidate interchanges. -/
 def MAX_COARSE_GAP_S : Int := 300
 
-/-- Group mid-run good fixes into platform clusters by time gap. Input must be
-time-sorted; each cluster is contiguous within `MAX_COARSE_GAP_S`. -/
+/--
+Group mid-run good fixes into platform clusters — each cluster one PLACE the
+ride was observed at. Input must be time-sorted.
+
+Time alone does not separate them. When GPS is up its fixes are seconds apart,
+so a purely temporal rule merges every surfacing along the ride into one blob
+whose centroid is a point mid-track, at no station at all (2026-06-28: King's
+Cross, Great Portland Street and Baker Street collapsed into one "interchange"
+out in Regent's Park). A cluster therefore also ends when the ride has MOVED
+beyond the radius within which fixes still belong to the same station.
+
+The centroid is the RUNNING one — `sum / cur.length` over the fixes accepted so
+far, recomputed as each is added — not the finished cluster's. Same as the TS,
+which carries `sumLat`/`sumLon` alongside.
+-/
 def clusterByGap (fixes : Array CoarseFix) : Array (Array CoarseFix) :=
-  fixes.foldl (init := #[]) fun clusters f =>
-    match clusters.back? with
-    | some cur =>
-      if f.ts - cur[cur.size - 1]!.ts ≤ MAX_COARSE_GAP_S then clusters.pop.push (cur.push f)
-      else clusters.push #[f]
-    | none => clusters.push #[f]
+  (fixes.foldl (init := ((#[] : Array (Array CoarseFix)), (0.0 : Float), (0.0 : Float)))
+    fun (clusters, sumLat, sumLon) f =>
+      match clusters.back? with
+      | some cur =>
+        let n := Float.ofNat cur.size
+        let nearCentroid :=
+          equirectMeters f.lat f.lon (sumLat / n) (sumLon / n) ≤ UNDERGROUND_STATION_RADIUS_M
+        if f.ts - cur[cur.size - 1]!.ts ≤ MAX_COARSE_GAP_S && nearCentroid then
+          (clusters.pop.push (cur.push f), sumLat + f.lat, sumLon + f.lon)
+        else (clusters.push #[f], f.lat, f.lon)
+      | none => (clusters.push #[f], f.lat, f.lon)).1
 
 /-- The physical lines a set of OSM relation names denotes. -/
 private def expand (names : Array String) : Array String :=
@@ -87,8 +106,11 @@ be on physically distinct lines. -/
 def reconstructUndergroundJourney (fixes interchangeFixes : Array CoarseFix)
     (boardingFix alightingFix : LatLon)
     (stationsLookup : Float → Float → Array NearbyStation)
-    (linesLookup : Float → Float → Array String) : Array UndergroundRun :=
-  match reconstructUndergroundRun fixes boardingFix alightingFix stationsLookup linesLookup with
+    (linesLookup : Float → Float → Array String)
+    (servedLookup : String → Array Verified.Geo.LineMembership.ServedStation) :
+    Array UndergroundRun :=
+  match reconstructUndergroundRun fixes boardingFix alightingFix stationsLookup linesLookup
+      servedLookup with
   | some single => #[single]
   | none =>
     let coarse := ((fixes.filter isCoarse).toList.mergeSort fun a b => a.ts ≤ b.ts).toArray
@@ -109,8 +131,11 @@ def reconstructUndergroundJourney (fixes interchangeFixes : Array CoarseFix)
       let before := coarse.filter (·.ts < ixTs)
       let after := coarse.filter (·.ts > ixTs)
       if before.size < MIN_COARSE_FIXES || after.size < MIN_COARSE_FIXES then none else
-      match reconstructUndergroundRun before boardingFix ixPt stationsLookup linesLookup,
-            reconstructUndergroundRun after ixPt alightingFix stationsLookup linesLookup with
+      -- `expandSharedTrack := true` for the halves: see the note at the flag.
+      match reconstructUndergroundRun before boardingFix ixPt stationsLookup linesLookup
+              servedLookup true,
+            reconstructUndergroundRun after ixPt alightingFix stationsLookup linesLookup
+              servedLookup true with
       | some leg1, some leg2 =>
         -- STRUCTURALLY ALWAYS TRUE, and no guard can catch its removal: leg1's
         -- alight station and leg2's board station are both
@@ -125,7 +150,25 @@ def reconstructUndergroundJourney (fixes interchangeFixes : Array CoarseFix)
               && disjointLines (expand alightLines) l1
           then some #[leg1, leg2] else none
       | _, _ => none
-    (clusters.findSome? tryCluster).getD #[]
+    match clusters.findSome? tryCluster with
+    | some legs => legs
+    | none =>
+      -- LAST RESORT: no line reaches both ends under OSM's own names, and no
+      -- change of line fits the evidence either. Now — and only now — reconcile
+      -- the two tagging conventions and ask the through-line question again. OSM
+      -- tags one physical line two ways, so "no line reaches both ends" can be a
+      -- fact about a combined relation NAME rather than about the journey: the
+      -- 2026-05-22 King's Cross St Pancras → Finchley Road ride is Metropolitan
+      -- end to end and was lost to that (#185).
+      --
+      -- It has to come AFTER the split, because reading through the naming is
+      -- exactly what would paper over a real change of line: on 2026-07-07 the
+      -- same expansion turns a King's Cross → Euston Square [Northern] → Wembley
+      -- Park [Metropolitan] return into one bogus Metropolitan through-ride.
+      match reconstructUndergroundRun fixes boardingFix alightingFix stationsLookup linesLookup
+          servedLookup true with
+      | some r => #[r]
+      | none => #[]
 
 /-! ## Guards (V8 reference values) -/
 
@@ -185,6 +228,10 @@ private def alightEndCouldRideThrough (lat : Float) (_lon : Float) : Array Strin
 
 private def oneLine (_lat _lon : Float) : Array String := #["Victoria Line"]
 
+/-- No line's stops are known, so the membership veto never fires. These cases
+are about the SPLIT; the veto is guarded in `LineMembership`. -/
+private def servedNothing (_line : String) : Array Verified.Geo.LineMembership.ServedStation := #[]
+
 private def COARSE : Array CoarseFix :=
   #[fx 1000 200 (some 200), fx 1100 800 (some 250), fx 1400 3200 (some 250), fx 1500 3800 (some 200)]
 private def INTERCHANGE : Array CoarseFix := #[fx 1200 2000 (some 20), fx 1250 2010 (some 15)]
@@ -197,46 +244,67 @@ private def TWO_LEGS : Array (String × String × String) :=
     ("Metropolitan Line", "King's Cross", "Wembley Park")]
 
 -- The single-line arm wins outright and no split is attempted.
-#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations oneLine)
+#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations oneLine servedNothing)
   == #[("Victoria Line", "Highbury & Islington", "Wembley Park")]
 -- A genuine interchange: two legs meeting at King's Cross.
-#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations changeLines) == TWO_LEGS
+#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations changeLines servedNothing) == TWO_LEGS
 -- THE PARALLEL-CORRIDOR TRAP, and the pair that makes it a real test: identical
 -- geometry to the case above, differing ONLY in the line names. The single arm
 -- fails on raw strings, and the canonicalised disjointness test then refuses the
 -- split — no phantom interchange on one continuous Metropolitan ride.
-#guard reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations sameLineTwoNames == #[]
+--
+-- And then the LAST RESORT answers the through-line question with the names
+-- reconciled, which is the whole point of it: the ride IS one Metropolitan leg,
+-- and refusing the split without offering that leg is how the 2026-05-22 King's
+-- Cross St Pancras → Finchley Road ride was lost (#185). Refusing the split and
+-- returning the through-line are the same finding, not opposite ones.
+#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations
+    sameLineTwoNames servedNothing)
+  == #[("Metropolitan Line", "Highbury & Islington", "Wembley Park")]
 -- THE DISJOINTNESS TEST, one conjunct at a time. `sameLineTwoNames` above fails
 -- SEVERAL at once, so on its own it pins none of them individually — these two
--- pass every other gate and are refused by exactly one.
-#guard reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations boardEndCouldRideThrough == #[]
-#guard reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations alightEndCouldRideThrough == #[]
+-- pass every other gate and are refused by exactly one, then fall through to the
+-- same last resort. The LINE each returns is what separates them: the board end
+-- could have ridden Metropolitan through, the alight end Victoria.
+#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations
+    boardEndCouldRideThrough servedNothing)
+  == #[("Metropolitan Line", "Highbury & Islington", "Wembley Park")]
+#guard jview (reconstructUndergroundJourney COARSE INTERCHANGE BOARD ALIGHT stations
+    alightEndCouldRideThrough servedNothing)
+  == #[("Victoria Line", "Highbury & Islington", "Wembley Park")]
 -- A cluster deep inside leg2's own zone: refused because no line serves both
 -- the board end and that point, so leg1 never resolves. (Named for what it
 -- actually tests — an earlier draft called this a station-DISAGREEMENT case,
 -- which it is not; see the note on that check below.)
-#guard reconstructUndergroundJourney COARSE #[fx 1300 3100 (some 20)] BOARD ALIGHT stations changeLines == #[]
+#guard reconstructUndergroundJourney COARSE #[fx 1300 3100 (some 20)] BOARD ALIGHT stations changeLines servedNothing == #[]
 -- Fewer than 2 × MIN_COARSE_FIXES cannot make two real legs.
 #guard reconstructUndergroundJourney
   #[fx 1000 200 (some 200), fx 1100 800 (some 250), fx 1400 3200 (some 250)]
-  INTERCHANGE BOARD ALIGHT stations changeLines == #[]
+  INTERCHANGE BOARD ALIGHT stations changeLines servedNothing == #[]
 -- No mid-run good fixes: nothing pins an interchange.
-#guard reconstructUndergroundJourney COARSE #[] BOARD ALIGHT stations changeLines == #[]
+#guard reconstructUndergroundJourney COARSE #[] BOARD ALIGHT stations changeLines servedNothing == #[]
 -- A cluster OUTSIDE the coarse span, either side, is not a mid-run recovery.
-#guard reconstructUndergroundJourney COARSE #[fx 900 2000 (some 20)] BOARD ALIGHT stations changeLines == #[]
-#guard reconstructUndergroundJourney COARSE #[fx 1600 2000 (some 20)] BOARD ALIGHT stations changeLines == #[]
+#guard reconstructUndergroundJourney COARSE #[fx 900 2000 (some 20)] BOARD ALIGHT stations changeLines servedNothing == #[]
+#guard reconstructUndergroundJourney COARSE #[fx 1600 2000 (some 20)] BOARD ALIGHT stations changeLines servedNothing == #[]
 -- A cluster so early that one side has too few coarse fixes to reconstruct.
-#guard reconstructUndergroundJourney COARSE #[fx 1050 2000 (some 20)] BOARD ALIGHT stations changeLines == #[]
+#guard reconstructUndergroundJourney COARSE #[fx 1050 2000 (some 20)] BOARD ALIGHT stations changeLines servedNothing == #[]
 -- Two clusters more than MAX_COARSE_GAP_S apart are distinct candidates; the
 -- first that satisfies every gate wins.
 #guard jview (reconstructUndergroundJourney COARSE #[fx 1120 2000 (some 20), fx 1450 2000 (some 20)]
-  BOARD ALIGHT stations changeLines) == TWO_LEGS
--- CLUSTERING IS LOAD-BEARING. These two fixes are 150 s apart — inside the gap —
--- so they MERGE, and the merged centroid (2000 m) lands at King's Cross. Treated
--- as two clusters they would land at 900 m and 3100 m, each resolving to a leg's
--- OWN endpoint station and being refused.
-#guard jview (reconstructUndergroundJourney COARSE #[fx 1150 900 (some 20), fx 1300 3100 (some 20)]
-  BOARD ALIGHT stations changeLines) == TWO_LEGS
-#guard reconstructUndergroundJourney #[] INTERCHANGE BOARD ALIGHT stations changeLines == #[]
+  BOARD ALIGHT stations changeLines servedNothing) == TWO_LEGS
+-- CLUSTERING IS LOAD-BEARING, and DISTANCE is half of it. These two fixes are
+-- 150 s apart, inside the gap — but 2200 m apart, far outside a station's own
+-- footprint — so they are two clusters, landing at 900 m and 3100 m, each
+-- resolving to a leg's OWN endpoint station and being refused.
+--
+-- The guard used to assert the opposite, because the Lean clustered on time
+-- alone. Merging them puts the centroid at 2000 m, which happens to land on
+-- King's Cross and manufacture a plausible interchange out of two surfacings
+-- two kilometres apart — exactly the 2026-06-28 failure the distance conjunct
+-- exists to stop, where King's Cross, Great Portland Street and Baker Street
+-- collapsed into one "interchange" out in Regent's Park.
+#guard reconstructUndergroundJourney COARSE #[fx 1150 900 (some 20), fx 1300 3100 (some 20)]
+  BOARD ALIGHT stations changeLines servedNothing == #[]
+#guard reconstructUndergroundJourney #[] INTERCHANGE BOARD ALIGHT stations changeLines servedNothing == #[]
 
 end Verified.Geo.UndergroundJourney
