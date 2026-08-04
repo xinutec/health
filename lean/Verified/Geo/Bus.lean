@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 /-!
 # Bus cluster (port of the pure kernels in `src/geo/bus-route-match.ts` and
@@ -639,14 +640,11 @@ def TRANSIT_QUERY_RADIUS_M : Float := 50
 any stop pattern to show. -/
 def MIN_LEG_S : Int := 3 * 60
 
-/-- The segment fields this pass reads and the one it writes. -/
-structure BusSeg where
-  startTs : Int
-  endTs : Int
-  mode : String
-  refinedMode : Option String := none
-  vehicleKind : Option String := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline segment record. This pass reads five fields and writes one; it
+names the whole thing so that
+`Verified.Geo.PassFold` can hand the same value to every pass in the cascade
+without a lossy projection at each hop. -/
+abbrev BusSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- The nearest reported distance among stops of one subtype, or `none` when
 that subtype is absent. `Math.min` over the filtered list, so a nearer stop of
@@ -822,17 +820,15 @@ Two things the TS does that this cannot express, both harmless:
 Exact: no arithmetic of its own — the window test is on `Int` timestamps and
 everything else is the matcher's, whose ULP story is above. -/
 
-/-- The segment fields this pass reads and the two it writes. `avgSpeed` is
-soft speed evidence, absent ⇒ neutral. -/
-structure BusRouteSeg where
-  startTs : Int
-  endTs : Int
-  mode : String
-  refinedMode : Option String := none
-  vehicleKind : Option String := none
-  wayName : Option String := none
-  avgSpeed : Option Float := none
-  deriving Inhabited, BEq, Repr
+/-- The segment fields this pass reads and the two it writes.
+
+`avgSpeed` is soft speed evidence. The TS structural interface
+`BusRouteAnnotatable` declares it optional, but the only caller hands this pass
+an `EnrichedSegment`, where `avgSpeed` is a required `number` — so an ABSENT
+speed is not an input the pipeline can produce, and it is not modelled here.
+The neutral arm `busSpeedPlausibility` keeps for it stays reachable through
+`matchBusRoute`, which does take an optional speed, and is pinned there. -/
+abbrev BusRouteSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- Name the bus route each road-vehicle leg rode. Purely additive: a leg that
 anchors and corroborates gets `vehicleKind := "bus"` and the route label, and
@@ -857,7 +853,7 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
           { board := ⟨board.lat, board.lon⟩
             alight := ⟨alight.lat, alight.lon⟩
             trace := legFixes.map fun p => ⟨p.lat, p.lon⟩
-            speedKmh := seg.avgSpeed }
+            speedKmh := some seg.avgSpeed }
         match matchBusRoute leg routes anchorM stopPassM minCoverage with
         | none => seg
         | some m =>
@@ -883,9 +879,16 @@ private def R_END : Int := 900
 
 private def LABEL : String := "Green Park → Victoria Station · 38"
 
+/-- An ordinary bus pace, well clear of the speed logistic's decision boundary,
+so every fixture below tests what it is about rather than the speed term — which
+the four `avgSpeed` guards bracket on their own. No fixture leaves the speed to
+a default that would stand for "no speed evidence", because the pipeline never
+hands this pass one. -/
+private def BUS_PACE_KMH : Float := 14
+
 private def rdrive (mode : String := "driving") (refinedMode : Option String := none)
     (startTs : Int := R_START) (endTs : Int := R_END) (vehicleKind : Option String := none)
-    (wayName : Option String := none) (avgSpeed : Option Float := none) : BusRouteSeg :=
+    (wayName : Option String := none) (avgSpeed : Float := BUS_PACE_KMH) : BusRouteSeg :=
   { startTs, endTs, mode, refinedMode, vehicleKind, wayName, avgSpeed }
 
 /-- The two fields the pass writes, per segment. -/
@@ -930,10 +933,10 @@ only thing between this fixture and a "bus" named off a single GPS point. -/
 
 -- `avgSpeed` is the speed evidence, and it reaches the logistic's decision
 -- boundary intact — the same 35.56/35.57 flip the matcher's own guards pin.
-#guard cells #[rdrive (avgSpeed := some 14)] busFixes' [route38] == #[(some "bus", some LABEL)]
-#guard cells #[rdrive (avgSpeed := some 35.56)] busFixes' [route38] == #[(some "bus", some LABEL)]
-#guard cells #[rdrive (avgSpeed := some 35.57)] busFixes' [route38] == #[(none, none)]
-#guard cells #[rdrive (avgSpeed := some 62)] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive (avgSpeed := 14)] busFixes' [route38] == #[(some "bus", some LABEL)]
+#guard cells #[rdrive (avgSpeed := 35.56)] busFixes' [route38] == #[(some "bus", some LABEL)]
+#guard cells #[rdrive (avgSpeed := 35.57)] busFixes' [route38] == #[(none, none)]
+#guard cells #[rdrive (avgSpeed := 62)] busFixes' [route38] == #[(none, none)]
 
 -- A match OVERWRITES an existing `wayName`; a miss leaves it, and leaves an
 -- existing `vehicleKind`, exactly as they were.
@@ -955,9 +958,9 @@ only thing between this fixture and a "bus" named off a single GPS point. -/
 -- Nothing else on the segment moves.
 #guard annotateBusRoutes
          #[rdrive (refinedMode := some "driving") (wayName := some "Piccadilly")
-             (avgSpeed := some 14)] busFixes' [route38]
+             (avgSpeed := 14)] busFixes' [route38]
        == #[{ startTs := 100, endTs := 900, mode := "driving", refinedMode := some "driving",
-              vehicleKind := some "bus", wayName := some LABEL, avgSpeed := some 14 }]
+              vehicleKind := some "bus", wayName := some LABEL, avgSpeed := 14 }]
 
 end RouteAnnotateGuards
 

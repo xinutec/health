@@ -1004,8 +1004,8 @@ private def optStr (j : Json) (k : String) : Except String (Option String) :=
 
 private def parseLabelSeg (j : Json) : Except String Verified.Geo.BiometricLabels.LabelSeg := do
   let kinds ← match j.getObjVal? "kinds" with
-    | .error _ => pure []
-    | .ok v => if v.isNull then pure [] else (← v.getArr?).toList.mapM (·.getStr?)
+    | .error _ => pure #[]
+    | .ok v => if v.isNull then pure #[] else (← v.getArr?).mapM (·.getStr?)
   return {
     startTs := ← (← j.getObjVal? "startTs").getInt?
     endTs := ← (← j.getObjVal? "endTs").getInt?
@@ -1015,7 +1015,7 @@ private def parseLabelSeg (j : Json) : Except String Verified.Geo.BiometricLabel
     avgSpeed := ← jBits (← j.getObjVal? "avgSpeed")
     maxSpeed := ← jBits (← j.getObjVal? "maxSpeed")
     linearity := ← jBits (← j.getObjVal? "linearity")
-    pointCount := (← (← j.getObjVal? "pointCount").getInt?).toNat
+    pointCount := ← (← j.getObjVal? "pointCount").getInt?
     place := ← optStr j "place"
     wayName := ← optStr j "wayName"
   }

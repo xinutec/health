@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.BiometricWindows
 import Verified.JsNum
 /-!
@@ -89,24 +90,13 @@ structure Fix where
   lon : Float
   deriving Inhabited, BEq
 
-/-- The segment fields these four passes actually read. `refinedReason` is
-    absent deliberately — a pass appends to it but never branches on it, so
-    carrying it would be transport with no decision content. -/
-structure LabelSeg where
-  startTs : Int
-  endTs : Int
-  mode : String
-  refinedMode : Option String := none
-  /-- The machine-readable refinement tags; `revertIsolatedCadenceDrives`
-      branches on `"low-cadence"`. -/
-  refinedKinds : List String := []
-  avgSpeed : Float := 0
-  maxSpeed : Float := 0
-  linearity : Float := 0
-  pointCount : Nat := 0
-  place : Option String := none
-  wayName : Option String := none
-  deriving Inhabited, BEq
+/-- The pipeline segment record. These four passes read a handful of its fields
+— `refinedKinds` for the low-cadence tag, the speeds, the linearity, the place
+and way labels — and construct nothing: each returns a {@link Decision}, so the
+port cannot drift on a field it does not model. It names the whole record so
+that `Verified.Geo.PassFold` can hand the same value to every pass in the
+cascade without a lossy projection at each hop. -/
+abbrev LabelSeg := Verified.Geo.SegmentMerge.Seg
 
 /-- What a pass decided about one segment. `flip` carries the new mode, the
     reason FRAGMENT to append, and the refinement tag to add (most passes add
@@ -423,7 +413,7 @@ private def steady (perMin : Float) (mins : Int := 5) : List StepPoint :=
 /-! ### `revertIsolatedCadenceDrives` -/
 
 private def flipped (avg : Float := 3) : LabelSeg :=
-  { walkSeg with refinedMode := some "driving", refinedKinds := ["low-cadence"], avgSpeed := avg }
+  { walkSeg with refinedMode := some "driving", refinedKinds := #["low-cadence"], avgSpeed := avg }
 private def realDrive : LabelSeg := { walkSeg with mode := "driving", avgSpeed := 40 }
 private def plainWalk : LabelSeg := walkSeg
 private def stay : LabelSeg := { walkSeg with mode := "stationary", avgSpeed := 0 }
