@@ -71,6 +71,15 @@ def MIN_COARSE_FIXES : Nat := 2
 platform wait, a same-station interchange — are not a journey. -/
 def MIN_JOURNEY_M : Float := 800
 
+/-- A station's own footprint. Wider than a platform because a reacquire on the
+concourse still belongs to the station it happened in.
+
+Lives here rather than in either caller because BOTH need it and neither imports
+the other: `UndergroundJourney` bounds a platform cluster by it, and
+`UndergroundAnnotate` asks with it whether the rider has moved CLEAR of a
+blackout. `PassFold` names it again at the pass boundary; that one is this. -/
+def UNDERGROUND_STATION_RADIUS_M : Float := 350
+
 /-- A coarse cell-network fix whose coordinate is reliable enough to snap to a
 station: accuracy in `[100, 800]`. A `none` accuracy is NOT coarse. -/
 def isCoarse (f : CoarseFix) : Bool :=

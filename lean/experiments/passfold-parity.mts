@@ -49,8 +49,43 @@ const only = new Set(process.argv.slice(2));
 
 interface Outcome {
 	date: string;
-	verdict: "IDENTICAL" | "DIVERGED" | "LOOKUP MISS" | "ERROR";
+	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "ERROR";
 	detail: string;
+}
+
+/** Fields no `Env` supplies, so the fold cannot produce them and a difference
+ *  here is structural rather than a divergence.
+ *
+ *  `PassFold.Env.walkEnv` / `.roadEnv` are declared SHELLS — the street-network
+ *  reads and every solver leaf are stubbed (`fun _ _ _ => none`), because the
+ *  matchers are the 4.31 MiB/day the wire measurement deliberately left
+ *  shell-side (`passfold-env-size.mts`). The passes still RUN; handed no
+ *  matcher they write nothing.
+ *
+ *  Reported, never hidden: a day whose only differences are these gets its own
+ *  verdict and still prints them. Anything outside this set is a divergence.
+ *
+ *  `snappedPath` is deliberately NOT here: `railSnap` reads `railRouteCache`,
+ *  which the payload does supply, so that one has to match. */
+const SHELLED = new Set(["walkMatchedPath", "walkSmoothedPath", "matchedPath"]);
+
+/** Key-sorted JSON, because `JSON.stringify` is ORDER-SENSITIVE on objects and
+ *  the two arms build `biometrics` field by field in their own orders. Comparing
+ *  raw renderings reported all 15 segments as differing when every value was
+ *  identical — a defect in the comparator that would have been read as a
+ *  divergence in the fold. */
+function canon(v: unknown): string {
+	const walk = (x: unknown): unknown =>
+		Array.isArray(x)
+			? x.map(walk)
+			: x !== null && typeof x === "object"
+				? Object.fromEntries(
+						Object.entries(x as Record<string, unknown>)
+							.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+							.map(([k, v2]) => [k, walk(v2)]),
+					)
+				: x;
+	return JSON.stringify(walk(v));
 }
 
 /** Field-by-field, so a divergence names the field rather than the segment. */
@@ -65,7 +100,7 @@ function diffSegs(want: unknown[], got: unknown[]): string[] {
 		const a = want[i] as Record<string, unknown>;
 		const b = got[i] as Record<string, unknown>;
 		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
+			if (canon(a[k]) !== canon(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
 		}
 	}
 	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
@@ -128,13 +163,23 @@ for (const file of readdirSync(DAYS_DIR)
 		continue;
 	}
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
+	// Shell-only is its own verdict, not a pass: the fields are still printed.
+	const real = diffs.filter((d) => !SHELLED.has(d.split(":")[0]));
 	outcomes.push({
 		date,
-		verdict: diffs.length === 0 ? "IDENTICAL" : "DIVERGED",
-		detail: diffs.length === 0 ? `${res.changed?.length ?? 0} passes fired` : diffs.slice(0, 6).join("; "),
+		verdict: diffs.length === 0 ? "IDENTICAL" : real.length === 0 ? "SHELL ONLY" : "DIVERGED",
+		// Real divergences first — a shell difference must never push one off the line.
+		detail:
+			diffs.length === 0
+				? `${res.changed?.length ?? 0} passes fired`
+				: [...real, ...diffs.filter((d) => !real.includes(d))].slice(0, 6).join("; "),
 	});
-	console.log(`${date}  ${outcomes[outcomes.length - 1].verdict.padEnd(11)} ${outcomes[outcomes.length - 1].detail}`);
 }
+
+// Every outcome, not just the ones that produced segments. The misses were the
+// silent ones, and a miss key is the whole finding — printing only the days
+// that got as far as a comparison hid 20 of 33 behind a tally.
+for (const o of outcomes) console.log(`${o.date}  ${o.verdict.padEnd(11)} ${o.detail}`);
 
 const tally = new Map<string, number>();
 for (const o of outcomes) tally.set(o.verdict, (tally.get(o.verdict) ?? 0) + 1);

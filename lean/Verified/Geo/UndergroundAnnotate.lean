@@ -45,7 +45,8 @@ UNPROVEN; pinned against Node/V8 (`lean/experiments/underground-annotate-refs.mt
 namespace Verified.Geo.UndergroundAnnotate
 
 open Verified.Geo.UndergroundRun
-  (CoarseFix LatLon UndergroundRun COARSE_ACCURACY_M MIN_COARSE_FIXES equirectMeters)
+  (CoarseFix LatLon UndergroundRun COARSE_ACCURACY_M MIN_COARSE_FIXES equirectMeters
+   UNDERGROUND_STATION_RADIUS_M)
 open Verified.Geo.UndergroundJourney (MAX_COARSE_GAP_S reconstructUndergroundJourney)
 open Verified.Geo.TubeHop (NearbyStation)
 open Verified.Geo.SegmentMerge (Seg)
@@ -147,6 +148,113 @@ private def clusterRuns (fixes : Array CoarseFix) : Array (Array CoarseFix) :=
 
 private def spanOf (r : Array CoarseFix) : Int := r[r.size - 1]!.ts - r[0]!.ts
 
+/-- How long good GPS has to hold, inside a gap between two dark fixes, to count
+as the phone genuinely having come back rather than blinking. -/
+def RECOVERY_SPAN_S : Int := 30
+
+/--
+Grow a host's run outward through the day's contiguous dark fixes.
+
+The host said WHETHER there is a ride in here; it does not get to say how long
+the tunnel is. GPS goes dark when the train enters and returns when it surfaces,
+and where the classifier cut a segment boundary has nothing to do with either —
+on 2026-05-22 it cut at two mid-tunnel reacquires, so the clipped window resolved
+a King's Cross St Pancras → Finchley Road ride as "Euston Square → St John's
+Wood", a station in at BOTH ends.
+
+Two things stop the growth: the `MAX_COARSE_GAP_S` contiguity rule, and a
+sustained good-GPS recovery inside the gap. The recovery test is asked ONLY here
+and not of the run's own interior — inside the host the classifier has already
+judged this one continuous moving leg, so a surfacing there is a surfacing.
+Growth annexes fixes the classifier gave to a different segment, and that claim
+clears a higher bar.
+-/
+def growThroughDarkness (run all good : Array CoarseFix) : Array CoarseFix :=
+  -- Did GPS genuinely come back between these two dark fixes?
+  let recovered (fromTs toTs : Int) : Bool :=
+    let between := good.filter fun f => f.ts > fromTs && f.ts < toTs
+    !between.isEmpty && between[between.size - 1]!.ts - between[0]!.ts ≥ RECOVERY_SPAN_S
+  match all.findIdx? (fun f => f.ts ≥ run[0]!.ts) with
+  -- The run's fixes are not in `all` — nothing to grow into.
+  | none => run
+  | some lo0 => Id.run do
+    let mut lo := lo0
+    let mut hi := all.size - 1
+    -- Each loop moves its index one step and never turns back, so `all.size`
+    -- bounds the iterations exactly. Not a fuel cap: it is the trip count.
+    for _ in [0:all.size] do
+      if hi > lo && all[hi]!.ts > run[run.size - 1]!.ts then hi := hi - 1 else break
+    for _ in [0:all.size] do
+      if lo > 0 && all[lo]!.ts - all[lo - 1]!.ts ≤ MAX_COARSE_GAP_S
+          && !recovered all[lo - 1]!.ts all[lo]!.ts then lo := lo - 1 else break
+    for _ in [0:all.size] do
+      if hi < all.size - 1 && all[hi + 1]!.ts - all[hi]!.ts ≤ MAX_COARSE_GAP_S
+          && !recovered all[hi]!.ts all[hi + 1]!.ts then hi := hi + 1 else break
+    return all.extract lo (hi + 1)
+
+/-- How close in time and space a well-located fix has to be, on BOTH sides of a
+GPS-dark one, to prove the phone was never actually out of contact with the sky.
+Deliberately tight on distance: on 2026-07-16 the blip sat 24 m and 50 m from its
+neighbours, while every genuine tunnel fix that day sat 570-3242 m from the
+nearest good fix. The two populations do not overlap, and it is POSITION
+continuity that separates them — accuracy cannot, since the blip's own accuracy
+is what raised the question. -/
+def BLIP_NEIGHBOUR_S : Nat := 120
+def BLIP_NEIGHBOUR_M : Float := 250
+
+/-- Is this dark fix a lone accuracy wobble inside continuous good coverage,
+rather than a tunnel?
+
+Underground the phone loses the sky: the fixes around a real blackout are either
+dark themselves or hundreds of metres away, because the train covered that ground
+while nobody was looking. A fix reporting 134 m of uncertainty while sitting 30 m
+from well-located fixes seconds either side reports on the receiver, not on the
+journey.
+
+Array order, not time order — the TS scans `good` as given, both ways. -/
+def isAccuracyBlip (f : CoarseFix) (good : Array CoarseFix) : Bool :=
+  -- `none` is not near: a run end with no good fix beyond it is not a blip.
+  let near (g? : Option CoarseFix) : Bool := g?.any fun g =>
+    -- `natAbs` IS `Math.abs` here: the TS takes the absolute difference of two
+    -- timestamps, which is what the neighbour bound is about on either side.
+    (g.ts - f.ts).natAbs ≤ BLIP_NEIGHBOUR_S
+      && equirectMeters f.lat f.lon g.lat g.lon ≤ BLIP_NEIGHBOUR_M
+  let before := (good.filter fun g => g.ts < f.ts).back?
+  let after := (good.filter fun g => g.ts > f.ts)[0]?
+  near before && near after
+
+/--
+Drop accuracy blips from the END of a run — the fixes that let it outlive the
+ride.
+
+The run's tail is what sets the alight: the window closes at the first good fix
+after the last dark one, so a blip four minutes into the walk away from the
+station moves the alight four minutes late and swallows the walk (2026-07-16, a
+Euston Square ride run over a confirmed 07:47-07:54 walk to UCLH).
+
+The tail ONLY. Measured over the corpus, blips are not uniformly noise: filtering
+them everywhere also drops poor-GPS indoor stays and mid-ride surfacings,
+fragmenting runs that are right today. What is asymmetric is the consequence — an
+over-long tail overwrites a confirmed walk, an over-long head does not, and the
+boarding anchor already owns the head.
+
+Being a blip is necessary but not sufficient: the rider must also have moved
+CLEAR of the blackout, by more than a station's own footprint. Arriving somewhere
+is not a tidy event — the phone reacquires on the platform, loses it again under
+the concourse roof, and settles outside — so distance is what separates an
+arrival from a blip, and the corpus separates cleanly on it.
+-/
+def trimBlipTail (run good : Array CoarseFix) : Array CoarseFix :=
+  Id.run do
+    let mut «end» := run.size
+    -- `end` only ever decreases, so `run.size` is the exact trip count.
+    for _ in [0:run.size] do
+      if «end» > 1 && isAccuracyBlip run[«end» - 1]! good
+          && equirectMeters run[«end» - 1]!.lat run[«end» - 1]!.lon
+               run[«end» - 2]!.lat run[«end» - 2]!.lon > UNDERGROUND_STATION_RADIUS_M
+      then «end» := «end» - 1 else break
+    return run.extract 0 «end»
+
 /--
 Find underground runs hiding inside the day's segments and carve them out as
 their own `train` segments.
@@ -163,6 +271,10 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
     (linesLookup : Float → Float → Array String)
     (waysLookup : Float → Float → Array NearbyWay) : Array Seg :=
   let good := rawFixes.filter isGood
+  -- Every GPS-dark fix of the day, in order — the stream a host's run is grown
+  -- back out into once the host has established there IS a ride.
+  let darkFixes := ((rawFixes.filter isUndergroundSignal).toList.mergeSort
+    fun a b => a.ts ≤ b.ts).toArray
   segments.foldl (init := #[]) fun result host =>
     if host.mode == "stationary" || alreadyRail host then result.push host else
     let hostDark := ((rawFixes.filter fun f =>
@@ -173,7 +285,15 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
     let qualifying := runs.filter fun r => r.size ≥ MIN_COARSE_FIXES && spanOf r ≥ MIN_RUN_DURATION_S
     match (qualifying.toList.mergeSort fun a b => spanOf b ≤ spanOf a).head? with
     | none => result.push host
-    | some runFixes =>
+    | some hostRun =>
+      -- Grow the run to the tunnel's own ends, then trim a tail that outlived
+      -- the ride. Trimmed AFTER growing, so a blip is caught whichever side
+      -- annexed it — the host's clustering or the growth past its boundary.
+      -- What survives still has to clear the bar the host run cleared, or the
+      -- ride would be reconstructed out of evidence just disowned.
+      let runFixes := trimBlipTail (growThroughDarkness hostRun darkFixes good) good
+      if runFixes.size < MIN_COARSE_FIXES || spanOf runFixes < MIN_RUN_DURATION_S
+      then result.push host else
       let runStart := runFixes[0]!.ts
       let runEnd := runFixes[runFixes.size - 1]!.ts
       -- Array order, not time order: the TS scans `good` as given.

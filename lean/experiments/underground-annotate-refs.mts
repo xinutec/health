@@ -19,9 +19,24 @@
  * and `reconstructUndergroundRun` reference-testable through their public
  * entry point. `sideWayName` is private and pinned through the split output.
  *
+ * # This harness had drifted out of its own subject's signature
+ *
+ * It called `annotateUndergroundRuns` with FIVE arguments. The pass has taken
+ * seven since `ed5471e`/`0a72d58` — `points` and `servedLookup` were added — so
+ * the call was passing `stations` where the track goes and defaulting the last
+ * two to `dbOsmAdapter`, i.e. reaching for the live OSM mirror instead of the
+ * stubs. Nothing caught it, because nothing typechecks these harnesses (#418),
+ * and the values in `UndergroundAnnotate.lean` are therefore pinned against a
+ * TS that stopped existing on 2026-07-28.
+ *
+ * Corrected here. The way-label cases will produce DIFFERENT answers from the
+ * ones the Lean currently guards, because `8655be3` changed which question
+ * `sideWayName` asks — that is the point, not a regression.
+ *
  * Run: nix develop /Users/pippijn/Code/health --command npx tsx lean/experiments/underground-annotate-refs.mts
  */
 
+import type { FilteredPoint } from "../../src/geo/kalman.js";
 import type { NearbyStation, NearbyWay } from "../../src/geo/osm.js";
 import type { CoarseFix } from "../../src/geo/underground-rail.js";
 import { annotateUndergroundRuns } from "../../src/geo/underground-rail.js";
@@ -127,11 +142,34 @@ const COARSE: CoarseFix[] = [
 	fix(1600, 3800, 200),
 ];
 
+/** The Kalman track `sideWayName` samples. `ed5471e`..`8655be3` changed the
+ *  pass to name a carve remainder from the SMOOTHED points by the enricher's
+ *  own rule, rather than from the raw good fixes by a second local rule — so
+ *  the harness has to supply a track, and the labels it produces are a
+ *  different question from the ones the pre-`8655be3` guards pinned.
+ *
+ *  Derived from the case's own fixes so every case gets a track covering its
+ *  own span: the pace is what `refineMode` reads, and a walk handed a train's
+ *  speed is refined as one. */
+const points = (fixes: CoarseFix[]): FilteredPoint[] =>
+	[...fixes]
+		.sort((a, b) => a.ts - b.ts)
+		.map((f) => ({ ts: f.ts, lat: f.lat, lon: f.lon, speed_kmh: 4 }) as FilteredPoint);
+
+/** The mirror knows no line's stops, so `lineCannotServe` asserts nothing and
+ *  the membership veto never fires. That is the honest default here: these
+ *  cases are about the window and the labels, and an empty list is "unknown",
+ *  NOT "serves nothing" (`line-membership.ts`). A case that wants to pin the
+ *  veto has to supply its own. */
+const servedNothing = async (_line: string): Promise<{ name: string }[]> => [];
+
 type Case = {
 	segments?: ReturnType<typeof seg>[];
 	fixes?: CoarseFix[];
+	points?: FilteredPoint[];
 	lines?: typeof oneLine;
 	ways?: typeof ways;
+	served?: typeof servedNothing;
 };
 
 const CASES: Record<string, Case> = {
@@ -318,9 +356,11 @@ for (const [name, c] of Object.entries(CASES)) {
 	const r = await annotateUndergroundRuns(
 		c.segments ?? [HOST],
 		c.fixes ?? [...GOOD, ...COARSE],
+		c.points ?? points(c.fixes ?? [...GOOD, ...COARSE]),
 		stations,
 		c.lines ?? oneLine,
 		c.ways ?? ways,
+		c.served ?? servedNothing,
 	);
 	show(`annotate.${name}`, view(r));
 }
