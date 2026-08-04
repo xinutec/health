@@ -86,17 +86,11 @@ private def isGood (f : CoarseFix) : Bool :=
   | none => true
   | some a => a < COARSE_ACCURACY_M
 
-/-- How many points along a side piece are sampled for ways. -/
+/-- How many points along a side piece are sampled for ways. The same count the
+enricher uses (`Enrich.N_SAMPLES`), because this asks the enricher's question —
+stated separately because the two constants are `velocity.ts`'s and this
+module's, and a change to one is not a change to the other. -/
 def SIDE_WAY_SAMPLES : Nat := 5
-
-/-- Upsert into a JS `Map`: a key already present keeps its ORIGINAL position and
-only its value is replaced. Load-bearing — the deduped ways are handed to the
-cascade in this order, and `pickBestHighway` reads the FIRST driveable one. -/
-private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay)
-    (better : NearbyWay → NearbyWay → Bool) : Array (String × NearbyWay) :=
-  match m.findIdx? (fun p => p.1 == k) with
-  | some i => if better v m[i]!.2 then m.set! i (k, v) else m
-  | none => m.push (k, v)
 
 /--
 Way label for a side piece of a split host — the walk left over when a tube ride
@@ -129,21 +123,16 @@ def sideWayName (points : Array Shed.PointF) (startTs endTs : Int) (mode : Strin
   if inPiece.isEmpty then none else
   let n := inPiece.size
   let sampleCount := min SIDE_WAY_SAMPLES n
-  -- Evenly spaced: first and last, and `sampleCount - 2` between them.
-  let sampled := (Array.range sampleCount).map fun i => inPiece[(i * (n - 1)) / (max 1 (sampleCount - 1))]!
-  -- Dedup by (type, subtype, name) keeping the MINIMUM distance, so a way
-  -- brushed past at one sample cannot outweigh one hugged at four others.
-  let byKey := sampled.foldl (init := (#[] : Array (String × NearbyWay))) fun acc p =>
-    (waysLookup p.lat p.lon).foldl (init := acc) fun acc w =>
-      let nm := w.name.getD ""
-      upsert acc s!"{w.type}/{w.subtype}/{nm}" w
-        (fun a b => a.distanceM.getD posInf < b.distanceM.getD posInf)
+  let byKey := Verified.Geo.RefineMode.dedupNearestWays
+    ((Verified.Geo.RefineMode.sampleIdxs n sampleCount).map fun i =>
+      let p := inPiece[i]!
+      waysLookup p.lat p.lon)
   if byKey.isEmpty then none else
   -- The PIECE's own pace. The host's average is the tunnel's, and a walk handed
   -- a train's speed is refined as one.
   let speeds := (inPiece.toList.mergeSort fun a b => a.speedKmh ≤ b.speedKmh).toArray
   let medianKmh := speeds[speeds.size / 2]!.speedKmh
-  (Verified.Geo.RefineMode.refineModeLegacyCascade mode medianKmh (byKey.map (·.2))).wayName
+  (Verified.Geo.RefineMode.refineModeLegacyCascade mode medianKmh byKey).wayName
 
 /-- Whether a segment is already an annotated rail run (its label carries the
 `Board → Alight` arrow), and so must be left alone. -/

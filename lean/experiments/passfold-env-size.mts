@@ -14,15 +14,23 @@
  *   - OBSERVATIONS and DAY TABLES — the raw fixes, steps, HR, sleep, and the
  *     five cached row-sets. Data. They cross.
  *   - LOOKUPS — `nearbyStations`, `linesAtPoint`, `nearbyWays`,
- *     `transitStops`, `stationsOnLine`, and `bestPlace`. Functions, so they
- *     cross as ANSWER TABLES: the fixture's `osmTrace` is already keyed
+ *     `transitStops`, `stationsOnLine`, `bestPlace`, and (added after this was
+ *     first measured) `reverseGeocode`. Functions, so they cross as ANSWER
+ *     TABLES: the fixture's `osmTrace` is already keyed
  *     `${lat}|${lon}|${radius}`, which is exactly the shape a pushed table
  *     needs, and `FixtureOsmAdapter` already hard-errors on an uncaptured key
  *     instead of returning short results. No new capture, no new oracle.
- *   - SHELL CALLBACKS — `reenrich`, `roadEnv`, `walkEnv`. Kept as callbacks in
- *     the `Env`, so the road and walk GEOMETRY never crosses at all. That is
- *     the design claim this script exists to price: `drivableRoads`,
- *     `walkableRoads` and `buildingsNear` are sized separately, as the saving.
+ *   - SHELL CALLBACKS — `roadEnv` and `walkEnv`. Kept as callbacks in the `Env`,
+ *     so the road and walk GEOMETRY never crosses at all. That is the design
+ *     claim this script exists to price: `drivableRoads`, `walkableRoads` and
+ *     `buildingsNear` are sized separately, as the saving.
+ *
+ * `reenrich` was in the third group and has moved to the second. It looked like a
+ * shell because the TS function behind it is `async` — but what is async about it
+ * is two OSM reads, and everything between them is arithmetic. Ported as
+ * `Verified.Geo.Enrich`, it costs one more answer table (`reverseGeocode`) and no
+ * geometry. A callback is not a shell just because it is a callback; it is a
+ * shell when what it does cannot be said in Lean.
  *
  * The alternative to answer tables is pushing raw rows and computing the
  * lookups in Lean, which `Verified.Geo.OsmSpatial` can already do. That is the

@@ -1324,6 +1324,37 @@ private def parseWay (j : Json) : Except String Verified.Geo.Factors.NearbyWay :
     distanceM := ← optBits j "distanceM"
   }
 
+/-- The Nominatim address fields the city extractor reads. Everything else in the
+response belongs to the venue namers, which are not in the fold's path. -/
+private def parseAddress (j : Json) : Except String Verified.Geo.Enrich.Address := do
+  return {
+    stateDistrict := ← optStr j "stateDistrict"
+    city := ← optStr j "city"
+    town := ← optStr j "town"
+    village := ← optStr j "village"
+    municipality := ← optStr j "municipality"
+  }
+
+/-- `[latBits, lonBits, zoom, address|null]`.
+
+The zoom crosses as a plain integer rather than as bits: it is an argument the
+caller writes as a literal (16 here, 18 by default), not a measured double, and
+keying an integer on its float bits would be a spelling both sides have to agree
+on for no gain.
+
+`null` is a RESULT — Nominatim resolving nothing — and is stored as such, so a
+key present with a null answer is not a miss. -/
+private def entryGeo (j : Json) :
+    Except String (String × Option Verified.Geo.Enrich.Address) := do
+  let a ← j.getArr?
+  let lat ← jBits (← nth a 0)
+  let lon ← jBits (← nth a 1)
+  let zoom ← (← nth a 2).getInt?
+  let ans ← match a[3]? with
+    | some v => if v.isNull then pure none else some <$> parseAddress v
+    | none => pure none
+  return (s!"{lat.toBits}|{lon.toBits}|{zoom}", ans)
+
 private def parseTransitStop (j : Json) : Except String Verified.Geo.Bus.TransitStop := do
   return ⟨← (← j.getObjVal? "subtype").getStr?, ← jBits (← j.getObjVal? "distanceM")⟩
 
@@ -1385,20 +1416,35 @@ private def parseEnv (j : Json) : Except String Env := do
     (entryS (fun v => do (← v.getArr?).mapM parseLineStation)))
   let tz := mkMap (← (← optArr lk "tzAt").mapM (entry2 (·.getStr?)))
   let places := mkMap (← (← optArr lk "bestPlace").mapM entryPlace)
+  let geocodes := mkMap (← (← optArr lk "reverseGeocode").mapM entryGeo)
   -- Not under `lookups`: these two are columns and a derived series, not
   -- questions put to the OSM mirror, so a miss in them is not a capture gap.
   let days := mkMap (← (← optArr j "focusPlaceDays").mapM
     (fun v => do let a ← v.getArr?; return (toString (← (← nth a 0).getInt?), ← (← nth a 1).getInt?)))
   let speeds := mkMap (← (← optArr j "speedByTs").mapM
     (fun v => do let a ← v.getArr?; return (toString (← (← nth a 0).getInt?), ← jBits (← nth a 1))))
+  -- Bound rather than inlined: the Kalman track is both an `Env` field and the
+  -- window the re-enrichment closure samples, and those must be the same series.
+  let pts ← (← optArr j "points").mapM parsePointF
+  let waysAt := fun lat lon => hit ways "nearbyWays" (k2 lat lon)
+  let geocodeAt := fun (lat lon : Float) (zoom : Int) =>
+    hit geocodes "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}"
   return {
-    points := ← (← optArr j "points").mapM parsePointF
+    points := pts
     rawFixes := ← (← optArr j "rawFixes").mapM parseCoarse
     steps := ← (← optArr j "steps").mapM parseStep
     railStops := ← (← optArr j "railStops").mapM parseRailStops
     nearbyStations := fun lat lon r => hit stations "nearbyStations" (k3 lat lon r)
     linesAtPoint := fun lat lon r => hit lines "linesAtPoint" (k3 lat lon r)
-    nearbyWays := fun lat lon => hit ways "nearbyWays" (k2 lat lon)
+    nearbyWays := waysAt
+    -- `reenrichSplitWalks` re-derives one carve remainder's enrichment from its
+    -- OWN geometry. `samplesInWindow` is inclusive at both ends, and an empty
+    -- window is `none` — which the pass reads as "leave the leg as it stands",
+    -- the same answer the TS's `if (segPoints.length === 0) return` gives.
+    reenrich := fun seg =>
+      Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
+        ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
+          ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
     bestPlace := fun lat lon s e m =>
       hit places "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{m}"
     tzAt := fun lat lon => hit tz "tzAt" (k2 lat lon)
@@ -1476,13 +1522,17 @@ private def changedPasses (input : Array Seg) (trace : Array (String × Array Se
       prev := segs
     return out
 
-/-- The `Env` fields this mode does not yet feed. They are SHELL callbacks —
-venue re-resolution and the road / walk solvers — and their `Env` defaults are
-no-ops, so a pass that needs one runs but decides nothing. Named in the output
-rather than left to be inferred from a divergence: an unfed callback and a real
-disagreement are different findings, and a parity run that cannot tell them
-apart reports the wrong one. -/
-private def UNFED : Array String := #["reenrich", "roadEnv", "walkEnv"]
+/-- The `Env` fields this mode does not feed. Their `Env` defaults are no-ops, so
+a pass that needs one runs but decides nothing. Named in the output rather than
+left to be inferred from a divergence: an unfed callback and a real disagreement
+are different findings, and a parity run that cannot tell them apart reports the
+wrong one.
+
+Both entries are SOLVERS — the road and pedestrian matchers, whose street-network
+reads and search leaves are 4.31 MiB/day the wire measurement deliberately left
+shell-side. `reenrich` was here too and is not any more: it was an OSM read plus
+arithmetic, which is a port (`Verified.Geo.Enrich`), not a shell. -/
+private def UNFED : Array String := #["roadEnv", "walkEnv"]
 
 /-- `walkDraw` and `walkFlags` stay at their `Env` defaults — `.matcher`, which
 is what production draws, and no flags, which is the request without

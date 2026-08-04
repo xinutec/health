@@ -43,6 +43,18 @@
  * encoder had handed Lean a narrower oracle, and the two are not distinguishable
  * from the message. Any miss recorded before #428 landed has to be re-read.
  *
+ * # Attributing a difference to a PASS is not something this can do
+ *
+ * The obvious version does not work: walking `trace` and reporting the first pass
+ * whose output differs at the segment's index reports the FIRST pass every time,
+ * because passes split and merge, so index 15 after the fold is not index 15
+ * before it. That was written, it confidently said `stationaryCoherence`, and it
+ * was an artefact. Attribution needs leg identity rather than an index (#409).
+ *
+ * What worked instead was the FIELD SET. A difference confined to exactly the
+ * fields one callback writes is that callback, and that is how the `reenrich`
+ * class was identified and then closed by porting it (`Verified.Geo.Enrich`).
+ *
  * Run: npx tsx lean/experiments/passfold-parity.mts [date …]
  */
 
@@ -173,6 +185,18 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 	osm.nearbyTransitStops = async (lat, lon, r?) => {
 		const v = await stops(lat, lon, r);
 		(rec.nearbyTransitStops as Record<string, unknown>)[key(lat, lon, r)] = v;
+		return v;
+	};
+	// RECORDED although the row-set adapter delegates it to the trace anyway, so
+	// the trace would serve as the oracle. Recording is still the stronger
+	// choice: the fold reaches `reverseGeocode` through `reenrichSplitWalks`, and
+	// if the Lean arm re-enriches a leg the TS arm did not, that shows up as a
+	// MISS on a key the run never asked for — where a copied trace would answer
+	// it and the extra re-enrichment would vanish into a field diff.
+	const geo = osm.reverseGeocode.bind(osm);
+	osm.reverseGeocode = async (lat, lon, zoom?) => {
+		const v = await geo(lat, lon, zoom);
+		rec.reverseGeocode[key(lat, lon, zoom)] = v;
 		return v;
 	};
 	return rec;

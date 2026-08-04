@@ -46,8 +46,15 @@
 
 import type { CapturedDay } from "../cli/fixture-day.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
+import type { NominatimResult } from "../geo/osm.js";
 import { DEFAULT_RADIUS_M } from "../geo/osm.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+
+/** `reverseGeocode`'s `zoom = 18` default, so a trace key that omitted it records
+ *  the EFFECTIVE argument rather than a blank — the same choice `table3` makes
+ *  for an omitted radius. */
+const NOMINATIM_DEFAULT_ZOOM = 18;
+
 import type { FoldCaptureFile } from "./fold-capture.js";
 
 /** A `Float64` bit pattern as a decimal string — the bridge's float encoding. */
@@ -156,6 +163,44 @@ function table2<T>(section: Record<string, T> | undefined, map: (v: T) => unknow
 	return out;
 }
 
+/** `reverseGeocode(cityGrid(lat), cityGrid(lon), 16)` — the endpoint city lookup
+ *  `enrichMovingSegment` makes, which reaches the fold through
+ *  `reenrichSplitWalks`.
+ *
+ *  `[latBits, lonBits, zoom, address|null]`. The zoom crosses as a PLAIN INTEGER,
+ *  unlike every other table key: it is a literal the caller writes (16 here, 18
+ *  by default), not a measured double, so keying it on float bits would be a
+ *  spelling both sides must agree on for nothing. The coordinates stay on bits
+ *  for the usual reason — JS and Lean render doubles differently.
+ *
+ *  A `null` answer is Nominatim resolving nothing, which is a RESULT. Stored as
+ *  such, so a key present with a null answer never reads as a miss.
+ *
+ *  Only the five address fields `extractCity` reads cross. The rest of a
+ *  `NominatimResult` belongs to the venue namers, which the fold does not run. */
+function geocodeTable(section: Record<string, NominatimResult | null> | undefined): unknown[] {
+	const out: unknown[] = [];
+	for (const [k, v] of Object.entries(section ?? {})) {
+		const n = keyNums(k);
+		if (n.length < 2) continue;
+		out.push([
+			bits(n[0]),
+			bits(n[1]),
+			n.length >= 3 ? n[2] : NOMINATIM_DEFAULT_ZOOM,
+			v === null
+				? null
+				: {
+						stateDistrict: optStr(v.address.state_district),
+						city: optStr(v.address.city),
+						town: optStr(v.address.town),
+						village: optStr(v.address.village),
+						municipality: optStr(v.address.municipality),
+					},
+		]);
+	}
+	return out;
+}
+
 /** Build the request.
  *
  *  `answers` is what the REPLAY'S OWN adapter answered, not the fixture's
@@ -252,6 +297,7 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 					line,
 					v.map((s) => [s.name, bits(s.lat), bits(s.lon)]),
 				]),
+				reverseGeocode: geocodeTable(t.reverseGeocode),
 				// The two the adapter never saw — see `fold-capture.ts`.
 				tzAt: cap.tzAt.map((q) => [bits(q.lat), bits(q.lon), q.tz]),
 				bestPlace: cap.bestPlace.map((q) => [
