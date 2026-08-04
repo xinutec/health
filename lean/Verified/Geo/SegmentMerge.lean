@@ -46,6 +46,27 @@ abbrev Mode := String
 /-- `Math.round` — halves go UP, towards +∞. -/
 private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 
+/-- Per-segment HR, sleep and step aggregates — what `enrichSegmentWithBiometrics`
+(`Verified.Geo.BiometricWindows`) computes and the `biomEnrich` pass attaches.
+
+Declared HERE rather than beside the function that fills it in, because `Seg`
+carries one and the dependency only runs one way: the segment record is the
+leaf every pass shares, so a field of it cannot name a module that imports it. -/
+structure BiometricEnrichment where
+  hrMean : Option Float
+  hrMin : Option Float
+  hrMax : Option Float
+  hrStd : Option Float
+  /-- HR samples that fell inside the segment window. -/
+  sampleCount : Nat
+  overlapsSleep : Bool
+  /-- Fraction of segment duration covered by sleep records (0–1). -/
+  sleepFraction : Float
+  /-- Total steps inside the segment; `none` when no step rows touched the
+      window's DAY — distinct from zero steps actively recorded. -/
+  stepsTotal : Option Float
+  deriving Inhabited, BEq, Repr
+
 /-- The `EnrichedSegment` fields these passes read and rewrite. A wider
 projection than `Verified.Geo.SegmentPasses.Seg`: the merges have to carry the
 weighted numeric fields, and the stay passes need the centroid and focus id.
@@ -101,6 +122,10 @@ structure Seg where
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
+  /-- HR, sleep and step aggregates over this segment's window, attached by the
+  `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
+  own fields are empty because Fitbit had nothing for the day. -/
+  biometrics : Option BiometricEnrichment := none
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/

@@ -13,6 +13,7 @@ import Verified.Geo.RailJourney
 import Verified.Geo.Bus
 import Verified.Geo.PlaceOverride
 import Verified.Geo.TransitPlace
+import Verified.Geo.BiometricWindows
 /-!
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
@@ -116,6 +117,10 @@ structure Env where
   platform, and the rename is refused. A separate field because
   `KnownPlaceProjection` carries geometry only. -/
   focusPlaceDays : Int → Option Int := fun _ => none
+  /-- Intraday heart-rate samples. -/
+  hr : List Verified.Geo.BiometricWindows.HrPoint := []
+  /-- Sleep-stage windows. -/
+  sleep : List Verified.Geo.BiometricWindows.SleepStage := []
 
 /-! ## Fix projections
 
@@ -162,6 +167,11 @@ def Env.interchangeSteps (e : Env) : List Verified.Geo.Interchange.StepPoint :=
 
 def Env.busFixes (e : Env) : List Verified.Geo.Bus.Fix :=
   (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
+
+/-- The step rows as the biometric windows declare them. A rename: `Float` both
+sides, unlike the two `Int` conversions above. -/
+def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
+  (e.steps.map fun s => ⟨s.ts, s.steps⟩).toList
 
 /-! ### The line lookup, three ways
 
@@ -446,6 +456,16 @@ def passes (e : Env) : Array Pass := #[
   -- The zone the frontend renders this segment's clock in.
   ("displayTz", fun segs => displayTz e segs),
 
+  -- Final cross-modal enrichment: HR, sleep and step stats per segment. Missing
+  -- Fitbit data leaves the enrichment's own fields empty — which is NOT the
+  -- same as the field being absent, and the segment record keeps both readings
+  -- apart.
+  ("biomEnrich", fun segs =>
+    segs.map fun s =>
+      let bio := Verified.Geo.BiometricWindows.enrichSegmentWithBiometrics
+                   s e.hr e.sleep e.biomSteps
+      { s with biometrics := some bio }),
+
   -- The HSMM's place picks override the pipeline's attribution on stays. Falls
   -- back to the pipeline's label when no decode exists — an EMPTY decode is
   -- that "no decode", matching the TS's null test.
@@ -541,7 +561,7 @@ private def NO_LOOKUPS : Env :=
     "railReconcile", "mergeSameRouteTrains", "interchangeSplit", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
     "rideHeadClaim", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
-    "railSnap", "busEvidence", "busRoutes", "displayTz", "hsmmOverride", "finalMerge",
+    "railSnap", "busEvidence", "busRoutes", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "interchangeStayLabel", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -589,8 +609,7 @@ def unported (e : Env) : Array String :=
 -- solver leaves the env does not hold yet; one needs a `biometrics` field on the
 -- shared segment record, which is a schema change and not wiring.
 #guard unported NO_LOOKUPS ==
-  #["revertIsolatedCadence2", "walkThrough", "reenrichSplitWalks", "roadMatch",
-    "walkMatch", "biomEnrich"]
+  #["revertIsolatedCadence2", "walkThrough", "reenrichSplitWalks", "roadMatch", "walkMatch"]
 
 #guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
 
@@ -690,7 +709,13 @@ every input it is handed matters.
   with nothing pinning it. #423.
 * `finalMerge` still fires with the far-phantom swallow removed — its witness is
   carried by the stay merge alone. The swallow's NO-OP arm is pinned (the walk
-  pair below); the arm that swallows is not. -/
+  pair below); the arm that swallows is not.
+
+Of the six step and fix projections, five are pinned; `Env.feasSteps` is not,
+and cannot be until `vehicleEdgeShed` and `rideHeadClaim` have witnesses, since
+they are its only consumers. Same root as their `unwitnessed` entries rather
+than a separate gap. Note the two projections have IDENTICAL bodies, so a probe
+aimed at one by its text alone hits the other — anchor on the signature. -/
 
 section Witnesses
 
@@ -761,7 +786,8 @@ private def withTrack (pts : Array Shed.PointF) (steps : Array StepPoint) : Env 
     transitStops := fun _ _ _ => #[{ subtype := "bus_stop", distanceM := 10 }]
     hmmDecode := #[{ startTs := 0, endTs := 600, mode := "stationary", placeId := some 7 }]
     hsmmPlaces := [(7, { displayName := some "The Office", lat := some lat0, lon := some lon0 })]
-    knownPlaces := #[⟨7, lat0, lon0⟩] }
+    knownPlaces := #[⟨7, lat0, lon0⟩]
+    hr := [{ ts := 60, bpm := 60 }, { ts := 120, bpm := 80 }] }
 
 private def MIX : Env := withTrack mixedTrack cadence
 private def BACK : Env := withTrack outAndBack #[]
@@ -776,12 +802,16 @@ private def dr (a b : Int) : Seg :=
 private def st (a b : Int) (place : Option String := none) : Seg :=
   { startTs := a, endTs := b, mode := "stationary", linearity := 0.2, pointCount := 50, place }
 
-/-- Does the named pass rewrite this day? A pass that has vanished reads as
-`false`, so the guards below also catch a deletion. -/
-private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
+/-- Run one named pass. A pass that has vanished returns its input, so `fires`
+below reads `false` and the guards catch a deletion. -/
+private def runNamed (e : Env) (name : String) (day : Array Seg) : Array Seg :=
   match (passes e).find? (·.1 == name) with
-  | some p => p.2 day != day
-  | none => false
+  | some p => p.2 day
+  | none => day
+
+/-- Does the named pass rewrite this day? -/
+private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
+  runNamed e name day != day
 
 -- Two stays either side of a march the classifier called dwelling: the first
 -- pass relabels it and the second coalesces the result. Both are pinned in
@@ -831,6 +861,20 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 -- from the input and pass here — what pins the BRANCH is the pair of guards on
 -- `displayTz` itself, below.
 #guard fires MIX "displayTz" #[wk 0 3000]
+-- Every segment leaves with an enrichment attached. Asserting only that the
+-- field went from `none` to `some` would be satisfied by a pass that attached a
+-- DEFAULT, so the mean of the two in-window samples is what is checked.
+#guard fires MIX "biomEnrich" #[wk 0 3000]
+#guard ((runNamed MIX "biomEnrich" #[wk 0 3000])[0]!.biometrics.map (·.hrMean)) == some (some 70)
+-- …and a window the samples miss gets an enrichment whose HR fields are empty,
+-- which is a different thing from no enrichment at all.
+#guard ((runNamed MIX "biomEnrich" #[wk 6000 9000])[0]!.biometrics.map (·.hrMean)) == some none
+-- The step total too, which is what pins `biomSteps` — the HR guards above are
+-- blind to it, and a projection that handed the pass no rows would pass them.
+-- 51 minutes at 100 spm, inclusive both ends.
+#guard ((runNamed MIX "biomEnrich" #[wk 0 3000])[0]!.biometrics.map (·.stepsTotal))
+  == some (some 5100)
+
 -- A decode with a place pick overrides the pipeline's attribution.
 #guard fires MIX "hsmmOverride" #[st 0 600, wk 600 1200]
 -- Two consecutive stays at one place are one visit.
@@ -890,7 +934,7 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 24
+#guard witnessed.size == 25
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

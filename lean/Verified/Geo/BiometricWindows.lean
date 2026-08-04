@@ -60,20 +60,12 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-structure BiometricEnrichment where
-  hrMean : Option Float
-  hrMin : Option Float
-  hrMax : Option Float
-  hrStd : Option Float
-  /-- HR samples that fell inside the segment window. -/
-  sampleCount : Nat
-  overlapsSleep : Bool
-  /-- Fraction of segment duration covered by sleep records (0–1). -/
-  sleepFraction : Float
-  /-- Total steps inside the segment; `none` when no step rows touched the
-      window's DAY — distinct from zero steps actively recorded. -/
-  stepsTotal : Option Float
-  deriving Inhabited, BEq
+/-- What this module computes and the segment record carries.
+
+Declared in `Verified.Geo.SegmentMerge` rather than here, because `Seg` has a
+field of this type and the segment record cannot import the module that fills
+it in without a cycle. Named here so the pass reads as its own. -/
+abbrev BiometricEnrichment := Verified.Geo.SegmentMerge.BiometricEnrichment
 
 /-- `Math.round(x * 10) / 10`. -/
 private def round1 (x : Float) : Float := Float.floor (x * 10 + 0.5) / 10
