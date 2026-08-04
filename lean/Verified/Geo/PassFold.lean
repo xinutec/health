@@ -8,6 +8,11 @@ import Verified.Geo.RailReconcile
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentPasses
 import Verified.Geo.TubeHop
+import Verified.Geo.Interchange
+import Verified.Geo.RailJourney
+import Verified.Geo.Bus
+import Verified.Geo.PlaceOverride
+import Verified.Geo.TransitPlace
 /-!
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
@@ -79,8 +84,38 @@ structure Env where
   /-- SHELL: re-resolve a merged stay's venue from its combined centre. An OSM
   call in the TS, injected here so the pass around it ports whole. -/
   bestPlace : Float → Float → Int → Int → String → Option Verified.Geo.SegmentMerge.ResolvedPlace
-  /-- SHELL: the IANA zone at a coordinate. tzdata, not arithmetic. -/
+  /-- SHELL: the IANA zone at a coordinate. tzdata, not arithmetic.
+
+  The TS wraps this in a `try`/`catch` and falls back to `homeTz`. Total here,
+  so the fallback belongs to whoever supplies the function. -/
   tzAt : Float → Float → String
+  /-- The user's home zone: what `displayTz` writes for a segment no fix
+  covers, and the TS's fallback when `tzLookup` throws. -/
+  homeTz : String := "Europe/London"
+  /-- `osm.stationsOnLine(line)` — every station the line serves, with the
+  coordinate of its canonical node. The RICHEST of the three shapes the passes
+  ask for; the other two are projections of it. -/
+  stationsOnLine : String → Array Verified.Geo.RailJourney.LineStation := fun _ => #[]
+  /-- `rail_route_cache` rows, filled offline by `refresh-rail-routes`. -/
+  railRouteCache : Array Verified.Geo.RailReconcile.RouteRow := #[]
+  /-- `bus_route_cache` rows. Empty is the honest "no mirror yet", and the pass
+  is a no-op then — which is why capturing routes cannot move a golden day. -/
+  busRouteCache : List Verified.Geo.Bus.BusRoute := []
+  /-- `osm.nearbyTransitStops(lat, lon, radiusM)`. -/
+  transitStops : Float → Float → Float → Array Verified.Geo.Bus.TransitStop := fun _ _ _ => #[]
+  /-- The HSMM's decode for this day, or empty when the cron has not run. The
+  TS tests the decode for null; empty carries the same meaning here. -/
+  hmmDecode : Array Verified.Geo.PlaceOverride.HmmSeg := #[]
+  /-- Place id → display name and centroid, for resolving the HSMM's picks. -/
+  hsmmPlaces : List (Int × Verified.Geo.PlaceOverride.PlaceLookup) := []
+  /-- Mined focus places, for the far-phantom swallow. -/
+  knownPlaces : Array Verified.Geo.SegmentMerge.KnownPlaceProjection := #[]
+  /-- `focus_places.unique_days` by id — how established a place is. The
+  transit-interchange labeller reads it as a PROVENANCE guard: a stay the
+  posterior assigned to a place visited on many days is a destination, not a
+  platform, and the rename is refused. A separate field because
+  `KnownPlaceProjection` carries geometry only. -/
+  focusPlaceDays : Int → Option Int := fun _ => none
 
 /-! ## Fix projections
 
@@ -118,6 +153,36 @@ one row is #422; when that closes this becomes a rename like the one above. -/
 def Env.absorberSteps (e : Env) : Array Verified.Geo.RailAbsorbers.StepPoint :=
   e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩
 
+def Env.interchangeFixes (e : Env) : Array Verified.Geo.Interchange.Fix :=
+  e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
+
+/-- The second `Float → Int` step conversion — see `absorberSteps`, and #422. -/
+def Env.interchangeSteps (e : Env) : List Verified.Geo.Interchange.StepPoint :=
+  (e.steps.map fun s => ⟨s.ts, s.steps.toInt64.toInt⟩).toList
+
+def Env.busFixes (e : Env) : List Verified.Geo.Bus.Fix :=
+  (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
+
+/-! ### The line lookup, three ways
+
+`stationsOnLine` is one mirror read, and three passes want three shapes of its
+answer. The env carries the RICHEST — name and coordinate — and each consumer
+takes what it declares, the same rule the fixes follow. -/
+
+/-- Name only: what the anchors' served-station test compares. -/
+def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
+  fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
+
+/-- Name and coordinate, as a list: what the interchange splicer declares. -/
+def Env.interchangeStations (e : Env) : String → List Verified.Geo.Interchange.Station :=
+  fun line => ((e.stationsOnLine line).map fun s => ⟨s.name, s.lat, s.lon⟩).toList
+
+/-- The journey assembler's own shell record. Its radius is an `Int` where the
+env's is a `Float`; widening, so nothing is lost. -/
+def Env.railJourneyEnv (e : Env) : Verified.Geo.RailJourney.Env :=
+  { linesAtPoint := fun lat lon r => e.linesAtPoint lat lon (Float.ofInt r)
+    stationsOnLine := e.stationsOnLine }
+
 /-! ## Radii the cascade chooses
 
 The mirror lookups take a radius, and it is the CALLER that picks one — the same
@@ -139,6 +204,71 @@ def UNDERGROUND_LINES_RADIUS_M : Float := 300
 /-- `DEFAULT_RADIUS_M.linesAtPoint` (`src/geo/osm.ts`) — what the adapter falls
 back to when the caller names none, which is how `railRuns` calls it. -/
 def LINES_AT_POINT_DEFAULT_RADIUS_M : Float := 100
+
+/-! ## The two passes with no module of their own
+
+Every other entry names a function some module owns. These two are written
+inline in `velocity.ts`, so they are written here — they are pass BODIES, not
+wiring, and they belong to the fold in the same way. -/
+
+/-- Fixes covering a segment's window. `samplesInWindow`: INCLUSIVE both ends,
+the pipeline's dominant reading. -/
+private def inWindow (e : Env) (s : Seg) : Array Shed.PointF :=
+  e.points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
+
+/-- The zone the frontend renders this segment's clock in, so a travel day
+reads as it was lived — morning at parents in CEST, evening home in BST.
+
+Stationary takes the centroid, moving the midpoint of the path: a ride's
+average position is somewhere it never was, and on a leg that crosses a border
+that is the wrong side. Note `mode` and not `effectiveMode`, as the TS has it —
+a leg refined to walking keeps the stationary branch. -/
+def displayTz (e : Env) (segs : Array Seg) : Array Seg :=
+  segs.map fun s =>
+    let pts := inWindow e s
+    if pts.isEmpty then { s with displayTz := some e.homeTz }
+    else
+      let (lat, lon) :=
+        if s.mode == "stationary" then
+          let n := Float.ofNat pts.size
+          ((pts.foldl (fun a p => a + p.lat) 0) / n, (pts.foldl (fun a p => a + p.lon) 0) / n)
+        else
+          let mid := pts[pts.size / 2]!
+          (mid.lat, mid.lon)
+      { s with displayTz := some (e.tzAt lat lon) }
+
+/-- Name a train-bracketed stay after its station.
+
+Runs LAST because the train adjacency is only final once the rail passes and
+`repairHandoff` have absorbed the slivers between the change and the next ride;
+the early place enrichment that named the stay had no transit context at all.
+
+The centroid is recomputed here rather than read off `centroidLat`, which is not
+reliably attached by this point — the TS does the same, for the same reason.
+
+The scan reads the array it is REWRITING, so a stay renamed at `i` is what index
+`i + 1` sees when it looks for its bracketing trains. That is the TS's `out[i] =`
+in place, and it is load-bearing for a run of two changes. -/
+def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+  let mut out := segs
+  for i in [0 : out.size] do
+    let s := out[i]!
+    if s.mode != "stationary" then continue
+    let pts := inWindow e s
+    if pts.isEmpty then continue
+    let n := Float.ofNat pts.size
+    let cLat := (pts.foldl (fun a p => a + p.lat) 0) / n
+    let cLon := (pts.foldl (fun a p => a + p.lon) 0) / n
+    match Verified.Geo.TransitPlace.stationAtTransitInterchange out (Int.ofNat i) cLat cLon
+            e.nearbyStations (stayFocusDays := s.focusPlaceId.bind e.focusPlaceDays) with
+    | none => pure ()
+    | some station =>
+      if some station != s.place then
+        let reason := match s.refinedReason with
+          | some r => s!"{r}; transit interchange → named station"
+          | none => "transit interchange → named station"
+        out := out.set! i { s with place := some station, refinedReason := some reason }
+  return out
 
 /-! ## The passes
 
@@ -218,6 +348,13 @@ def passes (e : Env) : Array Pass := #[
   ("mergeSameRouteTrains", fun segs =>
     Verified.Geo.RailReconcile.mergeAdjacentSameRouteTrains segs),
 
+  -- A train leg whose endpoint line sets are disjoint is impossible as one
+  -- ride. Split it at the watch-timed interchange step burst, with the change
+  -- station picked from the line graph by timing fit.
+  ("interchangeSplit", fun segs =>
+    Verified.Geo.Interchange.spliceInterchanges segs e.interchangeFixes e.interchangeSteps
+      (fun lat lon r => (e.linesAtPoint lat lon r).toList) e.interchangeStations),
+
   -- A short walk between two train legs sharing a station is the
   -- platform-to-platform change, not a street walk — name it the station so a
   -- mid-change GPS resurface can't name it after the nearest road.
@@ -252,6 +389,34 @@ def passes (e : Env) : Array Pass := #[
   -- stay's tail and extend the train back over the wait.
   ("rideHeadClaim", fun segs => RideHead.claimRideHeadFromStay segs e.points e.feasSteps),
 
+  -- When GPS surfaces a stop or two into a tunnel, the reconstruction boards at
+  -- the first snappable fix and the walk keeps the stranded first hop — so the
+  -- walk line bleeds on to the next station. Re-anchor the boarding to the
+  -- station the walk actually reached. Before railJourney, so the corrected
+  -- boarding feeds the merge.
+  ("boardingAnchor", fun segs =>
+    Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.absorberFixes
+      (fun lat lon =>
+        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
+      e.servedStations),
+
+  -- The mirror on the disembark side: the train closes at the surfaced station
+  -- and the ride on to the true alight is stranded as the FAST leading fixes of
+  -- the next walk. Extend the train forward and trim the walk.
+  ("alightAnchor", fun segs =>
+    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes
+      (fun lat lon =>
+        e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
+      (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)
+      e.servedStations),
+
+  -- One continuous Underground ride, shattered by a mid-tunnel GPS surface into
+  -- several train legs plus slivers. If a SINGLE line serves every station the
+  -- run touches, it was one ride on that line — collapse it. The line topology
+  -- decides, not a GPS heuristic, so a genuine multi-line change is left whole.
+  ("railJourney", fun segs =>
+    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.railFixes),
+
   -- A brief Underground hop with clean GPS trips neither underground gate, so
   -- it survives as `driving` and only the bus matcher is left to name it.
   -- Upgrade a fast station-to-station leg on a shared line to `train`.
@@ -260,6 +425,54 @@ def passes (e : Env) : Array Pass := #[
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)),
+
+  -- Attach the precomputed track geometry to each train run whose route is in
+  -- the cache. One indexed lookup, purely additive — the raw track is untouched.
+  ("railSnap", fun segs =>
+    Verified.Geo.RailReconcile.annotateSnappedPaths segs e.railRouteCache),
+
+  -- A refined-driving leg whose boarding wait and mid-leg dwells coincide with
+  -- bus_stop nodes is a bus. After all mode refinement, so it judges the FINAL
+  -- driving legs.
+  ("busEvidence", fun segs =>
+    Verified.Geo.Bus.annotateBusEvidence segs e.busFixes e.transitStops),
+
+  -- Stronger than the dwell evidence above: anchor a leg's first and last fix
+  -- to a mirrored route's stops and, on a match, name the bus. Catches short
+  -- rides with too few dwells to score.
+  ("busRoutes", fun segs =>
+    Verified.Geo.Bus.annotateBusRoutes segs e.busFixes e.busRouteCache),
+
+  -- The zone the frontend renders this segment's clock in.
+  ("displayTz", fun segs => displayTz e segs),
+
+  -- The HSMM's place picks override the pipeline's attribution on stays. Falls
+  -- back to the pipeline's label when no decode exists — an EMPTY decode is
+  -- that "no decode", matching the TS's null test.
+  ("hsmmOverride", fun segs =>
+    if e.hmmDecode.isEmpty then segs
+    else Verified.Geo.PlaceOverride.applyHsmmPlaceOverride segs e.hmmDecode e.hsmmPlaces),
+
+  -- By now the HSMM may have placed a segment that was un-placed at the earlier
+  -- merge, so two consecutive same-place stays could surface as duplicates.
+  -- Absorb intra-place pottering first, then swallow a phantom focus-place stay,
+  -- then re-merge.
+  --
+  -- The TS coalesces the freshly-adjacent walks ONLY when the swallow actually
+  -- demoted something, and tests that by REFERENCE equality on the returned
+  -- array. Lean has no such test; structural equality stands in, and is the
+  -- stricter reading — it also skips the coalesce for a swallow that returned an
+  -- equal-but-new array, which the TS would have coalesced. No such case can
+  -- arise, because the TS returns its input by identity exactly when it changed
+  -- nothing.
+  ("finalMerge", fun segs =>
+    let intra := Verified.Geo.SegmentMerge.absorbIntraPlaceWalk segs e.mergeFixes
+    let swallowed :=
+      Verified.Geo.SegmentMerge.absorbFarFocusPlacePhantom intra e.knownPlaces e.mergeFixes
+    let coalesced :=
+      if swallowed == intra then swallowed
+      else Verified.Geo.SegmentMerge.mergeAdjacentMoving swallowed
+    Verified.Geo.SegmentMerge.mergeAdjacentStays coalesced e.steps),
 
   -- Plausibility critic: absorb a non-train leg flush against an identified
   -- train journey into that journey — the tube-under-a-road "driving" stretch.
@@ -270,6 +483,11 @@ def passes (e : Env) : Array Pass := #[
   -- invalidate that. An invariant checked before the last pass that can break
   -- it is not an invariant.
   ("railReconcile2", fun segs => Verified.Geo.RailReconcile.reconcileAdjacentRailLegs segs),
+
+  -- A stay at a station bracketed by trains on BOTH sides is a change of
+  -- trains, not a venue visit — name it the station so a co-located shop cannot
+  -- surface as a destination.
+  ("interchangeStayLabel", fun segs => interchangeStayLabels e segs),
 
   -- LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
   -- nobody has identified yet"; the rail and bus passes have now all had their
@@ -320,9 +538,11 @@ private def NO_LOOKUPS : Env :=
 #guard passNames NO_LOOKUPS ==
   #["stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
     "railRuns", "undergroundRail", "boardingPlatform", "interchange", "driveStops",
-    "railReconcile", "mergeSameRouteTrains", "interchangeLabel", "vehicleSplit",
-    "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
-    "tubeHop", "repairHandoff", "railReconcile2", "vehicleIdentity"]
+    "railReconcile", "mergeSameRouteTrains", "interchangeSplit", "interchangeLabel",
+    "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
+    "rideHeadClaim", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
+    "railSnap", "busEvidence", "busRoutes", "displayTz", "hsmmOverride", "finalMerge",
+    "repairHandoff", "railReconcile2", "interchangeStayLabel", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -364,11 +584,13 @@ def unported (e : Env) : Array String :=
 
 -- Named, not counted: a tranche that quietly wires the easy half and leaves a
 -- number to shrink says nothing about WHICH work is left.
+-- Six left. Two return DECISIONS rather than segments, so they need the shell's
+-- applier ported; one is genuinely shell (async OSM re-enrichment); two carry
+-- solver leaves the env does not hold yet; one needs a `biometrics` field on the
+-- shared segment record, which is a schema change and not wiring.
 #guard unported NO_LOOKUPS ==
-  #["revertIsolatedCadence2", "interchangeSplit", "walkThrough", "reenrichSplitWalks",
-    "boardingAnchor", "alightAnchor", "railJourney", "railSnap", "busEvidence",
-    "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride",
-    "finalMerge", "interchangeStayLabel"]
+  #["revertIsolatedCadence2", "walkThrough", "reenrichSplitWalks", "roadMatch",
+    "walkMatch", "biomEnrich"]
 
 #guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
 
@@ -455,8 +677,20 @@ without a witness cannot slip in as covered.
 
 Re-measured with the witnesses in place, the same eleven mutations leave TWO
 silent: `rideHeadClaim` and `vehicleEdgeShed`, which are the two `unwitnessed`
-entries a mutation could reach. The guards now cover what this module claims
-they cover, and the residue is the list, not a caveat. -/
+entries a mutation could reach.
+
+The second tranche was measured the same way: twelve mutations, eight fire, and
+these FOUR are silent — recorded because a witness proves a pass acts, not that
+every input it is handed matters.
+
+* `boardingAnchor` and `alightAnchor` still fire with `servedStations` replaced
+  by an empty lookup, so their witnesses reach the pass without exercising the
+  line-membership test.
+* …and therefore so does `Env.servedStations` itself: the one projection here
+  with nothing pinning it. #423.
+* `finalMerge` still fires with the far-phantom swallow removed — its witness is
+  carried by the stay merge alone. The swallow's NO-OP arm is pinned (the walk
+  pair below); the arm that swallows is not. -/
 
 section Witnesses
 
@@ -492,6 +726,21 @@ private def stationsAt : Float → Float → Float → Array Verified.Geo.TubeHo
     #[{ name := (if lat < lat0 + 22000 * mlat then "S" else "T")
         distanceM := 40, lat := some lat, lon := some lon }]
 
+/-- Three stops along the ride: at its head, at the 22 km bar, and at its tail.
+The coordinates are the ones the fast stretch actually passes, because a route
+whose stops the leg never reaches anchors nothing. -/
+private def stopAt (n : Float) : Verified.Geo.RailJourney.LineStation × Float :=
+  (⟨"", lat0 + n * mlat, lon0⟩, n)
+
+private def lineStations : Array Verified.Geo.RailJourney.LineStation :=
+  #[⟨"S", lat0 + 3300 * mlat, lon0⟩, ⟨"M", lat0 + 22000 * mlat, lon0⟩,
+    ⟨"T", lat0 + 40800 * mlat, lon0⟩]
+
+private def busRoute : Verified.Geo.Bus.BusRoute :=
+  { routeRef := "18", routeName := some "Euston", osmRelationId := 1
+    stops := (lineStations.mapIdx fun i s =>
+      { name := some s.name, lat := s.lat, lon := s.lon, seq := Int.ofNat i + 1 }).toList }
+
 private def withTrack (pts : Array Shed.PointF) (steps : Array StepPoint) : Env :=
   { NO_LOOKUPS with
     points := pts
@@ -501,7 +750,18 @@ private def withTrack (pts : Array Shed.PointF) (steps : Array StepPoint) : Env 
     -- constant the caller passes unfalsifiable: `LINES_AT_POINT_DEFAULT_RADIUS_M`
     -- could be anything, including the fabricated `0` this fold nearly shipped.
     -- Answering only for a real radius puts that constant inside the guards.
-    linesAtPoint := fun _ _ r => if r ≥ 50 then #["Metropolitan"] else #[] }
+    linesAtPoint := fun _ _ r => if r ≥ 50 then #["Metropolitan"] else #[]
+    -- DIFFERENT from `homeTz`, on purpose: with both answering London a
+    -- `displayTz` that never looked anything up would be indistinguishable from
+    -- one that did, and the fallback branch would be untestable.
+    tzAt := fun _ _ => "Europe/Amsterdam"
+    stationsOnLine := fun _ => lineStations
+    railRouteCache := #[⟨"A → B", #[⟨lat0, lon0⟩, ⟨lat0 + 1000 * mlat, lon0⟩]⟩]
+    busRouteCache := [busRoute]
+    transitStops := fun _ _ _ => #[{ subtype := "bus_stop", distanceM := 10 }]
+    hmmDecode := #[{ startTs := 0, endTs := 600, mode := "stationary", placeId := some 7 }]
+    hsmmPlaces := [(7, { displayName := some "The Office", lat := some lat0, lon := some lon0 })]
+    knownPlaces := #[⟨7, lat0, lon0⟩] }
 
 private def MIX : Env := withTrack mixedTrack cadence
 private def BACK : Env := withTrack outAndBack #[]
@@ -513,8 +773,8 @@ private def wk (a b : Int) : Seg :=
 private def dr (a b : Int) : Seg :=
   { startTs := a, endTs := b, mode := "driving", refinedMode := some "driving"
     avgSpeed := 45, maxSpeed := 60, pointCount := 50 }
-private def st (a b : Int) : Seg :=
-  { startTs := a, endTs := b, mode := "stationary", linearity := 0.2, pointCount := 50 }
+private def st (a b : Int) (place : Option String := none) : Seg :=
+  { startTs := a, endTs := b, mode := "stationary", linearity := 0.2, pointCount := 50, place }
 
 /-- Does the named pass rewrite this day? A pass that has vanished reads as
 `false`, so the guards below also catch a deletion. -/
@@ -564,6 +824,57 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 #guard fires MIX "repairHandoff" #[dr 100 200, tr 200 400 (some "X → Y · Metropolitan Line")]
 -- A day ending on a ride nobody placed: `driving` is a claim, `vehicle` is not.
 #guard fires MIX "vehicleIdentity" #[st 0 600, dr 600 1200]
+-- A train run whose route is in the cache gets the track drawn on it.
+#guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]
+-- Any segment a fix covers gets a zone. `tzAt` answers Amsterdam and `homeTz`
+-- is London, so a pass that fell back instead of looking up would still differ
+-- from the input and pass here — what pins the BRANCH is the pair of guards on
+-- `displayTz` itself, below.
+#guard fires MIX "displayTz" #[wk 0 3000]
+-- A decode with a place pick overrides the pipeline's attribution.
+#guard fires MIX "hsmmOverride" #[st 0 600, wk 600 1200]
+-- Two consecutive stays at one place are one visit.
+#guard fires MIX "finalMerge" #[st 0 600 (some "Home"), st 600 1200 (some "Home")]
+-- …and two adjacent walks are NOT coalesced, because nothing was swallowed.
+-- The TS coalesces only when the far-phantom swallow demoted a stay, testing
+-- that by reference equality on the returned array; this is the guard that
+-- pins the structural stand-in. Drop the test and these two walks merge.
+#guard !fires MIX "finalMerge" #[wk 0 600, wk 600 1200]
+-- A stay at a station with a train either side is a change of trains.
+#guard fires MIX "interchangeStayLabel"
+  #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")]
+-- The ride on to the true alight, stranded as the fast head of the next walk.
+#guard fires MIX "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
+-- Two legs of one Metropolitan ride, split by a sliver, are one ride.
+#guard fires MIX "railJourney"
+  #[tr 3000 4200 (some "S → M · Metropolitan"), wk 4200 4400,
+    tr 4400 6000 (some "M → T · Metropolitan")]
+-- Boarding re-anchored to the station the preceding walk actually reached.
+#guard fires MIX "boardingAnchor" #[wk 3000 3600, tr 3600 6000 (some "T → S · Metropolitan")]
+
+/-! ### `displayTz`, whose branches nothing else owns
+
+The other 31 entries call a function some module pins. This one and
+`interchangeStayLabel` are written here, so their behaviour is pinned here too —
+a witness that they merely change something would leave the choice of
+coordinate, and the fallback, untested. -/
+
+-- A segment no fix covers takes `homeTz`, not a looked-up zone.
+#guard (displayTz MIX #[wk 100000 200000])[0]!.displayTz == some "Europe/London"
+-- One a fix covers takes the lookup's answer.
+#guard (displayTz MIX #[wk 0 3000])[0]!.displayTz == some "Europe/Amsterdam"
+-- Stationary reads the CENTROID, moving the MIDPOINT. The window has to span
+-- the pace change for that to be a distinction at all: over a UNIFORM stretch
+-- the mean position and the middle sample are the same point, so a pass that
+-- used one for both would pass. Across 0-6000 the ride pulls the mean far ahead
+-- of the middle sample — centroid ≈ 11.9 km, midpoint 3.3 km — and the lookup
+-- below answers by latitude, which makes the choice visible.
+private def byLat : Env :=
+  { MIX with tzAt := fun lat _ => if lat < lat0 + 7000 * mlat then "south" else "north" }
+#guard (displayTz byLat #[{ startTs := 0, endTs := 6000, mode := "stationary" }])[0]!.displayTz
+  == some "north"
+#guard (displayTz byLat #[{ startTs := 0, endTs := 6000, mode := "walking" }])[0]!.displayTz
+  == some "south"
 
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 below shows they act. Each needs a fixture shaped to its own gate — the two
@@ -572,13 +883,14 @@ and the three edge passes want a cadence-and-pace profile at a segment boundary
 this track does not produce. Named rather than counted, so the residue is the
 work rather than a number. -/
 def unwitnessed : Array String :=
-  #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim"]
+  #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
+    "interchangeSplit", "busEvidence", "busRoutes"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 16
+#guard witnessed.size == 24
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
