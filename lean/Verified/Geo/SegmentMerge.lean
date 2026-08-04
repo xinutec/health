@@ -74,6 +74,16 @@ structure Seg where
   window changed and its inherited enrichment is therefore no longer evidence
   about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/
   needsReenrich : Bool := false
+  /-- The bus passes' judgement of a road-vehicle leg: which KIND of vehicle it
+  is. The day-state flattening gives this precedence over `refinedMode`, so a
+  pass that promotes a leg to `train` must CLEAR it or the timeline renders the
+  train as a bus (#365). `Verified.Geo.PlaceOverride` is the pass that does. -/
+  vehicleKind : Option String := none
+  /-- The share of this leg's GPS samples that sit nearer a drivable road than
+  any rail — the evidence weighed against the HSMM's line support in
+  `decideHsmmTrainOverride`. `none` means no samples (an underground gap the
+  HSMM reconstructed), which cannot contradict, so the HSMM stands. -/
+  roadCorridorFraction : Option Float := none
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/
