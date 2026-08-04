@@ -96,5 +96,6 @@ import Verified.Geo.LineMembership
 import Verified.Geo.BridgeStays
 import Verified.Geo.BestPlace
 import Verified.Geo.SplitFold
+import Verified.Geo.StayEnrich
 import Verified.Geo.PreFold
 import Verified.Geo.PassFold
