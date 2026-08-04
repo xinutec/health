@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.OsmCorridor
 import Verified.Geo.DisplayGate
 import Verified.Geo.EpisodeGeometry
@@ -72,16 +73,10 @@ open Verified.Geo.EpisodeGeometry (Fix LatLon spikeAt)
 modules do. -/
 abbrev Mode := String
 
-/-- The `EnrichedSegment` fields this pass reads, plus the one it writes. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  /-- The street-matched display line. `none` is the TS `undefined`: the map
-  falls back to the raw track. -/
-  matchedPath : Option (Array MPt) := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- The shell: the mirror read and the matcher. -/
 structure Env where
@@ -177,7 +172,7 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
           | none => out := out.push seg
           | some path =>
             -- Match first, then decide on the DRAWN line.
-            let d := matchImprovesDisplay (fixes.map MPt.pt) (path.map MPt.pt)
+            let d := matchImprovesDisplay (fixes.map PathPt.pt) (path.map PathPt.pt)
               (ways.map (·.coords)) NEEDS_MATCH_M MATCH_MAX_STRAY_M
             out := out.push (if d.use then { seg with matchedPath := some path } else seg)
   return out

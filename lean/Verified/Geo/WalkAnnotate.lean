@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkSmooth
 import Verified.Geo.DisplayGate
@@ -79,13 +80,10 @@ structure PedFix where
   accuracy : Option Float := none
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields this pass reads, plus the two it writes. The
-read half is exactly `WalkAnchors.Seg`, because the endpoint anchors are the
-only consumer of the neighbour fields. -/
-structure Seg extends Verified.Geo.WalkAnchors.Seg where
-  walkMatchedPath : Option (Array TPt) := none
-  walkSmoothedPath : Option (Array TPt) := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- What the pedestrian matcher returns: the display line, and the coarse line
 every downstream threshold was tuned against. -/
@@ -198,7 +196,7 @@ structure Prep where
 speed cap. `none` means the leg reads nothing at all. -/
 def prepFor (seg : Seg) (displayFixes : Array PedFix) (speedByTs : Int → Option Float) :
     Option Prep :=
-  if Verified.Geo.WalkAnchors.effectiveMode seg.toSeg != "walking" then none
+  if Verified.Geo.WalkAnchors.effectiveMode seg != "walking" then none
   else
     -- The TS sorts by `ts` after filtering. `displayFixes` arrives in ts order
     -- and the filter is stable, so the sort is a no-op — but it is a TOTAL
@@ -241,10 +239,7 @@ def hold (pts : Array PedFix) : Array PedFix :=
 
 private def PedFix.walkFix (p : PedFix) : WalkFix :=
   { lat := p.lat, lon := p.lon, ts := Float.ofInt p.ts, accuracyM := p.accuracy }
-private def PedFix.mpt (p : PedFix) : MPt := ⟨p.lat, p.lon, Float.ofInt p.ts⟩
-private def PedFix.tpt (p : PedFix) : TPt := ⟨p.lat, p.lon, Float.ofInt p.ts⟩
-private def MPt.tpt (p : MPt) : TPt := ⟨p.lat, p.lon, p.ts⟩
-private def TPt.mpt (p : TPt) : MPt := ⟨p.lat, p.lon, p.ts⟩
+private def PedFix.pathPt (p : PedFix) : PathPt := ⟨p.lat, p.lon, Float.ofInt p.ts⟩
 
 /-! ## The endpoint anchors -/
 
@@ -258,7 +253,7 @@ private def toSmoothAnchor (a : Verified.Geo.WalkAnchors.WalkAnchor) :
 /-- The evidence the reconstruction gets: both endpoint anchors and the leg's
 pedometer count. -/
 def evidenceFor (segments : Array Seg) (si : Nat) (stepsWalked : Option Float) : WalkEvidence :=
-  let (s, e) := Verified.Geo.WalkAnchors.walkEndpointAnchors (segments.map (·.toSeg)) si
+  let (s, e) := Verified.Geo.WalkAnchors.walkEndpointAnchors segments si
   { start := s.map toSmoothAnchor, finish := e.map toSmoothAnchor, stepsWalked := stepsWalked }
 
 /-! ## The pass -/
@@ -274,8 +269,8 @@ private def changed (before after : Array TPt) : Bool :=
 private def drawRecon (env : Env) (ways : Ways) (buildings : Array Ring)
     (held : Array PedFix) (ev : WalkEvidence) : Array TPt × Bool :=
   match env.reconstruct (held.map PedFix.walkFix) ways buildings ev with
-  | some recon => if recon.size ≥ 2 then (recon, true) else (held.map PedFix.tpt, false)
-  | none => (held.map PedFix.tpt, false)
+  | some recon => if recon.size ≥ 2 then (recon, true) else (held.map PedFix.pathPt, false)
+  | none => (held.map PedFix.pathPt, false)
 
 /-- One leg's drawn line under the matcher arm: the display gate, the
 local-divergence splice salvage, the de-boxing refinement, and the
@@ -283,12 +278,12 @@ robust-reconstruction swap. Returns the line, whether a match (or a splice) was
 used, and whether the reconstruction replaced it. -/
 private def drawMatcher (env : Env) (flags : Flags) (ways : Ways) (buildings : Array Ring)
     (clean held : Array PedFix) (ev : WalkEvidence) : Array TPt × Bool × Bool := Id.run do
-  let fixes := clean.map PedFix.mpt
+  let fixes := clean.map PedFix.pathPt
   let result := env.matcher fixes ways buildings
   -- Decision parity (#369): the gate, the salvage and the refinement's
   -- engagement test all consume `coarsePath`, never the finer display line.
   let decision := result.map fun r =>
-    matchImprovesDisplay (fixes.map MPt.pt) (r.coarsePath.map MPt.pt) ways
+    matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) ways
       WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M
   let mut useMatch := match decision with
     | some d => d.use
@@ -307,18 +302,18 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Ways) (buildings : A
   match result with
   | some r =>
     if useMatch then
-      let base := (spliced.getD r.coarsePath).map MPt.pt
-      drawn := (spliced.getD r.path).map MPt.tpt
+      let base := (spliced.getD r.coarsePath).map PathPt.pt
+      drawn := (spliced.getD r.path)
       if flags.refine then
         match env.refineMatched (clean.map PedFix.walkFix) base with
         | some refined =>
           -- Applied only when it actually reduces sharp turns; otherwise the
           -- matched line is already smooth and is kept as-is.
-          if countSharpTurns (refined.map TPt.pt) < countSharpTurns base then drawn := refined
+          if countSharpTurns (refined.map PathPt.pt) < countSharpTurns base then drawn := refined
         | none => pure ()
     else
-      drawn := held.map PedFix.tpt
-  | none => drawn := held.map PedFix.tpt
+      drawn := held.map PedFix.pathPt
+  | none => drawn := held.map PedFix.pathPt
   -- The swap: a large FRACTION shorter AND a wide ABSOLUTE margin shorter. On
   -- an ordinary leg the reconstruction is ~the same length and nothing changes.
   if flags.recon then
@@ -545,7 +540,7 @@ private def mkEnv (ways : Ways) (key : Float × Float × Int)
     (refBase : Array Pt) (ref : Option (Array TPt)) : Env :=
   { walkableRoads := fun la lo r => if (la, lo, r) == key then ways else #[]
     buildingsNear := fun _ _ _ => #[]
-    matcher := fun fx _ _ => if fx == cleanIn.map PedFix.mpt then m else none
+    matcher := fun fx _ _ => if fx == cleanIn.map PedFix.pathPt then m else none
     reconstruct := fun fx _ _ ev =>
       if wfKey fx == pedKey heldIn && ev.stepsWalked.isNone then rec else none
     refineMatched := fun fx b =>
@@ -573,7 +568,7 @@ private def W_RECON : Array TPt :=
 private def W_REFINED : Array TPt := W_RECON
 private def envW : Env :=
   mkEnv STREETS (51.501, -0.14, 231) W_CLEAN W_HELD (some W_MATCH) (some W_RECON)
-    (W_MATCH.coarsePath.map MPt.pt) (some W_REFINED)
+    (W_MATCH.coarsePath.map PathPt.pt) (some W_REFINED)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] WALKING anySpeed envW) == RAW
 -- The reconstruction-primary arm draws the SAME reconstruction as a smoothed
@@ -584,7 +579,7 @@ private def envW : Env :=
 -- held fixes, and with nothing else changed the leg keeps its raw rendering.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] WALKING anySpeed
   (mkEnv STREETS (51.501, -0.14, 231) W_CLEAN W_HELD (some W_MATCH) (some #[tp 51.5 (-0.14) 1000])
-    (W_MATCH.coarsePath.map MPt.pt) (some W_REFINED)) [] .recon) == RAW
+    (W_MATCH.coarsePath.map PathPt.pt) (some W_REFINED)) [] .recon) == RAW
 -- The whole pass off.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] WALKING anySpeed envW [] .matcher
   { matchDisable := true }) == RAW
@@ -592,12 +587,12 @@ private def envW : Env :=
 -- key mismatch below IS the empty read.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] WALKING anySpeed
   (mkEnv STREETS (51.501, -0.14, 999) W_CLEAN W_HELD (some W_MATCH) (some W_RECON)
-    (W_MATCH.coarsePath.map MPt.pt) (some W_REFINED))) == RAW
+    (W_MATCH.coarsePath.map PathPt.pt) (some W_REFINED))) == RAW
 -- Two spikes leave three fixes: past the disc read, but under `MIN_LEG_FIXES`
 -- for the matcher, so the leg bails after the OSM cost is already paid.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] SPIKED_TWICE anySpeed
   (mkEnv STREETS (51.501, -0.14200000000000002, 335) W_CLEAN W_HELD (some W_MATCH)
-    (some W_RECON) (W_MATCH.coarsePath.map MPt.pt) (some W_REFINED))) == RAW
+    (some W_RECON) (W_MATCH.coarsePath.map PathPt.pt) (some W_REFINED))) == RAW
 
 -- ── the corner leg: the raw chord cuts the block, the match follows the
 -- streets, the refinement does not reduce sharp turns, so the DRAWN line is the
@@ -620,18 +615,18 @@ private def C_RECON : Array TPt :=
     tp 51.50266224806768 (-0.13706732692476112) 1240]
 private def envC : Env :=
   mkEnv STREETS (51.501400000000004, -0.13866, 301) C_CLEAN C_HELD (some C_MATCH) (some C_RECON)
-    (C_LINE.map MPt.pt) (some C_REFINED)
+    (C_LINE.map PathPt.pt) (some C_REFINED)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] CORNER anySpeed envC)
-  == #[(some (C_LINE.map MPt.tpt), none)]
+  == #[(some (C_LINE), none)]
 -- The refinement is offered and declined on its own terms (4 sharp turns
 -- either side), so switching it off changes nothing here.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] CORNER anySpeed envC [] .matcher
-  { refine := false }) == #[(some (C_LINE.map MPt.tpt), none)]
+  { refine := false }) == #[(some (C_LINE), none)]
 -- The reconstruction is 358 m against a 430 m draw: shorter, but not by the
 -- fraction the swap demands, so the matched line stands.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] CORNER anySpeed envC [] .matcher
-  { recon := false }) == #[(some (C_LINE.map MPt.tpt), none)]
+  { recon := false }) == #[(some (C_LINE), none)]
 
 -- ── the curved way: `path` carries the route's curve geometry, `coarsePath`
 -- does not. The gate and the refinement read COARSE; the DRAW is FINE.
@@ -656,10 +651,10 @@ private def V_RECON : Array TPt :=
 private def envV : Env :=
   mkEnv CURVED (51.501400000000004, -0.13866, 301) C_CLEAN C_HELD
     (some { path := V_FINE, coarsePath := V_COARSE }) (some V_RECON)
-    (V_COARSE.map MPt.pt) (some V_REFINED)
+    (V_COARSE.map PathPt.pt) (some V_REFINED)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] CORNER anySpeed envV)
-  == #[(some (V_FINE.map MPt.tpt), none)]
+  == #[(some (V_FINE), none)]
 
 -- ── the tight staircase: the ONLY fixture where the refinement engages
 -- (2 sharp turns against the coarse line's 3), and it replaces the fine path.
@@ -686,18 +681,18 @@ private def T_RECON : Array TPt :=
 private def envT : Env :=
   mkEnv TIGHT (51.501490000000004, -0.13862000000000002, 311) T_CLEAN T_HELD
     (some { path := T_FINE, coarsePath := T_COARSE }) (some T_RECON)
-    (T_COARSE.map MPt.pt) (some T_REFINED)
+    (T_COARSE.map PathPt.pt) (some T_REFINED)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TIGHT_FIXES anySpeed envT)
   == #[(some T_REFINED, none)]
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TIGHT_FIXES anySpeed envT [] .matcher
-  { refine := false }) == #[(some (T_FINE.map MPt.tpt), none)]
+  { refine := false }) == #[(some (T_FINE), none)]
 -- The engagement test is STRICT: an equal count keeps the matched line.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TIGHT_FIXES anySpeed
   (mkEnv TIGHT (51.501490000000004, -0.13862000000000002, 311) T_CLEAN T_HELD
     (some { path := T_FINE, coarsePath := T_COARSE }) (some T_RECON)
-    (T_COARSE.map MPt.pt) (some (T_COARSE.map MPt.tpt))))
-  == #[(some (T_FINE.map MPt.tpt), none)]
+    (T_COARSE.map PathPt.pt) (some (T_COARSE))))
+  == #[(some (T_FINE), none)]
 
 -- ── the straggler: the matcher sees the DESPIKED fixes and draws out to the
 -- 215 m hop; the reconstruction sees the HELD ones and draws the honest short
@@ -719,13 +714,13 @@ private def S_REFINED : Array TPt :=
 private def envS : Env :=
   mkEnv STREETS (51.501, -0.13940000000000002, 320) S_CLEAN S_HELD
     (some { path := S_LINE, coarsePath := S_LINE }) (some S_RECON)
-    (S_LINE.map MPt.pt) (some S_REFINED)
+    (S_LINE.map PathPt.pt) (some S_REFINED)
 
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed envS)
   == #[(none, some S_RECON)]
 -- The swap is the ONLY difference: switched off, the leg draws the matched line.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed envS [] .matcher
-  { recon := false }) == #[(some (S_LINE.map MPt.tpt), none)]
+  { recon := false }) == #[(some (S_LINE), none)]
 
 -- ── the forecourt: the stray gate rejects (p85 = 66 m), but the raw line is
 -- 62 m off-network and the match is 0 m off it, so the salvage splices the two.
@@ -749,13 +744,13 @@ private def envF : Env :=
   mkEnv MERIDIAN (51.501325, -0.139775, 268) F_CLEAN F_HELD
     (some { path := F_LINE, coarsePath := F_LINE }) (some F_RECON)
     -- The refinement's base is the SPLICED line, not the coarse one.
-    (F_SPLICED.map MPt.pt) none
+    (F_SPLICED.map PathPt.pt) none
 
 -- The Lean splice agrees with V8's, vertex for vertex.
-#guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.mpt) F_LINE WALK_MATCH_MAX_STRAY_M
+#guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.pathPt) F_LINE WALK_MATCH_MAX_STRAY_M
   == some F_SPLICED
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] FORECOURT anySpeed envF)
-  == #[(some (F_SPLICED.map MPt.tpt), none)]
+  == #[(some (F_SPLICED), none)]
 
 /-! ### The corrector and the passage snap
 
@@ -832,7 +827,7 @@ private def budgetProbe : Env :=
   #[{ startTs := 600, endTs := 1000, mode := "stationary" }, walkSeg 1000 1240]
   WALKING anySpeed envW) == #[(none, none), (none, none)]
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240, walkSeg 1000 1240] CORNER anySpeed envC)
-  == #[(some (C_LINE.map MPt.tpt), none), (some (C_LINE.map MPt.tpt), none)]
+  == #[(some (C_LINE), none), (some (C_LINE), none)]
 
 /-! ### The haversine and the JS rounding
 
@@ -891,16 +886,16 @@ private def F_STRAIGHT : Array TPt :=
   #[tp 51.5 (-0.14) 1000, tp 51.501 (-0.14) 1150, tp 51.502 (-0.14) 1300]
 private def envFF : Env :=
   { mkEnv MERIDIAN (51.501325, -0.139775, 268) F_CLEAN F_HELD
-      (some { path := F_FINE, coarsePath := F_LINE }) none (F_SPLICED.map MPt.pt) none with
+      (some { path := F_FINE, coarsePath := F_LINE }) none (F_SPLICED.map PathPt.pt) none with
       refineMatched := fun _ b =>
-        if b == F_SPLICED.map MPt.pt then some F_STRAIGHT else none }
+        if b == F_SPLICED.map PathPt.pt then some F_STRAIGHT else none }
 
-#guard (matchImprovesDisplay ((F_CLEAN.map PedFix.mpt).map MPt.pt) (F_FINE.map MPt.pt) MERIDIAN
+#guard (matchImprovesDisplay ((F_CLEAN.map PedFix.pathPt).map PathPt.pt) (F_FINE.map PathPt.pt) MERIDIAN
   WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).matchedOffRoadM == 41.57808528608979
-#guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.mpt) F_FINE WALK_MATCH_MAX_STRAY_M
+#guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.pathPt) F_FINE WALK_MATCH_MAX_STRAY_M
   == some F_FINE_SPLICED
-#guard countSharpTurns (F_SPLICED.map MPt.pt) == 2
-#guard countSharpTurns (F_STRAIGHT.map TPt.pt) == 0
+#guard countSharpTurns (F_SPLICED.map PathPt.pt) == 2
+#guard countSharpTurns (F_STRAIGHT.map PathPt.pt) == 0
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] FORECOURT anySpeed envFF)
   == #[(some F_STRAIGHT, none)]
 
@@ -917,14 +912,14 @@ private def ONEOFF : Array PedFix :=
     f 1270 51.5018 (-0.14), f 1300 51.502 (-0.14), f 1330 51.5021 (-0.1391)]
 private def envOne : Env :=
   mkEnv MERIDIAN (51.50109166666667, -0.13992500000000005, 246) ONEOFF ONEOFF
-    (some { path := F_LINE, coarsePath := F_LINE }) none (F_LINE.map MPt.pt) none
+    (some { path := F_LINE, coarsePath := F_LINE }) none (F_LINE.map PathPt.pt) none
 
-#guard (matchImprovesDisplay ((ONEOFF.map PedFix.mpt).map MPt.pt) (F_LINE.map MPt.pt) MERIDIAN
+#guard (matchImprovesDisplay ((ONEOFF.map PedFix.pathPt).map PathPt.pt) (F_LINE.map PathPt.pt) MERIDIAN
   WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).use
-#guard (spliceMatchedWithDivergentRuns (ONEOFF.map PedFix.mpt) F_LINE
+#guard (spliceMatchedWithDivergentRuns (ONEOFF.map PedFix.pathPt) F_LINE
   WALK_MATCH_MAX_STRAY_M).isSome
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1330] ONEOFF anySpeed envOne)
-  == #[(some (F_LINE.map MPt.tpt), none)]
+  == #[(some (F_LINE), none)]
 
 /-! ### The salvage's two bars
 
@@ -942,11 +937,11 @@ private def OFFSET25 : Array MPt := #[mp 51.5 (-0.14036) 1000, mp 51.502 (-0.140
 
 private def envOffset (line spliced : Array MPt) : Env :=
   mkEnv MERIDIAN (51.501325, -0.139775, 268) F_CLEAN F_HELD
-    (some { path := line, coarsePath := line }) none (spliced.map MPt.pt) none
+    (some { path := line, coarsePath := line }) none (spliced.map PathPt.pt) none
 
 -- 5.96 m off: inside the ÷2 bar, so the leg is salvaged.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] FORECOURT anySpeed
-  (envOffset OFFSET6 OFFSET6_SPLICED)) == #[(some (OFFSET6_SPLICED.map MPt.tpt), none)]
+  (envOffset OFFSET6 OFFSET6_SPLICED)) == #[(some (OFFSET6_SPLICED), none)]
 -- 24.95 m off: outside it, and the leg draws nothing. A ×2 loosening would take
 -- this one, which is what makes the bar's DIRECTION visible.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] FORECOURT anySpeed
@@ -965,9 +960,9 @@ private def envCross : Env :=
 
 -- The gate refuses on STRAY alone (64.3 m), the match is clean, and the raw
 -- excursion is 30.1 m — under `2 × 18`, so the salvage stays out.
-#guard (matchImprovesDisplay ((CROSSOVER.map PedFix.mpt).map MPt.pt) (F_LINE.map MPt.pt)
+#guard (matchImprovesDisplay ((CROSSOVER.map PedFix.pathPt).map PathPt.pt) (F_LINE.map PathPt.pt)
   PARALLEL WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).rawOffRoadM == 30.143384243249393
-#guard (spliceMatchedWithDivergentRuns (CROSSOVER.map PedFix.mpt) F_LINE
+#guard (spliceMatchedWithDivergentRuns (CROSSOVER.map PedFix.pathPt) F_LINE
   WALK_MATCH_MAX_STRAY_M).isSome
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] CROSSOVER anySpeed envCross) == RAW
 
@@ -995,8 +990,8 @@ private def LONG_RECON : Array TPt := #[tp 51.5 (-0.14) 1000, tp 51.5055 (-0.14)
   (mkEnv STREETS (51.503499999999995, -0.14, 509) LONGWALK LONGWALK none (some LONG_RECON) #[] none))
   == RAW
 -- Both fixtures' drawn lengths, so the two bars' arithmetic is legible.
-#guard pathLenM (W_HELD.map PedFix.tpt) == 222.3898532893893
-#guard pathLenM (LONGWALK.map PedFix.tpt) == 778.3644865116772
+#guard pathLenM (W_HELD.map PedFix.pathPt) == 222.3898532893893
+#guard pathLenM (LONGWALK.map PedFix.pathPt) == 778.3644865116772
 
 /-! ### What the raw fallback draws, and what the corrector is handed
 
@@ -1021,11 +1016,11 @@ private def echoEnv (key : Float × Float × Int) : Env :=
 -- On the teleported leg those differ — five against three.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   (echoEnv (51.504599999999996, -0.14, 631)))
-  == #[(some (nudge (TELE_HELD.map PedFix.tpt)), none)]
+  == #[(some (nudge (TELE_HELD.map PedFix.pathPt)), none)]
 -- One spike: four fixes reach the corrector, not the window's five.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] SPIKED anySpeed
   (echoEnv (51.501099999999994, -0.14100000000000001, 400)))
-  == #[(some (nudge (SPIKE_CLEAN.map PedFix.tpt)), none)]
+  == #[(some (nudge (SPIKE_CLEAN.map PedFix.pathPt)), none)]
 -- Two spikes leave three, and the bar is applied to the DESPIKED count, so the
 -- leg bails even though the window held five.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] SPIKED_TWICE anySpeed
@@ -1034,7 +1029,7 @@ private def echoEnv (key : Float × Float × Int) : Env :=
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] WALKING anySpeed
   { echoEnv (51.501, -0.14, 231) with
       reconstruct := fun _ _ _ _ => some #[tp 51.5 (-0.14) 1000] } [] .recon)
-  == #[(some (nudge (W_HELD.map PedFix.tpt)), none)]
+  == #[(some (nudge (W_HELD.map PedFix.pathPt)), none)]
 -- An empty building layer keeps both leaves out even when they would have
 -- changed the line.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
@@ -1059,7 +1054,7 @@ private def STEPS330 : List StepPoint := [⟨1020, 100⟩, ⟨1080, 120⟩, ⟨1
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed
   { envS with reconstruct := fun _ _ _ ev =>
       if ev.stepsWalked == some 330 then some S_RECON else none })
-  == #[(some (S_LINE.map MPt.tpt), none)]
+  == #[(some (S_LINE), none)]
 
 /-! ### The refinement is fed the DESPIKED fixes
 
@@ -1073,7 +1068,7 @@ engages. Same length as the reconstruction, which keeps the swap out. -/
 private def S_REFINED_ENG : Array TPt := #[tp 51.5 (-0.14) 1000, tp 51.5015 (-0.14) 1180]
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed
   { envS with refineMatched := fun fx b =>
-      if wfKey fx == pedKey S_CLEAN && b == S_LINE.map MPt.pt
+      if wfKey fx == pedKey S_CLEAN && b == S_LINE.map PathPt.pt
       then some S_REFINED_ENG else none })
   == #[(some S_REFINED_ENG, none)]
 
@@ -1086,7 +1081,7 @@ back to its own defaults.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with
       correct := fun d _ _ b => if b.isNone then nudge d else d })
-  == #[(some (nudge (TELE_HELD.map PedFix.tpt)), none)]
+  == #[(some (nudge (TELE_HELD.map PedFix.pathPt)), none)]
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with
       correct := fun d _ _ b => if b.isNone then nudge d else d } STEPS330) == RAW
@@ -1110,24 +1105,24 @@ private def envSBad : Env :=
         if (la, lo, r) == (51.501, -0.13940000000000002, 320) then BLOCK else #[]
       correct := fun d _ _ _ => nudge d }
 
-#guard !(matchImprovesDisplay ((S_CLEAN.map PedFix.mpt).map MPt.pt) (S_BADLINE.map MPt.pt) STREETS
+#guard !(matchImprovesDisplay ((S_CLEAN.map PedFix.pathPt).map PathPt.pt) (S_BADLINE.map PathPt.pt) STREETS
   WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).use
 -- Four vertices, not five: the fallback draws the HELD fixes.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed envSBad)
-  == #[(some (nudge (S_HELD.map PedFix.tpt)), none)]
+  == #[(some (nudge (S_HELD.map PedFix.pathPt)), none)]
 
 -- A single-vertex reconstruction is not a line: the swap declines it even
 -- though a zero-length line clears both of its bars trivially.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed
   { envS with reconstruct := fun _ _ _ _ => some #[tp 51.5 (-0.14) 1000] })
-  == #[(some (S_LINE.map MPt.tpt), none)]
+  == #[(some (S_LINE), none)]
 
 -- A corrector that DROPS a vertex: every surviving vertex is where it was, so
 -- only the length test sees the change. (In the TS the same test is what keeps
 -- the coordinate scan from indexing past the end.)
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
   { echoEnv (51.504599999999996, -0.14, 631) with correct := fun d _ _ _ => d.pop })
-  == #[(some ((TELE_HELD.map PedFix.tpt).pop), none)]
+  == #[(some ((TELE_HELD.map PedFix.pathPt).pop), none)]
 
 -- A leg whose ways came back empty is returned untouched even where the
 -- corrector would have had something to say about its raw line.

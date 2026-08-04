@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailSnap
 /-!
@@ -47,19 +48,10 @@ abbrev Mode := String
 /-- `Math.round` — halves go UP, towards +∞. -/
 private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 
-/-- The `EnrichedSegment` fields these passes read and rewrite. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  wayName : Option String := none
-  avgSpeed : Float := 0
-  maxSpeed : Float := 0
-  linearity : Float := 0.5
-  pointCount : Int := 10
-  snappedPath : Option (Array Verified.Geo.RailSnap.SnappedPoint) := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 

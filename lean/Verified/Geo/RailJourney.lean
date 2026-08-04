@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.RailReconcile
 import Verified.Geo.RailRuns
 import Verified.Geo.RailAbsorbers
@@ -99,17 +100,12 @@ structure LineStation where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields the assembler reads and rewrites. `RailReconcile`
-already carries the shared core; the assembler additionally reads a segment
-centroid (the test-only fallback when a leg has no fixes) and appends to
-`refinedReason`. -/
-structure Seg extends Verified.Geo.RailReconcile.Seg where
-  refinedReason : Option String := none
-  centroidLat : Option Float := none
-  centroidLon : Option Float := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-def effectiveMode (s : Seg) : String := Verified.Geo.RailReconcile.effectiveMode s.toSeg
+def effectiveMode (s : Seg) : String := Verified.Geo.RailReconcile.effectiveMode s
 
 /-- One OSM read, recorded in order. The pass's cost and its cache behaviour are
 both properties of this list, so it is part of the output the guards check —

@@ -1,3 +1,5 @@
+import Verified.Geo.SegmentMerge
+import Verified.Geo.PathPoint
 /-!
 # Walk endpoint anchors (port of `walkEndpointAnchors`, `pedestrian-match-annotate.ts`)
 
@@ -25,23 +27,13 @@ namespace Verified.Geo.WalkAnchors
 
 abbrev Mode := String
 
-/-- A vertex of a snapped rail track. -/
-structure SPt where
-  lat : Float
-  lon : Float
-  ts : Float
-  deriving Inhabited, BEq, Repr
+/-- A vertex of a snapped rail track — the shared drawn-path vertex. -/
+abbrev SPt := Verified.Geo.PathPt
 
-/-- The `EnrichedSegment` fields this leaf reads. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  centroidLat : Option Float := none
-  centroidLon : Option Float := none
-  snappedPath : Array SPt := #[]
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- A known endpoint with the confidence to attach to it. -/
 structure WalkAnchor where
@@ -84,10 +76,11 @@ def neighborAnchor (n? : Option Seg) (side : Side) (walkTs : Int) : Option WalkA
       match mode, n.centroidLat, n.centroidLon with
       | "stationary", some la, some lo => some ⟨la, lo, STAY_ANCHOR_SIGMA_M⟩
       | _, _, _ =>
-        if mode == "train" && n.snappedPath.size ≥ 2 then
+        let track := n.snappedPath.getD #[]
+        if mode == "train" && track.size ≥ 2 then
           let p := match side with
-            | .«end» => n.snappedPath[n.snappedPath.size - 1]!
-            | .start => n.snappedPath[0]!
+            | .«end» => track[track.size - 1]!
+            | .start => track[0]!
           some ⟨p.lat, p.lon, STATION_ANCHOR_SIGMA_M⟩
         else none
 
@@ -110,7 +103,7 @@ private def TRACK : Array SPt := #[⟨51.5, -0.1, 0⟩, ⟨51.51, -0.11, 300⟩,
 private def stay (a b : Int) : Seg :=
   { startTs := a, endTs := b, mode := "stationary", centroidLat := some 51.4, centroidLon := some (-0.2) }
 private def train (a b : Int) : Seg :=
-  { startTs := a, endTs := b, mode := "train", snappedPath := TRACK }
+  { startTs := a, endTs := b, mode := "train", snappedPath := some TRACK }
 private def walk : Seg := { startTs := 1000, endTs := 2000, mode := "walking" }
 
 private def STAY_A : Option WalkAnchor := some ⟨51.4, -0.2, 25⟩
@@ -138,7 +131,7 @@ private def TRACK_LAST : Option WalkAnchor := some ⟨51.52, -0.12, 15⟩
 #guard walkEndpointAnchors
   #[stay 0 1000, walk, { startTs := 2000, endTs := 3000, mode := "train" }] 1 == (STAY_A, none)
 #guard walkEndpointAnchors
-  #[stay 0 1000, walk, { startTs := 2000, endTs := 3000, mode := "train", snappedPath := #[TRACK[0]!] }] 1
+  #[stay 0 1000, walk, { startTs := 2000, endTs := 3000, mode := "train", snappedPath := some #[TRACK[0]!] }] 1
   == (STAY_A, none)
 -- Neither mode contributes: a walk between two walks is unanchored.
 #guard walkEndpointAnchors
@@ -153,7 +146,7 @@ private def TRACK_LAST : Option WalkAnchor := some ⟨51.52, -0.12, 15⟩
 #guard walkEndpointAnchors
   #[stay 0 1000, walk,
     { startTs := 2000, endTs := 3000, mode := "train", refinedMode := some "walking",
-      snappedPath := TRACK }] 1 == (STAY_A, none)
+      snappedPath := some TRACK }] 1 == (STAY_A, none)
 -- No neighbour on either side.
 #guard walkEndpointAnchors #[walk] 0 == (none, none)
 

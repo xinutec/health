@@ -1,3 +1,4 @@
+import Verified.Geo.WalkableRoute
 /-!
 # The drawn-path vertex
 
@@ -26,5 +27,8 @@ structure PathPt where
   lon : Float
   ts : Float
   deriving Inhabited, BEq, Repr
+
+/-- The positional part, where a caller wants a plain `Pt`. -/
+def PathPt.pt (p : PathPt) : Verified.Geo.WalkableRoute.Pt := ⟨p.lat, p.lon⟩
 
 end Verified.Geo

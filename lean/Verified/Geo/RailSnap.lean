@@ -1,3 +1,4 @@
+import Verified.Geo.PathPoint
 import Verified.Geo.WalkableRoute
 import Verified.Geo.Worldline
 import Verified.JsNum
@@ -397,11 +398,7 @@ def nearestVertex (graph : RailGraph) (p : Pt) : Option (Nat × Float) := Id.run
 /-! ## Snapping -/
 
 /-- One vertex of the snapped path, with an interpolated timestamp. -/
-structure SnappedPoint where
-  lat : Float
-  lon : Float
-  ts : Float
-  deriving Inhabited, BEq, Repr
+abbrev SnappedPoint := Verified.Geo.PathPt
 
 /-- The minimal slice of a classified train segment the snapper needs. -/
 structure TrainSegment where

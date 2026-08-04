@@ -1,3 +1,4 @@
+import Verified.Geo.PathPoint
 import Verified.Geo.WalkableRoute
 import Std.Data.HashMap
 
@@ -53,14 +54,8 @@ private def jsSign (x : Float) : Float :=
 abbrev Ring := Array Pt
 
 
-/-- A drawn walk vertex (`CorrectedPoint`). -/
-structure TPt where
-  lat : Float
-  lon : Float
-  ts : Float
-  deriving Inhabited, BEq, Repr
-
-def TPt.pt (p : TPt) : Pt := ⟨p.lat, p.lon⟩
+/-- A drawn walk vertex (`CorrectedPoint`) — the shared drawn-path vertex. -/
+abbrev TPt := Verified.Geo.PathPt
 
 /-- A nearest-point answer: the foot of the projection and its distance. -/
 structure NearPt where
@@ -610,7 +605,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
   let ctx := makeBadnessCtx ways buildings opts
   -- Fast path: nothing implausible → the common clean walk is returned
   -- untouched and un-densified after one sampling sweep.
-  let originalBadM := pathBadnessM (drawn.map TPt.pt) ctx
+  let originalBadM := pathBadnessM (drawn.map PathPt.pt) ctx
   if originalBadM < opts.minCrossingM then return (drawn, #[])
 
   let pts := densify drawn opts.densifyStepM
@@ -727,10 +722,10 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
       if !replaced then
         let gap := pts.extract a (b+1)
         let escaped := escapeBuildings gap ways buildings opts.toEscapeOptions
-        let lenOf (xs : Array TPt) : Float := polylineLenM (xs.map TPt.pt)
+        let lenOf (xs : Array TPt) : Float := polylineLenM (xs.map PathPt.pt)
         let addedM := lenOf escaped - lenOf gap
         let mut kept := gap
-        if pathBadnessM (escaped.map TPt.pt) ctx < runBadM && addedM ≤ budgetM then
+        if pathBadnessM (escaped.map PathPt.pt) ctx < runBadM && addedM ≤ budgetM then
           budgetM := budgetM - max 0 addedM
           kept := escaped
           diags := diags.push
@@ -749,7 +744,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
 
   -- Whole-line honesty invariant: never return a line more implausible than the
   -- input.
-  if pathBadnessM (out.map TPt.pt) ctx > originalBadM then
+  if pathBadnessM (out.map PathPt.pt) ctx > originalBadM then
     diags := diags.push
       { outcome := .invariantRevert, straightM := 0, runBadM := 0, routeFound := false,
         routeBadM := none, addedM := none, budgetM,
@@ -764,7 +759,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
   | none => pure ()
   | some stepBudgetM =>
     if originalLenM ≤ stepBudgetM then
-      let outLenM := polylineLenM (out.map TPt.pt)
+      let outLenM := polylineLenM (out.map PathPt.pt)
       if outLenM > stepBudgetM then
         diags := diags.push
           { outcome := .budgetRevert, straightM := 0, runBadM := 0, routeFound := false,

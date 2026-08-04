@@ -1,3 +1,5 @@
+import Verified.Geo.SegmentMerge
+import Verified.Geo.PathPoint
 /-!
 # Vehicle-leg repair passes (port of `src/geo/passes/repair-handoff.ts` and
 `src/geo/passes/vehicle-identity.ts`)
@@ -33,26 +35,12 @@ abbrev Mode := String
 
 /-- A matched-path vertex. Only the path's LENGTH is read here, but it is
 carried as the real array so this projection stores what the TS record does. -/
-structure SPt where
-  lat : Float
-  lon : Float
-  ts : Int
-  deriving Inhabited, BEq, Repr
+abbrev SPt := Verified.Geo.PathPt
 
-/-- The `EnrichedSegment` fields these two passes read. A different projection
-of the same TS record than `Verified.Geo.DayState.Seg` (labelling fields) or
-`Verified.Geo.EpisodeGeometry.Seg` (drawn-path fields). -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  wayName : Option String := none
-  vehicleKind : Option String := none
-  refinedReason : Option String := none
-  pointCount : Int := 0
-  matchedPath : Array SPt := #[]
-  deriving Inhabited, BEq
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- `refinedMode ?? mode` — `segment-util.ts`'s `effectiveMode`. Never read
 `refinedMode` directly; a forgotten fallback silently ignores every refinement
@@ -124,7 +112,7 @@ def UNIDENTIFIED_VEHICLE_REASON : String :=
 an identified bus route. All three are read for TRUTHINESS in the TS, so an
 empty `matchedPath` and an empty `wayName` are both "no claim". -/
 def hasVehicleClaim (s : Seg) : Bool :=
-  s.matchedPath.size > 0 || s.wayName.any (· != "") || s.vehicleKind.isSome
+  (s.matchedPath.getD #[]).size > 0 || s.wayName.any (· != "") || s.vehicleKind.isSome
 
 /-- Demote the trailing unclaimed `driving` leg to `vehicle`. Anything with a
 segment after it has finished, and its label is the cascade's final word rather
@@ -149,7 +137,7 @@ private def ABSORB (m : Mode) : String :=
 
 private def sg (startTs endTs : Int) (mode : Mode) (wayName : Option String := none)
     (refinedMode : Option Mode := none) (refinedReason : Option String := none)
-    (vehicleKind : Option String := none) (matchedPath : Array SPt := #[])
+    (vehicleKind : Option String := none) (matchedPath : Option (Array SPt) := none)
     (pointCount : Int := 5) : Seg :=
   { startTs, endTs, mode, refinedMode, wayName, vehicleKind, refinedReason, pointCount, matchedPath }
 
@@ -215,14 +203,17 @@ private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode �
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving", sg 200 300 "stationary"])
   == #[(100, "driving", none, none), (200, "stationary", none, none)]
 -- Any claim at all exempts it: a matched road, a named street, a bus route.
-#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := #[⟨51.52, -0.13, 100⟩])])
+#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := some #[⟨51.52, -0.13, 100⟩])])
   == #[(100, "driving", none, none)]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (some "Euston Road")])
   == #[(100, "driving", none, none)]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (vehicleKind := some "bus")])
   == #[(100, "driving", none, none)]
--- An EMPTY path or way name is not a claim (both are falsy in the TS).
-#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := #[])]) == #[DEMOTED 100 "driving"]
+-- An EMPTY path or way name is not a claim (both are falsy in the TS), and an
+-- ABSENT path is the shape the matcher actually leaves behind when it declines
+-- a leg — `undefined`, which `?.length ?? 0` collapses to the same answer.
+#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := some #[])]) == #[DEMOTED 100 "driving"]
+#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := none)]) == #[DEMOTED 100 "driving"]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (some "")]) == #[DEMOTED 100 "driving"]
 -- Only the `driving` placeholder is doubted.
 #guard iview (resolveVehicleIdentity #[sg 100 200 "train" (some TRAIN)]) == #[(100, "train", none, none)]

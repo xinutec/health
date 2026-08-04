@@ -87,7 +87,15 @@ structure LatLon where
   deriving Inhabited, BEq, Repr
 
 /-- A vertex of a derived path (`snappedPath` / `matchedPath` / …), which always
-carries an interpolated timestamp. -/
+carries an interpolated timestamp.
+
+DIVERGENCE, narrow and known: `interpolateTimes` divides a span by a distance
+ratio, so the value production serves is FRACTIONAL, and `Verified.Geo.PathPt`
+— the vertex the pass cascade now shares — types it `Float` for that reason.
+This projection rounds it, which can move a window-boundary filter in `clipPath`
+by one vertex and changes the `ts` this module emits. Kept `Int` because this
+renderer sits downstream of the fold and its guards are pinned against it;
+narrowing the two together is what closes the gap. -/
 structure SPt where
   lat : Float
   lon : Float

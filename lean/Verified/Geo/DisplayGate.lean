@@ -1,3 +1,4 @@
+import Verified.Geo.PathPoint
 import Verified.Geo.WalkableRoute
 import Verified.Geo.CellKey
 import Std.Data.HashMap
@@ -52,15 +53,9 @@ private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 abbrev Ways := Array (Array Pt)
 
 /-- A timestamped vertex: both `RoadFix` and `MatchedPoint`, which are the same
-    shape and are used interchangeably across this cluster. -/
-structure MPt where
-  lat : Float
-  lon : Float
-  ts : Float
-  deriving Inhabited, BEq, Repr
-
-/-- The positional part, where a caller wants a plain `Pt`. -/
-def MPt.pt (m : MPt) : Pt := ⟨m.lat, m.lon⟩
+    shape and are used interchangeably across this cluster — and the same shape
+    again as the drawn-path vertex every pass carries, so it names that one. -/
+abbrev MPt := Verified.Geo.PathPt
 
 /-- `projectPointToSegment`'s distance only. Identical arithmetic to
     `Verified.Geo.WalkableRoute.projectPointToSegment`, kept separate because
