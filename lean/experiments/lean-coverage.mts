@@ -26,9 +26,10 @@
  *
  * Roots, and the gate each stands for:
  *
- *   PreFold + PassFold + Enrich + DayChain + BestPlace
- *                       `pnpm run day-gate` — the five corrections before the
- *                       cascade, the 38 passes, and the stages after them
+ *   SplitFold + PreFold + PassFold + Enrich + DayChain + BestPlace
+ *                       `pnpm run day-gate` — the biometric splits and the stay
+ *                       bridge, the five corrections before the cascade, the 38
+ *                       passes, and the stages after them
  *                       (#424/#426/#429/#430). `BestPlace` is listed separately
  *                       because nothing in the chain IMPORTS it: `Main.lean`
  *                       composes it into the two callbacks the chain declares,
@@ -83,7 +84,17 @@ const under = (prefix: string): string[] => all.filter((m) => m.startsWith(prefi
 // Ordered: each gate is credited only with what no earlier gate already covers,
 // so the columns sum to the total rather than double-counting shared kernels.
 const GATES: [string, string[]][] = [
-	["day-gate", ["Verified.Geo.PreFold", "Verified.Geo.PassFold", "Verified.Geo.Enrich", "Verified.Geo.DayChain", "Verified.Geo.BestPlace"]],
+	[
+		"day-gate",
+		[
+			"Verified.Geo.SplitFold",
+			"Verified.Geo.PreFold",
+			"Verified.Geo.PassFold",
+			"Verified.Geo.Enrich",
+			"Verified.Geo.DayChain",
+			"Verified.Geo.BestPlace",
+		],
+	],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
 	["LEAN_HSMM / compare-assemble", under("Verified.Hsmm")],
 	["LEAN_RAIL (waived)", under("Verified.Rail")],

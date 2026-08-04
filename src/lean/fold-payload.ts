@@ -51,6 +51,7 @@ import { localStaySamples } from "../geo/opening-hours.js";
 import type { NominatimResult } from "../geo/osm.js";
 import { DEFAULT_RADIUS_M } from "../geo/osm.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+import type { TrackSegment } from "../geo/segments.js";
 import type { VenueTypeStats } from "../geo/venue-prior.js";
 import { localHourOf } from "../geo/venue-prior.js";
 import type { DayState } from "../sleep/day-state.js";
@@ -76,8 +77,14 @@ type Path = { lat: number; lon: number; ts: number }[] | undefined;
 const path = (p: Path): string[][] | null =>
 	p === undefined ? null : p.map((q) => [bits(q.lat), bits(q.lon), bits(q.ts)]);
 
-/** One segment in the shape `Day.parseSeg` reads. */
-export function encodeSeg(s: EnrichedSegment): unknown {
+/** One segment in the shape `Day.parseSeg` reads.
+ *
+ *  Takes a `TrackSegment` as well as an `EnrichedSegment` because the earliest
+ *  boundary the day gate compares (`segsRaw`, `classifySegments`' output) is the
+ *  unenriched type. Every enrichment field is optional, and an absent one
+ *  encodes as the null or empty that Lean's `Seg` defaults to — which is what
+ *  "not enriched yet" means. */
+export function encodeSeg(s: TrackSegment & Partial<EnrichedSegment>): unknown {
 	return {
 		startTs: s.startTs,
 		endTs: s.endTs,
@@ -295,6 +302,11 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 	const t = answers;
 	const inputs = day.inputs;
 	return {
+		// The SPLIT STAGE's input — `classifySegments`' output. Encoded with the
+		// same `encodeSeg` as everything else: `TrackSegment` is a prefix of
+		// `EnrichedSegment`, so the absent fields encode as the nulls and empties
+		// Lean's `Seg` defaults to, which is what the TS value means.
+		segsRaw: cap.segsRaw.map(encodeSeg),
 		// The CORRECTIONS' input, not the fold's. Named `segsPre` rather than
 		// `segs` so a caller still sending the fold's input fails loudly instead
 		// of quietly running the five corrections a second time (#430).

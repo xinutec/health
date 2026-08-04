@@ -42,6 +42,7 @@ import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { ModeStats } from "../geo/mode-biometrics.js";
 import type { JitterPlaceQuery } from "../geo/passes/stays.js";
+import type { TrackSegment } from "../geo/segments.js";
 import type { DayState } from "../sleep/day-state.js";
 
 /** A recorded `tzAt(lat, lon)` answer. */
@@ -103,6 +104,15 @@ export interface SleepPlaceQuery {
 export interface FoldCaptureFile {
 	date: string;
 	user: string;
+	/** The SPLIT STAGE's input — `classifySegments`' output, before either
+	 *  biometric split or the stay bridge (#430). The earliest boundary the day
+	 *  gate reaches, and the only one whose input nothing upstream of it in Lean
+	 *  produced. */
+	segsRaw: TrackSegment[];
+	/** The split stage's output — `refinedSegments`, what the OSM enrichment
+	 *  loop is handed. Not `segsPre`: enrichment runs between the two and is not
+	 *  ported, so this is where that sub-chain is measured and stops. */
+	segsSplit: TrackSegment[];
 	/** The CORRECTIONS' input — `enriched`, five stages before pass 1 (#430).
 	 *  This is where the Lean chain starts; `segsIn` below is no longer an
 	 *  input to it but the boundary it is measured at. */
@@ -136,6 +146,8 @@ export interface FoldCapture {
 	write: (
 		date: string,
 		user: string,
+		segsRaw: TrackSegment[],
+		segsSplit: TrackSegment[],
 		segsPre: EnrichedSegment[],
 		modeStats: ModeStats[],
 		segsIn: EnrichedSegment[],
@@ -172,11 +184,12 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 		recordSleepPlace: (q) => {
 			sleepPlace.push(q);
 		},
-		write: (date, user, segsPre, modeStats, segsIn, segsOut, obs) => {
-			file = { date, user, segsPre, modeStats, segsIn, segsOut, obs, tzAt, bestPlace, sleepPlace };
+		write: (date, user, segsRaw, segsSplit, segsPre, modeStats, segsIn, segsOut, obs) => {
+			file = { date, user, segsRaw, segsSplit, segsPre, modeStats, segsIn, segsOut, obs, tzAt, bestPlace, sleepPlace };
 			flush();
 			console.log(
-				`fold-capture ${date}: ${segsPre.length} pre, ${segsIn.length} in, ${segsOut.length} out, ` +
+				`fold-capture ${date}: ${segsRaw.length} raw, ${segsSplit.length} split, ${segsPre.length} pre, ` +
+					`${segsIn.length} in, ${segsOut.length} out, ` +
 					`${obs.points.length} pts, ${tzAt.length} tz, ${bestPlace.length} place`,
 			);
 		},

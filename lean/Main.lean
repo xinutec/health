@@ -1058,9 +1058,14 @@ cascade over one day's segments, in ONE bridge call. The fold is the unit
 because the order is the thing being measured: a pass at a time would let the
 shell re-impose the sequence, and then the sequence would not be under test.
 
-  { "segs": [ …segment…, ],
+  { "segsRaw": [ …segment…, ],   -- the split stage's input (segmentation output)
+    "segsPre": [ …segment…, ],   -- the corrections' input (enrichment output)
     "env":  { …observations, day tables, lookup answer tables… },
     "trace": true|false }
+
+Two INPUTS, because there are two sub-chains: the OSM enrichment loop runs
+between `segsRaw`'s stage and `segsPre`'s and is not ported, so the second
+cannot be fed from the first.
 
 ### Why the lookups cross as answer tables
 
@@ -1751,6 +1756,18 @@ def dayResult (j : Json) : Json :=
     let env ← parseEnv envJson
     let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
     let wantTrace ← optBool j "trace" false
+    -- The three stages between segmentation and the enrichment loop: the two
+    -- biometric splits and the stay bridge (#430). NOT chained to what follows,
+    -- and deliberately so — the OSM enrichment stage sits between this stage's
+    -- output and `segsPre`, and it is not ported. Two sub-chains in one call,
+    -- each starting from what the TS arm actually handed its stage, is honest;
+    -- feeding this one's output into the corrections would silently skip the
+    -- enrichment and compare the corrections against segments no run produced.
+    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
+    let splitCtx : Stays.SplitContext :=
+      { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
+        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
+    let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
     -- The five corrections that run between the OSM enrichment stage and pass 1
     -- (#430). Same argument as the fold's: they are one stage because the order
     -- is what is being measured — `revertIsolatedCadence` exists to undo the
@@ -1766,6 +1783,9 @@ def dayResult (j : Json) : Json :=
     let chain ← parseChain envJson out env.points env.displayFixes
     let (states, episodes) := Verified.Geo.DayChain.dayChain chain
     let base := [
+      -- The split stage's output — the earliest boundary, and the only one whose
+      -- input is not another Lean stage's output.
+      ("segsSplit", Json.arr (segsSplit.map segJson)),
       -- The corrections' output — the BOUNDARY the chain used to start at. Sent
       -- back so a divergence in the five stages is named where it happens
       -- rather than read off the fold's output dozens of decisions later.

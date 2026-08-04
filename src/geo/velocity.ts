@@ -1835,14 +1835,28 @@ export async function computeVelocityFromInputs(
 	// than an input to it. `obs.steps` / `obs.hr` below are the same two series
 	// the corrections read (`biomForStaySplit` IS `await biometricsPromise` on
 	// this arm), so `modeStats` is the only observation they add.
-	foldCapture?.write(date, userId, enriched, modeStats, physicallyCorrected, withBiometrics, {
-		points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
-		rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
-		displayFixes,
-		steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
-		hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
-		sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
-	});
+	//
+	// `segments` / `refinedSegments` are a SECOND, earlier sub-chain: the two
+	// biometric splits and the stay bridge. They are not chained to `enriched`
+	// because the OSM enrichment loop runs between them and is not ported.
+	foldCapture?.write(
+		date,
+		userId,
+		segments,
+		refinedSegments,
+		enriched,
+		modeStats,
+		physicallyCorrected,
+		withBiometrics,
+		{
+			points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+			rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+			displayFixes,
+			steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+			hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+			sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
+		},
+	);
 
 	const total = Date.now() - t0;
 	const summary = Object.entries(phaseTimes)

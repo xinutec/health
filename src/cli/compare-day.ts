@@ -2,9 +2,11 @@
  * CLI: does the Lean day produce what the TS pipeline produced?
  *
  * Task #424 built this as an experiment, #426 made it a gate, #429 widened it
- * past the fold, #430 widened it before. Three Lean stages run in ONE
- * `verified_cli day` call, each consuming what the last produced:
+ * past the fold, #430 widened it before. Four Lean stages run in ONE
+ * `verified_cli day` call:
  *
+ *   `Verified.Geo.SplitFold`  the two biometric splits and the stay bridge,
+ *                             between segmentation and the OSM enrichment loop
  *   `Verified.Geo.PreFold`    the five corrections between the OSM enrichment
  *                             stage and pass 1 — cadence, its revert, the
  *                             jitter demotion, the biometric signature, the
@@ -14,16 +16,26 @@
  *                             attribution, the state timeline, the dwell
  *                             continuation, the episode geometry
  *
- * This replays the golden corpus through both arms and compares FOUR boundaries:
- * the corrections' output (`pre.`), the fold's, the states and the episodes.
- * Three of the four are interior — measured even though the arms rejoin nowhere,
- * because a difference at the earliest boundary explains every one below it, and
- * comparing only the end would report the explanation as the finding.
+ * TWO sub-chains, not one. The last three are chained — each consumes what the
+ * one before it produced. `SplitFold` is not chained to them, because the OSM
+ * enrichment loop runs between its output and `PreFold`'s input and is not
+ * ported. Each sub-chain therefore starts from what the TS arm actually handed
+ * its first stage, which is the only honest option: feeding the split stage's
+ * output into the corrections would skip the enrichment silently and compare the
+ * corrections against segments no run ever produced.
  *
- * NOT the whole day. Everything upstream of the corrections — quality filter,
- * Kalman, segmentation, stay/walk splitting, the OSM enrichment stage — is still
- * unchained, and `lean/experiments/lean-coverage.mts` counts what that leaves
- * without any comparator.
+ * This replays the golden corpus through both arms and compares FIVE boundaries:
+ * the split stage's output (`split.`), the corrections' (`pre.`), the fold's,
+ * the states and the episodes. Four of the five are interior — measured even
+ * though the arms rejoin nowhere, because within a sub-chain a difference at the
+ * earliest boundary explains every one below it, and comparing only the end
+ * would report the explanation as the finding. Across the two sub-chains it does
+ * not: a `split.` line is its own finding, not the cause of a `pre.` one.
+ *
+ * NOT the whole day. The quality filter, Kalman and segmentation upstream, and
+ * the OSM enrichment stage in the middle, are still unchained, and
+ * `lean/experiments/lean-coverage.mts` counts what that leaves without any
+ * comparator.
  *
  * # Why it is a GATE and not a probe
  *
@@ -382,6 +394,7 @@ async function measure(file: string): Promise<Outcome> {
 	}
 
 	const res = JSON.parse(raw) as {
+		segsSplit?: unknown[];
 		segsMid?: unknown[];
 		segs?: unknown[];
 		states?: unknown[];
@@ -397,6 +410,12 @@ async function measure(file: string): Promise<Outcome> {
 		return { date, verdict: "ERROR", detail: `unfed callbacks changed: ${unfed.join(", ") || "(none)"}` };
 	}
 
+	// The two biometric splits and the stay bridge — the earliest boundary, and a
+	// SEPARATE sub-chain: the unported OSM enrichment loop runs between its output
+	// and `pre.`'s input, so a `split.` line does NOT explain a `pre.` line the way
+	// `pre.` explains `segs.`. Listed first because it is earliest in the day, not
+	// because the ones below descend from it.
+	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? []).map((d) => `split.${d}`);
 	// The five corrections, compared at the boundary they used to start the chain
 	// at. Prefixed and listed FIRST because a difference here is upstream of
 	// everything below it: the fold consumed the Lean arm's own corrections, so a
@@ -409,7 +428,7 @@ async function measure(file: string): Promise<Outcome> {
 	// a segment — they are different records at different points in the pipeline.
 	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? []).map((d) => `states.${d}`);
 	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? []);
-	const all = [...pre, ...diffs, ...states, ...eps.real];
+	const all = [...split, ...pre, ...diffs, ...states, ...eps.real];
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
 	const real = all.filter((d) => !SHELLED.has(d.split(":")[0]));
 	const shell = [

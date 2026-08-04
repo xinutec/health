@@ -1,4 +1,4 @@
-import Verified.Geo.Segments
+import Verified.Geo.SegmentMerge
 /-!
 # Bridging co-located stays on biometric evidence (port of
 `src/geo/bridge-stays-biometrics.ts`)
@@ -46,6 +46,12 @@ slow drift down a street from collapsing into one place, and it is pinned below.
   file, so it keeps THIS association.
 * `x ** 2` is written `x * x`. V8 special-cases an integer exponent of 2 to
   exactly that.
+* The segment type is `SegmentMerge.Seg`, not `Segments.TrackSegment`, though
+  the TS signature says `TrackSegment[]`. `Seg` is what the split stage carries
+  in Lean (`Verified.Geo.SplitFold`) and what crosses the wire, and TS's spread
+  (`{ ...cur }`) preserves whatever fields the runtime value actually has — so a
+  narrower Lean type would silently drop them on every merge. Nothing here reads
+  a field `TrackSegment` lacks; the four it touches are common to both.
 
 Exactness: sums, one division per mean, one `atan2` per pair. UNPROVEN; pinned
 against Node/V8 (`lean/experiments/bridge-stays-refs.mts`).
@@ -53,7 +59,7 @@ against Node/V8 (`lean/experiments/bridge-stays-refs.mts`).
 
 namespace Verified.Geo.BridgeStays
 
-open Verified.Geo.Segments (TrackSegment)
+open Verified.Geo.SegmentMerge (Seg)
 
 /-! ## Inputs -/
 
@@ -130,7 +136,7 @@ private def meanHrInWindow (startTs endTs : Int) (hr : Array HrPoint) : Option F
 
 /-- Should the run starting at `i` (currently ending at `extended`) absorb the
 stay at `j`? Factored out so the two arms read as the two cases they are. -/
-private def absorbs (extended next : TrackSegment) (cI cJ : Option (Float × Float))
+private def absorbs (extended next : Seg) (cI cJ : Option (Float × Float))
     (hr : Array HrPoint) (steps : Array StepPoint) : Bool :=
   match cI, cJ with
   | some (laI, loI), some (laJ, loJ) =>
@@ -153,11 +159,11 @@ The inner walk is fuelled by the remaining segment count. The TS `while` is
 bounded by the same quantity (`j` only ever increases, and the loop stops at
 `segments.length`), so the fuel is never the binding constraint.
 -/
-def bridgeStaysWithBiometrics (segments : Array TrackSegment)
+def bridgeStaysWithBiometrics (segments : Array Seg)
     (centroids : Array (Option (Float × Float))) (hr : Array HrPoint)
-    (steps : Array StepPoint) : Array TrackSegment :=
-  let rec extend (i : Nat) (extended : TrackSegment) (j : Nat) :
-      Nat → TrackSegment × Nat
+    (steps : Array StepPoint) : Array Seg :=
+  let rec extend (i : Nat) (extended : Seg) (j : Nat) :
+      Nat → Seg × Nat
     | 0 => (extended, j)
     | fuel + 1 =>
       if h : j < segments.size then
@@ -168,7 +174,7 @@ def bridgeStaysWithBiometrics (segments : Array TrackSegment)
                                    pointCount := extended.pointCount + next.pointCount } (j + 1) fuel
         else (extended, j)
       else (extended, j)
-  let rec go (i : Nat) (acc : Array TrackSegment) : Nat → Array TrackSegment
+  let rec go (i : Nat) (acc : Array Seg) : Nat → Array Seg
     | 0 => acc
     | fuel + 1 =>
       if h : i < segments.size then
@@ -184,16 +190,16 @@ def bridgeStaysWithBiometrics (segments : Array TrackSegment)
 
 /-! ## Guards -/
 
-private def stay (startTs endTs : Int) (pointCount : Nat := 10) : TrackSegment :=
+private def stay (startTs endTs : Int) (pointCount : Int := 10) : Seg :=
   { startTs := startTs, endTs := endTs, mode := "stationary", confidence := 0.9,
     confidenceMargin := 2, avgSpeed := 0.2, maxSpeed := 1, linearity := 0.1,
     pointCount := pointCount }
 
-private def walking (startTs endTs : Int) : TrackSegment :=
+private def walking (startTs endTs : Int) : Seg :=
   { stay startTs endTs 5 with mode := "walking", avgSpeed := 4.5, maxSpeed := 6 }
 
 /-- Pizza Union: two stays either side of a 5-minute no-fix gap, same table. -/
-private def pizza : Array TrackSegment := #[stay 0 1200 40, stay 1500 3000 50]
+private def pizza : Array Seg := #[stay 0 1200 40, stay 1500 3000 50]
 private def sameSpot : Array (Option (Float × Float)) :=
   #[some (51.5200, -0.0800), some (51.5200, -0.0800)]
 
@@ -233,7 +239,7 @@ private def noSteps : Array StepPoint := #[⟨1260, 0⟩, ⟨1320, 0⟩]
 
 /-! ### The back-to-back arm — no gap, so only the combined-window HR test -/
 
-private def backToBack : Array TrackSegment := #[stay 0 1200 40, stay 1200 2400 50]
+private def backToBack : Array Seg := #[stay 0 1200 40, stay 1200 2400 50]
 
 #guard (bridgeStaysWithBiometrics backToBack sameSpot #[] #[]).size == 1
 -- No HR at all still merges here: `combinedMean === null` does NOT break, which
