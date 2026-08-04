@@ -94,5 +94,6 @@ import Verified.Geo.LineStoppingPattern
 import Verified.Geo.LineStations
 import Verified.Geo.LineMembership
 import Verified.Geo.BridgeStays
+import Verified.Geo.BestPlace
 import Verified.Geo.PreFold
 import Verified.Geo.PassFold

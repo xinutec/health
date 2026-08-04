@@ -49,10 +49,30 @@ open Verified.Geo.RefineMode (sampleIdxs dedupNearestWays refineModeLegacyCascad
 
 /-! ## City, from two reverse geocodes -/
 
-/-- The Nominatim address fields `extractCity` reads. A projection of
-`NominatimResult`, not the whole record: everything else in that response is read
-by the venue namers, which are not in this path. -/
+/-- The `address` object of a Nominatim reverse-geocode.
+
+The five city-like fields are what `extractCity` walks; the rest are what the
+venue namers read (`Verified.Geo.BestPlace`). One record rather than two
+projections, because the two consumers read the SAME response and a second
+record would drift against it — the fix series get projected per consumer
+because they are pure input, but this one has a canonical shape upstream and
+keeping that shape is what makes the wire encoding auditable.
+
+Nominatim omits a field it has no value for, and can also return it EMPTY. The
+two are not the same to the TS: `hasSpecificVenue` tests truthiness (an empty
+string is absent) while `nominatimVenueName` uses `??` (an empty string is
+present, and wins). Both are modelled as they are written. -/
 structure Address where
+  amenity : Option String := none
+  tourism : Option String := none
+  leisure : Option String := none
+  shop : Option String := none
+  building : Option String := none
+  houseNumber : Option String := none
+  road : Option String := none
+  pedestrian : Option String := none
+  neighbourhood : Option String := none
+  suburb : Option String := none
   stateDistrict : Option String := none
   city : Option String := none
   town : Option String := none
