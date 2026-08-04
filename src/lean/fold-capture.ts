@@ -125,13 +125,13 @@ export interface FoldCaptureFile {
 	 *  gate reaches, and the only one whose input nothing upstream of it in Lean
 	 *  produced. */
 	segsRaw: TrackSegment[];
-	/** The split stage's output — `refinedSegments`, what the OSM enrichment
-	 *  loop is handed. Not `segsPre`: enrichment runs between the two and is not
-	 *  ported, so this is where that sub-chain is measured and stops. */
+	/** The split stage's output — `refinedSegments`, what the OSM enrichment loop
+	 *  is handed, and the boundary that stage is measured at. */
 	segsSplit: TrackSegment[];
-	/** The CORRECTIONS' input — `enriched`, five stages before pass 1 (#430).
-	 *  This is where the Lean chain starts; `segsIn` below is no longer an
-	 *  input to it but the boundary it is measured at. */
+	/** The OSM enrichment loop's output — `enriched`, five stages before pass 1.
+	 *  An ORACLE only, as of #430 B2: it used to be where the Lean chain started,
+	 *  because the enrichment stage between it and `segsSplit` was unported. Now
+	 *  `Verified.Geo.EnrichFold` produces it and this grades that. */
 	segsPre: EnrichedSegment[];
 	/** The mined `mode_biometrics` rows — the only observation the corrections
 	 *  need that the fold does not, and the only one not already in `obs`. */

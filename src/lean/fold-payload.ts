@@ -306,11 +306,13 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 		// same `encodeSeg` as everything else: `TrackSegment` is a prefix of
 		// `EnrichedSegment`, so the absent fields encode as the nulls and empties
 		// Lean's `Seg` defaults to, which is what the TS value means.
+		// The ONLY input as of #430 B2. `segsPre` used to cross beside it, because
+		// the OSM enrichment stage between the two was unported and the corrections
+		// could not be fed from the splits without skipping it. `EnrichFold` closed
+		// that gap, so the Lean day is one chain from here and `segsPre` is an
+		// ORACLE now — `compare-day` still reads it from the capture to grade the
+		// `enrich.` boundary, it just no longer crosses the wire.
 		segsRaw: cap.segsRaw.map(encodeSeg),
-		// The CORRECTIONS' input, not the fold's. Named `segsPre` rather than
-		// `segs` so a caller still sending the fold's input fails loudly instead
-		// of quietly running the five corrections a second time (#430).
-		segsPre: cap.segsPre.map(encodeSeg),
 		trace,
 		env: {
 			homeTz: inputs.homeTz,

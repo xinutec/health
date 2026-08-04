@@ -18,22 +18,21 @@
  *                               attribution, the state timeline, the dwell
  *                               continuation, the episode geometry
  *
- * Still two sub-chains, and no longer because anything between them is unported.
- * `EnrichFold` closed that gap (#430 B2): the first two ARE chained now, and
- * `PreFold` still starts from the TS arm's `segsPre` so that the join is
- * MEASURED — the `enrich.` boundary below compares the Lean enrichment's output
- * against exactly what the corrections are being fed. Chaining the second half
- * onto the first before that boundary is green would make the comparison feed
- * itself.
+ * ONE chain, as of #430 B2. It was two sub-chains for as long as the OSM
+ * enrichment stage sat unported between the splits and the corrections; the
+ * corrections had to start from what the TS arm handed them, because feeding the
+ * splits' output straight in would have skipped a stage silently. `EnrichFold`
+ * closed that gap, and the join was taken only after the `enrich.` boundary
+ * measured identical on all 33 golden days — chaining first would have made the
+ * comparison the thing feeding itself.
  *
- * This replays the golden corpus through both arms and compares SIX boundaries:
- * the split stage's output (`split.`), the enrichment's (`enrich.`), the
- * corrections' (`pre.`), the fold's, the states and the episodes. Five of the
- * six are interior — measured because within a sub-chain a difference at the
- * earliest boundary explains every one below it, and comparing only the end
- * would report the explanation as the finding. Across the two sub-chains it does
- * not: a `split.` line explains an `enrich.` one, and neither yet explains a
- * `pre.` one.
+ * So the Lean arm now takes ONE input, `classifySegments`' output, and runs it
+ * through to the episodes. This replays the golden corpus through both arms and
+ * compares SIX boundaries: the split stage's output (`split.`), the
+ * enrichment's (`enrich.`), the corrections' (`pre.`), the fold's, the states
+ * and the episodes. Five of the six are interior, and they are measured because
+ * a difference at the earliest one explains every one below it — comparing only
+ * the end would report the explanation as the finding.
  *
  * NOT the whole day. The quality filter, Kalman and segmentation upstream are
  * still unchained, and `lean/experiments/lean-coverage.mts` counts what that
@@ -419,17 +418,15 @@ async function measure(file: string): Promise<Outcome> {
 	// `pre.` explains `segs.`. Listed first because it is earliest in the day, not
 	// because the ones below descend from it.
 	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? []).map((d) => `split.${d}`);
-	// The OSM enrichment stage — the boundary that JOINS the two sub-chains, and
-	// the only one whose Lean input is another Lean stage's output while its
-	// oracle is still the TS's. A `split.` line therefore explains an `enrich.`
-	// line, and neither yet explains a `pre.` one: the corrections still consume
-	// `segsPre`, so the join is measured before it is relied on.
+	// The OSM enrichment stage — the boundary that used to be the seam between two
+	// sub-chains and is now interior like the rest. `cap.segsPre` is the TS arm's
+	// enrichment output: an ORACLE here, no longer an input to anything.
 	const enrich = diffSegs(cap.segsPre.map(encodeSeg), res.segsEnriched ?? []).map((d) => `enrich.${d}`);
 	// The five corrections, compared at the boundary they used to start the chain
-	// at. Prefixed and listed FIRST because a difference here is upstream of
-	// everything below it: the fold consumed the Lean arm's own corrections, so a
-	// `pre.` line explains any `segs.` line under it, and reading them the other
-	// way round would attribute a correction's defect to a pass.
+	// at. A difference here is upstream of everything below it: the fold consumed
+	// the Lean arm's own corrections, so a `pre.` line explains any `segs.` line
+	// under it, and reading them the other way round would attribute a
+	// correction's defect to a pass.
 	const pre = diffSegs(cap.segsIn.map(encodeSeg), res.segsMid ?? []).map((d) => `pre.${d}`);
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
 	// The stages after the fold, compared in the same call and on the same terms.

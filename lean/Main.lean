@@ -1058,17 +1058,18 @@ cascade over one day's segments, in ONE bridge call. The fold is the unit
 because the order is the thing being measured: a pass at a time would let the
 shell re-impose the sequence, and then the sequence would not be under test.
 
-  { "segsRaw": [ …segment…, ],   -- the split stage's input (segmentation output)
-    "segsPre": [ …segment…, ],   -- the corrections' input (enrichment output)
+  { "segsRaw": [ …segment…, ],   -- the segmentation output, and the ONLY input
     "env":  { …observations, day tables, lookup answer tables… },
     "trace": true|false }
 
-Still two INPUTS, and no longer because anything between them is unported —
-`Verified.Geo.EnrichFold` closed that gap (#430 B2). `segsPre` stays an input so
-the join is MEASURED before it is relied on: the enrichment stage's Lean output
-is returned as `segsEnriched` and compared against `segsPre`, while the
-corrections keep consuming the TS's. A single input would make that comparison
-the thing feeding itself.
+ONE input as of #430 B2. It was two for as long as the OSM enrichment stage sat
+unported between the splits and the corrections — the corrections had to start
+from what the TS arm handed them, because feeding the splits' output straight in
+would have skipped a stage silently. `Verified.Geo.EnrichFold` closed that gap,
+and the join was taken only after the day gate measured the new `segsEnriched`
+boundary identical on all 33 golden days. Every boundary below `segsRaw` is now
+Lean consuming Lean, and each is still returned and compared, so a difference is
+named where it happens rather than read off the end.
 
 ### Why the lookups cross as answer tables
 
@@ -1782,26 +1783,22 @@ callback: the fold gets the production answer, not an empty one. -/
 
 def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
-    let segsPre ← (← (← j.getObjVal? "segsPre").getArr?).mapM parseSeg
     let envJson ← j.getObjVal? "env"
     let env ← parseEnv envJson
     let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
     let wantTrace ← optBool j "trace" false
-    -- The three stages between segmentation and the enrichment loop: the two
-    -- biometric splits and the stay bridge (#430). NOT chained to what follows,
-    -- and deliberately so — the OSM enrichment stage sits between this stage's
-    -- output and `segsPre`, and it is not ported. Two sub-chains in one call,
-    -- each starting from what the TS arm actually handed its stage, is honest;
-    -- feeding this one's output into the corrections would silently skip the
-    -- enrichment and compare the corrections against segments no run produced.
+    -- ONE input, and one chain from here to the episodes (#430 B2). It used to be
+    -- two — the OSM enrichment stage ran between the splits and the corrections
+    -- and was not ported, so the corrections had to start from what the TS arm
+    -- handed them. `EnrichFold` closed that gap and the day gate measured the
+    -- new boundary green on all 33 golden days before this line was joined up.
     let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
     let splitCtx : Stays.SplitContext :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
         steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
     let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
     -- The OSM enrichment stage itself, the piece that used to be the gap between
-    -- the two sub-chains (#430 B2). Chained to the splits above it: this stage's
-    -- input IS their output, and there is nothing unported in between any more.
+    -- the two sub-chains (#430 B2). Chained on both sides now.
     let namer ← namerOf envJson
     let enrichReads : Verified.Geo.EnrichFold.Reads :=
       { ways := env.nearbyWays
@@ -1822,7 +1819,7 @@ def dayResult (j : Json) : Json :=
     -- pass before it, so a shell that re-imposed the sequence would put the
     -- thing under test outside the test. Their observations are the fold's own
     -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
-    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsPre
+    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched
     let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
     -- The fold's output is the chain's input, which is the whole reason these
     -- run in one call rather than two: a second bridge crossing would have to
@@ -1834,10 +1831,7 @@ def dayResult (j : Json) : Json :=
       -- The split stage's output — the earliest boundary, and the only one whose
       -- input is not another Lean stage's output.
       ("segsSplit", Json.arr (segsSplit.map segJson)),
-      -- The enrichment stage's output — the boundary that JOINS the two
-      -- sub-chains. Its input is the line above; its oracle is `segsPre`, which
-      -- is still the corrections' input below, so the join is measured before it
-      -- is relied on.
+      -- The enrichment stage's output — the boundary that used to be the seam.
       ("segsEnriched", Json.arr (segsEnriched.map segJson)),
       -- The corrections' output — the BOUNDARY the chain used to start at. Sent
       -- back so a divergence in the five stages is named where it happens
