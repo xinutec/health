@@ -14,7 +14,7 @@ browser chrome. Build & install steps: [`android/README.md`](android/README.md).
 src/                            backend (Hono + Kysely + MariaDB)
 frontend/                       Angular SPA (Material)
 tests/                          backend tests (vitest)
-scripts/                        utility scripts (deploy.sh, verify.sh, golden.sh, prod-db.sh)
+scripts/                        utility scripts (deploy.sh, golden.sh, prod-db.sh)
 docs/                           cross-cutting docs and proposals
 ├── ideas.md                    Small future-considerations: heuristic
 │                               refinements and UX tweaks that aren't
@@ -35,8 +35,7 @@ log (see `docs/proposals/README.md`).
 
 | Command | What it does |
 |---|---|
-| `pnpm run verify` | Typecheck (back + front) → schema-types check → format → Biome lint (back) → ESLint (front) → tests. Run before every commit. |
-| `scripts/verify.sh` | Thin wrapper that runs `pnpm run verify` under a `nix-shell` shebang, so the full check runs directly on a machine without pnpm on PATH (e.g. the Mac mini). `deploy.sh` already runs verify itself — this is for running it standalone. |
+| `pnpm run verify` | The commit gate: the fourteen checks in `gate.json` (rendered from `gate.dhall`) — typecheck and lint on both halves, schema-type drift, vitest, the frontend unit tests, the Lean verified core, the Angular build and the phone-width layout harness, and dev-lint. Runs them all and names every one that failed. The pre-commit hook runs the same table, and so does `deploy.sh`. |
 | `pnpm test` | Just the backend test suite. |
 | `pnpm run analyze YYYY-MM-DD` | Run the day-analysis CLI. Needs DB + Nextcloud env — easiest via `scripts/prod-db.sh` (below). |
 | `pnpm run golden` | Golden-day regression check — runs the classification pipeline against a curated set of real days and diffs the day-state timeline against blessed baselines. Run around large classification changes; `pnpm run golden --bless` updates baselines. The corpus under `tests/golden/` is local-only (gitignored). |

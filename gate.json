@@ -1,0 +1,223 @@
+{
+  "checks": [
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "backend deps match the lockfile",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend deps match the lockfile",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "typecheck"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "typecheck (backend)",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "typecheck:frontend"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "typecheck (frontend app + e2e)",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "check:schema-types"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "generated schema types are current",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "lint"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "lint (biome, backend)",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "lint:frontend"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "lint (eslint, frontend)",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "test"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "tests (vitest)",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "test:frontend"
+      ],
+      "cwd": ".",
+      "env": {
+        "NG_BUILD_MAX_WORKERS": "1"
+      },
+      "name": "frontend unit tests",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "lean-check"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "Lean verified core + decode parity",
+      "timeout_s": 3600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "nix",
+        "run",
+        "../../dev-lint#ng-build",
+        "--",
+        "--expect",
+        "dist/frontend/browser",
+        "--",
+        "pnpm",
+        "run",
+        "build"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend build",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
+        "ui-check"
+      ],
+      "cwd": "frontend",
+      "env": {},
+      "name": "frontend ui-check (phone-width layout harness)",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "run",
+        "git+file:../dev-lint?ref=HEAD",
+        "--",
+        "--baseline",
+        ".dev-lint-baseline",
+        "."
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "dev-lint (baselined)",
+      "timeout_s": 900
+    },
+    {
+      "argv": [
+        "nix",
+        "run",
+        "../dev-lint#gate",
+        "--",
+        "--check-table",
+        "gate.dhall",
+        "gate.json"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "the table matches its Dhall",
+      "timeout_s": 300
+    }
+  ],
+  "name": "health"
+}

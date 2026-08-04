@@ -167,8 +167,9 @@ Beyond the unit suite, three replay gates guard behaviour on **real
 captured days** (fixtures gitignored — see
 `privacy-in-tests-and-commits.md`):
 
-- `scripts/verify.sh` — typecheck (src + tests), biome, vitest,
-  frontend build + e2e. Run by the pre-commit hook.
+- `gate.json` (from `gate.dhall`) — typecheck (src + tests), biome, vitest,
+  the Lean verified core, frontend build + e2e. Run by the pre-commit hook,
+  and by `pnpm run verify`.
 - `scripts/golden.sh` — replays the golden day corpus
   (`tests/golden/days/`) byte-identically, then applies four gates on
   top of the snapshot diff. Two are ratcheted FLOORS over confirmed

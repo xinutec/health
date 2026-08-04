@@ -19,7 +19,7 @@
     "lint": "biome check .",
     "lint:frontend": "cd frontend && pnpm run lint",
     "format": "biome check --write .",
-    "verify": "pnpm run typecheck && pnpm run typecheck:frontend && pnpm run check:schema-types && pnpm run lint && pnpm run lint:frontend && pnpm test && pnpm run test:frontend && pnpm run lean-check",
+    "verify": "nix run ../dev-lint#gate -- . gate.json",
     "analyze": "node dist/cli/analyze-day.js",
     "audit:fitbit": "node dist/cli/audit-fitbit-sync.js",
     "golden": "scripts/golden.sh",

@@ -13,7 +13,7 @@ import harness from "./e2e/harness.mjs";
  * see dev-lint/docs/layout-quality-architecture.md. What this app says about
  * itself is in e2e/harness.mjs.
  *
- * `npm run ui-check` (wired into verify.sh after `ng build`) serves the
+ * `pnpm run ui-check` (a gate row, right after the build row) serves the
  * freshly-built dist. Both the dashboard layout harness (e2e/ui-pages.spec.ts)
  * and the settings overlap spec (e2e/settings.spec.ts) run here — this app has
  * no dev-serve-dependent behavioural specs.
