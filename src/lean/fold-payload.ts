@@ -13,11 +13,11 @@
  * the same convention as every other tenant, so both arms compare the same
  * doubles rather than two 6-decimal renderings of them.
  *
- * The lookup tables are keyed the same way, and that part is not cosmetic. The
- * fixture's `osmTrace` keys on `${lat}|${lon}|${radius}` — a JS number
- * rendering. Lean renders doubles differently, so a Lean-side key built from
- * the same double would not match the string, and a key that does not match is
- * a MISS. Re-keying on bits makes the two sides agree exactly or not at all.
+ * The lookup tables are keyed the same way, and that part is not cosmetic. A
+ * recorded trace keys on `${lat}|${lon}|${radius}` — a JS number rendering.
+ * Lean renders doubles differently, so a Lean-side key built from the same
+ * double would not match the string, and a key that does not match is a MISS.
+ * Re-keying on bits makes the two sides agree exactly or not at all.
  *
  * Recovering the double from the trace key is exact: JS `Number(String(x))`
  * round-trips, so `Number("51.502")` is bit-identical to the coordinate that
@@ -35,11 +35,19 @@
  * A miss is a finding, not a gap in this encoder: it means the Lean fold asked
  * a question the TS cascade did not, which is a wiring divergence that output
  * comparison alone would not localise.
+ *
+ * THAT SENTENCE WAS FALSE FOR FOUR COMMITS, and the caveat is worth keeping.
+ * It holds only because `answers` is now what the run itself answered. While
+ * these tables were built from the fixture's `osmTrace`, a miss could equally
+ * mean the encoder had handed Lean a narrower oracle than the TS arm used, and
+ * nothing in the message distinguishes the two (#428). An encoder that decides
+ * what the fold is allowed to ask has to be sure it is not the one failing.
  */
 
 import type { CapturedDay } from "../cli/fixture-day.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import { DEFAULT_RADIUS_M } from "../geo/osm.js";
+import type { OsmTrace } from "../geo/osm-adapter-recording.js";
 import type { FoldCaptureFile } from "./fold-capture.js";
 
 /** A `Float64` bit pattern as a decimal string — the bridge's float encoding. */
@@ -148,11 +156,27 @@ function table2<T>(section: Record<string, T> | undefined, map: (v: T) => unknow
 	return out;
 }
 
-/** Build the request. `trace` asks for per-pass output, which is how a
- *  divergence gets attributed to the pass that produced it (#409) — off by
- *  default because it multiplies the response by 38. */
-export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, trace = false): unknown {
-	const t = day.inputs.osmTrace;
+/** Build the request.
+ *
+ *  `answers` is what the REPLAY'S OWN adapter answered, not the fixture's
+ *  `osmTrace`, and the difference is a defect this used to have. Under
+ *  `osmSource: "rows"` — golden's default — the TS arm gets a
+ *  `RowSetOsmAdapter` that COMPUTES the four spatial lookups over raw OSM rows,
+ *  so its coordinate domain is unbounded. `osmTrace` is a fixed record from an
+ *  older capture, and on 2026-06-15 the TS arm asked `nearbyWays` about 69
+ *  distinct coordinates of which 4 were not in the trace at all. Building the
+ *  Lean tables from the trace therefore handed the fold a strictly SMALLER
+ *  oracle and manufactured misses that say nothing about the port (#428).
+ *
+ *  It is also the second-order fix: the row set and the trace are two different
+ *  oracles (#412), so a trace-built table can carry a different ANSWER for a
+ *  key both hold, not merely be missing keys. A recorded table cannot.
+ *
+ *  `trace` asks for per-pass output, which is how a divergence gets attributed
+ *  to the pass that produced it (#409) — off by default because it multiplies
+ *  the response by 38. */
+export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers: OsmTrace, trace = false): unknown {
+	const t = answers;
 	const inputs = day.inputs;
 	return {
 		segs: cap.segsIn.map(encodeSeg),

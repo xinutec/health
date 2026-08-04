@@ -11,23 +11,37 @@
  *      `FOLD_CAPTURE` set. That writes what the cascade was handed, what it
  *      produced, and the answers to the two callbacks no adapter sees
  *      (`fold-capture.ts`).
- *   2. Build the `day` request from that capture plus the fixture's own
- *      `osmTrace` and caches (`fold-payload.ts`).
+ *   2. Build the `day` request from that capture, the lookups THIS RUN's adapter
+ *      answered, and the fixture's caches (`fold-payload.ts`).
  *   3. Run `verified_cli day` and compare its segments against the TS arm's,
  *      field by field.
  *
  * Both arms therefore start from the same input and answer from the same
- * recorded lookups. What is left is the computation, which is the point: the
- * wire format was sized first (0.35 MiB/day steady state) so that this
- * measurement would not be a measurement of the bridge.
+ * lookups. What is left is the computation, which is the point: the wire format
+ * was sized first (0.35 MiB/day steady state) so that this measurement would not
+ * be a measurement of the bridge.
  *
- * # A miss is a result, not an error
+ * # Why the lookups are RECORDED and not read from `osmTrace`
  *
- * `LEAN_ABORT_ON_PANIC=1` is set for the child: an unanswered lookup aborts
- * with the key in the message rather than returning an empty answer that would
- * read as a real one. If that fires, the Lean fold asked a question the TS
- * cascade did not — a wiring divergence, and one that comparing outputs alone
- * would not have localised. It is reported as its own outcome.
+ * They used to be read from the fixture, and that was wrong (#428). Golden
+ * replays with `osmSource: "rows"`, which gives the TS arm a `RowSetOsmAdapter`
+ * that COMPUTES the four spatial lookups over raw OSM rows — any coordinate.
+ * `osmTrace` is a fixed record from an older capture, so a trace-built table
+ * gave the Lean arm a strictly smaller oracle: on 2026-06-15 the TS arm asked
+ * `nearbyWays` about 69 distinct coordinates of which 4 were not in the trace,
+ * and one of those four was exactly the key the fold aborted on.
+ *
+ * # A miss is a result, not an error — but read it carefully
+ *
+ * `LEAN_ABORT_ON_PANIC=1` is set for the child: an unanswered lookup aborts with
+ * the key in the message rather than returning an empty answer that would read
+ * as a real one.
+ *
+ * With the tables recorded, a miss means what it is supposed to mean: the Lean
+ * fold asked a question the TS cascade did not, a wiring divergence that
+ * comparing outputs alone would not localise. Before that it could ALSO mean the
+ * encoder had handed Lean a narrower oracle, and the two are not distinguishable
+ * from the message. Any miss recorded before #428 landed has to be re-read.
  *
  * Run: npx tsx lean/experiments/passfold-parity.mts [date …]
  */
@@ -37,6 +51,8 @@ import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { inputsFromFixture, parseCapturedDay } from "../../src/cli/fixture-day.js";
+import type { ClassificationInputs } from "../../src/geo/classification-inputs.js";
+import type { OsmTrace } from "../../src/geo/osm-adapter-recording.js";
 import { computeVelocityFromInputs } from "../../src/geo/velocity.js";
 import type { FoldCaptureFile } from "../../src/lean/fold-capture.js";
 import { buildDayRequest, encodeSeg } from "../../src/lean/fold-payload.js";
@@ -109,6 +125,59 @@ function diffSegs(want: unknown[], got: unknown[]): string[] {
 	return out;
 }
 
+/**
+ * Wrap the four spatial lookups so every answer this run gives is recorded,
+ * keyed exactly as `RecordingOsmAdapter` keys them (`lat|lon|radius`, the radius
+ * empty when the caller passed none) so `fold-payload.ts` reads it unchanged.
+ *
+ * The other trace sections are copied from the fixture: `stationsOnLine` and
+ * `reverseGeocode` are what `RowSetOsmAdapter` itself delegates to the trace, so
+ * for those the trace IS the oracle both arms use.
+ */
+function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace {
+	const rec: OsmTrace = {
+		nearbyWays: {},
+		nearbyStations: {},
+		nearbyLandmarks: {},
+		linesAtPoint: {},
+		reverseGeocode: {},
+		nearbyTransitStops: {},
+		// NOT recorded, carried: `RowSetOsmAdapter` delegates this one to the
+		// trace unless the row set carries rail lines, so the trace is the oracle
+		// the TS arm reads too. Recording it would work equally, but copying says
+		// which sections are answered from where.
+		stationsOnLine: fixture.stationsOnLine,
+	};
+	const key = (lat: number, lon: number, r: number | undefined): string => `${lat}|${lon}|${r ?? ""}`;
+	const osm = inputs.osm;
+
+	const ways = osm.nearbyWays.bind(osm);
+	osm.nearbyWays = async (lat, lon, r?) => {
+		const v = await ways(lat, lon, r);
+		rec.nearbyWays[key(lat, lon, r)] = v;
+		return v;
+	};
+	const stations = osm.nearbyStations.bind(osm);
+	osm.nearbyStations = async (lat, lon, r?) => {
+		const v = await stations(lat, lon, r);
+		rec.nearbyStations[key(lat, lon, r)] = v;
+		return v;
+	};
+	const lines = osm.linesAtPoint.bind(osm);
+	osm.linesAtPoint = async (lat, lon, r?) => {
+		const v = await lines(lat, lon, r);
+		rec.linesAtPoint[key(lat, lon, r)] = [...v];
+		return v;
+	};
+	const stops = osm.nearbyTransitStops.bind(osm);
+	osm.nearbyTransitStops = async (lat, lon, r?) => {
+		const v = await stops(lat, lon, r);
+		(rec.nearbyTransitStops as Record<string, unknown>)[key(lat, lon, r)] = v;
+		return v;
+	};
+	return rec;
+}
+
 const outcomes: Outcome[] = [];
 
 for (const file of readdirSync(DAYS_DIR)
@@ -121,9 +190,19 @@ for (const file of readdirSync(DAYS_DIR)
 	const capDir = mkdtempSync(path.join(tmpdir(), "foldcap-"));
 	process.env.FOLD_CAPTURE = capDir;
 
+	// Record what THIS run's adapter answers, rather than reading the fixture's
+	// `osmTrace`. Under `"rows"` the adapter computes the four spatial lookups
+	// from raw OSM rows and can answer any coordinate, while the trace is a
+	// fixed record from an older capture — so a trace-built table gives the Lean
+	// arm a smaller oracle than the TS arm used, and misses that say nothing
+	// about the port (#428). Same principle as `fold-capture.ts`: record the
+	// answer that was actually given.
+	const inputs = inputsFromFixture(captured, "rows");
+	const answers = recordingOsm(inputs, captured.inputs.osmTrace);
+
 	let cap: FoldCaptureFile;
 	try {
-		await computeVelocityFromInputs(inputsFromFixture(captured, "rows"));
+		await computeVelocityFromInputs(inputs);
 		const written = readdirSync(capDir);
 		if (written.length === 0) throw new Error("cascade wrote no capture (did it return early?)");
 		cap = JSON.parse(readFileSync(path.join(capDir, written[0]), "utf8")) as FoldCaptureFile;
@@ -137,7 +216,7 @@ for (const file of readdirSync(DAYS_DIR)
 		delete process.env.FOLD_CAPTURE;
 	}
 
-	const req = buildDayRequest(cap, captured);
+	const req = buildDayRequest(cap, captured, answers);
 	let raw: string;
 	try {
 		raw = execFileSync(CLI, ["day"], {
