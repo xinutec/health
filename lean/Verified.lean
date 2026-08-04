@@ -77,6 +77,8 @@ import Verified.Geo.RailReconcile
 import Verified.Geo.RailJourney
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkAnnotate
+import Verified.Geo.OsmCorridor
+import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.TubeHop
 import Verified.Geo.UndergroundRun
 import Verified.Geo.UndergroundJourney
