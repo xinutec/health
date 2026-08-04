@@ -361,6 +361,22 @@ export function planJitterStayRuns(segments: EnrichedSegment[]): Array<{ start: 
 	return runs;
 }
 
+/** One `bestPlace` question this pass asked, and what came back.
+ *
+ *  `city` is `extractCity(place) ?? null`, NOT the pass's `?? base.city`
+ *  fallback: the fallback belongs to the pass, and the Lean twin applies its
+ *  own. Recording the resolved value would hand Lean an answer that already
+ *  contains a decision it is supposed to make. */
+export interface JitterPlaceQuery {
+	lat: number;
+	lon: number;
+	startTs: number;
+	endTs: number;
+	tz: string;
+	label: string | null;
+	city: string | null;
+}
+
 /** Collapse runs of co-located stationary fragments (one continuous sit that
  *  GPS jitter shattered into several stays with different, wrong place labels)
  *  into a single stay, re-resolving its name from the combined centroid.
@@ -376,6 +392,13 @@ export async function consolidateJitterStays(
 	segments: EnrichedSegment[],
 	osm: OsmAdapter,
 	priors: VenuePriors | null = null,
+	/** Records the `bestPlace` question and its answer, for the Lean fold's
+	 *  payload (#424). `bestPlace` is a direct import taking the adapter, not an
+	 *  adapter METHOD, so `RecordingOsmAdapter` never sees this call — and it is
+	 *  the only `bestPlace` the refinement cascade makes. Without the hook the
+	 *  Lean arm would have no answer for the one question this pass asks, and a
+	 *  missing answer is not an empty one: it would abort the fold. */
+	record?: (q: JitterPlaceQuery) => void,
 ): Promise<EnrichedSegment[]> {
 	const runs = planJitterStayRuns(segments);
 	if (runs.length === 0) return segments;
@@ -389,9 +412,19 @@ export async function consolidateJitterStays(
 		// Re-resolve the venue from the combined centre, with the merged
 		// stay's full window as plausibility evidence — this run IS the
 		// poor-GPS indoor-sit case the venue scorer exists for (#246).
+		const tz = tzLookup(cLat, cLon);
 		const place = await bestPlace(osm, cLat, cLon, {
-			stay: { startUnix: run[0].startTs, endUnix: run[run.length - 1].endTs, tz: tzLookup(cLat, cLon) },
+			stay: { startUnix: run[0].startTs, endUnix: run[run.length - 1].endTs, tz },
 			priors,
+		});
+		record?.({
+			lat: cLat,
+			lon: cLon,
+			startTs: run[0].startTs,
+			endTs: run[run.length - 1].endTs,
+			tz,
+			label: place ? placeLabel(place) : null,
+			city: place ? (extractCity(place) ?? null) : null,
 		});
 		const base = run.reduce((a, b) => (b.endTs - b.startTs > a.endTs - a.startTs ? b : a)); // longest leg as base
 		const reason = `consolidated ${run.length} GPS-jitter stay fragments`;

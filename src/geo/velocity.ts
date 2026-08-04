@@ -10,6 +10,7 @@ import { db } from "../db/pool.js";
 import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
+import { foldCaptureFromEnv } from "../lean/fold-capture.js";
 import { installLeanPasses } from "../lean/install.js";
 import {
 	applyStationaryWalkThroughViaLean,
@@ -1116,6 +1117,11 @@ export async function computeVelocityFromInputs(
 	const homeTz = inputs.homeTz;
 	const hmmDecode = inputs.hsmmDecode;
 
+	// FOLD_CAPTURE=<dir> records what the cascade below was handed and what it
+	// asked of the two callbacks no adapter sees, so the Lean fold can be
+	// replayed against it (#424). `undefined` — and free — unless set.
+	const foldCapture = foldCaptureFromEnv();
+
 	type RefinementPass = {
 		name: string;
 		run: (segs: EnrichedSegment[]) => EnrichedSegment[] | Promise<EnrichedSegment[]>;
@@ -1210,7 +1216,13 @@ export async function computeVelocityFromInputs(
 		// runs containing a jitter-demoted leg, so normal multi-stay days are untouched.
 		{
 			name: "consolidateJitterStays",
-			run: (segs) => consolidateJitterStays(attachStayCentroids(segs, points), inputs.osm, inputs.venuePriors ?? null),
+			run: (segs) =>
+				consolidateJitterStays(
+					attachStayCentroids(segs, points),
+					inputs.osm,
+					inputs.venuePriors ?? null,
+					foldCapture?.recordBestPlace,
+				),
 		},
 
 		// A ride that doubles back is two rides with a change between them. Must
@@ -1624,11 +1636,22 @@ export async function computeVelocityFromInputs(
 						lat = mid.lat;
 						lon = mid.lon;
 					}
+					// `tzLookup` is a direct import, not an adapter method, so
+					// `RecordingOsmAdapter` never sees it. This is the cascade's only
+					// tz question — record it or the Lean arm has no answer.
+					//
+					// What gets recorded is the EFFECTIVE answer, `homeTz` included
+					// when the lookup throws. `Env.tzAt` is total in Lean, so the
+					// fallback belongs to whoever supplies the function — which is
+					// this capture.
+					let tz: string;
 					try {
-						return { ...s, displayTz: tzLookup(lat, lon) };
+						tz = tzLookup(lat, lon);
 					} catch {
-						return { ...s, displayTz: homeTz };
+						tz = homeTz;
 					}
+					foldCapture?.recordTz(lat, lon, tz);
+					return { ...s, displayTz: tz };
 				}),
 		},
 
@@ -1807,6 +1830,14 @@ export async function computeVelocityFromInputs(
 		}
 	}
 	const withBiometrics = segs;
+	foldCapture?.write(date, userId, physicallyCorrected, withBiometrics, {
+		points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+		rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+		displayFixes,
+		steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+		hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+		sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
+	});
 
 	const total = Date.now() - t0;
 	const summary = Object.entries(phaseTimes)
