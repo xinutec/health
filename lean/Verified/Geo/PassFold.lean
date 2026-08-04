@@ -15,6 +15,8 @@ import Verified.Geo.PlaceOverride
 import Verified.Geo.TransitPlace
 import Verified.Geo.BiometricWindows
 import Verified.Geo.BiometricLabels
+import Verified.Geo.RoadMatchAnnotate
+import Verified.Geo.WalkAnnotate
 /-!
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
@@ -122,6 +124,35 @@ structure Env where
   hr : List Verified.Geo.BiometricWindows.HrPoint := []
   /-- Sleep-stage windows. -/
   sleep : List Verified.Geo.BiometricWindows.SleepStage := []
+  /-- SHELL: re-derive one split walk's enrichment from its own geometry.
+  `none` is a failed re-enrichment, and the TS's answer to that is to leave the
+  leg honestly unnamed rather than confidently wrong — so the caller keeps the
+  segment as it stands. The only genuinely async pass in the cascade; what is
+  ASYNC is the OSM naming, and what is sequencing stays here. -/
+  reenrich : Seg → Option Seg := fun _ => none
+  /-- The road matcher's shell: the street-network read and the solver. -/
+  roadEnv : Verified.Geo.RoadMatchAnnotate.Env :=
+    { drivableRoads := fun _ _ _ => #[], matcher := fun _ _ => none }
+  /-- The pedestrian matcher's shell: two OSM reads and five solver leaves. -/
+  walkEnv : Verified.Geo.WalkAnnotate.Env :=
+    { walkableRoads := fun _ _ _ => #[]
+      buildingsNear := fun _ _ _ => #[]
+      matcher := fun _ _ _ => none
+      reconstruct := fun _ _ _ _ => none
+      refineMatched := fun _ _ => none
+      correct := fun drawn _ _ _ => drawn
+      snapPassages := fun drawn _ _ => drawn }
+  /-- The DISPLAY fixes — a different series from `points`, carrying the
+  phone's self-reported accuracy the walk draw weighs. -/
+  displayFixes : Array Verified.Geo.WalkAnnotate.PedFix := #[]
+  /-- Kalman speed at a timestamp, for the walk matcher's pace gate. -/
+  speedByTs : Int → Option Float := fun _ => none
+  /-- Which line a walking leg draws. `matcher` is production. -/
+  walkDraw : Verified.Geo.WalkAnnotate.Draw := .matcher
+  /-- The walk draw's toggles. `matchDisable` is the `/api/velocity`
+  `walkMatch=0` query param: it skips matching so the map can render raw walks
+  for an A/B against the pavement-matched line. -/
+  walkFlags : Verified.Geo.WalkAnnotate.Flags := {}
 
 /-! ## Fix projections
 
@@ -176,6 +207,11 @@ def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
 
 def Env.labelFixes (e : Env) : List Verified.Geo.BiometricLabels.Fix :=
   (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
+
+/-- The road matcher declares the episode-geometry fix — same four fields as
+`railFixes`, a different record. -/
+def Env.geomFixes (e : Env) : Array Verified.Geo.EpisodeGeometry.Fix :=
+  e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
 
 /-! ### The line lookup, three ways
 
@@ -420,6 +456,23 @@ def passes (e : Env) : Array Pass := #[
   -- stay's tail and extend the train back over the wait.
   ("rideHeadClaim", fun segs => RideHead.claimRideHeadFromStay segs e.points e.feasSteps),
 
+  -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
+  -- ran ~30 passes ago, on segments not yet split, so everything it concluded
+  -- about a walk that turned out to span a ride was derived from a window
+  -- CONTAINING the ride — the road name from a line drawn straight through it,
+  -- the refined mode from speeds averaged across it. `walkRemainder` has
+  -- already cleared that; here each remainder gets its own, from its own
+  -- geometry. One that fails re-enrichment stays honestly unnamed.
+  --
+  -- The naming is shell and injected; the sequencing is not. Note the flag is
+  -- cleared either way, matching the TS's destructure-and-drop — a remainder
+  -- whose re-enrichment failed is not retried by a later pass.
+  ("reenrichSplitWalks", fun segs =>
+    if !segs.any (·.needsReenrich) then segs
+    else segs.map fun s =>
+      if !s.needsReenrich then s
+      else { (e.reenrich s).getD s with needsReenrich := false }),
+
   -- When GPS surfaces a stop or two into a tunnel, the reconstruction boards at
   -- the first snappable fix and the walk keeps the stranded first hop — so the
   -- walk line bleeds on to the next station. Re-anchor the boarding to the
@@ -473,6 +526,20 @@ def passes (e : Env) : Array Pass := #[
   -- rides with too few dwells to score.
   ("busRoutes", fun segs =>
     Verified.Geo.Bus.annotateBusRoutes segs e.busFixes e.busRouteCache),
+
+  -- Snap each road-vehicle leg onto the street network so the map draws it on
+  -- the road instead of the raw GPS zigzag through buildings. After all mode
+  -- refinement, so it only matches the FINAL road legs. Purely additive: with
+  -- no road data it is a no-op and the raw track draws.
+  ("roadMatch", fun segs =>
+    Verified.Geo.RoadMatchAnnotate.annotateRoadMatches e.roadEnv segs e.geomFixes),
+
+  -- The same for walking legs, onto the walkable network, so the map draws the
+  -- pavement instead of a line through buildings. Display geometry only —
+  -- states unchanged.
+  ("walkMatch", fun segs =>
+    Verified.Geo.WalkAnnotate.annotateWalkMatches segs e.displayFixes e.speedByTs
+      e.walkEnv e.biomSteps e.walkDraw e.walkFlags),
 
   -- The zone the frontend renders this segment's clock in.
   ("displayTz", fun segs => displayTz e segs),
@@ -582,8 +649,8 @@ private def NO_LOOKUPS : Env :=
     "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
     "interchangeSplit", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
-    "rideHeadClaim", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
-    "railSnap", "busEvidence", "busRoutes", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
+    "rideHeadClaim", "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
+    "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "interchangeStayLabel", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -630,8 +697,7 @@ def unported (e : Env) : Array String :=
 -- applier ported; one is genuinely shell (async OSM re-enrichment); two carry
 -- solver leaves the env does not hold yet; one needs a `biometrics` field on the
 -- shared segment record, which is a schema change and not wiring.
-#guard unported NO_LOOKUPS ==
-  #["reenrichSplitWalks", "roadMatch", "walkMatch"]
+#guard unported NO_LOOKUPS == #[]
 
 #guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
 
@@ -887,6 +953,16 @@ private def flipped (a b : Int) : Seg :=
 -- fire unconditionally and the guard above would not notice.
 #guard !fires MIX "revertIsolatedCadence2" #[dr 0 600, flipped 600 1200, wk 1200 1800]
 
+-- A remainder flagged for re-enrichment. `MIX.reenrich` answers `none` — a
+-- FAILED re-enrichment — and the flag clears anyway, which is the TS's
+-- destructure-and-drop: the leg stays honestly unnamed and no later pass
+-- retries it. Asserting only that something changed would not separate that
+-- from a pass that cleared nothing, so the flag itself is checked.
+#guard fires MIX "reenrichSplitWalks" #[{ wk 0 600 with needsReenrich := true }]
+#guard !(runNamed MIX "reenrichSplitWalks" #[{ wk 0 600 with needsReenrich := true }])[0]!.needsReenrich
+-- A day with nothing flagged is returned untouched.
+#guard !fires MIX "reenrichSplitWalks" #[wk 0 600]
+
 -- A train run whose route is in the cache gets the track drawn on it.
 #guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]
 -- Any segment a fix covers gets a zone. `tzAt` answers Amsterdam and `homeTz`
@@ -970,13 +1046,13 @@ into three groups:
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
   #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
-    "interchangeSplit", "busEvidence", "busRoutes", "walkThrough"]
+    "interchangeSplit", "busEvidence", "busRoutes", "walkThrough", "roadMatch", "walkMatch"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 26
+#guard witnessed.size == 27
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
