@@ -40,6 +40,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
+import type { ModeStats } from "../geo/mode-biometrics.js";
 import type { JitterPlaceQuery } from "../geo/passes/stays.js";
 import type { DayState } from "../sleep/day-state.js";
 
@@ -102,7 +103,16 @@ export interface SleepPlaceQuery {
 export interface FoldCaptureFile {
 	date: string;
 	user: string;
-	/** The cascade's input — `physicallyCorrected`, before pass 1. */
+	/** The CORRECTIONS' input — `enriched`, five stages before pass 1 (#430).
+	 *  This is where the Lean chain starts; `segsIn` below is no longer an
+	 *  input to it but the boundary it is measured at. */
+	segsPre: EnrichedSegment[];
+	/** The mined `mode_biometrics` rows — the only observation the corrections
+	 *  need that the fold does not, and the only one not already in `obs`. */
+	modeStats: ModeStats[];
+	/** The cascade's input — `physicallyCorrected`, before pass 1. Recorded
+	 *  rather than recomputed, so the Lean corrections are compared against what
+	 *  the TS run actually handed the fold (#428). */
 	segsIn: EnrichedSegment[];
 	/** The cascade's output — what the 38 passes produced. The oracle. */
 	segsOut: EnrichedSegment[];
@@ -126,6 +136,8 @@ export interface FoldCapture {
 	write: (
 		date: string,
 		user: string,
+		segsPre: EnrichedSegment[],
+		modeStats: ModeStats[],
 		segsIn: EnrichedSegment[],
 		segsOut: EnrichedSegment[],
 		obs: FoldObservations,
@@ -160,11 +172,11 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 		recordSleepPlace: (q) => {
 			sleepPlace.push(q);
 		},
-		write: (date, user, segsIn, segsOut, obs) => {
-			file = { date, user, segsIn, segsOut, obs, tzAt, bestPlace, sleepPlace };
+		write: (date, user, segsPre, modeStats, segsIn, segsOut, obs) => {
+			file = { date, user, segsPre, modeStats, segsIn, segsOut, obs, tzAt, bestPlace, sleepPlace };
 			flush();
 			console.log(
-				`fold-capture ${date}: ${segsIn.length} in, ${segsOut.length} out, ` +
+				`fold-capture ${date}: ${segsPre.length} pre, ${segsIn.length} in, ${segsOut.length} out, ` +
 					`${obs.points.length} pts, ${tzAt.length} tz, ${bestPlace.length} place`,
 			);
 		},

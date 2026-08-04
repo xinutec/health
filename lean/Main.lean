@@ -1152,6 +1152,31 @@ private def parsePathPt (j : Json) : Except String Verified.Geo.PathPt := do
   let a ← j.getArr?
   return ⟨← jBits (← nth a 0), ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
 
+/-- A positional bit pattern that may be `null` — the array-tuple counterpart of
+{@link optBits}. The mined statistics are the first wire shape where a nullable
+Float sits in a tuple rather than under a key: a mode observed with no HR at all
+has `hrMean = null`, which is not the same claim as `hrMean = 0`. -/
+private def nthBits (a : Array Json) (i : Nat) : Except String (Option Float) := do
+  let v ← nth a i
+  if v.isNull then pure none else some <$> jBits v
+
+/-- One mined `mode_biometrics` row, as `fold-payload.ts` writes it. -/
+private def parseModeStats (j : Json) : Except String Verified.Geo.ModeBiometrics.ModeStats := do
+  let a ← j.getArr?
+  return {
+    mode := ← (← nth a 0).getStr?
+    hrMean := ← nthBits a 1
+    hrStd := ← nthBits a 2
+    hrSampleCount := (← (← nth a 3).getInt?).toNat
+    cadenceMean := ← nthBits a 4
+    cadenceStd := ← nthBits a 5
+    cadenceSampleCount := (← (← nth a 6).getInt?).toNat
+    speedMean := ← nthBits a 7
+    speedStd := ← nthBits a 8
+    speedSampleCount := (← (← nth a 9).getInt?).toNat
+    sampleCount := (← (← nth a 10).getInt?).toNat
+  }
+
 private def optPath (j : Json) (k : String) :
     Except String (Option (Array Verified.Geo.PathPt)) :=
   match j.getObjVal? k with
@@ -1625,10 +1650,18 @@ callback: the fold gets the production answer, not an empty one. -/
 
 def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
-    let segs ← (← (← j.getObjVal? "segs").getArr?).mapM parseSeg
+    let segsPre ← (← (← j.getObjVal? "segsPre").getArr?).mapM parseSeg
     let envJson ← j.getObjVal? "env"
     let env ← parseEnv envJson
+    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
     let wantTrace ← optBool j "trace" false
+    -- The five corrections that run between the OSM enrichment stage and pass 1
+    -- (#430). Same argument as the fold's: they are one stage because the order
+    -- is what is being measured — `revertIsolatedCadence` exists to undo the
+    -- pass before it, so a shell that re-imposed the sequence would put the
+    -- thing under test outside the test. Their observations are the fold's own
+    -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
+    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsPre
     let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
     -- The fold's output is the chain's input, which is the whole reason these
     -- run in one call rather than two: a second bridge crossing would have to
@@ -1637,6 +1670,10 @@ def dayResult (j : Json) : Json :=
     let chain ← parseChain envJson out env.points env.displayFixes
     let (states, episodes) := Verified.Geo.DayChain.dayChain chain
     let base := [
+      -- The corrections' output — the BOUNDARY the chain used to start at. Sent
+      -- back so a divergence in the five stages is named where it happens
+      -- rather than read off the fold's output dozens of decisions later.
+      ("segsMid", Json.arr (segs.map segJson)),
       ("segs", Json.arr (out.map segJson)),
       ("states", Json.arr (states.map stateJson)),
       ("episodes", Json.arr (episodes.map episodeJson)),

@@ -1830,7 +1830,12 @@ export async function computeVelocityFromInputs(
 		}
 	}
 	const withBiometrics = segs;
-	foldCapture?.write(date, userId, physicallyCorrected, withBiometrics, {
+	// `enriched` — five stages before the fold — is where the Lean chain starts
+	// (#430); `physicallyCorrected` is now the BOUNDARY it is measured at rather
+	// than an input to it. `obs.steps` / `obs.hr` below are the same two series
+	// the corrections read (`biomForStaySplit` IS `await biometricsPromise` on
+	// this arm), so `modeStats` is the only observation they add.
+	foldCapture?.write(date, userId, enriched, modeStats, physicallyCorrected, withBiometrics, {
 		points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
 		rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
 		displayFixes,

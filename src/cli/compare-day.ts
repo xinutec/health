@@ -2,15 +2,26 @@
  * CLI: does the Lean day produce what the TS pipeline produced?
  *
  * Task #424 built this as an experiment, #426 made it a gate, #429 widened it
- * past the fold. `Verified.Geo.PassFold` wires all 38 passes of
- * `src/geo/velocity.ts` (#419) and `Verified.Geo.DayChain` wires the six stages
- * after them — sleep-place attribution, the state timeline, the dwell
- * continuation, the episode geometry. `verified_cli day` executes both in one
- * call; this replays the golden corpus through both arms and compares the
- * segments, the states and the episodes.
+ * past the fold, #430 widened it before. Three Lean stages run in ONE
+ * `verified_cli day` call, each consuming what the last produced:
  *
- * NOT the whole day. Everything upstream of the fold — quality filter, Kalman,
- * segmentation, stay/walk splitting, the OSM enrichment stage — is still
+ *   `Verified.Geo.PreFold`    the five corrections between the OSM enrichment
+ *                             stage and pass 1 — cadence, its revert, the
+ *                             jitter demotion, the biometric signature, the
+ *                             physical-impossibility override
+ *   `Verified.Geo.PassFold`   all 38 passes of `src/geo/velocity.ts` (#419)
+ *   `Verified.Geo.DayChain`   the six stages after them — sleep-place
+ *                             attribution, the state timeline, the dwell
+ *                             continuation, the episode geometry
+ *
+ * This replays the golden corpus through both arms and compares FOUR boundaries:
+ * the corrections' output (`pre.`), the fold's, the states and the episodes.
+ * Three of the four are interior — measured even though the arms rejoin nowhere,
+ * because a difference at the earliest boundary explains every one below it, and
+ * comparing only the end would report the explanation as the finding.
+ *
+ * NOT the whole day. Everything upstream of the corrections — quality filter,
+ * Kalman, segmentation, stay/walk splitting, the OSM enrichment stage — is still
  * unchained, and `lean/experiments/lean-coverage.mts` counts what that leaves
  * without any comparator.
  *
@@ -41,9 +52,9 @@
  * # How a day is measured
  *
  *   1. Replay the fixture through `computeVelocityFromInputs` with
- *      `FOLD_CAPTURE` set. That writes what the cascade was handed, what it
- *      produced, and the answers to the two callbacks no adapter sees
- *      (`fold-capture.ts`).
+ *      `FOLD_CAPTURE` set. That writes what the corrections were handed, what
+ *      the cascade was handed, what it produced, and the answers to the two
+ *      callbacks no adapter sees (`fold-capture.ts`).
  *   2. Build the `day` request from that capture, the lookups THIS RUN's adapter
  *      answered, and the fixture's caches (`fold-payload.ts`).
  *   3. Run `verified_cli day` and compare its segments against the TS arm's,
@@ -363,6 +374,7 @@ async function measure(file: string): Promise<Outcome> {
 	}
 
 	const res = JSON.parse(raw) as {
+		segsMid?: unknown[];
 		segs?: unknown[];
 		states?: unknown[];
 		episodes?: unknown[];
@@ -377,13 +389,19 @@ async function measure(file: string): Promise<Outcome> {
 		return { date, verdict: "ERROR", detail: `unfed callbacks changed: ${unfed.join(", ") || "(none)"}` };
 	}
 
+	// The five corrections, compared at the boundary they used to start the chain
+	// at. Prefixed and listed FIRST because a difference here is upstream of
+	// everything below it: the fold consumed the Lean arm's own corrections, so a
+	// `pre.` line explains any `segs.` line under it, and reading them the other
+	// way round would attribute a correction's defect to a pass.
+	const pre = diffSegs(cap.segsIn.map(encodeSeg), res.segsMid ?? []).map((d) => `pre.${d}`);
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
 	// The stages after the fold, compared in the same call and on the same terms.
 	// Prefixed so a `place` difference in the timeline is not confused with one in
 	// a segment — they are different records at different points in the pipeline.
 	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? []).map((d) => `states.${d}`);
 	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? []);
-	const all = [...diffs, ...states, ...eps.real];
+	const all = [...pre, ...diffs, ...states, ...eps.real];
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
 	const real = all.filter((d) => !SHELLED.has(d.split(":")[0]));
 	const shell = [

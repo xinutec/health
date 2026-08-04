@@ -111,7 +111,12 @@ $DEV pnpm run verify
 # and reddens it as a LOOKUP MISS naming the coordinate, which is the localised
 # signal rather than a downstream field diff.
 #
-# 48 s for 33 days, so its place in this list is not a cost question.
+# It covers three Lean stages as of #430 — the five corrections before the
+# cascade, the 38 passes, and the six stages after them — and compares all four
+# boundaries between them, so a divergence is named where it happens rather than
+# where it surfaces.
+#
+# 57 s for 33 days, so its place in this list is not a cost question.
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean day parity"
 	$DEV pnpm run golden

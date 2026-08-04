@@ -26,9 +26,10 @@
  *
  * Roots, and the gate each stands for:
  *
- *   PassFold + Enrich + DayChain
- *                       `pnpm run day-gate` — the 38-pass cascade and the stages
- *                       after it (#424/#426/#429)
+ *   PreFold + PassFold + Enrich + DayChain
+ *                       `pnpm run day-gate` — the five corrections before the
+ *                       cascade, the 38 passes, and the stages after them
+ *                       (#424/#426/#429/#430)
  *   Match               `pnpm run compare-match` + LEAN_MATCH under golden
  *   Hsmm.*              LEAN_HSMM + `compare-assemble*`
  *   Rail.*              LEAN_RAIL — WAIVED: the corpus cannot reach it, and
@@ -77,7 +78,7 @@ const under = (prefix: string): string[] => all.filter((m) => m.startsWith(prefi
 // Ordered: each gate is credited only with what no earlier gate already covers,
 // so the columns sum to the total rather than double-counting shared kernels.
 const GATES: [string, string[]][] = [
-	["day-gate", ["Verified.Geo.PassFold", "Verified.Geo.Enrich", "Verified.Geo.DayChain"]],
+	["day-gate", ["Verified.Geo.PreFold", "Verified.Geo.PassFold", "Verified.Geo.Enrich", "Verified.Geo.DayChain"]],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
 	["LEAN_HSMM / compare-assemble", under("Verified.Hsmm")],
 	["LEAN_RAIL (waived)", under("Verified.Rail")],

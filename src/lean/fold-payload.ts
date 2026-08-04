@@ -263,10 +263,29 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 	const t = answers;
 	const inputs = day.inputs;
 	return {
-		segs: cap.segsIn.map(encodeSeg),
+		// The CORRECTIONS' input, not the fold's. Named `segsPre` rather than
+		// `segs` so a caller still sending the fold's input fails loudly instead
+		// of quietly running the five corrections a second time (#430).
+		segsPre: cap.segsPre.map(encodeSeg),
 		trace,
 		env: {
 			homeTz: inputs.homeTz,
+			// Mined `mode_biometrics`. The corrections' only observation that is
+			// not already here — `steps` and `hr` below are the same two series
+			// `applyBiometricSignature` averages over its window.
+			modeStats: cap.modeStats.map((m) => [
+				m.mode,
+				optBits(m.hrMean),
+				optBits(m.hrStd),
+				m.hrSampleCount,
+				optBits(m.cadenceMean),
+				optBits(m.cadenceStd),
+				m.cadenceSampleCount,
+				optBits(m.speedMean),
+				optBits(m.speedStd),
+				m.speedSampleCount,
+				m.sampleCount,
+			]),
 			points: cap.obs.points.map((p) => [p.ts, bits(p.lat), bits(p.lon), bits(p.speedKmh)]),
 			rawFixes: cap.obs.rawFixes.map((p) => [p.ts, bits(p.lat), bits(p.lon), optBits(p.accuracy)]),
 			displayFixes: cap.obs.displayFixes.map((p) => [p.ts, bits(p.lat), bits(p.lon), optBits(p.accuracy)]),
