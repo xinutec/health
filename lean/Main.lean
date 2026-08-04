@@ -1403,6 +1403,75 @@ private def entryPlace (j : Json) :
     | none => pure none
   return (s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{m}", ans)
 
+/-! ### The stages after the fold
+
+`Verified.Geo.DayChain` reads a different closure: two raw-fix series from
+OUTSIDE the day, the Fitbit windows before place attribution, the mined places in
+two projections, and one shell lookup. Parsed separately from `Env` because they
+are a different stage's inputs, not more of the fold's. -/
+
+private def parseStayFix (j : Json) : Except String Verified.Geo.DayState.StayFix := do
+  let a ← j.getArr?
+  return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
+
+private def parseRawSleep (j : Json) : Except String Verified.Geo.DayChain.RawSleepWindow := do
+  let a ← j.getArr?
+  let tz ← match a[2]? with
+    | some v => if v.isNull then pure none else some <$> v.getStr?
+    | none => pure none
+  return ⟨← (← nth a 0).getInt?, ← (← nth a 1).getInt?, tz, ← (← nth a 3).getInt?⟩
+
+private def parseStayPlace (j : Json) : Except String Verified.Geo.DayState.StayKnownPlace := do
+  let a ← j.getArr?
+  let r ← match a[2]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  let nm ← match a[3]? with
+    | some v => if v.isNull then pure none else some <$> v.getStr?
+    | none => pure none
+  return ⟨← jBits (← nth a 0), ← jBits (← nth a 1), r, nm⟩
+
+private def parseDwellPlace (j : Json) :
+    Except String Verified.Geo.DwellContinuation.DwellCandidate := do
+  let a ← j.getArr?
+  let optF (i : Nat) : Except String (Option Float) := match a[i]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  let optI (i : Nat) : Except String (Option Int) := match a[i]? with
+    | some v => if v.isNull then pure none else some <$> v.getInt?
+    | none => pure none
+  return ⟨← jBits (← nth a 0), ← jBits (← nth a 1), ← optF 2, ← optF 3, ← optI 4,
+    ← (← nth a 5).getInt?⟩
+
+/-- `[latBits, lonBits, label|null]`. A null answer is the mirror resolving
+nothing, which is a RESULT — the TS keeps the focus-place label then. Stored as
+such, so a key present with a null answer never reads as a miss. -/
+private def entrySleepPlace (j : Json) : Except String (String × Option String) := do
+  let a ← j.getArr?
+  let k := k2 (← jBits (← nth a 0)) (← jBits (← nth a 1))
+  let ans ← match a[2]? with
+    | some v => if v.isNull then pure none else some <$> v.getStr?
+    | none => pure none
+  return (k, ans)
+
+private def parseChain (j : Json) (segs : Array Seg)
+    (points : Array Shed.PointF) (display : Array Verified.Geo.WalkAnnotate.PedFix) :
+    Except String Verified.Geo.DayChain.Env := do
+  let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
+  let sleepPlaces := mkMap (← (← optArr lk "sleepPlace").mapM entrySleepPlace)
+  return {
+    segments := segs
+    points := points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
+    displayFixes := display.map fun p => ⟨p.ts, p.lat, p.lon⟩
+    morningFixes := (← (← optArr j "morningFixes").mapM parseStayFix).toList
+    prevEveningFixes := (← (← optArr j "prevEveningFixes").mapM parseStayFix).toList
+    stayPlaces := (← (← optArr j "stayPlaces").mapM parseStayPlace).toList
+    dwellPlaces := ← (← optArr j "dwellPlaces").mapM parseDwellPlace
+    sleep := (← (← optArr j "rawSleep").mapM parseRawSleep).toList
+    dayEndTs := (← optInt j "dayEndTs").getD 0
+    sleepPlace := fun lat lon => (hit sleepPlaces "sleepPlace" (k2 lat lon))
+  }
+
 private def parseEnv (j : Json) : Except String Env := do
   let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
   let stations := mkMap (← (← optArr lk "nearbyStations").mapM
@@ -1509,6 +1578,21 @@ private def segJson (s : Seg) : Json :=
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("biometrics", match s.biometrics with | none => Json.null | some b => biomJson b)]
 
+private def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
+    ("mode", Json.str s.mode), ("place", jOptS s.place), ("wayName", jOptS s.wayName),
+    ("asleep", match s.asleep with | none => Json.null | some b => Json.bool b),
+    ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),
+    ("inferred", match s.inferred with | none => Json.null | some b => Json.bool b)]
+
+private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson e.startTs), ("endTs", Lean.toJson e.endTs),
+    ("mode", Json.str e.mode), ("kind", Json.str e.kind), ("place", jOptS e.place),
+    ("points", Json.arr (e.points.map fun p =>
+      Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptI p.ts)]))]
+
 /-- The passes whose output differs from what they were handed — computed from
 the trace rather than declared, so it cannot drift from what ran. This is the
 witness question at real-day scale: `PassFold.unwitnessed` names the 11 passes
@@ -1542,11 +1626,20 @@ callback: the fold gets the production answer, not an empty one. -/
 def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let segs ← (← (← j.getObjVal? "segs").getArr?).mapM parseSeg
-    let env ← parseEnv (← j.getObjVal? "env")
+    let envJson ← j.getObjVal? "env"
+    let env ← parseEnv envJson
     let wantTrace ← optBool j "trace" false
     let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
+    -- The fold's output is the chain's input, which is the whole reason these
+    -- run in one call rather than two: a second bridge crossing would have to
+    -- ship the segments back out and in again, and the two arms could then be
+    -- compared against different segment lists without anything saying so.
+    let chain ← parseChain envJson out env.points env.displayFixes
+    let (states, episodes) := Verified.Geo.DayChain.dayChain chain
     let base := [
       ("segs", Json.arr (out.map segJson)),
+      ("states", Json.arr (states.map stateJson)),
+      ("episodes", Json.arr (episodes.map episodeJson)),
       ("passes", Json.arr ((Verified.Geo.PassFold.passNames env).map Json.str)),
       ("changed", Json.arr ((changedPasses segs trace).map Json.str)),
       ("unfed", Json.arr (UNFED.map Json.str))]

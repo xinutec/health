@@ -46,9 +46,11 @@
 
 import type { CapturedDay } from "../cli/fixture-day.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
+import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { NominatimResult } from "../geo/osm.js";
 import { DEFAULT_RADIUS_M } from "../geo/osm.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+import type { DayState } from "../sleep/day-state.js";
 
 /** `reverseGeocode`'s `zoom = 18` default, so a trace key that omitted it records
  *  the EFFECTIVE argument rather than a blank — the same choice `table3` makes
@@ -115,6 +117,43 @@ export function encodeSeg(s: EnrichedSegment): unknown {
 					stepsTotal: optBits(s.biometrics.stepsTotal),
 				}
 			: null,
+	};
+}
+
+/** One timeline row in the shape `Day.stateJson` emits. Timestamps and the
+ *  minutes count are integers, so no bits — the whole record is labels and
+ *  instants. */
+export function encodeState(s: DayState): unknown {
+	return {
+		startTs: s.startTs,
+		endTs: s.endTs,
+		mode: s.mode,
+		place: optStr(s.place),
+		wayName: optStr(s.wayName),
+		asleep: s.asleep ?? null,
+		tz: optStr(s.tz),
+		minutesAsleep: s.minutesAsleep ?? null,
+		inferred: s.inferred ?? null,
+	};
+}
+
+/** One drawn episode. The vertex timestamps are `Int` on the Lean side and
+ *  fractional on this one for derived geometry — see `DayChain.spts` and #420 —
+ *  so they are rounded here TOO, and identically. That is not the two arms
+ *  agreeing: it is the comparison declining to measure a gap it already knows
+ *  about, and the gap closes when `SPt` and `PathPt` narrow together. */
+export function encodeEpisode(e: EpisodeGeometry): unknown {
+	return {
+		startTs: e.startTs,
+		endTs: e.endTs,
+		mode: e.mode,
+		kind: e.kind,
+		place: optStr(e.place),
+		points: e.points.map((p) => ({
+			lat: bits(p.lat),
+			lon: bits(p.lon),
+			ts: p.ts === undefined ? null : Math.round(p.ts),
+		})),
 	};
 }
 
@@ -238,6 +277,37 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 			// separate observation, so it is derived here rather than captured.
 			speedByTs: cap.obs.points.map((p) => [p.ts, bits(p.speedKmh)]),
 
+			// --- the stages AFTER the fold (`Verified.Geo.DayChain`) ---
+			//
+			// The two raw-fix series are NOT today's track: the morning slice and
+			// the PREVIOUS evening's are where the sleep-place attribution looks
+			// when today's first stationary segment is hours late.
+			morningFixes: (cap.tail?.morningRaw ?? []).map((p) => [p.ts, bits(p.lat), bits(p.lon)]),
+			prevEveningFixes: (cap.tail?.prevEveningRaw ?? []).map((p) => [p.ts, bits(p.lat), bits(p.lon)]),
+			// Fitbit windows BEFORE place attribution. Distinct from `sleep` above,
+			// which is the projection the biometric windows read — same rows,
+			// different fields, and neither derives the other.
+			rawSleep: (cap.tail?.rawSleep ?? []).map((w) => [w.startTs, w.endTs, optStr(w.tz), w.minutesAsleep]),
+			dayEndTs: cap.tail?.dayEndTs ?? 0,
+			// The mined places, twice. The dwell DETECTOR wants a display name to
+			// snap a cluster to; the dwell CONTINUATION wants visit counts and
+			// totals for its survival curve. Two projections of one row rather than
+			// one widened record, on the rule the fix series follow.
+			stayPlaces: inputs.knownPlaces.map((p) => [
+				bits(p.centroidLat),
+				bits(p.centroidLon),
+				optBits(p.radiusM),
+				optStr(p.displayName),
+			]),
+			dwellPlaces: inputs.knownPlaces.map((p) => [
+				bits(p.centroidLat),
+				bits(p.centroidLon),
+				optBits(p.radiusM),
+				optBits(p.totalDwellSec),
+				p.visitCount ?? null,
+				p.uniqueDays,
+			]),
+
 			knownPlaces: inputs.knownPlaces.map((p) => [p.id, bits(p.centroidLat), bits(p.centroidLon)]),
 			focusPlaceDays: inputs.knownPlaces.map((p) => [p.id, p.uniqueDays]),
 			hsmmPlaces: inputs.knownPlaces.map((p) => [
@@ -298,6 +368,10 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 					v.map((s) => [s.name, bits(s.lat), bits(s.lon)]),
 				]),
 				reverseGeocode: geocodeTable(t.reverseGeocode),
+				// The sleep-stay label re-resolution — `bestPlace(preferResidential)`
+				// composed with `placeLabel`, asked per stay centroid. Keyed on the
+				// two coordinates because that is all the call varies by.
+				sleepPlace: (cap.sleepPlace ?? []).map((q) => [bits(q.lat), bits(q.lon), q.label]),
 				// The two the adapter never saw — see `fold-capture.ts`.
 				tzAt: cap.tzAt.map((q) => [bits(q.lat), bits(q.lon), q.tz]),
 				bestPlace: cap.bestPlace.map((q) => [

@@ -39,7 +39,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
+import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { JitterPlaceQuery } from "../geo/passes/stays.js";
+import type { DayState } from "../sleep/day-state.js";
 
 /** A recorded `tzAt(lat, lon)` answer. */
 export interface TzQuery {
@@ -69,6 +71,32 @@ export interface FoldObservations {
 	sleep: { startTs: number; endTs: number }[];
 }
 
+/** What the stages AFTER the fold read, beyond the fold's own observations.
+ *
+ *  All four are sliced or loaded upstream of `computeVelocityFromInputs`'s tail
+ *  and none survives into the fixture, so like `FoldObservations` they are
+ *  written out rather than re-derived. The two raw-fix series are the point of
+ *  the sleep-place attribution: they are NOT today's track — the morning slice
+ *  and the PREVIOUS evening's are where the user actually slept when today's
+ *  first stationary segment is hours late. */
+export interface DownstreamInputs {
+	morningRaw: { ts: number; lat: number; lon: number }[];
+	prevEveningRaw: { ts: number; lat: number; lon: number }[];
+	/** Fitbit windows before place attribution — `RawSleepWindow`. */
+	rawSleep: { startTs: number; endTs: number; tz: string | null; minutesAsleep: number }[];
+	/** `bounds.endUtc` — how far `applyDwellContinuation` may continue a dwell. */
+	dayEndTs: number;
+}
+
+/** A recorded sleep-stay label re-resolution: `bestPlace(preferResidential)`
+ *  composed with `placeLabel`, asked per stay centroid. A SHELL — venue naming
+ *  against the mirror, the same class as the jitter pass's `bestPlace`. */
+export interface SleepPlaceQuery {
+	lat: number;
+	lon: number;
+	label: string | null;
+}
+
 /** What one day's cascade consumed and produced. Merged with the day's
  *  `CapturedDay` by `fold-payload.ts` into a `verified_cli day` request. */
 export interface FoldCaptureFile {
@@ -81,11 +109,20 @@ export interface FoldCaptureFile {
 	obs: FoldObservations;
 	tzAt: TzQuery[];
 	bestPlace: JitterPlaceQuery[];
+	/** Absent when the run ended between the fold and the day's return — the
+	 *  file is written twice for exactly that reason, so a throw in the tail
+	 *  leaves the fold half readable rather than losing the day. */
+	tail?: DownstreamInputs;
+	sleepPlace?: SleepPlaceQuery[];
+	/** The served timeline and its geometry — the downstream oracle. */
+	statesOut?: DayState[];
+	episodesOut?: EpisodeGeometry[];
 }
 
 export interface FoldCapture {
 	recordTz: (lat: number, lon: number, tz: string) => void;
 	recordBestPlace: (q: JitterPlaceQuery) => void;
+	recordSleepPlace: (q: SleepPlaceQuery) => void;
 	write: (
 		date: string,
 		user: string,
@@ -93,6 +130,11 @@ export interface FoldCapture {
 		segsOut: EnrichedSegment[],
 		obs: FoldObservations,
 	) => void;
+	/** Re-write the day's file with the tail's inputs and outputs. Called at
+	 *  every return site of `computeVelocityFromInputs`, including the empty-day
+	 *  arm — a day that returns early returns a real timeline, and a capture that
+	 *  skipped it would compare the Lean chain against nothing. */
+	writeTail: (tail: DownstreamInputs, states: DayState[], episodes: EpisodeGeometry[]) => void;
 }
 
 /** `undefined` unless `FOLD_CAPTURE` names a directory to write into. */
@@ -101,6 +143,13 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 	if (!dir) return undefined;
 	const tzAt: TzQuery[] = [];
 	const bestPlace: JitterPlaceQuery[] = [];
+	const sleepPlace: SleepPlaceQuery[] = [];
+	let file: FoldCaptureFile | undefined;
+	const flush = (): void => {
+		if (file === undefined) return;
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(path.join(dir, `${file.date}-${file.user}.json`), JSON.stringify(file));
+	};
 	return {
 		recordTz: (lat, lon, tz) => {
 			tzAt.push({ lat, lon, tz });
@@ -108,13 +157,24 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 		recordBestPlace: (q) => {
 			bestPlace.push(q);
 		},
+		recordSleepPlace: (q) => {
+			sleepPlace.push(q);
+		},
 		write: (date, user, segsIn, segsOut, obs) => {
-			mkdirSync(dir, { recursive: true });
-			const file: FoldCaptureFile = { date, user, segsIn, segsOut, obs, tzAt, bestPlace };
-			writeFileSync(path.join(dir, `${date}-${user}.json`), JSON.stringify(file));
+			file = { date, user, segsIn, segsOut, obs, tzAt, bestPlace, sleepPlace };
+			flush();
 			console.log(
 				`fold-capture ${date}: ${segsIn.length} in, ${segsOut.length} out, ` +
 					`${obs.points.length} pts, ${tzAt.length} tz, ${bestPlace.length} place`,
+			);
+		},
+		writeTail: (tail, states, episodes) => {
+			if (file === undefined) return;
+			file = { ...file, tail, sleepPlace, statesOut: states, episodesOut: episodes };
+			flush();
+			console.log(
+				`fold-capture ${file.date}: tail ${states.length} states, ${episodes.length} episodes, ` +
+					`${tail.rawSleep.length} sleep, ${sleepPlace.length} sleep-place`,
 			);
 		},
 	};

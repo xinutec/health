@@ -1,8 +1,8 @@
 /**
  * Which Lean modules does anything actually EXECUTE against the TS they port?
  *
- * #426 asks what detects a port drifting from its subject. `fold-gate`
- * (`src/cli/compare-fold.ts`) answers it for the 38-pass cascade, and the other
+ * #426 asks what detects a port drifting from its subject. `day-gate`
+ * (`src/cli/compare-day.ts`) answers it for the 38-pass cascade, and the other
  * tenants have their own referees — but "the other tenants" was an assumption
  * until this counted it. The residue is the honest answer: modules with no
  * executable check at all, where a drift would be found the way #417 and #425
@@ -26,7 +26,9 @@
  *
  * Roots, and the gate each stands for:
  *
- *   PassFold + Enrich   `pnpm run fold-gate` (the 38-pass cascade, #424/#426)
+ *   PassFold + Enrich + DayChain
+ *                       `pnpm run day-gate` — the 38-pass cascade and the stages
+ *                       after it (#424/#426/#429)
  *   Match               `pnpm run compare-match` + LEAN_MATCH under golden
  *   Hsmm.*              LEAN_HSMM + `compare-assemble*`
  *   Rail.*              LEAN_RAIL — WAIVED: the corpus cannot reach it, and
@@ -75,7 +77,7 @@ const under = (prefix: string): string[] => all.filter((m) => m.startsWith(prefi
 // Ordered: each gate is credited only with what no earlier gate already covers,
 // so the columns sum to the total rather than double-counting shared kernels.
 const GATES: [string, string[]][] = [
-	["fold-gate", ["Verified.Geo.PassFold", "Verified.Geo.Enrich"]],
+	["day-gate", ["Verified.Geo.PassFold", "Verified.Geo.Enrich", "Verified.Geo.DayChain"]],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
 	["LEAN_HSMM / compare-assemble", under("Verified.Hsmm")],
 	["LEAN_RAIL (waived)", under("Verified.Rail")],

@@ -1897,6 +1897,11 @@ export async function computeVelocityFromInputs(
 				if (!isGenericStayLabel(stay.place)) return stay;
 				const resolved = await bestPlace(inputs.osm, stay.centroidLat, stay.centroidLon, { preferResidential: true });
 				const placeName = resolved ? placeLabel(resolved) : stay.place;
+				foldCapture?.recordSleepPlace({
+					lat: stay.centroidLat,
+					lon: stay.centroidLon,
+					label: resolved ? placeName : null,
+				});
 				return { ...stay, place: placeName };
 			}),
 		),
@@ -1915,21 +1920,40 @@ export async function computeVelocityFromInputs(
 	// hospital-stay case. Confidence comes from constraint, not data
 	// volume. See infer-empty-day.ts. Days that aren't bracketed stay
 	// blank (genuinely unknown).
+	// The inputs the Lean chain replays. Bound here rather than at each return
+	// site so both arms record the SAME closure — the empty-day arm returns a
+	// real timeline, and a capture that skipped it would compare the Lean chain
+	// against nothing on exactly the days with the least other evidence.
+	const downstreamInputs = {
+		morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+		prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+		rawSleep: rawSleep.map((w) => ({
+			startTs: w.startTs,
+			endTs: w.endTs,
+			tz: w.tz,
+			minutesAsleep: w.minutesAsleep,
+		})),
+		dayEndTs: bounds.endUtc,
+	};
+
 	if (states.length === 0 && points.length === 0) {
 		const inferred = await time(
 			"inferEmptyDay",
 			inferEmptyDayStatesFromBracket(inputs.emptyDayBracket, date, tz, inputs.osm),
 		);
-		if (inferred.length > 0)
+		if (inferred.length > 0) {
+			const episodes = buildEpisodes(inferred, withBiometrics, points, displayFixes);
+			foldCapture?.writeTail(downstreamInputs, inferred, episodes);
 			return {
 				points,
 				rawFixes: displayFixes,
 				segments: withBiometrics,
 				states: inferred,
-				episodes: buildEpisodes(inferred, withBiometrics, points, displayFixes),
+				episodes,
 				battery,
 				timing: phaseTimes,
 			};
+		}
 	}
 
 	// Dwell-prior continuation (#259): when the phone went quiet at a strong
@@ -1984,12 +2008,14 @@ export async function computeVelocityFromInputs(
 		console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
 	}
 
+	const episodes = buildEpisodes(finalStates, withBiometrics, points, displayFixes);
+	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);
 	return {
 		points,
 		rawFixes: displayFixes,
 		segments: withBiometrics,
 		states: finalStates,
-		episodes: buildEpisodes(finalStates, withBiometrics, points, displayFixes),
+		episodes,
 		battery,
 		timing: phaseTimes,
 	};

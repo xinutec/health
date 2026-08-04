@@ -1,10 +1,18 @@
 /**
- * CLI: does the Lean 38-pass fold produce what the TS cascade produced?
+ * CLI: does the Lean day produce what the TS pipeline produced?
  *
- * Task #424 built this as an experiment and #426 made it a gate. `Verified.Geo.
- * PassFold` wires all 38 passes of `src/geo/velocity.ts` (#419) and
- * `verified_cli day` executes them; this replays the golden corpus through both
- * arms and compares segment by segment.
+ * Task #424 built this as an experiment, #426 made it a gate, #429 widened it
+ * past the fold. `Verified.Geo.PassFold` wires all 38 passes of
+ * `src/geo/velocity.ts` (#419) and `Verified.Geo.DayChain` wires the six stages
+ * after them — sleep-place attribution, the state timeline, the dwell
+ * continuation, the episode geometry. `verified_cli day` executes both in one
+ * call; this replays the golden corpus through both arms and compares the
+ * segments, the states and the episodes.
+ *
+ * NOT the whole day. Everything upstream of the fold — quality filter, Kalman,
+ * segmentation, stay/walk splitting, the OSM enrichment stage — is still
+ * unchained, and `lean/experiments/lean-coverage.mts` counts what that leaves
+ * without any comparator.
  *
  * # Why it is a GATE and not a probe
  *
@@ -83,8 +91,8 @@
  * Needs the local golden fixtures (gitignored, real coordinates), so CI can
  * never run this — the deploy path is the only place it can gate.
  *
- *   pnpm run fold-gate                 # every golden day
- *   pnpm run fold-gate 2026-05-18      # one day
+ *   pnpm run day-gate                 # every golden day
+ *   pnpm run day-gate 2026-05-18      # one day
  *
  * Exit 0 = every day IDENTICAL or SHELL ONLY. Exit 1 = a divergence, a lookup
  * miss, or an unexpected shell. Exit 2 = no corpus.
@@ -98,7 +106,7 @@ import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import type { FoldCaptureFile } from "../lean/fold-capture.js";
-import { buildDayRequest, encodeSeg } from "../lean/fold-payload.js";
+import { buildDayRequest, encodeEpisode, encodeSeg, encodeState } from "../lean/fold-payload.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
 const ROOT = path.join(import.meta.dirname, "../..");
@@ -135,6 +143,81 @@ const SHELLED = new Set(["walkMatchedPath", "walkSmoothedPath", "matchedPath"]);
  *  would otherwise turn its fields into silent divergences on every day, and the
  *  gate would say "DIVERGED" about something nobody had wired. */
 const EXPECTED_UNFED = ["roadEnv", "walkEnv"];
+
+/** Episode kinds that only a solver can produce. With `walkEnv` / `roadEnv`
+ *  stubbed the Lean arm has no matched path, so the renderer falls back to raw
+ *  chords — and the episode says so in `kind`, which is geometry PROVENANCE.
+ *
+ *  MEASURED on 2026-05-18 rather than assumed: all six differing episodes were
+ *  `walking`, TS `matched` against Lean `raw`, with six `walkMatchedPath`
+ *  differences on the segments beneath them. Nothing else differed. */
+const SOLVER_KINDS = new Set(["matched", "smoothed"]);
+
+type Ep = { kind: string; points: unknown[] } & Record<string, unknown>;
+
+/** Whether an episode's geometry is the missing solver's absence: the TS arm
+ *  drew it with a solver kind and the Lean arm fell back to raw chords. */
+const isFallback = (a: Ep, b: Ep): boolean => SOLVER_KINDS.has(a.kind) && b.kind === "raw";
+
+/** Episodes, compared with TWO excuses, both measured and neither wider.
+ *
+ *  1. A FALLBACK episode — TS solver-drawn, Lean raw. Its `kind` and `points`
+ *     are the shell's absence. Every other field is still compared.
+ *
+ *  2. A CONNECTOR VERTEX INHERITED from one. A `tentative` episode bridges an
+ *     unobserved gap by joining its neighbours' drawn ends, so when the
+ *     neighbour was drawn by the missing matcher the joint moves with it.
+ *     Excused only for the specific vertex that equals that neighbour's
+ *     terminal vertex IN ITS OWN ARM — a connector whose interior or free end
+ *     moved is still a divergence.
+ *
+ *     MEASURED before it was written: on all four days where this fires
+ *     (2026-04-30, 06-15, 06-16, 07-17) the connector is two points, only the
+ *     first differs, and in BOTH arms it equals the previous episode's last
+ *     point, whose episode is a fallback.
+ *
+ *  Any other kind disagreement — `anchor` against `raw`, `tentative` against
+ *  `matched` — is real: the arms then disagree about what KIND of thing
+ *  happened, which no missing solver explains. */
+function diffEpisodes(want: unknown[], got: unknown[]): { real: string[]; fallback: number } {
+	const out: string[] = [];
+	if (want.length !== got.length) out.push(`episodes count: TS ${want.length}, Lean ${got.length}`);
+	const n = Math.min(want.length, got.length);
+	const A = want as Ep[];
+	const B = got as Ep[];
+	const counts = new Map<string, number>();
+	let fallback = 0;
+
+	/** Drop the vertices a neighbouring fallback moved, per arm. */
+	const trim = (eps: Ep[], i: number): unknown[] => {
+		const pts = [...eps[i].points];
+		const prev = eps[i - 1];
+		const next = eps[i + 1];
+		const inherited = (v: unknown, from: unknown): boolean => v !== undefined && canon(v) === canon(from);
+		if (next !== undefined && isFallback(A[i + 1], B[i + 1]) && inherited(pts.at(-1), next.points[0])) pts.pop();
+		if (prev !== undefined && isFallback(A[i - 1], B[i - 1]) && inherited(pts[0], prev.points.at(-1))) pts.shift();
+		return pts;
+	};
+
+	for (let i = 0; i < n; i++) {
+		const a = A[i];
+		const b = B[i];
+		const excused = isFallback(a, b);
+		if (excused) fallback += 1;
+		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+			if (excused && (k === "kind" || k === "points")) continue;
+			if (k === "points" && a.kind === "tentative" && b.kind === "tentative") {
+				if (canon(trim(A, i)) !== canon(trim(B, i))) counts.set(k, (counts.get(k) ?? 0) + 1);
+				continue;
+			}
+			if (canon(a[k]) !== canon(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
+		}
+	}
+	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
+		out.push(`episodes.${field}: ${c}/${n} differ`);
+	}
+	return { real: out, fallback };
+}
 
 /** Key-sorted JSON, because `JSON.stringify` is ORDER-SENSITIVE on objects and
  *  the two arms build `biometrics` field by field in their own orders. Comparing
@@ -279,7 +362,14 @@ async function measure(file: string): Promise<Outcome> {
 		};
 	}
 
-	const res = JSON.parse(raw) as { segs?: unknown[]; changed?: string[]; unfed?: string[]; error?: string };
+	const res = JSON.parse(raw) as {
+		segs?: unknown[];
+		states?: unknown[];
+		episodes?: unknown[];
+		changed?: string[];
+		unfed?: string[];
+		error?: string;
+	};
 	if (res.error) return { date, verdict: "ERROR", detail: `Lean arm: ${res.error}` };
 
 	const unfed = [...(res.unfed ?? [])].sort();
@@ -288,16 +378,26 @@ async function measure(file: string): Promise<Outcome> {
 	}
 
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
+	// The stages after the fold, compared in the same call and on the same terms.
+	// Prefixed so a `place` difference in the timeline is not confused with one in
+	// a segment — they are different records at different points in the pipeline.
+	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? []).map((d) => `states.${d}`);
+	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? []);
+	const all = [...diffs, ...states, ...eps.real];
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
-	const real = diffs.filter((d) => !SHELLED.has(d.split(":")[0]));
+	const real = all.filter((d) => !SHELLED.has(d.split(":")[0]));
+	const shell = [
+		...all.filter((d) => !real.includes(d)),
+		...(eps.fallback > 0 ? [`episodes drawn raw for want of a matcher: ${eps.fallback}`] : []),
+	];
 	return {
 		date,
-		verdict: diffs.length === 0 ? "IDENTICAL" : real.length === 0 ? "SHELL ONLY" : "DIVERGED",
+		verdict: real.length > 0 ? "DIVERGED" : shell.length === 0 ? "IDENTICAL" : "SHELL ONLY",
 		// Real divergences first — a shell difference must never push one off the line.
 		detail:
-			diffs.length === 0
-				? `${res.changed?.length ?? 0} passes fired`
-				: [...real, ...diffs.filter((d) => !real.includes(d))].slice(0, 6).join("; "),
+			real.length === 0 && shell.length === 0
+				? `${res.changed?.length ?? 0} passes fired, ${res.states?.length ?? 0} states, ${res.episodes?.length ?? 0} episodes`
+				: [...real, ...shell].slice(0, 6).join("; "),
 	};
 }
 
@@ -327,7 +427,7 @@ for (const [v, c] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`  ${v.
 
 const failed = outcomes.filter((o) => o.verdict !== "IDENTICAL" && o.verdict !== "SHELL ONLY");
 if (failed.length > 0) {
-	console.error(`\nFOLD GATE RED: ${failed.length} day(s) — ${failed.map((f) => f.date).join(", ")}`);
+	console.error(`\nDAY GATE RED: ${failed.length} day(s) — ${failed.map((f) => f.date).join(", ")}`);
 	process.exit(1);
 }
-console.log("\nfold gate green: the Lean fold matches the TS cascade on every field it owns");
+console.log("\nday gate green: the Lean day matches the TS pipeline on every field it owns");
