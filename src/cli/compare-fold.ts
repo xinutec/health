@@ -1,9 +1,34 @@
 /**
- * Does the Lean fold produce what the TS cascade produced?
+ * CLI: does the Lean 38-pass fold produce what the TS cascade produced?
  *
- * Task #424 step 3. `Verified.Geo.PassFold` wires all 38 passes (#419) and
- * `verified_cli day` executes them (#424 step 1) — this is the first run
- * against real days, with the golden corpus as the oracle.
+ * Task #424 built this as an experiment and #426 made it a gate. `Verified.Geo.
+ * PassFold` wires all 38 passes of `src/geo/velocity.ts` (#419) and
+ * `verified_cli day` executes them; this replays the golden corpus through both
+ * arms and compares segment by segment.
+ *
+ * # Why it is a GATE and not a probe
+ *
+ * Nothing else in the repo asks whether a Lean port still matches the TS it
+ * ports. Twice that cost a real day to notice: `pickBestStation` was stale
+ * against the #373 fix (found by reading, #417), and the underground trio was
+ * five commits and ~300 lines behind (found by a fold abort on the first real
+ * day it ran, #425). The alternative considered was a timestamp sweep — flag any
+ * `Verified/**.lean` older than a `src/**.ts` its docstring names — which
+ * over-reports badly: a TS commit touching a file need not touch the ported
+ * function, and 12 of the modules flagged that way were mostly fine.
+ *
+ * Running both arms on real days is the honest signal. A lookup MISS names the
+ * key the fold asked about and the TS did not; a field difference names the
+ * field.
+ *
+ * # The bar is ABSOLUTE, not a ratchet
+ *
+ * Unlike `walk-gate` and the golden truth rows, there is no blessed baseline to
+ * drift against. Every day must be IDENTICAL or SHELL ONLY, where SHELL ONLY
+ * means the ONLY differing fields are the three the declared solver shells
+ * produce. A ratchet would let a divergence be blessed in, and a divergence
+ * between two implementations of one algorithm is not a measurement to record —
+ * it is one of them being wrong.
  *
  * # How a day is measured
  *
@@ -18,8 +43,8 @@
  *
  * Both arms therefore start from the same input and answer from the same
  * lookups. What is left is the computation, which is the point: the wire format
- * was sized first (0.35 MiB/day steady state) so that this measurement would not
- * be a measurement of the bridge.
+ * was sized first (0.35 MiB/day steady state) so that this would not be a
+ * measurement of the bridge.
  *
  * # Why the lookups are RECORDED and not read from `osmTrace`
  *
@@ -55,25 +80,30 @@
  * fields one callback writes is that callback, and that is how the `reenrich`
  * class was identified and then closed by porting it (`Verified.Geo.Enrich`).
  *
- * Run: npx tsx lean/experiments/passfold-parity.mts [date …]
+ * Needs the local golden fixtures (gitignored, real coordinates), so CI can
+ * never run this — the deploy path is the only place it can gate.
+ *
+ *   pnpm run fold-gate                 # every golden day
+ *   pnpm run fold-gate 2026-05-18      # one day
+ *
+ * Exit 0 = every day IDENTICAL or SHELL ONLY. Exit 1 = a divergence, a lookup
+ * miss, or an unexpected shell. Exit 2 = no corpus.
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { inputsFromFixture, parseCapturedDay } from "../../src/cli/fixture-day.js";
-import type { ClassificationInputs } from "../../src/geo/classification-inputs.js";
-import type { OsmTrace } from "../../src/geo/osm-adapter-recording.js";
-import { computeVelocityFromInputs } from "../../src/geo/velocity.js";
-import type { FoldCaptureFile } from "../../src/lean/fold-capture.js";
-import { buildDayRequest, encodeSeg } from "../../src/lean/fold-payload.js";
+import type { ClassificationInputs } from "../geo/classification-inputs.js";
+import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+import { computeVelocityFromInputs } from "../geo/velocity.js";
+import type { FoldCaptureFile } from "../lean/fold-capture.js";
+import { buildDayRequest, encodeSeg } from "../lean/fold-payload.js";
+import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const DAYS_DIR = path.join(ROOT, "tests/golden/days");
 const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
-
-const only = new Set(process.argv.slice(2));
 
 interface Outcome {
 	date: string;
@@ -87,15 +117,24 @@ interface Outcome {
  *  `PassFold.Env.walkEnv` / `.roadEnv` are declared SHELLS — the street-network
  *  reads and every solver leaf are stubbed (`fun _ _ _ => none`), because the
  *  matchers are the 4.31 MiB/day the wire measurement deliberately left
- *  shell-side (`passfold-env-size.mts`). The passes still RUN; handed no
- *  matcher they write nothing.
+ *  shell-side (`lean/experiments/passfold-env-size.mts`). The passes still RUN;
+ *  handed no matcher they write nothing.
  *
  *  Reported, never hidden: a day whose only differences are these gets its own
  *  verdict and still prints them. Anything outside this set is a divergence.
  *
  *  `snappedPath` is deliberately NOT here: `railSnap` reads `railRouteCache`,
- *  which the payload does supply, so that one has to match. */
+ *  which the payload does supply, so that one has to match. Nor are the fields
+ *  `reenrich` used to leave unwritten — it is fed now (`Verified.Geo.Enrich`),
+ *  and a difference in `refinedMode` / `wayName` / `refinedReason` /
+ *  `roadCorridorFraction` is a real one again. */
 const SHELLED = new Set(["walkMatchedPath", "walkSmoothedPath", "matchedPath"]);
+
+/** The `Env` callbacks the `day` mode does not feed, as the CLI reports them.
+ *  Checked rather than assumed: a shell added to `PassFold.Env` and left unfed
+ *  would otherwise turn its fields into silent divergences on every day, and the
+ *  gate would say "DIVERGED" about something nobody had wired. */
+const EXPECTED_UNFED = ["roadEnv", "walkEnv"];
 
 /** Key-sorted JSON, because `JSON.stringify` is ORDER-SENSITIVE on objects and
  *  the two arms build `biometrics` field by field in their own orders. Comparing
@@ -138,13 +177,19 @@ function diffSegs(want: unknown[], got: unknown[]): string[] {
 }
 
 /**
- * Wrap the four spatial lookups so every answer this run gives is recorded,
+ * Wrap the five spatial lookups so every answer this run gives is recorded,
  * keyed exactly as `RecordingOsmAdapter` keys them (`lat|lon|radius`, the radius
  * empty when the caller passed none) so `fold-payload.ts` reads it unchanged.
  *
- * The other trace sections are copied from the fixture: `stationsOnLine` and
- * `reverseGeocode` are what `RowSetOsmAdapter` itself delegates to the trace, so
- * for those the trace IS the oracle both arms use.
+ * `stationsOnLine` is copied from the fixture rather than recorded: the row-set
+ * adapter delegates it to the trace unless the row set carries rail lines, so
+ * for that one the trace IS the oracle both arms read.
+ *
+ * `reverseGeocode` is delegated the same way and recorded anyway. The fold
+ * reaches it through `reenrichSplitWalks`, and if the Lean arm re-enriches a leg
+ * the TS arm did not, recording makes that a MISS on a key the run never asked
+ * for — where a copied trace would answer it and the extra re-enrichment would
+ * vanish into a field diff.
  */
 function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace {
 	const rec: OsmTrace = {
@@ -154,10 +199,6 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 		linesAtPoint: {},
 		reverseGeocode: {},
 		nearbyTransitStops: {},
-		// NOT recorded, carried: `RowSetOsmAdapter` delegates this one to the
-		// trace unless the row set carries rail lines, so the trace is the oracle
-		// the TS arm reads too. Recording it would work equally, but copying says
-		// which sections are answered from where.
 		stationsOnLine: fixture.stationsOnLine,
 	};
 	const key = (lat: number, lon: number, r: number | undefined): string => `${lat}|${lon}|${r ?? ""}`;
@@ -187,12 +228,6 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 		(rec.nearbyTransitStops as Record<string, unknown>)[key(lat, lon, r)] = v;
 		return v;
 	};
-	// RECORDED although the row-set adapter delegates it to the trace anyway, so
-	// the trace would serve as the oracle. Recording is still the stronger
-	// choice: the fold reaches `reverseGeocode` through `reenrichSplitWalks`, and
-	// if the Lean arm re-enriches a leg the TS arm did not, that shows up as a
-	// MISS on a key the run never asked for — where a copied trace would answer
-	// it and the extra re-enrichment would vanish into a field diff.
 	const geo = osm.reverseGeocode.bind(osm);
 	osm.reverseGeocode = async (lat, lon, zoom?) => {
 		const v = await geo(lat, lon, zoom);
@@ -202,25 +237,12 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 	return rec;
 }
 
-const outcomes: Outcome[] = [];
-
-for (const file of readdirSync(DAYS_DIR)
-	.filter((f) => f.endsWith(".json"))
-	.sort()) {
+async function measure(file: string): Promise<Outcome> {
 	const date = file.slice(0, 10);
-	if (only.size > 0 && !only.has(date)) continue;
-
 	const captured = parseCapturedDay(readFileSync(path.join(DAYS_DIR, file), "utf8"));
 	const capDir = mkdtempSync(path.join(tmpdir(), "foldcap-"));
 	process.env.FOLD_CAPTURE = capDir;
 
-	// Record what THIS run's adapter answers, rather than reading the fixture's
-	// `osmTrace`. Under `"rows"` the adapter computes the four spatial lookups
-	// from raw OSM rows and can answer any coordinate, while the trace is a
-	// fixed record from an older capture — so a trace-built table gives the Lean
-	// arm a smaller oracle than the TS arm used, and misses that say nothing
-	// about the port (#428). Same principle as `fold-capture.ts`: record the
-	// answer that was actually given.
 	const inputs = inputsFromFixture(captured, "rows");
 	const answers = recordingOsm(inputs, captured.inputs.osmTrace);
 
@@ -231,8 +253,7 @@ for (const file of readdirSync(DAYS_DIR)
 		if (written.length === 0) throw new Error("cascade wrote no capture (did it return early?)");
 		cap = JSON.parse(readFileSync(path.join(capDir, written[0]), "utf8")) as FoldCaptureFile;
 	} catch (e) {
-		outcomes.push({ date, verdict: "ERROR", detail: `TS arm: ${(e as Error).message}` });
-		continue;
+		return { date, verdict: "ERROR", detail: `TS arm: ${(e as Error).message}` };
 	} finally {
 		// `delete`, not `= undefined`: assigning to `process.env` coerces, so
 		// `undefined` would leave the literal string "undefined" and the next
@@ -240,11 +261,10 @@ for (const file of readdirSync(DAYS_DIR)
 		delete process.env.FOLD_CAPTURE;
 	}
 
-	const req = buildDayRequest(cap, captured, answers);
 	let raw: string;
 	try {
 		raw = execFileSync(CLI, ["day"], {
-			input: JSON.stringify(req),
+			input: JSON.stringify(buildDayRequest(cap, captured, answers)),
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
 			encoding: "utf8",
@@ -252,23 +272,25 @@ for (const file of readdirSync(DAYS_DIR)
 	} catch (e) {
 		const err = e as { stderr?: string };
 		const panic = (err.stderr ?? "").split("\n").find((l) => l.includes("uncaptured"));
-		outcomes.push({
+		return {
 			date,
 			verdict: panic ? "LOOKUP MISS" : "ERROR",
 			detail: panic ?? (err.stderr ?? "").split("\n")[0] ?? "no stderr",
-		});
-		continue;
+		};
 	}
 
-	const res = JSON.parse(raw) as { segs?: unknown[]; changed?: string[]; error?: string };
-	if (res.error) {
-		outcomes.push({ date, verdict: "ERROR", detail: `Lean arm: ${res.error}` });
-		continue;
+	const res = JSON.parse(raw) as { segs?: unknown[]; changed?: string[]; unfed?: string[]; error?: string };
+	if (res.error) return { date, verdict: "ERROR", detail: `Lean arm: ${res.error}` };
+
+	const unfed = [...(res.unfed ?? [])].sort();
+	if (canon(unfed) !== canon([...EXPECTED_UNFED].sort())) {
+		return { date, verdict: "ERROR", detail: `unfed callbacks changed: ${unfed.join(", ") || "(none)"}` };
 	}
+
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
 	const real = diffs.filter((d) => !SHELLED.has(d.split(":")[0]));
-	outcomes.push({
+	return {
 		date,
 		verdict: diffs.length === 0 ? "IDENTICAL" : real.length === 0 ? "SHELL ONLY" : "DIVERGED",
 		// Real divergences first — a shell difference must never push one off the line.
@@ -276,8 +298,22 @@ for (const file of readdirSync(DAYS_DIR)
 			diffs.length === 0
 				? `${res.changed?.length ?? 0} passes fired`
 				: [...real, ...diffs.filter((d) => !real.includes(d))].slice(0, 6).join("; "),
-	});
+	};
 }
+
+const only = new Set(process.argv.slice(2));
+const files = readdirSync(DAYS_DIR)
+	.filter((f) => f.endsWith(".json"))
+	.filter((f) => only.size === 0 || only.has(f.slice(0, 10)))
+	.sort();
+if (files.length === 0) {
+	console.error(only.size === 0 ? "no golden corpus — capture one first" : "no fixture for the requested date(s)");
+	process.exit(2);
+}
+
+const started = Date.now();
+const outcomes: Outcome[] = [];
+for (const file of files) outcomes.push(await measure(file));
 
 // Every outcome, not just the ones that produced segments. The misses were the
 // silent ones, and a miss key is the whole finding — printing only the days
@@ -286,5 +322,12 @@ for (const o of outcomes) console.log(`${o.date}  ${o.verdict.padEnd(11)} ${o.de
 
 const tally = new Map<string, number>();
 for (const o of outcomes) tally.set(o.verdict, (tally.get(o.verdict) ?? 0) + 1);
-console.log(`\n=== ${outcomes.length} day(s) ===`);
+console.log(`\n=== ${outcomes.length} day(s) in ${Math.round((Date.now() - started) / 1000)}s ===`);
 for (const [v, c] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`  ${v.padEnd(11)} ${c}`);
+
+const failed = outcomes.filter((o) => o.verdict !== "IDENTICAL" && o.verdict !== "SHELL ONLY");
+if (failed.length > 0) {
+	console.error(`\nFOLD GATE RED: ${failed.length} day(s) — ${failed.map((f) => f.date).join(", ")}`);
+	process.exit(1);
+}
+console.log("\nfold gate green: the Lean fold matches the TS cascade on every field it owns");

@@ -95,11 +95,29 @@ $DEV pnpm run verify
 # {user}`, so it became enforceable and could convict a leg) rather than any
 # decoder change. Harmless in the end, but nothing would have said so. Ordered
 # last of the three because it is the newest and the noisiest.
+#
+# fold-gate joined on 2026-08-04 (#426). It is the only thing in the repo that
+# asks whether a Lean port has drifted from the TS it ports, and until it existed
+# nothing did: `pickBestStation` went stale against #373 and was found by reading
+# (#417); the underground trio went five commits and ~300 lines behind and was
+# found by a fold abort on the first real day it ran (#425). The alternative — a
+# timestamp sweep flagging any `Verified/**.lean` older than a `src/**.ts` its
+# docstring names — over-reports: a TS commit touching a file need not touch the
+# ported function.
+#
+# Its bar is ABSOLUTE, not a ratchet: every day IDENTICAL or SHELL ONLY, no
+# baseline to bless a divergence into. Verified red as well as green — a TS-only
+# change to the enricher's sample count reddens it on the first two days tried,
+# and reddens it as a LOOKUP MISS naming the coordinate, which is the localised
+# signal rather than a downstream field diff.
+#
+# 48 s for 33 days, so its place in this list is not a cost question.
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
-	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard"
+	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean fold parity"
 	$DEV pnpm run golden
 	$DEV pnpm run walk-gate
 	$DEV pnpm run score-decoder
+	$DEV pnpm run fold-gate
 	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
 	# by a gate. Everything above runs with all seven flags `off`, so a broken
 	# bridge, a divergence, or a tenant that never ran could all ship — the arm
