@@ -14,6 +14,7 @@ import Verified.Geo.Bus
 import Verified.Geo.PlaceOverride
 import Verified.Geo.TransitPlace
 import Verified.Geo.BiometricWindows
+import Verified.Geo.BiometricLabels
 /-!
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
@@ -173,6 +174,9 @@ sides, unlike the two `Int` conversions above. -/
 def Env.biomSteps (e : Env) : List Verified.Geo.BiometricWindows.StepPoint :=
   (e.steps.map fun s => ⟨s.ts, s.steps⟩).toList
 
+def Env.labelFixes (e : Env) : List Verified.Geo.BiometricLabels.Fix :=
+  (e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩).toList
+
 /-! ### The line lookup, three ways
 
 `stationsOnLine` is one mirror read, and three passes want three shapes of its
@@ -331,6 +335,14 @@ def passes (e : Env) : Array Pass := #[
       (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
       e.nearbyWays),
 
+  -- Second cadence-drive revert. The FIRST runs before the rail passes exist,
+  -- so a platform interchange sandwiched between two rides saw `driving`
+  -- neighbours and survived. Those neighbours are `train` now, so an isolated
+  -- walking-pace flip between two trains reverts to the walk it is. A real
+  -- drive to a station is untouched: it is not pedestrian-paced.
+  ("revertIsolatedCadence2", fun segs =>
+    Verified.Geo.BiometricLabels.revertIsolatedCadenceDrivesApplied segs.toList),
+
   -- Absorb a platform / concourse wait into the boarding of its train run, so
   -- a station wait doesn't surface as a standalone stay mislabelled with the
   -- nearest focus place.
@@ -364,6 +376,15 @@ def passes (e : Env) : Array Pass := #[
   ("interchangeSplit", fun segs =>
     Verified.Geo.Interchange.spliceInterchanges segs e.interchangeFixes e.interchangeSteps
       (fun lat lon r => (e.linesAtPoint lat lon r).toList) e.interchangeStations),
+
+  -- A "stationary" stop the watch shows was a walk-through: a clear per-minute
+  -- step burst coinciding with real GPS translation. Runs HERE, after every
+  -- rail and drive absorber has claimed the segments it owns, so this only
+  -- touches genuine standalone phantom stops. The ONLY pass that changes the
+  -- segment COUNT by merging, so it carries a merge plan as well as decisions.
+  ("walkThrough", fun segs =>
+    Verified.Geo.BiometricLabels.applyStationaryWalkThroughApplied
+      segs.toList e.biomSteps e.labelFixes),
 
   -- A short walk between two train legs sharing a station is the
   -- platform-to-platform change, not a street walk — name it the station so a
@@ -557,8 +578,9 @@ private def NO_LOOKUPS : Env :=
 -- before it fails as a wrong day.
 #guard passNames NO_LOOKUPS ==
   #["stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
-    "railRuns", "undergroundRail", "boardingPlatform", "interchange", "driveStops",
-    "railReconcile", "mergeSameRouteTrains", "interchangeSplit", "interchangeLabel",
+    "railRuns", "undergroundRail", "revertIsolatedCadence2", "boardingPlatform",
+    "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
+    "interchangeSplit", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
     "rideHeadClaim", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
@@ -609,7 +631,7 @@ def unported (e : Env) : Array String :=
 -- solver leaves the env does not hold yet; one needs a `biometrics` field on the
 -- shared segment record, which is a schema change and not wiring.
 #guard unported NO_LOOKUPS ==
-  #["revertIsolatedCadence2", "walkThrough", "reenrichSplitWalks", "roadMatch", "walkMatch"]
+  #["reenrichSplitWalks", "roadMatch", "walkMatch"]
 
 #guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
 
@@ -854,6 +876,17 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 #guard fires MIX "repairHandoff" #[dr 100 200, tr 200 400 (some "X → Y · Metropolitan Line")]
 -- A day ending on a ride nobody placed: `driving` is a claim, `vehicle` is not.
 #guard fires MIX "vehicleIdentity" #[st 0 600, dr 600 1200]
+-- A cadence flip with no vehicular context on either side. The tag stays; only
+-- the mode reverts, which is why `isCadenceFlip` tests `refinedMode` too.
+private def flipped (a b : Int) : Seg :=
+  { startTs := a, endTs := b, mode := "walking", refinedMode := some "driving"
+    refinedKinds := #["low-cadence"], avgSpeed := 4, pointCount := 50 }
+#guard fires MIX "revertIsolatedCadence2" #[wk 0 600, flipped 600 1200, wk 1200 1800]
+-- …and the SAME flip beside a real drive is kept: a slow leg between two rides
+-- is the ride, and the pass exists to spare it. Without this the revert could
+-- fire unconditionally and the guard above would not notice.
+#guard !fires MIX "revertIsolatedCadence2" #[dr 0 600, flipped 600 1200, wk 1200 1800]
+
 -- A train run whose route is in the cache gets the track drawn on it.
 #guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]
 -- Any segment a fix covers gets a zone. `tzAt` answers Amsterdam and `homeTz`
@@ -921,20 +954,29 @@ private def byLat : Env :=
   == some "south"
 
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
-below shows they act. Each needs a fixture shaped to its own gate — the two
-rail annotators want line/stop data the synthetic lookups above do not carry,
-and the three edge passes want a cadence-and-pace profile at a segment boundary
-this track does not produce. Named rather than counted, so the residue is the
-work rather than a number. -/
+above shows they act. Each needs a fixture shaped to its own gate, and they fall
+into three groups:
+
+* `railRuns`, `undergroundRail`, `interchangeSplit` want line and stop data the
+  synthetic lookups do not carry — `interchangeSplit` in particular needs
+  endpoint line sets that are DISJOINT, which one uniform `linesAtPoint` cannot
+  produce.
+* `vehicleArrival`, `vehicleEdgeShed`, `rideHeadClaim`, `walkThrough` want a
+  cadence-and-pace profile at a segment boundary this track does not have: a
+  step burst coinciding with real translation, or its absence.
+* `busEvidence`, `busRoutes` want mid-leg dwells — a stop pattern, not a
+  constant-speed line.
+
+Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
   #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
-    "interchangeSplit", "busEvidence", "busRoutes"]
+    "interchangeSplit", "busEvidence", "busRoutes", "walkThrough"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 25
+#guard witnessed.size == 26
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

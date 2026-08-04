@@ -286,12 +286,9 @@ def statsOver (points : Array PointF) (startTs endTs : Int) : Stats :=
     let peak := fixes.foldl (init := fixes[0]!.speedKmh) fun m p => max m p.speedKmh
     ⟨Int.ofNat fixes.size, jsRound (sum / n * 10) / 10, jsRound (peak * 10) / 10⟩
 
-/-- `existing ? [...existing, kind] : [kind]` — the TS `addRefinedKind`. Lean's
-`refinedKinds` is a plain `Array` because the pipeline's readers collapse
-`undefined` and `[]`, and both branches of the TS produce the same list, so the
-push is faithful for either. -/
-def addRefinedKind (existing : Array String) (kind : String) : Array String :=
-  existing.push kind
+/-- Moved to `Verified.Geo.SegmentMerge`, beside the record whose field it
+writes, now that the biometric label appliers need it too. -/
+abbrev addRefinedKind := Verified.Geo.SegmentMerge.addRefinedKind
 
 private def SPLIT_REASON : String :=
   "split at a turnaround: the leg doubles back on itself, so it is two rides with a change between them"

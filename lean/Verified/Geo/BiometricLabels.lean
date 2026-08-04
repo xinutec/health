@@ -344,6 +344,70 @@ def applyStationaryWalkThrough (segments : List LabelSeg) (stepPoints : List Ste
   let modes := (segments.zip decisions).map fun (s, d) => modeAfter s d
   ⟨decisions, walkingRuns modes⟩
 
+/-! ## Applying a verdict
+
+The port used to stop at the DECISION and leave the record-writing in the
+shell (`applyDecision` / `rebuildWalkThrough` in `src/lean/lean-biometric-labels.ts`).
+That split was deliberate — decisions in Lean, sequencing in the shell — and it
+had one consequence its own comment named: those two functions were the only
+code that CONSTRUCTED a segment from a Lean verdict, and the only part no
+`#guard` could reach.
+
+`Verified.Geo.PassFold` needs the pass whole, so they are ported here. The shell
+keeps its copies for the shadow comparison; when the fold serves, they go. -/
+
+/-- Apply a verdict the way the TS passes write it: the mode becomes the refined
+mode, the reason is APPENDED to any existing one rather than replacing it, and a
+tag is added when the verdict carries one.
+
+Note the tag is never REMOVED — a reverted cadence flip still carries
+`"low-cadence"`, which is why {@link isCadenceFlip} also tests `refinedMode`. -/
+def applyDecision (s : LabelSeg) : Decision → LabelSeg
+  | .keep => s
+  | .flip mode reason kind =>
+    let reasoned := match s.refinedReason with
+      | some r => s!"{r}; {reason}"
+      | none => reason
+    let out := { s with refinedMode := some mode, refinedReason := some reasoned }
+    match kind with
+    | none => out
+    | some k => { out with refinedKinds := Verified.Geo.SegmentMerge.addRefinedKind s.refinedKinds k }
+
+/-- Apply a plan: decide, drop the stay label off anything flipped, then collapse
+each `[start, end)` run the way `mergeAdjacentWalking` does — the run's first
+segment takes the last's `endTs`, the summed `pointCount`, the max `maxSpeed`
+and the first REAL `wayName`.
+
+"Real" is the TS's truthiness test, so an empty string does not count as a name
+and is replaced by a later leg's. Written out rather than `.isNone`, because the
+two differ exactly on the leg whose enrichment failed and left `""`. -/
+def rebuildWalkThrough (segments : List LabelSeg) (plan : WalkThroughPlan) : Array LabelSeg :=
+  let decided := ((segments.zip plan.decisions).map fun (s, d) =>
+    match d with
+    | .keep => s
+    | flip => { applyDecision s flip with place := none, city := none }).toArray
+  (plan.runs.map fun (start, stop) => Id.run do
+    let mut first := decided[start]!
+    for i in [start + 1 : stop] do
+      let seg := decided[i]!
+      first := { first with
+        endTs := seg.endTs
+        pointCount := first.pointCount + seg.pointCount
+        maxSpeed := max first.maxSpeed seg.maxSpeed
+        wayName := if first.wayName.getD "" == "" && seg.wayName.getD "" != ""
+                   then seg.wayName else first.wayName }
+    return first).toArray
+
+/-- `revertIsolatedCadence2`, whole: decide, then write. -/
+def revertIsolatedCadenceDrivesApplied (segments : List LabelSeg) : Array LabelSeg :=
+  ((segments.zip (revertIsolatedCadenceDrives segments)).map
+    fun (s, d) => applyDecision s d).toArray
+
+/-- `walkThrough`, whole: decide, drop the stay labels, merge. -/
+def applyStationaryWalkThroughApplied (segments : List LabelSeg) (stepPoints : List StepPoint)
+    (points : List Fix := []) : Array LabelSeg :=
+  rebuildWalkThrough segments (applyStationaryWalkThrough segments stepPoints points)
+
 /-! ## Guards
 
 Two kinds, and they fail differently. The `fx` and `walkingRuns` guards pin

@@ -147,6 +147,16 @@ def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 /-- Whether a segment carries a refinement tag — `hasRefinedKind`. -/
 def hasRefinedKind (s : Seg) (kind : String) : Bool := s.refinedKinds.contains kind
 
+/-- `existing ? [...existing, kind] : [kind]` — the TS `addRefinedKind`. Lean's
+`refinedKinds` is a plain `Array` because the pipeline's readers collapse
+`undefined` and `[]`, and both branches of the TS produce the same list, so the
+push is faithful for either.
+
+Beside `hasRefinedKind` and not in the pass that first needed it: two passes
+write tags now, and the field they write belongs to this record. -/
+def addRefinedKind (existing : Array String) (kind : String) : Array String :=
+  existing.push kind
+
 /-- Fixes inside a segment's window. INCLUSIVE both ends, the pipeline's
 dominant convention (`samplesInWindow`). -/
 def samplesInWindow (fixes : Array Fix) (startTs endTs : Int) : Array Fix :=
