@@ -168,21 +168,40 @@ function localDayMinute(tsUnix: number, tz: string): { dayIdx: number; minuteOfD
 }
 
 /**
+ * The stay's minutes as `(dayIdx, minuteOfDay)` in the venue's local timezone —
+ * every minute of `[startUnix, endUnix)`, or the single instant at `startUnix`
+ * for a zero-length window.
+ *
+ * Exported because it is the whole of what the Lean port cannot do:
+ * `Verified.Geo.OpeningHours` decides open-vs-closed, but instant → local
+ * `(weekday, minute)` is tzdata, so `fold-payload.ts` calls THIS to put the
+ * resolved pairs on the wire. One implementation, called twice — a second one
+ * in the encoder would be a second thing to drift, and a disagreement there
+ * would read as a divergence in the venue scorer.
+ */
+export function localStaySamples(startUnix: number, endUnix: number, tz: string): [number, number][] {
+	if (endUnix <= startUnix) {
+		const { dayIdx, minuteOfDay } = localDayMinute(startUnix, tz);
+		return [[dayIdx, minuteOfDay]];
+	}
+	const out: [number, number][] = [];
+	for (let t = startUnix; t < endUnix; t += 60) {
+		const { dayIdx, minuteOfDay } = localDayMinute(t, tz);
+		out.push([dayIdx, minuteOfDay]);
+	}
+	return out;
+}
+
+/**
  * Fraction of the stay `[startUnix, endUnix)` during which the venue is
  * open, sampled per minute in the venue's local timezone. A zero-length
  * window is evaluated as the instant at its start. Returns a value in [0, 1].
  */
 export function openFractionDuring(spec: WeekSpec, startUnix: number, endUnix: number, tz: string): number {
-	if (endUnix <= startUnix) {
-		const { dayIdx, minuteOfDay } = localDayMinute(startUnix, tz);
-		return isOpenAt(spec, dayIdx, minuteOfDay) ? 1 : 0;
-	}
+	const samples = localStaySamples(startUnix, endUnix, tz);
 	let open = 0;
-	let total = 0;
-	for (let t = startUnix; t < endUnix; t += 60) {
-		const { dayIdx, minuteOfDay } = localDayMinute(t, tz);
+	for (const [dayIdx, minuteOfDay] of samples) {
 		if (isOpenAt(spec, dayIdx, minuteOfDay)) open++;
-		total++;
 	}
-	return open / total;
+	return open / samples.length;
 }

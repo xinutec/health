@@ -47,9 +47,12 @@
 import type { CapturedDay } from "../cli/fixture-day.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
+import { localStaySamples } from "../geo/opening-hours.js";
 import type { NominatimResult } from "../geo/osm.js";
 import { DEFAULT_RADIUS_M } from "../geo/osm.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
+import type { VenueTypeStats } from "../geo/venue-prior.js";
+import { localHourOf } from "../geo/venue-prior.js";
 import type { DayState } from "../sleep/day-state.js";
 
 /** `reverseGeocode`'s `zoom = 18` default, so a trace key that omitted it records
@@ -217,6 +220,43 @@ function table2<T>(section: Record<string, T> | undefined, map: (v: T) => unknow
  *
  *  Only the five address fields `extractCity` reads cross. The rest of a
  *  `NominatimResult` belongs to the venue namers, which the fold does not run. */
+/** A Nominatim result, whole.
+ *
+ *  It used to be the five city-like address fields only, because the one Lean
+ *  consumer was `extractCity`. `Verified.Geo.BestPlace` reads the rest — the
+ *  venue keys it names a stay after, the address it falls back to, the
+ *  `displayName` it takes the first comma-part of — so the projection became a
+ *  lie and the whole response crosses now. */
+function encodeGeocode(v: NominatimResult): unknown {
+	const a = v.address;
+	return {
+		displayName: v.displayName,
+		type: v.type,
+		category: v.category,
+		amenity: optStr(a.amenity),
+		tourism: optStr(a.tourism),
+		leisure: optStr(a.leisure),
+		shop: optStr(a.shop),
+		building: optStr(a.building),
+		houseNumber: optStr(a.house_number),
+		road: optStr(a.road),
+		pedestrian: optStr(a.pedestrian),
+		neighbourhood: optStr(a.neighbourhood),
+		suburb: optStr(a.suburb),
+		stateDistrict: optStr(a.state_district),
+		city: optStr(a.city),
+		town: optStr(a.town),
+		village: optStr(a.village),
+		municipality: optStr(a.municipality),
+	};
+}
+
+/** One mined venue-type row. The counts are fractional — soft attribution
+ *  contributes partial visits — so all three cross as bit patterns. */
+function venueStats(s: VenueTypeStats): unknown {
+	return { visits: bits(s.visits), dwell: s.dwell.map(bits), hours: s.hours.map(bits) };
+}
+
 function geocodeTable(section: Record<string, NominatimResult | null> | undefined): unknown[] {
 	const out: unknown[] = [];
 	for (const [k, v] of Object.entries(section ?? {})) {
@@ -226,15 +266,7 @@ function geocodeTable(section: Record<string, NominatimResult | null> | undefine
 			bits(n[0]),
 			bits(n[1]),
 			n.length >= 3 ? n[2] : NOMINATIM_DEFAULT_ZOOM,
-			v === null
-				? null
-				: {
-						stateDistrict: optStr(v.address.state_district),
-						city: optStr(v.address.city),
-						town: optStr(v.address.town),
-						village: optStr(v.address.village),
-						municipality: optStr(v.address.municipality),
-					},
+			v === null ? null : encodeGeocode(v),
 		]);
 	}
 	return out;
@@ -327,6 +359,22 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 				p.uniqueDays,
 			]),
 
+			// Mined visit-shape priors, the third input to the venue ranking. `null`
+			// when nothing has been mined — which is not "no evidence about this
+			// venue" but "no evidence about ANY venue", so `rankVenues` drops the
+			// whole shape term rather than scoring every candidate at a base rate.
+			venuePriors:
+				inputs.venuePriors == null
+					? null
+					: {
+							bySubtype: Object.entries(inputs.venuePriors.bySubtype).map(([k, s]) => [k, venueStats(s)]),
+							byCategory: Object.entries(inputs.venuePriors.byCategory).map(([k, s]) => [
+								k,
+								venueStats(s as VenueTypeStats),
+							]),
+							totalVisits: bits(inputs.venuePriors.totalVisits),
+						},
+
 			knownPlaces: inputs.knownPlaces.map((p) => [p.id, bits(p.centroidLat), bits(p.centroidLon)]),
 			focusPlaceDays: inputs.knownPlaces.map((p) => [p.id, p.uniqueDays]),
 			hsmmPlaces: inputs.knownPlaces.map((p) => [
@@ -387,19 +435,39 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 					v.map((s) => [s.name, bits(s.lat), bits(s.lon)]),
 				]),
 				reverseGeocode: geocodeTable(t.reverseGeocode),
-				// The sleep-stay label re-resolution — `bestPlace(preferResidential)`
-				// composed with `placeLabel`, asked per stay centroid. Keyed on the
-				// two coordinates because that is all the call varies by.
-				sleepPlace: (cap.sleepPlace ?? []).map((q) => [bits(q.lat), bits(q.lon), q.label]),
+				// The landmark ring `bestPlace` ranks. On the wire as of #430,
+				// when the naming stopped being a shell.
+				nearbyLandmarks: table3(t.nearbyLandmarks, DEFAULT_RADIUS_M.nearbyLandmarks, (v) =>
+					v.map((l) => ({
+						name: l.name,
+						type: l.type,
+						subtype: l.subtype,
+						distanceM: bits(l.distanceM),
+						openingHours: optStr(l.openingHours),
+						enclosing: l.enclosing === true,
+					})),
+				),
 				// The two the adapter never saw — see `fold-capture.ts`.
 				tzAt: cap.tzAt.map((q) => [bits(q.lat), bits(q.lon), q.tz]),
+				// The stay CONTEXT of each naming question, not its answer. Lean
+				// computes the label now; what it cannot compute is the venue-local
+				// clock, so the shell resolves the stay's minutes and its midpoint
+				// hour and sends those. `localStaySamples` is the pipeline's own
+				// function, called a second time rather than reimplemented.
 				bestPlace: cap.bestPlace.map((q) => [
 					bits(q.lat),
 					bits(q.lon),
 					q.startTs,
 					q.endTs,
+					// Still in the key even though nothing downstream reads it: the
+					// zone is what the two derived fields were resolved AGAINST, and
+					// a key that dropped it would answer a different question with
+					// the same spelling if the pass ever asked at two zones.
 					q.tz,
-					q.label === null ? null : { label: q.label, city: q.city },
+					localStaySamples(q.startTs, q.endTs, q.tz),
+					// `(start + end) / 2`, NOT floored — `shapeScore` does not floor
+					// it either, and `new Date(x * 1000)` takes the half-second.
+					localHourOf((q.startTs + q.endTs) / 2, q.tz),
 				]),
 			},
 		},

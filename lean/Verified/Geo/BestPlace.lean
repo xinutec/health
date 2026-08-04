@@ -42,6 +42,27 @@ reads.
 That is a smaller shell than "the answer": the shell now supplies WHEN, and
 Lean decides WHAT.
 
+## Which arm the golden corpus actually reaches
+
+MEASURED, not assumed, and the answer is uncomfortable enough to write down:
+
+* the **no-stay** arm runs on 5 of 33 days — 13 questions in total, all through
+  `DayChain`'s sleep-place attribution (2026-04-29, 04-30, 05-14, 05-25, 06-15);
+* the **stay** arm — the venue-plausibility ranking, and with it the mined
+  priors and every opening-hours path — runs on NO day. Its only caller in the
+  chained region is `consolidateJitterStays`, and no golden day contains the
+  jitter-demoted run that pass needs.
+
+So `rankVenues`, `shapeScore` and `parseOpeningHours` are IMPORTED by the gate
+and executed by nothing in it. The `#guard`s below are their only executable
+check, which is a weaker claim than the fold's and is why it is stated here
+rather than left to be inferred from a green run.
+
+This also means replacing the shell changed no golden output: the tables the
+shell used to answer from were empty on every day, because the question was
+never asked. A green corpus is therefore evidence about the no-stay arm and
+about nothing else.
+
 ## Truthiness, twice, and they disagree
 
 `hasSpecificVenue` tests `!!(a.amenity || a.tourism || a.leisure || a.shop)`,
@@ -239,21 +260,28 @@ def placeLabel (r : Result) : String :=
 
 /-! ## The chain -/
 
-/-- Everything the shell answered for one `bestPlace` question.
+/-- Everything the shell answers for one `bestPlace` question.
 
-`area` is the zoom-16 geocode. The TS fetches it LAZILY, at the bottom of the
-chain, so most calls never ask — but a recorded table cannot be lazy, and
-asking for it eagerly would put a question on the wire the run never asked and
-turn it into a MISS. It is therefore `Option`, and `none` means "the run did not
-reach the fall-through", which the chain below treats exactly as Nominatim
-returning nothing. -/
+`geocode` is a FUNCTION of the zoom rather than two resolved fields, and that is
+load-bearing. The TS asks zoom 18 up front and zoom 16 only at the bottom of the
+chain, so most calls never make the second request. A recorded lookup table
+answers by key and PANICS on a key the run never asked about (`LEAN_ABORT_ON_PANIC`,
+#428) — which is the behaviour we want, because Lean reaching the fall-through
+where the TS did not is exactly the kind of wiring divergence a field diff would
+not localise. Resolving both zooms eagerly would fire that panic on every call
+instead. Keeping it a function puts the zoom-16 application inside the branch
+that needs it, so the two arms ask the same questions or the gate says so. -/
 structure Reads where
   landmarks : List Poi
-  detailed : Option Result
-  area : Option Result := none
+  /-- `osm.reverseGeocode(lat, lon, zoom)` at this coordinate. -/
+  geocode : Int → Option Result
   /-- The stay's minutes as `(weekday, minute-of-day)` in the VENUE's tz. -/
   samples : List (Nat × Nat) := []
-  deriving Inhabited
+
+/-- The zoom the venue naming asks for first — a building-level result. -/
+def DETAIL_ZOOM : Int := 18
+/-- The fall-through zoom: a square, a park, a neighbourhood. -/
+def AREA_ZOOM : Int := 16
 
 /--
 `bestPlace`, whole.
@@ -268,7 +296,7 @@ enables the two overrides an overnight stay needs.
 def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option Result :=
   let landmarks := reads.landmarks.map (toLandmark reads.samples stay.isSome)
-  let detailed := reads.detailed
+  let detailed := reads.geocode DETAIL_ZOOM
   -- `bestLandmark` and `nominatimWon` are the two `let`s the TS threads through
   -- the chain; they are computed here and read below.
   let (bestLandmark, nominatimWon) : Option Landmark × Bool :=
@@ -298,31 +326,34 @@ def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePr
 
   if bestLandmark.any (·.enclosing) then
     some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed)
-  else match detailed with
-  | some d =>
-    if hasSpecificVenue d && (if stay.isSome then nominatimWon else true) then some d
-    else rest bestLandmark detailed reads.area preferResidential landmarks
-  | none => rest bestLandmark detailed reads.area preferResidential landmarks
+  else if detailed.any (fun d => hasSpecificVenue d && (if stay.isSome then nominatimWon else true))
+    then detailed
+  else rest bestLandmark detailed reads.geocode preferResidential landmarks
 where
-  /-- The tail of the chain, shared by both arms of the `detailed` match above.
-  Split out only because Lean has no early `return` here; the ORDER is the TS's
-  and is load-bearing — the lodging override must beat the residential address,
-  and both must beat the landmark. -/
-  rest (bestLandmark : Option Landmark) (detailed area : Option Result)
-      (preferResidential : Bool) (landmarks : List Landmark) : Option Result :=
+  /-- The tail of the chain. Split out only because Lean has no early `return`;
+  the ORDER is the TS's and is load-bearing — the lodging override must beat the
+  residential address, and both must beat the landmark. -/
+  rest (bestLandmark : Option Landmark) (detailed : Option Result)
+      (geocode : Int → Option Result) (preferResidential : Bool)
+      (landmarks : List Landmark) : Option Result :=
     if preferResidential then
       match pickLodgingOverride landmarks with
       | some lodging => some (withAddressFrom (landmarkToResult lodging) detailed)
-      | none => afterLodging bestLandmark detailed area preferResidential
-    else afterLodging bestLandmark detailed area preferResidential
-  afterLodging (bestLandmark : Option Landmark) (detailed area : Option Result)
-      (preferResidential : Bool) : Option Result :=
+      | none => afterLodging bestLandmark detailed geocode preferResidential
+    else afterLodging bestLandmark detailed geocode preferResidential
+  /-- `geocode AREA_ZOOM` is applied HERE and nowhere earlier — this is the only
+  branch the TS asks it on, and asking it sooner would put a request on the wire
+  the run never made. -/
+  afterLodging (bestLandmark : Option Landmark) (detailed : Option Result)
+      (geocode : Int → Option Result) (preferResidential : Bool) : Option Result :=
     if preferResidential && detailed.any hasResidentialAddress then detailed
     else match bestLandmark with
     | some bl => some (withAddressFrom (landmarkToResult bl) detailed)
     | none =>
       if detailed.any hasResidentialAddress then detailed
-      else match area with
+      else
+        let area := geocode AREA_ZOOM
+        match area with
         | some ar => if hasSpecificVenue ar || isLandmarkResult ar then some ar
                      else detailed.orElse fun _ => area
         | none => detailed
@@ -425,40 +456,50 @@ One case per branch, with a stay so the plausibility arm runs. -/
 
 private def stay : StayShape := { startUnix := 0, endUnix := 3600, localHour := 13 }
 
+/-- A `geocode` from two fixed answers. The shell's real one is a recorded table
+that PANICS on a key the run never asked about, so WHICH zoom the chain applies
+it to is observable there and not here: these guards pin the decisions, and the
+day gate pins the question set (a LOOKUP MISS names the coordinate). -/
+private def geo (detail area : Option Result) : Int → Option Result :=
+  fun z => if z == DETAIL_ZOOM then detail else if z == AREA_ZOOM then area else none
+
 -- An enclosing institution outranks everything, and takes the detailed address.
 private def hospital : Poi :=
   { name := "UCLH", type := "amenity", subtype := "hospital", distanceM := 40, enclosing := true }
-#guard (bestPlace { landmarks := [hospital, poi "Costa" "amenity" "cafe" 5], detailed := some detailedAddr }
-  (some stay) none false).map placeLabel == some "UCLH (hospital)"
+private def enclosingReads : Reads :=
+  { landmarks := [hospital, poi "Costa" "amenity" "cafe" 5], geocode := geo (some detailedAddr) none }
+#guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "UCLH (hospital)"
 
 -- No landmarks and no geocode names nothing at all.
-#guard bestPlace { landmarks := [], detailed := none } (some stay) none false == none
+private def emptyReads : Reads := { landmarks := [], geocode := geo none none }
+#guard bestPlace emptyReads (some stay) none false == none
 
 -- No landmarks, a specific-venue geocode: with a stay the Nominatim candidate
 -- must WIN the ranking to be returned, and unopposed it does.
-#guard (bestPlace { landmarks := [], detailed := some (res "cafe" "amenity" { A with amenity := some "Costa" }) }
-  (some stay) none false).map placeLabel == some "Costa (cafe)"
+private def costaOnly : Reads :=
+  { landmarks := [], geocode := geo (some (res "cafe" "amenity" { A with amenity := some "Costa" })) none }
+#guard (bestPlace costaOnly (some stay) none false).map placeLabel == some "Costa (cafe)"
 
 -- A landmark beats a non-venue geocode and inherits its address.
 private def streetGeocode : Result := res "house" "building" { A with road := some "Lower Belgrave Street" }
 private def landmarkVsStreet : Reads :=
-  { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], detailed := some streetGeocode }
+  { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], geocode := geo (some streetGeocode) none }
 #guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare (restaurant)"
 
 -- Nothing nearby, a residential geocode: the address is the honest label.
 private def downing : Result :=
   res "house" "building" { A with houseNumber := some "10", road := some "Downing Street" }
-private def addressOnly : Reads := { landmarks := [], detailed := some downing }
+private def addressOnly : Reads := { landmarks := [], geocode := geo (some downing) none }
 #guard (bestPlace addressOnly none none false).map placeLabel == some "Downing Street 10"
 
 -- The fall-through: no landmark, no residential address, and the zoom-16 area
 -- names a square.
 private def square : Result := res "square" "place" { A with pedestrian := some "Granary Square" }
-private def areaSquare : Reads := { landmarks := [], detailed := none, area := some square }
+private def areaSquare : Reads := { landmarks := [], geocode := geo none (some square) }
 #guard (bestPlace areaSquare none none false).map placeLabel == some "Granary Square (square)"
 
 -- …and when the area names nothing either, `detailed ?? area` still answers.
-private def areaNothing : Reads := { landmarks := [], detailed := none, area := some (res "" "boundary" A) }
+private def areaNothing : Reads := { landmarks := [], geocode := geo none (some (res "" "boundary" A)) }
 #guard (bestPlace areaNothing none none false).map placeLabel == some "Somewhere"
 
 -- `preferResidential`: an overnight stay 5 m from a guesthouse slept AT the
@@ -469,7 +510,7 @@ private def guesthouse : Poi := { name := "Sea View", type := "tourism", subtype
 private def nearerCafe : Poi := { name := "Beach Cafe", type := "amenity", subtype := "cafe", distanceM := 2 }
 private def residential : Result :=
   res "house" "building" { A with houseNumber := some "12", road := some "Marine Parade" }
-private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], detailed := some residential }
+private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], geocode := geo (some residential) none }
 #guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View (guest_house)"
 #guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe (cafe)"
 

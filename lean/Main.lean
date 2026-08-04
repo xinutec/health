@@ -1349,16 +1349,75 @@ private def parseWay (j : Json) : Except String Verified.Geo.Factors.NearbyWay :
     distanceM := ← optBits j "distanceM"
   }
 
-/-- The Nominatim address fields the city extractor reads. Everything else in the
-response belongs to the venue namers, which are not in the fold's path. -/
-private def parseAddress (j : Json) : Except String Verified.Geo.Enrich.Address := do
+/-- A Nominatim reverse-geocode, whole.
+
+It used to decode the five city-like fields only, because `extractCity` was the
+one consumer. `Verified.Geo.BestPlace` reads the rest, so the projection went
+away on both sides at once (#430) — a decoder narrower than the encoder would
+silently drop the venue keys the naming turns on. -/
+private def parseGeoResult (j : Json) : Except String Verified.Geo.BestPlace.Result := do
   return {
-    stateDistrict := ← optStr j "stateDistrict"
-    city := ← optStr j "city"
-    town := ← optStr j "town"
-    village := ← optStr j "village"
-    municipality := ← optStr j "municipality"
+    displayName := ← (← j.getObjVal? "displayName").getStr?
+    type := ← (← j.getObjVal? "type").getStr?
+    category := ← (← j.getObjVal? "category").getStr?
+    address := {
+      amenity := ← optStr j "amenity"
+      tourism := ← optStr j "tourism"
+      leisure := ← optStr j "leisure"
+      shop := ← optStr j "shop"
+      building := ← optStr j "building"
+      houseNumber := ← optStr j "houseNumber"
+      road := ← optStr j "road"
+      pedestrian := ← optStr j "pedestrian"
+      neighbourhood := ← optStr j "neighbourhood"
+      suburb := ← optStr j "suburb"
+      stateDistrict := ← optStr j "stateDistrict"
+      city := ← optStr j "city"
+      town := ← optStr j "town"
+      village := ← optStr j "village"
+      municipality := ← optStr j "municipality"
+    }
   }
+
+/-- One Overpass landmark, as `bestPlace` ranks them. `openingHours` is the RAW
+tag: `Verified.Geo.BestPlace.toLandmark` parses it against the stay's samples,
+because the fraction is a function of both and only the pair is meaningful. -/
+private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
+  return {
+    name := ← (← j.getObjVal? "name").getStr?
+    type := ← (← j.getObjVal? "type").getStr?
+    subtype := ← (← j.getObjVal? "subtype").getStr?
+    distanceM := ← jBits (← j.getObjVal? "distanceM")
+    openingHours := ← optStr j "openingHours"
+    enclosing := ← optBool j "enclosing" false
+  }
+
+private def parseVenueStats (j : Json) : Except String Verified.Geo.VenuePrior.VenueTypeStats := do
+  return {
+    visits := ← jBits (← j.getObjVal? "visits")
+    dwell := (← (← optArr j "dwell").mapM jBits).toList
+    hours := (← (← optArr j "hours").mapM jBits).toList
+  }
+
+/-- The mined visit-shape priors, or `none` when nothing has been mined.
+
+Association lists rather than maps, and in the encoder's order: `shapeScore`
+reads the subtype universe's SIZE off `bySubtype`, so the collection is data and
+not just an index. -/
+private def parseVenuePriors (j : Json) :
+    Except String (Option Verified.Geo.VenuePrior.VenuePriors) := do
+  match j.getObjVal? "venuePriors" with
+  | .error _ => pure none
+  | .ok v =>
+    if v.isNull then pure none else do
+      let pair := fun (e : Json) => do
+        let a ← e.getArr?
+        return (← (← nth a 0).getStr?, ← parseVenueStats (← nth a 1))
+      return some {
+        bySubtype := (← (← optArr v "bySubtype").mapM pair).toList
+        byCategory := (← (← optArr v "byCategory").mapM pair).toList
+        totalVisits := ← jBits (← v.getObjVal? "totalVisits")
+      }
 
 /-- `[latBits, lonBits, zoom, address|null]`.
 
@@ -1370,13 +1429,13 @@ on for no gain.
 `null` is a RESULT — Nominatim resolving nothing — and is stored as such, so a
 key present with a null answer is not a miss. -/
 private def entryGeo (j : Json) :
-    Except String (String × Option Verified.Geo.Enrich.Address) := do
+    Except String (String × Option Verified.Geo.BestPlace.Result) := do
   let a ← j.getArr?
   let lat ← jBits (← nth a 0)
   let lon ← jBits (← nth a 1)
   let zoom ← (← nth a 2).getInt?
   let ans ← match a[3]? with
-    | some v => if v.isNull then pure none else some <$> parseAddress v
+    | some v => if v.isNull then pure none else some <$> parseGeoResult v
     | none => pure none
   return (s!"{lat.toBits}|{lon.toBits}|{zoom}", ans)
 
@@ -1404,29 +1463,29 @@ private def entryS (parse : Json → Except String α) (j : Json) : Except Strin
   let a ← j.getArr?
   return (← (← nth a 0).getStr?, ← parse (← nth a 1))
 
-/-- `[latBits, lonBits, startTs, endTs, tz, {label, city?}|null]` — the venue
-re-resolution `consolidateJitterStays` delegates, its only caller. Keyed on all
-five arguments because it is asked per merged stay, and two stays at one
-centroid with different windows are different questions.
+/-- `[latBits, lonBits, startTs, endTs, tz, samples, localHour]` — the stay
+CONTEXT of one naming question, keyed on all five arguments because it is asked
+per merged stay and two stays at one centroid with different windows are
+different questions.
 
-The fifth argument is the IANA zone, not a mode: the pass passes `tzAt cLat
-cLon` through, so the answer depends on it. `preferResidential` is not in the
-key because that call site fixes it; a second caller with a different setting
-would need it, and would collide silently without. -/
+It used to carry the ANSWER, `{label, city}`, because `bestPlace` was a shell.
+It is now `Verified.Geo.BestPlace`, so what crosses is the part Lean cannot
+compute: the stay's minutes and its midpoint hour resolved in the venue's zone.
+The zone stays in the KEY as well — it is what those two were resolved against,
+and a key without it would spell two different questions the same way. -/
 private def entryPlace (j : Json) :
-    Except String (String × Option Verified.Geo.SegmentMerge.ResolvedPlace) := do
+    Except String (String × (List (Nat × Nat) × Int)) := do
   let a ← j.getArr?
   let lat ← jBits (← nth a 0)
   let lon ← jBits (← nth a 1)
   let s ← (← nth a 2).getInt?
   let e ← (← nth a 3).getInt?
   let m ← (← nth a 4).getStr?
-  let ans ← match a[5]? with
-    | some v =>
-      if v.isNull then pure none
-      else pure (some ⟨← (← v.getObjVal? "label").getStr?, ← optStr v "city"⟩)
-    | none => pure none
-  return (s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{m}", ans)
+  let samples ← (← (← nth a 5).getArr?).mapM fun p => do
+    let q ← p.getArr?
+    return ((← (← nth q 0).getInt?).toNat, (← (← nth q 1).getInt?).toNat)
+  let localHour ← (← nth a 6).getInt?
+  return (s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{m}", (samples.toList, localHour))
 
 /-! ### The stages after the fold
 
@@ -1468,22 +1527,55 @@ private def parseDwellPlace (j : Json) :
   return ⟨← jBits (← nth a 0), ← jBits (← nth a 1), ← optF 2, ← optF 3, ← optI 4,
     ← (← nth a 5).getInt?⟩
 
-/-- `[latBits, lonBits, label|null]`. A null answer is the mirror resolving
-nothing, which is a RESULT — the TS keeps the focus-place label then. Stored as
-such, so a key present with a null answer never reads as a miss. -/
-private def entrySleepPlace (j : Json) : Except String (String × Option String) := do
-  let a ← j.getArr?
-  let k := k2 (← jBits (← nth a 0)) (← jBits (← nth a 1))
-  let ans ← match a[2]? with
-    | some v => if v.isNull then pure none else some <$> v.getStr?
-    | none => pure none
-  return (k, ans)
+/-- `nearbyLandmarks`' radius, fixed by `bestPlace`'s only call to it. A literal
+rather than a parameter for the same reason the TS writes it inline: the ring is
+the picker's, not the caller's. -/
+private def LANDMARK_RADIUS_M : Float := 100
+
+/-- The tables the venue naming reads, bound once and shared by the fold's
+`bestPlace` and the chain's `sleepPlace` — the same function at two call sites,
+which is why they are built here rather than twice. -/
+private structure Namer where
+  landmarksAt : Float → Float → Array Verified.Geo.BestPlace.Poi
+  geocodeAt : Float → Float → Int → Option Verified.Geo.BestPlace.Result
+  stayCtx : Float → Float → Int → Int → String → List (Nat × Nat) × Int
+  priors : Option Verified.Geo.VenuePrior.VenuePriors
+
+private def namerOf (j : Json) : Except String Namer := do
+  let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
+  let landmarks := mkMap (← (← optArr lk "nearbyLandmarks").mapM
+    (entry3 (fun v => do (← v.getArr?).mapM parsePoi)))
+  let geocodes := mkMap (← (← optArr lk "reverseGeocode").mapM entryGeo)
+  let stays := mkMap (← (← optArr lk "bestPlace").mapM entryPlace)
+  return {
+    landmarksAt := fun lat lon => hit landmarks "nearbyLandmarks" (k3 lat lon LANDMARK_RADIUS_M)
+    geocodeAt := fun lat lon zoom => hit geocodes "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}"
+    stayCtx := fun lat lon s e tz => hit stays "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{tz}"
+    priors := ← parseVenuePriors j
+  }
+
+/-- Name one coordinate.
+
+`stay` is `(startUnix, endUnix, tz)` when there is a window to weigh and `none`
+when there is not — the two arms of `bestPlace`. The stay-context lookup sits
+inside `Option.map`, so a `none` stay never applies the panicking table and a
+naming with no window cannot fail on a key it was never going to need. -/
+private def Namer.name (n : Namer) (lat lon : Float) (stay : Option (Int × Int × String))
+    (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
+  let ctx := stay.map fun (s, e, tz) => n.stayCtx lat lon s e tz
+  Verified.Geo.BestPlace.resolve
+    { landmarks := (n.landmarksAt lat lon).toList
+      geocode := n.geocodeAt lat lon
+      samples := (ctx.map (·.1)).getD [] }
+    (stay.map fun (s, e, _) =>
+      ({ startUnix := s, endUnix := e, localHour := (ctx.map (·.2)).getD 0 } :
+        Verified.Geo.VenuePrior.StayShape))
+    n.priors preferResidential
 
 private def parseChain (j : Json) (segs : Array Seg)
     (points : Array Shed.PointF) (display : Array Verified.Geo.WalkAnnotate.PedFix) :
     Except String Verified.Geo.DayChain.Env := do
-  let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
-  let sleepPlaces := mkMap (← (← optArr lk "sleepPlace").mapM entrySleepPlace)
+  let namer ← namerOf j
   return {
     segments := segs
     points := points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
@@ -1494,7 +1586,10 @@ private def parseChain (j : Json) (segs : Array Seg)
     dwellPlaces := ← (← optArr j "dwellPlaces").mapM parseDwellPlace
     sleep := (← (← optArr j "rawSleep").mapM parseRawSleep).toList
     dayEndTs := (← optInt j "dayEndTs").getD 0
-    sleepPlace := fun lat lon => (hit sleepPlaces "sleepPlace" (k2 lat lon))
+    -- `bestPlace(preferResidential: true)` composed with `placeLabel`, computed
+    -- rather than injected as of #430. No stay window: the sleep attribution
+    -- asks about a centroid, not about a visit.
+    sleepPlace := fun lat lon => (namer.name lat lon none true).map (·.label)
   }
 
 private def parseEnv (j : Json) : Except String Env := do
@@ -1509,8 +1604,7 @@ private def parseEnv (j : Json) : Except String Env := do
   let onLine := mkMap (← (← optArr lk "stationsOnLine").mapM
     (entryS (fun v => do (← v.getArr?).mapM parseLineStation)))
   let tz := mkMap (← (← optArr lk "tzAt").mapM (entry2 (·.getStr?)))
-  let places := mkMap (← (← optArr lk "bestPlace").mapM entryPlace)
-  let geocodes := mkMap (← (← optArr lk "reverseGeocode").mapM entryGeo)
+  let namer ← namerOf j
   -- Not under `lookups`: these two are columns and a derived series, not
   -- questions put to the OSM mirror, so a miss in them is not a capture gap.
   let days := mkMap (← (← optArr j "focusPlaceDays").mapM
@@ -1521,8 +1615,10 @@ private def parseEnv (j : Json) : Except String Env := do
   -- window the re-enrichment closure samples, and those must be the same series.
   let pts ← (← optArr j "points").mapM parsePointF
   let waysAt := fun lat lon => hit ways "nearbyWays" (k2 lat lon)
+  -- `enrichMovingSegment` reads only the city fields, so the full response is
+  -- narrowed here rather than at the table.
   let geocodeAt := fun (lat lon : Float) (zoom : Int) =>
-    hit geocodes "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}"
+    (namer.geocodeAt lat lon zoom).map (·.address)
   return {
     points := pts
     rawFixes := ← (← optArr j "rawFixes").mapM parseCoarse
@@ -1539,8 +1635,8 @@ private def parseEnv (j : Json) : Except String Env := do
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
-    bestPlace := fun lat lon s e m =>
-      hit places "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{m}"
+    -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
+    bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
     tzAt := fun lat lon => hit tz "tzAt" (k2 lat lon)
     homeTz := ← (← j.getObjVal? "homeTz").getStr?
     stationsOnLine := fun line => hit onLine "stationsOnLine" line

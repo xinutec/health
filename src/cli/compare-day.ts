@@ -289,6 +289,8 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 	const rec: OsmTrace = {
 		nearbyWays: {},
 		nearbyStations: {},
+		// Recorded as of #430: `bestPlace` is Lean now, so the landmarks it ranks
+		// have to cross the wire. Before that it was a shell and this stayed empty.
 		nearbyLandmarks: {},
 		linesAtPoint: {},
 		reverseGeocode: {},
@@ -302,6 +304,12 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 	osm.nearbyWays = async (lat, lon, r?) => {
 		const v = await ways(lat, lon, r);
 		rec.nearbyWays[key(lat, lon, r)] = v;
+		return v;
+	};
+	const landmarks = osm.nearbyLandmarks.bind(osm);
+	osm.nearbyLandmarks = async (lat, lon, r?) => {
+		const v = await landmarks(lat, lon, r);
+		rec.nearbyLandmarks[key(lat, lon, r)] = v;
 		return v;
 	};
 	const stations = osm.nearbyStations.bind(osm);
