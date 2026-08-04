@@ -1063,9 +1063,12 @@ shell re-impose the sequence, and then the sequence would not be under test.
     "env":  { …observations, day tables, lookup answer tables… },
     "trace": true|false }
 
-Two INPUTS, because there are two sub-chains: the OSM enrichment loop runs
-between `segsRaw`'s stage and `segsPre`'s and is not ported, so the second
-cannot be fed from the first.
+Still two INPUTS, and no longer because anything between them is unported —
+`Verified.Geo.EnrichFold` closed that gap (#430 B2). `segsPre` stays an input so
+the join is MEASURED before it is relied on: the enrichment stage's Lean output
+is returned as `segsEnriched` and compared against `segsPre`, while the
+corrections keep consuming the TS's. A single input would make that comparison
+the thing feeding itself.
 
 ### Why the lookups cross as answer tables
 
@@ -1267,6 +1270,34 @@ private def parseSleep (j : Json) : Except String Verified.Geo.BiometricWindows.
 private def parseKnownPlace (j : Json) : Except String Verified.Geo.SegmentMerge.KnownPlaceProjection := do
   let a ← j.getArr?
   return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2)⟩
+
+/-- `[id, latBits, lonBits, radiusBits, uniqueDaysBits, hourProfile|null,
+displayName|null, sleepHoursBits, amenityLabel|null]` — a mined `focus_places`
+row as the OSM enrichment stage reads it.
+
+The whole row rather than a projection, unlike `stayPlaces` and `dwellPlaces`
+beside it: the stationary branch scores the candidate and then branches its
+LABEL on three more fields of the SAME row in one decision, so a split would
+only give the halves somewhere to drift apart. -/
+private def parseNamedPlace (j : Json) : Except String Verified.Geo.StayEnrich.NamedPlace := do
+  let a ← j.getArr?
+  let profile ← match a[5]? with
+    | some v => if v.isNull then pure none else some <$> ((← v.getArr?).mapM jBits).map Array.toList
+    | none => pure none
+  let optS (i : Nat) : Except String (Option String) := match a[i]? with
+    | some v => if v.isNull then pure none else some <$> v.getStr?
+    | none => pure none
+  return {
+    cand := {
+      id := ← (← nth a 0).getInt?
+      centroidLat := ← jBits (← nth a 1)
+      centroidLon := ← jBits (← nth a 2)
+      radiusM := ← jBits (← nth a 3)
+      uniqueDays := ← jBits (← nth a 4)
+      hourProfile := profile }
+    displayName := ← optS 6
+    sleepHours := ← jBits (← nth a 7)
+    amenityLabel := ← optS 8 }
 
 private def parseHmmSeg (j : Json) : Except String Verified.Geo.PlaceOverride.HmmSeg := do
   return {
@@ -1768,6 +1799,23 @@ def dayResult (j : Json) : Json :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
         steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
     let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
+    -- The OSM enrichment stage itself, the piece that used to be the gap between
+    -- the two sub-chains (#430 B2). Chained to the splits above it: this stage's
+    -- input IS their output, and there is nothing unported in between any more.
+    let namer ← namerOf envJson
+    let enrichReads : Verified.Geo.EnrichFold.Reads :=
+      { ways := env.nearbyWays
+        -- The naming arms read the whole response; the moving arm reads only the
+        -- city fields, so the narrowing happens here rather than at the table.
+        geocode := fun lat lon zoom => (namer.geocodeAt lat lon zoom).map (·.address)
+        stations := env.nearbyStations
+        place := fun lat lon pref stay => namer.name lat lon stay pref
+        tzAt := env.tzAt }
+    let segsEnriched := Verified.Geo.EnrichFold.enrichFold enrichReads
+      { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
+        steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
+      (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
+      env.points segsSplit
     -- The five corrections that run between the OSM enrichment stage and pass 1
     -- (#430). Same argument as the fold's: they are one stage because the order
     -- is what is being measured — `revertIsolatedCadence` exists to undo the
@@ -1786,6 +1834,11 @@ def dayResult (j : Json) : Json :=
       -- The split stage's output — the earliest boundary, and the only one whose
       -- input is not another Lean stage's output.
       ("segsSplit", Json.arr (segsSplit.map segJson)),
+      -- The enrichment stage's output — the boundary that JOINS the two
+      -- sub-chains. Its input is the line above; its oracle is `segsPre`, which
+      -- is still the corrections' input below, so the join is measured before it
+      -- is relied on.
+      ("segsEnriched", Json.arr (segsEnriched.map segJson)),
       -- The corrections' output — the BOUNDARY the chain used to start at. Sent
       -- back so a divergence in the five stages is named where it happens
       -- rather than read off the fold's output dozens of decisions later.

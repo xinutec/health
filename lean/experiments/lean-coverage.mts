@@ -26,10 +26,11 @@
  *
  * Roots, and the gate each stands for:
  *
- *   SplitFold + PreFold + PassFold + Enrich + DayChain + BestPlace
+ *   SplitFold + EnrichFold + PreFold + PassFold + Enrich + DayChain + BestPlace
  *                       `pnpm run day-gate` — the biometric splits and the stay
- *                       bridge, the five corrections before the cascade, the 38
- *                       passes, and the stages after them
+ *                       bridge, the OSM enrichment loop, the five corrections
+ *                       before the cascade, the 38 passes, and the stages after
+ *                       them
  *                       (#424/#426/#429/#430). `BestPlace` is listed separately
  *                       because nothing in the chain IMPORTS it: `Main.lean`
  *                       composes it into the two callbacks the chain declares,
@@ -88,6 +89,7 @@ const GATES: [string, string[]][] = [
 		"day-gate",
 		[
 			"Verified.Geo.SplitFold",
+			"Verified.Geo.EnrichFold",
 			"Verified.Geo.PreFold",
 			"Verified.Geo.PassFold",
 			"Verified.Geo.Enrich",

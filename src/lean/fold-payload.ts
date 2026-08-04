@@ -387,6 +387,24 @@ export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers:
 							totalVisits: bits(inputs.venuePriors.totalVisits),
 						},
 
+			// The mined places a THIRD way, for the OSM enrichment stage (#430).
+			// Unlike the two above this is the whole row: the stationary branch scores
+			// a candidate on its geometry and its hour profile and then branches its
+			// LABEL on the same row's `displayName`, `sleepHours` and `amenityLabel`,
+			// in one decision. The fix series get projected per consumer because they
+			// are separate readers of one input; this is one reader of one row, and
+			// splitting it would only invite the halves to drift.
+			enrichPlaces: inputs.knownPlaces.map((p) => [
+				p.id,
+				bits(p.centroidLat),
+				bits(p.centroidLon),
+				bits(p.radiusM ?? 50),
+				bits(p.uniqueDays),
+				p.hourProfile === null ? null : p.hourProfile.map(bits),
+				optStr(p.displayName),
+				bits(p.sleepHours),
+				optStr(p.amenityLabel),
+			]),
 			knownPlaces: inputs.knownPlaces.map((p) => [p.id, bits(p.centroidLat), bits(p.centroidLon)]),
 			focusPlaceDays: inputs.knownPlaces.map((p) => [p.id, p.uniqueDays]),
 			hsmmPlaces: inputs.knownPlaces.map((p) => [

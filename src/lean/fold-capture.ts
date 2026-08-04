@@ -41,7 +41,6 @@ import path from "node:path";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { ModeStats } from "../geo/mode-biometrics.js";
-import type { JitterPlaceQuery } from "../geo/passes/stays.js";
 import type { TrackSegment } from "../geo/segments.js";
 import type { DayState } from "../sleep/day-state.js";
 
@@ -90,6 +89,23 @@ export interface DownstreamInputs {
 	dayEndTs: number;
 }
 
+/** A recorded `bestPlace` naming question asked at a stay WINDOW — the key, not
+ *  the answer. `Verified.Geo.BestPlace` computes the label now; what it cannot
+ *  compute is the venue-local clock, so `fold-payload.ts` resolves the stay's
+ *  minutes and its midpoint hour from these five and sends those.
+ *
+ *  Asked from TWO places — the OSM enrichment loop names every stay, and
+ *  `consolidateJitterStays` re-names a merged one — which is why this is its own
+ *  type rather than the jitter pass's `JitterPlaceQuery`. That one carries the
+ *  answer as well; the answer is not what crosses. */
+export interface StayPlaceQuery {
+	lat: number;
+	lon: number;
+	startTs: number;
+	endTs: number;
+	tz: string;
+}
+
 /** A recorded sleep-stay label re-resolution: `bestPlace(preferResidential)`
  *  composed with `placeLabel`, asked per stay centroid. A SHELL — venue naming
  *  against the mirror, the same class as the jitter pass's `bestPlace`. */
@@ -128,7 +144,7 @@ export interface FoldCaptureFile {
 	segsOut: EnrichedSegment[];
 	obs: FoldObservations;
 	tzAt: TzQuery[];
-	bestPlace: JitterPlaceQuery[];
+	bestPlace: StayPlaceQuery[];
 	/** Absent when the run ended between the fold and the day's return — the
 	 *  file is written twice for exactly that reason, so a throw in the tail
 	 *  leaves the fold half readable rather than losing the day. */
@@ -141,7 +157,7 @@ export interface FoldCaptureFile {
 
 export interface FoldCapture {
 	recordTz: (lat: number, lon: number, tz: string) => void;
-	recordBestPlace: (q: JitterPlaceQuery) => void;
+	recordBestPlace: (q: StayPlaceQuery) => void;
 	recordSleepPlace: (q: SleepPlaceQuery) => void;
 	write: (
 		date: string,
@@ -166,7 +182,7 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 	const dir = process.env.FOLD_CAPTURE;
 	if (!dir) return undefined;
 	const tzAt: TzQuery[] = [];
-	const bestPlace: JitterPlaceQuery[] = [];
+	const bestPlace: StayPlaceQuery[] = [];
 	const sleepPlace: SleepPlaceQuery[] = [];
 	let file: FoldCaptureFile | undefined;
 	const flush = (): void => {
@@ -178,8 +194,11 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 		recordTz: (lat, lon, tz) => {
 			tzAt.push({ lat, lon, tz });
 		},
-		recordBestPlace: (q) => {
-			bestPlace.push(q);
+		// Projected, not pushed whole: the jitter pass hands its own
+		// `JitterPlaceQuery`, which carries the ANSWER too, and the answer is
+		// exactly what stopped crossing when `bestPlace` became Lean (#430).
+		recordBestPlace: ({ lat, lon, startTs, endTs, tz }) => {
+			bestPlace.push({ lat, lon, startTs, endTs, tz });
 		},
 		recordSleepPlace: (q) => {
 			sleepPlace.push(q);

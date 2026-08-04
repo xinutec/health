@@ -57,6 +57,7 @@ import {
 	commonCity,
 	extractCity,
 	type NearbyWay,
+	type NominatimResult,
 	placeLabel,
 	refineMode,
 	rejectImplausibleDriving,
@@ -645,6 +646,15 @@ export async function computeVelocityFromInputs(
 	// work, etc.), pull it to the cluster centroid. Reduces GPS noise around
 	// well-known locations and stabilises both segment timing and labels.
 	const knownPlaces = inputs.knownPlaces;
+
+	// FOLD_CAPTURE=<dir> records what the stages below were handed and what they
+	// asked of the two callbacks no adapter sees, so the Lean day can be replayed
+	// against it (#424). `undefined` — and free — unless set.
+	//
+	// Built here rather than beside the cascade it was written for: the OSM
+	// enrichment loop asks `bestPlace` too (#430), and it runs long before.
+	const foldCapture = foldCaptureFromEnv();
+
 	const snapped =
 		knownPlaces.length > 0
 			? cleaned.map((p) => {
@@ -903,6 +913,37 @@ export async function computeVelocityFromInputs(
 		};
 	};
 
+	/**
+	 * Name a stay at a coordinate, weighing the visit's own window.
+	 *
+	 * The three arms that pass no `stay` call `bestPlace` directly — they ask the
+	 * resolver a different question and must not be spelled as this one with a
+	 * default.
+	 *
+	 * `tzLookup` is resolved at the coordinate being NAMED, not at the segment's
+	 * centroid: the snap arm names a stay at the mined place's stored coordinates,
+	 * so the venue-local clock is that place's. Recorded on the way past, because
+	 * `Verified.Geo.StayEnrich` computes the label but cannot compute the zone —
+	 * see `fold-capture.ts`. A throw leaves nothing recorded and the caller's
+	 * `catch` returns the stay unnamed, so the Lean arm sees a key it was never
+	 * asked to answer; that only reaches coordinates `tz-lookup` rejects.
+	 */
+	const stayPlace = async (
+		seg: EnrichedSegment,
+		lat: number,
+		lon: number,
+		preferResidential: boolean,
+	): Promise<NominatimResult | null> => {
+		const tz = tzLookup(lat, lon);
+		foldCapture?.recordTz(lat, lon, tz);
+		foldCapture?.recordBestPlace({ lat, lon, startTs: seg.startTs, endTs: seg.endTs, tz });
+		return bestPlace(inputs.osm, lat, lon, {
+			preferResidential,
+			stay: { startUnix: seg.startTs, endUnix: seg.endTs, tz },
+			priors: inputs.venuePriors ?? null,
+		});
+	};
+
 	const enrichStart = Date.now();
 	const enriched: EnrichedSegment[] = await mapLimit(refinedSegments, ENRICH_CONCURRENCY, async (seg, i) => {
 		// Synthetic gap segments (inferred-walking or `unknown`) carry
@@ -1010,11 +1051,7 @@ export async function computeVelocityFromInputs(
 						// the sleep gate misses — must show a neutral
 						// area/address, not a low-confidence nearby park.
 						const venueless = wp.amenityLabel === null;
-						const place = await bestPlace(inputs.osm, placeLat, placeLon, {
-							preferResidential: isResidential || venueless,
-							stay: { startUnix: seg.startTs, endUnix: seg.endTs, tz: tzLookup(placeLat, placeLon) },
-							priors: inputs.venuePriors ?? null,
-						});
+						const place = await stayPlace(seg, placeLat, placeLon, isResidential || venueless);
 						if (!place) return seg;
 						const city = extractCity(place);
 						return {
@@ -1030,11 +1067,7 @@ export async function computeVelocityFromInputs(
 				// stay somewhere new. Use the day's centroid and the
 				// per-stay overnight check to decide residential preference.
 				const preferResidential = isSleepWindow;
-				const place = await bestPlace(inputs.osm, cLat, cLon, {
-					preferResidential,
-					stay: { startUnix: seg.startTs, endUnix: seg.endTs, tz: tzLookup(cLat, cLon) },
-					priors: inputs.venuePriors ?? null,
-				});
+				const place = await stayPlace(seg, cLat, cLon, preferResidential);
 				if (!place) return seg;
 				const city = extractCity(place);
 				return {
@@ -1116,11 +1149,6 @@ export async function computeVelocityFromInputs(
 
 	const homeTz = inputs.homeTz;
 	const hmmDecode = inputs.hsmmDecode;
-
-	// FOLD_CAPTURE=<dir> records what the cascade below was handed and what it
-	// asked of the two callbacks no adapter sees, so the Lean fold can be
-	// replayed against it (#424). `undefined` — and free — unless set.
-	const foldCapture = foldCaptureFromEnv();
 
 	type RefinementPass = {
 		name: string;

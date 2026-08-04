@@ -2,40 +2,42 @@
  * CLI: does the Lean day produce what the TS pipeline produced?
  *
  * Task #424 built this as an experiment, #426 made it a gate, #429 widened it
- * past the fold, #430 widened it before. Four Lean stages run in ONE
+ * past the fold, #430 widened it before. FIVE Lean stages run in ONE
  * `verified_cli day` call:
  *
- *   `Verified.Geo.SplitFold`  the two biometric splits and the stay bridge,
- *                             between segmentation and the OSM enrichment loop
- *   `Verified.Geo.PreFold`    the five corrections between the OSM enrichment
- *                             stage and pass 1 — cadence, its revert, the
- *                             jitter demotion, the biometric signature, the
- *                             physical-impossibility override
- *   `Verified.Geo.PassFold`   all 38 passes of `src/geo/velocity.ts` (#419)
- *   `Verified.Geo.DayChain`   the six stages after them — sleep-place
- *                             attribution, the state timeline, the dwell
- *                             continuation, the episode geometry
+ *   `Verified.Geo.SplitFold`    the two biometric splits and the stay bridge,
+ *                               between segmentation and the OSM enrichment loop
+ *   `Verified.Geo.EnrichFold`   the OSM enrichment loop itself — the road naming
+ *                               on a moving leg, the five-rule cascade on a stay
+ *   `Verified.Geo.PreFold`      the five corrections between it and pass 1 —
+ *                               cadence, its revert, the jitter demotion, the
+ *                               biometric signature, the physical-impossibility
+ *                               override
+ *   `Verified.Geo.PassFold`     all 38 passes of `src/geo/velocity.ts` (#419)
+ *   `Verified.Geo.DayChain`     the six stages after them — sleep-place
+ *                               attribution, the state timeline, the dwell
+ *                               continuation, the episode geometry
  *
- * TWO sub-chains, not one. The last three are chained — each consumes what the
- * one before it produced. `SplitFold` is not chained to them, because the OSM
- * enrichment loop runs between its output and `PreFold`'s input and is not
- * ported. Each sub-chain therefore starts from what the TS arm actually handed
- * its first stage, which is the only honest option: feeding the split stage's
- * output into the corrections would skip the enrichment silently and compare the
- * corrections against segments no run ever produced.
+ * Still two sub-chains, and no longer because anything between them is unported.
+ * `EnrichFold` closed that gap (#430 B2): the first two ARE chained now, and
+ * `PreFold` still starts from the TS arm's `segsPre` so that the join is
+ * MEASURED — the `enrich.` boundary below compares the Lean enrichment's output
+ * against exactly what the corrections are being fed. Chaining the second half
+ * onto the first before that boundary is green would make the comparison feed
+ * itself.
  *
- * This replays the golden corpus through both arms and compares FIVE boundaries:
- * the split stage's output (`split.`), the corrections' (`pre.`), the fold's,
- * the states and the episodes. Four of the five are interior — measured even
- * though the arms rejoin nowhere, because within a sub-chain a difference at the
+ * This replays the golden corpus through both arms and compares SIX boundaries:
+ * the split stage's output (`split.`), the enrichment's (`enrich.`), the
+ * corrections' (`pre.`), the fold's, the states and the episodes. Five of the
+ * six are interior — measured because within a sub-chain a difference at the
  * earliest boundary explains every one below it, and comparing only the end
  * would report the explanation as the finding. Across the two sub-chains it does
- * not: a `split.` line is its own finding, not the cause of a `pre.` one.
+ * not: a `split.` line explains an `enrich.` one, and neither yet explains a
+ * `pre.` one.
  *
- * NOT the whole day. The quality filter, Kalman and segmentation upstream, and
- * the OSM enrichment stage in the middle, are still unchained, and
- * `lean/experiments/lean-coverage.mts` counts what that leaves without any
- * comparator.
+ * NOT the whole day. The quality filter, Kalman and segmentation upstream are
+ * still unchained, and `lean/experiments/lean-coverage.mts` counts what that
+ * leaves without any comparator.
  *
  * # Why it is a GATE and not a probe
  *
@@ -395,6 +397,7 @@ async function measure(file: string): Promise<Outcome> {
 
 	const res = JSON.parse(raw) as {
 		segsSplit?: unknown[];
+		segsEnriched?: unknown[];
 		segsMid?: unknown[];
 		segs?: unknown[];
 		states?: unknown[];
@@ -416,6 +419,12 @@ async function measure(file: string): Promise<Outcome> {
 	// `pre.` explains `segs.`. Listed first because it is earliest in the day, not
 	// because the ones below descend from it.
 	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? []).map((d) => `split.${d}`);
+	// The OSM enrichment stage — the boundary that JOINS the two sub-chains, and
+	// the only one whose Lean input is another Lean stage's output while its
+	// oracle is still the TS's. A `split.` line therefore explains an `enrich.`
+	// line, and neither yet explains a `pre.` one: the corrections still consume
+	// `segsPre`, so the join is measured before it is relied on.
+	const enrich = diffSegs(cap.segsPre.map(encodeSeg), res.segsEnriched ?? []).map((d) => `enrich.${d}`);
 	// The five corrections, compared at the boundary they used to start the chain
 	// at. Prefixed and listed FIRST because a difference here is upstream of
 	// everything below it: the fold consumed the Lean arm's own corrections, so a
@@ -428,7 +437,7 @@ async function measure(file: string): Promise<Outcome> {
 	// a segment — they are different records at different points in the pipeline.
 	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? []).map((d) => `states.${d}`);
 	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? []);
-	const all = [...split, ...pre, ...diffs, ...states, ...eps.real];
+	const all = [...split, ...enrich, ...pre, ...diffs, ...states, ...eps.real];
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
 	const real = all.filter((d) => !SHELLED.has(d.split(":")[0]));
 	const shell = [
