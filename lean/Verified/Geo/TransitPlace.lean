@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.TubeHop
 /-!
 # Transit continuity for place-naming (port of `src/geo/transit-place.ts`)
@@ -49,15 +50,10 @@ open Verified.Geo.TubeHop (NearbyStation)
 
 abbrev Mode := String
 
-/-- The segment fields these two rules read. `stationAtTrainAlight`'s TS
-parameter names only `mode` and `refinedMode`; the timestamps default so a
-caller can build the smaller shape, exactly as the structural type allows. -/
-structure Seg where
-  mode : Mode
-  refinedMode : Option Mode := none
-  startTs : Int := 0
-  endTs : Int := 0
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 def effMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
@@ -203,24 +199,30 @@ private def noStations (_lat _lon _r : Float) : Array NearbyStation := #[]
 
 /-! ### `stationAtTrainAlight` -/
 
+/-- `stationAtTrainAlight` reads the mode alone — its TS parameter names only
+`mode` and `refinedMode`. The window is what the shared record requires, not
+evidence this rule looks at. -/
+private def md (mode : Mode) (refinedMode : Option Mode := none) : Seg :=
+  { mode, refinedMode, startTs := 0, endTs := 0 }
+
 private def alight (prev : Option Seg)
     (lookup : Float → Float → Float → Array NearbyStation := two)
     (radiusM : Float := STATION_AT_ALIGHT_RADIUS_M) : Option String :=
   stationAtTrainAlight prev 51.5 (-0.2) lookup radiusM
 
 #guard alight none == none
-#guard alight (some { mode := "walking" }) == none
-#guard alight (some { mode := "train" }) == some "Near"
+#guard alight (some (md "walking")) == none
+#guard alight (some (md "train")) == some "Near"
 -- `refinedMode ?? mode`, both directions.
-#guard alight (some { mode := "driving", refinedMode := some "train" }) == some "Near"
-#guard alight (some { mode := "train", refinedMode := some "walking" }) == none
-#guard alight (some { mode := "train" }) noStations == none
-#guard alight (some { mode := "train" }) tie == some "First"
-#guard alight (some { mode := "train" }) beyond == none
+#guard alight (some (md "driving" (some "train"))) == some "Near"
+#guard alight (some (md "train" (some "walking"))) == none
+#guard alight (some (md "train")) noStations == none
+#guard alight (some (md "train")) tie == some "First"
+#guard alight (some (md "train")) beyond == none
 -- The radius test is INCLUSIVE at the bar.
-#guard alight (some { mode := "train" }) atRadius == some "Edge"
+#guard alight (some (md "train")) atRadius == some "Edge"
 -- The radius is a parameter, not a constant: the same station admits at 200 m.
-#guard alight (some { mode := "train" }) beyond 200 == some "Outside"
+#guard alight (some (md "train")) beyond 200 == some "Outside"
 
 /-! ### `stationAtTransitInterchange` -/
 

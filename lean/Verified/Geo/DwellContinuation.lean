@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.DayState
 /-!
 # Dwell-prior continuation (port of `src/geo/dwell-continuation.ts`)
@@ -116,12 +117,10 @@ structure DwellCandidate where
   uniqueDays : Int
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields this pass reads: a stay's centroid, present
-only once the enrichment has attached one. -/
-structure Seg where
-  centroidLat : Option Float := none
-  centroidLon : Option Float := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- A JS-truthy string: `""` is falsy, so it is dropped rather than inherited. -/
 private def truthy (s : Option String) : Option String :=
@@ -210,7 +209,10 @@ private def homeFocus : DwellCandidate :=
   { centroidLat := 51.5, centroidLon := -0.2,
     totalDwellSec := some 1080000, visitCount := some 30, uniqueDays := 30 }
 
-private def at' (lat lon : Float) : Seg := { centroidLat := some lat, centroidLon := some lon }
+/-- A stay carrying only a centroid. The window and mode are what the shared
+record requires, not what this pass reads — it looks at the centroid alone. -/
+private def noCentroid : Seg := { startTs := 0, endTs := 0, mode := "stationary" }
+private def at' (lat lon : Float) : Seg := { noCentroid with centroidLat := some lat, centroidLon := some lon }
 private def here : Array Seg := #[at' 51.5 (-0.2)]
 
 private def stay : DayState :=
@@ -252,13 +254,13 @@ private def bare : DayState := { startTs := 900000, endTs := 950000, mode := "st
 #guard run #[bare] == #[bare, cont 950000 974953 none none]
 
 -- The centroid is the LAST segment carrying one, not the last segment…
-#guard run #[stay] (here.push {}) == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
+#guard run #[stay] (here.push noCentroid) == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
 -- …and with two real centroids it is the LATER, which is what makes it the
 -- day's last stay: only that one is in reach, so taking the first would refuse.
 #guard run #[stay] #[at' 51.51 (-0.2), at' 51.5 (-0.2)]
   == #[stay, cont 950000 974953 (some "Home") (some "Europe/London")]
 -- BOTH coordinates are required — a half-populated centroid is not one.
-#guard run #[stay] #[{}, { centroidLat := some 51.5 }] == #[stay]
+#guard run #[stay] #[noCentroid, { noCentroid with centroidLat := some 51.5 }] == #[stay]
 
 -- The place match: within `max(120 m, radiusM)`, nearest wins, ties keep FIRST.
 private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   -- ~1.1 km

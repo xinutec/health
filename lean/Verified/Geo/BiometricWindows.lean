@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 /-!
 # Biometric window aggregations + the stay bridge
@@ -54,13 +55,10 @@ structure SleepStage where
   endTs : Int
   deriving Inhabited, BEq
 
-/-- The minimum segment shape these reductions read. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : String := "stationary"
-  pointCount : Nat := 0
-  deriving Inhabited, BEq
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 structure BiometricEnrichment where
   hrMean : Option Float
@@ -259,8 +257,8 @@ private def approxO : Option Float → Option Float → Bool
   | _, _ => false
 
 private def T0 : Int := 1778457600
-private def sg (startTs endTs : Int) (mode : String := "stationary") (pointCount : Nat := 10) : Seg :=
-  ⟨startTs, endTs, mode, pointCount⟩
+private def sg (startTs endTs : Int) (mode : String := "stationary") (pointCount : Int := 10) : Seg :=
+  { startTs, endTs, mode, pointCount }
 private def hp (ts : Int) (bpm : Float) : HrPoint := ⟨ts, bpm⟩
 private def sp (ts : Int) (steps : Float) : StepPoint := ⟨ts, steps⟩
 

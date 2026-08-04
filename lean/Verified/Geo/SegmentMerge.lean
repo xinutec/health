@@ -1,3 +1,4 @@
+import Verified.Geo.PathPoint
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
 /-!
@@ -84,6 +85,22 @@ structure Seg where
   `decideHsmmTrainOverride`. `none` means no samples (an underground gap the
   HSMM reconstructed), which cannot contradict, so the HSMM stands. -/
   roadCorridorFraction : Option Float := none
+  /-- The IANA zone the frontend renders this segment's clock times in, rather
+  than the browser's. Written by the `displayTz` pass, which stays shell: the
+  lookup is tzdata, not arithmetic. -/
+  displayTz : Option String := none
+  /-- This train leg drawn on the OSM rail track (`annotateSnappedPaths`). -/
+  snappedPath : Option (Array PathPt) := none
+  /-- This road-vehicle leg drawn on the street network (`annotateRoadMatches`).
+  `none` when the leg could not be confidently matched, which is the map's
+  signal to fall back to the raw track — distinct from an empty path. -/
+  matchedPath : Option (Array PathPt) := none
+  /-- This walking leg drawn on the walkable network (`annotateWalkMatches`). -/
+  walkMatchedPath : Option (Array PathPt) := none
+  /-- This walking leg drawn by the MAP reconstruction instead of the matcher,
+  attached only where the reconstruction is substantially shorter. Takes
+  precedence over `walkMatchedPath` when present. -/
+  walkSmoothedPath : Option (Array PathPt) := none
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/

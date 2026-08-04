@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.RailRuns
 /-!
 # Tube-hop upgrade (port of `src/geo/passes/tube-hop.ts` + `pickBestStation`)
@@ -65,16 +66,10 @@ structure NearbyStation where
   lon : Option Float := none
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields this pass reads and rewrites. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  refinedReason : Option String := none
-  wayName : Option String := none
-  avgSpeed : Float
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 

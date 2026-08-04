@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
 /-!
 # Interchange decomposition kernels (port of the pure exports of `src/geo/interchange-split.ts`)
@@ -155,20 +156,10 @@ structure Fix where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : String
-  refinedMode : Option String := none
-  wayName : Option String := none
-  pointCount : Int := 0
-  confidence : Float := 0
-  confidenceMargin : Float := 0
-  avgSpeed : Float := 0
-  maxSpeed : Float := 0
-  linearity : Float := 0
-  refinedReason : Option String := none
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- `refinedMode ?? mode`. -/
 private def effectiveMode (s : Seg) : String := s.refinedMode.getD s.mode

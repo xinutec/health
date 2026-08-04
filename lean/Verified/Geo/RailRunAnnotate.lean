@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.RailRuns
 import Verified.Geo.TubeHop
 import Verified.Geo.LineStoppingPattern
@@ -81,22 +82,10 @@ open Verified.Geo.LineStoppingPattern (RailStopRelation pickLineByStoppingPatter
 
 /-! ## Shapes -/
 
-/-- The `EnrichedSegment` fields this pass reads and rewrites. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : String
-  refinedMode : Option String := none
-  refinedReason : Option String := none
-  refinedKinds : Array String := #[]
-  wayName : Option String := none
-  confidence : Float
-  confidenceMargin : Float
-  avgSpeed : Float
-  maxSpeed : Float
-  linearity : Float
-  pointCount : Nat
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- One OSM read, in the order it was issued. -/
 inductive Read where
@@ -578,7 +567,7 @@ private def collapse (segments : Array Seg) (run : RailRun) (label : Option Stri
     (init := #[]) fun acc k =>
       let s := segments[k]!
       if s.mode != "stationary" then acc.push s else acc
-  let weightOf (s : Seg) : Float := if s.pointCount == 0 then 1.0 else s.pointCount.toFloat
+  let weightOf (s : Seg) : Float := if s.pointCount == 0 then 1.0 else Float.ofInt s.pointCount
   let totalWeight :=
     let t := railSegs.foldl (fun a s => a + weightOf s) 0.0
     if t == 0.0 then 1.0 else t
@@ -734,7 +723,7 @@ no mutation to it can be seen through. -/
 private def outOf (segs : Array Seg) (fixes : Array Fix)
     (stops : Array RailStopRelation := #[]) :
     Array (Int × Int × String × String × String × String × Array String
-      × Float × Float × Float × Float × Float × Nat) :=
+      × Float × Float × Float × Float × Float × Int) :=
   (annotateRailRuns ENV segs fixes stops).map fun s =>
     (s.startTs, s.endTs, s.wayName.getD "", s.mode, s.refinedMode.getD "",
      s.refinedReason.getD "", s.refinedKinds,

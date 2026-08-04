@@ -1,3 +1,4 @@
+import Verified.Geo.SegmentMerge
 import Verified.Geo.TubeHop
 import Verified.Geo.LineMembership
 /-!
@@ -67,16 +68,10 @@ structure Fix where
   lon : Float
   deriving Inhabited, BEq, Repr
 
-/-- The `EnrichedSegment` fields these passes read and rewrite. -/
-structure Seg where
-  startTs : Int
-  endTs : Int
-  mode : Mode
-  refinedMode : Option Mode := none
-  wayName : Option String := none
-  refinedReason : Option String := none
-  pointCount : Int := 10
-  deriving Inhabited, BEq, Repr
+/-- The pipeline's segment record. This pass reads and rewrites a subset of
+it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
+value to every pass in the cascade without a lossy projection at each hop. -/
+abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- A per-minute step count. -/
 structure StepPoint where

@@ -17,6 +17,7 @@ import Verified.Rail.Certify
 import Verified.Rail.HeapInv
 import Verified.Rail.LoopInv
 import Verified.Rail.Tests
+import Verified.Geo.PathPoint
 import Verified.Geo.ArrayLemmas
 import Verified.Geo.CellKey
 import Verified.Geo.Simplify

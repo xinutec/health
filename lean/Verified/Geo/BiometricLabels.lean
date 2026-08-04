@@ -124,7 +124,8 @@ def modeAfter (s : LabelSeg) : Decision → String
   | .flip m _ _ => m
 
 /-- The window shape `cadenceForSegment` / `peakCadenceForSegment` read. -/
-private def win (s : LabelSeg) : Seg := ⟨s.startTs, s.endTs, s.mode, s.pointCount⟩
+private def win (s : LabelSeg) : Seg :=
+  { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount }
 
 /--
 `toFixed` for a reason string.
