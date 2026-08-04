@@ -365,8 +365,11 @@ def passes (e : Env) : Array Pass := #[
   -- A tube ride leaves only coarse cell-network fixes, which annotateRailRuns
   -- cannot resolve. Mine those from the RAW track to identify the line and
   -- split the swallowing walk into walk → train → walk.
+  -- `points` as well as `rawFixes`: the carve remainder is named from the
+  -- SMOOTHED track by the enricher's rule, while the tunnel window is still
+  -- mined from the raw one. Two different series, two different questions.
   ("undergroundRail", fun segs =>
-    Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes
+    Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points
       (fun lat lon => e.nearbyStations lat lon UNDERGROUND_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
       e.nearbyWays),

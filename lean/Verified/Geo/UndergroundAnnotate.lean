@@ -1,6 +1,8 @@
 import Verified.Geo.UndergroundJourney
 import Verified.Geo.SegmentMerge
 import Verified.Geo.Factors
+import Verified.Geo.RefineMode
+import Verified.Geo.StaySplit
 /-!
 # Underground run annotation (port of `annotateUndergroundRuns`,
 `src/geo/underground-rail.ts`)
@@ -67,6 +69,9 @@ def RAIL_ARROW : String := "→"
 non-negative (a distance-derived speed, or a midpoint of two timestamps). -/
 private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 
+/-- `?? Infinity` for an absent distance: it loses every comparison. -/
+private def posInf : Float := 1.0 / 0.0
+
 /-- Any fix that marks the GPS-dark window — a coarse cell-network fix OR a
 total-loss fix. **No upper bound**, unlike `isCoarse`; see the module note. -/
 def isUndergroundSignal (f : CoarseFix) : Bool :=
@@ -81,53 +86,64 @@ private def isGood (f : CoarseFix) : Bool :=
   | none => true
   | some a => a < COARSE_ACCURACY_M
 
-/-- Insertion-order-preserving vote bump, mirroring a JS `Map`. -/
-private def bump (votes : Array (String × Nat)) (k : String) : Array (String × Nat) :=
-  match votes.findIdx? (fun p => p.1 == k) with
-  | some i => votes.set! i (k, votes[i]!.2 + 1)
-  | none => votes.push (k, 1)
+/-- How many points along a side piece are sampled for ways. -/
+def SIDE_WAY_SAMPLES : Nat := 5
 
-/-- Winner by count, FIRST-INSERTED on a tie — the TS sorts the entries
-descending with a stable sort and takes the head. -/
-private def argmaxFirst (votes : Array (String × Nat)) : Option String :=
-  (votes.foldl (init := (none : Option (String × Nat))) fun best p =>
-    match best with
-    | none => some p
-    | some b => if p.2 > b.2 then some p else some b).map (·.1)
-
-/-- A way is a naming candidate only when it is a highway AND carries a
-non-empty name. The TS tests `w.name` for TRUTHINESS, so an empty name is
-skipped — the `emptyNameSideWays` guard has a 2 m empty-named way lose to a
-30 m named one. -/
-private def namedHighway (w : NearbyWay) : Bool :=
-  w.type == "highway" && (match w.name with | some n => n ≠ "" | none => false)
+/-- Upsert into a JS `Map`: a key already present keeps its ORIGINAL position and
+only its value is replaced. Load-bearing — the deduped ways are handed to the
+cascade in this order, and `pickBestHighway` reads the FIRST driveable one. -/
+private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay)
+    (better : NearbyWay → NearbyWay → Bool) : Array (String × NearbyWay) :=
+  match m.findIdx? (fun p => p.1 == k) with
+  | some i => if better v m[i]!.2 then m.set! i (k, v) else m
+  | none => m.push (k, v)
 
 /--
-Way label for a side piece of a split host, from the PIECE's own fixes.
+Way label for a side piece of a split host — the walk left over when a tube ride
+is carved out of it.
 
-The host's `wayName` was composed across ALL its fixes — both walks plus the
-tunnel — so inheriting it stamps the pre-tube walk's street onto the post-tube
+The host's `wayName` was composed across ALL its fixes, both walks plus the
+tunnel, so inheriting it stamps the pre-tube walk's street onto the post-tube
 walk at the other end of town (measured: a King's Cross walk labelled with a
-Belgravia street, task #248). `none` when the piece has no fixes or no named way
-nearby: an honest blank beats a leaked label.
+Belgravia street, #248).
+
+So the piece is named from the PIECE's own points — but by the SAME rule the OSM
+enricher uses for any other moving segment, not a local one. Sampling evenly,
+deduping ways by MINIMUM distance across samples, and handing the result to
+`refineMode` is exactly what `enrichMovingSegment` does; what is left out is the
+city lookup and the mode decision, neither of which a carve remainder needs.
+
+Asking a different question was a real defect rather than a stylistic one. The
+old rule — three samples, nearest named highway of any type, ties broken by
+insertion order so the FIRST fix won — named the 2026-07-15 walk from Work to
+King's Cross "Clarence Passage", 14 m from its opening fix, where the enricher
+given the same window says "Argyle Street".
+
+`none` when the piece has no points or no way nearby: an honest blank beats a
+leaked label.
 -/
-def sideWayName (good : Array CoarseFix) (startTs endTs : Int)
+def sideWayName (points : Array Shed.PointF) (startTs endTs : Int) (mode : String)
     (waysLookup : Float → Float → Array NearbyWay) : Option String :=
-  let inPiece := good.filter fun f => f.ts ≥ startTs && f.ts ≤ endTs
+  let inPiece := ((points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs).toList.mergeSort
+    fun a b => a.ts ≤ b.ts).toArray
   if inPiece.isEmpty then none else
   let n := inPiece.size
-  let sampleCount := min 3 n
-  let votes := (Array.range sampleCount).foldl (init := (#[] : Array (String × Nat))) fun votes i =>
-    -- Evenly spaced samples: first, middle, last for a piece of three or more.
-    let idx := (i * (n - 1)) / (max 1 (sampleCount - 1))
-    let f := inPiece[idx]!
-    let ways := waysLookup f.lat f.lon
-    let nearest := ((ways.filter namedHighway).toList.mergeSort fun a b =>
-      a.distanceM.getD 0 ≤ b.distanceM.getD 0).head?
-    match nearest.bind (·.name) with
-    | some nm => bump votes nm
-    | none => votes
-  argmaxFirst votes
+  let sampleCount := min SIDE_WAY_SAMPLES n
+  -- Evenly spaced: first and last, and `sampleCount - 2` between them.
+  let sampled := (Array.range sampleCount).map fun i => inPiece[(i * (n - 1)) / (max 1 (sampleCount - 1))]!
+  -- Dedup by (type, subtype, name) keeping the MINIMUM distance, so a way
+  -- brushed past at one sample cannot outweigh one hugged at four others.
+  let byKey := sampled.foldl (init := (#[] : Array (String × NearbyWay))) fun acc p =>
+    (waysLookup p.lat p.lon).foldl (init := acc) fun acc w =>
+      let nm := w.name.getD ""
+      upsert acc s!"{w.type}/{w.subtype}/{nm}" w
+        (fun a b => a.distanceM.getD posInf < b.distanceM.getD posInf)
+  if byKey.isEmpty then none else
+  -- The PIECE's own pace. The host's average is the tunnel's, and a walk handed
+  -- a train's speed is refined as one.
+  let speeds := (inPiece.toList.mergeSort fun a b => a.speedKmh ≤ b.speedKmh).toArray
+  let medianKmh := speeds[speeds.size / 2]!.speedKmh
+  (Verified.Geo.RefineMode.refineModeLegacyCascade mode medianKmh (byKey.map (·.2))).wayName
 
 /-- Whether a segment is already an annotated rail run (its label carries the
 `Board → Alight` arrow), and so must be left alone. -/
@@ -267,6 +283,7 @@ shorter than `MIN_SIDE_DURATION_S` are absorbed so the train covers the host's
 full span with no slivers.
 -/
 def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
+    (points : Array Shed.PointF)
     (stationsLookup : Float → Float → Array NearbyStation)
     (linesLookup : Float → Float → Array String)
     (waysLookup : Float → Float → Array NearbyWay) : Array Seg :=
@@ -341,7 +358,7 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
         let withPre :=
           if keepPre then
             result.push { host with
-              endTs := trainStart, wayName := sideWayName good host.startTs trainStart waysLookup }
+              endTs := trainStart, wayName := sideWayName points host.startTs trainStart host.mode waysLookup }
           else result
         let withLegs := (Array.range legs.size).foldl (init := withPre) fun acc li =>
           let leg := legs[li]!
@@ -363,7 +380,7 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
             refinedReason := some reason }
         if keepPost then
           withLegs.push { host with
-            startTs := trainEnd, wayName := sideWayName good trainEnd host.endTs waysLookup }
+            startTs := trainEnd, wayName := sideWayName points trainEnd host.endTs host.mode waysLookup }
         else withLegs
       | _, _ => result.push host
 
@@ -465,10 +482,18 @@ private def vw (segs : Array Seg) : Array Row :=
       linearity := s.linearity, pointCount := s.pointCount
       reason := s.refinedReason.getD "" }
 
+/-- The Kalman track `sideWayName` samples, derived from the case's own fixes so
+every case has a track covering its span. Mirrors the refs harness exactly: time
+order, and a constant walking pace, because the pace is what `refineMode` reads
+and a walk handed a train's speed is refined as one. -/
+private def track (fixes : Array CoarseFix) : Array Shed.PointF :=
+  ((fixes.toList.mergeSort fun a b => a.ts ≤ b.ts).map fun f =>
+    ({ ts := f.ts, lat := f.lat, lon := f.lon, speedKmh := 4 } : Shed.PointF)).toArray
+
 private def run (segments : Array Seg) (fixes : Array CoarseFix)
     (lines : Float → Float → Array String := oneLine)
     (w : Float → Float → Array NearbyWay := ways) : Array Row :=
-  vw (annotateUndergroundRuns segments fixes stations lines w)
+  vw (annotateUndergroundRuns segments fixes (track fixes) stations lines w)
 
 /-- The host untouched. -/
 private def PASS : Array Row := vw #[HOST]
@@ -583,8 +608,15 @@ private def longRunTrain : Row :=
   == vw #[{ HOST with mode := "train", wayName := some "A → B · Victoria Line" }]
 -- A train segment WITHOUT the arrow is not already-rail, so it is processed —
 -- and the side pieces keep the host's `train` mode.
+--
+-- They also come out UNNAMED, which is the enricher's rule doing its job rather
+-- than a loss: `sideWayName` hands the host's mode to the cascade, and a `train`
+-- with no railway in the sampled ways takes the "no rail evidence" arm, whose
+-- answer carries no `wayName` at all. The old local rule ignored the mode and
+-- named it anyway.
 #guard run #[{ HOST with mode := "train", wayName := some "Some Street" }] (GOOD ++ COARSE)
-  == #[{ preWalk with mode := "train" }, trainLeg 4, { postWalk with mode := "train" }]
+  == #[{ preWalk with mode := "train", wayName := "" }, trainLeg 4,
+       { postWalk with mode := "train", wayName := "" }]
 
 -- SIDE-PIECE TRIMMING. A host starting exactly MIN_SIDE_DURATION_S before the
 -- boarding fix keeps its pre piece (`≥`).
@@ -605,11 +637,17 @@ private def longRunTrain : Row :=
   == #[{ preWalk with wayName := "" }, trainLeg 4, { postWalk with wayName := "" }]
 #guard run #[HOST] (GOOD ++ COARSE) oneLine noWays
   == #[{ preWalk with wayName := "" }, trainLeg 4, { postWalk with wayName := "" }]
--- An EMPTY name is falsy in the TS filter, so a 2 m empty-named way loses to a
--- 30 m named one — nearest among the NAMED, not nearest overall.
+-- An EMPTY name now WINS, and that is the enricher's rule, not a defect here.
+-- The old local rule filtered to named highways, so a 2 m empty-named way lost
+-- to a 30 m named one. The cascade does not filter: `pickBestHighway` takes the
+-- nearest outright, the empty name is inside `WALK_NAME_BORROW_MAX_M` so the
+-- borrow is never reached, and the piece comes out blank.
+--
+-- Kept as a guard because it is exactly the case that separates the two rules —
+-- and because if this is wrong it is wrong in `refineMode`, for every walk in
+-- the app, not just for a carve remainder.
 #guard run #[HOST] (GOOD ++ COARSE) oneLine emptyNameWays
-  == #[{ preWalk with wayName := "Named Street" }, trainLeg 4,
-       { postWalk with wayName := "Named Street" }]
+  == #[{ preWalk with wayName := "" }, trainLeg 4, { postWalk with wayName := "" }]
 
 private def homeStay : Seg :=
   { startTs := 0, endTs := 400, mode := "stationary"
@@ -624,13 +662,20 @@ private def afterWalk : Seg :=
 #guard run #[homeStay, HOST, afterWalk] (GOOD ++ COARSE)
   == (vw #[homeStay]) ++ #[preWalk, trainLeg 4, postWalk] ++ (vw #[afterWalk])
 
--- SAMPLE COUNT. It matters only when the samples disagree: here the pre-walk
--- piece has its FIRST fix in one way-zone and its other two in another, so
--- sampling one fix and sampling three give different labels.
+-- SAMPLING ACROSS ZONES. The pre-walk piece has its FIRST point in one way-zone
+-- and its other two in another, so the samples disagree about what is nearby.
+--
+-- The answer is "Holloway Road" at 12 m, even though "Midway Road" at 8 m is in
+-- the deduped set and is NEARER. The cascade's `pickBestHighway` reads
+-- `highways[0]` at walking pace, trusting the adapter's closest-first order —
+-- and the dedup does not preserve it: entries land in first-SAMPLE order, so
+-- the first sample's ways precede every later sample's however far away they
+-- are. Recorded as the behaviour, not endorsed; if it is wrong it is wrong for
+-- every segment the enricher names, not only for a carve remainder.
 #guard run #[HOST]
   (#[fx 500 200 (some 10), fx 700 1200 (some 12), fx 900 1500 (some 15),
      fx 1700 3900 (some 15), fx 1900 4000 (some 12), fx 2100 4050 none] ++ COARSE)
-  == #[{ preWalk with wayName := "Midway Road" },
+  == #[{ preWalk with wayName := "Holloway Road" },
        { trainLeg 4 with wayName := "King's Cross → Wembley Park · Victoria Line"
                          avgSpeed := 10.8, maxSpeed := 10.8 },
        postWalk]
@@ -666,9 +711,11 @@ private def afterWalk : Seg :=
 -- still counts...
 #guard run #[{ HOST with mode := "train", wayName := some "A → B" }] (GOOD ++ COARSE)
   == vw #[{ HOST with mode := "train", wayName := some "A → B" }]
--- ...and the line separator without an arrow does NOT.
+-- ...and the line separator without an arrow does NOT. (Side pieces unnamed for
+-- the same reason as the `Some Street` case above: a `train` host, no railway.)
 #guard run #[{ HOST with mode := "train", wayName := some "Some · Street" }] (GOOD ++ COARSE)
-  == #[{ preWalk with mode := "train" }, trainLeg 4, { postWalk with mode := "train" }]
+  == #[{ preWalk with mode := "train", wayName := "" }, trainLeg 4,
+       { postWalk with mode := "train", wayName := "" }]
 
 -- A host carrying a place: the train legs CLEAR it (the ride is not at the
 -- place), while the side walks inherit it through the record spread.
