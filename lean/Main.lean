@@ -1348,10 +1348,15 @@ private def entryS (parse : Json → Except String α) (j : Json) : Except Strin
   let a ← j.getArr?
   return (← (← nth a 0).getStr?, ← parse (← nth a 1))
 
-/-- `[latBits, lonBits, startTs, endTs, mode, {label, city?}|null]` — the venue
-re-resolution the merge pass delegates. Keyed on all five arguments because the
-TS asks it per merged stay, and two stays at one centroid with different windows
-are different questions. -/
+/-- `[latBits, lonBits, startTs, endTs, tz, {label, city?}|null]` — the venue
+re-resolution `consolidateJitterStays` delegates, its only caller. Keyed on all
+five arguments because it is asked per merged stay, and two stays at one
+centroid with different windows are different questions.
+
+The fifth argument is the IANA zone, not a mode: the pass passes `tzAt cLat
+cLon` through, so the answer depends on it. `preferResidential` is not in the
+key because that call site fixes it; a second caller with a different setting
+would need it, and would collide silently without. -/
 private def entryPlace (j : Json) :
     Except String (String × Option Verified.Geo.SegmentMerge.ResolvedPlace) := do
   let a ← j.getArr?
