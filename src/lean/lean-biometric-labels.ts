@@ -99,10 +99,6 @@ const empty = (): BioLabelsStat => ({ calls: 0, fails: 0, lenDiffs: 0, segs: 0 }
 
 let stats: BioLabelsStat = empty();
 
-export function leanBioLabelsStats(): Readonly<BioLabelsStat> {
-	return stats;
-}
-
 export interface BioLabelsDivergence {
 	pass: LeanLabelPass;
 	/** Segment index within the day — identifies it without logging places. */
@@ -114,10 +110,6 @@ export interface BioLabelsDivergence {
 
 const MAX_DIVERGENCES = 20;
 let divergences: BioLabelsDivergence[] = [];
-
-export function leanBioLabelsDivergences(): readonly BioLabelsDivergence[] {
-	return divergences;
-}
 
 export function resetLeanBioLabelsStats(): void {
 	stats = empty();

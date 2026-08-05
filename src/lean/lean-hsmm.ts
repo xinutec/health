@@ -110,11 +110,6 @@ export function resetLeanHsmmStats(): void {
 	divergences.length = 0;
 }
 
-/** Test seam: the accumulated verdict without touching the ledger output. */
-export function leanHsmmStats(): Readonly<HsmmStats> {
-	return stats;
-}
-
 function record(date: string, kind: HsmmDivergence["kind"], detail: string): void {
 	if (divergences.length >= MAX_DIVERGENCES) return;
 	divergences.push({ date, kind, detail, scope: leanRunScope() });

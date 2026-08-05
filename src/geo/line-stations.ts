@@ -74,13 +74,6 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const cache = new Map<string, { stations: Station[]; cachedAt: number }>();
 
-/** Reset the cache. Test-only — production code never calls this. */
-export function _resetStationsOnLineCache(): void {
-	cache.clear();
-	allStationsCache = null;
-	railwayLineNamesCache = null;
-}
-
 /** All distinct railway line names in the mirror, cached for the life
  *  of the process. ~1k strings — tiny. Loaded lazily on the first
  *  `stationsOnLine` call.

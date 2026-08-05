@@ -189,8 +189,3 @@ export async function getConnectionStatus(userId: string): Promise<FitbitConnect
 	if (row.status === "needs_reauth") return "needs_reauth";
 	return "active";
 }
-
-export function _resetCache(): void {
-	cache.clear();
-	loadingPromises.clear();
-}

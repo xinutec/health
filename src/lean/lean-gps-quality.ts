@@ -69,10 +69,6 @@ const empty = (): GpsQualityStat => ({ calls: 0, fails: 0, lenDiffs: 0, pickDiff
 
 let stats: GpsQualityStat = empty();
 
-export function leanGpsQualityStats(): Readonly<GpsQualityStat> {
-	return stats;
-}
-
 export interface GpsQualityDivergence {
 	/** Input track length — identifies the call without logging coordinates. */
 	n: number;
@@ -85,10 +81,6 @@ export interface GpsQualityDivergence {
 
 const MAX_DIVERGENCES = 20;
 let divergences: GpsQualityDivergence[] = [];
-
-export function leanGpsQualityDivergences(): readonly GpsQualityDivergence[] {
-	return divergences;
-}
 
 export function resetLeanGpsQualityStats(): void {
 	stats = empty();

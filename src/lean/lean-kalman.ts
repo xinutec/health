@@ -142,10 +142,6 @@ const empty = (): KalmanStat => ({
 
 let stats: KalmanStat = empty();
 
-export function leanKalmanStats(): Readonly<KalmanStat> {
-	return stats;
-}
-
 export interface KalmanDivergence {
 	/** Input track length — enough to identify the call without logging coordinates. */
 	n: number;
@@ -162,10 +158,6 @@ export interface KalmanDivergence {
  *  counters above stay exact regardless. */
 const MAX_DIVERGENCES = 20;
 let divergences: KalmanDivergence[] = [];
-
-export function leanKalmanDivergences(): readonly KalmanDivergence[] {
-	return divergences;
-}
 
 export function resetLeanKalmanStats(): void {
 	stats = empty();
