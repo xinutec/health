@@ -693,6 +693,18 @@ export async function computeVelocityFromInputs(
 	const points = timeSync("kalman", () => filterGpsTrackViaLean(gpsPoints, () => filterGpsTrack(gpsPoints)));
 	const segments = timeSync("segments", () => classifySegments(points, stayPoints));
 
+	// Where the Lean `day` chain's input is produced, and therefore where the
+	// region a Lean tenant would REPLACE begins (#431 gap 3). Everything below —
+	// the OSM enrichment loop, the five corrections, the 38 passes, the sleep
+	// attribution, the timeline and the episodes — is what `verified_cli day`
+	// computes from `segsRaw`.
+	//
+	// Bracketed here rather than summed from `phaseTimes` because the phases do
+	// not tile the region: the enrichment loop and the episode build are not
+	// wrapped at all, so a sum would silently undercount the arm it is being
+	// divided into. `phaseTimes.leanCovered` is set at the return sites below.
+	const leanCoveredFrom = Date.now();
+
 	if (options.enrich === false) {
 		// Non-enriched path: no OSM, no biometrics, no sleep — caller
 		// requested raw segments only. `states` is still produced for
@@ -1991,6 +2003,7 @@ export async function computeVelocityFromInputs(
 		if (inferred.length > 0) {
 			const episodes = buildEpisodes(inferred, withBiometrics, points, displayFixes);
 			foldCapture?.writeTail(downstreamInputs, inferred, episodes);
+			phaseTimes.leanCovered = Date.now() - leanCoveredFrom;
 			return {
 				points,
 				rawFixes: displayFixes,
@@ -2031,32 +2044,42 @@ export async function computeVelocityFromInputs(
 	// what makes every future golden capture record membership for every
 	// labelled line). A line the adapter cannot answer — an older fixture
 	// replaying without that trace key — is skipped, never a violation.
-	const labelledLines = new Set<string>();
-	for (const s of finalStates) {
-		if (s.mode !== "train") continue;
-		const line = parseRailWayName(s.wayName ?? undefined)?.line;
-		if (line) labelledLines.add(line);
-	}
-	const lineStations = new Map<string, Awaited<ReturnType<typeof inputs.osm.stationsOnLine>>>();
-	for (const line of labelledLines) {
-		try {
-			lineStations.set(line, await inputs.osm.stationsOnLine(line));
-		} catch (e) {
-			// This used to swallow EVERYTHING with the note "uncaptured in a fixture
-			// trace — no membership, no assertion", which is the defect stated as if
-			// it were the design: with no membership the rail-triple check has
-			// nothing to test, so a stale fixture turned the feasibility gate into a
-			// silent pass on exactly the days whose line labels moved. A live
-			// adapter returning nothing is still fine — that is a genuine absence.
-			if (isUncapturedLookup(e)) throw e;
-		}
-	}
-	for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps, lineStations)) {
-		console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
-	}
+	//
+	// Timed as its own phase because it sits INSIDE the Lean-covered bracket and
+	// is not part of it: the Lean day produces the timeline, not this report, so
+	// a tenant would still pay for it. `leanCovered` subtracts it below.
+	await time(
+		"feasibility",
+		(async () => {
+			const labelledLines = new Set<string>();
+			for (const s of finalStates) {
+				if (s.mode !== "train") continue;
+				const line = parseRailWayName(s.wayName ?? undefined)?.line;
+				if (line) labelledLines.add(line);
+			}
+			const lineStations = new Map<string, Awaited<ReturnType<typeof inputs.osm.stationsOnLine>>>();
+			for (const line of labelledLines) {
+				try {
+					lineStations.set(line, await inputs.osm.stationsOnLine(line));
+				} catch (e) {
+					// This used to swallow EVERYTHING with the note "uncaptured in a fixture
+					// trace — no membership, no assertion", which is the defect stated as if
+					// it were the design: with no membership the rail-triple check has
+					// nothing to test, so a stale fixture turned the feasibility gate into a
+					// silent pass on exactly the days whose line labels moved. A live
+					// adapter returning nothing is still fine — that is a genuine absence.
+					if (isUncapturedLookup(e)) throw e;
+				}
+			}
+			for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps, lineStations)) {
+				console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
+			}
+		})(),
+	);
 
 	const episodes = buildEpisodes(finalStates, withBiometrics, points, displayFixes);
 	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);
+	phaseTimes.leanCovered = Date.now() - leanCoveredFrom - (phaseTimes.feasibility ?? 0);
 	return {
 		points,
 		rawFixes: displayFixes,
