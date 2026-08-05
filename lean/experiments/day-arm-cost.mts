@@ -131,14 +131,28 @@ class Serve {
 	private readonly proc = spawn(CLI, ["serve"], { stdio: ["pipe", "pipe", "pipe"] });
 	private readonly lines: AsyncIterator<string>;
 	private id = 0;
+	private stderr = "";
 
 	constructor() {
 		this.lines = createInterface({ input: this.proc.stdout, crlfDelay: Number.POSITIVE_INFINITY })[
 			Symbol.asyncIterator
 		]();
-		// Consumed and discarded rather than left unread: an unread stderr pipe
-		// fills and blocks the child mid-reply, which would look like a slow fold.
-		this.proc.stderr.resume();
+		// Kept, not discarded. It has to be consumed — an unread pipe fills and
+		// blocks the child mid-reply, which would look like a slow fold — but a
+		// `panic!` also lands here, and `daydecode`'s probes are only sound if they
+		// HIT. A probe that missed would still return a number, so silence on this
+		// stream is the only evidence that the tables were forced rather than
+		// merely asked about.
+		this.proc.stderr.on("data", (b: Buffer) => {
+			this.stderr += b.toString();
+		});
+	}
+
+	/** Anything the child complained about since the last call, and reset. */
+	takeStderr(): string {
+		const s = this.stderr;
+		this.stderr = "";
+		return s;
 	}
 
 	/** One request, one reply, wall time around both — INCLUDING the caller's
@@ -241,6 +255,8 @@ interface Outcome {
 	encodeMs: number;
 	foldMs: number;
 	noopMs: number;
+	/** The `daydecode` handler: layers 1+3 — request wire plus the typed decode. */
+	decodeMs: number;
 	answerMs: number;
 	reqMiB: number;
 	note?: string;
@@ -287,6 +303,7 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		encodeMs: 0,
 		foldMs: 0,
 		noopMs: 0,
+		decodeMs: 0,
 		answerMs: c.answerMs,
 		reqMiB: 0,
 	};
@@ -295,6 +312,7 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 	const { tzAt, bestPlace, partial } = c.tables;
 	const fold: number[] = [];
 	const noop: number[] = [];
+	const decode: number[] = [];
 	const encode: number[] = [];
 	let bytes = 0;
 	let req = {} as object;
@@ -310,13 +328,21 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		fold.push(d.ms);
 		bytes = d.bytes;
 		noop.push((await serve.ask("noop", req)).ms);
+		decode.push((await serve.ask("daydecode", req)).ms);
 	}
+	// A `panic!` from a `daydecode` probe means it asked a key the table does not
+	// hold, which makes its timing a measurement of a miss rather than of the
+	// table being built. Reported per day rather than tallied: the whole point of
+	// the probes is that they hit, so one is a defect and not a statistic.
+	const complained = serve.takeStderr().split("\n").find((l) => l.trim() !== "");
 	return {
 		...base,
 		encodeMs: median(encode),
 		foldMs: median(fold),
 		noopMs: median(noop),
+		decodeMs: median(decode),
 		reqMiB: bytes / (1024 * 1024),
+		note: complained,
 	};
 }
 
@@ -338,15 +364,15 @@ const leanArm = (o: Outcome): number => o.rounds * (o.encodeMs + o.foldMs) + o.a
 
 const n1 = (x: number): string => x.toFixed(1).padStart(8);
 console.log(
-	"\ndate         ts_cov ts_shell  ts_net  ts_osm  rnd   encode     fold     noop   answer lean_tot   ratio  req_MiB",
+	"\ndate         ts_cov ts_shell  ts_net  ts_osm  rnd   encode     fold     noop  decode   answer lean_tot   ratio",
 );
 for (const o of outcomes) {
 	const net = tsNet(o);
 	const ratio = net > 0 ? (leanArm(o) / net).toFixed(2) : "n/a";
 	console.log(
 		`${o.date} ${n1(o.tsCoveredMs)}${n1(o.tsShellMs)}${n1(net)}${n1(o.tsOsmMs)} ${String(o.rounds).padStart(4)}` +
-			`${n1(o.encodeMs)}${n1(o.foldMs)}${n1(o.noopMs)}${n1(o.answerMs)}${n1(leanArm(o))}${ratio.padStart(8)}` +
-			`${o.reqMiB.toFixed(2).padStart(9)}${o.note ? `  ${o.note}` : ""}`,
+			`${n1(o.encodeMs)}${n1(o.foldMs)}${n1(o.noopMs)}${n1(o.decodeMs)}${n1(o.answerMs)}${n1(leanArm(o))}` +
+			`${ratio.padStart(8)}${o.note ? `  ${o.note}` : ""}`,
 	);
 }
 
@@ -365,11 +391,16 @@ console.log(
 	`  Lean arm    ${s(lean)} = ${s(sum((o) => o.rounds * o.encodeMs))} encode + ${s(sum((o) => o.rounds * o.foldMs))} fold` +
 		` + ${s(sum((o) => o.answerMs))} answers`,
 );
-// NOT "transport vs the verified code". `noop` is the request-side floor alone,
-// so the remainder is layers 2+3+4 together — see the note above.
+// #405's layers, as far as the day mode's two handlers can separate them.
+// `daydecode` returns a count, so it carries layer 1 and layer 3 and none of
+// layer 2; what is left over from the real handler is layers 2 and 4 together.
 console.log(
-	`  of the fold ${s(sum((o) => o.rounds * o.noopMs))} is the request-side floor, ` +
-		`${s(sum((o) => o.rounds * (o.foldMs - o.noopMs)))} is response wire + decode + algorithm, unseparated`,
+	`  of the fold ${s(sum((o) => o.rounds * o.noopMs))} request wire, ` +
+		`${s(sum((o) => o.rounds * (o.decodeMs - o.noopMs)))} typed decode, ` +
+		`${s(sum((o) => o.rounds * (o.foldMs - o.decodeMs)))} response wire + algorithm`,
+);
+console.log(
+	"  the last of those is the RESIDUAL a Rust shell would still pay, plus a response encode still inside it",
 );
 console.log(`  ratio       ${(lean / net).toFixed(2)}× — the Lean arm against the region it would replace`);
 console.log(`  deferred    ${s(sum((o) => o.tsShellMs))} of matcher, which a flip moves rather than removes`);

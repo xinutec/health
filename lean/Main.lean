@@ -1850,6 +1850,100 @@ def dayResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ### The decode ablation (#433)
+
+#405 measured a bridge call as four layers — request wire, response wire,
+per-mode decode, algorithm — and only the last survives the Rust-shell
+architecture, where the two arms are one process and there is nothing to
+serialise. It also recorded that measuring with `noop` ALONE gets the answer
+wrong in the reassuring direction, because `{}` as a reply hides both the
+response wire and the decode; on gpsquality that mistake read the floor as a
+quarter of the call when it was seven eighths.
+
+`gpsquality` has `gqdecode` for its layer 3. The day mode had nothing, so
+`lean/experiments/day-arm-cost.mts` could only report `fold − noop`, which is
+layers 2+3+4 added together and therefore an upper bound on the residual rather
+than the residual.
+
+This is layer 3: `dayResult`'s parse prefix, and then stop. -/
+
+/-- Force a two-key lookup table by asking it something it CAN answer.
+
+The probe is not decoration. `parseEnv` binds each table's entries with `←`, so
+the per-entry parse is forced by the `Except` bind — but `mkMap` on the result is
+a plain pure `let` whose only consumers are the closures stored in `Env`, and the
+compiler is free to sink such a `let` to its use site (`Main.lean`'s decode-timing
+note records the same behaviour biting a timestamp). Whether the hash maps are
+built during `parseEnv` or on the fold's first lookup could not be settled by
+reading, and a layer measurement that skipped the work it claims to measure would
+be worse than none, because it would be quoted.
+
+So each table is asked for the key of its own FIRST entry — a hit, so no `panic!`
+fires and no miss-formatting cost enters the measurement — and the answer's size
+is folded into the reply, which is what forces it. An empty table has nothing to
+build and contributes zero. -/
+private def probe2 (lk : Json) (name : String) (f : Float → Float → α) (sz : α → Nat) :
+    Except String Nat := do
+  match (← optArr lk name)[0]? with
+  | none => return 0
+  | some e =>
+    let a ← e.getArr?
+    return sz (f (← jBits (← nth a 0)) (← jBits (← nth a 1)))
+
+/-- As {@link probe2}, for the tables keyed by a radius as well as a coordinate. -/
+private def probe3 (lk : Json) (name : String) (f : Float → Float → Float → α) (sz : α → Nat) :
+    Except String Nat := do
+  match (← optArr lk name)[0]? with
+  | none => return 0
+  | some e =>
+    let a ← e.getArr?
+    return sz (f (← jBits (← nth a 0)) (← jBits (← nth a 1)) (← jBits (← nth a 2)))
+
+/-- Layer 3: decode the request into the day's own structures and stop.
+
+Mirrors `dayResult`'s parse prefix exactly — same calls, same order — and must
+keep mirroring it. `parseChain` is deliberately absent: it takes the fold's
+OUTPUT, so it cannot run before the fold and its cost belongs to whatever
+handler runs the chain.
+
+The reply is a count rather than `{}` so that the sizes cannot be optimised
+away, and small so that layer 2 stays out of it. -/
+def decodeOnly (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let envJson ← j.getObjVal? "env"
+    let env ← parseEnv envJson
+    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
+    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
+    let places := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
+    let lk := (envJson.getObjVal? "lookups").toOption.getD (Json.mkObj [])
+    -- FIVE of the eight maps. The three `namerOf` builds — `nearbyLandmarks`,
+    -- `reverseGeocode`, `bestPlace` — are NOT probed, and the reason is a
+    -- property of the miss policy rather than an oversight: every route to them
+    -- from `Env` goes through `Namer.name`, which composes a landmark lookup
+    -- with a geocode lookup and a stay-context lookup, and any of the three can
+    -- reach a key this handler did not choose. A miss `panic!`s, and a `panic!`
+    -- inside a timing handler both prints and formats its message — cost that
+    -- would land in the number and did not come from the decode.
+    --
+    -- So their hash-map construction is attributed to whatever forces it first,
+    -- which is the fold. That UNDERSTATES layer 3 and overstates the residual —
+    -- the same direction as every other choice here, against the port.
+    let n1 ← probe2 lk "nearbyWays" env.nearbyWays Array.size
+    let n2 ← probe2 lk "tzAt" env.tzAt String.length
+    let n3 ← probe3 lk "nearbyStations" env.nearbyStations Array.size
+    let n4 ← probe3 lk "linesAtPoint" env.linesAtPoint Array.size
+    let n5 ← probe3 lk "transitStops" env.transitStops Array.size
+    let n := n1 + n2 + n3 + n4 + n5
+    return Json.mkObj [("n", Lean.toJson
+      (n + env.points.size + env.rawFixes.size + env.steps.size + env.displayFixes.size
+        + env.railStops.size + env.railRouteCache.size + env.busRouteCache.length
+        + env.hmmDecode.size + env.hsmmPlaces.length + env.knownPlaces.size
+        + env.hr.length + env.sleep.length
+        + modeStats.length + segsRaw.size + places.length))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 end Day
 
 /-- Persistent request loop: one NDJSON request per line
@@ -1878,6 +1972,10 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "gpsquality" => gpsQualityResult j
         | .ok "biolabels" => bioLabelsResult j
         | .ok "day" => Day.dayResult j
+        -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
+        -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
+        -- response wire plus the algorithm rather than those plus the decode.
+        | .ok "daydecode" => Day.decodeOnly j
         -- Ablation mode (#405): accept the request, do nothing, reply empty.
         -- The payload is still shipped across the SharedArrayBuffer and still
         -- parsed by `Json.parse line` above — only the ALGORITHM is skipped.
