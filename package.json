@@ -24,6 +24,7 @@
     "audit:fitbit": "node dist/cli/audit-fitbit-sync.js",
     "golden": "scripts/golden.sh",
     "day-gate": "scripts/day-gate.sh",
+    "focus-gate": "scripts/focus-gate.sh",
     "score-venues": "scripts/score-venues.sh",
     "golden-hsmm": "scripts/golden-hsmm.sh",
     "score-decoder": "scripts/score-decoder.sh",

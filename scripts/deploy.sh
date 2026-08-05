@@ -119,12 +119,26 @@ $DEV pnpm run verify
 # between them and is not ported.
 #
 # 50 s for 33 days, so its place in this list is not a cost question.
+#
+# focus-gate joined on 2026-08-05 (#435) and asks the same question about the
+# OTHER end of the pipeline. The day gate reaches everything `computeVelocity`
+# runs; it reaches nothing the weekly `refresh-focus-places` cron runs, so
+# `Verified.Geo.FocusPlaces` (800 lines) and `Verified.Geo.FocusIdentity` were
+# guard-pinned and nothing else — a guard is a snapshot of V8 at porting time
+# and keeps passing while the TS moves, which is exactly how #417 happened.
+#
+# Same absolute bar, no baseline. It replays each golden day's PhoneTrack fixes
+# through `detectFocusPlaces`, then the whole corpus at once — the shape the
+# cron actually runs on, and the only input that reaches the long-span
+# classification branches — and finally the captured conflated café/residence
+# cluster through `splitCluster`. 8 s for 35 cases.
 if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
-	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean day parity"
+	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean day/focus parity"
 	$DEV pnpm run golden
 	$DEV pnpm run walk-gate
 	$DEV pnpm run score-decoder
 	$DEV pnpm run day-gate
+	$DEV pnpm run focus-gate
 	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
 	# by a gate. Everything above runs with all seven flags `off`, so a broken
 	# bridge, a divergence, or a tenant that never ran could all ship — the arm

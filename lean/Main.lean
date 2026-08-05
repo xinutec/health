@@ -1946,6 +1946,132 @@ def decodeOnly (j : Json) : Json :=
 
 end Day
 
+/-! ## Focus-place mining (`verified_cli focus`)
+
+`Verified.Geo.FocusPlaces` + `Verified.Geo.FocusIdentity` — the weekly
+`refresh-focus-places` cron's pure core, which no day replay reaches, so until
+this mode existed both modules were guard-pinned and unattended (#435).
+
+Everything the cron computes off a point history, in the cron's own call order:
+
+  { "points":       [[ts, latBits, lonBits, accBits|null], …],
+    "sleepWindows": [[startTs, endTs], …],
+    "clusters":     [{ id, lat, lon, dwell, stays: [[…], …] }, …],
+    "old":          [[id, latBits, lonBits, firstSeenTs], …] }
+
+`points` drives `detectFocusPlaces`; `clusters` are ALREADY-BUILT clusters that
+go straight to `splitCluster` (the captured conflated café/residence and Home,
+which no single day's points can reproduce); `old` drives `matchClusters`
+against the mined centroids, the re-mining identity map.
+
+Every cluster comes back as a REPORT — its own fields plus every derived value
+`refresh-focus-places.ts` reads off it — so one comparison covers the
+classification layer as well as the geometry. Floats cross as bit patterns, so
+the two arms compare the same doubles.
+
+`pickWinningAmenity` is the one export this mode does NOT reach, and it is not
+an oversight: its input is a vote tally over OSM venue NAMES, produced by
+`nearbyLandmarks` + `rankVenues` + `isLabelWorthyVenue`. Building one here
+would mean this referee carrying another module's oracle, and a fabricated
+tally would check nothing. It stays guard-pinned; `lean-coverage.mts` counts
+that honestly rather than crediting it to this gate. -/
+
+namespace Focus
+
+open Verified.Geo.FocusPlaces
+open Verified.Geo.FocusIdentity (ExistingPlace NewCluster matchClusters)
+-- The tuple accessors live in `Day` (private, so same-file only, which this is).
+open Day (optArr nth)
+
+private def parseRawPoint (j : Json) : Except String RawPoint := do
+  let a ← j.getArr?
+  let acc ← match a[3]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2), acc⟩
+
+private def parseStay (j : Json) : Except String Stay := do
+  let a ← j.getArr?
+  return { startTs := ← (← nth a 0).getInt?, endTs := ← (← nth a 1).getInt?,
+           centroidLat := ← jBits (← nth a 2), centroidLon := ← jBits (← nth a 3),
+           pointCount := (← (← nth a 4).getInt?).toNat, durationSec := ← (← nth a 5).getInt? }
+
+private def parseCluster (j : Json) : Except String Cluster := do
+  let stays ← (← optArr j "stays").mapM parseStay
+  return { id := ← (← j.getObjVal? "id").getInt?,
+           centroidLat := ← jBits (← j.getObjVal? "lat"),
+           centroidLon := ← jBits (← j.getObjVal? "lon"),
+           stays := stays.toList,
+           totalDwellSec := ← (← j.getObjVal? "dwell").getInt? }
+
+private def parseWindow (j : Json) : Except String (Int × Int) := do
+  let a ← j.getArr?
+  return (← (← nth a 0).getInt?, ← (← nth a 1).getInt?)
+
+private def parseExisting (j : Json) : Except String ExistingPlace := do
+  let a ← j.getArr?
+  return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2), ← (← nth a 3).getInt?⟩
+
+private def encStay (s : Stay) : Json :=
+  Json.arr #[Lean.toJson s.startTs, Lean.toJson s.endTs, fBits s.centroidLat, fBits s.centroidLon,
+             Lean.toJson s.pointCount, Lean.toJson s.durationSec]
+
+/-- A cluster and everything the mining cron derives from it.
+
+The hour profile is emitted BOTH serialised and re-parsed, because
+`serializeHourProfile` rounds to permille: comparing only the string would let
+`parseHourProfile` drift unseen, and comparing only the parse would hide a
+rounding difference the column actually stores. -/
+private def report (windows : List (Int × Int)) (c : Cluster) : Json :=
+  let profile := serializeHourProfile (hourProfileOf c)
+  Json.mkObj [
+    ("id", Lean.toJson c.id),
+    ("lat", fBits c.centroidLat),
+    ("lon", fBits c.centroidLon),
+    ("dwell", Lean.toJson c.totalDwellSec),
+    ("stays", Json.arr ((c.stays.map encStay).toArray)),
+    ("label", Json.str (classifyClusterLabel c)),
+    ("profile", Json.str profile),
+    ("reparsed", match parseHourProfile (some profile) with
+      | none => Json.null
+      | some xs => Json.arr ((xs.map fBits).toArray)),
+    -- `hourProfileForRange` is the RUNTIME counterpart of `hourProfileOf` — it
+    -- scores one live stay against a mined profile — so it is exercised on the
+    -- cluster's own first stay rather than left to the guards.
+    ("firstStayProfile", match c.stays.head? with
+      | none => Json.null
+      | some s => Json.str (serializeHourProfile (hourProfileForRange s.startTs s.endTs c.centroidLon))),
+    ("sleepH", fBits (sleepHoursOf c)),
+    ("sleepFitbitH", fBits (sleepHoursFromFitbit c.stays windows)),
+    ("uniqueDays", Lean.toJson (uniqueDayCount c.stays c.centroidLon))]
+
+def focusResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let windows := (← (← optArr j "sleepWindows").mapM parseWindow).toList
+    let points := (← (← optArr j "points").mapM parseRawPoint).toList
+    let (stays, mined) := detectFocusPlaces points
+    let groups ← (← optArr j "clusters").mapM parseCluster
+    let old ← (← optArr j "old").mapM parseExisting
+    let identity := matchClusters old
+      ((mined.map (fun c => ({ centroidLat := c.centroidLat, centroidLon := c.centroidLon } : NewCluster))).toArray)
+    return Json.mkObj [
+      ("stays", Json.arr ((stays.map encStay).toArray)),
+      ("mined", Json.arr ((mined.map (report windows)).toArray)),
+      ("names", Json.arr (((assignDisplayNames mined).map
+        (fun (id, n) => Json.arr #[Lean.toJson id, Json.str n])).toArray)),
+      -- One entry per input cluster: the lobes `splitCluster` returned, which is
+      -- the cluster itself when it refused to split.
+      ("split", Json.arr (groups.map (fun c => Json.arr (((splitCluster c).map (report windows)).toArray)))),
+      ("identity", Json.mkObj [
+        ("assignments", Json.arr (identity.assignments.map (fun a =>
+          match a.oldId with | none => Json.null | some i => Lean.toJson i))),
+        ("deleted", Json.arr (identity.deletedOldIds.map Lean.toJson))])]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end Focus
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -1972,6 +2098,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "gpsquality" => gpsQualityResult j
         | .ok "biolabels" => bioLabelsResult j
         | .ok "day" => Day.dayResult j
+        | .ok "focus" => Focus.focusResult j
         -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
         -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
         -- response wire plus the algorithm rather than those plus the decode.
@@ -2045,6 +2172,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
   if args.contains "day" then return ← runOne Day.dayResult input
+  if args.contains "focus" then return ← runOne Focus.focusResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with

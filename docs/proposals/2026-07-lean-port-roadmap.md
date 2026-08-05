@@ -305,10 +305,16 @@ drift. `lean/experiments/lean-coverage.mts` labels them by that blind spot:
 | proven | a theorem in `lake build` | nothing it states |
 
 Measured 2026-08-05: 120 modules live-compared, 5 guard-pinned, 2 proven, 0
-unchecked. Read "guard-pinned" as *this port is unattended*, not as *this port is
-nearly covered* — the five are `CurrentPlace`, `FocusIdentity`, `FocusPlaces`,
-`LineStations`, `OsmSpatial`, and the first three run on the weekly mining cron
-that no day-gate replay can reach (#435 scopes the referee they need).
+unchecked — and after the focus gate landed the same day, **122 / 3 / 2 / 0**.
+Read "guard-pinned" as *this port is unattended*, not as *this port is
+nearly covered* — the five were `CurrentPlace`, `FocusIdentity`, `FocusPlaces`,
+`LineStations`, `OsmSpatial`. What they have in common is not one caller: two of
+them (`FocusPlaces`, `FocusIdentity`) are the weekly mining cron, `CurrentPlace`
+is the `/internal` presence route, and the other two are read from inside larger
+passes. The common property is that **no golden-day replay enters them**, which
+is the thing that makes a day gate blind — not which cron they happen to sit on.
+`FocusPlaces` and `FocusIdentity` moved to live-compared later the same day
+(#435, below); the remaining three are still unattended.
 
 A proof module has no comparator BY CONSTRUCTION — there is no TS arm to run
 against a theorem — so counting it as uncovered says the best-evidenced file in
@@ -326,3 +332,54 @@ to what TS does, including where that is odd — `impliedSpeedKmh` returns 0 for
 non-increasing `dt`, so a teleport sharing its anchor's timestamp is invisible
 to the filter. That is TS's documented choice; the guard pins it rather than
 quietly improving on it.
+
+### The focus gate, and what a mutation sweep says about a gate (#435)
+
+`pnpm run focus-gate` (`src/cli/compare-focus.ts` + the `focus` mode on
+`verified_cli`) is the second live comparator, and it exists because the day
+gate reaches everything `computeVelocity` runs and nothing the weekly
+`refresh-focus-places` cron runs. It replays each golden day's PhoneTrack fixes
+through `detectFocusPlaces`, then the whole corpus at once, then the captured
+conflated café/residence cluster through `splitCluster`. 35 cases, 8 s.
+
+**Concatenating the days is what makes it a check of the classification layer.**
+Per-day runs reach three labels (`hotel`, `one-off`, `other`). The corpus run —
+33.4k deduplicated fixes over a 93.8-day span — reaches `home`, `work`, `hotel`,
+`other`, `one-off` and all three display-name tiers. `home` wants a 30-day span
+and 20 distinct days, so no single day can produce it: without the corpus case
+the two arms would have agreed on `one-off` and that agreement would have meant
+nothing.
+
+**A gate is worth what its ablation says it is worth.** 31 single-change
+mutations of the Lean arm; **25 fire**. The six that do not are each measured
+rather than assumed, and only ONE is a gap a better input would close:
+
+| silent mutation | why |
+|---|---|
+| `localSolarHourFractional` divisor 15 → 14 | **the one real gap.** The same change to `localSolarHour` (`Verified/Geo/Velocity.lean`) FIRES. The fractional variant feeds only `splitCluster`'s circular embedding, where ≤1.2 min of shift at these longitudes moves no gate. A fixture far from Greenwich would close it. |
+| long-running-`work` fraction 0.35 → 0.05 | TS arm ablated the same way is ALSO silent — the conjuncts beside it decide first. Unobservable in either arm on this corpus. |
+| `KMEANS_MAX_ITERS` 50 → 1 | TS arm also silent: Lloyd converges within one pass on every `splitCluster` call this corpus makes. |
+| Fitbit overlap `>` → `≥` | provable no-op — at equality the added term is zero. |
+| `matchClusters` tiebreak reversed | needs an EXACT float distance tie, which re-mined real centroids do not produce. Guard-only by construction. |
+| `matchClusters` taken-check dropped | TS arm also silent: the corpus contains no MERGE (two old clusters competing for one new), the shape that check exists for. |
+
+**Thirteen of the 31 never reached the gate — the module's own `#guard`s failed
+`lake build` first.** That is the two layers being complementary rather than
+redundant, and it is also a measurement hazard: a sweep that stops at
+BUILD-FAILED is measuring the guards, not the gate. The verdicts above come from
+a second pass with the guard block stripped, and from a CONTROL that strips the
+guards and changes nothing else — it must read silent, or every verdict beside
+it is unreadable.
+
+**Two of my own probes were wrong before the results were.** One pair of
+"same" mutations turned out to hit different functions in the two languages
+(`localSolarHour` vs `localSolarHourFractional`), which is what produced the
+contradictory SILENT/MOVES pair above; and one TS ablation patched
+`focus-places.js` when its subject lives in `focus-places-identity.js`. Both
+read as findings about the gate until they were checked. When a Lean and a TS
+probe of "the same constant" disagree, suspect the probes before the arms.
+
+`pickWinningAmenity` is the one export the gate does not reach: its input is a
+vote tally over OSM venue names, so feeding it means carrying another module's
+oracle and a fabricated tally checks nothing. It stays guard-pinned, and
+`lean-coverage.mts` counts it that way rather than crediting it here.

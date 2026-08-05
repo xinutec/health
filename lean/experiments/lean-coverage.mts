@@ -37,6 +37,10 @@
  *                       so import closure alone would miss it — a reminder that
  *                       this counts modules a gate could reach, by whatever
  *                       route, and not a call graph.
+ *   FocusPlaces + FocusIdentity
+ *                       `pnpm run focus-gate` — the weekly `refresh-focus-places`
+ *                       mining, which no day replay reaches (#435). Both were
+ *                       guard-pinned until that gate existed.
  *   Match               `pnpm run compare-match` + LEAN_MATCH under golden
  *   Hsmm.*              LEAN_HSMM + `compare-assemble*`
  *   Rail.*              LEAN_RAIL — WAIVED: the corpus cannot reach it, and
@@ -97,6 +101,7 @@ const GATES: [string, string[]][] = [
 			"Verified.Geo.BestPlace",
 		],
 	],
+	["focus-gate", ["Verified.Geo.FocusPlaces", "Verified.Geo.FocusIdentity"]],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
 	["LEAN_HSMM / compare-assemble", under("Verified.Hsmm")],
 	["LEAN_RAIL (waived)", under("Verified.Rail")],
