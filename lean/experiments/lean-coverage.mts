@@ -149,22 +149,33 @@ const shape = (m: string): { thms: number; defs: number; guards: number } => ({
  * So guard-pinned is not a weaker comparator, it is blind to a different thing,
  * and the tiers are named for what each MISSES rather than for how good it is.
  *
- * The provenance column asks whether any `*-refs.mts` harness names the module,
- * because the project rule is to derive guard expectations from V8 and never by
- * hand — a guard written from the porter's belief agrees with the port for the
- * same reason the port is wrong. A name match is a PROXY for that and a loose
- * one: it says a harness mentions the module, not that the harness generated
- * these particular guards. Absence is the informative direction.
+ * The provenance column asks which `*-refs.mts` harness a pinned module's guards
+ * came from, because the project rule is to derive expectations from V8 and never
+ * by hand — a guard written from the porter's belief agrees with the port for the
+ * same reason the port is wrong.
+ *
+ * It reads the link from the LEAN side: the module's docstring cites its harness
+ * by path (`pinned against Node/V8 (lean/experiments/small-leaves-refs.mts)`).
+ * The obvious alternative — search the harnesses for the module's name — was
+ * tried first and is WRONG, in the direction that costs you: a harness refers to
+ * its subject by TS filename and exported function (`focus-places-identity.ts`,
+ * `matchClusters`), never by the Lean module name, so `FocusIdentity` came out
+ * unpinned when its guards were V8-derived all along. Reported as a finding, then
+ * withdrawn (#434).
+ *
+ * So the citation is authoritative and a missing one is the signal. A cited file
+ * that does not EXIST is worse than no citation — it is a claim of provenance
+ * with nothing behind it — so that is checked and called out rather than counted
+ * as pinned.
  */
 const EXPERIMENTS = path.join(LEAN, "experiments");
-const SELF = "lean-coverage.mts";
-const harnesses = readdirSync(EXPERIMENTS)
-	.filter((f) => f.endsWith(".mts") && f !== SELF)
-	.map((f) => ({ file: f, text: readFileSync(path.join(EXPERIMENTS, f), "utf8") }));
-const refsFor = (m: string): string[] => {
-	const base = m.split(".").pop() as string;
-	return harnesses.filter((h) => h.text.includes(base)).map((h) => h.file);
-};
+const present = new Set(readdirSync(EXPERIMENTS));
+/** The harnesses a module's own docstring claims its guards came from, each
+ *  marked when the file it names is not there. */
+const refsFor = (m: string): string[] =>
+	[...new Set([...body(m).matchAll(/experiments\/([\w-]+\.mts)/g)].map((x) => x[1]))].map((f) =>
+		present.has(f) ? f : `${f} (MISSING)`,
+	);
 
 const tier = (m: string): "proven" | "pinned" | "none" =>
 	shape(m).thms > 0 ? "proven" : shape(m).guards > 0 ? "pinned" : "none";
@@ -184,7 +195,7 @@ for (const [key, label, misses] of TIERS) {
 	for (const m of ms) {
 		const { thms, defs, guards } = shape(m);
 		const refs = refsFor(m);
-		const prov = key === "pinned" ? (refs.length > 0 ? `  <- ${refs.join(", ")}` : "  <- NO REFS HARNESS") : "";
+		const prov = key === "pinned" ? (refs.length > 0 ? `  <- ${refs.join(", ")}` : "  <- CITES NO HARNESS") : "";
 		console.log(
 			`    ${m.padEnd(30)} ${String(thms).padStart(3)} thm ${String(defs).padStart(3)} def ` +
 				`${String(guards).padStart(3)} guard${prov}`,
