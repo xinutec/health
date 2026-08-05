@@ -55,7 +55,7 @@ type Coord = [number, number];
 const way = (...ne: Array<[number, number]>): Coord[] => ne.map(([n, e]) => [P(n, e).lat, P(n, e).lon]);
 function geoOf(ways: Coord[][]): RoadGeometry {
 	return {
-		ways: ways.map((coords, i) => ({ id: i + 1, name: `w${i + 1}`, subtype: "footway", coords })),
+		ways: ways.map((coords, i) => ({ osmId: i + 1, name: `w${i + 1}`, subtype: "footway", coords })),
 	} as RoadGeometry;
 }
 function ringOf(...ne: Array<[number, number]>): BuildingFootprint {

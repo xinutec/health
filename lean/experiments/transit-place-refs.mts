@@ -17,10 +17,10 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as T from "../../src/geo/transit-place.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const T = await import(path.join(repo, "src/geo/transit-place.ts"));
 
 const q = (s: unknown) => JSON.stringify(s);
 
@@ -44,7 +44,7 @@ const AT_RADIUS = osmOf([S("Edge", 150)]);
 
 console.log("\n-- stationAtTrainAlight");
 const alight = async (
-	prev: { mode: string; refinedMode?: string } | undefined,
+	prev: { mode: TransportMode; refinedMode?: TransportMode } | undefined,
 	osm: never,
 	radiusM?: number,
 ): Promise<string | null> => T.stationAtTrainAlight(prev, 51.5, -0.2, osm, radiusM);
@@ -65,8 +65,8 @@ for (const [label, got] of [
 }
 
 console.log("\n-- stationAtTransitInterchange");
-type Seg = { mode: string; refinedMode?: string; startTs: number; endTs: number };
-const seg = (mode: string, startTs: number, endTs: number, refinedMode?: string): Seg => ({
+type Seg = { mode: TransportMode; refinedMode?: TransportMode; startTs: number; endTs: number };
+const seg = (mode: TransportMode, startTs: number, endTs: number, refinedMode?: TransportMode): Seg => ({
 	mode,
 	startTs,
 	endTs,

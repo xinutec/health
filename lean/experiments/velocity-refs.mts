@@ -4,14 +4,9 @@
  * to `Verified/Geo/Velocity.lean`. Prints Node/V8 outputs for the fixed inputs
  * baked into the Lean `#guard`s. Run: npx tsx lean/experiments/velocity-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const V = await import(path.join(repo, "src/geo/velocity.ts"));
-const FP = await import(path.join(repo, "src/geo/focus-places.ts"));
-const RRP = await import(path.join(repo, "src/geo/rail-road-proximity.ts"));
+import * as V from "../../src/geo/velocity.js";
+import * as FP from "../../src/geo/focus-places.js";
+import * as RRP from "../../src/geo/rail-road-proximity.js";
 
 // --- localSolarHour / hasOvernightPresence ---
 // hasOvernightPresence is module-private; re-implement its call over localSolarHour

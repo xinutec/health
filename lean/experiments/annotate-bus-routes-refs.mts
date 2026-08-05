@@ -18,8 +18,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const M = await import(path.join(repo, "src/geo/bus-route-match.ts"));
 
 type LatLon = { lat: number; lon: number };
 type Fix = { ts: number; lat: number; lon: number };
@@ -77,8 +75,8 @@ const LEG_END = 900;
 type Seg = {
 	startTs: number;
 	endTs: number;
-	mode: string;
-	refinedMode?: string;
+	mode: TransportMode;
+	refinedMode?: TransportMode;
 	vehicleKind?: "bus";
 	wayName?: string;
 	avgSpeed?: number;
@@ -91,7 +89,7 @@ const drive = (over: Partial<Seg> = {}): Seg => ({
 	...over,
 });
 
-const show = (label: string, segs: Seg[], fixes: Fix[], routes: unknown[], opts?: unknown) => {
+const show = (label: string, segs: Seg[], fixes: Fix[], routes: Parameters<typeof M.annotateBusRoutes>[2], opts?: Parameters<typeof M.annotateBusRoutes>[3]) => {
 	const out = M.annotateBusRoutes(segs, fixes, routes, opts);
 	const cells = out.map((s: Seg) => `${s.vehicleKind ?? "-"}/${s.wayName ?? "-"}`);
 	console.log(`${label.padEnd(38)} ${cells.join(" | ")}`);
@@ -148,6 +146,8 @@ console.log("--- the two-fix bar, with the coverage floor lowered ---");
  *  Their span has no intermediate stop, so coverage is 0 — which only clears
  *  the bar when `minCoverage` is 0 (`0 < 0` is false). That is the one setting
  *  under which the `legFixes.length < 2` test has a consequence of its own. */
+import * as M from "../../src/geo/bus-route-match.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 const routeTwin = {
 	routeRef: "C1",
 	routeName: "Twin",

@@ -1,0 +1,42 @@
+// The Lean reference harnesses, type-checked.
+//
+// ⚠ **Nothing else reads these files.** The root `tsconfig.json` includes only
+// `src/**/*` and `tsconfig.test.json` only `src` + `tests`, so `lean/experiments`
+// is in neither; Biome's config ignores the directory outright ("These paths
+// were provided but ignored"); and they run under `tsx`, which strips types
+// without checking them. Measured 2026-08-03 (#418).
+//
+// These are not ordinary scripts — they are the ORACLE. Each `*-refs.mts` drives
+// the TS arm and prints the `#guard` literals that get pasted into the Lean
+// modules and then defended by the deploy gate forever. A misspelled field reads
+// `undefined`, formats as `"undefined"` or `NaN`, and is pinned as though V8 had
+// said it. That failure is silent in the direction that matters: it does not
+// crash, it produces a confident wrong reference.
+//
+// Not hypothetical in kind. Tranche 9 (`56542fa`) shipped a harness that
+// re-parsed a FORMATTED trace string instead of the raw float, and six guards
+// were pinned to 6-decimal values. That one surfaced because the Lean guards then
+// failed to elaborate — but a type error need not fail anything at all. It just
+// moves the pinned value, quietly, and the gate defends the new one.
+//
+// Third instance of "the checking code is the least-checked code in the repo",
+// after `frontend/tsconfig.e2e.json` (the layout harness) and the Playwright
+// config it covers. See that file's header for the canary measurement.
+//
+// `rootDir` is the repo root because the harnesses import the TS arm across the
+// `lean/` boundary (`../../src/geo/*.js`). `noEmit` — nothing here is built.
+//
+// `../src/types/**/*.d.ts` is included explicitly: ambient `declare module`
+// blocks are not reachable by import, so without it the src files these
+// harnesses pull in fail on `tz-lookup` — an error about MY config, not about
+// their code.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["experiments/**/*.mts", "../src/types/**/*.d.ts"],
+  "exclude": ["node_modules"]
+}

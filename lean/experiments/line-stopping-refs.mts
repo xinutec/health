@@ -7,15 +7,10 @@
  *
  * Run: npx tsx lean/experiments/line-stopping-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const L = await import(path.join(repo, "src/geo/line-stopping-pattern.ts"));
-const LS = await import(path.join(repo, "src/geo/line-stations.ts"));
-const SS = await import(path.join(repo, "src/hmm/served-stations.ts"));
-const RC = await import(path.join(repo, "src/geo/rail-stops-cache.ts"));
+import * as L from "../../src/geo/line-stopping-pattern.js";
+import * as LS from "../../src/geo/line-stations.js";
+import * as SS from "../../src/hmm/served-stations.js";
+import * as RC from "../../src/geo/rail-stops-cache.js";
 
 // --- lineBaseToken: /\s+lines?\b.*$/i then trim -----------------------------
 const BASE_CASES = [

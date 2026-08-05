@@ -33,14 +33,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const RMA = await import(path.join(repo, "src/geo/road-match-annotate.ts"));
-const OC = await import(path.join(repo, "src/geo/osm-corridor.ts"));
-const RM = await import(path.join(repo, "src/geo/road-match.ts"));
-const MMC = await import(path.join(repo, "src/geo/map-match-core.ts"));
-const EG = await import(path.join(repo, "src/geo/episode-geometry.ts"));
-const SU = await import(path.join(repo, "src/geo/segment-util.ts"));
-const MB = await import(path.join(repo, "src/geo/mode-biometrics.ts"));
 
 type LL = { lat: number; lon: number };
 type Way = { osmId: number; name: string | null; subtype: string | null; coords: Array<[number, number]> };
@@ -272,7 +264,6 @@ const TOO_FEW: Fix[] = [f(6000, P(0, 0)), f(6060, P(100, 0)), f(6120, P(200, 0))
 /** Off in a field 20 km east: the mirror answers with nothing, so the leg
  *  bails after exactly one read and never reaches the matcher. */
 const NOWHERE: Fix[] = Array.from({ length: 5 }, (_, i) => f(7000 + i * 60, P(i * 100, 20_000)));
-
 
 /* ------------------------------------------------------------------ *
  * Scenarios
@@ -1047,6 +1038,13 @@ w("");
 }
 
 /* --- the scenario guards --- */
+import * as RMA from "../../src/geo/road-match-annotate.js";
+import * as OC from "../../src/geo/osm-corridor.js";
+import * as RM from "../../src/geo/road-match.js";
+import * as MMC from "../../src/geo/map-match-core.js";
+import * as EG from "../../src/geo/episode-geometry.js";
+import * as SU from "../../src/geo/segment-util.js";
+import * as MB from "../../src/geo/mode-biometrics.js";
 w("/-! ### The pass -/");
 w("");
 w("private def outOf (segs : Array Seg) (fixes : Array Fix) : Array Seg :=");

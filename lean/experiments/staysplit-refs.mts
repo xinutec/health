@@ -4,12 +4,7 @@
  * ported to `Verified/Geo/StaySplit.lean`.
  * Run: npx tsx lean/experiments/staysplit-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const SS = await import(path.join(repo, "src/geo/stay-split.ts"));
+import * as SS from "../../src/geo/stay-split.js";
 
 type Ev = Parameters<typeof SS.scoreSplitEvidence>[0];
 const cases: [string, Ev][] = [

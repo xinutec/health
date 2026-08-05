@@ -5,11 +5,10 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as W from "../../src/eval/worldline-feasibility.js";
+import * as RR from "../../src/geo/passes/rail-reconcile.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const W = await import(path.join(repo, "src/eval/worldline-feasibility.ts"));
-const RR = await import(path.join(repo, "src/geo/passes/rail-reconcile.ts"));
 
 // parseRailWayName
 for (const wn of ["A → B · Victoria", "A → B", "no arrow here", undefined] as const) {

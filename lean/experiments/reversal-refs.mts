@@ -25,9 +25,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const REV = await import(path.join(repo, "src/geo/passes/reversal.ts"));
-const PS = await import(path.join(repo, "src/geo/place-snap.ts"));
 
 type Fix = { ts: number; lat: number; lon: number; speed_kmh: number; bearing: number; accuracy: number };
 // biome-ignore lint/suspicious/noExplicitAny: reference harness feeds the real pass structural fixtures.
@@ -955,6 +952,8 @@ w();
 }
 
 /* ---- a fix sharing the pivot's timestamp ---- */
+import * as REV from "../../src/geo/passes/reversal.js";
+import * as PS from "../../src/geo/place-snap.js";
 {
 	// The arms exclude the pivot's own second (`< pivot.ts` / `> pivot.ts`).
 	// That is invisible unless some OTHER fix shares that second and sits far

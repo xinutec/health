@@ -5,13 +5,8 @@
  *
  * Run: npx tsx lean/experiments/line-membership-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const M = await import(path.join(repo, "src/geo/line-membership.ts"));
-const R = await import(path.join(repo, "src/geo/passes/rail-runs.ts"));
+import * as M from "../../src/geo/line-membership.js";
+import * as R from "../../src/geo/passes/rail-runs.js";
 
 // What the veto is fed: a mirror that knows three lines and nothing else. The
 // North London Line's tracks run PAST Finchley Road to Finchley Road & Frognal

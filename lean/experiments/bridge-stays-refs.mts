@@ -5,12 +5,7 @@
  *
  * Run: npx tsx lean/experiments/bridge-stays-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const B = await import(path.join(repo, "src/geo/bridge-stays-biometrics.ts"));
+import * as B from "../../src/geo/bridge-stays-biometrics.js";
 
 const stay = (startTs: number, endTs: number, pointCount = 10) =>
 	({

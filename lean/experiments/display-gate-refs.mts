@@ -62,8 +62,8 @@ const GEO: RoadGeometry = { ways: [SOUTH, NORTH, WEST, EAST] };
 const EMPTY: RoadGeometry = { ways: [] };
 
 const lines: string[] = [];
-const say = (label: string, value: string): void => lines.push(`${label} = ${value}`);
-const section = (name: string): void => lines.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines.push(`\n=== ${name} ===`); };
 
 // ---------------------------------------------------------------- metric ---
 section("metersBetween / projectPointToSegment");

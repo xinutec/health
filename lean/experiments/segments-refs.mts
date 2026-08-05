@@ -3,12 +3,7 @@
  * Reference-value generator for the `segments.ts` scoring cluster being ported
  * to `Verified/Geo/Segments.lean`. Run: npx tsx lean/experiments/segments-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const S = await import(path.join(repo, "src/geo/segments.ts"));
+import * as S from "../../src/geo/segments.js";
 
 type WF = Parameters<typeof S.scoreWindow>[0];
 const base: WF = {

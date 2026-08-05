@@ -16,11 +16,9 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { EnrichedSegment } from "../../src/geo/enriched-segment.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const A = await import(path.join(repo, "src/geo/passes/rail-absorbers.ts"));
-const { haversineMeters } = await import(path.join(repo, "src/geo/place-snap.ts"));
 
 type Fix = { ts: number; lat: number; lon: number; speed_kmh: number; bearing: number };
 type Seg = Record<string, unknown>;
@@ -79,7 +77,7 @@ const servedLookup = async (line: string) => {
 };
 
 const MET = "Metropolitan Line";
-const seg = (startTs: number, endTs: number, mode: string, over: Seg = {}): Seg => ({
+const seg = (startTs: number, endTs: number, mode: TransportMode, over: Seg = {}): Seg => ({
 	startTs,
 	endTs,
 	mode,
@@ -90,16 +88,19 @@ const walk = (a: number, b: number, over: Seg = {}) => seg(a, b, "walking", over
 const train = (a: number, b: number, wayName: string | undefined, over: Seg = {}) =>
 	seg(a, b, "train", { wayName, ...over });
 
-const cell = (s: Seg) => `${s.mode}[${s.startTs},${s.endTs}] ${s.wayName ?? "-"}`;
+const cell = (s: EnrichedSegment) => `${s.mode}[${s.startTs},${s.endTs}] ${s.wayName ?? "-"}`;
 
 const showBoard = async (label: string, segs: Seg[], points: Fix[]) => {
 	asked.length = 0;
-	const out = (await A.anchorTrainBoardingToWalkedStation(
-		segs as never,
-		points as never,
-		stationsLookup as never,
-		servedLookup as never,
-	)) as Seg[];
+	// The fixtures are deliberately PARTIAL — one documented conversion at the
+	// boundary, rather than `as never` on every argument, which switched off
+	// checking for the lookups too (#418).
+	const out = await A.anchorTrainBoardingToWalkedStation(
+		segs as unknown as EnrichedSegment[],
+		points,
+		stationsLookup,
+		servedLookup,
+	);
 	console.log(`--- ${label}`);
 	for (const s of out) console.log(`   ${cell(s)}`);
 	for (const s of out) if (s.refinedReason) console.log(`   reason: ${s.refinedReason}`);
@@ -108,13 +109,13 @@ const showBoard = async (label: string, segs: Seg[], points: Fix[]) => {
 
 const showAlight = async (label: string, segs: Seg[], points: Fix[]) => {
 	asked.length = 0;
-	const out = (await A.anchorTrainAlightToWalkedStation(
-		segs as never,
-		points as never,
-		stationsLookup as never,
-		linesLookup as never,
-		servedLookup as never,
-	)) as Seg[];
+	const out = await A.anchorTrainAlightToWalkedStation(
+		segs as unknown as EnrichedSegment[],
+		points,
+		stationsLookup,
+		linesLookup,
+		servedLookup,
+	);
 	console.log(`--- ${label}`);
 	for (const s of out) console.log(`   ${cell(s)}`);
 	for (const s of out) if (s.refinedReason) console.log(`   reason: ${s.refinedReason}`);
@@ -233,6 +234,9 @@ const alightStaleRun = [fix(0, 51.5), fix(30, 51.5014), fix(90, 51.5017), fix(12
  *  ends 11 m from where it started, which is not a ride to anywhere. */
 const alightBounce = [fix(0, 51.5), fix(600, 51.503), fix(630, 51.5001)];
 /** Two fixes that would anchor if the three-fix bar were a two-fix bar. */
+import * as A from "../../src/geo/passes/rail-absorbers.js";
+import { haversineMeters } from "../../src/geo/place-snap.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 const alightTwoFix = [fix(0, 51.5), fix(30, 51.5028)];
 
 await showAlight("a slow step resets the run start (alight)", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 120)], alightStaleRun);

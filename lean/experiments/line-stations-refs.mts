@@ -12,12 +12,7 @@
  *
  * Run: npx tsx lean/experiments/line-stations-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const L = await import(path.join(repo, "src/geo/line-stations.ts"));
+import * as L from "../../src/geo/line-stations.js";
 
 const q = (s: string) => JSON.stringify(s);
 

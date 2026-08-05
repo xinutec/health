@@ -30,14 +30,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "..", "..");
-const {
-	applyStationaryWalkThrough,
-	correctModeFromCadence,
-	correctStationaryWalkThrough,
-	demoteJitterWalkToStationary,
-	revertIsolatedCadenceDrives,
-} = await import(path.join(repo, "src/geo/biometrics.ts"));
 
 const T0 = 1778457600;
 
@@ -49,7 +41,7 @@ interface Fix {
 	ts: number;
 	lat: number;
 	lon: number;
-	speedKmh: number;
+	speed_kmh: number;
 	bearing: number;
 	accuracy: number | null;
 }
@@ -87,7 +79,7 @@ const fix = (ts: number, lat: number, lon: number): Fix => ({
 	ts,
 	lat,
 	lon,
-	speedKmh: 0,
+	speed_kmh: 0,
 	bearing: 0,
 	accuracy: 10,
 });
@@ -97,6 +89,13 @@ const fix = (ts: number, lat: number, lon: number): Fix => ({
  * input. `keep` is the TS returning the segment unchanged; a flip is the new
  * mode, the reason FRAGMENT it appended, and any tag it added.
  */
+import {
+	applyStationaryWalkThrough,
+	correctModeFromCadence,
+	correctStationaryWalkThrough,
+	demoteJitterWalkToStationary,
+	revertIsolatedCadenceDrives,
+} from "../../src/geo/biometrics.js";
 function decision(before: Seg, after: Seg): string {
 	if (after === before) return ".keep";
 	const mode = after.refinedMode ?? after.mode;

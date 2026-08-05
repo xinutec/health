@@ -14,15 +14,13 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { buildHsmmModel } from "../../src/hmm/decode.js";
+import { decodeTsFloat, scoreFloat } from "../../src/hmm/lean-shadow-core.js";
+import { buildRouteGraph, nodeKey } from "../../src/geo/route-graph.js";
+import { DEFAULT_MAX_DURATION } from "../../src/hmm/hsmm-viterbi.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
-
-const { buildHsmmModel } = await import(path.join(repo, "src/hmm/decode.ts"));
-const { decodeTsFloat, scoreFloat } = await import(path.join(repo, "src/hmm/lean-shadow-core.ts"));
-const { buildRouteGraph, nodeKey } = await import(path.join(repo, "src/geo/route-graph.ts"));
-const { DEFAULT_MAX_DURATION } = await import(path.join(repo, "src/hmm/hsmm-viterbi.ts"));
 
 const t0 = Math.floor(Date.parse("2026-07-16T11:00:00Z") / 1000);
 const P1 = { id: 101, lat: 51.52, lon: -0.13 };

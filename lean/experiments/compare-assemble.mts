@@ -27,13 +27,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
-
-const { buildHsmmModel } = await import(path.join(repo, "src/hmm/decode.ts"));
-const { quantize } = await import(path.join(repo, "src/hmm/lean-shadow-core.ts"));
-const { DEFAULT_MAX_DURATION } = await import(path.join(repo, "src/hmm/hsmm-viterbi.ts"));
-const { buildRouteGraph, nodeKey } = await import(path.join(repo, "src/geo/route-graph.ts"));
 
 const day = "2026-07-16";
 const tz = "Europe/London";
@@ -74,6 +68,10 @@ const edgesJson = [...populatedGraph.edges.values()].map((e: any) => ({
 
 /** A day: 3 min stationary at `start`, then either walking away (empty scenario)
  *  or a tube blackout A→B (populated). Returns points/hr/steps/proximity. */
+import { buildHsmmModel } from "../../src/hmm/decode.js";
+import { quantize } from "../../src/hmm/lean-shadow-core.js";
+import { DEFAULT_MAX_DURATION } from "../../src/hmm/hsmm-viterbi.js";
+import { buildRouteGraph, nodeKey } from "../../src/geo/route-graph.js";
 function buildDay(kind: "walk" | "tube") {
 	const points: any[] = [], hr: any[] = [], steps: any[] = [], prox: [number, any][] = [];
 	if (kind === "walk") {

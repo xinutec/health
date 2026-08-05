@@ -21,7 +21,7 @@ const f = (x: number): string => (Number.isFinite(x) ? x.toPrecision(17) : Strin
 type Coord = [number, number]; // [lat, lon]
 function geoOf(ways: Coord[][]): RoadGeometry {
 	return {
-		ways: ways.map((coords, i) => ({ id: i + 1, name: `w${i + 1}`, subtype: "footway", coords })),
+		ways: ways.map((coords, i) => ({ osmId: i + 1, name: `w${i + 1}`, subtype: "footway", coords })),
 	} as RoadGeometry;
 }
 

@@ -20,12 +20,6 @@
  *
  * Run: npx tsx lean/experiments/splice-interchanges-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const I = await import(path.join(repo, "src/geo/interchange-split.ts"));
 
 type Fix = { ts: number; lat: number; lon: number };
 type Step = { ts: number; steps: number };
@@ -107,6 +101,7 @@ const osmOf = (
 
 const bothLines: Record<string, Station[]> = { A: [change, wrong], B: [change, wrong] };
 /** A and B share no station ⇒ `pickInterchange` returns null. */
+import * as I from "../../src/geo/interchange-split.js";
 const noOverlap: Record<string, Station[]> = { A: [change], B: [wrong] };
 
 const FIELDS = [
@@ -134,14 +129,17 @@ const run = async (
 	} = {},
 ): Promise<void> => {
 	calls = 0;
+	// Partial fixtures and partial stubs, converted once at the boundary: the
+	// stub answers only the two adapter methods this pass calls, and the segments
+	// carry only the fields it reads (#418).
 	const out = await I.spliceInterchanges(
-		segs,
+		segs as unknown as Parameters<typeof I.spliceInterchanges>[0],
 		opts.pts ?? points,
 		opts.stp ?? steps,
-		osmOf(opts.atBoard ?? ["A"], opts.atAlight ?? ["B"], opts.byLine ?? bothLines),
+		osmOf(opts.atBoard ?? ["A"], opts.atAlight ?? ["B"], opts.byLine ?? bothLines) as Parameters<typeof I.spliceInterchanges>[3],
 	);
-	const rows = out.map((s: Record<string, unknown>) =>
-		FIELDS.map((f) => (s[f] === undefined ? null : s[f])),
+	const rows = out.map((s) =>
+		FIELDS.map((f) => ((s as unknown as Record<string, unknown>)[f] === undefined ? null : (s as unknown as Record<string, unknown>)[f])),
 	);
 	console.log(`${label.padEnd(26)} calls=${String(calls).padEnd(2)} ${JSON.stringify(rows)}`);
 };

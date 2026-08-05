@@ -28,16 +28,6 @@
  * Run: npx tsx lean/experiments/walk-annotate-refs.mts
  */
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const A = await import(path.join(repo, "src/geo/pedestrian-match-annotate.ts"));
-const EG = await import(path.join(repo, "src/geo/episode-geometry.ts"));
-const PM = await import(path.join(repo, "src/geo/pedestrian-match.ts"));
-const MMC = await import(path.join(repo, "src/geo/map-match-core.ts"));
-const WSM = await import(path.join(repo, "src/geo/walk-smooth-map.ts"));
-const WBE = await import(path.join(repo, "src/geo/walk-building-escape.ts"));
 
 type PedFix = { ts: number; lat: number; lon: number; accuracy: number | null };
 type Way = { osmId: number; name: string | null; subtype: string | null; coords: Array<[number, number]> };
@@ -48,7 +38,7 @@ type Seg = any;
 const n6 = (x: number): string => x.toFixed(6);
 
 /** A walking segment. `mode` stays raw so `refinedMode` can be exercised. */
-const seg = (startTs: number, endTs: number, mode: string, extra: Record<string, unknown> = {}): Seg => ({
+const seg = (startTs: number, endTs: number, mode: TransportMode, extra: Record<string, unknown> = {}): Seg => ({
 	startTs,
 	endTs,
 	mode,
@@ -216,12 +206,22 @@ async function run(title: string, o: CaseOpts): Promise<void> {
 		else process.env[k] = v;
 	}
 	const log: ReadLog[] = [];
-	const points = o.fixes.map((x) => ({ ts: x.ts, speed_kmh: o.speeds?.get(x.ts) ?? 4 }));
+	// The speed track the pass reads. It carries the fix's own position and
+	// bearing so it is a real `FilteredPoint` rather than a two-field stand-in —
+	// only `ts` and `speed_kmh` are read here, but a narrower shape is how the
+	// harness stops tracking what production hands the pass (#418).
+	const points = o.fixes.map((x) => ({
+		ts: x.ts,
+		lat: x.lat,
+		lon: x.lon,
+		bearing: 0,
+		speed_kmh: o.speeds?.get(x.ts) ?? 4,
+	}));
 	const out = await A.annotateWalkMatches(
 		o.segments,
 		o.fixes,
 		points,
-		adapter(o.ways ?? STREETS, o.buildings ?? [], log),
+		adapter(o.ways ?? STREETS, o.buildings ?? [], log) as Parameters<typeof A.annotateWalkMatches>[3],
 		o.steps ?? [],
 		o.draw ?? "matcher",
 	);
@@ -814,6 +814,13 @@ prepOf("CROSSOVER", CROSSOVER);
 
 /** A 778 m walk: long enough that the swap's FRACTION bar can block while its
  *  absolute drop bar passes (the two only separate above ~600 m). */
+import * as A from "../../src/geo/pedestrian-match-annotate.js";
+import * as EG from "../../src/geo/episode-geometry.js";
+import * as PM from "../../src/geo/pedestrian-match.js";
+import * as MMC from "../../src/geo/map-match-core.js";
+import * as WSM from "../../src/geo/walk-smooth-map.js";
+import * as WBE from "../../src/geo/walk-building-escape.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 const LONGWALK: PedFix[] = [
 	f(1000, 51.5, -0.14),
 	f(1100, 51.50175, -0.14),

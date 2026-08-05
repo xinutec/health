@@ -23,12 +23,7 @@
  *
  * Run: npx tsx lean/experiments/gpsquality-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "..", "..");
-const { qualityFilterGps } = await import(path.join(repo, "src/geo/gps-quality.ts"));
+import { qualityFilterGps } from "../../src/geo/gps-quality.js";
 
 interface GpsPoint {
 	ts: number;

@@ -94,8 +94,8 @@ const cloudAlong = (n: number, count: number): Array<{ lat: number; lon: number 
 	Array.from({ length: count }, (_, i) => P(n, (i * 1000) / (count - 1)));
 
 const lines_: string[] = [];
-const say = (label: string, value: string): void => lines_.push(`${label} = ${value}`);
-const section = (name: string): void => lines_.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines_.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines_.push(`\n=== ${name} ===`); };
 
 /** Emit the graph a set of ways builds: the fused vertex list and the
  *  adjacency, per scenario (a line-restricted search fuses a different way set

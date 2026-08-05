@@ -39,8 +39,8 @@ import { type QPt, quantPt } from "../../src/geo/quant-twin.js";
 import { ROAD_PROFILE } from "../../src/geo/road-match.js";
 
 const lines: string[] = [];
-const say = (label: string, value: string): void => lines.push(`${label} = ${value}`);
-const section = (name: string): void => lines.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines.push(`\n=== ${name} ===`); };
 
 // ---------------------------------------------------------------------------
 // The profile, quantised

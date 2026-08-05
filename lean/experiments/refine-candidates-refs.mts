@@ -28,8 +28,8 @@ import type { ModeStats } from "../../src/geo/mode-biometrics.js";
 import type { NearbyWay } from "../../src/geo/osm.js";
 
 const lines: string[] = [];
-const say = (label: string, value: string): void => lines.push(`${label} = ${value}`);
-const section = (name: string): void => lines.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines.push(`\n=== ${name} ===`); };
 
 const way = (type: string, subtype: string, name?: string, distanceM?: number): NearbyWay => ({
 	type,
@@ -131,7 +131,7 @@ const stats: ModeStats[] = [
 		sampleCount: 300,
 	},
 ];
-const bio = (cadence: number | undefined, speed: number | undefined): BiometricContext => ({
+const bio = (cadence: number | null, speed: number | null): BiometricContext => ({
 	obs: { hr: 90, cadence, speed },
 	stats,
 });
@@ -141,7 +141,7 @@ show("cadence vetoes driving+cycling", [way("highway", "residential", "Barn Rise
 // Above the speed ceiling the veto premise fails, so nothing is dropped.
 show("fast: veto premise fails", [way("highway", "residential", "Barn Rise", 8)], "walking", bio(105, 40));
 // No cadence observation at all.
-show("no cadence", [way("highway", "residential", "Barn Rise", 8)], "walking", bio(undefined, 4));
+show("no cadence", [way("highway", "residential", "Barn Rise", 8)], "walking", bio(null, 4));
 // The fallback survives a veto of its OWN mode.
 show("fallback survives its own veto", [way("highway", "residential", "Barn Rise", 8)], "driving", bio(105, 4));
 /* The interaction worth pinning: the cadence veto runs BEFORE the dedup, so

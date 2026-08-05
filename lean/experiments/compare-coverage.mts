@@ -16,14 +16,12 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { buildHsmmModel, KNOWN_LINES } from "../../src/hmm/decode.js";
+import { buildTrainGeneratorPrior } from "../../src/hmm/train-generator-prior.js";
+import { buildRouteGraph, nodeKey } from "../../src/geo/route-graph.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
-
-const { buildHsmmModel, KNOWN_LINES } = await import(path.join(repo, "src/hmm/decode.ts"));
-const { buildTrainGeneratorPrior } = await import(path.join(repo, "src/hmm/train-generator-prior.ts"));
-const { buildRouteGraph, nodeKey } = await import(path.join(repo, "src/geo/route-graph.ts"));
 
 const t0 = Math.floor(Date.parse("2026-07-16T11:00:00Z") / 1000);
 const A = { lat: 51.5, lon: -0.1 }, M = { lat: 51.525, lon: -0.075 }, B = { lat: 51.55, lon: -0.05 };

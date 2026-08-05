@@ -35,15 +35,14 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { filterGpsTrack } from "../../src/geo/kalman.js";
+import { floatToBits, floatFromBits } from "../../src/lean/float-bits.js";
+import { circularDegGap } from "../../src/lean/float-gap.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
 const dir = path.join(repo, "tests", "golden", "days");
-
-const { filterGpsTrack } = await import(path.join(repo, "src/geo/kalman.ts"));
-const { floatToBits, floatFromBits } = await import(path.join(repo, "src/lean/float-bits.ts"));
-const { circularDegGap } = await import(path.join(repo, "src/lean/float-gap.ts"));
 
 const want = process.argv.slice(2);
 const files = readdirSync(dir)

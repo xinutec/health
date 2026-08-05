@@ -3,12 +3,7 @@
  * Reference-value generator for `dwell-continuation.ts`'s pure exports ported to
  * `Verified/Geo/DwellContinuation.lean`. Run: npx tsx lean/experiments/dwell-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const D = await import(path.join(repo, "src/geo/dwell-continuation.ts"));
+import * as D from "../../src/geo/dwell-continuation.js";
 
 console.log("meanDwell ok:", D.meanDwellSec({ totalDwellSec: 72000, visitCount: 24, uniqueDays: 30 }));
 console.log("meanDwell zeroVisits:", D.meanDwellSec({ totalDwellSec: 72000, visitCount: 0, uniqueDays: 30 }));

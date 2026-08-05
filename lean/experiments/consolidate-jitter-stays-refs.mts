@@ -20,10 +20,9 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { EnrichedSegment } from "../../src/geo/enriched-segment.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const S = await import(path.join(repo, "src/geo/passes/stays.ts"));
 
 const asked: string[] = [];
 
@@ -88,6 +87,7 @@ const JIT = { refinedKinds: ["gps-jitter"] };
 /** Three co-located fragments: the MIDDLE one is longest (so the base pick is
  *  not the first), and the point counts differ (so the weighted centroid is not
  *  the plain mean). */
+import * as S from "../../src/geo/passes/stays.js";
 const runOf3 = [
 	stay(0, 600, 51.5, -0.14, 10, { ...JIT, city: "Edge", confidence: 0.1 }),
 	stay(600, 1500, 51.5002, -0.1401, 40, {
@@ -103,9 +103,10 @@ const runOf3 = [
 
 const dump = async (label: string, segs: Seg[]) => {
 	asked.length = 0;
-	const out = await S.consolidateJitterStays(segs as never, osm, null);
+	// Partial fixtures, one documented conversion at the boundary (#418).
+	const out = await S.consolidateJitterStays(segs as unknown as EnrichedSegment[], osm, null);
 	console.log(`--- ${label}`);
-	for (const s of out as Seg[]) {
+	for (const s of out) {
 		console.log(
 			`   [${s.startTs},${s.endTs}] n=${s.pointCount} c=${s.centroidLat},${s.centroidLon}` +
 				` conf=${s.confidence} avg=${s.avgSpeed}` +

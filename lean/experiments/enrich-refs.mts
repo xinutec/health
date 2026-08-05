@@ -19,9 +19,10 @@
  * Run: TMPDIR=/tmp npx tsx lean/experiments/enrich-refs.mts
  */
 
-import type { NearbyWay } from "../../src/geo/osm-adapter.js";
 import { commonCity, extractCity, rejectImplausibleDriving } from "../../src/geo/osm.js";
-import type { NominatimResult } from "../../src/geo/osm.js";
+// `osm-adapter` re-imports these rather than declaring them, so a type-only
+// import from there resolves to a local binding it does not re-export.
+import type { NearbyWay, NominatimResult } from "../../src/geo/osm.js";
 
 const addr = (a: Partial<NominatimResult["address"]>): NominatimResult =>
 	({ address: a }) as NominatimResult;

@@ -26,9 +26,6 @@ const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
 const dir = path.join(repo, "tests", "golden", "days");
 
-const { qualityFilterGps } = await import(path.join(repo, "src/geo/gps-quality.ts"));
-const { floatToBits } = await import(path.join(repo, "src/lean/float-bits.ts"));
-
 const want = process.argv.slice(2);
 const files = readdirSync(dir)
 	.filter((f) => f.endsWith(".json"))
@@ -43,6 +40,8 @@ const key = (p: any): string =>
 	`${p.ts}|${floatToBits(p.lat)}|${floatToBits(p.lon)}|${p.accuracy === null ? "n" : floatToBits(p.accuracy)}`;
 
 /** Indices of a drop-only subsequence within the input, by lock-step walk. */
+import { qualityFilterGps } from "../../src/geo/gps-quality.js";
+import { floatToBits } from "../../src/lean/float-bits.js";
 function idxOf(points: any[], keys: string[]): number[] {
 	const out: number[] = [];
 	let j = 0;

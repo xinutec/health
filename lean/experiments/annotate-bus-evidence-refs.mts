@@ -16,12 +16,6 @@
  *
  * Run: npx tsx lean/experiments/annotate-bus-evidence-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const B = await import(path.join(repo, "src/geo/bus-evidence.ts"));
 
 type Fix = { ts: number; lat: number; lon: number };
 type Stop = { subtype: string; distanceM: number };
@@ -50,7 +44,7 @@ for (let t = legStart; t <= legStart + 900; t += 30) {
 }
 const legEnd = legStart + 900;
 
-const seg = (mode: string, refinedMode?: string, startTs = legStart, endTs = legEnd) => ({
+const seg = (mode: TransportMode, refinedMode?: TransportMode, startTs = legStart, endTs = legEnd) => ({
 	startTs,
 	endTs,
 	mode,
@@ -80,7 +74,11 @@ const twoStops: Stop[] = [
 /** A bus stop, but beyond `TRANSIT_STOP_NEAR_M` — present is not near. */
 const farStop: Stop[] = [{ subtype: "bus_stop", distanceM: 40 }];
 
-const run = async (label: string, segs: object[], stops: Stop[]): Promise<void> => {
+/** Tracks the pass signature by construction: no named type is exported for
+ *  this parameter, and restating it is how the harness drifts (#418). */
+type BusEvidenceSeg = Parameters<typeof B.annotateBusEvidence>[0][number];
+
+const run = async (label: string, segs: BusEvidenceSeg[], stops: Stop[]): Promise<void> => {
 	const out = await B.annotateBusEvidence(segs, fixes, osmOf(stops));
 	console.log(`${label.padEnd(24)} ${JSON.stringify(out.map((s: { vehicleKind?: string }) => s.vehicleKind ?? null))}`);
 };
@@ -154,6 +152,8 @@ const barDwells = B.detectVehicleDwells(barFixes, legStart, barEnd);
 console.log(`boarding  ${JSON.stringify(B.detectBoardingWait(barFixes, legStart))}`);
 console.log(`dwellLats ${JSON.stringify(barDwells.map((d: { lat: number }) => d.lat))}`);
 /** Stop everywhere; a signal only at the LAST dwell. */
+import * as B from "../../src/geo/bus-evidence.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 const SIGNAL_FROM_LAT = 51.55;
 const perDwell = {
 	nearbyTransitStops: async (lat: number): Promise<Stop[]> =>

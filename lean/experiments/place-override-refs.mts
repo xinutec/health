@@ -25,11 +25,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const PO = await import(path.join(repo, "src/hmm/place-override.ts"));
-const PS = await import(path.join(repo, "src/geo/place-snap.ts"));
 
-type Hmm = { startTs: number; endTs: number; mode: string; lineName?: string | null; placeId?: number | null };
+
+type Hmm = { startTs: number; endTs: number; mode: TransportMode; lineName?: string | null; placeId?: number | null };
 type Place = { displayName: string | null; lat: number; lon: number };
 // biome-ignore lint/suspicious/noExplicitAny: reference harness feeds the real pass structural fixtures.
 type Seg = any;
@@ -346,7 +344,8 @@ const check = (id: string, before: Seg, after: Seg, want: Expect): void => {
 };
 
 for (const c of CASES) {
-	const res = PO.applyHsmmPlaceOverride(c.segs, c.hmm, PLACES);
+	// Partial HMM fixtures — each case sets only the field its branch reads (#418).
+	const res = PO.applyHsmmPlaceOverride(c.segs, c.hmm as unknown as Parameters<typeof PO.applyHsmmPlaceOverride>[1], PLACES);
 	if (res.length !== c.segs.length) {
 		console.error(`${c.id}: the pass changed the segment count (${c.segs.length} -> ${res.length})`);
 		process.exit(1);
@@ -386,6 +385,9 @@ for (const [note, c] of dcases) {
 w();
 
 /* ---- the doorstep gate distance ---- */
+import * as PO from "../../src/hmm/place-override.js";
+import * as PS from "../../src/geo/place-snap.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 w("/-! ### The #244 doorstep gate, at its own bar. -/");
 w();
 {

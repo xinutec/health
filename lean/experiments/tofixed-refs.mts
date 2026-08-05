@@ -23,8 +23,8 @@
  */
 
 const lines: string[] = [];
-const say = (label: string, value: string): void => lines.push(`${label} = ${value}`);
-const section = (name: string): void => lines.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines.push(`\n=== ${name} ===`); };
 
 /** `x.toFixed(f)`, labelled by the double's exact bit pattern so the Lean twin
  *  can be handed the identical value rather than a decimal literal it might

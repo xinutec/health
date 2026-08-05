@@ -18,17 +18,16 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { buildHsmmModel } from "../../src/hmm/decode.js";
+import { hsmmInputsFromFixture } from "../../src/cli/hsmm-fixture.js";
+import { quantize, decodeTsFloat, scoreFloat } from "../../src/hmm/lean-shadow-core.js";
+import { nodeKey } from "../../src/geo/route-graph.js";
+import { DEFAULT_MAX_DURATION } from "../../src/hmm/hsmm-viterbi.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, "..", "..");
 const leanBin = path.join(here, "..", ".lake", "build", "bin", "verified_cli");
 const dir = path.join(repo, "tests", "golden", "decoded_days");
-
-const { buildHsmmModel } = await import(path.join(repo, "src/hmm/decode.ts"));
-const { hsmmInputsFromFixture } = await import(path.join(repo, "src/cli/hsmm-fixture.ts"));
-const { quantize, decodeTsFloat, scoreFloat } = await import(path.join(repo, "src/hmm/lean-shadow-core.ts"));
-const { nodeKey } = await import(path.join(repo, "src/geo/route-graph.ts"));
-const { DEFAULT_MAX_DURATION } = await import(path.join(repo, "src/hmm/hsmm-viterbi.ts"));
 
 const want = process.argv[2];
 const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();

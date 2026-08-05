@@ -42,8 +42,8 @@ import type { SnappedPoint } from "../../src/geo/rail-snap.js";
 import type { DayState, DayStateMode } from "../../src/sleep/day-state.js";
 
 const lines: string[] = [];
-const say = (label: string, value: string): void => lines.push(`${label} = ${value}`);
-const section = (name: string): void => lines.push(`\n=== ${name} ===`);
+const say = (label: string, value: string): void => { lines.push(`${label} = ${value}`); };
+const section = (name: string): void => { lines.push(`\n=== ${name} ===`); };
 
 const LAT0 = 51.52;
 const LON0 = -0.13;

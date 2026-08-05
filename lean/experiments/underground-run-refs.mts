@@ -17,6 +17,7 @@
  * Run: nix develop /Users/pippijn/Code/health --command npx tsx lean/experiments/underground-run-refs.mts
  */
 
+import type { ServedStation } from "../../src/geo/line-membership.js";
 import type { NearbyStation } from "../../src/geo/osm.js";
 import type { CoarseFix } from "../../src/geo/underground-rail.js";
 import { reconstructUndergroundRun } from "../../src/geo/underground-rail.js";
@@ -127,6 +128,20 @@ const CASES: Record<string, Case> = {
 	empty: { fixes: [] },
 };
 
+/** The served-stations mirror, empty. `lineCannotServe` reads an empty result as
+ *  "line unknown to the mirror — no assertion", so this exercises the line
+ *  candidates without the served-station veto.
+ *
+ *  It is not a stand-in for production, which passes
+ *  `dbOsmAdapter.stationsOnLine` (#364). It matches the Lean side exactly:
+ *  `UndergroundRun.lean`'s guards pass `servedNothing`, which is this. So the
+ *  veto is unexercised in BOTH arms, and no guard here speaks to it.
+ *
+ *  Before #418 this argument was missing altogether, and the harness died with
+ *  `TypeError: lookup is not a function` — it could not regenerate its own
+ *  guards, and nothing noticed because nothing typechecks or runs these. */
+const servedNothing = async (): Promise<ServedStation[]> => [];
+
 for (const [name, c] of Object.entries(CASES)) {
 	const r = await reconstructUndergroundRun(
 		c.fixes,
@@ -134,6 +149,7 @@ for (const [name, c] of Object.entries(CASES)) {
 		c.alight ?? ALIGHT,
 		c.stations ?? stations,
 		c.lines ?? victoria,
+		servedNothing,
 	);
 	show(`run.${name}`, r);
 }

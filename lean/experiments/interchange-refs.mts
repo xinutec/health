@@ -4,12 +4,7 @@
  * ported to `Verified/Geo/Interchange.lean`.
  * Run: npx tsx lean/experiments/interchange-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const IC = await import(path.join(repo, "src/geo/interchange-split.ts"));
+import * as IC from "../../src/geo/interchange-split.js";
 
 type Step = { ts: number; steps: number };
 // --- findInterchangeBurst ---

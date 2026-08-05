@@ -1,9 +1,5 @@
 #!/usr/bin/env -S npx tsx
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const BC = await import(path.join(repo, "src/geo/biometric-coherence.ts"));
+import * as BC from "../../src/geo/biometric-coherence.js";
 
 type Hr = { ts: number; bpm: number };
 type St = { ts: number; steps: number };

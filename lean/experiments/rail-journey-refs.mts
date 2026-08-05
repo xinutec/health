@@ -44,16 +44,16 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { FilteredPoint } from "../../src/geo/kalman.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const RR = await import(path.join(repo, "src/geo/passes/rail-reconcile.ts"));
-const RUNS = await import(path.join(repo, "src/geo/passes/rail-runs.ts"));
-const PS = await import(path.join(repo, "src/geo/place-snap.ts"));
 
 // biome-ignore lint/suspicious/noExplicitAny: reference harness feeds the real pass structural fixtures.
 type Seg = any;
-type Fix = { ts: number; lat: number; lon: number; speed_kmh: number };
+/** The pipeline shape. `bearing` is unread on every path this harness drives,
+ *  but the harness feeds what production feeds — a narrower local stand-in is
+ *  how a harness stops tracking the type it is meant to mirror (#418). */
+type Fix = FilteredPoint;
 type LineStation = { name: string; lat: number; lon: number };
 
 const n6 = (x: number): string => x.toFixed(6);
@@ -142,7 +142,7 @@ const train = (startTs: number, endTs: number, board: string, alight: string, li
 });
 
 /** A non-train segment sitting between two train legs. */
-const gap = (startTs: number, endTs: number, mode: string, maxSpeed: number, wayName?: string): Seg => ({
+const gap = (startTs: number, endTs: number, mode: TransportMode, maxSpeed: number, wayName?: string): Seg => ({
 	startTs,
 	endTs,
 	mode,
@@ -162,7 +162,7 @@ const march = (t0: number, t1: number, fromLat: number, toLat: number, speed: nu
 	const out: Fix[] = [];
 	for (let i = 0; i < n; i++) {
 		const f = n === 1 ? 0 : i / (n - 1);
-		out.push({ ts: Math.round(t0 + (t1 - t0) * f), lat: fromLat + (toLat - fromLat) * f, lon: LON, speed_kmh: speed });
+		out.push({ ts: Math.round(t0 + (t1 - t0) * f), lat: fromLat + (toLat - fromLat) * f, lon: LON, speed_kmh: speed, bearing: 0 });
 	}
 	return out;
 };
@@ -559,10 +559,10 @@ await run(
 		train(1260, 1460, "B", "C", "Alpha Line"),
 	],
 	[
-		{ ts: 1000, lat: 51.5, lon: LON, speed_kmh: 50 },
-		{ ts: 1230, lat: 51.54, lon: LON, speed_kmh: 50 },
-		{ ts: 1460, lat: 51.55, lon: LON, speed_kmh: 50 },
-		{ ts: 1520, lat: 51.56, lon: LON, speed_kmh: 50 },
+		{ ts: 1000, lat: 51.5, lon: LON, speed_kmh: 50, bearing: 0 },
+		{ ts: 1230, lat: 51.54, lon: LON, speed_kmh: 50, bearing: 0 },
+		{ ts: 1460, lat: 51.55, lon: LON, speed_kmh: 50, bearing: 0 },
+		{ ts: 1520, lat: 51.56, lon: LON, speed_kmh: 50, bearing: 0 },
 	],
 );
 
@@ -655,6 +655,10 @@ await run(
 /* ------------------------------------------------------------------ *
  * Leaf references — the values the Lean guards replay directly.
  * ------------------------------------------------------------------ */
+import * as RR from "../../src/geo/passes/rail-reconcile.js";
+import * as RUNS from "../../src/geo/passes/rail-runs.js";
+import * as PS from "../../src/geo/place-snap.js";
+import type { TransportMode } from "../../src/geo/segments.js";
 
 console.log("\n=== LEAF parseRailWayName ===");
 for (const w of [
@@ -697,6 +701,14 @@ console.log("\n=== LEAF findRunAlightFix ===");
 {
 	const pts = [...march(1000, 1460, 51.5, 51.54, 50, 9), ...march(1520, 1640, 51.56, 51.5601, 4, 3)];
 	for (const endTs of [1460, 1500, 1640]) {
-		console.log(`  endTs=${endTs} -> ${JSON.stringify(RUNS.findRunAlightFix(pts, endTs))}`);
+		// Project the fields the Lean guard pins, rather than stringifying the
+		// whole fix. `bearing` is part of `FilteredPoint` and so part of what the
+		// harness must FEED, but it is unread here and pinning it would widen the
+		// guard to a value this case says nothing about.
+		const f = RUNS.findRunAlightFix(pts, endTs);
+		// `== null` because the miss case returns `undefined`, and the guard pins
+		// the literal `undefined` that `JSON.stringify` then renders — not `null`.
+		const shown = f == null ? f : { ts: f.ts, lat: f.lat, lon: f.lon, speed_kmh: f.speed_kmh };
+		console.log(`  endTs=${endTs} -> ${JSON.stringify(shown)}`);
 	}
 }

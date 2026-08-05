@@ -1,9 +1,5 @@
 #!/usr/bin/env -S npx tsx
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const M = await import(path.join(repo, "src/geo/mode-biometrics.ts"));
+import * as M from "../../src/geo/mode-biometrics.js";
 
 type Obs = { hr: number | null; cadence: number | null; speed: number | null };
 const O = (hr: number | null, cadence: number | null, speed: number | null): Obs => ({ hr, cadence, speed });

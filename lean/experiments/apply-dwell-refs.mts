@@ -15,18 +15,12 @@
  *
  * Run: npx tsx lean/experiments/apply-dwell-refs.mts
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const D = await import(path.join(repo, "src/geo/dwell-continuation.ts"));
 
 type State = Record<string, unknown>;
 type Seg = Record<string, unknown>;
 type Place = Record<string, unknown>;
 
-const st = (startTs: number, endTs: number, mode: string, extra: State = {}): State => ({
+const st = (startTs: number, endTs: number, mode: DayStateMode, extra: State = {}): State => ({
 	startTs,
 	endTs,
 	mode,
@@ -34,6 +28,10 @@ const st = (startTs: number, endTs: number, mode: string, extra: State = {}): St
 });
 
 /** τ = 36000 s (10 h), so the 0.5 floor gives a horizon of 36000·ln2 ≈ 24953 s. */
+import * as D from "../../src/geo/dwell-continuation.js";
+import type { EnrichedSegment } from "../../src/geo/enriched-segment.js";
+import type { KnownPlaceProjection } from "../../src/geo/classification-inputs.js";
+import type { DayState, DayStateMode } from "../../src/sleep/day-state.js";
 const home = (extra: Place = {}): Place => ({
 	centroidLat: 51.5,
 	centroidLon: -0.2,
@@ -48,7 +46,16 @@ const at = (lat: number, lon: number): Seg => ({ centroidLat: lat, centroidLon: 
 const DAY_END = 1_000_000;
 
 const run = (label: string, states: State[], segments: Seg[], places: Place[], dayEndTs = DAY_END): void => {
-	const out = D.applyDwellContinuation({ states, segments, knownPlaces: places, dayEndTs });
+	// The fixtures are deliberately PARTIAL — each carries only the fields this
+	// pass reads, which is what the guards pin. Converted once, at the boundary,
+	// rather than left as `Record<string, unknown>` that no type can see through
+	// (#418).
+	const out = D.applyDwellContinuation({
+		states: states as unknown as DayState[],
+		segments: segments as unknown as EnrichedSegment[],
+		knownPlaces: places as unknown as KnownPlaceProjection[],
+		dayEndTs,
+	});
 	console.log(`${label.padEnd(26)} ${JSON.stringify(out)}`);
 };
 

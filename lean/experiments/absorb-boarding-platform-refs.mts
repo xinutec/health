@@ -17,10 +17,9 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { EnrichedSegment } from "../../src/geo/enriched-segment.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, "../..");
-const A = await import(path.join(repo, "src/geo/passes/rail-absorbers.ts"));
 
 type Fix = { ts: number; lat: number; lon: number; speed_kmh: number; bearing: number };
 type Seg = Record<string, unknown>;
@@ -44,6 +43,7 @@ const asked: string[] = [];
 
 /** Answers "Euston Square" only at the platform centroid, "Baker Street" only
  *  at the decoy, nothing anywhere else. */
+import * as A from "../../src/geo/passes/rail-absorbers.js";
 const lookup = async (lat: number, lon: number) => {
 	asked.push(`${lat},${lon}`);
 	// The platform: an entrance CODE nearer than the station itself, so the
@@ -82,9 +82,15 @@ const train = (startTs: number, endTs: number, over: Seg = {}): Seg => ({
 
 const show = async (label: string, segs: Seg[], points: Fix[] = platform) => {
 	asked.length = 0;
-	const out = await A.absorbBoardingPlatform(segs as never, points as never, lookup as never);
-	const cells = (out as Seg[]).map((s) => `${s.mode}[${s.startTs},${s.endTs}]`);
-	console.log(`${label.padEnd(44)} ${cells.join(" ")}${out === segs ? "  (same array)" : ""}`);
+	// The fixtures are deliberately PARTIAL — they carry only the fields this
+	// pass reads, which is what the guards pin. One documented conversion at the
+	// boundary is honest about that; `as never` on every argument was not, and it
+	// also broke the `out === input` identity check below by erasing the link
+	// between the array going in and the one coming out (#418).
+	const input = segs as unknown as EnrichedSegment[];
+	const out = await A.absorbBoardingPlatform(input, points, lookup);
+	const cells = out.map((s) => `${s.mode}[${s.startTs},${s.endTs}]`);
+	console.log(`${label.padEnd(44)} ${cells.join(" ")}${out === input ? "  (same array)" : ""}`);
 	for (const a of asked) console.log(`${"".padEnd(44)}   asked: ${a}`);
 };
 
@@ -140,6 +146,6 @@ await show("nothing to absorb returns the input array", [{ startTs: 0, endTs: 60
 console.log("--- untouched fields survive; the train keeps everything but startTs ---");
 {
 	const t = train(900, 1800, { refinedReason: "earlier note", confidence: 0.9, place: "Somewhere" });
-	const out = await A.absorbBoardingPlatform([stay(600, 900), t] as never, platform as never, lookup as never);
+	const out = await A.absorbBoardingPlatform([stay(600, 900), t] as unknown as EnrichedSegment[], platform, lookup);
 	console.log(JSON.stringify(out));
 }
