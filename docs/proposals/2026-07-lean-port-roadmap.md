@@ -383,3 +383,43 @@ probe of "the same constant" disagree, suspect the probes before the arms.
 vote tally over OSM venue names, so feeding it means carrying another module's
 oracle and a fabricated tally checks nothing. It stays guard-pinned, and
 `lean-coverage.mts` counts it that way rather than crediting it here.
+
+### All four layers of a bridge call, separated (#433)
+
+`lean/experiments/day-arm-cost.mts` now cuts the `day` tenant at every seam
+#405 named, via three ablation handlers in `serveLoop`:
+
+| handler | includes |
+|---|---|
+| `noop` | request wire |
+| `daydecode` | + the typed decode (`dayResult`'s parse prefix, then stop) |
+| `dayresp` | + the algorithm (the whole chain, returning counts not rows) |
+| `day` | + the response side |
+
+Measured over 33 golden days: **request wire 9.4 s (45%), typed decode 8.1 s
+(39%), response wire 0.7 s (3%), ALGORITHM 2.6 s (13%)** of a 20.8 s fold. So
+**87% of the fold is staging the Rust shell deletes** — the same figure #405
+found on gpsquality, on a tenant three orders of magnitude larger, reached
+independently.
+
+**An ablation handler needs a forcing argument, and the argument must be
+CHECKED.** `let (states, episodes) := dayChain chain` is a pure `let`: a handler
+returning only `changed` would force the pass fold, have its `dayChain` call
+eliminated as dead code, and report a duration for a chain that never ran. That
+reads as a cheap algorithm — the direction that flatters the port, and nothing
+in the timings would look wrong. So `dayresp` returns integer checksums that the
+harness recomputes from the full `day` reply; a chain that did not run is a
+mismatch, not a fast number. `daydecode` likewise must return a count, because
+an errored handler returns fast and would read as a cheap decode.
+
+**A premise written into the task was refuted by the measurement it asked for.**
+It said "a multi-megabyte reply is not free". The request averages 2.41 MiB of
+lookup tables; the reply is 0.11 MiB of the day's own rows. That asymmetry is
+why layer 2 is a few milliseconds — and on 5 of 33 days it comes out NEGATIVE,
+inside the noise. The harness prints that count rather than clamping it, because
+a clamp turns a sampling artefact into a measurement.
+
+**Quote the split, not the ratio.** `ts_net` is remeasured live every run, so the
+arm ratio moved 3.23× → 2.72× → 3.09× across runs on the same code. The layer
+percentages barely moved. The ratio is an order of magnitude; the split is the
+result.

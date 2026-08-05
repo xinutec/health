@@ -1577,6 +1577,18 @@ private structure Namer where
   geocodeAt : Float → Float → Int → Option Verified.Geo.BestPlace.Result
   stayCtx : Float → Float → Int → Int → String → List (Nat × Nat) × Int
   priors : Option Verified.Geo.VenuePrior.VenuePriors
+  /-- The three tables' entry counts.
+      These exist so the LAYER MEASUREMENT can force the three `mkMap` calls
+      without calling the closures above (#433). The other five tables are
+      forced by a probe that asks them for a key they hold, but these three are
+      reachable only through `Namer.name`, which composes a landmark lookup, a
+      geocode lookup and a stay-context lookup — any of which can reach a key a
+      probe did not choose, and a miss `panic!`s. A structure field is computed
+      when the structure is built, so reading a size here forces the map with no
+      key to guess and no miss to risk.
+      `dayResult` ignores them and is unaffected: it forces all three through
+      the fold regardless, so the same work happens either way. -/
+  sizes : Nat
 
 private def namerOf (j : Json) : Except String Namer := do
   let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
@@ -1589,6 +1601,7 @@ private def namerOf (j : Json) : Except String Namer := do
     geocodeAt := fun lat lon zoom => hit geocodes "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}"
     stayCtx := fun lat lon s e tz => hit stays "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{tz}"
     priors := ← parseVenuePriors j
+    sizes := landmarks.size + geocodes.size + stays.size
   }
 
 /-- Name one coordinate.
@@ -1899,6 +1912,80 @@ private def probe3 (lk : Json) (name : String) (f : Float → Float → Float �
     let a ← e.getArr?
     return sz (f (← jBits (← nth a 0)) (← jBits (← nth a 1)) (← jBits (← nth a 2)))
 
+/-- Layer 2: run the WHOLE chain and return a summary instead of the rows.
+
+`day − dayresp` is the response side — the six `Json.arr (… .map …Json)` AST
+builds, `resp.compress`, the wire, and the caller's `JSON.parse`. `dayresp −
+daydecode` is then the algorithm alone, which is what `#433` set out to isolate:
+the 3.4 s the earlier measurement attributed to "response wire + algorithm,
+unseparated" splits here.
+
+`echo` cannot serve this tenant. Its reply is COMPUTED, so there is no input row
+to ship back at realistic size — which is why this mode runs the real chain and
+withholds only the encode.
+
+# The forcing argument, and why it is CHECKED rather than argued
+
+A handler returning only `changed` would be wrong in a way that looks fine.
+`changedPasses segs trace` forces the pass fold, but `let (states, episodes) :=
+dayChain chain` is a pure `let` whose result would then go unused — dead-code
+elimination removes the call, and the handler would time the fold while claiming
+to time the chain.
+
+So the reply carries INTEGER CHECKSUMS over the same values the encoders read:
+the timestamp sums and the vertex count. Those cannot be produced without
+running the chain, and — the part that matters — they are recomputable from the
+full `day` reply, so `day-arm-cost.mts` ASSERTS the two agree instead of
+inferring it from a plausible-looking duration. A chain that silently did not
+run reads as a mismatch, not as a fast number.
+
+Two admitted biases, both in the same direction as every other choice in this
+harness (against the port): the checksum folds are work `day` does not do, and
+`passes`/`unfed` are not built here. Both make `dayresp` slower than a pure
+"chain without encode", so they UNDERSTATE layer 2 and OVERSTATE the residual. -/
+def chainNoEncode (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let envJson ← j.getObjVal? "env"
+    let env ← parseEnv envJson
+    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
+    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
+    let splitCtx : Stays.SplitContext :=
+      { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
+        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
+    let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
+    let namer ← namerOf envJson
+    let enrichReads : Verified.Geo.EnrichFold.Reads :=
+      { ways := env.nearbyWays
+        geocode := fun lat lon zoom => (namer.geocodeAt lat lon zoom).map (·.address)
+        stations := env.nearbyStations
+        place := fun lat lon pref stay => namer.name lat lon stay pref
+        tzAt := env.tzAt }
+    let segsEnriched := Verified.Geo.EnrichFold.enrichFold enrichReads
+      { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
+        steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
+      (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
+      env.points segsSplit
+    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched
+    let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
+    let chain ← parseChain envJson out env.points env.displayFixes
+    let (states, episodes) := Verified.Geo.DayChain.dayChain chain
+    let tsSum (a : Array Seg) : Int := a.foldl (fun acc s => acc + s.startTs + s.endTs) 0
+    return Json.mkObj [
+      ("nSplit", Lean.toJson segsSplit.size),
+      ("nEnriched", Lean.toJson segsEnriched.size),
+      ("nMid", Lean.toJson segs.size),
+      ("nSegs", Lean.toJson out.size),
+      ("nStates", Lean.toJson states.size),
+      ("nEpisodes", Lean.toJson episodes.size),
+      ("nChanged", Lean.toJson (changedPasses segs trace).size),
+      ("sumSegTs", Lean.toJson (tsSum out)),
+      ("sumStateTs", Lean.toJson (states.foldl (fun acc s => acc + s.startTs + s.endTs) (0 : Int))),
+      ("sumEpisodeTs", Lean.toJson (episodes.foldl (fun acc e => acc + e.startTs + e.endTs) (0 : Int))),
+      ("nEpisodePoints", Lean.toJson (episodes.foldl (fun acc e => acc + e.points.size) 0))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- Layer 3: decode the request into the day's own structures and stop.
 
 Mirrors `dayResult`'s parse prefix exactly — same calls, same order — and must
@@ -1933,7 +2020,16 @@ def decodeOnly (j : Json) : Json :=
     let n3 ← probe3 lk "nearbyStations" env.nearbyStations Array.size
     let n4 ← probe3 lk "linesAtPoint" env.linesAtPoint Array.size
     let n5 ← probe3 lk "transitStops" env.transitStops Array.size
-    let n := n1 + n2 + n3 + n4 + n5
+    -- The three `namerOf` tables — `nearbyLandmarks`, `reverseGeocode`,
+    -- `bestPlace`. They used to be charged to the fold because the only route to
+    -- them was `Namer.name`, which composes three lookups and can reach a key a
+    -- probe did not choose; a miss `panic!`s, and a panic inside a timing
+    -- handler both prints and formats. `Namer.sizes` removes the need to guess a
+    -- key at all: it is a structure field, so building the `Namer` builds the
+    -- maps. This moves real work out of the residual and into layer 3, which is
+    -- where it belongs.
+    let namer ← namerOf envJson
+    let n := n1 + n2 + n3 + n4 + n5 + namer.sizes
     return Json.mkObj [("n", Lean.toJson
       (n + env.points.size + env.rawFixes.size + env.steps.size + env.displayFixes.size
         + env.railStops.size + env.railRouteCache.size + env.busRouteCache.length
@@ -2103,6 +2199,10 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
         -- response wire plus the algorithm rather than those plus the decode.
         | .ok "daydecode" => Day.decodeOnly j
+        -- Layer 2 for the day mode (#433): the whole chain, no row encoding, so
+        -- `day − dayresp` is the response side and `dayresp − daydecode` is the
+        -- algorithm. Its counts are cross-checked against the `day` reply.
+        | .ok "dayresp" => Day.chainNoEncode j
         -- Ablation mode (#405): accept the request, do nothing, reply empty.
         -- The payload is still shipped across the SharedArrayBuffer and still
         -- parsed by `Json.parse line` above — only the ALGORITHM is skipped.

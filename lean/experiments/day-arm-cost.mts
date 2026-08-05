@@ -64,7 +64,7 @@
  * smaller payload than the converged one this times. The bound is the honest
  * direction — it cannot make the tenant look cheaper than it is.
  *
- * # `fold − noop` is NOT the verified algorithm, and must not be quoted as it
+ * # The four layers, separated (#433)
  *
  * #405 measured a call as FOUR layers — request wire, response wire, per-mode
  * decode of generic `Json` into the tenant's own structures, and the algorithm —
@@ -75,15 +75,33 @@
  * that mistake would have read the floor as a quarter of the call when it was
  * seven eighths.
  *
- * `noop` is the only ablation the day mode has. So `fold − noop` is layers 2+3+4
- * together, and reading it as layer 4 OVERSTATES the verified code by however
- * much the response encode and `parseEnv`'s typed decode cost — which for a
- * multi-megabyte reply and six lookup tables is not a rounding error.
+ * Three handlers now cut the day mode at each seam:
  *
- * Closing that needs two more handlers in `serveLoop`, the way `echo` and
- * `gqdecode` exist for gpsquality. Until they do, the split printed below is
- * "request transport" against "everything else", and the residual that a Rust
- * shell would actually pay is UNMEASURED for this tenant.
+ *   noop        request wire only — read + `Json.parse` + a trivial reply.
+ *   daydecode   + the typed decode: `dayResult`'s parse prefix, then stop.
+ *   dayresp     + the algorithm: the whole chain, returning counts not rows.
+ *   day         + the response side: the six row arrays, encoded and shipped.
+ *
+ * So `resp − decode` is the ALGORITHM and `fold − resp` is layer 2. Both
+ * `daydecode` and `dayresp` are checked rather than trusted: the first must
+ * return a count, and the second's counts are recomputed from the `day` reply
+ * (`checkChainRan`), because a chain the compiler eliminated would otherwise
+ * read as a cheap algorithm — the direction that flatters the port.
+ *
+ * # Layer 2 is small, and the reason is the payload asymmetry
+ *
+ * The task that asked for this predicted "a multi-megabyte reply is not free".
+ * MEASURED, that premise is wrong: the request averages 2.4 MiB of lookup
+ * tables and the reply 0.11 MiB of the day's own rows, so the response side is
+ * a few ms and on some days sits below the noise floor. The harness prints the
+ * sizes beside the times, and says how many days came out negative rather than
+ * clamping them — a clamp would turn a sampling artefact into a measurement.
+ *
+ * # The ratio is the NOISY number here; the split is the stable one
+ *
+ * `ts_net` is remeasured live every run, so the ratio moves several tenths
+ * between runs on the same commit. The layer percentages barely move. Quote the
+ * split; treat the ratio as an order of magnitude.
  *
  * # The TS arm's own split
  *
@@ -120,7 +138,11 @@ const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
 /** Timed repeats per mode. The median is reported: three is enough to drop a
  *  single scheduler outlier and not enough to characterise a tail, which is not
  *  what this question needs — the tail belongs to a soak, this is a ratio. */
-const REPEATS = 3;
+// Raised from 3 when `dayresp` landed: layer 2 is a difference between two
+// numbers that turn out to be close, so the median needs a wider sample before
+// the subtraction says anything. It is still small enough that a day is timed
+// in seconds.
+const REPEATS = 5;
 
 /** A warm `verified_cli serve` — one process, many requests, which is the
  *  transport a tenant would use and the one `lean-core.ts` already has.
@@ -162,15 +184,20 @@ class Serve {
 	 *  reply it cannot use. Reading the line and dropping it timed the Lean arm
 	 *  without the half of the response wire that lands on this side, and for the
 	 *  day mode that reply is megabytes. */
-	async ask(mode: string, req: object): Promise<{ ms: number; bytes: number }> {
+	async ask(mode: string, req: object): Promise<{ ms: number; bytes: number; reply: number; result: unknown }> {
 		this.id += 1;
 		const line = `${JSON.stringify({ ...req, mode, id: this.id })}\n`;
 		const started = performance.now();
 		this.proc.stdin.write(line);
 		const { value, done } = await this.lines.next();
 		if (done) throw new Error(`serve loop closed during ${mode}`);
-		JSON.parse(value);
-		return { ms: performance.now() - started, bytes: line.length };
+		const parsed = JSON.parse(value) as { result?: unknown };
+		// The reply is returned as well as timed, because `dayresp`'s counts are
+		// only worth anything if something compares them against the `day` reply
+		// they claim to summarise. Its SIZE is returned too: layer 2 is whatever
+		// encoding and shipping those bytes costs, so the byte count is what makes
+		// a small layer-2 number explicable rather than merely surprising.
+		return { ms: performance.now() - started, bytes: line.length, reply: value.length, result: parsed.result };
 	}
 
 	close(): void {
@@ -240,6 +267,54 @@ function timeOsm(inputs: ClassificationInputs): () => number {
 
 const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
+/**
+ * Did `dayresp` really run the chain, or did it return fast because the compiler
+ * deleted work nothing consumed?
+ *
+ * This is the whole reason `dayresp` returns counts rather than `{}`. The
+ * hazard is specific and was identified before the handler was written:
+ * `let (states, episodes) := dayChain chain` is a pure `let`, so a handler that
+ * returned only `changed` would force the pass fold, have its `dayChain` call
+ * eliminated as dead code, and then report a duration for "the chain" that
+ * never ran it. Nothing in the timings would look wrong — it would simply read
+ * as a cheaper algorithm, which is the direction that flatters the port.
+ *
+ * So the counts are recomputed here from the FULL `day` reply and compared. A
+ * chain that did not run cannot produce the timestamp sums, and a chain that
+ * ran differently is caught for free. An unexplained mismatch voids the day's
+ * layer-2 number rather than being averaged into it.
+ */
+function checkChainRan(day: unknown, summary: unknown): string | undefined {
+	const d = day as Record<string, unknown[]> | undefined;
+	const s = summary as Record<string, number> | undefined;
+	if (d === undefined || s === undefined) return "dayresp: no reply to cross-check";
+	if (typeof s.nStates !== "number") return `dayresp: ${JSON.stringify(summary).slice(0, 120)}`;
+	const tsSum = (rows: unknown[] | undefined): number =>
+		(rows ?? []).reduce<number>((a, r) => {
+			const o = r as { startTs: number; endTs: number };
+			return a + o.startTs + o.endTs;
+		}, 0);
+	const want: Record<string, number> = {
+		nSplit: (d.segsSplit ?? []).length,
+		nEnriched: (d.segsEnriched ?? []).length,
+		nMid: (d.segsMid ?? []).length,
+		nSegs: (d.segs ?? []).length,
+		nStates: (d.states ?? []).length,
+		nEpisodes: (d.episodes ?? []).length,
+		nChanged: (d.changed ?? []).length,
+		sumSegTs: tsSum(d.segs),
+		sumStateTs: tsSum(d.states),
+		sumEpisodeTs: tsSum(d.episodes),
+		nEpisodePoints: (d.episodes ?? []).reduce<number>(
+			(a, e) => a + ((e as { points: unknown[] }).points ?? []).length,
+			0,
+		),
+	};
+	const bad = Object.entries(want).filter(([k, v]) => s[k] !== v);
+	if (bad.length === 0) return undefined;
+	return `dayresp DISAGREES with day: ${bad.map(([k, v]) => `${k} ${s[k]} != ${v}`).join(", ")}`;
+}
+
 interface Outcome {
 	date: string;
 	tsCoveredMs: number;
@@ -257,8 +332,15 @@ interface Outcome {
 	noopMs: number;
 	/** The `daydecode` handler: layers 1+3 — request wire plus the typed decode. */
 	decodeMs: number;
+	/** The `dayresp` handler: the whole chain, no row encoding. `foldMs − respMs`
+	 *  is the response side; `respMs − decodeMs` is the algorithm. */
+	respMs: number;
 	answerMs: number;
 	reqMiB: number;
+	/** The `day` reply's size. Layer 2 is the cost of building and shipping
+	 *  exactly these bytes, so the byte count is what makes a near-zero layer-2
+	 *  explicable rather than merely surprising. */
+	replyMiB: number;
 	note?: string;
 }
 
@@ -304,8 +386,10 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		foldMs: 0,
 		noopMs: 0,
 		decodeMs: 0,
+		respMs: 0,
 		answerMs: c.answerMs,
 		reqMiB: 0,
+		replyMiB: 0,
 	};
 	if (c.failure !== undefined) return { ...base, note: c.failure };
 
@@ -313,9 +397,12 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 	const fold: number[] = [];
 	const noop: number[] = [];
 	const decode: number[] = [];
+	const resp: number[] = [];
 	const encode: number[] = [];
 	let bytes = 0;
+	let replyBytes = 0;
 	let req = {} as object;
+	let mismatch: string | undefined;
 	for (let i = 0; i < REPEATS; i++) {
 		// Rebuilt each repeat because it is a per-ROUND cost, not a setup cost: a
 		// serving day encodes its inputs and its grown tables again every time it
@@ -327,8 +414,18 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		const d = await serve.ask("day", req);
 		fold.push(d.ms);
 		bytes = d.bytes;
+		replyBytes = d.reply;
 		noop.push((await serve.ask("noop", req)).ms);
-		decode.push((await serve.ask("daydecode", req)).ms);
+		const dec = await serve.ask("daydecode", req);
+		decode.push(dec.ms);
+		// A handler that ERRORED returns fast and would read as a cheap decode,
+		// which inflates everything downstream of it. `decodeOnly` returns a count,
+		// so demanding one is enough to tell a real decode from a rejected request.
+		const decN = (dec.result as { n?: number } | undefined)?.n;
+		if (typeof decN !== "number") mismatch ??= `daydecode: ${JSON.stringify(dec.result).slice(0, 120)}`;
+		const r = await serve.ask("dayresp", req);
+		resp.push(r.ms);
+		mismatch ??= checkChainRan(d.result, r.result);
 	}
 	// A `panic!` from a `daydecode` probe means it asked a key the table does not
 	// hold, which makes its timing a measurement of a miss rather than of the
@@ -341,8 +438,10 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		foldMs: median(fold),
 		noopMs: median(noop),
 		decodeMs: median(decode),
+		respMs: median(resp),
 		reqMiB: bytes / (1024 * 1024),
-		note: complained,
+		replyMiB: replyBytes / (1024 * 1024),
+		note: complained ?? mismatch,
 	};
 }
 
@@ -364,14 +463,14 @@ const leanArm = (o: Outcome): number => o.rounds * (o.encodeMs + o.foldMs) + o.a
 
 const n1 = (x: number): string => x.toFixed(1).padStart(8);
 console.log(
-	"\ndate         ts_cov ts_shell  ts_net  ts_osm  rnd   encode     fold     noop  decode   answer lean_tot   ratio",
+	"\ndate         ts_cov ts_shell  ts_net  ts_osm  rnd   encode     fold     noop  decode    resp   answer lean_tot   ratio",
 );
 for (const o of outcomes) {
 	const net = tsNet(o);
 	const ratio = net > 0 ? (leanArm(o) / net).toFixed(2) : "n/a";
 	console.log(
 		`${o.date} ${n1(o.tsCoveredMs)}${n1(o.tsShellMs)}${n1(net)}${n1(o.tsOsmMs)} ${String(o.rounds).padStart(4)}` +
-			`${n1(o.encodeMs)}${n1(o.foldMs)}${n1(o.noopMs)}${n1(o.decodeMs)}${n1(o.answerMs)}${n1(leanArm(o))}` +
+			`${n1(o.encodeMs)}${n1(o.foldMs)}${n1(o.noopMs)}${n1(o.decodeMs)}${n1(o.respMs)}${n1(o.answerMs)}${n1(leanArm(o))}` +
 			`${ratio.padStart(8)}${o.note ? `  ${o.note}` : ""}`,
 	);
 }
@@ -391,16 +490,34 @@ console.log(
 	`  Lean arm    ${s(lean)} = ${s(sum((o) => o.rounds * o.encodeMs))} encode + ${s(sum((o) => o.rounds * o.foldMs))} fold` +
 		` + ${s(sum((o) => o.answerMs))} answers`,
 );
-// #405's layers, as far as the day mode's two handlers can separate them.
-// `daydecode` returns a count, so it carries layer 1 and layer 3 and none of
-// layer 2; what is left over from the real handler is layers 2 and 4 together.
+// #405's four layers, now separated all the way. `noop` is layer 1, `daydecode`
+// adds layer 3, `dayresp` adds layer 4, and what the real handler has over
+// `dayresp` is layer 2. Only the algorithm survives a Rust shell.
 console.log(
 	`  of the fold ${s(sum((o) => o.rounds * o.noopMs))} request wire, ` +
 		`${s(sum((o) => o.rounds * (o.decodeMs - o.noopMs)))} typed decode, ` +
-		`${s(sum((o) => o.rounds * (o.foldMs - o.decodeMs)))} response wire + algorithm`,
+		`${s(sum((o) => o.rounds * (o.foldMs - o.respMs)))} response wire, ` +
+		`${s(sum((o) => o.rounds * (o.respMs - o.decodeMs)))} ALGORITHM`,
 );
 console.log(
-	"  the last of those is the RESIDUAL a Rust shell would still pay, plus a response encode still inside it",
+	`  the algorithm is the only one a Rust shell still pays: ` +
+		`${((sum((o) => o.rounds * (o.respMs - o.decodeMs)) / sum((o) => o.rounds * o.foldMs)) * 100).toFixed(0)}% of the fold`,
 );
+// Layer 2 is a difference between two close numbers, so some days come out
+// NEGATIVE. That is not a cost, it is the noise floor showing through, and
+// hiding it by clamping would turn a sampling artefact into a measurement. Both
+// the count and the sizes are printed so the reader can see why it is small: the
+// request is megabytes of tables, the reply is the day's own rows.
+const negatives = ok.filter((o) => o.foldMs - o.respMs < 0).length;
+console.log(
+	`  payload     ${(sum((o) => o.reqMiB) / ok.length).toFixed(2)} MiB request vs ` +
+		`${(sum((o) => o.replyMiB) / ok.length).toFixed(2)} MiB reply on average — which is why layer 2 is small`,
+);
+if (negatives > 0) {
+	console.log(
+		`  CAUTION     ${negatives}/${ok.length} day(s) put the response wire BELOW zero — at this size it is inside the` +
+			` noise, so read it as "not distinguishable from free", not as a number`,
+	);
+}
 console.log(`  ratio       ${(lean / net).toFixed(2)}× — the Lean arm against the region it would replace`);
 console.log(`  deferred    ${s(sum((o) => o.tsShellMs))} of matcher, which a flip moves rather than removes`);
