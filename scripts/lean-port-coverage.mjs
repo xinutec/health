@@ -49,15 +49,23 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-function leanFilesUnder(dir) {
+function filesUnder(dir, ext) {
 	const out = [];
 	for (const e of readdirSync(dir)) {
 		const p = join(dir, e);
-		if (statSync(p).isDirectory()) out.push(...leanFilesUnder(p));
-		else if (e.endsWith(".lean")) out.push(p);
+		if (statSync(p).isDirectory()) out.push(...filesUnder(p, ext));
+		else if (e.endsWith(ext)) out.push(p);
 	}
 	return out;
 }
+const leanFilesUnder = (dir) => filesUnder(dir, ".lean");
+// Path under `src/`, minus the extension: `src/hmm/factors/presence-continuity.ts`
+// -> `hmm/factors/presence-continuity`. Every scan below keys off this ONE label,
+// so a file cannot be counted by one pass and missed by another — which it was:
+// the blind-spot tally used a non-recursive `readdirSync` and reported `src/hmm
+// 33 files`, silently omitting `factors/presence-continuity.ts` (ported, as
+// `Hsmm/Continuity`). Recursion is the fix; a shared label is what keeps it fixed.
+const tsFilesUnder = (root) => filesUnder(root, ".ts").map((p) => p.slice("src/".length, -".ts".length));
 
 // name → the Verified modules defining it, and each module's guard count.
 const definedIn = new Map();
@@ -105,7 +113,11 @@ for (const p of leanFilesUnder("lean/Verified")) {
 		// A leading backtick that restates the def's OWN name is a heading, not a claim.
 		const lead = doc.match(/^\s*`([a-z][a-zA-Z0-9_]*)`/);
 		if (lead && lead[1] !== leanDef) rawClaims.push({ name: lead[1], hard: false, site });
-		for (const c of doc.matchAll(/\bTS `([a-z][a-zA-Z0-9_]*)`/g)) {
+		// `\s+`, not a literal space: doc comments WRAP, and "the TS\n    `buildEmissionFn`"
+		// is the same claim as "the TS `buildEmissionFn`". Requiring one space made the
+		// claim depend on where the line happened to break, which is not a property of
+		// the port — it silently dropped a real claim on first write.
+		for (const c of doc.matchAll(/\bTS\s+`([a-z][a-zA-Z0-9_]*)`/g)) {
 			rawClaims.push({ name: c[1], hard: true, site });
 		}
 	}
@@ -113,20 +125,48 @@ for (const p of leanFilesUnder("lean/Verified")) {
 
 // Shell / boundary / off-the-served-path per the roadmap — excluded on purpose,
 // so this reports on the algorithm layer only and a shell file never reads as a
-// coverage gap.
-const EXCLUDE =
-	/^(osm|osm-.*|.*-cache|.*-adapter.*|timezone|fitbit-tz|route-graph|route-graph-loader|opening-hours|load-classification-inputs|.*shadow.*|.*twin.*|leg-compare|venue-trace)$/;
+// coverage gap. Matched against the full label, not the bare filename: a bare
+// `persist` would also silence a future `src/geo/persist.ts`, and a silent
+// exclusion is indistinguishable from coverage. The count is printed either way.
+const EXCLUDE = [
+	// src/geo — the OSM/DB/timezone boundary, the shadow+twin harnesses, the
+	// diagnostic sinks.
+	/^geo\/(osm|osm-.*|.*-cache|.*-adapter.*|timezone|fitbit-tz|route-graph|route-graph-loader|opening-hours|load-classification-inputs|.*shadow.*|.*twin.*|leg-compare|venue-trace)$/,
+	// Env-flag reads, not algorithm. `src/geo/factors` reached the scan only when
+	// the walk went recursive (2026-08-05) — before that the whole directory was
+	// invisible and undeclared, which is the worst of both: not measured, and not
+	// named as unmeasured either.
+	/^geo\/factors\/feature-flag$/,
+	// src/hmm SHELL — the Lean bridge, the two DB readers. This is what the
+	// roadmap means by "the shell is just glue": it is the part Rust inherits,
+	// so it is not a port gap. `decode.ts` is deliberately NOT here — it is
+	// split, holding `segmentsFromStates` (algorithm) beside the orchestration.
+	/^hmm\/(lean-shadow-core|persist|continuity-context)$/,
+	// src/hmm OFF THE SERVED PATH — ~2.6k lines the roadmap already declares
+	// out of scope. Nothing decodes through them; porting them would buy
+	// coverage in a number and nothing in production.
+	/^hmm\/(route-aware-decoder|station-chain|tube-journey-assembler|inner-viterbi-edges|hsmm-marginals|mode-class-lock|fit-emissions)$/,
+];
+const excluded = (label) => EXCLUDE.some((re) => re.test(label));
 
 // `src/geo/passes` is the pipeline-pass layer and squarely in scope. `src/hmm`
-// and `src/eval` are NOT scanned: eval is the judge, not the subject (the same
-// reason line-membership.ts refuses to share checkRailTriples' helpers), and hmm
-// needs a shell/algorithm split nobody has made yet. Both are declared below as
-// blind spots rather than quietly assumed covered.
-const TS_DIRS = ["src/geo", "src/geo/passes"];
-const UNSCANNED = ["src/hmm", "src/eval"];
+// joined the scan on 2026-08-05 once the shell/algorithm split above was made —
+// it had been a blind spot only because nobody had made it, and the layer is
+// FACTORY-shaped (`buildX(model) -> (state, obs) => number`), so the Lean ports
+// carry the closure's name rather than the factory's and a name-only check reads
+// ten served factories as missing. The declared-rename claims are what make the
+// number honest; wiring the dir in without them would have made this tool worse.
+//
+// `src/eval` stays out on purpose: it is the judge, not the subject (the same
+// reason line-membership.ts refuses to share checkRailTriples' helpers). It is
+// declared below as a blind spot rather than quietly assumed covered.
+const TS_ROOTS = ["src/geo", "src/hmm"];
+const UNSCANNED = ["src/eval"];
 
-const exportsOf = (dir, f) =>
-	[...readFileSync(`${dir}/${f}`, "utf8").matchAll(/^export (?:async )?function ([a-zA-Z0-9_]+)/gm)].map((m) => m[1]);
+const exportsOf = (label) =>
+	[...readFileSync(`src/${label}.ts`, "utf8").matchAll(/^export (?:async )?function ([a-zA-Z0-9_]+)/gm)].map(
+		(m) => m[1],
+	);
 
 // Pass 1 — what the scanned TS actually exports, and what the blind-spot dirs
 // export. Both are needed BEFORE claims can be resolved: a soft claim is only
@@ -134,20 +174,21 @@ const exportsOf = (dir, f) =>
 // pointing into a blind spot rather than being stale.
 const files = [];
 const seenExports = new Set();
-for (const dir of TS_DIRS) {
-	for (const f of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-		const base = f.slice(0, -3);
-		if (EXCLUDE.test(base)) continue;
-		const exports = exportsOf(dir, f);
+const skipped = [];
+for (const root of TS_ROOTS) {
+	for (const base of tsFilesUnder(root).sort()) {
+		if (excluded(base)) {
+			skipped.push(base);
+			continue;
+		}
+		const exports = exportsOf(base);
 		if (exports.length === 0) continue;
 		for (const e of exports) seenExports.add(e);
-		files.push({ base: dir === "src/geo" ? base : `${dir.slice("src/".length)}/${base}`, exports });
+		files.push({ base, exports });
 	}
 }
 const blindExports = new Set();
-for (const d of UNSCANNED) for (const f of readdirSync(d).filter((f) => f.endsWith(".ts"))) {
-	for (const e of exportsOf(d, f)) blindExports.add(e);
-}
+for (const d of UNSCANNED) for (const base of tsFilesUnder(d)) for (const e of exportsOf(base)) blindExports.add(e);
 
 // Every identifier appearing anywhere in the TS, exported or not. A hard claim
 // naming a non-exported local (`segMode`), a TS keyword the prose is describing
@@ -155,9 +196,9 @@ for (const d of UNSCANNED) for (const f of readdirSync(d).filter((f) => f.endsWi
 // a coverage claim either. Rot is a name that has left the TS ENTIRELY, which is
 // what this set detects and why the check is usually silent.
 const tsWords = new Set();
-for (const dir of [...TS_DIRS, ...UNSCANNED]) {
-	for (const f of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-		for (const m of readFileSync(`${dir}/${f}`, "utf8").matchAll(/\b[a-z][a-zA-Z0-9_]*\b/g)) tsWords.add(m[0]);
+for (const dir of [...TS_ROOTS, ...UNSCANNED]) {
+	for (const base of tsFilesUnder(dir)) {
+		for (const m of readFileSync(`src/${base}.ts`, "utf8").matchAll(/\b[a-z][a-zA-Z0-9_]*\b/g)) tsWords.add(m[0]);
 	}
 }
 
@@ -194,7 +235,7 @@ rows.sort((a, b) => order[a.state] - order[b.state] || a.base.localeCompare(b.ba
 console.log("\n=== TS algorithm layer → Lean (names + declared renames; guards are the evidence) ===\n");
 for (const r of rows) {
 	if (!all && r.state === "written") continue;
-	console.log(`  ${r.state.padEnd(8)} ${r.base.padEnd(26)} ${r.have}/${r.want} defs  ${String(r.guards).padStart(4)} guards in ${r.mods.length} module(s)`);
+	console.log(`  ${r.state.padEnd(8)} ${r.base.padEnd(32)} ${r.have}/${r.want} defs  ${String(r.guards).padStart(4)} guards in ${r.mods.length} module(s)`);
 	if (r.missing.length) console.log(`           missing: ${r.missing.join(", ")}`);
 	if (r.renamed.length && all) {
 		for (const e of r.renamed) console.log(`           renamed: ${e} -> ${(claimedBy.get(e) ?? []).join(", ")}`);
@@ -211,12 +252,15 @@ if (stale.length) {
 	console.log(`  Either the TS moved/was renamed, or the doc comment is wrong. Not counted as coverage.`);
 }
 
+console.log(`\n  EXCLUDED — ${skipped.length} file(s) scanned and set aside as shell / boundary / off-path,`);
+console.log(`  NOT as coverage. A silent exclusion reads exactly like a port, so it is counted here${all ? ":" : " (--all to list)."}`);
+if (all) for (const s of skipped) console.log(`    ${s}`);
+
 console.log(`\n  BLIND SPOTS — not assessed, so absent from every number above:`);
-for (const d of UNSCANNED) {
-	const n = readdirSync(d).filter((f) => f.endsWith(".ts")).length;
-	console.log(`    ${d.padEnd(12)} ${String(n).padStart(3)} files`);
-}
-console.log(`    ${intoBlind.length} Lean def(s) already claim a function in there, so the real port is`);
+for (const d of UNSCANNED) console.log(`    ${d.padEnd(12)} ${String(tsFilesUnder(d).length).padStart(3)} files`);
+console.log(`    src/eval is out by DESIGN — it is the judge, not the subject; porting it would`);
+console.log(`    move the referee inside the thing it referees. Not a gap, and not future work.`);
+console.log(`    ${intoBlind.length} Lean def(s) claim a function in there, so the real port is`);
 console.log(`    further along than these numbers say — by an amount this script does not measure.`);
 console.log(`
   SERVE SURFACE (what actually executes for a request — a different question):

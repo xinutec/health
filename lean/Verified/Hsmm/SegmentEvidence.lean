@@ -146,7 +146,8 @@ def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int
 
 /-- Segment-evidence resolved over the observation tensor: the caller supplies
     only the state mode, segment length `d`, and end index `segEnd` (the duration
-    hook's arguments). `startIndex = segEnd − d + 1`, matching `buildSegmentEvidence`. -/
+    hook's arguments). `startIndex = segEnd − d + 1`, matching the TS
+    `buildSegmentEvidence`. -/
 def segmentEvidenceAt (obs : Array ObsRow) (pref : Array Float)
     (mode : Mode) (d segEnd : Nat) : Float :=
   if mode == .unknown then 0.0

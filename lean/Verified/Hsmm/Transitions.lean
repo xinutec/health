@@ -87,7 +87,7 @@ def crossWeightSumP (placeNear : Int → String → Bool) (states : List State) 
     0.0
 
 /-- Transition log-probability under the station-graph hard-zero — the served
-    `buildTransitionMatrix` with `placeNearLine`. -/
+    TS `buildTransitionMatrix` with `placeNearLine`. -/
 def transitionLogProbP (placeNear : Int → String → Bool) (states : List State) (selfLoop : Float)
     (src dst : State) : Float :=
   if sameState src dst then selfLoop

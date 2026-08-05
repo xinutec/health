@@ -33,7 +33,7 @@ def impliedSpeedKmh (fix : GpsFix) (tlat tlon currentTs : Float) : Float :=
     let elapsedH := elapsedSec / 3600
     distKm / elapsedH
 
-/-- The feasibility penalty (`buildGeometricFeasibility`). -/
+/-- The feasibility penalty — the TS `buildGeometricFeasibility` closure. -/
 def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option GpsFix)
     (placeCoord : Option (Float × Float)) : Float :=
   if s.mode != .stationary || s.placeId.isNone then 0.0

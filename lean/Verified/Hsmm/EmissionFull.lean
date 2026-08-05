@@ -58,10 +58,12 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
     else 0.0
   base + corr
 
-/-- Full per-cell emission log-probability over the model. `placeCoords` resolves
-    `s.placeId`; `isCovered` (train-generator) and `reacquireRobust` are caller
-    flags, matching `buildHsmmModel`. `continuity` is the presence-continuity seed
-    (`none` when `USE_CONTINUITY_CONTINUATION` is off). -/
+/-- Full per-cell emission log-probability over the model — the TS
+    `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
+    model sums onto it. `placeCoords` resolves `s.placeId`; `isCovered`
+    (train-generator) and `reacquireRobust` are caller flags, matching the TS
+    `buildHsmmModel`. `continuity` is the presence-continuity seed (`none` when
+    `USE_CONTINUITY_CONTINUATION` is off). -/
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))

@@ -20,8 +20,15 @@ it still called `kalman.ts` "the single best next port" while
 following it would have meant re-porting finished work. A hand-kept inventory of
 ~60 modules cannot stay honest; measure instead.
 
-As measured 2026-07-29, of 39 algorithm-layer files: **15 written, 14 partial,
-10 absent**. Caveats that keep those numbers honest in BOTH directions:
+As measured 2026-08-05, of 74 algorithm-layer files: **59 written, 11 partial,
+4 absent**. The file count jumped from 39 because the tool's scope did, not
+because the codebase grew: `src/hmm` was a declared blind spot until the
+shell/algorithm split existed to put it in scope, and `src/geo/factors` was
+reached by nothing at all until the directory walk went recursive — neither
+measured nor named as unmeasured. `src/eval` stays out by design: it is the
+judge, not the subject.
+
+Caveats that keep those numbers honest in BOTH directions:
 
 - The tool matches *names*, not behaviour. `#guard` counts are the real evidence
   — they run inside `lake build`, so a divergence fails the build.
@@ -30,6 +37,18 @@ As measured 2026-07-29, of 39 algorithm-layer files: **15 written, 14 partial,
   (DB/IO), `setSimplifyHook` (hook plumbing), `localHourOf` /
   `utcSecondsToDatetimeStr` (tz boundary), `stationsOnLine` (cache),
   `scheduleRailRouteFill` (IO).
+- It UNDERSTATES the `src/hmm` port unless the ports declare themselves. That
+  layer is factory-shaped — `buildX(model) → (state, obs) => number` — and Lean
+  ports the closure body under its own name, so ten served factories match
+  nothing by name. They now carry a rename claim in the def's own doc comment;
+  a module header naming the TS file is deliberately not read as one.
+
+After that wiring, what `src/hmm` still genuinely lacks in Lean is small and
+named: `reachablePlaces` / `reachablePlacesForDay`, `presence-log`'s
+`computeRow`, `servedStationSet` / `stationNameServed`, and `segmentsFromStates`
+(with `groupStatesIntoSegments`, which sits in the excluded `persist.ts` — real
+algorithm in a shell file). `buildTrainGeneratorPrior` reads as missing because
+it IS: both halves are ported, but the composition still lives shell-side.
 
 **Written is not served, and serving is now the bottleneck.** Writing Lean changes
 nothing on its own: the code has to reach a request through a `verified_cli` verb,

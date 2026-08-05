@@ -44,7 +44,7 @@ namespace Viterbi
 end Viterbi
 
 open Viterbi in
-/-- Decode the MAP state-per-minute path. `none` when no path has a finite
+/-- The TS `hsmmViterbi`: decode the MAP state-per-minute path. `none` when no path has a finite
 score (or the window/state space is degenerate with `T > 0`). -/
 def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let T := P.T
