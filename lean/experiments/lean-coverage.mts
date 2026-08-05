@@ -110,7 +110,46 @@ for (const [label, roots] of GATES) {
 	console.log(`${label.padEnd(34)} ${String(fresh.length).padStart(3)}`);
 }
 
+/**
+ * The residue is not one thing, and counting it as one was backwards.
+ *
+ * A module with no comparator was read as "a port nothing checks" — the class
+ * #417 and #425 came out of. But a module that PROVES something has no
+ * comparator BY CONSTRUCTION: there is no TS arm to run against a theorem, and
+ * `lake build` failing is the check. `Verified.Geo.LazyLower` is 8 theorems and
+ * zero definitions; listing it beside an unexercised port said the best-evidenced
+ * file in the tree was the least.
+ *
+ * So the residue is split on whether the module states any theorem, and both
+ * counts are printed per module so the reader can judge a mixed one. `RingSearch`
+ * is exactly that case: 1 theorem and 7 definitions, but the definitions are the
+ * abstract model the theorem is about — `Int` distances, an abstract stop-margin
+ * curve — not a port of anything, so nothing could compare them to TS either.
+ *
+ * The rule is mechanical and therefore blunt: a module carrying one theorem and a
+ * hundred unexercised definitions would land in PROVEN. The def/theorem counts
+ * beside each name are what stops that being invisible.
+ */
 const dark = all.filter((m) => !claimed.has(m)).sort();
-console.log(`${"NO comparator at all".padEnd(34)} ${String(dark.length).padStart(3)}`);
+const body = (m: string): string => readFileSync(path.join(LEAN, `${m.split(".").join(path.sep)}.lean`), "utf8");
+const count = (m: string, re: RegExp): number => (body(m).match(re) ?? []).length;
+const shape = (m: string): { thms: number; defs: number } => ({
+	thms: count(m, /^ *(theorem|lemma) /gm),
+	defs: count(m, /^ *(private )?def /gm),
+});
+const proven = dark.filter((m) => shape(m).thms > 0);
+const ungraded = dark.filter((m) => shape(m).thms === 0);
+console.log(`${"PROVEN — gated by `lake build`".padEnd(34)} ${String(proven.length).padStart(3)}`);
+console.log(`${"NO check of any kind".padEnd(34)} ${String(ungraded.length).padStart(3)}`);
 console.log(`${"".padEnd(34)} ${"---".padStart(3)}\n${"total".padEnd(34)} ${String(all.length).padStart(3)}\n`);
-for (const m of dark) console.log(`  ${m}`);
+for (const [label, ms] of [
+	["proven", proven],
+	["ungraded", ungraded],
+] as [string, string[]][]) {
+	if (ms.length === 0) continue;
+	console.log(`  ${label}:`);
+	for (const m of ms) {
+		const { thms, defs } = shape(m);
+		console.log(`    ${m.padEnd(30)} ${String(thms).padStart(3)} thm  ${String(defs).padStart(3)} def`);
+	}
+}
