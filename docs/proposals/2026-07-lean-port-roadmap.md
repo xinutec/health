@@ -351,33 +351,50 @@ the two arms would have agreed on `one-off` and that agreement would have meant
 nothing.
 
 **A gate is worth what its ablation says it is worth.** 31 single-change
-mutations of the Lean arm; **25 fire**. The six that do not are each measured
-rather than assumed, and only ONE is a gap a better input would close:
+mutations of the Lean arm; **25 fire**. The sweep is
+`lean/experiments/focus-mutation-sweep.mts` (#436) — it is the evidence for this
+section and it is re-runnable, so the numbers below can be re-derived after the
+next change to either arm rather than cited from here.
+
+The six that do not fire are each measured rather than assumed, and **none of
+them is a hole in the gate**: every one that can be characterised is a property
+of the corpus, which no gate over this data could catch.
 
 | silent mutation | why |
 |---|---|
-| `localSolarHourFractional` divisor 15 → 14 | **the one real gap.** The same change to `localSolarHour` (`Verified/Geo/Velocity.lean`) FIRES. The fractional variant feeds only `splitCluster`'s circular embedding, where ≤1.2 min of shift at these longitudes moves no gate. A fixture far from Greenwich would close it. |
-| long-running-`work` fraction 0.35 → 0.05 | TS arm ablated the same way is ALSO silent — the conjuncts beside it decide first. Unobservable in either arm on this corpus. |
+| `localSolarHourFractional` divisor 15 → 14 | TS arm ablated the same way is ALSO silent. The fractional variant feeds only `splitCluster`'s circular embedding, and 15 → 14 shifts the embedding by `|lon| · 60 · (1/14 − 1/15)` minutes — ~17 s per degree of longitude, so seconds for London clusters. That is far below the time-of-day separation a lobe split resolves. A fixture far from Greenwich would make it observable in BOTH arms. |
+| long-running-`work` fraction 0.35 → 0.05 | TS arm also silent — the conjuncts beside it decide first. |
 | `KMEANS_MAX_ITERS` 50 → 1 | TS arm also silent: Lloyd converges within one pass on every `splitCluster` call this corpus makes. |
-| Fitbit overlap `>` → `≥` | provable no-op — at equality the added term is zero. |
-| `matchClusters` tiebreak reversed | needs an EXACT float distance tie, which re-mined real centroids do not produce. Guard-only by construction. |
 | `matchClusters` taken-check dropped | TS arm also silent: the corpus contains no MERGE (two old clusters competing for one new), the shape that check exists for. |
+| Fitbit overlap `>` → `≥` | provable no-op — at equality the added term is zero. No twin needed, and none can exist. |
+| `matchClusters` tiebreak reversed | needs an EXACT float distance tie, which re-mined real centroids do not produce. Guard-only by construction. |
 
 **Thirteen of the 31 never reached the gate — the module's own `#guard`s failed
 `lake build` first.** That is the two layers being complementary rather than
 redundant, and it is also a measurement hazard: a sweep that stops at
-BUILD-FAILED is measuring the guards, not the gate. The verdicts above come from
-a second pass with the guard block stripped, and from a CONTROL that strips the
-guards and changes nothing else — it must read silent, or every verdict beside
-it is unreadable.
+BUILD-FAILED is measuring the guards, not the gate. So the harness strips the
+guard block before every Lean probe, and runs a CONTROL that strips the guards
+and changes nothing else — it must read silent, or every verdict beside it is
+unreadable, and the run aborts if it does not.
 
-**Two of my own probes were wrong before the results were.** One pair of
-"same" mutations turned out to hit different functions in the two languages
-(`localSolarHour` vs `localSolarHourFractional`), which is what produced the
-contradictory SILENT/MOVES pair above; and one TS ablation patched
-`focus-places.js` when its subject lives in `focus-places-identity.js`. Both
-read as findings about the gate until they were checked. When a Lean and a TS
-probe of "the same constant" disagree, suspect the probes before the arms.
+**A silent Lean probe is not a finding until its TS twin has been run.** The
+first version of this table called the `localSolarHourFractional` divisor "the
+one real gap", on the reasoning that the same change to `localSolarHour` fires.
+That was an inference across two different functions, not a measurement:
+mutating TS's `localSolarHourFractional` identically leaves the gate green too.
+The harness now runs the twin automatically for any SILENT Lean probe, which is
+what corrected it — and it is why the sweep belonged in the repo instead of the
+scratch directory it was written in.
+
+**Two of the original probes were wrong before the results were.** One pair of
+"same" mutations hit different functions in the two languages (`localSolarHour`
+lives in `Verified/Geo/Velocity.lean`, `localSolarHourFractional` in
+`FocusPlaces.lean`); and one TS ablation patched `focus-places.js` when its
+subject lives in `focus-places-identity.js`. Both read as findings about the
+gate until they were checked. The harness now fails any anchor that does not
+occur exactly once, which makes that particular mistake unrepresentable. When a
+Lean and a TS probe of "the same constant" disagree, suspect the probes before
+the arms.
 
 `pickWinningAmenity` is the one export the gate does not reach: its input is a
 vote tally over OSM venue names, so feeding it means carrying another module's
