@@ -897,12 +897,18 @@ asked about, so the resolved label reports the point the pass chose
 answer; the `?? base.city` fallback around `extractCity` IS this pass's and is
 pinned here.
 
-**A reproduced defect.** `totalPoints` is `reduce(+) || 1`, so a run whose
-fragments all carry `pointCount: 0` divides a zero numerator by 1 and puts the
-combined centroid at (0, 0) — the pass then resolves a venue in the Gulf of
-Guinea and names the stay after it. The `|| 1` prevents a NaN and yields a wrong
-answer instead of no answer. Reproduced deliberately: the twin's job is to agree
-with the TS, and a quietly-better centroid here would read as a Lean divergence.
+**A defect that was reproduced, then fixed in both arms (#416).** `totalPoints`
+used to be `reduce(+) || 1`, so a run whose fragments all carry `pointCount: 0`
+divided a zero numerator by 1 and put the combined centroid at (0, 0) — the pass
+then resolved a venue in the Gulf of Guinea and named the stay after it. The
+`|| 1` prevented a NaN and yielded a wrong answer instead of no answer. This twin
+reproduced it deliberately, because a quietly-better centroid here would have
+read as a Lean divergence rather than a TS bug.
+
+Both arms now fall back to the UNWEIGHTED mean of the fragment centroids, which
+is always available: `planJitterStayRuns` admits a fragment only if it has a
+centroid. The merged `pointCount` is the raw sum, so an all-zero run reports 0
+rather than a 1 no fragment contributed.
 
 Exact: the centroid is a weighted mean of `Float` centroids, the base pick and
 the index rewrite are ordering decisions on `Int`, and the two strings are built
@@ -934,15 +940,18 @@ def consolidateJitterStays (segments : Array Seg)
     let run := (List.range (stop - start + 1)).map fun k => segments[start + k]!
     let first := run.head!
     let last := run.getLast!
-    -- `reduce((s, x) => s + x.pointCount, 0) || 1`. The fallback fires on a
-    -- run of empty fragments and makes the centroid (0, 0) — see the header.
+    -- Point-count-weighted, falling back to the UNWEIGHTED mean when every
+    -- fragment carries `pointCount: 0`. The old fallback was a denominator of
+    -- 1 over a zero numerator, i.e. a (0, 0) centroid — see the header.
     let summed := run.foldl (fun s x => s + x.pointCount) 0
-    let totalPoints := if summed == 0 then 1 else summed
-    let denom := Float.ofInt totalPoints
+    let unweighted := summed == 0
+    let denom := Float.ofInt (if unweighted then (run.length : Int) else summed)
     -- Every segment in a run has a centroid: `planJitterStayRuns` refuses one
-    -- that does not, which is why the TS casts here rather than testing.
+    -- that does not, which is why the TS casts here rather than testing. That
+    -- precondition is also what makes the unweighted mean always available.
     let weighted (pick : Seg → Option Float) : Float :=
-      (run.foldl (fun s x => s + (pick x).getD 0 * Float.ofInt x.pointCount) 0) / denom
+      (run.foldl (fun s x =>
+        s + (pick x).getD 0 * (if unweighted then 1 else Float.ofInt x.pointCount)) 0) / denom
     let cLat := weighted (·.centroidLat)
     let cLon := weighted (·.centroidLon)
     let place := bestPlace cLat cLon first.startTs last.endTs (tzAt cLat cLon)
@@ -954,7 +963,7 @@ def consolidateJitterStays (segments : Array Seg)
       { base with
           startTs := first.startTs
           endTs := last.endTs
-          pointCount := totalPoints
+          pointCount := summed
           centroidLat := some cLat
           centroidLon := some cLon
           place := match place with | some p => some p.label | none => base.place
@@ -1008,6 +1017,12 @@ private def namedAfter : Float → Float → Int → Int → String → Option R
     if lat == C1_LAT && lon == C1_LON then some { label := "Olivomare" }
     else if lat == C2_LAT && lon == C2_LON then some { label := "Second venue" }
     else if lat == 0 && lon == 0 then some { label := "Null Island" }
+    -- The all-zero-pointCount run's centre, written as the arithmetic rather
+    -- than a decimal literal: it is the UNWEIGHTED mean of the two fragment
+    -- centroids, and spelling it that way is exact where a transcribed literal
+    -- would only be nearly so (#416).
+    else if lat == (51.5 + 51.5002) / 2 && lon == ((-0.14) + (-0.1401)) / 2 then
+      some { label := "Unweighted centre" }
     else if lat == 51.500099999999996 && lon == -0.14005 then some { label := "Tie centre" }
     else if lat == 51.500159999999994 && lon == -0.14008 then some { label := "Pair centre" }
     else none
@@ -1080,13 +1095,19 @@ private def shape (segs : Array Seg) :
        == #[some "earlier note; consolidated 3 GPS-jitter stay fragments", none,
             some "consolidated 2 GPS-jitter stay fragments"]
 
-/- The `|| 1` guard, reproduced. Every fragment carries `pointCount: 0`, so the
-numerator is 0, the denominator falls back to 1, and the combined centroid is
-(0, 0) — the resolver is asked about the Gulf of Guinea and the merged stay is
-named after whatever is there, with a `pointCount` of 1 no fragment contributed.
-This is what the TS does; it is recorded here, not fixed. -/
+/- Every fragment carries `pointCount: 0`, so the weights sum to zero and the
+centroid falls back to the UNWEIGHTED mean of the fragment centroids — which the
+resolver here is keyed on, so this pins the COORDINATE the pass asked about, not
+merely that it asked. The merged `pointCount` is 0, which is what the fragments
+actually contributed.
+
+Until #416 this pinned the defect instead: the denominator fell back to 1 over a
+zero numerator, putting the centre at (0, 0), resolving a venue in the Gulf of
+Guinea, and reporting a `pointCount` of 1 no fragment had contributed. The guard
+was deliberately reproducing it so the twin would not read as a Lean divergence;
+both arms are fixed together, so it now pins the answer rather than the bug. -/
 #guard shape #[cstay 0 600 51.5 (-0.14) 0 true, cstay 600 1500 51.5002 (-0.1401) 0]
-       == #[(0, 1500, 1, some 0, 0.8, some "Null Island", none, none,
+       == #[(0, 1500, 0, some ((51.5 + 51.5002) / 2), 0.8, some "Unweighted centre", none, none,
              some "consolidated 2 GPS-jitter stay fragments")]
 
 -- A tie on duration keeps the EARLIER leg as base: `>` is strict.

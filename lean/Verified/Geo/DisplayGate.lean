@@ -172,28 +172,54 @@ def NearGrid.nearestDist (g : NearGrid) (lat lon : Float) (clampM : Float := pos
     -- Rings past the occupied bounding box (plus one) cannot contain a bucket.
     let maxK :=
       (max (cy - g.minCy) (max (g.maxCy - cy) (max (cx - g.minCx) (max (g.maxCx - cx) 0)))) + 1
+    -- …and rings CLOSER than the box cannot either: a ring at Chebyshev distance
+    -- `k` meets the occupied box only once `k` reaches the box's own Chebyshev
+    -- distance. Starting there is exact — the skipped rings hold no buckets — and
+    -- it is what stops a far probe walking every empty ring in between (#416).
+    let minK :=
+      max 0 (max (g.minCy - cy) (max (cy - g.maxCy) (max (g.minCx - cx) (cx - g.maxCx))))
     let p : Pt := ⟨lat, lon⟩
     let mut best := posInf
     let mut seen : Std.HashSet Nat := {}
-    for kn in [0:maxK.toNat + 1] do
+    for kn in [minK.toNat:maxK.toNat + 1] do
       let k : Int := Int.ofNat kn
       if (Float.ofInt k - 1.5) * g.cellM ≥ min best clampM then break
-      -- Cells at Chebyshev distance exactly k.
+      -- Cells at Chebyshev distance exactly k, INTERSECTED with the occupied
+      -- box. Clipping is what bounds the work: a ring at distance k has 8k
+      -- cells, so a far probe walking whole rings stays quadratic in the
+      -- distance even once the empty inner rings are skipped. Cells outside the
+      -- box hold no bucket, so dropping them changes nothing.
       let yLo := cy - k
       let yHi := cy + k
-      for xi in [0:2 * kn + 1] do
-        let x := cx - k + Int.ofNat xi
-        let (b1, s1) := g.probe (cellKeyN yLo x) p best seen
-        best := b1; seen := s1
-        if kn > 0 then
-          let (b2, s2) := g.probe (cellKeyN yHi x) p best seen
+      let xFrom := max (cx - k) g.minCx
+      let xTo := min (cx + k) g.maxCx
+      let xCount := (xTo - xFrom + 1).toNat
+      if yLo ≥ g.minCy then
+        if yLo ≤ g.maxCy then
+          for xi in [0:xCount] do
+            let x := xFrom + Int.ofNat xi
+            let (b1, s1) := g.probe (cellKeyN yLo x) p best seen
+            best := b1; seen := s1
+      if kn > 0 then
+        if yHi ≥ g.minCy then
+          if yHi ≤ g.maxCy then
+            for xi in [0:xCount] do
+              let x := xFrom + Int.ofNat xi
+              let (b2, s2) := g.probe (cellKeyN yHi x) p best seen
+              best := b2; seen := s2
+      let yFrom := max (yLo + 1) g.minCy
+      let yTo := min (yHi - 1) g.maxCy
+      let yCount := (yTo - yFrom + 1).toNat
+      let leftInBox : Bool := g.minCx ≤ cx - k && cx - k ≤ g.maxCx
+      let rightInBox : Bool := g.minCx ≤ cx + k && cx + k ≤ g.maxCx
+      for yi in [0:yCount] do
+        let y := yFrom + Int.ofNat yi
+        if leftInBox then
+          let (b1, s1) := g.probe (cellKeyN y (cx - k)) p best seen
+          best := b1; seen := s1
+        if rightInBox then
+          let (b2, s2) := g.probe (cellKeyN y (cx + k)) p best seen
           best := b2; seen := s2
-      for yi in [0:2 * kn - 1] do
-        let y := yLo + 1 + Int.ofNat yi
-        let (b1, s1) := g.probe (cellKeyN y (cx - k)) p best seen
-        best := b1; seen := s1
-        let (b2, s2) := g.probe (cellKeyN y (cx + k)) p best seen
-        best := b2; seen := s2
     return min best clampM
 
 /-! ## Off-network metrics -/

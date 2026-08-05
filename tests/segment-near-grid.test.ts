@@ -72,6 +72,47 @@ describe("SegmentNearGrid — exactness vs brute force", () => {
 		}
 	});
 
+	// The existing exactness case calls a 0.02° spread "far", which is ~1 km —
+	// still inside the occupied box. A probe genuinely OUTSIDE the box is the
+	// case that used to walk every empty ring between itself and the data: with
+	// no clamp (`nearestRoadDist` passes none) the scan was quadratic in the
+	// distance, so a (0, 0) sentinel against a London grid presented as a hang
+	// rather than an error (#416).
+	it("probes far outside the occupied box are exact", () => {
+		const rand = lcg(2026);
+		const ways = randomWays(rand, 40);
+		const grid = SegmentNearGrid.fromWays(ways, 64);
+		expect(grid).not.toBeNull();
+		if (!grid) return;
+		// Null island, the antipode, and each side of the box in turn.
+		const far = [
+			{ lat: 0, lon: 0 },
+			{ lat: -51.53, lon: 179.9 },
+			{ lat: 51.53, lon: -80 },
+			{ lat: 89, lon: -0.12 },
+			{ lat: -89, lon: -0.12 },
+		];
+		for (const p of far) {
+			expect(grid.nearestDist(p.lat, p.lon)).toBe(bruteNearest(p, ways));
+		}
+	});
+
+	it("a far probe costs about what a near one does", () => {
+		const rand = lcg(31337);
+		const ways = randomWays(rand, 40);
+		const grid = SegmentNearGrid.fromWays(ways, 64);
+		expect(grid).not.toBeNull();
+		if (!grid) return;
+		// Wall-clock rather than a probe counter, because the failure this
+		// guards is a hang: unbounded, the (0, 0) call is ~8e9 bucket probes and
+		// never returns on any budget a test could tolerate. A generous ceiling
+		// still separates "bounded" from "quadratic in the distance to London".
+		const t0 = performance.now();
+		for (let i = 0; i < 200; i++) grid.nearestDist(0, 0);
+		const farMs = performance.now() - t0;
+		expect(farMs).toBeLessThan(1000);
+	});
+
 	it("clamped queries are exact below the clamp and clamped above it", () => {
 		const rand = lcg(7);
 		const ways = randomWays(rand, 40);

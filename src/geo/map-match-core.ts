@@ -501,21 +501,46 @@ export class SegmentNearGrid {
 		const cx = Math.floor(lon / this.cellLon);
 		// Rings past the occupied bounding box (plus one) cannot contain a bucket.
 		const maxK = Math.max(cy - this.minCy, this.maxCy - cy, cx - this.minCx, this.maxCx - cx, 0) + 1;
+		// …and rings CLOSER than the box cannot either: a ring at Chebyshev
+		// distance k from the query cell meets the occupied box only once k
+		// reaches the box's Chebyshev distance. Starting there is exact — the
+		// skipped rings hold no buckets, so `best` would not have moved — and it
+		// is what stops a far probe from walking every empty ring in between.
+		//
+		// Without it, a probe outside the box with no clamp (`nearestRoadDist`
+		// passes none) scans O(maxK²) cells before reaching any data: a (0, 0)
+		// sentinel against a London grid is ~89,600 rings, ~8e9 bucket probes,
+		// which presents as a hang rather than an error (#416).
+		const minK = Math.max(0, this.minCy - cy, cy - this.maxCy, this.minCx - cx, cx - this.maxCx);
 		this.gen++;
 		const p: Pt = { lat, lon };
 		let best = Number.POSITIVE_INFINITY;
-		for (let k = 0; k <= maxK; k++) {
+		for (let k = minK; k <= maxK; k++) {
 			if ((k - 1.5) * this.cellM >= Math.min(best, clampM)) break;
-			// Cells at Chebyshev distance exactly k.
+			// Cells at Chebyshev distance exactly k, INTERSECTED with the
+			// occupied box. Clipping is what bounds the work: a ring at distance
+			// k has 8k cells, so a far probe walking whole rings stays quadratic
+			// in the distance even once the empty inner rings are skipped. Cells
+			// outside the box hold no bucket, so dropping them changes nothing.
 			const yLo = cy - k;
 			const yHi = cy + k;
-			for (let x = cx - k; x <= cx + k; x++) {
-				best = this.probe(cellKey(yLo, x), p, best);
-				if (k > 0) best = this.probe(cellKey(yHi, x), p, best);
+			const xFrom = Math.max(cx - k, this.minCx);
+			const xTo = Math.min(cx + k, this.maxCx);
+			if (yLo >= this.minCy && yLo <= this.maxCy) {
+				for (let x = xFrom; x <= xTo; x++) best = this.probe(cellKey(yLo, x), p, best);
 			}
-			for (let y = yLo + 1; y <= yHi - 1; y++) {
-				best = this.probe(cellKey(y, cx - k), p, best);
-				best = this.probe(cellKey(y, cx + k), p, best);
+			if (k > 0 && yHi >= this.minCy && yHi <= this.maxCy) {
+				for (let x = xFrom; x <= xTo; x++) best = this.probe(cellKey(yHi, x), p, best);
+			}
+			const yFrom = Math.max(yLo + 1, this.minCy);
+			const yTo = Math.min(yHi - 1, this.maxCy);
+			const leftInBox = cx - k >= this.minCx && cx - k <= this.maxCx;
+			const rightInBox = cx + k >= this.minCx && cx + k <= this.maxCx;
+			if (leftInBox || rightInBox) {
+				for (let y = yFrom; y <= yTo; y++) {
+					if (leftInBox) best = this.probe(cellKey(y, cx - k), p, best);
+					if (rightInBox) best = this.probe(cellKey(y, cx + k), p, best);
+				}
 			}
 		}
 		return Math.min(best, clampM);

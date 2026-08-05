@@ -406,9 +406,22 @@ export async function consolidateJitterStays(
 	const drop = new Set<number>();
 	for (const { start, end } of runs) {
 		const run = segments.slice(start, end + 1);
-		const totalPoints = run.reduce((s, x) => s + x.pointCount, 0) || 1;
-		const cLat = run.reduce((s, x) => s + (x.centroidLat as number) * x.pointCount, 0) / totalPoints;
-		const cLon = run.reduce((s, x) => s + (x.centroidLon as number) * x.pointCount, 0) / totalPoints;
+		// Point-count-weighted centroid — a fragment holding more fixes should
+		// pull the combined centre further.
+		//
+		// When EVERY fragment carries `pointCount: 0` the weights sum to zero.
+		// The old `|| 1` denominator turned that into 0/1 = (0, 0): a centroid
+		// off West Africa, a `bestPlace` lookup at null island, and a stay named
+		// after whatever sits there — a confidently wrong answer where the guard
+		// was only meant to avoid a NaN. Fall back to the UNWEIGHTED mean
+		// instead: `planJitterStayRuns` admits a fragment only if it has a
+		// centroid, so the mean is always available and always inside the run's
+		// own ~75 m blob (#416).
+		const totalPoints = run.reduce((s, x) => s + x.pointCount, 0);
+		const weight = (x: EnrichedSegment): number => (totalPoints > 0 ? x.pointCount : 1);
+		const divisor = totalPoints > 0 ? totalPoints : run.length;
+		const cLat = run.reduce((s, x) => s + (x.centroidLat as number) * weight(x), 0) / divisor;
+		const cLon = run.reduce((s, x) => s + (x.centroidLon as number) * weight(x), 0) / divisor;
 		// Re-resolve the venue from the combined centre, with the merged
 		// stay's full window as plausibility evidence — this run IS the
 		// poor-GPS indoor-sit case the venue scorer exists for (#246).
