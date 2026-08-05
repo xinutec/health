@@ -89,6 +89,22 @@ Two consequences for the rest of the port:
   runtimes AND be provable, where two IEEE `cos` implementations can never be
   made to agree. Every transcendental in the served path is a place where the
   port can be pinned by testing but not proved.
+- **And getting off `Float` ENDS the regime that currently proves the port.**
+  Worth stating before it is discovered mid-migration. Every check the port has
+  today — 33/33 SHELL ONLY on the day gate, the tenant ledgers, every `#guard` —
+  asks the same question: *does Lean produce the bytes TS produced?* You cannot
+  be byte-identical to a `Float` implementation without `Float`. So the day the
+  reals go in, parity-with-TS stops being the criterion and something has to
+  replace it: theorems for what can be proved, a stated tolerance for what
+  cannot, and a decision about which served fields are allowed to move.
+
+  That is a change of correctness regime, not a refactor, and it is in tension
+  with "port as much as possible" only in the sense that the two want doing in a
+  deliberate order. Porting under bit-identity first is the cheap direction: it
+  is a mechanical check that catches real mistakes, and it is exactly what makes
+  a later `Float` removal reviewable — you will have a byte-exact baseline to
+  measure the intended deviation against, which you do not get if both changes
+  land together.
 
 ### The second slice, and the shape worth preferring (#388)
 
@@ -272,8 +288,40 @@ a day that happens to exercise it. Write one per branch and per threshold
 boundary — a pair straddling the boundary (80 vs 80.001) is what distinguishes
 `>` from `≥`, and the two must NOT agree.
 
+**But a guard is a SNAPSHOT, so it is blind to the TS moving.** It records what
+V8 answered on the day the port was written; it keeps passing while the function
+it ports changes underneath. That is not a hypothetical — `pickBestStation` went
+stale against the #373 fix with its guards green (#417), and the underground trio
+was five commits behind before a real day aborted the fold (#425). Both were
+found by reading or by luck, which is what a check is supposed to replace.
+
+So the three kinds of evidence fail differently and only one of them notices
+drift. `lean/experiments/lean-coverage.mts` labels them by that blind spot:
+
+| | check | misses |
+|---|---|---|
+| live comparator | a gate replays real days through both arms | branches no real day takes |
+| guard-pinned | `#guard`s in `lake build` | the TS moving (#417) |
+| proven | a theorem in `lake build` | nothing it states |
+
+Measured 2026-08-05: 120 modules live-compared, 5 guard-pinned, 2 proven, 0
+unchecked. Read "guard-pinned" as *this port is unattended*, not as *this port is
+nearly covered* — the five are `CurrentPlace`, `FocusIdentity`, `FocusPlaces`,
+`LineStations`, `OsmSpatial`, and the first three run on the weekly mining cron
+that no day-gate replay can reach (#435 scopes the referee they need).
+
+A proof module has no comparator BY CONSTRUCTION — there is no TS arm to run
+against a theorem — so counting it as uncovered says the best-evidenced file in
+the tree is the least. `Verified.Geo.LazyLower` is 8 theorems and zero
+definitions.
+
 Derive expectations from V8, never by hand: `lean/experiments/*-refs.mts` runs
-the real TS and prints the guard lines to paste. What the port owes is fidelity
+the real TS and prints the guard lines to paste. Each pinned module CITES its
+harness by path in its docstring, and that citation is the provenance record —
+`lean-coverage.mts` reads it and flags a citation whose file is gone. Do not try
+to recover the link by searching harnesses for the Lean module name: a harness
+imports its subject by TS filename and exported function and never names the Lean
+module, so that search reports V8-derived guards as hand-written (#434). What the port owes is fidelity
 to what TS does, including where that is odd — `impliedSpeedKmh` returns 0 for a
 non-increasing `dt`, so a teleport sharing its anchor's timestamp is invisible
 to the filter. That is TS's documented choice; the guard pins it rather than
