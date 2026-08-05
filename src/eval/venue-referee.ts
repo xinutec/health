@@ -26,7 +26,7 @@
  * to the narratives; everything here is arithmetic over that join.
  */
 
-import type { VenueCandidateScore } from "../geo/venue-prior.js";
+import { VENUE_RANK_FLOOR_NATS, type VenueCandidateScore } from "../geo/venue-prior.js";
 
 /** How the pipeline did on one stay that the ground truth names. The verdict
  *  is on the label the TIMELINE shows — not on the venue scorer's opinion,
@@ -106,6 +106,33 @@ export interface VenueCaseResult {
 	/** The truth scored HIGHER than the winner, and lost only to the
 	 *  near-field short-circuit. These stays are fixed by V1 alone. */
 	blockedByNearField: boolean;
+	/** The short-circuit elected a candidate the summed evidence ranked BELOW
+	 *  another one — i.e. the rule overrode the score.
+	 *
+	 *  Deliberately NOT conditioned on the verdict, the layer, or on the truth
+	 *  being a candidate, and that is the whole point. {@link blockedByNearField}
+	 *  requires `verdict === "wrong"`, so it can only fire once the damage is
+	 *  already user-visible; a stay where a later layer rescues the label is
+	 *  invisible to it. Measured 2026-08-05 over 62 cases: `blockedByNearField`
+	 *  counted 0 while this counted 6. A metric that can only see a defect the
+	 *  moment it stops being masked cannot tell you the mask is load-bearing. */
+	nearFieldOverrodeScore: boolean;
+	/** By how many nats the highest-scoring non-near-field candidate led the
+	 *  elected one. Null when the rule did not override.
+	 *
+	 *  The MAGNITUDE is the finding, not the count: a rule that breaks ties is
+	 *  doing its job, a rule that beats evidence is not. Measured 2026-08-05,
+	 *  the corpus-worst override is 1.26 nats — tie-breaking territory. #345 was
+	 *  filed claiming 4.03 nats on a 2026-06-15 stay; no such case survives in
+	 *  the corpus, and the narrative for that window has since changed. Re-read
+	 *  this number before arguing the rule needs replacing. */
+	nearFieldOverrodeByNats: number | null;
+	/** The short-circuit elected a candidate scoring below
+	 *  {@link VENUE_RANK_FLOOR_NATS}, so `bestPlace` declines to name it and the
+	 *  stay falls through to an area/address label. Here the rule does not
+	 *  misdirect the answer, it DESTROYS one: a nameable stay becomes a
+	 *  non-answer while a candidate above the floor sat lower in the ranking. */
+	nearFieldBelowFloor: boolean;
 }
 
 export interface VenueReport {
@@ -128,6 +155,16 @@ export interface VenueReport {
 	/** Wrong cases where the truth outscored the winner and lost only to the
 	 *  short-circuit — the V1 target. */
 	blockedByNearField: number;
+	/** Stays where the short-circuit overrode the summed evidence, WHATEVER the
+	 *  final label turned out to be. Always ≥ `blockedByNearField`; the excess
+	 *  is the set of rankings a later layer is currently masking. */
+	nearFieldOverrodeScore: number;
+	/** The largest such override, in nats. A big number here means the rule is
+	 *  beating evidence, not breaking ties. */
+	worstNearFieldOverrideNats: number | null;
+	/** Stays where the short-circuit elected a below-floor candidate, turning a
+	 *  nameable stay into an area/address label. */
+	nearFieldBelowFloor: number;
 	/** Wrong/declined cases where the true venue was not among the scorer's
 	 *  candidates at all — unreachable by any change to the ranking. */
 	truthMissing: number;
@@ -175,6 +212,16 @@ export function judgeVenueCase(c: VenueCase): VenueCaseResult {
 	// Only meaningful when the scorer's winner is the label that survived.
 	const wonByNearField = c.layer === "scorer" && c.accepted && top?.nearField === true;
 	const verdict: VenueVerdict = !chosen ? "declined" : venueNameMatches(c.truthPlace, chosen) ? "correct" : "wrong";
+	// The two RANKING pathologies. Computed from the ranking alone — no verdict,
+	// no layer, no truth — so a stay whose label another layer rescues still
+	// reports the defect underneath it.
+	//
+	// `bestOther` is taken as a MAX rather than the first non-near-field entry:
+	// the ranking is sorted near-field-first, and reading position for score
+	// would bake that sort order into the metric measuring it.
+	const nonNearField = c.ranked.filter((r) => !r.nearField);
+	const bestOther = nonNearField.length ? nonNearField.reduce((a, b) => (b.total > a.total ? b : a)) : null;
+	const nearFieldOverrodeScore = top?.nearField === true && bestOther !== null && bestOther.total > top.total;
 	return {
 		case: c,
 		verdict,
@@ -182,6 +229,9 @@ export function judgeVenueCase(c: VenueCase): VenueCaseResult {
 		wonByNearField,
 		truthRank,
 		truthGapNats,
+		nearFieldOverrodeScore,
+		nearFieldOverrodeByNats: nearFieldOverrodeScore && bestOther && top ? bestOther.total - top.total : null,
+		nearFieldBelowFloor: top?.nearField === true && top.total < VENUE_RANK_FLOOR_NATS,
 		// The score preferred the truth (gap ≤ 0) but the short-circuit put a
 		// lower-scoring candidate on top anyway. These, and only these, are the
 		// stays that gating the short-circuit (V1) would fix.
@@ -211,6 +261,15 @@ export function reportVenues(cases: readonly VenueCase[]): VenueReport {
 		nearFieldDecided: count((r) => r.wonByNearField),
 		nearFieldWrong: count((r) => r.wonByNearField && r.verdict === "wrong"),
 		blockedByNearField: count((r) => r.blockedByNearField),
+		nearFieldOverrodeScore: count((r) => r.nearFieldOverrodeScore),
+		worstNearFieldOverrideNats: results.reduce<number | null>(
+			(worst, r) =>
+				r.nearFieldOverrodeByNats !== null && (worst === null || r.nearFieldOverrodeByNats > worst)
+					? r.nearFieldOverrodeByNats
+					: worst,
+			null,
+		),
+		nearFieldBelowFloor: count((r) => r.nearFieldBelowFloor),
 		truthMissing: count((r) => r.verdict !== "correct" && decidedByScorer(r) && r.truthRank === null),
 		results,
 	};

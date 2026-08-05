@@ -241,6 +241,14 @@ ${layerLine("other")}
       …and was wrong                ${report.nearFieldWrong}
       …truth outscored it, blocked ONLY by the short-circuit: ${report.blockedByNearField}   <-- what V1 would fix
     truth not a candidate           ${report.truthMissing}  (mirror/geometry — no ranking change reaches these)
+
+  the RANKING pathology, counted whatever the final label was (#345).
+  The three counters above are all conditioned on the verdict, so a stay whose
+  label a later layer rescues does not appear in them — which is exactly how the
+  06-15 Macmillan case stayed invisible while the focus-place override masked it:
+    near-field overrode the score   ${report.nearFieldOverrodeScore}  (a non-near-field candidate scored HIGHER)
+      …worst override               ${report.worstNearFieldOverrideNats?.toFixed(2) ?? "—"} nats
+    near-field elected below floor  ${report.nearFieldBelowFloor}  (destroys the answer: bestPlace then declines)
 `);
 
 if (jsonAt) {
