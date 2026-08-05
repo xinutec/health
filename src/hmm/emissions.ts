@@ -94,7 +94,11 @@ export interface BuildEmissionFnOpts {
 	 *  Measured 2026-07-16: indoor reacquire scatter reads 5–14 km/h
 	 *  while genuinely still, and N(0,2) charges that 12–18 nats/minute
 	 *  — enough to buy phantom vehicle micro-rides that no honest
-	 *  segment-level term can counter. Conditioned on an observable
+	 *  segment-level term can counter. The counter was measured, not
+	 *  assumed: an honest "he never left" displacement term is worth
+	 *  ~−0.9 nats against those 12–18, so it cannot reach. The lie is
+	 *  emission-side and has to be answered there — do NOT build a
+	 *  prevState-in-duration-hook for this. Conditioned on an observable
 	 *  (unlike the REFUTED global heavy-tail mixture, which reshaped
 	 *  boundaries corpus-wide): a real ride's 70 km/h reacquire fix
 	 *  still pays hard even at the widened σ. Loader-gated
@@ -115,9 +119,18 @@ export interface BuildEmissionFnOpts {
  *  The widening additionally scales DOWN with rail-corridor proximity
  *  (`1 − exp(−railDist²/2σ²)`): a reacquire fix ON a rail line is
  *  exactly what a dark tube ride's reacquisition looks like (measured:
- *  the acceptance-day midday hop reacquires at 0–7 m from the track,
- *  while indoor drift scatters ~280 m off-rail), so the stationary
- *  tolerance must not shelter it. Road proximity is NOT used — in
+ *  the acceptance-day midday hop reacquires at 22–37 km/h at 0–7 m from
+ *  the track, while indoor drift reads 5–14 km/h at 264–296 m off-rail),
+ *  so the stationary tolerance must not shelter it.
+ *
+ *  That scaling is load-bearing, not a refinement: on speed alone the two
+ *  cases are provably inseparable. A departure at 22 km/h with age 0 and
+ *  drift at 14 km/h with age 2 fall the same side of EVERY decaying σ,
+ *  because any σ wide enough to tolerate the older, slower drift is wider
+ *  still at age 0 and tolerates the faster departure too. Only a second
+ *  observable splits them, and rail distance is the one that does — so
+ *  dropping `railScale` does not simplify this term, it breaks it.
+ *  Road proximity is NOT used — in
  *  London everything including indoor drift is within ~25 m of a road,
  *  so it carries no signal (the #234 lesson). */
 const REACQ_WIDEN = 2.5;
