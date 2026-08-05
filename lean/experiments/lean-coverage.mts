@@ -107,7 +107,7 @@ const claimed = new Set<string>();
 for (const [label, roots] of GATES) {
 	const fresh = [...closure(roots)].filter((m) => !claimed.has(m));
 	for (const m of fresh) claimed.add(m);
-	console.log(`${label.padEnd(34)} ${String(fresh.length).padStart(3)}`);
+	console.log(`${label.padEnd(38)} ${String(fresh.length).padStart(3)}`);
 }
 
 /**
@@ -133,23 +133,62 @@ for (const [label, roots] of GATES) {
 const dark = all.filter((m) => !claimed.has(m)).sort();
 const body = (m: string): string => readFileSync(path.join(LEAN, `${m.split(".").join(path.sep)}.lean`), "utf8");
 const count = (m: string, re: RegExp): number => (body(m).match(re) ?? []).length;
-const shape = (m: string): { thms: number; defs: number } => ({
+const shape = (m: string): { thms: number; defs: number; guards: number } => ({
 	thms: count(m, /^ *(theorem|lemma) /gm),
 	defs: count(m, /^ *(private )?def /gm),
+	guards: count(m, /#guard/g),
 });
-const proven = dark.filter((m) => shape(m).thms > 0);
-const ungraded = dark.filter((m) => shape(m).thms === 0);
-console.log(`${"PROVEN — gated by `lake build`".padEnd(34)} ${String(proven.length).padStart(3)}`);
-console.log(`${"NO check of any kind".padEnd(34)} ${String(ungraded.length).padStart(3)}`);
-console.log(`${"".padEnd(34)} ${"---".padStart(3)}\n${"total".padEnd(34)} ${String(all.length).padStart(3)}\n`);
-for (const [label, ms] of [
-	["proven", proven],
-	["ungraded", ungraded],
-] as [string, string[]][]) {
+/**
+ * Nor is "no comparator" the same as "no check". Every module in the residue
+ * carries `#guard`s — 11 to 58 of them — and `lake build` runs them. What a
+ * guard cannot do is notice the TS MOVING: it is a snapshot of V8's answer taken
+ * when the port was written, so a guard keeps passing while the thing it ports
+ * changes underneath. That is not hypothetical — it is exactly how
+ * `pickBestStation` went stale against the #373 fix (#417).
+ *
+ * So guard-pinned is not a weaker comparator, it is blind to a different thing,
+ * and the tiers are named for what each MISSES rather than for how good it is.
+ *
+ * The provenance column asks whether any `*-refs.mts` harness names the module,
+ * because the project rule is to derive guard expectations from V8 and never by
+ * hand — a guard written from the porter's belief agrees with the port for the
+ * same reason the port is wrong. A name match is a PROXY for that and a loose
+ * one: it says a harness mentions the module, not that the harness generated
+ * these particular guards. Absence is the informative direction.
+ */
+const EXPERIMENTS = path.join(LEAN, "experiments");
+const SELF = "lean-coverage.mts";
+const harnesses = readdirSync(EXPERIMENTS)
+	.filter((f) => f.endsWith(".mts") && f !== SELF)
+	.map((f) => ({ file: f, text: readFileSync(path.join(EXPERIMENTS, f), "utf8") }));
+const refsFor = (m: string): string[] => {
+	const base = m.split(".").pop() as string;
+	return harnesses.filter((h) => h.text.includes(base)).map((h) => h.file);
+};
+
+const tier = (m: string): "proven" | "pinned" | "none" =>
+	shape(m).thms > 0 ? "proven" : shape(m).guards > 0 ? "pinned" : "none";
+const TIERS: [string, string, string][] = [
+	["proven", "PROVEN — `lake build` is the check", "misses nothing it states"],
+	["pinned", "GUARD-PINNED — no live comparator", "misses the TS moving (#417)"],
+	["none", "NO check of any kind", "misses everything"],
+];
+for (const [key, label] of TIERS) {
+	console.log(`${label.padEnd(38)} ${String(dark.filter((m) => tier(m) === key).length).padStart(3)}`);
+}
+console.log(`${"".padEnd(38)} ${"---".padStart(3)}\n${"total".padEnd(38)} ${String(all.length).padStart(3)}\n`);
+for (const [key, label, misses] of TIERS) {
+	const ms = dark.filter((m) => tier(m) === key);
 	if (ms.length === 0) continue;
-	console.log(`  ${label}:`);
+	console.log(`  ${label} — ${misses}`);
 	for (const m of ms) {
-		const { thms, defs } = shape(m);
-		console.log(`    ${m.padEnd(30)} ${String(thms).padStart(3)} thm  ${String(defs).padStart(3)} def`);
+		const { thms, defs, guards } = shape(m);
+		const refs = refsFor(m);
+		const prov = key === "pinned" ? (refs.length > 0 ? `  <- ${refs.join(", ")}` : "  <- NO REFS HARNESS") : "";
+		console.log(
+			`    ${m.padEnd(30)} ${String(thms).padStart(3)} thm ${String(defs).padStart(3)} def ` +
+				`${String(guards).padStart(3)} guard${prov}`,
+		);
 	}
+	console.log("");
 }
