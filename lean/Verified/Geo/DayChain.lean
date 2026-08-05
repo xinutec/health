@@ -109,17 +109,14 @@ def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
 /-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
 `Array SPt` here — absent and empty mean the same thing to the renderer.
 
-THE TIMESTAMP NARROWS, and that is #420 rather than a choice made here.
-`PathPt.ts` is a `Float` because `interpolateTimes` divides a span by a distance
-ratio, so the value production serves is fractional; `SPt.ts` is an `Int`. The
-conversion rounds, which can move a `clipPath` window boundary by one vertex.
-
-Measured rather than assumed: if that ever bites, the fold parity says so as an
-`episodes` difference on a real day, and the fix is to narrow `SPt` and `PathPt`
-together (#420) — not to pick a rounding here that happens to agree. -/
+The timestamp used to NARROW here: `PathPt.ts` is a `Float` because the
+over-route trim and the walk corrector interpolate `ts` along a chord without
+rounding, while `SPt.ts` was an `Int`, so this conversion rounded. Both are
+`Float` now (#420), so the vertex crosses the stage boundary untouched — which
+is what a projection between two views of one record should do. -/
 private def spts (p : Option (Array Verified.Geo.PathPt)) :
     Array Verified.Geo.EpisodeGeometry.SPt :=
-  (p.getD #[]).map fun q => ⟨q.lat, q.lon, (Float.floor (q.ts + 0.5)).toInt64.toInt⟩
+  (p.getD #[]).map fun q => ⟨q.lat, q.lon, q.ts⟩
 
 def episodeSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.EpisodeGeometry.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode

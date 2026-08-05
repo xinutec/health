@@ -222,7 +222,10 @@ open Verified.Geo (rejectSpikes holdSpeed)
 open Verified.Geo.EpisodeGeometry (spikeAt speedOk)
 
 private def PedFix.latLon (p : PedFix) : Verified.Geo.EpisodeGeometry.LatLon :=
-  { lat := p.lat, lon := p.lon, ts := some p.ts }
+  -- A captured fix's `ts` is a whole second; `LatLon.ts` is `Float` because the
+  -- DERIVED vertices sharing that field are fractional (#420). Widening here is
+  -- exact — every Int in this range is a Float.
+  { lat := p.lat, lon := p.lon, ts := some (Float.ofInt p.ts) }
 private def PedFix.rawFix (p : PedFix) : Verified.Geo.EpisodeGeometry.RawFix :=
   { ts := p.ts, lat := p.lat, lon := p.lon }
 

@@ -1761,8 +1761,13 @@ private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson e.startTs), ("endTs", Lean.toJson e.endTs),
     ("mode", Json.str e.mode), ("kind", Json.str e.kind), ("place", jOptS e.place),
+    -- `ts` rides as bits like its `lat`/`lon` siblings: it is a `Float` now
+    -- (#420), and a derived vertex's is fractional, so a JSON number would round
+    -- at the boundary the bit encoding exists to avoid. Nothing decodes this
+    -- payload yet — the day chain has no serving path (#431) — so a consumer
+    -- must read `ts` as bits when one is written.
     ("points", Json.arr (e.points.map fun p =>
-      Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptI p.ts)]))]
+      Json.mkObj [("lat", fBits p.lat), ("lon", fBits p.lon), ("ts", jOptF p.ts)]))]
 
 /-- The passes whose output differs from what they were handed — computed from
 the trace rather than declared, so it cannot drift from what ran. This is the

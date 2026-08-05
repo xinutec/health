@@ -56,8 +56,10 @@ Node/V8 (`lean/experiments/episode-geometry-refs.mts`).
   the TS tests `(s.path?.length ?? 0) >= 2` — so they are plain `Array` here.
   `rawFixes` is NOT one of those: the TS tests `if (rawFixes)`, and an empty
   array is truthy in JS, so it stays an `Option`.
-* Timestamps are `Int`. They are copied through untouched, and the pipeline's
-  are whole UTC seconds.
+* Fix timestamps are `Int` — the capture path records whole UTC seconds. Drawn
+  DERIVED vertices are not: the over-route trim and the walk corrector
+  interpolate `ts` along a chord without rounding, so {@link SPt} and the `ts`
+  {@link LatLon} carries are `Float` (#420).
 -/
 
 namespace Verified.Geo.EpisodeGeometry
@@ -83,23 +85,31 @@ the map's point-inspector can show *when* a drawn vertex was. -/
 structure LatLon where
   lat : Float
   lon : Float
-  ts : Option Int := none
+  /-- `Float`, not `Int`: the TS field is a JS `number`, and the derived-path
+  vertices that feed it carry fractional timestamps (see {@link SPt}). Rounding
+  on the way out made this module emit a different value from the TS for 4226 of
+  23525 drawn vertices across the corpus (#420). -/
+  ts : Option Float := none
   deriving Inhabited, BEq, Repr
 
 /-- A vertex of a derived path (`snappedPath` / `matchedPath` / …), which always
 carries an interpolated timestamp.
 
-DIVERGENCE, narrow and known: `interpolateTimes` divides a span by a distance
-ratio, so the value production serves is FRACTIONAL, and `Verified.Geo.PathPt`
-— the vertex the pass cascade now shares — types it `Float` for that reason.
-This projection rounds it, which can move a window-boundary filter in `clipPath`
-by one vertex and changes the `ts` this module emits. Kept `Int` because this
-renderer sits downstream of the fold and its guards are pinned against it;
-narrowing the two together is what closes the gap. -/
+`ts` is `Float` because the interpolators that produce it do not round.
+`interpolateTimes` (rail-snap.ts) DOES — so the snapped path is integral — but
+`slicePathByArc` (map-match-core.ts, the over-route trim) and four sites in
+`walk-building-escape.ts` interpolate `a.ts + (b.ts - a.ts) * t` and keep the
+fraction. Measured across the 33-day corpus: 4226 of 23525 drawn vertices carry
+a fractional `ts`.
+
+The window filter in `clipPath` compares it against the state's integral
+bounds. That comparison is where a rounded model could keep or drop a vertex the
+TS does not — measured at ZERO occurrences in those 23525, so the divergence
+this type closes is the EMITTED VALUE, not the clip (#420). -/
 structure SPt where
   lat : Float
   lon : Float
-  ts : Int
+  ts : Float
   deriving Inhabited, BEq, Repr
 
 /-- The `FilteredPoint` fields this module reads — the Kalman-smoothed track. -/
@@ -255,6 +265,12 @@ def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 convention across the pipeline). -/
 def inWindow (ts start finish : Int) : Bool := ts ≥ start && ts ≤ finish
 
+/-- The same window test for a derived-path vertex, whose `ts` is fractional.
+The TS compares JS numbers throughout, so the fraction takes part in the
+comparison rather than being rounded away first (#420). -/
+def inWindowF (ts : Float) (start finish : Int) : Bool :=
+  ts ≥ Float.ofInt start && ts ≤ Float.ofInt finish
+
 /-- Segments overlapping a state's window — strict on both sides, so a segment
 merely touching a boundary does not cover it. -/
 def coveringSegs (segments : Array Seg) (st : State) : Array Seg :=
@@ -307,14 +323,14 @@ def entryPoint (st? : Option State) (segments : Array Seg) (points : Array Fix) 
 /-! ## The dispatch -/
 
 /-- A `Fix` as a drawn vertex, keeping its moment. -/
-def toLatLon (p : Fix) : LatLon := { lat := p.lat, lon := p.lon, ts := some p.ts }
+def toLatLon (p : Fix) : LatLon := { lat := p.lat, lon := p.lon, ts := some (Float.ofInt p.ts) }
 
 /-- A `RawFix` as a drawn vertex. -/
-def rawToLatLon (p : RawFix) : LatLon := { lat := p.lat, lon := p.lon, ts := some p.ts }
+def rawToLatLon (p : RawFix) : LatLon := { lat := p.lat, lon := p.lon, ts := some (Float.ofInt p.ts) }
 
 /-- A derived path clipped to a window, as drawn vertices. -/
 def clipPath (path : Array SPt) (st : State) : Array LatLon :=
-  (path.filter (fun sp => inWindow sp.ts st.startTs st.endTs)).map
+  (path.filter (fun sp => inWindowF sp.ts st.startTs st.endTs)).map
     (fun sp => { lat := sp.lat, lon := sp.lon, ts := some sp.ts })
 
 /-- The per-mode speed ceiling, `none` where the mode has none. -/
@@ -478,13 +494,13 @@ private def pt (n e : Float) : Float × Float := (lat0 + n * mlat, lon0 + e * ml
 #guard (pt 3 0).1 == 51.520026949335254
 #guard (pt 5 5).1 == 51.52004491555875
 
-private def ll (n e : Float) (ts : Option Int := none) : LatLon :=
+private def ll (n e : Float) (ts : Option Float := none) : LatLon :=
   { lat := (pt n e).1, lon := (pt n e).2, ts }
 private def fx (ts : Int) (n e : Float) (v : Float := 4) : Fix :=
   { ts, lat := (pt n e).1, lon := (pt n e).2, speedKmh := v }
 private def rx (ts : Int) (n e : Float) : RawFix :=
   { ts, lat := (pt n e).1, lon := (pt n e).2 }
-private def spt (ts : Int) (n e : Float) : SPt :=
+private def spt (ts : Float) (n e : Float) : SPt :=
   { lat := (pt n e).1, lon := (pt n e).2, ts }
 private def stt (a b : Int) (m : Mode) (p : Option String := none) : State :=
   { startTs := a, endTs := b, mode := m, place := p }
