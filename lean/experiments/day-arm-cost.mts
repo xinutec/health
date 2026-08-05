@@ -55,8 +55,7 @@
  *             would measure Lean's startup, which no tenant pays.
  *   noop      the same payload to the `noop` mode. The serve loop parses the
  *             request BEFORE dispatching on mode, so this is read + `Json.parse`
- *             + a trivial reply: the transport floor, and `fold − noop` is what
- *             the verified code itself costs (#405's ablation, same shape).
+ *             + a trivial reply: the REQUEST-side transport floor.
  *   answers   the lookups the rounds asked for, answered live from the row-set
  *             adapter. Not Lean's cost — production pays it in either arm — but
  *             it is where the over-fetch lands, so it is counted and shown.
@@ -64,6 +63,27 @@
  * `rounds × fold` is an UPPER bound: the tables grow, so early rounds carry a
  * smaller payload than the converged one this times. The bound is the honest
  * direction — it cannot make the tenant look cheaper than it is.
+ *
+ * # `fold − noop` is NOT the verified algorithm, and must not be quoted as it
+ *
+ * #405 measured a call as FOUR layers — request wire, response wire, per-mode
+ * decode of generic `Json` into the tenant's own structures, and the algorithm —
+ * and only the last survives the Rust-shell architecture. It also recorded the
+ * trap this file would otherwise walk into verbatim: *"measuring with `noop`
+ * ALONE gets the answer wrong, and wrong in the reassuring direction"*, because
+ * `{}` as a reply hides both the response wire and the decode. On gpsquality
+ * that mistake would have read the floor as a quarter of the call when it was
+ * seven eighths.
+ *
+ * `noop` is the only ablation the day mode has. So `fold − noop` is layers 2+3+4
+ * together, and reading it as layer 4 OVERSTATES the verified code by however
+ * much the response encode and `parseEnv`'s typed decode cost — which for a
+ * multi-megabyte reply and six lookup tables is not a rounding error.
+ *
+ * Closing that needs two more handlers in `serveLoop`, the way `echo` and
+ * `gqdecode` exist for gpsquality. Until they do, the split printed below is
+ * "request transport" against "everything else", and the residual that a Rust
+ * shell would actually pay is UNMEASURED for this tenant.
  *
  * # The TS arm's own split
  *
@@ -121,7 +141,13 @@ class Serve {
 		this.proc.stderr.resume();
 	}
 
-	/** One request, one reply, wall time around both. */
+	/** One request, one reply, wall time around both — INCLUDING the caller's
+	 *  `JSON.parse` of the reply.
+	 *
+	 *  Parsing it is not optional for a tenant: a reply it has not decoded is a
+	 *  reply it cannot use. Reading the line and dropping it timed the Lean arm
+	 *  without the half of the response wire that lands on this side, and for the
+	 *  day mode that reply is megabytes. */
 	async ask(mode: string, req: object): Promise<{ ms: number; bytes: number }> {
 		this.id += 1;
 		const line = `${JSON.stringify({ ...req, mode, id: this.id })}\n`;
@@ -129,6 +155,7 @@ class Serve {
 		this.proc.stdin.write(line);
 		const { value, done } = await this.lines.next();
 		if (done) throw new Error(`serve loop closed during ${mode}`);
+		JSON.parse(value);
 		return { ms: performance.now() - started, bytes: line.length };
 	}
 
@@ -338,9 +365,11 @@ console.log(
 	`  Lean arm    ${s(lean)} = ${s(sum((o) => o.rounds * o.encodeMs))} encode + ${s(sum((o) => o.rounds * o.foldMs))} fold` +
 		` + ${s(sum((o) => o.answerMs))} answers`,
 );
+// NOT "transport vs the verified code". `noop` is the request-side floor alone,
+// so the remainder is layers 2+3+4 together — see the note above.
 console.log(
-	`  of the fold ${s(sum((o) => o.rounds * o.noopMs))} is transport (parsing the payload), ` +
-		`${s(sum((o) => o.rounds * (o.foldMs - o.noopMs)))} is the verified code`,
+	`  of the fold ${s(sum((o) => o.rounds * o.noopMs))} is the request-side floor, ` +
+		`${s(sum((o) => o.rounds * (o.foldMs - o.noopMs)))} is response wire + decode + algorithm, unseparated`,
 );
 console.log(`  ratio       ${(lean / net).toFixed(2)}× — the Lean arm against the region it would replace`);
 console.log(`  deferred    ${s(sum((o) => o.tsShellMs))} of matcher, which a flip moves rather than removes`);
