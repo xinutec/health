@@ -146,8 +146,10 @@ export interface EpisodeGeometry {
   startTs: number;
   endTs: number;
   mode: DayState["mode"];
-  // Mirrors the backend EpisodeKind union (episode-geometry.ts) — hand-kept;
-  // a kind missing here renders with default styling and a raw label.
+  // Mirrors the backend EpisodeKind union (episode-geometry.ts). Still written
+  // by hand — the frontend has no compile-time link to the backend types — but
+  // no longer only by hand: scripts/check-frontend-unions.mjs fails the gate
+  // when this list and the backend's disagree (#337).
   kind: "snapped" | "raw" | "anchor" | "tentative" | "matched" | "smoothed";
   points: { lat: number; lon: number; ts?: number }[];
   /** Stay label for an `anchor` episode — drives the marker popup. */

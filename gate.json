@@ -83,6 +83,21 @@
         "--command",
         "pnpm",
         "run",
+        "check:frontend-unions"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "frontend union copies match the backend",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
         "lint"
       ],
       "cwd": ".",

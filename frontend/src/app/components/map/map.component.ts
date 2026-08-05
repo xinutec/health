@@ -16,7 +16,7 @@ import { MatCardModule } from "@angular/material/card";
 import { MatCheckboxModule } from "@angular/material/checkbox";
 import * as L from "leaflet";
 import { modeStyle } from "../../modes";
-import { displayTzAt, type LatestFix, type VelocityData } from "../../services/health.service";
+import { displayTzAt, type EpisodeGeometry, type LatestFix, type VelocityData } from "../../services/health.service";
 
 /** Longest gap (m) between two episodes' drawn ends that still joins the next
  *  episode's own polyline. Sized to cosmetic stitching: a station platform →
@@ -119,7 +119,18 @@ export class MapComponent implements OnDestroy {
 	 *  tap anywhere reports the nearest point's exact coordinate, time, and
 	 *  what KIND of point it is (raw GPS fix vs a derived stay centre or gap
 	 *  connector). Rebuilt on every render. */
-	private inspectPoints: { lat: number; lon: number; ts?: number; mode: string; kind: string; place?: string }[] = [];
+	// `kind` carries the episode kind (plus `live` for the latest-fix marker,
+	// which has no episode behind it) rather than `string`, so it reaches
+	// SOURCE_LABEL as a key the compiler can check. `mode` stays a display
+	// string: the live tail labels itself "live", which is not a DayStateMode.
+	private inspectPoints: {
+		lat: number;
+		lon: number;
+		ts?: number;
+		mode: string;
+		kind: EpisodeGeometry["kind"] | "live";
+		place?: string;
+	}[] = [];
 	/** The day key the view was last fitted to. Keyed on the DAY (not the data
 	 *  object), so refetching the same day — toggling walk-snap, pull-to-refresh,
 	 *  the 5-min recompute, a 15s poll — preserves the viewer's pan/zoom; only a
@@ -388,6 +399,9 @@ export class MapComponent implements OnDestroy {
 				when = new Date(best.ts * 1000).toLocaleString("en-GB", opts);
 			}
 		}
+		// The fallback survives the typing: `kind` comes off the wire as JSON,
+		// so a backend that ships a kind this build has never heard of lands
+		// here at runtime even though the compiler thinks the lookup is total.
 		const source = MapComponent.SOURCE_LABEL[best.kind] ?? best.kind;
 		const placeLine = best.place ? `<br><i>${best.place}</i>` : "";
 		const html =
@@ -401,8 +415,14 @@ export class MapComponent implements OnDestroy {
 	}
 
 	/** What each episode `kind` means as a data source — the answer to
-	 *  "where does this point come from". */
-	private static readonly SOURCE_LABEL: Record<string, string> = {
+	 *  "where does this point come from".
+	 *
+	 *  Keyed on the episode kinds plus `live` (the latest-fix marker, which is
+	 *  drawn here and has no backend episode). `Record<…>` rather than
+	 *  `Record<string, …>` so a new kind is a build error here instead of a
+	 *  popup that shows the raw slug — the kinds themselves are held to the
+	 *  backend union by scripts/check-frontend-unions.mjs (#337). */
+	private static readonly SOURCE_LABEL: Record<EpisodeGeometry["kind"] | "live", string> = {
 		raw: "raw GPS fix",
 		matched: "map-matched to road/path",
 		snapped: "snapped to rail line",

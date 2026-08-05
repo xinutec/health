@@ -85,6 +85,16 @@ in  { name = "health"
         , argv = G.inDevShell [ "pnpm", "run", "check:schema-types" ]
         , timeout_s = 600
         }
+      , {-  The frontend restates the backend's string unions — it has no
+            compile-time link to them. This fails when a copy has drifted, so
+            adding a mode or an episode kind server-side cannot silently leave
+            the UI rendering it as a default.
+        -}
+        G.Check::{
+        , name = "frontend union copies match the backend"
+        , argv = G.inDevShell [ "pnpm", "run", "check:frontend-unions" ]
+        , timeout_s = 600
+        }
       , G.Check::{
         , name = "lint (biome, backend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]

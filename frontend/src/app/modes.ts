@@ -16,6 +16,10 @@
  * Mirrors the backend `DayStateMode` (src/sleep/day-state.ts) = `TransportMode`
  * plus `sleeping` (from the Fitbit windows, not GPS) and `bus` (which rides on a
  * segment as `vehicleKind`, not as a mode).
+ *
+ * The mirror is enforced: scripts/check-frontend-unions.mjs flattens both unions
+ * and fails the gate when they disagree, so a mode added server-side cannot
+ * reach production with the UI silently unaware of it (#337).
  */
 
 export type DayStateMode =

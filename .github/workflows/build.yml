@@ -56,6 +56,7 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run typecheck:frontend
       - run: pnpm run check:schema-types
+      - run: pnpm run check:frontend-unions
       - run: pnpm run lint
       - run: pnpm run lint:frontend
       - run: pnpm test

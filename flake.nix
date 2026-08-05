@@ -20,6 +20,7 @@
             pkgs.pnpm # the frontend's installer; node ships npm too, ignore it
             pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
             pkgs.lean4 # verified core (lean/) — includes lake; toolchain comes from nix, not elan
+            pkgs.dhall-json # re-render gate.json from gate.dhall, which the gate's own staleness message tells you to do
           ];
         };
       });

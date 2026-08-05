@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p lean/tsconfig.experiments.json",
     "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.e2e.json",
     "check:schema-types": "node scripts/check-schema-types.mjs",
+    "check:frontend-unions": "node scripts/check-frontend-unions.mjs",
     "lint": "biome check .",
     "lint:frontend": "cd frontend && pnpm run lint",
     "format": "biome check --write .",

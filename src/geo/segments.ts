@@ -26,7 +26,16 @@ import { samplesInWindow } from "./segment-util.js";
  *  even though it means "some vehicle" on the way through.
  *
  *  Note `bus` is NOT here: a bus is a `driving` segment carrying
- *  `vehicleKind: "bus"`, flattened to a `bus` mode at the day-state layer. */
+ *  `vehicleKind: "bus"`, flattened to a `bus` mode at the day-state layer.
+ *
+ *  #337 asked whether that should change, and the answer is no. A bus is not a
+ *  distinct thing the *motion* looks like — its evidence is road-vehicle
+ *  kinematics, identical to a car's; what makes it a bus is a route match
+ *  against the stop mirror, which is a label applied after the fact. Promoting
+ *  it to a `TransportMode` would force it into {@link ModelledMode} too, and
+ *  the HSMM would need an emission prior distinguishing bus from car on speed
+ *  and heart rate alone — a prior we cannot honestly write. Excluding it there
+ *  instead would just re-open the divergent-union problem this task closed. */
 export type TransportMode =
 	| "stationary"
 	| "walking"
