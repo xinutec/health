@@ -790,14 +790,18 @@ silent: `rideHeadClaim` and `vehicleEdgeShed`, which are the two `unwitnessed`
 entries a mutation could reach.
 
 The second tranche was measured the same way: twelve mutations, eight fire, and
-these FOUR are silent — recorded because a witness proves a pass acts, not that
+these FOUR were silent — recorded because a witness proves a pass acts, not that
 every input it is handed matters.
 
-* `boardingAnchor` and `alightAnchor` still fire with `servedStations` replaced
-  by an empty lookup, so their witnesses reach the pass without exercising the
-  line-membership test.
-* …and therefore so does `Env.servedStations` itself: the one projection here
-  with nothing pinning it. #423.
+* ~~`boardingAnchor` and `alightAnchor` still fire with `servedStations`
+  replaced by an empty lookup~~ — CLOSED (#423). The `NOSERVE` pair below is
+  what closed it: a mirror that knows the line but does not stop it where the
+  walk arrives, so the veto has something to reject. Re-measured, all three
+  mutations now fail the build — emptying either entry's lookup, or gutting
+  `Env.servedStations` itself (which fails both guards at once).
+* `undergroundRail` also takes `servedStations`, and emptying THAT argument is
+  still silent. Not a fourth hole of its own: the pass is on `unwitnessed`, so
+  nothing shows it acts at all, and its lookup cannot be pinned before it is.
 * `finalMerge` still fires with the far-phantom swallow removed — its witness is
   carried by the stay merge alone. The swallow's NO-OP arm is pinned (the walk
   pair below); the arm that swallows is not.
@@ -1007,6 +1011,24 @@ private def flipped (a b : Int) : Seg :=
     tr 4400 6000 (some "M → T · Metropolitan")]
 -- Boarding re-anchored to the station the preceding walk actually reached.
 #guard fires MIX "boardingAnchor" #[wk 3000 3600, tr 3600 6000 (some "T → S · Metropolitan")]
+
+-- …and the SAME two days against a mirror that knows the line but does not stop
+-- it where the walk arrives: `M` is the only served station, and neither walk
+-- reaches it. The membership veto fires and both anchors decline. #423.
+--
+-- These are what pin `Env.servedStations`. The positive witnesses above cannot:
+-- their walks reach `S`/`T`, which `MIX`'s mirror serves, so they anchor whether
+-- the lookup answers or not. And an EMPTY lookup is not a disabled one —
+-- `LineMembership.scan` leaves `known` false when every component comes back
+-- empty, so a gutted projection reads as "unknown, assert nothing" and both
+-- anchors fire again. That is a DIFFERENT answer, not a missing one, which is
+-- why the guard has to be negative: only a day the veto is supposed to STOP can
+-- tell a populated lookup from an absent one.
+private def NOSERVE : Env :=
+  { MIX with stationsOnLine := fun _ => #[⟨"M", lat0 + 22000 * mlat, lon0⟩] }
+
+#guard !fires NOSERVE "boardingAnchor" #[wk 3000 3600, tr 3600 6000 (some "T → S · Metropolitan")]
+#guard !fires NOSERVE "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 
 /-! ### `displayTz`, whose branches nothing else owns
 
