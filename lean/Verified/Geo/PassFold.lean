@@ -791,7 +791,10 @@ entries a mutation could reach.
 
 The second tranche was measured the same way: twelve mutations, eight fire, and
 these FOUR were silent — recorded because a witness proves a pass acts, not that
-every input it is handed matters.
+every input it is handed matters. Three are now closed (2026-08-06) and the
+fourth is subsumed; the entries stay, struck through, because what made each one
+silent is the reusable part. Both closures needed the SAME move — the pass fires
+either way, so the guard cannot ask whether it acted, only what it produced.
 
 * ~~`boardingAnchor` and `alightAnchor` still fire with `servedStations`
   replaced by an empty lookup~~ — CLOSED (#423). The `NOSERVE` pair below is
@@ -802,9 +805,14 @@ every input it is handed matters.
 * `undergroundRail` also takes `servedStations`, and emptying THAT argument is
   still silent. Not a fourth hole of its own: the pass is on `unwitnessed`, so
   nothing shows it acts at all, and its lookup cannot be pinned before it is.
-* `finalMerge` still fires with the far-phantom swallow removed — its witness is
-  carried by the stay merge alone. The swallow's NO-OP arm is pinned (the walk
-  pair below); the arm that swallows is not.
+* ~~`finalMerge` still fires with the far-phantom swallow removed~~ — CLOSED.
+  `fires` was never going to reach it: with the swallow gone that day changes
+  nothing, so "did the pass act" is the wrong question and the guards below
+  assert the OUTPUT instead. Two same-place stays either side of a walk, one on
+  the place and one 990 m off it; the far one is demoted and coalesced. Both
+  mutations fail the build — deleting the swallow, and a swallow that demotes
+  EVERY stay carrying the id, which is what the surviving-near-stay guard is
+  for.
 
 Of the six step and fix projections, five are pinned; `Env.feasSteps` is not,
 and cannot be until `vehicleEdgeShed` and `rideHeadClaim` have witnesses, since
@@ -1000,6 +1008,28 @@ private def flipped (a b : Int) : Seg :=
 -- that by reference equality on the returned array; this is the guard that
 -- pins the structural stand-in. Drop the test and these two walks merge.
 #guard !fires MIX "finalMerge" #[wk 0 600, wk 600 1200]
+
+-- …and the far-phantom swallow, the arm the two guards above do not reach: they
+-- are carried by the stay merge alone, so the swallow could be deleted and both
+-- would still hold. `fires` cannot pin it either — with the swallow gone this
+-- day changes nothing at all, so the assertion has to be about the OUTPUT.
+--
+-- Two stays carrying the same focus place with only a walk between them. The
+-- first sits on it (centroid 66 m along the track, inside `FOCUS_AT_PLACE_M`);
+-- the second is 990 m away, past `FOCUS_PHANTOM_MIN_M` — the label over-reach
+-- the pass exists to demote. The far one loses mode, place and id, and then
+-- coalesces with the walk before it into one 120→1200 leg.
+private def stf (a b : Int) : Seg := { st a b (some "The Office") with focusPlaceId := some 7 }
+private def farPhantomDay : Array Seg := #[stf 0 120, wk 120 600, stf 600 1200]
+private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
+
+#guard farPhantomOut.size == 2
+#guard farPhantomOut[1]!.startTs == 120 && farPhantomOut[1]!.endTs == 1200
+#guard farPhantomOut[1]!.focusPlaceId == none
+-- The NEAR stay survives with its label. Without this a swallow that demoted
+-- every stay carrying the id — including the one actually at the place — would
+-- satisfy all three guards above.
+#guard farPhantomOut[0]!.focusPlaceId == some 7 && farPhantomOut[0]!.place == some "The Office"
 -- A stay at a station with a train either side is a change of trains.
 #guard fires MIX "interchangeStayLabel"
   #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")]
