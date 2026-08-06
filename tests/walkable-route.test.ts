@@ -152,4 +152,62 @@ describe("routeOnWalkable", () => {
 	it("returns null on an empty network", () => {
 		expect(routeOnWalkable({ lat: LAT, lon: W }, { lat: LAT, lon: E }, { ways: [] })).toBeNull();
 	});
+
+	it("bounds the ROUTE, not the search frontier", () => {
+		// One straight street with nodes at 0, 50, 100, 145 and 400 m. The
+		// destination sits at 148 m — mid-way along the LONG 145→400 edge, so its
+		// far splice node is 400 m out. Dijkstra settles the near splice node at
+		// 145 (route total 148), then must pop the far one at 545 before both
+		// ends of the destination edge are settled.
+		//
+		// `maxRouteM` is a bound on the ROUTE the caller would draw. A 148 m route
+		// under a 150 m bound is admissible, and the search reaching past 150 to
+		// prove it is the shortest is not the caller's business. Aborting there
+		// reports "no walkable path exists" for a street the walker is standing
+		// on — which the corrector reads as a data gap and answers by trusting
+		// the GPS straight through a building.
+		const street: RoadGeometry = {
+			ways: [
+				{
+					osmId: 1,
+					name: "Long St",
+					subtype: "residential",
+					coords: [
+						[LAT, LON],
+						[LAT, LON + dLon(50)],
+						[LAT, LON + dLon(100)],
+						[LAT, LON + dLon(145)],
+						[LAT, LON + dLon(400)],
+					],
+				},
+			],
+		};
+		const route = routeOnWalkable({ lat: LAT, lon: LON }, { lat: LAT, lon: LON + dLon(148) }, street, {
+			maxRouteM: 150,
+		});
+		expect(route).not.toBeNull();
+		if (!route) return;
+		expect(pathLength(route)).toBeCloseTo(148, 0);
+	});
+
+	it("still refuses a route that is itself over the bound", () => {
+		// Same geometry, destination beyond the bound: 400 m of street under a
+		// 150 m bound has no admissible route, and the answer stays null.
+		const street: RoadGeometry = {
+			ways: [
+				{
+					osmId: 1,
+					name: "Long St",
+					subtype: "residential",
+					coords: [
+						[LAT, LON],
+						[LAT, LON + dLon(400)],
+					],
+				},
+			],
+		};
+		expect(
+			routeOnWalkable({ lat: LAT, lon: LON }, { lat: LAT, lon: LON + dLon(400) }, street, { maxRouteM: 150 }),
+		).toBeNull();
+	});
 });

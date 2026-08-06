@@ -194,9 +194,10 @@ export function routeOnWalkable(a: Pt, b: Pt, geo: RoadGeometry, opts: Partial<R
 	if (!from || !to || from.distM > snapRadiusM || to.distM > snapRadiusM) return null;
 
 	// Same-edge shortcut: both points project onto the same edge → the route is
-	// straight along that edge.
+	// straight along that edge. Still subject to `maxRouteM`: the bound is a
+	// property of the route, not of how it was found.
 	if ((from.nodeA === to.nodeA && from.nodeB === to.nodeB) || (from.nodeA === to.nodeB && from.nodeB === to.nodeA)) {
-		return [from.point, to.point];
+		return metersBetween(from.point, to.point) > maxRouteM ? null : [from.point, to.point];
 	}
 
 	// Dijkstra from the two splice nodes of `from`, seeded with the along-edge
@@ -217,7 +218,18 @@ export function routeOnWalkable(a: Pt, b: Pt, geo: RoadGeometry, opts: Partial<R
 		const { id, key } = top;
 		if (settled[id]) continue;
 		settled[id] = 1;
-		if (key > maxRouteM) return null; // best remaining already too long
+		// Frontier past the bound: STOP searching, but keep what is already
+		// settled. Returning null here answered "no walkable path exists" for a
+		// destination whose route was already known and admissible — the far
+		// splice node of a long destination edge can sit hundreds of metres out,
+		// so the search must overshoot the bound to settle it. `maxRouteM` bounds
+		// the ROUTE, and that bound is enforced on the total below.
+		//
+		// Safe to read `dist` for unsettled nodes after this break: Dijkstra
+		// settles in increasing key order, so anything still unsettled when a key
+		// K is popped has final distance ≥ K > maxRouteM, and the total check
+		// rejects it.
+		if (key > maxRouteM) break;
 		if (settled[to.nodeA] && settled[to.nodeB]) break;
 		for (const e of graph.adj[id]) {
 			const nd = key + e.distM;

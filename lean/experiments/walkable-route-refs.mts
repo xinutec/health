@@ -141,6 +141,33 @@ route("snap radius 1m fails", { lat: LAT0 + 0.00002, lon: LON0 + D * 0.5 }, { la
 route("maxRoute 50m refuses", { lat: LAT0, lon: LON0 + D * 0.5 }, { lat: LAT0 + D * 0.5, lon: LON0 }, BLOCK, {
 	maxRouteM: 50,
 });
+// The bound is on the ROUTE, not on the search frontier. One straight street
+// with a junction at 2D (~125 m) and a far end at 8D (~499 m); the destination
+// sits just past the junction on the LONG second edge, so its far splice node
+// is ~374 m out. Dijkstra must overshoot a 130 m bound to settle that node even
+// though the route itself is ~128 m and admissible.
+const LONG: Coord[][] = [
+	[
+		[LAT0, LON0],
+		[LAT0, LON0 + 2 * D],
+		[LAT0, LON0 + 8 * D],
+	],
+];
+route("bound 130m admits the 128m route", { lat: LAT0, lon: LON0 }, { lat: LAT0, lon: LON0 + 2.05 * D }, LONG, {
+	maxRouteM: 130,
+});
+route("bound 120m refuses it", { lat: LAT0, lon: LON0 }, { lat: LAT0, lon: LON0 + 2.05 * D }, LONG, {
+	maxRouteM: 120,
+});
+// The same-edge shortcut obeys the bound too: ~94 m along one edge, no search.
+route("same edge under bound", { lat: LAT0, lon: LON0 }, { lat: LAT0, lon: LON0 + 1.5 * D }, LONG, {
+	maxRouteM: 120,
+});
+route("same edge over bound", { lat: LAT0, lon: LON0 }, { lat: LAT0, lon: LON0 + 1.5 * D }, LONG, {
+	maxRouteM: 60,
+});
+dumpGraph("long", LONG);
+
 // Disconnected network: two separate ways with no shared coordinate.
 const SPLIT: Coord[][] = [
 	[

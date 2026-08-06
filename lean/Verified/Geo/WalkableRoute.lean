@@ -253,10 +253,12 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
   if from_.distM > opts.snapRadiusM || to.distM > opts.snapRadiusM then return none
 
   -- Same-edge shortcut: both project onto one edge, so the route is straight
-  -- along it and no search is needed.
+  -- along it and no search is needed. Still subject to `maxRouteM`: the bound
+  -- is a property of the route, not of how it was found.
   if (from_.nodeA == to.nodeA && from_.nodeB == to.nodeB)
      || (from_.nodeA == to.nodeB && from_.nodeB == to.nodeA) then
-    return some #[from_.point, to.point]
+    return if metersBetween from_.point to.point > opts.maxRouteM then none
+           else some #[from_.point, to.point]
 
   -- Dijkstra from BOTH splice nodes of `from`, seeded with the along-edge
   -- distances, until both splice nodes of `to` are settled (or the bound trips).
@@ -270,7 +272,6 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
   heap := heap.push from_.nodeA from_.toA
   heap := heap.push from_.nodeB from_.toB
 
-  let mut bailed := false
   while heap.size > 0 do
     let (top, h') := heap.pop
     heap := h'
@@ -280,10 +281,18 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
       if settled[id]! then
         continue
       settled := settled.set! id true
-      -- The best remaining is already too long: no route can beat the bound.
-      if key > opts.maxRouteM then
-        bailed := true
-        break
+      -- Frontier past the bound: STOP searching, but keep what is already
+      -- settled. Answering `none` here reported "no walkable path exists" for a
+      -- destination whose route was already known and admissible — the far
+      -- splice node of a long destination edge can sit hundreds of metres out,
+      -- so the search must overshoot the bound to settle it. `maxRouteM` bounds
+      -- the ROUTE, and that bound is enforced on the total below.
+      --
+      -- Safe to read `dist` for unsettled nodes after this break: Dijkstra
+      -- settles in increasing key order, so anything still unsettled when a key
+      -- K is popped has final distance ≥ K > maxRouteM, and the total check
+      -- rejects it.
+      if key > opts.maxRouteM then break
       if settled[to.nodeA]! && settled[to.nodeB]! then break
       for (toId, w) in graph.adj[id]! do
         let nd := key + w
@@ -291,7 +300,6 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
           dist := dist.set! toId nd
           prev := prev.set! toId (Int.ofNat id)
           heap := heap.push toId nd
-  if bailed then return none
 
   -- Total cost of arriving at `to`'s edge via either of its splice nodes.
   let viaA := dist[to.nodeA]! + to.toA
@@ -427,6 +435,27 @@ private def ptsApprox (a : Array Pt) (b : List Pt) : Bool :=
 -- The corner route is ~81 m, so a 50 m bound refuses it rather than detouring.
 #guard (routeOnWalkable ⟨LAT0, LON0 + D * 0.5⟩ ⟨LAT0 + D * 0.5, LON0⟩
   blockWays { maxRouteM := 50 }).isNone
+
+/-! ### The bound is on the ROUTE, not on the search
+
+One straight street with a junction at 2D (~125 m) and a far end at 8D (~499 m).
+The destination sits just past the junction, on the LONG second edge, so its far
+splice node is ~374 m out — Dijkstra has to overshoot the bound to settle it,
+even though the route itself is ~128 m and admissible. -/
+
+private def e2 : Pt := ⟨LAT0, LON0 + 2 * D⟩
+private def e8 : Pt := ⟨LAT0, LON0 + 8 * D⟩
+private def longWays : Ways := #[#[n0, e2, e8]]
+private def justPast : Pt := ⟨LAT0, LON0 + 2.05 * D⟩
+
+#guard match routeOnWalkable n0 justPast longWays { maxRouteM := 130 } with
+  | some r => ptsApprox r [n0, e2, justPast]
+  | none => false
+-- ...while a route that is ITSELF over the bound is still refused.
+#guard (routeOnWalkable n0 justPast longWays { maxRouteM := 120 }).isNone
+-- The same-edge shortcut obeys the bound too: ~94 m along one edge, no search.
+#guard (routeOnWalkable n0 ⟨LAT0, LON0 + 1.5 * D⟩ longWays { maxRouteM := 120 }).isSome
+#guard (routeOnWalkable n0 ⟨LAT0, LON0 + 1.5 * D⟩ longWays { maxRouteM := 60 }).isNone
 
 /-! ### A disconnected network
 

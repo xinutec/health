@@ -663,13 +663,23 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
       let dAnchorASnapM := (nearestWalkable anchorA.pt ways).map (·.distM)
       let dAnchorBSnapM := (nearestWalkable anchorB.pt ways).map (·.distM)
 
-      -- CASE 2 FIRST — one run, one route. Holistic: this is what avoids the
-      -- zigzag a per-vertex escape produces mid-block.
+      -- CASE 2 and CASE 2.5 are CANDIDATES, scored against each other — not
+      -- tried in order until one sticks. Case 2's guard asks only "less
+      -- implausible than the gap", which a street route that still clips a
+      -- corner passes, and case 2.5 used to be reached only when case 2 FAILED
+      -- — so a mediocre route silently blocked a detour that eliminated the
+      -- crossing outright. Both are computed even when one already reaches
+      -- bad = 0: they then tie on badness and the tie-break, ADDED LENGTH,
+      -- decides. That length is not cosmetic — enough of it trips the whole-leg
+      -- step-budget revert, which discards every correction on the leg.
       if runBadM ≥ opts.minCrossingM then
         let straightM := metersBetween anchorA.pt anchorB.pt
         dStraightM := straightM
-        -- The route bound is floored like the budget: going around a block is
-        -- legitimately several times a NARROW gap's straight line.
+        let mut cands : Array (Outcome × Array Pt × Float × Float) := #[]
+
+        -- CASE 2 — route the gap along the streets. The bound is floored like
+        -- the budget: going around a block is legitimately several times a
+        -- NARROW gap's straight line.
         let route := routeOnWalkable anchorA.pt anchorB.pt ways
           { snapRadiusM := opts.routeSnapRadiusM,
             maxRouteM := max opts.minRouteBudgetM (straightM * opts.maxDetourRatio) }
@@ -678,43 +688,46 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
         | some r =>
           if r.size ≥ 2 then
             let routeBadM := pathBadnessM r ctx
-            let (cum, total) := cumLengths r
+            let (_, total) := cumLengths r
             let addedM := total - straightM
             dRouteFound := true
             dRouteBadM := some routeBadM
             dRouteAddedM := some addedM
             if routeBadM < runBadM && addedM ≤ budgetM then
-              diags := diags.push
-                { outcome := .routed, straightM, runBadM, routeFound := true,
-                  routeBadM := some routeBadM, addedM := some addedM, budgetM,
-                  anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
-              budgetM := budgetM - max 0 addedM
-              out := out.pop
-              out := out ++ timedAlong r cum total anchorA.ts anchorB.ts
-              replaced := true
+              cands := cands.push (.routed, r, routeBadM, addedM)
 
-      -- CASE 2.5 — corner detour around the footprint(s) themselves. Accepted
-      -- only when it eliminates the run's crossings, obeys the same
-      -- detour-ratio bound routes obey, and fits the budget.
-      if !replaced && runBadM ≥ opts.minCrossingM then
+        -- CASE 2.5 — corner detour around the footprint(s) themselves. Obeys
+        -- the same detour-ratio bound routes obey, and fits the budget.
         match repairChord CORNER_MAX_DEPTH anchorA.pt anchorB.pt ctx.ring with
         | none => pure ()
         | some detour =>
           if detour.size > 2 then
-            let (cum, total) := cumLengths detour
-            let addedM := total - dStraightM
-            let lenOK := total ≤ max opts.minRouteBudgetM (dStraightM * opts.maxDetourRatio)
+            let (_, total) := cumLengths detour
+            let addedM := total - straightM
+            let lenOK := total ≤ max opts.minRouteBudgetM (straightM * opts.maxDetourRatio)
             let detourBadM := pathBadnessM detour ctx
             if lenOK && detourBadM < runBadM && addedM ≤ budgetM then
-              diags := diags.push
-                { outcome := .cornered, straightM := dStraightM, runBadM,
-                  routeFound := dRouteFound, routeBadM := some detourBadM,
-                  addedM := some addedM, budgetM,
-                  anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
-              budgetM := budgetM - max 0 addedM
-              out := out.pop
-              out := out ++ timedAlong detour cum total anchorA.ts anchorB.ts
-              replaced := true
+              cands := cands.push (.cornered, detour, detourBadM, addedM)
+
+        -- Least remaining crossing wins; ties go to the shorter line, so a
+        -- repair never buys an equal result with invented distance.
+        let best := cands.foldl (init := (none : Option (Outcome × Array Pt × Float × Float)))
+          fun acc c =>
+            match acc with
+            | none => some c
+            | some b => if c.2.2.1 < b.2.2.1 || (c.2.2.1 == b.2.2.1 && c.2.2.2 < b.2.2.2) then some c else some b
+        match best with
+        | none => pure ()
+        | some (outcome, pts', badM, addedM) =>
+          let (cum, total) := cumLengths pts'
+          diags := diags.push
+            { outcome, straightM, runBadM, routeFound := dRouteFound,
+              routeBadM := some badM, addedM := some addedM, budgetM,
+              anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
+          budgetM := budgetM - max 0 addedM
+          out := out.pop
+          out := out ++ timedAlong pts' cum total anchorA.ts anchorB.ts
+          replaced := true
 
       -- CASE 1 FALLBACK — escape each interior vertex onto its near-side
       -- street, kept only if it reduces the crossing AND fits the same
@@ -1122,12 +1135,22 @@ private def ESCAPE_OPTS : CorrectOptions :=
   | _ => false
 
 -- Urban block cut: mid-block, past `offNetworkM` from every street with the
--- house wall inside `buildingProxM`. Bad, but no footprint is crossed, so the
--- corner router has nothing to work with and no vertex has anything to escape
--- from — case 3, the densified GPS stands.
-#guard (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[HOUSE]).1.size == 6
+-- house wall inside `buildingProxM`. No footprint is crossed, so the corner
+-- router has nothing to work with and no vertex has anything to escape from —
+-- but the STREETS ring does enclose this chord, and routing it around is
+-- exactly what case 2 exists for. The 30 m cut is redrawn as a ~95 m street
+-- route: badness 30 → 0, adding 65 m against a 150 m budget.
+--
+-- This guard used to record `trustGPS` with `routeFound := false`. That was the
+-- router's frontier-bound defect frozen as an expectation: the destination edge
+-- is long, so Dijkstra had to pop a 160 m node before settling its far end, and
+-- the old code answered "no walkable path" on reaching the bound instead of
+-- keeping the 95 m route it had already found. Re-derived from V8
+-- (`lean/experiments/walk-escape-refs.mts`), not hand-adjusted to pass.
+#guard (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[HOUSE]).1.size == 3
 #guard match (correctWalkPath #[T 35 40 1000, T 35 70 1030] STREETS #[HOUSE]).2.toList with
-  | [d] => diagIs d .trustGPS 29.999792890312513 29.999792890312513 false none none 150.0
+  | [d] => diagIs d .routed 29.999792890312513 29.999792890312513 true (some 0.0)
+             (some 65.000207109359508) 150.0
              (some 34.999999999671161) (some 29.999792890312513)
   | _ => false
 -- Same geometry, no buildings: open ground is never badness (case 3).

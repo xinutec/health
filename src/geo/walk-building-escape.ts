@@ -662,6 +662,26 @@ export interface CorrectRunDiag {
 	 *  GPS). Null on the `invariant-revert` record (no single run). */
 	anchorASnapM: number | null;
 	anchorBSnapM: number | null;
+	/** Length (m) of the shortest walkable route between the anchors with the
+	 *  detour bound LIFTED, or null when no path exists at any length. This is
+	 *  what splits the two failures `routeFound: false` conflates: a finite
+	 *  value means the graph IS connected and the route was refused by
+	 *  `maxRouteM` (a threshold question); null means genuinely disconnected (a
+	 *  connectivity question). Computed only when a `diag` sink is supplied —
+	 *  it is a second Dijkstra — so production never pays for it. */
+	unboundedRouteM: number | null;
+	/** Did case 2 actually CALL the router? A run under `minCrossingM` skips
+	 *  routing entirely, so its `routeFound: false` means "never asked", not
+	 *  "no route" — without this the two are indistinguishable downstream, and
+	 *  a non-attempt reads as a routing failure. */
+	routeAttempted: boolean;
+}
+
+/** Total length (m) of a polyline. */
+function polylineLenM(xs: readonly { lat: number; lon: number }[]): number {
+	let total = 0;
+	for (let k = 1; k < xs.length; k++) total += metersBetween(xs[k - 1].lat, xs[k - 1].lon, xs[k].lat, xs[k].lon);
+	return total;
 }
 
 /**
@@ -754,13 +774,38 @@ export function correctWalkPath(
 		let dRouteAddedM: number | null = null;
 		const dAnchorASnapM = diag ? (nearestWalkable(anchorA, walkable)?.distM ?? null) : null;
 		const dAnchorBSnapM = diag ? (nearestWalkable(anchorB, walkable)?.distM ?? null) : null;
+		// Same query, bound lifted: separates "no path" from "path too long".
+		const dUnboundedRouteM = diag
+			? ((r) => (r && r.length >= 2 ? polylineLenM(r) : null))(
+					routeOnWalkable(anchorA, anchorB, walkable, { snapRadiusM: opts.routeSnapRadiusM, maxRouteM: 5000 }),
+				)
+			: null;
 		if (runBadM >= opts.minCrossingM) {
 			const straightM = metersBetween(anchorA.lat, anchorA.lon, anchorB.lat, anchorB.lon);
 			dStraightM = straightM;
-			// The route bound is floored like the budget: going around a block is
-			// legitimately SEVERAL times a narrow gap's straight line (a 30 m gap
-			// mid-block detours ~130 m around it); the plain ratio would refuse
-			// exactly the honest detours the rule exists to make.
+
+			// Both repairs are CANDIDATES, scored against each other — not tried in
+			// order until one sticks. Case 2 used to win merely by being reachable:
+			// its guard asks "less implausible than the gap", which a route that
+			// still clips a corner passes, and case 2.5 was only reached when case 2
+			// FAILED. So a mediocre street route silently blocked a corner detour
+			// that eliminated the crossing outright, and the blocking was invisible
+			// because the better repair was never computed. Measured on
+			// 2026-05-25 @11:31Z: routed leaves 15 m of crossing where cornered
+			// leaves 0.
+			const candidates: Array<{
+				outcome: "routed" | "cornered";
+				pts: Array<{ lat: number; lon: number }>;
+				badM: number;
+				addedM: number;
+				totalM: number;
+			}> = [];
+
+			// CASE 2 — route the whole gap along the streets. The bound is floored
+			// like the budget: going around a block is legitimately SEVERAL times a
+			// narrow gap's straight line (a 30 m gap mid-block detours ~130 m
+			// around it); the plain ratio would refuse exactly the honest detours
+			// the rule exists to make.
 			const route = routeOnWalkable(anchorA, anchorB, walkable, {
 				snapRadiusM: opts.routeSnapRadiusM,
 				maxRouteM: Math.max(opts.minRouteBudgetM, straightM * opts.maxDetourRatio),
@@ -770,89 +815,91 @@ export function correctWalkPath(
 				// the gap it replaces, AND its added length must fit the whole-leg
 				// budget.
 				const routeBadM = pathBadnessM(route, ctx);
-				let total = 0;
-				const cum: number[] = [0];
-				for (let k = 1; k < route.length; k++) {
-					total += metersBetween(route[k - 1].lat, route[k - 1].lon, route[k].lat, route[k].lon);
-					cum.push(total);
-				}
-				const addedM = total - straightM;
+				const totalM = polylineLenM(route);
+				const addedM = totalM - straightM;
 				dRouteFound = true;
 				dRouteBadM = routeBadM;
 				dRouteAddedM = addedM;
-				if (routeBadM < runBadM && addedM <= budgetM) {
-					diag?.({
-						outcome: "routed",
-						straightM,
-						runBadM,
-						routeFound: true,
-						routeBadM,
-						addedM,
-						budgetM,
-						anchorASnapM: dAnchorASnapM,
-						anchorBSnapM: dAnchorBSnapM,
-					});
-					budgetM -= Math.max(0, addedM);
-					// Timestamps: interpolate along the route by cumulative distance
-					// between the anchors' real times. The route's (street-snapped)
-					// start supersedes the copied anchor position; its timestamp is kept.
-					out.pop();
-					for (let k = 0; k < route.length; k++) {
-						const f = total > 0 ? cum[k] / total : 0;
-						out.push({ lat: route[k].lat, lon: route[k].lon, ts: anchorA.ts + (anchorB.ts - anchorA.ts) * f });
-					}
-					replaced = true;
-				}
+				if (routeBadM < runBadM && addedM <= budgetM)
+					candidates.push({ outcome: "routed", pts: route, badM: routeBadM, addedM, totalM });
 			}
-		}
-		if (!replaced && runBadM >= opts.minCrossingM) {
-			// CASE 2.5 — no street route: corner detour around the footprint(s)
-			// themselves. Accepted only when it eliminates the run's crossings
-			// outright (verified by construction), obeys the same detour-ratio
-			// bound as routes, does not raise the composite badness (a wall-hug
-			// far from every way in a truly unmapped area is not confidently a
-			// walk — the block-cut rule keeps its vote), and fits the budget.
-			const detour = repairChord(anchorA, anchorB, ctx, 0);
-			if (process.env.WALK_CORNER_DEBUG === "1" && (!detour || detour.length <= 2)) {
-				console.error(
-					`[corner] decline: repairChord=${detour ? "trivial" : "null"} straight=${Math.round(dStraightM)}m runBad=${Math.round(runBadM)}m`,
-				);
-			}
-			if (detour && detour.length > 2) {
-				let total = 0;
-				const cum: number[] = [0];
-				for (let k = 1; k < detour.length; k++) {
-					total += metersBetween(detour[k - 1].lat, detour[k - 1].lon, detour[k].lat, detour[k].lon);
-					cum.push(total);
-				}
-				const addedM = total - dStraightM;
-				const lenOK = total <= Math.max(opts.minRouteBudgetM, dStraightM * opts.maxDetourRatio);
-				const detourBadM = pathBadnessM(detour, ctx);
-				if (process.env.WALK_CORNER_DEBUG === "1" && !(lenOK && detourBadM < runBadM && addedM <= budgetM)) {
+
+			// CASE 2.5 — corner detour around the footprint(s) themselves. Obeys the
+			// same detour-ratio bound as routes and does not raise the composite
+			// badness (a wall-hug far from every way in a truly unmapped area is not
+			// confidently a walk — the block-cut rule keeps its vote).
+			//
+			// Evaluated even when the street route already leaves ZERO crossing.
+			// "Nothing can beat zero" is true on the primary key and WRONG as a
+			// short-circuit: the two repairs then tie on badness and the tie-break —
+			// added length — decides. That length is not cosmetic. A repair that
+			// adds enough to take the leg past its pedometer step budget trips the
+			// whole-leg revert below (#347), which throws away EVERY correction on
+			// the leg and hands back the uncorrected line, crossings and all.
+			// Measured on 2026-05-25 @11:31Z: the street route reaches bad=0 by
+			// adding 98 m, and paying that reverted the leg — a perfect repair that
+			// made the drawn walk worse.
+			{
+				const detour = repairChord(anchorA, anchorB, ctx, 0);
+				if (process.env.WALK_CORNER_DEBUG === "1" && (!detour || detour.length <= 2)) {
 					console.error(
-						`[corner] decline: lenOK=${lenOK} (total=${Math.round(total)} straight=${Math.round(dStraightM)}) detourBad=${Math.round(detourBadM)} vs runBad=${Math.round(runBadM)} added=${Math.round(addedM)} budget=${Math.round(budgetM)}`,
+						`[corner] decline: repairChord=${detour ? "trivial" : "null"} straight=${Math.round(straightM)}m runBad=${Math.round(runBadM)}m`,
 					);
 				}
-				if (lenOK && detourBadM < runBadM && addedM <= budgetM) {
-					diag?.({
-						outcome: "cornered",
-						straightM: dStraightM,
-						runBadM,
-						routeFound: dRouteFound,
-						routeBadM: detourBadM,
-						addedM,
-						budgetM,
-						anchorASnapM: dAnchorASnapM,
-						anchorBSnapM: dAnchorBSnapM,
-					});
-					budgetM -= Math.max(0, addedM);
-					out.pop();
-					for (let k = 0; k < detour.length; k++) {
-						const f = total > 0 ? cum[k] / total : 0;
-						out.push({ lat: detour[k].lat, lon: detour[k].lon, ts: anchorA.ts + (anchorB.ts - anchorA.ts) * f });
+				if (detour && detour.length > 2) {
+					const totalM = polylineLenM(detour);
+					const addedM = totalM - straightM;
+					const lenOK = totalM <= Math.max(opts.minRouteBudgetM, straightM * opts.maxDetourRatio);
+					const detourBadM = pathBadnessM(detour, ctx);
+					if (process.env.WALK_CORNER_DEBUG === "1" && !(lenOK && detourBadM < runBadM && addedM <= budgetM)) {
+						console.error(
+							`[corner] decline: lenOK=${lenOK} (total=${Math.round(totalM)} straight=${Math.round(straightM)}) detourBad=${Math.round(detourBadM)} vs runBad=${Math.round(runBadM)} added=${Math.round(addedM)} budget=${Math.round(budgetM)}`,
+						);
 					}
-					replaced = true;
+					if (lenOK && detourBadM < runBadM && addedM <= budgetM)
+						candidates.push({ outcome: "cornered", pts: detour, badM: detourBadM, addedM, totalM });
 				}
+			}
+
+			// Least remaining building crossing wins; ties go to the shorter line,
+			// so a repair never buys an equal result with invented distance (#347).
+			candidates.sort((x, y) => x.badM - y.badM || x.addedM - y.addedM);
+			if (process.env.WALK_CORNER_DEBUG === "1") {
+				console.error(
+					`[cand] runBad=${Math.round(runBadM)}m straight=${Math.round(straightM)}m budget=${Math.round(budgetM)}m -> ${
+						candidates.length === 0
+							? "NONE"
+							: candidates.map((c) => `${c.outcome}(bad=${c.badM.toFixed(1)} added=${Math.round(c.addedM)})`).join(" ")
+					}`,
+				);
+			}
+			const best = candidates[0];
+			if (best) {
+				diag?.({
+					outcome: best.outcome,
+					straightM,
+					runBadM,
+					routeFound: dRouteFound,
+					routeBadM: best.badM,
+					addedM: best.addedM,
+					budgetM,
+					anchorASnapM: dAnchorASnapM,
+					anchorBSnapM: dAnchorBSnapM,
+					unboundedRouteM: dUnboundedRouteM,
+					routeAttempted: true,
+				});
+				budgetM -= Math.max(0, best.addedM);
+				// Timestamps: interpolate along the repair by cumulative distance
+				// between the anchors' real times. The repair's (street-snapped) start
+				// supersedes the copied anchor position; its timestamp is kept.
+				out.pop();
+				let cum = 0;
+				for (let k = 0; k < best.pts.length; k++) {
+					if (k > 0) cum += metersBetween(best.pts[k - 1].lat, best.pts[k - 1].lon, best.pts[k].lat, best.pts[k].lon);
+					const f = best.totalM > 0 ? cum / best.totalM : 0;
+					out.push({ lat: best.pts[k].lat, lon: best.pts[k].lon, ts: anchorA.ts + (anchorB.ts - anchorA.ts) * f });
+				}
+				replaced = true;
 			}
 		}
 		if (!replaced) {
@@ -885,6 +932,8 @@ export function correctWalkPath(
 					budgetM,
 					anchorASnapM: dAnchorASnapM,
 					anchorBSnapM: dAnchorBSnapM,
+					unboundedRouteM: dUnboundedRouteM,
+					routeAttempted: runBadM >= opts.minCrossingM,
 				});
 			} else {
 				diag?.({
@@ -897,6 +946,8 @@ export function correctWalkPath(
 					budgetM,
 					anchorASnapM: dAnchorASnapM,
 					anchorBSnapM: dAnchorBSnapM,
+					unboundedRouteM: dUnboundedRouteM,
+					routeAttempted: runBadM >= opts.minCrossingM,
 				});
 			}
 			for (let k = 1; k <= b - a; k++) out.push(kept[k]);
@@ -918,6 +969,8 @@ export function correctWalkPath(
 			budgetM,
 			anchorASnapM: null,
 			anchorBSnapM: null,
+			unboundedRouteM: null,
+			routeAttempted: false,
 		});
 		return drawn.map((p) => ({ ...p }));
 	}
@@ -945,6 +998,8 @@ export function correctWalkPath(
 				budgetM,
 				anchorASnapM: null,
 				anchorBSnapM: null,
+				unboundedRouteM: null,
+				routeAttempted: false,
 			});
 			return drawn.map((p) => ({ ...p }));
 		}
