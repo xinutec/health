@@ -187,6 +187,36 @@ describe("qualityFilterGps", () => {
 		expect(result.length).toBe(fixes.length);
 	});
 
+	it("drops a frozen coordinate the phone disclaims at kilometre scale", () => {
+		// Same geometry as the protected poor-accuracy stay above — a run
+		// bracketed by good fixes at one spot, going nowhere. The ONLY difference
+		// is the stated accuracy, and it is the whole difference: at 120 m the
+		// fix still says which building you are in, so it is kept and
+		// down-weighted; at tens of kilometres it says nothing at all.
+		//
+		// The 2026-05-11 evening train through Belgium, reduced to its shape: the
+		// phone stops solving, repeats its last coordinate for fifteen minutes,
+		// and inflates the error bar every fix. Kept, the Kalman gives a ±37 km
+		// measurement no weight and coasts on its last real velocity — emitting a
+		// smooth, confident 29 km of travel that never happened. The honest
+		// output is a gap.
+		const fixes: GpsPoint[] = [];
+		for (let i = 0; i < 4; i++) fixes.push(fix(1000 + i * 15, 0, 0, 10)); // good entry
+		// The real accuracy sequence off that day: one frozen coordinate,
+		// confidence decaying monotonically.
+		const frozenStart = 1000 + 4 * 15;
+		const decay = [835, 1500, 2136, 6045, 9365, 10660, 11963, 13265, 14564, 15865, 17162, 18462, 19762, 21060, 37880];
+		decay.forEach((acc, k) => {
+			fixes.push(fix(frozenStart + k * 30, 0, 0, acc));
+		});
+		const exitStart = frozenStart + decay.length * 30;
+		for (let i = 0; i < 4; i++) fixes.push(fix(exitStart + i * 15, 0, 0, 10)); // good exit
+
+		const result = qualityFilterGps(fixes);
+		expect(result.map((p) => p.ts)).toEqual(fixes.filter((p) => (p.accuracy ?? 0) <= 100).map((p) => p.ts));
+		expect(result.every((p) => (p.accuracy ?? 0) < 800)).toBe(true);
+	});
+
 	it("keeps sustained fast travel (a plane), which has no coherent bridge", () => {
 		// A plane: 14 fixes marching coherently NE at ~800 km/h, 30 s apart
 		// (~6.67 km per step). Every fix is "unreachable" from the previous

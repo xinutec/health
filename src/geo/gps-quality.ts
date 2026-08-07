@@ -69,6 +69,31 @@ const GARBAGE_MIN_SPEED_KMH = 15;
  *  erased while still dropping the H&I→Baker Street tunnel. */
 const MIN_TRANSIT_DISPLACEMENT_M = 800;
 
+/** Accuracy (m) above which a fix is not a position at all, and is dropped
+ *  whether or not it moved.
+ *
+ *  `inaccurateMotion` below keeps a poor-accuracy fix that is going nowhere,
+ *  on purpose: a stationary indoor sit reports the same cell-tower grade as a
+ *  tube ride, and erasing the sit is worse than keeping a smeared one. That
+ *  trade holds only while the fix still says roughly WHERE you are. Beyond the
+ *  distance at which this module distinguishes "here" from "a station away" —
+ *  `MIN_TRANSIT_DISPLACEMENT_M`, the resolution of its own decision — the
+ *  measurement cannot inform any question asked of it, so keeping it buys
+ *  nothing and costs a fabricated answer.
+ *
+ *  What it costs downstream to keep one: on the 2026-05-11 evening train the
+ *  phone stopped solving, repeated a single coordinate for fifteen minutes and
+ *  inflated its error bar 835 → 37,880 m. Every one of those survived (frozen,
+ *  so never "moving"), and the Kalman — correctly giving a ±37 km measurement
+ *  no weight — coasted on its last real velocity and emitted a smooth,
+ *  confident 29 km of travel through Belgium that never happened. Dropped, the
+ *  stretch is an honest gap for downstream gap-inference to own.
+ *
+ *  Corpus scale: 187 of 51,992 fixes (0.36%) state worse than a kilometre; the
+ *  99th percentile is 318 m and the median is 10 m. This bound is far out in
+ *  the tail — it is not a quality bar, it is a floor on being a measurement. */
+const ACCURACY_UNINFORMATIVE_M = MIN_TRANSIT_DISPLACEMENT_M;
+
 function distanceM(a: GpsPoint, b: GpsPoint): number {
 	const dLatM = (b.lat - a.lat) * 111_320;
 	const dLonM = (b.lon - a.lon) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
@@ -118,7 +143,11 @@ function impliedSpeedKmh(a: GpsPoint, b: GpsPoint): number {
  * garbage). Returns the surviving fixes in input order; dropped fixes
  * leave an honest temporal gap for downstream gap-inference.
  */
-export function qualityFilterGps(points: GpsPoint[]): GpsPoint[] {
+export function qualityFilterGps(input: GpsPoint[]): GpsPoint[] {
+	// Fixes the phone itself disclaims go first, before anything reasons from
+	// them — including before the coherence walk can make one an anchor, or a
+	// bridge, or the thing a later fix is judged "unreachable" from.
+	const points = input.filter((p) => p.accuracy === null || p.accuracy <= ACCURACY_UNINFORMATIVE_M);
 	if (points.length <= 2) return points;
 
 	const kept: GpsPoint[] = [points[0]];

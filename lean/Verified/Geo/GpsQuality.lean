@@ -26,6 +26,14 @@ def BRIDGE_WINDOW_S : Int := 1800
 def ACCURACY_CEILING_M : Float := 80
 def GARBAGE_MIN_SPEED_KMH : Float := 15
 def MIN_TRANSIT_DISPLACEMENT_M : Float := 800
+/-- Accuracy (m) above which a fix is not a position at all, and is dropped
+whether or not it moved. `inaccurateMotion` keeps a poor-accuracy fix that is
+going nowhere on purpose — an indoor sit reports the same cell-tower grade as a
+tube ride — but that trade holds only while the fix still says roughly WHERE you
+are. Beyond the distance at which this module distinguishes "here" from "a
+station away" (`MIN_TRANSIT_DISPLACEMENT_M`, the resolution of its own
+decision), the measurement cannot inform any question asked of it. -/
+def ACCURACY_UNINFORMATIVE_M : Float := MIN_TRANSIT_DISPLACEMENT_M
 private def pi : Float := 3.141592653589793
 
 def distanceM (a b : GpsPoint) : Float :=
@@ -78,8 +86,13 @@ partial def walk (points : Array GpsPoint) (kept : Array GpsPoint) (i : Nat) : A
         else walk points (kept.push cand) (i + 1)
       | none => walk points (kept.push cand) (i + 1)
 
-/-- Drop incoherent GPS runs; surviving fixes in input order. -/
-def qualityFilterGps (points : Array GpsPoint) : Array GpsPoint :=
+/-- Drop incoherent GPS runs; surviving fixes in input order. Fixes the phone
+itself disclaims go first, before anything reasons from them — including before
+the walk can make one an anchor, a bridge, or the thing a later fix is judged
+"unreachable" from. -/
+def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
+  let points := input.filter fun p =>
+    match p.accuracy with | some acc => decide (acc ≤ ACCURACY_UNINFORMATIVE_M) | none => true
   if points.size ≤ 2 then points else walk points #[points[0]!] 1
 
 -- Parity with the real `qualityFilterGps` (kept-set ts from Node/V8): teleport
@@ -165,5 +178,26 @@ private def accuracyAtCeiling : Array GpsPoint := #[
 private def accuracyOverCeiling : Array GpsPoint := #[
   gp 0 51.5 (-0.1) 20, gp 10 51.501 (-0.1) 20, gp 100 51.52 (-0.1) 80.001, gp 160 51.53 (-0.1) 20, gp 170 51.531 (-0.1) 20]
 #guard (qualityFilterGps accuracyOverCeiling).map (·.ts) == #[0, 10, 160, 170]
+
+-- ACCURACY_UNINFORMATIVE_M — the pre-filter, which the anchor walk cannot
+-- reach. Same geometry as the poor-accuracy jitter kept in `track` above (a run
+-- bracketed by good fixes at one spot, going nowhere); the only difference is
+-- the stated accuracy, and it decides. The 2026-05-11 evening train: the phone
+-- stops solving, repeats one coordinate, and inflates its error bar 835 →
+-- 37,880 m. Kept, the Kalman gives a ±37 km measurement no weight, coasts on
+-- its last real velocity, and draws 29 km of travel that never happened.
+private def gpf (ts : Int) (acc : Float) : GpsPoint := ⟨ts, 50, 5, some acc⟩
+private def disclaimed : Array GpsPoint := #[
+  gpf 1000 10, gpf 1015 10, gpf 1030 10, gpf 1045 10,
+  gpf 1060 835, gpf 1090 1500, gpf 1120 2136, gpf 1150 6045, gpf 1180 9365,
+  gpf 1210 10660, gpf 1240 11963, gpf 1270 13265, gpf 1300 14564, gpf 1330 15865,
+  gpf 1360 17162, gpf 1390 18462, gpf 1420 19762, gpf 1450 21060, gpf 1480 37880,
+  gpf 1510 10, gpf 1525 10, gpf 1540 10, gpf 1555 10]
+#guard (qualityFilterGps disclaimed).map (·.ts) == #[1000, 1015, 1030, 1045, 1510, 1525, 1540, 1555]
+
+-- The pre-filter runs BEFORE the ≤2 pass-through, so a track that is short only
+-- because most of it is disclaimed does not get waved past. A port that filters
+-- after the size check keeps all three.
+#guard (qualityFilterGps #[gpf 0 10, gpf 10 5000, gpf 20 10]).map (·.ts) == #[0, 20]
 
 end Verified.Geo.GpsQuality
