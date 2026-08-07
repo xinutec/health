@@ -225,6 +225,107 @@ describe("filterGpsTrack", () => {
 		}
 	});
 
+	it("does not coast past a stop on velocity learned across a blackout", () => {
+		// The 2026-08-05 Baker Street interchange, reduced to its shape.
+		//
+		// A tube run happens with no usable fixes: the phone repeats one stale
+		// coordinate, then reports the far end of the tunnel. That PAIR implies
+		// ~140 km/h, and the filter learns it as velocity — which is honest, it
+		// has nothing better. The next fix says the phone has stopped (2 m in
+		// 13 s), but one position measurement corrects velocity only weakly, so
+		// the filter still believes it is doing ~70 km/h. The fix after that is
+		// poor (accuracy 100 m), so it carries little weight, and the filter
+		// coasts its estimate ~300 m past every observation.
+		//
+		// Downstream that reads as a walking leg with a 99 km/h step — a
+		// physically impossible leg the feasibility gate rejects. But nothing
+		// was ever observed moving: the filter may smooth its observations, it
+		// may not claim motion they contradict.
+		//
+		// Synthetic anchor: middle-of-nowhere coords at (50.0, 5.0). At this
+		// latitude 0.001 deg lon ≈ 71.6 m.
+		const points: GpsPoint[] = [
+			// Underground: the same stale coordinate, accuracy decaying.
+			{ ts: 0, lat: 50.0, lon: 5.0, accuracy: 26 },
+			{ ts: 13, lat: 50.0, lon: 5.0, accuracy: 45 },
+			{ ts: 26, lat: 50.0, lon: 5.0, accuracy: 63 },
+			// The far end of the tunnel run: 859 m west, 22 s later → 141 km/h.
+			{ ts: 48, lat: 50.0, lon: 4.988, accuracy: 68 },
+			// Stopped: 2 m in 13 s.
+			{ ts: 61, lat: 50.0, lon: 4.98803, accuracy: 14 },
+			// A poor fix, 38 m west of the last one.
+			{ ts: 80, lat: 50.0, lon: 4.9875, accuracy: 100 },
+			// …and the track settles.
+			{ ts: 89, lat: 50.0, lon: 4.988, accuracy: 34 },
+			{ ts: 99, lat: 50.0, lon: 4.98805, accuracy: 13 },
+			{ ts: 113, lat: 50.0, lon: 4.98802, accuracy: 15 },
+			{ ts: 127, lat: 50.0, lon: 4.98806, accuracy: 37 },
+		];
+		const result = filterGpsTrack(points);
+		const mPerDegLon = 111320 * Math.cos((50.0 * Math.PI) / 180);
+		const byTs = new Map(points.map((p) => [p.ts, p]));
+
+		// Once the phone has stopped, no estimate may sit further from its own
+		// measurement than that measurement's accuracy could explain.
+		for (const f of result) {
+			if (f.ts < 61) continue;
+			const z = byTs.get(f.ts);
+			if (!z) continue;
+			const offM = Math.abs(f.lon - z.lon) * mPerDegLon;
+			expect(offM, `estimate at ts=${f.ts} sits ${offM.toFixed(0)} m from its own fix`).toBeLessThan(
+				2 * (z.accuracy ?? 20),
+			);
+		}
+
+		// …and therefore no step across the stopped stretch reads as a vehicle.
+		const settled = result.filter((f) => f.ts >= 61);
+		for (let i = 1; i < settled.length; i++) {
+			const dt = settled[i].ts - settled[i - 1].ts;
+			const dm = Math.abs(settled[i].lon - settled[i - 1].lon) * mPerDegLon;
+			const kmh = (dm / dt) * 3.6;
+			expect(kmh, `step into ts=${settled[i].ts} reads ${kmh.toFixed(1)} km/h`).toBeLessThan(15);
+		}
+	});
+
+	it("keeps a fast train that alternates fresh fix and stale repeat", () => {
+		// The 2026-05-10 Eurostar across northern France, reduced to its shape.
+		// The phone reports a real fix, then restates the identical coordinate,
+		// then a real fix ~4 km further on — the whole way. Every restatement
+		// reads as zero displacement, so a velocity bound taken naively from the
+		// last step would pin a 250 km/h train to walking pace and drag the
+		// track kilometres behind the train.
+		//
+		// A repeated coordinate is the phone saying "same answer as before", not
+		// "I have stopped". It is not evidence about velocity either way.
+		const points: GpsPoint[] = [];
+		let lat = 50.0;
+		let ts = 0;
+		points.push({ ts, lat, lon: 3.0, accuracy: 30 });
+		for (let i = 0; i < 8; i++) {
+			// Real fix: ~3.9 km north in 28 s ≈ 250 km/h (0.035 deg lat).
+			ts += 28;
+			lat += 0.035;
+			points.push({ ts, lat, lon: 3.0, accuracy: 700 });
+			// …then the very same coordinate restated 27 s later.
+			ts += 27;
+			points.push({ ts, lat, lon: 3.0, accuracy: 700 });
+		}
+		const result = filterGpsTrack(points);
+
+		// The filter must still be travelling at the end, not pinned to the floor.
+		const settled = result.slice(-6);
+		for (const p of settled) {
+			expect(p.speed_kmh, `train pinned to ${p.speed_kmh} km/h by its own stale repeats`).toBeGreaterThan(100);
+		}
+		// …and it must not fall progressively behind. The filter lags ~1.2 km
+		// here regardless — smoothing against 700 m-accuracy fixes, identical
+		// with and without the bound — but a bound that pinned the velocity
+		// would leave it tens of kilometres back and growing.
+		const last = result[result.length - 1];
+		const lagM = Math.abs(last.lat - points[points.length - 1].lat) * 111_320;
+		expect(lagM, `estimate is ${(lagM / 1000).toFixed(1)} km behind the train`).toBeLessThan(2000);
+	});
+
 	it("produces consistent speed for constant velocity", () => {
 		// Simulate walking north at ~5 km/h for 2 minutes
 		// 5 km/h = 1.39 m/s ≈ 0.0000125 deg/s latitude

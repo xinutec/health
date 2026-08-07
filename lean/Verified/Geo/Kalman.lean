@@ -84,6 +84,18 @@ def adaptiveProcessNoise (speedDegPerSec : Float) : Float :=
 
 def INNOVATION_GATE : Float := 50
 def MAX_CONSECUTIVE_REJECTS : Nat := 3
+
+/-- Velocity is only ever observed as a difference of positions, so the filter
+may smooth what its fixes show but may not claim motion they contradict. Over
+one step, motion that does not reverse averages `(v_start + v_end)/2`, so
+`v_end ≤ 2 ×` the step's average — a kinematic identity, not a tuned threshold.
+Applied to the posterior against the last two ACCEPTED measurements: a gated fix
+moved no state, so it is not evidence about velocity either. -/
+def VELOCITY_OBSERVABILITY_FACTOR : Float := 2
+/-- …with a floor, so GPS noise around a standstill (or a repeated stale fix,
+which shows zero displacement while the wearer really is moving) cannot pin the
+velocity state to zero and make the next genuine fix look like a jump. -/
+def VELOCITY_OBSERVABILITY_FLOOR_KMH : Float := 5
 private def defaultAccuracy : Float := 20
 
 private def mod360 (x : Float) : Float := x - Float.floor (x / 360) * 360
@@ -104,6 +116,8 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
   let mut stateLon : KState := ⟨p0.lon, 0, initVarLon, initVarLon, 0⟩
   let mut result : Array FilteredPoint := #[⟨p0.ts, p0.lat, p0.lon, 0, 0⟩]
   let mut consecutiveRejects : Nat := 0
+  -- The last measurement the filter actually took in (accepted update or reset).
+  let mut lastAccepted : GpsPoint := p0
   for i in [1:n] do
     let p := points[i]!
     let prev := points[i-1]!
@@ -145,6 +159,7 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
             vLonPerSec := dLonDeg / dt2
         stateLat := ⟨p.lat, vLatPerSec, posVarLat, posVarLat * 100, 0⟩
         stateLon := ⟨p.lon, vLonPerSec, posVarLon, posVarLon * 100, 0⟩
+        lastAccepted := p
         result := result.push ⟨p.ts, p.lat, p.lon, initialSpeed, initialBearing⟩
       else
         let qLat := adaptiveProcessNoise (Float.abs stateLat.v)
@@ -165,6 +180,34 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
           consecutiveRejects := 0
           stateLat := update1D stateLat p.lat rLat
           stateLon := update1D stateLon p.lon rLon
+          -- Velocity-observability bound: the posterior may not travel faster
+          -- than twice what the last two accepted fixes actually show.
+          -- A coordinate bit-identical to the last one is the phone restating
+          -- its previous answer, not reporting that it has stopped. Held back
+          -- rather than advanced, so the next genuine fix is measured across the
+          -- full elapsed span (the 2026-05-10 Eurostar alternated fresh fix and
+          -- stale repeat the whole way across France).
+          let obsDtI := p.ts - lastAccepted.ts
+          let restated := p.lat == lastAccepted.lat && p.lon == lastAccepted.lon
+          if decide (obsDtI > 0) && !restated then
+            let obsDt := obsDtI.toNat.toFloat
+            let obsLatM := (p.lat - lastAccepted.lat) * 111320
+            let obsLonM := (p.lon - lastAccepted.lon) * 111320 * Float.cos (p.lat * pi / 180)
+            let obsKmh := (Float.sqrt (obsLatM ^ 2 + obsLonM ^ 2) / obsDt) * 3.6
+            let observed := VELOCITY_OBSERVABILITY_FACTOR * obsKmh
+            let bound := if observed > VELOCITY_OBSERVABILITY_FLOOR_KMH then observed
+                         else VELOCITY_OBSERVABILITY_FLOOR_KMH
+            let stateLatMs := stateLat.v * R_EARTH * (pi / 180)
+            let stateLonMs := stateLon.v * R_EARTH * Float.cos (stateLat.x * (pi / 180)) * (pi / 180)
+            let stateKmh := Float.sqrt (stateLatMs ^ 2 + stateLonMs ^ 2) * 3.6
+            if stateKmh > bound then
+              -- Uniform scale: keep the direction, give up the magnitude the
+              -- fixes cannot support.
+              let scale := bound / stateKmh
+              stateLat := { stateLat with v := stateLat.v * scale }
+              stateLon := { stateLon with v := stateLon.v * scale }
+          if !(p.lat == lastAccepted.lat && p.lon == lastAccepted.lon) then
+            lastAccepted := p
           let vLatMs := stateLat.v * R_EARTH * (pi / 180)
           let vLonMs := stateLon.v * R_EARTH * Float.cos (stateLat.x * (pi / 180)) * (pi / 180)
           let speedKmh := Float.sqrt (vLatMs ^ 2 + vLonMs ^ 2) * 3.6
@@ -201,5 +244,50 @@ private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Boo
 #guard rowOk out[6]! 4000 51.6 (-0.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
 #guard rowOk out[7]! 4010 51.6001 (-0.2001) 4.7 328
 #guard classifyMode 1.0 == "stationary" && classifyMode 5 == "walking" && classifyMode 20 == "cycling"
+
+-- The velocity-observability bound, which `track` above never reaches. Shape of
+-- the 2026-08-05 Baker Street interchange: one stale coordinate repeated while
+-- underground, then the far end of the tunnel run (859 m in 22 s → 141 km/h),
+-- then fixes showing the phone stopped. Row 4 is the witness: the bound holds
+-- the posterior at the 5 km/h floor where the unclamped filter carried ~70 and
+-- coasted the estimate ~300 m past every observation. Values from Node/V8.
+private def gpa (ts : Int) (lon acc : Float) : GpsPoint := ⟨ts, 50, lon, some acc⟩
+private def clampTrack : Array GpsPoint := #[
+  gpa 0 5.0 26, gpa 13 5.0 45, gpa 26 5.0 63,
+  gpa 48 4.988 68, gpa 61 4.98803 14, gpa 80 4.9875 100,
+  gpa 89 4.988 34, gpa 99 4.98805 13, gpa 113 4.98802 15, gpa 127 4.98806 37]
+private def clampOut : Array FilteredPoint := filterGpsTrack clampTrack
+
+#guard clampOut.size == 10
+#guard rowOk clampOut[3]! 48 50 4.9891191295311872 126.2 270          -- tunnel pair: velocity learned
+#guard rowOk clampOut[4]! 61 50 4.9879683036293940 5.0 270            -- stopped: held at the floor
+#guard rowOk clampOut[5]! 80 50 4.9875609605642586 5.6 270            -- the poor fix no longer coasts
+#guard rowOk clampOut[6]! 89 50 4.9879331921647987 1.1 90
+-- The `restated` exclusion, which `clampTrack` above does not pin (its repeats
+-- sit where the velocity is already zero, so dropping the rule changes nothing
+-- there). The 2026-05-10 Eurostar: a real fix, then the identical coordinate
+-- restated, then a real fix ~3.9 km on — the whole way across France. Treating
+-- a restatement as an observation of zero displacement pins a 250 km/h train to
+-- the 5 km/h floor and drags the track kilometres behind it. Values from V8.
+private def gpe (ts : Int) (lat acc : Float) : GpsPoint := ⟨ts, lat, 3.0, some acc⟩
+private def restatedTrack : Array GpsPoint := #[
+  gpe 0 50.0 30,
+  gpe 28 50.034999999999997 700, gpe 55 50.034999999999997 700,
+  gpe 83 50.069999999999993 700, gpe 110 50.069999999999993 700,
+  gpe 138 50.104999999999990 700, gpe 165 50.104999999999990 700,
+  gpe 193 50.139999999999986 700, gpe 220 50.139999999999986 700]
+private def restatedOut : Array FilteredPoint := filterGpsTrack restatedTrack
+
+#guard restatedOut.size == 9
+#guard approxK restatedOut[4]!.lat 50.077496889790027 && approxK restatedOut[4]!.speedKmh 282.7
+#guard approxK restatedOut[8]!.lat 50.150157067670655 && approxK restatedOut[8]!.speedKmh 272.5
+-- The train stays a train: every fix after the first is still travelling.
+#guard restatedOut.all fun f => f.ts == 0 || f.speedKmh > 100
+
+-- …and therefore no step across the stopped stretch reads as a vehicle.
+#guard (List.range 5).all fun k =>
+  let a := clampOut[k+4]!; let b := clampOut[k+5]!
+  let dt := (b.ts - a.ts).toNat.toFloat
+  Float.abs (b.lon - a.lon) * 111320 * Float.cos (50 * pi / 180) / dt * 3.6 < 15
 
 end Verified.Geo.Kalman

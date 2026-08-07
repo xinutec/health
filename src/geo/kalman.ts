@@ -130,6 +130,29 @@ const INNOVATION_GATE = 50;
  *  coasted prediction, so without re-acquisition it would be gated too. */
 const MAX_CONSECUTIVE_REJECTS = 3;
 
+/** Velocity is only ever observed as a difference of positions, so the filter
+ *  may smooth what its fixes show but may not claim motion they contradict.
+ *
+ *  Bound: over one step, motion that does not reverse direction averages
+ *  (v_start + v_end)/2, so v_end ≤ 2 × the step's average — a kinematic
+ *  identity, not a tuned threshold. Applied to the posterior velocity against
+ *  the last two ACCEPTED measurements (gated fixes taught the filter nothing,
+ *  so they cannot bound it either).
+ *
+ *  Why it is needed: a position measurement corrects velocity only weakly
+ *  (kv = pxv/(px+r)), so a velocity learned from one bad pair survives several
+ *  fixes that flatly contradict it. On 2026-08-05 a tube run with no usable
+ *  fixes — one stale coordinate repeated, then the far end of the tunnel —
+ *  gave the filter ~140 km/h. The next fix showed the phone stopped (2 m in
+ *  13 s) and the filter still held ~70 km/h; the fix after that was accurate
+ *  to 100 m, so it carried little weight, and the estimate coasted 300 m past
+ *  every observation. Downstream that read as a walking leg with a 99 km/h
+ *  step. */
+const VELOCITY_OBSERVABILITY_FACTOR = 2;
+/** …with a floor, so GPS noise around a standstill cannot pin the velocity
+ *  state to zero and make the next genuine fix look like a jump. */
+const VELOCITY_OBSERVABILITY_FLOOR_KMH = 5;
+
 export function filterGpsTrack(points: GpsPoint[]): FilteredPoint[] {
 	if (points.length === 0) return [];
 	if (points.length === 1) {
@@ -167,6 +190,16 @@ export function filterGpsTrack(points: GpsPoint[]): FilteredPoint[] {
 	// Count of consecutive measurements gated out by innovation testing.
 	// Reset to 0 on any accepted measurement or filter reset.
 	let consecutiveRejects = 0;
+
+	// The last measurement the filter took in AND learned a position from.
+	// Two exclusions, both because the fix is not evidence about velocity:
+	// gated fixes (they moved no state), and coordinates bit-identical to this
+	// one — a phone that has stopped solving restates its last answer rather
+	// than reporting that it has stopped moving, and on the 2026-05-10 Eurostar
+	// it alternated fresh fix / stale repeat the whole way across France. Held
+	// back rather than advanced, so the next genuine fix is measured across the
+	// full elapsed span and reads the real speed.
+	let lastAccepted: GpsPoint = points[0];
 
 	for (let i = 1; i < points.length; i++) {
 		const p = points[i];
@@ -237,6 +270,7 @@ export function filterGpsTrack(points: GpsPoint[]): FilteredPoint[] {
 			stateLat = { x: p.lat, v: vLatPerSec, px: posVarLat, pv: velVarLat, pxv: 0 };
 			stateLon = { x: p.lon, v: vLonPerSec, px: posVarLon, pv: velVarLon, pxv: 0 };
 
+			lastAccepted = p;
 			result.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed_kmh: initialSpeed, bearing: initialBearing });
 			continue;
 		}
@@ -282,6 +316,28 @@ export function filterGpsTrack(points: GpsPoint[]): FilteredPoint[] {
 		// Update
 		stateLat = update1D(stateLat, p.lat, rLat);
 		stateLon = update1D(stateLon, p.lon, rLon);
+
+		// Velocity-observability bound: the posterior may not travel faster
+		// than twice what the last two accepted fixes actually show.
+		const obsDt = p.ts - lastAccepted.ts;
+		const restated = p.lat === lastAccepted.lat && p.lon === lastAccepted.lon;
+		if (obsDt > 0 && !restated) {
+			const obsLatM = (p.lat - lastAccepted.lat) * 111320;
+			const obsLonM = (p.lon - lastAccepted.lon) * 111320 * Math.cos((p.lat * Math.PI) / 180);
+			const obsKmh = (Math.sqrt(obsLatM ** 2 + obsLonM ** 2) / obsDt) * 3.6;
+			const bound = Math.max(VELOCITY_OBSERVABILITY_FACTOR * obsKmh, VELOCITY_OBSERVABILITY_FLOOR_KMH);
+			const stateLatMs = stateLat.v * R_EARTH * (Math.PI / 180);
+			const stateLonMs = stateLon.v * R_EARTH * Math.cos(stateLat.x * (Math.PI / 180)) * (Math.PI / 180);
+			const stateKmh = Math.sqrt(stateLatMs ** 2 + stateLonMs ** 2) * 3.6;
+			if (stateKmh > bound) {
+				// Uniform scale: the direction the filter inferred is kept, only
+				// the magnitude the fixes cannot support is given up.
+				const scale = bound / stateKmh;
+				stateLat = { ...stateLat, v: stateLat.v * scale };
+				stateLon = { ...stateLon, v: stateLon.v * scale };
+			}
+		}
+		if (!restated) lastAccepted = p;
 
 		// Calculate speed in km/h from velocity state
 		const vLatMs = stateLat.v * R_EARTH * (Math.PI / 180);
