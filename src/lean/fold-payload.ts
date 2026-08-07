@@ -162,7 +162,19 @@ export function encodeEpisode(e: EpisodeGeometry): unknown {
 		points: e.points.map((p) => ({
 			lat: bits(p.lat),
 			lon: bits(p.lon),
-			ts: p.ts === undefined ? null : Math.round(p.ts),
+			// `bits`, like the coordinates beside it. The Lean arm's `LatLon.ts` is
+			// a `Float` on purpose — #420 measured that rounding it made the module
+			// emit a different value from the TS for 4226 of 23525 drawn vertices —
+			// so it arrives as a bit pattern, and a rounded JS number can never
+			// equal one however equal the two timestamps are. That mismatch was
+			// reported as an `episodes.points` divergence on every day carrying a
+			// derived path, and it is the ONLY non-shell divergence the day gate
+			// had left (the matcher nulls are already excused by SHELLED).
+			//
+			// Rounding also hid the divergence worth seeing: a vertex whose two
+			// arms genuinely disagree in the fraction compared EQUAL once both
+			// sides were rounded to the same second.
+			ts: p.ts === undefined ? null : bits(p.ts),
 		})),
 	};
 }

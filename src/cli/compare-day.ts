@@ -231,10 +231,16 @@ function diffEpisodes(want: unknown[], got: unknown[]): { real: string[]; fallba
 		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
 			if (excused && (k === "kind" || k === "points")) continue;
 			if (k === "points" && a.kind === "tentative" && b.kind === "tentative") {
-				if (canon(trim(A, i)) !== canon(trim(B, i))) counts.set(k, (counts.get(k) ?? 0) + 1);
+				if (canon(trim(A, i)) !== canon(trim(B, i))) {
+					counts.set(k, (counts.get(k) ?? 0) + 1);
+					sample(`episodes.${k}`, i, trim(A, i), trim(B, i));
+				}
 				continue;
 			}
-			if (canon(a[k]) !== canon(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
+			if (canon(a[k]) !== canon(b[k])) {
+				counts.set(k, (counts.get(k) ?? 0) + 1);
+				sample(`episodes.${k}`, i, a[k], b[k]);
+			}
 		}
 	}
 	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
@@ -262,6 +268,30 @@ function canon(v: unknown): string {
 	return JSON.stringify(walk(v));
 }
 
+/** `DAY_DIFF_DUMP=1` prints the first differing VALUE for each field, not only
+ *  the count.
+ *
+ *  "walkMatchedPath: 6/15 segments differ" says the fold moved without saying
+ *  how, or how far, and the two arms' own renderings are the only thing that
+ *  answers it — the gate is absolute, so there is no baseline to diff against
+ *  instead. One sample per field per day: enough to start an investigation at
+ *  the divergence, which is where it has to start (a checkout-based bisect
+ *  cannot attribute this — old code asks the fixtures for lookups they were
+ *  never captured with, and errors out instead of comparing).
+ *
+ *  Off by default and read only here, so the gate's verdict is untouched. */
+const DUMP = process.env.DAY_DIFF_DUMP === "1";
+let dumped = new Set<string>();
+
+function sample(label: string, index: number, a: unknown, b: unknown): void {
+	if (!DUMP || dumped.has(label)) return;
+	dumped.add(label);
+	const clip = (s: string): string => (s.length > 600 ? `${s.slice(0, 600)}… (${s.length} chars)` : s);
+	console.log(`    ${label} — first at index ${index}`);
+	console.log(`      TS   ${clip(canon(a))}`);
+	console.log(`      Lean ${clip(canon(b))}`);
+}
+
 /** Field-by-field, so a divergence names the field rather than the segment. */
 function diffSegs(want: unknown[], got: unknown[]): string[] {
 	const out: string[] = [];
@@ -274,7 +304,10 @@ function diffSegs(want: unknown[], got: unknown[]): string[] {
 		const a = want[i] as Record<string, unknown>;
 		const b = got[i] as Record<string, unknown>;
 		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (canon(a[k]) !== canon(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
+			if (canon(a[k]) !== canon(b[k])) {
+				counts.set(k, (counts.get(k) ?? 0) + 1);
+				sample(k, i, a[k], b[k]);
+			}
 		}
 	}
 	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
@@ -417,6 +450,9 @@ async function measure(file: string): Promise<Outcome> {
 	// and `pre.`'s input, so a `split.` line does NOT explain a `pre.` line the way
 	// `pre.` explains `segs.`. Listed first because it is earliest in the day, not
 	// because the ones below descend from it.
+	// One sample per field PER DAY, so a whole-corpus dump does not report only
+	// whichever day happened to reach a field first.
+	dumped = new Set<string>();
 	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? []).map((d) => `split.${d}`);
 	// The OSM enrichment stage — the boundary that used to be the seam between two
 	// sub-chains and is now interior like the rest. `cap.segsPre` is the TS arm's
