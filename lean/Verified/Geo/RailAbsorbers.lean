@@ -628,7 +628,22 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
         let canon (lat lon : Float) : Array String :=
           (linesLookup lat lon).flatMap fun l => (RailRuns.expandTubeLineNames l).toArray
         let surfacedCanon := canon surfaced.lat surfaced.lon
-        let alightCanon := canon alightFix.lat alightFix.lon
+        -- A platform is 150 m long and the depot beyond it longer, so a fix that
+        -- settles a couple of hundred metres past the platform ends still
+        -- resolves the station while sitting outside every mapped rail way, and
+        -- `linesAtPoint` answers the EMPTY SET. Empty is not disagreement:
+        -- nothing was asked. Read as one it rejected Wembley Park on 2026-07-07
+        -- and left 1651 m of Metropolitan riding inside the following walk. So
+        -- when the fix answers nothing, ask the station it just resolved TO —
+        -- a named node's own coordinates are the better probe anyway (#358). A
+        -- station that answers nothing either, or one whose recording predates
+        -- these coordinates, still fails the guard.
+        let alightCanon :=
+          if (linesLookup alightFix.lat alightFix.lon).isEmpty then
+            match station.lat, station.lon with
+            | some slat, some slon => canon slat slon
+            | _, _ => #[]
+          else canon alightFix.lat alightFix.lon
         if !alightCanon.any (surfacedCanon.contains ·) then continue
         -- Applied BEFORE the rename decision, unlike the boarding side.
         match rail.line with
@@ -976,8 +991,9 @@ private def aview (out : Array Seg) : Array (Int × Int × Option String × Opti
 
 private def board (segs : Array Seg) (pts : Array Fix) :=
   aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed)
-private def alight (segs : Array Seg) (pts : Array Fix) (lines : Float → Float → Array String := aLines) :=
-  aview (anchorTrainAlightToWalkedStation segs pts aStations lines aServed)
+private def alight (segs : Array Seg) (pts : Array Fix) (lines : Float → Float → Array String := aLines)
+    (stations : Float → Float → Array NearbyStation := aStations) :=
+  aview (anchorTrainAlightToWalkedStation segs pts stations lines aServed)
 
 /-- Slow, slow, then a TWO-step vehicle-paced run: the boarding hop. -/
 private def boardWalk : Array Fix :=
@@ -1235,6 +1251,34 @@ private def alightTwoFix : Array Fix := #[f 0 51.5, f 30 51.5028]
 -- An empty intersection is a REFUSAL, not an abstention: unlike
 -- `lineCannotServe`, "the mirror knows no lines here" stops the anchor.
 #guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk (fun _ _ => #[])
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+
+-- …but an empty answer AT THE SETTLE FIX is not an intersection at all. A
+-- platform is 150 m long and the depot beyond it longer, so a fix landing past
+-- the platform ends resolves the station while sitting off every mapped rail
+-- way. Ask the station it resolved TO (#358's rule): here 51.5028 knows no
+-- line, its Great Portland Street node at 51.5031 does, and the anchor fires.
+private def aStationsWithCoords : Float → Float → Array NearbyStation := fun lat lon =>
+  if lon == -0.14 && lat == 51.5028 then
+    #[{ name := "Great Portland Street", subtype := "station", distanceM := 25,
+        lat := some 51.5031, lon := some (-0.14) }]
+  else aStations lat lon
+private def linesOffTrack : Float → Float → Array String := fun lat _ =>
+  if lat == 51.5 || lat == 51.5031 then #[METLINE] else #[]
+private def linesOffTrackAndNode : Float → Float → Array String := fun lat _ =>
+  if lat == 51.5 then #[METLINE] else #[]
+
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
+    linesOffTrack aStationsWithCoords
+  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+-- The fallback asks a SECOND question; it does not excuse the answer. A station
+-- that knows no line either still fails the corridor gate.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
+    linesOffTrackAndNode aStationsWithCoords
+  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
+-- And a station whose recording predates `NearbyStation.lat`/`lon` cannot be
+-- asked at all, so the empty fix-point answer stands — unchanged behaviour.
+#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk linesOffTrack
   == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
 
 end Verified.Geo.RailAbsorbers

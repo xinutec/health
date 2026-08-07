@@ -30,7 +30,8 @@ const efix = (ts: number, lon: number): Fix => ({ ts, lat: 51.5, lon, speed_kmh:
 
 /** Most stations here sit on the -0.14 meridian, so a lookup mostly has to
  *  discriminate on latitude; the east-west fixture adds one that does not. */
-const stationsAt = (lat: number, lon: number): { name: string; subtype: string; distanceM: number }[] => {
+type Stn = { name: string; subtype: string; distanceM: number; lat?: number; lon?: number };
+const stationsAt = (lat: number, lon: number): Stn[] => {
 	if (lon === -0.139) return [{ name: "Euston Square", subtype: "station", distanceM: 20 }];
 	if (lon !== -0.14) return [];
 	if (lat === 51.5006) return [{ name: "Euston Square", subtype: "station", distanceM: 20 }];
@@ -41,9 +42,13 @@ const stationsAt = (lat: number, lon: number): { name: string; subtype: string; 
 	return [];
 };
 const asked: string[] = [];
+/** Most fixtures' stations carry no coordinates — the shape a recording made
+ *  before `NearbyStation.lat`/`lon` existed replays as. The override supplies
+ *  them where a case turns on the station's own position. */
+let stationsOverride: ((lat: number, lon: number) => Stn[]) | null = null;
 const stationsLookup = async (lat: number, lon: number) => {
 	asked.push(`stations(${lat},${lon})`);
-	return stationsAt(lat, lon);
+	return (stationsOverride ?? stationsAt)(lat, lon);
 };
 
 /** Directional and combined relation names on purpose: the intersection is
@@ -252,4 +257,23 @@ linesOverride = (lat) => (lat === 51.5 ? ["Metropolitan Line Southbound"] : ["Ci
 await showAlight("shared only AFTER expansion", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 180)], alightWalk);
 linesOverride = () => [];
 await showAlight("neither end knows a line: refused", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 180)], alightWalk);
+linesOverride = null;
+
+console.log("--- an empty answer at the settle fix is not a disagreement ---");
+// A platform is 150 m long and the depot beyond it longer: the settle fix
+// (51.5028) lands past the platform ends, off every mapped rail way, so the
+// point lookup answers NOTHING there while the station node it resolves to
+// (51.5031) carries the line. Reading that empty answer as a disagreement is
+// what left 07-07's ride tail inside the following walk.
+const gptWithCoords: Stn = { name: "Great Portland Street", subtype: "station", distanceM: 25, lat: 51.5031, lon: -0.14 };
+stationsOverride = (lat, lon) => (lon === -0.14 && lat === 51.5028 ? [gptWithCoords] : stationsAt(lat, lon));
+linesOverride = (lat) => (lat === 51.5 || lat === 51.5031 ? [MET] : []);
+await showAlight("empty at the fix: the STATION answers", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 180)], alightWalk);
+// The fallback asks a second question; it does not excuse the answer.
+linesOverride = (lat) => (lat === 51.5 ? [MET] : []);
+await showAlight("…and the station answering nothing is still a refusal", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 180)], alightWalk);
+// A station whose recording predates the coordinate fields cannot be asked at
+// all, so the empty fix-point answer stands — the old behaviour, unchanged.
+stationsOverride = null;
+await showAlight("…and a station with no coordinates cannot be asked", [train(-600, 0, `Wembley Park → Euston Square · ${MET}`), walk(0, 180)], alightWalk);
 linesOverride = null;

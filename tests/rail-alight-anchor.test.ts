@@ -313,6 +313,110 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		expect(out[1].startTs).toBe(T0);
 	});
 
+	// --- the settle fix off the mapped track -----------------------------
+	// A station's platforms are long and its depot longer, so a fix that
+	// settles a couple of hundred metres beyond the platform ends is still
+	// WITHIN the station lookup's reach while being outside any rail way's —
+	// `linesAtPoint` answers the empty set there. These two say what an empty
+	// answer means: nothing was asked, not "the lines disagree".
+	function lookupsWithNarrowLines(stations: Station[], linesRadiusM: number) {
+		const base = lookups(stations);
+		const nearest = (lat: number, lon: number): Station | null => {
+			let best: Station | null = null;
+			let bestD = Infinity;
+			for (const s of stations) {
+				const dM = Math.hypot((lat - s.lat) * 111_000, (lon - s.lon) * 69_000);
+				if (dM < bestD) {
+					best = s;
+					bestD = dM;
+				}
+			}
+			return bestD <= linesRadiusM ? best : null;
+		};
+		return {
+			...base,
+			// Stations carry their node coordinates, as the real adapter's do.
+			stationsLookup: async (lat: number, lon: number): Promise<NearbyStation[]> =>
+				(await base.stationsLookup(lat, lon)).map((s) => {
+					const st = stations.find((x) => x.name === s.name);
+					return st ? { ...s, lat: st.lat, lon: st.lon } : s;
+				}),
+			linesLookup: async (lat: number, lon: number): Promise<Set<string>> => {
+				const s = nearest(lat, lon);
+				return new Set(s ? s.lines : []);
+			},
+		};
+	}
+
+	/** A dense vehicle-paced run from Carfax that settles `offsetLat` north of
+	 *  the target station — near enough to resolve it, far enough to be off
+	 *  every mapped track. */
+	function denseRunSettlingOffTrack(target: Station, offsetLat: number, wayName: string) {
+		const N = 7;
+		const endLat = target.lat + offsetLat;
+		const walkFixes: FilteredPoint[] = [];
+		for (let i = 0; i <= N; i++) {
+			const f = i / N;
+			walkFixes.push(
+				fix(T0 + i * 14, CARFAX.lat + (endLat - CARFAX.lat) * f, CARFAX.lon + (target.lon - CARFAX.lon) * f),
+			);
+		}
+		const settleTs = T0 + N * 14;
+		walkFixes.push(fix(settleTs + 60, endLat - 0.0015, target.lon - 0.0008));
+		walkFixes.push(fix(settleTs + 180, endLat - 0.003, target.lon - 0.0015));
+		const points = [fix(T0 - 300, ASHVALE.lat, ASHVALE.lon), fix(T0 - 100, 51.55, -0.25), ...walkFixes];
+		const segs: EnrichedSegment[] = [seg(T0 - 300, T0, "train", wayName), seg(T0, settleTs + 180, "walking")];
+		return { segs, points, settleTs };
+	}
+
+	it("asks the RESOLVED STATION for its lines when the settle fix is off the mapped track (07-07)", async () => {
+		// 2026-07-07: the ride into Wembley Park settles 258 m west of the
+		// platforms, out over the depot, where `linesAtPoint` finds no rail way
+		// at all. Read as a disagreement, that empty answer rejected the station
+		// the fix had just resolved to and left 1651 m of Metropolitan riding —
+		// seven consecutive 14 s steps at 48–65 km/h — inside the following
+		// walk, which is exactly the run the kinematic invariant counts.
+		const lkNarrow = lookupsWithNarrowLines([ASHVALE, CARFAX, DEEPWELL, OFFLINE], 150);
+		const { segs, points, settleTs } = denseRunSettlingOffTrack(
+			DEEPWELL,
+			0.0024,
+			"Ashvale → Carfax · Metropolitan Line",
+		);
+		// the premise: the settle fix itself answers nothing, the station does
+		const settleFix = points[points.length - 3];
+		expect([...(await lkNarrow.linesLookup(settleFix.lat, settleFix.lon))]).toEqual([]);
+		expect([...(await lkNarrow.linesLookup(DEEPWELL.lat, DEEPWELL.lon))]).toContain("Metropolitan Line");
+
+		const out = await anchorTrainAlightToWalkedStation(
+			segs,
+			points,
+			lkNarrow.stationsLookup,
+			lkNarrow.linesLookup,
+			lkNarrow.servedLookup,
+		);
+		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
+		expect(out[0].endTs).toBe(settleTs);
+		expect(out[1].startTs).toBe(settleTs);
+	});
+
+	it("still rejects a station on no shared line when the settle fix is off the mapped track", async () => {
+		// The fallback asks the station instead of the fix; it does not excuse
+		// the station from answering. Charing Cross shares no line with Carfax,
+		// so the corridor guard must still refuse — an empty fix-point answer
+		// is not a blanket pass.
+		const lkNarrow = lookupsWithNarrowLines([ASHVALE, CARFAX, DEEPWELL, OFFLINE], 150);
+		const { segs, points } = denseRunSettlingOffTrack(OFFLINE, 0.0024, "Ashvale → Carfax · Metropolitan Line");
+		const out = await anchorTrainAlightToWalkedStation(
+			segs,
+			points,
+			lkNarrow.stationsLookup,
+			lkNarrow.linesLookup,
+			lkNarrow.servedLookup,
+		);
+		expect(out[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
+		expect(out[1].startTs).toBe(T0);
+	});
+
 	it("leaves a plain walk (no fast leading hop) untouched", async () => {
 		const { segs, points } = trainThenWalk();
 		// rewrite the walk's leading hop to walking pace (small steps)

@@ -497,10 +497,28 @@ export async function anchorTrainAlightToWalkedStation(
 		// GPS-surfaced station — the hop stayed on the run's corridor, not off to
 		// an unrelated station. Canonicalise directional/combined names before ∩
 		// (the expandTubeLineNames lesson).
-		const [surfacedLines, alightLines] = await Promise.all([
+		const [surfacedLines, linesAtSettle] = await Promise.all([
 			linesLookup(surfaced.lat, surfaced.lon),
 			linesLookup(alightFix.lat, alightFix.lon),
 		]);
+		// A platform is 150 m long and the depot beyond it longer, so a fix that
+		// settles a couple of hundred metres past the platform ends still
+		// resolves the station while sitting outside every mapped rail way —
+		// `linesAtPoint` answers the EMPTY SET. Empty is not disagreement:
+		// nothing was asked. Read as one it rejected Wembley Park on 2026-07-07
+		// (settle fix 258 m west of the node, no lines; the node itself carries
+		// Metropolitan and Jubilee) and left 1651 m of Metropolitan riding —
+		// seven consecutive 14 s steps at 48-65 km/h — inside the following
+		// walk, where the kinematic invariant counts it as impossible walking.
+		// So when the fix answers nothing, ask the station it just resolved TO;
+		// a named node's own coordinates are the better probe for its lines
+		// anyway (the #358 rule). A station that answers nothing either, or one
+		// whose recording predates these coordinates, still fails the guard —
+		// the fallback asks a second question, it does not excuse the answer.
+		const alightLines =
+			linesAtSettle.size > 0 || station.lat === undefined || station.lon === undefined
+				? linesAtSettle
+				: await linesLookup(station.lat, station.lon);
 		const surfacedCanon = new Set([...surfacedLines].flatMap(expandTubeLineNames));
 		const alightCanon = new Set([...alightLines].flatMap(expandTubeLineNames));
 		if (![...alightCanon].some((l) => surfacedCanon.has(l))) continue;
