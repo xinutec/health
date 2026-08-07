@@ -48,7 +48,7 @@ namespace Verified.Geo.UndergroundAnnotate
 
 open Verified.Geo.UndergroundRun
   (CoarseFix LatLon UndergroundRun COARSE_ACCURACY_M MIN_COARSE_FIXES equirectMeters
-   UNDERGROUND_STATION_RADIUS_M)
+   UNDERGROUND_STATION_RADIUS_M MIN_JOURNEY_M)
 open Verified.Geo.UndergroundJourney (MAX_COARSE_GAP_S reconstructUndergroundJourney)
 open Verified.Geo.TubeHop (NearbyStation)
 open Verified.Geo.SegmentMerge (Seg)
@@ -139,14 +139,65 @@ def sideWayName (points : Array Shed.PointF) (startTs endTs : Int) (mode : Strin
 private def alreadyRail (host : Seg) : Bool :=
   host.mode == "train" && ((host.wayName.getD "").splitOn RAIL_ARROW).length > 1
 
-/-- Cluster the host's GPS-dark fixes into runs. A gap longer than
-`MAX_COARSE_GAP_S` means GPS recovered in between — one run ended — so a later
-unrelated blip cannot be mistaken for part of the same journey. -/
-private def clusterRuns (fixes : Array CoarseFix) : Array (Array CoarseFix) :=
+/-- Longest gap (s) a change of trains can bridge when the displacement test
+below says the ride continued. A ceiling, not a discriminator: displacement
+separates every case measured, and this only stops two genuinely unrelated
+blackouts — a morning tunnel and an evening one — from reading as one ride
+because both happened to end up somewhere else. -/
+def MAX_INTERCHANGE_GAP_S : Int := 1800
+
+/-- Are two dark fixes either side of a long gap the same blackout?
+
+`MAX_COARSE_GAP_S` is a proxy, and its stated reason for splitting a long gap is
+that GPS must have recovered inside it. On 2026-07-02 that proxy is wrong: a
+change of trains at Finchley Road puts 333 s between the two halves of one ride,
+and the ride resumes on the far side of it.
+
+The direct question is not how long the phone was quiet, nor how the fixes in
+between paced — someone waiting on a platform and someone sitting in a hospital
+are equally still, so neither duration nor pace separates them without being
+tuned to the days in hand. It is whether the darkness resumed SOMEWHERE ELSE.
+
+That is necessary but NOT sufficient, and 2026-07-01 is why. There the ride ends
+at Euston Square, the rider walks out and off down the street, and one more poor
+fix lands from a doorway six minutes later — 315 s and 1432 m from the last dark
+fix, which end to end is indistinguishable from 07-02's change of trains. Joined,
+the ride ran to 11:50 and ate six minutes of a confirmed ten-minute walk.
+
+So ask the gap itself, not just its ends. A change of trains is a DWELL: the
+phone, when heard at all, is heard from one station. When instead it is heard
+travelling, nothing in that stretch was ever dark and there is no blackout to
+bridge. Both tests together, measured:
+
+                                       gap    ends apart   in-gap drift
+    2026-07-02  08:10:20 → 08:15:53   333 s      3072 m           70 m   join
+    2026-07-01  10:44:57 → 10:50:12   315 s      1432 m          606 m   split
+    2026-06-15  14:03:08 → 14:18:53   945 s       574 m          571 m   split
+    2026-06-15  15:47:27 → 15:57:10   583 s       296 m          288 m   split
+    2026-06-15  14:18:53 → 15:47:27  5314 s         4 m           33 m   split
+
+Neither boundary is fitted between the populations: `MIN_JOURNEY_M` is what this
+module already calls a journey rather than a platform wait, and
+`UNDERGROUND_STATION_RADIUS_M` is what it already calls one station. -/
+private def heardTravelling (good : Array CoarseFix) (fromTs toTs : Int) : Bool :=
+  let between := good.filter fun f => f.ts > fromTs && f.ts < toTs
+  between.any fun f =>
+    equirectMeters between[0]!.lat between[0]!.lon f.lat f.lon > UNDERGROUND_STATION_RADIUS_M
+
+private def sameBlackout (prev next : CoarseFix) (good : Array CoarseFix) : Bool :=
+  let gap := next.ts - prev.ts
+  if gap ≤ MAX_COARSE_GAP_S then true
+  else if gap > MAX_INTERCHANGE_GAP_S then false
+  else if heardTravelling good prev.ts next.ts then false
+  else equirectMeters prev.lat prev.lon next.lat next.lon ≥ MIN_JOURNEY_M
+
+/-- Cluster the host's GPS-dark fixes into runs, splitting where the darkness
+stopped being the same blackout (see `sameBlackout`). -/
+private def clusterRuns (fixes good : Array CoarseFix) : Array (Array CoarseFix) :=
   fixes.foldl (init := #[]) fun runs f =>
     match runs.back? with
     | some cur =>
-      if f.ts - cur[cur.size - 1]!.ts ≤ MAX_COARSE_GAP_S
+      if sameBlackout cur[cur.size - 1]! f good
       then runs.set! (runs.size - 1) (cur.push f)
       else runs.push #[f]
     | none => runs.push #[f]
@@ -287,7 +338,7 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
     let hostDark := ((rawFixes.filter fun f =>
       f.ts ≥ host.startTs && f.ts ≤ host.endTs && isUndergroundSignal f).toList.mergeSort
         fun a b => a.ts ≤ b.ts).toArray
-    let runs := clusterRuns hostDark
+    let runs := clusterRuns hostDark good
     -- The journey is the longest-spanning run that clears the bar.
     let qualifying := runs.filter fun r => r.size ≥ MIN_COARSE_FIXES && spanOf r ≥ MIN_RUN_DURATION_S
     match (qualifying.toList.mergeSort fun a b => spanOf b ≤ spanOf a).head? with
@@ -343,9 +394,21 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
         let speedKmh :=
           jsRound (distM / Float.ofInt (max 1 (trainEnd - trainStart)) * 3.6 * 10) / 10
         -- The changeover sits between one leg's last coarse fix and the next
-        -- leg's first.
+        -- leg's first — and it belongs to NEITHER ride. Bisecting it hands half
+        -- the platform walk to each train: on 2026-07-12 at King's Cross that put
+        -- 198 m of walking at 93 steps/min inside the Victoria leg, the shape
+        -- `checkModeKinematics` rejects. A changeover long enough to stand alone
+        -- becomes its own segment in the host's mode; below MIN_SIDE_DURATION_S
+        -- the midpoint split stands, because the rides have to meet somewhere.
+        let changeovers : Array (Option (Int × Int)) := (Array.range (legs.size - 1)).map fun li =>
+          let from_ := legs[li]!.endTs
+          let to_ := legs[li + 1]!.startTs
+          if to_ - from_ ≥ MIN_SIDE_DURATION_S then some (from_, to_) else none
         let boundaries : Array Int := (Array.range (legs.size - 1)).map fun li =>
-          (jsRound (Float.ofInt (legs[li]!.endTs + legs[li + 1]!.startTs) / 2)).toInt64.toInt
+          match changeovers[li]! with
+          | some (from_, _) => from_
+          | none =>
+            (jsRound (Float.ofInt (legs[li]!.endTs + legs[li + 1]!.startTs) / 2)).toInt64.toInt
         let withPre :=
           if keepPre then
             result.push { host with
@@ -353,14 +416,19 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
           else result
         let withLegs := (Array.range legs.size).foldl (init := withPre) fun acc li =>
           let leg := legs[li]!
-          let segStart := if li == 0 then trainStart else boundaries[li - 1]!
+          let prevChange := if li == 0 then none else changeovers[li - 1]!
+          let segStart :=
+            if li == 0 then trainStart
+            else match prevChange with
+              | some (_, to_) => to_
+              | none => boundaries[li - 1]!
           let segEnd := if li == legs.size - 1 then trainEnd else boundaries[li]!
           let reason :=
             if legs.size > 1 then
               s!"underground reconstruction (interchange leg {li + 1}/{legs.size} on {leg.line})"
             else
               s!"underground reconstruction ({runFixes.size} coarse fixes on {leg.line})"
-          acc.push { host with
+          let withLeg := acc.push { host with
             startTs := segStart, endTs := segEnd
             mode := "train", refinedMode := some "train"
             confidence := 0.6, confidenceMargin := 1.5
@@ -369,6 +437,13 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
             place := none, city := none
             wayName := some s!"{leg.boardingStation} → {leg.alightingStation} · {leg.line}"
             refinedReason := some reason }
+          match (if li < legs.size - 1 then changeovers[li]! else none) with
+          | some (from_, to_) =>
+            withLeg.push { host with
+              startTs := from_, endTs := to_
+              wayName := sideWayName points from_ to_ host.mode waysLookup
+              refinedReason := some s!"underground reconstruction (change of trains at {leg.alightingStation})" }
+          | none => withLeg
         if keepPost then
           withLegs.push { host with
             startTs := trainEnd, wayName := sideWayName points trainEnd host.endTs host.mode waysLookup }
@@ -516,28 +591,39 @@ private def trainLeg (nFixes : Nat) : Row :=
 #guard run #[HOST] (GOOD ++ COARSE) == #[preWalk, trainLeg 4, postWalk]
 
 private def legOne : Row :=
-  { startTs := 900, endTs := 1250, mode := "train", refinedMode := "train"
+  { startTs := 900, endTs := 1100, mode := "train", refinedMode := "train"
     wayName := "Highbury & Islington → King's Cross · Victoria Line", place := "", city := ""
     avgSpeed := 16.6, maxSpeed := 16.6, confidence := 0.6, confidenceMargin := 1.5
     linearity := 1, pointCount := 0
     reason := "underground reconstruction (interchange leg 1/2 on Victoria Line)" }
 
+/-- The change of trains: neither ride's, so it keeps the host's mode and gets a
+side piece's own way label. Bisecting this span between the two legs is what put
+2026-07-12's King's Cross platform walk inside a train leg. -/
+private def changeOfTrains : Row :=
+  { startTs := 1100, endTs := 1400, mode := "walking", refinedMode := ""
+    wayName := "Holloway Road", place := "", city := ""
+    avgSpeed := 4, maxSpeed := 6, confidence := 0.8, confidenceMargin := 2
+    linearity := 0.5, pointCount := 10
+    reason := "underground reconstruction (change of trains at King's Cross)" }
+
 private def legTwo : Row :=
-  { startTs := 1250, endTs := 1700, mode := "train", refinedMode := "train"
+  { startTs := 1400, endTs := 1700, mode := "train", refinedMode := "train"
     wayName := "King's Cross → Wembley Park · Metropolitan Line", place := "", city := ""
     avgSpeed := 16.6, maxSpeed := 16.6, confidence := 0.6, confidenceMargin := 1.5
     linearity := 1, pointCount := 0
     reason := "underground reconstruction (interchange leg 2/2 on Metropolitan Line)" }
 
--- TWO legs: the reason switches to the interchange form and a boundary
--- timestamp is minted between them (`round((1100 + 1400) / 2)` = 1250). Needs a
--- GOOD fix surfaced mid-run — the platform at the changeover.
+-- TWO legs: the reason switches to the interchange form, and the changeover
+-- between them (1100 → 1400, over MIN_SIDE_DURATION_S) survives as its own
+-- segment rather than being bisected into the rides either side. Needs a GOOD
+-- fix surfaced mid-run — the platform at the changeover.
 #guard run #[HOST]
   #[fx 500 0 (some 10), fx 900 200 (some 15), fx 1250 2000 (some 20),
     fx 1700 3900 (some 15), fx 2100 4050 none,
     fx 1000 200 (some 200), fx 1100 800 (some 250),
     fx 1400 3200 (some 250), fx 1600 3800 (some 200)] changeLines
-  == #[preWalk, legOne, legTwo, postWalk]
+  == #[preWalk, legOne, changeOfTrains, legTwo, postWalk]
 
 -- `isUndergroundSignal`, THE LEAF. The two COARSE fixes span only 100 s, under
 -- MIN_RUN_DURATION_S, so on their own they are not a run at all. The two
@@ -558,10 +644,15 @@ private def legTwo : Row :=
 -- A missing accuracy is never a signal (and counts as good).
 #guard run #[HOST] (GOOD ++ #[fx 1000 200 none, fx 1300 2400 (some 250)]) == PASS
 
--- RUN SELECTION. A gap above MAX_COARSE_GAP_S splits the dark fixes into two
--- runs; neither half clears MIN_RUN_DURATION_S, so nothing is carved out.
+-- RUN SELECTION. A 400 s gap is above MAX_COARSE_GAP_S, but the darkness
+-- resumes 2.6 km further along (800 m → 3400 m north), so `sameBlackout` reads
+-- it as one tunnel: the train went somewhere while nobody was watching. Joined,
+-- the run spans 600 s and clears MIN_RUN_DURATION_S. Before the displacement
+-- test this split into two halves, neither of which cleared the bar, and the
+-- ride was lost — which is 2026-07-02's change of trains at Finchley Road.
 #guard run #[HOST] (GOOD ++ #[fx 1000 200 (some 200), fx 1100 800 (some 250),
-                              fx 1500 3400 (some 250), fx 1600 3800 (some 200)]) == PASS
+                              fx 1500 3400 (some 250), fx 1600 3800 (some 200)])
+  == #[preWalk, trainLeg 4, postWalk]
 -- Exactly 300 s apart is still ONE run — the test is `≤`.
 #guard run #[HOST] (GOOD ++ #[fx 1000 200 (some 200), fx 1300 2400 (some 250),
                               fx 1600 3800 (some 200)])
@@ -578,14 +669,68 @@ private def longRunTrain : Row :=
     wayName := "Highbury & Islington → Wembley Park · Victoria Line", place := "", city := ""
     avgSpeed := 13.7, maxSpeed := 13.7, confidence := 0.6, confidenceMargin := 1.5
     linearity := 1, pointCount := 0
-    reason := "underground reconstruction (2 coarse fixes on Victoria Line)" }
+    reason := "underground reconstruction (4 coarse fixes on Victoria Line)" }
 
--- TWO qualifying runs: the LONGEST-spanning wins, not the first. Run A spans
--- 200 s and would give a train window of 900-1700; run B spans 250 s and gives
--- 900-1900, so the choice is visible in the output.
+-- The 400 s gap here is over MAX_COARSE_GAP_S, but the darkness resumes 3.1 km
+-- on (300 m → 3400 m north), so `sameBlackout` joins the two halves into one
+-- 850 s run and the ride reads end to end.
+--
+-- This case USED to exercise run SELECTION — two qualifying runs, longest span
+-- wins — and it no longer can, because there is only one run left. Selection is
+-- pinned by `longestRunWinsAcrossTravel` below instead.
 #guard run #[HOST] (GOOD ++ #[fx 1000 200 (some 200), fx 1200 300 (some 250),
                               fx 1600 3400 (some 250), fx 1850 3800 (some 200)])
   == #[preWalk, longRunTrain, { postWalk with startTs := 1900 }]
+
+private def shortTrain : Row :=
+  { startTs := 900, endTs := 1300, mode := "train", refinedMode := "train"
+    wayName := "Highbury & Islington → King's Cross · Victoria Line", place := "", city := ""
+    avgSpeed := 9, maxSpeed := 9, confidence := 0.6, confidenceMargin := 1.5
+    linearity := 1, pointCount := 0
+    reason := "underground reconstruction (2 coarse fixes on Victoria Line)" }
+
+-- WHAT THE PHONE SAID IN THE GAP. Both of these put a 400 s gap between two dark
+-- stretches whose ends are 2.5 km apart, so displacement alone bridges them and
+-- the ride reads end to end. They differ only in the good fixes BETWEEN.
+--
+-- Heard travelling — 600 m of drift, which is 2026-07-01's walk out of Euston
+-- Square — and the gap is no blackout at all: the ride stops where the phone
+-- came back, rather than running six minutes into a confirmed walk.
+#guard run #[HOST]
+  #[fx 500 0 (some 10), fx 900 200 (some 15),
+    fx 1000 200 (some 200), fx 1200 900 (some 250),
+    fx 1300 1200 (some 12), fx 1450 1800 (some 10),
+    fx 1600 3400 (some 250), fx 1700 3800 (some 200),
+    fx 1900 4000 (some 12), fx 2100 4050 none]
+  == #[preWalk, shortTrain,
+       { postWalk with startTs := 1300, wayName := "Midway Road" }]
+-- Heard, but going nowhere — 100 m, which is 2026-07-02's change of trains at
+-- Finchley Road — so the two halves are one tunnel and the ride spans both.
+#guard run #[HOST]
+  #[fx 500 0 (some 10), fx 900 200 (some 15),
+    fx 1000 200 (some 200), fx 1200 900 (some 250),
+    fx 1300 2000 (some 12), fx 1450 2100 (some 10),
+    fx 1600 3400 (some 250), fx 1700 3800 (some 200),
+    fx 1900 4000 (some 12), fx 2100 4050 none]
+  == #[preWalk, longRunTrain, { postWalk with startTs := 1900 }]
+
+private def selectedTrain : Row :=
+  { startTs := 1450, endTs := 1950, mode := "train", refinedMode := "train"
+    wayName := "King's Cross → Wembley Park · Victoria Line", place := "", city := ""
+    avgSpeed := 15.8, maxSpeed := 15.8, confidence := 0.6, confidenceMargin := 1.5
+    linearity := 1, pointCount := 0
+    reason := "underground reconstruction (2 coarse fixes on Victoria Line)" }
+
+-- RUN SELECTION, on a pair the bridging genuinely refuses. Run A spans 200 s and
+-- comes first; run B spans 300 s and wins. The two board and alight at different
+-- stations, so taking the first instead of the longest is visible here.
+#guard run #[HOST]
+  #[fx 500 0 (some 10), fx 900 200 (some 15),
+    fx 1000 200 (some 200), fx 1200 900 (some 250),
+    fx 1300 1200 (some 12), fx 1450 1800 (some 10),
+    fx 1600 3100 (some 250), fx 1900 3800 (some 200),
+    fx 1950 4000 (some 12), fx 2100 4050 none]
+  == #[{ preWalk with endTs := 1450 }, selectedTrain, { postWalk with startTs := 1950 }]
 
 -- BRACKETING GOOD FIXES. No good fix at or before the run start: nothing to
 -- board from; and none after it: nothing to alight at.

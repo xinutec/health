@@ -671,6 +671,303 @@ describe("annotateUndergroundRuns", () => {
 		expect(result[1].endTs).toBe(2400);
 	});
 
+	it("joins two dark runs across a change of trains, because the train moved between them", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The 2026-07-02 shape. The ride goes dark, the rider changes trains at an
+		// intermediate station, and the ride resumes. The phone reports the
+		// interchange platform at confident accuracy throughout the change, so the
+		// contiguity rule alone cuts the tunnel in two: the first piece spans 18 s
+		// (under MIN_RUN_DURATION_S) and the second holds one fix (under
+		// MIN_COARSE_FIXES), so NEITHER qualifies and the whole ride stays buried
+		// in the walking host.
+		//
+		// What says it is one blackout is not how long the gap was or how the
+		// platform fixes paced — it is that the darkness resumed 1.6 km further
+		// down the line. The train went somewhere; the blackout continued.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1000, ...at(20, 10), accuracy: 12 }, // boarding, good GPS at Alpha
+			coarseFix(1200, 900, 450), //               into the tunnel, hugging Beta
+			coarseFix(1218, 1010, 505),
+			// The change: four confident fixes over 265 s, all within ~50 m of the
+			// Gamma platform.
+			{ ts: 1255, ...at(1990, 1000), accuracy: 30 },
+			{ ts: 1400, ...at(2010, 1010), accuracy: 20 },
+			{ ts: 1480, ...at(1995, 1005), accuracy: 83 },
+			{ ts: 1520, ...at(2005, 1000), accuracy: 20 },
+			// Dark again on the second leg — and 1.6 km on from where it went dark.
+			coarseFix(1551, 2600, 1300),
+			{ ts: 1700, ...at(2980, 1490), accuracy: 13 }, // alighted at Delta
+		];
+		const host = seg({ startTs: 900, endTs: 2400 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toContain("train");
+		const train = result.find((s) => s.mode === "train");
+		expect(train?.wayName).toBe("Alpha → Delta · Line 1");
+		expect(train?.startTs).toBe(1000);
+		expect(train?.endTs).toBe(1700);
+	});
+
+	it("joins two dark runs across a gap the phone said nothing at all in", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The case the bridging exists for in the first place: a deep tunnel where
+		// the phone does not surface between the two dark stretches, so there is
+		// nothing in the gap to testify either way. Silence is not evidence that
+		// the ride ended — it is the ordinary shape of being underground — and the
+		// displacement test is left to answer on its own.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 900, ...at(20, 10), accuracy: 12 },
+			// A short first stretch, too brief to be a ride on its own …
+			coarseFix(1000, 300, 150),
+			coarseFix(1100, 700, 350),
+			// … 400 s of nothing whatsoever, and the darkness resumes 1.2 km on …
+			coarseFix(1500, 1800, 900),
+			coarseFix(1700, 2400, 1200),
+			coarseFix(1900, 2900, 1450),
+			{ ts: 2000, ...at(2990, 1495), accuracy: 13 },
+		];
+		const host = seg({ startTs: 850, endTs: 2400 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		const trains = result.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(1);
+		expect(trains[0].wayName).toBe("Alpha → Delta · Line 1");
+	});
+
+	it("keeps two dark runs apart when the phone was heard travelling between them", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The 2026-07-01 shape, and the case displacement ALONE gets wrong. The
+		// ride ends at Gamma, the rider walks out of the station and off down the
+		// street, and several minutes later the phone throws one more poor fix from
+		// the doorway of somewhere. Endpoint to endpoint that pair looks exactly
+		// like the 07-02 change of trains above — 315 s apart and 1432 m on,
+		// measured — so a displacement test joins them and the ride swallows six
+		// minutes of the walk.
+		//
+		// What separates them is not the endpoints but what sits BETWEEN. A change
+		// of trains is a dwell: the phone, when heard at all, is heard from one
+		// station. Here it is heard continuously and it is heard MOVING — 226 s of
+		// 2-20 m fixes tracing the street, 606 m end to end on the day. Nothing in
+		// that gap was ever dark, so there is no blackout to bridge, and a ride
+		// cannot be reconstructed across ground the phone already reported walking.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 900, ...at(20, 10), accuracy: 12 }, // boarding, good GPS at Alpha
+			// The tunnel, and it stands on its own: 3 fixes over 218 s.
+			coarseFix(1000, 300, 150),
+			coarseFix(1100, 700, 350),
+			coarseFix(1218, 1010, 505),
+			// Out at Gamma and away on foot: confident fixes the whole way, and they
+			// travel — 600 m from the first to the last.
+			{ ts: 1255, ...at(1990, 1000), accuracy: 30 },
+			{ ts: 1340, ...at(2180, 1180), accuracy: 8 },
+			{ ts: 1420, ...at(2330, 1330), accuracy: 6 },
+			{ ts: 1490, ...at(2420, 1420), accuracy: 12 },
+			// One more poor fix from a doorway, and it happens to land by the next
+			// station down the line — 2.2 km on from where the tunnel went dark, so
+			// endpoint displacement alone reads it as the ride carrying on.
+			coarseFix(1551, 2980, 1490),
+			{ ts: 1700, ...at(2990, 1495), accuracy: 13 },
+		];
+		const host = seg({ startTs: 850, endTs: 2400 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		// The true ride is the one that ends where the phone came back.
+		const trains = result.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(1);
+		expect(trains[0].wayName).toBe("Alpha → Gamma · Line 1");
+		expect(trains[0].endTs).toBeLessThanOrEqual(1255);
+	});
+
+	it("keeps two dark runs apart when the darkness resumes where it stopped (the indoor stay)", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The counterpart, and the case a pace-based reading of the reacquire gets
+		// WRONG: 2026-06-15's Macmillan stay and 2026-05-22's Cleveland Clinic
+		// stay. The rider arrives, sits indoors for an hour and a half on poor GPS,
+		// and leaves. Measured on 06-15 the two dark stretches sit 5314 s apart and
+		// the phone is 4 m from where it started — against 333 s and 3072 m for the
+		// 07-02 change of trains above.
+		//
+		// Someone sitting still is stationary in exactly the way someone waiting on
+		// a platform is, so pace cannot separate them and duration only can by
+		// being tuned. Displacement does it outright: a blackout that resumes where
+		// it stopped is a new episode, and joining these two invents a ride that
+		// swallows the stay.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1000, ...at(20, 10), accuracy: 12 },
+			// A ride that qualifies on its own — so this test is about whether the
+			// run wrongly EXTENDS, not about whether anything is found at all.
+			coarseFix(1200, 900, 450),
+			coarseFix(1300, 1500, 750),
+			coarseFix(1400, 2010, 1010),
+			{ ts: 1500, ...at(2980, 1490), accuracy: 13 }, // arrived near Delta
+			// …and an hour and a half indoors, the phone barely moving.
+			{ ts: 3000, ...at(2984, 1492), accuracy: 40 },
+			{ ts: 5000, ...at(2979, 1488), accuracy: 55 },
+			coarseFix(6532, 2982, 1491), // dark again — 4 m from where it went dark
+			coarseFix(6600, 2984, 1489),
+		];
+		const host = seg({ startTs: 900, endTs: 7000 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		// The ride is carved out, and it ENDS at the arrival — the indoor darkness
+		// an hour and a half later is not part of it.
+		const train = result.find((s) => s.mode === "train");
+		expect(train?.endTs).toBe(1500);
+	});
+
+	it("keeps a nearby later blackout apart even inside the interchange window", async () => {
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
+		// The case the gap ceiling CANNOT decide, and the one the displacement
+		// test exists for: 2026-06-15's 945 s / 574 m and 583 s / 296 m gaps both
+		// sit inside the interchange window, so only distance says they are new
+		// blackouts. The rider arrives, then goes dark again 657 m away a quarter
+		// of an hour later — a building at the destination, not a station down the
+		// line. Under MIN_JOURNEY_M, so the ride must not reach for it.
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1000, ...at(20, 10), accuracy: 12 },
+			coarseFix(1200, 900, 450),
+			coarseFix(1300, 1500, 750),
+			coarseFix(1400, 2010, 1010),
+			{ ts: 1500, ...at(2980, 1490), accuracy: 13 }, // arrived near Delta
+			// 950 s later — inside MAX_INTERCHANGE_GAP_S — and only 657 m on.
+			coarseFix(2350, 2600, 1300),
+			coarseFix(2420, 2610, 1310),
+		];
+		const host = seg({ startTs: 900, endTs: 3000 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		const train = result.find((s) => s.mode === "train");
+		expect(train?.endTs).toBe(1500);
+	});
+
+	it("leaves the change of trains out of both rides, instead of splitting it between them", async () => {
+		// 2026-07-12 at King's Cross: a Metropolitan leg, 198 m of walking between
+		// platforms at 93 steps/min, then a Victoria leg. The changeover was being
+		// bisected — half given to each ride — so the walk ended up inside a train
+		// segment and #356's invariant called it what it was: a train leg
+		// sustaining a pedestrian-paced stepping run.
+		//
+		// The rider is not on a train while walking between platforms. The gap
+		// between one leg's last coarse fix and the next leg's first belongs to
+		// neither ride; it is the change, and it keeps the host's own mode.
+		const IX: FakeStation[] = [
+			{ name: "Alpha", north: 0, east: 0, lines: ["Line 1"] },
+			{ name: "Mid1", north: 500, east: 0, lines: ["Line 1"] },
+			{ name: "Beta", north: 1000, east: 0, lines: ["Line 1", "Line 3"] },
+			{ name: "Mid2", north: 1500, east: 0, lines: ["Line 3"] },
+			{ name: "Omega", north: 2000, east: 0, lines: ["Line 3"] },
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(IX);
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1000, ...at(20, 0), accuracy: 12 }, // boarding at Alpha
+			coarseFix(1700, 500, 0), //                 leg 1, hugging Mid1
+			coarseFix(1800, 510, 0),
+			// Surfaced at Beta — the platform change, on foot.
+			{ ts: 2000, ...at(1000, 0), accuracy: 15 },
+			{ ts: 2100, ...at(1010, 0), accuracy: 15 },
+			coarseFix(2300, 1500, 0), //                leg 2, hugging Mid2
+			coarseFix(2400, 1510, 0),
+			{ ts: 2600, ...at(1980, 0), accuracy: 13 }, // alighting at Omega
+		];
+		const host = seg({ startTs: 900, endTs: 3000 });
+		const result = await annotateUndergroundRuns(
+			[host],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		// walk in · ride · CHANGE · ride · walk out — the change is its own
+		// segment, not two halves donated to the rides either side.
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "walking", "train", "walking"]);
+		expect(result[1].wayName).toBe("Alpha → Beta · Line 1");
+		expect(result[3].wayName).toBe("Beta → Omega · Line 3");
+		// The changeover spans exactly the gap between the two rides' own fixes.
+		expect(result[2].startTs).toBe(1800);
+		expect(result[2].endTs).toBe(2300);
+	});
+
+	it("does not cut a sliver of a segment out of a changeover too short to stand alone", async () => {
+		// The other side of the rule above. A cross-platform change takes seconds,
+		// not minutes, and carving a 50 s segment out between the two rides buys a
+		// fragment nobody can read. Under MIN_SIDE_DURATION_S the rides meet at the
+		// midpoint as before — there is no walk worth naming.
+		const IX: FakeStation[] = [
+			{ name: "Alpha", north: 0, east: 0, lines: ["Line 1"] },
+			{ name: "Mid1", north: 500, east: 0, lines: ["Line 1"] },
+			{ name: "Beta", north: 1000, east: 0, lines: ["Line 1", "Line 3"] },
+			{ name: "Mid2", north: 1500, east: 0, lines: ["Line 3"] },
+			{ name: "Omega", north: 2000, east: 0, lines: ["Line 3"] },
+		];
+		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(IX);
+		const rawFixes: CoarseFix[] = [
+			{ ts: 1000, ...at(20, 0), accuracy: 12 },
+			coarseFix(1700, 500, 0),
+			coarseFix(1800, 510, 0),
+			{ ts: 1820, ...at(1000, 0), accuracy: 15 }, // the change, 50 s end to end
+			coarseFix(1850, 1500, 0),
+			coarseFix(1900, 1510, 0),
+			{ ts: 2100, ...at(1980, 0), accuracy: 13 },
+		];
+		const result = await annotateUndergroundRuns(
+			[seg({ startTs: 900, endTs: 2400 })],
+			rawFixes,
+			[],
+			stationsLookup,
+			linesLookup,
+			async () => [],
+			servedLookup,
+		);
+
+		expect(result.map((s) => s.mode)).toEqual(["walking", "train", "train", "walking"]);
+		// The two rides abut at the midpoint of the changeover, as before.
+		expect(result[1].endTs).toBe(1825);
+		expect(result[2].startTs).toBe(1825);
+	});
+
 	it("leaves a segment with no coarse-fix run untouched", async () => {
 		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		const host = seg({ startTs: 1000, endTs: 2800 });

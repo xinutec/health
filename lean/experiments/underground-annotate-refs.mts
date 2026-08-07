@@ -224,6 +224,41 @@ const CASES: Record<string, Case> = {
 	spanJustUnderBar: { fixes: [...GOOD, fix(1000, 200, 200), fix(1179, 3800, 200)] },
 	// A single coarse fix is below MIN_COARSE_FIXES.
 	oneCoarseFix: { fixes: [...GOOD, fix(1000, 200, 200)] },
+	// A gap above MAX_COARSE_GAP_S but inside MAX_INTERCHANGE_GAP_S, whose ends
+	// are 2.5 km apart — so displacement alone says "the ride carried on" and
+	// bridges it. What the two cases differ in is what the phone reported IN the
+	// gap. Travelling (600 m of drift, the 2026-07-01 walk out of the station)
+	// splits, so only the first stretch is a run and the window is short; a dwell
+	// (100 m, the 2026-07-02 change of trains) joins, and the window spans both.
+	heardTravellingSplitsRun: {
+		fixes: [
+			fix(500, 0, 10),
+			fix(900, 200, 15),
+			fix(1000, 200, 200),
+			fix(1200, 900, 250), // run A: span 200, qualifies alone
+			fix(1300, 1200, 12),
+			fix(1450, 1800, 10), // heard MOVING between the two
+			fix(1600, 3400, 250),
+			fix(1700, 3800, 200), // run B: span 100, does not
+			fix(1900, 4000, 12),
+			fix(2100, 4050, null),
+		],
+	},
+	dwellJoinsRun: {
+		fixes: [
+			fix(500, 0, 10),
+			fix(900, 200, 15),
+			fix(1000, 200, 200),
+			fix(1200, 900, 250),
+			fix(1300, 2000, 12),
+			fix(1450, 2100, 10), // heard, but going nowhere
+			fix(1600, 3400, 250),
+			fix(1700, 3800, 200),
+			fix(1900, 4000, 12),
+			fix(2100, 4050, null),
+		],
+	},
+
 	// TWO qualifying runs, separated by a gap above MAX_COARSE_GAP_S. The
 	// LONGEST-spanning one wins, not the first — and the two produce
 	// different train windows, so the choice is visible in the output.
@@ -234,6 +269,25 @@ const CASES: Record<string, Case> = {
 			fix(1200, 300, 250), // run A: span 200, first
 			fix(1600, 3400, 250),
 			fix(1850, 3800, 200), // run B: span 250 — wins
+		],
+	},
+	// Run SELECTION, kept honest. `longestRunWins` above no longer separates its
+	// two runs at all — displacement joins them into one — so what pins the
+	// longest-span choice has to be a pair the bridging genuinely refuses. Held
+	// apart here by the travel test: run B spans 300 s to run A's 200, and wins,
+	// which is visible because the two board and alight at different stations.
+	longestRunWinsAcrossTravel: {
+		fixes: [
+			fix(500, 0, 10),
+			fix(900, 200, 15),
+			fix(1000, 200, 200),
+			fix(1200, 900, 250), // run A: span 200
+			fix(1300, 1200, 12),
+			fix(1450, 1800, 10), // heard moving: the runs stay apart
+			fix(1600, 3100, 250),
+			fix(1900, 3800, 200), // run B: span 300 — wins
+			fix(1950, 4000, 12),
+			fix(2100, 4050, null),
 		],
 	},
 

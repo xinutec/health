@@ -378,6 +378,81 @@ const MIN_SIDE_DURATION_S = 60;
  *  blip (poor indoor GPS at the destination) is not the same journey. */
 const MAX_COARSE_GAP_S = 300;
 
+/** Longest gap (s) that a change of trains can still bridge, when the
+ *  displacement test below says the ride continued. A ceiling rather than a
+ *  discriminator: displacement already separates every case measured, and this
+ *  only stops two genuinely unrelated blackouts — a morning tunnel and an
+ *  evening one — from being read as a single ride because both happened to end
+ *  up somewhere else. Half an hour is longer than any interchange on the
+ *  network and far under the 88 min the 2026-06-15 stay spans. */
+const MAX_INTERCHANGE_GAP_S = 1800;
+
+/**
+ * Are two dark fixes either side of a long gap the same blackout?
+ *
+ * {@link MAX_COARSE_GAP_S} is a proxy, and its own reason for splitting is that
+ * GPS must have recovered inside the gap. On 2026-07-02 that proxy is wrong: a
+ * change of trains at Finchley Road puts 333 s between the two halves of one
+ * ride, and the ride resumes on the far side of it.
+ *
+ * The direct question is not how long the phone was quiet, nor how the fixes in
+ * between paced — someone waiting on a platform and someone sitting in a
+ * hospital are equally still, so neither duration nor pace can separate them
+ * without being tuned to the days in hand. It is whether the darkness resumed
+ * SOMEWHERE ELSE. A train that went dark, stopped being heard from, and is next
+ * heard from a station down the line was travelling throughout; a phone that
+ * goes quiet indoors and speaks again from the same room an hour and a half
+ * later has not been anywhere, and joining those two invents a ride that
+ * swallows the stay.
+ *
+ * That is necessary but NOT sufficient, and 2026-07-01 is why. There the ride
+ * ends at Euston Square, the rider walks out and off down the street, and one
+ * more poor fix lands from a doorway six minutes later — 315 s and 1432 m from
+ * the last dark fix, which end to end is indistinguishable from 07-02's change
+ * of trains. Joined, the ride ran to 11:50 and ate six minutes of a confirmed
+ * ten-minute walk.
+ *
+ * So ask the gap itself, not just its ends. A change of trains is a DWELL: the
+ * phone, when heard at all, is heard from one station. When instead it is heard
+ * travelling, nothing in that stretch was ever dark and there is no blackout to
+ * bridge — a ride cannot be reconstructed across ground the phone already
+ * reported walking. Both tests together, measured:
+ *
+ *                                        gap    ends apart   in-gap drift
+ *     2026-07-02  08:10:20 → 08:15:53   333 s      3072 m           70 m   join
+ *     2026-07-01  10:44:57 → 10:50:12   315 s      1432 m          606 m   split
+ *     2026-06-15  14:03:08 → 14:18:53   945 s       574 m          571 m   split
+ *     2026-06-15  15:47:27 → 15:57:10   583 s       296 m          288 m   split
+ *     2026-06-15  14:18:53 → 15:47:27  5314 s         4 m           33 m   split
+ *
+ * Neither boundary is fitted between the populations. {@link MIN_JOURNEY_M} is
+ * the distance this module already uses to say "that is a journey, not a
+ * platform wait", asked here of the tunnel's two halves; {@link
+ * UNDERGROUND_STATION_RADIUS_M} is what it already calls one station, asked of
+ * what the phone reported in between. The two are complementary rather than
+ * redundant — the Macmillan stay drifts only 33 m and is split by displacement
+ * alone, and the last 06-15 row would read as a dwell at 288 m but never gets
+ * asked, because 296 m is not a journey.
+ */
+function sameBlackout(prev: CoarseFix, next: CoarseFix, ceiling: number, good: CoarseFix[]): boolean {
+	const gap = next.ts - prev.ts;
+	if (gap <= MAX_COARSE_GAP_S) return true;
+	if (gap > ceiling) return false;
+	if (heardTravelling(good, prev.ts, next.ts)) return false;
+	return equirectMeters(prev.lat, prev.lon, next.lat, next.lon) >= MIN_JOURNEY_M;
+}
+
+/** Did the phone, in the fixes it DID report between two dark stretches, go
+ *  anywhere? Silence answers no — a gap with nothing in it is the deep-tube
+ *  case the bridging exists for, and it falls through to displacement — which
+ *  is what an empty `some` says without needing to be asked separately. */
+function heardTravelling(good: CoarseFix[], from: number, to: number): boolean {
+	const between = good.filter((f) => f.ts > from && f.ts < to);
+	return between.some(
+		(f) => equirectMeters(between[0].lat, between[0].lon, f.lat, f.lon) > UNDERGROUND_STATION_RADIUS_M,
+	);
+}
+
 /** Span (s) of uninterrupted good GPS that ends a blackout rather than
  *  merely interrupting it. A train passing a vent shaft or a shallow station
  *  box gives the phone one glimpse of sky and takes it away again — that is
@@ -557,7 +632,7 @@ export async function annotateUndergroundRuns(
 		const runs: CoarseFix[][] = [];
 		for (const f of hostCoarse) {
 			const cur = runs.at(-1);
-			if (cur && f.ts - cur[cur.length - 1].ts <= MAX_COARSE_GAP_S) cur.push(f);
+			if (cur && sameBlackout(cur[cur.length - 1], f, MAX_INTERCHANGE_GAP_S, good)) cur.push(f);
 			else runs.push([f]);
 		}
 		const span = (r: CoarseFix[]): number => r[r.length - 1].ts - r[0].ts;
@@ -626,11 +701,30 @@ export async function annotateUndergroundRuns(
 		const distM = equirectMeters(boarding.lat, boarding.lon, alighting.lat, alighting.lon);
 		const speedKmh = Math.round((distM / Math.max(1, trainEnd - trainStart)) * 3.6 * 10) / 10;
 
-		// Boundaries between consecutive legs: the changeover sits between one
-		// leg's last coarse fix and the next leg's first.
+		// The changeover sits between one leg's last coarse fix and the next leg's
+		// first — and it belongs to NEITHER ride. Bisecting it, which is what this
+		// used to do, hands half the platform walk to each train: on 2026-07-12 at
+		// King's Cross that put 198 m of walking at 93 steps/min inside the
+		// Victoria leg, which is exactly the shape `checkModeKinematics` rejects
+		// (#356). The rider is not riding while changing trains.
+		//
+		// So a changeover long enough to stand on its own becomes its own segment,
+		// in the host's mode — the classifier already judged that stretch, and it
+		// judged it walking. Below MIN_SIDE_DURATION_S the old midpoint split
+		// stands: a sliver is not worth a segment, and the two rides have to meet
+		// somewhere.
 		const boundaries: number[] = [];
+		const changeovers: Array<{ startTs: number; endTs: number } | null> = [];
 		for (let li = 0; li < legs.length - 1; li++) {
-			boundaries.push(Math.round((legs[li].endTs + legs[li + 1].startTs) / 2));
+			const from = legs[li].endTs;
+			const to = legs[li + 1].startTs;
+			if (to - from >= MIN_SIDE_DURATION_S) {
+				changeovers.push({ startTs: from, endTs: to });
+				boundaries.push(from);
+			} else {
+				changeovers.push(null);
+				boundaries.push(Math.round((from + to) / 2));
+			}
 		}
 
 		if (keepPre) {
@@ -642,7 +736,8 @@ export async function annotateUndergroundRuns(
 		}
 		for (let li = 0; li < legs.length; li++) {
 			const leg = legs[li];
-			const segStart = li === 0 ? trainStart : boundaries[li - 1];
+			const prevChange = li > 0 ? changeovers[li - 1] : null;
+			const segStart = li === 0 ? trainStart : (prevChange?.endTs ?? boundaries[li - 1]);
 			const segEnd = li === legs.length - 1 ? trainEnd : boundaries[li];
 			const reason =
 				legs.length > 1
@@ -665,6 +760,16 @@ export async function annotateUndergroundRuns(
 				wayName: `${leg.boardingStation} → ${leg.alightingStation} · ${leg.line}`,
 				refinedReason: reason,
 			});
+			const change = li < legs.length - 1 ? changeovers[li] : null;
+			if (change) {
+				result.push({
+					...host,
+					startTs: change.startTs,
+					endTs: change.endTs,
+					wayName: await sideWayName(points, change.startTs, change.endTs, host.mode, waysLookup),
+					refinedReason: `underground reconstruction (change of trains at ${leg.alightingStation})`,
+				});
+			}
 		}
 		if (keepPost) {
 			result.push({
