@@ -142,10 +142,25 @@ const EXCLUDE = [
 	// so it is not a port gap. `decode.ts` is deliberately NOT here — it is
 	// split, holding `segmentsFromStates` (algorithm) beside the orchestration.
 	/^hmm\/(lean-shadow-core|persist|continuity-context)$/,
-	// src/hmm OFF THE SERVED PATH — ~2.6k lines the roadmap already declares
-	// out of scope. Nothing decodes through them; porting them would buy
-	// coverage in a number and nothing in production.
-	/^hmm\/(route-aware-decoder|station-chain|tube-journey-assembler|inner-viterbi-edges|hsmm-marginals|mode-class-lock|fit-emissions)$/,
+	// src/hmm OFF THE SERVED PATH — the roadmap declares these out of scope, and
+	// an import trace on 2026-08-09 CONFIRMED each one below: `route-aware-decoder`
+	// and `tube-journey-assembler` are imported only by `cli/compare-vs-ground-truth`,
+	// `hsmm-marginals` only by `cli/compare-hmm-vs-heuristic`, and
+	// `inner-viterbi-edges` / `mode-class-lock` only by `route-aware-decoder`.
+	// Nothing decodes through them; porting them would buy coverage in a number
+	// and nothing in production.
+	//
+	// `station-chain` WAS IN THIS LIST AND DID NOT BELONG. The same trace found
+	// `src/hmm/decode.ts` importing it: `decodeServed` → both arms →
+	// `segmentsFromStates` → `resolveStationChain`, and `decode-day.ts` then
+	// `saveDecode`s the result. So 820 lines of served, PERSISTED algorithm were
+	// being set aside as off-path — precisely the failure this list's own header
+	// warns about, since a silent exclusion reads exactly like a port. It counts
+	// as a gap now, which is why the totals moved when nothing was written.
+	// Re-derive membership from a trace before adding to this list, never from
+	// the roadmap's prose: that prose was traced once, in 2026-07, and this is
+	// what it drifting looks like.
+	/^hmm\/(route-aware-decoder|tube-journey-assembler|inner-viterbi-edges|hsmm-marginals|mode-class-lock|fit-emissions)$/,
 ];
 const excluded = (label) => EXCLUDE.some((re) => re.test(label));
 

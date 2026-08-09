@@ -208,8 +208,23 @@ gate reports a call count instead of an absence.
 ## Off the served path — do not port (eval / training / legacy)
 
 - Train-journey cluster (used only by eval/CLI, not serve): `route-aware-decoder`
-  (457), `station-chain` (820), `tube-journey-assembler` (420),
-  `inner-viterbi-edges` (372), `hsmm-marginals` (267), `mode-class-lock` (157).
+  (457), `tube-journey-assembler` (420), `inner-viterbi-edges` (372),
+  `hsmm-marginals` (267), `mode-class-lock` (157). Re-traced 2026-08-09 and all
+  five hold: the first two are imported only by `cli/compare-vs-ground-truth`,
+  `hsmm-marginals` only by `cli/compare-hmm-vs-heuristic`, and the last two only
+  by `route-aware-decoder`.
+- **`station-chain` (820) was in that list and does not belong — CORRECTED
+  2026-08-09.** The same trace found `src/hmm/decode.ts` importing it:
+  `decodeServed` → both arms → `segmentsFromStates` → `resolveStationChain`,
+  after which `decode-day.ts` `saveDecode`s the result. It is served AND
+  persisted, and `served-stations` (76) is reached only through it. That is the
+  largest single unported module on the served path, and it was invisible in
+  every coverage number until the exclusion was removed
+  (`scripts/lean-port-coverage.mjs`): the measured gap went from
+  `59 · 11 · 4 of 74` to `59 · 11 · 5 of 75` with nothing written.
+  The lesson is the one this file already states about the Tier list and now
+  states about itself: **membership here is a trace result, not prose.** This
+  section was traced once, in 2026-07-24, and the decode chain moved under it.
 - `fit-emissions` (241) — learned-emissions training; null in prod.
 - `src/eval/*` (16 files) — offline scoring/evaluation, except
   `worldline-feasibility` (below), which the serve path imports.
