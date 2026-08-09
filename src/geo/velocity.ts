@@ -18,6 +18,7 @@ import {
 	demoteJitterWalkToStationaryViaLean,
 	revertIsolatedCadenceDrivesViaLean,
 } from "../lean/lean-biometric-labels.js";
+import { leanDayMode, shadowLeanDay } from "../lean/lean-day.js";
 import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
@@ -1897,6 +1898,51 @@ export async function computeVelocityFromInputs(
 			sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
 		},
 	);
+
+	// The LIVE day request — the same six inputs `foldCapture.write` just
+	// recorded, handed straight to the Lean chain instead of to a file. This is
+	// what #431 gap 1 was about: `buildDayRequest` used to demand a
+	// `FoldCaptureFile`, which only exists when `FOLD_CAPTURE` is set and is
+	// written BY the run it would replace, so nothing could ever serve from it.
+	//
+	// The tail is built here rather than at the capture's `writeTail` because
+	// nothing in it derives from the cascade: `morningRaw` / `prevEveningRaw`
+	// destructure `inputs.phonetrack`, `rawSleep` IS `inputs.sleepWindows`, and
+	// `dayEndTs` IS `bounds.endUtc`. It was recorded late, not computed late.
+	if (leanDayMode() !== "off") {
+		await shadowLeanDay(
+			{
+				segsRaw: segments,
+				modeStats,
+				obs: {
+					points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+					rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+					displayFixes,
+					steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+					hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+					sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
+				},
+				tail: {
+					morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+					prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+					rawSleep: inputs.sleepWindows.map((w) => ({
+						startTs: w.startTs,
+						endTs: w.endTs,
+						tz: w.tz,
+						minutesAsleep: w.minutesAsleep,
+					})),
+					dayEndTs: bounds.endUtc,
+				},
+				// The answer tables start EMPTY. A serving caller has no recorded
+				// trace to seed them from; the round loop fills them by asking.
+				tzAt: [],
+				bestPlace: [],
+			},
+			inputs,
+			withBiometrics,
+			`${date} ${userId}`,
+		);
+	}
 
 	const total = Date.now() - t0;
 	const summary = Object.entries(phaseTimes)

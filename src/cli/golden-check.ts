@@ -58,6 +58,7 @@ import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { ceilingSize, type DeltaCeiling, gateDeltaCeiling, ratchetDownCeiling } from "../lean/delta-ceiling.js";
 import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
+import { logLeanDayLedger } from "../lean/lean-day.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { logLeanHsmmLedger } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
@@ -530,6 +531,9 @@ const leanVerdicts = [
 	// it wanted to. Moved to their tenant modules alongside the other five.
 	logLeanMatchLedger("golden"),
 	logLeanPassLedger("golden"),
+	// The day cascade — the first tenant whose request is built LIVE rather than
+	// read from a capture (#431 gap 1).
+	logLeanDayLedger("golden"),
 ];
 // Two tenants this corpus CANNOT exercise, both for the same reason and both by
 // deliberate design rather than oversight: #233 made the corpus deterministic by
