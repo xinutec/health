@@ -1,5 +1,7 @@
 import Verified.Hsmm.RouteModel
 import Verified.Hsmm.RouteGraph
+import Verified.Hsmm.Observation
+import Verified.Geo.WalkableRoute
 /-!
 # C4.3 chained train triples — the graph layer (port of `src/hmm/station-chain.ts`, #672)
 
@@ -162,12 +164,23 @@ private def ssspLoop (g : ChainGraph) (line : String) : Nat → Sssp → Sssp
     The fuel is not a budget: each round marks exactly one node done and a node
     is done at most once, so `nodes.size + seeds` rounds cannot be reached. It
     exists because Lean needs a decreasing measure, not because the search is
-    allowed to be cut short. -/
+    allowed to be cut short.
+
+    Returns the pairs in the TS `Map`'s INSERTION order, not a bare lookup table.
+    `trajectoryAdmits` iterates the result and its own output order reaches the
+    candidate list, where `sideCandidates` dedupes and cuts — so a hash-ordered
+    return would be a permutation the caller reads. `linePathMeters` only looks
+    up, and takes a strict minimum, so it is indifferent. -/
 def lineSssp (g : ChainGraph) (line : String) (seeds : Array (String × Float)) :
-    Std.HashMap String Float :=
+    Array (String × Float) :=
   let st0 : Sssp := seeds.foldl (fun st (id, d) => relax st id d)
     { order := #[], dist := {}, done := {} }
-  (ssspLoop g line (g.nodes.size + seeds.size + 1) st0).dist
+  let st := ssspLoop g line (g.nodes.size + seeds.size + 1) st0
+  st.order.filterMap (fun id => (st.dist.get? id).map (fun d => (id, d)))
+
+/-- The same distances as a lookup table, for the callers that only probe. -/
+def ssspMap (rows : Array (String × Float)) : Std.HashMap String Float :=
+  rows.foldl (fun m (id, d) => m.insert id d) {}
 
 /-- Shortest along-line path (m) between two stations' footprints, or `none`
     when unreachable. Doubles as the pair-connectivity constraint. -/
@@ -177,13 +190,271 @@ def linePathMeters (g : ChainGraph) (line : String) (a b : ChainNode) : Option F
   if start.isEmpty || goal.isEmpty then none
   else if start.any (goal.contains ·) then some 0
   else
-    let dist := lineSssp g line (start.toArray.map (fun id => (id, (0 : Float))))
+    let dist := ssspMap (lineSssp g line (start.toArray.map (fun id => (id, (0 : Float)))))
     goal.fold (fun acc id =>
       match dist.get? id with
       | none => acc
       | some d => match acc with
         | none => some d
         | some bd => if d < bd then some d else acc) none
+
+/-! ## Scoring terms
+
+All in nats, all clamped: evidence, never a veto. Each is a port of a PRIVATE TS
+function, so none can be pinned on its own — the guards at the bottom drive the
+whole resolver and each case is shaped so one term decides it. -/
+
+def STATION_SIGMA_M : Float := 200
+def SLOP_SPEED_M_PER_MIN : Float := 500
+def CAND_BASE_RADIUS_M : Float := 800
+def MAX_CANDIDATES_PER_SIDE : Nat := 12
+def TUBE_SPEED_KMH : Float := 32
+def STOP_OVERHEAD_MIN : Float := 0.8
+def DURATION_SIGMA_FRAC : Float := 0.35
+def DURATION_SIGMA_MIN : Float := 2
+def SAME_STATION_M : Float := 250
+def TRANSFER_WALK_M_PER_MIN : Float := 75
+def TRANSFER_Z_SCALE : Float := 40
+def CHAIN_GAP_MAX_S : Int := 12 * 60
+def STATION_PASS_M : Float := 300
+def TERMINAL_DWELL_TOL_MIN : Float := 3
+def TERMINAL_DWELL_Z_MIN : Float := 1
+def MIN_PATH_M : Float := 400
+def ANCHOR_CLAMP : Float := -6
+def DURATION_CLAMP : Float := -6
+def DWELL_CLAMP : Float := -6
+def CHAIN_CLAMP : Float := -8
+def MARGIN_NATS : Float := 1.0
+def BOUNDARY_UNOBSERVED_MIN : Float := 5
+def ABS_ANCHOR_FLOOR : Float := -4
+def TRAJ_OFFLINE_MAX_M : Float := 400
+def TRAJ_MIN_FIXES : Nat := 4
+def TRAJ_MIN_SPAN_MIN : Float := 5
+def TRAJ_MAX_EXTRAP_MIN : Float := 4
+def TRAJ_SIGMA_BASE_M : Float := 500
+def TRAJ_MAD_SCALE : Float := 2.5
+def TRAJ_CLAMP : Float := -6
+def TRAJ_SUPPORT_FLOOR : Float := -1.5
+def TRAJ_ADMIT_WINDOW_MIN : Float := 6
+def TRAJ_ADMIT_SPEED_M_PER_MIN : Float := 1000
+def DWELL_DISQUALIFY : Float := -3
+def NOT_SERVED_PENALTY : Float := -3
+
+inductive Side where
+  | board
+  | alight
+  deriving BEq, Inhabited
+
+/-- Seconds to minutes, on the `Int` timestamps the TS carries as numbers. -/
+private def mins (a b : Int) : Float := Float.ofInt (a - b) / 60
+
+/-- `−z²/2` with σ widened in quadrature by anchor staleness, clamped. -/
+def slopZPenalty (distM sigmaM slopMin clamp : Float) : Float :=
+  let slop := SLOP_SPEED_M_PER_MIN * slopMin
+  let sigma := Float.sqrt (sigmaM * sigmaM + slop * slop)
+  let z := distM / sigma
+  max clamp (-0.5 * z * z)
+
+structure Fit where
+  v : Float
+  c : Float
+  madM : Float
+  deriving Inhabited
+
+/-- Theil–Sen: slope is the median of pairwise slopes, so a MINORITY of corrupted
+    fixes cannot steer it. `(t, d)` pairs.
+
+    `Observation.median` is reused rather than restated. Note it returns 0 on an
+    empty list where the TS returns NaN (`(undefined + undefined) / 2`) — a real
+    divergence, and unreachable here: the empty case is guarded for `v`, and `c`
+    and `madM` are only reached with at least `TRAJ_MIN_FIXES` points. -/
+def theilSen (pts : Array (Float × Float)) : Fit :=
+  let slopes := (List.range pts.size).foldl (fun acc i =>
+    (List.range pts.size).foldl (fun acc j =>
+      if j > i && pts[j]!.1 != pts[i]!.1
+      then acc ++ [(pts[j]!.2 - pts[i]!.2) / (pts[j]!.1 - pts[i]!.1)]
+      else acc) acc) []
+  let v := if slopes.isEmpty then 0 else Verified.Hsmm.Observation.median slopes
+  let c := Verified.Hsmm.Observation.median (pts.toList.map (fun p => p.2 - v * p.1))
+  let madM := Verified.Hsmm.Observation.median
+    (pts.toList.map (fun p => Float.abs (p.2 - (v * p.1 + c))))
+  { v, c, madM }
+
+/-- Observed leg minutes against the along-line path the pair implies.
+
+    A boundary lost in a blackout means the ride extends past the observed
+    window, so the term goes ONE-SIDED: a pair expecting LONGER than observed is
+    consistent, only a pair expecting shorter contradicts. -/
+def durationPenalty (observedMin pathM : Float) (boundaryUnobserved : Bool) : Float :=
+  let expectedMin := (pathM / 1000 / TUBE_SPEED_KMH) * 60 + STOP_OVERHEAD_MIN
+  let sigma := max DURATION_SIGMA_MIN (DURATION_SIGMA_FRAC * expectedMin)
+  if boundaryUnobserved && expectedMin ≥ observedMin then 0
+  else
+    let z := (observedMin - expectedMin) / sigma
+    max DURATION_CLAMP (-0.5 * z * z)
+
+structure InLegFix where
+  ts : Int
+  lat : Float
+  lon : Float
+  deriving Inhabited
+
+private def dwellZ (excessMin : Float) : Float :=
+  if excessMin ≤ 0 then 0
+  else
+    let z := excessMin / TERMINAL_DWELL_Z_MIN
+    max DWELL_CLAMP (-0.5 * z * z)
+
+/-- Alighting at A means the trajectory reaches A at the leg's END; an in-leg fix
+    near A minutes earlier implies the train dwelt at a through station, which
+    real services do not. Symmetrically for boards. A leg dark near the candidate
+    asserts nothing. -/
+def terminalDwellPenalty (fixes : Array InLegFix) (station : ChainNode)
+    (legStartTs legEndTs : Int) (side : Side) : Float :=
+  let near := fixes.filter (fun f =>
+    haversineMeters f.lat f.lon station.lat station.lon ≤ STATION_PASS_M)
+  match side with
+  | .alight => match near[0]? with
+    | none => 0
+    | some f => dwellZ (mins legEndTs f.ts - TERMINAL_DWELL_TOL_MIN)
+  | .board => match near.back? with
+    | none => 0
+    | some f => dwellZ (mins f.ts legStartTs - TERMINAL_DWELL_TOL_MIN)
+
+/-- Handover between consecutive legs: the same station complex (by name or by
+    proximity) is free, anything else must be walkable in the observed gap. -/
+def chainPenalty (prevAlight board : ChainNode) (gapMin : Float) : Float :=
+  if prevAlight.stationName == board.stationName then 0
+  else
+    let d := haversineMeters prevAlight.lat prevAlight.lon board.lat board.lon
+    if d ≤ SAME_STATION_M then 0
+    else
+      let requiredPace := d / max gapMin 0.5
+      let z := max 0 (requiredPace - TRANSFER_WALK_M_PER_MIN) / TRANSFER_Z_SCALE
+      max CHAIN_CLAMP (-0.5 * z * z)
+
+/-! ## Trajectory: the fixes' own vote, projected onto the line's track -/
+
+structure TrackFix where
+  ts : Int
+  edge : RouteEdge
+  alongM : Float
+  deriving Inhabited
+
+/-- Project each in-leg fix onto the nearest point of `line`'s track, dropping
+    fixes further off it than `TRAJ_OFFLINE_MAX_M`.
+
+    Scans the line's own edge set directly — `edgesNear`'s grid indexes geometry
+    VERTICES, so it goes blind mid-span of a sparse edge.
+
+    `bestDist` is seeded once per FIX and carried across edges, and the
+    comparison is STRICT, so the first edge to reach a distance keeps it. That is
+    why `g.model.edges` must be in builder order. -/
+def projectFixesToLine (g : ChainGraph) (line : String) (fixes : Array InLegFix) :
+    Array TrackFix :=
+  let lineEdges := g.model.edges.filter (fun e => e.lineMemberships.contains line)
+  -- One fix against one edge: walk the geometry, carrying `(best, bestDist)` in
+  -- and out, and an `arc` that belongs to this edge alone.
+  let scanEdge (f : InLegFix) (st : Option TrackFix × Float) (e : RouteEdge) :
+      Option TrackFix × Float :=
+    let geom := e.geometry.toArray
+    let r := (List.range (geom.size - 1)).foldl
+      (fun (acc : Option TrackFix × Float × Float) i =>
+        let a := geom[i]!
+        let b := geom[i + 1]!
+        let segLen := haversineMeters a.lat a.lon b.lat b.lon
+        let proj := Verified.Geo.WalkableRoute.projectPointToSegment
+          ⟨f.lat, f.lon⟩ ⟨a.lat, a.lon⟩ ⟨b.lat, b.lon⟩
+        let hit := if proj.distM < acc.2.1
+          then (some { ts := f.ts, edge := e, alongM := acc.2.2 + proj.t * segLen }, proj.distM)
+          else (acc.1, acc.2.1)
+        (hit.1, hit.2, acc.2.2 + segLen))
+      (st.1, st.2, 0)
+    (r.1, r.2.1)
+  fixes.foldl (fun out f =>
+    match (lineEdges.foldl (scanEdge f) (none, TRAJ_OFFLINE_MAX_M)).1 with
+    | none => out
+    | some tf => out.push tf) #[]
+
+/-- Along-line distance from a projected fix to the SSSP's seed station, entering
+    the fix's edge at whichever endpoint is closer. -/
+def trackFixDistM (sssp : Std.HashMap String Float) (tf : TrackFix) : Option Float :=
+  let len := geometryLengthM tf.edge.geometry
+  let viaU := (sssp.get? tf.edge.startNode).map (· + tf.alongM)
+  let viaV := (sssp.get? tf.edge.endNode).map (fun d => d + max 0 (len - tf.alongM))
+  match viaU, viaV with
+  | none, _ => viaV
+  | some u, none => some u
+  | some u, some v => some (min u v)
+
+/-- Fit the on-track fixes' along-line distances to a candidate over time, and
+    score how far from it the fit lands at the leg boundary. `none` = the fixes
+    cannot support a fit (too few, too clustered, boundary too dark), and the
+    term then asserts nothing rather than asserting zero. -/
+def trajectoryPenalty (trackFixes : Array TrackFix) (sssp : Std.HashMap String Float)
+    (legStartTs legEndTs : Int) (side : Side) : Option Float :=
+  let acc := trackFixes.foldl
+    (fun (st : Array (Float × Float) × Option Int × Option Int) tf =>
+      match trackFixDistM sssp tf with
+      | none => st
+      | some d =>
+        (st.1.push (mins tf.ts legStartTs, d),
+         some (match st.2.1 with | none => tf.ts | some x => min x tf.ts),
+         some (match st.2.2 with | none => tf.ts | some x => max x tf.ts)))
+    (#[], none, none)
+  let pts := acc.1
+  if pts.size < TRAJ_MIN_FIXES then none
+  else match acc.2.1, acc.2.2 with
+    | some firstTs, some lastTs =>
+      if mins lastTs firstTs < TRAJ_MIN_SPAN_MIN then none
+      else if side == Side.alight && mins legEndTs lastTs > TRAJ_MAX_EXTRAP_MIN then none
+      else if side == Side.board && mins firstTs legStartTs > TRAJ_MAX_EXTRAP_MIN then none
+      else
+        let fit := theilSen pts
+        let targetT := match side with
+          | .alight => mins legEndTs legStartTs
+          | .board => 0
+        let predictedM := fit.v * targetT + fit.c
+        let sigma := max TRAJ_SIGMA_BASE_M (TRAJ_MAD_SCALE * fit.madM)
+        let z := Float.abs predictedM / sigma
+        some (max TRAJ_CLAMP (-0.5 * z * z))
+    -- Unreachable: `pts.size ≥ TRAJ_MIN_FIXES` means both were set. Kept total
+    -- rather than `!`-indexed, so the impossible case cannot panic in prod.
+    | _, _ => none
+
+/-- Stations admissible for one side from the TRAJECTORY alone: along-line
+    reachable from a near-boundary on-track fix within the ride time that
+    boundary leaves. This is what gets the true station into the candidate set
+    when the anchor fix is kilometres wrong — the anchor may be, the track is
+    not. -/
+def trajectoryAdmits (g : ChainGraph) (line : String) (trackFixes : Array TrackFix)
+    (legStartTs legEndTs : Int) (side : Side) : Array ChainNode :=
+  (trackFixes.foldl (fun (acc : Array ChainNode × Std.HashSet String) tf =>
+    let boundaryMin := match side with
+      | .alight => mins legEndTs tf.ts
+      | .board => mins tf.ts legStartTs
+    if boundaryMin < 0 || boundaryMin > TRAJ_ADMIT_WINDOW_MIN then acc
+    else
+      let len := geometryLengthM tf.edge.geometry
+      let endSeed := max 0 (len - tf.alongM)
+      -- `Map.set` semantics: the start seed goes in first, and the end seed
+      -- replaces it only when LOWER and only when it is the same key.
+      let seeds : Array (String × Float) :=
+        if tf.edge.endNode == tf.edge.startNode then
+          #[(tf.edge.startNode, min tf.alongM endSeed)]
+        else #[(tf.edge.startNode, tf.alongM), (tf.edge.endNode, endSeed)]
+      let reachM := boundaryMin * TRAJ_ADMIT_SPEED_M_PER_MIN + CAND_BASE_RADIUS_M
+      (lineSssp g line seeds).foldl (fun acc (id, d) =>
+        if d > reachM then acc
+        else match g.nodeById.get? id with
+          | none => acc
+          | some node => match node.stationName with
+            | none => acc
+            | some name =>
+              if !(stationLineMemberships g node).contains line then acc
+              else if acc.2.contains name then acc
+              else (acc.1.push node, acc.2.insert name)) acc)
+    (#[], {})).1
 
 /-! ## Guards — the synthetic line from `lean/experiments/station-chain-refs.mts`
 
