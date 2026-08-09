@@ -84,7 +84,33 @@ function closure(roots: string[]): Set<string> {
 }
 
 const all = [...imports.keys()];
-const under = (prefix: string): string[] => all.filter((m) => m.startsWith(prefix));
+
+/**
+ * Every module in a namespace, credited to that namespace's gate.
+ *
+ * THIS IS A BLANKET, AND A BLANKET IS A CLAIM. Unlike the other gates below, it
+ * does not trace anything: a module is credited for being NAMED
+ * `Verified.Hsmm.*`, so adding a file to that namespace silently makes this tool
+ * report it as live-compared — which is how `Verified.Hsmm.StationChain` came to
+ * be counted the day it was written, with no comparator of any kind (#672).
+ *
+ * That is the same defect `scripts/lean-port-coverage.mjs` carried on the other
+ * side, where an off-path exclusion list copied from 2026-07 prose hid 820 lines
+ * of served algorithm. Both tools grant coverage structurally instead of by
+ * trace, and both read exactly like a measurement.
+ *
+ * Narrowing it needs the real closure of `assembledecode` / `decode`, which is
+ * a call-graph trace through `Main.lean` (it imports `Verified` wholesale, so
+ * the import graph cannot answer it). Filed rather than guessed — see #674. The
+ * exclusion below is the part that CAN be settled today: a module known to have
+ * no comparator does not get the blanket.
+ */
+const under = (prefix: string): string[] =>
+	all.filter((m) => m.startsWith(prefix) && !NO_COMPARATOR.has(m));
+
+/** Named exceptions to the namespace blanket: guard-pinned, comparator absent,
+ *  each verified by reading it rather than by its name. */
+const NO_COMPARATOR = new Set(["Verified.Hsmm.StationChain"]);
 
 // Ordered: each gate is credited only with what no earlier gate already covers,
 // so the columns sum to the total rather than double-counting shared kernels.

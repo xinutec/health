@@ -10,6 +10,7 @@ import Verified.Hsmm.Memo
 import Verified.Hsmm.Ckpt
 import Verified.Hsmm.Packed
 import Verified.Hsmm.Factors
+import Verified.Hsmm.StationChain
 import Verified.Hsmm.Tests
 import Verified.Rail.Graph
 import Verified.Rail.Dijkstra

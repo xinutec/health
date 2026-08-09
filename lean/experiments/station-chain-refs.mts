@@ -87,20 +87,25 @@ const graph = buildRouteGraph(rawLines, rawPoints);
 // reference value: a Lean port reading a different node set is not comparable,
 // and that difference must be visible here rather than inferred from a
 // downstream mismatch.
-const named = [...graph.nodes.values()].filter((n) => n.stationName !== undefined);
+// Emitted in ITERATION ORDER, which is load-bearing rather than cosmetic.
+// `stationsNear` walks `routeGraph.nodes.values()` — a JS Map, so insertion
+// order — and `sideCandidates` then dedupes by name keeping the FIRST best,
+// sorts with V8's STABLE sort, and cuts at MAX_CANDIDATES_PER_SIDE. Every one of
+// those three steps reads the order, so a Lean port iterating a hash map would
+// diverge on ties at the cut. The port has to consume an ordered node list, and
+// this is where that order is defined.
 show(
-	"graph.stations",
-	named.map((n) => ({ name: n.stationName, lat: n.point.lat, lon: Number(n.point.lon.toFixed(8)) })),
+	"graph.nodes",
+	[...graph.nodes.values()].map((n) => [n.id, n.point.lat, n.point.lon, n.stationName ?? null, [...n.edgeIds]]),
 );
-show("graph.edgeCount", graph.edges.size);
-show("graph.nodeCount", graph.nodes.size);
 show(
-	"graph.edgeLengthsM",
-	[...graph.edges.values()].map((e) => Number(e.attrs.lengthM.toFixed(6))),
-);
-show(
-	"graph.lineMemberships",
-	[...new Set([...graph.edges.values()].flatMap((e) => [...e.attrs.lineMemberships]))].sort(),
+	"graph.edges",
+	[...graph.edges.values()].map((e) => [
+		e.id,
+		e.geometry.map((p) => [p.lat, p.lon]),
+		Number(e.attrs.lengthM.toFixed(9)),
+		[...e.attrs.lineMemberships],
+	]),
 );
 
 /* ------------------------------------------------------------------ */
