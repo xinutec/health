@@ -86,31 +86,82 @@ function closure(roots: string[]): Set<string> {
 const all = [...imports.keys()];
 
 /**
- * Every module in a namespace, credited to that namespace's gate.
+ * The HSMM and Rail rows used to be `under("Verified.Hsmm")` /
+ * `under("Verified.Rail")` — every module whose NAME began with the prefix,
+ * while every other row was a real import closure (#674).
  *
- * THIS IS A BLANKET, AND A BLANKET IS A CLAIM. Unlike the other gates below, it
- * does not trace anything: a module is credited for being NAMED
- * `Verified.Hsmm.*`, so adding a file to that namespace silently makes this tool
- * report it as live-compared — which is how `Verified.Hsmm.StationChain` came to
- * be counted the day it was written, with no comparator of any kind (#672).
+ * A blanket is a claim, not a measurement, and this one was granting coverage to
+ * files nothing executed: writing `Verified.Hsmm.StationChain` — `#guard`s only,
+ * no comparator — moved the live-compared count from 122 to 123 the day the file
+ * existed, purely for where it was put.
  *
- * That is the same defect `scripts/lean-port-coverage.mjs` carried on the other
- * side, where an off-path exclusion list copied from 2026-07 prose hid 820 lines
- * of served algorithm. Both tools grant coverage structurally instead of by
- * trace, and both read exactly like a measurement.
+ * It is the mirror of what `scripts/lean-port-coverage.mjs` was doing on the TS
+ * side, where an exclusion list copied from 2026-07 prose hid 820 lines of served
+ * algorithm (#672). One tool hid a gap by excluding, this one by including; both
+ * read exactly like a measurement.
  *
- * Narrowing it needs the real closure of `assembledecode` / `decode`, which is
- * a call-graph trace through `Main.lean` (it imports `Verified` wholesale, so
- * the import graph cannot answer it). Filed rather than guessed — see #674. The
- * exclusion below is the part that CAN be settled today: a module known to have
- * no comparator does not get the blanket.
+ * Replaced by the modules the HSMM/Rail comparators actually enter, traced
+ * through `Main.lean`'s verb table. `Main.lean` imports `Verified` wholesale, so
+ * the IMPORT graph cannot answer this — the roots below come from reading each
+ * handler and following what it calls:
+ *
+ *   `hsmm`          `hsmmResult` → `pDecodeFast`            → Packed
+ *   `assemble`      `assembleResult` → `Assemble.build*`,
+ *                   `Quantize.quantize`                     → Assemble, Quantize
+ *   `assembledecode` `assembleDecodeResult` → `parseAssemble`,
+ *                   `buildPData`, `pDecodeFast`             → Assemble, Packed
+ *   `coverage`      `coverageResult` → `TrainCandidates`,
+ *                   `RouteModel`                            → TrainCandidates
+ *   `rail`          `railResult` → `Verified.Rail.dijkstraC`,
+ *                   `.dijkstraDist`                         → Certify, Dijkstra
+ *
+ * Each of those five verbs has a live driver: `lean-hsmm.ts` for `hsmm`,
+ * `compare-assemble*.mts` for the two assemble verbs, `compare-coverage.mts` for
+ * `coverage`, `LEAN_RAIL` for `rail`.
+ *
+ * Note `buildPData` and `parseAssemble` live in `Main.lean` itself rather than in
+ * a `Verified.*` module — shell-side glue, so there is nothing for this tool to
+ * credit — which is exactly why the roots have to be read off the handlers and
+ * not guessed from names.
  */
-const under = (prefix: string): string[] =>
-	all.filter((m) => m.startsWith(prefix) && !NO_COMPARATOR.has(m));
+const HSMM_ROOTS = [
+	"Verified.Hsmm.Packed",
+	"Verified.Hsmm.Assemble",
+	"Verified.Hsmm.Quantize",
+	"Verified.Hsmm.TrainCandidates",
+];
+/** WAIVED, and the waiver is why this row must not be a blanket: the golden
+ *  corpus preloads `rail_route_cache` (#233) so the Dijkstra never runs, and a
+ *  blanket would credit modules to a gate already declared unexercisable.
+ *
+ *  This row now prints 0, and that does NOT mean Rail has no modules. Both roots
+ *  are already claimed by `compare-match`, because `Verified.Geo.LazyDijkstra`
+ *  imports `Verified.Rail.Dijkstra` and `LazyLower` imports `Rail.Certify` — the
+ *  walk matcher's lazy search is built on the certified one. Import-reachable
+ *  from an exercised gate is an UPPER bound, as this file says at the top, so
+ *  the #233 waiver is untouched by it. */
+const RAIL_ROOTS = ["Verified.Rail.Certify", "Verified.Rail.Dijkstra"];
 
-/** Named exceptions to the namespace blanket: guard-pinned, comparator absent,
- *  each verified by reading it rather than by its name. */
-const NO_COMPARATOR = new Set(["Verified.Hsmm.StationChain"]);
+/**
+ * What removing the blanket exposed, recorded so the next reader knows which
+ * residue lines are findings and which are shape.
+ *
+ * FINDINGS — real ports, guards only, no cited harness, entered by no verb:
+ *   `Verified.Hsmm.GpsOutliers` (9 def) and `Verified.Hsmm.RouteRail` (9 def).
+ *   Their ONLY importer is `Verified.Hsmm.Factors`, whose only importer is
+ *   `Verified.lean` — so nothing in `verified_cli` reaches them, and the blanket
+ *   had been reporting both as live-compared.
+ *
+ * SHAPE — in the residue correctly, but not ports and not news:
+ *   `Verified.Hsmm.Factors` is an AGGREGATOR: 25 imports, zero definitions. It
+ *   exists to pull the HSMM tree into the library root.
+ *   `Verified.Hsmm.Tests` / `Verified.Rail.Tests` are guard suites. Guard-only
+ *   is what they are FOR, the way theorem-only is what a PROVEN module is for.
+ *
+ * They are left in the count rather than filtered out, because a filter is the
+ * thing this whole change was about: the def/guard columns beside each name are
+ * what let a reader tell the two apart without one.
+ */
 
 // Ordered: each gate is credited only with what no earlier gate already covers,
 // so the columns sum to the total rather than double-counting shared kernels.
@@ -129,8 +180,8 @@ const GATES: [string, string[]][] = [
 	],
 	["focus-gate", ["Verified.Geo.FocusPlaces", "Verified.Geo.FocusIdentity"]],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
-	["LEAN_HSMM / compare-assemble", under("Verified.Hsmm")],
-	["LEAN_RAIL (waived)", under("Verified.Rail")],
+	["LEAN_HSMM / compare-assemble", HSMM_ROOTS],
+	["LEAN_RAIL (waived)", RAIL_ROOTS],
 	["kalman / gpsquality / biolabels", ["Verified.Geo.Kalman", "Verified.Geo.GpsQuality", "Verified.Geo.BiometricLabels"]],
 ];
 
