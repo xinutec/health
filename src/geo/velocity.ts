@@ -1899,51 +1899,6 @@ export async function computeVelocityFromInputs(
 		},
 	);
 
-	// The LIVE day request — the same six inputs `foldCapture.write` just
-	// recorded, handed straight to the Lean chain instead of to a file. This is
-	// what #431 gap 1 was about: `buildDayRequest` used to demand a
-	// `FoldCaptureFile`, which only exists when `FOLD_CAPTURE` is set and is
-	// written BY the run it would replace, so nothing could ever serve from it.
-	//
-	// The tail is built here rather than at the capture's `writeTail` because
-	// nothing in it derives from the cascade: `morningRaw` / `prevEveningRaw`
-	// destructure `inputs.phonetrack`, `rawSleep` IS `inputs.sleepWindows`, and
-	// `dayEndTs` IS `bounds.endUtc`. It was recorded late, not computed late.
-	if (leanDayMode() !== "off") {
-		await shadowLeanDay(
-			{
-				segsRaw: segments,
-				modeStats,
-				obs: {
-					points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
-					rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
-					displayFixes,
-					steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
-					hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
-					sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
-				},
-				tail: {
-					morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
-					prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
-					rawSleep: inputs.sleepWindows.map((w) => ({
-						startTs: w.startTs,
-						endTs: w.endTs,
-						tz: w.tz,
-						minutesAsleep: w.minutesAsleep,
-					})),
-					dayEndTs: bounds.endUtc,
-				},
-				// The answer tables start EMPTY. A serving caller has no recorded
-				// trace to seed them from; the round loop fills them by asking.
-				tzAt: [],
-				bestPlace: [],
-			},
-			inputs,
-			withBiometrics,
-			`${date} ${userId}`,
-		);
-	}
-
 	const total = Date.now() - t0;
 	const summary = Object.entries(phaseTimes)
 		.map(([k, v]) => `${k}=${v}ms`)
@@ -2041,6 +1996,48 @@ export async function computeVelocityFromInputs(
 		dayEndTs: bounds.endUtc,
 	};
 
+	// The LIVE day request — the same inputs `foldCapture.write` and `writeTail`
+	// record, handed straight to the Lean chain instead of to a file. This is what
+	// #431 gap 1 was about: `buildDayRequest` used to demand a `FoldCaptureFile`,
+	// which only exists when `FOLD_CAPTURE` is set and is written BY the run it
+	// would replace, so nothing could ever serve from it.
+	//
+	// Called at the TAIL, beside `writeTail`, and at BOTH of its sites. Running at
+	// the cascade boundary instead would compare the fold's segments while the
+	// states and episodes in the same response went unread — the tenant would then
+	// measure less of the day chain than its name claims, on exactly the stages
+	// nothing else grades live. The empty-day arm is included for the reason the
+	// capture includes it: a tenant that skipped it would fall silent on the days
+	// with the least other evidence.
+	const shadowDay = async (tsStates: DayState[], tsEpisodes: EpisodeGeometry[]): Promise<void> => {
+		if (leanDayMode() === "off") return;
+		await shadowLeanDay(
+			{
+				segsRaw: segments,
+				modeStats,
+				obs: {
+					points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+					rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+					displayFixes,
+					steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+					hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+					sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
+				},
+				// The same closure the capture records, not a second copy of it:
+				// nothing in the tail derives from the cascade, so there is one
+				// definition and both arms read it.
+				tail: downstreamInputs,
+				// The answer tables start EMPTY. A serving caller has no recorded
+				// trace to seed them from; the round loop fills them by asking.
+				tzAt: [],
+				bestPlace: [],
+			},
+			inputs,
+			{ segs: withBiometrics, states: tsStates, episodes: tsEpisodes },
+			`${date} ${userId}`,
+		);
+	};
+
 	if (states.length === 0 && points.length === 0) {
 		const inferred = await time(
 			"inferEmptyDay",
@@ -2049,6 +2046,7 @@ export async function computeVelocityFromInputs(
 		if (inferred.length > 0) {
 			const episodes = buildEpisodes(inferred, withBiometrics, points, displayFixes);
 			foldCapture?.writeTail(downstreamInputs, inferred, episodes);
+			await shadowDay(inferred, episodes);
 			phaseTimes.leanCovered = Date.now() - leanCoveredFrom;
 			return {
 				points,
@@ -2125,6 +2123,7 @@ export async function computeVelocityFromInputs(
 
 	const episodes = buildEpisodes(finalStates, withBiometrics, points, displayFixes);
 	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);
+	await shadowDay(finalStates, episodes);
 	phaseTimes.leanCovered = Date.now() - leanCoveredFrom - (phaseTimes.feasibility ?? 0);
 	return {
 		points,

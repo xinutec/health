@@ -129,6 +129,7 @@ import path from "node:path";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
+import { canon, classify, diffEpisodes, diffSegs } from "../lean/day-compare.js";
 import type { FoldCaptureFile } from "../lean/fold-capture.js";
 import { buildDayRequest, encodeEpisode, encodeSeg, encodeState } from "../lean/fold-payload.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
@@ -143,130 +144,11 @@ interface Outcome {
 	detail: string;
 }
 
-/** Fields no `Env` supplies, so the fold cannot produce them and a difference
- *  here is structural rather than a divergence.
- *
- *  `PassFold.Env.walkEnv` / `.roadEnv` are declared SHELLS — the street-network
- *  reads and every solver leaf are stubbed (`fun _ _ _ => none`), because the
- *  matchers are the 4.31 MiB/day the wire measurement deliberately left
- *  shell-side (`lean/experiments/passfold-env-size.mts`). The passes still RUN;
- *  handed no matcher they write nothing.
- *
- *  Reported, never hidden: a day whose only differences are these gets its own
- *  verdict and still prints them. Anything outside this set is a divergence.
- *
- *  `snappedPath` is deliberately NOT here: `railSnap` reads `railRouteCache`,
- *  which the payload does supply, so that one has to match. Nor are the fields
- *  `reenrich` used to leave unwritten — it is fed now (`Verified.Geo.Enrich`),
- *  and a difference in `refinedMode` / `wayName` / `refinedReason` /
- *  `roadCorridorFraction` is a real one again. */
-const SHELLED = new Set(["walkMatchedPath", "walkSmoothedPath", "matchedPath"]);
-
 /** The `Env` callbacks the `day` mode does not feed, as the CLI reports them.
  *  Checked rather than assumed: a shell added to `PassFold.Env` and left unfed
  *  would otherwise turn its fields into silent divergences on every day, and the
  *  gate would say "DIVERGED" about something nobody had wired. */
 const EXPECTED_UNFED = ["roadEnv", "walkEnv"];
-
-/** Episode kinds that only a solver can produce. With `walkEnv` / `roadEnv`
- *  stubbed the Lean arm has no matched path, so the renderer falls back to raw
- *  chords — and the episode says so in `kind`, which is geometry PROVENANCE.
- *
- *  MEASURED on 2026-05-18 rather than assumed: all six differing episodes were
- *  `walking`, TS `matched` against Lean `raw`, with six `walkMatchedPath`
- *  differences on the segments beneath them. Nothing else differed. */
-const SOLVER_KINDS = new Set(["matched", "smoothed"]);
-
-type Ep = { kind: string; points: unknown[] } & Record<string, unknown>;
-
-/** Whether an episode's geometry is the missing solver's absence: the TS arm
- *  drew it with a solver kind and the Lean arm fell back to raw chords. */
-const isFallback = (a: Ep, b: Ep): boolean => SOLVER_KINDS.has(a.kind) && b.kind === "raw";
-
-/** Episodes, compared with TWO excuses, both measured and neither wider.
- *
- *  1. A FALLBACK episode — TS solver-drawn, Lean raw. Its `kind` and `points`
- *     are the shell's absence. Every other field is still compared.
- *
- *  2. A CONNECTOR VERTEX INHERITED from one. A `tentative` episode bridges an
- *     unobserved gap by joining its neighbours' drawn ends, so when the
- *     neighbour was drawn by the missing matcher the joint moves with it.
- *     Excused only for the specific vertex that equals that neighbour's
- *     terminal vertex IN ITS OWN ARM — a connector whose interior or free end
- *     moved is still a divergence.
- *
- *     MEASURED before it was written: on all four days where this fires
- *     (2026-04-30, 06-15, 06-16, 07-17) the connector is two points, only the
- *     first differs, and in BOTH arms it equals the previous episode's last
- *     point, whose episode is a fallback.
- *
- *  Any other kind disagreement — `anchor` against `raw`, `tentative` against
- *  `matched` — is real: the arms then disagree about what KIND of thing
- *  happened, which no missing solver explains. */
-function diffEpisodes(want: unknown[], got: unknown[]): { real: string[]; fallback: number } {
-	const out: string[] = [];
-	if (want.length !== got.length) out.push(`episodes count: TS ${want.length}, Lean ${got.length}`);
-	const n = Math.min(want.length, got.length);
-	const A = want as Ep[];
-	const B = got as Ep[];
-	const counts = new Map<string, number>();
-	let fallback = 0;
-
-	/** Drop the vertices a neighbouring fallback moved, per arm. */
-	const trim = (eps: Ep[], i: number): unknown[] => {
-		const pts = [...eps[i].points];
-		const prev = eps[i - 1];
-		const next = eps[i + 1];
-		const inherited = (v: unknown, from: unknown): boolean => v !== undefined && canon(v) === canon(from);
-		if (next !== undefined && isFallback(A[i + 1], B[i + 1]) && inherited(pts.at(-1), next.points[0])) pts.pop();
-		if (prev !== undefined && isFallback(A[i - 1], B[i - 1]) && inherited(pts[0], prev.points.at(-1))) pts.shift();
-		return pts;
-	};
-
-	for (let i = 0; i < n; i++) {
-		const a = A[i];
-		const b = B[i];
-		const excused = isFallback(a, b);
-		if (excused) fallback += 1;
-		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (excused && (k === "kind" || k === "points")) continue;
-			if (k === "points" && a.kind === "tentative" && b.kind === "tentative") {
-				if (canon(trim(A, i)) !== canon(trim(B, i))) {
-					counts.set(k, (counts.get(k) ?? 0) + 1);
-					sample(`episodes.${k}`, i, trim(A, i), trim(B, i));
-				}
-				continue;
-			}
-			if (canon(a[k]) !== canon(b[k])) {
-				counts.set(k, (counts.get(k) ?? 0) + 1);
-				sample(`episodes.${k}`, i, a[k], b[k]);
-			}
-		}
-	}
-	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
-		out.push(`episodes.${field}: ${c}/${n} differ`);
-	}
-	return { real: out, fallback };
-}
-
-/** Key-sorted JSON, because `JSON.stringify` is ORDER-SENSITIVE on objects and
- *  the two arms build `biometrics` field by field in their own orders. Comparing
- *  raw renderings reported all 15 segments as differing when every value was
- *  identical — a defect in the comparator that would have been read as a
- *  divergence in the fold. */
-function canon(v: unknown): string {
-	const walk = (x: unknown): unknown =>
-		Array.isArray(x)
-			? x.map(walk)
-			: x !== null && typeof x === "object"
-				? Object.fromEntries(
-						Object.entries(x as Record<string, unknown>)
-							.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-							.map(([k, v2]) => [k, walk(v2)]),
-					)
-				: x;
-	return JSON.stringify(walk(v));
-}
 
 /** `DAY_DIFF_DUMP=1` prints the first differing VALUE for each field, not only
  *  the count.
@@ -279,7 +161,9 @@ function canon(v: unknown): string {
  *  cannot attribute this — old code asks the fixtures for lookups they were
  *  never captured with, and errors out instead of comparing).
  *
- *  Off by default and read only here, so the gate's verdict is untouched. */
+ *  Stays HERE rather than in `day-compare.ts` because it is the gate's
+ *  reporting, not the rule: the tenant compares the same way and prints nothing.
+ *  Off by default, so the gate's verdict is untouched. */
 const DUMP = process.env.DAY_DIFF_DUMP === "1";
 let dumped = new Set<string>();
 
@@ -290,30 +174,6 @@ function sample(label: string, index: number, a: unknown, b: unknown): void {
 	console.log(`    ${label} — first at index ${index}`);
 	console.log(`      TS   ${clip(canon(a))}`);
 	console.log(`      Lean ${clip(canon(b))}`);
-}
-
-/** Field-by-field, so a divergence names the field rather than the segment. */
-function diffSegs(want: unknown[], got: unknown[]): string[] {
-	const out: string[] = [];
-	if (want.length !== got.length) {
-		out.push(`segment count: TS ${want.length}, Lean ${got.length}`);
-	}
-	const n = Math.min(want.length, got.length);
-	const counts = new Map<string, number>();
-	for (let i = 0; i < n; i++) {
-		const a = want[i] as Record<string, unknown>;
-		const b = got[i] as Record<string, unknown>;
-		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (canon(a[k]) !== canon(b[k])) {
-				counts.set(k, (counts.get(k) ?? 0) + 1);
-				sample(k, i, a[k], b[k]);
-			}
-		}
-	}
-	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
-		out.push(`${field}: ${c}/${n} segments differ`);
-	}
-	return out;
 }
 
 /**
@@ -453,30 +313,26 @@ async function measure(file: string): Promise<Outcome> {
 	// One sample per field PER DAY, so a whole-corpus dump does not report only
 	// whichever day happened to reach a field first.
 	dumped = new Set<string>();
-	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? []).map((d) => `split.${d}`);
+	const split = diffSegs(cap.segsSplit.map(encodeSeg), res.segsSplit ?? [], sample).map((d) => `split.${d}`);
 	// The OSM enrichment stage — the boundary that used to be the seam between two
 	// sub-chains and is now interior like the rest. `cap.segsPre` is the TS arm's
 	// enrichment output: an ORACLE here, no longer an input to anything.
-	const enrich = diffSegs(cap.segsPre.map(encodeSeg), res.segsEnriched ?? []).map((d) => `enrich.${d}`);
+	const enrich = diffSegs(cap.segsPre.map(encodeSeg), res.segsEnriched ?? [], sample).map((d) => `enrich.${d}`);
 	// The five corrections, compared at the boundary they used to start the chain
 	// at. A difference here is upstream of everything below it: the fold consumed
 	// the Lean arm's own corrections, so a `pre.` line explains any `segs.` line
 	// under it, and reading them the other way round would attribute a
 	// correction's defect to a pass.
-	const pre = diffSegs(cap.segsIn.map(encodeSeg), res.segsMid ?? []).map((d) => `pre.${d}`);
-	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? []);
+	const pre = diffSegs(cap.segsIn.map(encodeSeg), res.segsMid ?? [], sample).map((d) => `pre.${d}`);
+	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? [], sample);
 	// The stages after the fold, compared in the same call and on the same terms.
 	// Prefixed so a `place` difference in the timeline is not confused with one in
 	// a segment — they are different records at different points in the pipeline.
-	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? []).map((d) => `states.${d}`);
-	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? []);
+	const states = diffSegs((cap.statesOut ?? []).map(encodeState), res.states ?? [], sample).map((d) => `states.${d}`);
+	const eps = diffEpisodes((cap.episodesOut ?? []).map(encodeEpisode), res.episodes ?? [], sample);
 	const all = [...split, ...enrich, ...pre, ...diffs, ...states, ...eps.real];
 	// Shell-only is its own verdict, not a pass: the fields are still printed.
-	const real = all.filter((d) => !SHELLED.has(d.split(":")[0]));
-	const shell = [
-		...all.filter((d) => !real.includes(d)),
-		...(eps.fallback > 0 ? [`episodes drawn raw for want of a matcher: ${eps.fallback}`] : []),
-	];
+	const { real, shell } = classify(all, eps.fallback);
 	return {
 		date,
 		verdict: real.length > 0 ? "DIVERGED" : shell.length === 0 ? "IDENTICAL" : "SHELL ONLY",

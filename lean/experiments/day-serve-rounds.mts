@@ -38,7 +38,8 @@ import { inputsFromFixture, parseCapturedDay } from "../../src/cli/fixture-day.j
 import type { FoldCaptureFile } from "../../src/lean/fold-capture.js";
 import { buildDayRequest } from "../../src/lean/fold-payload.js";
 import { computeVelocityFromInputs } from "../../src/geo/velocity.js";
-import { canon, converge } from "../../src/lean/day-serve.js";
+import { canon } from "../../src/lean/day-compare.js";
+import { converge } from "../../src/lean/day-serve.js";
 import { recordedLookups } from "./day-serve-lib.mjs";
 
 const ROOT = path.join(import.meta.dirname, "../..");

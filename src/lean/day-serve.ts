@@ -88,22 +88,6 @@ export function missesIn(stderr: string): Miss[] {
 	return [...seen.values()];
 }
 
-/** Key-sorted JSON — `JSON.stringify` is order-sensitive on objects and two runs
- *  build their tables in different orders. */
-export function canon(v: unknown): string {
-	const walk = (x: unknown): unknown =>
-		Array.isArray(x)
-			? x.map(walk)
-			: x !== null && typeof x === "object"
-				? Object.fromEntries(
-						Object.entries(x as Record<string, unknown>)
-							.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-							.map(([k, v2]) => [k, walk(v2)]),
-					)
-				: x;
-	return JSON.stringify(walk(v));
-}
-
 export function emptyTrace(): OsmTrace {
 	return {
 		nearbyWays: {},

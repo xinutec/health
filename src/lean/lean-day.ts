@@ -31,12 +31,19 @@
  *
  * # Scope, honestly
  *
- * `shadow` compares the CASCADE boundary only: Lean's `segs` against the TS
- * `withBiometrics`, under the same `encodeSeg` + `canon` equality `compare-day`
- * uses, so this and the gate cannot disagree about what "same" means. The day
- * chain's tail — states and episodes — is in the response and is not read here,
- * because the TS answers to compare it against are not in scope at this call
- * site. `day-gate` grades that boundary against a capture and keeps doing so.
+ * `shadow` compares the three boundaries the response carries — the cascade's
+ * `segs`, the state timeline, and the episodes — against the TS arm's own, under
+ * `day-compare.ts`'s rule, which `compare-day` imports too. Neither states a
+ * rule of its own, because a shadow that disagrees with its gate about equality
+ * is worse than no shadow. This ran at the cascade boundary alone at first, when
+ * it was called before the timeline existed; it runs at the TAIL now, where all
+ * three TS answers are in scope, so `DayChain`'s output is measured rather than
+ * inferred from the fold's.
+ *
+ * What the gate still has that this does not: the three INTERIOR boundaries
+ * (`split.` / `enrich.` / `pre.`). Those need oracles only a `FoldCapture`
+ * carries, so a live request cannot produce them — the asymmetry is structural,
+ * and it is why `day-gate` stays the finer instrument rather than a duplicate.
  *
  * There is no `on` path yet. This module exists to prove a live encoder works
  * end to end; serving from it is the next step, and wants this quiet first.
@@ -45,9 +52,12 @@
 import path from "node:path";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
-import { canon, converge } from "./day-serve.js";
+import type { EpisodeGeometry } from "../geo/episode-geometry.js";
+import type { DayState } from "../sleep/day-state.js";
+import { classify, diffEpisodes, diffSegs } from "./day-compare.js";
+import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
-import { encodeSeg } from "./fold-payload.js";
+import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 
 export type LeanDayMode = "off" | "shadow" | "on";
@@ -75,50 +85,27 @@ interface DayStat {
 	 *  Structurally louder than a field difference: a count mismatch means the
 	 *  two cascades took different branches, not that one rounded differently. */
 	lenDiffs: number;
+	/** Days whose ONLY differences are the declared shells — the two solvers the
+	 *  fold is not fed. `day-gate` calls these SHELL ONLY and passes them; so does
+	 *  this, and counting them keeps EXACT from claiming more than it measured. */
+	shellOnly: number;
 	/** Round depths seen — the staging cost this tenant is mostly made of. */
 	rounds: number[];
 	/** Per-day fingerprints of what differed, for the delta ceiling. */
 	unexplained: string[];
 }
 
-const stats: DayStat = { calls: 0, fails: 0, segDiffs: 0, lenDiffs: 0, rounds: [], unexplained: [] };
+const stats: DayStat = { calls: 0, fails: 0, segDiffs: 0, lenDiffs: 0, shellOnly: 0, rounds: [], unexplained: [] };
 
 export function resetLeanDayStats(): void {
 	stats.calls = 0;
 	stats.fails = 0;
 	stats.segDiffs = 0;
 	stats.lenDiffs = 0;
+	stats.shellOnly = 0;
 	stats.rounds = [];
 	stats.unexplained = [];
 }
-
-/** Which encoded fields differ, and on how many segments.
- *
- *  Compares the ENCODED forms — `encodeSeg` on the TS side against what the
- *  fold emitted — because that is the comparison `compare-day` makes. A bespoke
- *  field list here could call a day EXACT that `day-gate` calls divergent, and
- *  a shadow that disagrees with the gate about equality is worse than none. */
-function differingFields(want: readonly unknown[], got: readonly unknown[]): Map<string, number> {
-	const counts = new Map<string, number>();
-	const n = Math.min(want.length, got.length);
-	for (let i = 0; i < n; i++) {
-		const a = want[i] as Record<string, unknown>;
-		const b = got[i] as Record<string, unknown>;
-		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (canon(a[k]) !== canon(b[k])) counts.set(k, (counts.get(k) ?? 0) + 1);
-		}
-	}
-	return counts;
-}
-
-/** The drawn-geometry fields the day request cannot carry, so a difference in
- *  them says nothing about the cascade.
- *
- *  The walk and road matchers are SHELLED — their inputs are 4.31 MiB/day of
- *  road and building rows (#431 gap 2) — so the fold never sees them and emits
- *  whatever its own defaults are. `day-gate` reports exactly these as SHELL
- *  ONLY, on 35/35 days, and this list is why the two agree. */
-const SHELL_ONLY_FIELDS = new Set(["snappedPath", "matchedPath", "walkMatchedPath", "walkSmoothedPath"]);
 
 /**
  * Run the Lean day beside the TS cascade and record what differed.
@@ -130,7 +117,7 @@ const SHELL_ONLY_FIELDS = new Set(["snappedPath", "matchedPath", "walkMatchedPat
 export async function shadowLeanDay(
 	req: DayRequestInputs,
 	inputs: ClassificationInputs,
-	tsSegsOut: readonly EnrichedSegment[],
+	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
 	label: string,
 ): Promise<void> {
 	const { spawnSync } = await import("node:child_process");
@@ -163,7 +150,7 @@ export async function shadowLeanDay(
 			console.log(`lean-day[shadow] ${label}: NOT CONVERGED — ${c.failure ?? "no reason given"}`);
 			return;
 		}
-		const res = JSON.parse(c.out) as { segs?: unknown[]; error?: string };
+		const res = JSON.parse(c.out) as { segs?: unknown[]; states?: unknown[]; episodes?: unknown[]; error?: string };
 		if (res.error !== undefined) {
 			stats.fails += 1;
 			console.log(`lean-day[shadow] ${label}: LEAN ERROR — ${res.error}`);
@@ -172,19 +159,34 @@ export async function shadowLeanDay(
 		stats.calls += 1;
 		stats.rounds.push(c.rounds);
 
-		const leanSegs = res.segs ?? [];
-		if (leanSegs.length !== tsSegsOut.length) {
-			stats.lenDiffs += 1;
-			stats.unexplained.push(`${label}/len=${tsSegsOut.length}v${leanSegs.length}`);
-			return;
-		}
-		const counts = differingFields(tsSegsOut.map(encodeSeg), leanSegs);
-		const real = [...counts].filter(([k]) => !SHELL_ONLY_FIELDS.has(k));
+		// The WHOLE chain, at the three boundaries the response carries — the
+		// cascade's segments and the two stages after it. The tail was left out
+		// while this ran before the timeline was built, which made the tenant
+		// measure less of the day than its name claimed; it runs at the tail now,
+		// so `DayChain`'s own output is compared rather than assumed from the
+		// fold's. `day-gate` also grades the three INTERIOR boundaries
+		// (`split.` / `enrich.` / `pre.`), which need capture oracles that do not
+		// exist on a live request — that asymmetry is deliberate and is why the
+		// gate stays the finer instrument.
+		const eps = diffEpisodes(ts.episodes.map(encodeEpisode), res.episodes ?? []);
+		const all = [
+			...diffSegs(ts.segs.map(encodeSeg), res.segs ?? []),
+			...diffSegs(ts.states.map(encodeState), res.states ?? []).map((d) => `states.${d}`),
+			...eps.real,
+		];
+		// `classify` is `compare-day`'s own rule, imported rather than restated.
+		// The list this replaced also excused `snappedPath`, which the gate does
+		// NOT — inert while both were green, and precisely the divergence the two
+		// would have reported differently.
+		const { real, shell } = classify(all, eps.fallback);
+		if (shell.length > 0) stats.shellOnly += 1;
 		if (real.length > 0) {
-			stats.segDiffs += 1;
-			for (const [field, n] of real.sort((x, y) => y[1] - x[1])) {
-				stats.unexplained.push(`${label}/${field}=${n}`);
-			}
+			// A count difference is structurally louder than a field one — the two
+			// chains took different branches rather than rounding differently — so it
+			// is tallied apart even though both are divergences.
+			if (real.some((d) => d.includes("count:"))) stats.lenDiffs += 1;
+			else stats.segDiffs += 1;
+			for (const d of real) stats.unexplained.push(`${label}/${d}`);
 		}
 	} catch (e) {
 		stats.fails += 1;
@@ -202,10 +204,18 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 	// Zero calls is NOT a pass — the trap every other tenant carries (#392). A
 	// day tenant that never ran and one that agreed everywhere print the same
 	// line unless this says otherwise.
+	//
+	// A SHELL-ONLY day is clean and says so on its own line rather than inside
+	// "EXACT": the two solvers really are absent from the fold, and a verdict that
+	// silently absorbed their absence would be claiming agreement about geometry
+	// nobody compared. `day-gate` prints the same distinction.
 	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.segDiffs + s.lenDiffs} DIVERGED`;
 	const depth = s.rounds.length === 0 ? "" : ` — rounds ${Math.min(...s.rounds)}-${Math.max(...s.rounds)}`;
+	const shells = s.shellOnly === 0 ? "" : ` — ${s.shellOnly} shell-only`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segDiffs}`;
-	console.log(`lean-day[${mode}] ${label}: ${verdict} (${s.calls} day(s), ${s.fails} failed)${depth}${detail}`);
+	console.log(
+		`lean-day[${mode}] ${label}: ${verdict} (${s.calls} day(s), ${s.fails} failed)${depth}${shells}${detail}`,
+	);
 	return {
 		tenant: "day",
 		mode,
