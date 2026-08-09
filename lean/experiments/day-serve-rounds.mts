@@ -13,7 +13,7 @@
  * stays a referee.
  *
  * There is a third way and it needs no async bridge: ask the fold what it wants
- * until it stops wanting. `day-serve-lib.mts` is that loop and explains why it
+ * until it stops wanting. `src/lean/day-serve.ts` is that loop and explains why it
  * works. This file is the VERDICT half — does the demand-driven day equal the
  * gate's day — and `day-arm-cost.mts` is the cost half.
  *
@@ -38,7 +38,8 @@ import { inputsFromFixture, parseCapturedDay } from "../../src/cli/fixture-day.j
 import type { FoldCaptureFile } from "../../src/lean/fold-capture.js";
 import { buildDayRequest } from "../../src/lean/fold-payload.js";
 import { computeVelocityFromInputs } from "../../src/geo/velocity.js";
-import { canon, converge, recordedLookups } from "./day-serve-lib.mjs";
+import { canon, converge } from "../../src/lean/day-serve.js";
+import { recordedLookups } from "./day-serve-lib.mjs";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const DAYS_DIR = path.join(ROOT, "tests/golden/days");

@@ -129,7 +129,7 @@ import type { ClassificationInputs } from "../../src/geo/classification-inputs.j
 import { computeVelocityFromInputs } from "../../src/geo/velocity.js";
 import type { FoldCaptureFile } from "../../src/lean/fold-capture.js";
 import { buildDayRequest } from "../../src/lean/fold-payload.js";
-import { converge } from "./day-serve-lib.mjs";
+import { converge } from "../../src/lean/day-serve.js";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const DAYS_DIR = path.join(ROOT, "tests/golden/days");
