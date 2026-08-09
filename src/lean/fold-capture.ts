@@ -115,16 +115,47 @@ export interface SleepPlaceQuery {
 	label: string | null;
 }
 
+/**
+ * Everything a `verified_cli day` request is built FROM — the payload, with no
+ * oracle in it.
+ *
+ * `FoldCaptureFile` below is a superset: more than half of it (`segsSplit`,
+ * `segsPre`, `segsIn`, `segsOut`, `statesOut`, `episodesOut`, `sleepPlace`) is
+ * what the TS run ANSWERED, read only by `compare-day` to grade a boundary.
+ * `buildDayRequest` never touches those, and a serving caller cannot produce
+ * them — they are the output of the very cascade the request would replace.
+ *
+ * Splitting the two is what lets the fold serve. A capture satisfies this
+ * interface structurally, so the gate keeps passing its file; `velocity.ts` can
+ * satisfy it directly from values already in scope, with no capture at all.
+ *
+ * `tzAt` / `bestPlace` are the shell ANSWER TABLES, and are the one part a
+ * serving caller does not have up front: they start empty and fill over the
+ * round loop, because the fold is a pure function of its tables and will name
+ * what it wanted (#431 gap 4).
+ */
+export interface DayRequestInputs {
+	/** The SPLIT STAGE's input — `classifySegments`' output. The only segment
+	 *  series that crosses; everything downstream of it is Lean's to produce. */
+	segsRaw: TrackSegment[];
+	/** The mined `mode_biometrics` rows — the corrections' only observation that
+	 *  is not already in `obs`. */
+	modeStats: ModeStats[];
+	obs: FoldObservations;
+	/** What the stages after the fold read. Absent only when a caller builds a
+	 *  fold-only request; the day chain needs it. */
+	tail?: DownstreamInputs;
+	tzAt: TzQuery[];
+	bestPlace: StayPlaceQuery[];
+}
+
 /** What one day's cascade consumed and produced. Merged with the day's
- *  `CapturedDay` by `fold-payload.ts` into a `verified_cli day` request. */
-export interface FoldCaptureFile {
+ *  `ClassificationInputs` by `fold-payload.ts` into a `verified_cli day`
+ *  request. A superset of {@link DayRequestInputs} — the extra fields are
+ *  oracles, and are why this type cannot be what a serving caller builds. */
+export interface FoldCaptureFile extends DayRequestInputs {
 	date: string;
 	user: string;
-	/** The SPLIT STAGE's input — `classifySegments`' output, before either
-	 *  biometric split or the stay bridge (#430). The earliest boundary the day
-	 *  gate reaches, and the only one whose input nothing upstream of it in Lean
-	 *  produced. */
-	segsRaw: TrackSegment[];
 	/** The split stage's output — `refinedSegments`, what the OSM enrichment loop
 	 *  is handed, and the boundary that stage is measured at. */
 	segsSplit: TrackSegment[];
@@ -133,22 +164,12 @@ export interface FoldCaptureFile {
 	 *  because the enrichment stage between it and `segsSplit` was unported. Now
 	 *  `Verified.Geo.EnrichFold` produces it and this grades that. */
 	segsPre: EnrichedSegment[];
-	/** The mined `mode_biometrics` rows — the only observation the corrections
-	 *  need that the fold does not, and the only one not already in `obs`. */
-	modeStats: ModeStats[];
 	/** The cascade's input — `physicallyCorrected`, before pass 1. Recorded
 	 *  rather than recomputed, so the Lean corrections are compared against what
 	 *  the TS run actually handed the fold (#428). */
 	segsIn: EnrichedSegment[];
 	/** The cascade's output — what the 38 passes produced. The oracle. */
 	segsOut: EnrichedSegment[];
-	obs: FoldObservations;
-	tzAt: TzQuery[];
-	bestPlace: StayPlaceQuery[];
-	/** Absent when the run ended between the fold and the day's return — the
-	 *  file is written twice for exactly that reason, so a throw in the tail
-	 *  leaves the fold half readable rather than losing the day. */
-	tail?: DownstreamInputs;
 	sleepPlace?: SleepPlaceQuery[];
 	/** The served timeline and its geometry — the downstream oracle. */
 	statesOut?: DayState[];

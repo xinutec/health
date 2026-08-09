@@ -1,5 +1,5 @@
 /**
- * `FoldCaptureFile` + `CapturedDay` → a `verified_cli day` request.
+ * `DayRequestInputs` + `ClassificationInputs` → a `verified_cli day` request.
  *
  * Task #424. The wire format was decided by measurement first
  * (`lean/experiments/passfold-env-size.mts`): recorded answer tables for the
@@ -44,7 +44,7 @@
  * what the fold is allowed to ask has to be sure it is not the one failing.
  */
 
-import type { CapturedDay } from "../cli/fixture-day.js";
+import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import { localStaySamples } from "../geo/opening-hours.js";
@@ -55,13 +55,12 @@ import type { TrackSegment } from "../geo/segments.js";
 import type { VenueTypeStats } from "../geo/venue-prior.js";
 import { localHourOf } from "../geo/venue-prior.js";
 import type { DayState } from "../sleep/day-state.js";
+import type { DayRequestInputs } from "./fold-capture.js";
 
 /** `reverseGeocode`'s `zoom = 18` default, so a trace key that omitted it records
  *  the EFFECTIVE argument rather than a blank — the same choice `table3` makes
  *  for an omitted radius. */
 const NOMINATIM_DEFAULT_ZOOM = 18;
-
-import type { FoldCaptureFile } from "./fold-capture.js";
 
 /** A `Float64` bit pattern as a decimal string — the bridge's float encoding. */
 export function bits(x: number): string {
@@ -309,10 +308,23 @@ function geocodeTable(section: Record<string, NominatimResult | null> | undefine
  *
  *  `trace` asks for per-pass output, which is how a divergence gets attributed
  *  to the pass that produced it (#409) — off by default because it multiplies
- *  the response by 38. */
-export function buildDayRequest(cap: FoldCaptureFile, day: CapturedDay, answers: OsmTrace, trace = false): unknown {
+ *  the response by 38.
+ *
+ *  Takes {@link DayRequestInputs} rather than a `FoldCaptureFile`, and
+ *  `ClassificationInputs` rather than a `CapturedDay`, because neither of the
+ *  richer types can exist on the serving path: a capture file carries the
+ *  cascade's own OUTPUT (`segsOut`, `statesOut`) and is written by the run this
+ *  would replace, and a `CapturedDay` is a fixture. Nothing in the body wanted
+ *  either — it read six fields off the capture and seven off `day.inputs`, all
+ *  of which production already computes. A capture still satisfies the narrower
+ *  type structurally, so `compare-day` passes its file unchanged (#431 gap 1). */
+export function buildDayRequest(
+	cap: DayRequestInputs,
+	inputs: ClassificationInputs,
+	answers: OsmTrace,
+	trace = false,
+): unknown {
 	const t = answers;
-	const inputs = day.inputs;
 	return {
 		// The SPLIT STAGE's input — `classifySegments`' output. Encoded with the
 		// same `encodeSeg` as everything else: `TrackSegment` is a prefix of

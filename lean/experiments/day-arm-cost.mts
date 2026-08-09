@@ -374,7 +374,7 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 	// noise, and a negative "cost of the matcher" is not a measurement.
 	const walkShellMs = Math.max(0, tsCoveredMs - (noWalk.timing.leanCovered ?? 0));
 
-	const c = await converge(cap, captured, inputs.osm, async (req) => runRound(req));
+	const c = await converge(cap, inputs, inputs.osm, async (req) => runRound(req));
 	const base = {
 		date,
 		tsCoveredMs,
@@ -409,7 +409,7 @@ async function measure(file: string, serve: Serve): Promise<Outcome> {
 		// asks. Leaving it out of the Lean arm would price the fold and not the
 		// tenant.
 		const startedEncoding = performance.now();
-		req = buildDayRequest({ ...cap, tzAt, bestPlace }, captured, partial) as object;
+		req = buildDayRequest({ ...cap, tzAt, bestPlace }, inputs, partial) as object;
 		encode.push(performance.now() - startedEncoding);
 		const d = await serve.ask("day", req);
 		fold.push(d.ms);

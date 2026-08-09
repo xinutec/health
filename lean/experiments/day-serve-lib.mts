@@ -30,7 +30,8 @@
 import type { OsmAdapter } from "../../src/geo/osm-adapter.js";
 import type { OsmTrace } from "../../src/geo/osm-adapter-recording.js";
 import type { CapturedDay } from "../../src/cli/fixture-day.js";
-import type { FoldCaptureFile, StayPlaceQuery, TzQuery } from "../../src/lean/fold-capture.js";
+import type { ClassificationInputs } from "../../src/geo/classification-inputs.js";
+import type { DayRequestInputs, FoldCaptureFile, StayPlaceQuery, TzQuery } from "../../src/lean/fold-capture.js";
 import { buildDayRequest } from "../../src/lean/fold-payload.js";
 import tzLookup from "tz-lookup";
 
@@ -150,12 +151,16 @@ export interface Converged {
  * Fill the tables by asking the fold what it wants until it stops wanting.
  *
  * The lookups are answered LIVE from `osm` — the same object production would
- * hand a real shell, able to answer any coordinate rather than a fixed set. The
- * INPUTS still come from `cap`; supplying those live is a different gap of #431.
+ * hand a real shell, able to answer any coordinate rather than a fixed set.
+ *
+ * Both parameters are now the NARROW types — `DayRequestInputs` rather than a
+ * capture file, `ClassificationInputs` rather than a fixture — so nothing in the
+ * round loop depends on a capture existing. A `FoldCaptureFile` still satisfies
+ * the first structurally, which is why the experiments pass theirs unchanged.
  */
 export async function converge(
-	cap: FoldCaptureFile,
-	captured: CapturedDay,
+	cap: DayRequestInputs,
+	inputs: ClassificationInputs,
 	osm: OsmAdapter,
 	run: RunRound,
 ): Promise<Converged> {
@@ -181,7 +186,7 @@ export async function converge(
 	for (;;) {
 		rounds += 1;
 		if (rounds > MAX_ROUNDS) return fail(`NO CONVERGENCE in ${MAX_ROUNDS}`);
-		const r = await run(buildDayRequest({ ...cap, tzAt, bestPlace }, captured, partial));
+		const r = await run(buildDayRequest({ ...cap, tzAt, bestPlace }, inputs, partial));
 		const all = missesIn(r.err);
 		if (all.length === 0) {
 			return { rounds, asked: answered.size, unanswerable, answerMs, tables, out: r.out };
@@ -271,7 +276,7 @@ export async function converge(
 					try {
 						tz = tzLookup(lat, lon);
 					} catch {
-						tz = captured.inputs.homeTz;
+						tz = inputs.homeTz;
 					}
 					tzAt.push({ lat, lon, tz });
 					break;

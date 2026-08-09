@@ -412,7 +412,7 @@ async function measure(file: string): Promise<Outcome> {
 	let raw: string;
 	try {
 		raw = execFileSync(CLI, ["day"], {
-			input: JSON.stringify(buildDayRequest(cap, captured, answers)),
+			input: JSON.stringify(buildDayRequest(cap, inputs, answers)),
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
 			encoding: "utf8",

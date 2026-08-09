@@ -82,7 +82,7 @@ async function measure(file: string): Promise<Outcome> {
 		delete process.env.FOLD_CAPTURE;
 	}
 
-	const c = await converge(cap, captured, inputs.osm, async (req) => run(req, false));
+	const c = await converge(cap, inputs, inputs.osm, async (req) => run(req, false));
 	const recorded = recordedLookups(cap, captured);
 	if (c.failure !== undefined) {
 		return { date, rounds: c.rounds, asked: c.asked, unanswerable: c.unanswerable, recorded, verdict: c.failure };
@@ -91,7 +91,7 @@ async function measure(file: string): Promise<Outcome> {
 	// The reference: the same converged tables, but aborting on a miss. If the
 	// loop really converged this cannot miss, and its output is the gate's.
 	const { tzAt, bestPlace, partial } = c.tables;
-	const ref = run(buildDayRequest({ ...cap, tzAt, bestPlace }, captured, partial), true);
+	const ref = run(buildDayRequest({ ...cap, tzAt, bestPlace }, inputs, partial), true);
 	const verdict =
 		ref.out === ""
 			? `ABORTED: ${ref.err.split("\n")[0]}`
