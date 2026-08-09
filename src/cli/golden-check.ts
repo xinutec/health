@@ -48,6 +48,7 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { type CeilingBaseline, gateCeiling, ratchetDownCounts } from "../eval/ceiling-gate.js";
 import { type FloorBaseline, gateFloor, ratchetUpFloor } from "../eval/floor-gate.js";
 import { parseGroundTruth } from "../eval/ground-truth.js";
 import { gateJourneys, type JourneyBaseline } from "../eval/journey-gate.js";
@@ -200,7 +201,7 @@ const JOURNEY_BASELINE_PATH = path.join(GOLDEN_DIR, "journey-baseline.json");
  *  ceiling. Tracked in git like the other floors; safe to commit (counts only,
  *  no coordinates). */
 const FEASIBILITY_BASELINE_PATH = path.join(GOLDEN_DIR, "feasibility-baseline.json");
-type FeasibilityBaseline = Record<string, number>;
+type FeasibilityBaseline = CeilingBaseline;
 /** Per-day standing count of `invalid-rail-triple` legs — a labelled train
  *  leg whose line does not serve its board/alight station (#181/#351).
  *  Ratcheted like the kinematic ceiling: membership data comes from each
@@ -241,34 +242,6 @@ const TRUTH_BASELINE_PATH = path.join(GOLDEN_DIR, "truth-baseline.json");
  *  Safe to commit — a `match` fingerprint is a hash of the quantised leg input
  *  and a `passes` one is `op/n/note`, so neither says where the user was. */
 const LEAN_DELTA_BASELINE_PATH = path.join(GOLDEN_DIR, "lean-delta-baseline.json");
-
-/**
- * Merge a fresh per-day count into a committed CEILING, keeping the ratchet
- * one-way: `min(committed, current)` per day.
- *
- * The gate's whole claim is that these ceilings "can only shrink", but until
- * 2026-07-27 the `--bless-*` flags wrote the current counts WHOLESALE — so a
- * bless run that fixed four days and left one red silently raised that day's
- * ceiling and the standing failure disappeared from the gate. A run may fix
- * some days without fixing all of them; blessing the wins must not also bless
- * the losses. A day above its ceiling keeps the lower committed value and goes
- * on failing until it is genuinely fixed.
- */
-function ratchetDown(committed: FeasibilityBaseline | null, current: FeasibilityBaseline): FeasibilityBaseline {
-	const ordered: FeasibilityBaseline = {};
-	const dates = new Set([...Object.keys(committed ?? {}), ...Object.keys(current)]);
-	for (const date of [...dates].sort()) {
-		// A day MISSING from the committed baseline has a ceiling of ZERO —
-		// that is how the gate reads it everywhere else (`baseline[date] ?? 0`),
-		// so a newly-offending day cannot be blessed in by omission either.
-		// `committed === null` is the distinct bootstrap case (no baseline file
-		// at all): nothing to ratchet against, so the current counts establish
-		// the first ceiling.
-		const floor = committed === null ? (current[date] ?? 0) : Math.min(committed[date] ?? 0, current[date] ?? 0);
-		if (floor > 0) ordered[date] = floor;
-	}
-	return ordered;
-}
 
 const args = process.argv.slice(2);
 let bless = false;
@@ -397,6 +370,14 @@ let linesFromRows = 0;
 let hardViolations = 0;
 const kinematicNow: FeasibilityBaseline = {};
 const railTripleNow: FeasibilityBaseline = {};
+/** Days whose fixture actually replayed, so `checkWorldlineFeasibility` ran on
+ *  them. A day that THREW never reaches the counter, so it is absent from
+ *  `kinematicNow` — and absent reads as ZERO, which against a non-zero ceiling
+ *  is an IMPROVEMENT. That inverts the gate: a change that breaks a fixture and
+ *  worsens the day at once reports "1 day(s) improved" and prompts a re-bless.
+ *  The truth and journey floors already carry this distinction (#408); these two
+ *  ratchets are counts rather than sets, and were left reading silence as zero. */
+const feasibilityReported = new Set<string>();
 // Per-day set of ground-truth journeys the pipeline reconstructs this run —
 // compared against the committed baseline by the journey ratchet gate below.
 const journeysNow: JourneyBaseline = {};
@@ -413,11 +394,16 @@ const truthRegressedNow: FloorBaseline = {};
  *  than left to read as 100% regressed (the same trap as the aggregates that
  *  silently skip a throwing day). */
 const truthReported = new Set<string>();
+/** Every day this run set out to replay — the denominator the feasibility
+ *  ceilings are checked against, so a day at ceiling zero that stops replaying
+ *  is still named rather than silently dropping out of the sweep. */
+const feasibilityAttempted = new Set<string>();
 
 for (const file of files) {
 	const full = path.join(DAYS_DIR, file);
 	const captured = parseCapturedDay(await readFile(full, "utf8"));
 	if (blessDate && captured.meta.date !== blessDate) continue;
+	feasibilityAttempted.add(captured.meta.date);
 
 	const label = `${captured.meta.date} ${captured.meta.user}${captured.meta.description ? ` — ${captured.meta.description}` : ""}`;
 
@@ -496,6 +482,7 @@ for (const file of files) {
 	// exactly the lines the captured pipeline run resolved.
 	const lineStations = new Map(Object.entries(captured.inputs.osmTrace.stationsOnLine ?? {}));
 	const violations = checkWorldlineFeasibility(states, dayPoints, dayInputs.biometrics.steps, lineStations);
+	feasibilityReported.add(captured.meta.date);
 	if (violations.length > 0) {
 		const kinematic = violations.filter((v) => v.kind === "impossible-mode-kinematics").length;
 		if (kinematic > 0) kinematicNow[captured.meta.date] = kinematic;
@@ -628,7 +615,7 @@ console.log(
 const kinematicTotal = Object.values(kinematicNow).reduce((n, c) => n + c, 0);
 let kinematicRegressed = 0;
 if (blessFeasibility) {
-	const ordered = ratchetDown(await loadFeasibilityBaseline(), kinematicNow);
+	const ordered = ratchetDownCounts(await loadFeasibilityBaseline(), kinematicNow, feasibilityReported);
 	await writeFile(FEASIBILITY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
 	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
 	console.log(
@@ -642,26 +629,24 @@ if (feasBaseline === null) {
 		`feasibility (kinematic): no baseline yet — ${kinematicTotal} standing leg(s). Establish the ceiling with: npm run golden -- --bless-feasibility`,
 	);
 } else {
-	const dates = new Set([...Object.keys(feasBaseline), ...Object.keys(kinematicNow)]);
-	let improvedDays = 0;
-	for (const date of [...dates].sort()) {
-		const was = feasBaseline[date] ?? 0;
-		const now = kinematicNow[date] ?? 0;
-		if (now > was) {
-			kinematicRegressed += now - was;
-			console.log(`      ✗ feasibility (kinematic): ${date} emits ${now} impossible leg(s), ceiling is ${was}`);
-		} else if (now < was) {
-			improvedDays++;
-		}
+	const gate = gateCeiling(feasBaseline, kinematicNow, feasibilityReported, feasibilityAttempted);
+	for (const r of gate.regressed) {
+		kinematicRegressed += r.now - r.was;
+		console.log(`      ✗ feasibility (kinematic): ${r.date} emits ${r.now} impossible leg(s), ceiling is ${r.was}`);
 	}
 	console.log(
 		kinematicRegressed > 0
 			? `feasibility (kinematic): FAIL — ${kinematicRegressed} leg(s) above the committed ceiling.`
 			: `feasibility (kinematic): ${kinematicTotal} standing leg(s), none above the ceiling.`,
 	);
-	if (improvedDays > 0) {
+	if (gate.unmeasured.length > 0) {
 		console.log(
-			`feasibility (kinematic): ${improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-feasibility`,
+			`feasibility (kinematic): ${gate.unmeasured.length} day(s) not measured this run, ceiling unchecked: ${gate.unmeasured.join(", ")}`,
+		);
+	}
+	if (gate.improvedDays > 0) {
+		console.log(
+			`feasibility (kinematic): ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-feasibility`,
 		);
 	}
 }
@@ -681,7 +666,7 @@ if (blessRailTriples) {
 	} catch {
 		committed = null;
 	}
-	const ordered = ratchetDown(committed, railTripleNow);
+	const ordered = ratchetDownCounts(committed, railTripleNow, feasibilityReported);
 	await writeFile(RAIL_TRIPLE_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
 	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
 	console.log(
@@ -700,26 +685,24 @@ if (railTripleBaseline === null) {
 		`rail triples: no baseline yet — ${railTripleTotal} standing invalid leg(s). Establish the ceiling with: npm run golden -- --bless-rail-triples`,
 	);
 } else {
-	const dates = new Set([...Object.keys(railTripleBaseline), ...Object.keys(railTripleNow)]);
-	let improvedDays = 0;
-	for (const date of [...dates].sort()) {
-		const was = railTripleBaseline[date] ?? 0;
-		const now = railTripleNow[date] ?? 0;
-		if (now > was) {
-			railTripleRegressed += now - was;
-			console.log(`      ✗ rail triples: ${date} emits ${now} invalid leg(s), ceiling is ${was}`);
-		} else if (now < was) {
-			improvedDays++;
-		}
+	const gate = gateCeiling(railTripleBaseline, railTripleNow, feasibilityReported, feasibilityAttempted);
+	for (const r of gate.regressed) {
+		railTripleRegressed += r.now - r.was;
+		console.log(`      ✗ rail triples: ${r.date} emits ${r.now} invalid leg(s), ceiling is ${r.was}`);
 	}
 	console.log(
 		railTripleRegressed > 0
 			? `rail triples: FAIL — ${railTripleRegressed} leg(s) above the committed ceiling.`
 			: `rail triples: ${railTripleTotal} standing invalid leg(s), none above the ceiling.`,
 	);
-	if (improvedDays > 0) {
+	if (gate.unmeasured.length > 0) {
 		console.log(
-			`rail triples: ${improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-rail-triples`,
+			`rail triples: ${gate.unmeasured.length} day(s) not measured this run, ceiling unchecked: ${gate.unmeasured.join(", ")}`,
+		);
+	}
+	if (gate.improvedDays > 0) {
+		console.log(
+			`rail triples: ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-rail-triples`,
 		);
 	}
 }
