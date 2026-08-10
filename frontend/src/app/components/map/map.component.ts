@@ -17,6 +17,7 @@ import { MatCheckboxModule } from "@angular/material/checkbox";
 import * as L from "leaflet";
 import { modeStyle } from "../../modes";
 import { displayTzAt, type EpisodeGeometry, type LatestFix, type VelocityData } from "../../services/health.service";
+import { sourceLabel } from "./map.labels";
 
 /** Longest gap (m) between two episodes' drawn ends that still joins the next
  *  episode's own polyline. Sized to cosmetic stitching: a station platform →
@@ -402,7 +403,7 @@ export class MapComponent implements OnDestroy {
 		// The fallback survives the typing: `kind` comes off the wire as JSON,
 		// so a backend that ships a kind this build has never heard of lands
 		// here at runtime even though the compiler thinks the lookup is total.
-		const source = MapComponent.SOURCE_LABEL[best.kind] ?? best.kind;
+		const source = sourceLabel(best.kind, best.mode);
 		const placeLine = best.place ? `<br><i>${best.place}</i>` : "";
 		const html =
 			`<div style="font:13px/1.5 system-ui">` +
@@ -414,21 +415,4 @@ export class MapComponent implements OnDestroy {
 		L.popup({ closeButton: true }).setLatLng([best.lat, best.lon]).setContent(html).openOn(map);
 	}
 
-	/** What each episode `kind` means as a data source — the answer to
-	 *  "where does this point come from".
-	 *
-	 *  Keyed on the episode kinds plus `live` (the latest-fix marker, which is
-	 *  drawn here and has no backend episode). `Record<…>` rather than
-	 *  `Record<string, …>` so a new kind is a build error here instead of a
-	 *  popup that shows the raw slug — the kinds themselves are held to the
-	 *  backend union by scripts/check-frontend-unions.mjs (#337). */
-	private static readonly SOURCE_LABEL: Record<EpisodeGeometry["kind"] | "live", string> = {
-		raw: "raw GPS fix",
-		matched: "map-matched to road/path",
-		snapped: "snapped to rail line",
-		smoothed: "smoothed GPS (denoised)",
-		anchor: "stay centre (computed average)",
-		tentative: "gap connector (inferred, no GPS)",
-		live: "live position (latest fix)",
-	};
 }
