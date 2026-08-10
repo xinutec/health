@@ -47,6 +47,7 @@ namespace Verified.Hsmm.StationChain
 open Verified.Hsmm.FloatScore (haversineMeters)
 open Verified.Hsmm.RouteGraph (LatLon geometryLengthM)
 open Verified.Hsmm.RouteModel (RouteGraphModel RouteEdge buildRouteGraphModel edgesNearIdx)
+open Verified.Hsmm.Observation (ObsRow)
 
 /-- Station-footprint radius (m) — `train-candidate-generator.ts`'s constant,
     restated here because this module's copy is what its own guards pin. -/
@@ -332,6 +333,140 @@ def chainPenalty (prevAlight board : ChainNode) (gapMin : Float) : Float :=
       let requiredPace := d / max gapMin 0.5
       let z := max 0 (requiredPace - TRANSFER_WALK_M_PER_MIN) / TRANSFER_Z_SCALE
       max CHAIN_CLAMP (-0.5 * z * z)
+
+/-! ## Anchors: the observed fix each side of the leg is measured against -/
+
+/-- Where a side's candidates are measured from, and how stale that measurement
+    is. `slopMin` widens both the admission radius and the penalty's sigma, so a
+    boundary the phone never observed cannot masquerade as a precise one. -/
+structure Anchor where
+  lat : Float
+  lon : Float
+  /-- Minutes between the fix and the leg boundary it anchors. -/
+  slopMin : Float
+  deriving Inhabited, Repr
+
+/-- Last observed fix strictly BEFORE the leg (board side).
+
+    Two sources, and the fallback is not the same shape as the scan. The scan
+    walks backwards for a minute that carries its own `gps`; failing that it
+    takes `prevGpsFix` off the leg's FIRST row — the bookend, which is a fix the
+    aggregator already reached back for. Note the index: the fallback reads
+    `firstIdx`, not `firstIdx - 1`, so a leg whose every prior minute is dark
+    still anchors from the bookend rather than from nothing. -/
+def boardAnchor (obs : Array ObsRow) (firstIdx : Nat) (legStartTs : Int) : Option Anchor :=
+  let rec scan (i : Nat) : Option Anchor :=
+    match i with
+    | 0 => none
+    | j + 1 =>
+      match obs[j]? with
+      | none => none
+      | some o => match o.gps with
+        | some g => some ⟨g.lat, g.lon, max 0 (mins legStartTs o.ts)⟩
+        | none => scan j
+  match scan firstIdx with
+  | some a => some a
+  | none => match (obs[firstIdx]?).bind (·.prevGpsFix) with
+    | none => none
+    | some b => some ⟨b.lat, b.lon, max 0 (mins legStartTs b.ts)⟩
+
+/-- First observed fix at/after the leg end (alight side) — `boardAnchor`
+    mirrored, with `nextGpsFix` off the leg's LAST row as the bookend. -/
+def alightAnchor (obs : Array ObsRow) (lastIdx : Nat) (legEndTs : Int) : Option Anchor :=
+  let rec scan (i : Nat) (fuel : Nat) : Option Anchor :=
+    match fuel with
+    | 0 => none
+    | f + 1 =>
+      match obs[i]? with
+      | none => none
+      | some o => match o.gps with
+        | some g => some ⟨g.lat, g.lon, max 0 (mins o.ts legEndTs)⟩
+        | none => scan (i + 1) f
+  match scan (lastIdx + 1) obs.size with
+  | some a => some a
+  | none => match (obs[lastIdx]?).bind (·.nextGpsFix) with
+    | none => none
+    | some b => some ⟨b.lat, b.lon, max 0 (mins b.ts legEndTs)⟩
+
+/-! ## Side candidates: which stations one end of a leg may be -/
+
+structure SideCandidate where
+  node : ChainNode
+  anchorPenalty : Float
+  deriving Inhabited, Repr
+
+/-- A name→candidate map that remembers INSERTION order, mirroring the JS `Map`
+    the TS builds. Updating an existing name must NOT move it, which is exactly
+    what `Map.set` does and what `{ st with best := … }` does here. -/
+private structure ByName where
+  order : Array String
+  best : Std.HashMap String SideCandidate
+
+private def byNameEmpty : ByName := ⟨#[], {}⟩
+
+private def byNameOut (st : ByName) : Array SideCandidate :=
+  st.order.filterMap (fun name => st.best.get? name)
+
+/-- Keep the BEST-scoring node per station name. Penalties are ≤ 0, so "greater"
+    is "closer to the anchor"; the comparison is STRICT, so a later node tying
+    the incumbent does not displace it and the name keeps its first position. -/
+private def admitCand (st : ByName) (node : ChainNode) (p : Float) : ByName :=
+  match node.stationName with
+  | none => st
+  | some name =>
+    match st.best.get? name with
+    | some prev => if p > prev.anchorPenalty then { st with best := st.best.insert name ⟨node, p⟩ } else st
+    | none => { order := st.order.push name, best := st.best.insert name ⟨node, p⟩ }
+
+/-- Stations on `line` admissible for one side of a leg, scored against the
+    anchor and DEDUPED BY NAME — one real station is several OSM nodes
+    (entrances, merged endpoints), and the margin gate compares stations, not
+    nodes.
+
+    A missing anchor admits every station on the line at a flat 0; the chain and
+    duration terms then carry the choice. Trajectory-admitted stations (`extra`)
+    join AFTER the cap, so a candidate the track vouches for cannot be crowded
+    out by anchor-plausible ones — that is what trajectory admission is for.
+
+    THREE consumers of order, which is why the graph carries an ordered node
+    array (see the module docstring): the dedupe above keeps the first best, the
+    sort below is stable, and the cut then falls wherever those two left things. -/
+def sideCandidates (g : ChainGraph) (line : String) (anchor : Option Anchor)
+    (extra : Array ChainNode) : Array SideCandidate :=
+  let admitted := match anchor with
+    | none =>
+      g.nodes.foldl (fun st n =>
+        match n.stationName with
+        | none => st
+        | some _ => if (stationLineMemberships g n).contains line then admitCand st n 0 else st)
+        byNameEmpty
+    | some a =>
+      let radius := CAND_BASE_RADIUS_M + SLOP_SPEED_M_PER_MIN * a.slopMin
+      (stationsNear g a.lat a.lon radius).foldl (fun st nd =>
+        if (stationLineMemberships g nd.1).contains line then
+          admitCand st nd.1 (slopZPenalty nd.2 STATION_SIGMA_M a.slopMin ANCHOR_CLAMP)
+        else st) byNameEmpty
+  -- Descending by penalty, STABLY: `mergeSort` is left-biased on `≤`, so ties
+  -- keep the graph order the dedupe left them in — the same guarantee V8 gives
+  -- `sort((a, b) => b.p - a.p)`, and the reason ties at the cut are decidable.
+  let sorted := ((byNameOut admitted).toList.mergeSort
+    (fun a b => b.anchorPenalty ≤ a.anchorPenalty)).toArray
+  -- `stationName.getD ""` mirrors the TS `?? ""`, which is unreachable: every
+  -- candidate here came through `admitCand`, which drops the nameless.
+  let capped := (sorted.extract 0 MAX_CANDIDATES_PER_SIDE).foldl (fun st c =>
+    { order := st.order.push (c.node.stationName.getD ""),
+      best := st.best.insert (c.node.stationName.getD "") c }) byNameEmpty
+  byNameOut (extra.foldl (fun st n =>
+    match n.stationName with
+    | none => st
+    | some name =>
+      if st.best.contains name then st
+      else
+        let p := match anchor with
+          | none => 0
+          | some a =>
+            slopZPenalty (haversineMeters a.lat a.lon n.lat n.lon) STATION_SIGMA_M a.slopMin ANCHOR_CLAMP
+        { order := st.order.push name, best := st.best.insert name ⟨n, p⟩ }) capped)
 
 /-! ## Trajectory: the fixes' own vote, projected onto the line's track -/
 
