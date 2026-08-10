@@ -6,7 +6,6 @@ import Verified.Hsmm.Quantize
 import Verified.Hsmm.Entry
 import Verified.Hsmm.Geometric
 import Verified.Hsmm.LineProximity
-import Verified.Hsmm.RouteRail
 import Verified.Hsmm.ChainContext
 import Verified.Hsmm.SegmentEvidence
 import Verified.Hsmm.TrainGenerator

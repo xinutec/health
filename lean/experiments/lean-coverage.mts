@@ -148,9 +148,28 @@ const RAIL_ROOTS = ["Verified.Rail.Certify", "Verified.Rail.Dijkstra"];
  *
  * FINDINGS — real ports, guards only, no cited harness, entered by no verb:
  *   `Verified.Hsmm.GpsOutliers` (9 def) and `Verified.Hsmm.RouteRail` (9 def).
- *   Their ONLY importer is `Verified.Hsmm.Factors`, whose only importer is
- *   `Verified.lean` — so nothing in `verified_cli` reaches them, and the blanket
- *   had been reporting both as live-compared.
+ *   Their ONLY importer was `Verified.Hsmm.Factors`, whose only importer is
+ *   `Verified.lean` — so nothing in `verified_cli` reached them, and the blanket
+ *   had been reporting both as live-compared. Both resolved 2026-08-10 (#676),
+ *   and they turned out to be different problems wearing the same signature:
+ *
+ *   `RouteRail` was SUPERSEDED and is deleted. `EmissionFull` sums
+ *   `base + geo + routeRail + lineProx` using `RouteModel.routeRailEvidence` —
+ *   same four constants, same gates, but it COMPUTES the route-graph facts in
+ *   Lean instead of taking them as caller-resolved booleans, which is what the
+ *   deleted module took. `EmissionFull` is imported by `Assemble`, which the
+ *   `assemble`/`assembledecode` verbs enter, so the live path was never the
+ *   orphan. Checked in that order deliberately: superseded was the SECOND
+ *   reading, and the first (a wiring defect in `Assemble`) had to be ruled out
+ *   before deleting anything.
+ *
+ *   `GpsOutliers` is NEITHER, and stays. It is the only Lean implementation and
+ *   its TS is live — `decode.ts:160` calls `dropGpsOutliers` on every decode. No
+ *   verb reaches it for a CAPTURE-time reason: `capture-hsmm-day.ts:191` applies
+ *   the same drop BEFORE storing the fixture, so the stored points hold none of
+ *   the outliers the pass exists to remove and a replay cannot exercise it. Same
+ *   shape as the #233 waiver — determinism bought by moving work out of the
+ *   replay — and the fix is on the capture side, not a wiring change here.
  *
  * SHAPE — in the residue correctly, but not ports and not news:
  *   `Verified.Hsmm.Factors` is an AGGREGATOR: 25 imports, zero definitions. It
