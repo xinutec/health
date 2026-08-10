@@ -201,6 +201,12 @@ const GATES: [string, string[]][] = [
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
 	["LEAN_HSMM / compare-assemble", HSMM_ROOTS],
 	["LEAN_RAIL (waived)", RAIL_ROOTS],
+	// #672. The `stationchain` verb, driven by `compare-stationchain.sh` over the
+	// decoded-day corpus. Listed only once that comparator existed: the verb
+	// landed a commit earlier and this row deliberately did NOT move then,
+	// because a verb with nothing behind it is reachable, not compared — which is
+	// the exact overstatement #674 removed from this file.
+	["LEAN_STATIONCHAIN / compare-stationchain", ["Verified.Hsmm.StationChain"]],
 	["kalman / gpsquality / biolabels", ["Verified.Geo.Kalman", "Verified.Geo.GpsQuality", "Verified.Geo.BiometricLabels"]],
 ];
 

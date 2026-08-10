@@ -38,6 +38,7 @@
     "compare-rail": "scripts/compare-rail.sh",
     "compare-geo": "scripts/compare-geo.sh",
     "compare-match": "scripts/compare-match.sh",
+    "compare-stationchain": "scripts/compare-stationchain.sh",
     "compare-kalman": "scripts/compare-kalman.sh",
     "compare-gpsquality": "scripts/compare-gpsquality.sh",
     "bench-bridge": "scripts/bench-bridge.sh",
