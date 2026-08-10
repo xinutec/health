@@ -50,6 +50,7 @@ import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
 import { logLeanMatchLedger } from "../lean/lean-match.js";
 import { logLeanPassLedger } from "../lean/lean-passes.js";
+import { logLeanStationChainLedger } from "../lean/lean-station-chain.js";
 import { leanShadowEnabled, setLeanRunScope } from "../lean/run-scope.js";
 import { errorText } from "../util/error-text.js";
 
@@ -261,6 +262,14 @@ async function decodeAndPersist(
 	// re-exercises the full A/B.
 	if (leanShadowEnabled()) await runWalkShadow(userId, date, tz, osm);
 	logLeanHsmmLedger(date);
+	// #711. Missed on the first pass, and the first live run is what showed it:
+	// the per-day `lean-stationchain <date> EXACT …` lines printed from inside
+	// the resolver, so the cron LOOKED instrumented, while the accumulating
+	// ledger — the fleetwatch-readable line, and the only one carrying the
+	// swallowed-bridge-failure count — was emitted by the two gates and by
+	// nothing on the serve path. A tenant whose ledger is never emitted in
+	// production is the same silence the ledger exists to break.
+	logLeanStationChainLedger(date);
 	logLeanPassLedger(date);
 	logLeanMatchLedger(date);
 	logLeanKalmanLedger(date);
