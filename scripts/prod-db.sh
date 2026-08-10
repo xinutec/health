@@ -54,7 +54,6 @@ NC_CLIENT_SECRET=$(get NC_CLIENT_SECRET)
 # uses; just credentials isn't enough.
 USE_FACTOR_SCORER=$(get USE_FACTOR_SCORER)
 USE_BIOMETRIC_FACTOR=$(get USE_BIOMETRIC_FACTOR)
-USE_CONTINUITY_CONTINUATION=$(get USE_CONTINUITY_CONTINUATION)
 # C4 continuity flags — these gate the HSMM decode itself, so a Mac
 # replay that misses them decodes a different day than the cron wrote
 # to decoded_days.
@@ -72,7 +71,6 @@ export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
 # an empty string is not the same as unset (the code reads === "1").
 [ -n "$USE_FACTOR_SCORER" ] && export USE_FACTOR_SCORER || true
 [ -n "$USE_BIOMETRIC_FACTOR" ] && export USE_BIOMETRIC_FACTOR || true
-[ -n "$USE_CONTINUITY_CONTINUATION" ] && export USE_CONTINUITY_CONTINUATION || true
 [ -n "$USE_CADENCE_IMPUTATION" ] && export USE_CADENCE_IMPUTATION || true
 [ -n "$USE_SEGMENT_EVIDENCE" ] && export USE_SEGMENT_EVIDENCE || true
 [ -n "$USE_CHAIN_CONTEXT" ] && export USE_CHAIN_CONTEXT || true

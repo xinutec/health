@@ -8,8 +8,9 @@
  * chain start or when the prior row is absent / incomplete.
  *
  * Shared by the production decode-day CLI and the HSMM fixture-capture
- * CLI so both seed the decoder identically. The flag gate
- * (`useContinuityContinuation`) stays at the call site.
+ * CLI so both seed the decoder identically. Called unconditionally since
+ * #237 — the USE_CONTINUITY_CONTINUATION gate is gone, so "seed identically"
+ * is now true of a local run too, not only of two runs that both set it.
  */
 
 import { db as kyselyDb } from "../db/pool.js";

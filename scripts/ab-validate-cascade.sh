@@ -13,7 +13,7 @@ done
 
 echo "=== Pass B: cascade + continuity ON ===" >&2
 for d in $DATES; do
-  USE_CONTINUITY_CONTINUATION=1 ./scripts/prod-db.sh node dist/cli/decode-day.js --date "$d" > /tmp/dec.log 2>&1
+  ./scripts/prod-db.sh node dist/cli/decode-day.js --date "$d" > /tmp/dec.log 2>&1
   ./scripts/prod-db.sh node dist/cli/refresh-presence-log.js > /tmp/ref.log 2>&1
 done
 ./scripts/prod-db.sh node scripts/dump-all-segments.mjs 2>/dev/null | grep -v '^Forwarding\|^Handling' > /tmp/cascade_on.json

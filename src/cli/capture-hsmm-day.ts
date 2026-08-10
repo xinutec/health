@@ -10,11 +10,12 @@
  * replay test rebuilds the route graph and re-runs `decodeHsmm` with no
  * DB and no network.
  *
- * Connection: needs the prod DB. Run via prod-db.sh with the SAME gating
- * env the cron uses (USE_CONTINUITY_CONTINUATION=1) so the captured
- * decode matches production:
+ * Connection: needs the prod DB. Run via prod-db.sh, which mirrors the gating
+ * env the cron uses so the captured decode matches production. Continuity is no
+ * longer among those flags: it is unconditional since #237, so a capture cannot
+ * silently record a no-continuity decode by forgetting an env var.
  *
- *   USE_CONTINUITY_CONTINUATION=1 scripts/prod-db.sh \
+ *   scripts/prod-db.sh \
  *     node dist/cli/capture-hsmm-day.js 2026-05-25 pippijn Europe/London \
  *       --description "taxi home->Cleveland Clinic; must NOT decode train @ Circle Line (#238)"
  *
@@ -38,7 +39,6 @@ import { migrate } from "../db/schema.js";
 import {
 	useCadenceImputation,
 	useChainContext,
-	useContinuityContinuation,
 	useReacquireRobustSpeed,
 	useSegmentEvidence,
 } from "../geo/factors/feature-flag.js";
@@ -91,7 +91,7 @@ const DECODED_DIR = path.join(process.cwd(), "tests", "golden", "decoded_days");
 function usage(): never {
 	console.error(
 		'Usage: node dist/cli/capture-hsmm-day.js <date> <user> <timezone> [--description "..."]\n' +
-			"Run via prod-db.sh with USE_CONTINUITY_CONTINUATION=1 to match the cron.\n",
+			"Run via prod-db.sh to match the cron's gating env.\n",
 	);
 	process.exit(2);
 }
@@ -170,7 +170,7 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
 initPool(config.db);
 await withConnection(migrate);
 
-console.error(`# capture-hsmm-day — ${date} ${user} (${tz}), continuity=${useContinuityContinuation() ? "on" : "off"}`);
+console.error(`# capture-hsmm-day — ${date} ${user} (${tz})`);
 
 const places = await loadFocusPlacesForUser(user);
 const placeNearLine = await buildPlaceNearLine(places, KNOWN_LINES);
@@ -189,7 +189,7 @@ const rawOsm = await loadRawOsmForBbox(dayBbox, { featureTypes: ["railway"] });
 const routeGraph = buildRouteGraph(rawOsm.lines, rawOsm.points);
 
 const proximityByMinute = await computeMinuteProximity(dbOsmAdapter, date, tz, dropGpsOutliers(velResult.points));
-const continuityContext = useContinuityContinuation() ? await loadContinuityContext(user, date) : null;
+const continuityContext = await loadContinuityContext(user, date);
 // Served-station membership (#364) — captured into the fixture so a
 // replay reproduces the same station-chain evidence.
 const railStopRelations = await loadAllRailStopRelations();

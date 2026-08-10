@@ -37,17 +37,6 @@ export function useFactorScorer(): boolean {
 	return process.env.USE_FACTOR_SCORER === "1";
 }
 
-/** USE_CONTINUITY_CONTINUATION=1 — Phase 3 of
- *  `docs/proposals/2026-06-presence-continuity.md`. When on, the HSMM
- *  emission function reads the prior day's end-of-day place from
- *  `presence_log` and boosts the no-fix-minute likelihood for the
- *  matching stationary state. Falls off as
- *  `decay(hours-since-last-fix)` so a multi-day no-data period
- *  attributes to the prior place but with decaying confidence. */
-export function useContinuityContinuation(): boolean {
-	return process.env.USE_CONTINUITY_CONTINUATION === "1";
-}
-
 export function useBiometricFactor(): boolean {
 	return process.env.USE_BIOMETRIC_FACTOR === "1";
 }

@@ -21,7 +21,6 @@ import {
 	placeReachabilityRadiusM,
 	useCadenceImputation,
 	useChainContext,
-	useContinuityContinuation,
 	usePlaceReachability,
 	useReacquireRobustSpeed,
 	useSegmentEvidence,
@@ -194,12 +193,14 @@ async function decodeAndPersist(
 	// actually observes.
 	const proximityByMinute = await computeMinuteProximity(osm, date, tz, dropGpsOutliers(velResult.points));
 	// Presence-continuity seed (Phase 3 of
-	// docs/proposals/2026-06-presence-continuity.md): when the flag is
-	// on, read the prior day's presence_log row to set the
-	// continuation context. Silent fallback if the row doesn't exist
-	// (chain start) or the flag is off. The flag gate lives here in the
-	// loader; the decoder purely consumes whatever context it is given.
-	const continuityContext = useContinuityContinuation() ? await loadContinuityContext(userId, date) : null;
+	// docs/proposals/2026-06-presence-continuity.md): read the prior day's
+	// presence_log row to set the continuation context. Silent fallback if the
+	// row doesn't exist (chain start). Unconditional since #237 — it had been
+	// gated on USE_CONTINUITY_CONTINUATION, which production sets to 1, so the
+	// flag's only remaining effect was to let a LOCAL run decode a different day
+	// than the cron wrote to decoded_days. The loader still owns the null case;
+	// the decoder purely consumes whatever context it is given.
+	const continuityContext = await loadContinuityContext(userId, date);
 	// Per-day stationary state-space reduction: drop focus places the user was
 	// never near (dead trellis states), keeping high-dwell anchors + the
 	// continuity place. Off by default — production behaviour is the full set.

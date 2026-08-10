@@ -11,9 +11,9 @@
  * around this core; tests call it directly against a captured fixture so
  * the decode is replayable without a database.
  *
- * The flag gate (`useContinuityContinuation`) lives in the loader, not
- * here: the loader either reads the prior-day continuity context or
- * passes `null`, and this core consumes whatever it is handed.
+ * The loader either reads the prior-day continuity context or passes `null`
+ * (chain start, or no prior row), and this core consumes whatever it is
+ * handed. There is no longer a flag in front of that read — see #237.
  */
 
 import type { HrPoint, SleepStageRecord, StepPoint } from "../geo/biometrics.js";
