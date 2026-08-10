@@ -12,18 +12,46 @@
  */
 
 import { TestBed } from "@angular/core/testing";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { ReauthBannerComponent } from "./reauth-banner.component";
 import { ConnectionStateService } from "../../services/connection-state.service";
+import { HealthService } from "../../services/health.service";
 
-function setup() {
+function setup(opts: { onCheckAuth?: () => void } = {}) {
+	// `checkAuth` is what re-reads /api/me and pushes the durable connection
+	// status into ConnectionStateService. Stubbed so a test can say what the
+	// server would have answered.
+	const checkAuth = vi.fn(() => {
+		opts.onCheckAuth?.();
+		return Promise.resolve(true);
+	});
 	TestBed.configureTestingModule({
 		imports: [ReauthBannerComponent],
+		providers: [{ provide: HealthService, useValue: { checkAuth } }],
 	});
 	const fixture = TestBed.createComponent(ReauthBannerComponent);
 	const connection = TestBed.inject(ConnectionStateService);
 	fixture.detectChanges();
-	return { fixture, connection };
+	return { fixture, connection, checkAuth };
+}
+
+/** Press the banner's button, with /api/nextcloud/connect/init stubbed. */
+async function pressConnect(fixture: { nativeElement: unknown }): Promise<void> {
+	vi.spyOn(globalThis, "fetch").mockResolvedValue(
+		new Response(JSON.stringify({ loginUrl: "https://nc.example/login/v2/flow/abc" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		}),
+	);
+	vi.spyOn(window, "open").mockReturnValue(null);
+	const button = (fixture.nativeElement as HTMLElement).querySelector("button");
+	button?.click();
+	await flush();
+}
+
+/** Let the component's awaited fetch/json chain settle. */
+function flush(): Promise<void> {
+	return new Promise((r) => setTimeout(r, 0));
 }
 
 describe("ReauthBannerComponent", () => {
@@ -69,5 +97,45 @@ describe("ReauthBannerComponent", () => {
 		const button = banner?.querySelector("button");
 		expect(button?.textContent ?? "").toContain("Connect Nextcloud");
 		expect(button?.textContent ?? "").not.toContain("Reconnect");
+	});
+
+	it("settles when the page comes back, rather than on a timer that isn't running", async () => {
+		// The defect DL-ANGULAR-OFFSITE-POLL names, and the reason this banner
+		// changed. Granting access happens on NEXTCLOUD's page, which takes the
+		// foreground — so the 2s poll this replaced was not running while the
+		// only interesting thing happened. life shipped the same design and it
+		// failed on first use: credential stored, banner still waiting, exactly
+		// one status request made.
+		const { fixture, connection, checkAuth } = setup({
+			onCheckAuth: () => connection.setNextcloudStatus("active"),
+		});
+		connection.setNextcloudStatus("not_linked");
+		fixture.detectChanges();
+		await pressConnect(fixture);
+		fixture.detectChanges();
+		expect((fixture.nativeElement as HTMLElement).textContent ?? "").toContain("Opened Nextcloud");
+
+		document.dispatchEvent(new Event("visibilitychange"));
+		await flush();
+		fixture.detectChanges();
+
+		expect(checkAuth).toHaveBeenCalled();
+		expect(connection.nextcloudStatus()).toBe("active");
+		expect((fixture.nativeElement as HTMLElement).querySelector(".reauth-banner")).toBeNull();
+	});
+
+	it("coming back without granting returns the button rather than spinning for ever", async () => {
+		// Abandoning the grant used to leave a spinner and no way out of it.
+		const { fixture, connection } = setup();
+		connection.setNextcloudStatus("not_linked");
+		fixture.detectChanges();
+		await pressConnect(fixture);
+
+		document.dispatchEvent(new Event("visibilitychange"));
+		await flush();
+		fixture.detectChanges();
+
+		const button = (fixture.nativeElement as HTMLElement).querySelector("button");
+		expect(button?.textContent ?? "").toContain("Connect Nextcloud");
 	});
 });
