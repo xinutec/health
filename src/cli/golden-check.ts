@@ -41,9 +41,14 @@
  * the ceiling that lets a Lean tenant be staged here while it still carries
  * debt, #403).
  *
+ * Those five COMBINE — they write different baseline files and the run applies
+ * every one it was given, naming each file it wrote. `--bless` is the exception
+ * and is rejected alongside them, because it skips the measurement the ratchets
+ * are derived from; see the bless section for both halves of that.
+ *
  * Exit 0 = every fixture matches (or was blessed).
  * Exit 1 = at least one regressed (or threw an uncaptured-query error).
- * Exit 2 = no corpus.
+ * Exit 2 = no corpus, or contradictory bless flags.
  */
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
@@ -311,6 +316,35 @@ for (let i = 0; i < args.length; i++) {
 	}
 }
 
+/** The five ratchet flags, which apply together in one pass — see the bless
+ *  section below for why they are no longer exclusive. */
+const ratchetFlags = [
+	["--bless-lean-deltas", blessLeanDeltas],
+	["--bless-feasibility", blessFeasibility],
+	["--bless-rail-triples", blessRailTriples],
+	["--bless-truth", blessTruth],
+	["--bless-journeys", blessJourneys],
+] as const;
+const ratchetsRequested = ratchetFlags.filter(([, on]) => on).map(([name]) => name);
+// `--bless` is the one that genuinely cannot join them, and the reason is not
+// taste. The day-snapshot bless `continue`s past the truth report and the
+// feasibility check for every day (see the loop below), so `truthNow`,
+// `journeysNow`, `kinematicNow` and `railTripleNow` are all empty on that path.
+// `ratchetUpFloor` and `ratchetDownCounts` both read a date absent from the
+// measured set as "not measured" and pass the committed value straight through
+// — correctly, that is their whole job — so the run would announce a blessed
+// baseline having changed nothing. That is this bug wearing a different hat: a
+// bless that reports success and does not land. Reject it rather than perform
+// it.
+if (bless && ratchetsRequested.length > 0) {
+	console.error(
+		`--bless cannot be combined with ${ratchetsRequested.join(" ")}: --bless skips the truth and\n` +
+			`feasibility measurement the ratchets are derived from, so they would write their committed\n` +
+			`values back unchanged. Run the snapshot bless and the ratchets as separate invocations.`,
+	);
+	process.exit(2);
+}
+
 async function loadJourneyBaseline(): Promise<JourneyBaseline> {
 	try {
 		return JSON.parse(await readFile(JOURNEY_BASELINE_PATH, "utf8")) as JourneyBaseline;
@@ -558,13 +592,102 @@ const leanUnexplainedNow: DeltaCeiling = {};
 for (const v of leanVerdicts) {
 	if (v !== null && v.unexplained.length > 0) leanUnexplainedNow[v.tenant] = [...v.unexplained];
 }
-if (blessLeanDeltas) {
-	const ordered = ratchetDownCeiling(leanCeiling, leanUnexplainedNow);
-	await writeFile(LEAN_DELTA_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
-	console.log(
-		`lean deltas: blessed ceiling — ${ceilingSize(ordered)} standing divergence(s) across ` +
-			`${Object.keys(ordered).length} tenant(s).`,
-	);
+// --- bless ----------------------------------------------------------------
+// Every requested ratchet in ONE pass, then a single exit.
+//
+// Each of these five used to sit at its own place further down the file and end
+// in its own `process.exit(0)`, so `--bless-truth --bless-feasibility` ran the
+// feasibility block, wrote `feasibility-baseline.json` and exited — the truth
+// floor was never touched, with no warning and exit 0. Hit for real on
+// 2026-08-07: the run reported "feasibility (kinematic): blessed ceiling" and
+// nothing else, and 2026-07-02 @08:09Z only landed on a second run with
+// `--bless-truth` alone. The dangerous direction is the other one, though: the
+// flags are a ratchet's only interface, and someone blessing several after a big
+// fix would believe all of them landed while the gate quietly held the old
+// floor, so the next unrelated change reads as a regression against a floor that
+// was never raised.
+//
+// They are independent writes to different baseline files. Nothing about them
+// ever required exclusivity, so they now all apply and the run names every file
+// it wrote — "what did this bless actually change" is answerable from the log
+// rather than from `git diff` on the golden repo.
+//
+// Placed here, above the gates, deliberately: the gates below judge the run
+// against baselines this section is about to replace, and printing a verdict
+// against a superseded baseline is noise at best. The one thing that must come
+// first is the ledger section above, which `--bless-lean-deltas` reads.
+if (ratchetsRequested.length > 0) {
+	const wrote: string[] = [];
+	if (blessLeanDeltas) {
+		const ordered = ratchetDownCeiling(leanCeiling, leanUnexplainedNow);
+		await writeFile(LEAN_DELTA_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+		console.log(
+			`lean deltas: blessed ceiling — ${ceilingSize(ordered)} standing divergence(s) across ` +
+				`${Object.keys(ordered).length} tenant(s).`,
+		);
+		wrote.push(path.basename(LEAN_DELTA_BASELINE_PATH));
+	}
+	if (blessFeasibility) {
+		const ordered = ratchetDownCounts(await loadFeasibilityBaseline(), kinematicNow, feasibilityReported);
+		await writeFile(FEASIBILITY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+		const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
+		console.log(
+			`feasibility (kinematic): blessed ceiling — ${blessedTotal} standing leg(s) across ${Object.keys(ordered).length} day(s).`,
+		);
+		wrote.push(path.basename(FEASIBILITY_BASELINE_PATH));
+	}
+	if (blessRailTriples) {
+		let committed: FeasibilityBaseline | null = null;
+		try {
+			committed = JSON.parse(await readFile(RAIL_TRIPLE_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
+		} catch {
+			committed = null;
+		}
+		const ordered = ratchetDownCounts(committed, railTripleNow, feasibilityReported);
+		await writeFile(RAIL_TRIPLE_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
+		const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
+		console.log(
+			`rail triples: blessed ceiling — ${blessedTotal} standing invalid leg(s) across ${Object.keys(ordered).length} day(s).`,
+		);
+		wrote.push(path.basename(RAIL_TRIPLE_BASELINE_PATH));
+	}
+	if (blessTruth) {
+		const { floor, dropped } = ratchetUpFloor((await loadTruthBaseline()) ?? {}, truthNow, truthDescribed);
+		await writeFile(TRUTH_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
+		const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
+		console.log(`truth: blessed floor — ${blessedTotal} confirmed row(s) across ${Object.keys(floor).length} day(s).`);
+		// Naming the drops is the point: a row leaves the floor only by leaving the
+		// narrative's `correct` set, which is exactly what an honest re-audit does
+		// and exactly what "flip the row until the gate is green" does too. The gate
+		// cannot tell them apart; stating each one out loud is what makes the
+		// difference reviewable.
+		for (const d of dropped)
+			console.log(
+				`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — no longer a confirmed row`,
+			);
+		wrote.push(path.basename(TRUTH_BASELINE_PATH));
+	}
+	if (blessJourneys) {
+		// Ratchet UP, the mirror of `ratchetDown`: the floor is the UNION of the
+		// committed journeys and the ones this run reconstructed. A journey that
+		// used to work and no longer does stays in the floor, so blessing the new
+		// wins cannot quietly drop it — the regression keeps failing the gate
+		// until it is actually fixed.
+		// Keep a committed journey ONLY while the ground truth still describes it —
+		// see `ratchetUpFloor`, which owns that rule for both floors.
+		const { floor, dropped } = ratchetUpFloor(await loadJourneyBaseline(), journeysNow, journeysDescribed);
+		await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
+		const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
+		console.log(
+			`journeys: blessed floor — ${blessedTotal} journey(s) across ${Object.keys(floor).length} day(s): everything reconstructed now, plus every committed journey the ground truth still describes.`,
+		);
+		for (const d of dropped)
+			console.log(
+				`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — the narrative no longer describes it`,
+			);
+		wrote.push(path.basename(JOURNEY_BASELINE_PATH));
+	}
+	console.log(`\nBlessed ${wrote.length} baseline(s): ${wrote.join(", ")}.`);
 	process.exit(0);
 }
 const leanGate = gateLedgers(leanVerdicts, GOLDEN_UNEXERCISABLE, leanCeiling);
@@ -618,15 +741,6 @@ console.log(
 // regression; fixing legs prompts a re-bless that ratchets the ceiling down.
 const kinematicTotal = Object.values(kinematicNow).reduce((n, c) => n + c, 0);
 let kinematicRegressed = 0;
-if (blessFeasibility) {
-	const ordered = ratchetDownCounts(await loadFeasibilityBaseline(), kinematicNow, feasibilityReported);
-	await writeFile(FEASIBILITY_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
-	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
-	console.log(
-		`feasibility (kinematic): blessed ceiling — ${blessedTotal} standing leg(s) across ${Object.keys(ordered).length} day(s).`,
-	);
-	process.exit(0);
-}
 const feasBaseline = await loadFeasibilityBaseline();
 if (feasBaseline === null) {
 	console.log(
@@ -663,21 +777,6 @@ if (feasBaseline === null) {
 // higher ceiling explicitly rather than let it hide.
 const railTripleTotal = Object.values(railTripleNow).reduce((n, c) => n + c, 0);
 let railTripleRegressed = 0;
-if (blessRailTriples) {
-	let committed: FeasibilityBaseline | null = null;
-	try {
-		committed = JSON.parse(await readFile(RAIL_TRIPLE_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
-	} catch {
-		committed = null;
-	}
-	const ordered = ratchetDownCounts(committed, railTripleNow, feasibilityReported);
-	await writeFile(RAIL_TRIPLE_BASELINE_PATH, `${JSON.stringify(ordered, null, "\t")}\n`, "utf8");
-	const blessedTotal = Object.values(ordered).reduce((n, c) => n + c, 0);
-	console.log(
-		`rail triples: blessed ceiling — ${blessedTotal} standing invalid leg(s) across ${Object.keys(ordered).length} day(s).`,
-	);
-	process.exit(0);
-}
 let railTripleBaseline: FeasibilityBaseline | null = null;
 try {
 	railTripleBaseline = JSON.parse(await readFile(RAIL_TRIPLE_BASELINE_PATH, "utf8")) as FeasibilityBaseline;
@@ -731,22 +830,6 @@ async function loadTruthBaseline(): Promise<FloorBaseline | null> {
 	} catch {
 		return null; // no baseline yet — first run bootstraps
 	}
-}
-if (blessTruth) {
-	const { floor, dropped } = ratchetUpFloor((await loadTruthBaseline()) ?? {}, truthNow, truthDescribed);
-	await writeFile(TRUTH_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
-	const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
-	console.log(`truth: blessed floor — ${blessedTotal} confirmed row(s) across ${Object.keys(floor).length} day(s).`);
-	// Naming the drops is the point: a row leaves the floor only by leaving the
-	// narrative's `correct` set, which is exactly what an honest re-audit does
-	// and exactly what "flip the row until the gate is green" does too. The gate
-	// cannot tell them apart; stating each one out loud is what makes the
-	// difference reviewable.
-	for (const d of dropped)
-		console.log(
-			`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — no longer a confirmed row`,
-		);
-	process.exit(0);
 }
 const truthBaseline = await loadTruthBaseline();
 if (truthBaseline === null) {
@@ -808,27 +891,6 @@ if (truthBaseline === null) {
 // correct), so this makes the standing failures a floor that can only shrink —
 // the measurement the joint mode+position model (#257) is built against.
 const totalReconstructed = Object.values(journeysNow).reduce((n, a) => n + a.length, 0);
-if (blessJourneys) {
-	// Ratchet UP, the mirror of `ratchetDown`: the floor is the UNION of the
-	// committed journeys and the ones this run reconstructed. A journey that
-	// used to work and no longer does stays in the floor, so blessing the new
-	// wins cannot quietly drop it — the regression keeps failing the gate
-	// until it is actually fixed.
-	// Keep a committed journey ONLY while the ground truth still describes it —
-	// see `ratchetUpFloor`, which owns that rule for both floors.
-	const { floor, dropped } = ratchetUpFloor(await loadJourneyBaseline(), journeysNow, journeysDescribed);
-	await writeFile(JOURNEY_BASELINE_PATH, `${JSON.stringify(floor, null, "\t")}\n`, "utf8");
-	const blessedTotal = Object.values(floor).reduce((n, a) => n + a.length, 0);
-	console.log(
-		`journeys: blessed floor — ${blessedTotal} journey(s) across ${Object.keys(floor).length} day(s): everything reconstructed now, plus every committed journey the ground truth still describes.`,
-	);
-	for (const d of dropped)
-		console.log(
-			`      – dropped ${d.date} @${new Date(d.startTs * 1000).toISOString().slice(11, 16)}Z — the narrative no longer describes it`,
-		);
-	process.exit(0);
-}
-
 const baseline = await loadJourneyBaseline();
 // Same exclusion as the truth floor above, for the same reason: a day the
 // replay refused reconstructed no journeys, and charging its floor entries as
