@@ -62,7 +62,7 @@ import { beginWalkLegCapture, endWalkLegCapture } from "../geo/pedestrian-match-
 import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
-import { isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
+import { ACCEPTED_MATCH_DELTAS, isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
 import { errorText } from "../util/error-text.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -413,6 +413,13 @@ const files = readdirSync(DAYS_DIR)
 	.sort();
 
 let legs = 0;
+// Every leg fingerprint the replay produced, and every day it covered. Neither
+// is needed to judge a divergence; both are needed to judge a manifest ENTRY
+// THAT DID NOT APPEAR, which is the other half of #662 — see the orphan report
+// under `--gate`. A divergence that vanishes is invisible to the list above by
+// construction: nothing is printed for a leg that stopped diverging.
+const replayedLegs = new Set<string>();
+const replayedDays = new Set<string>();
 const coarseTotals = { EXACT: 0, NEAR: 0, DIFF: 0 };
 const pathTotals = { EXACT: 0, NEAR: 0, DIFF: 0 };
 let nullBoth = 0;
@@ -421,6 +428,7 @@ let leanExact = 0;
 const leanMismatches: string[] = [];
 
 for (const file of files) {
+	replayedDays.add(file.slice(0, 10));
 	const captured = parseCapturedDay(readFileSync(path.join(DAYS_DIR, file), "utf8"));
 	const inputs = inputsFromFixture(captured);
 	const capture = beginWalkLegCapture();
@@ -454,6 +462,7 @@ for (const file of files) {
 			);
 		}
 		legs++;
+		replayedLegs.add(fp);
 		const date = file.slice(0, 10);
 		const hhmm = new Date(leg.startTs * 1000).toISOString().slice(11, 16);
 		if (candidatesMode) {
@@ -591,6 +600,59 @@ if (divergent.length > 0) {
 		);
 	}
 }
+
+// ── manifest coverage: the entries that did NOT appear (#662) ───────────────
+//
+// The list above answers "is every divergence accounted for?". This answers the
+// question nobody was asking and which made #662 take a day to diagnose: "is
+// every acceptance still about a leg that exists?" Those are different, and only
+// the first was ever reported — a manifest entry whose leg stops appearing
+// produces NO output at all, so a re-keying event reads as N new UNEXPLAINED
+// findings and M silent disappearances rather than as one act.
+//
+// The three-way split is the point. An entry can go missing for reasons that
+// call for opposite responses, and lumping them as "orphan" would need the same
+// manual investigation the report is meant to replace:
+//
+//   RESOLVED         the leg is still replayed, it just no longer diverges. Good
+//                    news and the ratchet payoff — delete the entry.
+//   RE-FINGERPRINTED the day was replayed but NO leg carries that fingerprint.
+//                    The leg's own content moved, so the adjudication is
+//                    stranded and the same divergence will reappear below as
+//                    UNEXPLAINED under a new key. This is #662's shape exactly.
+//   NOT COVERED      the corpus does not contain that day. Says nothing about
+//                    the entry; recorded so it is never mistaken for either of
+//                    the two above.
+//
+// None of these FAIL the gate, deliberately. A resolved entry is an improvement
+// and a stranded one is bookkeeping — neither is a divergence being served, and
+// failing on them would block a deploy on the manifest's filing rather than on
+// the matcher's behaviour. They are printed every run instead, which is the
+// treatment the truth and journey floors give their own cleared rows.
+const matched = new Set(divergent.map((d) => d.leg));
+const resolved: string[] = [];
+const refingerprinted: string[] = [];
+const uncovered: string[] = [];
+for (const e of ACCEPTED_MATCH_DELTAS) {
+	if (matched.has(e.leg)) continue;
+	const where = `${e.date} ${e.hhmm} leg=${e.leg}`;
+	if (!replayedDays.has(e.date)) uncovered.push(where);
+	else if (replayedLegs.has(e.leg)) resolved.push(where);
+	else refingerprinted.push(where);
+}
+// Count ENTRIES that appeared, not divergences: `matched` is keyed by leg and
+// holds every divergence in the run, so printing its size here read "28 of 23"
+// — a coverage figure larger than the thing it covers.
+const stillMeasured = ACCEPTED_MATCH_DELTAS.filter((e) => matched.has(e.leg)).length;
+console.log(
+	`\nmanifest coverage: ${ACCEPTED_MATCH_DELTAS.length} entr(ies) — ` +
+		`${stillMeasured} still measured, ${resolved.length} resolved, ` +
+		`${refingerprinted.length} re-fingerprinted, ${uncovered.length} not covered`,
+);
+for (const r of resolved) console.log(`  RESOLVED         ${r} — no longer diverges; delete this entry`);
+for (const r of refingerprinted)
+	console.log(`  RE-FINGERPRINTED ${r} — day replayed, no leg has this fingerprint (#662)`);
+for (const r of uncovered) console.log(`  NOT COVERED      ${r} — this day is not in the replayed corpus`);
 
 const problems: string[] = [];
 if (legs === 0) problems.push("NO COVERAGE — no legs matched; nothing was verified");
