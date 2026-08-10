@@ -59,6 +59,12 @@ jobs:
       - run: pnpm run check:frontend-unions
       - run: pnpm run lint
       - run: pnpm run lint:frontend
+      # `dist/` before `pnpm test`: tests/golden-bless-flags.test.ts drives the
+      # BUILT golden-check CLI, because the bug it guards is in that CLI's own
+      # control flow (one process.exit per bless block) and nothing importable
+      # can reach it. `typecheck` above is `tsc --noEmit`, so without this step
+      # dist/ does not exist here and the spawn fails with a bare exit 1.
+      - run: pnpm run build
       - run: pnpm test
       - run: pnpm run test:frontend
       - run: pnpm run lean-check

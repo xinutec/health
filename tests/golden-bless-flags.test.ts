@@ -17,11 +17,11 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { FIXTURE_FORMAT_VERSION } from "../src/cli/fixture-day.js";
 import { emptyOsmTrace } from "../src/geo/osm-adapter-recording.js";
 
@@ -83,6 +83,15 @@ afterEach(async () => {
 });
 
 describe("golden-check --bless-* flags", () => {
+	// Say so plainly rather than letting the spawn fail with a bare exit 1 and a
+	// "Cannot find module" nobody reads: `pnpm test` does not build, so this
+	// suite needs `pnpm run build` first (CI runs it as its own step).
+	beforeAll(async () => {
+		await access(CLI).catch(() => {
+			throw new Error(`${CLI} is missing — this suite drives the built CLI. Run \`pnpm run build\` first.`);
+		});
+	});
+
 	it("applies every requested ratchet in one run, not just the first", async () => {
 		const dir = await seed({
 			// Measured this run with zero violations, so the ceiling ratchets 3 -> 0
