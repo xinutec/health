@@ -307,3 +307,40 @@ show("skip.unknownRail", resolve([{ ...trainSeg(2, 11), lineName: "unknown_rail"
 /* ------------------------------------------------------------------ */
 
 show("empty.observations", resolve([trainSeg(2, 11)], []));
+
+/* ------------------------------------------------------------------ */
+/* Case INPUTS, for the Lean guards to consume                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The port cannot re-derive these: `lonAt` is a float computation, the bookends
+ * are set per case, and a transcription slip would produce a guard that pins the
+ * wrong scenario while still passing. So emit the inputs the same way the graph
+ * is emitted — V8's values, pasted rather than recomputed.
+ *
+ * Timestamps are printed as MINUTE OFFSETS from T0, which is what the Lean side
+ * reconstructs them from; absolute epoch seconds would only make the literals
+ * harder to check by eye against the case comments above.
+ */
+const obsRows = (rows: Observation[]): unknown[] =>
+	rows.map((o) => [
+		(o.ts - T0) / 60,
+		o.gps === null ? null : [o.gps.lat, o.gps.lon],
+		o.prevGpsFix === null ? null : [(o.prevGpsFix.ts - T0) / 60, o.prevGpsFix.lat, o.prevGpsFix.lon],
+		o.nextGpsFix === null ? null : [(o.nextGpsFix.ts - T0) / 60, o.nextGpsFix.lat, o.nextGpsFix.lon],
+	]);
+
+const segRows = (segs: HmmSegment[]): unknown[] =>
+	segs.map((s) => [(s.startTs - T0) / 60, (s.endTs - T0) / 60, s.mode, s.lineName]);
+
+for (const [label, segs, rows] of [
+	["clean", [trainSeg(2, 11)], cleanObs],
+	["duration", [trainSeg(2, 5)], durationObs],
+	["dwell", [trainSeg(2, 13)], dwellObs],
+	["dark", [trainSeg(1, 5)], darkObs],
+	["chain", [trainSeg(2, 8), trainSeg(11, 17)], chainObs],
+	["split", [trainSeg(2, 8), trainSeg(21, 27)], splitObs],
+] as [string, HmmSegment[], Observation[]][]) {
+	show(`in.${label}.segs`, segRows(segs));
+	show(`in.${label}.obs`, obsRows(rows));
+}
