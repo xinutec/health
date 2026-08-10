@@ -155,9 +155,9 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# hid from `compare-kalman` while the pipeline exercised it every day. This
 	# runs the real serving path on real days.
 	#
-	# hsmm and rail are staged too even though the corpus cannot reach them —
-	# `gateLedgers` prints their waiver each run, and turns it into a STALE
-	# WAIVER report the moment the corpus does reach one.
+	# hsmm, rail and stationchain are staged too even though the corpus cannot
+	# reach them — `gateLedgers` prints their waiver each run, and turns it into
+	# a STALE WAIVER report the moment the corpus does reach one.
 	#
 	# ALL SEVEN tenants run `on` here as of #403 — `match` and `passes` included,
 	# which they were not until the ceiling existed to hold their standing debt.
@@ -183,7 +183,19 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# measuring the host rather than the code.
 	echo "==> [2/7] golden corpus again, with ALL SEVEN Lean tenants ON"
 	$DEV LEAN_KALMAN=on LEAN_GPSQUALITY=on LEAN_BIOLABELS=on LEAN_HSMM=on LEAN_RAIL=on \
-		LEAN_MATCH=on LEAN_PASSES=on LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden
+		LEAN_MATCH=on LEAN_PASSES=on LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden
+
+	# The station-chain tenant (#711), on the one gate that can REACH it. The
+	# run above waives it for the same #233 reason it waives hsmm and rail — the
+	# corpus replays cached decodes, so `segmentsFromStates` never runs and the
+	# resolver with it. `golden-hsmm` decodes the eleven fixtures for real, and
+	# gates the ledger with no waiver available at all.
+	#
+	# It is a deploy gate rather than a CI one because it needs the gitignored
+	# `tests/golden/decoded_days` corpus, exactly as `pnpm run golden` above
+	# does. `shadow` not `on`: this tenant writes (its output is persisted to
+	# `decoded_days`), so serving it is a decision, not a gate setting.
+	$DEV LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

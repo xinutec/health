@@ -49,6 +49,14 @@
  *     exercised — every winning candidate is simply a station its line really
  *     serves, so the penalty is 0 whatever its magnitude.
  *
+ * ## The wire line
+ *
+ * Each run prints what the request costs, by component. It is printed rather
+ * than recorded in a task because the number moves whenever the route graph the
+ * day is built from moves, and a stale size is what makes a tenant look
+ * affordable that no longer is. `lean-station-chain.ts` reads it as the tenant's
+ * defining cost and records why the graph — 81% of it — cannot be pruned.
+ *
  * Run: scripts/compare-stationchain.sh
  * Exit 0 = every day's pairs identical. Exit 1 = a divergence. Exit 2 = no corpus.
  */
@@ -56,66 +64,14 @@
 import { execFileSync } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { nodeKey, type RouteGraph } from "../geo/route-graph.js";
 import { buildHsmmModel, decodeHsmm } from "../hmm/decode.js";
-import type { Observation } from "../hmm/observation.js";
 import { resolveStationChain } from "../hmm/station-chain.js";
+import { encodeStationChainRequest } from "../lean/lean-station-chain.js";
 import { type HsmmCapturedDay, hsmmInputsFromFixture } from "./hsmm-fixture.js";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const DECODED_DIR = path.join(ROOT, "tests/golden/decoded_days");
 const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
-
-/** The wire form of the route graph.
- *
- *  `nodes` MUST stay in `routeGraph.nodes.values()` order. It is a JS `Map`, so
- *  that is insertion order, and four things downstream read it: the candidate
- *  dedupe keeps the first best, the sort is stable, the cut at
- *  `MAX_CANDIDATES_PER_SIDE` falls where those leave it, and the argmax over
- *  max-marginals is first-wins. Sorting this array to make a diff tidier would
- *  change results. */
-function encodeGraph(g: RouteGraph): { edges: unknown[]; nodes: unknown[] } {
-	return {
-		edges: [...g.edges.values()].map((e) => ({
-			id: e.id,
-			geometry: e.geometry.map((p) => ({ lat: p.lat, lon: p.lon })),
-			lineMemberships: [...e.attrs.lineMemberships],
-			underground: e.attrs.underground,
-			// The Lean edge carries node KEY STRINGS, not coordinates — `nodeKey`'s
-			// `toFixed(5)` rounding stays shell-side, as it does for
-			// `RouteConnectivity`. Note the ~0.3 m consequence this creates and
-			// which both arms share: a node's coordinates are the rounded key
-			// parsed back (`buildRouteGraph` materialises them that way), while the
-			// edge geometry it belongs to keeps full precision.
-			startNode: nodeKey(e.startPoint.lat, e.startPoint.lon),
-			endNode: nodeKey(e.endPoint.lat, e.endPoint.lon),
-		})),
-		nodes: [...g.nodes.values()].map((n) => ({
-			id: n.id,
-			lat: n.point.lat,
-			lon: n.point.lon,
-			stationName: n.stationName ?? null,
-			edgeIds: [...n.edgeIds],
-		})),
-	};
-}
-
-function encodeObs(o: Observation): unknown {
-	return {
-		ts: o.ts,
-		gps: o.gps === null ? null : { lat: o.gps.lat, lon: o.gps.lon, speedKmh: o.gps.speedKmh },
-		hr: o.hr,
-		cadence: o.cadence,
-		hourLocal: o.hourLocal,
-		dayOfWeekLocal: o.dayOfWeekLocal,
-		inBed: o.inBed,
-		roadDistM: o.roadDistM ?? null,
-		railDistM: o.railDistM ?? null,
-		reacquireAgeMin: o.reacquireAgeMin ?? null,
-		prevGpsFix: o.prevGpsFix,
-		nextGpsFix: o.nextGpsFix,
-	};
-}
 
 type Pair = [number, string | null, string | null];
 
@@ -127,7 +83,19 @@ interface Outcome {
 	trainLegs: number;
 	resolved: number;
 	detail: string;
+	/** Bytes of the request as it goes over the wire, by component (#711). */
+	wire: Record<string, number>;
 }
+
+/** Wire cost of one component, in bytes of the JSON actually sent.
+ *
+ *  Measured rather than estimated because the tenant question #711 has to answer
+ *  is a size question: #411 records the HSMM tenant at 33-40 MiB/day and #424
+ *  got the day fold to 0.35 MiB/day, and which of those a station-chain tenant
+ *  resembles decides whether it can be wired per-day at all. */
+const wireBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "", "utf8");
+
+const mib = (n: number): string => `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 
 async function run(): Promise<number> {
 	let files: string[];
@@ -153,37 +121,30 @@ async function run(): Promise<number> {
 			(s) => s.mode === "train" && s.lineName !== null && s.lineName !== "unknown_rail",
 		).length;
 
-		// TS arm.
-		const ts: Pair[] = [
-			...resolveStationChain({
-				segments,
-				observations: model.tensor,
-				routeGraph: inputs.routeGraph,
-				railStopRelations: inputs.railStopRelations,
-			}).entries(),
-		].map(([i, r]) => [i, r.board, r.alight]);
+		const opts = {
+			segments,
+			observations: model.tensor,
+			routeGraph: inputs.routeGraph,
+			railStopRelations: inputs.railStopRelations,
+		};
 
-		// Lean arm — the same four inputs across the wire.
-		const request = {
-			...encodeGraph(inputs.routeGraph),
-			obs: model.tensor.map(encodeObs),
-			segs: segments.map((s) => ({
-				startTs: s.startTs,
-				endTs: s.endTs,
-				mode: s.mode,
-				lineName: s.lineName,
-			})),
-			// `undefined` and `[]` are different requests: absent means the mirror
-			// was never consulted (every servedPen is 0), empty means it was and
-			// had nothing. Preserve the distinction rather than defaulting.
-			relations:
-				inputs.railStopRelations === undefined
-					? null
-					: inputs.railStopRelations.map((r) => ({
-							lineRef: r.lineRef,
-							lineName: r.lineName,
-							stops: r.stops.map((s) => ({ name: s.name })),
-						})),
+		// TS arm. `resolveStationChain` directly, NOT the tenant's
+		// `resolveStationsServed`: this comparator must drive the TS resolver
+		// whatever `LEAN_STATIONCHAIN` happens to be set to, or a run with the
+		// tenant `on` would compare the Lean arm against itself and report a sweep
+		// of agreement it did not measure.
+		const ts: Pair[] = [...resolveStationChain(opts).entries()].map(([i, r]) => [i, r.board, r.alight]);
+
+		// Lean arm — the same four inputs across the wire, through the SAME encoder
+		// the tenant uses (#426).
+		const request = encodeStationChainRequest(opts);
+		const wire = {
+			edges: wireBytes(request.edges),
+			nodes: wireBytes(request.nodes),
+			obs: wireBytes(request.obs),
+			segs: wireBytes(request.segs),
+			relations: wireBytes(request.relations),
+			total: wireBytes(request),
 		};
 		let raw: string;
 		try {
@@ -201,12 +162,13 @@ async function run(): Promise<number> {
 				trainLegs,
 				resolved: ts.length,
 				detail: (err.stderr ?? "").split("\n")[0] || "no stderr",
+				wire,
 			});
 			continue;
 		}
 		const got = JSON.parse(raw) as { resolved?: Pair[]; error?: string };
 		if (typeof got.error === "string") {
-			outcomes.push({ date, verdict: "ERROR", trainLegs, resolved: ts.length, detail: `Lean arm: ${got.error}` });
+			outcomes.push({ date, verdict: "ERROR", trainLegs, resolved: ts.length, detail: `Lean arm: ${got.error}`, wire });
 			continue;
 		}
 		const lean = got.resolved ?? [];
@@ -216,7 +178,7 @@ async function run(): Promise<number> {
 		const onlyTs = tsKeys.filter((k) => !leanKeys.includes(k));
 		const onlyLean = leanKeys.filter((k) => !tsKeys.includes(k));
 		if (onlyTs.length === 0 && onlyLean.length === 0 && tsKeys.length === leanKeys.length) {
-			outcomes.push({ date, verdict: "IDENTICAL", trainLegs, resolved: ts.length, detail: "" });
+			outcomes.push({ date, verdict: "IDENTICAL", trainLegs, resolved: ts.length, detail: "", wire });
 		} else {
 			outcomes.push({
 				date,
@@ -224,6 +186,7 @@ async function run(): Promise<number> {
 				trainLegs,
 				resolved: ts.length,
 				detail: `ts-only=[${onlyTs.join(" ")}] lean-only=[${onlyLean.join(" ")}]`,
+				wire,
 			});
 		}
 	}
@@ -247,6 +210,24 @@ async function run(): Promise<number> {
 		`\n${outcomes.length - bad}/${outcomes.length} day(s) identical — ` +
 			`${totalResolved} pair(s) resolved across ${totalLegs} named-line train leg(s).`,
 	);
+
+	// Wire cost (#711). Printed per run rather than kept in a task, because the
+	// number moves whenever the graph the day is built from moves, and a stale
+	// size is what makes a tenant look affordable that no longer is.
+	const totals = outcomes.map((o) => o.wire.total);
+	const worst = outcomes.reduce((a, b) => (b.wire.total > a.wire.total ? b : a));
+	const sum = totals.reduce((a, b) => a + b, 0);
+	console.log(
+		`\nwire: ${mib(sum / totals.length)}/day mean, ${mib(Math.min(...totals))} min, ` +
+			`${mib(worst.wire.total)} max (${worst.date})`,
+	);
+	console.log(
+		`      worst day by component: ` +
+			(["edges", "nodes", "obs", "segs", "relations"] as const)
+				.map((k) => `${k} ${mib(worst.wire[k] ?? 0)}`)
+				.join("  "),
+	);
+
 	if (totalLegs === 0) {
 		console.log("NO TRAIN LEGS IN THE CORPUS — this run compared nothing and must not be read as agreement.");
 		return 1;

@@ -31,6 +31,8 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { decodeHsmm } from "../hmm/decode.js";
 import type { HmmSegment } from "../hmm/persist.js";
+import { logLeanStationChainLedger } from "../lean/lean-station-chain.js";
+import { gateLedgers } from "../lean/ledger-verdict.js";
 import {
 	decodeFlagsFor,
 	HSMM_FIXTURE_FORMAT_VERSION,
@@ -122,8 +124,21 @@ async function main(): Promise<void> {
 		console.log(`\nBlessed ${checked} fixture(s).`);
 		process.exit(0);
 	}
+	// The station-chain tenant (#711) is reachable HERE and nowhere else in the
+	// gates: this harness decodes the fixtures for real, so `segmentsFromStates`
+	// runs and the resolver with it, where `golden-check` replays cached decodes
+	// (#233) and can only waive it. So it is gated here with an EMPTY
+	// unexercisable map — no waiver is available, and a tenant staged but silent
+	// across eleven decoded days is a broken bridge rather than a structural gap.
+	//
+	// Inert unless staged: `LEAN_STATIONCHAIN` unset makes the ledger return null
+	// and the gate finds nothing to judge.
+	const leanGate = gateLedgers([logLeanStationChainLedger("golden-hsmm")], {});
+	for (const n of leanGate.notes) console.log(`lean: ${n}`);
+	for (const f of leanGate.failures) console.log(`lean: FAIL — ${f}`);
+
 	console.log(`\n${checked - failures}/${checked} HSMM fixture(s) match baseline.`);
-	process.exit(failures === 0 ? 0 : 1);
+	process.exit(failures === 0 && leanGate.failures.length === 0 ? 0 : 1);
 }
 
 await main();

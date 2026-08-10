@@ -70,6 +70,7 @@ import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
 import { logLeanMatchLedger } from "../lean/lean-match.js";
 import { logLeanPassLedger } from "../lean/lean-passes.js";
 import { logLeanRailLedger } from "../lean/lean-rail.js";
+import { logLeanStationChainLedger } from "../lean/lean-station-chain.js";
 import { gateLedgers } from "../lean/ledger-verdict.js";
 import { errorText } from "../util/error-text.js";
 import {
@@ -568,6 +569,13 @@ const leanVerdicts = [
 	// The day cascade — the first tenant whose request is built LIVE rather than
 	// read from a capture (#431 gap 1).
 	logLeanDayLedger("golden"),
+	// `stationchain` (#711). Same #233 shape as `hsmm` and for the same reason —
+	// it runs inside `segmentsFromStates`, which the replay skips — so it is
+	// waived below. It is staged here anyway: the waiver is what makes the
+	// tenant's absence a stated fact instead of a silence, and if the corpus ever
+	// decodes for real the gate reports the waiver stale rather than keep
+	// excusing it.
+	logLeanStationChainLedger("golden"),
 ];
 // Two tenants this corpus CANNOT exercise, both for the same reason and both by
 // deliberate design rather than oversight: #233 made the corpus deterministic by
@@ -582,6 +590,12 @@ const leanVerdicts = [
 const GOLDEN_UNEXERCISABLE: Record<string, string> = {
 	hsmm: "the corpus replays cached decodes (#233), so the decoder never runs",
 	rail: "the corpus preloads rail_route_cache (#233), so the Dijkstra never runs",
+	// Third instance of the same waiver shape, and the one with a replacement:
+	// `scripts/compare-stationchain.sh` DOES decode the eleven fixtures freshly
+	// and drives both arms over them, so this tenant is corpus-covered by a tool
+	// rather than by this gate. That is why the flag is worth having anyway — the
+	// comparator answers for the corpus, and the ledger answers for live days.
+	stationchain: "the corpus replays cached decodes (#233), so segmentsFromStates never runs",
 };
 // The ceiling of un-adjudicated divergences (#403). Read BEFORE the gate runs,
 // because it is what decides whether `match`/`passes` standing debt is a

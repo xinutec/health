@@ -334,6 +334,37 @@ export function leanHsmmServe(req: Record<string, unknown>): LeanHsmmResp {
 	return leanCore.call("hsmm", req) as LeanHsmmResp;
 }
 
+/** Result shape of a `stationchain` resolve (mirrors `verified_cli stationchain`
+ *  and the `serveLoop` `stationChainResult` handler): one
+ *  `[segIndex, board, alight]` row per train leg the resolver could name a side
+ *  of, with `null` for a side that stayed below the confidence gate.
+ *
+ *  Legs with NEITHER side resolved are absent rather than present-with-nulls,
+ *  exactly as the TS `Map` omits them — so the row count is not the leg count,
+ *  and comparing lengths alone would call two different resolutions equal. */
+export interface LeanStationChainResp {
+	resolved?: Array<[number, string | null, string | null]>;
+	error?: string;
+}
+
+/**
+ * Run one verified station-chain resolve through the persistent core,
+ * synchronously. `req` is what `encodeStationChainRequest` builds — the route
+ * graph, the day's observation tensor, its segments and the rail-stop
+ * relations. Throws `LeanBridgeError` on any bridge failure; the caller falls
+ * back to TS.
+ *
+ * The second-heaviest request any tenant sends: 2.87 MiB per day mean over the
+ * eleven decode fixtures (3.31 max, measured 2026-08-10), against the HSMM
+ * tenant's 33–40 (#411) and the day fold's 0.35 (#424). 81% of it is the route
+ * graph, and `lean-station-chain.ts` records why that part cannot be pruned
+ * without moving results. The reply is a handful of rows, so the asymmetry is
+ * the same one #411 is about — just an order of magnitude smaller.
+ */
+export function leanStationChainServe(req: Record<string, unknown>): LeanStationChainResp {
+	return leanCore.call("stationchain", req) as LeanStationChainResp;
+}
+
 /** Result shape of a `kalman` GPS filter (mirrors `verified_cli kalman` and the
  *  `serveLoop` `kalmanResult` handler): `[ts, latBits, lonBits, speedBits,
  *  bearingBits]` rows.

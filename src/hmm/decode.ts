@@ -20,6 +20,7 @@ import type { HrPoint, SleepStageRecord, StepPoint } from "../geo/biometrics.js"
 import type { FilteredPoint } from "../geo/kalman.js";
 import type { RailStopRelation } from "../geo/osm-rail-stops.js";
 import type { RouteGraph } from "../geo/route-graph.js";
+import { resolveStationsServed } from "../lean/lean-station-chain.js";
 import { buildChainContext } from "./chain-context.js";
 import { DEFAULT_MIN_DURATION_BY_MODE, type GammaFit } from "./duration-dist.js";
 import { buildEmissionFn } from "./emissions.js";
@@ -36,7 +37,6 @@ import { groupStatesIntoSegments, type HmmSegment } from "./persist.js";
 import { buildRouteRailEvidence } from "./route-rail-evidence.js";
 import { buildSegmentEvidence } from "./segment-evidence.js";
 import { buildStateSpace, type FocusPlaceRef, type State } from "./state-space.js";
-import { resolveStationChain } from "./station-chain.js";
 import { buildTrainGeneratorPrior } from "./train-generator-prior.js";
 import { buildDurationLogProb } from "./train-hop-duration.js";
 import { buildTransitionMatrix } from "./transitions.js";
@@ -281,7 +281,15 @@ export function decodeHsmm(inputs: HsmmInputs): HmmSegment[] {
  * verified Lean decode (`decodeHsmmViaLean`, path from the bridge): both produce
  * a state path over the SAME model, then tile and station-label it identically,
  * so the served output depends only on WHICH decoder produced the path, not on
- * two divergent segmentisers. Pure — no flags, no bridge.
+ * two divergent segmentisers.
+ *
+ * This said "Pure — no flags, no bridge" until #711 put the station-chain
+ * resolver behind `LEAN_STATIONCHAIN`. The property that mattered survives and
+ * is the reason the seam is HERE rather than in each decoder: both arms still
+ * run one resolver under one flag, so the HSMM tenant's arms cannot disagree
+ * about station labelling. What is gone is only the literal claim, and the
+ * count is unchanged — exactly one of the two callers runs per decoded day, so
+ * a shadow day is still one station-chain bridge call, not two.
  */
 export function segmentsFromStates(model: HsmmModel, hmmStates: readonly State[], inputs: HsmmInputs): HmmSegment[] {
 	const timestamps = model.tensor.map((o) => o.ts);
@@ -291,12 +299,15 @@ export function segmentsFromStates(model: HsmmModel, hmmStates: readonly State[]
 	// decoded train legs, scored jointly along each journey chain
 	// (`station-chain.ts`). Confidence-gated — an ambiguous side stays
 	// null rather than guessing.
-	const stations = resolveStationChain({
-		segments,
-		observations: model.tensor,
-		routeGraph: inputs.routeGraph,
-		railStopRelations: inputs.railStopRelations,
-	});
+	const stations = resolveStationsServed(
+		{
+			segments,
+			observations: model.tensor,
+			routeGraph: inputs.routeGraph,
+			railStopRelations: inputs.railStopRelations,
+		},
+		inputs.date,
+	);
 	for (const [segIndex, resolved] of stations) {
 		segments[segIndex].boardStation = resolved.board;
 		segments[segIndex].alightStation = resolved.alight;
