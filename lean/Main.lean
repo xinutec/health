@@ -2173,6 +2173,85 @@ def focusResult (j : Json) : Json :=
 
 end Focus
 
+/-! ## `stationchain` — the C4.3 chained-triple resolver (#672)
+
+The verb that makes `Verified.Hsmm.StationChain` live-compared rather than
+merely guard-pinned. Its 22 guards pin it against eleven synthetic V8 outcomes;
+what they cannot see is the TS moving underneath (#417), which is what a
+comparator over real days is for.
+
+Input:
+  { "edges":  [{id, geometry:[{lat,lon}], lineMemberships:[str], underground,
+                startNode, endNode}],
+    "nodes":  [{id, lat, lon, stationName, edgeIds}]   -- ORDERED, see below
+    "obs":    [ObsRow],
+    "segs":   [{startTs, endTs, mode, lineName}],
+    "relations": [{lineRef, lineName, stops:[{name}]}] | null }
+Output: { "resolved": [[segIndex, board|null, alight|null]] }
+
+`nodes` ARRIVES ORDERED and must stay that way across the wire. The shell hands
+over `routeGraph.nodes.values()` in JS Map insertion order, and four things
+downstream read it — the candidate dedupe, the stable sort, the cut at
+`MAX_CANDIDATES_PER_SIDE`, and the first-wins argmax over max-marginals. A
+transport that sorted or de-duplicated this array would change results while
+looking like a tidy-up.
+-/
+namespace StationChain
+
+open Verified.Hsmm.StationChain
+
+private def scOptStr (j : Json) (k : String) : Except String (Option String) :=
+  match j.getObjVal? k with
+  | .error _ => pure none
+  | .ok v => if v.isNull then pure none else some <$> v.getStr?
+
+private def parseChainNode (j : Json) : Except String ChainNode := do
+  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
+    | .ok s => some s | .error _ => none
+  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
+  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon",
+    name, edgeIds.toList⟩
+
+private def parseChainSeg (j : Json) : Except String ChainSeg := do
+  return { mode := ← (← j.getObjVal? "mode").getStr?
+           lineName := ← scOptStr j "lineName"
+           startTs := ← (← j.getObjVal? "startTs").getInt?
+           endTs := ← (← j.getObjVal? "endTs").getInt? }
+
+private def parseRelation (j : Json) :
+    Except String Verified.Hsmm.ServedStations.RailStopRelation := do
+  let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun s => do
+    pure (⟨← scOptStr s "name"⟩ : Verified.Hsmm.ServedStations.RailStop)
+  return ⟨← scOptStr j "lineRef", ← scOptStr j "lineName", stops⟩
+
+private def optJson : Option String → Json
+  | none => Json.null
+  | some s => Json.str s
+
+/-- `relations` ABSENT and `relations: []` are different requests, and the
+    difference is not cosmetic: absent means the mirror was never consulted, so
+    every candidate's `servedPen` is 0, while an empty array means it was
+    consulted and had nothing — which `servedStationSet` also answers `none` to,
+    but only after `railRelationsForLine` runs. Kept distinct here so a shell
+    that cannot reach the mirror cannot be mistaken for one that found it bare. -/
+def stationChainResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
+    let nodes ← (← (← j.getObjVal? "nodes").getArr?).mapM parseChainNode
+    let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
+    let segs ← (← (← j.getObjVal? "segs").getArr?).mapM parseChainSeg
+    let rels ← match j.getObjVal? "relations" with
+      | .ok v => if v.isNull then pure none else pure (some (← (← v.getArr?).mapM parseRelation))
+      | .error _ => pure none
+    let rows := resolveStationChain (mkChainGraph edges nodes) segs obs rels
+    return Json.mkObj [("resolved", Json.arr (rows.map (fun r =>
+      Json.arr #[Lean.toJson r.1, optJson r.2.board, optJson r.2.alight])))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end StationChain
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
@@ -2200,6 +2279,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "biolabels" => bioLabelsResult j
         | .ok "day" => Day.dayResult j
         | .ok "focus" => Focus.focusResult j
+        | .ok "stationchain" => StationChain.stationChainResult j
         -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
         -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
         -- response wire plus the algorithm rather than those plus the decode.
@@ -2278,6 +2358,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
   if args.contains "day" then return ← runOne Day.dayResult input
   if args.contains "focus" then return ← runOne Focus.focusResult input
+  if args.contains "stationchain" then return ← runOne StationChain.stationChainResult input
   if args.contains "assemble" then return ← runOne assembleResult input
   let t1 ← IO.monoMsNow
   match Json.parse input >>= parseModel with
