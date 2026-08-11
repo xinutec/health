@@ -439,6 +439,22 @@ let blessRefused = 0;
  *  deliberate: this one must exist before the loop, and hoisting the gate's
  *  copy would put the ceiling's whole accounting far from where it is used. */
 const blessCeiling = bless ? await loadFeasibilityBaseline() : null;
+/** The committed TRUTH FLOOR, read up-front for the same reason and used the
+ *  same way — the other half of the hole `b5e19a4` opened on. That commit
+ *  taught `--bless` to ask whether a day is POSSIBLE; it never taught it to ask
+ *  whether the day still matches what has been CONFIRMED, so a bless would
+ *  happily record output that breaks a corroborated ground-truth row and report
+ *  success. Five corpus days sit at PASS today with confirmed rows failing
+ *  underneath them, which is what that looks like from the outside. */
+const blessFloor = bless
+	? await (async (): Promise<FloorBaseline | null> => {
+			try {
+				return JSON.parse(await readFile(TRUTH_BASELINE_PATH, "utf8")) as FloorBaseline;
+			} catch {
+				return null; // no floor yet — nothing to protect
+			}
+		})()
+	: null;
 let checked = 0;
 /** Days whose kernel lookups came from pushed rows rather than the oracle. */
 let fromRows = 0;
@@ -570,6 +586,42 @@ for (const file of files) {
 			);
 			continue;
 		}
+		// ...and it must not enshrine a day that breaks a CONFIRMED row.
+		//
+		// The mirror of the ceiling check above, against the floor instead: the
+		// bar is what the project has already committed to satisfying, not zero.
+		// A day carrying standing truth debt can still be re-blessed — refusing
+		// those would make `--bless` unusable while any debt exists — but a day
+		// that would drop a row OUT of the floor is refused, because that is the
+		// only case where blessing changes the gate's verdict instead of
+		// recording it.
+		//
+		// Without this the two gates disagree in a way that reads as nonsense and
+		// is really one of them not having been asked: a fixture reports PASS
+		// because the output matches a baseline that a bless wrote, while a
+		// corroborated ground-truth row underneath it fails. That is the state of
+		// five corpus days, and no commit in the history says it was intended.
+		const blessTruth = blessFloor === null ? null : await truthReport(captured.meta.date, captured.meta.tz, states);
+		const floorKeys = blessFloor?.[captured.meta.date] ?? [];
+		const stillHeld = new Set(blessTruth?.truthVerified ?? []);
+		// Only judgeable when the day HAS a truth report — a day with no narrative
+		// measures nothing, and "measured nothing" must not read as "lost
+		// everything" (the #408 trap, one level up).
+		const lostRows = blessTruth === null ? [] : floorKeys.filter((k) => !stillHeld.has(k));
+		if (lostRows.length > 0) {
+			blessRefused++;
+			console.log(`\nREFUSED  ${label}`);
+			for (const k of lostRows)
+				console.log(`      ✗ confirmed row @${new Date(k * 1000).toISOString().slice(11, 16)}Z no longer holds`);
+			console.log(
+				`    ${lostRows.length} row(s) in the committed truth floor would stop holding.\n` +
+					"    The fixture is UNCHANGED. Blessing it would record output that contradicts\n" +
+					"    a confirmed narrative as the expected one, and the day would then read PASS\n" +
+					"    with the row still failing underneath it.\n" +
+					"    Fix the day, or re-audit the row deliberately: npm run golden -- --bless-truth\n",
+			);
+			continue;
+		}
 		const updated: CapturedDay = { ...captured, expected: { velocity: actual } };
 		await writeFile(full, `${JSON.stringify(updated, null, "\t")}\n`, "utf8");
 		blessed++;
@@ -630,7 +682,9 @@ if (bless) {
 	if (blessRefused > 0) {
 		// Non-zero, because a bless that silently skipped a day would be the same
 		// defect one level up: a command reporting success over work it did not do.
-		console.log(`REFUSED ${blessRefused} day(s) above the feasibility ceiling — those fixtures are unchanged.`);
+		console.log(
+			`REFUSED ${blessRefused} day(s) — past the feasibility ceiling or below the truth floor; those fixtures are unchanged.`,
+		);
 		process.exit(1);
 	}
 	process.exit(0);
