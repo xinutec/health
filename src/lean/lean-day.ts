@@ -45,8 +45,20 @@
  * carries, so a live request cannot produce them — the asymmetry is structural,
  * and it is why `day-gate` stays the finer instrument rather than a duplicate.
  *
- * There is no `on` path yet. This module exists to prove a live encoder works
- * end to end; serving from it is the next step, and wants this quiet first.
+ * # `on`
+ *
+ * `serveLeanDay` returns the chain's own answer for `velocity.ts` to return in
+ * place of the TS one. It runs the SAME comparison `shadow` does and records
+ * into the same ledger — serving is not a reason to grade a day more loosely,
+ * it is a reason to grade it at all.
+ *
+ * Two things it does NOT do, both deliberate. It does not delete the TS
+ * cascade: the two solvers are shelled, so their drawn geometry is grafted back
+ * from the TS run that still happens (`day-decode.ts`), and what deletes the TS
+ * arm is the Rust shell — the roadmap puts that last on purpose. And it does not
+ * serve through a failure: a bridge error, a non-convergent loop or a count
+ * mismatch falls back to TS, counted and warned, the way `LEAN_STATIONCHAIN=on`
+ * does.
  */
 
 import path from "node:path";
@@ -55,6 +67,7 @@ import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { DayState } from "../sleep/day-state.js";
 import { classify, diffEpisodes, diffSegs } from "./day-compare.js";
+import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells } from "./day-decode.js";
 import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
 import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
@@ -120,6 +133,26 @@ export async function shadowLeanDay(
 	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
 	label: string,
 ): Promise<void> {
+	await runLeanDay(req, inputs, ts, label);
+}
+
+/**
+ * The chain, the comparison and the accounting — everything both modes share.
+ *
+ * Returns the response's three arrays, still in wire shape, or `undefined` when
+ * nothing usable came back. `shadow` drops that value on the floor and `on`
+ * decodes it, so the two modes cannot diverge in what they MEASURE: a served
+ * day is graded by the same rule and lands in the same ledger as a shadowed one.
+ * Splitting the comparison out per mode is how a tenant ends up serving under a
+ * looser definition of agreement than it stages under.
+ */
+async function runLeanDay(
+	req: DayRequestInputs,
+	inputs: ClassificationInputs,
+	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
+	label: string,
+): Promise<{ segs: unknown[]; states: unknown[]; episodes: unknown[] } | undefined> {
+	const mode = leanDayMode();
 	const { spawnSync } = await import("node:child_process");
 	try {
 		const c = await converge(req, inputs, inputs.osm, async (payload) => {
@@ -147,14 +180,14 @@ export async function shadowLeanDay(
 		});
 		if (c.rounds < 0) {
 			stats.fails += 1;
-			console.log(`lean-day[shadow] ${label}: NOT CONVERGED — ${c.failure ?? "no reason given"}`);
-			return;
+			console.log(`lean-day[${mode}] ${label}: NOT CONVERGED — ${c.failure ?? "no reason given"}`);
+			return undefined;
 		}
 		const res = JSON.parse(c.out) as { segs?: unknown[]; states?: unknown[]; episodes?: unknown[]; error?: string };
 		if (res.error !== undefined) {
 			stats.fails += 1;
-			console.log(`lean-day[shadow] ${label}: LEAN ERROR — ${res.error}`);
-			return;
+			console.log(`lean-day[${mode}] ${label}: LEAN ERROR — ${res.error}`);
+			return undefined;
 		}
 		stats.calls += 1;
 		stats.rounds.push(c.rounds);
@@ -188,10 +221,52 @@ export async function shadowLeanDay(
 			else stats.segDiffs += 1;
 			for (const d of real) stats.unexplained.push(`${label}/${d}`);
 		}
+		return { segs: res.segs ?? [], states: res.states ?? [], episodes: res.episodes ?? [] };
 	} catch (e) {
 		stats.fails += 1;
-		console.log(`lean-day[shadow] ${label}: BRIDGE FAILED — ${e instanceof Error ? e.message : "non-Error throw"}`);
+		console.log(`lean-day[${mode}] ${label}: BRIDGE FAILED — ${e instanceof Error ? e.message : "non-Error throw"}`);
+		return undefined;
 	}
+}
+
+/**
+ * The `on` path: run the chain and RETURN its answer, or `undefined` to serve TS.
+ *
+ * Everything `shadowLeanDay` does, plus a decode — the comparison still runs and
+ * still records, because a served divergence is more worth counting than a
+ * shadowed one, not less. What changes is only what the caller does with it.
+ *
+ * `undefined` on a bridge failure, a non-convergent round loop, or a count
+ * mismatch at either boundary. The first two are the house pattern
+ * (`lean-station-chain.ts`: serve TS, count it, say so loudly) and the third is
+ * a limit of the graft rather than a policy — the solver geometry the fold is
+ * not fed can only be put back positionally, and across differing counts that
+ * would splice two days together rather than repair one.
+ *
+ * A FIELD divergence is served. That is the point of `on`: shadow already
+ * reports it and nothing sees it, and the flip exists to make it user-visible.
+ */
+export async function serveLeanDay(
+	req: DayRequestInputs,
+	inputs: ClassificationInputs,
+	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
+	label: string,
+): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] } | undefined> {
+	const res = await runLeanDay(req, inputs, ts, label);
+	if (res === undefined) return undefined;
+
+	const segs = graftShells(res.segs.map(decodeSeg), ts.segs);
+	const episodes = graftEpisodes(res.episodes.map(decodeEpisode), ts.episodes);
+	if (segs === undefined || episodes === undefined) {
+		stats.fails += 1;
+		console.warn(
+			`lean-day[on] ${label}: count mismatch at the graft — serving TS ` +
+				`(segs TS ${ts.segs.length}/Lean ${res.segs.length}, ` +
+				`episodes TS ${ts.episodes.length}/Lean ${res.episodes.length})`,
+		);
+		return undefined;
+	}
+	return { segs, states: res.states.map(decodeState), episodes };
 }
 
 /** Print the run's accounting and return it as the gate's data. `null` when the

@@ -10,6 +10,7 @@ import { db } from "../db/pool.js";
 import { getSyncState } from "../db/sync-state.js";
 import { checkWorldlineFeasibility } from "../eval/worldline-feasibility.js";
 import { applyHsmmPlaceOverride } from "../hmm/place-override.js";
+import type { DayRequestInputs } from "../lean/fold-capture.js";
 import { foldCaptureFromEnv } from "../lean/fold-capture.js";
 import { installLeanPasses } from "../lean/install.js";
 import {
@@ -18,7 +19,7 @@ import {
 	demoteJitterWalkToStationaryViaLean,
 	revertIsolatedCadenceDrivesViaLean,
 } from "../lean/lean-biometric-labels.js";
-import { leanDayMode, shadowLeanDay } from "../lean/lean-day.js";
+import { leanDayMode, serveLeanDay, shadowLeanDay } from "../lean/lean-day.js";
 import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
@@ -2009,33 +2010,42 @@ export async function computeVelocityFromInputs(
 	// nothing else grades live. The empty-day arm is included for the reason the
 	// capture includes it: a tenant that skipped it would fall silent on the days
 	// with the least other evidence.
-	const shadowDay = async (tsStates: DayState[], tsEpisodes: EpisodeGeometry[]): Promise<void> => {
-		if (leanDayMode() === "off") return;
-		await shadowLeanDay(
-			{
-				segsRaw: segments,
-				modeStats,
-				obs: {
-					points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
-					rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
-					displayFixes,
-					steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
-					hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
-					sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
-				},
-				// The same closure the capture records, not a second copy of it:
-				// nothing in the tail derives from the cascade, so there is one
-				// definition and both arms read it.
-				tail: downstreamInputs,
-				// The answer tables start EMPTY. A serving caller has no recorded
-				// trace to seed them from; the round loop fills them by asking.
-				tzAt: [],
-				bestPlace: [],
+	// Returns the Lean chain's own answer under `on`, and `undefined` under
+	// `shadow` / `off` / any failure — so the caller's `?? { … }` is both "the
+	// tenant is not serving" and "it tried and could not", which are the same
+	// thing from here: serve TS. The distinction is not lost, it is in the
+	// ledger, where a fall-back is a counted `fail` rather than a silent one.
+	const leanDay = async (
+		tsStates: DayState[],
+		tsEpisodes: EpisodeGeometry[],
+	): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] } | undefined> => {
+		const mode = leanDayMode();
+		if (mode === "off") return undefined;
+		const req: DayRequestInputs = {
+			segsRaw: segments,
+			modeStats,
+			obs: {
+				points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+				rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+				displayFixes,
+				steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+				hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+				sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
 			},
-			inputs,
-			{ segs: withBiometrics, states: tsStates, episodes: tsEpisodes },
-			`${date} ${userId}`,
-		);
+			// The same closure the capture records, not a second copy of it:
+			// nothing in the tail derives from the cascade, so there is one
+			// definition and both arms read it.
+			tail: downstreamInputs,
+			// The answer tables start EMPTY. A serving caller has no recorded
+			// trace to seed them from; the round loop fills them by asking.
+			tzAt: [],
+			bestPlace: [],
+		};
+		const tsArm = { segs: withBiometrics, states: tsStates, episodes: tsEpisodes };
+		const label = `${date} ${userId}`;
+		if (mode === "on") return serveLeanDay(req, inputs, tsArm, label);
+		await shadowLeanDay(req, inputs, tsArm, label);
+		return undefined;
 	};
 
 	if (states.length === 0 && points.length === 0) {
@@ -2046,14 +2056,17 @@ export async function computeVelocityFromInputs(
 		if (inferred.length > 0) {
 			const episodes = buildEpisodes(inferred, withBiometrics, points, displayFixes);
 			foldCapture?.writeTail(downstreamInputs, inferred, episodes);
-			await shadowDay(inferred, episodes);
+			// The capture writes the TS answer whatever the tenant serves: it is the
+			// input closure for the GATE, and a capture of Lean's own output would
+			// be the fold grading itself.
+			const served = await leanDay(inferred, episodes);
 			phaseTimes.leanCovered = Date.now() - leanCoveredFrom;
 			return {
 				points,
 				rawFixes: displayFixes,
-				segments: withBiometrics,
-				states: inferred,
-				episodes,
+				segments: served?.segs ?? withBiometrics,
+				states: served?.states ?? inferred,
+				episodes: served?.episodes ?? episodes,
 				battery,
 				timing: phaseTimes,
 			};
@@ -2123,14 +2136,23 @@ export async function computeVelocityFromInputs(
 
 	const episodes = buildEpisodes(finalStates, withBiometrics, points, displayFixes);
 	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);
-	await shadowDay(finalStates, episodes);
+	// Under `on` this is the whole flip: the three values the day is MADE of come
+	// from the Lean chain instead of the TS one. Everything above still ran —
+	// `on` does not delete the TS cascade, because the two solvers are shelled and
+	// their geometry is grafted back from it (`day-decode.ts`). What changes is
+	// which arm's answer leaves this function.
+	//
+	// The feasibility check above deliberately still grades the TS states. It is
+	// an invariant on the day, not on an arm, and running it on whichever arm won
+	// would make its verdict depend on a flag.
+	const served = await leanDay(finalStates, episodes);
 	phaseTimes.leanCovered = Date.now() - leanCoveredFrom - (phaseTimes.feasibility ?? 0);
 	return {
 		points,
 		rawFixes: displayFixes,
-		segments: withBiometrics,
-		states: finalStates,
-		episodes,
+		segments: served?.segs ?? withBiometrics,
+		states: served?.states ?? finalStates,
+		episodes: served?.episodes ?? episodes,
 		battery,
 		timing: phaseTimes,
 	};
