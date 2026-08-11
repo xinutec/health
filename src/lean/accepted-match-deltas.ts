@@ -323,14 +323,31 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarseDevM: 0.01,
 		pathDevM: 0.01,
 		basis: "magnitude",
-		// #401's own leg. The 5.87 m slide is declared; the 27 SECOND timestamp
-		// shift deliberately is NOT, so this entry fails the gate until someone
-		// signs that number specifically. It is the largest in the corpus by a
-		// factor of 27, the map tap-inspector renders the vertex time to the
-		// second, and this leg has been passing on a 0.01 m LINE bound that says
-		// nothing about it — which is the whole of #401.
+		// #401's own leg, and the only entry in this file whose sign-off is about
+		// a TIME rather than a distance. Both extra figures are declared, so the
+		// gate now holds it to all three axes instead of to the 0.01 m line bound
+		// that said nothing about either.
 		vtxM: 5.87,
-		reason: bounded(0.01, "coarse and display"),
+		dtsS: 27,
+		reason:
+			`${bounded(0.01, "coarse and display")} SLIDE AND SHIFT, measured 2026-08-11 (#401): the lines agree ` +
+			"to 0.01 m, but one display vertex sits 5.87 m along the line from its counterpart and carries a " +
+			"timestamp 27 SECONDS apart. Both are declared and enforced here because the line deviation cannot " +
+			"see either — a vertex sliding along an otherwise identical polyline is invisible to " +
+			"polylineDeviationM by construction. 27 s is the largest shift in the corpus by a factor of 27 " +
+			"against the 1 s floor two whole-second roundings can produce, so it is NOT rounding and is not " +
+			"claimed to be. What it is instead: SIGNED OFF ON ITS CONSEQUENCE, by Pippijn on 2026-08-11, having " +
+			"been shown what it costs. The consequence is bounded and was traced rather than assumed — the " +
+			"interpolated ts reaches exactly two readers (api.ts:469 strips the segment-level path arrays, so " +
+			"nothing else sees it). episode-geometry clips the drawn path by it, where 27 s can move a vertex " +
+			"across a state-window boundary and change which vertices are drawn — cosmetic at one end of one " +
+			"leg, since the line itself is identical. And the map tap-inspector renders it at second precision, " +
+			"so tapping THIS vertex can report a time up to 27 s off depending on which arm drew the line. " +
+			"Nothing decides anything on it: the coarse layer feeds matchImprovesDisplay geometrically, and " +
+			"these lines are 0.01 m apart. Accepted as a display-time imprecision on one vertex of one leg, " +
+			"NOT as rounding. Which arm's timestamp is nearer the truth is unknown and unknowable from the " +
+			"data — that is why this is a ceiling on a consequence and not a claim about correctness, and why " +
+			"a leg that shifts FURTHER than 27 s still fails.",
 	},
 	{
 		leg: "2742a9a5725284a7",

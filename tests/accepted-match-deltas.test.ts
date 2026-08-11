@@ -266,15 +266,28 @@ describe("accepted-match-delta vertex and timestamp axes (#401)", () => {
 	// One second is the floor of a timestamp both arms round to whole seconds,
 	// so it is free; 27 s is not, and this pins that #401's leg stays RED until
 	// someone signs that number specifically rather than inheriting a metre bound.
-	it("accepts a 1 s shift and REFUSES the 27 s one that is not signed off", () => {
+	it("accepts the 27 s shift it is signed off at, and REFUSES anything past it", () => {
+		expect(shift.dtsS).toBe(27);
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(true);
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 28])).toBe(false);
+		// The sign-off is a CEILING on a consequence, not a claim that 27 s is
+		// right, so a smaller shift passes and a larger one does not.
 		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 1])).toBe(true);
-		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(false);
+	});
+
+	// An entry that declares no dtsS inherits the 1 s floor and nothing more —
+	// 27 s must not become the file-wide allowance because one leg carries it.
+	it("does not let one signed-off shift loosen every other entry", () => {
+		expect(entry.dtsS).toBeUndefined();
+		expect(atAll(entry, [0.01, 0.01], [0.01, 0.01], [0, 1])).toBe(true);
+		expect(atAll(entry, [0.01, 0.01], [0.01, 0.01], [0, 2])).toBe(false);
+		expect(atAll(entry, [0.01, 0.01], [0.01, 0.01], [0, 27])).toBe(false);
 	});
 
 	// The measured corpus figures, so the gate's actual verdict on these two legs
 	// is pinned here and not only in a run nobody re-reads.
 	it("matches what compare-match measures on the corpus today", () => {
 		expect(atAll(slide, [0.0, 0.01], [0.0, 12.22], [0, 1])).toBe(true);
-		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(false);
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(true);
 	});
 });
