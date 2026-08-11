@@ -197,6 +197,19 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `decoded_days`), so serving it is a decision, not a gate setting.
 	$DEV LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
 
+	# The HSMM outlier filter's ONLY evidence (#695). `Verified.Hsmm.GpsOutliers`
+	# has no tenant, no ledger and no gate — unlike `GpsQuality`, whose
+	# comparator can stay a hand-run referee because `LEAN_GPSQUALITY` serves it
+	# daily and prints a verdict. So this comparator is the whole of what stands
+	# behind that module, and leaving it hand-run would repeat #9's hazard in
+	# miniature: a check that exists, is never run, and quietly stops being true.
+	#
+	# Cheap enough that there is no argument against it — 11 fixtures, ~2 s
+	# total, against the ~12 min the matcher gate below costs. It replays the
+	# gitignored `decoded_days` corpus, which is why it belongs here rather than
+	# in gate.dhall, exactly like the three around it.
+	$DEV pnpm run compare-gps-outliers
+
 	# The MATCHER FLIP GATE (#9). Until now `compare-match` appeared in
 	# package.json and nowhere else — not here, not gate.dhall, not any script
 	# that runs unattended. So a three-arm bit-exact comparison existed and

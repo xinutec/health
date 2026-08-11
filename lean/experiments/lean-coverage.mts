@@ -48,6 +48,8 @@
  *   Kalman / GpsQuality / BiometricLabels
  *                       their three tenants + `compare-kalman` /
  *                       `compare-gpsquality`
+ *   Hsmm.GpsOutliers    `pnpm run compare-gps-outliers` — the HSMM fixtures'
+ *                       points through both arms, kept-sets compared (#695)
  *
  * Run: TMPDIR=/tmp npx tsx lean/experiments/lean-coverage.mts
  */
@@ -163,13 +165,24 @@ const RAIL_ROOTS = ["Verified.Rail.Certify", "Verified.Rail.Dijkstra"];
  *   reading, and the first (a wiring defect in `Assemble`) had to be ruled out
  *   before deleting anything.
  *
- *   `GpsOutliers` is NEITHER, and stays. It is the only Lean implementation and
- *   its TS is live — `decode.ts:160` calls `dropGpsOutliers` on every decode. No
- *   verb reaches it for a CAPTURE-time reason: `capture-hsmm-day.ts:191` applies
- *   the same drop BEFORE storing the fixture, so the stored points hold none of
- *   the outliers the pass exists to remove and a replay cannot exercise it. Same
- *   shape as the #233 waiver — determinism bought by moving work out of the
- *   replay — and the fix is on the capture side, not a wiring change here.
+ *   `GpsOutliers` was NEITHER, and is now live-compared (#695, 2026-08-11). It
+ *   is the only Lean implementation and its TS is live — `decode.ts:160` calls
+ *   `dropGpsOutliers` on every decode.
+ *
+ *   The reason recorded here for why no verb reached it was WRONG, and worth
+ *   keeping as the correction it is. It said the fixture was captured downstream
+ *   of the drop — `capture-hsmm-day.ts:191` applies the same drop BEFORE
+ *   storing — so the stored points held no outliers and a replay could not
+ *   exercise the pass, making it the #233 waiver shape with a capture-side fix.
+ *   Line 191 applies the drop to `computeMinuteProximity`'s ARGUMENT. The stored
+ *   `points` are `velResult.points`, raw. Measured: all 11 fixtures carry
+ *   outliers, 999 of 8758 fixes, ~11%. The data was there the whole time and the
+ *   missing piece was a verb, which is a wiring change here after all.
+ *
+ *   Two claims stood next to each other for a day — "no verb reaches it", true
+ *   and mechanical, and "the fixture cannot exercise it", inferred from a line
+ *   number and never run. Only the first was checkable without work, and it was
+ *   the one that turned out to be the whole problem.
  *
  * SHAPE — in the residue correctly, but not ports and not news:
  *   `Verified.Hsmm.Factors` is an AGGREGATOR: 25 imports, zero definitions. It
@@ -208,6 +221,10 @@ const GATES: [string, string[]][] = [
 	// the exact overstatement #674 removed from this file.
 	["LEAN_STATIONCHAIN / compare-stationchain", ["Verified.Hsmm.StationChain"]],
 	["kalman / gpsquality / biolabels", ["Verified.Geo.Kalman", "Verified.Geo.GpsQuality", "Verified.Geo.BiometricLabels"]],
+	// #695. Listed on the same condition as the stationchain row above: the
+	// `gpsoutliers` verb and `compare-gps-outliers.mts` landed together, so this
+	// row moved when the module became COMPARED, not when it became reachable.
+	["compare-gps-outliers", ["Verified.Hsmm.GpsOutliers"]],
 ];
 
 const claimed = new Set<string>();

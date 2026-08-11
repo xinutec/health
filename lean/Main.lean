@@ -962,6 +962,44 @@ private def gpsQualityResult (j : Json) : Json :=
       Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon,
         match p.accuracy with | none => Json.null | some a => fBits a]))]
 
+/-! ## HSMM GPS outlier filter (`verified_cli gpsoutliers`)
+
+`Verified.Hsmm.GpsOutliers.dropGpsOutliers` — the robust-median cluster filter
+`buildHsmmModel` runs on its raw points before the observation tensor. Distinct
+from `gpsquality` above, which is a different filter at a different stage: that
+one runs before the Kalman smoother on raw PhoneTrack fixes, this one runs after
+it on the smoothed stream, and only this one is the HSMM's.
+
+  { "pts": [[ts, latBits, lonBits, speedBits], …] }
+
+Output: the SURVIVING rows, same shape — a pure selection like `gpsquality`, so
+the only thing the two arms can disagree about is WHICH fixes survive. `cos`
+reaches the deviation compared against the 2 km threshold and nothing else, and
+no real fix sits within a ULP of 2 km of its own cluster median, so the kept set
+is exact rather than close. Set equality is the honest assertion here and a
+float delta would be the wrong instrument.
+
+This verb exists because the module had none (#695): `Verified.Hsmm.Factors` was
+its only importer and nothing in `verified_cli` reached it, so the twin was a
+real port of a live pass that no comparator could enter. -/
+
+private def parseHsmmGpsPt (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
+  let a ← j.getArr?
+  match a[0]?, a[1]?, a[2]?, a[3]? with
+  | some ts, some la, some lo, some sp =>
+    return ⟨← ts.getInt?, ← jBits la, ← jBits lo, ← jBits sp⟩
+  | _, _, _, _ => throw "hsmm gps point must be [ts, latBits, lonBits, speedBits]"
+
+private def gpsOutliersResult (j : Json) : Json :=
+  let parsed : Except String (List Verified.Hsmm.Observation.GpsPoint) := do
+    let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseHsmmGpsPt
+    return Verified.Hsmm.GpsOutliers.dropGpsOutliers pts.toList
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out =>
+    Json.mkObj [("pts", Json.arr ((out.map fun p =>
+      Json.arr #[Lean.toJson p.ts, fBits p.lat, fBits p.lon, fBits p.speedKmh]).toArray))]
+
 /-! ## Biometric label rewrites (`verified_cli biolabels`)
 
 `Verified.Geo.BiometricLabels` — the four velocity passes that let the step
@@ -2276,6 +2314,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "coverage" => coverageResult j
         | .ok "kalman" => kalmanResult j
         | .ok "gpsquality" => gpsQualityResult j
+        | .ok "gpsoutliers" => gpsOutliersResult j
         | .ok "biolabels" => bioLabelsResult j
         | .ok "day" => Day.dayResult j
         | .ok "focus" => Focus.focusResult j
@@ -2355,6 +2394,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
+  if args.contains "gpsoutliers" then return ← runOne gpsOutliersResult input
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
   if args.contains "day" then return ← runOne Day.dayResult input
   if args.contains "focus" then return ← runOne Focus.focusResult input
