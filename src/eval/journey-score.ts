@@ -95,8 +95,16 @@ export interface JourneyResult {
 	/** The reconstructed shape of the best-overlapping output journey, or null
 	 *  when nothing overlapped. */
 	actualShape: string[] | null;
-	/** True when `actualShape` equals `expectedShape`. */
+	/** True when `actualShape` equals `expectedShape` AND the match covers the
+	 *  audited span. BOTH conjuncts, which is why the two below exist. */
 	matched: boolean;
+	/** Seconds of the audited span the best-overlapping journey does NOT cover,
+	 *  and the allowance it had. Reported because a shape-only diagnostic cannot
+	 *  explain a coverage failure: measured 2026-08-11, five of the corpus's 15
+	 *  unmatched journeys reconstruct their EXACT expected shape and fail here
+	 *  instead, with nothing in the output saying so (#752). */
+	uncoveredS: number;
+	slackS: number;
 }
 
 /** Expand a coarse state timeline (contiguous start/end/mode windows — the
@@ -289,13 +297,16 @@ export function journeyShapeResults(
 		const overlap =
 			match === null ? 0 : Math.max(0, Math.min(gt.endTs, match.endTs) - Math.max(gt.startTs, match.startTs));
 		const uncovered = gt.endTs - gt.startTs - overlap;
-		const covered = uncovered <= Math.max(COVERAGE_SLACK_FRAC * (gt.endTs - gt.startTs), COVERAGE_SLACK_MIN_S);
+		const slack = Math.max(COVERAGE_SLACK_FRAC * (gt.endTs - gt.startTs), COVERAGE_SLACK_MIN_S);
+		const covered = uncovered <= slack;
 		return {
 			startTs: gt.startTs,
 			endTs: gt.endTs,
 			expectedShape,
 			actualShape,
 			matched: actualShape !== null && arraysEqual(expectedShape, actualShape) && covered,
+			uncoveredS: Math.round(uncovered),
+			slackS: Math.round(slack),
 		};
 	});
 }
@@ -480,7 +491,18 @@ export function scoreJourneys(rows: readonly GroundTruthRow[], decoder: readonly
 		const actualShape = match !== null ? modeShape(match) : null;
 		const matched = actualShape !== null && arraysEqual(expectedShape, actualShape);
 		if (matched) journeysModeSequenceMatched++;
-		journeyResults.push({ startTs: gtJ.startTs, endTs: gtJ.endTs, expectedShape, actualShape, matched });
+		// This scorer judges the DECODER on shape alone — it has no coverage
+		// conjunct to report, and saying "0 uncovered" would claim a check it
+		// never ran. -1 is the absent value, and the printer omits it.
+		journeyResults.push({
+			startTs: gtJ.startTs,
+			endTs: gtJ.endTs,
+			expectedShape,
+			actualShape,
+			matched,
+			uncoveredS: -1,
+			slackS: -1,
+		});
 	}
 
 	return {

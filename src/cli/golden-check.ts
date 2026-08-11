@@ -192,11 +192,19 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 	// Per-journey failure diagnostic: expected vs reconstructed mode shape — the
 	// signal that says WHICH factor (corridor / kinematic / cadence) each broken
 	// journey needs. Only shown with GOLDEN_JOURNEY_DEBUG to keep the report terse.
+	//
+	// Shape alone CANNOT explain the verdict: `matched` is shape AND coverage, so
+	// a journey that reconstructs its exact expected shape fails silently on the
+	// second conjunct. Five of the corpus's 15 unmatched journeys are that case,
+	// one of them an enforced regression nobody could attribute (#752), so the
+	// coverage side is printed beside the shape.
 	if (process.env.GOLDEN_JOURNEY_DEBUG) {
 		for (const r of journeyResults.filter((x) => !x.matched)) {
 			const at = new Date(r.startTs * 1000).toISOString().slice(11, 16);
+			const cov =
+				r.uncoveredS >= 0 ? `  uncovered ${r.uncoveredS}s of ${r.endTs - r.startTs}s (slack ${r.slackS}s)` : "";
 			lines.push(
-				`      ✗ journey @${at}Z  expected [${r.expectedShape.join(",")}]  got [${(r.actualShape ?? []).join(",")}]`,
+				`      ✗ journey @${at}Z  expected [${r.expectedShape.join(",")}]  got [${(r.actualShape ?? []).join(",")}]${cov}`,
 			);
 		}
 	}
