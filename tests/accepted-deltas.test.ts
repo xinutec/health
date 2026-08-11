@@ -12,6 +12,7 @@ import {
 	deltaFingerprint,
 	deltaTag,
 	isAcceptedDelta,
+	isBoundedByGeometry,
 	type MeasuredDelta,
 	shapeWithin,
 	unexplainedDeltas,
@@ -188,5 +189,71 @@ describe("lean-pass ledger scoping", () => {
 		expect(leanLeg()).toBe("outer00000000000");
 		restoreOuter();
 		expect(leanLeg()).toBe("");
+	});
+});
+
+/**
+ * The geometric bound (#766) — the rule that judges a line-drawing pass by the
+ * LINE it drew rather than by which vertices it kept.
+ *
+ * It exists because the quantised arm cannot satisfy index identity: it snaps
+ * the perpendicular foot to the 1e-7° grid before measuring to it, which picks
+ * the other vertex whenever two candidates sit within a few mm of each other in
+ * chord deviation. That is a vertex sliding ALONG the same line, and the
+ * matcher's manifest already declines to call that a difference.
+ *
+ * These pin the two things that keep the rule from being a blanket excuse: the
+ * tolerance is a real ceiling, and a changed vertex COUNT is never bounded.
+ */
+describe("geometric bound on a line-drawing divergence", () => {
+	const geom = (lineDevM: number, sameVertexCount = true): MeasuredDelta => ({
+		op: "simplify",
+		n: 100,
+		note: "",
+		leg: "a-leg-nobody-signed-off",
+		tsOnly: [40],
+		leanOnly: [41],
+		lineDevM,
+		toleranceM: 5,
+		sameVertexCount,
+	});
+
+	it("bounds a slide whose lines agree inside the pass's own tolerance", () => {
+		// The worst real corpus case is 0.44 m against a 5 m tolerance.
+		expect(isBoundedByGeometry(geom(0.44))).toBe(true);
+		expect(isAcceptedDelta(geom(0.44))).toBe(true);
+		expect(deltaTag(geom(0.44))).toBe("bounded");
+	});
+
+	it("treats the tolerance as a real ceiling, not a gesture", () => {
+		expect(isBoundedByGeometry(geom(5))).toBe(true); // exactly at it
+		expect(isBoundedByGeometry(geom(5.0001))).toBe(false); // just past it
+		expect(deltaTag(geom(5.0001))).toBe("UNEXPLAINED");
+	});
+
+	it("NEVER bounds a changed vertex count, however close the lines", () => {
+		// A different NUMBER of vertices is an add or a drop, not a slide — a
+		// different phenomenon, and not the one measured in #766.
+		expect(isBoundedByGeometry(geom(0.001, false))).toBe(false);
+		expect(deltaTag(geom(0.001, false))).toBe("UNEXPLAINED");
+	});
+
+	it("does not bound an op that reports no geometry", () => {
+		// The count-only passes draw no comparable line, so this rule must not
+		// reach them — they keep the manifest as their only route to accepted.
+		const countOnly: MeasuredDelta = { op: "spurs", n: 10, note: "kept 9 vs 8", leg: "some-leg" };
+		expect(isBoundedByGeometry(countOnly)).toBe(false);
+	});
+
+	it("refuses a non-finite deviation", () => {
+		// `polylineDeviationM` returns Infinity when one arm drew nothing, which
+		// is the loudest possible disagreement and must not read as bounded.
+		expect(isBoundedByGeometry(geom(Number.POSITIVE_INFINITY))).toBe(false);
+	});
+
+	it("still accepts a signed-off leg that carries no geometry", () => {
+		// The manifest route is unchanged — the two rules are independent.
+		const manifest: MeasuredDelta = { ...geom(99), leg: ACCEPTED_DELTAS[0]?.leg ?? "", lineDevM: undefined };
+		if (ACCEPTED_DELTAS.length > 0) expect(deltaTag(manifest)).not.toBe("bounded");
 	});
 });

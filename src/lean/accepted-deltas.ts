@@ -73,6 +73,15 @@ export interface MeasuredDelta {
 	/** The flip, structurally — absent for the count-only ops. */
 	tsOnly?: readonly number[];
 	leanOnly?: readonly number[];
+	/** How far the two arms' OUTPUT LINES are apart, in metres (symmetric,
+	 *  `polylineDeviationM`), with the tolerance the pass was run at. Present
+	 *  only for the ops that draw a line and can therefore be judged as one.
+	 *  See {@link isBoundedByGeometry} for why this is the bar that matters. */
+	lineDevM?: number;
+	toleranceM?: number;
+	/** Did both arms keep the SAME NUMBER of vertices? A slide is a swap; a
+	 *  different count is an add or a drop, which is a different phenomenon. */
+	sameVertexCount?: boolean;
 }
 
 export interface AcceptedDelta {
@@ -161,8 +170,59 @@ export function shapeWithin(d: MeasuredDelta, a: AcceptedDelta): boolean {
 	return tsOnly.every((i, k) => Math.abs(i - leanOnly[k]) <= a.maxShift);
 }
 
-/** True iff this measured divergence is in the accepted near-tie manifest. */
+/**
+ * Do the two arms draw the SAME LINE, to the precision the pass itself works
+ * at? Then the index-set difference is not a difference in what was decided.
+ *
+ * This is the bar `accepted-match-deltas.ts` already applies to the matcher —
+ * LINE-to-line distance, explicitly not vertex-to-vertex, because a vertex
+ * sliding ALONG an otherwise identical polyline is not a disagreement about
+ * the geometry. `lean-passes` was the one tenant still holding its arm to
+ * exact index identity, which asserts more than a display-geometry pass
+ * promises and which a quantised arm structurally cannot satisfy.
+ *
+ * MEASURED 2026-08-11 (#766), the whole reason this rule exists. Every
+ * `simplify` divergence in the golden corpus is the QUANTISED CHORD METRIC
+ * disagreeing with the float one: `qChordDist` snaps the perpendicular foot
+ * onto the 1e-7° grid before measuring to it, worth millimetres on a ~9 m
+ * deviation — enough to pick the other vertex when two candidates are nearly
+ * equidistant from the chord. It is NOT a float tie: the candidate gaps are
+ * 1.4-7.7 mm, some 1e12 ULP apart. The quantised twin reproduces Lean's pick
+ * at 5 of 5 disputed steps, so the Lean arm is faithful to its own
+ * specification and the two arms are answering slightly different questions.
+ * On the three corpus legs the arms keep the SAME vertex count and their lines
+ * sit 0.04-0.44 m apart, while individual vertices slide up to 8 m along them.
+ *
+ * ## Why the pass's own tolerance is the right bound
+ *
+ * Douglas-Peucker guarantees only that the simplified line stays within
+ * `toleranceM` of the input. Two valid simplifications of one input may
+ * therefore differ from EACH OTHER by up to twice that. Requiring them to
+ * agree within ONE tolerance is strictly stronger than the pass's own
+ * contract, and the worst measured case uses under a tenth of it.
+ *
+ * The vertex-count test is what keeps this from being a blanket excuse: a
+ * slide is a SWAP, and both arms keeping a different NUMBER of vertices means
+ * one genuinely added or dropped something. That is not this phenomenon and is
+ * never bounded here, however close the lines happen to sit.
+ */
+export function isBoundedByGeometry(d: MeasuredDelta): boolean {
+	if (d.lineDevM === undefined || d.toleranceM === undefined) return false;
+	if (d.sameVertexCount !== true) return false;
+	return Number.isFinite(d.lineDevM) && d.lineDevM <= d.toleranceM;
+}
+
+/**
+ * True iff this divergence is explained — either by the per-leg manifest, or
+ * by the two arms drawing the same line.
+ *
+ * The two rules are deliberately different in kind. The manifest is a closed
+ * list of legs someone inspected; the geometric bound is a GENERAL property
+ * that any leg either has or does not. Adding a leg to the manifest excuses
+ * that leg; passing the geometric bound is a measurement about the output.
+ */
 export function isAcceptedDelta(d: MeasuredDelta): boolean {
+	if (isBoundedByGeometry(d)) return true;
 	if (d.leg === "") return false;
 	const candidates = acceptedByLeg.get(d.leg);
 	if (candidates === undefined) return false;
@@ -180,8 +240,11 @@ export function unexplainedDeltas(divs: readonly MeasuredDelta[]): readonly Meas
 	return divs.filter((d) => !isAcceptedDelta(d));
 }
 
-/** Per-divergence label, shared so the gate and the ledger read alike. */
-export function deltaTag(d: MeasuredDelta): "accepted" | "UNEXPLAINED" {
+/** Per-divergence label, shared so the gate and the ledger read alike.
+ *  `bounded` and `accepted` are both explained, and kept apart on purpose: one
+ *  is a measurement of this run's output, the other is a signed-off leg. */
+export function deltaTag(d: MeasuredDelta): "bounded" | "accepted" | "UNEXPLAINED" {
+	if (isBoundedByGeometry(d)) return "bounded";
 	return isAcceptedDelta(d) ? "accepted" : "UNEXPLAINED";
 }
 

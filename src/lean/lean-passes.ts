@@ -29,6 +29,7 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { polylineDeviationM } from "../geo/leg-compare.js";
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaFingerprint, deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
@@ -120,6 +121,12 @@ interface Divergence {
 	 *  checked. Adjudication needs the numbers, not a rendering of them. */
 	tsOnly?: readonly number[];
 	leanOnly?: readonly number[];
+	/** How far apart the two arms' drawn lines are, and the tolerance the pass
+	 *  ran at — the bar a line-drawing op is judged by (`isBoundedByGeometry`).
+	 *  Absent for the ops that do not produce a comparable polyline. */
+	lineDevM?: number;
+	toleranceM?: number;
+	sameVertexCount?: boolean;
 	/** Which run produced it — a `decode` divergence affects served output. */
 	scope: LeanRunScope;
 }
@@ -131,9 +138,10 @@ function recordDivergence(
 	n: number,
 	note: string,
 	shape?: { tsOnly: readonly number[]; leanOnly: readonly number[] },
+	geometry?: { lineDevM: number; toleranceM: number; sameVertexCount: boolean },
 ): void {
 	if (divergences.length >= MAX_DIVERGENCES) return;
-	divergences.push({ op, n, note, leg: leanLeg(), ...shape, scope: leanRunScope() });
+	divergences.push({ op, n, note, leg: leanLeg(), ...shape, ...geometry, scope: leanRunScope() });
 }
 
 /** Structured divergences (bounded) — the flip-decision ledger. */
@@ -230,8 +238,17 @@ export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], tolerance
 	recordCall("simplify", diverged);
 	if (diverged) {
 		const shape = symdiff(tsIdx, keep);
-		const note = symdiffNote(shape);
-		recordDivergence("simplify", pts.length, note, shape);
+		// The two arms' OUTPUT LINES, which is what a display-geometry pass is
+		// actually responsible for. An index-set difference where both lines
+		// agree to the pass's own tolerance is a vertex sliding along one line,
+		// not a disagreement about where the line goes (#766).
+		const lineDevM = polylineDeviationM(
+			tsIdx.map((i) => pts[i]),
+			keep.map((i) => pts[i]),
+		);
+		const geometry = { lineDevM, toleranceM, sameVertexCount: tsIdx.length === keep.length };
+		const note = `${symdiffNote(shape)} line=${lineDevM.toFixed(2)} m/tol ${toleranceM} m`;
+		recordDivergence("simplify", pts.length, note, shape, geometry);
 		// #766: dump the diverging input so the disputed argmax can be replayed
 		// offline by `scripts/probe-simplify-divergence.mjs`. Off unless the env
 		// var is set, and it fires only on a divergence — but it writes a GPS
