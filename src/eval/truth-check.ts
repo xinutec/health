@@ -117,6 +117,31 @@ function norm(s: string | null): string | null {
 }
 
 /**
+ * Does the live way LABEL carry the road the truth names?
+ *
+ * A live `wayName` is not a road, it is a display label: `composeWayName`
+ * (geo/passes/moving.ts) emits up to three road names joined by ", " for one
+ * merged moving leg, duration-weighted, each covering at least 15% of it, and
+ * capped at 30 characters so the timeline stays one line. A walk that crosses
+ * two roads is therefore labelled "Barn Rise, Forty Avenue".
+ *
+ * String equality against that label contradicts this module's own rule — extra
+ * attribution on the live side is not a contradiction — and it cost a real row:
+ * 2026-07-16 @07:13Z, confirmed "walking on Barn Rise", failed for eleven days
+ * against a live leg with IDENTICAL BOUNDS labelled "Barn Rise, Forty Avenue",
+ * with Barn Rise right there in it. That is the confirmed road, plus one more.
+ *
+ * So ask membership, not equality. Still a real test in the direction that
+ * matters: a truth naming a road the leg never touched finds no component and
+ * fails, which is what 2026-05-25 ("Hudson Walk" against "Fulton Road") is.
+ */
+function wayNameCovers(truthWay: string, liveWay: string | null): boolean {
+	if (liveWay == null) return false;
+	const want = norm(truthWay);
+	return liveWay.split(",").some((part) => norm(part) === want);
+}
+
+/**
  * Does the live state match the truth cell? DELIBERATELY ASYMMETRIC: the
  * truth cell asserts only what it names, so extra attribution on the live
  * side is not a contradiction — a truth of plain "walking" is satisfied by
@@ -146,14 +171,14 @@ export function truthMatches(truth: ParsedTruth | null, live: ParsedTruth | null
 		// line is a partial attribution, not a contradiction.
 		if (truth.lineName != null && live.lineName != null && norm(truth.lineName) !== norm(live.lineName)) return false;
 		// A truth-asserted road for a bus ("bus on Piccadilly") must hold.
-		if (truth.wayName != null && norm(truth.wayName) !== norm(live.wayName)) return false;
+		if (truth.wayName != null && !wayNameCovers(truth.wayName, live.wayName)) return false;
 		return true;
 	}
 
-	// A truth-asserted place must match; a truth-asserted way must match; a
-	// truth that asserts neither is a mode-only claim.
+	// A truth-asserted place must match; a truth-asserted way must be carried by
+	// the live label; a truth that asserts neither is a mode-only claim.
 	if (truth.place != null) return norm(truth.place) === norm(live.place);
-	if (truth.wayName != null) return norm(truth.wayName) === norm(live.wayName);
+	if (truth.wayName != null) return wayNameCovers(truth.wayName, live.wayName);
 	return true;
 }
 

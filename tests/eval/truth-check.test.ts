@@ -62,6 +62,21 @@ describe("truthMatches — asymmetric: the truth asserts only what it names", ()
 		expect(truthMatches(busOn("Piccadilly"), busOn("Edgware Road"))).toBe(false);
 		expect(truthMatches(busOn(null), busOn("Piccadilly"))).toBe(true);
 	});
+	it("finds the confirmed road inside a merged leg's multi-road label", () => {
+		// A live `wayName` is a DISPLAY label, not a road: `composeWayName` joins up
+		// to three road names with ", " for one merged moving leg. Exact equality
+		// against that contradicts this module's own asymmetry rule, and did — the
+		// 2026-07-16 @07:13Z walk, confirmed "on Barn Rise", failed against a live
+		// leg of identical bounds labelled "Barn Rise, Forty Avenue".
+		expect(truthMatches(walk("Barn Rise"), walk("Barn Rise, Forty Avenue"))).toBe(true);
+		expect(truthMatches(walk("Forty Avenue"), walk("Barn Rise, Forty Avenue"))).toBe(true);
+		// Membership, not substring: a road the leg never touched still fails, which
+		// is what keeps this a test rather than a formality. "Hudson Walk" against
+		// "Fulton Road" (2026-05-25) must stay a mismatch, and a name that merely
+		// CONTAINS the truth is not the same road.
+		expect(truthMatches(walk("Hudson Walk"), walk("Fulton Road, Westeinde"))).toBe(false);
+		expect(truthMatches(walk("Barn Rise"), walk("Upper Barn Rise"))).toBe(false);
+	});
 	it("never matches when either side is null", () => {
 		expect(truthMatches(null, stay("Home"))).toBe(false);
 		expect(truthMatches(stay("Home"), null)).toBe(false);
