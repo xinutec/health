@@ -1,32 +1,31 @@
 #!/usr/bin/env node
-// Dump the mined venue_type_priors blob for a user. Read-only.
-//   prod-db.sh node scripts/probe-venue-priors.mjs [user]
-import { createConnection } from "mariadb";
-const c = await createConnection({
+/**
+ * Is #343's headline still true? It says the mined visit-shape prior is trained
+ * on 40 visits TOTAL, with cafe at 3 and none in the 40-150 min dwell bucket.
+ * Those numbers date from 2026-07-12 and the table has been mined since.
+ * Read-only.
+ */
+import * as mariadb from "mariadb";
+
+const pool = mariadb.createPool({
 	host: process.env.DB_HOST,
 	port: Number(process.env.DB_PORT),
 	user: process.env.DB_USER,
 	password: process.env.DB_PASSWORD,
-	database: "health",
+	database: process.env.DB_NAME,
+	connectionLimit: 1,
 });
-const user = process.argv[2] ?? "pippijn";
-const [row] = await c.query("SELECT priors_json, mined_stays FROM venue_type_priors WHERE user_id=?", [user]);
-if (!row) {
-	console.log("no priors row");
-	process.exit(0);
+const conn = await pool.getConnection();
+const cols = await conn.query("SHOW COLUMNS FROM venue_type_priors");
+console.log("columns:", cols.map((c) => c.Field).join(", "));
+const rows = await conn.query("SELECT * FROM venue_type_priors ORDER BY 1, 2");
+console.log(`venue_type_priors rows: ${rows.length}`);
+let total = 0;
+for (const r of rows) {
+	const n = Number(r.visit_count ?? r.n ?? r.count ?? 0);
+	total += n;
+	console.log("  " + Object.entries(r).map(([k, v]) => `${k}=${v}`).join("  "));
 }
-const p = JSON.parse(row.priors_json);
-console.log(`mined_stays=${row.mined_stays} totalVisits=${p.totalVisits}`);
-for (const [st, s] of Object.entries(p.bySubtype))
-	console.log(
-		`  ${st.padEnd(18)} v=${s.visits}  dwell=[${s.dwell.join(",")}]  hours=${s.hours
-			.map((v, h) => [v, h])
-			.filter(([v]) => v > 0)
-			.map(([v, h]) => `${h}h:${v}`)
-			.join(" ")}`,
-	);
-console.log("byCategory:");
-for (const [cat, s] of Object.entries(p.byCategory))
-	console.log(`  ${cat.padEnd(18)} v=${s.visits}  dwell=[${s.dwell.join(",")}]`);
-await c.end();
-process.exit(0);
+console.log(`summed visit count across rows: ${total}`);
+await conn.release();
+await pool.end();
