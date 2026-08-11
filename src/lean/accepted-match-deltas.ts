@@ -656,8 +656,10 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		basis: "magnitude",
 		reason:
 			`${boundedAt(0.01, "display", "2026-08-11")} RE-KEYED: supersedes f1a37e256633c480 at the same date ` +
-			"and start minute — the UCLH → Euston Square walk that entry describes, with the same 8v/14v counts " +
-			"and the same 0.01 m display deviation. Worst display vertex separation 0.01 m.",
+			"and start minute, with the same 8v/14v counts and the same 0.01 m display deviation. Worst display " +
+			"vertex separation 0.01 m. (The superseded entry named the two ENDPOINTS of this walk. This repo is " +
+			"PUBLIC and one of them is a hospital, so the identifying detail is dropped rather than carried " +
+			"forward — the fingerprint and the counts identify the leg without it.)",
 	},
 	{
 		leg: "840aff22fab124fe",
