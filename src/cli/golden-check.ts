@@ -389,6 +389,16 @@ if (files.length === 0) {
 
 let regressions = 0;
 let blessed = 0;
+/** Days `--bless` declined to write because their output is physically
+ *  impossible beyond what the ceiling already accepts (#749). Counted so the
+ *  run can exit non-zero: a bless that quietly skipped a day would report
+ *  success over work it did not do. */
+let blessRefused = 0;
+/** The kinematic ceiling, read up-front because the BLESS path needs it — the
+ *  gate below loads it again for its own reporting, and that duplication is
+ *  deliberate: this one must exist before the loop, and hoisting the gate's
+ *  copy would put the ceiling's whole accounting far from where it is used. */
+const blessCeiling = bless ? await loadFeasibilityBaseline() : null;
 let checked = 0;
 /** Days whose kernel lookups came from pushed rows rather than the oracle. */
 let fromRows = 0;
@@ -475,6 +485,51 @@ for (const file of files) {
 	}
 
 	if (bless) {
+		// A bless must not enshrine a day the feasibility gate refuses (#749).
+		//
+		// This branch used to `continue` straight past the feasibility check
+		// below, so `--bless` never computed it — and the corpus drifted exactly
+		// that way: the blessed `expected` for 2026-06-16 CONTAINS a walking leg
+		// covering 1090 m in two steps at 105 km/h, because a bless recorded what
+		// the pipeline produced and nothing asked whether it was possible. The run
+		// then reports `35/35 fixture(s) match baseline` and `feasibility: FAIL` in
+		// the same breath, which reads as a contradiction and is really the gate's
+		// two halves asking different questions: did the output CHANGE, and is the
+		// output POSSIBLE. A bless answered the first while walking past the second.
+		//
+		// The bar is the committed ceiling, not zero. A day already carrying
+		// standing debt can still be re-blessed — the ceiling is what the project
+		// has looked at and accepted, and refusing those would make `--bless`
+		// unusable while any debt exists. What is refused is a day that would push
+		// PAST what was accepted, which is the only case where blessing changes the
+		// gate's verdict rather than recording it.
+		const lineStationsForBless = new Map(Object.entries(captured.inputs.osmTrace.stationsOnLine ?? {}));
+		const blessViolations = checkWorldlineFeasibility(
+			states,
+			dayPoints,
+			dayInputs.biometrics.steps,
+			lineStationsForBless,
+		);
+		const blessKinematic = blessViolations.filter((v) => v.kind === "impossible-mode-kinematics").length;
+		const blessHard = blessViolations.filter(
+			(v) => v.kind !== "impossible-mode-kinematics" && v.kind !== "invalid-rail-triple",
+		).length;
+		const ceiling = blessCeiling?.[captured.meta.date] ?? 0;
+		// Hard violations have no ceiling to sit under, so any of them refuses.
+		if (blessKinematic > ceiling || blessHard > 0) {
+			blessRefused++;
+			console.log(`\nREFUSED  ${label}`);
+			for (const v of blessViolations) console.log(`      ✗ ${v.kind}: ${v.detail}`);
+			console.log(
+				`    ${blessKinematic} impossible leg(s) against a committed ceiling of ${ceiling}` +
+					(blessHard > 0 ? ` and ${blessHard} hard violation(s)` : "") +
+					".\n" +
+					"    The fixture is UNCHANGED. Blessing it would record a physically impossible day\n" +
+					"    as the expected one, and every later run would then agree with it.\n" +
+					"    Fix the day, or raise the ceiling deliberately: npm run golden -- --bless-feasibility\n",
+			);
+			continue;
+		}
 		const updated: CapturedDay = { ...captured, expected: { velocity: actual } };
 		await writeFile(full, `${JSON.stringify(updated, null, "\t")}\n`, "utf8");
 		blessed++;
@@ -532,6 +587,12 @@ for (const file of files) {
 
 if (bless) {
 	console.log(`\nBlessed ${blessed} day(s).`);
+	if (blessRefused > 0) {
+		// Non-zero, because a bless that silently skipped a day would be the same
+		// defect one level up: a command reporting success over work it did not do.
+		console.log(`REFUSED ${blessRefused} day(s) above the feasibility ceiling — those fixtures are unchanged.`);
+		process.exit(1);
+	}
 	process.exit(0);
 }
 
