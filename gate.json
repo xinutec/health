@@ -98,6 +98,21 @@
         "--command",
         "pnpm",
         "run",
+        "check:cascade-parity"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "Lean fold's cascade copy matches velocity.ts",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "pnpm",
+        "run",
         "lint"
       ],
       "cwd": ".",

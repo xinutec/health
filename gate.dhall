@@ -95,6 +95,17 @@ in  { name = "health"
         , argv = G.inDevShell [ "pnpm", "run", "check:frontend-unions" ]
         , timeout_s = 600
         }
+      , {-  `Verified.Geo.PassFold` pins its wiring against a HAND-COPIED list
+            of the TS pass names, so a pass added to `velocity.ts` leaves the
+            Lean guards agreeing with each other and disagreeing with what
+            runs. This reads the names out of the TS. The fold fell a pass
+            behind exactly this way when `changeoverWindow` landed (#444).
+        -}
+        G.Check::{
+        , name = "Lean fold's cascade copy matches velocity.ts"
+        , argv = G.inDevShell [ "pnpm", "run", "check:cascade-parity" ]
+        , timeout_s = 600
+        }
       , G.Check::{
         , name = "lint (biome, backend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]

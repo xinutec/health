@@ -17,6 +17,7 @@
     "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.e2e.json",
     "check:schema-types": "node scripts/check-schema-types.mjs",
     "check:frontend-unions": "node scripts/check-frontend-unions.mjs",
+    "check:cascade-parity": "node scripts/check-cascade-parity.mjs",
     "lint": "biome check .",
     "lint:frontend": "cd frontend && pnpm run lint",
     "format": "biome check --write .",
