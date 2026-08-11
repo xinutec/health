@@ -674,3 +674,149 @@ export function annotateSnappedPaths(
 		return { ...seg, snappedPath: interpolateTimes(geom, seg.startTs, seg.endTs) };
 	});
 }
+
+/** Min step pace (km/h) for a fix-to-fix hop inside a changeover window to be
+ *  the TRAIN still moving rather than the rider walking. Same bar as the
+ *  boarding anchor's `BOARDING_HOP_MIN_KMH`, and for the same reason: it sits
+ *  well above any walking or running pace, so nothing a person does on a
+ *  platform reaches it. */
+const CHANGEOVER_RIDE_MIN_KMH = 15;
+
+/** A reclaimed ride must cover at least this (m) end to end. A cross-platform
+ *  change is tens of metres; an inter-station hop is hundreds. Below this the
+ *  fast steps are GPS noise or the last metres of a train already stopping, and
+ *  moving the boundary would buy a wrong label instead of a right one. Mirrors
+ *  `BOARDING_HOP_MIN_DIST_M`. */
+const CHANGEOVER_RIDE_MIN_M = 250;
+
+/** The platform walk left behind must span at least this (s). Below it there is
+ *  no walk to speak of and the two legs are really one arrival — a case for the
+ *  merge passes, not this one, which would otherwise leave a 3-second "walk"
+ *  wedged between two rides. */
+const CHANGEOVER_PLATFORM_MIN_S = 20;
+
+/**
+ * A changeover window is `[ride tail][platform walk][ride head]`, and only the
+ * middle is a walk (#444).
+ *
+ * The rail reconstruction can end a leg while the phone is still a kilometre
+ * from the station that leg CLAIMS to alight at, and still closing at 50 km/h.
+ * The remaining ride is then stranded in the walk between the two legs, which
+ * the interchange labeller has already named `"<station> (interchange)"` — so a
+ * four-minute "platform walk" contains an inter-station hop, and the kinematic
+ * invariant correctly calls it physically impossible. The 2026-07-02 Jubilee leg
+ * ends one stop early (its true alight is 3.5 minutes later) and the 2026-06-15
+ * one ends 3:56 before the phone reaches its claimed station.
+ *
+ * The anchors decline this case by design — both carry a train→walk→train guard
+ * that hands an interchange here — because reclaiming a hop on ONE side says
+ * nothing about which side it belongs to. Between two rides it can belong to
+ * either, and the window has to be read as a whole.
+ *
+ * # Which part is the walk
+ *
+ * The platform walk is the LONGEST stretch of the window the phone is not
+ * moving at vehicle pace. Everything before it belongs to the arriving ride,
+ * everything after to the departing one.
+ *
+ * That criterion rather than "the fast steps at each end", because a train
+ * STOPS: 2026-07-02's stranded ride calls at West Hampstead and holds for 28 s
+ * inside the window, so a scan that ends the tail at the first slow step ends it
+ * at the intermediate platform. Duration alone cannot separate those either —
+ * the intermediate stops there run 14-28 s and the real cross-platform change is
+ * 32 s. What distinguishes the change is that it is the LONGEST such stretch,
+ * which is the one thing a station stop mid-ride is not.
+ *
+ * Both sides are optional and measured independently: 07-02 yields a tail and no
+ * head, 06-15 yields both.
+ *
+ * Conservative by construction. It only runs on a walk BETWEEN two
+ * station-pair-labelled trains; it moves a boundary only when the reclaimed
+ * ride covers a real inter-station distance; and it leaves the walk alone unless
+ * a recognisable platform stretch survives. Any of those failing means the
+ * window is not the shape this describes, and the pass declines rather than
+ * guessing — an unfixed impossible leg is a reported defect, a wrongly moved
+ * boundary is a silent one.
+ */
+export function splitChangeoverWindows(
+	segments: EnrichedSegment[],
+	points: readonly FilteredPoint[],
+): EnrichedSegment[] {
+	const out = segments.map((s) => ({ ...s }));
+	for (let i = 1; i < out.length - 1; i++) {
+		const walk = out[i];
+		const prev = out[i - 1];
+		const next = out[i + 1];
+		if (effectiveMode(walk) !== "walking") continue;
+		if (!isStationPairTrain(prev) || !isStationPairTrain(next)) continue;
+
+		const fixes = samplesInWindow(points, walk);
+		if (fixes.length < 4) continue;
+
+		// Step k joins fixes[k] and fixes[k+1]. `ride[k]` is that step at train
+		// pace.
+		const ride: boolean[] = [];
+		for (let k = 0; k + 1 < fixes.length; k++) {
+			const a = fixes[k];
+			const b = fixes[k + 1];
+			const dt = b.ts - a.ts;
+			const dm = haversineMeters(a.lat, a.lon, b.lat, b.lon);
+			ride.push(dt > 0 && (dm / dt) * 3.6 >= CHANGEOVER_RIDE_MIN_KMH);
+		}
+		if (!ride.some(Boolean)) continue; // nothing stranded — an honest walk
+
+		// The longest run of non-ride steps, by DURATION: the platform walk.
+		let bestFrom = -1;
+		let bestTo = -1;
+		let bestS = -1;
+		for (let k = 0; k < ride.length; k++) {
+			if (ride[k]) continue;
+			let end = k;
+			while (end + 1 < ride.length && !ride[end + 1]) end++;
+			const span = fixes[end + 1].ts - fixes[k].ts;
+			if (span > bestS) {
+				bestS = span;
+				bestFrom = k;
+				bestTo = end + 1;
+			}
+			k = end;
+		}
+		if (bestFrom < 0 || bestS < CHANGEOVER_PLATFORM_MIN_S) continue;
+
+		const net = (from: number, to: number): number =>
+			haversineMeters(fixes[from].lat, fixes[from].lon, fixes[to].lat, fixes[to].lon);
+		const tailM = bestFrom > 0 ? net(0, bestFrom) : 0;
+		const headM = bestTo < fixes.length - 1 ? net(bestTo, fixes.length - 1) : 0;
+		const takeTail = tailM >= CHANGEOVER_RIDE_MIN_M;
+		const takeHead = headM >= CHANGEOVER_RIDE_MIN_M;
+		if (!takeTail && !takeHead) continue;
+
+		const walkStart = takeTail ? fixes[bestFrom].ts : walk.startTs;
+		const walkEnd = takeHead ? fixes[bestTo].ts : walk.endTs;
+		if (walkEnd - walkStart < CHANGEOVER_PLATFORM_MIN_S) continue;
+
+		const countIn = (from: number, to: number): number => points.filter((p) => p.ts >= from && p.ts < to).length;
+		const note = (why: string): string => `changeover window: ${why} (#444)`;
+		if (takeTail) {
+			prev.endTs = walkStart;
+			prev.pointCount = countIn(prev.startTs, walkStart);
+			prev.refinedReason = prev.refinedReason
+				? `${prev.refinedReason}; ${note(`reclaimed ${Math.round(tailM)} m of stranded ride`)}`
+				: note(`reclaimed ${Math.round(tailM)} m of stranded ride`);
+		}
+		if (takeHead) {
+			next.startTs = walkEnd;
+			next.pointCount = countIn(walkEnd, next.endTs);
+			next.refinedReason = next.refinedReason
+				? `${next.refinedReason}; ${note(`reclaimed ${Math.round(headM)} m of stranded ride`)}`
+				: note(`reclaimed ${Math.round(headM)} m of stranded ride`);
+		}
+		walk.startTs = walkStart;
+		walk.endTs = walkEnd;
+		walk.pointCount = countIn(walkStart, walkEnd);
+		walk.refinedReason = walk.refinedReason
+			? `${walk.refinedReason}; ${note("trimmed to the platform change")}`
+			: note("trimmed to the platform change");
+	}
+	return out;
+}

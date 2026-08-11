@@ -80,6 +80,7 @@ import {
 	mergeAdjacentSameRouteTrains,
 	parseRailWayName,
 	reconcileAdjacentRailLegs,
+	splitChangeoverWindows,
 } from "./passes/rail-reconcile.js";
 import { annotateRailRuns, RAIL_RUN_STATION_RADIUS_M } from "./passes/rail-runs.js";
 import { repairVehicleHandoff } from "./passes/repair-handoff.js";
@@ -1778,6 +1779,16 @@ export async function computeVelocityFromInputs(
 		{
 			name: "railReconcile2",
 			run: async (segs) => reconcileAdjacentRailLegs(segs),
+		},
+
+		// The changeover window between two rides contains the RIDE, not just a
+		// platform walk (#444). Runs HERE — after railReconcile2, so both
+		// neighbours carry their final station-pair labels, and after the anchors,
+		// which decline this case by design because a hop between two rides can
+		// belong to either side and the window has to be read whole.
+		{
+			name: "changeoverWindow",
+			run: (segs) => splitChangeoverWindows(segs, points),
 		},
 
 		// Transit-interchange stay label: a stationary stay sitting at a station
