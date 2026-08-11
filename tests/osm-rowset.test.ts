@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { lineNamesMatching } from "../src/geo/line-stations.js";
 import {
 	boxContainsPoint,
 	boxIntersectsLine,
@@ -16,9 +17,12 @@ import {
 	coverageBoxesForTrack,
 	coverageForTrack,
 	KERNEL_BUFFER_M,
+	lineIsCovered,
 	MAX_KERNEL_QUERY_RADIUS_M,
 	methodIsCovered,
+	type OsmLineRow,
 	queryIsCovered,
+	railLineCandidates,
 } from "../src/geo/osm-rowset.js";
 
 /** The widest buffer in the table — `railway`, the only feature type asked at
@@ -286,5 +290,62 @@ describe("the buffer constant", () => {
 		// over the measured worst case is not silently spent by a future edit.
 		const worstMeasuredOffset = 428;
 		expect(RAIL_BUFFER_M - MAX_KERNEL_QUERY_RADIUS_M).toBeGreaterThan(worstMeasuredOffset * 1.5);
+	});
+});
+
+describe("the rail-line candidates a day can be asked about (#741)", () => {
+	const railRow = (name: string | null): OsmLineRow => ({
+		osmId: 1,
+		featureType: "railway",
+		subtype: "subway",
+		name,
+		coords: [[LAT, LON]],
+		tags: {},
+	});
+
+	/** The mirror's whole railway name list, cut to the names that matter here.
+	 *  "Hammersmith & City Line" is tagged standalone only on the Hammersmith
+	 *  branch — miles from the track this stands for, and so never a row of it. */
+	const ALL_NAMES = [
+		"Circle, Hammersmith & City and Metropolitan Lines",
+		"Hammersmith & City Line",
+		"Circle Line",
+		"Metropolitan Line",
+		"Bakerloo Line",
+	];
+
+	/** `loadRailLineSet`'s fetch step, which is all this test needs of it. */
+	const fetchedFrom = (candidates: readonly string[]): string[] => [
+		...new Set(candidates.flatMap((c) => lineNamesMatching(c, ALL_NAMES))),
+	];
+
+	it("closes a compound label over the split that lineCannotServe applies", () => {
+		const candidates = railLineCandidates([railRow("Circle, Hammersmith & City and Metropolitan Lines")]);
+		expect(candidates).toContain("Circle, Hammersmith & City and Metropolitan Lines");
+		expect(candidates).toContain("Circle Line");
+		expect(candidates).toContain("Hammersmith & City Line");
+		expect(candidates).toContain("Metropolitan Line");
+	});
+
+	it("makes a component answerable that the raw row names cannot answer", () => {
+		const day = [railRow("Circle, Hammersmith & City and Metropolitan Lines")];
+		const set = {
+			allNames: ALL_NAMES,
+			fetchedNames: fetchedFrom(railLineCandidates(day)),
+			ways: [],
+			stations: [],
+		};
+		expect(lineIsCovered("Hammersmith & City Line", set)).toBe(true);
+
+		// The derivation before #741: names as read, no closure. This is the state
+		// 2026-08-08's capture aborted in, and it is what the closure buys — not a
+		// wider buffer, one extra name.
+		const asRead = { ...set, fetchedNames: fetchedFrom(day.map((l) => l.name as string)) };
+		expect(lineIsCovered("Hammersmith & City Line", asRead)).toBe(false);
+	});
+
+	it("takes nothing from unnamed rows or from rows that are not railway", () => {
+		const road: OsmLineRow = { ...railRow("Watling Street"), featureType: "highway" };
+		expect(railLineCandidates([railRow(null), road])).toEqual([]);
 	});
 });

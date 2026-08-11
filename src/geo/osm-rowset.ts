@@ -58,6 +58,11 @@ import { sql } from "kysely";
 import { db } from "../db/pool.js";
 import { lineNamesMatching } from "./line-stations.js";
 import { METERS_PER_DEG_LAT, metersPerDegLon, parseLineStringWkt } from "./osm-local.js";
+// The one transformation the pipeline applies to a line label before asking
+// about it (`lineCannotServe`). Imported, not copied: a second implementation
+// of the split would be free to drift from the asks it has to anticipate, and
+// this module's whole job is to fetch what those asks will need.
+import { expandTubeLineNames } from "./passes/rail-runs.js";
 
 /** The widest radius any kernel call site passes — `RAIL_JOURNEY_LINES_RADIUS_M`,
  *  asked of `railway`. A ceiling read off the call sites, not a sample maximum. */
@@ -553,15 +558,48 @@ export async function loadOsmRowSet(track: ReadonlyArray<{ lat: number; lon: num
 }
 
 /**
+ * The line labels a day can ask `stationsOnLine` about: the railway names on
+ * its own rows, closed under the compound-label split `lineCannotServe`
+ * applies before asking. Pure, and exported for the test that pins the closure
+ * — the DB-bound caller cannot be unit-tested, and an unpinned closure is what
+ * #741 was.
+ */
+export function railLineCandidates(dayLines: readonly OsmLineRow[]): string[] {
+	const candidates = new Set<string>();
+	for (const l of dayLines) {
+		if (l.featureType !== "railway" || l.name === null) continue;
+		candidates.add(l.name);
+		for (const component of expandTubeLineNames(l.name)) candidates.add(component);
+	}
+	return [...candidates];
+}
+
+/**
  * The `stationsOnLine` inputs for a day, derived from the day's own railway rows.
  *
- * The candidate lines are the distinct names on the railway rows already
- * fetched — which is not a heuristic but the exact reachable set: `linesAtPoint`
- * answers out of these same rows, so no name it can ever return for this day is
- * outside them. Whether the day only ever ASKS about lines it saw is a separate
+ * The candidates start as the distinct names on the railway rows already
+ * fetched. `linesAtPoint` answers out of these same rows, so no name it can
+ * return for this day is outside them — but that bounds only the names the day
+ * READS, and the day does not only ask about names it read (#741).
+ *
+ * `lineCannotServe` splits a compound OSM label into the physical lines it
+ * denotes and asks about each ("Circle, Hammersmith & City and Metropolitan
+ * Lines" → "Circle Line", "Hammersmith & City Line", "Metropolitan Line"), so
+ * the reachable ask set is the row names CLOSED UNDER that expansion, and the
+ * closure is what is fetched here. The distinction is not academic: across the
+ * 35-day corpus the closure adds exactly one name, "Hammersmith & City Line",
+ * on 33 of the 35 days — a standalone way name that lives on the Hammersmith
+ * branch, outside every one of those days' boxes, while the other components
+ * ("Circle Line", "Metropolitan Line") are tagged standalone somewhere along
+ * the track and were already candidates. So every day was one un-short-circuited
+ * `lineCannotServe` away from an uncapturable capture, and 2026-08-08 is where
+ * that branch was finally taken.
+ *
+ * Whether the day only asks about lines in this closure is still a separate
  * question, and a measured one — 24 of 24 across the corpus
  * (`lean/experiments/delegated-lookup-keys.mts`). {@link lineIsCovered} is what
- * holds that claim to account per call rather than trusting the measurement.
+ * holds that claim to account per call rather than trusting the measurement,
+ * and it is what caught this: the guard was right and the derivation was wrong.
  *
  * Offline only, like its caller. Two queries plus one per distinct buffer.
  */
@@ -578,12 +616,8 @@ async function loadRailLineSet(dayLines: readonly OsmLineRow[]): Promise<OsmRail
 		.map((r) => r.name)
 		.filter((n): n is string => n !== null);
 
-	const candidates = new Set<string>();
-	for (const l of dayLines) {
-		if (l.featureType === "railway" && l.name !== null) candidates.add(l.name);
-	}
 	const fetched = new Set<string>();
-	for (const c of candidates) {
+	for (const c of railLineCandidates(dayLines)) {
 		for (const n of lineNamesMatching(c, allNames)) fetched.add(n);
 	}
 	const fetchedNames = [...fetched];
