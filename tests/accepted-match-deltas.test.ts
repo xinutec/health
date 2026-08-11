@@ -201,3 +201,80 @@ describe("accepted-match-delta manifest shape", () => {
 		}
 	});
 });
+
+/** The two axes the LINE deviation cannot see (#401), and the reason they are
+ *  enforced rather than merely recorded. `polylineDeviationM` is insensitive to
+ *  where along a straight run a vertex sits, so a leg can hold a 0.01 m line
+ *  bound while a vertex travels metres and its interpolated timestamp travels
+ *  seconds — and that timestamp is not an intermediate: `episode-geometry`
+ *  CLIPS the drawn path by it, and the map's tap-inspector renders it to the
+ *  second. */
+describe("accepted-match-delta vertex and timestamp axes (#401)", () => {
+	/** 2026-04-29 17:44 — the corpus's largest along-line slide, 12.22 m at
+	 *  0.01 m of line, signed off with an explicit `vtxM`. */
+	const slide = byLeg("480b1b141d902740");
+	/** 2026-04-30 15:16 — #401's own leg: 5.87 m of slide DECLARED, and a 27 s
+	 *  timestamp shift deliberately NOT declared. */
+	const shift = byLeg("cf8fa2efd60d5dc6");
+
+	const atAll = (d: AcceptedMatchDelta, dev: [number, number], vtx: [number, number], dts: [number, number]): boolean =>
+		isAcceptedMatchDelta(
+			d.leg,
+			d.coarse,
+			d.path,
+			d.note,
+			{ coarse: dev[0], path: dev[1] },
+			{ coarse: vtx[0], path: vtx[1] },
+			{ coarse: dts[0], path: dts[1] },
+		);
+
+	it("accepts the declared slide at its recorded figure", () => {
+		expect(atAll(slide, [0.0, 0.01], [0.0, 12.22], [0, 1])).toBe(true);
+	});
+
+	// The check that makes the field worth having: without it this leg passes on
+	// its 0.01 m line bound no matter how far the vertex goes, which is the hole
+	// #401 was filed about.
+	it("REFUSES a slide beyond the recorded vtxM, on an unchanged line", () => {
+		expect(atAll(slide, [0.0, 0.01], [0.0, 12.23], [0, 1])).toBe(false);
+		expect(atAll(slide, [0.0, 0.01], [0.0, 50.0], [0, 1])).toBe(false);
+	});
+
+	// An entry that declares no vtxM is asserting the vertices stayed inside the
+	// line deviation it DID record. That assertion is tested, not trusted.
+	it("holds an undeclared entry to its own line deviation", () => {
+		expect(atAll(entry, [0.01, 0.01], [0.01, 0.01], [0, 0])).toBe(true);
+		expect(atAll(entry, [0.01, 0.01], [0.01, 5.0], [0, 0])).toBe(false);
+	});
+
+	// THE BUG THE FIRST VERSION OF THIS RULE HAD, pinned so it cannot come back.
+	// An implicit bound of "no further than the line moved" failed six signed-off
+	// legs: they are recorded at dev 0.00 and measure vtx 0.01, which is one step
+	// of the two-decimal resolution both figures are printed at, not a slide. The
+	// floor is read off the corpus gap (25 legs <= 0.14 m, then 0.79 / 5.87 /
+	// 12.22), so it separates a last-decimal disagreement from a vertex that
+	// travelled.
+	it("does not fail a zero-deviation entry on one rounding step of separation", () => {
+		const zero = byLeg("2d288f1de88f721d");
+		expect(Math.max(zero.coarseDevM, zero.pathDevM)).toBe(0);
+		expect(atAll(zero, [0.0, 0.0], [0.0, 0.01], [0, 0])).toBe(true);
+		expect(atAll(zero, [0.0, 0.0], [0.0, 0.2], [0, 0])).toBe(true);
+		// ...and still catches a real slide on the same entry.
+		expect(atAll(zero, [0.0, 0.0], [0.0, 0.21], [0, 0])).toBe(false);
+	});
+
+	// One second is the floor of a timestamp both arms round to whole seconds,
+	// so it is free; 27 s is not, and this pins that #401's leg stays RED until
+	// someone signs that number specifically rather than inheriting a metre bound.
+	it("accepts a 1 s shift and REFUSES the 27 s one that is not signed off", () => {
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 1])).toBe(true);
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(false);
+	});
+
+	// The measured corpus figures, so the gate's actual verdict on these two legs
+	// is pinned here and not only in a run nobody re-reads.
+	it("matches what compare-match measures on the corpus today", () => {
+		expect(atAll(slide, [0.0, 0.01], [0.0, 12.22], [0, 1])).toBe(true);
+		expect(atAll(shift, [0.01, 0.01], [0.01, 5.87], [1, 27])).toBe(false);
+	});
+});

@@ -54,7 +54,14 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { legDeviations, legFingerprint, legNote, legVertexSeparations, maxDeviationM } from "../geo/leg-compare.js";
+import {
+	legDeviations,
+	legFingerprint,
+	legNote,
+	legTimeShifts,
+	legVertexSeparations,
+	maxDeviationM,
+} from "../geo/leg-compare.js";
 import { setCandidateSink } from "../geo/map-match-core.js";
 import { setQCandidateSink } from "../geo/match-twin.js";
 import { WALK_PROFILE } from "../geo/pedestrian-match.js";
@@ -251,10 +258,16 @@ interface DivergentLeg {
 	 *  that one would hide the disagreement it resolves (#400). */
 	coarseVtxM: number | null;
 	pathVtxM: number | null;
+	/** Worst per-vertex timestamp shift per layer, in whole seconds (#401). The
+	 *  third axis, and the only one a reader can see directly: the map's
+	 *  tap-inspector renders a display vertex's interpolated `ts` to the second. */
+	coarseDtsS: number | null;
+	pathDtsS: number | null;
 }
 
 /** Metres to two decimals, or `n/a` where the figure is undefined. */
 const fmtDev = (d: number | null): string => (d === null ? "n/a" : `${d.toFixed(2)} m`);
+const fmtSec = (d: number | null): string => (d === null ? "n/a" : `${d}s`);
 
 /** One arm's pre-cut candidate list for one fix: distances (m) by segment id,
  *  in sorted order. */
@@ -483,6 +496,7 @@ for (const file of files) {
 		if (r.coarse !== "EXACT" || r.path !== "EXACT") {
 			const dev = legDeviations(r.float, r.quant);
 			const vtx = legVertexSeparations(r.float, r.quant);
+			const dts = legTimeShifts(r.float, r.quant);
 			divergent.push({
 				leg: legFingerprint(leg.clean),
 				date,
@@ -494,6 +508,8 @@ for (const file of files) {
 				pathDevM: dev.path,
 				coarseVtxM: vtx.coarse,
 				pathVtxM: vtx.path,
+				coarseDtsS: dts.coarse,
+				pathDtsS: dts.path,
 			});
 		}
 		perDay.push(
@@ -587,7 +603,15 @@ console.log(`\n=== matcher flip gate ===`);
 // entry is signed off AT a magnitude, so a leg that keeps its vertex counts and
 // moves further than that is not the leg the sign-off was about (#395).
 const accepts = (d: DivergentLeg): boolean =>
-	isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note, { coarse: d.coarseDevM, path: d.pathDevM });
+	isAcceptedMatchDelta(
+		d.leg,
+		d.coarse,
+		d.path,
+		d.note,
+		{ coarse: d.coarseDevM, path: d.pathDevM },
+		{ coarse: d.coarseVtxM, path: d.pathVtxM },
+		{ coarse: d.coarseDtsS, path: d.pathDtsS },
+	);
 const unexplained = divergent.filter((d) => !accepts(d));
 if (divergent.length > 0) {
 	console.log(`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained):`);
@@ -596,7 +620,8 @@ if (divergent.length > 0) {
 		console.log(
 			`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})` +
 				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}` +
-				`  vtx coarse=${fmtDev(d.coarseVtxM)} path=${fmtDev(d.pathVtxM)}`,
+				`  vtx coarse=${fmtDev(d.coarseVtxM)} path=${fmtDev(d.pathVtxM)}` +
+				`  dts coarse=${fmtSec(d.coarseDtsS)} path=${fmtSec(d.pathDtsS)}`,
 		);
 	}
 }

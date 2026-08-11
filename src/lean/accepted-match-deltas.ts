@@ -140,9 +140,69 @@ export interface AcceptedMatchDelta {
 	 * the corridor the sign-off measured is not the corridor being served.
 	 */
 	basis: "magnitude" | "corridor";
+	/**
+	 * The worst per-vertex SEPARATION, in metres, across both layers — declared
+	 * only when it exceeds the line deviations above, and ENFORCED as a ceiling
+	 * when it is (#401).
+	 *
+	 * A vertex that slides ALONG an otherwise identical polyline moves further
+	 * than the line does, and `polylineDeviationM` is insensitive to where along
+	 * a straight run a vertex sits. So a leg can hold a 0.01 m line bound while a
+	 * vertex travels metres, which is not a hypothetical: `cf8fa2efd60d5dc6`
+	 * slides 5.87 m and `480b1b141d902740` slides 12.22 m, both at 0.01 m of
+	 * line. Optional rather than required because on 24 of the corpus's 28
+	 * divergences the separation is at or under the deviation and carries no
+	 * information — a field that reads `0.01` twenty-four times teaches a reader
+	 * to skip it, and then the three that matter are skipped too.
+	 */
+	vtxM?: number;
+	/**
+	 * The worst per-vertex TIMESTAMP shift, in whole seconds, across both layers
+	 * — declared only when above `IRREDUCIBLE_DTS_S`, and enforced when it is.
+	 *
+	 * This is the axis a reader can actually see. `episode-geometry.ts` clips the
+	 * drawn path by these timestamps, so a shift across a state-window boundary
+	 * changes which vertices are drawn at all; and the map's tap-inspector renders
+	 * the chosen vertex's `ts` with `second: "2-digit"`, so the difference between
+	 * the two arms is legible in the popup. #401 flagged the question and said not
+	 * to sign it off in either direction unmeasured; measured 2026-08-11, the
+	 * answer is that it reaches the screen.
+	 */
+	dtsS?: number;
 	/** Why this delta is accepted (human sign-off), citing its own numbers. */
 	reason: string;
 }
+
+/**
+ * The timestamp shift that carries no information, in seconds.
+ *
+ * Both arms round an INTERPOLATED timestamp to a whole second (`quantPt`), so
+ * two interpolations of the same instant can land a second apart with nothing
+ * having moved. That makes 1 s the floor of the measurement rather than a
+ * tolerance someone chose — derived, not picked, which is the distinction this
+ * file keeps insisting on. Five corpus legs sit at exactly 1 s and one sits at
+ * 27 s, and the gap between those is the whole point: 27 s is not rounding.
+ */
+const IRREDUCIBLE_DTS_S = 1;
+
+/**
+ * The vertex separation that carries no information, in metres.
+ *
+ * An implicit bound of "no further than the line moved" was the first attempt
+ * and it was wrong in a way only running it showed: six legs recorded at
+ * `dev 0.00` measure `vtx 0.01`, which is ONE step of the two-decimal
+ * resolution both figures are printed at, not a slide. Holding them to 0.00
+ * failed six signed-off legs on rounding.
+ *
+ * So the floor is read off the corpus the same way the header reads the
+ * deviation populations, and the gap is just as clean: 25 of the 28 divergences
+ * sit at or under 0.14 m of separation, and the other three are 0.79 m, 5.87 m
+ * and 12.22 m. 0.20 m falls in the empty space between those populations with
+ * room either side, so it separates "the last decimal place disagreed" from "a
+ * vertex travelled", which is the distinction this bound is for. Anything above
+ * it must be declared per entry and is then enforced at the declared figure.
+ */
+const IRREDUCIBLE_VTX_M = 0.2;
 
 /**
  * The measured figure at the resolution the manifest records it in.
@@ -234,6 +294,9 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarseDevM: 0.04,
 		pathDevM: 0.0,
 		basis: "magnitude",
+		// #401: 0.79 m of along-line slide at 0.04 m of line. Declared so the
+		// enforcement has the real figure rather than inferring the deviation.
+		vtxM: 0.79,
 		reason:
 			"One of ten coarse vertices sits 78.7 cm from its counterpart — but it slid mostly ALONG the line, so " +
 			"the two coarse polylines measure 0.04 m apart and the display path is BIT-IDENTICAL (53v vs 53v, " +
@@ -260,6 +323,13 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		coarseDevM: 0.01,
 		pathDevM: 0.01,
 		basis: "magnitude",
+		// #401's own leg. The 5.87 m slide is declared; the 27 SECOND timestamp
+		// shift deliberately is NOT, so this entry fails the gate until someone
+		// signs that number specifically. It is the largest in the corpus by a
+		// factor of 27, the map tap-inspector renders the vertex time to the
+		// second, and this leg has been passing on a 0.01 m LINE bound that says
+		// nothing about it — which is the whole of #401.
+		vtxM: 5.87,
 		reason: bounded(0.01, "coarse and display"),
 	},
 	{
@@ -446,6 +516,35 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		pathDevM: 0.01,
 		basis: "magnitude",
 		reason: bounded(0.01, "display"),
+	},
+	{
+		// Held back from the 2026-08-11 batch and signed off here instead, once
+		// the manifest could state its actual magnitude. Its LINE moves 0.01 m
+		// and a display vertex moves 12.22 m along that line — the largest slide
+		// in the corpus. Signing it at 0.01 m would have recorded a bound on the
+		// wrong quantity, which is what #395 rebuilt this file to stop, so it sat
+		// UNEXPLAINED until `vtxM` existed to carry the real number (#401).
+		leg: "480b1b141d902740",
+		date: "2026-04-29",
+		hhmm: "17:44",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 21v vs 21v, path 61v vs 61v",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		basis: "magnitude",
+		vtxM: 12.22,
+		reason:
+			"Float↔quant rounding with an ALONG-LINE vertex slide, MEASURED 2026-08-11 and inspected vertex by " +
+			"vertex. The coarse (decision) layer is BIT-IDENTICAL, 21v vs 21v at 0.0 cm — so nothing that feeds " +
+			"matchImprovesDisplay differs at all, and the keep/discard decision is untouched. On the display " +
+			"layer, 60 of 61 vertices are bit-identical and vertex [19] sits 12.18 m away with its timestamp " +
+			"1 SECOND apart. That combination is what bounds it: 12 m of slide carrying only 1 s means the " +
+			"vertex is a different point on the SAME polyline (the two lines measure 0.01 m apart), not a " +
+			"different route and not a different time. The reader-visible consequence is the tap-inspector " +
+			"attributing a time 1 s different to a tap in that spot, which is the irreducible floor of a " +
+			"timestamp both arms round to whole seconds. Contrast cf8fa2efd60d5dc6, which slides less than half " +
+			"as far and shifts 27 s — the two axes are independent, and this leg is the benign corner of them.",
 	},
 	// ── the 2026-08-11 adjudication (#662) ──────────────────────────────────────
 	//
@@ -655,13 +754,38 @@ export function isAcceptedMatchDelta(
 	path: MatchLegClass,
 	note: string,
 	dev: { coarse: number | null; path: number | null },
+	vtx?: { coarse: number | null; path: number | null },
+	dts?: { coarse: number | null; path: number | null },
 ): boolean {
 	const d = accepted.get(leg);
 	if (d === undefined || d.coarse !== coarse || d.path !== path || d.note !== note) return false;
 	if (dev.coarse === null || dev.path === null) return false;
 	const ok = (measured: number, recorded: number): boolean =>
 		d.basis === "corridor" ? printedM(measured) === recorded : printedM(measured) <= recorded;
-	return ok(dev.coarse, d.coarseDevM) && ok(dev.path, d.pathDevM);
+	if (!ok(dev.coarse, d.coarseDevM) || !ok(dev.path, d.pathDevM)) return false;
+
+	// The two axes the line deviation cannot see (#401). Both are optional
+	// ARGUMENTS but not optional CHECKS: an entry that does not declare a bound
+	// is asserting the measurement stays within the deviation it did record, and
+	// that assertion is tested here rather than trusted. Skipping the check when
+	// the field is absent would make the default the loose one, which is exactly
+	// what `basis` is documented as refusing to do.
+	//
+	// `null` (no vertex correspondence — differing counts) is not a failure the
+	// way a null DEVIATION is. There, null means the lines could not be compared
+	// at all; here it means the polyline branch already measured the only thing
+	// there is to measure, and a per-vertex figure is undefined rather than
+	// missing.
+	if (vtx !== undefined) {
+		const worst = Math.max(vtx.coarse ?? 0, vtx.path ?? 0);
+		const bound = d.vtxM ?? Math.max(d.coarseDevM, d.pathDevM, IRREDUCIBLE_VTX_M);
+		if (printedM(worst) > bound) return false;
+	}
+	if (dts !== undefined) {
+		const worst = Math.max(dts.coarse ?? 0, dts.path ?? 0);
+		if (worst > (d.dtsS ?? IRREDUCIBLE_DTS_S)) return false;
+	}
+	return true;
 }
 
 /** Tag a measured divergence for a ledger line. */

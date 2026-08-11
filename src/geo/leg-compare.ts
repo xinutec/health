@@ -123,6 +123,52 @@ export function vertexSeparationM(from: readonly LL[], to: readonly LL[]): numbe
 	return worst;
 }
 
+/**
+ * Worst corresponding-vertex TIMESTAMP shift per layer, in SECONDS — the third
+ * axis a leg can diverge in, and the one nothing measured until #401.
+ *
+ * A display-path vertex carries an INTERPOLATED timestamp, and that timestamp is
+ * read twice: `episode-geometry.ts` clips the drawn path with it
+ * (`mp.ts >= state.startTs && mp.ts <= state.endTs`, so a shift across a window
+ * boundary changes which vertices are drawn), and the map's tap-inspector
+ * renders it to the reader at SECOND precision (`second: "2-digit"`). So this is
+ * not bookkeeping about an intermediate — it is a number a person can read off
+ * the screen.
+ *
+ * Reported separately from {@link legVertexSeparations} because the two are
+ * INDEPENDENT, which the corpus demonstrates rather than merely allows:
+ * `cf8fa2efd60d5dc6` slides 5.85 m and shifts 27 s, while `480b1b141d902740`
+ * slides more than twice as far (12.18 m) and shifts ONE second. The biggest
+ * slide is not the biggest time error, so a bound on either alone bounds the
+ * wrong quantity — the same mistake, one axis over, that #395 rebuilt the
+ * manifest to remove.
+ *
+ * `null` where there is no vertex correspondence to compare (one arm null, or
+ * differing counts), exactly as the two metre figures do. Zero would be a claim.
+ */
+export function vertexTimeShiftS(
+	from: ReadonlyArray<{ lat: number; lon: number; ts: number }>,
+	to: readonly QPt[],
+): number | null {
+	if (from.length !== to.length) return null;
+	let worst = 0;
+	for (let i = 0; i < from.length; i++) {
+		worst = Math.max(worst, Math.abs(Number(quantPt(from[i]).ts - to[i].ts)));
+	}
+	return worst;
+}
+
+/** Worst per-vertex timestamp shift per layer, in seconds. `quantPt` rounds `ts`
+ *  to whole seconds, so these units ARE seconds — the figure #401 recorded as
+ *  "27 units" is 27 seconds of a time the tap-inspector shows. */
+export function legTimeShifts(float: FloatArm | null, quant: QuantArm | null): LegSeconds {
+	if (float === null || quant === null) return { coarse: null, path: null };
+	return {
+		coarse: vertexTimeShiftS(float.coarsePath, quant.coarsePath),
+		path: vertexTimeShiftS(float.path, quant.path),
+	};
+}
+
 export interface FloatArm {
 	coarsePath: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
 	path: ReadonlyArray<{ lat: number; lon: number; ts: number }>;
@@ -146,6 +192,15 @@ export interface QuantArm {
  * the figure the class is NOT derived from, and tell the two apart.
  */
 export interface LegMetres {
+	coarse: number | null;
+	path: number | null;
+}
+
+/** Same per-layer shape as {@link LegMetres}, in whole SECONDS. A distinct type
+ *  rather than a reused one so a metre figure and a second figure cannot be
+ *  passed to each other's parameter — the two are compared against different
+ *  thresholds and read by different consumers. */
+export interface LegSeconds {
 	coarse: number | null;
 	path: number | null;
 }
