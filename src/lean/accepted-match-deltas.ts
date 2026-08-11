@@ -168,12 +168,18 @@ const printedM = (m: number): number => Number(m.toFixed(2));
 /** Sub-decimetre sign-off. The measured deviation is the argument; this spells
  *  out the threshold it is being measured against, so each entry states its own
  *  number without restating the reasoning 20 times. */
-const bounded = (devM: number, layer: string): string =>
-	`Float↔quant rounding, MEASURED 2026-07-31: the two ${layer} lines are ${devM.toFixed(2)} m apart ` +
+const boundedAt = (devM: number, layer: string, measuredOn: string): string =>
+	`Float↔quant rounding, MEASURED ${measuredOn}: the two ${layer} lines are ${devM.toFixed(2)} m apart ` +
 	`(symmetric polyline deviation). The nearest threshold any of this feeds is matchImprovesDisplay's ` +
 	`18 m off-road trigger and 40 m stray cap, so a deviation this size cannot change whether the match is ` +
 	`kept, let alone which corridor is chosen. Bounded by measurement against a named threshold — not ` +
 	`"display-only", which names the output field and bounds nothing (#395).`;
+
+/** The 2026-07-31 re-derivation's sign-off. Kept as the original one-argument
+ *  form so its twenty entries below are untouched by the date becoming a
+ *  parameter — a mass edit of signed-off text to add a field is how a sign-off
+ *  stops being the thing that was signed. */
+const bounded = (devM: number, layer: string): string => boundedAt(devM, layer, "2026-07-31");
 
 export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 	// ── genuine route-choice flips — signed off individually ────────────────────
@@ -330,18 +336,6 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		reason: bounded(0.01, "display"),
 	},
 	{
-		leg: "ec77d1b73443d289",
-		date: "2026-04-29",
-		hhmm: "14:50",
-		coarse: "EXACT",
-		path: "NEAR",
-		note: "coarse 32v vs 32v, path 66v vs 66v",
-		coarseDevM: 0.01,
-		pathDevM: 0.01,
-		basis: "magnitude",
-		reason: bounded(0.01, "display"),
-	},
-	{
 		leg: "8bfdeba62a10b7f3",
 		date: "2026-05-11",
 		hhmm: "19:59",
@@ -378,18 +372,6 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		pathDevM: 0.0,
 		basis: "magnitude",
 		reason: `${bounded(0.0, "display")} One redundant collinear display vertex (40v vs 41v), as with 05-11.`,
-	},
-	{
-		leg: "fcb19c04f6001234",
-		date: "2026-06-15",
-		hhmm: "16:41",
-		coarse: "EXACT",
-		path: "NEAR",
-		note: "coarse 9v vs 9v, path 62v vs 62v",
-		coarseDevM: 0.0,
-		pathDevM: 0.0,
-		basis: "magnitude",
-		reason: bounded(0.0, "display"),
 	},
 	{
 		leg: "69e5896e7e0da12b",
@@ -465,23 +447,89 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		basis: "magnitude",
 		reason: bounded(0.01, "display"),
 	},
+	// ── the 2026-08-11 adjudication (#662) ──────────────────────────────────────
+	//
+	// Eight legs the gate had been reporting as UNEXPLAINED, signed off together
+	// after Pippijn reviewed them. They reached that state two different ways and
+	// the reasons record which, because the two are not the same claim:
+	//
+	//   * three are RE-KEYED adjudications — the same divergence as an entry that
+	//     was already signed off, whose leg fingerprint moved when an upstream
+	//     change altered the fixes it is built from (#662). Those name the entry
+	//     they supersede, which is deleted in the same commit; leaving both would
+	//     make the manifest's coverage look larger than the corpus it covers.
+	//   * five had never been adjudicated at all. 2026-08-06 was not in the gated
+	//     corpus when this file was re-derived, so three of them could not have
+	//     been.
+	//
+	// A ninth, 480b1b141d902740 (2026-04-29 17:44), was deliberately NOT signed
+	// off — its line moved 0.01 m while a display VERTEX moved 12.22 m along it,
+	// which is #401's shape and twice the 5.85 m that made #401 worth filing. The
+	// rule here bounds lines, so accepting it at 0.01 m would bound the wrong
+	// quantity. It stays UNEXPLAINED and the gate stays red on it, which is the
+	// honest state: a divergence nobody has bounded.
 	{
-		leg: "a28db136844e4ddf",
+		leg: "f284eacbbeb66b27",
+		date: "2026-06-15",
+		hhmm: "16:40",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 9v vs 9v, path 62v vs 62v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		basis: "magnitude",
+		reason:
+			`${boundedAt(0.0, "display", "2026-08-11")} RE-KEYED: supersedes fcb19c04f6001234, signed off at ` +
+			"16:41 on this same day. The start minute moved as well as the fingerprint, so neither the leg's " +
+			"content nor its calendar slot identified it across the change — which is why #662 was NOT closed by " +
+			"re-keying the manifest on day + hh:mm.",
+	},
+	{
+		leg: "5a916603a1b96a07",
+		date: "2026-06-16",
+		hhmm: "15:48",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 29v vs 29v, path 66v vs 67v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		basis: "magnitude",
+		reason:
+			`${boundedAt(0.0, "display", "2026-08-11")} The display counts differ by one vertex (66v vs 67v), so ` +
+			"the deviation is a POLYLINE measure rather than a positional one — there is no vertex pairing to " +
+			"slide along, and #401's along-line hazard cannot arise on this leg.",
+	},
+	{
+		leg: "6d105ef6b32c015f",
+		date: "2026-06-17",
+		hhmm: "16:34",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 13v vs 13v, path 62v vs 62v",
+		coarseDevM: 0.0,
+		pathDevM: 0.0,
+		basis: "magnitude",
+		reason:
+			`${boundedAt(0.0, "display", "2026-08-11")} Worst display VERTEX separation 0.05 m, checked against ` +
+			"#401 — five centimetres of slide on a line that did not move, four hundred times under the " +
+			"18 m trigger by either measure.",
+	},
+	{
+		leg: "9885d2a5873db953",
 		date: "2026-07-17",
 		hhmm: "14:33",
 		coarse: "EXACT",
 		path: "NEAR",
-		note: "coarse 13v vs 13v, path 36v vs 36v",
+		note: "coarse 13v vs 13v, path 35v vs 35v",
 		coarseDevM: 0.0,
 		pathDevM: 0.0,
 		basis: "magnitude",
-		reason: bounded(0.0, "display"),
+		reason:
+			`${boundedAt(0.0, "display", "2026-08-11")} RE-KEYED: supersedes a28db136844e4ddf at the same date ` +
+			"and start minute. Worst display vertex separation 0.01 m.",
 	},
 	{
-		// The 23rd entry, and the only one not measured in the 2026-07-31
-		// re-derivation — 2026-07-30 was not in the gated corpus then. #407
-		// promoted it; this leg is what the promotion surfaced.
-		leg: "f1a37e256633c480",
+		leg: "fc9dacbbd1a5f157",
 		date: "2026-07-30",
 		hhmm: "09:28",
 		coarse: "NEAR",
@@ -491,15 +539,61 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 		pathDevM: 0.01,
 		basis: "magnitude",
 		reason:
-			"Float↔quant rounding, MEASURED 2026-08-02 (not in the 2026-07-31 re-derivation — the day was still in " +
-			"adhoc-days/ and ungated). UCLH → Euston Square, the 10:28–10:39 BST walk. Both arms keep the SAME vertex " +
-			"counts at both layers (8v coarse, 14v display) and the two display lines are 0.01 m apart; the coarse " +
-			"lines are identical at the recorded resolution. That is the sub-decimetre population this file " +
-			"documents (20 of 22 legs at 0.00–0.04 m), four orders of magnitude under matchImprovesDisplay's 18 m " +
-			"off-road trigger and 40 m stray cap, so it cannot change whether the match is kept or which corridor " +
-			"is chosen — the failure mode #398 found on 71e5544efa614a06, which is the OTHER 07-30 walk and is now " +
-			"bit-clean after #406. Held in the delta CEILING as un-adjudicated debt from the promotion until this " +
-			"measurement; moved here once measured, which is the direction that file is supposed to flow.",
+			`${boundedAt(0.01, "display", "2026-08-11")} RE-KEYED: supersedes f1a37e256633c480 at the same date ` +
+			"and start minute — the UCLH → Euston Square walk that entry describes, with the same 8v/14v counts " +
+			"and the same 0.01 m display deviation. Worst display vertex separation 0.01 m.",
+	},
+	{
+		leg: "840aff22fab124fe",
+		date: "2026-08-06",
+		hhmm: "08:38",
+		coarse: "NEAR",
+		path: "NEAR",
+		note: "coarse 9v vs 9v, path 31v vs 31v",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		basis: "magnitude",
+		reason:
+			`${boundedAt(0.01, "coarse and display", "2026-08-11")} First adjudication for this leg: 2026-08-06 ` +
+			"entered the gated corpus after the 2026-07-31 re-derivation. Worst vertex separation 0.01 m at " +
+			"both layers, so the line and its vertices moved by the same negligible amount (#401).",
+	},
+	{
+		leg: "954deac79bb423b0",
+		date: "2026-08-06",
+		hhmm: "09:14",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 26v vs 26v, path 78v vs 77v",
+		coarseDevM: 0.0,
+		pathDevM: 0.01,
+		basis: "magnitude",
+		reason:
+			`${boundedAt(0.01, "display", "2026-08-11")} First adjudication for this leg. The display counts ` +
+			"differ by one vertex (78v vs 77v), so this is a polyline measure with no vertex pairing to slide " +
+			"along.",
+	},
+	{
+		leg: "c907b7bb2e0c96f9",
+		date: "2026-08-06",
+		hhmm: "10:21",
+		coarse: "NEAR",
+		path: "NEAR",
+		note: "coarse 6v vs 6v, path 12v vs 12v",
+		coarseDevM: 0.14,
+		pathDevM: 0.14,
+		basis: "magnitude",
+		reason:
+			"Float↔quant rounding, MEASURED 2026-08-11 and the only leg of this batch INSPECTED vertex by vertex, " +
+			"because at 0.14 m it stood an order of magnitude above the other seven and that gap deserved an " +
+			"explanation rather than a bound. The explanation is that the line did not drift: both arms agree " +
+			"BIT-FOR-BIT on every vertex of both layers except the LAST one, which sits 13.6 cm away (Δlat=-12, " +
+			"Δlon=-4 units, Δts=0). So the 0.14 m symmetric deviation is one endpoint, not a wandering polyline, " +
+			"and the vertex separation equals it rather than exceeding it — the #401 hazard is absent by " +
+			"construction here. 13.6 cm is below the metre-scale accuracy of the GPS being matched, so the two " +
+			"arms disagree by less than the input can resolve, and it is ~130x under matchImprovesDisplay's 18 m " +
+			"off-road trigger and 40 m stray cap. quant↔lean EXACT, so this is float-vs-quantised arithmetic and " +
+			"not a Lean divergence.",
 	},
 ];
 

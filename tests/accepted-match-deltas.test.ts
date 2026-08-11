@@ -161,17 +161,40 @@ describe("accepted-match-delta manifest shape", () => {
 
 	// The review invariant that keeps `basis` honest, and the reason it is a test
 	// rather than a comment: `basis` decides which enforcement rule an entry gets,
-	// so an entry claiming the wrong one is a silently weaker gate. The two
-	// entries above a decimetre are the corpus's genuine route-choice flips —
-	// signed off on one replayed corridor, so `corridor` — and everything at or
-	// below 0.04 m argues from size, so `magnitude`. If a third flip appears it
-	// needs its own per-leg measurement, and this is where that gets noticed.
+	// so an entry claiming the wrong one is a silently weaker gate. Everything at
+	// or below a decimetre argues from size, so `magnitude`. Above it, an entry
+	// must have been LOOKED AT and named here — which is the mechanism, and it
+	// fired as designed on 2026-08-11.
+	//
+	// It used to assert that every entry above 0.1 m was a route-choice flip with
+	// `basis: "corridor"`, on the evidence that the corpus's two big entries
+	// (17.52 m and 14.37 m) were exactly that. c907b7bb2e0c96f9 falsified the
+	// PROXY without touching the principle: it measures 0.14 m, and a
+	// vertex-by-vertex inspection showed both arms bit-identical on every vertex
+	// of both layers except the last, which sits 13.6 cm away. A single endpoint
+	// is not a corridor, and `corridor`'s equality enforcement would have been
+	// wrong for it — it would fail the gate if the leg IMPROVED to 0.13 m, which
+	// is what the magnitude/ceiling split exists to avoid.
+	//
+	// So the bar is unchanged and the classification is now explicit per leg. A
+	// NEW leg above 0.1 m still fails this test until someone puts it in one of
+	// the two lists, which is the noticing this test is for. What is no longer
+	// assumed is that size alone tells you which list it belongs in.
+	const CORRIDOR_FLIPS = ["77277765451f43f5", "91167e4cf16f9ea8"];
+	const INSPECTED_MAGNITUDE = ["c907b7bb2e0c96f9"];
 	it("ties the enforcement basis to the kind of argument the entry actually makes", () => {
 		const big = ACCEPTED_MATCH_DELTAS.filter((d) => Math.max(d.coarseDevM, d.pathDevM) > 0.1);
-		expect(big.map((d) => d.leg).sort()).toEqual(["77277765451f43f5", "91167e4cf16f9ea8"]);
+		expect(big.map((d) => d.leg).sort()).toEqual([...CORRIDOR_FLIPS, ...INSPECTED_MAGNITUDE].sort());
 		for (const d of big) {
-			expect(d.basis).toBe("corridor");
-			expect(d.reason).toContain("MEASURED 2026-07-22");
+			if (CORRIDOR_FLIPS.includes(d.leg)) {
+				expect(d.basis).toBe("corridor");
+				expect(d.reason).toContain("MEASURED 2026-07-22");
+			} else {
+				// The exception earns its ceiling by having been inspected, so the
+				// reason must carry the vertex-level evidence rather than a bound.
+				expect(d.basis).toBe("magnitude");
+				expect(d.reason).toContain("BIT-FOR-BIT");
+			}
 		}
 		for (const d of ACCEPTED_MATCH_DELTAS) {
 			if (Math.max(d.coarseDevM, d.pathDevM) <= 0.1) expect(d.basis).toBe("magnitude");
