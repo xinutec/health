@@ -171,8 +171,19 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 		);
 	if (gtJourneys.length > 0) lines.push(`    journeys: ${journeysMatchedCount}/${gtJourneys.length} reconstructed`);
 	for (const { row, verdict } of res.verdicts) {
-		if (verdict === "regressed")
+		if (verdict === "regressed") {
 			lines.push(`      ✗ REGRESSED ${row.windowText}: confirmed "${row.truthText}" no longer holds`);
+			// A regressed row names what BROKE, never what the pipeline said instead
+			// — so every one of them has to be re-diagnosed by hand before it can be
+			// attributed. Print the live state beside the truth it contradicts.
+			if (process.env.GOLDEN_TRUTH_DEBUG) {
+				const live = stateAt(row.startTs, row.endTs);
+				const hm = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
+				lines.push(
+					`        pipeline said: ${live ? `${live.mode}${live.place ? ` @ ${live.place}` : ""}${live.wayName ? ` on ${live.wayName}` : ""} [${hm(live.startTs)}-${hm(live.endTs)}Z vs row ${hm(row.startTs)}-${hm(row.endTs)}Z]` : "(no state covers this window)"}`,
+				);
+			}
+		}
 		if (verdict === "cleared")
 			lines.push(
 				`      ✓ cleared    ${row.windowText}: now matches truth "${row.truthText}" — flip the row to correct`,
