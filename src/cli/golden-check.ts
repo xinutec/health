@@ -148,7 +148,8 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 	// from the drawn state legs directly (minute-free, so a sub-minute leg is not
 	// dropped). The ratchet tracks per-journey matches.
 	const gtJourneys = groundTruthJourneys(gt.rows);
-	const journeyResults = journeyShapeResults(gtJourneys, statesToJourneys(states));
+	const pipelineJourneys = statesToJourneys(states);
+	const journeyResults = journeyShapeResults(gtJourneys, pipelineJourneys);
 	const journeyMatched = journeyResults.filter((r) => r.matched).map((r) => r.startTs);
 	const journeyAll = journeyResults.map((r) => r.startTs);
 	const journeysMatchedCount = journeyResults.filter((r) => r.matched).length;
@@ -203,8 +204,28 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 			const at = new Date(r.startTs * 1000).toISOString().slice(11, 16);
 			const cov =
 				r.uncoveredS >= 0 ? `  uncovered ${r.uncoveredS}s of ${r.endTs - r.startTs}s (slack ${r.slackS}s)` : "";
+			// WHICH END is short, which "uncovered" cannot say: a lead/lag of
+			// +N means the reconstruction starts/ends N seconds INSIDE the
+			// audited window.
+			const hm = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 19);
+			const ends =
+				r.matchStartTs === null || r.matchEndTs === null
+					? "  (nothing overlapped)"
+					: `  got ${hm(r.matchStartTs)}-${hm(r.matchEndTs)} vs ${hm(r.startTs)}-${hm(r.endTs)} [late start ${r.matchStartTs - r.startTs}s, early end ${r.endTs - r.matchEndTs}s]`;
 			lines.push(
-				`      ✗ journey @${at}Z  expected [${r.expectedShape.join(",")}]  got [${(r.actualShape ?? []).join(",")}]${cov}`,
+				`      ✗ journey @${at}Z  expected [${r.expectedShape.join(",")}]  got [${(r.actualShape ?? []).join(",")}]${cov}${ends}`,
+			);
+			// `bestOverlap` scores ONE pipeline journey — the single biggest
+			// overlap. If the pipeline split this trip in two, the gate grades the
+			// larger half and calls the other half uncovered, which is a failure
+			// that exists only in the comparison. So list EVERY pipeline journey
+			// touching the window: more than one here means the split, not the
+			// pipeline, is what "uncovered" is measuring.
+			const touching = pipelineJourneys.filter((p) => p.endTs > r.startTs && p.startTs < r.endTs);
+			lines.push(
+				`        ${touching.length} pipeline journey(s) touch the window: ${
+					touching.map((p) => `${hm(p.startTs)}-${hm(p.endTs)}`).join("  ") || "(none)"
+				}`,
 			);
 		}
 	}

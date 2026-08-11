@@ -105,6 +105,13 @@ export interface JourneyResult {
 	 *  instead, with nothing in the output saying so (#752). */
 	uncoveredS: number;
 	slackS: number;
+	/** Where the best-overlapping journey actually starts and ends, or null when
+	 *  nothing overlapped. `uncoveredS` says a journey is SHORT and cannot say at
+	 *  which end — and the two readings of that need opposite fixes: a pipeline
+	 *  that under-reconstructs, or a narrative window that includes dwell the
+	 *  pipeline rightly excludes. Only the ends separate them. */
+	matchStartTs: number | null;
+	matchEndTs: number | null;
 }
 
 /** Expand a coarse state timeline (contiguous start/end/mode windows — the
@@ -307,6 +314,8 @@ export function journeyShapeResults(
 			matched: actualShape !== null && arraysEqual(expectedShape, actualShape) && covered,
 			uncoveredS: Math.round(uncovered),
 			slackS: Math.round(slack),
+			matchStartTs: match?.startTs ?? null,
+			matchEndTs: match?.endTs ?? null,
 		};
 	});
 }
@@ -502,6 +511,8 @@ export function scoreJourneys(rows: readonly GroundTruthRow[], decoder: readonly
 			matched,
 			uncoveredS: -1,
 			slackS: -1,
+			matchStartTs: match?.startTs ?? null,
+			matchEndTs: match?.endTs ?? null,
 		});
 	}
 
