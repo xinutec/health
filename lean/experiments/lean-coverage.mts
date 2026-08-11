@@ -185,10 +185,15 @@ const RAIL_ROOTS = ["Verified.Rail.Certify", "Verified.Rail.Dijkstra"];
  *   the one that turned out to be the whole problem.
  *
  * SHAPE — in the residue correctly, but not ports and not news:
- *   `Verified.Hsmm.Factors` is an AGGREGATOR: 25 imports, zero definitions. It
- *   exists to pull the HSMM tree into the library root.
+ *   `Verified.Hsmm.Factors` is an AGGREGATOR: 24 imports, zero definitions. It
+ *   exists to pull the HSMM tree into the library root. It now has a tier of its
+ *   own (IMPORT SURFACE) rather than being counted as guard-pinned on the
+ *   strength of the phrase `#guard` in its docstring — see {@link shape} (#738).
  *   `Verified.Hsmm.Tests` / `Verified.Rail.Tests` are guard suites. Guard-only
  *   is what they are FOR, the way theorem-only is what a PROVEN module is for.
+ *   Both check a port against an in-language exhaustive ORACLE rather than
+ *   against V8, which is why the provenance column no longer asks them to cite
+ *   a harness — see {@link provenance}.
  *
  * They are left in the count rather than filtered out, because a filter is the
  * thing this whole change was about: the def/guard columns beside each name are
@@ -257,10 +262,30 @@ for (const [label, roots] of GATES) {
 const dark = all.filter((m) => !claimed.has(m)).sort();
 const body = (m: string): string => readFileSync(path.join(LEAN, `${m.split(".").join(path.sep)}.lean`), "utf8");
 const count = (m: string, re: RegExp): number => (body(m).match(re) ?? []).length;
+/**
+ * All three anchor at the start of a line, and the guard one has to (#738).
+ *
+ * It was `/#guard/g` — every occurrence anywhere in the file, prose included —
+ * and 61 of the 128 modules say the word `#guard` in their own docstring while
+ * explaining what pins them. 68 phantom guards across the corpus, 3428 counted
+ * against 3360 real.
+ *
+ * On a module with forty real guards a spare one is a rounding error. On
+ * `Verified.Hsmm.Factors` it was the entire count: zero theorems, zero
+ * definitions, zero guards, one sentence mentioning them — and {@link tier}
+ * reads `guards > 0`, so a word in a comment was promoting the module out of
+ * "NO check of any kind". The headline this file exists to print was partly
+ * bought by prose.
+ *
+ * Indentation is allowed for symmetry with the other two, not because anything
+ * needs it: measured, no `#guard` in the tree is indented, so `^#guard` and
+ * `^ *#guard` agree at 3360. `scripts/lean-port-coverage.mjs` has always used
+ * the anchored form and was never wrong about this.
+ */
 const shape = (m: string): { thms: number; defs: number; guards: number } => ({
 	thms: count(m, /^ *(theorem|lemma) /gm),
 	defs: count(m, /^ *(private )?def /gm),
-	guards: count(m, /#guard/g),
+	guards: count(m, /^ *#guard\b/gm),
 });
 /**
  * Nor is "no comparator" the same as "no check". Every module in the residue
@@ -301,11 +326,63 @@ const refsFor = (m: string): string[] =>
 		present.has(f) ? f : `${f} (MISSING)`,
 	);
 
-const tier = (m: string): "proven" | "pinned" | "none" =>
-	shape(m).thms > 0 ? "proven" : shape(m).guards > 0 ? "pinned" : "none";
+/**
+ * A module that states NOTHING — no theorem, no definition, no guard — is not
+ * an unchecked port. It is an import surface: a file whose whole content is
+ * `import` lines pulling a subtree into the library root, so that the guards in
+ * that subtree run under `lake build`. `Verified.Hsmm.Factors` is the case
+ * (#738): 24 imports, and its docstring says as much.
+ *
+ * It gets its own tier rather than a place in either neighbour, because both
+ * neighbours would be a claim about a thing that does not exist. GUARD-PINNED
+ * says "checked by guards" of a file with none. "NO check of any kind" says the
+ * port is unchecked, of a file that ports nothing — and would put a 1 under the
+ * headline for a module where 0 and 1 are equally meaningless.
+ *
+ * The distinction is only visible because the counts are printed per module. An
+ * import surface and a stub read identically from the tier label alone, and
+ * telling them apart is what the `0 thm 0 def 0 guard` line beside the name is
+ * for — the same argument this file already makes for not filtering the
+ * aggregator out of the residue entirely.
+ */
+/**
+ * What the provenance column should say, which is not always "which harness".
+ *
+ * `CITES NO HARNESS` asks a V8 question: these guards claim no derivation, so
+ * they may be the porter's belief agreeing with the porter's code (#434). That
+ * is the right question for a PORT. It is the wrong question for the two
+ * `*.Tests` modules, and they were the only two flying the flag once #695 and
+ * #738 were resolved — a permanent warning that named no defect, which is how a
+ * flag stops being read.
+ *
+ * Neither is a port. `Verified.Hsmm.Tests` checks `viterbi` against an
+ * exhaustive brute-force oracle over seeded random problems; `Verified.Rail.Tests`
+ * does the same for the Dijkstra against all-simple-paths enumeration. Both arms
+ * are Lean, so there is no V8 answer to cite and nothing was written by hand
+ * from belief — the expectation is COMPUTED by the oracle at build time, every
+ * build, on instances chosen by seed rather than by the author.
+ *
+ * Selected by module name, deliberately shallowly: the rule is visible, and
+ * what would make it wrong is visible too — a `*.Tests` module that pins a TS
+ * port instead of running an oracle would be mislabelled here, and the fix
+ * would be to name it something else or to read the docstring instead of the
+ * name. Nothing about that is worth a parser today, with two modules in scope.
+ */
+const provenance = (m: string, refs: string[]): string => {
+	if (refs.length > 0) return refs.join(", ");
+	return m.endsWith(".Tests") ? "IS AN ORACLE SUITE (no TS arm to cite)" : "CITES NO HARNESS";
+};
+
+const tier = (m: string): "proven" | "pinned" | "surface" | "none" => {
+	const s = shape(m);
+	if (s.thms > 0) return "proven";
+	if (s.guards > 0) return "pinned";
+	return s.defs === 0 ? "surface" : "none";
+};
 const TIERS: [string, string, string][] = [
 	["proven", "PROVEN — `lake build` is the check", "misses nothing it states"],
 	["pinned", "GUARD-PINNED — no live comparator", "misses the TS moving (#417)"],
+	["surface", "IMPORT SURFACE — states nothing", "nothing to miss; not a port"],
 	["none", "NO check of any kind", "misses everything"],
 ];
 for (const [key, label] of TIERS) {
@@ -319,7 +396,7 @@ for (const [key, label, misses] of TIERS) {
 	for (const m of ms) {
 		const { thms, defs, guards } = shape(m);
 		const refs = refsFor(m);
-		const prov = key === "pinned" ? (refs.length > 0 ? `  <- ${refs.join(", ")}` : "  <- CITES NO HARNESS") : "";
+		const prov = key === "pinned" ? `  <- ${provenance(m, refs)}` : "";
 		console.log(
 			`    ${m.padEnd(30)} ${String(thms).padStart(3)} thm ${String(defs).padStart(3)} def ` +
 				`${String(guards).padStart(3)} guard${prov}`,
