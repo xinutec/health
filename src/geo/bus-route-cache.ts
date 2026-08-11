@@ -82,3 +82,34 @@ export async function loadAllBusRoutes(): Promise<BusRoute[]> {
 	}
 	return routes;
 }
+
+/** A rebuild may not drop the mirror below this fraction of what it already
+ *  held WHEN TILES FAILED. A shrink is legitimate data — routes leave OSM, the
+ *  home region moves — but only a run that fetched everything it asked for can
+ *  claim it. */
+const SHRINK_FLOOR = 0.8;
+
+/**
+ * Should this rebuild be refused, and why?
+ *
+ * The rebuild is a DELETE + INSERT of the whole table, so a bad run does not
+ * degrade the mirror gracefully — it replaces it. The original guard refused
+ * only when EVERY tile failed, which is the one case that cannot happen
+ * quietly: a run where 90 of 100 tiles fail returns a plausible-looking handful
+ * of routes and overwrites a healthy 995 with them, and nothing in the output
+ * says the mirror just lost 90% of its content.
+ *
+ * That mattered little while the cron was suspended and every run was watched.
+ * It is the whole risk once the job runs unattended at 05:30, which is what
+ * #255 asks for. So: a shrink past {@link SHRINK_FLOOR} is refused when any
+ * tile failed, and allowed when none did.
+ *
+ * Exported and pure so the decision is testable without a DB or Overpass.
+ */
+export function rebuildRefusal(existing: number, fetched: number, tileFailures: number): string | null {
+	if (tileFailures === 0) return null; // a complete run is authoritative, whatever it found
+	if (fetched === 0) return `Every tile failed and the cache holds ${existing} route(s)`;
+	if (existing > 0 && fetched < existing * SHRINK_FLOOR)
+		return `${tileFailures} tile(s) failed and the rebuild would cut the mirror ${existing} -> ${fetched} route(s)`;
+	return null;
+}

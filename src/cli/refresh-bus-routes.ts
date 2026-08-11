@@ -32,7 +32,7 @@
 import { z } from "zod";
 import { db, destroyPool, initPool, withConnection } from "../db/pool.js";
 import { migrate } from "../db/schema.js";
-import { serializeBusRoute } from "../geo/bus-route-cache.js";
+import { rebuildRefusal, serializeBusRoute } from "../geo/bus-route-cache.js";
 import type { BusRoute } from "../geo/bus-route-match.js";
 import { buildBusRouteOverpassQuery, extractBusRoutes } from "../geo/osm-bus-routes.js";
 import { overpassFetch } from "../geo/osm-overpass.js";
@@ -63,6 +63,7 @@ const config = z
  *  travel history (a user's old San Francisco / Toronto clusters) so the
  *  mirror tracks where they live now. */
 const RECENT_DAYS = 120;
+
 /** Two focus places belong to the same metropolitan region if within this
  *  of each other. Comfortably larger than a city's diameter, far smaller
  *  than the gap between cities — cleanly separates London from Amsterdam. */
@@ -134,11 +135,17 @@ for (const [i, tile] of tiles.entries()) {
 	}
 }
 
-// Refuse to clobber a populated cache with a near-empty rebuild when the
-// fetches broadly failed (Overpass down / breaker open) — a partial mirror
-// is fine, but an all-failed run must not wipe yesterday's good data.
-if (byRelation.size === 0 && tileFailures > 0) {
-	console.error(`All ${tiles.length} tiles failed — leaving bus_route_cache untouched.`);
+const existing = Number(
+	(
+		await db()
+			.selectFrom("bus_route_cache")
+			.select((eb) => eb.fn.countAll().as("n"))
+			.executeTakeFirstOrThrow()
+	).n,
+);
+const refusal = rebuildRefusal(existing, byRelation.size, tileFailures);
+if (refusal !== null) {
+	console.error(`${refusal} — leaving bus_route_cache untouched.`);
 	await destroyPool();
 	process.exit(1);
 }
