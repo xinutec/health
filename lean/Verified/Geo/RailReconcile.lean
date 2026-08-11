@@ -42,6 +42,7 @@ against Node/V8 (`lean/experiments/rail-reconcile-refs.mts`).
 namespace Verified.Geo.RailReconcile
 
 open Verified.Geo.RailAbsorbers (parseRailWayName RAIL_STATION_SEP RAIL_LINE_SEP)
+open Verified.Hsmm.FloatScore (haversineMeters)
 
 abbrev Mode := String
 
@@ -52,6 +53,9 @@ private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
 it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
+
+/-- A GPS fix, as the filter left it. -/
+abbrev Fix := Verified.Geo.SegmentMerge.Fix
 
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
@@ -196,6 +200,160 @@ def annotateSnappedPaths (segments : Array Seg) (railRouteCache : Array RouteRow
             snappedPath := some (Verified.Geo.RailSnap.interpolateTimes row.geometry
               (Float.ofInt seg.startTs) (Float.ofInt seg.endTs)) }
 
+/-! ## `splitChangeoverWindows` -/
+
+/-- A step at or above this (km/h) is the phone on a train, not on a platform. -/
+def CHANGEOVER_RIDE_MIN_KMH : Float := 15
+
+/-- Net displacement a reclaimed side must cover (m) before a leg boundary moves.
+Comfortably under a tube inter-station hop, comfortably over a platform walk. -/
+def CHANGEOVER_RIDE_MIN_M : Float := 250
+
+/-- The platform walk left behind must span at least this (s). Below it there is
+no walk to speak of and the two legs are really one arrival. -/
+def CHANGEOVER_PLATFORM_MIN_S : Int := 20
+
+/-- A station-pair-labelled train leg — the only kind this pass reasons over.
+Private in the TS; named here because the pass is driven directly. -/
+def isStationPairTrain (s : Seg) : Bool :=
+  effectiveMode s == "train" && (parseRailWayName s.wayName).isSome
+
+/-- `existing ? "existing; add" : add`. The EMPTY STRING is included in the
+falsy branch, as in the TS: `refinedReason = ""` is replaced, not prefixed. -/
+private def appendReason (existing : Option String) (add : String) : String :=
+  match existing with
+  | some r => if r == "" then add else s!"{r}; {add}"
+  | none => add
+
+/-- The maximal runs of consecutive non-ride steps, as `(from, to)` index pairs
+into the FIX array: `ride[from] … ride[to-1]` are all false, so the run spans
+fix `from` through fix `to`. A run still open at the end closes at `ride.size`,
+which is the last fix — so `to` indexes a fix in every case. -/
+private def stillRuns (ride : Array Bool) : Array (Nat × Nat) :=
+  let (runs, opened) := (List.range ride.size).foldl
+    (init := ((#[] : Array (Nat × Nat)), (none : Option Nat)))
+    fun (runs, opened) k =>
+      if ride[k]! then
+        match opened with
+        | some s => (runs.push (s, k), none)
+        | none => (runs, none)
+      else
+        match opened with
+        | some _ => (runs, opened)
+        | none => (runs, some k)
+  match opened with
+  | some s => runs.push (s, ride.size)
+  | none => runs
+
+/-- The platform walk: the LONGEST still run BY DURATION, with its span.
+First-wins on a tie, mirroring the TS's strict `>` against a `-1` seed. -/
+private def platformRun (fixes : Array Fix) (ride : Array Bool) : Option (Nat × Nat × Int) :=
+  (stillRuns ride).foldl (init := none) fun best (f, t) =>
+    let span := fixes[t]!.ts - fixes[f]!.ts
+    match best with
+    | some (_, _, bs) => if span > bs then some (f, t, span) else best
+    | none => if span > -1 then some (f, t, span) else none
+
+/-- One `[ride tail][platform walk][ride head]` window, at the walk's index.
+
+Sequential by construction: the head branch moves the NEXT leg's start, and that
+leg is the `prev` of a window two indices on, so each step reads the array the
+previous ones left. Hence a fold over indices rather than a map. -/
+private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Array Seg :=
+  let walk := out[i]!
+  let prev := out[i-1]!
+  let next := out[i+1]!
+  if effectiveMode walk != "walking" then out
+  else if !isStationPairTrain prev || !isStationPairTrain next then out
+  else
+    let fixes := Verified.Geo.SegmentMerge.samplesInWindow points walk.startTs walk.endTs
+    if fixes.size < 4 then out else
+    -- Step k joins fixes[k] and fixes[k+1]. `ride[k]` is that step at train pace.
+    let ride : Array Bool := (Array.range (fixes.size - 1)).map fun k =>
+      let a := fixes[k]!
+      let b := fixes[k+1]!
+      let dt := b.ts - a.ts
+      dt > 0 && haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 ≥ CHANGEOVER_RIDE_MIN_KMH
+    if !ride.any id then out else -- nothing stranded — an honest walk
+    match platformRun fixes ride with
+    | none => out
+    | some (bestFrom, bestTo, bestS) =>
+      if bestS < CHANGEOVER_PLATFORM_MIN_S then out else
+      let net (a b : Nat) : Float :=
+        haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
+      let tailM := if bestFrom > 0 then net 0 bestFrom else 0
+      let headM := if bestTo < fixes.size - 1 then net bestTo (fixes.size - 1) else 0
+      let takeTail := tailM ≥ CHANGEOVER_RIDE_MIN_M
+      let takeHead := headM ≥ CHANGEOVER_RIDE_MIN_M
+      if !takeTail && !takeHead then out else
+      let walkStart := if takeTail then fixes[bestFrom]!.ts else walk.startTs
+      let walkEnd := if takeHead then fixes[bestTo]!.ts else walk.endTs
+      if walkEnd - walkStart < CHANGEOVER_PLATFORM_MIN_S then out else
+      -- EXCLUSIVE upper bound, unlike the `samplesInWindow` that read the fixes:
+      -- the recount is `>= from && < to`, so a boundary point falls to one side
+      -- only. Counted over ALL points, not the window's fixes.
+      let countIn (a b : Int) : Int :=
+        Int.ofNat (points.filter (fun p => p.ts ≥ a && p.ts < b)).size
+      let reclaimed (m : Float) : String :=
+        let r := (Verified.JsNum.toFixed (jsRound m) 0).getD "?"
+        s!"changeover window: reclaimed {r} m of stranded ride (#444)"
+      let out := if takeTail then
+          out.set! (i-1) { prev with
+            endTs := walkStart
+            pointCount := countIn prev.startTs walkStart
+            refinedReason := some (appendReason prev.refinedReason (reclaimed tailM)) }
+        else out
+      let out := if takeHead then
+          out.set! (i+1) { next with
+            startTs := walkEnd
+            pointCount := countIn walkEnd next.endTs
+            refinedReason := some (appendReason next.refinedReason (reclaimed headM)) }
+        else out
+      out.set! i { walk with
+        startTs := walkStart
+        endTs := walkEnd
+        pointCount := countIn walkStart walkEnd
+        refinedReason := some (appendReason walk.refinedReason
+          "changeover window: trimmed to the platform change (#444)") }
+
+/-- A changeover window is `[ride tail][platform walk][ride head]`, and only the
+middle is a walk (#444).
+
+The rail reconstruction can end a leg while the phone is still a kilometre from
+the station that leg CLAIMS to alight at, and still closing at 50 km/h. The
+remaining ride is then stranded in the walk between the two legs — which the
+interchange labeller has already named `"<station> (interchange)"` — so a
+four-minute "platform walk" contains an inter-station hop, and the kinematic
+invariant correctly calls it physically impossible.
+
+The anchors decline this case by design: reclaiming a hop on ONE side says
+nothing about which side it belongs to. Between two rides it can belong to
+either, and the window has to be read as a whole.
+
+## Which part is the walk
+
+The platform walk is the LONGEST stretch of the window the phone is not moving
+at vehicle pace. Everything before it belongs to the arriving ride, everything
+after to the departing one.
+
+That criterion rather than "the fast steps at each end", because a train STOPS:
+an intermediate call sits inside the window as a slow stretch of its own.
+Duration alone cannot separate those either — the intermediate stops run
+14-28 s and the real cross-platform change 32 s. What distinguishes the change
+is that it is the LONGEST such stretch, which is the one thing a station stop
+mid-ride is not.
+
+Both sides are optional and measured independently. Conservative by
+construction: it runs only on a walk BETWEEN two station-pair-labelled trains,
+moves a boundary only when the reclaimed side covers a real inter-station
+distance, and leaves the walk alone unless a recognisable platform stretch
+survives. Any of those failing means the window is not this shape, and the pass
+declines rather than guessing — an unfixed impossible leg is a REPORTED defect,
+a wrongly moved boundary a silent one. -/
+def splitChangeoverWindows (segments : Array Seg) (points : Array Fix) : Array Seg :=
+  (List.range segments.size).foldl (init := segments) fun out i =>
+    if i == 0 || i + 1 ≥ segments.size then out else splitOneWindow points out i
+
 /-! ## Guards (V8 reference values) -/
 
 private def blank : Seg := { startTs := 0, endTs := 0, mode := "" }
@@ -317,5 +475,89 @@ private def CACHE : Array RouteRow := #[⟨"A → B", #[northPt 0, northPt 1000]
     (·.snappedPath.isSome) == #[true, false]
 #guard (annotateSnappedPaths #[tr 1000 2000 none] CACHE)[0]!.snappedPath == none
 #guard annotateSnappedPaths #[] CACHE == #[]
+
+private def fx (ts : Int) (m : Float) : Fix := ⟨ts, (northPt m).lat, (northPt m).lon⟩
+
+/-- The only shape the pass reads: a walk between two station-pair-labelled
+trains. The trains extend 300 s past the walk, so a moved boundary shows. -/
+private def cwin (fixes : Array Fix) : Array Seg :=
+  let t0 := fixes[0]!.ts
+  let t1 := fixes[fixes.size - 1]!.ts
+  #[tr (t0 - 300) t0 (some "A → S · Jubilee Line"),
+    tr t0 t1 (some "S (interchange)") (mode := "walking"),
+    tr t1 (t1 + 300) (some "S → T · Bakerloo Line")]
+
+private def cview (out : Array Seg) : Array (Int × Int × Int × Option String) :=
+  out.map fun s => (s.startTs, s.endTs, s.pointCount, s.refinedReason)
+
+private def TRIMMED : String := "changeover window: trimmed to the platform change (#444)"
+private def reclaim (m : String) : String := s!"changeover window: reclaimed {m} m of stranded ride (#444)"
+
+-- BOTH sides: a fast approach, a 90 s platform stretch, a fast departure. Each
+-- leg is recounted over the points, and the reclaimed metres are the HAVERSINE
+-- distance rounded — 499, not the 500 m the frame was built at.
+private def BOTH : Array Fix :=
+  #[fx 1000 0, fx 1030 500, fx 1060 505, fx 1120 515, fx 1150 1015, fx 1180 1520]
+#guard cview (splitChangeoverWindows (cwin BOTH) BOTH)
+  == #[(700, 1030, 1, some (reclaim "499")),
+       (1030, 1120, 2, some TRIMMED),
+       (1120, 1480, 3, some (reclaim "1004"))]
+
+-- TAIL only (the 07-02 shape): the ride is stranded at the START of the walk
+-- and nothing fast follows, so only the arriving leg's boundary moves and the
+-- departing leg keeps its own count of 10 untouched.
+private def TAIL : Array Fix := #[fx 1000 0, fx 1030 500, fx 1060 505, fx 1120 515, fx 1150 525]
+#guard cview (splitChangeoverWindows (cwin TAIL) TAIL)
+  == #[(700, 1030, 1, some (reclaim "499")), (1030, 1150, 3, some TRIMMED), (1150, 1450, 10, none)]
+
+-- THE DISCRIMINATOR: a 25 s intermediate station stop precedes the 35 s
+-- cross-platform change. A scan that ended the tail at the FIRST slow step
+-- would cut at the intermediate platform, 505 m in; LONGEST-run reclaims the
+-- whole 1004 m and cuts at the real change.
+private def INTER : Array Fix :=
+  #[fx 1000 0, fx 1030 500, fx 1055 505, fx 1085 1005, fx 1120 1010, fx 1150 1510]
+#guard cview (splitChangeoverWindows (cwin INTER) INTER)
+  == #[(700, 1085, 3, some (reclaim "1004")),
+       (1085, 1120, 1, some TRIMMED),
+       (1120, 1450, 2, some (reclaim "499"))]
+
+-- An honest walk: no step at vehicle pace, so nothing is stranded.
+private def HONEST : Array Fix := #[fx 1000 0, fx 1030 20, fx 1060 40, fx 1120 70, fx 1150 90]
+#guard cview (splitChangeoverWindows (cwin HONEST) HONEST)
+  == #[(700, 1000, 10, none), (1000, 1150, 10, none), (1150, 1450, 10, none)]
+-- A ride IS present, but neither side covers an inter-station distance
+-- (200 m < 250 m): the pass declines rather than moving a boundary.
+private def SHORT : Array Fix := #[fx 1000 0, fx 1010 200, fx 1040 205, fx 1100 210, fx 1110 215]
+#guard cview (splitChangeoverWindows (cwin SHORT) SHORT)
+  == #[(700, 1000, 10, none), (1000, 1110, 10, none), (1110, 1410, 10, none)]
+-- Fewer than four fixes: too little to read a window from.
+private def FEW : Array Fix := #[fx 1000 0, fx 1030 500, fx 1120 515]
+#guard cview (splitChangeoverWindows (cwin FEW) FEW)
+  == #[(700, 1000, 10, none), (1000, 1120, 10, none), (1120, 1420, 10, none)]
+-- The platform stretch is 15 s, under the 20 s bar: what is left would not be a
+-- walk, so the window is one arrival for the merge passes, not this one.
+private def BRIEF : Array Fix := #[fx 1000 0, fx 1030 500, fx 1045 505, fx 1060 1005, fx 1090 1510]
+#guard cview (splitChangeoverWindows (cwin BRIEF) BRIEF)
+  == #[(700, 1000, 10, none), (1000, 1090, 10, none), (1090, 1390, 10, none)]
+
+-- Not two station-pair trains, and a middle that is not a walk: both decline.
+#guard cview (splitChangeoverWindows
+    #[tr 700 1000 (some "Jubilee Line"), tr 1000 1180 none (mode := "walking"),
+      tr 1180 1480 (some "S → T")] BOTH)
+  == #[(700, 1000, 10, none), (1000, 1180, 10, none), (1180, 1480, 10, none)]
+#guard cview (splitChangeoverWindows
+    #[tr 700 1000 (some "A → S"), tr 1000 1180 none (mode := "stationary"),
+      tr 1180 1480 (some "S → T")] BOTH)
+  == #[(700, 1000, 10, none), (1000, 1180, 10, none), (1180, 1480, 10, none)]
+
+-- An existing reason is PREFIXED; an EMPTY-STRING one is replaced outright,
+-- because `""` is falsy in the TS append.
+#guard (splitChangeoverWindows
+    #[{ tr 700 1000 (some "A → S") with refinedReason := some "earlier note" },
+      { tr 1000 1180 none (mode := "walking") with refinedReason := some "" },
+      tr 1180 1480 (some "S → T")] BOTH).map (·.refinedReason)
+  == #[some s!"earlier note; {reclaim "499"}", some TRIMMED, some (reclaim "1004")]
+
+#guard splitChangeoverWindows #[] BOTH == #[]
 
 end Verified.Geo.RailReconcile

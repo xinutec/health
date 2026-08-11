@@ -595,6 +595,14 @@ def passes (e : Env) : Array Pass := #[
   -- it is not an invariant.
   ("railReconcile2", fun segs => Verified.Geo.RailReconcile.reconcileAdjacentRailLegs segs),
 
+  -- The changeover window between two rides contains the RIDE, not just a
+  -- platform walk. HERE and not earlier: after `railReconcile2`, so both
+  -- neighbours carry their final station-pair labels, and after the anchors,
+  -- which decline this case by design because a hop between two rides can
+  -- belong to either side and the window has to be read whole.
+  ("changeoverWindow", fun segs =>
+    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.mergeFixes),
+
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
   -- surface as a destination.
@@ -654,7 +662,8 @@ private def NO_LOOKUPS : Env :=
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
     "rideHeadClaim", "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
-    "repairHandoff", "railReconcile2", "interchangeStayLabel", "vehicleIdentity"]
+    "repairHandoff", "railReconcile2", "changeoverWindow", "interchangeStayLabel",
+    "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -676,9 +685,9 @@ def TS_CASCADE : Array String := #[
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "interchangeStayLabel", "vehicleIdentity"]
+  "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 38
+#guard TS_CASCADE.size == 39
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -695,11 +704,14 @@ def unported (e : Env) : Array String :=
   TS_CASCADE.filter fun n => !(passNames e).contains n
 
 -- Named, not counted: a tranche that quietly wires the easy half and leaves a
--- number to shrink says nothing about WHICH work is left.
--- Six left. Two return DECISIONS rather than segments, so they need the shell's
--- applier ported; one is genuinely shell (async OSM re-enrichment); two carry
--- solver leaves the env does not hold yet; one needs a `biometrics` field on the
--- shared segment record, which is a schema change and not wiring.
+-- number to shrink says nothing about WHICH work is left. Nothing is left.
+--
+-- Note what this does NOT catch: `TS_CASCADE` is a hand-copied literal, so a
+-- pass added to `velocity.ts` leaves both lists agreeing with each other and
+-- disagreeing with the pipeline. That is exactly how the fold fell a pass
+-- behind when `changeoverWindow` landed — every guard here stayed green.
+-- `scripts/check-cascade-parity.mjs` reads the names out of the TS and is the
+-- check that would have failed.
 #guard unported NO_LOOKUPS == #[]
 
 #guard (passNames NO_LOOKUPS).size + (unported NO_LOOKUPS).size == TS_CASCADE.size
@@ -942,6 +954,11 @@ private def fires (e : Env) (name : String) (day : Array Seg) : Bool :=
 -- Leg B boards where leg A alighted, not where it independently resolved.
 #guard fires MIX "railReconcile" #[tr 0 600 (some "A → S"), tr 600 1200 (some "T0 → T · Jubilee Line")]
 #guard fires MIX "railReconcile2" #[tr 0 600 (some "A → S"), tr 600 1200 (some "T0 → T · Jubilee Line")]
+-- A "platform walk" laid across the track's 4 km/h → 45 km/h boundary: three
+-- slow minutes and then the ride, so the departing leg's boarding is pulled back
+-- to where the track actually starts moving. Head-only, which is the 07-02 shape
+-- mirrored — `MIX` accelerates once and never decelerates, so there is no tail.
+#guard fires MIX "changeoverWindow" #[tr 2400 2820 (some "A → S"), wk 2820 3300, tr 3300 3900 (some "S → T")]
 -- Two adjacent legs of one ride.
 #guard fires MIX "mergeSameRouteTrains" #[tr 0 600 (some "A → B"), tr 660 1200 (some "A → B")]
 -- A short walk between two trains sharing a station is the platform change.
@@ -1107,7 +1124,7 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 27
+#guard witnessed.size == 28
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

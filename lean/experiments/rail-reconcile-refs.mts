@@ -22,7 +22,9 @@ import {
 	annotateSnappedPaths,
 	mergeAdjacentSameRouteTrains,
 	reconcileAdjacentRailLegs,
+	splitChangeoverWindows,
 } from "../../src/geo/passes/rail-reconcile.js";
+import type { FilteredPoint } from "../../src/geo/kalman.js";
 import type { SnappedPoint } from "../../src/geo/rail-snap.js";
 import type { TransportMode } from "../../src/geo/segments.js";
 
@@ -251,3 +253,98 @@ for (const [name, c] of Object.entries(SNAP_CASES)) {
 		})),
 	);
 }
+
+/* ------------------------------------------------------------------ *
+ * `splitChangeoverWindows` — [ride tail][platform walk][ride head]     *
+ * ------------------------------------------------------------------ */
+
+const fx = (ts: number, m: number): FilteredPoint => ({
+	ts,
+	lat: north(m).lat,
+	lon: north(m).lon,
+	speed_kmh: 0,
+	bearing: 0,
+});
+
+/** A walk between two station-pair-labelled trains — the only shape the pass
+ *  reads. The trains' windows extend past the walk so a moved boundary shows. */
+const window = (fixes: FilteredPoint[]): EnrichedSegment[] => [
+	seg(fixes[0].ts - 300, fixes[0].ts, "train", { wayName: "A → S · Jubilee Line" }),
+	seg(fixes[0].ts, fixes[fixes.length - 1].ts, "walking", { wayName: "S (interchange)" }),
+	seg(fixes[fixes.length - 1].ts, fixes[fixes.length - 1].ts + 300, "train", { wayName: "S → T · Bakerloo Line" }),
+];
+
+const CHANGE_CASES: Record<string, FilteredPoint[]> = {
+	// BOTH sides: a fast approach, a 90 s platform stretch, a fast departure.
+	bothSides: [fx(1000, 0), fx(1030, 500), fx(1060, 505), fx(1120, 515), fx(1150, 1015), fx(1180, 1520)],
+	// TAIL only (the 07-02 shape): the ride is stranded at the START of the walk
+	// and nothing fast follows, so only the arriving leg's boundary moves.
+	tailOnly: [fx(1000, 0), fx(1030, 500), fx(1060, 505), fx(1120, 515), fx(1150, 525)],
+	// THE DISCRIMINATOR: a 25 s intermediate station stop precedes the 35 s
+	// cross-platform change. A scan that ended the tail at the first slow step
+	// would cut at the intermediate platform; LONGEST-run picks the change.
+	intermediateStop: [fx(1000, 0), fx(1030, 500), fx(1055, 505), fx(1085, 1005), fx(1120, 1010), fx(1150, 1510)],
+	// An honest walk: no step at vehicle pace anywhere, so nothing is stranded.
+	honestWalk: [fx(1000, 0), fx(1030, 20), fx(1060, 40), fx(1120, 70), fx(1150, 90)],
+	// A ride is present but neither side covers an inter-station distance
+	// (200 m < 250 m), so the pass declines rather than moving a boundary.
+	tooShortToReclaim: [fx(1000, 0), fx(1010, 200), fx(1040, 205), fx(1100, 210), fx(1110, 215)],
+	// Fewer than four fixes: too little to read a window from.
+	tooFewFixes: [fx(1000, 0), fx(1030, 500), fx(1120, 515)],
+	// The platform stretch is under 20 s, so what is left would not be a walk.
+	platformTooBrief: [fx(1000, 0), fx(1030, 500), fx(1045, 505), fx(1060, 1005), fx(1090, 1510)],
+};
+
+const changeView = (out: EnrichedSegment[]): unknown =>
+	out.map((s) => ({
+		startTs: s.startTs,
+		endTs: s.endTs,
+		pointCount: s.pointCount,
+		refinedReason: s.refinedReason ?? null,
+	}));
+
+for (const [name, fixes] of Object.entries(CHANGE_CASES)) {
+	show(`change.${name}`, changeView(splitChangeoverWindows(window(fixes), fixes)));
+}
+
+// Not two station-pair trains: an unparseable label on either side declines.
+show(
+	"change.notAPair",
+	changeView(
+		splitChangeoverWindows(
+			[
+				seg(700, 1000, "train", { wayName: "Jubilee Line" }),
+				seg(1000, 1180, "walking"),
+				seg(1180, 1480, "train", { wayName: "S → T" }),
+			],
+			CHANGE_CASES.bothSides,
+		),
+	),
+);
+// The middle is not a walk.
+show(
+	"change.middleNotAWalk",
+	changeView(
+		splitChangeoverWindows(
+			[
+				seg(700, 1000, "train", { wayName: "A → S" }),
+				seg(1000, 1180, "stationary"),
+				seg(1180, 1480, "train", { wayName: "S → T" }),
+			],
+			CHANGE_CASES.bothSides,
+		),
+	),
+);
+// An existing refinedReason is PREFIXED; an empty-string one is REPLACED.
+show(
+	"change.reasonAppend",
+	splitChangeoverWindows(
+		[
+			seg(700, 1000, "train", { wayName: "A → S", refinedReason: "earlier note" }),
+			seg(1000, 1180, "walking", { refinedReason: "" }),
+			seg(1180, 1480, "train", { wayName: "S → T" }),
+		],
+		CHANGE_CASES.bothSides,
+	).map((s) => s.refinedReason ?? null),
+);
+show("change.empty", changeView(splitChangeoverWindows([], CHANGE_CASES.bothSides)));
