@@ -371,6 +371,12 @@ const INTERCHANGE_WALK_MIN_CADENCE_SPM = 40;
  * that the walk classifier then fills. Cadence separates them, because a
  * platform change is a physical act with a physical trace.
  *
+ *
+ * KNOWN LIMIT, untested: a genuine SAME-PLATFORM interchange needs almost no
+ * walking (Finchley Road Met↔Jubilee is the local example), so it would read as
+ * low cadence and be merged away. No golden day exercises one. 2026-06-15, the
+ * day this was built for, is NOT such a case — its ground truth is user-confirmed
+ * "direct Jubilee", so there was no change to erase.
  * FAIL-SAFE TOWARDS THE MARKER. No step data, no window long enough to measure,
  * or no rows for the day all return `true` — the caller then behaves exactly as
  * it did before this test existed. Only a MEASURED low cadence overrides the

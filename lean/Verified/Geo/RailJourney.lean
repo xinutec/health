@@ -224,6 +224,11 @@ which is the shape of a platform change and equally the shape of an artefact of
 the underground reconstruction filling a mid-ride gap. Cadence separates them,
 because a platform change leaves a physical trace.
 
+KNOWN LIMIT, untested: a genuine SAME-PLATFORM interchange needs almost no
+walking (Finchley Road Met↔Jubilee locally), so it would read as low cadence and
+be merged away. No golden day exercises one; 2026-06-15 is not such a case — its
+ground truth is user-confirmed "direct Jubilee".
+
 FAIL-SAFE TOWARDS THE MARKER: too short to measure, or no step rows for the day,
 both return `true`, so a day without Fitbit data behaves exactly as it did
 before this test existed. Only a MEASURED low cadence overrides the label. -/
