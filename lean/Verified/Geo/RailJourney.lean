@@ -2,6 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.RailReconcile
 import Verified.Geo.RailRuns
 import Verified.Geo.RailAbsorbers
+import Verified.Geo.BiometricWindows
 
 /-!
 # `assembleRailJourney` — the rail-journey assembler
@@ -207,17 +208,46 @@ private def idxRange (lo n : Nat) : List Nat := List.range' lo n
 def isStationPairTrain (seg : Seg) : Bool :=
   effectiveMode seg == "train" && (parseRailWayName seg.wayName).isSome
 
+/-- A platform-to-platform change is a WALK, and walking produces steps. Below
+this (steps/min) nobody crossed a platform, whatever the label says. Same value
+and same question as `interchange-split.ts`'s `BURST_MIN_CADENCE`.
+
+MEASURED on the two corpus cases it separates: 2026-06-15's "Swiss Cottage
+(interchange)" runs 13 spm (19 then 7 steps in two minutes) against the same
+rider's 90-110 that hour; 2026-05-20's genuine Baker Street change runs 60. -/
+def INTERCHANGE_WALK_MIN_CADENCE_SPM : Float := 40
+
+/-- Did the rider actually walk this "interchange" walk?
+
+The label is geometric — a short walk between two train legs sharing a station —
+which is the shape of a platform change and equally the shape of an artefact of
+the underground reconstruction filling a mid-ride gap. Cadence separates them,
+because a platform change leaves a physical trace.
+
+FAIL-SAFE TOWARDS THE MARKER: too short to measure, or no step rows for the day,
+both return `true`, so a day without Fitbit data behaves exactly as it did
+before this test existed. Only a MEASURED low cadence overrides the label. -/
+def interchangeWalkIsWalked (walk : Seg) (steps : List Verified.Geo.BiometricWindows.StepPoint) : Bool :=
+  let durationSec := walk.endTs - walk.startTs
+  if durationSec < 30 then true
+  else match Verified.Geo.BiometricWindows.stepsInWindow steps walk.startTs walk.endTs with
+    | none => true
+    | some total => (total / Float.ofInt durationSec) * 60 ≥ INTERCHANGE_WALK_MIN_CADENCE_SPM
+
 /-- Is there a platform-to-platform interchange walk strictly between two
-positions? Such a walk is positive evidence of a train change. -/
-def hasInterchangeWalkBetween (segments : Array Seg) (aIdx bIdx : Nat) : Bool :=
+positions? Such a walk is positive evidence of a train change — but only when
+the rider is measured to have walked it (`interchangeWalkIsWalked`). -/
+def hasInterchangeWalkBetween (segments : Array Seg) (aIdx bIdx : Nat)
+    (steps : List Verified.Geo.BiometricWindows.StepPoint) : Bool :=
   (idxRange (aIdx + 1) (bIdx - aIdx - 1)).any fun m =>
     match segments[m]? with
     | none => false
     | some seg =>
       effectiveMode seg == "walking" &&
-        match seg.wayName with
-        | none => false
-        | some w => w.endsWith INTERCHANGE_WALK_SUFFIX
+        (match seg.wayName with
+         | none => false
+         | some w => w.endsWith INTERCHANGE_WALK_SUFFIX) &&
+        interchangeWalkIsWalked seg steps
 
 /-- The stations a set of train legs touches, in first-seen order. Order does not
 affect the membership test that consumes it, but it is deterministic. -/
@@ -393,7 +423,7 @@ private structure PrefixState where
   groupLine : Option String
   deriving Inhabited, Repr
 
-private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix) (runBoard : String) :
+private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint) (runBoard : String) :
     List Nat → PrefixState → MemoM PrefixState
   | [], st => return st
   | c :: rest, st => do
@@ -417,7 +447,7 @@ private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix)
       match st.acc.back? with
       | none => false
       | some prev =>
-        hasInterchangeWalkBetween segments prev c &&
+        hasInterchangeWalkBetween segments prev c steps &&
           !(fragLine.isSome && st.allowed.isSome)
     if brokenByWalk then return st
     -- Gate 1 — a single line serves every station the prefix would touch.
@@ -437,7 +467,7 @@ private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix)
                      | some fl => ridesBackTowardBoard runBoard fl onLine
                      | none => false) then
         return st
-      extendPrefix env segments points runBoard rest
+      extendPrefix env segments points steps runBoard rest
         { acc := st.acc.push c, allowed := nextAllowed, groupLine := some ln }
 
 /-! ## The assembler -/
@@ -470,14 +500,14 @@ on its own, passing through anything between them.
 `remaining` is the number of train positions still unvisited, not a fuel budget:
 it starts at exactly `positions.size` and every step consumes at least the
 position it just emitted, so it is a genuine well-founded measure. -/
-private def subRuns (env : Env) (segments : Array Seg) (points : Array Fix)
+private def subRuns (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint)
     (positions : Array Nat) : Nat → Nat → Nat → Array Seg → MemoM (Array Seg)
   | 0, _, _, out => return out
   | remaining + 1, p, cursor, out => do
     if h : p < positions.size then
       let firstPos := positions[p]
       let runBoard := ((parseRailWayName segments[firstPos]!.wayName).map RailTriple.board).getD ""
-      let st ← extendPrefix env segments points runBoard
+      let st ← extendPrefix env segments points steps runBoard
         ((positions.toList.drop p)) { acc := #[], allowed := none, groupLine := none }
       -- `extendPrefix` accepts at least the first offered position unless gate 1
       -- or 2 rejects it outright, in which case the lone leg passes through.
@@ -504,20 +534,20 @@ private def subRuns (env : Env) (segments : Array Seg) (points : Array Fix)
               | none => l.alight
             pure (out.push (mergedLeg segments firstPos lastPos (e - p + 1) gl f alight))
         | _, _, _ => pure passthrough
-      subRuns env segments points positions (remaining - (e - p)) (e + 1) (lastPos + 1) out
+      subRuns env segments points steps positions (remaining - (e - p)) (e + 1) (lastPos + 1) out
     else return out
 
 /-- Assemble fragmented single-line rail journeys into one ride.
 
 `remaining` counts segments still unvisited — the outer scan advances past at
 least the segment it just handled, so it strictly decreases. -/
-private def scan (env : Env) (segments : Array Seg) (points : Array Fix) :
+private def scan (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint) :
     Nat → Nat → Array Seg → MemoM (Array Seg)
   | 0, _, out => return out
   | remaining + 1, i, out => do
     if h : i < segments.size then
       if !isStationPairTrain segments[i] then
-        scan env segments points remaining (i + 1) (out.push segments[i])
+        scan env segments points steps remaining (i + 1) (out.push segments[i])
       else
         -- Extend a maximal run: train legs plus short intervening slivers. A
         -- sliver is only INSIDE the run if another train leg follows it — a
@@ -543,26 +573,26 @@ private def scan (env : Env) (segments : Array Seg) (points : Array Fix) :
                 stop := true
             else stop := true
         if lastTrain == i then
-          scan env segments points remaining (i + 1) (out.push segments[i])
+          scan env segments points steps remaining (i + 1) (out.push segments[i])
         else
           let positions := (idxRange i (lastTrain - i + 1)).toArray.filter fun m =>
             match segments[m]? with
             | some s => isStationPairTrain s
             | none => false
-          let out ← subRuns env segments points positions positions.size 0 i out
+          let out ← subRuns env segments points steps positions positions.size 0 i out
           -- Anything between the last sub-run and `lastTrain` has already been
           -- emitted by `subRuns`; resume after the run.
-          scan env segments points (remaining - (lastTrain - i)) (lastTrain + 1) out
+          scan env segments points steps (remaining - (lastTrain - i)) (lastTrain + 1) out
     else return out
 
 /-- The pass, with its read trace. -/
-def assembleRailJourneyTraced (env : Env) (segments : Array Seg) (points : Array Fix) :
+def assembleRailJourneyTraced (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint) :
     Array Seg × Array Read :=
-  let (out, m) := (scan env segments points segments.size 0 #[]).run {}
+  let (out, m) := (scan env segments points steps segments.size 0 #[]).run {}
   (out, m.trace)
 
-def assembleRailJourney (env : Env) (segments : Array Seg) (points : Array Fix) : Array Seg :=
-  (assembleRailJourneyTraced env segments points).1
+def assembleRailJourney (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint) : Array Seg :=
+  (assembleRailJourneyTraced env segments points steps).1
 
 /-! ## Guards (V8 reference values)
 
@@ -631,14 +661,16 @@ accumulated fields, BOTH mode fields, and the reason. The mode fields are in
 here because the merged leg FORCES them and nothing else in the tuple would
 notice; the reason is in here because it carries the fragment COUNT, which is
 the only place a mis-scoped run shows when the merged window is unchanged. -/
-private def outOf (segs : Array Seg) (points : Array Fix) :
+private def outOf (segs : Array Seg) (points : Array Fix)
+    (steps : List Verified.Geo.BiometricWindows.StepPoint := []) :
     Array (Int × Int × String × Int × Float × String × String × String) :=
-  (assembleRailJourney ENV segs points).map fun s =>
+  (assembleRailJourney ENV segs points steps).map fun s =>
     (s.startTs, s.endTs, s.wayName.getD "", s.pointCount, s.maxSpeed,
      s.mode, s.refinedMode.getD "", s.refinedReason.getD "")
 
-private def traceOf (segs : Array Seg) (points : Array Fix) : Array Read :=
-  (assembleRailJourneyTraced ENV segs points).2
+private def traceOf (segs : Array Seg) (points : Array Fix)
+    (steps : List Verified.Geo.BiometricWindows.StepPoint := []) : Array Read :=
+  (assembleRailJourneyTraced ENV segs points steps).2
 
 /-! ### Leaves, called for real -/
 
@@ -744,6 +776,25 @@ private def S4_SEGS : Array Seg :=
 
 #guard outOf S4_SEGS S3_FIXES ==
   #[(1000, 1200, "A → B", 10, 60.0, "train", "train", ""), (1200, 1260, "B (interchange)", 4, 5.0, "walking", "walking", ""), (1260, 1460, "B → C", 10, 60.0, "train", "train", "")]
+-- …and the SAME fixture merges once the rider's cadence says nobody crossed a
+-- platform. The walk spans 60 s, so 13 steps is 13 spm — the 2026-06-15 Swiss
+-- Cottage shape, where an underground-reconstruction artefact wore an
+-- interchange label. Gate 3 is the only thing holding S4 apart, so this is a
+-- clean ablation of it: same segments, same OSM, only the steps differ.
+private def S4_STILL : List Verified.Geo.BiometricWindows.StepPoint := [⟨1200, 13⟩, ⟨1260, 0⟩]
+private def S4_WALKED : List Verified.Geo.BiometricWindows.StepPoint := [⟨1200, 60⟩, ⟨1260, 0⟩]
+
+#guard (outOf S4_SEGS S3_FIXES S4_STILL).size == 1
+#guard (outOf S4_SEGS S3_FIXES S4_STILL)[0]!.2.2.1 == "A → C · Alpha Line"
+-- 60 spm is a real platform walk (2026-05-20's Baker Street change runs 60):
+-- the marker stands and the run stays split, exactly as with no data at all.
+#guard outOf S4_SEGS S3_FIXES S4_WALKED == outOf S4_SEGS S3_FIXES
+#guard (outOf S4_SEGS S3_FIXES S4_WALKED).size == 3
+-- The bar itself, both sides: 40 steps over the 60 s walk is exactly 40 spm and
+-- does NOT merge; 39 does.
+#guard (outOf S4_SEGS S3_FIXES [⟨1200, 40⟩]).size == 3
+#guard (outOf S4_SEGS S3_FIXES [⟨1200, 39⟩]).size == 1
+
 -- The memo asymmetry in miniature: two neighbourhood calls at two different
 -- centroids, ONE station fetch. The second sub-run re-asks `linesAtPoint`
 -- because it is not cached, then hits the memo for Alpha.
@@ -1153,14 +1204,14 @@ private def S27_FIXES : Array Fix := #[⟨1000, 51.5, -0.1, 50.0⟩, ⟨1075, 51
 #guard stationsOf #[train 1000 1200 "A" "B" (some "L"), train 1260 1460 "B" "C" (some "L")]
   == #["A", "B", "C"]
 -- The interval is EXCLUSIVE of both endpoints.
-#guard hasInterchangeWalkBetween S4_SEGS 0 2
-#guard !hasInterchangeWalkBetween S4_SEGS 0 1
-#guard !hasInterchangeWalkBetween S14_SEGS 0 2
+#guard hasInterchangeWalkBetween S4_SEGS 0 2 []
+#guard !hasInterchangeWalkBetween S4_SEGS 0 1 []
+#guard !hasInterchangeWalkBetween S14_SEGS 0 2 []
 -- The lower endpoint is excluded too: an interchange walk sitting AT `aIdx` is
 -- not between anything. (`aIdx` is a train position in every real call, so this
 -- can only be shown by calling the helper directly.)
 #guard !hasInterchangeWalkBetween
-  #[gap 1000 1100 "walking" 5 (some "B (interchange)"), train 1100 1300 "B" "C"] 0 1
+  #[gap 1000 1100 "walking" 5 (some "B (interchange)"), train 1100 1300 "B" "C"] 0 1 []
 
 /-! ## Deliberately unpinned
 

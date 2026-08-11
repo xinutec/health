@@ -197,9 +197,9 @@ function emitLean(tag: string, points: Fix[], out: Seg[], reads: Read[]): void {
 	console.log(`  LEAN trace ${tag} := #[${asRead.join(", ")}]`);
 }
 
-async function run(name: string, segments: Seg[], points: Fix[]): Promise<void> {
+async function run(name: string, segments: Seg[], points: Fix[], steps: { ts: number; steps: number }[] = []): Promise<void> {
 	trace.length = 0;
-	const out = await RR.assembleRailJourney(segments, points, osm);
+	const out = await RR.assembleRailJourney(segments, points, steps, osm);
 	console.log(`\n=== ${name} ===`);
 	console.log(`in  ${segments.length} seg(s), ${points.length} fix(es)`);
 	for (const r of trace) {

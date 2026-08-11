@@ -190,7 +190,7 @@ describe("assembleRailJourney", () => {
 			seg("train", 22, 33, { wayName: "Carfax → Deepwell", centroidLat: 1, centroidLon: 0 }),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -209,7 +209,7 @@ describe("assembleRailJourney", () => {
 			seg("train", 22, 33, { wayName: "Carfax → Deepwell", centroidLat: 1, centroidLon: 0 }),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train" || s.refinedMode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -231,7 +231,7 @@ describe("assembleRailJourney", () => {
 			{ 1: ["Victoria Line"], 2: ["Metropolitan Line"] },
 			{ "Victoria Line": ["Victoria", "Elmford"], "Metropolitan Line": ["Elmford", "Deepwell"] },
 		);
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		expect(out.filter((s) => s.mode === "train")).toHaveLength(2);
 	});
 
@@ -267,7 +267,7 @@ describe("assembleRailJourney", () => {
 				"Victoria Line": ["Elmford", "Highbury & Islington"],
 			},
 		);
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(2);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -299,7 +299,7 @@ describe("assembleRailJourney", () => {
 				"Metropolitan Line": ["Ashvale", "Carfax"],
 			},
 		);
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(2);
 		expect(trains[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
@@ -327,12 +327,83 @@ describe("assembleRailJourney", () => {
 				"Metropolitan Line": ["Ashvale", "Carfax"],
 			},
 		);
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(2);
 		expect(trains[0].wayName).toBe("Ashvale → Carfax");
 		expect(trains[1].wayName).toBe("Carfax → Farvale · Jubilee Line");
 		expect(out.some((s) => s.mode === "walking" && s.wayName === "Carfax (interchange)")).toBe(true);
+	});
+
+	it("MERGES across an interchange-labelled walk the rider did not actually walk (the real 2026-06-15)", async () => {
+		// Identical in shape to the 06-16 case above — unlabelled first leg, an
+		// "(interchange)" walk, one line serving all three — and the OPPOSITE
+		// answer, because the rider's own cadence says nobody crossed a platform.
+		// On 2026-06-15 that walk carries 19 then 7 steps in two minutes (13 spm)
+		// where the same rider's real walking that hour runs 90-110. A
+		// platform-to-platform change is a physical act; this is the trace of one
+		// not happening, and the walk is an artefact of the underground
+		// reconstruction filling a mid-ride gap.
+		const segs = [
+			seg("train", 0, 9, { wayName: "Ashvale → Carfax", centroidLat: 1, centroidLon: 0 }),
+			seg("walking", 9, 11, { wayName: "Carfax (interchange)", centroidLat: 1, centroidLon: 0 }),
+			seg("train", 11, 15, { wayName: "Carfax → Farvale · Jubilee Line", centroidLat: 1, centroidLon: 0 }),
+		];
+		const osm = osmStub(
+			{ 1: ["Jubilee Line", "Metropolitan Line"] },
+			{ "Jubilee Line": ["Ashvale", "Carfax", "Farvale"], "Metropolitan Line": ["Ashvale", "Carfax"] },
+		);
+		const steps = [
+			{ ts: 9 * 60, steps: 19 },
+			{ ts: 10 * 60, steps: 7 },
+		];
+		const out = await assembleRailJourney([...segs], [], steps, osm);
+		const trains = out.filter((s) => s.mode === "train");
+		expect(trains).toHaveLength(1);
+		expect(trains[0].wayName).toBe("Ashvale → Farvale · Jubilee Line");
+	});
+
+	it("keeps the split when the rider DID walk it — the same fixture, walking cadence", async () => {
+		// The discriminator is the cadence and nothing else: identical segments,
+		// identical OSM, only the step rows differ. 2026-05-20's genuine Baker
+		// Street change runs 24, 82, 113, 19 spm.
+		const segs = [
+			seg("train", 0, 9, { wayName: "Ashvale → Carfax", centroidLat: 1, centroidLon: 0 }),
+			seg("walking", 9, 11, { wayName: "Carfax (interchange)", centroidLat: 1, centroidLon: 0 }),
+			seg("train", 11, 15, { wayName: "Carfax → Farvale · Jubilee Line", centroidLat: 1, centroidLon: 0 }),
+		];
+		const osm = osmStub(
+			{ 1: ["Jubilee Line", "Metropolitan Line"] },
+			{ "Jubilee Line": ["Ashvale", "Carfax", "Farvale"], "Metropolitan Line": ["Ashvale", "Carfax"] },
+		);
+		const steps = [
+			{ ts: 9 * 60, steps: 82 },
+			{ ts: 10 * 60, steps: 113 },
+		];
+		const out = await assembleRailJourney([...segs], [], steps, osm);
+		expect(out.filter((s) => s.mode === "train")).toHaveLength(2);
+	});
+
+	it("trusts the marker when there is no cadence evidence either way", async () => {
+		// FAIL-SAFE. A day with no step rows in the window must behave exactly as
+		// it did before the cadence test existed — otherwise a Fitbit outage would
+		// silently start merging rides that really were two.
+		const segs = [
+			seg("train", 0, 9, { wayName: "Ashvale → Carfax", centroidLat: 1, centroidLon: 0 }),
+			seg("walking", 9, 11, { wayName: "Carfax (interchange)", centroidLat: 1, centroidLon: 0 }),
+			seg("train", 11, 15, { wayName: "Carfax → Farvale · Jubilee Line", centroidLat: 1, centroidLon: 0 }),
+		];
+		const osm = osmStub(
+			{ 1: ["Jubilee Line", "Metropolitan Line"] },
+			{ "Jubilee Line": ["Ashvale", "Carfax", "Farvale"], "Metropolitan Line": ["Ashvale", "Carfax"] },
+		);
+		// Rows exist for the day but none overlap the walk — `stepsInWindow`
+		// returns 0 rather than null, so this is the ZERO case, not the no-data
+		// case, and zero steps is a measurement: nobody walked.
+		const farAway = [{ ts: 200 * 60, steps: 100 }];
+		expect((await assembleRailJourney([...segs], [], farAway, osm)).filter((s) => s.mode === "train")).toHaveLength(1);
+		// Truly no data at all: trust the marker, stay split.
+		expect((await assembleRailJourney([...segs], [], [], osm)).filter((s) => s.mode === "train")).toHaveLength(2);
 	});
 
 	it("DOES merge a same-line ride even with an interchange-labelled sliver when both legs name that line", async () => {
@@ -353,7 +424,7 @@ describe("assembleRailJourney", () => {
 			}),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Brookden → Deepwell · Metropolitan Line");
@@ -391,7 +462,7 @@ describe("assembleRailJourney", () => {
 		for (let m = 0; m <= 10; m++) points.push(fix(m, 0, (0.06 * m) / 10));
 		for (let m = 12; m <= 22; m++) points.push(fix(m, 0, 0.06 - (0.06 * (m - 12)) / 10));
 
-		const out = await assembleRailJourney([...segs], points, osm);
+		const out = await assembleRailJourney([...segs], points, [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(2);
 		for (const t of trains) {
@@ -432,7 +503,7 @@ describe("assembleRailJourney", () => {
 		for (let m = 0; m <= 10; m++) points.push(fix(m, 0, (0.06 * m) / 10));
 		for (let m = 11; m <= 19; m++) points.push(fix(m, 0, 0.06));
 
-		const out = await assembleRailJourney([...segs], points, osm);
+		const out = await assembleRailJourney([...segs], points, [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(2);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell");
@@ -462,7 +533,7 @@ describe("assembleRailJourney", () => {
 		];
 		const points = [];
 		for (let m = 0; m <= 14; m++) points.push(fix(m, 0, (0.04 * m) / 14)); // then dark
-		const out = await assembleRailJourney([...segs], points, osm);
+		const out = await assembleRailJourney([...segs], points, [], osm);
 		expect(out.filter((s) => s.mode === "train")).toHaveLength(1);
 	});
 
@@ -473,7 +544,7 @@ describe("assembleRailJourney", () => {
 			seg("train", 40, 50, { wayName: "Brookden → Carfax", centroidLat: 1, centroidLon: 0 }),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		expect(out.filter((s) => s.mode === "train")).toHaveLength(2);
 	});
 
@@ -490,7 +561,7 @@ describe("assembleRailJourney", () => {
 			seg("train", 23, 28, { wayName: "Carfax → Deepwell", centroidLat: 1, centroidLon: 0 }),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -506,7 +577,7 @@ describe("assembleRailJourney", () => {
 			seg("train", 23, 28, { wayName: "Carfax → Deepwell", centroidLat: 1, centroidLon: 0 }),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		expect(out.filter((s) => s.mode === "train")).toHaveLength(2);
 	});
 
@@ -519,7 +590,7 @@ describe("assembleRailJourney", () => {
 			}),
 		];
 		const osm = osmStub({ 1: ["Metropolitan Line"] }, { "Metropolitan Line": MET });
-		const out = await assembleRailJourney([...segs], [], osm);
+		const out = await assembleRailJourney([...segs], [], [], osm);
 		expect(out).toHaveLength(1);
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 	});
@@ -567,7 +638,7 @@ describe("assembleRailJourney — the ride's alight comes from the ride's end", 
 	it("carries the ride past its last GPS-seen station to where the rider actually got off", async () => {
 		// GPS returns at 25 min, walking pace, 7 m from Deepwell — the real alight.
 		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.5, 0.0301, 2)];
-		const out = await assembleRailJourney([...darkRide], points, osm);
+		const out = await assembleRailJourney([...darkRide], points, [], osm);
 		const trains = out.filter((s) => s.mode === "train");
 		expect(trains).toHaveLength(1);
 		expect(trains[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -577,7 +648,7 @@ describe("assembleRailJourney — the ride's alight comes from the ride's end", 
 		// No fix after the last fragment: we do not know where they got off, so we
 		// must not invent a station — the honest answer is the one we had.
 		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60)];
-		const out = await assembleRailJourney([...darkRide], points, osm);
+		const out = await assembleRailJourney([...darkRide], points, [], osm);
 		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
 	});
 
@@ -586,7 +657,7 @@ describe("assembleRailJourney — the ride's alight comes from the ride's end", 
 		// JOURNEY_ALIGHT_MAX_M). Naming the nearest station anyway would be a
 		// fabrication.
 		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.53, 0.08, 2)];
-		const out = await assembleRailJourney([...darkRide], points, osm);
+		const out = await assembleRailJourney([...darkRide], points, [], osm);
 		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
 	});
 
@@ -595,7 +666,7 @@ describe("assembleRailJourney — the ride's alight comes from the ride's end", 
 		// Re-resolving would name the board station as the alight; keep the
 		// fragment's label rather than emit a zero-length ride.
 		const points = [fix(5, 51.5, 0.005, 60), fix(15, 51.5, 0.015, 60), fix(25, 51.5, 0.0001, 2)];
-		const out = await assembleRailJourney([...darkRide], points, osm);
+		const out = await assembleRailJourney([...darkRide], points, [], osm);
 		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
 	});
 
@@ -610,7 +681,7 @@ describe("assembleRailJourney — the ride's alight comes from the ride's end", 
 			fix(19, 51.5, 0.022, 55), // …and moving again
 			fix(25, 51.5, 0.0301, 2),
 		];
-		const out = await assembleRailJourney([...darkRide], points, osm);
+		const out = await assembleRailJourney([...darkRide], points, [], osm);
 		expect(out.filter((s) => s.mode === "train")[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 	});
 });

@@ -1570,7 +1570,7 @@ export async function computeVelocityFromInputs(
 
 		{
 			name: "railJourney",
-			run: (segs) => assembleRailJourney(segs, points, inputs.osm),
+			run: (segs) => assembleRailJourney(segs, points, steps, inputs.osm),
 		},
 
 		// Short clean tube-hop rescue (#280): a brief Underground hop whose GPS

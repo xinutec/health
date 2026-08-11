@@ -502,7 +502,7 @@ def passes (e : Env) : Array Pass := #[
   -- run touches, it was one ride on that line — collapse it. The line topology
   -- decides, not a GPS heuristic, so a genuine multi-line change is left whole.
   ("railJourney", fun segs =>
-    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.railFixes),
+    Verified.Geo.RailJourney.assembleRailJourney e.railJourneyEnv segs e.railFixes e.biomSteps),
 
   -- A brief Underground hop with clean GPS trips neither underground gate, so
   -- it survives as `driving` and only the bus matcher is left to name it.

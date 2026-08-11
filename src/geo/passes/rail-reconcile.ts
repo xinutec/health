@@ -7,6 +7,7 @@
  * from the velocity orchestrator.
  */
 
+import { type StepPoint, stepsInWindow } from "../biometrics.js";
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
 import { haversineMeters } from "../place-snap.js";
@@ -344,16 +345,64 @@ function isStationPairTrain(seg: EnrichedSegment | undefined): seg is EnrichedSe
  *  platform-to-platform line change between two train legs sharing a station. */
 const INTERCHANGE_WALK_SUFFIX = "(interchange)";
 
+/**
+ * A platform-to-platform change is a WALK, and walking produces steps. Below
+ * this (steps/min) nobody crossed a platform, whatever the label says.
+ *
+ * The sibling bar in `interchange-split.ts` (`BURST_MIN_CADENCE`) uses the same
+ * value for the same question — what a walking burst between platforms looks
+ * like — and the two should move together if either moves.
+ *
+ * MEASURED on the two corpus cases this separates, and they are not close to
+ * each other or to the bar: 2026-06-15's "Swiss Cottage (interchange)" runs
+ * 13 spm (19 then 7 steps in two minutes) while the same rider's real walking
+ * that hour is 90-110; 2026-05-20's genuine Baker Street change runs 60 spm
+ * (24, 82, 113, 19) and peaks at 113.
+ */
+const INTERCHANGE_WALK_MIN_CADENCE_SPM = 40;
+
+/**
+ * Did the rider actually walk this "interchange" walk?
+ *
+ * The label comes from `relabelWalkingInterchanges`, which reads geometry — a
+ * short walk between two train legs sharing a station. That is the right shape
+ * for a platform change and also the right shape for an artefact of the
+ * underground reconstruction, which leaves a gap between two halves of ONE ride
+ * that the walk classifier then fills. Cadence separates them, because a
+ * platform change is a physical act with a physical trace.
+ *
+ * FAIL-SAFE TOWARDS THE MARKER. No step data, no window long enough to measure,
+ * or no rows for the day all return `true` — the caller then behaves exactly as
+ * it did before this test existed. Only a MEASURED low cadence overrides the
+ * label, so a day without Fitbit data cannot silently start merging rides.
+ */
+function interchangeWalkIsWalked(walk: EnrichedSegment, steps: readonly StepPoint[]): boolean {
+	const durationSec = walk.endTs - walk.startTs;
+	// The same floor `cadenceForSegment` uses: under 30 s the denominator is too
+	// small for the ratio to mean anything.
+	if (durationSec < 30) return true;
+	const total = stepsInWindow(steps, walk.startTs, walk.endTs);
+	if (total === null) return true;
+	return (total / durationSec) * 60 >= INTERCHANGE_WALK_MIN_CADENCE_SPM;
+}
+
 /** Is there a platform-to-platform interchange walk between the train legs at
  *  `aIdx` and `bIdx` (exclusive)? Such a walk is positive evidence of a train
- *  change, so the rail-journey assembler must not merge across it. */
-function hasInterchangeWalkBetween(segments: readonly EnrichedSegment[], aIdx: number, bIdx: number): boolean {
+ *  change, so the rail-journey assembler must not merge across it — but only
+ *  when the rider is measured to have walked it (`interchangeWalkIsWalked`). */
+function hasInterchangeWalkBetween(
+	segments: readonly EnrichedSegment[],
+	aIdx: number,
+	bIdx: number,
+	steps: readonly StepPoint[],
+): boolean {
 	for (let m = aIdx + 1; m < bIdx; m++) {
 		const seg = segments[m];
 		if (
 			effectiveMode(seg) === "walking" &&
 			seg.wayName !== undefined &&
-			seg.wayName.endsWith(INTERCHANGE_WALK_SUFFIX)
+			seg.wayName.endsWith(INTERCHANGE_WALK_SUFFIX) &&
+			interchangeWalkIsWalked(seg, steps)
 		) {
 			return true;
 		}
@@ -435,6 +484,7 @@ async function findThroughLine(
 export async function assembleRailJourney(
 	segments: EnrichedSegment[],
 	points: readonly FilteredPoint[],
+	steps: readonly StepPoint[],
 	osm: RailJourneyOsm,
 ): Promise<EnrichedSegment[]> {
 	const out: EnrichedSegment[] = [];
@@ -540,7 +590,7 @@ export async function assembleRailJourney(
 					}
 					if (nextAllowed.size === 0) break; // line-label interchange: a physical line change
 				}
-				if (c > p && hasInterchangeWalkBetween(segments, trainPositions[c - 1], trainPositions[c])) {
+				if (c > p && hasInterchangeWalkBetween(segments, trainPositions[c - 1], trainPositions[c], steps)) {
 					// Both fragments explicitly the same line (allowed carried a prior
 					// label and this one intersects it) proves the interchange marker
 					// spurious; otherwise trust it and split here.
