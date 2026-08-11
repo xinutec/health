@@ -20,7 +20,7 @@ it still called `kalman.ts` "the single best next port" while
 following it would have meant re-porting finished work. A hand-kept inventory of
 ~60 modules cannot stay honest; measure instead.
 
-As measured 2026-08-05, of 74 algorithm-layer files: **59 written, 11 partial,
+As measured 2026-08-11, of 75 algorithm-layer files: **61 written, 10 partial,
 4 absent**. The file count jumped from 39 because the tool's scope did, not
 because the codebase grew: `src/hmm` was a declared blind spot until the
 shell/algorithm split existed to put it in scope, and `src/geo/factors` was
@@ -63,10 +63,24 @@ a tenant in `src/lean/`, and a flag. The entire serve surface today is
 | `LEAN_KALMAN` | the GPS Kalman filter (#387, 2026-07-29) |
 | `LEAN_GPSQUALITY` | the GPS quality pre-filter (#388, 2026-07-30) |
 | `LEAN_BIOLABELS` | four biometric label-rewrite passes, five call sites (#390, 2026-07-30) |
+| `LEAN_STATIONCHAIN` | the decoder's station chain |
+| `LEAN_DAY` | the whole pass cascade as one fold (#424) — BUILT and unset everywhere |
 
 Everything else is written-but-idle. The next slices are therefore *execution*
 slices — take a complete module, give it a CLI verb and a shadow tenant,
 validate on the golden corpus, flip — not new ports.
+
+**A flag existing is not a flag serving, and this table cannot tell you which.**
+Whether a tenant is `off`, `shadow` or `on` lives in the cluster, not in the
+repo, so read it there rather than from any list here:
+
+    ssh root@isis.xinutec.org "for k in deploy cronjob; do for n in \$(kubectl -n health get \$k -o custom-columns=N:.metadata.name --no-headers); do echo \"== \$k/\$n\"; kubectl -n health get \$k \$n -o jsonpath='{range .spec.template.spec.containers[*]}{range .env[*]}{.name}={.value}{\"\\n\"}{end}{end}{range .spec.jobTemplate.spec.template.spec.containers[*]}{range .env[*]}{.name}={.value}{\"\\n\"}{end}{end}' | grep '^LEAN_'; done; done"
+
+The gap that command closes is not hypothetical: two task bodies asserted for
+days that every tenant was `shadow` and production served TS, while six were
+already `on`. The deploy gate is also STRICTER than production on two tenants —
+`scripts/deploy.sh` re-runs golden with `LEAN_PASSES=on LEAN_HSMM=on`, and
+production runs both `shadow`.
 
 ### What the first execution slice cost, and what it taught (#387)
 
