@@ -196,6 +196,39 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# does. `shadow` not `on`: this tenant writes (its output is persisted to
 	# `decoded_days`), so serving it is a decision, not a gate setting.
 	$DEV LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
+
+	# The MATCHER FLIP GATE (#9). Until now `compare-match` appeared in
+	# package.json and nowhere else — not here, not gate.dhall, not any script
+	# that runs unattended. So a three-arm bit-exact comparison existed and
+	# nothing failed when it stopped being true, which is the hazard
+	# ledger-verdict.ts was written for one layer down (#387): printing evidence
+	# is not enforcing it.
+	#
+	# It asserts three conditions the run above cannot:
+	#   COVERAGE    legs were actually matched (a run that matched nothing
+	#               reports a clean sweep of nothing);
+	#   NO FALLBACK quant↔Lean bit-exact on every leg, so serving Lean IS serving
+	#               the verified twin and nothing silently diverges from it;
+	#   AGREEMENT   every float↔quant divergence is in the signed-off manifest,
+	#               adjudicated on all THREE axes a leg can move in — line,
+	#               vertex, and timestamp (#401).
+	#
+	# It also reports manifest COVERAGE: entries whose leg no longer appears are
+	# named as RESOLVED / RE-FINGERPRINTED / NOT COVERED rather than vanishing
+	# silently (#662). None of those fail the run; they are how a re-keying
+	# announces itself as one act instead of as N new findings.
+	#
+	# A deploy gate rather than a CI one for the same reason as the two above: it
+	# replays the gitignored `tests/golden/days` corpus. It is the SLOWEST of the
+	# three (~12 min, 208 legs each through three matchers), which is the price of
+	# the only check that compares the served arm against the verified one on
+	# real days.
+	#
+	# This gate going red does NOT mean production is wrong — LEAN_MATCH is
+	# `shadow`, so the TS matcher is what serves. It means the manifest no longer
+	# describes the corpus, and the fix is to adjudicate the leg it names, never
+	# to widen the manifest to match.
+	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match -- --gate
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

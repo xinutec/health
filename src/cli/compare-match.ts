@@ -152,6 +152,13 @@ const argDates = allArgs.filter(
 		a !== "--leg" &&
 		a !== "--days" &&
 		a !== "--candidates" &&
+		// A bare `--` is argv punctuation, never a date. `pnpm run compare-match
+		// -- --gate` forwards the separator itself, so wiring this into
+		// `deploy.sh` (#9) made `--` a date filter that matched no fixture: zero
+		// files, zero legs, and the gate failing with `NO COVERAGE — nothing was
+		// verified`. Red for a reason that has nothing to do with the matcher,
+		// on the run that is supposed to be the matcher's evidence.
+		a !== "--" &&
 		(legIdx === -1 || i !== legIdx + 1) &&
 		(daysIdx === -1 || i !== daysIdx + 1),
 );
@@ -424,6 +431,20 @@ const files = readdirSync(DAYS_DIR)
 	.filter((f) => f.endsWith(".json"))
 	.filter((f) => argDates.length === 0 || argDates.some((d) => f.startsWith(d)))
 	.sort();
+// A day filter that selects NOTHING is a typo, and a typo must not quietly
+// narrow the corpus to nothing: without `--gate` the run then exits 0 having
+// compared no legs at all, which reads exactly like a pass. Checked by what the
+// filter SELECTED rather than by the shape of the argument, because a
+// shape-valid impossible date (`2026-13-01`) matches no fixture just as a
+// misspelling does — a regex on the argument would have let that one through,
+// and did, on the first attempt at this guard.
+if (argDates.length > 0 && files.length === 0) {
+	console.error(
+		`no fixture in ${DAYS_DIR} matches ${argDates.join(" ")} — ` +
+			`positional arguments are YYYY-MM-DD day filters, and this one selected nothing`,
+	);
+	process.exit(2);
+}
 
 let legs = 0;
 // Every leg fingerprint the replay produced, and every day it covered. Neither
