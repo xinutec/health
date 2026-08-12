@@ -1281,3 +1281,127 @@ export function claimRideHeadFromStay<T extends TrackSegment>(
 	}
 	return out;
 }
+
+// --- walk→stay ARRIVAL boundary correction ------------------------------
+//
+// The pedestrian mirror of `claimRideHeadFromStay`. That pass carves a ride's
+// HEAD out of the stay before it; this one gives a walk's TAIL to the stay
+// after it. Between them the cascade already had four walk↔vehicle boundary
+// passes (`reassignWalkTailToVehicle`, `reassignVehicleArrivalWalk`,
+// `shedVehiclePedestrianEdges`, `claimRideHeadFromStay`) and none for the
+// plainest boundary a day contains: arriving somewhere on foot.
+
+/** Steps below this pace are standing, not walking — {@link MARCH_STILL_KMH},
+ *  the same bar the departure twin uses to find the platform wait. */
+/** The trailing still run must span at least this. It is a NOISE floor, not
+ *  the discriminator: the run is anchored at the walk's LAST fix, so a pause
+ *  at a crossing cannot qualify — the walking that follows a crossing pause
+ *  breaks the run before it reaches the end. */
+const FOOT_ARRIVAL_MIN_DWELL_S = 60;
+/** The still run must hold position. Above this it is slow movement (a last
+ *  stretch of a tired walk, a drift indoors), and where the walk truly ended
+ *  is no longer readable from it. Observed arrivals sit at 1–9 m. */
+const FOOT_ARRIVAL_SPREAD_MAX_M = 30;
+/** Never annihilate the walk: a boundary correction that leaves no walk
+ *  behind is a reclassification, and that is not this pass's decision. */
+const FOOT_ARRIVAL_MIN_WALK_REMAINDER_S = 60;
+
+/**
+ * Move a walk→stay boundary back to the moment the walking actually stopped.
+ *
+ * `segments.ts` classifies in `WINDOW_SEC` = 300 s windows, so the window that
+ * straddles an arrival is scored as a whole and its walking half carries the
+ * verdict. The stay therefore starts up to a window late, and the walk is
+ * credited with minutes the user spent standing still at the destination.
+ *
+ * Measured on 2026-06-22: walking at 5–6 km/h to within 0.7 m of the home
+ * centroid at 18:19:13Z, then every step 0.1–6.5 m at ≤0.9 km/h — and the
+ * pipeline ended the walk at 18:22Z, three minutes late.
+ *
+ * The carve is deliberately conservative — it only ever moves the boundary
+ * BACK, never forward, and only when the walk's own tail is a held position.
+ * It marks the shortened walk `needsReenrich` so `reenrichSplitWalks` re-derives
+ * its way name from the geometry that is left: a walk trimmed of its arrival
+ * can be named for a different street than the one it overran onto.
+ */
+export function claimStayArrivalFromWalk<T extends TrackSegment>(
+	segments: readonly T[],
+	points: readonly FilteredPoint[],
+): T[] {
+	const segs = [...segments];
+	const out: T[] = [];
+
+	for (let i = 0; i < segs.length; i++) {
+		const cur = segs[i];
+		const next = segs[i + 1];
+		if (!next || segMode(cur) !== "walking" || segMode(next) !== "stationary") {
+			out.push(cur);
+			continue;
+		}
+		const fixes = samplesInWindow(points, cur).sort((a, b) => a.ts - b.ts);
+		if (fixes.length < 4) {
+			out.push(cur);
+			continue;
+		}
+		const stepKmh = (a: number, b: number): number => {
+			const dt = fixes[b].ts - fixes[a].ts;
+			return dt > 0 ? (haversineMeters(fixes[a].lat, fixes[a].lon, fixes[b].lat, fixes[b].lon) / dt) * 3.6 : 0;
+		};
+		// Walk back from the walk's LAST fix while the rider is standing. The
+		// anchoring is the whole discriminator — see FOOT_ARRIVAL_MIN_DWELL_S.
+		let k = fixes.length - 1;
+		while (k > 0 && stepKmh(k - 1, k) < MARCH_STILL_KMH) k--;
+		const run = fixes.slice(k);
+		if (run.length < 2) {
+			out.push(cur);
+			continue;
+		}
+		const arrivalTs = run[0].ts;
+		const durS = run[run.length - 1].ts - arrivalTs;
+		if (durS < FOOT_ARRIVAL_MIN_DWELL_S) {
+			out.push(cur);
+			continue;
+		}
+		const cLat = run.reduce((s, p) => s + p.lat, 0) / run.length;
+		const cLon = run.reduce((s, p) => s + p.lon, 0) / run.length;
+		const spreadM = Math.max(...run.map((p) => haversineMeters(cLat, cLon, p.lat, p.lon)));
+		if (spreadM > FOOT_ARRIVAL_SPREAD_MAX_M) {
+			out.push(cur);
+			continue;
+		}
+		if (arrivalTs - cur.startTs < FOOT_ARRIVAL_MIN_WALK_REMAINDER_S) {
+			out.push(cur);
+			continue;
+		}
+		const movedS = Math.round(cur.endTs - arrivalTs);
+		if (movedS <= 0) {
+			out.push(cur);
+			continue;
+		}
+		const reason = `arrival boundary moved back ${movedS} s: the walk's tail held position within ${Math.round(spreadM)} m for ${Math.round(durS)} s`;
+		// `walkRemainder` is the family's rebuild: it recomputes pointCount /
+		// avgSpeed / maxSpeed / linearity over the new window and clears the
+		// enrichment derived from the old one. Doing this by hand would leave
+		// the walk carrying an avgSpeed that the standing tail dragged down —
+		// the very seconds this pass just took away from it.
+		const rebuilt = walkRemainder(cur, cur.startTs, arrivalTs, points);
+		out.push({ ...rebuilt, refinedReason: reason });
+		// The stay keeps its enrichment — it is the same place, merely entered
+		// earlier — but its window grew, so its sample-derived fields must be
+		// recomputed over it.
+		const stayFixes = points.filter((p) => p.ts >= arrivalTs && p.ts < next.endTs);
+		const staySpeeds = stayFixes.map((p) => p.speed_kmh ?? 0);
+		segs[i + 1] = {
+			...next,
+			startTs: arrivalTs,
+			pointCount: stayFixes.length,
+			...(staySpeeds.length > 0
+				? {
+						avgSpeed: Math.round(median(staySpeeds) * 10) / 10,
+						maxSpeed: Math.round(Math.max(...staySpeeds) * 10) / 10,
+					}
+				: {}),
+		};
+	}
+	return out;
+}

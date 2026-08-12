@@ -110,6 +110,7 @@ import {
 } from "./segments.js";
 import {
 	claimRideHeadFromStay,
+	claimStayArrivalFromWalk,
 	reassignVehicleArrivalWalk,
 	reassignWalkTailToVehicle,
 	shedVehiclePedestrianEdges,
@@ -1470,6 +1471,20 @@ export async function computeVelocityFromInputs(
 		{
 			name: "rideHeadClaim",
 			run: (segs) => claimRideHeadFromStay(segs, points, biomForStaySplit.steps),
+		},
+
+		// The pedestrian mirror of the pass above: give a walk's TAIL to the
+		// stay it arrives at. `segments.ts` scores 300 s windows whole, so the
+		// window straddling an arrival is carried by its walking half and the
+		// stay starts up to a window late.
+		//
+		// Runs immediately before reenrichSplitWalks, for the same reason
+		// that pass gives: a walk trimmed of its arrival is a different
+		// stretch of street, and there is no point naming a segment that is
+		// about to be re-cut.
+		{
+			name: "stayArrivalClaim",
+			run: (segs) => claimStayArrivalFromWalk(segs, points),
 		},
 
 		// Re-enrich the on-foot remainders `vehicleSplit` left behind.

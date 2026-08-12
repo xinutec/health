@@ -1786,6 +1786,162 @@ end RideHeadGuards
 
 end RideHead
 
+/-! ## Walk→stay arrival boundary (`claimStayArrivalFromWalk`)
+
+The pedestrian mirror of `RideHead`: that namespace carves a ride's HEAD out of
+the stay before it, this one gives a walk's TAIL to the stay after it. -/
+namespace FootArrival
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF segMode sortedIn walkRemainder median jsRound)
+open RideHead (MARCH_STILL_KMH stepKmh)
+
+/-- Noise floor on the trailing still run, NOT the discriminator: the run is
+anchored at the walk's LAST fix, so a pause at a crossing cannot qualify —
+the walking that follows one breaks the run before it reaches the end. -/
+def FOOT_ARRIVAL_MIN_DWELL_S : Int := 60
+/-- Above this the tail is slow movement, not a held position, and where the
+walk ended is no longer readable from it. Observed arrivals sit at 1–9 m. -/
+def FOOT_ARRIVAL_SPREAD_MAX_M : Float := 30
+/-- Never annihilate the walk: a correction leaving no walk behind is a
+reclassification, which is not this pass's decision. -/
+def FOOT_ARRIVAL_MIN_WALK_REMAINDER_S : Int := 60
+
+/-- Index of the first fix of the trailing run of standing fixes. -/
+private def arrivalIdx (fixes : Array PointF) : Nat := Id.run do
+  let mut k := fixes.size - 1
+  while k > 0 do
+    if stepKmh fixes (k - 1) k < MARCH_STILL_KMH then k := k - 1 else break
+  return k
+
+/-- Move a walk→stay boundary back to the moment the walking actually stopped.
+
+`segments.ts` classifies in 300 s windows, so the window straddling an arrival
+is scored whole and its walking half carries the verdict; the stay starts up to
+a window late. Only ever moves the boundary BACK, and only when the walk's own
+tail is a held position. Marks the shortened walk `needsReenrich` — a walk
+trimmed of its arrival can belong to a different street than the one it
+overran onto. -/
+def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut segs := segments
+  let mut out : Array Seg := #[]
+  for i in [0:segs.size] do
+    let cur := segs[i]!
+    let moved : Option (Seg × Seg) := Id.run do
+      if i + 1 ≥ segs.size then return none
+      let next := segs[i + 1]!
+      if !(segMode cur == "walking" && segMode next == "stationary") then return none
+      let fixes := sortedIn points cur.startTs cur.endTs
+      if fixes.size < 4 then return none
+      let k := arrivalIdx fixes
+      let run := fixes.extract k fixes.size
+      if run.size < 2 then return none
+      let arrivalTs := run[0]!.ts
+      let durS := run[run.size - 1]!.ts - arrivalTs
+      if durS < FOOT_ARRIVAL_MIN_DWELL_S then return none
+      let cLat := (run.foldl (fun s p => s + p.lat) 0) / Float.ofNat run.size
+      let cLon := (run.foldl (fun s p => s + p.lon) 0) / Float.ofNat run.size
+      let spreadM := run.foldl (fun m p => max m (haversineMeters cLat cLon p.lat p.lon)) 0
+      if spreadM > FOOT_ARRIVAL_SPREAD_MAX_M then return none
+      if arrivalTs - cur.startTs < FOOT_ARRIVAL_MIN_WALK_REMAINDER_S then return none
+      if cur.endTs - arrivalTs ≤ 0 then return none
+      let movedS := cur.endTs - arrivalTs
+      let reason := s!"arrival boundary moved back {movedS} s: the walk's tail held position within {Float.round spreadM} m for {durS} s"
+      -- `walkRemainder` is the family's rebuild: it recomputes pointCount /
+      -- avgSpeed / maxSpeed / linearity over the new window and clears the
+      -- enrichment derived from the old one. By hand the walk would keep an
+      -- avgSpeed the standing tail dragged down — the very seconds this pass
+      -- has just taken away from it.
+      let rebuilt := walkRemainder cur cur.startTs arrivalTs points
+      let walk := { rebuilt with refinedReason := some reason }
+      -- The stay keeps its enrichment (same place, entered earlier) but its
+      -- window grew, so its sample-derived fields are recomputed over it.
+      let stayFixes := points.filter fun p => p.ts ≥ arrivalTs && p.ts < next.endTs
+      let staySpeeds := stayFixes.map (·.speedKmh)
+      let stay :=
+        if staySpeeds.isEmpty then { next with startTs := arrivalTs, pointCount := 0 }
+        else
+          let avg := jsRound (median staySpeeds * 10) / 10
+          let mx := jsRound ((staySpeeds.foldl max staySpeeds[0]!) * 10) / 10
+          { next with startTs := arrivalTs, pointCount := Int.ofNat stayFixes.size, avgSpeed := avg, maxSpeed := mx }
+      return some (walk, stay)
+    match moved with
+    | some (walk, stay) =>
+      out := out.push walk
+      segs := segs.set! (i + 1) stay
+    | none => out := out.push cur
+  return out
+
+
+/-! ### Guards — pinned against V8 on the same construction
+`tests/stay-arrival-claim.test.ts` builds. -/
+namespace FootArrivalGuards
+
+open Verified.Geo.SegmentMerge (Seg)
+open Shed (PointF)
+
+private def T0 : Int := 1000000
+private def ORIGIN : Float := 51.0
+private def northM (m : Float) : Float := ORIGIN + m / 111195
+
+private def fx (ts : Int) (m : Float) : PointF := ⟨ts, northM m, 0, 0⟩
+
+/-- 10 min walking at ~5.5 km/h (a fix every 28 s, 43 m a step), then a held
+position jittering within `spread` m for `dwellS`. -/
+private def arrivalDay (dwellS : Int) (spread : Float := 4) : Array PointF := Id.run do
+  let mut pts : Array PointF := #[]
+  let mut m : Float := 0
+  let mut ts : Int := T0
+  while ts < T0 + 600 do
+    pts := pts.push (fx ts m)
+    m := m + 43
+    ts := ts + 28
+  let arrival := ts
+  let mut j : Nat := 0
+  while ts ≤ arrival + dwellS do
+    pts := pts.push (fx ts (if j % 2 == 0 then m else m + spread))
+    ts := ts + 28
+    j := j + 1
+  return pts
+
+private def walkSeg (endTs : Int) : Seg := { startTs := T0, endTs, mode := "walking" }
+private def staySeg (startTs : Int) : Seg := { startTs, endTs := startTs + 3600, mode := "stationary" }
+
+/-- The walk runs to T0+784; the walking stops at T0+616. -/
+private def dayFor (dwellS : Int) (spread : Float := 4) : Array Seg × Array PointF :=
+  let pts := arrivalDay dwellS spread
+  let walkEnd := pts[pts.size - 1]!.ts + 28
+  (#[walkSeg walkEnd, staySeg walkEnd], pts)
+
+private def runOn (dwellS : Int) (spread : Float := 4) : Array Seg :=
+  let (segs, pts) := dayFor dwellS spread
+  FootArrival.claimStayArrivalFromWalk segs pts
+
+-- The boundary lands on the first standing fix, not on the segmenter's window
+-- edge: 1000616, where HEAD left it at 1000784 (168 s late).
+#guard (runOn 140)[0]!.endTs == 1000616
+#guard (runOn 140)[0]!.needsReenrich == true
+-- Time is moved, never dropped: the stay picks up exactly what the walk gave up.
+#guard (runOn 140)[1]!.startTs == (runOn 140)[0]!.endTs
+#guard (runOn 140)[0]!.startTs == 1000000
+
+-- A 56 s pause is under the noise floor and does not move anything.
+#guard (runOn 56)[0]!.endTs == ((dayFor 56).1)[0]!.endTs
+#guard (runOn 56)[0]!.needsReenrich == false
+-- A tail that drifts 80 m is slow movement, not an arrival.
+#guard (runOn 140 80)[0]!.endTs == ((dayFor 140 80).1)[0]!.endTs
+
+-- Only a walk followed by a STAY is eligible.
+#guard
+  let (segs, pts) := dayFor 140
+  let toTrain := #[segs[0]!, { segs[1]! with mode := "train" }]
+  (FootArrival.claimStayArrivalFromWalk toTrain pts)[0]!.endTs == segs[0]!.endTs
+
+end FootArrivalGuards
+
+end FootArrival
+
 /-! ## `splitStaysOnEvidence`
 
 A stay is one segment because the GPS never moved — but a phone that sits in a

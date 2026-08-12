@@ -458,6 +458,7 @@ def passes (e : Env) : Array Pass := #[
   -- pass has no walk to hand anything to. Carve the departure march out of the
   -- stay's tail and extend the train back over the wait.
   ("rideHeadClaim", fun segs => RideHead.claimRideHeadFromStay segs e.points e.feasSteps),
+  ("stayArrivalClaim", fun segs => FootArrival.claimStayArrivalFromWalk segs e.points),
 
   -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
   -- ran ~30 passes ago, on segments not yet split, so everything it concluded
@@ -660,7 +661,8 @@ private def NO_LOOKUPS : Env :=
     "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
     "interchangeSplit", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
-    "rideHeadClaim", "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
+    "rideHeadClaim", "stayArrivalClaim",
+    "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "changeoverWindow", "interchangeStayLabel",
     "vehicleIdentity"]
@@ -682,12 +684,13 @@ def TS_CASCADE : Array String := #[
   "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
   "interchangeSplit", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
+  "stayArrivalClaim",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 39
+#guard TS_CASCADE.size == 40
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1118,6 +1121,7 @@ into three groups:
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
   #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
+    "stayArrivalClaim",
     "interchangeSplit", "busEvidence", "busRoutes", "walkThrough", "roadMatch", "walkMatch"]
 
 /-- Wired passes with a witness above. -/
