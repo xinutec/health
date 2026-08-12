@@ -215,6 +215,15 @@ async function truthReport(date: string, tz: string, states: readonly StateWindo
 			lines.push(
 				`      ✗ journey @${at}Z  expected [${r.expectedShape.join(",")}]  got [${(r.actualShape ?? []).join(",")}]${cov}${ends}`,
 			);
+			// How much of each surviving leg the ground truth was actually
+			// talking about. A leg clipped to a few seconds counts toward the
+			// shape exactly as loudly as one that fills the window, and that is
+			// invisible in the shape alone (#810).
+			if (r.clippedLegs.length > 0) {
+				lines.push(
+					`        legs in span: ${r.clippedLegs.map((l) => `${l.mode} ${l.overlapS}s/${l.durationS}s`).join(", ")}`,
+				);
+			}
 			// `bestOverlap` scores ONE pipeline journey — the single biggest
 			// overlap. If the pipeline split this trip in two, the gate grades the
 			// larger half and calls the other half uncovered, which is a failure

@@ -112,6 +112,12 @@ export interface JourneyResult {
 	 *  pipeline rightly excludes. Only the ends separate them. */
 	matchStartTs: number | null;
 	matchEndTs: number | null;
+	/** Each leg that survived the audited-span clip, with how many seconds of it
+	 *  actually fall inside that span. A shape mismatch says WHICH legs differ
+	 *  and never says how much of a leg the ground truth was talking about — and
+	 *  a leg contributing three seconds reads identically to one contributing
+	 *  ten minutes. Diagnostic only; the verdict is `matched`. */
+	clippedLegs: readonly { mode: string; overlapS: number; durationS: number }[];
 }
 
 /** Expand a coarse state timeline (contiguous start/end/mode windows — the
@@ -287,6 +293,20 @@ export function statesToJourneys(
 const COVERAGE_SLACK_FRAC = 0.2;
 const COVERAGE_SLACK_MIN_S = 240;
 
+/** How much of a leg must fall INSIDE the audited span for it to count toward
+ *  the reconstructed shape.
+ *
+ *  One minute, because that is the resolution this scorer works at:
+ *  {@link statesToMinutes} expands a timeline into one entry per top-of-minute,
+ *  so a leg contributing less than that is below what the comparison can
+ *  actually see. Counting it reads structure out of rounding.
+ *
+ *  This is a floor on VISIBILITY, not a tolerance. It is deliberately not a
+ *  fraction of the window and not {@link COVERAGE_SLACK_FRAC}: either would
+ *  also swallow a leg occupying a quarter of the audited span, which is a
+ *  pipeline disagreement the gate must keep reporting (#810). */
+const SHAPE_MIN_LEG_OVERLAP_S = 60;
+
 export function journeyShapeResults(
 	gtJourneys: readonly Journey[],
 	pipelineJourneys: readonly Journey[],
@@ -296,9 +316,43 @@ export function journeyShapeResults(
 		const expectedShape = modeShape(gt);
 		// Compare structure over the AUDITED span only: the ground truth
 		// asserts nothing about time outside its rows, so pipeline legs
-		// entirely beyond the journey window must not fail the match. A leg
-		// that crosses the boundary still overlaps and is kept.
-		const clipped = match === null ? null : match.legs.filter((l) => l.endTs > gt.startTs && l.startTs < gt.endTs);
+		// entirely beyond the journey window must not fail the match.
+		//
+		// A leg that CROSSES the boundary used to be kept whole, however little
+		// of it fell inside — and that is how 2026-06-24 failed (#810): the walk
+		// out of the station contributes THIRTY-SIX SECONDS to a 21-minute
+		// window and still added a third element to the shape, against a ground
+		// truth that has no row for it at all. One case in the corpus clips to
+		// two seconds.
+		//
+		// So a leg at either END is trimmed when it reaches less than the
+		// resolution the shape is BUILT at. `statesToMinutes` emits one entry per
+		// top-of-minute, so under a minute is below what this comparison can see,
+		// and counting it reads structure out of rounding.
+		//
+		// ONLY AT THE ENDS, and that restriction is load-bearing rather than
+		// caution. Dropping an INTERIOR leg merges its neighbours, because
+		// `modeShape` dedupes consecutive modes — measured on 2026-06-22, where a
+		// sub-minute train between two walks was the difference between
+		// [walking,train,walking] and a collapsed [walking], turning a matching
+		// journey into a regression. It is the same dedup hazard #755 hit from
+		// the other side. Trimming an end can never join two legs.
+		//
+		// The bound stays at one minute rather than a fraction of the window or
+		// the coverage slack: either would also swallow 2026-04-29's 146 s walk,
+		// and there the pipeline genuinely ends the train a quarter of the way
+		// into the audited span — a real disagreement that must keep failing.
+		const overlapOf = (l: { startTs: number; endTs: number }): number =>
+			Math.min(gt.endTs, l.endTs) - Math.max(gt.startTs, l.startTs);
+		let spanLegs = match === null ? null : match.legs.filter((l) => overlapOf(l) > 0);
+		if (spanLegs !== null) {
+			let lo = 0;
+			let hi = spanLegs.length;
+			while (lo < hi && overlapOf(spanLegs[lo]) < SHAPE_MIN_LEG_OVERLAP_S) lo++;
+			while (hi > lo && overlapOf(spanLegs[hi - 1]) < SHAPE_MIN_LEG_OVERLAP_S) hi--;
+			spanLegs = spanLegs.slice(lo, hi);
+		}
+		const clipped = spanLegs;
 		const actualShape =
 			match !== null && clipped !== null && clipped.length > 0 ? modeShape({ ...match, legs: clipped }) : null;
 		const overlap =
@@ -316,6 +370,11 @@ export function journeyShapeResults(
 			slackS: Math.round(slack),
 			matchStartTs: match?.startTs ?? null,
 			matchEndTs: match?.endTs ?? null,
+			clippedLegs: (clipped ?? []).map((l) => ({
+				mode: l.mode,
+				overlapS: Math.max(0, Math.min(gt.endTs, l.endTs) - Math.max(gt.startTs, l.startTs)),
+				durationS: l.endTs - l.startTs,
+			})),
 		};
 	});
 }
@@ -513,6 +572,11 @@ export function scoreJourneys(rows: readonly GroundTruthRow[], decoder: readonly
 			slackS: -1,
 			matchStartTs: match?.startTs ?? null,
 			matchEndTs: match?.endTs ?? null,
+			// This scorer compares the decoder's WHOLE journey, with no
+			// audited-span clip, so there is no per-leg overlap to report —
+			// empty rather than the legs, which would imply a clip that never
+			// ran. Same reasoning as the -1 above.
+			clippedLegs: [],
 		});
 	}
 
