@@ -420,5 +420,42 @@ describe("pickBestPlace", () => {
 			// No boost at all — the magnet is range-gated.
 			expect(sitting).toBe(noCoherence);
 		});
+
+		// The 500 m case above cannot fail: it is outside every magnet
+		// radius this module has ever had. The reach that mattered in
+		// production is ~200 m, and nothing pinned it — which is how a
+		// frequently-visited building magneted a stay in the one next
+		// door (two adjacent buildings of one institution) for as long
+		// as it did. These pin the reach at the distance that decides.
+		describe("reach does not grow with visit history", () => {
+			// Measured on the corpus: a stay sits ~24 m from its true
+			// building and ~205 m from the neighbouring one. The magnet
+			// must not span that gap for ANY visit count.
+			const near = (dM: number): PlaceCandidate => varley({ centroidLat: 51.563 + dM / 111_320, radiusM: 25 });
+			const stay = { lat: 51.563, lon: -0.2796 };
+			const boost = (c: PlaceCandidate): number =>
+				scorePlaceForSegment(c, stay.lat, stay.lon, { stayHourProfile: DAYTIME, biometricCoherence: 1 }) -
+				scorePlaceForSegment(c, stay.lat, stay.lon, { stayHourProfile: DAYTIME });
+
+			it("gives a heavily-visited neighbour 205 m away no boost", () => {
+				// Before the fix this place's magnet reached 224 m and it
+				// took the stay by 0.0056 nats.
+				expect(boost({ ...near(205), uniqueDays: 31 })).toBe(0);
+				expect(boost({ ...near(205), uniqueDays: 500 })).toBe(0);
+			});
+
+			it("still boosts the building the stay is actually in", () => {
+				expect(boost({ ...near(24), uniqueDays: 4 })).toBeGreaterThan(0);
+			});
+
+			it("is the same reach for a one-off and an established place", () => {
+				// The reach answers "could GPS noise have put the stay
+				// here?" — a property of the sensor, not of the place.
+				const oneOff = { ...near(150), uniqueDays: 1 };
+				const established = { ...near(150), uniqueDays: 500 };
+				expect(boost(oneOff)).toBe(0);
+				expect(boost(established)).toBe(0);
+			});
+		});
 	});
 });

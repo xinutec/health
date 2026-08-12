@@ -111,10 +111,23 @@ def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Fl
 /-- Magnet strength: bounded so Home does not drown out everything else. -/
 def magnetStrength (c : PlaceCandidate) : Float := Float.log (1 + c.uniqueDays)
 
-/-- Magnet radius: scales with the place's scatter, so a tightly-clustered
-    place has a tight magnet and a well-established one a wider one. -/
-def magnetRadiusM (c : PlaceCandidate) : Float :=
-  MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * effectiveSigmaM c
+/-- Magnet radius: CONSTANT at 30 + 2·40 = 110 m. Reach answers "could GPS
+    noise have put this stay here?", a property of the sensor, not of the
+    place — so it does not scale with visit history.
+
+    It used to multiply `effectiveSigmaM`, which grows with visit-days, giving
+    an established place a ~224 m magnet. That triple-counted establishedness
+    (it already widens the Gaussian σ and already relaxes the distance veto),
+    and let a frequently-visited place magnet a stay in the building next
+    door. The docstring it carried — "scales with the place's scatter" — was
+    never true of the data: `radiusM` is a constant 25 m on all 127 corpus
+    focus places, so `effectiveSigmaM` reduces to its establishedness floor.
+
+    The corpus separates cleanly: a stay sits ~24 m from its true building and
+    ~205 m from the neighbouring one, so the cut lies in the empty band
+    between. See `src/geo/place-prior.ts` for the measured case. -/
+def magnetRadiusM (_c : PlaceCandidate) : Float :=
+  MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * SIGMA_FLOOR_MIN_M
 
 /-- Posterior score for one candidate: Gaussian log-likelihood on distance
     (constant terms dropped — this is only ever argmaxed) + frequency prior +
@@ -259,6 +272,36 @@ private def oneOff : PlaceCandidate := C 2 LAT LON 25 1 (some EVENING)
 #guard approx (magnetStrength (C 1 LAT LON 25 1 none)) 0.69314718055994529
 #guard approx (magnetStrength (C 1 LAT LON 25 10 none)) 2.3978952727983707
 #guard approx (magnetStrength (C 1 LAT LON 25 500 none)) 6.2166061010848646
+
+/-! ### `magnetRadiusM` — constant reach
+
+Nothing pinned the magnet radius before 2026-08-12, and nothing pinned the
+boost at all: `biometricCoherence` defaults to `none`, so every guard above
+runs with the magnet contributing exactly 0. The whole mechanism was dark. -/
+
+-- Reach does not scale with visit history. Before the fix these read 110 and
+-- 230 — a 500-day place got a magnet twice as wide as a one-off's.
+#guard magnetRadiusM (C 1 LAT LON 25 1 none) == 110
+#guard magnetRadiusM (C 1 LAT LON 25 500 none) == 110
+
+-- The measured corpus shape (two adjacent buildings of one institution): a
+-- stay ~24 m from the building it is in, which the user visits rarely,
+-- against the neighbour ~205 m away, which the user visits constantly.
+private def nearSparse : PlaceCandidate := C 1 (north 24) LON 25 4 (some DAYTIME)
+private def farEstablished : PlaceCandidate := C 2 (north 205) LON 25 31 (some DAYTIME)
+
+-- THE FIX, stated as an invariance: the far place is outside its magnet, so
+-- biometric coherence cannot move its score by any amount.
+#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0)) 1.9924056837212474
+#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 1)) 1.9924056837212474
+-- The near place is inside its magnet, so coherence does move it.
+#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0)) 2.2706214960936260
+#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 1)) 3.8800594085277265
+-- At the real stay's measured coherence the near building wins by 1.71 nats.
+-- Under the old 224 m magnet the far one won by 0.0056.
+#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0.886842487040252)) 3.6979394170935551
+#guard decide (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0.886842487040252)
+             < scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0.886842487040252))
 
 /-! ### `scorePlaceForSegment` -/
 

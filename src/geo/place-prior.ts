@@ -130,8 +130,29 @@ const MAGNET_REF_DAYS = 10;
  *  places get a more generous range. */
 const MAGNET_BASE_RADIUS_M = 30;
 
-/** Multiplier on $\sigma_p$ in the magnet radius. With $\sigma_p$ up to
- *  100 m and $k = 2$, an established place's magnet reaches ~230 m. */
+/** Multiplier on the GPS-noise floor in the magnet radius. Fixed at the
+ *  UNEARNED floor (`SIGMA_FLOOR_MIN_M`), so every place's magnet reaches
+ *  30 + 2·40 = 110 m.
+ *
+ *  It used to multiply {@link effectiveSigmaM}, which grows with visit
+ *  history — so an established place's magnet reached ~230 m, and the
+ *  docstring said so as if it were the intent. That triple-counted
+ *  establishedness: it already widens the Gaussian σ (softening the
+ *  distance penalty), and already relaxes the distance veto via
+ *  `magnetFactor`. Buying reach a third time is what let a
+ *  frequently-visited place magnet a stay in the building next door.
+ *
+ *  MEASURED on the corpus: an 88-minute stay (spread 23 m, accuracy 4 m)
+ *  sat 25.7 m from the building it was actually in — visited on 4 days —
+ *  and 216.6 m from a neighbouring building of the same institution,
+ *  visited on 31. The neighbour's magnet radius was 224.0 m, so it
+ *  reached across by 7.4 m, and its boost log(32) beat the true
+ *  building's log(5) by 1.857 — overturning a 1.641 lead on distance and
+ *  frequency. The wrong building won by 0.0056 nats.
+ *
+ *  Reach answers "could GPS noise have put the stay here?", which is a
+ *  property of the sensor, not of how often the user visits. Strength is
+ *  what establishedness earns, and it still does. */
 const MAGNET_SIGMA_MULTIPLIER = 2;
 
 /** Veto-relaxation ceiling: even with maximal magnet × coherence, the
@@ -190,11 +211,19 @@ export function magnetStrength(candidate: PlaceCandidate): number {
 }
 
 /** Magnet radius around a focus_place. A candidate further than this
- *  from the segment centroid gets no magnet boost. Scales with the
- *  place's empirical scatter — a tightly-clustered place has a tight
- *  magnet, a well-established one a wider one. */
-function magnetRadiusM(candidate: PlaceCandidate): number {
-	return MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * effectiveSigmaM(candidate);
+ *  from the segment centroid gets no magnet boost. Constant: it is the
+ *  distance GPS noise could plausibly have displaced the stay by, which
+ *  is a property of the sensor and not of the place.
+ *
+ *  The claim this docstring used to make — "scales with the place's
+ *  empirical scatter, a tightly-clustered place has a tight magnet" —
+ *  was never true of the data. `radiusM` is a CONSTANT 25 m on all 127
+ *  focus places in the corpus (measured 2026-08-12), so `effectiveSigmaM`
+ *  reduces to its establishedness floor and carried no scatter signal to
+ *  scale with. Two more docstrings still to audit make the same claim;
+ *  see {@link MAGNET_SIGMA_MULTIPLIER}. */
+function magnetRadiusM(_candidate: PlaceCandidate): number {
+	return MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * SIGMA_FLOOR_MIN_M;
 }
 
 export function scorePlaceForSegment(
