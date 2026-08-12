@@ -713,6 +713,43 @@ export const ACCEPTED_MATCH_DELTAS: readonly AcceptedMatchDelta[] = [
 			"off-road trigger and 40 m stray cap. quant↔lean EXACT, so this is float-vs-quantised arithmetic and " +
 			"not a Lean divergence.",
 	},
+	// ── the floor: nothing moved, one timestamp rounded the other way ───────────
+	{
+		leg: "62c433a17fde0a56",
+		date: "2026-08-10",
+		hhmm: "18:19",
+		coarse: "EXACT",
+		path: "NEAR",
+		note: "coarse 14v vs 14v, path 33v vs 33v",
+		coarseDevM: 0.01,
+		pathDevM: 0.01,
+		basis: "magnitude",
+		reason:
+			"The smallest divergence this system can produce, signed off 2026-08-12 (#743). Once both arms are " +
+			"on the 1e-7° grid the two lines are IDENTICAL: `--leg` reports Δlat=0, Δlon=0 at every vertex of " +
+			"both layers, worst separation 0.0 cm on the 14v coarse path and 0.0 cm on the 33v display path. The " +
+			"only supra-unit difference in the whole leg is display vertex [13], whose timestamp is ONE SECOND " +
+			"apart (Δts=-1). " +
+			"That second is IRREDUCIBLE_DTS_S, the floor derived in #401: both arms round an interpolated " +
+			"timestamp to a whole second, so two interpolations of the same instant can land a second apart with " +
+			"nothing having moved. Five corpus legs already sit at exactly 1 s. " +
+			"The 0.01 m recorded here is NOT that vertex and not a line that moved — it is the sub-unit residual, " +
+			"because `legDeviations` / `legVertexSeparations` compare the RAW float arm against the quant arm " +
+			"while `comparePaths` quantises the float arm first. So the class sees a grid-exact line and the " +
+			"deviation sees half a grid unit (~1.11 cm of latitude at London), which `toFixed(2)` renders 0.01. " +
+			"Recording 0.0 would be tighter than the instrument: it is what `--leg` prints, on a different " +
+			"comparison from the one the gate enforces. " +
+			"It reads NEAR rather than EXACT only because EXACT demands bit-identical rows INCLUDING ts, and it " +
+			"read UNEXPLAINED only because a LIVE leg has no manifest entry — 2026-08-10 is not in the 35-day " +
+			"corpus. Neither is a statement about size. Re-measured before signing: `scripts/compare-match.sh " +
+			"--days tests/golden/adhoc-days --leg 62c433a17fde0a56 2026-08-10`, whose fixture is kept outside the " +
+			"gated corpus so this stays reproducible without prod. " +
+			"vtxM and dtsS are left undeclared per this file's convention — declare only above the floor — so the " +
+			"gate holds it to IRREDUCIBLE_VTX_M (0.2 m) and IRREDUCIBLE_DTS_S (1 s). Anything past either is a " +
+			"new divergence and fails, which is the intent: this sign-off says the line did not move, not that " +
+			"movement is tolerated. quant↔lean EXACT, so this is float-vs-quantised arithmetic, not a Lean " +
+			"divergence.",
+	},
 ];
 
 const accepted = new Map<string, AcceptedMatchDelta>(ACCEPTED_MATCH_DELTAS.map((d) => [d.leg, d]));
