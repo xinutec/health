@@ -1,8 +1,11 @@
 // Read-only: WHY does a focus place carry the amenity_label it carries?
 //
 // Written for #789, where a focus place gained a third visit-day and LOST its
-// mined amenity label, so a confirmed evening stay fell through to
-// the venue scorer and came back named for a different, larger nearby feature.
+// mined amenity label, so a confirmed evening stay fell through to the venue
+// scorer and came back named for a different, larger nearby feature.
+//
+// (Deliberately unnamed here: this repo is public, and a venue plus a date is
+// exactly the pair that must not be committed. The task carries the specifics.)
 //
 // `refresh-focus-places` nulls a label at THREE independent gates, and the task
 // only listed the first. This probe reports all three for one place, so the

@@ -32,6 +32,7 @@ import {
 import { type ExistingPlace, matchClusters } from "../geo/focus-places-identity.js";
 import { bestPlace, isLabelWorthyVenue, nearbyLandmarks } from "../geo/osm.js";
 import { dbOsmAdapter } from "../geo/osm-adapter.js";
+import { haversineMeters } from "../geo/place-snap.js";
 import {
 	type AttributedStay,
 	attributeStayVenue,
@@ -75,8 +76,46 @@ const config = z
 const DEFAULT_LOOKBACK_DAYS = 180;
 const FETCH_CHUNK_DAYS = 7;
 
-const argUserId = process.argv[2] ?? null;
-const argLookbackDays = Number.parseInt(process.argv[3] ?? "", 10) || DEFAULT_LOOKBACK_DAYS;
+/**
+ * `--dry-run` mines exactly as a real run does and writes NOTHING, so the
+ * effect of a mining change can be measured before it reaches the column the
+ * runtime trusts.
+ *
+ * It exists because golden cannot see this layer: a day replay reads
+ * `inputs.knownPlaces` captured out of prod, so the mined `amenity_label`
+ * arrives as an INPUT and a change to the miner is invisible to every gate.
+ * A dry run of the real cron is the only honest before/after — reimplementing
+ * the vote in a probe would measure the reimplementation.
+ *
+ * It earned itself immediately: it refuted the fix it was built to measure. A
+ * robust cluster centre restored no label and dropped two (#789).
+ */
+const rawArgv = process.argv.slice(2);
+const argDryRun = rawArgv.includes("--dry-run");
+/** `--explain <lat> <lon>`: dump the whole amenity decision for the cluster
+ *  nearest that coordinate — each stay's vote with its distance, the
+ *  dwell-weighted tally, and which of the three gates returned NULL.
+ *
+ *  That last part is the point. A null `amenity_label` looks the same whichever
+ *  gate produced it, and #789 was attributed to the wrong one from a measurement
+ *  that only proved a DIFFERENT gate would also have blocked it. Naming the gate
+ *  that actually fired is what a null label cannot tell you and guessing gets
+ *  wrong. */
+const explainAt = ((): { lat: number; lon: number } | null => {
+	const i = rawArgv.indexOf("--explain");
+	if (i === -1) return null;
+	const lat = Number(rawArgv[i + 1]);
+	const lon = Number(rawArgv[i + 2]);
+	return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+})();
+const argv = rawArgv.filter(
+	(a, i) =>
+		a !== "--dry-run" &&
+		a !== "--explain" &&
+		!(explainAt !== null && (i === rawArgv.indexOf("--explain") + 1 || i === rawArgv.indexOf("--explain") + 2)),
+);
+const argUserId = argv[0] ?? null;
+const argLookbackDays = Number.parseInt(argv[1] ?? "", 10) || DEFAULT_LOOKBACK_DAYS;
 
 initPool(config.db);
 await withConnection(migrate);
@@ -164,15 +203,40 @@ async function refreshOne(userId: string): Promise<void> {
 	// never train it — training on the picker's own guesses would launder
 	// its mistakes into the prior.
 	const attributedStays: AttributedStay[] = [];
+	// The cluster `--explain` is about: the one whose centroid is nearest the
+	// coordinate. Matching on the STORED centroid rather than on a stay means
+	// the same coordinate selects the same cluster a `focus_places` row would.
+	const explainId =
+		explainAt === null
+			? null
+			: (result.clusters.reduce<{ id: number; d: number } | null>((best, c) => {
+					const d = haversineMeters(explainAt.lat, explainAt.lon, c.centroidLat, c.centroidLon);
+					return best === null || d < best.d ? { id: c.id, d } : best;
+				}, null)?.id ?? null);
+
 	for (const c of result.clusters) {
+		const explain = c.id === explainId;
+		if (explain) {
+			console.log(`\n[${userId}] === EXPLAIN cluster ${c.id} ===`);
+			console.log(`  centroid ${c.centroidLat.toFixed(6)}, ${c.centroidLon.toFixed(6)}`);
+			console.log(`  ${c.stays.length} stay(s), total dwell ${(c.totalDwellSec / 60).toFixed(1)} min`);
+		}
 		const clusterSleepH = hasFitbitSleep ? sleepHoursFromFitbit(c.stays, fitbitSleepWindows) : sleepHoursOf(c);
 		if (clusterSleepH >= RESIDENCE_SLEEP_THRESHOLD_H) {
+			if (explain)
+				console.log(
+					`  GATE 0 (residence): sleepH=${clusterSleepH.toFixed(1)} >= ${RESIDENCE_SLEEP_THRESHOLD_H} — label forced NULL`,
+				);
 			amenityLabels.set(c.id, null);
 			continue;
 		}
 		const votes = new Map<string, number>();
 		for (const s of c.stays) {
 			const landmarks = await nearbyLandmarks(s.centroidLat, s.centroidLon);
+			if (explain) {
+				const when = new Date(s.startTs * 1000).toISOString().slice(0, 16).replace("T", " ");
+				console.log(`  stay ${when}  ${(s.durationSec / 60).toFixed(1)} min  ${landmarks.length} landmark(s)`);
+			}
 			if (landmarks.length === 0) continue;
 			const attributed = attributeStayVenue(landmarks);
 			if (attributed !== null) {
@@ -205,25 +269,59 @@ async function refreshOne(userId: string): Promise<void> {
 			// the venue, and would otherwise mislabel the cluster. The
 			// plausibility floor additionally drops votes where even the
 			// best candidate is implausible (closed + far).
-			if (!isLabelWorthyVenue(best) || ranked.total < VENUE_RANK_FLOOR_NATS) continue;
+			if (!isLabelWorthyVenue(best) || ranked.total < VENUE_RANK_FLOOR_NATS) {
+				if (explain) {
+					const why = !isLabelWorthyVenue(best)
+						? `not label-worthy (type=${best.type}, ${best.distanceM.toFixed(0)} m — needs amenity/tourism/shop within 50 m)`
+						: `below rank floor (${ranked.total.toFixed(2)} < ${VENUE_RANK_FLOOR_NATS} nats)`;
+					console.log(`    GATE 2 rejects its vote for "${best.name}": ${why}`);
+				}
+				continue;
+			}
+			if (explain)
+				console.log(
+					`    votes "${best.name}" (${best.subtype}, ${best.distanceM.toFixed(0)} m) with ${(s.durationSec / 60).toFixed(1)} min`,
+				);
 			votes.set(best.name, (votes.get(best.name) ?? 0) + s.durationSec);
 		}
 		let winner = pickWinningAmenity(votes, {
 			minWeight: 60 * 30, // at least 30 min of total cluster dwell
 			minFraction: 0.5, // winner must take majority of the vote
 		});
+		if (explain) {
+			const total = [...votes.values()].reduce((a, b) => a + b, 0);
+			console.log(
+				`  GATE 1 tally over ${(total / 60).toFixed(1)} min of voting dwell (needs >= 30 min, winner >= 50%):`,
+			);
+			for (const [name, w] of [...votes].sort((a, b) => b[1] - a[1])) {
+				console.log(`    ${((w / total) * 100).toFixed(0).padStart(3)}%  ${(w / 60).toFixed(1)} min  ${name}`);
+			}
+			console.log(`  GATE 1 winner: ${winner ?? "NULL"}`);
+		}
 		// Centroid gate: the winning venue must be AT the cluster — within
 		// venue range of its *centroid*, not merely near some scattered
 		// stays. Two co-located places ~45 m apart (a residence and a
 		// café) would otherwise let the residence's evening stays, the
 		// ones whose GPS drifts venue-ward, vote the café's name onto the
 		// residence — its centroid stays a clear ~70 m off the café.
+		//
+		// A ROBUST centre (median of the stays' centroids) was measured here on
+		// 2026-08-12 and REVERTED. The dwell-weighted mean is not robust — one
+		// stay ~200 m out at 20% of the dwell moves it 41 m — and that looked
+		// like the cause of #789. It is not: `--dry-run` showed the gate never
+		// runs on that cluster, because gate 1 already returned NULL, and across
+		// the corpus the median restored nothing and DROPPED two labels the mean
+		// kept (48/115 clusters labelled against 50/115). A fix that costs two
+		// and buys none. Do not retry it without re-reading #789.
 		let winnerKind: string | null = null;
 		if (winner !== null) {
 			const atCentroid = await nearbyLandmarks(c.centroidLat, c.centroidLon, 100);
 			const winnerHere = atCentroid.find((l) => l.name === winner);
 			if (winnerHere === undefined || !isLabelWorthyVenue(winnerHere)) winner = null;
 			else winnerKind = winnerHere.subtype;
+			if (explain) {
+				console.log(`  GATE 3 (centroid): ${winner === null ? "NULLS the winner" : `keeps it (${winnerKind})`}`);
+			}
 		}
 		amenityLabels.set(c.id, winner);
 		amenityKinds.set(c.id, winnerKind);
@@ -237,23 +335,42 @@ async function refreshOne(userId: string): Promise<void> {
 	// Persist the venue-type priors blob — full recompute every run, never
 	// incremental, so a re-mine after a code/gate change is reproducible.
 	const priors = minePriors(attributedStays);
-	await db()
-		.insertInto("venue_type_priors")
-		.values({
-			user_id: userId,
-			priors_json: JSON.stringify(priors),
-			mined_stays: attributedStays.length,
-		})
-		.onDuplicateKeyUpdate({
-			priors_json: JSON.stringify(priors),
-			mined_stays: attributedStays.length,
-		})
-		.execute();
+	if (!argDryRun) {
+		await db()
+			.insertInto("venue_type_priors")
+			.values({
+				user_id: userId,
+				priors_json: JSON.stringify(priors),
+				mined_stays: attributedStays.length,
+			})
+			.onDuplicateKeyUpdate({
+				priors_json: JSON.stringify(priors),
+				mined_stays: attributedStays.length,
+			})
+			.execute();
+	}
 	console.log(
 		`[${userId}] venue priors: ${attributedStays.length} attributed stays across ${
 			Object.keys(priors.bySubtype).length
 		} venue types`,
 	);
+
+	if (argDryRun) {
+		// Everything below writes. A dry run has already reported what it came
+		// for, so it stops here rather than opening a transaction it would only
+		// roll back — a rollback still takes the locks, and this runs against
+		// prod.
+		// Precise about what "dry" means: no user data is written. The OSM
+		// mirror IS still filled, because `nearbyLandmarks` runs `ensureCovered`
+		// and that is a cache the real run would warm identically — saying
+		// "writes nothing" would be the kind of claim this codebase keeps
+		// catching.
+		console.log(
+			`[${userId}] DRY RUN — focus_places, venue_type_priors and sync_state untouched. ` +
+				`(The OSM mirror cache is still filled by nearbyLandmarks, as on a real run.)`,
+		);
+		return;
+	}
 
 	await withConnection(async (conn) => {
 		await conn.beginTransaction();
