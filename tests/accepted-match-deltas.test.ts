@@ -181,7 +181,16 @@ describe("accepted-match-delta manifest shape", () => {
 	// the two lists, which is the noticing this test is for. What is no longer
 	// assumed is that size alone tells you which list it belongs in.
 	const CORRIDOR_FLIPS = ["77277765451f43f5", "91167e4cf16f9ea8"];
-	const INSPECTED_MAGNITUDE = ["c907b7bb2e0c96f9"];
+	// `a0f21eac57625068` (2026-08-08, #747) is the second entry to land here, and
+	// it is the largest: 2.26 m, an order above c907b7bb2e0c96f9's 0.14 m. It is
+	// not a corridor flip and equality would be wrong for it — the COARSE layer
+	// both arms decide on is bit-for-bit identical (11v vs 11v, 0.00 m), and
+	// every float vertex lies exactly on the quant line, so the two arms agree on
+	// which corridor was walked. The 2.26 m is ONE EXTRA display vertex in the
+	// quant path (24v vs 23v), a detour one arm draws and the other smooths
+	// through. That is a magnitude argument about a known shape, so a ceiling is
+	// right: the leg improving to 2.0 m must not fail the gate.
+	const INSPECTED_MAGNITUDE = ["c907b7bb2e0c96f9", "a0f21eac57625068"];
 	it("ties the enforcement basis to the kind of argument the entry actually makes", () => {
 		const big = ACCEPTED_MATCH_DELTAS.filter((d) => Math.max(d.coarseDevM, d.pathDevM) > 0.1);
 		expect(big.map((d) => d.leg).sort()).toEqual([...CORRIDOR_FLIPS, ...INSPECTED_MAGNITUDE].sort());
@@ -211,8 +220,16 @@ describe("accepted-match-delta manifest shape", () => {
  *  second. */
 describe("accepted-match-delta vertex and timestamp axes (#401)", () => {
 	/** 2026-04-29 17:44 — the corpus's largest along-line slide, 12.22 m at
-	 *  0.01 m of line, signed off with an explicit `vtxM`. */
-	const slide = byLeg("480b1b141d902740");
+	 *  0.01 m of line, signed off with an explicit `vtxM`.
+	 *
+	 *  Keyed `480b1b141d902740` until 2026-08-12. The leg is the same one and
+	 *  every figure still measures identically; the walk-boundary passes
+	 *  (`466ceb0`, `cc16e69`, `bdef95f`, `b017a1d`) redrew it, and
+	 *  `legFingerprint` digests a leg's input fixes, so the key moved (#800,
+	 *  #662). Pinning a test to a content hash inherits that: if this throws
+	 *  `manifest no longer holds leg`, look for the same day and hh:mm under a
+	 *  new fingerprint before assuming the entry was dropped. */
+	const slide = byLeg("3bb671f84b4194d4");
 	/** 2026-04-30 15:16 — #401's own leg: 5.87 m of slide DECLARED, and a 27 s
 	 *  timestamp shift deliberately NOT declared. */
 	const shift = byLeg("cf8fa2efd60d5dc6");
