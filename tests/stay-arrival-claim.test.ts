@@ -82,6 +82,38 @@ describe("claimStayArrivalFromWalk", () => {
 		expect((out[0] as { wayName?: string }).wayName).toBe("Barn Rise");
 	});
 
+	it("DOES ask for the name back — the weaker request the mode veto above still allows", () => {
+		// The two flags exist to be different requests. `needsReenrich` would
+		// redo the mode (see the test above); `needsRename` asks
+		// `reenrichSplitWalks` for the road name off the new geometry and
+		// nothing else. Without it the trimmed walk keeps a name derived from a
+		// line drawn through the stretch it overran onto — measured on
+		// 2026-06-22 @09:01Z, and on eight other corpus days.
+		//
+		// The pass still carries the OLD name out: it is the input to the
+		// rename, not the answer, and a day whose re-derivation fails keeps
+		// something honest rather than going blank mid-cascade.
+		const { segs, points } = arrivalDay(140);
+		const withName = [{ ...segs[0], wayName: "Barn Rise" }, segs[1]];
+		const out = claimStayArrivalFromWalk(withName, points);
+		expect((out[0] as { needsRename?: boolean }).needsRename).toBe(true);
+		expect((out[0] as { needsReenrich?: boolean }).needsReenrich).toBeFalsy();
+	});
+
+	it("does not flag a walk it declined to trim", () => {
+		// The flag has to travel with the carve. Setting it on every walk→stay
+		// pair would send segments whose window never moved back through OSM
+		// naming, which is both a lookup the fixture never recorded and a
+		// re-derivation with no reason to run.
+		const t0 = 1_000_000;
+		const points: FilteredPoint[] = [];
+		let m = 0;
+		for (let ts = t0; ts < t0 + 600; ts += 28, m += 43) points.push(fix(ts, m));
+		const segs = [seg(t0, t0 + 600, "walking"), seg(t0 + 600, t0 + 4200, "stationary")];
+		const out = claimStayArrivalFromWalk(segs, points);
+		expect((out[0] as { needsRename?: boolean }).needsRename).toBeFalsy();
+	});
+
 	it("leaves a walk that ends while still moving alone", () => {
 		const t0 = 1_000_000;
 		const points: FilteredPoint[] = [];

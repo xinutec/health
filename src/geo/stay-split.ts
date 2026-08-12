@@ -1320,9 +1320,10 @@ const FOOT_ARRIVAL_MIN_WALK_REMAINDER_S = 60;
  *
  * The carve is deliberately conservative — it only ever moves the boundary
  * BACK, never forward, and only when the walk's own tail is a held position.
- * It marks the shortened walk `needsReenrich` so `reenrichSplitWalks` re-derives
- * its way name from the geometry that is left: a walk trimmed of its arrival
- * can be named for a different street than the one it overran onto.
+ * It marks the shortened walk `needsRename` so `reenrichSplitWalks` re-derives
+ * its way name — and only its way name — from the geometry that is left: a walk
+ * trimmed of its arrival can be named for a different street than the one it
+ * overran onto. The mode is deliberately not re-derived; see below.
  */
 export function claimStayArrivalFromWalk<T extends TrackSegment>(
 	segments: readonly T[],
@@ -1391,11 +1392,12 @@ export function claimStayArrivalFromWalk<T extends TrackSegment>(
 		// `cycling`, and `repairVehicleHandoff` then absorbed 27 minutes of it
 		// into the adjacent train as an impossible vehicle hand-off.
 		//
-		// So: keep the recomputed kinematics, keep the existing naming and mode.
-		// The cost is a walk trimmed of its arrival that is still named for the
-		// street it overran onto (2026-06-22 @09:01Z). Re-deriving only the NAME,
-		// without re-deriving the mode, is the fix for that and is not this
-		// pass's to make.
+		// The NAME is a different matter. A walk trimmed of its arrival is a
+		// shorter stretch of street, and the name it carries was derived from a
+		// line drawn through the part it overran onto (2026-06-22 @09:01Z). So
+		// keep the recomputed kinematics and the existing mode, and flag
+		// `needsRename` — which asks `reenrichSplitWalks` for the road name off
+		// the new geometry and for nothing else.
 		const rebuilt = walkRemainder(cur, cur.startTs, arrivalTs, points);
 		const kept = cur as { refinedMode?: TransportMode; wayName?: string };
 		out.push({
@@ -1403,6 +1405,7 @@ export function claimStayArrivalFromWalk<T extends TrackSegment>(
 			refinedMode: kept.refinedMode,
 			wayName: kept.wayName,
 			needsReenrich: false,
+			needsRename: true,
 			refinedReason: reason,
 		});
 		// The stay keeps its enrichment — it is the same place, merely entered

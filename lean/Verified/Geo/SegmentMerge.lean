@@ -96,6 +96,13 @@ structure Seg where
   window changed and its inherited enrichment is therefore no longer evidence
   about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/
   needsReenrich : Bool := false
+  /-- The weaker sibling of `needsReenrich`: re-derive this segment's road NAME
+  from its own geometry, but leave its mode alone. Set by
+  `claimStayArrivalFromWalk`, whose carve changes a walk's window but never what
+  it IS — so the inherited name is stale while the inherited mode is still
+  right. Asking for the full re-derivation instead cost a mode on 2026-04-29
+  (#782). -/
+  needsRename : Bool := false
   /-- The bus passes' judgement of a road-vehicle leg: which KIND of vehicle it
   is. The day-state flattening gives this precedence over `refinedMode`, so a
   pass that promotes a leg to `train` must CLEAR it or the timeline renders the

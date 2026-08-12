@@ -1520,7 +1520,7 @@ export async function computeVelocityFromInputs(
 		{
 			name: "reenrichSplitWalks",
 			run: async (segs) => {
-				const stale = segs.filter((s) => s.needsReenrich);
+				const stale = segs.filter((s) => s.needsReenrich || s.needsRename);
 				if (stale.length === 0) return segs;
 				const redone = new Map<number, EnrichedSegment>();
 				await Promise.all(
@@ -1536,9 +1536,27 @@ export async function computeVelocityFromInputs(
 					}),
 				);
 				return segs.map((s) => {
-					if (!s.needsReenrich) return s;
-					const { needsReenrich: _, ...rest } = redone.get(s.startTs) ?? s;
-					return rest;
+					if (s.needsReenrich) {
+						const { needsReenrich: _, ...rest } = redone.get(s.startTs) ?? s;
+						return rest;
+					}
+					if (!s.needsRename) return s;
+					// NAME ONLY. `enrichMovingSegment` re-runs refineMode as well, and
+					// taking that verdict is what broke 04-29 (#782) — so read exactly
+					// one field off the fresh derivation and drop the rest, including
+					// the confidence, which `roadSupportedConfidence` computed from a
+					// mode this segment is not adopting.
+					//
+					// A renamed segment whose re-derivation produced no way name comes
+					// out unnamed, not holding its stale one: the old name described a
+					// window this segment no longer spans, so it is not evidence.
+					const { needsRename: _, ...rest } = s;
+					const fresh = redone.get(s.startTs);
+					if (!fresh) return rest;
+					const { wayName, ...withoutName } = rest;
+					return wayName === undefined && fresh.wayName === undefined
+						? withoutName
+						: { ...withoutName, ...(fresh.wayName !== undefined ? { wayName: fresh.wayName } : {}) };
 				});
 			},
 		},

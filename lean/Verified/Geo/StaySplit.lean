@@ -1820,9 +1820,9 @@ private def arrivalIdx (fixes : Array PointF) : Nat := Id.run do
 `segments.ts` classifies in 300 s windows, so the window straddling an arrival
 is scored whole and its walking half carries the verdict; the stay starts up to
 a window late. Only ever moves the boundary BACK, and only when the walk's own
-tail is a held position. Marks the shortened walk `needsReenrich` — a walk
+tail is a held position. Marks the shortened walk `needsRename` — a walk
 trimmed of its arrival can belong to a different street than the one it
-overran onto. -/
+overran onto — but not `needsReenrich`, so its mode is left alone. -/
 def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
   let mut segs := segments
   let mut out : Array Seg := #[]
@@ -1862,8 +1862,13 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
       -- re-derivation made a shortened leg come back `cycling` on 2026-04-29,
       -- and `repairVehicleHandoff` absorbed 27 minutes of it into the adjacent
       -- train as an impossible vehicle hand-off.
+      --
+      -- The NAME is a different matter: the shorter walk is a shorter stretch
+      -- of street, and the name it carries was derived from a line drawn
+      -- through the part it overran onto. `needsRename` asks `reenrich` for
+      -- that and for nothing else.
       let rebuilt := walkRemainder cur cur.startTs arrivalTs points
-      let walk := { rebuilt with refinedMode := cur.refinedMode, wayName := cur.wayName, needsReenrich := false, refinedReason := some reason }
+      let walk := { rebuilt with refinedMode := cur.refinedMode, wayName := cur.wayName, needsReenrich := false, needsRename := true, refinedReason := some reason }
       -- The stay keeps its enrichment (same place, entered earlier) but its
       -- window grew, so its sample-derived fields are recomputed over it.
       let stayFixes := points.filter fun p => p.ts ≥ arrivalTs && p.ts < next.endTs

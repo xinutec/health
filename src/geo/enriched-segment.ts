@@ -48,6 +48,19 @@ export interface EnrichedSegment extends TrackSegment {
 	 *  re-derives their road name and refined mode from their own geometry and
 	 *  clears the flag; it is an internal marker and never reaches the API. */
 	needsReenrich?: boolean;
+	/** The weaker sibling of `needsReenrich`: re-derive this segment's road
+	 *  NAME from its own geometry, but leave its mode alone.
+	 *
+	 *  Set by `claimStayArrivalFromWalk`, which moves a walk→stay boundary back
+	 *  to where the walking stopped. That changes the window, never what the
+	 *  segment IS — so the old name is stale (it was derived from a line that
+	 *  overran onto the next street) while the old mode is still right. Asking
+	 *  for the full re-derivation instead is not free: on 2026-04-29 the
+	 *  shortened leg came back `cycling` and `repairVehicleHandoff` absorbed 27
+	 *  minutes of it into the adjacent train (#782, reverted in cc16e69).
+	 *
+	 *  Like `needsReenrich`, an internal marker that never reaches the API. */
+	needsRename?: boolean;
 	displayTz?: string; // IANA tz to render the segment's timestamps in (frontend uses this instead of browser tz)
 	biometrics?: BiometricEnrichment;
 	snappedPath?: SnappedPoint[]; // derived: this train segment drawn on the OSM rail track — see annotateSnappedPaths

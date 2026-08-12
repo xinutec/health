@@ -473,11 +473,18 @@ def passes (e : Env) : Array Pass := #[
   -- The naming is shell and injected; the sequencing is not. Note the flag is
   -- cleared either way, matching the TS's destructure-and-drop — a remainder
   -- whose re-enrichment failed is not retried by a later pass.
+  --
+  -- `needsRename` is the weaker request: take the fresh derivation's wayName
+  -- and NOTHING else, because re-deriving the mode of a walk trimmed of its
+  -- arrival is what cost a leg on 2026-04-29 (#782). A rename whose derivation
+  -- produced no name comes out unnamed rather than holding the stale one — the
+  -- old name described a window this segment no longer spans.
   ("reenrichSplitWalks", fun segs =>
-    if !segs.any (·.needsReenrich) then segs
+    if !segs.any (fun s => s.needsReenrich || s.needsRename) then segs
     else segs.map fun s =>
-      if !s.needsReenrich then s
-      else { (e.reenrich s).getD s with needsReenrich := false }),
+      if s.needsReenrich then { (e.reenrich s).getD s with needsReenrich := false }
+      else if !s.needsRename then s
+      else { s with needsRename := false, wayName := (e.reenrich s).bind (·.wayName) }),
 
   -- When GPS surfaces a stop or two into a tunnel, the reconstruction boards at
   -- the first snappable fix and the walk keeps the stranded first hop — so the

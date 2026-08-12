@@ -107,6 +107,7 @@ export function encodeSeg(s: TrackSegment & Partial<EnrichedSegment>): unknown {
 		// would silently become NaN, so it is dropped rather than coerced.
 		focusPlaceId: s.focusPlaceId === undefined || Number.isNaN(Number(s.focusPlaceId)) ? null : Number(s.focusPlaceId),
 		needsReenrich: s.needsReenrich ?? false,
+		needsRename: s.needsRename ?? false,
 		vehicleKind: optStr(s.vehicleKind),
 		roadCorridorFraction: optBits(s.roadCorridorFraction),
 		displayTz: optStr(s.displayTz),

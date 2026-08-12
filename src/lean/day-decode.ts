@@ -136,6 +136,10 @@ export function decodeSeg(v: unknown): EnrichedSegment {
 	// `false` would put a key on every served segment that no TS segment carries.
 	// Caught by the round-trip test, not by reading.
 	if (optBool(r.needsReenrich) === true) seg.needsReenrich = true;
+	// Same asymmetry, same reason: `reenrichSplitWalks` destructures the key away
+	// once it has renamed the segment, so absent is how "nothing to rename" is
+	// spelled on the TS side too.
+	if (optBool(r.needsRename) === true) seg.needsRename = true;
 	put("vehicleKind", optStr(r.vehicleKind) as EnrichedSegment["vehicleKind"]);
 	put("roadCorridorFraction", optNum(r.roadCorridorFraction));
 	put("displayTz", optStr(r.displayTz));
