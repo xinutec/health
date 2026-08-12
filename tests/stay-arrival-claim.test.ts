@@ -68,11 +68,18 @@ describe("claimStayArrivalFromWalk", () => {
 		expect(out[0].startTs).toBe(segs[0].startTs);
 	});
 
-	it("marks the shortened walk for re-enrichment", () => {
-		// A walk trimmed of its arrival may belong to a different street than
-		// the one it overran onto, so its OSM naming has to be redone.
+	it("does NOT force the shortened walk to be re-derived", () => {
+		// Tempting, because a walk trimmed of its arrival may belong to a
+		// different street than the one it overran onto. But re-derivation
+		// redoes the MODE as well as the name: on 2026-04-29 the shortened leg
+		// came back `cycling` and repairVehicleHandoff absorbed 27 minutes of
+		// it into the adjacent train as an impossible vehicle hand-off. The
+		// window changed; what the segment IS did not.
 		const { segs, points } = arrivalDay(140);
-		expect((claimStayArrivalFromWalk(segs, points)[0] as { needsReenrich?: boolean }).needsReenrich).toBe(true);
+		const withName = [{ ...segs[0], wayName: "Barn Rise" }, segs[1]];
+		const out = claimStayArrivalFromWalk(withName, points);
+		expect((out[0] as { needsReenrich?: boolean }).needsReenrich).toBeFalsy();
+		expect((out[0] as { wayName?: string }).wayName).toBe("Barn Rise");
 	});
 
 	it("leaves a walk that ends while still moving alone", () => {
@@ -83,7 +90,6 @@ describe("claimStayArrivalFromWalk", () => {
 		const segs = [seg(t0, t0 + 600, "walking"), seg(t0 + 600, t0 + 4200, "stationary")];
 		const out = claimStayArrivalFromWalk(segs, points);
 		expect(out[0].endTs).toBe(segs[0].endTs);
-		expect((out[0] as { needsReenrich?: boolean }).needsReenrich).toBeFalsy();
 	});
 
 	it("does not fire on a pause too short to be an arrival", () => {

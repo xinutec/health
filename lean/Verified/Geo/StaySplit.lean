@@ -1853,8 +1853,17 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
       -- enrichment derived from the old one. By hand the walk would keep an
       -- avgSpeed the standing tail dragged down — the very seconds this pass
       -- has just taken away from it.
+      -- `walkRemainder` recomputes the kinematics over the new window, which is
+      -- what this pass wants — the seconds it removes are the standing ones
+      -- that dragged the average down. But it also clears the enrichment and
+      -- flags `needsReenrich`, and that is wrong here: its own callers carve a
+      -- remainder whose MODE is genuinely in question, while trimming an
+      -- arrival changes the window and never what the segment IS. Forcing the
+      -- re-derivation made a shortened leg come back `cycling` on 2026-04-29,
+      -- and `repairVehicleHandoff` absorbed 27 minutes of it into the adjacent
+      -- train as an impossible vehicle hand-off.
       let rebuilt := walkRemainder cur cur.startTs arrivalTs points
-      let walk := { rebuilt with refinedReason := some reason }
+      let walk := { rebuilt with refinedMode := cur.refinedMode, wayName := cur.wayName, needsReenrich := false, refinedReason := some reason }
       -- The stay keeps its enrichment (same place, entered earlier) but its
       -- window grew, so its sample-derived fields are recomputed over it.
       let stayFixes := points.filter fun p => p.ts ≥ arrivalTs && p.ts < next.endTs
@@ -1921,7 +1930,9 @@ private def runOn (dwellS : Int) (spread : Float := 4) : Array Seg :=
 -- The boundary lands on the first standing fix, not on the segmenter's window
 -- edge: 1000616, where HEAD left it at 1000784 (168 s late).
 #guard (runOn 140)[0]!.endTs == 1000616
-#guard (runOn 140)[0]!.needsReenrich == true
+-- It does NOT force re-derivation: that redoes the MODE too, and a shortened
+-- leg came back `cycling` on 2026-04-29 and was absorbed into a train.
+#guard (runOn 140)[0]!.needsReenrich == false
 -- Time is moved, never dropped: the stay picks up exactly what the walk gave up.
 #guard (runOn 140)[1]!.startTs == (runOn 140)[0]!.endTs
 #guard (runOn 140)[0]!.startTs == 1000000

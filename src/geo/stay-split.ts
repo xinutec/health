@@ -1379,13 +1379,32 @@ export function claimStayArrivalFromWalk<T extends TrackSegment>(
 			continue;
 		}
 		const reason = `arrival boundary moved back ${movedS} s: the walk's tail held position within ${Math.round(spreadM)} m for ${Math.round(durS)} s`;
-		// `walkRemainder` is the family's rebuild: it recomputes pointCount /
-		// avgSpeed / maxSpeed / linearity over the new window and clears the
-		// enrichment derived from the old one. Doing this by hand would leave
-		// the walk carrying an avgSpeed that the standing tail dragged down —
-		// the very seconds this pass just took away from it.
+		// `walkRemainder` recomputes pointCount / avgSpeed / maxSpeed / linearity
+		// over the new window, which is what this pass needs: the seconds it takes
+		// away are the standing ones that were dragging the walk's average down.
+		//
+		// But it also CLEARS the enrichment and flags `needsReenrich`, and that is
+		// wrong here. Its own callers carve a remainder whose MODE is genuinely
+		// back in question (a "walk" that turned out to span a ride). Trimming an
+		// arrival changes the window, never what the segment IS — and forcing the
+		// re-derivation is not free: on 2026-04-29 the shortened leg came back
+		// `cycling`, and `repairVehicleHandoff` then absorbed 27 minutes of it
+		// into the adjacent train as an impossible vehicle hand-off.
+		//
+		// So: keep the recomputed kinematics, keep the existing naming and mode.
+		// The cost is a walk trimmed of its arrival that is still named for the
+		// street it overran onto (2026-06-22 @09:01Z). Re-deriving only the NAME,
+		// without re-deriving the mode, is the fix for that and is not this
+		// pass's to make.
 		const rebuilt = walkRemainder(cur, cur.startTs, arrivalTs, points);
-		out.push({ ...rebuilt, refinedReason: reason });
+		const kept = cur as { refinedMode?: TransportMode; wayName?: string };
+		out.push({
+			...rebuilt,
+			refinedMode: kept.refinedMode,
+			wayName: kept.wayName,
+			needsReenrich: false,
+			refinedReason: reason,
+		});
 		// The stay keeps its enrichment — it is the same place, merely entered
 		// earlier — but its window grew, so its sample-derived fields must be
 		// recomputed over it.
