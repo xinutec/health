@@ -28,7 +28,6 @@
  * ledger surfaces them so the flip is never blind.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
 import { polylineDeviationM } from "../geo/leg-compare.js";
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaFingerprint, deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
@@ -249,26 +248,6 @@ export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], tolerance
 		const geometry = { lineDevM, toleranceM, sameVertexCount: tsIdx.length === keep.length };
 		const note = `${symdiffNote(shape)} line=${lineDevM.toFixed(2)} m/tol ${toleranceM} m`;
 		recordDivergence("simplify", pts.length, note, shape, geometry);
-		// #766: dump the diverging input so the disputed argmax can be replayed
-		// offline by `scripts/probe-simplify-divergence.mjs`. Off unless the env
-		// var is set, and it fires only on a divergence — but it writes a GPS
-		// track, so point it somewhere outside the repo (the repo is public).
-		// Delete this block with #766.
-		if (process.env.SIMPLIFY_DUMP_DIR) {
-			mkdirSync(process.env.SIMPLIFY_DUMP_DIR, { recursive: true });
-			writeFileSync(
-				`${process.env.SIMPLIFY_DUMP_DIR}/simplify-${pts.length}-${tsIdx.length}.json`,
-				JSON.stringify({
-					n: pts.length,
-					toleranceM,
-					pts: pts.map((p) => [p.lat, p.lon]),
-					tsIdx,
-					keep,
-					tsOnly: shape.tsOnly,
-					leanOnly: shape.leanOnly,
-				}),
-			);
-		}
 		if (mode === "shadow") console.warn(`[lean-passes] simplify divergence (n=${pts.length}): ${note}`);
 	}
 	return mode === "on" ? keep.map((i) => pts[i]) : tsResult;
