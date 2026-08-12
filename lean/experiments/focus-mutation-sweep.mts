@@ -119,7 +119,7 @@ const MUTATIONS: Mutation[] = [
 	// --- geometry and admission: the stay/cluster detector's four constants ---
 	{ name: "stay-radius", file: FP, from: "def STAY_RADIUS_M : Float := 100", to: "def STAY_RADIUS_M : Float := 110" },
 	{ name: "cluster-radius", file: FP, from: "def CLUSTER_RADIUS_M : Float := 150", to: "def CLUSTER_RADIUS_M : Float := 160" },
-	{ name: "min-duration", file: FP, from: "def STAY_MIN_DURATION_SEC : Int := 10 * 60", to: "def STAY_MIN_DURATION_SEC : Int := 11 * 60" },
+	{ name: "min-duration", file: FP, from: "def FOCUS_VISIT_MIN_S : Int := 10 * 60", to: "def FOCUS_VISIT_MIN_S : Int := 11 * 60" },
 	{ name: "accuracy-filter", file: FP, from: "def ACCURACY_FILTER_M : Float := 200", to: "def ACCURACY_FILTER_M : Float := 150" },
 
 	// --- splitCluster: the k-means lobe split ---

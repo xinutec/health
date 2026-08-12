@@ -8,7 +8,8 @@
  *
  * Pipeline:
  *   1. detectStays — windows where all points cluster within STAY_RADIUS_M of
- *      their median centroid for ≥ STAY_MIN_DURATION_SEC. No max-gap rule;
+ *      their median centroid for ≥ FOCUS_VISIT_MIN_S (NOT the segmenter's
+ *      `SEGMENT_STAY_MIN_S` — see that constant's docs). No max-gap rule;
  *      the radius check breaks the window when the phone moves elsewhere.
  *   2. clusterStays — greedy, plus a post-merge pass to combine drifting
  *      cluster fragments. Centroid is dwell-weighted average.
@@ -19,7 +20,24 @@
 import { haversineMeters } from "./place-snap.js";
 
 export const STAY_RADIUS_M = 100;
-export const STAY_MIN_DURATION_SEC = 10 * 60; // 10 min — short enough to catch cafes
+/**
+ * How long a dwell must last to be MINED as a visit into `focus_places`.
+ *
+ * 10 min — short enough to catch cafes.
+ *
+ * NOT the same question as `SEGMENT_STAY_MIN_S` in `segments.ts`, which is 15
+ * min and asks whether a stretch of track is a stay at all. This one asks
+ * whether an already-detected dwell is a place worth remembering, so it is
+ * deliberately the LOWER bar: a 12-minute coffee stop is a place you went even
+ * where the segmenter's sparse-data fallback would not have cut a stay for it.
+ *
+ * The two were both called `STAY_MIN_DURATION_SEC` until #762. An audit sweep
+ * grepped the name, matched this file first, and wrongly concluded #268 was
+ * citing a stale value — #268's argument is precisely that a 5-10 minute shop
+ * stop cannot survive a 15-minute floor, and it read as contradicted by a
+ * constant of the same name set to 10.
+ */
+export const FOCUS_VISIT_MIN_S = 10 * 60;
 export const ACCURACY_FILTER_M = 200;
 export const CLUSTER_RADIUS_M = 150;
 
@@ -100,7 +118,7 @@ export function detectStays(points: RawPoint[]): Stay[] {
 		if (slice.length >= 2) {
 			const c = medianCentroid(slice);
 			const duration = slice[slice.length - 1].ts - slice[0].ts;
-			if (duration >= STAY_MIN_DURATION_SEC) {
+			if (duration >= FOCUS_VISIT_MIN_S) {
 				stays.push({
 					startTs: slice[0].ts,
 					endTs: slice[slice.length - 1].ts,

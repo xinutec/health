@@ -43,8 +43,13 @@ open Verified.Geo.Velocity (localSolarHour)
 /-! ## Calibration (verbatim from the TS) -/
 
 def STAY_RADIUS_M : Float := 100
-/-- Short enough to catch cafés. -/
-def STAY_MIN_DURATION_SEC : Int := 10 * 60
+/-- How long a dwell must last to be MINED as a visit. Short enough to catch
+cafés.
+
+NOT `Verified.Geo.Segments.SEGMENT_STAY_MIN_S` (15 min), which asks whether
+there is a stay in the track at all. This is the LOWER bar, on purpose. Both
+were called `STAY_MIN_DURATION_SEC` until #762. -/
+def FOCUS_VISIT_MIN_S : Int := 10 * 60
 def ACCURACY_FILTER_M : Float := 200
 def CLUSTER_RADIUS_M : Float := 150
 
@@ -128,7 +133,7 @@ private def maxDistFromCentroid (ps : List RawPoint) (lat lon : Float) : Float :
 Greedily extend a window while every point stays within `STAY_RADIUS_M` of its
 own median centroid; the radius check is what eventually breaks the window
 when the phone moves elsewhere. A window of ≥2 points spanning
-`STAY_MIN_DURATION_SEC` becomes a stay and the scan resumes after it;
+`FOCUS_VISIT_MIN_S` becomes a stay and the scan resumes after it;
 otherwise the scan advances one point and tries again.
 -/
 def detectStays (points : List RawPoint) : List Stay := Id.run do
@@ -152,7 +157,7 @@ def detectStays (points : List RawPoint) : List Stay := Id.run do
       let first := slice.headD default
       let last := slice.getLastD default
       let duration := last.ts - first.ts
-      if decide (duration ≥ STAY_MIN_DURATION_SEC) then
+      if decide (duration ≥ FOCUS_VISIT_MIN_S) then
         stays := stays.push ⟨first.ts, last.ts, cLat, cLon, slice.length, duration⟩
         i := bestJ
         advanced := true
@@ -634,7 +639,7 @@ private def stationaryPoints (lat lon : Float) (from_ to : Int) (accuracy : Opti
        | [s] => s.startTs == DAY0 + 3600 && s.endTs == DAY0 + 8700 && s.pointCount == 18
                 && s.durationSec == 5100 && s.centroidLat == HOME_LAT && s.centroidLon == HOME_LON
        | _ => false
--- Under STAY_MIN_DURATION_SEC, a single point, and nothing at all.
+-- Under FOCUS_VISIT_MIN_S, a single point, and nothing at all.
 #guard (detectStays (stationaryPoints HOME_LAT HOME_LON DAY0 (DAY0 + 400))).length == 0
 #guard (detectStays [⟨DAY0, HOME_LAT, HOME_LON, some 10⟩]).length == 0
 #guard (detectStays []).length == 0

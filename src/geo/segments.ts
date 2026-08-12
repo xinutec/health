@@ -661,7 +661,22 @@ export function smoothSegments(segments: TrackSegment[], minDurationSec: number)
 
 // --- Stay detection (sparse-data fallback) ---
 
-const STAY_MIN_DURATION_SEC = 15 * 60; // 15 minutes
+/**
+ * How long a stretch of track must hold still to be CUT AS A STAY by the
+ * sparse-data fallback. 15 minutes.
+ *
+ * NOT the same question as `FOCUS_VISIT_MIN_S` in `focus-places.ts`, which is
+ * 10 min and asks whether an already-detected dwell is worth mining into
+ * `focus_places`. This one decides whether there is a stay in the track at all,
+ * so it is the HIGHER bar — a shorter pause here is not yet distinguishable
+ * from a gap in sparse fixes.
+ *
+ * The gap between the two is the subject of #268: a 5-10 minute shop stop
+ * cannot survive this floor, so an evening walk swallows it whole. Both
+ * constants were called `STAY_MIN_DURATION_SEC` until #762, which made that
+ * argument read as self-contradicting.
+ */
+const SEGMENT_STAY_MIN_S = 15 * 60;
 /** Trajectory-segmentation radius for honest-gaps findStays. A new fix
  *  beyond this distance from the running cluster centroid starts a new
  *  cluster. Sized to tolerate indoor / urban-canyon GPS jitter that can
@@ -686,7 +701,7 @@ interface StayPoint {
  * points in time order, maintaining a running cluster. A point within
  * `CLUSTER_RADIUS_M` of the current cluster's centroid joins it; a point
  * outside that radius closes the current cluster and starts a new one.
- * Each closed cluster with ≥ 2 fixes spanning ≥ STAY_MIN_DURATION_SEC
+ * Each closed cluster with ≥ 2 fixes spanning ≥ SEGMENT_STAY_MIN_S
  * becomes a stationary stay.
  *
  * This replaces an earlier single-median + 150 m radius approach that
@@ -713,19 +728,19 @@ export function findStays(points: StayPoint[], existing: TrackSegment[]): TrackS
 		gaps.push({ start: points[0].ts, end: points[points.length - 1].ts });
 	} else {
 		const firstPointTs = points[0].ts;
-		if (sorted[0].startTs - firstPointTs >= STAY_MIN_DURATION_SEC) {
+		if (sorted[0].startTs - firstPointTs >= SEGMENT_STAY_MIN_S) {
 			gaps.push({ start: firstPointTs, end: sorted[0].startTs });
 		}
 		for (let i = 0; i < sorted.length - 1; i++) {
 			const gapStart = sorted[i].endTs;
 			const gapEnd = sorted[i + 1].startTs;
-			if (gapEnd - gapStart >= STAY_MIN_DURATION_SEC) {
+			if (gapEnd - gapStart >= SEGMENT_STAY_MIN_S) {
 				gaps.push({ start: gapStart, end: gapEnd });
 			}
 		}
 		const lastPointTs = points[points.length - 1].ts;
 		const lastSegEnd = sorted[sorted.length - 1].endTs;
-		if (lastPointTs - lastSegEnd >= STAY_MIN_DURATION_SEC) {
+		if (lastPointTs - lastSegEnd >= SEGMENT_STAY_MIN_S) {
 			gaps.push({ start: lastSegEnd, end: lastPointTs });
 		}
 	}
@@ -736,7 +751,7 @@ export function findStays(points: StayPoint[], existing: TrackSegment[]): TrackS
 		if (cluster.length < 2) return;
 		const sortedCluster = [...cluster].sort((a, b) => a.ts - b.ts);
 		const duration = sortedCluster[sortedCluster.length - 1].ts - sortedCluster[0].ts;
-		if (duration < STAY_MIN_DURATION_SEC) return;
+		if (duration < SEGMENT_STAY_MIN_S) return;
 		stays.push({
 			startTs: sortedCluster[0].ts,
 			endTs: sortedCluster[sortedCluster.length - 1].ts,

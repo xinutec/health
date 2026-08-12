@@ -225,7 +225,11 @@ reference-tested THROUGH `classifySegments`, which is the only caller. -/
 
 /-! ### Constants (verbatim from segments.ts) -/
 def STATIONARY_SPLIT_DIST_M : Float := 100
-def STAY_MIN_DURATION_SEC : Int := 15 * 60
+/-- How long a stretch must hold still to be CUT AS A STAY by the sparse-data
+fallback. NOT `Verified.Geo.FocusPlaces.FOCUS_VISIT_MIN_S` (10 min), which asks
+whether a dwell is worth mining. This is the HIGHER bar, and the floor #268's
+swallowed shop stops fall under. Both were `STAY_MIN_DURATION_SEC` until #762. -/
+def SEGMENT_STAY_MIN_S : Int := 15 * 60
 def CLUSTER_RADIUS_M : Float := 150
 def WINDOW_SEC : Int := 300
 def MIN_SEGMENT_SEC : Int := 120
@@ -440,7 +444,7 @@ private def emitStay (cluster : Array StayPoint) : Option TrackSegment :=
   let sc := (cluster.toList.mergeSort (fun a b => a.ts ≤ b.ts)).toArray
   let first := sc[0]!
   let last := sc[sc.size-1]!
-  if last.ts - first.ts < STAY_MIN_DURATION_SEC then none else
+  if last.ts - first.ts < SEGMENT_STAY_MIN_S then none else
   some { startTs := first.ts, endTs := last.ts, mode := "stationary"
          confidence := 0.9, confidenceMargin := MARGIN_MAX_FINITE
          avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := sc.size }
@@ -461,14 +465,14 @@ def findStays (points : Array StayPoint) (existing : Array TrackSegment) : Array
     if sorted.isEmpty then
       gaps := #[(firstTs, lastTs)]
     else
-      if sorted[0]!.startTs - firstTs ≥ STAY_MIN_DURATION_SEC then
+      if sorted[0]!.startTs - firstTs ≥ SEGMENT_STAY_MIN_S then
         gaps := gaps.push (firstTs, sorted[0]!.startTs)
       for i in [0:sorted.size-1] do
         let gapStart := sorted[i]!.endTs
         let gapEnd := sorted[i+1]!.startTs
-        if gapEnd - gapStart ≥ STAY_MIN_DURATION_SEC then gaps := gaps.push (gapStart, gapEnd)
+        if gapEnd - gapStart ≥ SEGMENT_STAY_MIN_S then gaps := gaps.push (gapStart, gapEnd)
       let lastSegEnd := sorted[sorted.size-1]!.endTs
-      if lastTs - lastSegEnd ≥ STAY_MIN_DURATION_SEC then gaps := gaps.push (lastSegEnd, lastTs)
+      if lastTs - lastSegEnd ≥ SEGMENT_STAY_MIN_S then gaps := gaps.push (lastSegEnd, lastTs)
     let mut stays : Array TrackSegment := #[]
     for (gs, ge) in gaps do
       let inGap := ((stayPointsInWindow points gs ge).toList.mergeSort (fun a b => a.ts ≤ b.ts)).toArray
