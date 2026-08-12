@@ -421,6 +421,8 @@ def passes (e : Env) : Array Pass := #[
   -- rail and drive absorber has claimed the segments it owns, so this only
   -- touches genuine standalone phantom stops. The ONLY pass that changes the
   -- segment COUNT by merging, so it carries a merge plan as well as decisions.
+  ("rideTailTrim", fun segs =>
+    Verified.Geo.Interchange.trimRideTailAtWalk segs e.interchangeFixes e.interchangeSteps),
   ("walkThrough", fun segs =>
     Verified.Geo.BiometricLabels.applyStationaryWalkThroughApplied
       segs.toList e.biomSteps e.labelFixes),
@@ -659,7 +661,7 @@ private def NO_LOOKUPS : Env :=
   #["stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
     "railRuns", "undergroundRail", "revertIsolatedCadence2", "boardingPlatform",
     "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
-    "interchangeSplit", "walkThrough", "interchangeLabel",
+    "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
     "rideHeadClaim", "stayArrivalClaim",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
@@ -682,7 +684,7 @@ def TS_CASCADE : Array String := #[
   "stationaryCoherence", "merge", "consolidateJitterStays", "reversalSplit",
   "railRuns", "undergroundRail", "revertIsolatedCadence2", "boardingPlatform",
   "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
-  "interchangeSplit", "walkThrough", "interchangeLabel", "vehicleSplit",
+  "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
@@ -690,7 +692,7 @@ def TS_CASCADE : Array String := #[
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 40
+#guard TS_CASCADE.size == 41
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1121,7 +1123,7 @@ into three groups:
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
   #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
-    "stayArrivalClaim",
+    "stayArrivalClaim", "rideTailTrim",
     "interchangeSplit", "busEvidence", "busRoutes", "walkThrough", "roadMatch", "walkMatch"]
 
 /-- Wired passes with a witness above. -/

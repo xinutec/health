@@ -49,7 +49,7 @@ import { useBiometricFactor } from "./factors/feature-flag.js";
 import { hourProfileForRange, localSolarHour } from "./focus-places.js";
 import { qualityFilterGps } from "./gps-quality.js";
 import { inferEmptyDayStatesFromBracket } from "./infer-empty-day.js";
-import { spliceInterchanges } from "./interchange-split.js";
+import { spliceInterchanges, trimRideTailAtWalk } from "./interchange-split.js";
 import type { FilteredPoint } from "./kalman.js";
 import { filterGpsTrack } from "./kalman.js";
 import { loadClassificationInputs } from "./load-classification-inputs.js";
@@ -1391,6 +1391,16 @@ export async function computeVelocityFromInputs(
 		{
 			name: "interchangeSplit",
 			run: (segs) => spliceInterchanges(segs, points, steps, inputs.osm),
+		},
+
+		// The other shape of the same evidence: the burst is in the leg's
+		// TAIL and the ride never resumes, so the leg has been drawn past the
+		// moment the rider got off. Runs immediately after the splice because
+		// it must not see a leg the splice is about to cut, and because a
+		// resumed ride is the splice's case, not this one.
+		{
+			name: "rideTailTrim",
+			run: (segs) => trimRideTailAtWalk(segs, points, steps),
 		},
 		{
 			name: "walkThrough",

@@ -171,6 +171,8 @@ private def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array F
 /-- `Math.round` — halves go UP, towards +∞. The slop is a sum of absolute
     values, so the negative half of the rule is unreachable here. -/
 private def jsRoundInt (x : Float) : Int := (Float.floor (x + 0.5)).toInt64.toInt
+/-- `Math.round` keeping a Float, for the rebuilt kinematics. -/
+private def jsRoundF (x : Float) : Float := Float.floor (x + 0.5)
 
 /-- `[...new Set(xs)]` — first occurrence wins, insertion order preserved. -/
 private def dedup (xs : List String) : List String :=
@@ -255,7 +257,121 @@ def spliceInterchanges (segments : Array Seg) (points : Array Fix) (steps : List
   segments.foldl (init := #[]) fun out seg =>
     out ++ spliceOne seg points steps linesAtPoint stationsOnLine
 
+/-! ## Ride tail past the alight (`trimRideTailAtWalk`) -/
+
+/-- Fixes at or above this pace are the vehicle still moving. A ride that
+    resumes after the burst is an INTERCHANGE, which `spliceInterchanges` owns. -/
+def TAIL_RIDE_RESUMES_KMH : Float := 25
+/-- Leave a real ride behind; below this the leg is something else mislabelled. -/
+def TAIL_MIN_REMAINING_RIDE_S : Int := 3 * 60
+
+private def tailStepKmh (fixes : Array Fix) (i : Nat) : Float :=
+  let dt := fixes[i]!.ts - fixes[i-1]!.ts
+  if dt > 0 then
+    haversineMeters fixes[i-1]!.lat fixes[i-1]!.lon fixes[i]!.lat fixes[i]!.lon / Float.ofInt dt * 3.6
+  else 0
+
+/-- Trim a train leg drawn past its alight, and re-home the trimmed time.
+
+    `spliceInterchanges` handles a burst in the MIDDLE of an impossible leg.
+    This handles the other shape: the burst is in the TAIL, the ride never
+    resumes, and the leg has been drawn past the moment the rider got off.
+
+    Resumption is checked from the burst's END, not its start: step buckets are
+    per-minute, so the burst's first minute routinely still holds the vehicle
+    BRAKING into the station (2026-06-18 has a 27.9 km/h fix fifteen seconds
+    in). Testing from the start reads that as the ride resuming and refuses
+    every real tail.
+
+    The trimmed span is re-emitted as ONE walking leg. Leaving a hole would
+    stop the day for eight minutes; separating that walk from the stop which
+    follows it is #268's law and is deliberately not attempted here. -/
+def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
+    (steps : List StepPoint) : Array Seg :=
+  segments.foldl (init := #[]) fun out seg => Id.run do
+    if effectiveMode seg != "train" then return out.push seg
+    match findInterchangeBurst steps seg.startTs seg.endTs with
+    | none => return out.push seg
+    | some burst =>
+      let inLeg := samplesInWindow points seg.startTs seg.endTs
+      if inLeg.size < 3 then return out.push seg
+      let mut resumes := false
+      for i in [1:inLeg.size] do
+        if inLeg[i]!.ts > burst.endTs && tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then
+          resumes := true
+      if resumes then return out.push seg
+      let mut alightTs := seg.startTs
+      for i in [1:inLeg.size] do
+        if tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then alightTs := inLeg[i]!.ts
+      if alightTs - seg.startTs < TAIL_MIN_REMAINING_RIDE_S || alightTs ≥ seg.endTs then
+        return out.push seg
+      let trimmedS := seg.endTs - alightTs
+      let burstS := burst.endTs - burst.startTs
+      let rideWhy := s!"alight trimmed back {trimmedS} s: the leg ran past it through a {burstS} s walking burst"
+      let walkWhy := s!"carved from the ride's overrun tail: {burstS} s of walking-cadence steps inside a train leg"
+      let ride := { seg with endTs := alightTs, refinedReason := some rideWhy }
+      -- Kinematics RECOMPUTED over the carved window: inheriting gives a walk
+      -- the ride's 90 km/h, zeroing makes every later pass read it as
+      -- stationary. Both are lies a downstream pass acts on.
+      let tail := inLeg.filter (fun p => p.ts ≥ alightTs)
+      let mut speeds : Array Float := #[]
+      let mut path : Float := 0
+      for i in [1:tail.size] do
+        let dt := tail[i]!.ts - tail[i-1]!.ts
+        let d := haversineMeters tail[i-1]!.lat tail[i-1]!.lon tail[i]!.lat tail[i]!.lon
+        path := path + d
+        if dt > 0 then speeds := speeds.push (d / Float.ofInt dt * 3.6)
+      let net : Float := if tail.size ≥ 2 then
+        haversineMeters tail[0]!.lat tail[0]!.lon tail[tail.size-1]!.lat tail[tail.size-1]!.lon else 0
+      let avg : Float := if speeds.isEmpty then 0 else (speeds.foldl (· + ·) 0) / Float.ofNat speeds.size
+      let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+      let lin : Float := if path > 0 then min (net / path) 1.0 else 0
+      let walk := { seg with startTs := alightTs, mode := "walking", refinedMode := none, wayName := none, pointCount := Int.ofNat tail.size, avgSpeed := jsRoundF (avg * 10) / 10, maxSpeed := jsRoundF (mx * 10) / 10, linearity := jsRoundF (lin * 100) / 100, refinedReason := some walkWhy }
+      return (out.push ride).push walk
+
 /-! ## Parity with Node/V8 (`lean/experiments/interchange-refs.mts`) -/
+
+/-! ### `trimRideTailAtWalk` — the 06-18 shape
+
+A ride at vehicle pace, a walk out of the station, then STOPPED, all inside one
+train leg. The stationary part is load-bearing in the fixture: a burst within
+`BURST_EDGE_GUARD_S` of a leg edge is discarded, so a tail burst is only
+visible because the leg runs on past it. -/
+
+private def tailFixes : Array Fix := Id.run do
+  let mut pts : Array Fix := #[]
+  let mut m : Float := 0
+  let mut ts : Int := 0
+  while ts < 420 do
+    pts := pts.push ⟨ts, 51.0 + m / 111195, 0⟩; m := m + 250; ts := ts + 14
+  -- braking into the station, ~28 km/h, INSIDE the burst's first minute
+  pts := pts.push ⟨ts, 51.0 + m / 111195, 0⟩; m := m + 110; ts := ts + 14
+  while ts < 600 do
+    pts := pts.push ⟨ts, 51.0 + m / 111195, 0⟩; m := m + 20; ts := ts + 14
+  while ts ≤ 900 do
+    pts := pts.push ⟨ts, 51.0 + m / 111195, 0⟩; m := m + 1; ts := ts + 14
+  return pts
+
+private def tailSteps : List StepPoint :=
+  (List.range 3).map (fun k => ⟨420 + Int.ofNat k * 60, 93⟩)
+private def tailSeg : Seg :=
+  { startTs := 0, endTs := 900, mode := "train", wayName := some "A → B · Metropolitan Line" }
+
+-- Trims, and re-homes the trimmed span as a walking leg rather than a hole.
+#guard (trimRideTailAtWalk #[tailSeg] tailFixes tailSteps).size == 2
+#guard (trimRideTailAtWalk #[tailSeg] tailFixes tailSteps)[1]!.mode == "walking"
+#guard (trimRideTailAtWalk #[tailSeg] tailFixes tailSteps)[1]!.startTs
+     == (trimRideTailAtWalk #[tailSeg] tailFixes tailSteps)[0]!.endTs
+#guard (trimRideTailAtWalk #[tailSeg] tailFixes tailSteps)[1]!.endTs == 900
+-- The braking fix inside the burst is the train arriving, not the ride
+-- resuming: checked from the burst's END. Reading it from the start refuses
+-- every real tail.
+#guard decide ((trimRideTailAtWalk #[tailSeg] tailFixes tailSteps)[0]!.endTs < 900)
+-- No burst, no trim.
+#guard (trimRideTailAtWalk #[tailSeg] tailFixes [⟨480, 5⟩]).size == 1
+-- Not a train leg, not ours.
+#guard (trimRideTailAtWalk #[{ tailSeg with mode := "driving" }] tailFixes tailSteps).size == 1
+
 
 private def cleanSteps : List StepPoint :=
   [⟨60, 5⟩, ⟨300, 112⟩, ⟨360, 113⟩, ⟨420, 110⟩, ⟨600, 4⟩, ⟨1140, 8⟩]

@@ -344,3 +344,151 @@ export function pickInterchange(opts: {
 	}
 	return best;
 }
+
+// --- ride tail past the alight -----------------------------------------
+
+/** A step pace at or above this is the rider walking, not riding. Reuses
+ *  {@link BURST_MIN_CADENCE}, the bar `findInterchangeBurst` already applies. */
+/** Fixes at or above this pace are the vehicle still moving. A ride that
+ *  resumes after the burst is an INTERCHANGE (or a station stop), not a tail —
+ *  `spliceInterchanges` owns that case and this pass must not touch it. */
+const TAIL_RIDE_RESUMES_KMH = 25;
+/** Leave a real ride behind. Below this the leg is not a ride with a tail, it
+ *  is something else mislabelled, and reclassifying it is not this pass's call. */
+const TAIL_MIN_REMAINING_RIDE_S = 3 * 60;
+
+/**
+ * Trim a train leg that runs past its alight.
+ *
+ * `spliceInterchanges` above handles a burst in the MIDDLE of an impossible
+ * leg. This handles the other shape: the burst is in the TAIL, the ride never
+ * resumes, and the leg has simply been drawn past the moment the rider got
+ * off — swallowing the walk out of the station, and whatever the rider then
+ * did, into the ride.
+ *
+ * MEASURED 2026-06-18, a Metropolitan-line leg drawn 12:06–12:21Z:
+ *
+ *     12:08–12:13:01   46–101 km/h   the ride
+ *     12:13:15         27.9 km/h     decelerating into the station
+ *     12:13:29–12:16   2.5–7.1 km/h  walking, and the step burst runs 12:13–12:16
+ *     12:16:15 on      0.1–1.1 km/h  stopped
+ *
+ * `worldline-feasibility` convicts that leg — "train leg sustains a
+ * pedestrian-paced stepping run: 146 m over 180 s at 93 steps/min" — and it is
+ * right: three minutes of the ride are the rider on foot.
+ *
+ * This pass moves the alight to where the walking starts. It does NOT try to
+ * surface what happened afterwards; separating the walk from the stop that
+ * follows it is #268's law, and needs the joint signal (zero cadence AND
+ * near-zero displacement AND a nameable venue), not a boundary move.
+ *
+ * Deliberately narrow: the ride must not resume after the burst. That is what
+ * distinguishes a tail from an interchange, and it is checked against the
+ * FIXES rather than the label, because the label is the thing in question.
+ */
+export function trimRideTailAtWalk<T extends SpliceableSegment>(
+	segments: readonly T[],
+	points: ReadonlyArray<{ ts: number; lat: number; lon: number }>,
+	steps: readonly StepPoint[],
+): T[] {
+	const out: T[] = [];
+	for (const seg of segments) {
+		if (effectiveMode(seg) !== "train") {
+			out.push(seg);
+			continue;
+		}
+		const burst = findInterchangeBurst(steps, seg.startTs, seg.endTs);
+		if (!burst) {
+			out.push(seg);
+			continue;
+		}
+		const inLeg = samplesInWindow(points, seg)
+			.slice()
+			.sort((a, b) => a.ts - b.ts);
+		if (inLeg.length < 3) {
+			out.push(seg);
+			continue;
+		}
+		const stepKmh = (i: number): number => {
+			const dt = inLeg[i].ts - inLeg[i - 1].ts;
+			return dt > 0 ? (haversineMeters(inLeg[i - 1].lat, inLeg[i - 1].lon, inLeg[i].lat, inLeg[i].lon) / dt) * 3.6 : 0;
+		};
+		// The ride must not come back after the burst starts. Checked on the
+		// fixes: a leg that resumes vehicle pace is an interchange or a station
+		// stop, and `spliceInterchanges` owns those.
+		// Checked from the burst's END, not its start. Step buckets are
+		// per-minute, so the burst's first minute routinely still contains the
+		// vehicle DECELERATING into the station — 06-18 has a 27.9 km/h fix
+		// fifteen seconds into the burst. Testing from the start reads that
+		// braking as the ride resuming and refuses every real tail.
+		let resumes = false;
+		for (let i = 1; i < inLeg.length; i++) {
+			if (inLeg[i].ts > burst.endTs && stepKmh(i) >= TAIL_RIDE_RESUMES_KMH) {
+				resumes = true;
+				break;
+			}
+		}
+		if (resumes) {
+			out.push(seg);
+			continue;
+		}
+		// The alight is the last fix reached at vehicle pace — including the
+		// braking fixes inside the burst's first minute, which are the train
+		// arriving, not the rider walking.
+		let alightTs = seg.startTs;
+		for (let i = 1; i < inLeg.length; i++) {
+			if (stepKmh(i) >= TAIL_RIDE_RESUMES_KMH) alightTs = inLeg[i].ts;
+		}
+		if (alightTs - seg.startTs < TAIL_MIN_REMAINING_RIDE_S || alightTs >= seg.endTs) {
+			out.push(seg);
+			continue;
+		}
+		const trimmedS = Math.round(seg.endTs - alightTs);
+		const reason = `alight trimmed back ${trimmedS} s: the leg ran past it through a ${Math.round(burst.endTs - burst.startTs)} s walking burst`;
+		out.push({
+			...seg,
+			endTs: alightTs,
+			refinedReason: seg.refinedReason ? `${seg.refinedReason}; ${reason}` : reason,
+		});
+		// Re-home the trimmed time. Leaving a hole in the timeline is worse
+		// than the leg that was too long — the day would simply stop for eight
+		// minutes. It is emitted as ONE walking leg: the rider walked out of
+		// the station and then, on 06-18, stopped. Separating those two is
+		// #268's law (zero cadence AND held position AND a nameable venue),
+		// which this pass deliberately does not attempt. The station-side
+		// naming is dropped because it described the ride, not this stretch.
+		// Kinematics are RECOMPUTED over the carved window, not inherited and
+		// not zeroed. Inheriting gives a walk the ride's 90 km/h; zeroing gives
+		// it 0 and every later pass reads it as stationary. Either is a lie a
+		// downstream pass will act on.
+		const tail = inLeg.filter((p) => p.ts >= alightTs);
+		const tailSpeeds: number[] = [];
+		for (let i = 1; i < tail.length; i++) {
+			const dt = tail[i].ts - tail[i - 1].ts;
+			if (dt > 0)
+				tailSpeeds.push((haversineMeters(tail[i - 1].lat, tail[i - 1].lon, tail[i].lat, tail[i].lon) / dt) * 3.6);
+		}
+		const net =
+			tail.length >= 2
+				? haversineMeters(tail[0].lat, tail[0].lon, tail[tail.length - 1].lat, tail[tail.length - 1].lon)
+				: 0;
+		let path = 0;
+		for (let i = 1; i < tail.length; i++)
+			path += haversineMeters(tail[i - 1].lat, tail[i - 1].lon, tail[i].lat, tail[i].lon);
+		out.push({
+			...seg,
+			startTs: alightTs,
+			mode: "walking" as TransportMode,
+			refinedMode: undefined,
+			wayName: undefined,
+			pointCount: tail.length,
+			avgSpeed: tailSpeeds.length
+				? Math.round((tailSpeeds.reduce((a, b) => a + b, 0) / tailSpeeds.length) * 10) / 10
+				: 0,
+			maxSpeed: tailSpeeds.length ? Math.round(Math.max(...tailSpeeds) * 10) / 10 : 0,
+			linearity: path > 0 ? Math.round(Math.min(net / path, 1) * 100) / 100 : 0,
+			refinedReason: `carved from the ride's overrun tail: ${Math.round(burst.endTs - burst.startTs)} s of walking-cadence steps inside a train leg`,
+		});
+	}
+	return out;
+}
