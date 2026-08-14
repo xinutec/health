@@ -14,6 +14,7 @@
  * Pure; no DB, no IO.
  */
 
+import { haversineMeters } from "./place-snap.js";
 import type { RefinedKind, TransportMode } from "./segments.js";
 
 /** The minimum shape these helpers read: a time window plus a mode that a
@@ -88,6 +89,67 @@ export function addRefinedKind(
  *  substring-matching `refinedReason`. */
 export function hasRefinedKind(seg: { refinedKinds?: readonly RefinedKind[] }, kind: RefinedKind): boolean {
 	return seg.refinedKinds?.includes(kind) ?? false;
+}
+
+/** The kinematic summary a segment carries. Every field is an observation
+ *  about the segment's OWN window — see {@link statsOverWindow}. */
+export interface WindowStats {
+	pointCount: number;
+	avgSpeed: number;
+	maxSpeed: number;
+	linearity: number;
+}
+
+/**
+ * Recompute a segment's kinematics from the fixes its window actually owns.
+ *
+ * A carve that reslices a segment and emits the pieces as `{...seg, startTs,
+ * endTs}` hands every piece the PARENT's summary. That summary was measured
+ * across the whole parent — including whatever the carve just removed — so the
+ * piece reports a peak that never happened inside it, and the kinematic
+ * invariants downstream read that peak as evidence. Measured on the golden
+ * corpus: 60 of 208 walking segments reported a `maxSpeed` their own fixes do
+ * not support, the underground carve's post-tube walks among them, one of them
+ * claiming 187.2 km/h on foot.
+ *
+ * `avgSpeed` is the MEDIAN, matching how `classifySegments` derives it — a mean
+ * over a window containing a ride is dragged by the ride.
+ *
+ * @param excludeStart drops the fix ON `startTs`. Set it when a VEHICLE
+ * precedes this window: the fix at the boundary is the one the vehicle arrived
+ * on and its speed reading is the vehicle's, so a following walk that keeps it
+ * is right back to claiming the ride's arrival speed on foot.
+ */
+export function statsOverWindow(
+	points: readonly (Timestamped & LatLon & { speed_kmh?: number })[],
+	startTs: number,
+	endTs: number,
+	excludeStart = false,
+): WindowStats {
+	const fixes = points
+		.filter((p) => (excludeStart ? p.ts > startTs : p.ts >= startTs) && p.ts <= endTs)
+		.sort((a, b) => a.ts - b.ts);
+	if (fixes.length === 0) return { pointCount: 0, avgSpeed: 0, maxSpeed: 0, linearity: 0 };
+	const speeds = fixes.map((f) => f.speed_kmh ?? 0);
+	const sorted = [...speeds].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	const med = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+	let pathDist = 0;
+	for (let k = 1; k < fixes.length; k++) {
+		pathDist += haversineMeters(fixes[k - 1].lat, fixes[k - 1].lon, fixes[k].lat, fixes[k].lon);
+	}
+	const straight = haversineMeters(
+		fixes[0].lat,
+		fixes[0].lon,
+		fixes[fixes.length - 1].lat,
+		fixes[fixes.length - 1].lon,
+	);
+	return {
+		pointCount: fixes.length,
+		avgSpeed: Math.round(med * 10) / 10,
+		maxSpeed: Math.round(Math.max(...speeds) * 10) / 10,
+		linearity: pathDist > 0 ? Math.round(Math.min(straight / pathDist, 1) * 100) / 100 : 0,
+	};
 }
 
 /** A geographic point. */

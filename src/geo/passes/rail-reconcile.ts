@@ -12,7 +12,7 @@ import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
 import { haversineMeters } from "../place-snap.js";
 import { interpolateTimes } from "../rail-snap.js";
-import { effectiveMode, samplesInWindow } from "../segment-util.js";
+import { effectiveMode, samplesInWindow, statsOverWindow } from "../segment-util.js";
 import { MOVING_MERGE_MAX_GAP_S } from "./moving.js";
 import { expandTubeLineNames, findRunAlightFix } from "./rail-runs.js";
 
@@ -869,7 +869,12 @@ export function splitChangeoverWindows(
 		}
 		walk.startTs = walkStart;
 		walk.endTs = walkEnd;
-		walk.pointCount = countIn(walkStart, walkEnd);
+		// The stranded ride just moved out of this walk on both sides, so the
+		// peak it reports has to move with it — `pointCount` alone left
+		// 2026-04-29's Arnhem Centraal changeover claiming 87.8 km/h across a
+		// window whose own fixes top out at 5. A ride precedes, so its arrival
+		// fix stays with the ride.
+		Object.assign(walk, statsOverWindow(points, walkStart, walkEnd, true));
 		walk.refinedReason = walk.refinedReason
 			? `${walk.refinedReason}; ${note("trimmed to the platform change")}`
 			: note("trimmed to the platform change");

@@ -33,6 +33,7 @@ import type { NearbyStation, NearbyWay } from "./osm.js";
 import { pickBestStation, refineMode } from "./osm.js";
 import { dbOsmAdapter } from "./osm-adapter.js";
 import { expandTubeLineNames } from "./passes/rail-runs.js";
+import { statsOverWindow } from "./segment-util.js";
 
 /** A raw GPS fix with its reported accuracy radius, in metres. */
 export interface CoarseFix {
@@ -798,10 +799,16 @@ export async function annotateUndergroundRuns(
 			}
 		}
 
+		// The host's summary was measured across the tunnel this carve just
+		// removed, so — by the same rule that already renames the pieces below —
+		// each piece's kinematics come from the fixes it owns. Inheriting gave
+		// the post-tube walks the ride's peak: 07-17's two walks both reported
+		// the host's 84.2 km/h and 114 fixes when they hold 61 and 45.
 		if (keepPre) {
 			result.push({
 				...host,
 				endTs: trainStart,
+				...statsOverWindow(points, host.startTs, trainStart),
 				wayName: await sideWayName(points, host.startTs, trainStart, host.mode, waysLookup),
 			});
 		}
@@ -837,6 +844,9 @@ export async function annotateUndergroundRuns(
 					...host,
 					startTs: change.startTs,
 					endTs: change.endTs,
+					// A train precedes a changeover, so the boundary fix is the one
+					// the train arrived on — the platform walk must not take it.
+					...statsOverWindow(points, change.startTs, change.endTs, true),
 					wayName: await sideWayName(points, change.startTs, change.endTs, host.mode, waysLookup),
 					refinedReason: `underground reconstruction (change of trains at ${leg.alightingStation})`,
 				});
@@ -846,6 +856,10 @@ export async function annotateUndergroundRuns(
 			result.push({
 				...host,
 				startTs: trainEnd,
+				// The ride owns its arrival fix — see the `excludeStart` note on
+				// `statsOverWindow`. This is the #810 shape: a walk that keeps it
+				// reports the train's final approach as its own.
+				...statsOverWindow(points, trainEnd, host.endTs, true),
 				wayName: await sideWayName(points, trainEnd, host.endTs, host.mode, waysLookup),
 			});
 		}

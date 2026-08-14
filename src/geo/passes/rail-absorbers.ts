@@ -13,7 +13,7 @@ import { lineCannotServe, type ServedStationsLookup } from "../line-membership.j
 import { type NearbyStation, pickBestStation } from "../osm.js";
 import { dbOsmAdapter } from "../osm-adapter.js";
 import { haversineMeters } from "../place-snap.js";
-import { effectiveMode, samplesInWindow, samplesInWindowExclusiveEnd } from "../segment-util.js";
+import { effectiveMode, samplesInWindow, samplesInWindowExclusiveEnd, statsOverWindow } from "../segment-util.js";
 import { parseRailWayName } from "./rail-reconcile.js";
 import { expandTubeLineNames, RAIL_RUN_STATION_RADIUS_M } from "./rail-runs.js";
 
@@ -394,7 +394,10 @@ export async function anchorTrainBoardingToWalkedStation(
 		const reason = sameBoard
 			? `boarding boundary extended back to the ${station.name} departure — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk`
 			: `boarding re-anchored to ${station.name} (walk's terminal station) — reclaimed a ${Math.round(tailDist)} m hop the underground reconstruction had left in the walk (was boarding ${rail.board})`;
-		out[k - 1] = { ...walk, endTs: boardFix.ts };
+		// Mirror of the alight side: the reclaimed hop belongs to the ride now,
+		// so it must stop counting toward the walk's peak. No `excludeStart` —
+		// nothing precedes this walk's start, only its END moved.
+		out[k - 1] = { ...walk, endTs: boardFix.ts, ...statsOverWindow(points, walk.startTs, boardFix.ts) };
 		out[k] = {
 			...train,
 			startTs: boardFix.ts,
@@ -556,7 +559,12 @@ export async function anchorTrainAlightToWalkedStation(
 			wayName: sameAlight ? train.wayName : `${rail.board} → ${station.name}${rail.line ? ` · ${rail.line}` : ""}`,
 			refinedReason: train.refinedReason ? `${train.refinedReason}; ${reason}` : reason,
 		};
-		out[k + 1] = { ...walk, startTs: alightFix.ts };
+		// The hop just moved into the ride, so it is no longer the walk's to
+		// report. Leaving the summary alone left 2026-07-02's Euston Underpass
+		// walk claiming a 187.2 km/h peak — the reclaimed 1491 m blackout hop —
+		// long after the fix that produced it had been handed to the train.
+		// `excludeStart` because the ride owns its arrival fix.
+		out[k + 1] = { ...walk, startTs: alightFix.ts, ...statsOverWindow(points, alightFix.ts, walk.endTs, true) };
 	}
 	return out;
 }
