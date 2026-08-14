@@ -404,8 +404,19 @@ export async function reconstructUndergroundJourney(
 }
 
 /** Shortest underground run worth carving out (s). Below this, a stray
- *  pair of coarse fixes in an ordinary walk is just noise. */
+ *  pair of coarse fixes in an ordinary walk is just noise — UNLESS the run
+ *  covers real ground at motorised pace, which noise cannot; see
+ *  `coversGroundTooFastToWalk`. */
 const MIN_RUN_DURATION_S = 180;
+/** How far a sub-floor run must reach to be a ride rather than noise.
+ *  Inter-station scale, the same order as the alight anchor's
+ *  `ALIGHT_HOP_MIN_DIST_M`; GPS jitter cannot accumulate this as NET
+ *  displacement. */
+const SHORT_RUN_MIN_SEP_M = 250;
+/** …and at what pace. Matches `KINEMATIC_VEHICLE_STEP_KMH` and
+ *  `ALIGHT_HOP_MIN_KMH`, the pipeline's standing line between on-foot motion
+ *  and being carried. */
+const SHORT_RUN_MIN_KMH = 15;
 
 /** A surviving side-piece (the walk before/after the tube) shorter than
  *  this is absorbed into the train segment rather than kept as its own
@@ -676,6 +687,41 @@ export async function annotateUndergroundRuns(
 		}
 		const span = (r: CoarseFix[]): number => r[r.length - 1].ts - r[0].ts;
 
+		/** The ground a run covers end to end: the last good fix before it to the
+		 *  first good fix after it. This is the board->alight separation, and it
+		 *  is what the duration floor is really trying to approximate. */
+		const separationM = (r: CoarseFix[]): number => {
+			const g0 = r[0];
+			const g1 = r[r.length - 1];
+			if (!g0 || !g1) return Number.NaN;
+			const b = [...good].reverse().find((f) => f.ts <= g0.ts);
+			const a = good.find((f) => f.ts >= g1.ts);
+			return b && a ? equirectMeters(b.lat, b.lon, a.lat, a.lon) : Number.NaN;
+		};
+
+		/**
+		 * A run too SHORT for the duration floor that is nonetheless a ride.
+		 *
+		 * The floor exists so "a stray pair of coarse fixes in an ordinary walk"
+		 * is not carved out as a journey. That is a proxy, and 2026-06-16 is where
+		 * it and the question part company: the Baker Street -> Green Park Jubilee
+		 * leg surfaces only 76 s of coarse fixes — under the 180 s floor — while
+		 * covering 1079 m, which is 51 km/h. A deep-tube leg with near-total GPS
+		 * loss is short in FIXES, not in travel, and the floor cannot tell the two
+		 * apart. Dropping it cost 06-16 four golden failures: two confirmed truth
+		 * rows, the journey, and an impossible-kinematics leg where the ride was
+		 * drawn as a 112 km/h walk.
+		 *
+		 * So ask the thing the floor approximates. No walk covers an inter-station
+		 * distance at motorised pace; the stray-pair case the floor guards against
+		 * goes nowhere and is still refused.
+		 */
+		const coversGroundTooFastToWalk = (r: CoarseFix[]): boolean => {
+			const sep = separationM(r);
+			const s = span(r);
+			return s > 0 && Number.isFinite(sep) && sep >= SHORT_RUN_MIN_SEP_M && (sep / s) * 3.6 >= SHORT_RUN_MIN_KMH;
+		};
+
 		// `UNDERGROUND_RUN_DUMP=1` prints EVERY candidate run this host contains,
 		// clipped and grown, with the end-to-end board->alight separation — the
 		// axis #445 has not refuted. It prints runs this gate is about to DISCARD
@@ -685,11 +731,7 @@ export async function annotateUndergroundRuns(
 		if (process.env.UNDERGROUND_RUN_DUMP === "1") {
 			for (const r of runs) {
 				const grown = trimBlipTail(growThroughDarkness(r, darkFixes, good), good);
-				const g0 = grown[0];
-				const g1 = grown[grown.length - 1];
-				const b = g0 ? [...good].reverse().find((f) => f.ts <= g0.ts) : undefined;
-				const a = g1 ? good.find((f) => f.ts >= g1.ts) : undefined;
-				const sep = b && a ? equirectMeters(b.lat, b.lon, a.lat, a.lon) : Number.NaN;
+				const sep = separationM(grown);
 				const keptHead = r.length >= MIN_COARSE_FIXES && span(r) >= MIN_RUN_DURATION_S;
 				const keptGrow = grown.length >= MIN_COARSE_FIXES && span(grown) >= MIN_RUN_DURATION_S;
 				console.log(
@@ -697,7 +739,8 @@ export async function annotateUndergroundRuns(
 						` clipped=${span(r)}s grown=${grown.length ? span(grown) : 0}s` +
 						` nfix=${r.length}->${grown.length}` +
 						` sep=${Number.isFinite(sep) ? sep.toFixed(0) : "?"}m` +
-						` head=${keptHead ? "keep" : "drop"} growfirst=${keptGrow ? "keep" : "drop"}`,
+						` head=${keptHead ? "keep" : "drop"} growfirst=${keptGrow ? "keep" : "drop"}` +
+						` fast=${coversGroundTooFastToWalk(r) ? "yes" : "no"}`,
 				);
 			}
 		}
