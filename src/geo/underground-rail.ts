@@ -636,6 +636,33 @@ export async function annotateUndergroundRuns(
 			else runs.push([f]);
 		}
 		const span = (r: CoarseFix[]): number => r[r.length - 1].ts - r[0].ts;
+
+		// `UNDERGROUND_RUN_DUMP=1` prints EVERY candidate run this host contains,
+		// clipped and grown, with the end-to-end board->alight separation — the
+		// axis #445 has not refuted. It prints runs this gate is about to DISCARD
+		// too, which is the whole point: the grow-first patch's two losses are
+		// runs HEAD never keeps, so a dump of what HEAD kept cannot see them.
+		// Behaviour-neutral; off by default.
+		if (process.env.UNDERGROUND_RUN_DUMP === "1") {
+			for (const r of runs) {
+				const grown = trimBlipTail(growThroughDarkness(r, darkFixes, good), good);
+				const g0 = grown[0];
+				const g1 = grown[grown.length - 1];
+				const b = g0 ? [...good].reverse().find((f) => f.ts <= g0.ts) : undefined;
+				const a = g1 ? good.find((f) => f.ts >= g1.ts) : undefined;
+				const sep = b && a ? equirectMeters(b.lat, b.lon, a.lat, a.lon) : Number.NaN;
+				const keptHead = r.length >= MIN_COARSE_FIXES && span(r) >= MIN_RUN_DURATION_S;
+				const keptGrow = grown.length >= MIN_COARSE_FIXES && span(grown) >= MIN_RUN_DURATION_S;
+				console.log(
+					`underground-run ${new Date(r[0].ts * 1000).toISOString().slice(11, 19)}` +
+						` clipped=${span(r)}s grown=${grown.length ? span(grown) : 0}s` +
+						` nfix=${r.length}->${grown.length}` +
+						` sep=${Number.isFinite(sep) ? sep.toFixed(0) : "?"}m` +
+						` head=${keptHead ? "keep" : "drop"} growfirst=${keptGrow ? "keep" : "drop"}`,
+				);
+			}
+		}
+
 		// The journey is the longest-spanning run that clears the bar.
 		const hostRun = runs
 			.filter((r) => r.length >= MIN_COARSE_FIXES && span(r) >= MIN_RUN_DURATION_S)
