@@ -22,12 +22,12 @@
  *   tests/golden/days/<date>-<user>.json     — captured fixtures
  *   tests/golden/ground-truth/<date>.md      — user-confirmed truth
  *
- * Capture a day with `npm run capture-golden` (that is the only path that
+ * Capture a day with `pnpm run capture-golden` (that is the only path that
  * touches prod). Then:
  *
- *   npm run golden                    # check every captured day
- *   npm run golden -- --bless         # re-derive every expected
- *   npm run golden -- --bless 2026-05-15
+ *   pnpm run golden                    # check every captured day
+ *   pnpm run golden --bless         # re-derive every expected
+ *   pnpm run golden --bless 2026-05-15
  *
  * `--bless` re-derives `expected.velocity` from the pipeline run against
  * the ALREADY-CAPTURED inputs; it never re-pulls from prod.
@@ -431,7 +431,7 @@ if (files.length === 0) {
 	console.error(
 		`No golden fixtures found at ${DAYS_DIR}.\n` +
 			`Capture one against the prod DB:\n` +
-			`  npm run capture-golden -- <date> <user> <timezone>`,
+			`  pnpm run capture-golden <date> <user> <timezone>`,
 	);
 	process.exit(2);
 }
@@ -544,7 +544,7 @@ for (const file of files) {
 		console.log(`\nFAIL     ${label}`);
 		console.log(`    ${errorText(e)}`);
 		console.log(
-			`    re-capture: npm run capture-golden -- ${captured.meta.date} ${captured.meta.user} ${captured.meta.tz}\n`,
+			`    re-capture: pnpm run capture-golden ${captured.meta.date} ${captured.meta.user} ${captured.meta.tz}\n`,
 		);
 		continue;
 	}
@@ -591,7 +591,7 @@ for (const file of files) {
 					".\n" +
 					"    The fixture is UNCHANGED. Blessing it would record a physically impossible day\n" +
 					"    as the expected one, and every later run would then agree with it.\n" +
-					"    Fix the day, or raise the ceiling deliberately: npm run golden -- --bless-feasibility\n",
+					"    Fix the day, or raise the ceiling deliberately: pnpm run golden --bless-feasibility\n",
 			);
 			continue;
 		}
@@ -627,7 +627,7 @@ for (const file of files) {
 					"    The fixture is UNCHANGED. Blessing it would record output that contradicts\n" +
 					"    a confirmed narrative as the expected one, and the day would then read PASS\n" +
 					"    with the row still failing underneath it.\n" +
-					"    Fix the day, or re-audit the row deliberately: npm run golden -- --bless-truth\n",
+					"    Fix the day, or re-audit the row deliberately: pnpm run golden --bless-truth\n",
 			);
 			continue;
 		}
@@ -648,7 +648,7 @@ for (const file of files) {
 		for (const ln of d.lines) console.log(ln);
 		console.log(
 			`    captured ${captured.meta.capturedAt} @ ${captured.meta.capturedAtCodeSha.slice(0, 8)}.\n` +
-				`    If intentional, re-bless: npm run golden -- --bless ${captured.meta.date}\n`,
+				`    If intentional, re-bless: pnpm run golden --bless ${captured.meta.date}\n`,
 		);
 	}
 
@@ -875,7 +875,7 @@ const ceilingGate = gateDeltaCeiling(leanCeiling, leanUnexplainedNow);
 if (leanCeiling === null && ceilingSize(leanUnexplainedNow) > 0) {
 	console.log(
 		`lean deltas: no ceiling yet — ${ceilingSize(leanUnexplainedNow)} unexplained divergence(s). ` +
-			`Establish it with: npm run golden -- --bless-lean-deltas`,
+			`Establish it with: pnpm run golden --bless-lean-deltas`,
 	);
 }
 // `cleared` is never a failure — it is the ratchet's payoff, and naming it is
@@ -922,7 +922,7 @@ let kinematicRegressed = 0;
 const feasBaseline = await loadFeasibilityBaseline();
 if (feasBaseline === null) {
 	console.log(
-		`feasibility (kinematic): no baseline yet — ${kinematicTotal} standing leg(s). Establish the ceiling with: npm run golden -- --bless-feasibility`,
+		`feasibility (kinematic): no baseline yet — ${kinematicTotal} standing leg(s). Establish the ceiling with: pnpm run golden --bless-feasibility`,
 	);
 } else {
 	const gate = gateCeiling(feasBaseline, kinematicNow, feasibilityReported, feasibilityAttempted);
@@ -942,7 +942,7 @@ if (feasBaseline === null) {
 	}
 	if (gate.improvedDays > 0) {
 		console.log(
-			`feasibility (kinematic): ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-feasibility`,
+			`feasibility (kinematic): ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: pnpm run golden --bless-feasibility`,
 		);
 	}
 }
@@ -963,7 +963,7 @@ try {
 }
 if (railTripleBaseline === null) {
 	console.log(
-		`rail triples: no baseline yet — ${railTripleTotal} standing invalid leg(s). Establish the ceiling with: npm run golden -- --bless-rail-triples`,
+		`rail triples: no baseline yet — ${railTripleTotal} standing invalid leg(s). Establish the ceiling with: pnpm run golden --bless-rail-triples`,
 	);
 } else {
 	const gate = gateCeiling(railTripleBaseline, railTripleNow, feasibilityReported, feasibilityAttempted);
@@ -983,7 +983,7 @@ if (railTripleBaseline === null) {
 	}
 	if (gate.improvedDays > 0) {
 		console.log(
-			`rail triples: ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: npm run golden -- --bless-rail-triples`,
+			`rail triples: ${gate.improvedDays} day(s) improved — ratchet the ceiling down with: pnpm run golden --bless-rail-triples`,
 		);
 	}
 }
@@ -1012,7 +1012,7 @@ async function loadTruthBaseline(): Promise<FloorBaseline | null> {
 const truthBaseline = await loadTruthBaseline();
 if (truthBaseline === null) {
 	console.log(
-		`truth: no floor yet — ${truthHeld} confirmed row(s) held. Establish the floor with: npm run golden -- --bless-truth`,
+		`truth: no floor yet — ${truthHeld} confirmed row(s) held. Establish the floor with: pnpm run golden --bless-truth`,
 	);
 } else {
 	// Only days that actually produced a truth report can be judged. A day whose
@@ -1084,7 +1084,7 @@ for (const [date, keys] of Object.entries(baseline)) {
 const gate = gateJourneys(journeyBaselineMeasured, journeysNow);
 if (Object.keys(baseline).length === 0) {
 	console.log(
-		`journeys: no baseline yet — ${totalReconstructed} reconstructed. Establish the floor with: npm run golden -- --bless-journeys`,
+		`journeys: no baseline yet — ${totalReconstructed} reconstructed. Establish the floor with: pnpm run golden --bless-journeys`,
 	);
 } else if (gate.regressed.length > 0) {
 	console.log(`journeys: FAIL — ${gate.regressed.length} previously-reconstructed journey(s) regressed:`);

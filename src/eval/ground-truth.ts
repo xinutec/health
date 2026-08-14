@@ -22,7 +22,7 @@
  *
  *   The HMM and pipeline have been measured against either each other
  *   (`compare-hmm-vs-heuristic`) or against previously-blessed pipeline
- *   output (`npm run golden`) — both self-referential. The narratives
+ *   output (`pnpm run golden`) — both self-referential. The narratives
  *   are the actual truth signal, but were a manual-only reference
  *   until this module. Programmatic comparison vs ground truth is the
  *   precondition for honest evaluation of any classification change.

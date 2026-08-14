@@ -4,7 +4,7 @@
  * `tests/golden/ground-truth/`.
  *
  * Replaces the self-referential `compare-hmm-vs-heuristic`
- * (mode-agreement-with-the-thing-we-want-to-beat) and `npm run golden`
+ * (mode-agreement-with-the-thing-we-want-to-beat) and `pnpm run golden`
  * (json-diff-vs-our-own-blessed-baseline). This is the first metric
  * anchored to ground truth — see `docs/design/probabilistic-principles.md`
  * §"Audit and verification".

@@ -1,7 +1,7 @@
 /**
  * Walk-geometry ratchet gate — the drawn-line counterpart of `journey-gate.ts`.
  *
- * `npm run golden` gates day-STATES; the drawn walk geometry was refereed by
+ * `pnpm run golden` gates day-STATES; the drawn walk geometry was refereed by
  * `score-walk-match` but never gated — the referee only measured anything when
  * a human invoked it, and its A/B exit (matcher vs smoother) carries standing
  * failures (#305), so it cannot be a deploy gate as-is.

@@ -18,9 +18,9 @@
  * names / biometrics). Capture a day with capture-hsmm-day.js against
  * prod, then:
  *
- *   npm run golden-hsmm                 # check every captured day
- *   npm run golden-hsmm -- --bless      # re-derive every expected decode
- *   npm run golden-hsmm -- --bless 2026-05-25
+ *   pnpm run golden-hsmm                 # check every captured day
+ *   pnpm run golden-hsmm --bless      # re-derive every expected decode
+ *   pnpm run golden-hsmm --bless 2026-05-25
  *
  * Exit 0 = every fixture matches (or was blessed).
  * Exit 1 = at least one regressed.

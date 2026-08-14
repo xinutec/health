@@ -16,7 +16,7 @@ ULP wobble except at a round boundary — the accepted near-tie class. The
 reset path emits speed/bearing UNROUNDED (a TS quirk, mirrored here). UNPROVEN;
 pinned by the `#guard`s against Node/V8.
 
-That "≤1-ULP close" is now MEASURED, not predicted (`npm run compare-kalman`,
+That "≤1-ULP close" is now MEASURED, not predicted (`pnpm run compare-kalman`,
 2026-07-29, all 32 golden days). Row counts agree everywhere — the two arms keep
 the same fixes. `lat` is bit-identical everywhere; `lon` differs on ~0.5% of rows
 by ≤1 ULP (worst day 19, where the recursion compounds a run of them); the few

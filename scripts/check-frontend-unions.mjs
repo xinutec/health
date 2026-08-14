@@ -21,7 +21,7 @@
 // renamed type or a moved file would otherwise silently reduce this to a
 // check of nothing, which reads identically to a check that passes.
 //
-// Run via `npm run check:frontend-unions`; wired into gate.json and CI.
+// Run via `pnpm run check:frontend-unions`; wired into gate.json and CI.
 
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";

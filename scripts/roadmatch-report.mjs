@@ -6,7 +6,7 @@
 //
 // Usage: nix develop --command node scripts/roadmatch-report.mjs [fixture.json]
 // (node from the flake devShell — see scripts/_devshell.sh; run
-// `npm run build` first — imports the compiled matcher from dist/).
+// `pnpm run build` first — imports the compiled matcher from dist/).
 
 import { readFileSync } from "node:fs";
 import { matchRoadSegment, projectPointToSegment } from "../dist/geo/road-match.js";

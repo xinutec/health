@@ -13,7 +13,7 @@
  * both decoders' paths are re-scored here and must achieve the same best.
  *
  * Usage: node lean/experiments/compare.mjs   (from the repo root, after
- *        `npm run build` and `lake build` in lean/)
+ *        `pnpm run build` and `lake build` in lean/)
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";

@@ -26,7 +26,7 @@
  * parity gate; the eventual compare-geometry harness will import the real
  * exports.
  *
- * Run from the repo root after `npm run build`:
+ * Run from the repo root after `pnpm run build`:
  *   node lean/experiments/quant-probe.mjs            # all golden days
  *   node lean/experiments/quant-probe.mjs 2026-06-24 # one day
  */

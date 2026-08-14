@@ -6,7 +6,7 @@
  * window (± a 12-min margin to show the bounding stays). This is the evidence
  * needed to classify each failure as a genuine mode error vs a journey-boundary
  * / over-split artifact — without which the "first factor" can't be chosen
- * honestly. Zero DB: replays the golden fixtures like `npm run golden`.
+ * honestly. Zero DB: replays the golden fixtures like `pnpm run golden`.
  *
  *   node scripts/adjudicate-journeys.mjs            # every day
  *   node scripts/adjudicate-journeys.mjs 2026-06-29 # one day

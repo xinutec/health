@@ -18,7 +18,7 @@
  * exercises different tie patterns for free.
  *
  * Needs the local railsnap fixture (gitignored, real coordinates) — a
- * tool like golden-hsmm, not part of `npm run verify`.
+ * tool like golden-hsmm, not part of `pnpm run verify`.
  *
  * Usage: node dist/cli/compare-rail.js
  * Exit 0 = every comparison EXACT.

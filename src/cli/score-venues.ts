@@ -75,7 +75,7 @@ try {
 	files = [];
 }
 if (files.length === 0) {
-	console.error(`No golden fixtures at ${DAYS_DIR}. Capture one: npm run capture-golden -- <date> <user> <tz>`);
+	console.error(`No golden fixtures at ${DAYS_DIR}. Capture one: pnpm run capture-golden <date> <user> <tz>`);
 	process.exit(2);
 }
 

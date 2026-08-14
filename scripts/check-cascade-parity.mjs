@@ -14,7 +14,7 @@
 // renamed `passes` binding or a moved `TS_CASCADE` would otherwise reduce this
 // to a check of nothing, which reads exactly like a check that passes.
 //
-// Run via `npm run check:cascade-parity`; wired into gate.json.
+// Run via `pnpm run check:cascade-parity`; wired into gate.json.
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

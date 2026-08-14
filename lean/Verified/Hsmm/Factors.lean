@@ -28,7 +28,7 @@ import Verified.Hsmm.Assemble
 The Lean re-implementations of the TypeScript HSMM — the scoring-factor kernels
 and the structural resolvers (state-space enumeration, …) — each pinned to V8 by
 `#guard` parity checks. Importing them here pulls every module (and therefore
-every guard) into the default `Verified` library build, so `npm run verify`
+every guard) into the default `Verified` library build, so `pnpm run verify`
 (`lake build`) fails on any TS↔Lean divergence — the guards are worthless if
 they never run.
 

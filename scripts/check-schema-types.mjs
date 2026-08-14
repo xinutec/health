@@ -17,7 +17,7 @@
 // include `bigint` (transitively through aliases like
 // FitbitSleepLogId).
 //
-// Run via `npm run check:schema-types`; wired into `verify`.
+// Run via `pnpm run check:schema-types`; wired into `verify`.
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

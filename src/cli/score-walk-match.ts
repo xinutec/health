@@ -232,7 +232,7 @@ async function scoreDay(date: string, user: string): Promise<WalkVerdict[]> {
 		hasBuildings ? offPathBuildingCrossingM(pts, buildings, walkable) : null;
 	const namedWindows = loadNamedWalkWindows(date, captured.meta.tz);
 	// Fresh inputs per arm (the adapters are stateless, but explicit) — and
-	// built the SAME way `npm run golden` builds them, which means the row-set
+	// built the SAME way `pnpm run golden` builds them, which means the row-set
 	// kernel with the captured trace only as its fallback. Constructing a bare
 	// `FixtureOsmAdapter` here instead made this gate replay against a strictly
 	// smaller oracle than the corpus does: golden answers every day from pushed

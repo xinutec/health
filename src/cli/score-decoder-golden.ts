@@ -15,7 +15,7 @@
  * building — the truth-engine's central bet that it beats the heuristic
  * pipeline. It runs from any commit with no tunnel:
  *
- *   npm run score-decoder            # every captured day that has ground truth
+ *   pnpm run score-decoder            # every captured day that has ground truth
  *   node dist/cli/score-decoder-golden.js --date 2026-05-22
  *
  * Fixtures + narratives are gitignored real data; the harness skips a
@@ -194,11 +194,11 @@ async function main(): Promise<void> {
 		// Each day decodes under the configuration its fixture records — for a
 		// v1 fixture, production's (see `decodeFlagsFor`). The env vars stay as
 		// an EXPLICIT A/B override for shadow-measuring a candidate flag
-		// (`USE_CADENCE_IMPUTATION=1 npm run score-decoder`), but they no longer
+		// (`USE_CADENCE_IMPUTATION=1 pnpm run score-decoder`), but they no longer
 		// decide the default.
 		//
 		// They used to. The baseline was blessed "with the four continuity flags
-		// on" (2026-07-17) while a bare `npm run score-decoder` still decoded
+		// on" (2026-07-17) while a bare `pnpm run score-decoder` still decoded
 		// with all four OFF, so the ratchet reported eleven regressions across
 		// six days — including 2026-06-12 losing both matched journeys and
 		// gaining a phantom ride. None were real: with the flags on the ratchet

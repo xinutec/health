@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   scripts/golden-hsmm.sh --bless           # re-derive every expected
 #   scripts/golden-hsmm.sh --bless 2026-05-25    # one day
 #
-# Via npm (note the `--` so npm forwards the flags):
+# Via pnpm (no `--` — unlike npm, pnpm forwards it as an argument):
 #   pnpm run golden-hsmm
 #   pnpm run golden-hsmm --bless 2026-05-25
 #

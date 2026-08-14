@@ -241,7 +241,7 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `shadow`, so the TS matcher is what serves. It means the manifest no longer
 	# describes the corpus, and the fix is to adjudicate the leg it names, never
 	# to widen the manifest to match.
-	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match -- --gate
+	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match --gate
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
 fi

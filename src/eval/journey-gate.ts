@@ -2,7 +2,7 @@
  * Journey-correctness ratchet gate — the measurement foundation the
  * decoder-owns-mode program (#257, #250) stands on.
  *
- * `npm run golden` gates on the fixture snapshot diff and worldline-feasibility,
+ * `pnpm run golden` gates on the fixture snapshot diff and worldline-feasibility,
  * but the truth layer (does the reconstructed day read as the right sequence of
  * trips?) was informational only — the golden PASSED while 20+ confirmed tube
  * journeys were silently mis-reconstructed. You cannot build a joint mode+position

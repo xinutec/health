@@ -16,7 +16,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   scripts/capture-golden.sh <date> <user> <timezone> [--description "..."]
 #   scripts/capture-golden.sh 2026-05-15 pippijn Europe/London
 #
-# Via npm:
+# Via pnpm:
 #   pnpm run capture-golden 2026-05-15 pippijn Europe/London
 
 set -euo pipefail
