@@ -128,6 +128,34 @@ app.route("/internal", internalRoutes(config));
 // the request comes from an Android phone, not a browser.
 app.route("/owntracks", owntracksRoutes(config));
 
+// ⚠ HTML MUST REVALIDATE, and shipping without saying so cost a deploy nobody
+// could see. With no `Cache-Control` at all a client falls back to *heuristic*
+// caching from `Last-Modified` and may keep the document indefinitely without
+// asking again. MEASURED on the `messages` viewer 2026-08-14: an Android WebView
+// fetched the whole API and never once requested `main-*.js`, so the phone ran a
+// build several deploys old for hours. The symptom is "the change did not
+// deploy", which sends you to CI, the image and the rollout — all of them
+// correct.
+//
+// `no-cache` means "ask first", not "never keep": the ETag still turns the usual
+// case into a 304 with no body.
+//
+// ⚠ ONLY text/html, AND ONLY WHEN NOTHING HAS ALREADY SPOKEN. This runs on
+// `/*`, which in Hono is every route including the API — so an `else` branch
+// stamping `immutable` on whatever was left would put a year-long cache on JSON,
+// which is the same bug pointing the other way. The hashed-asset half is
+// deliberately not done here: `immutable` is only honest for a URL that cannot
+// change meaning, and this middleware cannot tell one of those from an API
+// response, where `messages`' tower layer could because it wrapped the static
+// service alone.
+app.use("/*", async (c, next) => {
+	await next();
+	if (c.res.headers.get("cache-control")) return;
+	if ((c.res.headers.get("content-type") ?? "").startsWith("text/html")) {
+		c.res.headers.set("cache-control", "no-cache");
+	}
+});
+
 // Static files (Angular SPA)
 app.use("/*", serveStatic({ root: "./public" }));
 
