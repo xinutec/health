@@ -83,33 +83,35 @@ export async function loadAllBusRoutes(): Promise<BusRoute[]> {
 	return routes;
 }
 
-/** A rebuild may not drop the mirror below this fraction of what it already
- *  held WHEN TILES FAILED. A shrink is legitimate data — routes leave OSM, the
- *  home region moves — but only a run that fetched everything it asked for can
- *  claim it. */
-const SHRINK_FLOOR = 0.8;
-
 /**
  * Should this rebuild be refused, and why?
  *
- * The rebuild is a DELETE + INSERT of the whole table, so a bad run does not
- * degrade the mirror gracefully — it replaces it. The original guard refused
- * only when EVERY tile failed, which is the one case that cannot happen
- * quietly: a run where 90 of 100 tiles fail returns a plausible-looking handful
- * of routes and overwrites a healthy 995 with them, and nothing in the output
- * says the mirror just lost 90% of its content.
+ * Only one case is left: EVERY tile failed, so the run learned nothing and has
+ * nothing authoritative to write. Anything else is now safe by construction —
+ * the write is a per-tile replace (see `refresh-bus-routes.ts`), so a tile that
+ * failed keeps its own rows and a partial run cannot cut the mirror at all.
  *
- * That mattered little while the cron was suspended and every run was watched.
- * It is the whole risk once the job runs unattended at 05:30, which is what
- * #255 asks for. So: a shrink past {@link SHRINK_FLOOR} is refused when any
- * tile failed, and allowed when none did.
+ * # Why the old shrink threshold is gone
+ *
+ * It compared COUNTS: a rebuild was refused if it would drop the mirror below
+ * 80% of what it held whenever any tile failed. That was the right instinct and
+ * the wrong instrument, and measuring it on prod (2026-08-14, #255) showed why.
+ *
+ * **Harm is not proportional to count.** A run fetching 796 of 995 routes but
+ * losing the handful the rider actually uses passed the floor; a run dropping
+ * 300 untouched peripheral routes failed it. The number the guard read was
+ * uncorrelated with the damage it existed to prevent.
+ *
+ * And it could only ever choose between two bad outcomes — overwrite the mirror
+ * with a partial fetch, or refuse and keep everything stale — because the
+ * writer had thrown away the one fact that makes a third outcome possible:
+ * WHICH tile failed. The fetch loop knows it exactly. Carrying that through to
+ * the write dissolves the trade-off, so there is no threshold left to tune.
  *
  * Exported and pure so the decision is testable without a DB or Overpass.
  */
-export function rebuildRefusal(existing: number, fetched: number, tileFailures: number): string | null {
-	if (tileFailures === 0) return null; // a complete run is authoritative, whatever it found
-	if (fetched === 0) return `Every tile failed and the cache holds ${existing} route(s)`;
-	if (existing > 0 && fetched < existing * SHRINK_FLOOR)
-		return `${tileFailures} tile(s) failed and the rebuild would cut the mirror ${existing} -> ${fetched} route(s)`;
+export function rebuildRefusal(existing: number, tileFailures: number, tilesTotal: number): string | null {
+	if (tilesTotal > 0 && tileFailures >= tilesTotal && existing > 0)
+		return `Every tile failed (${tileFailures}/${tilesTotal}) and the cache holds ${existing} route(s)`;
 	return null;
 }

@@ -12,9 +12,22 @@
  * `bus_route_cache` and read back with a single indexed scan.
  *
  * A route's stop sequence is stable, so it is keyed by relation, reused
- * across every day the route appears. The whole table is rebuilt
- * transactionally each run — a pure cache, fully recomputable, no
+ * across every day the route appears. A pure cache, fully recomputable, no
  * incremental accumulator (the same discipline as refresh-rail-routes).
+ *
+ * # The write is per TILE, not whole-table
+ *
+ * The fetch is tiled and a tile can fail on its own — Overpass 504s are
+ * routine, 4 of 18 on a normal run. So the write follows the fetch: a run that
+ * loses all its tiles is refused, a COMPLETE run rebuilds the whole table
+ * authoritatively, and a PARTIAL run replaces only the tiles that answered and
+ * leaves every other tile its rows.
+ *
+ * That makes a partial run lossless, which is what lets this job run
+ * unattended (#255). It replaced a threshold on the route COUNT, which could
+ * only choose between overwriting the mirror with a partial fetch and keeping
+ * all of it stale — and which measured the wrong thing anyway, since losing
+ * 200 routes nobody rides and losing the one bus home score identically.
  *
  * # Scope discipline (the throttling lesson)
  *
@@ -114,10 +127,18 @@ console.log(
 	`Mirroring route=bus relations across ${tiles.length} tiles of bbox ${bbox.minLat.toFixed(3)},${bbox.minLon.toFixed(3)}→${bbox.maxLat.toFixed(3)},${bbox.maxLon.toFixed(3)}`,
 );
 
+/** A tile's stable identity, stored on every row it yielded. Rounded to the
+ *  tiling grid so the same cell keys identically run to run. */
+const tileKey = (t: Bbox): string => `${t.minLat.toFixed(4)},${t.minLon.toFixed(4)}`;
+
 const t0 = Date.now();
-const byRelation = new Map<number, BusRoute>();
+const byRelation = new Map<number, { route: BusRoute; tile: string }>();
+/** Tiles that ANSWERED. Each is authoritative for its own rows; the rest keep
+ *  theirs untouched, which is what makes a partial run lossless. */
+const succeededTiles: string[] = [];
 let tileFailures = 0;
 for (const [i, tile] of tiles.entries()) {
+	const key = tileKey(tile);
 	try {
 		const res = await overpassFetch(buildBusRouteOverpassQuery(tile), { timeoutMs: TILE_TIMEOUT_MS });
 		if (!res.ok) {
@@ -127,7 +148,12 @@ for (const [i, tile] of tiles.entries()) {
 		}
 		const data = (await res.json()) as Parameters<typeof extractBusRoutes>[0];
 		const routes = extractBusRoutes(data);
-		for (const r of routes) byRelation.set(r.osmRelationId, r);
+		// First tile to yield a route owns it. `node(r)` returns the route's FULL
+		// stop list from any cell it touches, so whichever answered first has the
+		// complete route — there is nothing to merge across tiles.
+		for (const r of routes)
+			if (!byRelation.has(r.osmRelationId)) byRelation.set(r.osmRelationId, { route: r, tile: key });
+		succeededTiles.push(key);
 		console.log(`  tile ${i + 1}/${tiles.length}: ${routes.length} routes (${byRelation.size} unique so far)`);
 	} catch (e) {
 		console.warn(`  tile ${i + 1}/${tiles.length}: ${errorText(e)} — skipped`);
@@ -143,29 +169,45 @@ const existing = Number(
 			.executeTakeFirstOrThrow()
 	).n,
 );
-const refusal = rebuildRefusal(existing, byRelation.size, tileFailures);
+const refusal = rebuildRefusal(existing, tileFailures, tiles.length);
 if (refusal !== null) {
 	console.error(`${refusal} — leaving bus_route_cache untouched.`);
 	await destroyPool();
 	process.exit(1);
 }
 
-const routes = [...byRelation.values()];
-console.log(`Parsed ${routes.length} unique bus routes from ${tiles.length} tiles (${Date.now() - t0}ms)`);
+const fetched = [...byRelation.values()];
+console.log(`Parsed ${fetched.length} unique bus routes from ${tiles.length} tiles (${Date.now() - t0}ms)`);
 
 await withConnection(async (conn) => {
-	// Transactional full rebuild — readers see the old snapshot until
-	// commit, so the dashboard never observes an empty cache mid-refresh.
+	// Transactional — readers see the old snapshot until commit, so the
+	// dashboard never observes an empty cache mid-refresh.
 	await conn.beginTransaction();
 	try {
-		await conn.query("DELETE FROM bus_route_cache");
-		if (routes.length > 0) {
-			const rows = routes.map((r) => {
-				const s = serializeBusRoute(r);
-				return [s.osm_relation_id, s.route_ref, s.route_name, s.stops_json];
+		if (tileFailures === 0) {
+			// A complete run is authoritative for the whole bbox: anything absent
+			// is absent from OSM. This is also what retires `tile_key IS NULL`
+			// rows written before the column existed.
+			await conn.query("DELETE FROM bus_route_cache");
+		} else {
+			// A partial run is authoritative ONLY for the tiles that answered.
+			// Drop just those rows; every other tile keeps what it had, so the
+			// mirror cannot shrink because Overpass 504'd somewhere.
+			const placeholders = succeededTiles.map(() => "?").join(",");
+			await conn.query(`DELETE FROM bus_route_cache WHERE tile_key IN (${placeholders})`, succeededTiles);
+		}
+		if (fetched.length > 0) {
+			const rows = fetched.map(({ route, tile }) => {
+				const s = serializeBusRoute(route);
+				return [s.osm_relation_id, s.route_ref, s.route_name, s.stops_json, tile];
 			});
+			// Upsert, not plain insert: a route can survive the delete above under a
+			// FAILED tile's key and still be re-fetched from one that answered.
 			await conn.batch(
-				"INSERT INTO bus_route_cache (osm_relation_id, route_ref, route_name, stops_json) VALUES (?, ?, ?, ?)",
+				`INSERT INTO bus_route_cache (osm_relation_id, route_ref, route_name, stops_json, tile_key)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON DUPLICATE KEY UPDATE route_ref = VALUES(route_ref), route_name = VALUES(route_name),
+				   stops_json = VALUES(stops_json), tile_key = VALUES(tile_key), computed_at = CURRENT_TIMESTAMP`,
 				rows,
 			);
 		}
@@ -175,7 +217,16 @@ await withConnection(async (conn) => {
 		throw e;
 	}
 });
-console.log(`bus_route_cache rebuilt: ${routes.length} routes`);
+const [{ n: after }] = (await db()
+	.selectFrom("bus_route_cache")
+	.select((eb) => eb.fn.countAll().as("n"))
+	.execute()) as unknown as [{ n: number }];
+console.log(
+	tileFailures === 0
+		? `bus_route_cache rebuilt in full: ${fetched.length} routes`
+		: `bus_route_cache merged: ${succeededTiles.length}/${tiles.length} tiles replaced, ` +
+				`${tileFailures} kept their existing rows — ${existing} -> ${Number(after)} routes`,
+);
 
 await destroyPool();
 process.exit(0);

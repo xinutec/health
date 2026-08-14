@@ -737,6 +737,16 @@ const MIGRATIONS: readonly string[] = [
     computed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (osm_relation_id)
   )`,
+
+	// Which Overpass tile yielded this route. The refresh is tiled, and a
+	// tile can fail on its own (Overpass 504s are routine), so knowing the
+	// origin turns a partial run from a whole-mirror gamble into a
+	// per-tile replace: tiles that answered are authoritative for their own
+	// rows, tiles that failed keep theirs. NULL on rows written before this
+	// column existed — they are replaced by the first fully-successful run,
+	// which is authoritative for everything.
+	`ALTER TABLE bus_route_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL`,
+	`ALTER TABLE bus_route_cache ADD INDEX IF NOT EXISTS idx_bus_route_tile (tile_key)`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {
