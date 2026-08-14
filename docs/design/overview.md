@@ -209,10 +209,24 @@ than failing, which stalls the deploy with no output at all:
   bridge could otherwise ship unconsulted.
 
 All of these replay the gitignored `tests/golden/` corpus, so **CI can never run
-any of them** — the deploy path is the only place they gate. `deploy.sh` runs
-them before building, pushing, and rolling out. Every script enters the pinned
-nix devshell itself (`scripts/_devshell.sh`) — run them directly, no wrapper
-needed.
+any of them**. Every script enters the pinned nix devshell itself
+(`scripts/_devshell.sh`) — run them directly, no wrapper needed.
+
+**They gate less than this section used to claim, and the difference matters.**
+`deploy.sh` builds nothing: `.github/workflows/build.yml` pushes
+`xinutec/health-sync:latest` on every push to `main`, gated only on CI's verify
+— typecheck, lint, unit tests, `lean-check`. Every CronJob in the `health`
+namespace pulls `:latest` per invocation, so a green CI run puts new
+classification code into production the next time a cron fires, and no replay
+gate has seen it. What `deploy.sh` uniquely does is run these gates locally and
+then `rollout restart deploy/health-auth` — the one workload that does not
+re-pull by itself, and therefore the only one they gate.
+
+So the gates measure the algorithm; they do not gate the artefact that runs it.
+Measured 2026-08-14 (#813), which sets out the two ways to end that: accept it
+and treat the replay gates as advisory measurement, or have `deploy.sh` promote
+a digest (`:prod`) that the CronJobs pin. Not yet decided — until it is, read a
+red gate as "this needs looking at", not as "this cannot ship".
 
 ## Security checklist
 

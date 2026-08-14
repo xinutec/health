@@ -11,13 +11,26 @@
 # NOT come from the pinned flake.
 # (2026-06-29 Angular 21->22 + zoneless migration; Node 22->24.)
 #
-# Runs `pnpm run verify` (typecheck + lint + tests), then the local
-# fixture gates (`pnpm run golden` + `pnpm run walk-gate` +
-# `pnpm run score-decoder` — these can only run here, the fixtures are
-# gitignored), commits all changes in
+# Runs `pnpm run verify` (typecheck + lint + tests), then the replay gates
+# in step 2 (count the commands there — golden, walk-gate, score-decoder,
+# day-gate, focus-gate, golden with the Lean tenants on, golden-hsmm; they
+# can only run here, the fixtures are gitignored), commits all changes in
 # this repo, pushes to main, waits for CI, then rolls out the new image
 # on isis. The k8s manifests live in the home monorepo (xinutec/pippijn
-# code/kubes/health/k8s); this repo builds xinutec/health-sync:latest.
+# code/kubes/health/k8s).
+#
+# WHAT THIS DOES NOT DO — do not read the gates above as controlling what
+# reaches production. This script BUILDS NOTHING: `.github/workflows/
+# build.yml` pushes `xinutec/health-sync:latest` on every push to main,
+# gated only on CI's verify (typecheck / lint / unit tests / lean-check —
+# never the replay gates, which need the gitignored corpus CI cannot
+# have). Every CronJob in the health namespace pulls `:latest` per
+# invocation, so a green CI run puts new classification code into
+# production the next time a cron fires, with no replay gate in front of
+# it. Step 7 restarts ONE Deployment — health-auth — which is the only
+# workload that does not re-pull on its own, and therefore the only thing
+# these gates actually gate. Measured and written down 2026-08-14 (#813),
+# where the two ways to end that asymmetry are set out.
 #
 # Usage:
 #   scripts/deploy.sh -m "commit message"
