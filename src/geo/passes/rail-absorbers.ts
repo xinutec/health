@@ -545,7 +545,13 @@ export async function anchorTrainAlightToWalkedStation(
 				: await linesLookup(station.lat, station.lon);
 		const surfacedCanon = new Set([...surfacedLines].flatMap(expandTubeLineNames));
 		const alightCanon = new Set([...alightLines].flatMap(expandTubeLineNames));
-		if (![...alightCanon].some((l) => surfacedCanon.has(l))) {
+		// `ALIGHT_ANCHOR_NO_CORRIDOR=1` ablates this guard. It asks whether two
+		// positions share a line, which presumes a line identifier is stable
+		// along a route — true of the tube mirror ("Metropolitan" end to end),
+		// false of per-section track refs (2026-04-29 compared 044 against 514a
+		// and could only reject). Measured over the corpus it rejects exactly one
+		// leg, that one; the ablation is how that is kept honest.
+		if (process.env.ALIGHT_ANCHOR_NO_CORRIDOR !== "1" && ![...alightCanon].some((l) => surfacedCanon.has(l))) {
 			why(
 				`settles at ${station.name} but shares no line with the surfaced fix — ` +
 					`surfaced={${[...surfacedCanon].join("|")}} alight={${[...alightCanon].join("|")}}`,
@@ -579,15 +585,23 @@ export async function anchorTrainAlightToWalkedStation(
 		// additionally anchored by the station+line topology of a DIFFERENT
 		// station the walk demonstrably reached.
 		const sameAlight = station.name === rail.alight;
+		// `ALIGHT_ANCHOR_NO_SINGLE_STEP=1` ablates the stuck-GPS guard. It fires
+		// on 7 corpus days, all the same ~1500 m single-hop shape, while the
+		// IDENTICAL shape extends freely whenever the settled station happens not
+		// to match the label — so the same physical evidence is read two ways
+		// depending on a name. 2026-07-14's ground truth calls its refusal a
+		// misread in as many words ("previously misread as a stale-fix run"; the
+		// ride "does not end at 08:36").
+		const singleStepRefusal = sameAlight && settleRunSteps < 2;
 		// `ALIGHT_ANCHOR_DUMP=1` names why a reclaimable-looking hop was left in
 		// the walk. Every guard above this point exits silently, so a leg that
 		// SHOULD have been extended and was not is otherwise indistinguishable
 		// from one the pass never considered.
 		why(
 			`settles at ${station.name} over ${settleRunSteps} step(s), ${hopM} m — ` +
-				`${sameAlight && settleRunSteps < 2 ? "REFUSED: same station on a single step (stuck-GPS guard)" : "extending"}`,
+				`${singleStepRefusal ? "REFUSED: same station on a single step (stuck-GPS guard)" : "extending"}`,
 		);
-		if (sameAlight && settleRunSteps < 2) continue;
+		if (singleStepRefusal && process.env.ALIGHT_ANCHOR_NO_SINGLE_STEP !== "1") continue;
 		const reason = sameAlight
 			? `alight boundary extended to the ${station.name} arrival — reclaimed a ${hopM} m ride tail the early cut left in the walk`
 			: `alight re-anchored to ${station.name} (walk's leading hop reached it) — reclaimed a ${hopM} m hop the GPS blackout left in the walk (was alighting ${rail.alight})`;
