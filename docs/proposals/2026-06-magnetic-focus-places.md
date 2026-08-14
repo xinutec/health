@@ -384,7 +384,7 @@ some headroom for established places.
 The Varley case is a single example, but the class is broad: every
 focus_place that sits within GPS-noise distance of a typed OSM POI
 is at risk of being misattributed on any noisy-GPS day. As the user
-accumulates recurring places (Dasha's home, regular cafés, gyms,
+accumulates recurring places (a friend's home, regular cafés, gyms,
 medical providers), the count of at-risk pairings grows. The magnet
 is one principle covering all of them; once shipped, every
 focus_place gets the benefit automatically.

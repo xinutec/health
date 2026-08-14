@@ -86,7 +86,7 @@ describe("biometricCoherence", () => {
 	});
 
 	it("the 05-25 Varley window (resting + 5 steps/min) gives high coherence", () => {
-		// User confirmed: sitting at Dasha's, making pancakes. Some movement
+		// User confirmed: sitting at a friend's home, cooking. Some movement
 		// (pancake flipping, walking to the kitchen) but no sustained
 		// walking. Expected coherence high — closer to 0.9 than to 0.5.
 		const result = biometricCoherence({
