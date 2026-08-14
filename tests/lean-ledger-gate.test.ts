@@ -1,7 +1,7 @@
 /**
  * The gate that turns a Lean tenant's ledger into an exit code (#392).
  *
- * Until this existed, `npm run golden` could print
+ * Until this existed, `pnpm run golden` could print
  * `lean-kalman[on] golden 0/32f (no calls) NOT EXERCISED` and still exit 0 —
  * every tenant's arm dead, every fixture green, because the exit code was
  * computed from the snapshot diff and the ratchets alone. These pin the four

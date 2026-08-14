@@ -22,7 +22,7 @@
  * (real coordinates / journeys, local only — same policy as
  * `tests/fixtures/days/` and `tests/golden/`). When the fixture is
  * absent — i.e. on CI — the whole suite is skipped. Locally it runs on
- * every `npm test` and is the verdict on whether the feature works.
+ * every `pnpm test` and is the verdict on whether the feature works.
  */
 
 import { readFileSync } from "node:fs";

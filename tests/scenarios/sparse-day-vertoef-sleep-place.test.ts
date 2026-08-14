@@ -123,7 +123,7 @@ describeWithFixture("2026-04-29 Vertoef sleep-place — fixture replay", fixture
 	const segments = classifySegments(filtered);
 
 	// `it.fails` — documents the current sparse-day failure mode
-	// without breaking `npm run verify`. Flips to red when the
+	// without breaking `pnpm run verify`. Flips to red when the
 	// segmentation bug is fixed, prompting marker removal.
 	it.fails("produces a stationary stay whose centroid sits at Vertoef in the pre-sleep UTC window", () => {
 		const inWindow = segments.filter(

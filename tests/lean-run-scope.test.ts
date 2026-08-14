@@ -6,7 +6,7 @@
  * both to `decode`.
  *
  * Everything here is bridge-free — no `verified_cli`, no flags on — so it runs
- * anywhere `npm run verify` does.
+ * anywhere `pnpm run verify` does.
  */
 
 import { afterEach, describe, expect, it } from "vitest";

@@ -19,7 +19,7 @@
  *
  * The fixture lives in `tests/fixtures/roadmatch/` and is gitignored (real
  * coordinates / journeys — same policy as `railsnap`). Absent on CI, so the
- * suite skips there; locally it runs on every `npm test` and is the verdict
+ * suite skips there; locally it runs on every `pnpm test` and is the verdict
  * on whether the feature works.
  */
 

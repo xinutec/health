@@ -12,7 +12,7 @@ import { describe, it } from "vitest";
  *
  * This helper gates the body itself. When `fixture` is null it collects
  * a single skipped placeholder and never touches the body; when present
- * it runs `body` with the fixture narrowed non-null. The same `npm test`
+ * it runs `body` with the fixture narrowed non-null. The same `pnpm test`
  * command therefore exercises these suites locally (fixture present) and
  * cleanly skips them in CI (fixture absent) — no separate exclude list.
  */

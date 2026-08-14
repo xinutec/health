@@ -15,7 +15,7 @@
  * vitest it never completes — every call reports `lean-bridge: degraded —
  * falling back to TS (call timed out)` after 20 s. So a test that routed
  * through it would silently measure the TS arm and pass for the wrong reason.
- * That is exactly why the corpus gate (`npm run golden` under
+ * That is exactly why the corpus gate (`pnpm run golden` under
  * `LEAN_BIOLABELS=on`, which is a plain node process) is where the serving path
  * is verified end to end.
  */
