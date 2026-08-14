@@ -260,20 +260,27 @@ function findRailRuns(segments: EnrichedSegment[], points: FilteredPoint[]): Rai
 	const couldBeTrainPause = (s: EnrichedSegment): boolean => {
 		if (s.endTs - s.startTs > TRAIN_PAUSE_MAX_SEC) return false;
 		if (s.mode === "stationary") return true;
-		// MEASURED 2026-08-14 and NOT yet acted on — see #810. Absorption fires
-		// exactly TWICE on the whole corpus (`RAIL_MERGE_DUMP=1` below), and both
-		// are confirmed interchange WALKS between two different trains: 04-29 the
-		// Arnhem transfer (286 s, 4.7 km/h, welding 101 and 127 km/h legs) and
-		// 06-12 the King's Cross Victoria -> Metropolitan change (278 s,
-		// 8.1 km/h, already a `wrong {user}` row). It has never absorbed a
-		// stationary segment here, despite being named and documented for one.
+		// A WALK is never a train pause, however slow (#810). The paragraph above
+		// calls such a segment "almost certainly a platform interchange" and then
+		// absorbs it — but an interchange is the one thing a leg boundary is FOR,
+		// and the merge spans first.startTs..last.endTs, so absorbing one welds
+		// two genuinely different trains into a single leg and deletes the
+		// confirmed row between them.
 		//
-		// Refusing `walking` outright is the candidate fix and is deliberately
-		// NOT applied yet: it cannot be graded until 04-29 is re-captured (moving
-		// this boundary invalidates that day's OSM trace, and the day then drops
-		// out of every aggregate), and it makes the S12/S13 guard pair in
-		// `RailRunAnnotate.lean` unreachable for walking, so that pair needs
-		// restructuring in the same change.
+		// MEASURED over the whole corpus (`RAIL_MERGE_DUMP=1` below): absorption
+		// fires exactly TWICE, and both are confirmed interchange walks between
+		// two different trains —
+		//   04-29  286 s, 4.7 km/h, welding 101 km/h and 127 km/h legs (the
+		//          Arnhem transfer, a confirmed "walking + brief stationary" row)
+		//   06-12  278 s, 8.1 km/h, King's Cross Victoria -> Metropolitan
+		//          (already a `wrong {user}` row)
+		// It has NEVER absorbed a stationary segment here, despite this field
+		// being named `absorbedStationary` and documented for one.
+		//
+		// The 2026-04-29 case cited in the note above is one of those two: the
+		// GPS-tightness fallback was tuned to make that segment absorbable, and
+		// it is exactly what must not be.
+		if (s.refinedMode === "walking" || s.mode === "walking") return false;
 		if (s.avgSpeed <= TRAIN_PAUSE_MAX_AVG_KMH) return true;
 		// Fallback: GPS-cluster check for the case where the classifier
 		// over-estimated avgSpeed (instant-speed spikes at a platform).

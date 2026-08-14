@@ -191,6 +191,14 @@ whichever looks sane catches both failure modes. -/
 def couldBeTrainPause (points : Array Fix) (s : Seg) : Bool :=
   if s.endTs - s.startTs > TRAIN_PAUSE_MAX_SEC then false
   else if s.mode == "stationary" then true
+  -- A WALK is never a train pause, however slow (#810). An interchange is the
+  -- one thing a leg boundary is FOR, and the merge spans the whole run, so
+  -- absorbing one welds two different trains into a single leg. Measured
+  -- corpus-wide, absorption fires exactly twice and both are confirmed
+  -- interchange walks; it has never absorbed a stationary segment. The
+  -- 2026-04-29 case cited above is one of the two.
+  -- Mirrors `couldBeTrainPause` in src/geo/passes/rail-runs.ts.
+  else if Verified.Geo.SegmentMerge.effectiveMode s == "walking" then false
   else if s.avgSpeed ≤ TRAIN_PAUSE_MAX_AVG_KMH then true
   else
     let segPoints := samplesInWindow points s
@@ -827,10 +835,12 @@ private def fixesS11 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51
 #guard traceOf segsS11 fixesS11 == #[.stations 51.5 (-0.1), .stations 51.54 (-0.1), .lines 51.5 (-0.1), .lines 51.54 (-0.1)]
 
 -- A non-stationary middle segment absorbs on the avgSpeed arm (<= 10 km/h)
--- without being stationary.
+-- without being stationary. `driving`, not `walking`: a walk is refused
+-- outright now (#810), so a walking fixture here would test the refusal rather
+-- than the threshold this pair exists for. See S14 for the refusal itself.
 private def segsS12 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS12 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1180, 51.515, (-0.1), 50.0⟩, ⟨1240, 51.53, (-0.1), 50.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩, ⟨1420, 51.54, (-0.1), 2.0⟩]
 #guard outOf segsS12 fixesS12 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "train", "merged rail run (collapsed brief pauses)", #[], 0.8, 2.0, 35.0, 60.0, 0.9, 24)]
@@ -840,10 +850,10 @@ private def fixesS12 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51
 -- fixes span the whole ride), so the run splits.
 private def segsS13 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.1, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.1, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS13 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1180, 51.515, (-0.1), 50.0⟩, ⟨1240, 51.53, (-0.1), 50.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩, ⟨1420, 51.54, (-0.1), 2.0⟩]
-#guard outOf segsS13 fixesS13 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10), (1200, 1260, "", "walking", "", "", #[], 0.8, 2.0, 10.1, 60.0, 0.9, 4), (1260, 1300, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10)]
+#guard outOf segsS13 fixesS13 == #[(1100, 1200, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10), (1200, 1260, "", "driving", "", "", #[], 0.8, 2.0, 10.1, 60.0, 0.9, 4), (1260, 1300, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10)]
 -- V8's exact order, which this arm does not reproduce across runs — every
 -- run's station pair, then every run's line pair: #[.stations 51.5 (-0.1),
 -- .stations 51.54 (-0.1), .stations 51.5 (-0.1), .stations 51.54 (-0.1),
@@ -851,11 +861,23 @@ private def fixesS13 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51
 -- (-0.1)]
 #guard ((traceOf segsS13 fixesS13).map reprStr).qsort (· < ·) == (((#[.stations 51.5 (-0.1), .stations 51.54 (-0.1), .stations 51.5 (-0.1), .stations 51.54 (-0.1), .lines 51.5 (-0.1), .lines 51.54 (-0.1), .lines 51.5 (-0.1), .lines 51.54 (-0.1)] : Array Read).map reprStr).qsort (· < ·))
 
+-- A WALK is refused however slow (#810), so it splits where the identical
+-- `driving` fixture at the same speed (S12) merges. This is the pair that
+-- pins the new rule: S12 and S14 differ ONLY in the middle segment's mode.
+-- Two confirmed interchange walks in the corpus were being welded into their
+-- neighbouring train legs by the avgSpeed arm below the fix.
+private def segsS12w : Array Seg := #[
+  { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
+  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 10.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
+  { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
+private def fixesS12w : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1180, 51.515, (-0.1), 50.0⟩, ⟨1240, 51.53, (-0.1), 50.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩, ⟨1420, 51.54, (-0.1), 2.0⟩]
+#guard outOf segsS12w fixesS12w == #[(1100, 1200, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10), (1200, 1260, "", "walking", "", "", #[], 0.8, 2.0, 10.0, 60.0, 0.9, 4), (1260, 1300, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10)]
+
 -- The GPS-cluster arm SUCCEEDING: avgSpeed over the bar, but the segment's
 -- own fixes sit within 100 m of their centroid.
 private def segsS14 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 4 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS14 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1210, 51.52, (-0.1), 40.0⟩, ⟨1230, 51.5202, (-0.1), 40.0⟩, ⟨1250, 51.5201, (-0.1), 40.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩, ⟨1420, 51.54, (-0.1), 2.0⟩]
 #guard outOf segsS14 fixesS14 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "train", "merged rail run (collapsed brief pauses)", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 24)]
@@ -1090,7 +1112,7 @@ private def fixesS36 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1120, 51
 -- 0.8 absorbs and 1.0 does not.
 private def segsS37 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS37 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1202, 51.52, (-0.1), 40.0⟩, ⟨1206, 51.5201, (-0.1), 40.0⟩, ⟨1210, 51.5202, (-0.1), 40.0⟩, ⟨1214, 51.5203, (-0.1), 40.0⟩, ⟨1218, 51.5204, (-0.1), 40.0⟩, ⟨1222, 51.5205, (-0.1), 40.0⟩, ⟨1226, 51.5206, (-0.1), 40.0⟩, ⟨1230, 51.5207, (-0.1), 40.0⟩, ⟨1234, 51.5208, (-0.1), 40.0⟩, ⟨1238, 51.5249, (-0.1), 40.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩]
 #guard outOf segsS37 fixesS37 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "train", "merged rail run (collapsed brief pauses)", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 30)]
@@ -1112,7 +1134,7 @@ private def fixesS38 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51
 -- so `< 2` admits it and `< 3` would not.
 private def segsS39 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 2 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 2 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS39 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1210, 51.52, (-0.1), 40.0⟩, ⟨1250, 51.5201, (-0.1), 40.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩]
 #guard outOf segsS39 fixesS39 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "train", "merged rail run (collapsed brief pauses)", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 22)]
@@ -1123,7 +1145,7 @@ private def fixesS39 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1120, 51
 -- the FIRST fix the farthest is 178 m and it would not.
 private def segsS40 : Array Seg := #[
   { startTs := 1100, endTs := 1200, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 },
-  { startTs := 1200, endTs := 1260, mode := "walking", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 3 },
+  { startTs := 1200, endTs := 1260, mode := "driving", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 3 },
   { startTs := 1260, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS40 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1210, 51.52, (-0.1), 40.0⟩, ⟨1230, 51.5208, (-0.1), 40.0⟩, ⟨1250, 51.5216, (-0.1), 40.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩]
 #guard outOf segsS40 fixesS40 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "train", "merged rail run (collapsed brief pauses)", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 23)]
