@@ -752,8 +752,18 @@ export async function annotateUndergroundRuns(
 		// observed downstream at all; under HEAD their runs are dropped here and
 		// never reach the interchange decision.
 		const growFirst = process.env.UNDERGROUND_GROW_FIRST === "1";
+		// `UNDERGROUND_SHORT_RUN=1` admits a run that is short in FIXES but covers
+		// ground no walk could — a MEASUREMENT switch, like grow-first beside it,
+		// and off for the same reason: graded alone it is net worse (`b35ccdd`).
+		// It exists because 06-16's alight defect cannot be observed otherwise —
+		// with the run dropped, there is no Jubilee leg to be wrong about.
+		const shortRun = process.env.UNDERGROUND_SHORT_RUN === "1";
 		const hostRun = runs
-			.filter((r) => r.length >= MIN_COARSE_FIXES && (growFirst || span(r) >= MIN_RUN_DURATION_S))
+			.filter(
+				(r) =>
+					r.length >= MIN_COARSE_FIXES &&
+					(growFirst || span(r) >= MIN_RUN_DURATION_S || (shortRun && coversGroundTooFastToWalk(r))),
+			)
 			.sort((a, b) => span(b) - span(a))[0];
 		if (!hostRun) {
 			result.push(host);
@@ -773,7 +783,10 @@ export async function annotateUndergroundRuns(
 		// survives still has to clear the same bar the host run cleared, or the
 		// ride would be reconstructed out of evidence just disowned.
 		const runFixes = trimBlipTail(growThroughDarkness(hostRun, darkFixes, good), good);
-		if (runFixes.length < MIN_COARSE_FIXES || span(runFixes) < MIN_RUN_DURATION_S) {
+		if (
+			runFixes.length < MIN_COARSE_FIXES ||
+			(span(runFixes) < MIN_RUN_DURATION_S && !(shortRun && coversGroundTooFastToWalk(runFixes)))
+		) {
 			result.push(host);
 			continue;
 		}

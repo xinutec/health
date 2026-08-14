@@ -451,15 +451,33 @@ export async function anchorTrainAlightToWalkedStation(
 		if (effectiveMode(train) !== "train") continue;
 		const rail = parseRailWayName(train.wayName);
 		if (rail === null) continue;
+		// `ALIGHT_ANCHOR_DUMP=1` names which guard left a reclaimable-looking hop
+		// in the walk. Every exit below is silent, so a leg the pass REFUSED and a
+		// leg it never reached are otherwise indistinguishable — 2026-06-16's
+		// Jubilee leg printed nothing at all, and the reason turned out to be the
+		// very first guard.
+		const dump = process.env.ALIGHT_ANCHOR_DUMP === "1";
+		const why = (msg: string): void => {
+			if (dump) console.log(`  alight-anchor ${rail.board} → ${rail.alight}: ${msg}`);
+		};
 		const walk = out[k + 1];
-		if (effectiveMode(walk) !== "walking") continue;
+		if (effectiveMode(walk) !== "walking") {
+			why(`the next segment is ${walk ? effectiveMode(walk) : "nothing"}, not a walk — nothing to reclaim from`);
+			continue;
+		}
 		// Interchange guard (mirror of the boarding side): train → walk → train
 		// is an interchange sliver — the walk's leading hop is the NEXT train
 		// pulling out, not this one riding in. Owned by reconcileAdjacentRailLegs
 		// / assembleRailJourney, not here.
-		if (k + 2 < out.length && effectiveMode(out[k + 2]) === "train") continue;
+		if (k + 2 < out.length && effectiveMode(out[k + 2]) === "train") {
+			why("train → walk → train is an interchange sliver, owned elsewhere");
+			continue;
+		}
 		const fixes = samplesInWindow(points, walk);
-		if (fixes.length < 3) continue;
+		if (fixes.length < 3) {
+			why(`the following walk holds only ${fixes.length} fix(es)`);
+			continue;
+		}
 
 		// The alighting hop ends where the LAST vehicle-paced RUN in the walk
 		// settles — a run, not a single step. With a tunnel blackout the ride
@@ -492,14 +510,6 @@ export async function anchorTrainAlightToWalkedStation(
 				runStart = -1;
 			}
 		}
-		// `ALIGHT_ANCHOR_DUMP=1` names which guard left a reclaimable-looking hop
-		// in the walk. Every exit below is silent, so a leg that SHOULD have been
-		// extended and was not is otherwise indistinguishable from one the pass
-		// never looked at.
-		const dump = process.env.ALIGHT_ANCHOR_DUMP === "1";
-		const why = (msg: string): void => {
-			if (dump) console.log(`  alight-anchor ${rail.board} → ${rail.alight}: ${msg}`);
-		};
 		if (settle < 1) {
 			why(`no vehicle-paced inter-station run in the following walk (${fixes.length} fixes)`);
 			continue;
