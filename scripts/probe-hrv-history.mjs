@@ -6,8 +6,9 @@
 //
 // Emits `date,hrv,rhr` rows (header included), one per day, for every date
 // present in hrv_daily OR daily_activity, ascending. Missing metric = empty
-// cell (gen_hrv_chart.py reads empty as NaN). This is the full-history
-// counterpart to probe-hr-trend.mjs (which is recent-window only).
+// cell (gen_hrv_chart.py reads empty as NaN), and a recorded 0 counts as
+// missing. This is the full-history counterpart to probe-hr-trend.mjs (which
+// is recent-window only).
 import { createConnection } from "mariadb";
 
 const c = await createConnection({
@@ -36,7 +37,11 @@ for (const [table, metric, key] of sources) {
 	);
 	for (const { d, v } of rows) {
 		if (!byDate.has(d)) byDate.set(d, {});
-		if (v !== null) byDate.get(d)[key] = Number(v);
+		// A zero is a failed reading, not a measurement — an RMSSD of 0 ms is
+		// physiologically impossible — so it belongs on the same side of the
+		// test as NULL. Dropped HERE and not at ingest: hrv_daily keeps what
+		// Fitbit recorded, verbatim.
+		if (v !== null && v > 0) byDate.get(d)[key] = Number(v);
 	}
 }
 
