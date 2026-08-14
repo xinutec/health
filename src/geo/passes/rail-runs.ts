@@ -260,6 +260,20 @@ function findRailRuns(segments: EnrichedSegment[], points: FilteredPoint[]): Rai
 	const couldBeTrainPause = (s: EnrichedSegment): boolean => {
 		if (s.endTs - s.startTs > TRAIN_PAUSE_MAX_SEC) return false;
 		if (s.mode === "stationary") return true;
+		// MEASURED 2026-08-14 and NOT yet acted on — see #810. Absorption fires
+		// exactly TWICE on the whole corpus (`RAIL_MERGE_DUMP=1` below), and both
+		// are confirmed interchange WALKS between two different trains: 04-29 the
+		// Arnhem transfer (286 s, 4.7 km/h, welding 101 and 127 km/h legs) and
+		// 06-12 the King's Cross Victoria -> Metropolitan change (278 s,
+		// 8.1 km/h, already a `wrong {user}` row). It has never absorbed a
+		// stationary segment here, despite being named and documented for one.
+		//
+		// Refusing `walking` outright is the candidate fix and is deliberately
+		// NOT applied yet: it cannot be graded until 04-29 is re-captured (moving
+		// this boundary invalidates that day's OSM trace, and the day then drops
+		// out of every aggregate), and it makes the S12/S13 guard pair in
+		// `RailRunAnnotate.lean` unreachable for walking, so that pair needs
+		// restructuring in the same change.
 		if (s.avgSpeed <= TRAIN_PAUSE_MAX_AVG_KMH) return true;
 		// Fallback: GPS-cluster check for the case where the classifier
 		// over-estimated avgSpeed (instant-speed spikes at a platform).
@@ -796,6 +810,24 @@ function applyRailRuns(segments: EnrichedSegment[], runs: RailRun[], runLabels: 
 		// Multi-segment / absorbed run → collapse into one train segment.
 		const first = segments[run.from];
 		const last = segments[run.toExclusive - 1];
+
+		// `RAIL_MERGE_DUMP=1` prints what a run is about to swallow. The merge
+		// spans first.startTs..last.endTs, so anything absorbed loses its own
+		// boundaries entirely — and a CONFIRMED interchange absorbed this way is
+		// indistinguishable afterwards from a train that simply paused (#810).
+		// Off by default.
+		if (process.env.RAIL_MERGE_DUMP === "1") {
+			const hm = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 19);
+			console.log(`rail-merge ${hm(first.startTs)}-${hm(last.endTs)} (${last.endTs - first.startTs}s) absorbing:`);
+			for (let k = run.from; k < run.toExclusive; k++) {
+				const s = segments[k];
+				console.log(
+					`    ${hm(s.startTs)}-${hm(s.endTs)} ${String(s.endTs - s.startTs).padStart(4)}s ` +
+						`${(s.refinedMode ?? s.mode).padEnd(10)} avg=${s.avgSpeed}km/h` +
+						`${run.absorbedStationary.includes(k) ? "  <- ABSORBED as a train pause" : ""}`,
+				);
+			}
+		}
 		const railSegs: EnrichedSegment[] = [];
 		for (let k = run.from; k < run.toExclusive; k++) {
 			if (segments[k].mode !== "stationary") railSegs.push(segments[k]);
