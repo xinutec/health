@@ -93,6 +93,25 @@ trap cleanup EXIT
 # open a fresh one: Mac:LOCAL_PORT -(ssh -L)- isis:LOCAL_PORT
 # -(kubectl)- svc/health-db:3306.
 ssh "$HEALTH_HOST" "pkill -f '$PF_PATTERN' 2>/dev/null || true" 2>/dev/null || true
+
+# A back-to-back run can still find the PREVIOUS run's local listener
+# bound here — ssh releases the port some time after it is killed, not
+# at once. Starting ours while that one lingers means ExitOnForwardFailure
+# kills ours, and the stale listener then answers the readiness probe in
+# its place. Wait for the port to go quiet, so what we probe is our own.
+if (exec 3<>"/dev/tcp/127.0.0.1/$LOCAL_PORT") 2>/dev/null; then
+	printf "    local port %s still held by an earlier run" "$LOCAL_PORT" >&2
+	for i in $(seq 1 40); do
+		(exec 3<>"/dev/tcp/127.0.0.1/$LOCAL_PORT") 2>/dev/null || break
+		printf . >&2
+		sleep 0.5
+		[ "$i" -eq 40 ] && {
+			echo " still held — refusing to probe a listener that is not ours" >&2
+			exit 1
+		}
+	done
+	echo " freed" >&2
+fi
 # ServerAlive* keeps the long-lived tunnel from idling out during
 # CPU-heavy phases that aren't touching the DB (e.g. the route-aware
 # HSMM decode loop) — without these the upstream resets the
@@ -103,13 +122,35 @@ ssh -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 -o ServerAliveCountMax
 	"kubectl -n $NS port-forward svc/health-db $LOCAL_PORT:3306" &
 TUNNEL_PID=$!
 
+# Readiness has to test the FAR end. A bare connect proves only that the
+# local ssh listener is bound, and ssh binds it the moment it connects —
+# whether or not kubectl ever bound its own end, and whether or not the
+# server behind it is up. That is why a back-to-back run could print
+# "ok" and then fail on the very first query with ER_SOCKET_UNEXPECTED_CLOSE.
+# MariaDB sends its handshake greeting unprompted on accept, so one byte
+# arriving here proves the whole chain: Mac, ssh, kubectl, server. Cost is
+# one aborted connection per invocation, which the server does not mind.
+db_greets() {
+	local b rc
+	# The braces matter: a failed `exec` redirection is reported by the
+	# shell itself, and a `2>/dev/null` on the exec line is not applied
+	# in time to suppress it. Grouping puts the message inside the
+	# redirect, so a refused probe stays silent instead of printing a
+	# scary "Connection refused" on every poll of a healthy startup.
+	{ exec 3<>"/dev/tcp/127.0.0.1/$LOCAL_PORT"; } 2>/dev/null || return 1
+	IFS= read -r -t 5 -n 1 b <&3
+	rc=$?
+	exec 3<&- 3>&-
+	return "$rc"
+}
+
 printf "    waiting for tunnel" >&2
 for i in $(seq 1 60); do
 	kill -0 "$TUNNEL_PID" 2>/dev/null || {
 		echo " tunnel process exited" >&2
 		exit 1
 	}
-	if (echo >"/dev/tcp/127.0.0.1/$LOCAL_PORT") 2>/dev/null; then
+	if db_greets; then
 		echo " ok" >&2
 		break
 	fi
