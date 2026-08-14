@@ -72,7 +72,7 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   `shortestPath` (binary heap tie behaviour included) with honest-`none`
   contract deltas; `#guard`-pinned against the oracle in
   `Verified/Rail/Tests.lean`, and pinned against production on real
-  corridors by `npm run compare-rail` (via `verified_cli rail`).
+  corridors by `pnpm run compare-rail` (via `verified_cli rail`).
 - `Verified/Rail/HeapInv.lean` — binary-heap invariants, both halves:
   `IsHeapA`, `root_le` (the root is a minimum), sift-up repair
   (`siftUp_isHeap` via `UpOK`) with the `push` theorems, and sift-down
@@ -143,7 +143,7 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   squared comparison, and `qArcPos`), so the pass theorems specialise
   for free. Representation chosen by corpus probe
   (`experiments/quant-probe.mjs`), and pinned at scale by
-  `npm run compare-geo`: every golden walking leg through
+  `pnpm run compare-geo`: every golden walking leg through
   `verified_cli geo` vs the twin — 173/173 legs bit-EXACT, float↔quant
   flips zero everywhere except one near-threshold tie at the 1.5 m
   display tolerance.
@@ -213,7 +213,7 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   `verified_cli serve` is the persistent NDJSON loop the TS bridge drives —
   one long-lived process instead of a spawn per call.
 - `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
-  problems (run `npm run build` first, then
+  problems (run `pnpm run build` first, then
   `nix develop -c node lean/experiments/compare.mjs` from the repo root).
 
 ## Conventions

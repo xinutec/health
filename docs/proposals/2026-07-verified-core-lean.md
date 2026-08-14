@@ -157,7 +157,7 @@ porting float arithmetic.
   optimisable later without touching the theorems). Remaining V1 nicety:
   genericise `Score` so the theorems are parametric over any linearly
   ordered additive monoid with bottom.
-- **V2 — real-data shadow. First slice SHIPPED.** `npm run lean-shadow`
+- **V2 — real-data shadow. First slice SHIPPED.** `pnpm run lean-shadow`
   (`src/cli/lean-shadow.ts`): for every golden `decoded_days` fixture,
   `buildHsmmModel` (extracted from `decodeHsmm` so the shadow quantises
   the *very* model production runs) is quantised to ×2²⁰ integer tensors
@@ -170,7 +170,7 @@ porting float arithmetic.
   paths and best scores, S≈155 × T=1440 × maxD=240), and quantisation is
   lossless on this corpus (float↔quant 100.00% minute agreement, zero
   float-score delta — the near-tie flips the referee design anticipated
-  haven't occurred yet). `npm run verify` now runs `lean-check` (lake
+  haven't occurred yet). `pnpm run verify` now runs `lean-check` (lake
   build with its `#guard`s + the seeded parity harness); the shadow tool
   itself needs the local (gitignored) corpus, so it stays a tool like
   `golden-hsmm`. **The day-scale cost is fixed** (was ~23s/3.6GB per
@@ -230,7 +230,7 @@ porting float arithmetic.
   disconnected" — the null-over-wrong contract. The pilot (spec + oracle
   (exhaustive simple-path enumeration) + the port, `#guard`-pinned over
   seeded random multigraphs and degenerate shapes) is done, and so is
-  the real-data harness: `npm run compare-rail` rebuilds each fixture
+  the real-data harness: `pnpm run compare-rail` rebuilds each fixture
   train segment's production graph, quantises, and runs TS-float,
   TS-quantised, and `verified_cli rail` on it — **every fixture
   comparison EXACT (both directions per segment), float↔quant
@@ -378,7 +378,7 @@ porting float arithmetic.
   `/` — as an explicit part of the twin contract) and instantiates the
   pass layer, so the pass theorems specialise to the real metric for
   free; `verified_cli geo` exposes the passes over quantised points;
-  `src/geo/quant-twin.ts` is the BigInt twin; and `npm run
+  `src/geo/quant-twin.ts` is the BigInt twin; and `pnpm run
   compare-geo` replays every golden walking leg through all three
   arms — **173/173 legs bit-EXACT quant↔Lean on every pass, float↔
   quant flips zero except the one probed near-tie** (simplify-1.5 m,
@@ -398,7 +398,7 @@ porting float arithmetic.
   trim's threshold count widens the tie class; display-only, gate
   unaffected).
   **The MATCHER twin is BUILT and MEASURED** (2026-07-19,
-  `src/geo/match-twin.ts` + `npm run compare-match`): the full
+  `src/geo/match-twin.ts` + `pnpm run compare-match`): the full
   `matchTrajectory`/`matchWalkSegment` pipeline in the pinned integer
   semantics — graph build with 1e-7° vertex keys (`vertexDp: 7` makes
   the float `toFixed(7)` key the same grid), gap bridging, corridor
@@ -422,7 +422,7 @@ porting float arithmetic.
   Lean twin of `match-twin.ts`), reusing the fully-proved `LazyDijkstra`
   machinery for routing and running the proved `MatchViterbi.decodeFast`
   for the trellis; `verified_cli match` A/Bs every golden walking leg
-  against the BigInt twin and `npm run compare-match` **gates at
+  against the BigInt twin and `pnpm run compare-match` **gates at
   173/173 quant↔Lean EXACT**, with the same per-leg A/B wired as a live
   nightly prod shadow (`decode-day` walk-shadow, LEAN_CLI-gated). So the
   matcher now *ships* Lean-decoded results bit-for-bit and is
@@ -535,7 +535,7 @@ porting float arithmetic.
   **Honest flip gate.** `shadow` and `on` take the SAME measurements
   (calls / bridge-failures / divergences); a green `on` run therefore *proves*
   the bridge served every call rather than silently falling back to TS. The
-  gate (`npm run shadow-passes [--on]`) is RED unless coverage > 0 AND
+  gate (`pnpm run shadow-passes [--on]`) is RED unless coverage > 0 AND
   failures == 0 AND every divergence is in the accepted manifest — closing the
   earlier false-CLEAN bug where a dead bridge read as ready-to-flip.
 
@@ -682,14 +682,14 @@ porting float arithmetic.
 
   Two coverage gaps surfaced doing it, both still open:
 
-  - `npm run lean-shadow` runs the corpus *without* the c4 flags, so its
+  - `pnpm run lean-shadow` runs the corpus *without* the c4 flags, so its
     duration export always takes the **sparse** branch (`ov=…`). The
     class-factorised branch production takes every day (`durClasses=8`) has no
     gate. Fix 3 was verified against a purpose-built referee re-deriving every
     delta exhaustively (12 days, ~640M cells, agreeing everywhere) — that
     referee is not yet wired into `verify`.
-  - `npm run golden-hsmm` fails 3 of 12 fixtures (2026-05-15, 07-12, 07-14) and
-    is **not** part of `npm run verify`, so nothing catches it. Confirmed
+  - `pnpm run golden-hsmm` fails 3 of 12 fixtures (2026-05-15, 07-12, 07-14) and
+    is **not** part of `pnpm run verify`, so nothing catches it. Confirmed
     pre-existing by running it on the unmodified tree; the failures are
     single-segment boundary shifts. Unrelated to the above, but nothing is
     watching it.
@@ -755,6 +755,6 @@ porting float arithmetic.
   event — fix proofs in the same commit that bumps the pin.
 - **`#guard` cost.** The oracle is exponential; keep guard instances tiny
   (they run on every `lake build`).
-- ~~The parity harness is not yet part of `npm run verify`~~ — wired:
-  `npm run lean-check` (lake build + harness) is the last step of
+- ~~The parity harness is not yet part of `pnpm run verify`~~ — wired:
+  `pnpm run lean-check` (lake build + harness) is the last step of
   `verify`. Cost ≈ seconds warm; a cold `lean/.lake` rebuild is ~1–2 min.

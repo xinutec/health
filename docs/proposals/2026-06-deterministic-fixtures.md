@@ -294,7 +294,7 @@ explicit bless on the diff).
   `loadClassificationInputs(config, ...)` then `computeVelocity(...)`.
   Same DB queries, same wire calls, same output.
 - **Tests don't touch a DB.** No port-forward, no mock pool, no
-  parity worries. `npm run golden-v2` runs against files only.
+  parity worries. `pnpm run golden-v2` runs against files only.
 - **Code SHA recorded.** When a fixture was captured against commit
   `abc123` and current code differs, the test reports
   `captured_at_code_sha != current_sha` as part of the diff context.
@@ -448,7 +448,7 @@ cutover.
 
 - Delete `tests/golden/manifest.json`, `tests/golden/expected/`,
   `src/cli/golden-check.ts`, `src/cli/capture-day.ts`.
-- Rename `*-v2` → `*`. `npm run golden` points at the new harness.
+- Rename `*-v2` → `*`. `pnpm run golden` points at the new harness.
 - Outcome: one harness, one format.
 
 ### Phase 7: HSMM-layer refactor — `HsmmInputs` + adapters

@@ -106,7 +106,7 @@ Status: watch-liveness imputation implemented in `buildObservationTensor`
 (measured liveness within a 5-minute window on BOTH sides; a day with no
 step rows imputes nothing), behind `USE_CADENCE_IMPUTATION=1` — the flag
 gate lives in the loaders, `decodeHsmm` stays pure. Shadow-measured on
-the scoreboard (`USE_CADENCE_IMPUTATION=1 npm run score-decoder`):
+the scoreboard (`USE_CADENCE_IMPUTATION=1 pnpm run score-decoder`):
 
 - **Wins**: two journeys reconstructed on a previously 0-matched day
   (pre-boarding platform waits sharpen leg boundaries), leg mode/line

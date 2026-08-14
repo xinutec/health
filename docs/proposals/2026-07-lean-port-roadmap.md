@@ -146,7 +146,7 @@ Two consequences for the rest of the port:
 
 `Verified.Geo.GpsQuality` — the incoherent-run pre-filter one call ABOVE the
 Kalman filter — went in next and cost almost nothing: the bit transport already
-existed, so it was a verb, a tenant, and a referee. `npm run compare-gpsquality`
+existed, so it was a verb, a tenant, and a referee. `pnpm run compare-gpsquality`
 reports **32/32 days agreeing exactly on the keep-set**, and golden under
 `LEAN_GPSQUALITY=on` is 32/32 byte-identical with zero divergence warnings.
 
@@ -199,7 +199,7 @@ Three things made this slice cheap, and all three are reusable:
   The port cannot drift on fields it does not model, and the comparison asks the
   only question that matters: did both arms decide the same thing?
 
-Corpus evidence: `npm run golden` under `LEAN_BIOLABELS=on` is 32/32
+Corpus evidence: `pnpm run golden` under `LEAN_BIOLABELS=on` is 32/32
 byte-identical with the ledger reading `128/0f EXACT` — 32 days × 4 passes,
 every call served, zero failures, zero divergences.
 
@@ -316,8 +316,8 @@ A green gate that never executed the flag proves nothing, and the two ways to ge
 one are both easy to walk into.
 
 **Wrong layer.** A velocity-layer flag can only be gated by a harness that enters
-through `computeVelocity` / `computeVelocityFromInputs` — `npm run golden` and
-`npm run walk-gate` (`score-walk-match.ts` calls it directly). `npm run
+through `computeVelocity` / `computeVelocityFromInputs` — `pnpm run golden` and
+`pnpm run walk-gate` (`score-walk-match.ts` calls it directly). `pnpm run
 score-decoder` replays *captured* HSMM fixtures straight into `decodeHsmm` and
 never enters velocity at all, so for `LEAN_GPSQUALITY` and `LEAN_KALMAN` it is
 identical by construction. I had it on the #388 gate list; running it would have

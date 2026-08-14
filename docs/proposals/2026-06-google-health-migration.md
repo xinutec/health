@@ -86,7 +86,7 @@ from another device) use the copy-the-`code` path:
 
 ```
 cd ~/Code/health
-nix develop -c npm run build                 # dist/ for the sync CLI
+nix develop -c pnpm run build                 # dist/ for the sync CLI
 
 # Creds from the k8s secret into the env (GH_CLIENT_ID / GH_CLIENT_SECRET /
 # GH_REFRESH_TOKEN). Inspect with:
