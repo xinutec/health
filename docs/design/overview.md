@@ -163,9 +163,16 @@ run synthetic days end-to-end). Tests share the same strict type
 checking as production code, so a stale call into a refactored
 signature surfaces immediately.
 
-Beyond the unit suite, three replay gates guard behaviour on **real
+Beyond the unit suite, a set of replay gates guards behaviour on **real
 captured days** (fixtures gitignored — see
-`privacy-in-tests-and-commits.md`):
+`privacy-in-tests-and-commits.md`). The ones below are the shape of it, NOT
+the list: **count the commands in `scripts/deploy.sh` step 2 rather than
+quoting a number from here.** That block ran seven commands on 2026-08-14 and
+has grown twice in a month, and every attempt to summarise it has undercounted
+— this section said "three", and #749 spent days reporting `golden` alone as
+the distance to a rollout. They run under `set -e`, so **a red gate behind a red
+gate is never reached**, and one of them (`day-gate`) was found HANGING rather
+than failing, which stalls the deploy with no output at all:
 
 - `gate.json` (from `gate.dhall`) — typecheck (src + tests), biome, vitest,
   the Lean verified core, frontend build + e2e. Run by the pre-commit hook,
@@ -189,10 +196,23 @@ captured days** (fixtures gitignored — see
   (`score-walk-match`) against the per-metric ratchet floor in
   `tests/golden/walk-baseline.json` (tracked in git, moved only by an
   explicit re-bless).
+- `scripts/score-decoder.sh` — the real `decodeHsmm` against ground truth,
+  ratcheted per day in `tests/golden/decoder-scoreboard.json`.
+- `scripts/day-gate.sh` — the ONLY check that asks whether the Lean port has
+  drifted from the TS it ports. Absolute bar, no baseline to bless into: every
+  day must be IDENTICAL or SHELL ONLY.
+- `scripts/focus-gate.sh` — the same question at the other end of the pipeline,
+  for the weekly focus-place miner, which no day replay reaches.
+- `golden` a second time with all seven Lean tenants `on`, and
+  `scripts/golden-hsmm.sh` — the only places the verified core is actually
+  EXECUTED by a gate. Everything above runs with the tenants off, so a broken
+  bridge could otherwise ship unconsulted.
 
-`scripts/deploy.sh` runs all three before building, pushing, and
-rolling out. Every script enters the pinned nix devshell itself
-(`scripts/_devshell.sh`) — run them directly, no wrapper needed.
+All of these replay the gitignored `tests/golden/` corpus, so **CI can never run
+any of them** — the deploy path is the only place they gate. `deploy.sh` runs
+them before building, pushing, and rolling out. Every script enters the pinned
+nix devshell itself (`scripts/_devshell.sh`) — run them directly, no wrapper
+needed.
 
 ## Security checklist
 

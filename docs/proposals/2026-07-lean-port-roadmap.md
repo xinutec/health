@@ -124,7 +124,10 @@ Two consequences for the rest of the port:
   port can be pinned by testing but not proved.
 - **And getting off `Float` ENDS the regime that currently proves the port.**
   Worth stating before it is discovered mid-migration. Every check the port has
-  today — 33/33 SHELL ONLY on the day gate, the tenant ledgers, every `#guard` —
+  today — SHELL ONLY on every golden day of the day gate (35/35 on 2026-08-14;
+  COUNT it rather than quoting a figure, this line said 33/33 while `days/` held
+  35, and the gate it quoted had been HANGING mid-corpus, so the tally could not
+  have been current — see #424), the tenant ledgers, every `#guard` —
   asks the same question: *does Lean produce the bytes TS produced?* You cannot
   be byte-identical to a `Float` implementation without `Float`. So the day the
   reals go in, parity-with-TS stops being the criterion and something has to
