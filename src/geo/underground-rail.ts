@@ -244,10 +244,30 @@ export async function reconstructUndergroundJourney(
 		linesLookup,
 		servedLookup,
 	);
-	if (single) return [single];
+	/** `UNDERGROUND_SPLIT_DUMP=1` reports how the interchange decision went, at
+	 *  every point it can end. #445 needs to know WHICH test disowns a true
+	 *  platform change, and the counts alone cannot say. Off by default. */
+	const SPLIT_DUMP = process.env.UNDERGROUND_SPLIT_DUMP === "1";
+	const sdump = (msg: string): void => {
+		if (SPLIT_DUMP) console.log(`underground-split ${new Date(fixes[0].ts * 1000).toISOString().slice(11, 19)} ${msg}`);
+	};
+
+	if (single) {
+		// NOTE the ordering: a through-ride is accepted BEFORE any split is
+		// considered, so whenever one line plausibly reaches both ends the
+		// interchange below is never examined at all.
+		sdump(
+			`single=${single.boardingStation} -> ${single.alightingStation} [${single.line}] — RETURNED, split never tried`,
+		);
+		return [single];
+	}
+	sdump("single=none — trying split");
 
 	const coarse = fixes.filter(isCoarse).sort((a, b) => a.ts - b.ts);
-	if (coarse.length < 2 * MIN_COARSE_FIXES) return []; // not enough to split into two real legs
+	if (coarse.length < 2 * MIN_COARSE_FIXES) {
+		sdump(`coarse=${coarse.length} < ${2 * MIN_COARSE_FIXES} — too few to split`);
+		return []; // not enough to split into two real legs
+	}
 
 	// A genuine interchange means the rider could NOT have stayed on one line:
 	// the boarding end is not served by the second leg's line, and the
@@ -297,7 +317,12 @@ export async function reconstructUndergroundJourney(
 		};
 		const before = coarse.filter((f) => f.ts < ixTs);
 		const after = coarse.filter((f) => f.ts > ixTs);
-		if (before.length < MIN_COARSE_FIXES || after.length < MIN_COARSE_FIXES) continue;
+		if (before.length < MIN_COARSE_FIXES || after.length < MIN_COARSE_FIXES) {
+			sdump(
+				`cluster@${new Date(ixTs * 1000).toISOString().slice(11, 19)} before=${before.length} after=${after.length} — too few either side`,
+			);
+			continue;
+		}
 		const leg1 = await reconstructUndergroundRun(
 			before,
 			boardingFix,
@@ -316,7 +341,14 @@ export async function reconstructUndergroundJourney(
 			servedLookup,
 			true,
 		);
-		if (!leg1 || !leg2 || leg1.alightingStation !== leg2.boardingStation) continue;
+		if (!leg1 || !leg2 || leg1.alightingStation !== leg2.boardingStation) {
+			sdump(
+				`cluster@${new Date(ixTs * 1000).toISOString().slice(11, 19)} ` +
+					`leg1=${leg1 ? `${leg1.boardingStation}->${leg1.alightingStation} [${leg1.line}]` : "none"} ` +
+					`leg2=${leg2 ? `${leg2.boardingStation}->${leg2.alightingStation} [${leg2.line}]` : "none"} — legs do not meet`,
+			);
+			continue;
+		}
 
 		// Compare PHYSICAL lines, not OSM relation strings: "Metropolitan Line"
 		// and "Circle, Hammersmith & City and Metropolitan Lines" are the same
@@ -330,11 +362,17 @@ export async function reconstructUndergroundJourney(
 		const leg1Lines = expand([leg1.line]);
 		const leg2Lines = expand([leg2.line]);
 		const disjoint = (a: Set<string>, b: Set<string>): boolean => ![...a].some((x) => b.has(x));
-		if (
-			disjoint(leg1Lines, leg2Lines) &&
-			disjoint(expand(boardLines), leg2Lines) &&
-			disjoint(expand(alightLines), leg1Lines)
-		) {
+		const dLegs = disjoint(leg1Lines, leg2Lines);
+		const dBoard = disjoint(expand(boardLines), leg2Lines);
+		const dAlight = disjoint(expand(alightLines), leg1Lines);
+		sdump(
+			`cluster@${new Date(ixTs * 1000).toISOString().slice(11, 19)} ` +
+				`${leg1.boardingStation}->${leg1.alightingStation} [${leg1.line}] + ` +
+				`${leg2.boardingStation}->${leg2.alightingStation} [${leg2.line}] ` +
+				`legsDisjoint=${dLegs} boardCantRideLeg2=${dBoard} alightCantRideLeg1=${dAlight} ` +
+				`=> ${dLegs && dBoard && dAlight ? "SPLIT" : "rejected as parallel corridor"}`,
+		);
+		if (dLegs && dBoard && dAlight) {
 			return [leg1, leg2];
 		}
 	}
@@ -664,8 +702,14 @@ export async function annotateUndergroundRuns(
 		}
 
 		// The journey is the longest-spanning run that clears the bar.
+		// `UNDERGROUND_GROW_FIRST=1` asks the bar of the GROWN run only — #445's
+		// patch, kept as a MEASUREMENT switch, not a fix: it is graded net worse
+		// and must not be turned on by default. It exists so the two losses can be
+		// observed downstream at all; under HEAD their runs are dropped here and
+		// never reach the interchange decision.
+		const growFirst = process.env.UNDERGROUND_GROW_FIRST === "1";
 		const hostRun = runs
-			.filter((r) => r.length >= MIN_COARSE_FIXES && span(r) >= MIN_RUN_DURATION_S)
+			.filter((r) => r.length >= MIN_COARSE_FIXES && (growFirst || span(r) >= MIN_RUN_DURATION_S))
 			.sort((a, b) => span(b) - span(a))[0];
 		if (!hostRun) {
 			result.push(host);
