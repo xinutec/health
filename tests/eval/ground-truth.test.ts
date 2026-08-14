@@ -23,7 +23,7 @@ const MINIMAL_FOUR_COL = `# 2026-05-22 — ground truth
 | 13:26 – 13:35  | train Carfax → Farvale · Jubilee Line              | correct    | Two-leg shape was right                                     |
 | 19:55 – 20:04  | walking on Pentonville Road                                 | correct    |                                                             |
 | 20:05 – 20:12  | driving on Deepwell Underpass                                 | **wrong**  | This is the Met Line tube to Brookden, not driving     |
-| 20:46 – 23:59  | stationary @ Royal Free Hospital                            | correct    |                                                             |
+| 20:46 – 23:59  | stationary @ Hospital R Hospital                            | correct    |                                                             |
 `;
 
 const MINIMAL_THREE_COL_WITH_TRAILING_NOTES = `# 2026-04-29 — ground truth
@@ -34,7 +34,7 @@ const MINIMAL_THREE_COL_WITH_TRAILING_NOTES = `# 2026-04-29 — ground truth
 | -------------- | --------------------------------------------------- | -------- |
 | 22:16 – 08:08  | sleeping @ Parkhotel Den Haag (hotel)               | correct  | Was "@ Molenstraat 61A" pre-Layer 1.
 | 09:51 – 10:50  | stationary @ Parkhotel Den Haag (hotel)             | correct  |
-| 11:05 – 11:10  | stationary on HMC Westeinde Heliport                | partial  | A heliport label for a walking-past moment.
+| 11:05 – 11:10  | stationary on Hospital W Heliport                | partial  | A heliport label for a walking-past moment.
 | 18:48 – 22:13  | walking                                             | wrong    | Sparse-day phantom motion.
 `;
 

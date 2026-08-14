@@ -30,21 +30,21 @@ const train = (from: string | null, to: string | null, lineName: string | null =
 
 describe("truthMatches — asymmetric: the truth asserts only what it names", () => {
 	it("matches the same place ignoring the trailing qualifier", () => {
-		expect(truthMatches(stay("HMC Westeinde", "hospital"), stay("HMC Westeinde", null))).toBe(true);
+		expect(truthMatches(stay("Hospital W", "hospital"), stay("Hospital W", null))).toBe(true);
 	});
 	it("treats sleeping and stationary at the same place as equivalent", () => {
 		const sleeping: ParsedTruth = { ...stay("Home"), mode: "sleeping" };
 		expect(truthMatches(sleeping, stay("Home"))).toBe(true);
 	});
 	it("distinguishes different places", () => {
-		expect(truthMatches(stay("HMC Westeinde"), stay("Kapsalon Marian"))).toBe(false);
+		expect(truthMatches(stay("Hospital W"), stay("Kapsalon Marian"))).toBe(false);
 	});
 	it("a truth-asserted way must hold; an unasserted way accepts any live label", () => {
 		expect(truthMatches(walk("Hudson Walk"), walk("Hudson Walk"))).toBe(true);
-		expect(truthMatches(walk("Hudson Walk"), walk("Westeinde"))).toBe(false);
+		expect(truthMatches(walk("Hudson Walk"), walk("Hospital W"))).toBe(false);
 		expect(truthMatches(walk("Hudson Walk"), walk(null))).toBe(false); // live lost the asserted way
 		// Plain "walking" only vetted the mode — extra live attribution is not a contradiction.
-		expect(truthMatches(walk(null), walk("Westeinde"))).toBe(true);
+		expect(truthMatches(walk(null), walk("Hospital W"))).toBe(true);
 		expect(truthMatches(walk(null), walk(null))).toBe(true);
 	});
 	it("matches trains on board+alight; line only discriminates when both name one", () => {
@@ -74,7 +74,7 @@ describe("truthMatches — asymmetric: the truth asserts only what it names", ()
 		// is what keeps this a test rather than a formality. "Hudson Walk" against
 		// "Fulton Road" (2026-05-25) must stay a mismatch, and a name that merely
 		// CONTAINS the truth is not the same road.
-		expect(truthMatches(walk("Hudson Walk"), walk("Fulton Road, Westeinde"))).toBe(false);
+		expect(truthMatches(walk("Hudson Walk"), walk("Fulton Road, Hospital W"))).toBe(false);
 		expect(truthMatches(walk("Barn Rise"), walk("Upper Barn Rise"))).toBe(false);
 	});
 	it("never matches when either side is null", () => {
@@ -85,10 +85,10 @@ describe("truthMatches — asymmetric: the truth asserts only what it names", ()
 
 describe("parsePipelineState — render a live state for comparison", () => {
 	it("splits a place name from its qualifier and round-trips against a truth stay", () => {
-		const r = parsePipelineState({ mode: "stationary", place: "HMC Westeinde (hospital)" });
-		expect(r?.place).toBe("HMC Westeinde");
+		const r = parsePipelineState({ mode: "stationary", place: "Hospital W (hospital)" });
+		expect(r?.place).toBe("Hospital W");
 		expect(r?.placeQualifier).toBe("hospital");
-		expect(truthMatches(stay("HMC Westeinde", "hospital"), r)).toBe(true);
+		expect(truthMatches(stay("Hospital W", "hospital"), r)).toBe(true);
 	});
 	it("renders a walk as a way", () => {
 		expect(truthMatches(walk("Hudson Walk"), parsePipelineState({ mode: "walking", wayName: "Hudson Walk" }))).toBe(
@@ -192,7 +192,7 @@ describe("classifyDay — 2026-04-29 hairdresser → HMC, the contamination case
 
 | Window         | Truth                                         | Status     | Notes                                        |
 | -------------- | --------------------------------------------- | ---------- | -------------------------------------------- |
-| 14:36 – 16:19  | stationary @ HMC Westeinde (hospital)         | **wrong**  | pipeline says Kapsalon Marian {corroborated} |
+| 14:36 – 16:19  | stationary @ Hospital W (hospital)         | **wrong**  | pipeline says Kapsalon Marian {corroborated} |
 | 12:25 – 12:35  | walking on Hudson Walk                        | correct    | cadence + GPS {derived}                      |
 | 09:00 – 10:00  | stationary @ Home                             | correct    | legacy untagged row                          |
 `;

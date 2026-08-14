@@ -30,7 +30,7 @@ describe("checkDayConstraints", () => {
 			st("walking"),
 			st("train", { wayName: "Ashvale → Deepwell · Metropolitan Line" }),
 			st("walking"),
-			st("stationary", { place: "UCLH" }),
+			st("stationary", { place: "Hospital U" }),
 			st("walking"),
 			st("train", { wayName: "Deepwell → Ashvale · Metropolitan Line" }),
 			st("walking"),
@@ -81,7 +81,7 @@ describe("checkDayConstraints", () => {
 	it("does NOT flag two distinct stays separated by an unobserved gap (honest hole, not a teleport)", () => {
 		// 2026-05-22 / 04-30 shape: a stay ends, then hours later a stay at a
 		// different place begins — the travel happened in the unobserved gap.
-		const a: DayState = { startTs: 0, endTs: 3600, mode: "stationary", place: "Royal Free Hospital" };
+		const a: DayState = { startTs: 0, endTs: 3600, mode: "stationary", place: "Hospital R Hospital" };
 		const b: DayState = { startTs: 3600 + 2 * 3600, endTs: 3600 + 3 * 3600, mode: "sleeping", place: "Home" };
 		expect(checkDayConstraints([a, b])).toEqual([]);
 	});

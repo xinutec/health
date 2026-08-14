@@ -20,8 +20,8 @@ within an established stay get the same independent treatment as a
 fresh travel day. This produces an unphysical labelling regression
 the user sees directly:
 
-- 2026-05-25 (rich data): admitted to Cleveland Clinic London → day
-  labels correctly as `@ Cleveland Clinic London`
+- 2026-05-25 (rich data): admitted to Clinic C → day
+  labels correctly as `@ Clinic C`
 - 2026-05-26 through 2026-06-01 (Owntracks frequency turned down):
   fewer fixes per day, some days with zero or near-zero fixes. The
   same hospital bed. Day labelling drifts to `@ Stay`, `@ unknown`,
@@ -300,7 +300,7 @@ per the factor. The full continuous value is stored on the segment
 distribution at the boundary between decoder and renderer. The
 renderer can choose to bucket for human consumption:
 
-- `confidence ≥ 0.7`: render plain (`Cleveland Clinic London`)
+- `confidence ≥ 0.7`: render plain (`Clinic C`)
 - `0.3 ≤ confidence < 0.7`: render with `· likely` suffix
 - `confidence < 0.3`: render with `· presumed` suffix
 
@@ -343,7 +343,7 @@ boundaries are not load-bearing.
     threshold) at the empirical 75th-percentile gap-between-fixes
     inside established stays.
   - Validate the calibration produces sensible attributions on a
-    multi-day Cleveland Clinic fixture *without* the factor wired
+    multi-day Clinic C fixture *without* the factor wired
     into the runtime — purely a backtest over `decoded_days`.
 
 - **Phase 3 — wire the continuation factor + state-space extension
@@ -360,18 +360,18 @@ boundaries are not load-bearing.
   `· presumed` suffixes to the timeline. Depends on Phase 3
   landing.
 
-## Worked example — Cleveland Clinic 8-day stay
+## Worked example — Clinic C 8-day stay
 
 Day **05-25** (rich data, admission):
 - HSMM decodes the day normally; the magnet pulls the afternoon's
-  stays to Cleveland Clinic London.
-- `presence_log[2026-05-25]`: dominant_place = Cleveland Clinic id,
-  dominant_fraction = 0.6, end_of_day_place = Cleveland Clinic id,
+  stays to Clinic C.
+- `presence_log[2026-05-25]`: dominant_place = Clinic C id,
+  dominant_fraction = 0.6, end_of_day_place = Clinic C id,
   end_of_day_posterior = 0.95.
 
 Day **05-26** (sparse data, ~30 fixes, all near hospital):
-- State-space gains the continuation candidate at Cleveland Clinic.
-- All 30 fixes are within `R_magnet` of Cleveland Clinic, no
+- State-space gains the continuation candidate at Clinic C.
+- All 30 fixes are within `R_magnet` of Clinic C, no
   contradicting evidence. For minutes with a fix, the existing
   distance term scores the candidate well; for the many no-fix
   minutes, the new emission factor contributes
@@ -393,22 +393,22 @@ Day **05-29** (zero fixes — Owntracks fully off):
     competing candidate scores any better (the from-data
     candidates have no data).
   - The HSMM picks the continuation candidate. Day labels as
-    Cleveland Clinic, confidence ≈ 0.025 — well below the
-    `presumed` threshold. UI renders as `Cleveland Clinic London ·
+    Clinic C, confidence ≈ 0.025 — well below the
+    `presumed` threshold. UI renders as `Clinic C ·
     presumed`. Honest.
 
 Day **06-02** (discharge):
 - Per-day decode produces strong from-data evidence: a long
   movement segment with sustained speed, then a stationary stay at
   Home. The continuation candidate's score is dwarfed by the
-  from-data Cleveland Clinic→drive→Home sequence.
+  from-data Clinic C→drive→Home sequence.
 - `presence_log[2026-06-02]`: end_of_day = Home. The chain reseeds.
 
 ## Testing
 
-- **Real-data multi-day fixture: Cleveland Clinic 05-25 through
+- **Real-data multi-day fixture: Clinic C 05-25 through
   06-02.** Capture all 9 days as a single fixture. Assert per day:
-  the labelling matches the GT narrative (`@ Cleveland Clinic
+  the labelling matches the GT narrative (`@ Clinic C
   London` daytime + sleep for 05-26 through 06-01, even on
   zero-fix days; correct drive + Home on 06-02). The confidence
   drops on no-fix days but the label is preserved.
@@ -440,7 +440,7 @@ Day **06-02** (discharge):
 
 - **First-time stays.** The continuation only fires after at least
   one day's `presence_log` exists. A user's first visit to
-  Cleveland Clinic gets the standard per-day decode plus magnet,
+  Clinic C gets the standard per-day decode plus magnet,
   no temporal pull. By the second day the seed exists and
   continuation can fire.
 

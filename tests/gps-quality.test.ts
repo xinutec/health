@@ -166,7 +166,7 @@ describe("qualityFilterGps", () => {
 	});
 
 	it("keeps a poor-accuracy run that jitters FAST but never travels (indoor stay / interchange)", () => {
-		// The 2026-06-24 UCLH / 2026-06-12 Elmford-interchange regression
+		// The 2026-06-24 Hospital U / 2026-06-12 Elmford-interchange regression
 		// guard. A poor-accuracy indoor stay (or a platform-to-platform walk) can
 		// jitter ±150 m between cell-tower fixes — each hop implies >15 km/h, so
 		// the per-hop test would call it the underground signature — yet the run

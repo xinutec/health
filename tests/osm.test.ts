@@ -323,8 +323,8 @@ describe("pickBestLandmark", () => {
 });
 
 describe("isEnclosingInstitution", () => {
-	it("flags a hospital POINT within the campus radius as enclosing (2026-04-29 HMC Westeinde)", () => {
-		// HMC Westeinde is mapped only as a point; the long stop sat ~59 m
+	it("flags a hospital POINT within the campus radius as enclosing (2026-04-29 Hospital W)", () => {
+		// Hospital W is mapped only as a point; the long stop sat ~59 m
 		// from it. Without this, the nearest point-POI (a hairdresser 36 m
 		// off) wins. The hospital must be treated as enclosing.
 		expect(

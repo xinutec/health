@@ -161,9 +161,9 @@ describe("derivePlaceForSleep — bedtime side beats wake side (sleep-onset anch
 		// to and through bedtime (overlaps the window); a Home stay only
 		// appears the next day (wake side). The overlap (where you actually lay
 		// down) wins — the inpatient night stays at the hospital.
-		const hospital = stationary(-5 * H, 30 * 60, "Cleveland Clinic London"); // overlaps onset
+		const hospital = stationary(-5 * H, 30 * 60, "Clinic C"); // overlaps onset
 		const home = stationary(12 * H, 13 * H, "Home"); // wake side, next day
-		expect(derivePlaceForSleep(window, [hospital, home])).toBe("Cleveland Clinic London");
+		expect(derivePlaceForSleep(window, [hospital, home])).toBe("Clinic C");
 	});
 
 	it("still uses the wake side when it is the only evidence", () => {

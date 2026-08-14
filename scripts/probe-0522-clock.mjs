@@ -15,7 +15,7 @@ const USER = "pippijn";
 const LO = Date.parse("2026-05-22T18:00:00Z") / 1000;
 const HI = Date.parse("2026-05-22T21:00:00Z") / 1000;
 
-// Royal Free Hospital footprint (from the narrative) — to flag the
+// Hospital R Hospital footprint (from the narrative) — to flag the
 // arrival fix.
 const RF_LAT = 51.5535;
 const RF_LON = -0.1662;
@@ -52,12 +52,12 @@ for (const f of fixes) {
 	// only print movement boundaries + the RF arrival to keep it short
 	const moved = prev === null || Math.abs(f.lat - prev.lat) > 0.002 || Math.abs(f.lon - prev.lon) > 0.002;
 	if (moved || atRF) {
-		console.log(`  ${utc(f.ts)}Z | ${bst(f.ts)} BST  ${f.lat.toFixed(4)},${f.lon.toFixed(4)}${atRF ? "  <-- Royal Free" : ""}`);
+		console.log(`  ${utc(f.ts)}Z | ${bst(f.ts)} BST  ${f.lat.toFixed(4)},${f.lon.toFixed(4)}${atRF ? "  <-- Hospital R" : ""}`);
 	}
 	prev = f;
 }
 if (firstRF !== null) {
-	console.log(`\n  >>> First Royal Free fix:  ${utc(firstRF)}Z  =  ${bst(firstRF)} BST`);
+	console.log(`\n  >>> First Hospital R fix:  ${utc(firstRF)}Z  =  ${bst(firstRF)} BST`);
 }
 
 const c = await createConnection(config.db);

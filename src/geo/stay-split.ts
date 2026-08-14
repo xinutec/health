@@ -284,7 +284,7 @@ const WALK_SPLIT_FRESHNESS_S = 30 * 60;
 
 /**
  * Carve long low-cadence edge runs out of "walking" segments as
- * stationary sits (task #245 — the Cleveland Clinic shape: a ~60-min
+ * stationary sits (task #245 — the Clinic C shape: a ~60-min
  * indoor sit whose jittery indoor GPS classified as one walk together
  * with the real ~10-min walk that followed).
  *

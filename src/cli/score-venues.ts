@@ -123,7 +123,7 @@ for (const file of files) {
 	// one of those is not a venue-attribution case, and counting it would drown
 	// the signal in easy wins.
 	//
-	// Everything ELSE a focus place is named after — Macmillan Cancer Centre,
+	// Everything ELSE a focus place is named after — Centre M Cancer Centre,
 	// Miné Mané — IS a venue, and IS something the scorer could name. Those must
 	// be counted. Excluding them (as this referee originally did, by testing the
 	// truth against every focus-place name) made the referee blind to the cases
@@ -245,7 +245,7 @@ ${layerLine("other")}
   the RANKING pathology, counted whatever the final label was (#345).
   The three counters above are all conditioned on the verdict, so a stay whose
   label a later layer rescues does not appear in them — which is exactly how the
-  06-15 Macmillan case stayed invisible while the focus-place override masked it:
+  06-15 Centre M case stayed invisible while the focus-place override masked it:
     near-field overrode the score   ${report.nearFieldOverrodeScore}  (a non-near-field candidate scored HIGHER)
       …worst override               ${report.worstNearFieldOverrideNats?.toFixed(2) ?? "—"} nats
     near-field elected below floor  ${report.nearFieldBelowFloor}  (destroys the answer: bestPlace then declines)

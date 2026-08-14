@@ -468,7 +468,7 @@ const MAX_INTERCHANGE_GAP_S = 1800;
  * platform wait", asked here of the tunnel's two halves; {@link
  * UNDERGROUND_STATION_RADIUS_M} is what it already calls one station, asked of
  * what the phone reported in between. The two are complementary rather than
- * redundant — the Macmillan stay drifts only 33 m and is split by displacement
+ * redundant — the Centre M stay drifts only 33 m and is split by displacement
  * alone, and the last 06-15 row would read as a dwell at 288 m but never gets
  * asked, because 296 m is not a journey.
  */
@@ -581,7 +581,7 @@ function isAccuracyBlip(f: CoarseFix, good: readonly CoarseFix[]): boolean {
  * fix after the last dark one, so a blip four minutes into the walk away from
  * the station moves the alight four minutes late and swallows the walk. On
  * 2026-07-16 that ran the Euston Square ride over a confirmed 07:47–07:54 walk
- * to UCLH.
+ * to Hospital U.
  *
  * The tail ONLY. Measured over the corpus, blips are not uniformly noise:
  * filtering them everywhere also drops poor-GPS indoor stays and mid-ride

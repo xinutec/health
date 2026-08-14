@@ -128,7 +128,7 @@ const CASES: Case[] = [
 		id: "H4",
 		expect: ["unchanged"],
 		note: "the dominant place is the generic bucket marker `Stay`. It names a cluster KIND, not a venue, so it must not overwrite anything — the pipeline's own place stands.",
-		segs: [seg({ place: "Cleveland Clinic London", centroidLat: 51.5308, centroidLon: -0.1238 })],
+		segs: [seg({ place: "Clinic C", centroidLat: 51.5308, centroidLon: -0.1238 })],
 		hmm: [hmmStay(11, T0, T0 + 600)],
 	},
 	{

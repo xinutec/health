@@ -59,7 +59,7 @@ export const INTERCHANGE_DWELL_MAX_S = 900;
  *  is a genuine destination, and keeps its label even when train legs
  *  bracket it. Trains on both sides prove a JOURNEY structure — not that
  *  the stop between them was a platform (2026-07-02, user-confirmed: an
- *  RT visit 5 m from the 6-day UCLH focus place, between the morning
+ *  RT visit 5 m from the 6-day Hospital U focus place, between the morning
  *  tube and a REAL one-stop hop onward, was renamed "Warren Street"
  *  after the station 100 m away; the intervening street walks passed the
  *  short-walk check). One-off focus places stay overridable — the

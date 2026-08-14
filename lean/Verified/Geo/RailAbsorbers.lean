@@ -474,7 +474,7 @@ When the GPS first surfaces a stop or two into a tunnel, `annotateUndergroundRun
 anchors the boarding to the first fix it can snap to the rail line — which can be
 one or two stations past where the rider actually boarded. The walk before it
 keeps a fast tail: the train pulling out of the real boarding station. So the
-drawn walk bleeds hundreds of metres onto the next station (2026-06-23 UCLH →
+drawn walk bleeds hundreds of metres onto the next station (2026-06-23 Hospital U →
 Euston Square, where the walk drew on to Great Portland Street and the boarding
 read "Baker Street", two stops late).
 

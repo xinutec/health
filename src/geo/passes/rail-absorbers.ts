@@ -276,7 +276,7 @@ const BOARDING_HOP_MIN_DIST_M = 250;
  * line — which can be one or two stations past where the rider actually boarded.
  * The walk before it then keeps a fast "tail": the GPS of the train pulling out
  * of the real boarding station toward the first surfaced one. So the drawn walk
- * line bleeds hundreds of metres on to the next station (the 2026-06-23 UCLH →
+ * line bleeds hundreds of metres on to the next station (the 2026-06-23 Hospital U →
  * Euston Square case, where the walk drew on to Great Portland Street, and the
  * boarding read "Baker Street" — two stops past Euston Square).
  *

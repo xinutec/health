@@ -465,10 +465,10 @@ private def geo (detail area : Option Result) : Int → Option Result :=
 
 -- An enclosing institution outranks everything, and takes the detailed address.
 private def hospital : Poi :=
-  { name := "UCLH", type := "amenity", subtype := "hospital", distanceM := 40, enclosing := true }
+  { name := "Hospital U", type := "amenity", subtype := "hospital", distanceM := 40, enclosing := true }
 private def enclosingReads : Reads :=
   { landmarks := [hospital, poi "Costa" "amenity" "cafe" 5], geocode := geo (some detailedAddr) none }
-#guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "UCLH (hospital)"
+#guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "Hospital U (hospital)"
 
 -- No landmarks and no geocode names nothing at all.
 private def emptyReads : Reads := { landmarks := [], geocode := geo none none }

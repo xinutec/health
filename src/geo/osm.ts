@@ -548,7 +548,7 @@ export const LARGE_INSTITUTION_SUBTYPES = new Set(["hospital"]);
  *  grounds, not at the café across the street. Without this, a stay deep in a
  *  hospital campus is named after whatever tiny point-POI (a hairdresser, a
  *  pharmacy) happens to sit nearest the noisy GPS centroid — the 2026-04-29
- *  HMC Westeinde case. */
+ *  Hospital W case. */
 export const LARGE_INSTITUTION_POINT_RADIUS_M = 80;
 
 /** Should this landmark be treated as the enclosing institution — outranking
@@ -558,7 +558,7 @@ export const LARGE_INSTITUTION_POINT_RADIUS_M = 80;
  *    stay (`encloses`, any of the three subtypes): yes. Definitive.
  *  - The point-only fallback (`distanceM <= LARGE_INSTITUTION_POINT_RADIUS_M`)
  *    is restricted to a **hospital** mapped as a **point**. Rationale: a long
- *    sedentary stay by a hospital node is the hospital (HMC Westeinde,
+ *    sedentary stay by a hospital node is the hospital (Hospital W,
  *    2026-04-29), but a university / college has campus eateries you visit as
  *    *destinations* — a Greek restaurant next to LSHTM is the restaurant, not
  *    the university (2026-05-14) — and a polygon feature already carries the

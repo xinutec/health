@@ -36,7 +36,7 @@ export interface LabeledSample {
 	gpsPresent: boolean;
 	/** Place id when the heuristic labeled this minute as
 	 *  `stationary @ knownPlace`; `null` for moving modes or
-	 *  stationary @ off-network. Per-place HR fits (Cleveland Clinic
+	 *  stationary @ off-network. Per-place HR fits (Clinic C
 	 *  baseline ≠ Home baseline) need this conditioning. */
 	placeId: number | null;
 }

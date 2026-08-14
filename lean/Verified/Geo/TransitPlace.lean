@@ -118,7 +118,7 @@ to a focus place visited on at least this many distinct days is a genuine
 destination and keeps its label even when train legs bracket it.
 
 Trains on both sides prove a JOURNEY structure — not that the stop between them
-was a platform (2026-07-02, user-confirmed: a visit 5 m from the 6-day UCLH
+was a platform (2026-07-02, user-confirmed: a visit 5 m from the 6-day Hospital U
 focus place, between the morning tube and a real one-stop hop onward, was
 renamed "Warren Street" after the station 100 m away). One-off focus places stay
 overridable, so the 06-29 Baker Street case this rule exists for keeps working

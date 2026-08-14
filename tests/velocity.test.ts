@@ -189,7 +189,7 @@ describe("mergeAdjacentStays", () => {
 		// The stay-split inserts an `unknown` (0-fix) gap on a speculative
 		// mid-stay-departure hint. 17 min > the 10-min phantom-move cap, but
 		// the place resolves to the same venue on both sides → continuous
-		// presence. Collapse all three into one Cleveland Clinic stay.
+		// presence. Collapse all three into one Clinic C stay.
 		const gap: EnrichedSegment = {
 			startTs: HOUR,
 			endTs: HOUR + 17 * 60,
@@ -202,15 +202,15 @@ describe("mergeAdjacentStays", () => {
 			pointCount: 0,
 		};
 		const out = mergeAdjacentStays([
-			stay(0, HOUR, "Cleveland Clinic London (hospital)"),
+			stay(0, HOUR, "Clinic C (hospital)"),
 			gap,
-			stay(HOUR + 17 * 60, 3 * HOUR, "Cleveland Clinic London (hospital)"),
+			stay(HOUR + 17 * 60, 3 * HOUR, "Clinic C (hospital)"),
 		]);
 		expect(out).toHaveLength(1);
 		expect(out[0].mode).toBe("stationary");
 		expect(out[0].startTs).toBe(0);
 		expect(out[0].endTs).toBe(3 * HOUR);
-		expect(out[0].place).toBe("Cleveland Clinic London (hospital)");
+		expect(out[0].place).toBe("Clinic C (hospital)");
 	});
 
 	it("does NOT bridge a blackout gap when the bracketing places differ", () => {

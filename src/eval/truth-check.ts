@@ -149,8 +149,8 @@ function wayNameCovers(truthWay: string, liveWay: string | null): boolean {
  * of "train A → B" without a `· Line` is satisfied by any line. But every
  * assertion the truth DOES make must hold: a named place, way, or
  * board/alight pair that the live side lacks or contradicts is a mismatch.
- * The trailing `(qualifier)` is ignored — "HMC Westeinde (hospital)" and
- * "HMC Westeinde" are the same place; a wrong *qualifier* on a right place
+ * The trailing `(qualifier)` is ignored — "Hospital W (hospital)" and
+ * "Hospital W" are the same place; a wrong *qualifier* on a right place
  * is a separate, weaker signal, not a state mismatch. A null truth (unparsed
  * cell) or absent live state never matches.
  */

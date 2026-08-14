@@ -437,5 +437,5 @@ tunnel-transit coherence #251).
 - `npm run verify`; `npm run golden` byte-identical until the flag flips.
 - `node dist/cli/score-walk-match.js` under the G0-reframed gate.
 - **The case**: replay 2026-07-06; the 10:16 leg must be a short
-  Euston Square→UCLH walk (~350 m, bbox staying east of lon −0.14), not a
+  Euston Square→Hospital U walk (~350 m, bbox staying east of lon −0.14), not a
   Regent's Park out-and-back.

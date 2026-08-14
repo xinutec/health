@@ -80,13 +80,13 @@ describe("bestPlace via OsmAdapter", () => {
 		// is a stay *in* the hospital, regardless of a closer cafe POI.
 		const osm = mockOsmAdapter({
 			nearbyLandmarks: () => [
-				landmark("Cleveland Clinic London", "amenity", "hospital", 5, { enclosing: true }),
+				landmark("Clinic C", "amenity", "hospital", 5, { enclosing: true }),
 				landmark("Lobby Cafe", "amenity", "cafe", 1),
 			],
 			reverseGeocode: (_lat, _lon, zoom) => (zoom === 18 ? venueResult("Lobby Cafe", "cafe") : null),
 		});
 		const result = await bestPlace(osm, 51.52, -0.15);
-		expect(result?.displayName).toBe("Cleveland Clinic London");
+		expect(result?.displayName).toBe("Clinic C");
 	});
 
 	it("with preferResidential, picks a lodging POI within 50m over the residential address", async () => {

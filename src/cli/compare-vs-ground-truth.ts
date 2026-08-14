@@ -204,7 +204,7 @@ async function loadFocusPlacesForUser(userId: string): Promise<PlaceWithCoords[]
  * Strategy (in order, highest-dwell wins on ties):
  *   1. Exact case-insensitive equality on `display_name`
  *   2. Ground-truth name is a substring of `display_name` (e.g.
- *      "Cleveland Clinic" matches "Cleveland Clinic London")
+ *      "Clinic C" matches "Clinic C")
  *   3. `display_name` is a substring of the ground-truth name (e.g.
  *      "Place Q" matches "Place Q Apartments")
  *   4. Synonyms for common labels — "Home" picks the highest-dwell

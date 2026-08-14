@@ -46,11 +46,11 @@ describe("parseGroundTruth day-anchor", () => {
 
 describe("parseGroundTruth cell parsing", () => {
 	it("parses a bus leg's stops + route number symmetrically to a train", () => {
-		const md = table("| 10:25 – 10:29 | bus Farvale → Cleveland Clinic London · 38 | correct | {user} |");
+		const md = table("| 10:25 – 10:29 | bus Farvale → Clinic C · 38 | correct | {user} |");
 		const gt = parseGroundTruth(md, "2026-06-12", "Europe/London");
 		const b = gt.rows[0].truth;
 		expect(b?.mode).toBe("bus");
-		expect(b?.trainFromTo).toEqual({ from: "Farvale", to: "Cleveland Clinic London" });
+		expect(b?.trainFromTo).toEqual({ from: "Farvale", to: "Clinic C" });
 		expect(b?.lineName).toBe("38");
 	});
 

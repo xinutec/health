@@ -80,7 +80,7 @@ describe("stationAtTransitInterchange", () => {
 	});
 
 	it("does NOT fire for a long stay between an outbound and a return train (a destination, not a change)", async () => {
-		// The 2026-06-24 UCLH appointment: a 2-hour stay near Gorse End,
+		// The 2026-06-24 Hospital U appointment: a 2-hour stay near Gorse End,
 		// bracketed by a Ashvale↔Deepwell round trip. Trains on both sides, but
 		// it's a destination, not an interchange.
 		const segs = [
@@ -135,7 +135,7 @@ describe("stationAtTransitInterchange", () => {
 		expect(await stationAtTransitInterchange(segs, 1, LAT, LON, bakerOsm)).toBeNull();
 	});
 
-	// --- established-focus-place guard (2026-07-02 UCLH → "Gorse End") --
+	// --- established-focus-place guard (2026-07-02 Hospital U → "Gorse End") --
 	// A stay the place prior confidently assigned to an established focus
 	// place is a genuine destination even when a ride brackets each side:
 	// the RT visit sat 5 m from a 6-day hospital focus place, between the

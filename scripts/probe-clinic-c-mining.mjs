@@ -10,7 +10,7 @@ const c = await createConnection({
 
 const USER = "pippijn";
 
-// Cleveland Clinic London is at ~51.4997, -0.1488.
+// Clinic C is at ~51.4997, -0.1488.
 // Home is at ~51.553, -0.286 (Wembley).
 // Show every focus_place within ~5km of either.
 const rows = await c.query(
@@ -40,7 +40,7 @@ for (const r of rows) {
 	const lon = Number(r.centroid_lon);
 	const dHome = dist(lat, lon, 51.553, -0.286);
 	const dCC = dist(lat, lon, 51.4997, -0.1488);
-	const near = dHome < 1000 ? "(near HOME)" : dCC < 1000 ? "(near CLEVELAND CLINIC)" : "";
+	const near = dHome < 1000 ? "(near HOME)" : dCC < 1000 ? "(near CLINIC C)" : "";
 	console.log(
 		`${String(r.id).padStart(3)}  ${(r.display_name ?? "—").padEnd(22)}  ${(r.detected_label ?? "—").padEnd(8)}  ` +
 			`${lat.toFixed(4)},${lon.toFixed(4)}  ${r.radius_m}m  ${String(r.sleep_hours).padStart(6)}  ${String(r.unique_days).padStart(5)}  ` +

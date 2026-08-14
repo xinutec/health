@@ -196,7 +196,7 @@ async function collectDaySamples(
 	// GPS-null minutes that dominate clinic / hospital / office stays.
 	// Per-minute GPS attribution missed these (Phase 2.5 v3 audit: only
 	// 8 of 27 places had enough samples). Per-segment fixes that:
-	// Cleveland Clinic's full hour of stationary minutes attributes to
+	// Clinic C's full hour of stationary minutes attributes to
 	// one placeId, not the 5 minutes that happened to have a GPS fix.
 	const segPlaceId = new Map<number, number | null>(); // by segment index
 	for (let i = 0; i < velResult.segments.length; i++) {

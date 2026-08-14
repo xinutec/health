@@ -286,7 +286,7 @@ ride.
 The run's tail is what sets the alight: the window closes at the first good fix
 after the last dark one, so a blip four minutes into the walk away from the
 station moves the alight four minutes late and swallows the walk (2026-07-16, a
-Euston Square ride run over a confirmed 07:47-07:54 walk to UCLH).
+Euston Square ride run over a confirmed 07:47-07:54 walk to Hospital U).
 
 The tail ONLY. Measured over the corpus, blips are not uniformly noise: filtering
 them everywhere also drops poor-GPS indoor stays and mid-ride surfacings,

@@ -283,9 +283,9 @@ private def PLACES : List (Int × PlaceLookup) := [
   #[("stationary", none, (some "Work"), none, none, none)]
 
 -- H4: the dominant place is the generic bucket marker `Stay`. It names a cluster KIND, not a venue, so it must not overwrite anything — the pipeline's own place stands.
-#guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Cleveland Clinic London"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
+#guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Clinic C"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]
     #[⟨1751000000, 1751000600, "stationary", none, (some 11)⟩] PLACES).map projSeg ==
-  #[("stationary", none, (some "Cleveland Clinic London"), none, none, none)]
+  #[("stationary", none, (some "Clinic C"), none, none, none)]
 
 -- H5: the dominant place has no display name — nothing to override with.
 #guard (applyHsmmPlaceOverride #[{ startTs := 1751000000, endTs := 1751000600, mode := "stationary", refinedMode := none, avgSpeed := 0.0, place := (some "Somewhere"), wayName := none, refinedReason := none, centroidLat := (some 51.5308), centroidLon := (some (-0.1238)), vehicleKind := none, roadCorridorFraction := none }]

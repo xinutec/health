@@ -759,7 +759,7 @@ export async function computeVelocityFromInputs(
 	);
 	// Symmetric pass for the opposite failure: a long indoor sit whose
 	// jittery GPS classified as a single "walking" segment together with
-	// the real walk at its edge (the Cleveland Clinic shape, #245). Runs
+	// the real walk at its edge (the Clinic C shape, #245). Runs
 	// before enrichment so the carved-out sit gets normal place naming.
 	const walkSplitSegments = timeSync("walkSplit", () =>
 		splitWalksOnEvidence(splitSegments, points, { hr: biomForStaySplit.hr, steps: biomForStaySplit.steps }),
@@ -1576,7 +1576,7 @@ export async function computeVelocityFromInputs(
 		// the reconstruction boards the train at the first snappable fix (a
 		// station or two past the real boarding) and the walk keeps the stranded
 		// first hop — so the walk line bleeds on to the next station (the
-		// 2026-06-23 UCLH → Euston Square walk that drew on to Great Portland
+		// 2026-06-23 Hospital U → Euston Square walk that drew on to Great Portland
 		// Street, boarding read "Baker Street"). Runs before railJourney so the
 		// corrected boarding feeds the journey merge. See
 		// anchorTrainBoardingToWalkedStation.

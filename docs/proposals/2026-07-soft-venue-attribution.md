@@ -244,7 +244,7 @@ change to ship.
 
 The referee excluded any stay whose truth named a mined focus place — a
 reasonable-looking guard against drowning in 94 "Home" stays. But it also
-excluded `Macmillan Cancer Centre`, `Miné Mané`, and every other **venue** a
+excluded `Centre M Cancer Centre`, `Miné Mané`, and every other **venue** a
 focus place is named after: *exactly the population the override answers
 correctly*. The referee could see the layer's four failures and none of its
 seventeen successes.
@@ -259,7 +259,7 @@ Corrected (only Home/Work excluded — intent labels no OSM scorer could produce
 | **overall** | **42/53 (79%)** |
 
 **Deleting the override was then tried, and reverted.** It cleared 3 confirmed
-rows (Pizza Union, Olivomare, Proton @ UCLH) and **regressed 3** — Macmillan
+rows (Pizza Union, Olivomare, Clinic P @ Hospital U) and **regressed 3** — Centre M
 Cancer Centre, plus two 06-28 train legs, because stationary place names feed
 board/alight station resolution and a venue relabel can break a *train*. Net
 zero, with a confirmed-label regression. **Golden caught what the referee could
@@ -453,10 +453,10 @@ the visit-shape prior. So "weight, don't filter" collapses to "don't": the right
 end state is to **delete** the override, not to soften it.
 
 **But deleting it is blocked, and not by anything in this proposal.** It costs
-exactly one confirmed truth — Macmillan Cancer Centre (06-15) — and that loss is
+exactly one confirmed truth — Centre M Cancer Centre (06-15) — and that loss is
 not caused by the deletion. The referee reports the truth as *"−4.03 nats
-behind"*: Macmillan **outscores** the winner ("Proton International @ UCLH") by
-four nats and still ranks #3, because Proton sits inside `NEAR_FIELD_DECISIVE_M`
+behind"*: Centre M **outscores** the winner ("Clinic P @ Hospital U") by
+four nats and still ranks #3, because Clinic P sits inside `NEAR_FIELD_DECISIVE_M`
 (12 m) and the near-field rule ranks it above every non-near-field candidate
 *regardless of score*. It is irreducible: it survives a memory term at 5 nats,
 and it survives converting the enclosing-institution rule to evidence. Only
@@ -470,8 +470,8 @@ Two other things worth keeping:
 
 - **Enclosing-as-evidence is also refuted.** Converting the enclosing-institution
   rule from an absolute sort key to a bounded nats term is strictly worse at
-  every weight tried (1/2/3/5) — it breaks HMC Westeinde (×2) and Royal Free
-  Hospital — *and* it does not recover Macmillan. Do not assume a hard rule
+  every weight tried (1/2/3/5) — it breaks Hospital W (×2) and Hospital R
+  Hospital — *and* it does not recover Centre M. Do not assume a hard rule
   should become nats just because it is hard; measure. (What near-field probably
   wants is a distance-decaying bonus, not a cliff at 12 m — but that is a
   hypothesis, not a plan.)

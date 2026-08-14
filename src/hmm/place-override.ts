@@ -93,7 +93,7 @@ function maybeOverride(
  *  in `src/geo/focus-places.ts`. These are NOT venue labels — they
  *  identify a cluster's *kind* (you sleep here sometimes) without
  *  naming the venue. The pipeline's `bestPlace` lookup has already
- *  resolved a real venue name (e.g. "Cleveland Clinic London"); the
+ *  resolved a real venue name (e.g. "Clinic C"); the
  *  HSMM override must not overwrite it with the bucket marker. The
  *  sleep-stay resolver in `src/geo/velocity.ts:1014` treats the same
  *  value the same way. */
@@ -148,7 +148,7 @@ const MOVEMENT_TO_TRAIN_MIN_AVG_KMH = 8;
  * This is deliberately NOT a hard veto. The HSMM picks a line from
  * route-graph connectivity + station proximity, which in dense central
  * London can credit a line a road vehicle merely drove past (2026-05-25:
- * a taxi home → Cleveland Clinic mislabelled "Circle Line" because the
+ * a taxi home → Clinic C mislabelled "Circle Line" because the
  * loop passes within ~600 m of half of zone 1). Against that we weigh the
  * GPS evidence — how much of the trace runs nearer a drivable road than
  * any rail. Neither side is absolute:

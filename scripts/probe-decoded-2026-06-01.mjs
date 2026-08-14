@@ -35,8 +35,8 @@ if (row) {
 
 // Also: what are the Owntracks/Phone fix counts per day around 2026-06-01?
 // (May reveal that 2026-06-01 had very sparse history that didn't trigger
-// a re-decode after the focus_places mining for Cleveland Clinic ran.)
-console.log(`\nfocus_places refreshed_at for Cleveland Clinic and Home:`);
+// a re-decode after the focus_places mining for Clinic C ran.)
+console.log(`\nfocus_places refreshed_at for Clinic C and Home:`);
 const fp = await c.query(
 	`SELECT id, display_name, detected_label, sleep_hours, unique_days
 	 FROM focus_places WHERE user_id=? AND id IN (6023, 6046)`,

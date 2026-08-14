@@ -22,7 +22,7 @@ describe("computeRow", () => {
 		expect(row).toBeNull();
 	});
 
-	it("Cleveland Clinic day: 23 h stationary @ place 42 dominates", () => {
+	it("Clinic C day: 23 h stationary @ place 42 dominates", () => {
 		const day = [
 			seg({ startTs: T0, endTs: T0 + 23 * 3600, mode: "stationary", placeId: 42 }),
 			seg({ startTs: T0 + 23 * 3600, endTs: T0 + 24 * 3600, mode: "stationary", placeId: 42 }),

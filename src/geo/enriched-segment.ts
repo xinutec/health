@@ -24,7 +24,7 @@ export interface EnrichedSegment extends TrackSegment {
 	 *  lookup at a place the prior didn't recognise. Lets late passes
 	 *  tell an established personal destination from an incidental stop —
 	 *  the interchange labeller must not rename a stay at a many-visit
-	 *  focus place after a nearby station (the 2026-07-02 UCLH →
+	 *  focus place after a nearby station (the 2026-07-02 Hospital U →
 	 *  "Warren Street" case, user-confirmed). Typed like `KnownPlace.id`. */
 	focusPlaceId?: string | number;
 	city?: string; // city/town/village (for stationary segments) — frontend groups consecutive same-city segments

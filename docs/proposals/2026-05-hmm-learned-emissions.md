@@ -184,7 +184,7 @@ story.
 
 ## What this DOESN'T fix (deferred to next iteration)
 
-- **Per-place HR**: Cleveland Clinic stays attributed to wrong
+- **Per-place HR**: Clinic C stays attributed to wrong
   state because HR runs hot there. Per-mode learning makes the
   global stationary HR distribution wider (absorbs anxious-at-
   clinic into the variance), which helps marginally but doesn't

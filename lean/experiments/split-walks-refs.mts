@@ -1,7 +1,7 @@
 /**
  * V8 reference values for `splitWalksOnEvidence` (`src/geo/stay-split.ts`).
  *
- * The Cleveland-Clinic shape (#245): an hour sitting indoors, where jittery
+ * The Clinic-C shape (#245): an hour sitting indoors, where jittery
  * GPS never settles, followed by the real ten-minute walk out — segmented as
  * ONE walking segment, because the jitter looks like movement all the way
  * through. The fix is to stop asking the GPS and ask the STEP COUNTER: bucket

@@ -805,7 +805,7 @@ describe("annotateUndergroundRuns", () => {
 	it("keeps two dark runs apart when the darkness resumes where it stopped (the indoor stay)", async () => {
 		const { stationsLookup, linesLookup, servedLookup } = lookupsFor(NETWORK);
 		// The counterpart, and the case a pace-based reading of the reacquire gets
-		// WRONG: 2026-06-15's Macmillan stay and 2026-05-22's Cleveland Clinic
+		// WRONG: 2026-06-15's Centre M stay and 2026-05-22's Clinic C
 		// stay. The rider arrives, sits indoors for an hour and a half on poor GPS,
 		// and leaves. Measured on 06-15 the two dark stretches sit 5314 s apart and
 		// the phone is 4 m from where it started — against 333 s and 3072 m for the

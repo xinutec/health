@@ -17,7 +17,7 @@
  *
  *   scripts/prod-db.sh \
  *     node dist/cli/capture-hsmm-day.js 2026-05-25 pippijn Europe/London \
- *       --description "taxi home->Cleveland Clinic; must NOT decode train @ Circle Line (#238)"
+ *       --description "taxi home->Clinic C; must NOT decode train @ Circle Line (#238)"
  *
  * Writes tests/golden/decoded_days/<date>-<user>.json (gitignored — the
  * fixture carries real GPS + place names).

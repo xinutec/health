@@ -26,7 +26,7 @@ const HOSPITAL: StayKnownPlace = {
 	centroidLat: 51.553,
 	centroidLon: -0.165,
 	radiusM: 80,
-	displayName: "Royal Free Hospital",
+	displayName: "Hospital R Hospital",
 };
 
 function fixesAt(

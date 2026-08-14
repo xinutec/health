@@ -75,7 +75,7 @@ function hsmmTrain(startMin: number, endMin: number, lineName: string | null): H
 
 const PLACES = new Map<number, { displayName: string | null }>([
 	[1, { displayName: "Home" }],
-	[2, { displayName: "Cleveland Clinic London" }],
+	[2, { displayName: "Clinic C" }],
 	[3, { displayName: null }], // place with no display name (just an id)
 	// Clusters that qualify for the "Stay" bucket in
 	// `assignDisplayNames` — overnight presence but not Home/Work
@@ -95,9 +95,9 @@ describe("applyHsmmPlaceOverride", () => {
 
 	it("overrides a stationary segment's place when HSMM dominant is a different known place", () => {
 		const segments = [stationary(0, 60, "Home")];
-		const hmm = [hsmm(0, 60, "stationary", 2)]; // Cleveland Clinic
+		const hmm = [hsmm(0, 60, "stationary", 2)]; // Clinic C
 		const out = applyHsmmPlaceOverride(segments, hmm, PLACES);
-		expect(out[0].place).toBe("Cleveland Clinic London");
+		expect(out[0].place).toBe("Clinic C");
 	});
 
 	it("leaves a stationary segment alone when HSMM agrees", () => {
@@ -132,7 +132,7 @@ describe("applyHsmmPlaceOverride", () => {
 
 	it("picks the HSMM placeId with majority overlap minutes", () => {
 		const segments = [stationary(0, 60, "Home")];
-		// HSMM split: 20 min Cleveland Clinic, 40 min Home → Home wins.
+		// HSMM split: 20 min Clinic C, 40 min Home → Home wins.
 		const hmm = [hsmm(0, 20, "stationary", 2), hsmm(20, 60, "stationary", 1)];
 		const out = applyHsmmPlaceOverride(segments, hmm, PLACES);
 		expect(out[0].place).toBe("Home");
@@ -147,16 +147,16 @@ describe("applyHsmmPlaceOverride", () => {
 	});
 
 	it("skips override when the focus_place's displayName is the generic 'Stay' bucket", () => {
-		// Cleveland Clinic on 2026-05-22: pipeline ran bestPlace and
-		// attached "Cleveland Clinic London" from OSM. HSMM picked the
+		// Clinic C on 2026-05-22: pipeline ran bestPlace and
+		// attached "Clinic C" from OSM. HSMM picked the
 		// (8-night) cluster whose displayName is "Stay" in the mining
 		// bucket sense. The override must NOT overwrite the venue name
 		// with the bucket label — `velocity.ts:1014` already treats
 		// "Stay" as a placeholder that needs an OSM re-resolve.
-		const segments = [stationary(0, 60, "Cleveland Clinic London")];
+		const segments = [stationary(0, 60, "Clinic C")];
 		const hmm = [hsmm(0, 60, "stationary", 4)]; // placeId 4 → displayName="Stay"
 		const out = applyHsmmPlaceOverride(segments, hmm, PLACES);
-		expect(out[0].place).toBe("Cleveland Clinic London");
+		expect(out[0].place).toBe("Clinic C");
 	});
 
 	it("skips override when seg.place is undefined AND HSMM's displayName is 'Stay'", () => {
@@ -175,7 +175,7 @@ describe("applyHsmmPlaceOverride", () => {
 		const hmm = [hsmm(0, 60, "stationary", 1), hsmm(60, 90, "walking"), hsmm(90, 180, "stationary", 2)];
 		const out = applyHsmmPlaceOverride(segments, hmm, PLACES);
 		expect(out[0].place).toBe("Home");
-		expect(out[2].place).toBe("Cleveland Clinic London");
+		expect(out[2].place).toBe("Clinic C");
 	});
 
 	it("overrides driving → train when HSMM has a confident train pick on a movement segment", () => {

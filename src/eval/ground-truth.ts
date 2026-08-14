@@ -83,7 +83,7 @@ export type GroundTruthMode = "sleeping" | "stationary" | "walking" | "cycling" 
 
 export interface ParsedTruth {
 	mode: GroundTruthMode;
-	/** Focus-place name (e.g. "Home", "Cleveland Clinic London"). `null`
+	/** Focus-place name (e.g. "Home", "Clinic C"). `null`
 	 *  for movement modes or train. */
 	place: string | null;
 	/** OSM way name when the truth cell is "walking on X" or

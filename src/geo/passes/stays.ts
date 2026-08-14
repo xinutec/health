@@ -94,12 +94,12 @@ export function mergeAdjacentStays(segments: EnrichedSegment[], steps: readonly 
 		//      a continuous stay (avg ≤ 2 km/h, ≤ 10 min). Tested on
 		//      `mode !== "stationary"` (not effectiveMode) so a middle that
 		//      biometricCorrect later reclassified to stationary still
-		//      bridges — the 2026-05-22 Royal Free 23:49-23:54 case.
+		//      bridges — the 2026-05-22 Hospital R 23:49-23:54 case.
 		//   2. A no-GPS BLACKOUT (`unknown`, zero fixes) of ANY length — an
 		//      absence of data, not an observed excursion. The stay-split
 		//      emits it on a speculative mid-stay-departure hint, but if the
 		//      place resolves the SAME on both sides the user never left
-		//      (the 2026-06-12 17-min Cleveland Clinic indoor-GPS gap). Place
+		//      (the 2026-06-12 17-min Clinic C indoor-GPS gap). Place
 		//      identity outranks the speculative split, so the duration /
 		//      speed caps that guard shape 1 don't apply.
 		const isBriefPhantomMove =

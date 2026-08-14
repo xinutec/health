@@ -22,7 +22,7 @@ describe("bracketedStayPlaceId", () => {
 describe("buildInferredStayState", () => {
 	it("spans the whole day as an inferred stationary stay at the place", () => {
 		const s = buildInferredStayState({
-			place: "Cleveland Clinic London",
+			place: "Clinic C",
 			tz: "Europe/London",
 			startTs: 1_000,
 			endTs: 87_400,
@@ -31,7 +31,7 @@ describe("buildInferredStayState", () => {
 			startTs: 1_000,
 			endTs: 87_400,
 			mode: "stationary",
-			place: "Cleveland Clinic London",
+			place: "Clinic C",
 			inferred: true,
 			tz: "Europe/London",
 		});
