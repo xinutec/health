@@ -107,6 +107,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -124,6 +125,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -136,6 +138,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -149,6 +152,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -170,6 +174,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			ghost.stationsLookup,
 			ghost.linesLookup,
 			ghost.servedLookup,
@@ -205,6 +210,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -212,6 +218,71 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 		expect(out[0].endTs).toBe(settleTs);
 		expect(out[1].startTs).toBe(settleTs);
+	});
+
+	// A SINGLE-step hop landing at the leg's own alight label is the ambiguous
+	// case: a ride still running and a rider already walking while stale fixes
+	// teleport after them produce the same fast step. Cadence is what separates
+	// them — measured on 2026-07-07 and 2026-07-14, both ~1500 m single hops,
+	// both with the rider taking essentially no steps until the settle fix.
+	const singleHopToOwnAlight = (): { segs: EnrichedSegment[]; points: FilteredPoint[]; settleTs: number } => {
+		const trainEnd = T0;
+		const settleTs = T0 + 200;
+		const points = [
+			fix(trainEnd - 300, ASHVALE.lat, ASHVALE.lon),
+			fix(T0, CARFAX.lat, CARFAX.lon), // surfaced, one stop short
+			fix(settleTs, DEEPWELL.lat, DEEPWELL.lon), // one long hop to the labelled alight
+			fix(settleTs + 120, DEEPWELL.lat - 0.002, DEEPWELL.lon - 0.001),
+		];
+		return {
+			segs: [
+				seg(trainEnd - 300, trainEnd, "train", "Ashvale → Deepwell · Metropolitan Line"),
+				seg(T0, settleTs + 120, "walking"),
+			],
+			points,
+			settleTs,
+		};
+	};
+
+	it("extends a single-step hop to its own alight when the rider was NOT stepping (the ride was still running)", async () => {
+		const { segs, points, settleTs } = singleHopToOwnAlight();
+		// Seated: a couple of stray steps a minute, far under the pedestrian floor.
+		const steps = [
+			{ ts: T0, steps: 2 },
+			{ ts: T0 + 60, steps: 0 },
+			{ ts: T0 + 120, steps: 1 },
+		];
+		const out = await anchorTrainAlightToWalkedStation(
+			segs,
+			points,
+			steps,
+			lk.stationsLookup,
+			lk.linesLookup,
+			lk.servedLookup,
+		);
+		expect(out[0].endTs).toBe(settleTs);
+		expect(out[1].startTs).toBe(settleTs);
+	});
+
+	it("refuses the same single-step hop when the rider WAS stepping (stale GPS chasing a real walk)", async () => {
+		const { segs, points, settleTs } = singleHopToOwnAlight();
+		// On foot the whole way: a walking cadence over the same window.
+		const steps = [
+			{ ts: T0, steps: 105 },
+			{ ts: T0 + 60, steps: 110 },
+			{ ts: T0 + 120, steps: 102 },
+		];
+		const out = await anchorTrainAlightToWalkedStation(
+			segs,
+			points,
+			steps,
+			lk.stationsLookup,
+			lk.linesLookup,
+			lk.servedLookup,
+		);
+		expect(out[0].endTs).toBe(T0);
+		expect(out[1].startTs).toBe(T0);
+		expect(settleTs).toBeGreaterThan(T0); // the hop was there to take; cadence is why it was not
 	});
 
 	it("extends the boundary even when the settled station IS the leg's current alight label", async () => {
@@ -240,6 +311,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -278,6 +350,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -305,6 +378,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,
@@ -390,6 +464,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lkNarrow.stationsLookup,
 			lkNarrow.linesLookup,
 			lkNarrow.servedLookup,
@@ -409,6 +484,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lkNarrow.stationsLookup,
 			lkNarrow.linesLookup,
 			lkNarrow.servedLookup,
@@ -426,6 +502,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
+			[],
 			lk.stationsLookup,
 			lk.linesLookup,
 			lk.servedLookup,

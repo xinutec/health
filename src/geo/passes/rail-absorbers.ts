@@ -6,6 +6,7 @@
  * platform-to-platform walks. Extracted from the velocity orchestrator.
  */
 
+import { meanCadenceSpm, PEDESTRIAN_MIN_CADENCE_SPM } from "../../eval/worldline-feasibility.js";
 import type { StepPoint } from "../biometrics.js";
 import type { EnrichedSegment } from "../enriched-segment.js";
 import type { FilteredPoint } from "../kalman.js";
@@ -414,7 +415,6 @@ export async function anchorTrainBoardingToWalkedStation(
 const ALIGHT_HOP_MIN_KMH = 15;
 /** The leading fast run must cover a real inter-station distance (m). */
 const ALIGHT_HOP_MIN_DIST_M = 250;
-
 /**
  * Re-anchor an underground train's ALIGHT to the station the FOLLOWING walk's
  * leading hop reached — the mirror of {@link anchorTrainBoardingToWalkedStation}.
@@ -436,6 +436,10 @@ const ALIGHT_HOP_MIN_DIST_M = 250;
 export async function anchorTrainAlightToWalkedStation(
 	segments: EnrichedSegment[],
 	points: FilteredPoint[],
+	/** The day's per-minute step rows. Cadence is what separates a ride still
+	 *  running from a rider already walking; without it the rule falls back to
+	 *  the old step-count proxy rather than guessing. */
+	steps: readonly StepPoint[] = [],
 	stationsLookup: (lat: number, lon: number) => Promise<NearbyStation[]> = (lat, lon) =>
 		dbOsmAdapter.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
 	linesLookup: (lat: number, lon: number) => Promise<Set<string>> = (lat, lon) => dbOsmAdapter.linesAtPoint(lat, lon),
@@ -585,21 +589,45 @@ export async function anchorTrainAlightToWalkedStation(
 		// additionally anchored by the station+line topology of a DIFFERENT
 		// station the walk demonstrably reached.
 		const sameAlight = station.name === rail.alight;
-		// `ALIGHT_ANCHOR_NO_SINGLE_STEP=1` ablates the stuck-GPS guard. It fires
-		// on 7 corpus days, all the same ~1500 m single-hop shape, while the
-		// IDENTICAL shape extends freely whenever the settled station happens not
-		// to match the label — so the same physical evidence is read two ways
-		// depending on a name. 2026-07-14's ground truth calls its refusal a
-		// misread in as many words ("previously misread as a stale-fix run"; the
-		// ride "does not end at 08:36").
-		const singleStepRefusal = sameAlight && settleRunSteps < 2;
+		// A same-station extension needs evidence the ride actually continued,
+		// because the alternative — the rider already walking while stale fixes
+		// teleport after them — produces the same fast steps. `settleRunSteps >= 2`
+		// used to stand in for that evidence and is the wrong question: 07-14 (a
+		// real ride tail, so recorded in ground truth) and 07-07 (a corroborated
+		// walk to a hospital) are both single-step hops of ~1500 m, identical to
+		// within noise. Ask where the rider PAUSED instead — a train still running
+		// stops at its own line's stations.
+		//
+		// `ALIGHT_ANCHOR_NO_SINGLE_STEP=1` ablates the whole refusal, which is how
+		// the two days above were graded against each other.
+		// Was the rider WALKING across the stretch being reclaimed?
+		//
+		// `settleRunSteps >= 2` used to stand in for that and asks the wrong
+		// question: 2026-07-14 and 2026-07-07 are both single-step ~1500 m hops
+		// and are the same shape to within noise, yet one is a real ride tail. So
+		// is the other — measured, the rider took ZERO steps across both windows
+		// and started stepping only at the settle fix. GPS agrees: 1.5 km covered
+		// in ~3 min, which is 28 km/h.
+		//
+		// Cadence answers it directly, and it is the signal the symmetric
+		// invariant (`checkVehiclePedestrianRuns`) already trusts in the opposite
+		// direction. Below the pedestrian floor the rider was carried, so the tail
+		// is the ride's; at or above it they were on foot and extending would eat
+		// a real walk's head, which is what the guard was built to prevent.
+		//
+		// No step data means the question was not asked: fall back to the old
+		// proxy rather than assert on silence.
+		const cadence = sameAlight ? meanCadenceSpm(steps, surfaced.ts, alightFix.ts) : null;
+		const wasWalking = cadence !== null && cadence >= PEDESTRIAN_MIN_CADENCE_SPM;
+		const singleStepRefusal = sameAlight && settleRunSteps < 2 && (cadence === null ? true : wasWalking);
 		// `ALIGHT_ANCHOR_DUMP=1` names why a reclaimable-looking hop was left in
 		// the walk. Every guard above this point exits silently, so a leg that
 		// SHOULD have been extended and was not is otherwise indistinguishable
 		// from one the pass never considered.
 		why(
 			`settles at ${station.name} over ${settleRunSteps} step(s), ${hopM} m — ` +
-				`${singleStepRefusal ? "REFUSED: same station on a single step (stuck-GPS guard)" : "extending"}`,
+				`cadence ${cadence === null ? "unknown" : `${Math.round(cadence)} steps/min`} — ` +
+				`${singleStepRefusal ? "REFUSED: same station, single step, and the rider was walking" : "extending"}`,
 		);
 		if (singleStepRefusal && process.env.ALIGHT_ANCHOR_NO_SINGLE_STEP !== "1") continue;
 		const reason = sameAlight

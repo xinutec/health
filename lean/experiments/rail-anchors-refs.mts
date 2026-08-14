@@ -117,6 +117,7 @@ const showAlight = async (label: string, segs: Seg[], points: Fix[]) => {
 	const out = await A.anchorTrainAlightToWalkedStation(
 		segs as unknown as EnrichedSegment[],
 		points,
+		[],
 		stationsLookup,
 		linesLookup,
 		servedLookup,
