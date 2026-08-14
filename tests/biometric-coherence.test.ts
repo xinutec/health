@@ -85,7 +85,7 @@ describe("biometricCoherence", () => {
 		expect(result).toBeGreaterThan(0.95);
 	});
 
-	it("the 05-25 Varley window (resting + 5 steps/min) gives high coherence", () => {
+	it("the 05-25 Place Q window (resting + 5 steps/min) gives high coherence", () => {
 		// User confirmed: sitting at a friend's home, cooking. Some movement
 		// (pancake flipping, walking to the kitchen) but no sustained
 		// walking. Expected coherence high — closer to 0.9 than to 0.5.
@@ -98,10 +98,10 @@ describe("biometricCoherence", () => {
 		expect(result).toBeGreaterThan(0.85);
 	});
 
-	it("the hypothetical 05-25-walking-past-Varley window gives low coherence", () => {
+	it("the hypothetical 05-25 walking-past-Place-Q window gives low coherence", () => {
 		// Walking past on the way to the playground — 100 steps/min, HR
 		// 95. Coherence should be well below 0.5 — the magnet should not
-		// pull this segment to Varley.
+		// pull this segment to Place Q.
 		const result = biometricCoherence({
 			startTs: t0,
 			endTs: t60,

@@ -357,7 +357,7 @@ describe("pickBestPlace", () => {
 			};
 		}
 
-		// Stay centroid drifted ~70 m east of Varley toward the
+		// Stay centroid drifted ~70 m east of Place Q toward the
 		// hypothetical playground node.
 		const M_PER_DEG_LON = 111_320 * Math.cos((51.563 * Math.PI) / 180);
 		const driftedStay = {
@@ -405,7 +405,7 @@ describe("pickBestPlace", () => {
 		});
 
 		it("does NOT apply outside the magnet radius", () => {
-			// 500 m east of Varley — far outside its magnet (~230 m).
+			// 500 m east of Place Q — far outside its magnet (~230 m).
 			const farStay = {
 				lat: 51.563,
 				lon: -0.2796 + 500 / M_PER_DEG_LON,

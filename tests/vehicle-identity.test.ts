@@ -38,7 +38,7 @@ describe("resolveVehicleIdentity", () => {
 	});
 
 	// THE COUNTER-EXAMPLE THAT KILLED THE OBVIOUS RULE (2026-05-20 23:16–23:22).
-	// A user-confirmed taxi home from Varley. It carries NO way name and NO road
+	// A user-confirmed taxi home from Place Q. It carries NO way name and NO road
 	// match — the matcher simply failed on it — so "no road evidence ⇒ not a car"
 	// would rename a real drive. It is finished (a Home stay follows), and that
 	// is what makes it safe: only an unfinished ride is still a guess.

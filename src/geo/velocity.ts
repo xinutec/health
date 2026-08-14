@@ -1381,7 +1381,7 @@ export async function computeVelocityFromInputs(
 		// per-minute step burst coinciding with real GPS translation. Runs HERE,
 		// after every rail / drive absorber has claimed the station-walking and
 		// drive-stop segments it owns, so this only touches genuine standalone
-		// phantom stops (the 2026-05-25 Union Park park-stroll case). The pass
+		// phantom stops (the 2026-05-25 Park U park-stroll case). The pass
 		// carries its own cross-segment guards (intra-place pacing, walking-only
 		// coalesce) — see applyStationaryWalkThrough.
 		// Interchange decomposition (task #222): a train leg whose endpoint

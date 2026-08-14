@@ -230,7 +230,7 @@ const STATIONARY_WALK_MIN_AVG_SPEED_KMH = 1.0;
  *  STATIONARY_WALK_STAY_MAX_EXTENT_M from their centroid did not go anywhere —
  *  you cannot "walk through" a ~60 m spot for ten-plus minutes — so it is a
  *  stay and the flip is vetoed. 10 min clears real walk-throughs (the
- *  2026-05-25 Union Park stroll is ~5 min and genuinely covers ground); 80 m
+ *  2026-05-25 Park U stroll is ~5 min and genuinely covers ground); 80 m
  *  absorbs multipath spread (the 2026-06-17 Bloomsbury Surgery dwell stayed
  *  within ~50 m for 15 min while jitter spikes lifted avgSpeed past 1 km/h).
  *  Skipped when no fixes are supplied — without the geometry the old behaviour

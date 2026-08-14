@@ -319,7 +319,7 @@ describe("correctModeFromCadence — passenger-in-traffic detection", () => {
 	});
 });
 
-describe("correctModeFromCadence — stationary walk-through detection (2026-05-25 Union Park)", () => {
+describe("correctModeFromCadence — stationary walk-through detection (2026-05-25 Park U)", () => {
 	const step = (ts: number, steps: number): StepPoint => ({ ts, steps });
 	type SegLike = TrackSegment & { refinedMode?: TransportMode; refinedReason?: string };
 	const stationarySeg = (avgSpeed: number, durationS: number): SegLike => ({
@@ -334,8 +334,8 @@ describe("correctModeFromCadence — stationary walk-through detection (2026-05-
 		pointCount: 5,
 	});
 
-	it("flips stationary → walking on a walking burst WITH GPS translation (Union Park: peak 104/min, avg 1.4 km/h)", () => {
-		// Ground truth: walked through Union Park (a park, not a stop); the
+	it("flips stationary → walking on a walking burst WITH GPS translation (Park U: peak 104/min, avg 1.4 km/h)", () => {
+		// Ground truth: walked through Park U (a park, not a stop); the
 		// slow, meandering pace made the GPS classifier score it stationary.
 		// The watch recorded a 104-steps/min minute mid-window.
 		const seg = stationarySeg(1.4, 5 * 60);
@@ -441,7 +441,7 @@ describe("correctModeFromCadence — stationary walk-through detection (2026-05-
 		expect(r.refinedMode ?? r.mode).toBe("stationary");
 	});
 
-	it("does not apply the geometry veto to a short walk-through (5-min Union Park still flips)", () => {
+	it("does not apply the geometry veto to a short walk-through (5-min Park U still flips)", () => {
 		// Same tight cluster, but only 5 min — under the long-dwell threshold,
 		// so the veto stays out of the way and the burst flips it.
 		const seg = stationarySeg(1.4, 5 * 60);
@@ -482,8 +482,8 @@ describe("applyStationaryWalkThrough — sequence-level guards", () => {
 	// A clear walking burst with GPS translation in 0..300s.
 	const burst: StepPoint[] = [step(0, 8), step(60, 18), step(120, 104), step(180, 12), step(240, 0)];
 
-	it("flips a standalone phantom stop AND merges it into the adjacent walk (Union Park → Hudson Walk)", () => {
-		const segs = [walk(0, 600, "Hudson Walk"), stat(600, 900, 1.4, "Union Park (park)"), walk(900, 1200)];
+	it("flips a standalone phantom stop AND merges it into the adjacent walk (Park U → Hudson Walk)", () => {
+		const segs = [walk(0, 600, "Hudson Walk"), stat(600, 900, 1.4, "Park U (park)"), walk(900, 1200)];
 		// Burst lands inside the stationary segment 600..900.
 		const steps = [step(660, 8), step(720, 18), step(780, 104), step(840, 12)];
 		const out = applyStationaryWalkThrough(segs, steps);
@@ -507,7 +507,7 @@ describe("applyStationaryWalkThrough — sequence-level guards", () => {
 	});
 
 	it("DOES flip a stop that transitions between two DIFFERENT places", () => {
-		const segs = [stat(0, 600, 0, "Varley"), stat(600, 900, 1.4, "Union Park (park)"), stat(900, 1500, 0, "Home")];
+		const segs = [stat(0, 600, 0, "Place Q"), stat(600, 900, 1.4, "Park U (park)"), stat(900, 1500, 0, "Home")];
 		const steps = [step(660, 8), step(720, 104), step(780, 90)];
 		const out = applyStationaryWalkThrough(segs, steps);
 		const middle = out.find((s) => s.startTs === 600);

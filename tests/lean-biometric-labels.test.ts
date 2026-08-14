@@ -186,7 +186,7 @@ describe("rebuildWalkThrough", () => {
 			endTs: T0 + 2 * W,
 			mode: "stationary",
 			avgSpeed: 1.4,
-			place: "Union Park",
+			place: "Park U",
 			city: "London",
 		});
 		const after = seg({ startTs: T0 + 2 * W, endTs: T0 + 3 * W, mode: "stationary", avgSpeed: 0, place: "Home" });

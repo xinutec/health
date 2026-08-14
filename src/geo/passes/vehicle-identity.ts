@@ -23,7 +23,7 @@
  * `vehicleKind`. The golden corpus refutes it. Two *user-confirmed* taxi rides
  * carry no road evidence at all:
  *
- *   - 2026-05-20 23:16–23:22, the taxi home from Varley;
+ *   - 2026-05-20 23:16–23:22, the taxi home from Place Q;
  *   - 2026-05-25 12:41–12:55, "the short vehicle leg back home", whose tail
  *     (12:52–12:55) the segmenter splits off unnamed.
  *

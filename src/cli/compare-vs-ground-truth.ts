@@ -206,7 +206,7 @@ async function loadFocusPlacesForUser(userId: string): Promise<PlaceWithCoords[]
  *   2. Ground-truth name is a substring of `display_name` (e.g.
  *      "Cleveland Clinic" matches "Cleveland Clinic London")
  *   3. `display_name` is a substring of the ground-truth name (e.g.
- *      "Varley" matches "Varley Apartments")
+ *      "Place Q" matches "Place Q Apartments")
  *   4. Synonyms for common labels — "Home" picks the highest-dwell
  *      residential focus place (`amenity_type` heuristic NOT available
  *      cheaply, so we use highest-dwell as the proxy).

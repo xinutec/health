@@ -22,27 +22,27 @@ This works when one focus_place clearly dominates the area. It breaks
 when a focus_place sits within GPS-noise distance of an unrelated OSM
 POI:
 
-- **2026-05-25 Varley vs Canada Gardens — Play Area.** The user spent
-  92 minutes at Varley Apartments (a known focus_place, recurring
+- **2026-05-25 Place Q vs Gardens C — Play Area.** The user spent
+  92 minutes at Place Q Apartments (a known focus_place, recurring
   partner visits). The day's GPS noise produced three alternating
-  short stays (Canada Gardens / Varley / Canada Gardens), then the
+  short stays (Gardens C / Place Q / Gardens C), then the
   bridge-stays merger (`src/geo/bridge-stays-biometrics.ts`) combined
   them into one stay. The merged centroid landed slightly closer to
-  the playground POI than to Varley's stored centroid; the playground
-  is a typed leisure POI; the label landed on "Canada Gardens — Play
-  Area" instead of "Varley (apartments)."
+  the playground POI than to Place Q's stored centroid; the playground
+  is a typed leisure POI; the label landed on "Gardens C — Play
+  Area" instead of "Place Q (apartments)."
 
-The focus_place was *there* — Varley wins on 05-20, on prior partner
+The focus_place was *there* — Place Q wins on 05-20, on prior partner
 visits, and on visit-frequency prior in general. On 05-25 it lost
 because one day's noisy centroid drift happened to favour a
 geometrically-close playground node — and that single-segment
-geometric pick had no memory of the dozen prior Varley visits whose
+geometric pick had no memory of the dozen prior Place Q visits whose
 centroid had already converged within ~10 m of the apartments.
 
 The conflated-place-clusters work (shipped) addressed the analogous
 *café + residence* case via time-of-day discrimination: the residence
 and the café are visited at different hours, so even when spatially
-fused they separate by when. **The Varley vs Canada Gardens case
+fused they separate by when. **The Place Q vs Gardens C case
 isn't time-of-day separable** — the playground POI has no visit
 profile of its own; the user simply doesn't go there.
 
@@ -51,7 +51,7 @@ profile of its own; the user simply doesn't go there.
 A place visited many times **anchors** the GPS readings near it. A
 single visit's noisy GPS should be interpreted as drift *from* the
 known centroid, not as new positional evidence to compete against it.
-The user's mental model is right: "I'm at Varley" is a state that
+The user's mental model is right: "I'm at Place Q" is a state that
 persists across noisy fixes, broken only when actual movement evidence
 says the user left.
 
@@ -83,7 +83,7 @@ focus_places bias the candidate-selection step itself.
   time-of-day profiles to focus_places, splits clusters on time-of-day,
   uses time-of-day match in `pickBestPlace`, distance-aware type
   priority in `pickBestLandmark`. The time-of-day signal handles café +
-  residence; the Varley vs Canada Gardens case is **not** time-of-day
+  residence; the Place Q vs Gardens C case is **not** time-of-day
   separable (the playground has no visit history at all). Magnetic
   anchoring is the missing piece for the no-time-signal case.
 
@@ -113,7 +113,7 @@ $$
 
 A focus_place visited twice for an hour each gets $M_p \approx 1.0$.
 Home, with hundreds of hours of dwell over hundreds of visits, gets
-$M_p \approx 30$. Varley with ~10 visits and ~30h dwell gets
+$M_p \approx 30$. Place Q with ~10 visits and ~30h dwell gets
 $M_p \approx 12$. A one-off 10-min visit gets $M_p \approx 0.3$.
 
 The shape is intentionally heavy-tailed: a regular place dominates a
@@ -121,8 +121,8 @@ one-off place by orders of magnitude.
 
 ### 2. Biometric coupling — the magnet is loose, not rigid
 
-The location prior alone is too rigid. A user walking past Varley on the way
-to the playground is *spatially* near Varley but *biometrically* moving —
+The location prior alone is too rigid. A user walking past Place Q on the way
+to the playground is *spatially* near Place Q but *biometrically* moving —
 elevated HR, steady step accumulation, sustained speed. The magnet must let
 real movement dissolve it; the location history is one signal, the user's
 current state of motion is another, and they are **loosely coupled**, not
@@ -157,10 +157,10 @@ $\sigma_p$ the focus_place's empirical visit-centroid scatter.
 Three regimes the joint factor captures naturally:
 
 1. **Inside the place, sitting**: high $M_p$, high $B_s$ → strong pull.
-   Varley wins decisively against a nearby playground POI on a relaxed
+   Place Q wins decisively against a nearby playground POI on a relaxed
    visit.
 2. **Walking past the place**: high $M_p$, low $B_s$ → near-zero pull.
-   A 7-minute walk through the Varley area with elevated HR and active
+   A 7-minute walk through the Place Q area with elevated HR and active
    steps gets no anchoring; the segment classifies as walking on its own
    merits.
 3. **At a place we don't recognise, sitting**: low $M_p$, high $B_s$ →
@@ -177,7 +177,7 @@ cannot pull a moving user back to a recently-visited place, and high $B_s$
 alone cannot invent a place the user has never been to.
 
 This is **a soft prior**, not a hard veto. A focus_place whose magnet
-pulls Varley into the lead can still lose to a much closer focus_place at
+pulls Place Q into the lead can still lose to a much closer focus_place at
 the same coords. The boost is bounded, range-gated, and biometric-
 modulated — three independent gates the proposal must pass before
 attribution shifts.
@@ -208,9 +208,9 @@ strong when both signals agree, weak when either weakens, off when
 either is clearly broken.
 
 Note one thing the design deliberately doesn't do: it doesn't carry
-the magnet forward across segments. If the user walks from Varley to
+the magnet forward across segments. If the user walks from Place Q to
 the playground for 10 minutes and then stops, the new stationary
-segment is scored fresh — no carry-over "we were just at Varley."
+segment is scored fresh — no carry-over "we were just at Place Q."
 The reproducibility constraint from §4 of the paused proposal applies:
 each day, each segment is decoded as a pure function of inputs, no
 stateful drift.
@@ -240,40 +240,40 @@ stateful drift.
   is about whether we know there's *a* recurring place here, not
   about whether we know its name.
 
-## Worked example — 05-25 Varley vs Canada Gardens
+## Worked example — 05-25 Place Q vs Gardens C
 
 Today's pickBestPlace scores roughly:
 
-- Varley: $-\log(2\pi\sigma^2)/2 - d^2/(2\sigma^2) + \log P_{\text{freq}}(\text{Varley})$
+- Place Q: $-\log(2\pi\sigma^2)/2 - d^2/(2\sigma^2) + \log P_{\text{freq}}(\text{Place Q})$
   ≈ moderate negative + small positive frequency boost.
-- Canada Gardens — Play Area: an OSM POI candidate via `bestPlace`,
+- Gardens C — Play Area: an OSM POI candidate via `bestPlace`,
   not a focus_place; the playground wins the OSM-amenity vote and the
   geometric distance is slightly shorter.
 
-Net: the playground's geometric proximity edges out Varley's frequency
+Net: the playground's geometric proximity edges out Place Q's frequency
 prior — the prior is bounded so it doesn't dominate distance evidence,
 which is the right design (a 2-km-away matching profile must not beat
 the place the user is standing in).
 
-With magnetism, Varley's $M_p \approx 12$ (recurring partner visits)
+With magnetism, Place Q's $M_p \approx 12$ (recurring partner visits)
 multiplied by $B_s \approx 0.95$ (resting HR ~70 bpm during the visit,
 ~5 steps/min — bathroom and pancake-making count, but well below
 walking) yields a $\sim +11$ log-score boost when the centroid is
-within Varley's magnet radius. Even if Varley's centroid is 50 m from
+within Place Q's magnet radius. Even if Place Q's centroid is 50 m from
 the segment centroid vs the playground at 30 m, the boost more than
-compensates — Varley wins, label is "Varley (apartments)", snap-to-
+compensates — Place Q wins, label is "Place Q (apartments)", snap-to-
 stored-centroid keeps the downstream OSM lookup at the known building,
 not in the park.
 
-Contrast with **walking past Varley** on the way to the playground
+Contrast with **walking past Place Q** on the way to the playground
 (hypothetical):
 
-- $M_{\text{Varley}} \approx 12$ (same recurring history)
+- $M_{\text{Place Q}} \approx 12$ (same recurring history)
 - $B_s \approx 0.05$ (elevated HR, sustained 90+ steps/min)
 - Boost $= 12 \times 0.05 = 0.6$ log-points
 
 Negligible — the geometric-distance term dominates and the segment is
-not attributed to Varley. Even better, this segment is most likely
+not attributed to Place Q. Even better, this segment is most likely
 classified as `walking` upstream by the mode classifier, so the
 structural detachment in §3 means the magnet never fires at all.
 
@@ -286,9 +286,9 @@ term picks correctly.
 
 `pickBestPlace` currently applies a hard veto: any candidate further
 than `MAX_DISTANCE_SIGMAS × effectiveSigmaM` from the segment centroid
-is dropped before scoring. For Varley with ~10 visits the effective
+is dropped before scoring. For Place Q with ~10 visits the effective
 σ caps around 75–100 m; the veto distance is 225–300 m. If 05-25's
-merged centroid drifted further than that, Varley never enters the
+merged centroid drifted further than that, Place Q never enters the
 scoring at all and the magnet boost cannot save it.
 
 Two options handle this; **Phase 1 commits to (a) first** and re-
@@ -334,14 +334,14 @@ some headroom for established places.
 ## Testing
 
 - **Real-data fixture, 2026-05-25.** Capture the 10:53–12:25
-  Varley window (already in prod data; gitignored fixture). Assert
-  the pre-magnet pipeline labels it "Canada Gardens — Play Area"
-  and the post-magnet pipeline labels it "Varley (apartments)."
+  Place Q window (already in prod data; gitignored fixture). Assert
+  the pre-magnet pipeline labels it "Gardens C — Play Area"
+  and the post-magnet pipeline labels it "Place Q (apartments)."
   This is the canonical test case per the project's real-data-
   fixture rule.
 
 - **Goldens.** Re-run after enabling the flag. Expect: 05-20
-  unchanged (Varley already wins), 05-22 unchanged (no Varley-class
+  unchanged (Place Q already wins), 05-22 unchanged (no Place Q-class
   ambiguity), 04-29 and 04-30 unchanged (sparse days), 05-15 and
   05-18 unchanged (NHNN/Work clear). Any unexpected drift on the
   blessed days needs cross-check against the GT narratives.
@@ -354,9 +354,9 @@ some headroom for established places.
   close competitor — the magnet is range-gated to
   $R_{\text{magnet}}$.
 
-- **Detachment.** A two-stay scenario test: stay at Varley, walk 3
+- **Detachment.** A two-stay scenario test: stay at Place Q, walk 3
   min away, stay at a coffee shop near the playground. The second
-  stay must NOT be pulled to Varley.
+  stay must NOT be pulled to Place Q.
 
 ## Risks
 
@@ -374,14 +374,14 @@ some headroom for established places.
   for Phase 1.
 
 - **Test-fixture drift.** The 05-25 fixture must capture enough of
-  Varley's prior visit history for the focus_places mining to
+  Place Q's prior visit history for the focus_places mining to
   produce a representative $M_p$. The fixture rebuild step needs
   to include the focus_places snapshot from the day of capture,
   not just the GPS for that one day.
 
 ## Why this is worth the design effort
 
-The Varley case is a single example, but the class is broad: every
+The Place Q case is a single example, but the class is broad: every
 focus_place that sits within GPS-noise distance of a typed OSM POI
 is at risk of being misattributed on any noisy-GPS day. As the user
 accumulates recurring places (a friend's home, regular cafés, gyms,
