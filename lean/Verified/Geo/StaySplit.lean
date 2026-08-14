@@ -1847,7 +1847,11 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
       if arrivalTs - cur.startTs < FOOT_ARRIVAL_MIN_WALK_REMAINDER_S then return none
       if cur.endTs - arrivalTs ≤ 0 then return none
       let movedS := cur.endTs - arrivalTs
-      let reason := s!"arrival boundary moved back {movedS} s: the walk's tail held position within {Float.round spreadM} m for {durS} s"
+      -- `jsRound … .toInt64.toInt`, not `Float.round`: the latter stays a Float
+      -- and `s!` renders it "3.000000", where the TS arm's `Math.round` prints
+      -- "3". The reason string is compared field-for-field by the day gate, so
+      -- the formatting IS the parity.
+      let reason := s!"arrival boundary moved back {movedS} s: the walk's tail held position within {toString (jsRound spreadM).toInt64.toInt} m for {durS} s"
       -- `walkRemainder` is the family's rebuild: it recomputes pointCount /
       -- avgSpeed / maxSpeed / linearity over the new window and clears the
       -- enrichment derived from the old one. By hand the walk would keep an

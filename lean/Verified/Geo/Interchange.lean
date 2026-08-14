@@ -309,7 +309,14 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
       let burstS := burst.endTs - burst.startTs
       let rideWhy := s!"alight trimmed back {trimmedS} s: the leg ran past it through a {burstS} s walking burst"
       let walkWhy := s!"carved from the ride's overrun tail: {burstS} s of walking-cadence steps inside a train leg"
-      let ride := { seg with endTs := alightTs, refinedReason := some rideWhy }
+      -- APPEND, never replace: a leg reaching here may already carry the reason
+      -- an earlier pass gave it (on 06-18, "station-pair upgrade (was: on
+      -- subway)"), and the TS arm composes with "; ". Overwriting drops the
+      -- earlier pass's account of the same leg.
+      let rideReason := match seg.refinedReason with
+        | some prior => s!"{prior}; {rideWhy}"
+        | none => rideWhy
+      let ride := { seg with endTs := alightTs, refinedReason := some rideReason }
       -- Kinematics RECOMPUTED over the carved window: inheriting gives a walk
       -- the ride's 90 km/h, zeroing makes every later pass read it as
       -- stationary. Both are lies a downstream pass acts on.

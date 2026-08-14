@@ -1264,6 +1264,7 @@ private def parseSeg (j : Json) : Except String Seg := do
     centroidLon := ← optBits j "centroidLon"
     focusPlaceId := ← optInt j "focusPlaceId"
     needsReenrich := ← optBool j "needsReenrich" false
+    needsRename := ← optBool j "needsRename" false
     vehicleKind := ← optStr j "vehicleKind"
     roadCorridorFraction := ← optBits j "roadCorridorFraction"
     displayTz := ← optStr j "displayTz"
@@ -1778,6 +1779,7 @@ private def segJson (s : Seg) : Json :=
     ("centroidLat", jOptF s.centroidLat), ("centroidLon", jOptF s.centroidLon),
     ("focusPlaceId", jOptI s.focusPlaceId),
     ("needsReenrich", Json.bool s.needsReenrich),
+    ("needsRename", Json.bool s.needsRename),
     ("vehicleKind", jOptS s.vehicleKind),
     ("roadCorridorFraction", jOptF s.roadCorridorFraction),
     ("displayTz", jOptS s.displayTz),
