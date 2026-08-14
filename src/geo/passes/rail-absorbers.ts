@@ -488,13 +488,34 @@ export async function anchorTrainAlightToWalkedStation(
 				runStart = -1;
 			}
 		}
-		if (settle < 1) continue; // no vehicle-paced inter-station run in the walk
+		// `ALIGHT_ANCHOR_DUMP=1` names which guard left a reclaimable-looking hop
+		// in the walk. Every exit below is silent, so a leg that SHOULD have been
+		// extended and was not is otherwise indistinguishable from one the pass
+		// never looked at.
+		const dump = process.env.ALIGHT_ANCHOR_DUMP === "1";
+		const why = (msg: string): void => {
+			if (dump) console.log(`  alight-anchor ${rail.board} → ${rail.alight}: ${msg}`);
+		};
+		if (settle < 1) {
+			why(`no vehicle-paced inter-station run in the following walk (${fixes.length} fixes)`);
+			continue;
+		}
 		const alightFix = fixes[settle];
 		const surfaced = fixes[0];
-		if (haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon) < ALIGHT_HOP_MIN_DIST_M) continue;
+		const hopDistM = haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon);
+		if (hopDistM < ALIGHT_HOP_MIN_DIST_M) {
+			why(`hop is only ${Math.round(hopDistM)} m, under the ${ALIGHT_HOP_MIN_DIST_M} m floor`);
+			continue;
+		}
 
 		const station = pickBestStation(await stationsLookup(alightFix.lat, alightFix.lon));
-		if (!station) continue;
+		if (!station) {
+			why(
+				`hop of ${Math.round(hopDistM)} m over ${settleRunSteps} step(s) settles at NO STATION — ` +
+					`nothing within the lookup radius of the settle fix`,
+			);
+			continue;
+		}
 
 		// Line-continuity guard: the new alight must share a tube line with the
 		// GPS-surfaced station — the hop stayed on the run's corridor, not off to
@@ -524,7 +545,13 @@ export async function anchorTrainAlightToWalkedStation(
 				: await linesLookup(station.lat, station.lon);
 		const surfacedCanon = new Set([...surfacedLines].flatMap(expandTubeLineNames));
 		const alightCanon = new Set([...alightLines].flatMap(expandTubeLineNames));
-		if (![...alightCanon].some((l) => surfacedCanon.has(l))) continue;
+		if (![...alightCanon].some((l) => surfacedCanon.has(l))) {
+			why(
+				`settles at ${station.name} but shares no line with the surfaced fix — ` +
+					`surfaced={${[...surfacedCanon].join("|")}} alight={${[...alightCanon].join("|")}}`,
+			);
+			continue;
+		}
 
 		// The guard above asks whether the two ENDS share a corridor, which a
 		// line running alongside the tube for miles satisfies while saying
@@ -533,9 +560,12 @@ export async function anchorTrainAlightToWalkedStation(
 		// anchor turned the 2026-06-28 return into a "North London line" ride
 		// alighting 7.1 km away at Wembley Park — a leg the feasibility gate
 		// could only reject after the fact (#377).
-		if (rail.line && (await lineCannotServe(rail.line, station.name, servedLookup))) continue;
+		if (rail.line && (await lineCannotServe(rail.line, station.name, servedLookup))) {
+			why(`settles at ${station.name}, which the ${rail.line} does not serve`);
+			continue;
+		}
 
-		const hopM = Math.round(haversineMeters(surfaced.lat, surfaced.lon, alightFix.lat, alightFix.lon));
+		const hopM = Math.round(hopDistM);
 		// The rail-run topology often gets the alight NAME right while the cut
 		// lands early (the label is anchored on stations, the boundary on
 		// segmentation windows). A settled station equal to the current label is
@@ -549,6 +579,14 @@ export async function anchorTrainAlightToWalkedStation(
 		// additionally anchored by the station+line topology of a DIFFERENT
 		// station the walk demonstrably reached.
 		const sameAlight = station.name === rail.alight;
+		// `ALIGHT_ANCHOR_DUMP=1` names why a reclaimable-looking hop was left in
+		// the walk. Every guard above this point exits silently, so a leg that
+		// SHOULD have been extended and was not is otherwise indistinguishable
+		// from one the pass never considered.
+		why(
+			`settles at ${station.name} over ${settleRunSteps} step(s), ${hopM} m — ` +
+				`${sameAlight && settleRunSteps < 2 ? "REFUSED: same station on a single step (stuck-GPS guard)" : "extending"}`,
+		);
 		if (sameAlight && settleRunSteps < 2) continue;
 		const reason = sameAlight
 			? `alight boundary extended to the ${station.name} arrival — reclaimed a ${hopM} m ride tail the early cut left in the walk`

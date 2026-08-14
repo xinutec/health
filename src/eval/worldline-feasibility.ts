@@ -211,6 +211,49 @@ function checkVehiclePedestrianRuns(
  * (jitter can be fast per-step but goes nowhere) and by run length (a single
  * fast step is a reacquire teleport, not a ride).
  */
+export interface VehiclePacedRun {
+	netM: number;
+	steps: number;
+	peakKmh: number;
+}
+
+/**
+ * The worst sustained vehicle-paced run inside a window's fixes, or null.
+ *
+ * Extracted from {@link checkModeKinematics} so a probe can ask the question on
+ * modes the INVARIANT deliberately does not assert on (see
+ * `KINEMATIC_ASSERTED_MODES`) without restating the rule and drifting from it.
+ * Measuring a mode and asserting on it are different decisions; only the second
+ * has to be zero-false-positive.
+ */
+export function worstVehiclePacedRun(fixes: readonly FeasibilityFix[]): VehiclePacedRun | null {
+	let runStart = -1;
+	let runSteps = 0;
+	let worst: VehiclePacedRun | null = null;
+	let peakKmh = 0;
+	for (let i = 1; i < fixes.length; i++) {
+		const dt = fixes[i].ts - fixes[i - 1].ts;
+		const stepM = fixDistanceM(fixes[i - 1], fixes[i]);
+		const stepKmh = dt > 0 ? (stepM / dt) * 3.6 : 0;
+		if (stepKmh >= KINEMATIC_VEHICLE_STEP_KMH) {
+			if (runStart < 0) {
+				runStart = i - 1;
+				runSteps = 0;
+				peakKmh = 0;
+			}
+			runSteps++;
+			peakKmh = Math.max(peakKmh, stepKmh);
+			const netM = fixDistanceM(fixes[runStart], fixes[i]);
+			if (runSteps >= KINEMATIC_MIN_RUN_STEPS && netM >= KINEMATIC_MIN_RUN_NET_M && (!worst || netM > worst.netM)) {
+				worst = { netM, steps: runSteps, peakKmh };
+			}
+		} else {
+			runStart = -1;
+		}
+	}
+	return worst;
+}
+
 function checkModeKinematics(
 	legs: readonly FeasibilityLeg[],
 	points: readonly FeasibilityFix[],
@@ -218,31 +261,7 @@ function checkModeKinematics(
 	const violations: FeasibilityViolation[] = [];
 	for (const l of legs) {
 		if (!KINEMATIC_ASSERTED_MODES.has(l.mode)) continue;
-		const fixes = points.filter((p) => p.ts >= l.startTs && p.ts <= l.endTs);
-		let runStart = -1;
-		let runSteps = 0;
-		let worst: { netM: number; steps: number; peakKmh: number } | null = null;
-		let peakKmh = 0;
-		for (let i = 1; i < fixes.length; i++) {
-			const dt = fixes[i].ts - fixes[i - 1].ts;
-			const stepM = fixDistanceM(fixes[i - 1], fixes[i]);
-			const stepKmh = dt > 0 ? (stepM / dt) * 3.6 : 0;
-			if (stepKmh >= KINEMATIC_VEHICLE_STEP_KMH) {
-				if (runStart < 0) {
-					runStart = i - 1;
-					runSteps = 0;
-					peakKmh = 0;
-				}
-				runSteps++;
-				peakKmh = Math.max(peakKmh, stepKmh);
-				const netM = fixDistanceM(fixes[runStart], fixes[i]);
-				if (runSteps >= KINEMATIC_MIN_RUN_STEPS && netM >= KINEMATIC_MIN_RUN_NET_M && (!worst || netM > worst.netM)) {
-					worst = { netM, steps: runSteps, peakKmh };
-				}
-			} else {
-				runStart = -1;
-			}
-		}
+		const worst = worstVehiclePacedRun(points.filter((p) => p.ts >= l.startTs && p.ts <= l.endTs));
 		if (worst) {
 			violations.push({
 				kind: "impossible-mode-kinematics",
