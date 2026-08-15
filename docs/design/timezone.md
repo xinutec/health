@@ -301,7 +301,7 @@ straggler row reads identically whether or not its `ts_utc` is populated yet.
 
 ## `home_tz` derivation
 
-`assignDisplayNames` (`src/geo/focus-places.ts:328`) returns
+`assignDisplayNames` (`src/geo/focus-places.ts`) returns
 `Map<number, string>` mapping cluster id → human-readable name
 (e.g. `"Home"`, `"Work"`). After it runs, the
 `refresh-focus-places` CLI iterates the clusters and inserts
@@ -420,7 +420,7 @@ Unit:
 - `fitbitTsToUnix` with both `string` and `Date` input — the mariadb
   driver returns DATETIMEs as `Date` objects in some code paths and as
   strings in the aggregated `DATE_FORMAT` query in
-  `src/geo/velocity.ts:53`.
+  `loadBiometrics` (`src/geo/velocity.ts`).
 - `tz-lookup` boundary cases: points near NL/BE/FR/UK border polygons.
 
 UPSERT correctness:
@@ -552,8 +552,9 @@ reads ignore it. Steps, in implementation order:
    derived from clusters that didn't get persisted. Skipped entirely
    when `result.clusters.length === 0` (already inside the
    `if (result.clusters.length > 0)` guard).
-9. **Read path**: `loadBiometrics` in `velocity.ts:34-105` selects
-   `tz` per row. For the per-minute HR aggregate at `:53`, use
+9. **Read path**: `loadBiometrics` in `velocity.ts` selects
+   `tz` per row. For the per-minute HR aggregate (the `DATE_FORMAT`
+   group-by), use
    `MAX(tz) AS tz` — mixed-tz buckets are impossible by
    construction (the GROUP BY is on the wall-clock string
    `DATE_FORMAT(ts, '%Y-%m-%d %H:%i')`, and a tz change moves the
@@ -605,11 +606,11 @@ sync correctness.
   to update.
 - `src/sync.ts` — orchestration; gains the profile-fetch step.
 - `src/cli/refresh-focus-places.ts` — pattern for the backfill CLI
-  and the home_tz write site. `assignDisplayNames` is consumed at
-  `:115`; the home_tz write fits in the same loop.
+  and the home_tz write site. `assignDisplayNames` is consumed in the
+  cluster-insert loop; the home_tz write fits in the same loop.
 - `src/nextcloud/phonetrack.ts` — `fetchTrackPointsRange` for the
   per-sync GPS-fix fetch.
-- `src/geo/focus-places.ts:328` — `assignDisplayNames(clusters):
+- `src/geo/focus-places.ts` — `assignDisplayNames(clusters):
   Map<number, string>` (the cluster id → name map).
 - `src/sync.ts:39-55` — private `getSyncState` / `setSyncState`
   helpers to extract to a shared module.

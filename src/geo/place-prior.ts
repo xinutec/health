@@ -217,10 +217,15 @@ export function magnetStrength(candidate: PlaceCandidate): number {
  *
  *  The claim this docstring used to make — "scales with the place's
  *  empirical scatter, a tightly-clustered place has a tight magnet" —
- *  was never true of the data. `radiusM` is a CONSTANT 25 m on all 127
- *  focus places in the corpus (measured 2026-08-12), so `effectiveSigmaM`
- *  reduces to its establishedness floor and carried no scatter signal to
- *  scale with. Two more docstrings still to audit make the same claim;
+ *  was never true of the data. `radiusM` is written as a CONSTANT 25 m on
+ *  every focus place (127 rows when measured 2026-08-12), so
+ *  `effectiveSigmaM` reduces to its establishedness floor — 25 is below even
+ *  the unearned floor of `SIGMA_FLOOR_MIN_M` — and carries no scatter signal
+ *  to scale with. STILL TRUE: `focus-places.clusterSpreadM` now measures the
+ *  scatter this wanted (2026-08-15) and the miner reports it, but nothing
+ *  writes it, so the column remains the constant. Writing it would move this
+ *  and two other consumers, which is why it has not been: see #789.
+ *  Two more docstrings still to audit make the same claim;
  *  see {@link MAGNET_SIGMA_MULTIPLIER}. */
 function magnetRadiusM(_candidate: PlaceCandidate): number {
 	return MAGNET_BASE_RADIUS_M + MAGNET_SIGMA_MULTIPLIER * SIGMA_FLOOR_MIN_M;

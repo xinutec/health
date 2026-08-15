@@ -414,7 +414,8 @@ outranking present evidence.**
 ## Open questions
 
 - Should the responsibility be computed per-**stay** or per-**cluster**? The
-  miner iterates over clusters (`refresh-focus-places.ts:167`), and a cluster
+  miner iterates over clusters (the `for (const c of result.clusters)` mining
+  loop in `refresh-focus-places.ts`), and a cluster
   pools repeat visits to the same place. Pooling first would sharpen the
   responsibilities (five visits to the same café is better evidence than one) —
   but it would also re-introduce a commitment step at the cluster level, which

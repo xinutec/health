@@ -136,12 +136,32 @@ smeared sit" — is not what the data says.
 
 **The focus-place layer is 0/4**, and it is a *hard override*: when a mined
 focus place carries an `amenity_label`, `velocity.ts` returns that label and
-`rankVenues` is never called (`src/geo/velocity.ts:975`). The label itself was
-mined by an earlier run of `rankVenues`. So it is the scorer's own historical
-answer, frozen into a cluster, and now unfalsifiable by present evidence. That
-is the self-confirmation loop, and it is structural — not a scoring bug.
-Urban Social (`focus_place #6053` → "The Library") is one of the four; so are
-Olivomare → "Keencare Pharmacy" and Pizza Union → "Bell & Viv".
+`rankVenues` is never called (the `if (!isResidential && wp.amenityLabel)`
+early return). The label itself was mined by an earlier run of `rankVenues`.
+So it is the scorer's own historical answer, frozen into a cluster, and now
+unfalsifiable by present evidence. That is the self-confirmation loop, and it
+is structural — not a scoring bug. Urban Social (`focus_place #6053` → "The
+Library") is one of the four; so are Olivomare → "Keencare Pharmacy" and
+Pizza Union → "Bell & Viv".
+
+> **SUPERSEDED 2026-08-15 on both counts — the paragraph above is kept
+> because the reasoning still holds, but neither number nor "hard" does.**
+>
+> The override is **no longer unconditional**: `feefb75` requires
+> `wp.uniqueDays >= MINED_LABEL_MIN_DAYS` before a mined label may
+> short-circuit the scorer, on the ground that a single-visit cluster has no
+> majority to be the majority vote of. So the scorer now runs for exactly the
+> clusters whose frozen answer was least examined.
+>
+> And **the layer is no longer 0/4**: two of the three named above are fixed.
+> Olivomare and Pizza Union both clear, measured against a same-build
+> baseline (2 truth rows cleared, 0 lost). Urban Social is untouched — its
+> cluster has 9 visit-days, so the new gate does not reach it, and #343
+> remains the only instrument that can name it.
+>
+> The self-confirmation loop itself is NOT closed. It is narrowed to
+> multi-visit clusters, where the frozen answer at least rests on more than
+> one look. #344 owns deleting the override outright.
 
 ### But removing the override does NOT fix Urban Social
 

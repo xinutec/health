@@ -314,11 +314,21 @@ const RESIDENCE_SLEEP_THRESHOLD_H = 5;
  *
  *  The label is documented as a "majority vote across the user's prior
  *  visits", and on a single-visit cluster there is no majority — it is one
- *  observation, promoted to an answer. 40 of the corpus's 55 labelled
- *  clusters are single-day (measured 2026-08-15), so this branch is
- *  overwhelmingly deciding stays from one look. The venue scorer has
- *  strictly more evidence for those (opening hours, dwell shape, distance),
- *  and cannot run while the label pre-empts it. */
+ *  observation, promoted to an answer. Single-visit clusters dominate what
+ *  this branch decides — 58 of the 73 labels the miner emits (measured
+ *  2026-08-15, `refresh-focus-places --dry-run`; it was 40 of 55 before
+ *  `c506a7b` exempted near-field votes from the dwell floor and the count
+ *  went UP). Re-measure rather than quoting either figure. The venue scorer
+ *  has strictly more evidence for those stays (opening hours, dwell shape,
+ *  distance), and cannot run while the label pre-empts it.
+ *
+ *  This gate and `c506a7b` pull against each other — one emits more
+ *  single-visit labels, the other declines to trust them — and that is
+ *  deliberate, not an oversight. Graded together on a corpus copy with only
+ *  the labels varied: 5 standing regressed rows -> 4, none lost. Do NOT
+ *  collapse them into one distance rule: the label that most needed
+ *  overriding here came from 10 m, unanimous, over 86 minutes, and was still
+ *  wrong. See #789. */
 const MINED_LABEL_MIN_DAYS = 2;
 
 /** Mean of HR / cadence stream values over a segment's time range. */

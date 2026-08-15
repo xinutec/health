@@ -56,7 +56,7 @@ persists across noisy fixes, broken only when actual movement evidence
 says the user left.
 
 This generalises the snap-to-stored-centroid step already in
-`velocity.ts:660-680` (after a focus_place wins, the centroid is
+`velocity.ts` (after a focus_place wins, the centroid is
 snapped to the focus_place's stored coords for downstream lookups).
 That step has the right *idea* but kicks in too late — only after the
 geometric centroid has already been used to pick the winner. By the

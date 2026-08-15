@@ -366,8 +366,8 @@ Gate: journey-level truth parity on the full corpus — clears ≥
 regressions, invariants at zero, per the roadmap's shadow discipline.
 
 Phased plan (seam study 2026-07-18; the seams are the `boardingAnchor`
-pass at velocity.ts:1443, `alightAnchor` at :1459, and the existing
-decoder→pipeline bridge `hsmmOverride` at :1603 →
+pass in velocity.ts, `alightAnchor`, and the existing
+decoder→pipeline bridge `hsmmOverride` →
 `applyHsmmPlaceOverride`):
 
 - **C4.4a — station/line authority + anchor gating (first).** Authority
