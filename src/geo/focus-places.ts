@@ -722,6 +722,16 @@ export function assignDisplayNames(clusters: Cluster[]): Map<number, string> {
  *   - `opts.minWeight`: the total vote weight must reach this floor before
  *     we'll commit to a winner. Prevents picking a name from a single
  *     short-visit cluster with no real evidence.
+ *   - `opts.weightExempt`: names for which `minWeight` does not apply.
+ *     The floor is a proxy question — "were you AT this venue, or just
+ *     near it?" — and a vote cast from the near field has answered it
+ *     directly, by geometry. Measured over the corpus (2026-08-15): the
+ *     floor refused 28 clusters, ALL of them unanimous, and every one of
+ *     the five the ground truth can adjudicate was the correct venue,
+ *     including a confirmed 5-minute shopping stop. Dwell is simply not
+ *     what distinguishes a real visit from a passing one. Note this does
+ *     NOT relax `minFraction`: proximity says you were here, not which of
+ *     several co-located venues you were in.
  *   - `opts.minFraction`: the winner's share of the total must exceed this.
  *     A close vote (cafe A 52%, cafe B 48%) returns null so the runtime
  *     OSM picker stays in charge.
@@ -731,7 +741,7 @@ export function assignDisplayNames(clusters: Cluster[]): Map<number, string> {
  */
 export function pickWinningAmenity(
 	votes: Map<string, number>,
-	opts: { minWeight: number; minFraction: number },
+	opts: { minWeight: number; minFraction: number; weightExempt?: ReadonlySet<string> },
 ): string | null {
 	if (votes.size === 0) return null;
 	let total = 0;
@@ -744,7 +754,7 @@ export function pickWinningAmenity(
 			winner = name;
 		}
 	}
-	if (total < opts.minWeight) return null;
+	if (total < opts.minWeight && opts.weightExempt?.has(winner) !== true) return null;
 	if (winnerWeight / total < opts.minFraction) return null;
 	return winner;
 }

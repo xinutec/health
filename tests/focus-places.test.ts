@@ -485,6 +485,35 @@ describe("pickWinningAmenity", () => {
 		]);
 		expect(pickWinningAmenity(votes, { minWeight: 60 * 30, minFraction: 0.5 })).toBeNull();
 	});
+
+	// The weight floor asks "were you AT this place, or merely near it?".
+	// A vote cast from inside the near-field has already answered that
+	// question by geometry, so it is exempt — see #789, where a unanimous
+	// vote from 3 m was refused for being 1.8 min short of the floor.
+
+	it("exempts a near-field winner from the weight floor", () => {
+		const votes = new Map<string, number>([["Black Sheep Coffee", 28 * 60]]);
+		expect(pickWinningAmenity(votes, opts)).toBeNull();
+		expect(pickWinningAmenity(votes, { ...opts, weightExempt: new Set(["Black Sheep Coffee"]) })).toBe(
+			"Black Sheep Coffee",
+		);
+	});
+
+	it("does not exempt a mid-field winner", () => {
+		const votes = new Map<string, number>([["Real Food Market", 11 * 60]]);
+		expect(pickWinningAmenity(votes, { ...opts, weightExempt: new Set(["Somewhere Else"]) })).toBeNull();
+	});
+
+	it("still applies the majority floor to an exempt winner", () => {
+		// Exemption answers "were you here", not "which one" — a split vote
+		// stays undecided however close the leader was.
+		const votes = new Map<string, number>([
+			["Cafe A", 10 * 60],
+			["Cafe B", 9 * 60],
+			["Cafe C", 9 * 60],
+		]);
+		expect(pickWinningAmenity(votes, { ...opts, weightExempt: new Set(["Cafe A"]) })).toBeNull();
+	});
 });
 
 describe("hourProfileOf / hourProfileForRange", () => {

@@ -247,7 +247,7 @@ const SHAPE_CLAMP = { dwell: [-2, 1.2], hour: [-1.5, 1.2], base: [-2, 1.5] } as 
  *  12 m is the urban doorstep scale — tight enough that a genuinely ambiguous
  *  mid-field sit (the closed-venue-15 m-away hours case) still falls through
  *  to the scored ranking. Enclosing institutions still outrank this. */
-const NEAR_FIELD_DECISIVE_M = 12;
+export const NEAR_FIELD_DECISIVE_M = 12;
 
 const clamp = (x: number, [lo, hi]: readonly [number, number]): number => Math.min(hi, Math.max(lo, x));
 

@@ -40,6 +40,7 @@ import {
 	attributeStayVenue,
 	localHourOf,
 	minePriors,
+	NEAR_FIELD_DECISIVE_M,
 	rankVenues,
 	VENUE_RANK_FLOOR_NATS,
 } from "../geo/venue-prior.js";
@@ -205,6 +206,19 @@ async function refreshOne(userId: string): Promise<void> {
 	// never train it — training on the picker's own guesses would launder
 	// its mistakes into the prior.
 	const attributedStays: AttributedStay[] = [];
+	/** Clusters that produced a vote but ended up with no label, and which
+	 *  gate stopped them. A null `amenity_label` looks identical whichever
+	 *  gate wrote it, so the count per gate is the only way to know what
+	 *  moving a threshold would actually cost or buy (#789). */
+	const blocked: Array<{
+		gate: string;
+		clusterId: number;
+		wouldBe: string;
+		dwellMin: number;
+		share: number;
+		distM: number;
+		days: number;
+	}> = [];
 	// The cluster `--explain` is about: the one whose centroid is nearest the
 	// coordinate. Matching on the STORED centroid rather than on a stay means
 	// the same coordinate selects the same cluster a `focus_places` row would.
@@ -240,6 +254,9 @@ async function refreshOne(userId: string): Promise<void> {
 			continue;
 		}
 		const votes = new Map<string, number>();
+		// Closest this venue was seen from any voting stay's centroid — the
+		// vote's quality, which the weight alone does not carry.
+		const voteDist = new Map<string, number>();
 		for (const s of c.stays) {
 			const landmarks = await nearbyLandmarks(s.centroidLat, s.centroidLon);
 			if (explain) {
@@ -292,10 +309,18 @@ async function refreshOne(userId: string): Promise<void> {
 					`    votes "${best.name}" (${best.subtype}, ${best.distanceM.toFixed(0)} m) with ${(s.durationSec / 60).toFixed(1)} min`,
 				);
 			votes.set(best.name, (votes.get(best.name) ?? 0) + s.durationSec);
+			voteDist.set(best.name, Math.min(voteDist.get(best.name) ?? Infinity, best.distanceM));
 		}
+		// Names some stay voted for from inside the near field. `voteDist`
+		// holds the CLOSEST such sighting, so one visit that sat on the venue
+		// exempts it even if a later, sloppier fix put it further out — the
+		// claim being made is "you have been in here", and one good fix
+		// establishes that as well as ten.
+		const nearFieldWinners = new Set([...voteDist].filter(([, d]) => d <= NEAR_FIELD_DECISIVE_M).map(([name]) => name));
 		let winner = pickWinningAmenity(votes, {
 			minWeight: 60 * 30, // at least 30 min of total cluster dwell
 			minFraction: 0.5, // winner must take majority of the vote
+			weightExempt: nearFieldWinners,
 		});
 		if (explain) {
 			const total = [...votes.values()].reduce((a, b) => a + b, 0);
@@ -306,6 +331,23 @@ async function refreshOne(userId: string): Promise<void> {
 				console.log(`    ${((w / total) * 100).toFixed(0).padStart(3)}%  ${(w / 60).toFixed(1)} min  ${name}`);
 			}
 			console.log(`  GATE 1 winner: ${winner ?? "NULL"}`);
+		}
+		// Census: a vote was cast and gate 1 refused it. Record WHICH of its
+		// two conditions did the refusing — a weight floor and a majority
+		// floor answer different questions, and #789 turned on the fact that
+		// the vote it blocked was unanimous.
+		if (winner === null && votes.size > 0) {
+			const total = [...votes.values()].reduce((a, b) => a + b, 0);
+			const [name, w] = [...votes].sort((a, b) => b[1] - a[1])[0];
+			blocked.push({
+				gate: total < 60 * 30 ? "1-weight" : "1-majority",
+				clusterId: c.id,
+				wouldBe: name,
+				dwellMin: total / 60,
+				share: w / total,
+				distM: voteDist.get(name) ?? Number.NaN,
+				days: uniqueDayCount(c.stays, c.centroidLon),
+			});
 		}
 		// Centroid gate: the winning venue must be AT the cluster — within
 		// venue range of its *centroid*, not merely near some scattered
@@ -326,14 +368,44 @@ async function refreshOne(userId: string): Promise<void> {
 		if (winner !== null) {
 			const atCentroid = await nearbyLandmarks(c.centroidLat, c.centroidLon, 100);
 			const winnerHere = atCentroid.find((l) => l.name === winner);
-			if (winnerHere === undefined || !isLabelWorthyVenue(winnerHere)) winner = null;
-			else winnerKind = winnerHere.subtype;
+			if (winnerHere === undefined || !isLabelWorthyVenue(winnerHere)) {
+				const total = [...votes.values()].reduce((a, b) => a + b, 0);
+				blocked.push({
+					gate: "3-centroid",
+					clusterId: c.id,
+					wouldBe: winner,
+					dwellMin: total / 60,
+					share: (votes.get(winner) ?? 0) / total,
+					distM: voteDist.get(winner) ?? Number.NaN,
+					days: uniqueDayCount(c.stays, c.centroidLon),
+				});
+				winner = null;
+			} else winnerKind = winnerHere.subtype;
 			if (explain) {
 				console.log(`  GATE 3 (centroid): ${winner === null ? "NULLS the winner" : `keeps it (${winnerKind})`}`);
 			}
 		}
 		amenityLabels.set(c.id, winner);
 		amenityKinds.set(c.id, winnerKind);
+	}
+	// What the gates cost, by gate. Printed on every run — a threshold whose
+	// blast radius is unknown is a threshold nobody can move.
+	if (blocked.length > 0) {
+		const byGate = new Map<string, number>();
+		for (const b of blocked) byGate.set(b.gate, (byGate.get(b.gate) ?? 0) + 1);
+		console.log(
+			`[${userId}] gates refused a cast vote on ${blocked.length} cluster(s): ` +
+				[...byGate].map(([g, n]) => `${g}=${n}`).join(" "),
+		);
+		if (argDryRun) {
+			for (const b of [...blocked].sort((a, b2) => a.gate.localeCompare(b2.gate) || b2.dwellMin - a.dwellMin)) {
+				console.log(
+					`[${userId}]   ${b.gate.padEnd(11)} cluster ${String(b.clusterId).padStart(3)}  ` +
+						`${b.dwellMin.toFixed(1).padStart(6)} min  ${(b.share * 100).toFixed(0).padStart(3)}%  ` +
+						`${b.distM.toFixed(0).padStart(3)} m  ${String(b.days).padStart(2)}d  ${b.wouldBe}`,
+				);
+			}
+		}
 	}
 	console.log(
 		`[${userId}] amenity mining: ${[...amenityLabels.values()].filter((v) => v !== null).length}/${
