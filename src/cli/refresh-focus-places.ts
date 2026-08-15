@@ -4,7 +4,15 @@
  * places pipeline. Replaces the user's rows in focus_places inside a
  * transaction so the dashboard never sees an empty snapshot mid-refresh.
  *
- * Run manually for now (will become a weekly cron once stable):
+ * This RUNS ON A CRON — `health-focus-refresh`, Sundays 04:00, from
+ * `xinutec/health-sync:latest` with `imagePullPolicy: Always` and no args
+ * (verified against the cluster 2026-08-15; it said "run manually for now,
+ * will become a weekly cron once stable" for however long it had already been
+ * one). So a change in here reaches production on the next push plus the next
+ * Sunday, with no deploy step and no gate in between — `deploy.sh`'s replay
+ * gates guard the `health-auth` Deployment, not the CronJobs (#813).
+ *
+ * Manually, against prod via `scripts/prod-db.sh`:
  *   node dist/cli/refresh-focus-places.js              # all users with NC linked
  *   node dist/cli/refresh-focus-places.js <user_id>    # one user, default 90d
  *   node dist/cli/refresh-focus-places.js <user_id> 90 # one user, explicit days
