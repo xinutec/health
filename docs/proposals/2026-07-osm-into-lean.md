@@ -69,9 +69,10 @@ The two terms are different kinds of number, and only one is empirical:
   `STATION_AT_ALIGHT_RADIUS_M`, and the `nearbyWays` (50) /
   `nearbyLandmarks` (100) / `nearbyTransitStops` (50) defaults. None is derived
   from data, so **800 m bounds it by construction**.
-- **The offset is empirical**: 428 m worst across the corpus, from the passes
-  that query at DERIVED points — matched-path vertices, resolved station
-  coordinates — rather than at fixes.
+- **The offset is empirical**: 428 m worst across the corpus at the time of
+  writing, from the passes that query at DERIVED points — matched-path vertices,
+  resolved station coordinates — rather than at fixes. It is **744.7 m** on the
+  35-day corpus (re-measured 2026-08-15); see the superseded-figure note below.
 
 ### The buffer is per feature type, not global
 
@@ -91,6 +92,19 @@ Only `railway` — a sparse table — needs the wide buffer. `highway`, by far t
 biggest, is asked exclusively at 50 m. So: **`railway` 1500 m, everything else
 500 m.** Measured on 2026-07-10, that is 46,024 rows against 133,284 for a
 uniform 1500 m — a 2.9× cut whose dropped rows no query could ever have reached.
+
+> ⚠ **THE RAILWAY FIGURE IS SUPERSEDED: it is 2200 m as of `838d617`
+> (2026-08-15), and the table above is the 32-day measurement.** Re-run over 35
+> days the worst railway offset is **744.7 m**, not 1227.9 — so the worst
+> standing query needs 800 + 744.7 = 1544.7 m against a configured 1500, and it
+> survived only because neighbouring coverage boxes covered the remainder.
+>
+> The empirical half MOVES, which is the durable point: a rail question is asked
+> about a STATION, and a station sits as far off the fix track as the walk to
+> reach it — on a blackout leg, however far the ride went unobserved. 2026-04-29's
+> alight asks 1220 m off the nearest fix. **Read `KERNEL_BUFFER_M` in
+> `src/geo/osm-rowset.ts` for the live values**; every buffer number in this
+> proposal is the value on its measurement date.
 
 All **2521** captured kernel queries across the 32 days replay as covered
 through the real `methodIsCovered`.
@@ -288,8 +302,9 @@ Staying in the shell:
 
 1. Lean spatial kernel + guards against V8, driven from captured rows. DONE:
    points (`6ea6992`) and lines (`45d830a`), 25 probes.
-2. Capture path: query the buffered track once per day — **1500 m for `railway`,
-   500 m for the rest** — serialise raw rows, and record the coverage boxes
+2. Capture path: query the buffered track once per day — **2200 m for `railway`
+   (1500 when this was written, see the superseded-figure note above), 500 m for
+   the rest** — serialise raw rows, and record the coverage boxes
    alongside them. DONE: `src/geo/osm-rowset.ts` + `tests/osm-rowset.test.ts`,
    sized by `lean/experiments/osm-buffer-sizing.mts`.
 3. Swap the injected lookups to read the pushed table. DONE for the kernel:
