@@ -104,14 +104,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 
 	it("extends the train to the downline station the walk's leading hop reached (the 06-29 case)", async () => {
 		const { segs, points } = trainThenWalk();
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].mode).toBe("train");
 		expect(out[0].wayName).toBe("Ashvale → Deepwell");
 		// the train now ends where it settled (the hop's end), and the walk starts there
@@ -122,63 +115,49 @@ describe("anchorTrainAlightToWalkedStation", () => {
 
 	it("preserves the line suffix when the run had one", async () => {
 		const { segs, points } = trainThenWalk({ wayName: "Ashvale → Carfax · Metropolitan Line" });
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 	});
 
 	it("does NOT fire on a train→walk→train interchange (owned by the journey passes)", async () => {
 		const { segs, points } = trainThenWalk({ interchangeTail: true });
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Carfax");
 		expect(out[1].startTs).toBe(T0);
 	});
 
-	it("does NOT extend to a station off the run's line (line-continuity guard)", async () => {
+	// ⚠ THIS TEST RECORDS A GAP, NOT A GUARANTEE. It asserted the opposite until
+	// 2026-08-15, when the line-continuity guard was removed: that guard refused
+	// every non-tube alight by construction, because it presumed a line label is
+	// stable along a route and Dutch rail names sections separately ({044} vs
+	// {514a}). Removing it cleared the corpus's last journey failure.
+	//
+	// A leg WITH a line is still covered — `lineCannotServe` refuses a station
+	// its own line does not serve, and the two tests below prove it. This leg
+	// has NO line, so nothing asks the topology anything and the hop extends to
+	// a station off the corridor.
+	//
+	// When a legless-leg check lands, this expectation should flip back to
+	// "Ashvale → Carfax" — deliberately, and this comment should go with it.
+	it("extends a LEGLESS leg off the corridor — the gap left by removing the line guard", async () => {
 		const { segs, points } = trainThenWalk({ offlineHop: true });
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
-		expect(out[0].wayName).toBe("Ashvale → Carfax");
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
+		expect(out[0].wayName).toBe("Ashvale → Charing Cross");
 	});
 
 	it("does NOT extend to a station the leg's OWN line does not serve (06-28)", async () => {
-		// The corridor guard above compares the lines PASSING each end, so a
-		// line that runs alongside the tube for miles satisfies it. It says
-		// nothing about the line the leg is labelled with. Here the leg reads
-		// "Ghost line" and the hop settles at Deepwell, which the Ghost passes
-		// on its way elsewhere but never serves — extending would write a leg
-		// that cannot have happened, which is what made 06-28 the corpus's
-		// invalid-triple red.
+		// This is the check that SURVIVED the corridor guard's removal, and the
+		// reason removing it was safe wherever a leg carries a line. Passing-by
+		// is not serving: here the leg reads "Ghost line" and the hop settles at
+		// Deepwell, which the Ghost passes on its way elsewhere but never stops
+		// at — extending would write a leg that cannot have happened, which is
+		// what made 06-28 the corpus's invalid-triple red. `lineCannotServe`
+		// asks the line TOPOLOGY, not two labels, so it is indifferent to
+		// whether a name is route-stable.
 		const ghostAt = (s: Station): Station => ({ ...s, lines: [...s.lines, "Ghost line"], servedBy: s.lines });
 		const ghost = lookups([ASHVALE, { ...CARFAX, lines: [...CARFAX.lines, "Ghost line"] }, ghostAt(DEEPWELL), OFFLINE]);
 		const { segs, points } = trainThenWalk({ wayName: "Ashvale → Carfax · Ghost line" });
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			ghost.stationsLookup,
-			ghost.linesLookup,
-			ghost.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], ghost.stationsLookup, ghost.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Carfax · Ghost line");
 		expect(out[1].startTs).toBe(T0);
 	});
@@ -207,14 +186,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Carfax · Metropolitan Line"),
 			seg(T0, settleTs + 180, "walking"),
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
 		expect(out[0].endTs).toBe(settleTs);
 		expect(out[1].startTs).toBe(settleTs);
@@ -252,14 +224,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			{ ts: T0 + 60, steps: 0 },
 			{ ts: T0 + 120, steps: 1 },
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			steps,
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, steps, lk.stationsLookup, lk.servedLookup);
 		expect(out[0].endTs).toBe(settleTs);
 		expect(out[1].startTs).toBe(settleTs);
 	});
@@ -272,14 +237,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			{ ts: T0 + 60, steps: 110 },
 			{ ts: T0 + 120, steps: 102 },
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			steps,
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, steps, lk.stationsLookup, lk.servedLookup);
 		expect(out[0].endTs).toBe(T0);
 		expect(out[1].startTs).toBe(T0);
 		expect(settleTs).toBeGreaterThan(T0); // the hop was there to take; cadence is why it was not
@@ -308,14 +266,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Deepwell · Metropolitan Line"),
 			seg(T0, settleTs + 180, "walking"),
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line"); // label untouched
 		expect(out[0].endTs).toBe(settleTs); // boundary moved
 		expect(out[1].startTs).toBe(settleTs);
@@ -347,14 +298,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Deepwell · Metropolitan Line"),
 			seg(T0, T0 + 300, "walking"),
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].endTs).toBe(trainEnd); // boundary untouched
 		expect(out[1].startTs).toBe(T0);
 	});
@@ -375,14 +319,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			seg(trainEnd - 300, trainEnd, "train", "Ashvale → Carfax"),
 			seg(T0, T0 + 80, "walking"),
 		];
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Carfax");
 		expect(out[1].startTs).toBe(T0);
 	});
@@ -443,30 +380,31 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		return { segs, points, settleTs };
 	}
 
-	it("asks the RESOLVED STATION for its lines when the settle fix is off the mapped track (07-07)", async () => {
+	it("extends a ride that settles OFF the mapped track (07-07)", async () => {
 		// 2026-07-07: the ride into Wembley Park settles 258 m west of the
 		// platforms, out over the depot, where `linesAtPoint` finds no rail way
-		// at all. Read as a disagreement, that empty answer rejected the station
-		// the fix had just resolved to and left 1651 m of Metropolitan riding —
-		// seven consecutive 14 s steps at 48–65 km/h — inside the following
-		// walk, which is exactly the run the kinematic invariant counts.
+		// at all. That emptiness used to matter: the corridor guard read it as
+		// disagreement, rejected the station the fix had just resolved to, and
+		// left 1651 m of Metropolitan riding — seven consecutive 14 s steps at
+		// 48–65 km/h — inside the following walk, which is exactly the run the
+		// kinematic invariant counts.
+		//
+		// The guard is gone (2026-08-15), so no lookup of the settle fix happens
+		// at all and the emptiness is simply irrelevant. The day is kept as a
+		// case because the OUTCOME is what mattered: the ride must reach its
+		// true disembark rather than being stranded in the walk.
 		const lkNarrow = lookupsWithNarrowLines([ASHVALE, CARFAX, DEEPWELL, OFFLINE], 150);
 		const { segs, points, settleTs } = denseRunSettlingOffTrack(
 			DEEPWELL,
 			0.0024,
 			"Ashvale → Carfax · Metropolitan Line",
 		);
-		// the premise: the settle fix itself answers nothing, the station does
-		const settleFix = points[points.length - 3];
-		expect([...(await lkNarrow.linesLookup(settleFix.lat, settleFix.lon))]).toEqual([]);
-		expect([...(await lkNarrow.linesLookup(DEEPWELL.lat, DEEPWELL.lon))]).toContain("Metropolitan Line");
 
 		const out = await anchorTrainAlightToWalkedStation(
 			segs,
 			points,
 			[],
 			lkNarrow.stationsLookup,
-			lkNarrow.linesLookup,
 			lkNarrow.servedLookup,
 		);
 		expect(out[0].wayName).toBe("Ashvale → Deepwell · Metropolitan Line");
@@ -474,11 +412,13 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		expect(out[1].startTs).toBe(settleTs);
 	});
 
-	it("still rejects a station on no shared line when the settle fix is off the mapped track", async () => {
-		// The fallback asks the station instead of the fix; it does not excuse
-		// the station from answering. Charing Cross shares no line with Carfax,
-		// so the corridor guard must still refuse — an empty fix-point answer
-		// is not a blanket pass.
+	it("still rejects a station the leg's line does not serve, even settling off the mapped track", async () => {
+		// The counterpart to the case above, and the one that shows what was NOT
+		// lost with the corridor guard: this leg is labelled Metropolitan and the
+		// hop settles at Charing Cross, which the Metropolitan does not serve.
+		// `lineCannotServe` refuses on the line topology, so the refusal survives
+		// the guard's removal and does not depend on the settle fix answering
+		// anything at all.
 		const lkNarrow = lookupsWithNarrowLines([ASHVALE, CARFAX, DEEPWELL, OFFLINE], 150);
 		const { segs, points } = denseRunSettlingOffTrack(OFFLINE, 0.0024, "Ashvale → Carfax · Metropolitan Line");
 		const out = await anchorTrainAlightToWalkedStation(
@@ -486,7 +426,6 @@ describe("anchorTrainAlightToWalkedStation", () => {
 			points,
 			[],
 			lkNarrow.stationsLookup,
-			lkNarrow.linesLookup,
 			lkNarrow.servedLookup,
 		);
 		expect(out[0].wayName).toBe("Ashvale → Carfax · Metropolitan Line");
@@ -499,14 +438,7 @@ describe("anchorTrainAlightToWalkedStation", () => {
 		points[3] = fix(T0 + 120, CARFAX.lat + 0.0003, CARFAX.lon + 0.0003);
 		points[4] = fix(T0 + 240, CARFAX.lat + 0.0006, CARFAX.lon + 0.0006);
 		points[5] = fix(T0 + 300, CARFAX.lat + 0.0009, CARFAX.lon + 0.0009);
-		const out = await anchorTrainAlightToWalkedStation(
-			segs,
-			points,
-			[],
-			lk.stationsLookup,
-			lk.linesLookup,
-			lk.servedLookup,
-		);
+		const out = await anchorTrainAlightToWalkedStation(segs, points, [], lk.stationsLookup, lk.servedLookup);
 		expect(out[0].wayName).toBe("Ashvale → Carfax");
 		expect(out[1].startTs).toBe(T0);
 	});

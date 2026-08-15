@@ -1607,7 +1607,6 @@ export async function computeVelocityFromInputs(
 					points,
 					steps,
 					(lat, lon) => inputs.osm.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
-					(lat, lon) => inputs.osm.linesAtPoint(lat, lon),
 					(line) => inputs.osm.stationsOnLine(line),
 				),
 		},

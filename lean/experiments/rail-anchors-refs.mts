@@ -119,7 +119,6 @@ const showAlight = async (label: string, segs: Seg[], points: Fix[]) => {
 		points,
 		[],
 		stationsLookup,
-		linesLookup,
 		servedLookup,
 	);
 	console.log(`--- ${label}`);

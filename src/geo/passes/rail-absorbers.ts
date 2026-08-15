@@ -16,7 +16,7 @@ import { dbOsmAdapter } from "../osm-adapter.js";
 import { haversineMeters } from "../place-snap.js";
 import { effectiveMode, samplesInWindow, samplesInWindowExclusiveEnd, statsOverWindow } from "../segment-util.js";
 import { parseRailWayName } from "./rail-reconcile.js";
-import { expandTubeLineNames, RAIL_RUN_STATION_RADIUS_M } from "./rail-runs.js";
+import { RAIL_RUN_STATION_RADIUS_M } from "./rail-runs.js";
 
 /** Longest stationary stretch (s) before a rail run still treated as a
  *  platform / concourse wait and absorbed into boarding the train. A
@@ -442,7 +442,6 @@ export async function anchorTrainAlightToWalkedStation(
 	steps: readonly StepPoint[] = [],
 	stationsLookup: (lat: number, lon: number) => Promise<NearbyStation[]> = (lat, lon) =>
 		dbOsmAdapter.nearbyStations(lat, lon, RAIL_RUN_STATION_RADIUS_M),
-	linesLookup: (lat: number, lon: number) => Promise<Set<string>> = (lat, lon) => dbOsmAdapter.linesAtPoint(lat, lon),
 	servedLookup: ServedStationsLookup = (line) => dbOsmAdapter.stationsOnLine(line),
 ): Promise<EnrichedSegment[]> {
 	const out = segments.map((s) => ({ ...s }));
@@ -531,52 +530,34 @@ export async function anchorTrainAlightToWalkedStation(
 			continue;
 		}
 
-		// Line-continuity guard: the new alight must share a tube line with the
-		// GPS-surfaced station — the hop stayed on the run's corridor, not off to
-		// an unrelated station. Canonicalise directional/combined names before ∩
-		// (the expandTubeLineNames lesson).
-		const [surfacedLines, linesAtSettle] = await Promise.all([
-			linesLookup(surfaced.lat, surfaced.lon),
-			linesLookup(alightFix.lat, alightFix.lon),
-		]);
-		// A platform is 150 m long and the depot beyond it longer, so a fix that
-		// settles a couple of hundred metres past the platform ends still
-		// resolves the station while sitting outside every mapped rail way —
-		// `linesAtPoint` answers the EMPTY SET. Empty is not disagreement:
-		// nothing was asked. Read as one it rejected Wembley Park on 2026-07-07
-		// (settle fix 258 m west of the node, no lines; the node itself carries
-		// Metropolitan and Jubilee) and left 1651 m of Metropolitan riding —
-		// seven consecutive 14 s steps at 48-65 km/h — inside the following
-		// walk, where the kinematic invariant counts it as impossible walking.
-		// So when the fix answers nothing, ask the station it just resolved TO;
-		// a named node's own coordinates are the better probe for its lines
-		// anyway (the #358 rule). A station that answers nothing either, or one
-		// whose recording predates these coordinates, still fails the guard —
-		// the fallback asks a second question, it does not excuse the answer.
-		const alightLines =
-			linesAtSettle.size > 0 || station.lat === undefined || station.lon === undefined
-				? linesAtSettle
-				: await linesLookup(station.lat, station.lon);
-		const surfacedCanon = new Set([...surfacedLines].flatMap(expandTubeLineNames));
-		const alightCanon = new Set([...alightLines].flatMap(expandTubeLineNames));
-		// `ALIGHT_ANCHOR_NO_CORRIDOR=1` ablates this guard. It asks whether two
-		// positions share a line, which presumes a line identifier is stable
-		// along a route — true of the tube mirror ("Metropolitan" end to end),
-		// false of per-section track refs (2026-04-29 compared 044 against 514a
-		// and could only reject). Measured over the corpus it rejects exactly one
-		// leg, that one; the ablation is how that is kept honest.
-		if (process.env.ALIGHT_ANCHOR_NO_CORRIDOR !== "1" && ![...alightCanon].some((l) => surfacedCanon.has(l))) {
-			why(
-				`settles at ${station.name} but shares no line with the surfaced fix — ` +
-					`surfaced={${[...surfacedCanon].join("|")}} alight={${[...alightCanon].join("|")}}`,
-			);
-			continue;
-		}
+		// There WAS a line-continuity guard here: the new alight had to share a
+		// line with the GPS-surfaced fix. Removed 2026-08-15, and the reason is
+		// worth keeping so it is not reinvented.
+		//
+		// It presumed a line identifier is STABLE ALONG A ROUTE — true of the
+		// tube mirror, where "Metropolitan" runs end to end. Dutch rail carries
+		// per-section names: 2026-04-29 compared {044} against {514a} and could
+		// only reject, because a label that changes along the route can never
+		// intersect itself. Every non-tube alight was refused by construction.
+		//
+		// Ablated over 35 days it moved NOTHING except that one leg — no
+		// fixture, truth row, journey or feasibility leg. Its entire measured
+		// effect was a single false rejection, and removing it clears the last
+		// journey failure in the corpus at no measured cost.
+		//
+		// It was NOT rewritten to fire only where its premise holds, because
+		// nothing in the data says where that is: `shapeLineNames` reads OSM
+		// `name`, so `044` and `Metropolitan Line` arrive by the same route and
+		// differ only in how they look. Gating on that would be a regex
+		// pretending to be a topology check. `lineCannotServe` below asks the
+		// real question — does THIS leg's line serve that station — and asks it
+		// of the line topology rather than of two labels.
+		//
+		// ⚠ The gap that leaves: `lineCannotServe` needs a line, and a leg
+		// without one (04-29's) is now ungated here. The answer to that is a
+		// check on legless legs, not a broken corridor test.
 
-		// The guard above asks whether the two ENDS share a corridor, which a
-		// line running alongside the tube for miles satisfies while saying
-		// nothing about the line this leg is labelled with. Ask that directly:
-		// a leg cannot alight where its own line does not stop. Without it the
+		// A leg cannot alight where its own line does not stop. Without it the
 		// anchor turned the 2026-06-28 return into a "North London line" ride
 		// alighting 7.1 km away at Wembley Park — a leg the feasibility gate
 		// could only reject after the fact (#377).
