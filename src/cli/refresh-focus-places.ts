@@ -219,6 +219,9 @@ async function refreshOne(userId: string): Promise<void> {
 		distM: number;
 		days: number;
 	}> = [];
+	/** The mirror of `blocked`: every label the miner committed to, with the
+	 *  distance and visit count behind it. */
+	const emitted: Array<{ clusterId: number; label: string; dwellMin: number; distM: number; days: number }> = [];
 	// The cluster `--explain` is about: the one whose centroid is nearest the
 	// coordinate. Matching on the STORED centroid rather than on a stay means
 	// the same coordinate selects the same cluster a `focus_places` row would.
@@ -385,6 +388,21 @@ async function refreshOne(userId: string): Promise<void> {
 				console.log(`  GATE 3 (centroid): ${winner === null ? "NULLS the winner" : `keeps it (${winnerKind})`}`);
 			}
 		}
+		if (winner !== null) {
+			// Every label the miner DOES emit, with how close the vote that
+			// produced it was. The runtime currently second-guesses a mined
+			// label by the cluster's visit count (`MINED_LABEL_MIN_DAYS`);
+			// whether distance is the better discriminator is answerable only
+			// from this list (#789).
+			const total = [...votes.values()].reduce((a, b) => a + b, 0);
+			emitted.push({
+				clusterId: c.id,
+				label: winner,
+				dwellMin: total / 60,
+				distM: voteDist.get(winner) ?? Number.NaN,
+				days: uniqueDayCount(c.stays, c.centroidLon),
+			});
+		}
 		amenityLabels.set(c.id, winner);
 		amenityKinds.set(c.id, winnerKind);
 	}
@@ -405,6 +423,21 @@ async function refreshOne(userId: string): Promise<void> {
 						`${b.distM.toFixed(0).padStart(3)} m  ${String(b.days).padStart(2)}d  ${b.wouldBe}`,
 				);
 			}
+		}
+	}
+	if (argDryRun && emitted.length > 0) {
+		const near = emitted.filter((e) => e.distM <= NEAR_FIELD_DECISIVE_M).length;
+		const oneDay = emitted.filter((e) => e.days <= 1).length;
+		console.log(
+			`[${userId}] labels emitted: ${emitted.length} — ${near} from the near field, ` +
+				`${oneDay} from a single visit-day (the two are NOT the same set)`,
+		);
+		for (const e of [...emitted].sort((a, b) => b.distM - a.distM)) {
+			console.log(
+				`[${userId}]   emitted  cluster ${String(e.clusterId).padStart(3)}  ` +
+					`${e.dwellMin.toFixed(1).padStart(7)} min  ${e.distM.toFixed(0).padStart(3)} m  ` +
+					`${String(e.days).padStart(2)}d  ${e.label}`,
+			);
 		}
 	}
 	console.log(
