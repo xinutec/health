@@ -174,11 +174,15 @@ const DUMP = process.env.DAY_DIFF_DUMP === "1";
 const DAY_BRIDGE_TIMEOUT_MS = Number(process.env.DAY_BRIDGE_TIMEOUT_MS ?? 120_000);
 let dumped = new Set<string>();
 
-function sample(label: string, index: number, a: unknown, b: unknown): void {
+function sample(label: string, index: number, a: unknown, b: unknown, where?: string): void {
 	if (!DUMP || dumped.has(label)) return;
 	dumped.add(label);
 	const clip = (s: string): string => (s.length > 600 ? `${s.slice(0, 600)}… (${s.length} chars)` : s);
-	console.log(`    ${label} — first at index ${index}`);
+	// The index alone cannot be traced back to a pass: the state view a fixture
+	// carries is a different length from the segment array the fold compares, so
+	// counting rows in one to find a slot in the other silently misreads. Bounds
+	// and mode identify the piece directly.
+	console.log(`    ${label} — first at index ${index}${where ? ` (${where})` : ""}`);
 	console.log(`      TS   ${clip(canon(a))}`);
 	console.log(`      Lean ${clip(canon(b))}`);
 }

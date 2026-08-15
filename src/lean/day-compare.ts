@@ -66,7 +66,19 @@ export function canon(v: unknown): string {
 /** Where a caller may print the first differing VALUE for a field. The gate
  *  wires `DAY_DIFF_DUMP=1` to one; the tenant passes none, because a served
  *  request is not a place to dump 600 characters of geometry. */
-export type Sample = (label: string, index: number, a: unknown, b: unknown) => void;
+/** `where` identifies the SEGMENT a difference landed on — bounds and mode, so
+ *  a dump says which piece of the day diverged rather than only which array
+ *  slot. Deliberately not `wayName`: the label is the one field that carries a
+ *  real place name, and this string is printed. */
+export type Sample = (label: string, index: number, a: unknown, b: unknown, where?: string) => void;
+
+/** `<startTs>-<endTs> <mode>` for a segment-shaped record, when it has them. */
+function segWhere(r: Record<string, unknown>): string | undefined {
+	const { startTs, endTs, mode, refinedMode } = r;
+	if (typeof startTs !== "number" || typeof endTs !== "number") return undefined;
+	const m = typeof refinedMode === "string" && refinedMode !== "" ? refinedMode : mode;
+	return `${startTs}-${endTs}${typeof m === "string" ? ` ${m}` : ""}`;
+}
 
 /** Field-by-field, so a divergence names the field rather than the segment. */
 export function diffSegs(want: readonly unknown[], got: readonly unknown[], sample?: Sample): string[] {
@@ -82,7 +94,7 @@ export function diffSegs(want: readonly unknown[], got: readonly unknown[], samp
 		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
 			if (canon(a[k]) !== canon(b[k])) {
 				counts.set(k, (counts.get(k) ?? 0) + 1);
-				sample?.(k, i, a[k], b[k]);
+				sample?.(k, i, a[k], b[k], segWhere(a));
 			}
 		}
 	}
