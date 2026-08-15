@@ -80,6 +80,15 @@ export function leanDayMode(): LeanDayMode {
 	return v === "on" || v === "shadow" ? v : "off";
 }
 
+/** How long ONE round of the day fold may take before the bridge is called
+ *  wedged. Per round, not per day: `converge` runs 2-7 of them, each measured
+ *  at ~1-3 s, so this is generous and only a deadlock reaches it.
+ *
+ *  Deliberately separate from the gate's `DAY_BRIDGE_TIMEOUT_MS`: this one runs
+ *  inside a CronJob where nobody is watching, and it should be able to be
+ *  tightened without loosening a developer's gate. */
+const DAY_TENANT_TIMEOUT_MS = Number(process.env.LEAN_DAY_TIMEOUT_MS ?? 60_000);
+
 /** The same resolution `compare-day` uses, and the same `LEAN_CLI` override the
  *  rest of the bridge honours. */
 function cliPath(): string {
@@ -171,9 +180,26 @@ async function runLeanDay(
 			// entirely from defaults. That reads as a clean run and is the opposite
 			// of one — measured depth on this corpus is 2-7 rounds, so a reported
 			// depth of 1 is the shape of this mistake.
+			// BOUNDED, and this one runs IN PRODUCTION. The same bridge call
+			// wedged the day gate on 2026-08-15 — both processes at 0.0% CPU,
+			// no output, no error, no exit — and it is INTERMITTENT, so three
+			// clean runs prove nothing. Unbounded here, that deadlock hangs a
+			// `decode-recent` CronJob invocation instead of failing it: no
+			// output to alert on, and the job never completes.
+			//
+			// `LEAN_CALL_TIMEOUT_MS` does NOT reach this call — it is honoured
+			// by `lean-core`'s request path. This tenant span had no bound at
+			// all, which is why the flip to `shadow` had to wait for one.
+			//
+			// A timeout surfaces as empty `out`, which `converge` already reads
+			// as a failed round: the tenant records a `fail`, logs it, and
+			// returns `undefined` so the TS answer serves. Degrading to TS is
+			// exactly what shadow does anyway, so the bound cannot change a
+			// served result — only stop a hang.
 			const r = spawnSync(cliPath(), ["day"], {
 				input: JSON.stringify(payload),
 				maxBuffer: 512 * 1024 * 1024,
+				timeout: DAY_TENANT_TIMEOUT_MS,
 				encoding: "utf8",
 			});
 			return { out: r.stdout ?? "", err: r.stderr ?? "" };
