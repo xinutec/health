@@ -65,6 +65,40 @@ export interface Cluster {
 	totalDwellSec: number;
 }
 
+/** How far a cluster's stays actually sit from the centroid the cluster
+ *  would relocate them to — the p90 stay-centroid-to-cluster-centroid
+ *  distance, in metres.
+ *
+ *  This is the cluster's own scatter, and it answers a question no
+ *  stay-side signal can (#789): a stay's spread measures the PRECISION of
+ *  its fixes, so a tightly-clustered stay in the wrong place looks
+ *  perfect. Whether the cluster centroid is a real place or the average of
+ *  several is a property of the cluster.
+ *
+ *  p90 rather than max, because one outlying visit should not define the
+ *  tolerance of an otherwise-tight place. Nearest-rank, so a cluster of
+ *  fewer than ten stays reports its largest distance — with that little
+ *  evidence there is no body of the distribution to prefer. */
+/** Floor for the `radius_m` a cluster is stored with — and the value the
+ *  column held as a literal constant for every row before it was mined.
+ *
+ *  Scatter is a LOWER BOUND on how well we know a centroid, never the whole
+ *  of it: a cluster with one stay measures 0 m of scatter and knows its
+ *  centroid no better than the GPS that produced it. Measured over the
+ *  corpus (2026-08-15, 117 clusters), spread is 0 at the median and exceeds
+ *  25 m for only 30 — so writing raw scatter would NARROW the stored radius
+ *  on 87 clusters and change three consumers that read it as a tolerance.
+ *  Flooring keeps the change one-directional: a cluster can only widen. */
+export const FOCUS_RADIUS_FLOOR_M = 25;
+
+export function clusterSpreadM(c: Cluster): number {
+	if (c.stays.length <= 1) return 0;
+	const dists = c.stays
+		.map((s) => haversineMeters(c.centroidLat, c.centroidLon, s.centroidLat, s.centroidLon))
+		.sort((a, b) => a - b);
+	return dists[Math.ceil(0.9 * dists.length) - 1];
+}
+
 export type ClusterLabel = "home" | "work" | "hotel" | "frequent" | "one-off" | "other";
 export type DisplayName = "Home" | "Work" | "Stay";
 

@@ -19,8 +19,10 @@ import {
 	assignDisplayNames,
 	type Cluster,
 	classifyCluster,
+	clusterSpreadM,
 	detectFocusPlaces,
 	type FitbitSleepWindow,
+	FOCUS_RADIUS_FLOOR_M,
 	hourProfileOf,
 	pickWinningAmenity,
 	type RawPoint,
@@ -220,6 +222,13 @@ async function refreshOne(userId: string): Promise<void> {
 			console.log(`\n[${userId}] === EXPLAIN cluster ${c.id} ===`);
 			console.log(`  centroid ${c.centroidLat.toFixed(6)}, ${c.centroidLon.toFixed(6)}`);
 			console.log(`  ${c.stays.length} stay(s), total dwell ${(c.totalDwellSec / 60).toFixed(1)} min`);
+			// The cluster's own scatter, so a claim about whether `radius_m`
+			// could gate this cluster is measured on the cluster in question
+			// rather than inferred from its absence in a summary listing.
+			console.log(
+				`  spread ${clusterSpreadM(c).toFixed(1)} m (p90 stay→centroid), stored radius_m would be ` +
+					`${Math.max(clusterSpreadM(c), FOCUS_RADIUS_FLOOR_M).toFixed(1)} m`,
+			);
 		}
 		const clusterSleepH = hasFitbitSleep ? sleepHoursFromFitbit(c.stays, fitbitSleepWindows) : sleepHoursOf(c);
 		if (clusterSleepH >= RESIDENCE_SLEEP_THRESHOLD_H) {
@@ -354,6 +363,43 @@ async function refreshOne(userId: string): Promise<void> {
 			Object.keys(priors.bySubtype).length
 		} venue types`,
 	);
+
+	// Report the measured cluster spread before anything writes. `radius_m` has
+	// been the literal 25 on every row, which is below `effectiveSigmaM`'s
+	// floor and so carried no signal at all (#789). What the mined spread
+	// actually looks like decides whether writing it is a behaviour change:
+	// four call sites read this column, and one of them (`place-prior`) only
+	// notices values above 40 m.
+	{
+		const spreads = result.clusters.map(clusterSpreadM).sort((a, b) => a - b);
+		const q = (f: number): number => Math.round(spreads[Math.min(spreads.length - 1, Math.floor(f * spreads.length))]);
+		const over = (m: number): number => spreads.filter((s) => s > m).length;
+		console.log(
+			`[${userId}] cluster spread (p90 stay→centroid): median ${q(0.5)} m, p75 ${q(0.75)} m, ` +
+				`p90 ${q(0.9)} m, max ${Math.round(spreads[spreads.length - 1] ?? 0)} m — ` +
+				`${over(25)}/${spreads.length} above the old constant 25, ${over(40)} above the scorer's σ floor 40`,
+		);
+		// Every cluster that would actually change, with what it is. A summary
+		// cannot answer the question #789 asks — whether the SPRAWLING clusters
+		// are the multi-venue ones and the tight ones are single places — so
+		// list them and let the labels say.
+		if (argDryRun) {
+			const sprawling = result.clusters
+				.map((c) => ({ c, spread: clusterSpreadM(c) }))
+				.filter((x) => x.spread > FOCUS_RADIUS_FLOOR_M)
+				.sort((a, b) => b.spread - a.spread);
+			for (const { c, spread } of sprawling) {
+				console.log(
+					`[${userId}]   spread ${String(Math.round(spread)).padStart(3)} m  ` +
+						`${String(c.stays.length).padStart(3)} stays  ` +
+						`${String(uniqueDayCount(c.stays, c.centroidLon)).padStart(3)} days  ` +
+						`sleepH ${String(Math.round(sleepHoursOf(c))).padStart(3)}  ` +
+						`${c.centroidLat.toFixed(5)},${c.centroidLon.toFixed(5)}  ` +
+						`${amenityLabels.get(c.id) ?? "(no mined venue)"}`,
+				);
+			}
+		}
+	}
 
 	if (argDryRun) {
 		// Everything below writes. A dry run has already reported what it came

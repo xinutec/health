@@ -3,6 +3,7 @@ import {
 	assignDisplayNames,
 	type Cluster,
 	classifyCluster,
+	clusterSpreadM,
 	clusterStays,
 	detectFocusPlaces,
 	detectStays,
@@ -629,5 +630,49 @@ describe("splitCluster", () => {
 		const stays: Stay[] = [];
 		for (let i = 0; i < 3; i++) stays.push(mkStay(i, i, 13, 0, 20, 90));
 		expect(splitCluster(makeCluster(stays))).toHaveLength(1);
+	});
+});
+
+describe("clusterSpreadM", () => {
+	// A cluster's own scatter — how far its stays sit from the centroid the
+	// cluster would relocate them to. #789 needs exactly this: whether the
+	// centroid is a place or an average of several.
+
+	it("is 0 for a single stay — nothing to disagree with", () => {
+		expect(clusterSpreadM(makeCluster([stay(0, 12, HOME_LAT, HOME_LON)]))).toBe(0);
+	});
+
+	it("is small for stays in one building", () => {
+		const stays: Stay[] = [];
+		for (let i = 0; i < 10; i++) {
+			const p = offset(HOME_LAT, HOME_LON, i - 5, (i % 3) - 1);
+			stays.push(stay(i, 20, p.lat, p.lon));
+		}
+		expect(clusterSpreadM(makeCluster(stays))).toBeLessThan(10);
+	});
+
+	it("is large for stays spanning several venues — the #789 shape", () => {
+		// Three visits ~200 m apart: the centroid is nobody's location.
+		const a = offset(HOME_LAT, HOME_LON, 0, 0);
+		const b = offset(HOME_LAT, HOME_LON, 0, 100);
+		const c = offset(HOME_LAT, HOME_LON, 0, 200);
+		const spread = clusterSpreadM(
+			makeCluster([stay(0, 12, a.lat, a.lon), stay(1, 13, b.lat, b.lon), stay(2, 14, c.lat, c.lon)]),
+		);
+		expect(spread).toBeGreaterThan(80);
+	});
+
+	it("is not dragged by one outlier when the cluster is well-sampled", () => {
+		// 19 tight stays and 1 stay 500 m out. The max would report ~500;
+		// p90 reports the body of the distribution, which is what a
+		// tolerance should be built on.
+		const stays: Stay[] = [];
+		for (let i = 0; i < 19; i++) {
+			const p = offset(HOME_LAT, HOME_LON, i - 9, 0);
+			stays.push(stay(i, 20, p.lat, p.lon));
+		}
+		const far = offset(HOME_LAT, HOME_LON, 0, 500);
+		stays.push(stay(30, 20, far.lat, far.lon));
+		expect(clusterSpreadM(makeCluster(stays))).toBeLessThan(60);
 	});
 });
