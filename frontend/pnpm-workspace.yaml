@@ -22,7 +22,7 @@ allowBuilds:
   esbuild: true
   lmdb: true
   msgpackr-extract: true
-  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/971cb32736d8ae40c26474fb7876f1e9c58c493e": true
+  "@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/5e3cf0a6460068362a2687b2fd8694f75a21e7f8": true
 
 # Carried across from package.json's npm-format `overrides`, which pnpm does not
 # read. Leaving them there does not merely ignore them going forward: `pnpm

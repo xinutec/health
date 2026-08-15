@@ -23,7 +23,7 @@
     "@angular/platform-browser-dynamic": "^22.0.4",
     "@angular/router": "^22.0.4",
     "@types/leaflet": "^1.9.21",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#971cb32736d8ae40c26474fb7876f1e9c58c493e",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#5e3cf0a6460068362a2687b2fd8694f75a21e7f8",
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",
     "ng2-charts": "^10.0.0",
