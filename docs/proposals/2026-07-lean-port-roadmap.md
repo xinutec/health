@@ -89,7 +89,7 @@ a tenant in `src/lean/`, and a flag. The entire serve surface today is
 | `LEAN_GPSQUALITY` | the GPS quality pre-filter (#388, 2026-07-30) |
 | `LEAN_BIOLABELS` | four biometric label-rewrite passes, five call sites (#390, 2026-07-30) |
 | `LEAN_STATIONCHAIN` | the decoder's station chain |
-| `LEAN_DAY` | the whole pass cascade as one fold (#424) — BUILT and unset everywhere |
+| `LEAN_DAY` | the whole pass cascade as one fold (#424) |
 
 Everything else is written-but-idle. The next slices are therefore *execution*
 slices — take a complete module, give it a CLI verb and a shadow tenant,
@@ -97,7 +97,11 @@ validate on the golden corpus, flip — not new ports.
 
 **A flag existing is not a flag serving, and this table cannot tell you which.**
 Whether a tenant is `off`, `shadow` or `on` lives in the cluster, not in the
-repo, so read it there rather than from any list here:
+repo, so read it there rather than from any list here. The table above deliberately
+says only what each flag EXECUTES; it used to carry mode words too, and the
+`LEAN_DAY` row still read "BUILT and unset everywhere" for a day after
+`ee28e434` staged it `shadow` — the same staleness this paragraph warns about,
+inside the table the paragraph is attached to.
 
     ssh root@isis.xinutec.org "for k in deploy cronjob; do for n in \$(kubectl -n health get \$k -o custom-columns=N:.metadata.name --no-headers); do echo \"== \$k/\$n\"; kubectl -n health get \$k \$n -o jsonpath='{range .spec.template.spec.containers[*]}{range .env[*]}{.name}={.value}{\"\\n\"}{end}{end}{range .spec.jobTemplate.spec.template.spec.containers[*]}{range .env[*]}{.name}={.value}{\"\\n\"}{end}{end}' | grep '^LEAN_'; done; done"
 

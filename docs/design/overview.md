@@ -203,10 +203,18 @@ than failing, which stalls the deploy with no output at all:
   day must be IDENTICAL or SHELL ONLY.
 - `scripts/focus-gate.sh` — the same question at the other end of the pipeline,
   for the weekly focus-place miner, which no day replay reaches.
-- `golden` a second time with all seven Lean tenants `on`, and
+- `golden` a second time with the Lean tenants turned up, and
   `scripts/golden-hsmm.sh` — the only places the verified core is actually
   EXECUTED by a gate. Everything above runs with the tenants off, so a broken
   bridge could otherwise ship unconsulted.
+
+  **Not ALL of them, and the count moves — read `deploy.sh` rather than a number
+  here.** As of 2026-08-15 it sets seven `on` (`LEAN_KALMAN`, `LEAN_GPSQUALITY`,
+  `LEAN_BIOLABELS`, `LEAN_HSMM`, `LEAN_RAIL`, `LEAN_MATCH`, `LEAN_PASSES`) plus
+  `LEAN_STATIONCHAIN=shadow`. There are NINE flags: `LEAN_DAY` is absent from
+  this run entirely, and is covered instead by `day-gate.sh` above. This line
+  said "all seven" while nine existed — a phrase that reads as *every tenant*
+  and had stopped meaning it.
 
 All of these replay the gitignored `tests/golden/` corpus, so **CI can never run
 any of them**. Every script enters the pinned nix devshell itself
