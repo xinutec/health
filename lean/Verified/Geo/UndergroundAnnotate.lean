@@ -92,6 +92,58 @@ stated separately because the two constants are `velocity.ts`'s and this
 module's, and a change to one is not a change to the other. -/
 def SIDE_WAY_SAMPLES : Nat := 5
 
+/-- What a carved piece's own fixes say about it. -/
+structure WindowStats where
+  pointCount : Int
+  avgSpeed : Float
+  maxSpeed : Float
+  linearity : Float
+  deriving Inhabited, Repr
+
+/--
+Recompute a piece's kinematics from the fixes its window actually owns — the
+port of TS `statsOverWindow` (`7d89369`).
+
+A carve that reslices a segment and emits the pieces as `{ host with startTs,
+endTs }` hands every piece the PARENT's summary. That summary was measured
+across the whole parent, INCLUDING whatever the carve just removed, so the
+piece reports a peak that never happened inside it and the kinematic invariants
+downstream read that peak as evidence. Measured on the corpus: 60 of 208
+walking segments reported a `maxSpeed` their own fixes do not support.
+
+`avgSpeed` is the MEDIAN, matching how `classifySegments` derives it: a mean
+over a window that contained a ride is dragged by the ride.
+
+`excludeStart` drops the fix ON `startTs`. Set it when a VEHICLE precedes this
+window — the boundary fix is the one the vehicle arrived on, and its speed is
+the vehicle's, so a following walk that keeps it claims the ride's arrival
+speed on foot.
+-/
+def statsOverWindow (points : Array Shed.PointF) (startTs endTs : Int)
+    (excludeStart : Bool := false) : WindowStats :=
+  let fixes := (points.toList.filter fun p =>
+      (if excludeStart then decide (p.ts > startTs) else decide (p.ts ≥ startTs))
+        && decide (p.ts ≤ endTs)).mergeSort fun a b => a.ts ≤ b.ts
+  match fixes with
+  | [] => { pointCount := 0, avgSpeed := 0, maxSpeed := 0, linearity := 0 }
+  | first :: _ =>
+    let arr := fixes.toArray
+    let speeds := fixes.map (·.speedKmh)
+    let sorted := speeds.mergeSort (· ≤ ·)
+    let mid := sorted.length / 2
+    let med :=
+      if sorted.length % 2 == 0 then (sorted[mid - 1]! + sorted[mid]!) / 2 else sorted[mid]!
+    let pathDist := (List.range (arr.size - 1)).foldl (init := (0 : Float)) fun acc k =>
+      acc + Verified.Hsmm.FloatScore.haversineMeters
+        arr[k]!.lat arr[k]!.lon arr[k + 1]!.lat arr[k + 1]!.lon
+    let last := arr[arr.size - 1]!
+    let straight := Verified.Hsmm.FloatScore.haversineMeters first.lat first.lon last.lat last.lon
+    { pointCount := Int.ofNat arr.size
+      avgSpeed := Float.floor (med * 10 + 0.5) / 10
+      maxSpeed := Float.floor ((speeds.foldl max first.speedKmh) * 10 + 0.5) / 10
+      linearity :=
+        if pathDist > 0 then Float.floor (min (straight / pathDist) 1 * 100 + 0.5) / 100 else 0 }
+
 /--
 Way label for a side piece of a split host — the walk left over when a tube ride
 is carved out of it.
@@ -411,8 +463,11 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
             (jsRound (Float.ofInt (legs[li]!.endTs + legs[li + 1]!.startTs) / 2)).toInt64.toInt
         let withPre :=
           if keepPre then
+            let st := statsOverWindow points host.startTs trainStart
             result.push { host with
-              endTs := trainStart, wayName := sideWayName points host.startTs trainStart host.mode waysLookup }
+              endTs := trainStart, wayName := sideWayName points host.startTs trainStart host.mode waysLookup
+              avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
+              linearity := st.linearity, pointCount := st.pointCount }
           else result
         let withLegs := (Array.range legs.size).foldl (init := withPre) fun acc li =>
           let leg := legs[li]!
@@ -439,14 +494,23 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
             refinedReason := some reason }
           match (if li < legs.size - 1 then changeovers[li]! else none) with
           | some (from_, to_) =>
+            -- `excludeStart`: a train ends at `from_`, so the boundary fix carries
+            -- the train's arrival speed.
+            let st := statsOverWindow points from_ to_ (excludeStart := true)
             withLeg.push { host with
               startTs := from_, endTs := to_
               wayName := sideWayName points from_ to_ host.mode waysLookup
+              avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
+              linearity := st.linearity, pointCount := st.pointCount
               refinedReason := some s!"underground reconstruction (change of trains at {leg.alightingStation})" }
           | none => withLeg
         if keepPost then
+          -- `excludeStart` again: the tube ride ends at `trainEnd`.
+          let st := statsOverWindow points trainEnd host.endTs (excludeStart := true)
           withLegs.push { host with
-            startTs := trainEnd, wayName := sideWayName points trainEnd host.endTs host.mode waysLookup }
+            startTs := trainEnd, wayName := sideWayName points trainEnd host.endTs host.mode waysLookup
+            avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
+            linearity := st.linearity, pointCount := st.pointCount }
         else withLegs
       | _, _ => result.push host
 
@@ -567,17 +631,22 @@ private def run (segments : Array Seg) (fixes : Array CoarseFix)
 /-- The host untouched. -/
 private def PASS : Array Row := vw #[HOST]
 
+-- ⚠ The side pieces carry THEIR OWN kinematics, not the host's. Before
+-- `statsOverWindow` (TS `7d89369`) these read the host's `maxSpeed 6 /
+-- linearity 0.5 / pointCount 10` — measured across the whole span INCLUDING
+-- the tube ride the carve just removed. Every value below is from
+-- `lean/experiments/underground-annotate-refs.mts`, not hand-derived.
 private def preWalk : Row :=
   { startTs := 500, endTs := 900, mode := "walking", refinedMode := ""
     wayName := "Holloway Road", place := "", city := ""
-    avgSpeed := 4, maxSpeed := 6, confidence := 0.8, confidenceMargin := 2
-    linearity := 0.5, pointCount := 10, reason := "" }
+    avgSpeed := 4, maxSpeed := 4, confidence := 0.8, confidenceMargin := 2
+    linearity := 1, pointCount := 3, reason := "" }
 
 private def postWalk : Row :=
   { startTs := 1700, endTs := 2100, mode := "walking", refinedMode := ""
     wayName := "Wembley Park Drive", place := "", city := ""
-    avgSpeed := 4, maxSpeed := 6, confidence := 0.8, confidenceMargin := 2
-    linearity := 0.5, pointCount := 10, reason := "" }
+    avgSpeed := 4, maxSpeed := 4, confidence := 0.8, confidenceMargin := 2
+    linearity := 1, pointCount := 2, reason := "" }
 
 private def trainLeg (nFixes : Nat) : Row :=
   { startTs := 900, endTs := 1700, mode := "train", refinedMode := "train"
@@ -603,8 +672,8 @@ side piece's own way label. Bisecting this span between the two legs is what put
 private def changeOfTrains : Row :=
   { startTs := 1100, endTs := 1400, mode := "walking", refinedMode := ""
     wayName := "Holloway Road", place := "", city := ""
-    avgSpeed := 4, maxSpeed := 6, confidence := 0.8, confidenceMargin := 2
-    linearity := 0.5, pointCount := 10
+    avgSpeed := 4, maxSpeed := 4, confidence := 0.8, confidenceMargin := 2
+    linearity := 1, pointCount := 2
     reason := "underground reconstruction (change of trains at King's Cross)" }
 
 private def legTwo : Row :=
@@ -623,7 +692,8 @@ private def legTwo : Row :=
     fx 1700 3900 (some 15), fx 2100 4050 none,
     fx 1000 200 (some 200), fx 1100 800 (some 250),
     fx 1400 3200 (some 250), fx 1600 3800 (some 200)] changeLines
-  == #[preWalk, legOne, changeOfTrains, legTwo, postWalk]
+  == #[{ preWalk with pointCount := 2 }, legOne, changeOfTrains, legTwo,
+       { postWalk with linearity := 0, pointCount := 1 }]
 
 -- `isUndergroundSignal`, THE LEAF. The two COARSE fixes span only 100 s, under
 -- MIN_RUN_DURATION_S, so on their own they are not a run at all. The two
@@ -680,7 +750,8 @@ private def longRunTrain : Row :=
 -- pinned by `longestRunWinsAcrossTravel` below instead.
 #guard run #[HOST] (GOOD ++ #[fx 1000 200 (some 200), fx 1200 300 (some 250),
                               fx 1600 3400 (some 250), fx 1850 3800 (some 200)])
-  == #[preWalk, longRunTrain, { postWalk with startTs := 1900 }]
+  == #[preWalk, longRunTrain,
+       { postWalk with startTs := 1900, linearity := 0, pointCount := 1 }]
 
 private def shortTrain : Row :=
   { startTs := 900, endTs := 1300, mode := "train", refinedMode := "train"
@@ -702,8 +773,8 @@ private def shortTrain : Row :=
     fx 1300 1200 (some 12), fx 1450 1800 (some 10),
     fx 1600 3400 (some 250), fx 1700 3800 (some 200),
     fx 1900 4000 (some 12), fx 2100 4050 none]
-  == #[preWalk, shortTrain,
-       { postWalk with startTs := 1300, wayName := "Midway Road" }]
+  == #[{ preWalk with pointCount := 2 }, shortTrain,
+       { postWalk with startTs := 1300, wayName := "Midway Road", pointCount := 5 }]
 -- Heard, but going nowhere — 100 m, which is 2026-07-02's change of trains at
 -- Finchley Road — so the two halves are one tunnel and the ride spans both.
 #guard run #[HOST]
@@ -712,7 +783,8 @@ private def shortTrain : Row :=
     fx 1300 2000 (some 12), fx 1450 2100 (some 10),
     fx 1600 3400 (some 250), fx 1700 3800 (some 200),
     fx 1900 4000 (some 12), fx 2100 4050 none]
-  == #[preWalk, longRunTrain, { postWalk with startTs := 1900 }]
+  == #[{ preWalk with pointCount := 2 }, longRunTrain,
+       { postWalk with startTs := 1900, linearity := 0, pointCount := 1 }]
 
 private def selectedTrain : Row :=
   { startTs := 1450, endTs := 1950, mode := "train", refinedMode := "train"
@@ -730,7 +802,8 @@ private def selectedTrain : Row :=
     fx 1300 1200 (some 12), fx 1450 1800 (some 10),
     fx 1600 3100 (some 250), fx 1900 3800 (some 200),
     fx 1950 4000 (some 12), fx 2100 4050 none]
-  == #[{ preWalk with endTs := 1450 }, selectedTrain, { postWalk with startTs := 1950 }]
+  == #[{ preWalk with endTs := 1450, pointCount := 6 }, selectedTrain,
+       { postWalk with startTs := 1950, linearity := 0, pointCount := 1 }]
 
 -- BRACKETING GOOD FIXES. No good fix at or before the run start: nothing to
 -- board from; and none after it: nothing to alight at.
@@ -760,13 +833,14 @@ private def selectedTrain : Row :=
 -- SIDE-PIECE TRIMMING. A host starting exactly MIN_SIDE_DURATION_S before the
 -- boarding fix keeps its pre piece (`≥`).
 #guard run #[{ HOST with startTs := 840 }] (GOOD ++ COARSE)
-  == #[{ preWalk with startTs := 840 }, trainLeg 4, postWalk]
+  == #[{ preWalk with startTs := 840, linearity := 0, pointCount := 1 }, trainLeg 4, postWalk]
 -- One second under, the sliver is absorbed and the train starts at the host's
 -- own start — which also lengthens the window, so the speed drops.
 #guard run #[{ HOST with startTs := 841 }] (GOOD ++ COARSE)
   == #[{ trainLeg 4 with startTs := 841, avgSpeed := 15.5, maxSpeed := 15.5 }, postWalk]
 #guard run #[{ HOST with endTs := 1760 }] (GOOD ++ COARSE)
-  == #[preWalk, trainLeg 4, { postWalk with endTs := 1760 }]
+  == #[preWalk, trainLeg 4,
+       { postWalk with endTs := 1760, avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 0 }]
 #guard run #[{ HOST with endTs := 1759 }] (GOOD ++ COARSE)
   == #[preWalk, { trainLeg 4 with endTs := 1759, avgSpeed := 15.5, maxSpeed := 15.5 }]
 
@@ -826,12 +900,12 @@ private def afterWalk : Seg :=
 #guard run #[HOST]
   (#[fx 500 1500 (some 10), fx 700 3500 (some 12), fx 900 200 (some 15),
      fx 1700 3900 (some 15), fx 1900 4000 (some 12), fx 2100 4050 none] ++ COARSE)
-  == #[{ preWalk with wayName := "Midway Road" }, trainLeg 4, postWalk]
+  == #[{ preWalk with wayName := "Midway Road", linearity := 0.25 }, trainLeg 4, postWalk]
 
 -- A GOOD fix at exactly the run's first timestamp: the boarding scan is `≤`, so
 -- it — not the earlier one — boards, which moves the train window.
 #guard run #[HOST] (GOOD ++ #[fx 1000 250 (some 15)] ++ COARSE)
-  == #[{ preWalk with endTs := 1000 },
+  == #[{ preWalk with endTs := 1000, linearity := 0.67, pointCount := 5 },
        { trainLeg 4 with startTs := 1000, avgSpeed := 18.8, maxSpeed := 18.8 },
        postWalk]
 
@@ -840,7 +914,8 @@ private def afterWalk : Seg :=
 #guard run #[{ HOST with endTs := 1300 }]
   #[fx 500 0 (some 10), fx 900 200 (some 15), fx 1900 4000 (some 12),
     fx 1000 200 (some 200), fx 1300 2400 (some 250)]
-  == #[preWalk, { trainLeg 2 with endTs := 1300, avgSpeed := 34.2, maxSpeed := 34.2 }]
+  == #[{ preWalk with pointCount := 2 },
+       { trainLeg 2 with endTs := 1300, avgSpeed := 34.2, maxSpeed := 34.2 }]
 
 -- A NON-train segment whose label happens to carry an arrow is NOT an
 -- already-annotated rail run — the mode half of the test is load-bearing.

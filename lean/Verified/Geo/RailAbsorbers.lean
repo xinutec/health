@@ -1,6 +1,9 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.TubeHop
 import Verified.Geo.LineMembership
+-- For `meanCadenceSpm` / `PEDESTRIAN_MIN_CADENCE_SPM`: cadence is what decides a
+-- ride tail, and the pedestrian floor is the worldline module's to define.
+import Verified.Geo.Worldline
 /-!
 # Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
@@ -597,8 +600,8 @@ about the line the leg is LABELLED with. Without it the anchor turned the
 2026-06-28 return into a "North London line" ride alighting 7.1 km away at
 Wembley Park (#377). -/
 def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint)
     (stationsLookup : Float → Float → Array NearbyStation)
-    (linesLookup : Float → Float → Array String)
     (servedLookup : String → Array LineMembership.ServedStation) : Array Seg := Id.run do
   let mut out := segments
   if out.isEmpty then return out
@@ -625,26 +628,15 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
       match pickBestStation (stationsLookup alightFix.lat alightFix.lon) with
       | none => continue
       | some station =>
-        let canon (lat lon : Float) : Array String :=
-          (linesLookup lat lon).flatMap fun l => (RailRuns.expandTubeLineNames l).toArray
-        let surfacedCanon := canon surfaced.lat surfaced.lon
-        -- A platform is 150 m long and the depot beyond it longer, so a fix that
-        -- settles a couple of hundred metres past the platform ends still
-        -- resolves the station while sitting outside every mapped rail way, and
-        -- `linesAtPoint` answers the EMPTY SET. Empty is not disagreement:
-        -- nothing was asked. Read as one it rejected Wembley Park on 2026-07-07
-        -- and left 1651 m of Metropolitan riding inside the following walk. So
-        -- when the fix answers nothing, ask the station it just resolved TO —
-        -- a named node's own coordinates are the better probe anyway (#358). A
-        -- station that answers nothing either, or one whose recording predates
-        -- these coordinates, still fails the guard.
-        let alightCanon :=
-          if (linesLookup alightFix.lat alightFix.lon).isEmpty then
-            match station.lat, station.lon with
-            | some slat, some slon => canon slat slon
-            | _, _ => #[]
-          else canon alightFix.lat alightFix.lon
-        if !alightCanon.any (surfacedCanon.contains ·) then continue
+        -- The line-continuity guard that stood here is GONE (TS `16fcbe3`). It
+        -- required the settled station and the surfaced fix to share a line,
+        -- which presumes a line identifier is stable along a route: true of the
+        -- tube mirror, false of per-section names, so it refused every such
+        -- alight by construction. Ablated over 35 days it moved nothing but one
+        -- leg. Removing it also removes this pass's ONLY `linesAtPoint` asks —
+        -- which is why keeping it here turned the day gate into 25 LOOKUP MISS
+        -- days: the fold asked for keys the TS arm no longer requests, so the
+        -- table never carried them.
         -- Applied BEFORE the rename decision, unlike the boarding side.
         match rail.line with
         | some line =>
@@ -652,7 +644,21 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
         | none => pure ()
         let hopM := metres (fixDist surfaced alightFix)
         let sameAlight := station.name == rail.alight
-        if sameAlight && settleRunSteps < 2 then continue
+        -- CADENCE, not step count, decides a ride tail (TS `dd72209`). A single
+        -- fast step landing at the already-labelled alight is ambiguous: it is
+        -- either a ride still running through a blackout, or stale fixes
+        -- teleporting to catch up with a rider already walking. The step COUNT
+        -- cannot separate those — the pedometer can. Refuse only when the rider
+        -- was demonstrably walking, or when there is no cadence to read at all.
+        let cadence :=
+          if sameAlight then Verified.Geo.Worldline.meanCadenceSpm steps surfaced.ts alightFix.ts else none
+        let wasWalking :=
+          match cadence with
+          | some c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
+          | none => false
+        let singleStepRefusal :=
+          sameAlight && settleRunSteps < 2 && (match cadence with | none => true | some _ => wasWalking)
+        if singleStepRefusal then continue
         let reason :=
           if sameAlight then
             s!"alight boundary extended to the {station.name} arrival — reclaimed a {hopM} m ride tail the early cut left in the walk"
@@ -991,9 +997,10 @@ private def aview (out : Array Seg) : Array (Int × Int × Option String × Opti
 
 private def board (segs : Array Seg) (pts : Array Fix) :=
   aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed)
-private def alight (segs : Array Seg) (pts : Array Fix) (lines : Float → Float → Array String := aLines)
+private def alight (segs : Array Seg) (pts : Array Fix)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := [])
     (stations : Float → Float → Array NearbyStation := aStations) :=
-  aview (anchorTrainAlightToWalkedStation segs pts stations lines aServed)
+  aview (anchorTrainAlightToWalkedStation segs pts steps stations aServed)
 
 /-- Slow, slow, then a TWO-step vehicle-paced run: the boarding hop. -/
 private def boardWalk : Array Fix :=
@@ -1238,47 +1245,23 @@ private def alightTwoFix : Array Fix := #[f 0 51.5, f 30 51.5028]
 #guard alight #[atrain (-600) 0 (some "Wembley Park → Euston Square · "), awalk 0 180] alightWalk
   == #[(-600, 60, some "Wembley Park → Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
 
--- THE CORRIDOR GATE. The two ends must share a line…
+-- THE CORRIDOR GATE IS GONE (TS `16fcbe3`), and six guards went with it. They
+-- pinned an intersection of line labels at the two ends — including the rule
+-- that an EMPTY intersection refuses, and the fallback that asks the resolved
+-- station when the settle fix is off the mapped track. All of it presumed a
+-- line identifier is stable along a route, which is a tube-mirror premise: a
+-- per-section name can never intersect itself, so the gate refused every such
+-- alight by construction.
+--
+-- ⚠ THE GUARD BELOW RECORDS A GAP, NOT A GUARANTEE — the Lean twin of the TS
+-- test named for it. Where the gate used to refuse a settle on an unrelated
+-- line, the anchor now FIRES. A leg carrying a line is still covered, by
+-- `lineCannotServe` on the line topology (the guards above prove it); a leg
+-- with no line is not covered by anything here.
+--
+-- When a legless-leg check lands, this expectation flips back to a refusal —
+-- deliberately, and this comment goes with it.
 #guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
-    (fun lat _ => if lat == 51.5 then #[METLINE] else #["Jubilee Line"])
-  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
--- …and they may share it only AFTER `expandTubeLineNames` canonicalises a
--- directional name on one side and a combined relation on the other.
-#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
-    (fun lat _ => if lat == 51.5 then #["Metropolitan Line Southbound"]
-                  else #["Circle, Hammersmith & City and Metropolitan Lines"])
   == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
--- An empty intersection is a REFUSAL, not an abstention: unlike
--- `lineCannotServe`, "the mirror knows no lines here" stops the anchor.
-#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk (fun _ _ => #[])
-  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
-
--- …but an empty answer AT THE SETTLE FIX is not an intersection at all. A
--- platform is 150 m long and the depot beyond it longer, so a fix landing past
--- the platform ends resolves the station while sitting off every mapped rail
--- way. Ask the station it resolved TO (#358's rule): here 51.5028 knows no
--- line, its Great Portland Street node at 51.5031 does, and the anchor fires.
-private def aStationsWithCoords : Float → Float → Array NearbyStation := fun lat lon =>
-  if lon == -0.14 && lat == 51.5028 then
-    #[{ name := "Great Portland Street", subtype := "station", distanceM := 25,
-        lat := some 51.5031, lon := some (-0.14) }]
-  else aStations lat lon
-private def linesOffTrack : Float → Float → Array String := fun lat _ =>
-  if lat == 51.5 || lat == 51.5031 then #[METLINE] else #[]
-private def linesOffTrackAndNode : Float → Float → Array String := fun lat _ =>
-  if lat == 51.5 then #[METLINE] else #[]
-
-#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
-    linesOffTrack aStationsWithCoords
-  == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
--- The fallback asks a SECOND question; it does not excuse the answer. A station
--- that knows no line either still fails the corridor gate.
-#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
-    linesOffTrackAndNode aStationsWithCoords
-  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
--- And a station whose recording predates `NearbyStation.lat`/`lon` cannot be
--- asked at all, so the empty fix-point answer stands — unchanged behaviour.
-#guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk linesOffTrack
-  == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
 
 end Verified.Geo.RailAbsorbers

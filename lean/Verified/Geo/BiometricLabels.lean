@@ -1,6 +1,9 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.BiometricWindows
 import Verified.JsNum
+-- For `PEDESTRIAN_MIN_CADENCE_SPM`: the burst route in `correctStationaryWalkThrough`
+-- counts minutes at the fleet's pedestrian floor rather than inventing one.
+import Verified.Geo.Worldline
 /-!
 # Biometric label rewrites
 
@@ -76,6 +79,12 @@ def CADENCE_REVERT_PEDESTRIAN_AVG_KMH : Float := 7
 def STATIONARY_JITTER_MAX_PEAK_CADENCE : Float := 20
 def STATIONARY_JITTER_MAX_LINEARITY : Float := 0.35
 def STATIONARY_WALK_PEAK_CADENCE : Float := 80
+/-- …but a walk that keeps STOPPING never produces that one unmistakable
+minute. Its evidence is spread ACROSS minutes rather than concentrated in one,
+so no value of a peak floor can see it. Count walking minutes as a second,
+independent route in: several at pedestrian cadence, separated by pauses, is a
+walk with pauses in it. See the TS header for the day that showed it. -/
+def STATIONARY_WALK_MIN_BURST_MINUTES : Nat := 3
 def STATIONARY_WALK_MIN_AVG_SPEED_KMH : Float := 1.0
 def STATIONARY_WALK_STAY_MIN_DURATION_S : Int := 10 * 60
 def STATIONARY_WALK_STAY_MAX_EXTENT_M : Float := 80
@@ -116,6 +125,17 @@ def modeAfter (s : LabelSeg) : Decision → String
 /-- The window shape `cadenceForSegment` / `peakCadenceForSegment` read. -/
 private def win (s : LabelSeg) : Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, pointCount := s.pointCount }
+
+/-- How many whole minutes inside the window are at or above pedestrian cadence.
+Where `peakCadenceForSegment` asks "was there one unmistakable walking minute",
+this asks "how much of this window was spent walking" — the question an
+interrupted walk can actually answer. Mirrors the TS `walkingMinutesInSegment`
+window test exactly, bound for bound. -/
+def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
+  stepPoints.foldl (fun n sp =>
+    if decide (sp.ts ≥ seg.startTs) && decide (sp.ts ≤ seg.endTs)
+        && decide (sp.steps ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
+    then n + 1 else n) 0
 
 /--
 `toFixed` for a reason string.
@@ -288,7 +308,13 @@ def correctStationaryWalkThrough (seg : LabelSeg) (stepPoints : List StepPoint)
   else if looksLikeStay seg points then .keep
   else
     let peak := peakCadenceForSegment (win seg) stepPoints
-    if peak < STATIONARY_WALK_PEAK_CADENCE then .keep
+    let bursts := walkingMinutesInSegment (win seg) stepPoints
+    let sustained := bursts ≥ STATIONARY_WALK_MIN_BURST_MINUTES
+    if peak < STATIONARY_WALK_PEAK_CADENCE && !sustained then .keep
+    else if peak < STATIONARY_WALK_PEAK_CADENCE then
+      .flip "walking"
+        s!"walking bursts ({bursts} min at {fx Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM 0}+/min) with GPS movement"
+        none
     else .flip "walking" s!"walking burst ({fx peak 0}/min) with GPS movement" none
 
 /-- A stationary stop bracketed by the SAME place on both sides is intra-place

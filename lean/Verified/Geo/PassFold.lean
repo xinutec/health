@@ -501,10 +501,9 @@ def passes (e : Env) : Array Pass := #[
   -- and the ride on to the true alight is stranded as the FAST leading fixes of
   -- the next walk. Extend the train forward and trim the walk.
   ("alightAnchor", fun segs =>
-    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes
+    Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes e.feasSteps
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)
       e.servedStations),
 
   -- One continuous Underground ride, shattered by a mid-tunnel GPS surface into
