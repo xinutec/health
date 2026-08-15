@@ -81,13 +81,22 @@ export const MAX_KERNEL_QUERY_RADIUS_M = 800;
  * sizing pulls a fraction of that, and the rows dropped are ones no query
  * could ever have reached.
  *
- * Each entry is a radius CEILING plus offset headroom (worst measured offsets:
- * railway 428 m, highway/waterway/aeroway 212 m, landmark 182 m, transit_stop
- * 39 m — `lean/experiments/osm-buffer-sizing.mts`).
+ * Each entry is a radius CEILING plus offset headroom (worst measured offsets,
+ * `lean/experiments/osm-buffer-sizing.mts`, re-run 2026-08-15: railway 744.7 m,
+ * highway/waterway/aeroway 241.6 m, landmark 182.2 m, transit_stop 39.1 m).
+ *
+ * ⚠ The railway figure is the one that moves, and it had already outgrown its
+ * buffer: at 744.7 m offset the worst standing query needs 1544.7 m against a
+ * configured 1500, and only survives because neighbouring coverage boxes cover
+ * the remainder. It is not a margin to trim — a rail question is asked about a
+ * STATION, and a station sits as far off the fix track as the walk to reach it,
+ * which on a blackout leg is however far the ride went unobserved. 2026-04-29's
+ * alight asks 1220 m off the nearest fix, so 800 + 1220 = 2020 is the real
+ * requirement there and the old 1500 refused the query outright.
  */
 export const KERNEL_BUFFER_M: Readonly<Record<string, number>> = {
-	// 800 (linesAtPoint) + 700.
-	railway: 1500,
+	// 800 (linesAtPoint) + 1400.
+	railway: 2200,
 	// 50 (nearbyWays) + 450.
 	highway: 500,
 	waterway: 500,
