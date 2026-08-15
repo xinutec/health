@@ -11,6 +11,7 @@
  * cases — the timeline still works, just without the extra context.
  */
 
+import { PEDESTRIAN_MIN_CADENCE_SPM } from "../eval/worldline-feasibility.js";
 import type { FilteredPoint } from "./kalman.js";
 import { haversineMeters } from "./place-snap.js";
 import { addRefinedKind, effectiveMode, hasRefinedKind, samplesInWindow } from "./segment-util.js";
@@ -172,6 +173,19 @@ export function peakCadenceForSegment(segment: TrackSegment, stepPoints: StepPoi
 	return peak;
 }
 
+/** How many whole minutes inside the segment's window are at or above
+ *  pedestrian cadence. Where `peakCadenceForSegment` asks "was there one
+ *  unmistakable walking minute", this asks "how much of this window was spent
+ *  walking" — the question an interrupted walk can actually answer, since its
+ *  step evidence is spread across minutes instead of concentrated in one. */
+export function walkingMinutesInSegment(segment: TrackSegment, stepPoints: StepPoint[]): number {
+	let minutes = 0;
+	for (const sp of stepPoints) {
+		if (sp.ts >= segment.startTs && sp.ts <= segment.endTs && sp.steps >= PEDESTRIAN_MIN_CADENCE_SPM) minutes++;
+	}
+	return minutes;
+}
+
 // --- Cadence-based mode correction ---
 
 /** A walking-classified segment with cadence below this is almost certainly
@@ -211,6 +225,24 @@ const CADENCE_REVERT_PEDESTRIAN_AVG_KMH = 7;
  *  (window-shopping, a park stroll) so its mean cadence looks ambiguous, but
  *  at least one minute hits a clear walking burst. */
 const STATIONARY_WALK_PEAK_CADENCE = 80;
+
+/** ...except that a walk which keeps STOPPING never produces that one
+ *  unmistakable minute, however plainly it is a walk. 2026-06-16's station
+ *  exit reads 77, 63, 2, 67, 28, 29 steps/min — 237 steps in under five
+ *  minutes, and a peak of 77 against a floor of 80. The peak test is not
+ *  merely set too high there; it is the wrong statistic, because an
+ *  interrupted walk's evidence is spread ACROSS minutes rather than
+ *  concentrated in one. So count walking minutes as a second, independent
+ *  route: several minutes at pedestrian cadence, separated by pauses, is a
+ *  walk with pauses in it.
+ *
+ *  The floor is `PEDESTRIAN_MIN_CADENCE_SPM` — the same pedestrian threshold
+ *  the ride-tail rule uses — deliberately, so this is the existing taxonomy
+ *  and not a number picked to clear one day. Requiring several such minutes
+ *  is what keeps it honest: a lone 60-step minute is the incidental shuffling
+ *  the peak test already refuses, and the avgSpeed and extent vetoes above
+ *  still have to pass, so pacing in place cannot reach here. */
+const STATIONARY_WALK_MIN_BURST_MINUTES = 3;
 
 /** ...but only flip when the GPS also shows the segment actually translated.
  *  Pacing in place at an established stay (home, a hospital ward) produces the
@@ -475,9 +507,16 @@ export function correctStationaryWalkThrough<
 	}
 
 	const peak = peakCadenceForSegment(segment, stepPoints);
-	if (peak < STATIONARY_WALK_PEAK_CADENCE) return segment;
+	// Two independent routes in: one unmistakable minute, or several walking
+	// ones. The second admits the interrupted walk the peak test cannot see.
+	const bursts = walkingMinutesInSegment(segment, stepPoints);
+	const sustained = bursts >= STATIONARY_WALK_MIN_BURST_MINUTES;
+	if (peak < STATIONARY_WALK_PEAK_CADENCE && !sustained) return segment;
 
-	const reason = `walking burst (${peak.toFixed(0)}/min) with GPS movement`;
+	const reason =
+		peak < STATIONARY_WALK_PEAK_CADENCE
+			? `walking bursts (${bursts} min at ${PEDESTRIAN_MIN_CADENCE_SPM}+/min) with GPS movement`
+			: `walking burst (${peak.toFixed(0)}/min) with GPS movement`;
 	return {
 		...segment,
 		refinedMode: "walking",
