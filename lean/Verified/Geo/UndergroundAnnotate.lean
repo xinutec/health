@@ -3,6 +3,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.Factors
 import Verified.Geo.RefineMode
 import Verified.Geo.StaySplit
+import Verified.Geo.SegmentUtil
 /-!
 # Underground run annotation (port of `annotateUndergroundRuns`,
 `src/geo/underground-rail.ts`)
@@ -53,6 +54,7 @@ open Verified.Geo.UndergroundJourney (MAX_COARSE_GAP_S reconstructUndergroundJou
 open Verified.Geo.TubeHop (NearbyStation)
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Geo.Factors (NearbyWay)
+open Verified.Geo.SegmentUtil (WindowStats statsOverWindow)
 
 /-- Shortest underground run worth carving out (s). Below this, a stray pair of
 coarse fixes in an ordinary walk is just noise. -/
@@ -92,57 +94,10 @@ stated separately because the two constants are `velocity.ts`'s and this
 module's, and a change to one is not a change to the other. -/
 def SIDE_WAY_SAMPLES : Nat := 5
 
-/-- What a carved piece's own fixes say about it. -/
-structure WindowStats where
-  pointCount : Int
-  avgSpeed : Float
-  maxSpeed : Float
-  linearity : Float
-  deriving Inhabited, Repr
-
-/--
-Recompute a piece's kinematics from the fixes its window actually owns — the
-port of TS `statsOverWindow` (`7d89369`).
-
-A carve that reslices a segment and emits the pieces as `{ host with startTs,
-endTs }` hands every piece the PARENT's summary. That summary was measured
-across the whole parent, INCLUDING whatever the carve just removed, so the
-piece reports a peak that never happened inside it and the kinematic invariants
-downstream read that peak as evidence. Measured on the corpus: 60 of 208
-walking segments reported a `maxSpeed` their own fixes do not support.
-
-`avgSpeed` is the MEDIAN, matching how `classifySegments` derives it: a mean
-over a window that contained a ride is dragged by the ride.
-
-`excludeStart` drops the fix ON `startTs`. Set it when a VEHICLE precedes this
-window — the boundary fix is the one the vehicle arrived on, and its speed is
-the vehicle's, so a following walk that keeps it claims the ride's arrival
-speed on foot.
--/
-def statsOverWindow (points : Array Shed.PointF) (startTs endTs : Int)
-    (excludeStart : Bool := false) : WindowStats :=
-  let fixes := (points.toList.filter fun p =>
-      (if excludeStart then decide (p.ts > startTs) else decide (p.ts ≥ startTs))
-        && decide (p.ts ≤ endTs)).mergeSort fun a b => a.ts ≤ b.ts
-  match fixes with
-  | [] => { pointCount := 0, avgSpeed := 0, maxSpeed := 0, linearity := 0 }
-  | first :: _ =>
-    let arr := fixes.toArray
-    let speeds := fixes.map (·.speedKmh)
-    let sorted := speeds.mergeSort (· ≤ ·)
-    let mid := sorted.length / 2
-    let med :=
-      if sorted.length % 2 == 0 then (sorted[mid - 1]! + sorted[mid]!) / 2 else sorted[mid]!
-    let pathDist := (List.range (arr.size - 1)).foldl (init := (0 : Float)) fun acc k =>
-      acc + Verified.Hsmm.FloatScore.haversineMeters
-        arr[k]!.lat arr[k]!.lon arr[k + 1]!.lat arr[k + 1]!.lon
-    let last := arr[arr.size - 1]!
-    let straight := Verified.Hsmm.FloatScore.haversineMeters first.lat first.lon last.lat last.lon
-    { pointCount := Int.ofNat arr.size
-      avgSpeed := Float.floor (med * 10 + 0.5) / 10
-      maxSpeed := Float.floor ((speeds.foldl max first.speedKmh) * 10 + 0.5) / 10
-      linearity :=
-        if pathDist > 0 then Float.floor (min (straight / pathDist) 1 * 100 + 0.5) / 100 else 0 }
+-- `WindowStats` / `statsOverWindow` were DEFINED here until #424. They moved to
+-- `Verified.Geo.SegmentUtil` — the mirror of the `src/geo/segment-util.ts` the TS
+-- imports them from — because `Verified.Geo.RailAbsorbers` needs them and cannot
+-- import this module. While they lived here the absorbers silently did without.
 
 /--
 Way label for a side piece of a split host — the walk left over when a tube ride

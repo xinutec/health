@@ -4,6 +4,10 @@ import Verified.Geo.LineMembership
 -- For `meanCadenceSpm` / `PEDESTRIAN_MIN_CADENCE_SPM`: cadence is what decides a
 -- ride tail, and the pedestrian floor is the worldline module's to define.
 import Verified.Geo.Worldline
+-- For `statsOverWindow`: an anchor that moves a walk's boundary owes that walk a
+-- fresh summary, and the summary rule is shared with the other two passes that
+-- move boundaries (#424).
+import Verified.Geo.SegmentUtil
 /-!
 # Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
@@ -63,18 +67,39 @@ open Verified.Geo.TubeHop (NearbyStation pickBestStation)
 
 abbrev Mode := String
 
-/-- A Kalman-filtered fix. `speed_kmh` and `bearing` are carried by the TS type
-but read by nothing in this file. -/
+/-- A Kalman-filtered fix. `bearing` is carried by the TS type but read by nothing
+in this file.
+
+`speedKmh` IS read, as of #424 — by the two anchors, which recompute the
+kinematics of the walk whose boundary they moved. It was omitted while they did
+not, and its absence is exactly why they did not: the summary they needed to
+recompute is derived from it. -/
 structure Fix where
   ts : Int
   lat : Float
   lon : Float
+  speedKmh : Float
   deriving Inhabited, BEq, Repr
+
+/-- The fix as `Verified.Geo.SegmentUtil` types it — a rename, field for field. -/
+def Fix.toPointF (f : Fix) : Shed.PointF :=
+  { ts := f.ts, lat := f.lat, lon := f.lon, speedKmh := f.speedKmh }
+
+/-- `statsOverWindow` over this module's fix type. -/
+def windowStats (points : Array Fix) (startTs endTs : Int)
+    (excludeStart : Bool := false) : Verified.Geo.SegmentUtil.WindowStats :=
+  Verified.Geo.SegmentUtil.statsOverWindow (points.map Fix.toPointF) startTs endTs excludeStart
 
 /-- The pipeline's segment record. This pass reads and rewrites a subset of
 it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
+
+/-- Re-summarise a segment whose window just changed. The four fields are exactly
+the ones TS's `{ ...walk, ...statsOverWindow(...) }` spreads. -/
+def applyStats (s : Seg) (st : Verified.Geo.SegmentUtil.WindowStats) : Seg :=
+  { s with pointCount := st.pointCount, avgSpeed := st.avgSpeed,
+           maxSpeed := st.maxSpeed, linearity := st.linearity }
 
 /-- A per-minute step count. -/
 structure StepPoint where
@@ -538,7 +563,12 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
             s!"boarding boundary extended back to the {station.name} departure — reclaimed a {metres tailDist} m hop the underground reconstruction had left in the walk"
           else
             s!"boarding re-anchored to {station.name} (walk's terminal station) — reclaimed a {metres tailDist} m hop the underground reconstruction had left in the walk (was boarding {rail.board})"
-        out := out.set! (k - 1) { walk with endTs := boardFix.ts }
+        -- Mirror of the alight side: the reclaimed hop belongs to the ride now,
+        -- so it must stop counting toward the walk's peak. No `excludeStart` —
+        -- nothing precedes this walk's start, only its END moved.
+        out := out.set! (k - 1)
+          (applyStats { walk with endTs := boardFix.ts }
+            (windowStats points walk.startTs boardFix.ts))
         out := out.set! k
           { train with
               startTs := boardFix.ts
@@ -674,7 +704,14 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
                 match train.refinedReason with
                 | some r => some s!"{r}; {reason}"
                 | none => some reason }
-        out := out.set! (k + 1) { walk with startTs := alightFix.ts }
+        -- The hop just moved into the ride, so it is no longer the walk's to
+        -- report. Leaving the summary alone left a walk claiming a 187.2 km/h
+        -- peak — the reclaimed blackout hop — long after the fix that produced
+        -- it had been handed to the train. `excludeStart` because the ride owns
+        -- its arrival fix.
+        out := out.set! (k + 1)
+          (applyStats { walk with startTs := alightFix.ts }
+            (windowStats points alightFix.ts walk.endTs (excludeStart := true)))
   return out
 
 /-! ## Guards (V8 reference values) -/
@@ -847,7 +884,7 @@ last sits exactly ON the stationary's closing boundary, where the exclusive-end
 window excludes it — and it is 50 km away, so an inclusive window would resolve
 a different station outright. -/
 private def platform : Array Fix :=
-  #[⟨600, 51.5254, -0.1359⟩, ⟨660, 51.5256, -0.1361⟩, ⟨720, 51.5252, -0.1357⟩, ⟨900, 51.9999, -0.9999⟩]
+  #[⟨600, 51.5254, -0.1359, 0⟩, ⟨660, 51.5256, -0.1361, 0⟩, ⟨720, 51.5252, -0.1357, 0⟩, ⟨900, 51.9999, -0.9999, 0⟩]
 
 private def MET_RUN : String := "Euston Square → Baker Street · Metropolitan Line"
 
@@ -869,7 +906,7 @@ private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mod
 #guard absorb #[pstay 600 900, ptrain 900 1800 (some "Baker Street → Wembley Park · Metropolitan Line")]
   == #[("stationary", 600, 900), ("train", 900, 1800)]
 -- Nothing near the centroid.
-#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨600, 0, 0⟩, ⟨660, 0, 0⟩]
+#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨600, 0, 0, 0⟩, ⟨660, 0, 0, 0⟩]
   == #[("stationary", 600, 900), ("train", 900, 1800)]
 
 -- What disqualifies the pair.
@@ -881,14 +918,14 @@ private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mod
 #guard absorb #[ptrain 900 1800] == #[("train", 900, 1800)]
 -- An empty window would average 0/0 = NaN. The stub answers a station AT NaN,
 -- so without the guard the pass would absorb off a query it must never make.
-#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨1000, 51.5254, -0.1359⟩]
+#guard absorb #[pstay 600 900, ptrain 900 1800] #[⟨1000, 51.5254, -0.1359, 0⟩]
   == #[("stationary", 600, 900), ("train", 900, 1800)]
 -- A MISSING label is rejected, not read as an empty boarding station: the
 -- station here really is named `""`, and the wait still survives…
-#guard absorb #[pstay 600 900, ptrain 900 1800 none] #[⟨700, 40, 40⟩]
+#guard absorb #[pstay 600 900, ptrain 900 1800 none] #[⟨700, 40, 40, 0⟩]
   == #[("stationary", 600, 900), ("train", 900, 1800)]
 -- …whereas a label that genuinely parses to an empty board absorbs there.
-#guard absorb #[pstay 600 900, ptrain 900 1800 (some " → Baker Street")] #[⟨700, 40, 40⟩]
+#guard absorb #[pstay 600 900, ptrain 900 1800 (some " → Baker Street")] #[⟨700, 40, 40, 0⟩]
   == #[("train", 600, 1800)]
 
 -- 900 s exactly is still a platform wait; 901 s is a stay of its own.
@@ -904,7 +941,7 @@ private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mod
 -- THE WINDOW DISCRIMINATOR. The boundary fix at 900 is excluded above; widen the
 -- stationary by one second so the same fix falls strictly inside, and it is the
 -- ONLY sample — the query moves 50 km and resolves Baker Street instead.
-#guard absorb #[pstay 600 901, ptrain 901 1800 (some "Baker Street → Wembley Park")] #[⟨900, 51.9999, -0.9999⟩]
+#guard absorb #[pstay 600 901, ptrain 901 1800 (some "Baker Street → Wembley Park")] #[⟨900, 51.9999, -0.9999, 0⟩]
   == #[("train", 600, 1800)]
 
 -- Shape: neighbours survive, and two waits in one day both absorb.
@@ -914,7 +951,7 @@ private def absorb (segs : Array Seg) (pts : Array Fix := platform) : Array (Mod
 #guard absorb
     #[pstay 600 900, ptrain 900 1800, pstay 1800 2100,
       ptrain 2100 3000 (some "King's Cross St Pancras → Farringdon · Circle Line")]
-    (platform ++ #[⟨1800, 51.5271, -0.1327⟩, ⟨1900, 51.5271, -0.1327⟩])
+    (platform ++ #[⟨1800, 51.5271, -0.1327, 0⟩, ⟨1900, 51.5271, -0.1327, 0⟩])
   == #[("train", 600, 1800), ("train", 1800, 3000)]
 #guard absorb #[{ startTs := 0, endTs := 600, mode := "walking" }] == #[("walking", 0, 600)]
 #guard absorb #[] == #[]
@@ -978,10 +1015,10 @@ private def aServed : String → Array LineMembership.ServedStation := fun line 
   else if line == "" then #[⟨"Nowhere"⟩]
   else #[]
 
-private def f (ts : Int) (lat : Float) : Fix := ⟨ts, lat, -0.14⟩
+private def f (ts : Int) (lat : Float) (speedKmh : Float := 0) : Fix := ⟨ts, lat, -0.14, speedKmh⟩
 /-- An EAST-WEST fix: one latitude throughout, so the haversine's two arguments
 cannot be swapped without the distance changing. -/
-private def ef (ts : Int) (lon : Float) : Fix := ⟨ts, 51.5, lon⟩
+private def ef (ts : Int) (lon : Float) : Fix := ⟨ts, 51.5, lon, 0⟩
 private def aseg (a b : Int) (mode : Mode) (wayName : Option String := none)
     (refinedMode : Option Mode := none) (refinedReason : Option String := none) : Seg :=
   { startTs := a, endTs := b, mode, wayName, refinedMode, refinedReason }
@@ -1219,6 +1256,47 @@ private def GPS_SAME : String :=
     #[f 0 51.4, f 30 51.4014, f 60 51.4028, f 120 51.4031]
   == #[(-600, 0, WP "Euston Square", none), (0, 180, none, none)]
 #guard alight #[] alightWalk == #[]
+
+/-! #### The summary follows the boundary (#424)
+
+Both anchors move a walk's edge, and the walk's kinematics are derived from the
+window that edge closes. Leaving them alone is what the Lean arm did until #424:
+the two sides then agreed on `startTs`/`endTs` and disagreed on `pointCount`,
+`avgSpeed`, `maxSpeed` and `linearity` — a segment describing a window it no
+longer spans, on 29 of 35 golden days.
+
+The fixtures carry SPEEDS here (the ones above default to zero, which cannot
+distinguish a recomputed summary from an inherited one). Walking pace on the
+walk's own fixes, vehicle pace on the reclaimed hop: the fix that tells them
+apart is exactly the one changing hands. -/
+
+private def statsView (out : Array Seg) : Array (Int × Float × Float) :=
+  out.map fun s => (s.pointCount, s.avgSpeed, s.maxSpeed)
+
+/-- `boardWalk`, with the hop at vehicle pace. -/
+private def boardWalkSpeeds : Array Fix :=
+  #[f 0 51.5 4, f 60 51.5003 5, f 120 51.5006 6, f 150 51.502 60, f 180 51.5034 62, f 240 51.5048 64]
+/-- `alightWalk`, with the leading hop at vehicle pace. -/
+private def alightWalkSpeeds : Array Fix :=
+  #[f 0 51.5 55, f 30 51.5014 60, f 60 51.5028 58, f 120 51.5031 5, f 180 51.5034 4]
+
+-- Boarding: the walk keeps 0-120, so 3 fixes topping out at 6 km/h — NOT the
+-- six fixes and 64 km/h peak the un-recomputed parent reported. `avgSpeed` is
+-- the median of [4, 5, 6]. The train is not re-summarised (nor is it in the TS):
+-- it keeps `Seg`'s defaults.
+#guard statsView (anchorTrainBoardingToWalkedStation
+    #[awalk 0 240, atrain 240 900 (BAKER)] boardWalkSpeeds aStations aServed)
+  == #[(3, 5, 6), (10, 0, 0)]
+-- A refused extension leaves the summary untouched, defaults and all: this pass
+-- restates a window only when it moves one.
+#guard statsView (anchorTrainBoardingToWalkedStation
+    #[awalk 0 240, atrain 240 900 (BAKER s!" · {NLL}")] boardWalkSpeeds aStations aServed)
+  == #[(10, 0, 0), (10, 0, 0)]
+-- Alight: the walk starts at 60 and `excludeStart` gives the boundary fix to the
+-- ride that arrived on it, so 2 fixes — 120 and 180 — at walking pace.
+#guard statsView (anchorTrainAlightToWalkedStation
+    #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalkSpeeds [] aStations aServed)
+  == #[(10, 0, 0), (2, 4.5, 5)]
 
 /-! #### Alight: the cases the probe sweep asked for -/
 

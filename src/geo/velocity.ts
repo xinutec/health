@@ -1905,12 +1905,18 @@ export async function computeVelocityFromInputs(
 	let segs = physicallyCorrected;
 	// PASS_TRACE=1 prints the segment list after every refinement pass that
 	// changed it — the way to find which pass ate (or invented) a segment.
+	//
+	// `pointCount` rides along because bounds alone cannot see the defect class
+	// the day gate keeps finding: a pass moves a boundary and leaves the stats
+	// describing the OLD window, so the two arms agree on start/end and disagree
+	// on everything derived from them (#424). Without it this trace prints
+	// nothing at all for a stats-only change and reads as "no pass touched it".
 	const trace = process.env.PASS_TRACE === "1";
 	const traceLine = (list: readonly EnrichedSegment[]): string =>
 		list
 			.map((s) => {
 				const t = (ts: number): string => new Date(ts * 1000).toISOString().slice(11, 16);
-				return `${t(s.startTs)}-${t(s.endTs)}:${effectiveMode(s)}`;
+				return `${t(s.startTs)}-${t(s.endTs)}:${effectiveMode(s)}#${s.pointCount}`;
 			})
 			.join(" ");
 	let prevTrace = trace ? traceLine(segs) : "";

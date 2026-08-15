@@ -54,8 +54,12 @@ it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same
 value to every pass in the cascade without a lossy projection at each hop. -/
 abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
-/-- A GPS fix, as the filter left it. -/
-abbrev Fix := Verified.Geo.SegmentMerge.Fix
+/-- A GPS fix, as the filter left it.
+
+The ABSORBERS' fix, not `SegmentMerge`'s, because `splitChangeoverWindows` has to
+re-summarise the walk it trims and the summary is derived from `speedKmh`
+(#424). The two differ in that field alone. -/
+abbrev Fix := Verified.Geo.RailAbsorbers.Fix
 
 def effectiveMode (s : Seg) : Mode := s.refinedMode.getD s.mode
 
@@ -266,7 +270,9 @@ private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Ar
   if effectiveMode walk != "walking" then out
   else if !isStationPairTrain prev || !isStationPairTrain next then out
   else
-    let fixes := Verified.Geo.SegmentMerge.samplesInWindow points walk.startTs walk.endTs
+    -- `samplesInWindow`, inclusive at both ends — spelled out because the shared
+    -- one is typed to `SegmentMerge.Fix` and this pass reads the absorbers'.
+    let fixes := points.filter fun p => p.ts ≥ walk.startTs && p.ts ≤ walk.endTs
     if fixes.size < 4 then out else
     -- Step k joins fixes[k] and fixes[k+1]. `ride[k]` is that step at train pace.
     let ride : Array Bool := (Array.range (fixes.size - 1)).map fun k =>
@@ -292,6 +298,11 @@ private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Ar
       -- EXCLUSIVE upper bound, unlike the `samplesInWindow` that read the fixes:
       -- the recount is `>= from && < to`, so a boundary point falls to one side
       -- only. Counted over ALL points, not the window's fixes.
+      --
+      -- It applies to the two RIDES only. The walk between them gets the full
+      -- `statsOverWindow` below, on the other bound convention — the TS spells
+      -- these differently at the two ends of the same block and the difference
+      -- is load-bearing, so they stay spelled differently here.
       let countIn (a b : Int) : Int :=
         Int.ofNat (points.filter (fun p => p.ts ≥ a && p.ts < b)).size
       let reclaimed (m : Float) : String :=
@@ -309,12 +320,18 @@ private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Ar
             pointCount := countIn walkEnd next.endTs
             refinedReason := some (appendReason next.refinedReason (reclaimed headM)) }
         else out
-      out.set! i { walk with
-        startTs := walkStart
-        endTs := walkEnd
-        pointCount := countIn walkStart walkEnd
-        refinedReason := some (appendReason walk.refinedReason
-          "changeover window: trimmed to the platform change (#444)") }
+      -- The stranded ride just moved out of this walk on both sides, so the peak
+      -- it reports has to move with it — `pointCount` alone left 2026-04-29's
+      -- changeover claiming 87.8 km/h across a window whose own fixes top out at
+      -- 5. A ride precedes, so its arrival fix stays with the ride.
+      out.set! i
+        (Verified.Geo.RailAbsorbers.applyStats
+          { walk with
+            startTs := walkStart
+            endTs := walkEnd
+            refinedReason := some (appendReason walk.refinedReason
+              "changeover window: trimmed to the platform change (#444)") }
+          (Verified.Geo.RailAbsorbers.windowStats points walkStart walkEnd (excludeStart := true)))
 
 /-- A changeover window is `[ride tail][platform walk][ride head]`, and only the
 middle is a walk (#444).
@@ -476,7 +493,8 @@ private def CACHE : Array RouteRow := #[⟨"A → B", #[northPt 0, northPt 1000]
 #guard (annotateSnappedPaths #[tr 1000 2000 none] CACHE)[0]!.snappedPath == none
 #guard annotateSnappedPaths #[] CACHE == #[]
 
-private def fx (ts : Int) (m : Float) : Fix := ⟨ts, (northPt m).lat, (northPt m).lon⟩
+private def fx (ts : Int) (m : Float) (speedKmh : Float := 0) : Fix :=
+  ⟨ts, (northPt m).lat, (northPt m).lon, speedKmh⟩
 
 /-- The only shape the pass reads: a walk between two station-pair-labelled
 trains. The trains extend 300 s past the walk, so a moved boundary shows. -/
@@ -502,6 +520,29 @@ private def BOTH : Array Fix :=
   == #[(700, 1030, 1, some (reclaim "499")),
        (1030, 1120, 2, some TRIMMED),
        (1120, 1480, 3, some (reclaim "1004"))]
+
+-- THE SUMMARY FOLLOWS THE BOUNDARY (#424). `pointCount` alone is not enough:
+-- the walk inherited its `avgSpeed`/`maxSpeed`/`linearity` from a window that
+-- CONTAINED the ride, and trimming the window without restating them left
+-- 2026-04-29's changeover reporting 87.8 km/h across a platform stretch. Note
+-- the counts are unchanged from the guard above — `>= start, < end` and
+-- `> start, <= end` happen to agree on this window, which is exactly why the
+-- defect hid behind an agreeing `pointCount` on the corpus.
+private def BOTH_KMH : Array Fix :=
+  #[fx 1000 0 80, fx 1030 500 85, fx 1060 505 4, fx 1120 515 5, fx 1150 1015 88, fx 1180 1520 90]
+/-- `cwin`, but the walk carries the ride's peak — the state the trim inherits. -/
+private def cwinFast (fixes : Array Fix) : Array Seg :=
+  let t0 := fixes[0]!.ts
+  let t1 := fixes[fixes.size - 1]!.ts
+  #[tr (t0 - 300) t0 (some "A → S · Jubilee Line"),
+    tr t0 t1 (some "S (interchange)") 10 40 90 0.5 "walking",
+    tr t1 (t1 + 300) (some "S → T · Bakerloo Line")]
+-- The walk went in carrying 40 / 90 and comes out at 4.5 / 5, its own fixes'
+-- median and peak. The two RIDES keep their zeros: they are recounted, never
+-- re-summarised, on this side as on the TS's.
+#guard (splitChangeoverWindows (cwinFast BOTH_KMH) BOTH_KMH).map
+    (fun s => (s.pointCount, s.avgSpeed, s.maxSpeed))
+  == #[(1, 0, 0), (2, 4.5, 5), (3, 0, 0)]
 
 -- TAIL only (the 07-02 shape): the ride is stranded at the START of the walk
 -- and nothing fast follows, so only the arriving leg's boundary moves and the

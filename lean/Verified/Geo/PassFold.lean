@@ -169,7 +169,7 @@ def Env.railFixes (e : Env) : Array Verified.Geo.RailRuns.Fix :=
   e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
 
 def Env.absorberFixes (e : Env) : Array Verified.Geo.RailAbsorbers.Fix :=
-  e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
+  e.points.map fun p => ⟨p.ts, p.lat, p.lon, p.speedKmh⟩
 
 def Env.tubeFixes (e : Env) : Array Verified.Geo.TubeHop.Fix :=
   e.points.map fun p => ⟨p.ts, p.lat, p.lon⟩
@@ -610,7 +610,7 @@ def passes (e : Env) : Array Pass := #[
   -- which decline this case by design because a hop between two rides can
   -- belong to either side and the window has to be read whole.
   ("changeoverWindow", fun segs =>
-    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.mergeFixes),
+    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.absorberFixes),
 
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
