@@ -171,6 +171,22 @@ in  { name = "health"
           ]
         , timeout_s = 900
         }
+      , {-  A green gate has to mean the package this repo PUBLISHES still builds.
+
+            ⚠ NOT covered by `Lean verified core + decode parity` above, which
+            runs `pnpm run lean-check` in the dev shell. `packages.verified-cli`
+            is the derivation the production image's lean-build stage consumes,
+            and its own comment says `lake build` runs every #guard spec check,
+            so BUILDING IT IS THE PROOF GATE. Running the proof in a dev shell
+            and shipping a derivation nobody built is the gap this closes: the
+            thing production consumes is the thing that has to be green.
+        -}
+        G.Check::{
+        , name = "the verified CLI packages (what the production image consumes)"
+        , argv =
+            [ "nix", "build", "--no-warn-dirty", "--no-link", ".#verified-cli" ]
+        , timeout_s = 3600
+        }
       , G.checkTable "../dev-lint"
       ]
     }

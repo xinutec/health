@@ -236,6 +236,19 @@
     {
       "argv": [
         "nix",
+        "build",
+        "--no-warn-dirty",
+        "--no-link",
+        ".#verified-cli"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "the verified CLI packages (what the production image consumes)",
+      "timeout_s": 3600
+    },
+    {
+      "argv": [
+        "nix",
         "run",
         "../dev-lint#gate",
         "--",
