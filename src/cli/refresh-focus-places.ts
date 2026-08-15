@@ -10,6 +10,7 @@
  *   node dist/cli/refresh-focus-places.js <user_id> 90 # one user, explicit days
  */
 
+import { writeFile } from "node:fs/promises";
 import tzLookup from "tz-lookup";
 import { z } from "zod";
 import { db, destroyPool, initPool, withConnection } from "../db/pool.js";
@@ -111,10 +112,17 @@ const explainAt = ((): { lat: number; lon: number } | null => {
 	const lon = Number(rawArgv[i + 2]);
 	return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
 })();
+/** `--emit-known-places <file>`: see the block that writes it, below. */
+const emitKnownPlacesTo = ((): string | null => {
+	const i = rawArgv.indexOf("--emit-known-places");
+	return i === -1 ? null : (rawArgv[i + 1] ?? null);
+})();
 const argv = rawArgv.filter(
 	(a, i) =>
 		a !== "--dry-run" &&
 		a !== "--explain" &&
+		a !== "--emit-known-places" &&
+		!(emitKnownPlacesTo !== null && i === rawArgv.indexOf("--emit-known-places") + 1) &&
 		!(explainAt !== null && (i === rawArgv.indexOf("--explain") + 1 || i === rawArgv.indexOf("--explain") + 2)),
 );
 const argUserId = argv[0] ?? null;
@@ -445,6 +453,38 @@ async function refreshOne(userId: string): Promise<void> {
 			result.clusters.length
 		} clusters labelled (${Date.now() - tMine}ms)`,
 	);
+
+	// `--emit-known-places <file>`: write what this run WOULD store, in the
+	// exact projection `loadClassificationInputs` hands the pipeline.
+	//
+	// This is the missing half of the note on `--dry-run` above. A dry run
+	// says what the miner decided; it cannot say what the decision does to a
+	// day, because golden reads `knownPlaces` as a captured INPUT. Emitting
+	// the projection lets a corpus COPY be re-pointed at the new labels and
+	// graded — varying only the mining, with every other captured input held
+	// fixed. That isolation is the point: a real re-capture would refresh
+	// prod inputs too, and has broken confirmed truth rows for reasons
+	// unrelated to the change being measured (#379).
+	if (emitKnownPlacesTo !== null) {
+		const names = assignDisplayNames(result.clusters);
+		const projection = result.clusters.map((c) => ({
+			// Synthetic, and safe: nothing in a fixture's inputs or expected
+			// output keys on a focus-place id (checked 2026-08-15).
+			id: 100000 + c.id,
+			centroidLat: c.centroidLat,
+			centroidLon: c.centroidLon,
+			radiusM: FOCUS_RADIUS_FLOOR_M,
+			displayName: names.get(c.id) ?? null,
+			sleepHours: Math.round(hasFitbitSleep ? sleepHoursFromFitbit(c.stays, fitbitSleepWindows) : sleepHoursOf(c)),
+			amenityLabel: amenityLabels.get(c.id) ?? null,
+			uniqueDays: uniqueDayCount(c.stays, c.centroidLon),
+			hourProfile: hourProfileOf(c),
+			totalDwellSec: c.totalDwellSec,
+			visitCount: c.stays.length,
+		}));
+		await writeFile(emitKnownPlacesTo, JSON.stringify(projection, null, "\t"));
+		console.log(`[${userId}] wrote ${projection.length} known-place rows to ${emitKnownPlacesTo}`);
+	}
 
 	// Persist the venue-type priors blob — full recompute every run, never
 	// incremental, so a re-mine after a code/gate change is reproducible.
