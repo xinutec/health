@@ -140,7 +140,7 @@ const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
 
 interface Outcome {
 	date: string;
-	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "ERROR";
+	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "TIMEOUT" | "ERROR";
 	detail: string;
 }
 
@@ -165,6 +165,13 @@ const EXPECTED_UNFED = ["roadEnv", "walkEnv"];
  *  reporting, not the rule: the tenant compares the same way and prints nothing.
  *  Off by default, so the gate's verdict is untouched. */
 const DUMP = process.env.DAY_DIFF_DUMP === "1";
+
+/** How long one day's bridge call may take before it is called wedged.
+ *
+ *  `LEAN_CALL_TIMEOUT_MS` covers the request path and NOT this gate, which is
+ *  why the hang had no guard at all. Overridable for a slow machine; the point
+ *  is that it is bounded, not that it is exactly two minutes. */
+const DAY_BRIDGE_TIMEOUT_MS = Number(process.env.DAY_BRIDGE_TIMEOUT_MS ?? 120_000);
 let dumped = new Set<string>();
 
 function sample(label: string, index: number, a: unknown, b: unknown): void {
@@ -275,10 +282,38 @@ async function measure(file: string): Promise<Outcome> {
 			input: JSON.stringify(buildDayRequest(cap, inputs, answers)),
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
+			// WITHOUT THIS THE GATE CAN HANG FOREVER, and has: on 2026-08-15 it
+			// wedged after 5 of 35 days with `compare-day` and `verified_cli`
+			// BOTH at 0.0% CPU, no output, no error and no exit. It is
+			// INTERMITTENT — three runs of the same build finished in ~50 s
+			// first — so a completing run is not evidence the deadlock is gone.
+			//
+			// A bound turns that into a red day instead of a stopped corpus,
+			// which matters most where nobody is watching: `deploy.sh` runs this
+			// under `set -e`, where a hang stops the deploy rather than failing
+			// it. A gate that cannot finish cannot produce a tally, and a task
+			// quoting one from a hung run is how #424 started.
+			//
+			// The bound is per DAY, not per corpus. Measured cost is 1-3 s a
+			// day, so two minutes is ~40x headroom and only a wedge reaches it.
+			timeout: DAY_BRIDGE_TIMEOUT_MS,
 			encoding: "utf8",
 		});
 	} catch (e) {
-		const err = e as { stderr?: string };
+		const err = e as { stderr?: string; code?: string; signal?: string };
+		// A timeout is killed with `killSignal` (SIGTERM by default), and Node
+		// reports `ETIMEDOUT` on some platforms and only the signal on others —
+		// so test both, and say TIMEOUT rather than folding it into ERROR. The
+		// two want different responses: ERROR is a bug in the day, TIMEOUT is
+		// the deadlock, and burying one in the other loses the distinction that
+		// makes the deadlock countable.
+		if (err.code === "ETIMEDOUT" || err.signal === "SIGTERM") {
+			return {
+				date,
+				verdict: "TIMEOUT",
+				detail: `bridge did not answer within ${DAY_BRIDGE_TIMEOUT_MS} ms — the #424 deadlock`,
+			};
+		}
 		const panic = (err.stderr ?? "").split("\n").find((l) => l.includes("uncaptured"));
 		return {
 			date,
