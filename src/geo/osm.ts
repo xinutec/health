@@ -1304,7 +1304,7 @@ export function refineMode(
 	if (useFactorScorer()) {
 		return refineModeViaFactors(originalMode, speedKmh, ways, biometric, confidenceMargin, debugLabel, railRoad);
 	}
-	return refineModeLegacyCascade(originalMode, speedKmh, ways);
+	return refineModeLegacyCascade(originalMode, speedKmh, ways, debugLabel);
 }
 
 /** Maximum sustained speed (km/h) plausibly attainable on a non-
@@ -1481,7 +1481,12 @@ function reasonFromBest(ranked: ScoredRefinement): string {
 	return `${ranked.best.mode} (no way context)`;
 }
 
-function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, ways: NearbyWay[]): ModeRefinement {
+function refineModeLegacyCascade(
+	originalMode: TransportMode,
+	speedKmh: number,
+	ways: NearbyWay[],
+	debugLabel?: string,
+): ModeRefinement {
 	const railways = ways.filter((w) => w.type === "railway");
 	const highways = ways.filter((w) => w.type === "highway");
 	const aeroways = ways.filter((w) => w.type === "aeroway");
@@ -1563,6 +1568,27 @@ function refineModeLegacyCascade(originalMode: TransportMode, speedKmh: number, 
 		const hwFar = (hw.distanceM ?? Number.POSITIVE_INFINITY) > WALK_NAME_BORROW_MAX_M;
 		const hwName =
 			speedKmh < WALK_NAME_BORROW_MAX_KMH ? ((hwFar ? undefined : hw.name) ?? borrowStreetName(highways)) : hw.name;
+		// CASCADE_DEBUG=1 dumps the pick and the named candidates it beat.
+		//
+		// This is the counterpart of FACTOR_DEBUG, and it exists because that
+		// one covers the path that is OFF: production sets no
+		// USE_FACTOR_SCORER (checked against the live pod 2026-08-15), so the
+		// legacy cascade is what ships and what golden grades — and it had no
+		// dump at all. A wrong way-name was therefore unattributable without
+		// editing the file first, which is how #445 spent an afternoon
+		// inferring one.
+		if (process.env.CASCADE_DEBUG === "1") {
+			const named = highways
+				.filter((h) => h.name)
+				.slice(0, 6)
+				.map((h) => `${h.name}@${Math.round(h.distanceM ?? -1)}m/${h.subtype}`)
+				.join(" ");
+			console.error(
+				`[cascade-debug]${debugLabel ? ` ${debugLabel}` : ""} speed=${speedKmh.toFixed(1)} ` +
+					`pick=${hw.name ?? "(unnamed)"}@${Math.round(hw.distanceM ?? -1)}m/${hw.subtype} far=${hwFar} ` +
+					`→ wayName=${hwName ?? "(none)"} | named: ${named}`,
+			);
+		}
 		// Pedestrian-only highways
 		if (hw.subtype === "footway" || hw.subtype === "path" || hw.subtype === "pedestrian") {
 			if (speedKmh < 10) return { mode: "walking", confidence: "high", reason: `on ${hw.subtype}`, wayName: hwName };
