@@ -309,6 +309,18 @@ interface NamedPlace extends KnownPlace {
  *  hours) at it for at least RESIDENCE_SLEEP_THRESHOLD_H total hours. */
 const RESIDENCE_SLEEP_THRESHOLD_H = 5;
 
+/** Distinct visit-days a cluster needs before its mined `amenity_label`
+ *  is allowed to short-circuit the venue scorer.
+ *
+ *  The label is documented as a "majority vote across the user's prior
+ *  visits", and on a single-visit cluster there is no majority — it is one
+ *  observation, promoted to an answer. 40 of the corpus's 55 labelled
+ *  clusters are single-day (measured 2026-08-15), so this branch is
+ *  overwhelmingly deciding stays from one look. The venue scorer has
+ *  strictly more evidence for those (opening hours, dwell shape, distance),
+ *  and cannot run while the label pre-empts it. */
+const MINED_LABEL_MIN_DAYS = 2;
+
 /** Mean of HR / cadence stream values over a segment's time range. */
 function meanInWindow<T extends { ts: number }>(
 	stream: T[],
@@ -1048,7 +1060,7 @@ export async function computeVelocityFromInputs(
 						// label because the cluster's sleep_hours dwarfs
 						// its awake_hours.
 						const isResidential = wp.sleepHours >= RESIDENCE_SLEEP_THRESHOLD_H;
-						if (!isResidential && wp.amenityLabel) {
+						if (!isResidential && wp.amenityLabel && wp.uniqueDays >= MINED_LABEL_MIN_DAYS) {
 							const namedPlace = await bestPlace(inputs.osm, placeLat, placeLon, { preferResidential: false });
 							const namedCity = extractCity(namedPlace);
 							return {
