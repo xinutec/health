@@ -13,6 +13,31 @@ overlap with an existing Lean core before porting.
 ## Measured state — run the tool, do not trust the list below
 
     nix develop . --command node scripts/lean-port-coverage.mjs [--all]
+    pnpm run day-gate            # parity, per golden day
+
+**This rule covers the DAY GATE too, and that had to be learned twice.** A
+sentence here used to quote "SHELL ONLY on every golden day (35/35)". It was
+accurate the morning it was written and false by that evening, when a TS change
+shipped unported; nobody re-ran the gate for a day, and two tasks quoted the
+dead figure as evidence the port was sound. Before that it had said 33/33 while
+`days/` held 35, from a run that had HUNG mid-corpus.
+
+So: **no tally in this file describes CURRENT state.** Run the gate. A DATED
+record of what a slice measured at the time is a different thing and is worth
+keeping — #388's "32/32 days agreeing" below is history, and reads as history.
+What must not appear is a figure a reader could take for today's.
+
+Three ways a quoted tally goes wrong, all observed here:
+
+  - a TS-only change desyncs the port and nothing re-runs the gate — the gate
+    is NOT in the commit hook (`core.hooksPath=scripts/githooks`, 16 checks)
+  - the gate HANGS mid-corpus, so the tally it printed was never complete
+    (bounded since `ae9df5c`; a wedge is now one `TIMEOUT` day, and the hang is
+    INTERMITTENT, so a completing run is not evidence it is gone — #424)
+  - the corpus silently loses days: a code change that moves a segment boundary
+    invalidates that day's captured OSM trace, so it bails and drops out of
+    every aggregate. **Read the day COUNT before the verdict** — a shrinking
+    denominator reads exactly like an improving one.
 
 **The Tier list below is a plan, not a status, and it has drifted.** On 2026-07-29
 it still called `kalman.ts` "the single best next port" while
@@ -124,10 +149,7 @@ Two consequences for the rest of the port:
   port can be pinned by testing but not proved.
 - **And getting off `Float` ENDS the regime that currently proves the port.**
   Worth stating before it is discovered mid-migration. Every check the port has
-  today — SHELL ONLY on every golden day of the day gate (35/35 on 2026-08-14;
-  COUNT it rather than quoting a figure, this line said 33/33 while `days/` held
-  35, and the gate it quoted had been HANGING mid-corpus, so the tally could not
-  have been current — see #424), the tenant ledgers, every `#guard` —
+  today — the day gate, the tenant ledgers, every `#guard` —
   asks the same question: *does Lean produce the bytes TS produced?* You cannot
   be byte-identical to a `Float` implementation without `Float`. So the day the
   reals go in, parity-with-TS stops being the criterion and something has to
