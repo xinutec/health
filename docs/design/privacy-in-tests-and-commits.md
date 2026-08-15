@@ -108,3 +108,25 @@ rule above. These were pushed to GitHub before the rule was
 codified. Rewriting public git history is more disruptive than the
 leak warrants, so the existing commits are left as-is and this doc
 exists so the rule is durable going forward.
+
+Two more, added 2026-08-15 — **after** the rule existed, which is
+the point of recording them:
+
+- `58a44ab` prints three timeline rows under a real date, naming
+  two stations, a street and a bus destination. It is the "the
+  user's 2026-05-12 morning commute" shape the rule names, in the
+  form a pipeline dump makes easy to paste.
+- `838d617` names a city in a `linesAtPoint(...)` line beside the
+  date of the trip that produced the query.
+
+The lesson is narrower than "be careful": a **dump pasted verbatim**
+is the failure mode. Pipeline output is exactly a (place, time,
+mode) tuple per line, so quoting it into a message is the rule's
+worst case even when the surrounding prose is abstract. Quote the
+SHAPE — "train, then a 5-minute walk, then a bus" — and keep the
+labels in the task tracker, which is private.
+
+The rule for source comments is unchanged and was not broken here:
+station names as test data are fine when decoupled from a narrative
+about the user, which is why the synthetic `#guard` fixtures naming
+real stations are allowed.
