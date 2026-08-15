@@ -42,10 +42,13 @@
  *     (300), `ENDPOINT_LINES_RADIUS_M` (300), `STATION_AT_ALIGHT_RADIUS_M`, and
  *     the `nearbyWays` / `nearbyLandmarks` / `nearbyTransitStops` defaults. None
  *     is computed from the data, so 800 m is a ceiling, not a sample maximum.
- *   - The offset half is EMPIRICAL: 428 m is the worst across the 32 golden
- *     days (`lean/experiments/osm-buffer-sizing.mts`). Queries land off-track
- *     because some passes ask at DERIVED points — matched-path vertices and
- *     resolved station coordinates — not at fixes.
+ *   - The offset half is EMPIRICAL and it MOVES: 744.7 m is the worst over the
+ *     35-day corpus, re-measured 2026-08-15 (`lean/experiments/osm-buffer-sizing.mts`).
+ *     Queries land off-track because some passes ask at DERIVED points —
+ *     matched-path vertices and resolved station coordinates — not at fixes.
+ *     It read 428 m over 32 days when this was written, so do not quote a figure
+ *     from here without re-running the harness; the per-type table below carries
+ *     the current numbers and the reasoning for each.
  *
  * An empirical maximum is not a guarantee, which is why the row-set carries the
  * boxes it was built from and {@link queryIsCovered} is checked at every read.
