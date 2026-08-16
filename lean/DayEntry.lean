@@ -1,6 +1,7 @@
 import Verified
 import DayEntry.Wire
 import DayEntry.OsmHost
+import Verified.Geo.WalkMatchAdapt
 
 /-!
 # `DayEntry` — the day cascade's JSON boundary, and the C entry point
@@ -622,7 +623,12 @@ private def parseEnv (j : Json) : Except String Env := do
     walkEnv := {
       walkableRoads := DayEntry.OsmHost.walkableRoads
       buildingsNear := DayEntry.OsmHost.buildingsNear
-      matcher := fun _ _ _ => none
+      -- The real pedestrian matcher, through the quantisation adapter
+      -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so
+      -- under `verified_cli` — which links the empty stub — this is still the
+      -- shell's answer. It only becomes visible in a host that can answer
+      -- `walkableRoads`, which is the point.
+      matcher := Verified.Geo.WalkMatchAdapt.matcher
       reconstruct := fun _ _ _ _ => none
       refineMatched := fun _ _ => none
       correct := fun drawn _ _ _ => drawn

@@ -59,6 +59,36 @@ def decompose (x : Float) : Decomposed :=
   else
     { neg, m := frac + 0x10000000000000, e := Int.ofNat expo - 1075 }
 
+/-! ## `Math.round`
+
+A DIFFERENT rounding rule from `toFixed`, and the difference is not cosmetic:
+`Math.round` is round-half-toward-+∞ (`floor(y + 0.5)`), so `Math.round(-0.5)`
+is `-0` while `(-0.5).toFixed(0)` is `"-1"`. `toFixed` strips the sign before
+rounding and takes ties on the MAGNITUDE; `Math.round` does not. Reaching for
+the wrong one of these is a silent off-by-one on exactly half the ties.
+
+⚠ There are THIRTEEN private copies of this one-liner across `Verified/Geo`
+(RailReconcile, RailSnap, WalkAnnotate, SegmentMerge, StaySplit, CurrentPlace,
+UndergroundAnnotate, RailAbsorbers, OsmCorridor, WalkSmooth, Interchange x2,
+Segments). This is their home; new code should use it rather than add a
+fourteenth. Consolidating the existing thirteen is its own change — see the
+task, and do not fold it into an unrelated one. -/
+
+/-- `Math.round` — round half toward +∞. -/
+def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+
+/-- `Math.round` as an `Int`, the form callers building quantised coordinates
+want (`Interchange`'s `jsRoundInt`). -/
+def jsRoundInt (x : Float) : Int := (jsRound x).toInt64.toInt
+
+-- Ties go UP, not away from zero — the whole reason this is not `Float.round`.
+#guard jsRound 1.5 == 2
+#guard jsRound 2.5 == 3
+#guard jsRound (-2.5) == -2
+#guard jsRound (-0.5) == 0
+#guard jsRoundInt (-2.5) == -2
+#guard jsRoundInt 2.5 == 3
+
 /--
 The integer `n` of ECMA-262 21.1.3.3 step 10 for `|x|`: the integer closest to
 `|x| · 10^f`, ties going to the larger. Exact — no floating point is involved
