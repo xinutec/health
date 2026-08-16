@@ -101,7 +101,12 @@ fi
 #
 # 2026-05-14 asks 4 times. A day that asks ZERO cannot discriminate and must not
 # be the sentinel.
-if ! grep -qE 'osm: walkableRoads=[1-9]' "$REQ_DIR/host.err"; then
+# ASKS, not hits. The counter reads `hits/asked`, and this check runs without
+# `--osm`, so every lookup misses and hits are legitimately 0. What must be
+# nonzero is the number of times the fold REACHED the callback. Testing hits
+# here failed the moment the fixture path landed — a check measuring the wrong
+# half of its own instrument.
+if ! grep -qE 'osm: walkableRoads=[0-9]+/[1-9]' "$REQ_DIR/host.err"; then
 	cat "$REQ_DIR/host.err" >&2
 	echo "rust-host-check: the fold made no OSM callbacks on $DAY." >&2
 	echo "  Either the stub won the link again, or this day stopped asking." >&2

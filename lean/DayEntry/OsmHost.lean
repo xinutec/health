@@ -5,14 +5,19 @@ import Verified
 
 `PassFold.Env`'s `walkEnv`/`roadEnv` are declared shells, and `DayEntry`'s
 `UNFED` says why: their "street-network reads and search leaves are 4.31 MiB/day
-the wire measurement deliberately left shell-side". That number is the whole
-problem. The other six spatial lookups reach the fold through the REQUEST, grown
-by `day-serve.ts`'s round loop — ask, be told what was wanted, answer, re-run.
-That protocol carries point queries returning small records. It cannot carry
-4.31 MiB of road network and building polygon per day across 2-7 rounds.
+the wire measurement deliberately left shell-side".
 
-So these three are answered by CALLING instead of by shipping. Lean declares
-them `@[extern]`; whoever links the fold provides them:
+Stated precisely, because the loose version of this was wrong once. `OsmTrace`
+DOES carry `walkableRoads`, `buildingsNear` and `drivableRoads` sections — they
+exist for fixture capture — so it is not that the request could not hold them.
+What is true is narrower: `day-serve.ts`'s round loop does not answer them, and
+`UNFED` gives the reason as the wire cost of doing so, 4.31 MiB/day across the
+2-7 rounds the loop takes. That cost is an ASSERTION in a comment; nobody has
+measured it, because the shells answered empty before the ask could be recorded.
+
+Answering by CALLING sidesteps it either way, and — see the counters in
+`rust/day-shell/src/osm.rs` — finally makes the ask countable. Lean declares
+these `@[extern]`; whoever links the fold provides them:
 
   `verified_cli`      `osm-host-stub.c` — empty results, so the spawned CLI
                       keeps exactly the shell behaviour it has today.

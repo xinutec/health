@@ -28,70 +28,111 @@ use std::os::raw::c_char;
 use std::time::Instant;
 
 extern "C" {
-	fn health_shell_init() -> i32;
-	fn health_shell_day(input: *const c_char) -> *mut c_char;
-	fn health_shell_free(p: *mut c_char);
+    fn health_shell_init() -> i32;
+    fn health_shell_day(input: *const c_char) -> *mut c_char;
+    fn health_shell_free(p: *mut c_char);
 }
 
 /// Safe wrapper over the shim. Copies the answer into a `String` and hands the
 /// C buffer back immediately, so there is exactly one owner at any moment.
 fn day(input: &CString) -> String {
-	// SAFETY: `init` ran (checked by the caller below), `input` is a valid
-	// NUL-terminated C string that outlives the call, and the returned pointer is
-	// a `strdup`'d buffer this function frees before returning.
-	unsafe {
-		let p = health_shell_day(input.as_ptr());
-		assert!(!p.is_null(), "health_shell_day returned NULL");
-		let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-		health_shell_free(p);
-		s
-	}
+    // SAFETY: `init` ran (checked by the caller below), `input` is a valid
+    // NUL-terminated C string that outlives the call, and the returned pointer is
+    // a `strdup`'d buffer this function frees before returning.
+    unsafe {
+        let p = health_shell_day(input.as_ptr());
+        assert!(!p.is_null(), "health_shell_day returned NULL");
+        let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+        health_shell_free(p);
+        s
+    }
 }
 
 fn main() {
-	let repeat: usize = std::env::args()
-		.collect::<Vec<_>>()
-		.windows(2)
-		.find(|w| w[0] == "--repeat")
-		.and_then(|w| w[1].parse().ok())
-		.unwrap_or(1);
+    let repeat: usize = std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|w| w[0] == "--repeat")
+        .and_then(|w| w[1].parse().ok())
+        .unwrap_or(1);
 
-	let mut input = String::new();
-	std::io::stdin().read_to_string(&mut input).expect("read stdin");
-	// A day request has no interior NULs; if one appears, that is a corrupt
-	// request and not something to paper over by truncating at it.
-	let input = CString::new(input).expect("request contains an interior NUL byte");
+    // `--osm <file>` answers the fold's lookups from a captured day instead of
+    // with nothing. See `osm.rs`: a test instrument, not the production read.
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(w) = argv.windows(2).find(|w| w[0] == "--osm") {
+        match osm::load_fixture(&w[1]) {
+            Ok((roads, buildings)) => {
+                eprintln!("osm: loaded {roads} walkableRoads / {buildings} buildingsNear keys")
+            }
+            Err(e) => {
+                eprintln!("osm: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
 
-	let t_init = Instant::now();
-	// SAFETY: called exactly once, before any other entry point in the shim.
-	let rc = unsafe { health_shell_init() };
-	assert_eq!(rc, 0, "Lean runtime initialisation failed");
-	let init_ms = t_init.elapsed().as_secs_f64() * 1e3;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .expect("read stdin");
+    // A day request has no interior NULs; if one appears, that is a corrupt
+    // request and not something to paper over by truncating at it.
+    let input = CString::new(input).expect("request contains an interior NUL byte");
 
-	let mut out = String::new();
-	let mut per_call = Vec::with_capacity(repeat);
-	for _ in 0..repeat {
-		let t = Instant::now();
-		out = day(&input);
-		per_call.push(t.elapsed().as_secs_f64() * 1e3);
-	}
+    let t_init = Instant::now();
+    // SAFETY: called exactly once, before any other entry point in the shim.
+    let rc = unsafe { health_shell_init() };
+    assert_eq!(rc, 0, "Lean runtime initialisation failed");
+    let init_ms = t_init.elapsed().as_secs_f64() * 1e3;
 
-	println!("{out}");
+    let mut out = String::new();
+    let mut per_call = Vec::with_capacity(repeat);
+    for _ in 0..repeat {
+        let t = Instant::now();
+        out = day(&input);
+        per_call.push(t.elapsed().as_secs_f64() * 1e3);
+    }
 
-	// The fold's own lookups, which nothing could see before the host existed —
-	// the shells answered empty before the question could be recorded. Zero here
-	// means the matcher never asked, which is what the remaining five stubbed
-	// `walkEnv` leaves currently guarantee: `matcher` returns `none`, so nothing
-	// downstream of it ever reaches for a road or a building.
-	let (roads, buildings) = osm::take_counts();
-	eprintln!("osm: walkableRoads={roads} buildingsNear={buildings}");
+    println!("{out}");
 
-	// To stderr, so stdout stays diffable against `verified_cli day`.
-	if repeat > 1 {
-		let first = per_call[0];
-		let rest: f64 = per_call[1..].iter().sum::<f64>() / (repeat - 1) as f64;
-		eprintln!("init={init_ms:.1}ms first={first:.1}ms mean-after-first={rest:.1}ms n={repeat}");
-	} else {
-		eprintln!("init={init_ms:.1}ms call={:.1}ms", per_call[0]);
-	}
+    // The fold's own lookups, which nothing could see before the host existed —
+    // the shells answered empty before the question could be recorded. Zero here
+    // means the matcher never asked, which is what the remaining five stubbed
+    // `walkEnv` leaves currently guarantee: `matcher` returns `none`, so nothing
+    // downstream of it ever reaches for a road or a building.
+    // Hits and MISSES apart. An unanswered lookup returns empty, which is
+    // indistinguishable from "no roads here" — so a run with misses has not
+    // exercised the matcher however green it looks, and must say so.
+    let c = osm::take_counts();
+    eprintln!(
+        "osm: walkableRoads={}/{} buildingsNear={}/{} (hit/asked){}",
+        c.walkable_hits,
+        c.walkable_hits + c.walkable_misses,
+        c.buildings_hits,
+        c.buildings_hits + c.buildings_misses,
+        // A miss only MEANS something when there was something to hit. Without
+        // `--osm` every lookup misses by design, and warning about it there
+        // trains the reader to ignore the warning that matters.
+        if c.misses() > 0 && osm::have_trace() {
+            "  ⚠ MISSES"
+        } else {
+            ""
+        }
+    );
+    if c.asked() == 0 {
+        // Distinct from a miss, and a different finding: the matcher never
+        // reached for a road at all. That is what the five still-stubbed
+        // `walkEnv` leaves guarantee — `matcher` returns `none`, so nothing
+        // downstream of it looks anything up.
+        eprintln!("osm: the fold made no lookups at all");
+    }
+
+    // To stderr, so stdout stays diffable against `verified_cli day`.
+    if repeat > 1 {
+        let first = per_call[0];
+        let rest: f64 = per_call[1..].iter().sum::<f64>() / (repeat - 1) as f64;
+        eprintln!("init={init_ms:.1}ms first={first:.1}ms mean-after-first={rest:.1}ms n={repeat}");
+    } else {
+        eprintln!("init={init_ms:.1}ms call={:.1}ms", per_call[0]);
+    }
 }

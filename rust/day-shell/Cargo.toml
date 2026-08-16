@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[dependencies]
+# Reading a captured `OsmTrace` so the host can answer the fold's lookups with
+# REAL roads before the live reads exist. Test instrument, not the production
+# path — that one will read the OSM mirror directly.
+serde_json = "1"
+
 [build-dependencies]
 cc = "1"
