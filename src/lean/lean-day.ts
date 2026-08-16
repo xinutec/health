@@ -338,8 +338,25 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 	const depth = s.rounds.length === 0 ? "" : ` — rounds ${Math.min(...s.rounds)}-${Math.max(...s.rounds)}`;
 	const shells = s.shellOnly === 0 ? "" : ` — ${s.shellOnly} shell-only`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segDiffs}`;
+	// WHICH fields, not just how many — the same choice `lean-match` makes and
+	// for the same reason: "a reader adjudicating a production line has to be
+	// able to see what it was adjudicated against".
+	//
+	// It costs nothing until something diverges, and it is what makes the first
+	// host-backed run readable: `diffSegs` now measures a drawn field instead of
+	// excusing it, so these lines carry `walkMatchedPath drawn: 2/12 segments
+	// differ, worst 14.08 cm` — a magnitude to judge against the corpus envelope
+	// rather than a count to guess at.
+	//
+	// Bounded, because a genuinely broken day would otherwise print one line per
+	// field per day into a CronJob log. The count above is always exact; this is
+	// the sample.
+	const MAX_LINES = 8;
+	const lines = s.unexplained.slice(0, MAX_LINES);
+	const more = s.unexplained.length - lines.length;
+	const which = lines.length === 0 ? "" : ` — ${lines.join("; ")}${more > 0 ? ` (+${more} more)` : ""}`;
 	console.log(
-		`lean-day[${mode}] ${label}: ${verdict} (${s.calls} day(s), ${s.fails} failed)${depth}${shells}${detail}`,
+		`lean-day[${mode}] ${label}: ${verdict} (${s.calls} day(s), ${s.fails} failed)${depth}${shells}${detail}${which}`,
 	);
 	const verdictData: LedgerVerdict = {
 		tenant: "day",

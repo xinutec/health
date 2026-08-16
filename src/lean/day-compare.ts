@@ -16,6 +16,9 @@
  * is how a gate stops being a gate; read the provenance before touching it.
  */
 
+import { polylineDeviationM } from "../geo/leg-compare.js";
+import { floatFromBits } from "./float-bits.js";
+
 /** Fields no `Env` supplies, so the fold cannot produce them and a difference
  *  here is structural rather than a divergence.
  *
@@ -80,6 +83,48 @@ function segWhere(r: Record<string, unknown>): string | undefined {
 	return `${startTs}-${endTs}${typeof m === "string" ? ` ${m}` : ""}`;
 }
 
+/** A wire path (`[[latBits, lonBits, tsBits], …]`) as coordinates, or `null`
+ *  when the value is not one. */
+function asPath(v: unknown): Array<{ lat: number; lon: number }> | null {
+	if (!Array.isArray(v) || v.length === 0) return null;
+	const out: Array<{ lat: number; lon: number }> = [];
+	for (const p of v) {
+		if (!Array.isArray(p) || typeof p[0] !== "string" || typeof p[1] !== "string") return null;
+		out.push({ lat: floatFromBits(p[0]), lon: floatFromBits(p[1]) });
+	}
+	return out;
+}
+
+/**
+ * Which of three things a shelled field is doing on one segment.
+ *
+ * ⚠ THE EXCUSAL HAS TO BE CONDITIONAL NOW, and it was not. `SHELLED` names the
+ * three solver-geometry fields, and {@link classify} excused every difference in
+ * them by NAME — which was right for exactly as long as the Lean arm could not
+ * draw: `walkEnv`/`roadEnv` were stubs, so the only possible difference was
+ * "TS drew, Lean did not", and that is the shell.
+ *
+ * The fold can draw now (#959: it answers its own OSM lookups in-process, and
+ * `LEAN_DAY_HOST` ships it). An unconditional excusal therefore says
+ * "shell-only" about geometry BOTH arms produced and nobody compared — a green
+ * that means the gate stopped looking, which is the failure this whole gate
+ * exists to prevent. Same defect, same day, as `graftShells` preferring TS
+ * unconditionally.
+ *
+ *   `shell`   TS drew, Lean did not — the declared absence, still excused
+ *   `extra`   LEAN drew, TS did not — never a shell: nothing declares the fold
+ *             INVENTING geometry, and #395 rejects a null deviation under either
+ *             basis because there is no distance to bound
+ *   `drawn`   both drew — a real comparison, reported with its deviation
+ */
+function shelledKind(a: unknown, b: unknown): "shell" | "extra" | "drawn" {
+	const tsHas = a !== undefined && a !== null;
+	const leanHas = b !== undefined && b !== null;
+	if (tsHas && !leanHas) return "shell";
+	if (leanHas && !tsHas) return "extra";
+	return "drawn";
+}
+
 /** Field-by-field, so a divergence names the field rather than the segment. */
 export function diffSegs(want: readonly unknown[], got: readonly unknown[], sample?: Sample): string[] {
 	const out: string[] = [];
@@ -88,18 +133,41 @@ export function diffSegs(want: readonly unknown[], got: readonly unknown[], samp
 	}
 	const n = Math.min(want.length, got.length);
 	const counts = new Map<string, number>();
+	/** Worst polyline deviation seen per DRAWN field, in metres. */
+	const worst = new Map<string, number>();
 	for (let i = 0; i < n; i++) {
 		const a = want[i] as Record<string, unknown>;
 		const b = got[i] as Record<string, unknown>;
 		for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-			if (canon(a[k]) !== canon(b[k])) {
-				counts.set(k, (counts.get(k) ?? 0) + 1);
-				sample?.(k, i, a[k], b[k], segWhere(a));
+			if (canon(a[k]) === canon(b[k])) continue;
+			// A shelled field is only shelled while the fold leaves it alone; see
+			// `shelledKind`. The suffix is what carries that into `classify`,
+			// which splits on the field NAME and so must be handed a different
+			// name rather than a flag.
+			let key = k;
+			if (SHELLED.has(k)) {
+				const kind = shelledKind(a[k], b[k]);
+				if (kind === "drawn") {
+					key = `${k} drawn`;
+					const pa = asPath(a[k]);
+					const pb = asPath(b[k]);
+					if (pa !== null && pb !== null) {
+						worst.set(key, Math.max(worst.get(key) ?? 0, polylineDeviationM(pa, pb)));
+					}
+				} else if (kind === "extra") {
+					key = `${k} LEAN-ONLY`;
+				}
 			}
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+			sample?.(key, i, a[k], b[k], segWhere(a));
 		}
 	}
 	for (const [field, c] of [...counts].sort((x, y) => y[1] - x[1])) {
-		out.push(`${field}: ${c}/${n} segments differ`);
+		const dev = worst.get(field);
+		// Centimetres, because the class this measures is the 1e-7 degree
+		// quantisation and metres would print every one of them as "0.00".
+		const how = dev === undefined ? "" : `, worst ${(dev * 100).toFixed(2)} cm`;
+		out.push(`${field}: ${c}/${n} segments differ${how}`);
 	}
 	return out;
 }
