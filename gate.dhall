@@ -211,7 +211,7 @@ in  { name = "health"
           ]
         , timeout_s = 900
         }
-      , {-  A green gate has to mean the package this repo PUBLISHES still builds.
+      , {-  A green gate has to mean the packages this repo PUBLISHES still build.
 
             ⚠ NOT covered by `Lean verified core + decode parity` above, which
             runs `pnpm run lean-check` in the dev shell. `packages.verified-cli`
@@ -220,11 +220,25 @@ in  { name = "health"
             so BUILDING IT IS THE PROOF GATE. Running the proof in a dev shell
             and shipping a derivation nobody built is the gap this closes: the
             thing production consumes is the thing that has to be green.
+
+            `.#day-shell` joined it when the image started carrying the host
+            (#959) — for exactly the same reason, and it is a DIFFERENT build
+            from the dev one `the in-process Rust host agrees with the spawned
+            CLI` exercises: that check runs cargo in the dev shell against a
+            local `lake` tree, where this builds both halves inside a
+            sandboxed derivation with vendored crates. Either can break
+            without the other.
         -}
         G.Check::{
         , name = "the verified CLI packages (what the production image consumes)"
         , argv =
-            [ "nix", "build", "--no-warn-dirty", "--no-link", ".#verified-cli" ]
+            [ "nix"
+            , "build"
+            , "--no-warn-dirty"
+            , "--no-link"
+            , ".#verified-cli"
+            , ".#day-shell"
+            ]
         , timeout_s = 3600
         }
       , G.checkTable "../dev-lint"

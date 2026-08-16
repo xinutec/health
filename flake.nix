@@ -49,6 +49,51 @@
             cp .lake/build/bin/verified_cli $out/bin/
           '';
         };
+
+        # The in-process host (rust/day-shell), for the production image. Same
+        # stdin/stdout contract as verified-cli above, and the difference is the
+        # whole point: this one can ANSWER the fold's walkableRoads /
+        # buildingsNear / drivableRoads callbacks from the OSM mirror as it
+        # generates them, where a spawned pure function cannot (#959).
+        #
+        # ⚠ Both halves build HERE, in one derivation, and that is forced rather
+        # than chosen: `rust/day-shell/build.rs` reads its link line out of
+        # `lean/.lake/build/bin/verified_cli.rsp` — the file lake WROTE when it
+        # linked the CLI — instead of restating nine libraries and two store
+        # paths that move on every `nix flake update`. So the Lean build has to
+        # have happened in the same tree, and `verified-cli` above cannot be
+        # reused as an input: it exports the binary, not the `.rsp` or the
+        # static libs.
+        day-shell = pkgs.stdenv.mkDerivation (finalAttrs: {
+          name = "day-shell";
+          src = ./.;
+          # Cargo cannot reach the network inside a nix build, so the crates are
+          # vendored from rust/Cargo.lock. Bump the hash when a dependency
+          # changes; nix prints the correct one on mismatch. Vendored from
+          # `rust/` alone — the workspace and its lockfile are all the vendoring
+          # needs, and pointing it at the whole tree would re-fetch whenever an
+          # unrelated file changed.
+          cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
+            src = ./rust;
+            hash = "sha256-ocYOGJ/OJLqGPTInCXA9VhqGZKE80g7lcO1DMbIwV8s=";
+          };
+          cargoRoot = "rust";
+          nativeBuildInputs = [
+            pkgs.lean4
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rustPlatform.cargoSetupHook
+          ];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            (cd lean && lake build verified_cli DayEntry:static Verified:static)
+            (cd rust && cargo build --release --offline)
+          '';
+          installPhase = ''
+            mkdir -p $out/bin
+            cp rust/target/release/day-shell $out/bin/
+          '';
+        });
       });
     };
 }

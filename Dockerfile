@@ -8,10 +8,20 @@ FROM nixos/nix:latest AS lean-build
 WORKDIR /src
 COPY flake.nix flake.lock ./
 COPY lean/ lean/
+# rust/ too: `.#day-shell` below builds BOTH halves in one derivation, because
+# day-shell's build.rs reads its link line out of the .rsp lake writes when it
+# links verified_cli. See the flake.
+COPY rust/ rust/
 RUN nix --extra-experimental-features 'nix-command flakes' build .#verified-cli
 RUN mkdir -p /export/nix/store /export/bin && \
     cp -a $(nix-store -qR result) /export/nix/store/ && \
     install -m755 "$(readlink -f result)/bin/verified_cli" /export/bin/verified_cli
+# The in-process host. Same contract as verified_cli — byte for byte, which
+# scripts/rust-host-check.sh is the gate for — and additionally able to answer
+# the fold's OSM callbacks from the mirror while it runs (#959).
+RUN nix --extra-experimental-features 'nix-command flakes' build .#day-shell && \
+    cp -a $(nix-store -qR result) /export/nix/store/ && \
+    install -m755 "$(readlink -f result)/bin/day-shell" /export/bin/day-shell
 
 FROM node:24-alpine AS backend-build
 WORKDIR /app
@@ -47,6 +57,11 @@ COPY --from=frontend-build /app/dist/frontend/browser public/
 COPY --from=lean-build /export/nix/store /nix/store/
 COPY --from=lean-build /export/bin/verified_cli lean/verified_cli
 ENV LEAN_CLI=/app/lean/verified_cli
+# The day tenant's own binary, and a SEPARATE variable on purpose: LEAN_CLI is
+# read by lean-core, lean-hsmm and compare-match as well, and day-shell serves
+# the `day` mode only. See `cliPath()` in src/lean/lean-day.ts.
+COPY --from=lean-build /export/bin/day-shell lean/day-shell
+ENV LEAN_DAY_HOST=/app/lean/day-shell
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale
 # client/deploy is visible at a glance. Injected by .github/workflows/docker.yml.
 ARG GIT_SHA=dev

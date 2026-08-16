@@ -89,10 +89,34 @@ export function leanDayMode(): LeanDayMode {
  *  tightened without loosening a developer's gate. */
 const DAY_TENANT_TIMEOUT_MS = Number(process.env.LEAN_DAY_TIMEOUT_MS ?? 60_000);
 
-/** The same resolution `compare-day` uses, and the same `LEAN_CLI` override the
- *  rest of the bridge honours. */
+/**
+ * The binary this tenant spawns, most specific first.
+ *
+ * `LEAN_DAY_HOST` is `rust/day-shell` — the in-process host, which links the
+ * same Lean fold and speaks the same stdin/stdout contract (proved byte for
+ * byte by `scripts/rust-host-check.sh`) but can also ANSWER the fold's
+ * `walkableRoads` / `buildingsNear` / `drivableRoads` callbacks from the OSM
+ * mirror as they are generated. `verified_cli` structurally cannot: it is a
+ * spawned pure function, its externs resolve to `lean/c/osm-host-stub.c`, and a
+ * walking leg whose ways come back empty is skipped before any solver leaf
+ * runs. That is what `day-decode.ts` grafts the TS geometry back for (#959).
+ *
+ * ⚠ It is a SEPARATE variable rather than a change to `LEAN_CLI`, and that is
+ * not a preference. `LEAN_CLI` is read by `lean-core.ts`, `lean-hsmm.ts` and
+ * `compare-match.ts` as well, `Dockerfile` sets it for all of them, and
+ * `day-shell` serves the `day` mode ONLY — it ignores argv and reads a day
+ * request on stdin. Repointing the shared variable would break three tenants to
+ * fix one. `compare-day.ts`'s `DAY_HOST_BIN` is the same override under the
+ * gate's own name.
+ *
+ * Unset, this is exactly what it was: `LEAN_CLI`, else the local `lake` build.
+ */
 function cliPath(): string {
-	return process.env.LEAN_CLI ?? path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli");
+	return (
+		process.env.LEAN_DAY_HOST ??
+		process.env.LEAN_CLI ??
+		path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli")
+	);
 }
 
 interface DayStat {

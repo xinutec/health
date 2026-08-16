@@ -265,7 +265,8 @@
         "build",
         "--no-warn-dirty",
         "--no-link",
-        ".#verified-cli"
+        ".#verified-cli",
+        ".#day-shell"
       ],
       "cwd": ".",
       "env": {},
