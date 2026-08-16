@@ -13,10 +13,17 @@
  * literals that carry every optional field at once).
  */
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { EnrichedSegment } from "../src/geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../src/geo/episode-geometry.js";
-import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells } from "../src/lean/day-decode.js";
+import {
+	decodeEpisode,
+	decodeSeg,
+	decodeState,
+	graftEpisodes,
+	graftShells,
+	takeGrafted,
+} from "../src/lean/day-decode.js";
 import { encodeEpisode, encodeSeg, encodeState } from "../src/lean/fold-payload.js";
 import type { DayState } from "../src/sleep/day-state.js";
 
@@ -196,5 +203,40 @@ describe("the shells are grafted, and only where they are shells", () => {
 		const tsAnchor: EpisodeGeometry = { ...drawn, kind: "anchor" };
 		const leanRaw = raw(drawn);
 		expect(graftEpisodes([leanRaw], [tsAnchor])).toEqual([leanRaw]);
+	});
+
+	// #959 deletes both halves once this reads zero across live days, so the
+	// counter has to be trustworthy in both directions before it is evidence.
+	describe("counts what it took, so the deletion can be measured", () => {
+		beforeEach(() => {
+			takeGrafted();
+		});
+
+		it("counts a fill and a replaced episode", () => {
+			graftShells([leanSeg], [FULL_SEG]);
+			graftEpisodes([raw(drawn)], [drawn]);
+			expect(takeGrafted()).toEqual({ fields: 2, episodes: 1 });
+		});
+
+		it("counts NOTHING when the fold drew everything itself", () => {
+			graftShells([FULL_SEG], [FULL_SEG]);
+			graftEpisodes([drawn], [drawn]);
+			expect(takeGrafted()).toEqual({ fields: 0, episodes: 0 });
+		});
+
+		// A field TS does not have either is not a graft — otherwise every day
+		// with a segment neither arm drew would read as a counter-example and
+		// the deletion would never clear.
+		it("does not count a field that is absent on BOTH sides", () => {
+			const neither: EnrichedSegment = { ...FULL_SEG, walkMatchedPath: undefined, walkSmoothedPath: undefined };
+			graftShells([leanSeg], [neither]);
+			expect(takeGrafted().fields).toBe(0);
+		});
+
+		it("resets, so a count belongs to one day", () => {
+			graftShells([leanSeg], [FULL_SEG]);
+			takeGrafted();
+			expect(takeGrafted()).toEqual({ fields: 0, episodes: 0 });
+		});
 	});
 });

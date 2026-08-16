@@ -243,10 +243,40 @@ export function graftShells(
 		for (const k of SHELLED) {
 			if ((l as unknown as Record<string, unknown>)[k] !== undefined) continue;
 			const v = (ts[i] as unknown as Record<string, unknown>)[k];
-			if (v !== undefined) (out as Record<string, unknown>)[k] = v;
+			if (v !== undefined) {
+				(out as Record<string, unknown>)[k] = v;
+				grafted.fields += 1;
+			}
 		}
 		return out;
 	});
+}
+
+/**
+ * What the two grafts actually took from TS, so the claim "the graft is dead"
+ * can be a measurement instead of an inference (#959).
+ *
+ * Both halves were written for a fold that could not draw. The fold can draw
+ * now, which should leave nothing to graft — but "should" is what the shelled
+ * comments said for weeks after they stopped being true. The deletion is gated
+ * on this reading zero across live days, and a non-zero count is the
+ * counter-example that stops it.
+ *
+ * ⚠ It counts a REAL fill, not a visit: the branch is entered on every segment
+ * and only the assignment is evidence.
+ *
+ * Expect it to be non-zero without `LEAN_DAY_HOST` — `verified_cli` links the
+ * empty OSM stub, so the fold genuinely draws none and the graft is still
+ * load-bearing there. A count from that transport says nothing about the cron.
+ */
+const grafted = { fields: 0, episodes: 0 };
+
+/** Read the graft counters and reset them, so a count belongs to one day. */
+export function takeGrafted(): { fields: number; episodes: number } {
+	const out = { ...grafted };
+	grafted.fields = 0;
+	grafted.episodes = 0;
+	return out;
 }
 
 /**
@@ -267,5 +297,9 @@ export function graftEpisodes(
 ): EpisodeGeometry[] | undefined {
 	if (lean.length !== ts.length) return undefined;
 	const SOLVER = new Set(["matched", "smoothed"]);
-	return lean.map((l, i) => (SOLVER.has(ts[i].kind) && l.kind === "raw" ? ts[i] : l));
+	return lean.map((l, i) => {
+		if (!(SOLVER.has(ts[i].kind) && l.kind === "raw")) return l;
+		grafted.episodes += 1;
+		return ts[i];
+	});
 }

@@ -71,7 +71,7 @@ import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { DayState } from "../sleep/day-state.js";
 import { classify, diffEpisodes, diffSegs, type Sample } from "./day-compare.js";
-import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells } from "./day-decode.js";
+import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells, takeGrafted } from "./day-decode.js";
 import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
 import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
@@ -352,6 +352,15 @@ export async function serveLeanDay(
 
 	const segs = graftShells(res.segs.map(decodeSeg), ts.segs);
 	const episodes = graftEpisodes(res.episodes.map(decodeEpisode), ts.episodes);
+	// Read it here, not after the early return, or a count-mismatch day leaks
+	// its tally onto the next one.
+	const g = takeGrafted();
+	if (g.fields > 0 || g.episodes > 0) {
+		console.warn(
+			`lean-day[on] ${label}: GRAFTED ${g.fields} field(s) and ${g.episodes} ` +
+				`episode(s) from TS — the fold drew none there (#959)`,
+		);
+	}
 	if (segs === undefined || episodes === undefined) {
 		stats.fails += 1;
 		console.warn(
