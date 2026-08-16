@@ -43,14 +43,27 @@ import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanRailMode = "off" | "shadow" | "on";
+/**
+ * `solo` — no TS arm, no comparison, no fallback (#975). See
+ * `lean-gps-quality.ts` for the shared rationale.
+ *
+ * ⚠ This tenant is the first where `solo` is NOT measurement-blind. The
+ * referee check below — Lean's settled `dist` against `railPathCostQ` of
+ * Lean's OWN path — was never a TS-vs-Lean comparison; it checks the verified
+ * arm against the spec its proof is about. It needs no second arm and so
+ * SURVIVES the deletion. `solo` keeps counting `costDiffs`, and a non-zero
+ * count still means the bridge or the quantisation is wrong.
+ */
+export type LeanRailMode = "off" | "shadow" | "on" | "solo";
 
 export function leanRailMode(): LeanRailMode {
 	// The settings-UI master override wins over the env default when set.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
+	// Env-only, like the sibling tenants: dropping the fallback is a deployment
+	// decision, not something the settings toggle should be able to express.
 	const v = process.env.LEAN_RAIL;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 /** ×2²⁰ — the same quantisation scale `compare-rail` and the HSMM shadow use.
@@ -159,6 +172,36 @@ const eqPath = (a: readonly number[], b: readonly number[]): boolean =>
  * (`arm-timing.ts`) — the RATIO is what a flip decision turns on, and an
  * eagerly-evaluated argument had already finished before this was entered.
  */
+/**
+ * `solo`: the verified search alone (#975). No TS arm, no fallback — a bridge
+ * failure or an error response throws and the caller fails loudly.
+ *
+ * ⚠ **The referee check is KEPT, and it is the reason this solo is not blind.**
+ * `railPathCostQ(qadj, leanPath)` recomputes the cost of the path Lean returned
+ * and compares it to the distance Lean settled on. That is the verified arm
+ * against the spec its proof is about — not one implementation against another
+ * — so it needs no TS and means exactly as much here as it did under `on`. A
+ * non-zero `costDiffs` still says the bridge or the quantisation is wrong.
+ *
+ * `null` is a legitimate answer (no route), NOT a failure: `lean.none === true`
+ * is the search reporting the graph is disconnected between the endpoints, and
+ * turning that into a throw would fail every day with an unroutable leg.
+ */
+function soloPath(graph: RailGraph, from: number, to: number): number[] | null {
+	const qadj = quantiseRailAdj(graph.adj);
+	const lean = leanRailServe({ adj: qadj, src: from, dst: to });
+	if (lean.error !== undefined) {
+		stats.fails += 1;
+		throw new LeanBridgeError(`lean-rail[solo]: ${lean.error}`);
+	}
+	stats.calls += 1;
+	const leanPath = lean.none === true || lean.path === undefined ? null : lean.path;
+	if (leanPath !== null && lean.dist !== undefined && railPathCostQ(qadj, leanPath) !== lean.dist) {
+		stats.costDiffs += 1;
+	}
+	return leanPath;
+}
+
 export function shortestPathViaLean(
 	graph: RailGraph,
 	from: number,
@@ -166,6 +209,7 @@ export function shortestPathViaLean(
 	ts: () => number[] | null,
 ): number[] | null {
 	const mode = leanRailMode();
+	if (mode === "solo") return soloPath(graph, from, to);
 	if (mode === "off") return ts();
 	const tsPath = timeTsArm("rail", ts);
 
@@ -244,8 +288,23 @@ export function logLeanRailLedger(label: string): LedgerVerdict | null {
 	// search runs from the route-cache fill, and the corpus preloads
 	// `rail_route_cache`, so no search happens. Its gate is `compare-rail`, not
 	// golden — the corpus cannot speak for it either way.
+	//
+	// ⚠ `solo` reports the REFEREE, not agreement. `pathDiffs`/`nullFlips` are
+	// TS comparisons and are structurally zero there, so EXACT would be the usual
+	// vacuous green — but `costDiffs` is NOT vacuous: it survives the missing TS
+	// arm (see `soloPath`). So the verdict names what was actually checked, and a
+	// cost mismatch is still a failure rather than being folded into a word that
+	// implies a comparison nobody made.
 	const verdict =
-		s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.pathDiffs + s.nullFlips + s.costDiffs} DIVERGED`;
+		s.calls === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? s.costDiffs === 0
+					? `SOLO (no TS arm; ${s.calls} path(s) referee-checked)`
+					: `SOLO — ${s.costDiffs} COST MISMATCH`
+				: clean
+					? "EXACT"
+					: `${s.pathDiffs + s.nullFlips + s.costDiffs} DIVERGED`;
 	const detail = clean ? "" : ` — path=${s.pathDiffs} null=${s.nullFlips} cost=${s.costDiffs}`;
 	const legs =
 		divergences.length === 0
