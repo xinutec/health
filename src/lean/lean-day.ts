@@ -53,12 +53,15 @@
  * it is a reason to grade it at all.
  *
  * Two things it does NOT do, both deliberate. It does not delete the TS
- * cascade: the two solvers are shelled, so their drawn geometry is grafted back
- * from the TS run that still happens (`day-decode.ts`), and what deletes the TS
- * arm is the Rust shell — the roadmap puts that last on purpose. And it does not
- * serve through a failure: a bridge error, a non-convergent loop or a count
- * mismatch falls back to TS, counted and warned, the way `LEAN_STATIONCHAIN=on`
- * does.
+ * cascade — the TS run still happens, because the comparison above needs both
+ * arms and `day-decode.ts`'s graft still fills any field the fold left undrawn.
+ * ⚠ The solvers are NO LONGER SHELLED (2026-08-16): every `PassFold.Env` shell
+ * is filled and, under `LEAN_DAY_HOST`, the fold answers its own OSM lookups
+ * and DRAWS. So the graft is a backstop rather than the mechanism, and it is
+ * expected to fill nothing — health #959 is deleting it once a week of live
+ * days proves that count is zero. And it does not serve through a failure: a
+ * bridge error, a non-convergent loop or a count mismatch falls back to TS,
+ * counted and warned, the way `LEAN_STATIONCHAIN=on` does.
  */
 
 import { appendFileSync } from "node:fs";
@@ -132,9 +135,15 @@ interface DayStat {
 	 *  Structurally louder than a field difference: a count mismatch means the
 	 *  two cascades took different branches, not that one rounded differently. */
 	lenDiffs: number;
-	/** Days whose ONLY differences are the declared shells — the two solvers the
-	 *  fold is not fed. `day-gate` calls these SHELL ONLY and passes them; so does
-	 *  this, and counting them keeps EXACT from claiming more than it measured. */
+	/** Days whose ONLY differences are "TS drew, Lean did not" — `day-compare`'s
+	 *  `shell` class. `day-gate` calls these SHELL ONLY and passes them; so does
+	 *  this, and counting them keeps EXACT from claiming more than it measured.
+	 *
+	 *  ⚠ Since 2026-08-16 this should stay ZERO under `LEAN_DAY_HOST`: the shells
+	 *  are filled and the fold draws, so a non-zero count means the fold FAILED to
+	 *  draw something, not that it was never asked to. That inverts what the
+	 *  number means — it used to be the expected case and is now a finding. Seven
+	 *  live days measured 0. */
 	shellOnly: number;
 	/** Round depths seen — the staging cost this tenant is mostly made of. */
 	rounds: number[];
@@ -325,8 +334,8 @@ async function runLeanDay(
  * `undefined` on a bridge failure, a non-convergent round loop, or a count
  * mismatch at either boundary. The first two are the house pattern
  * (`lean-station-chain.ts`: serve TS, count it, say so loudly) and the third is
- * a limit of the graft rather than a policy — the solver geometry the fold is
- * not fed can only be put back positionally, and across differing counts that
+ * a limit of the graft rather than a policy — solver geometry the fold did not
+ * draw can only be put back positionally, and across differing counts that
  * would splice two days together rather than repair one.
  *
  * A FIELD divergence is served. That is the point of `on`: shadow already

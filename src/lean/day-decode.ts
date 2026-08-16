@@ -39,20 +39,28 @@
  *      fractional `ts` survives exactly (#420). It is the ROUNDING that would
  *      have been the loss here.
  *
- * # Why the shells are grafted rather than served
+ * # Why the graft exists, and why it is now a BACKSTOP
  *
- * `PassFold.Env.walkEnv` / `.roadEnv` are declared shells, so the Lean arm
- * writes no `walkMatchedPath` / `walkSmoothedPath` / `matchedPath` and its
- * episodes fall back to raw chords where a solver drew the TS ones
+ * ⚠ **The premise below changed on 2026-08-16. Read this before trusting any
+ * "the shells are empty" statement elsewhere.**
+ *
+ * `PassFold.Env.walkEnv` / `.roadEnv` USED to be declared shells, so the Lean
+ * arm wrote no `walkMatchedPath` / `walkSmoothedPath` / `matchedPath` and its
+ * episodes fell back to raw chords where a solver drew the TS ones
  * (`day-compare.ts`'s `SHELLED` and `SOLVER_KINDS`). Serving those verbatim
- * would not be "Lean's answer" — it would be a REGRESSION to undrawn geometry,
- * the exact user-visible loss #398 caused and the matcher gate now bounds.
+ * would not have been "Lean's answer" — it would have been a REGRESSION to
+ * undrawn geometry, the exact user-visible loss #398 caused.
  *
- * So the served day takes Lean's fields and grafts the TS run's solver output
- * back on, and that is a statement about what `on` means: the fold decides
- * everything it is fed, and the two solvers it is not fed still come from the
- * TS run that still happens. #431 gap 2 records why that is transport and not a
- * design choice — under one process there is no wire and no shell.
+ * Every shell is filled now, and under `LEAN_DAY_HOST` the fold answers its own
+ * OSM lookups and DRAWS. So the graft fills only where Lean drew NOTHING, and on
+ * seven live days it filled nothing at all (`shellOnly == 0` on every ledger
+ * line). It is a backstop against a fold that fails to draw, not the mechanism
+ * that makes `on` honest.
+ *
+ * It is still load-bearing for a caller WITHOUT the host: `verified_cli` links
+ * the empty OSM stub, so a leg with no ways is skipped before any solver leaf
+ * runs. Check the transport before deleting — health #959 tracks that removal
+ * and asks for a week of zero-fill evidence first.
  */
 
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
