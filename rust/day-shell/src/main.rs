@@ -38,7 +38,7 @@
 //! rest pay only the fold, and the gap between them is what a shared process
 //! buys over `converge`'s 2-7 spawns.
 
-mod osm;
+use day_shell::{mirror, osm};
 
 use std::ffi::{CStr, CString};
 use std::io::Read;
@@ -74,9 +74,25 @@ fn main() {
         .and_then(|w| w[1].parse().ok())
         .unwrap_or(1);
 
-    // `--osm <file>` answers the fold's lookups from a captured day instead of
-    // with nothing. See `osm.rs`: a test instrument, not the production read.
     let argv: Vec<String> = std::env::args().collect();
+
+    // `--osm-verify <trace>` does not run a fold at all: it reads every key the
+    // fixture holds from the MIRROR too and compares. That is how the Rust port
+    // of the three mirror queries is checked (#959) — against what the TS arm
+    // recorded for the same (lat, lon, radius), not against "it returned rows".
+    if let Some(w) = argv.windows(2).find(|w| w[0] == "--osm-verify") {
+        match osm::verify_against_mirror(&w[1]) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("verify: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // `--osm <file>` answers the fold's lookups from a captured day instead of
+    // from the mirror. See `osm.rs`: a test instrument, and it WINS over the
+    // mirror so that replaying a captured day reproduces that day.
     if let Some(w) = argv.windows(2).find(|w| w[0] == "--osm") {
         match osm::load_fixture(&w[1]) {
             Ok((roads, buildings)) => {
@@ -129,9 +145,10 @@ fn main() {
         c.drivable_hits,
         c.drivable_hits + c.drivable_misses,
         // A miss only MEANS something when there was something to hit. Without
-        // `--osm` every lookup misses by design, and warning about it there
-        // trains the reader to ignore the warning that matters.
-        if c.misses() > 0 && osm::have_trace() {
+        // `--osm` and without a mirror every lookup misses by design, and
+        // warning about it there trains the reader to ignore the warning that
+        // matters.
+        if c.misses() > c.mirror_reads && (osm::have_trace() || mirror::configured()) {
             "  ⚠ MISSES"
         } else {
             ""

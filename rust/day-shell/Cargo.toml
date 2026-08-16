@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+mysql = { version = "28.0.0", default-features = false, features = ["minimal"] }
 # Reading a captured `OsmTrace` so the host can answer the fold's lookups with
 # REAL roads before the live reads exist. Test instrument, not the production
 # path — that one will read the OSM mirror directly.

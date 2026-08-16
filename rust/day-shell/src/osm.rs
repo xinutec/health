@@ -1,18 +1,20 @@
 //! The host's half of `DayEntry.OsmHost` — the lookups the fold generates
 //! mid-run and a spawned process cannot answer.
 //!
-//! # Two sources, and only one of them is the destination
+//! # Three sources, in this order
 //!
-//! Empty by default: zero polylines, the same answer `c/osm-host-stub.c` gives
-//! the spawned CLI and the same one the `fun _ _ _ => #[]` shells gave before
-//! either existed. The fold's output is then unchanged, which is what makes the
-//! callback safe to have landed before it answers anything.
+//! 1. `--osm <file>` — a captured `OsmTrace`. A TEST instrument: it answers the
+//!    same keys the TS arm recorded on that day, so the two arms can be compared
+//!    on identical roads.
+//! 2. The OSM MIRROR, when `DB_HOST`/`DB_NAME` name one (`mirror.rs`). This is
+//!    the production answer.
+//! 3. Empty — zero polylines, the same answer `c/osm-host-stub.c` gives the
+//!    spawned CLI and the same one the `fun _ _ _ => #[]` shells gave before
+//!    either existed.
 //!
-//! With `--osm <file>`, a captured `OsmTrace` answers instead. That is a TEST
-//! instrument. The production path reads the OSM mirror — `osm-local.ts` reads
-//! it out of MariaDB — and is not written. The point of the fixture path is that
-//! the matcher can be exercised end to end, against the same roads the TS arm
-//! saw, before any of that exists.
+//! The fixture wins over the mirror deliberately: a replay of a captured day
+//! must reproduce that day, not whatever the mirror holds now. Both are counted
+//! apart, so a run cannot look answered when it was not.
 //!
 //! # Keys are matched as NUMBERS, never as strings
 //!
@@ -54,8 +56,10 @@ type Line = Vec<(f64, f64)>;
 /// Keying on the raw bit patterns was the first attempt, and it MISSED one of
 /// this day's four walkableRoads lookups:
 ///
-///     lat  4049c87656936f04 == 4049c87656936f04   bit-identical
-///     lon  bfd1d17f51558938 vs bfd1d17f51558937   1 ULP apart
+/// ```text
+/// lat  4049c87656936f04 == 4049c87656936f04   bit-identical
+/// lon  bfd1d17f51558938 vs bfd1d17f51558937   1 ULP apart
+/// ```
 ///
 /// That is not a bug in either arm. It is the divergence `Verified/Geo/
 /// Kalman.lean` measured across 32 golden days — `lat` bit-identical, `lon`
@@ -73,6 +77,7 @@ type Line = Vec<(f64, f64)>;
 ///
 /// Exact and quantised hits are still counted apart, so the ULP divergence
 /// stays visible rather than being absorbed here.
+///
 /// The radius rides in the key too, quantised at 1e-6 m rather than taken as a
 /// whole number: the walk disc is metres by the time it is read, but the road
 /// CORRIDOR radius is a `Float` the fetch passes through untouched (443.0 on
@@ -100,11 +105,23 @@ struct Way {
     coords: Line,
 }
 
+/// A key as the trace WROTE it, floats and all. The `HashMap` key is quantised
+/// (see [`Key`]) and cannot be turned back into a query, so `--osm-verify`
+/// needs the originals to ask the mirror the same question.
+struct RawKey {
+    section: String,
+    key: Key,
+    lat: f64,
+    lon: f64,
+    radius: f64,
+}
+
 #[derive(Default)]
 struct Trace {
     walkable: HashMap<Key, Vec<Line>>,
     buildings: HashMap<Key, Vec<Line>>,
     drivable: HashMap<Key, Vec<Way>>,
+    keys: Vec<RawKey>,
 }
 
 static TRACE: OnceLock<Trace> = OnceLock::new();
@@ -115,6 +132,9 @@ static BUILDINGS_HITS: AtomicU64 = AtomicU64::new(0);
 static BUILDINGS_MISSES: AtomicU64 = AtomicU64::new(0);
 static DRIVABLE_HITS: AtomicU64 = AtomicU64::new(0);
 static DRIVABLE_MISSES: AtomicU64 = AtomicU64::new(0);
+/// Lookups the MIRROR answered — counted apart from the fixture's hits, so a
+/// run cannot claim the fixture served it when the database did.
+static MIRROR_READS: AtomicU64 = AtomicU64::new(0);
 
 pub struct Counts {
     pub walkable_hits: u64,
@@ -123,6 +143,7 @@ pub struct Counts {
     pub buildings_misses: u64,
     pub drivable_hits: u64,
     pub drivable_misses: u64,
+    pub mirror_reads: u64,
 }
 
 impl Counts {
@@ -154,16 +175,24 @@ pub fn take_counts() -> Counts {
         buildings_misses: BUILDINGS_MISSES.swap(0, Ordering::Relaxed),
         drivable_hits: DRIVABLE_HITS.swap(0, Ordering::Relaxed),
         drivable_misses: DRIVABLE_MISSES.swap(0, Ordering::Relaxed),
+        mirror_reads: MIRROR_READS.swap(0, Ordering::Relaxed),
     }
 }
 
-/// `"51.56|-0.27|485"` → the numeric key. `None` on anything unparseable, which
-/// is a corrupt trace rather than a missing entry and should not be silent.
-fn parse_key(k: &str) -> Option<Key> {
+/// `"51.56|-0.27|485"` → its three numbers. `None` on anything unparseable,
+/// which is a corrupt trace rather than a missing entry and should not be
+/// silent.
+fn parse_key_floats(k: &str) -> Option<(f64, f64, f64)> {
     let mut it = k.split('|');
-    let lat: f64 = it.next()?.parse().ok()?;
-    let lon: f64 = it.next()?.parse().ok()?;
-    let r: f64 = it.next()?.parse().ok()?;
+    Some((
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    ))
+}
+
+fn parse_key(k: &str) -> Option<Key> {
+    let (lat, lon, r) = parse_key_floats(k)?;
     Some((quantise(lat), quantise(lon), quantise_r(r)))
 }
 
@@ -242,6 +271,27 @@ fn parse_rings(v: &serde_json::Value) -> Vec<Line> {
         .unwrap_or_default()
 }
 
+/// Every section's keys with their ORIGINAL numbers, for `--osm-verify`.
+fn raw_keys(root: &serde_json::Value) -> Vec<RawKey> {
+    let mut out = Vec::new();
+    for name in ["walkableRoads", "buildingsNear", "drivableRoads"] {
+        let Some(o) = root
+            .get("inputs")
+            .and_then(|i| i.get("osmTrace"))
+            .and_then(|t| t.get(name))
+            .and_then(|s| s.as_object())
+        else {
+            continue;
+        };
+        for k in o.keys() {
+            if let (Some((lat, lon, radius)), Some(key)) = (parse_key_floats(k), parse_key(k)) {
+                out.push(RawKey { section: name.to_owned(), key, lat, lon, radius });
+            }
+        }
+    }
+    out
+}
+
 fn section<T>(
     root: &serde_json::Value,
     name: &str,
@@ -264,11 +314,13 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
-    let t = Trace {
+    let mut t = Trace {
         walkable: section(&root, "walkableRoads", parse_ways),
         buildings: section(&root, "buildingsNear", parse_rings),
         drivable: section(&root, "drivableRoads", parse_way_records),
+        keys: Vec::new(),
     };
+    t.keys = raw_keys(&root);
     let n = (t.walkable.len(), t.buildings.len());
     // An empty trace would answer every lookup with a miss, which reads like a
     // disagreeing fold rather than a fixture without the sections. Say so here,
@@ -305,6 +357,100 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     }
     let _ = TRACE.set(t);
     Ok(n)
+}
+
+/// `--osm-verify <trace>`: read every key the fixture holds from the MIRROR too,
+/// and compare. Exit code is the verdict.
+///
+/// This is how the Rust port of `queryWalkableRoads` / `queryBuildingsNear` /
+/// `queryDrivableRoads` is checked (#959): not by "it returned rows", but
+/// against what the TS arm recorded for the SAME (lat, lon, radius). Same
+/// count, same order, same vertices.
+///
+/// ⚠ A mismatch is not automatically a port defect. The mirror is LIVE and a
+/// captured day is a snapshot: OSM edits between capture and now move real
+/// vertices. So run this on the most recently captured day available, and read
+/// a difference as "one of these two things" rather than as a verdict on the
+/// port. A difference in COUNT ORDER or in the subtype set is the port; a
+/// handful of moved vertices on one way is the world.
+pub fn verify_against_mirror(path: &str) -> Result<(), String> {
+    load_fixture(path)?;
+    let t = TRACE.get().ok_or("no trace")?;
+    let mut checked = 0usize;
+    let mut mismatched = 0usize;
+
+    let mut report = |label: &str, k: &RawKey, want: usize, got: usize, detail: String| {
+        checked += 1;
+        if !detail.is_empty() {
+            mismatched += 1;
+            eprintln!(
+                "verify: {label} ({:.7}, {:.7}, {}) fixture={want} mirror={got} — {detail}",
+                k.lat, k.lon, k.radius
+            );
+        }
+    };
+
+    for k in &t.keys {
+        match k.section.as_str() {
+            "walkableRoads" => {
+                let want = t.walkable.get(&k.key).cloned().unwrap_or_default();
+                let got: Vec<Line> = crate::mirror::walkable_roads(k.lat, k.lon, k.radius)
+                    .into_iter()
+                    .map(|w| w.coords)
+                    .collect();
+                let d = diff_lines(&want, &got);
+                report("walkableRoads", k, want.len(), got.len(), d);
+            }
+            "buildingsNear" => {
+                let want = t.buildings.get(&k.key).cloned().unwrap_or_default();
+                let got = crate::mirror::buildings_near(k.lat, k.lon, k.radius);
+                let d = diff_lines(&want, &got);
+                report("buildingsNear", k, want.len(), got.len(), d);
+            }
+            "drivableRoads" => {
+                let want: Vec<Line> = t
+                    .drivable
+                    .get(&k.key)
+                    .map(|ws| ws.iter().map(|w| w.coords.clone()).collect())
+                    .unwrap_or_default();
+                let got: Vec<Line> = crate::mirror::drivable_roads(k.lat, k.lon, k.radius)
+                    .into_iter()
+                    .map(|w| w.coords)
+                    .collect();
+                let d = diff_lines(&want, &got);
+                report("drivableRoads", k, want.len(), got.len(), d);
+            }
+            _ => {}
+        }
+    }
+
+    eprintln!("verify: {checked} key(s) checked, {mismatched} mismatched");
+    if mismatched == 0 {
+        Ok(())
+    } else {
+        Err(format!("{mismatched} of {checked} key(s) differ"))
+    }
+}
+
+/// The first thing that differs, named. Empty string means identical.
+fn diff_lines(want: &[Line], got: &[Line]) -> String {
+    if want.len() != got.len() {
+        return "different polyline COUNT".to_owned();
+    }
+    for (i, (a, b)) in want.iter().zip(got).enumerate() {
+        if a.len() != b.len() {
+            return format!("polyline {i}: {} vertices vs {}", a.len(), b.len());
+        }
+        for (j, (p, q)) in a.iter().zip(b).enumerate() {
+            if p != q {
+                return format!(
+                    "polyline {i} vertex {j}: ({:.7}, {:.7}) vs ({:.7}, {:.7})",
+                    p.0, p.1, q.0, q.1
+                );
+            }
+        }
+    }
+    String::new()
 }
 
 /// Encode polylines in `DayEntry.OsmHost`'s wire format: a little-endian `u32`
@@ -419,6 +565,32 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     lon.to_bits()
                 );
             }
+            // No fixture entry. The MIRROR is the production answer, and it is
+            // only consulted here — after the fixture — so replaying a captured
+            // day reproduces THAT day rather than whatever the mirror holds now.
+            //
+            // A mirror read that finds nothing is still counted a miss above,
+            // and correctly: a walk over an area the mirror does not cover is
+            // exactly the case that must not read as "there are no roads here".
+            if crate::mirror::configured() {
+                let lines: Vec<Line> = if which {
+                    crate::mirror::walkable_roads(lat, lon, radius)
+                        .into_iter()
+                        .map(|w| w.coords)
+                        .collect()
+                } else {
+                    crate::mirror::buildings_near(lat, lon, radius)
+                };
+                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                if std::env::var_os("OSM_LOG").is_some() {
+                    eprintln!(
+                        "osm: MIRROR {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s)",
+                        section_name(which),
+                        lines.len()
+                    );
+                }
+                return answer(&lines);
+            }
             answer(&[])
         }
     }
@@ -450,6 +622,26 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     lon.to_bits()
                 );
             }
+            if crate::mirror::configured() {
+                let ways: Vec<Way> = crate::mirror::drivable_roads(lat, lon, radius)
+                    .into_iter()
+                    .map(|w| Way {
+                        osm_id: w.osm_id,
+                        name: w.name,
+                        subtype: w.subtype,
+                        coords: w.coords,
+                    })
+                    .collect();
+                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                if std::env::var_os("OSM_LOG").is_some() {
+                    eprintln!(
+                        "osm: MIRROR drivableRoads lat={lat:.17} lon={lon:.17} r={radius} \
+                         -> {} way(s)",
+                        ways.len()
+                    );
+                }
+                return hand_over(&encode_ways(&ways));
+            }
             hand_over(&encode_ways(&[]))
         }
     }
@@ -457,8 +649,16 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
 
 /// Called by Lean with an owned boxed `Int`, released here. Returns an owned
 /// `ByteArray` Lean takes ownership of.
+///
+/// `unsafe` because it is: `radius_m` must be a live `lean_object *`, and this
+/// releases it. That was true before these moved into the library too — making
+/// them public is what let clippy say so. Lean's `@[extern]` call is unaffected;
+/// the C ABI does not know the difference.
+///
+/// # Safety
+/// `radius_m` must be a live boxed Lean `Int` this function may consume.
 #[no_mangle]
-pub extern "C" fn health_osm_walkable_roads(
+pub unsafe extern "C" fn health_osm_walkable_roads(
     lat: f64,
     lon: f64,
     radius_m: *mut c_void,
@@ -474,8 +674,11 @@ pub extern "C" fn health_osm_walkable_roads(
 }
 
 /// As [`health_osm_walkable_roads`].
+///
+/// # Safety
+/// `radius_m` must be a live boxed Lean `Int` this function may consume.
 #[no_mangle]
-pub extern "C" fn health_osm_buildings_near(
+pub unsafe extern "C" fn health_osm_buildings_near(
     lat: f64,
     lon: f64,
     radius_m: *mut c_void,
