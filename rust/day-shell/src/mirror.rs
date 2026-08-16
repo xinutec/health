@@ -112,6 +112,16 @@ static POOL: std::sync::OnceLock<Option<Pool>> = std::sync::OnceLock::new();
 /// reads in `src/config.ts:72`. Absent host or database means "no mirror
 /// configured", which is not an error: it is the fixture-only and stub cases,
 /// and they must keep working.
+///
+/// ⚠ DELIBERATELY NOT the TS's defaults, and this is the one place the two
+/// disagree on purpose. `config.ts` defaults `host` to `health-db` and
+/// `database` to `health`, because a server that cannot reach its database has
+/// nothing to do. This has plenty to do without one — answer empty, count the
+/// miss, let the fold draw raw — so defaulting would turn every dev-shell run
+/// into a DNS timeout per lookup for a host that does not resolve. Both are set
+/// in the production pod (checked against the live CronJob), so the difference
+/// never shows there. `DB_PORT` DOES default, to the same 3306, because a port
+/// is not evidence of intent the way a hostname is.
 fn opts() -> Option<Opts> {
     let host = std::env::var("DB_HOST").ok()?;
     let database = std::env::var("DB_NAME").ok()?;
