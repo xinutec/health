@@ -124,6 +124,19 @@
         "develop",
         "--no-warn-dirty",
         "--command",
+        "scripts/rust-host-check.sh"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "the in-process Rust host agrees with the spawned CLI",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
         "pnpm",
         "run",
         "lint"

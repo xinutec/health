@@ -127,6 +127,25 @@ in  { name = "health"
         , argv = G.inDevShell [ "scripts/day-gate-smoke.sh" ]
         , timeout_s = 600
         }
+      , {-  `rust/day-shell` calls the SAME Lean fold in-process that
+            `verified_cli day` is spawned for, and the entire argument for it is
+            that the two answers are identical. That is a third arm computing the
+            day, and every silent drift this repository has had came from a
+            second copy with no check between the copies (#444, `feefb75`, the
+            frontend unions).
+
+            Builds it, runs clippy at `-D warnings`, then diffs the two answers
+            byte for byte on a real day. Verified RED as well as green: a change
+            to the export that leaves `Day.dayResult` alone fails it.
+
+            Skips the equivalence out loud when the gitignored corpus is absent —
+            build and clippy still run — so this passes on a clean checkout.
+        -}
+        G.Check::{
+        , name = "the in-process Rust host agrees with the spawned CLI"
+        , argv = G.inDevShell [ "scripts/rust-host-check.sh" ]
+        , timeout_s = 1800
+        }
       , G.Check::{
         , name = "lint (biome, backend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]
