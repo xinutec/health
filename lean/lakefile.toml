@@ -11,9 +11,12 @@ name = "Verified"
 name = "verified_cli"
 root = "Main"
 
-# `Main` as a LIBRARY as well as an exe root (#952). The exe is unchanged and
-# still the thing the TS bridge spawns; this additionally emits
-# `libverified_Main.a` so a host process can link the fold in and call
-# `health_day_result` through the C ABI instead of paying the spawn.
+# The day entry point as a LIBRARY (#952), so a host process can link the fold
+# in and call `health_day_result` through the C ABI instead of paying a spawn.
+#
+# It is `DayEntry` and not `Main` because a lean_exe's root module also emits
+# `main`, and an archive carrying `_main` wins the link in a foreign host
+# silently — it built, ran and printed well-formed JSON from the WRONG entry
+# point. `DayEntry` defines no `main`, so there is nothing to collide.
 [[lean_lib]]
-name = "Main"
+name = "DayEntry"

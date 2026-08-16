@@ -15,20 +15,21 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* Emitted by `@[export health_day_result]` in lean/Main.lean. Takes an owned
+/* Emitted by `@[export health_day_result]` in lean/DayEntry.lean. Takes an owned
  * Lean string, returns an owned Lean string. */
 extern lean_object *health_day_result(lean_object *input);
 
 /* Lake generates one of these per module, named after the PACKAGE and the
- * module: the package is `verified`, so `Main` becomes `initialize_verified_Main`.
- * `Main` transitively initialises `Verified`, so this is the only one to call.
+ * module: the package is `verified`, so the `DayEntry` library's is
+ * `initialize_verified_DayEntry`. It transitively initialises `Verified`, so it
+ * is the only one to call.
  *
  * It takes `builtin` alone — no world argument. Neither the name nor the arity
  * is guessable, and both were wrong on the first attempt here; they are read off
  * `lean/.lake/build/ir/Main.c`, which is the generated `main` this function is a
  * copy of. If a toolchain bump breaks this, diff against that file again rather
  * than reasoning about what the signature ought to be. */
-extern lean_object *initialize_verified_Main(uint8_t builtin);
+extern lean_object *initialize_verified_DayEntry(uint8_t builtin);
 
 /* Declared here because <lean/lean.h> does not declare it — Lean's own generated
  * `main` forward-declares it the same way. It lives in libleancpp. */
@@ -47,7 +48,7 @@ void lean_initialize(void);
  * until the day some pass did. */
 int health_shell_init(void) {
 	lean_initialize();
-	lean_object *res = initialize_verified_Main(1 /* builtin */);
+	lean_object *res = initialize_verified_DayEntry(1 /* builtin */);
 	lean_io_mark_end_initialization();
 	if (!lean_io_result_is_ok(res)) {
 		lean_io_result_show_error(res);
