@@ -29,6 +29,7 @@
  */
 
 import { polylineDeviationM } from "../geo/leg-compare.js";
+import { DETAIL_TOLERANCE_M } from "../geo/map-match-core.js";
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaFingerprint, deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
@@ -492,4 +493,59 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 	resetLeanPassStats();
 	resetArmPair("geo");
 	return out;
+}
+
+/**
+ * Route-detail splice through the verified core (`qSplice`, op `splice`).
+ *
+ * ⚠ **This op had NO A/B until 2026-08-16, and it is where the first live day
+ * diverged.** `simplify`, `spurs`, `spikes`, `trim` and `despike` were all
+ * compared and all read EXACT on every live day; `splice` was not compared at
+ * all, and 2026-08-11 shipped a 2.55 m out-and-back spur that the Lean arm
+ * keeps and the TS arm excises (#749). The uncompared op is the one that broke,
+ * which is the argument for this function existing rather than for the fix
+ * alone.
+ *
+ * ⚠ **Not drop-only, unlike every other pass here.** Splice ADDS vertices
+ * carried back from the route, so the result is not a subsequence of the input
+ * and `subsequenceKept` cannot recover it. `on` mode therefore materialises the
+ * Lean rows directly — which is faithful, because the TS splice also emits
+ * fresh `{lat, lon, ts}` objects rather than the input ones.
+ *
+ * `tol` is the per-chord depth FLOOR and `drop` the ceiling, both micro-metres
+ * on the wire, matching the two numbers `qMatchWalkSegment` passes.
+ */
+export function spliceViaLean<P extends LatLonTs>(
+	coarse: readonly P[],
+	route: readonly P[],
+	dropM: number,
+	ts: () => P[],
+): P[] {
+	const mode = leanPassMode();
+	if (mode === "off" || coarse.length < 2 || route.length < 2) return ts();
+	const tsResult = timeTsArm("geo", ts);
+	let leanRows: number[][];
+	try {
+		leanRows =
+			leanGeo({
+				op: "splice",
+				coarse: rows(coarse),
+				route: rows(route),
+				tol: Math.round(DETAIL_TOLERANCE_M * 1e6),
+				drop: Math.round(dropM * 1e6),
+			}).pts ?? [];
+	} catch (e) {
+		if (!(e instanceof LeanBridgeError)) throw e;
+		recordFail("splice");
+		return tsResult;
+	}
+	const diverged = !eqRows(rows(tsResult), leanRows);
+	recordCall("splice", diverged);
+	if (diverged) {
+		const note = `ts=${tsResult.length} lean=${leanRows.length} verts`;
+		recordDivergence("splice", coarse.length, note);
+		if (mode === "shadow") console.warn(`[lean-passes] splice divergence (n=${coarse.length}): ${note}`);
+	}
+	if (mode !== "on") return tsResult;
+	return leanRows.map((r) => ({ lat: r[0] / 1e7, lon: r[1] / 1e7, ts: r[2] }) as unknown as P);
 }

@@ -23,7 +23,7 @@
  * to fall back to the pedestrian smoother, never to invent an on-pavement path.
  */
 
-import { despikeViaLean, trimViaLean } from "../lean/lean-passes.js";
+import { despikeViaLean, spliceViaLean, trimViaLean } from "../lean/lean-passes.js";
 import {
 	despikeUnsupportedApexes,
 	type MatchProfile,
@@ -118,5 +118,10 @@ export function matchWalkSegment(
 	const cleaned = despikeViaLean(trimmed, fixes, () => despikeUnsupportedApexes(trimmed, fixes));
 	// Then carry the way geometry back into the surviving chords (#369) — pure
 	// curve fidelity; every deliberate excision above stays excised.
-	return { path: spliceRouteDetail(cleaned, result.routeDetail, profile.simplifyToleranceM), coarsePath: cleaned };
+	return {
+		path: spliceViaLean(cleaned, result.routeDetail, profile.simplifyToleranceM, () =>
+			spliceRouteDetail(cleaned, result.routeDetail, profile.simplifyToleranceM),
+		),
+		coarsePath: cleaned,
+	};
 }

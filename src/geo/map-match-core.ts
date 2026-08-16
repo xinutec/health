@@ -1543,8 +1543,12 @@ export function removeSpurs(pts: readonly MatchedPoint[], returnM: number, maxSp
 }
 
 /** A curve deeper than this (m, per chord) is drawn as its way geometry rather
- *  than a straight chord — see {@link spliceRouteDetail}. */
-const DETAIL_TOLERANCE_M = 1.5;
+ *  than a straight chord — see {@link spliceRouteDetail}.
+ *
+ *  Exported because the Lean twin takes it as an ARGUMENT (`qSplice`'s `tol`)
+ *  where this file keeps it a constant, so the A/B has to pass the same number
+ *  rather than restate it. */
+export const DETAIL_TOLERANCE_M = 1.5;
 
 /**
  * Carry the route's way geometry back into a cleaned matched line (#369): for
