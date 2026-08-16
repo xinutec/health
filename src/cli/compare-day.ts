@@ -209,7 +209,7 @@ function sample(label: string, index: number, a: unknown, b: unknown, where?: st
 }
 
 /**
- * Wrap the five spatial lookups so every answer this run gives is recorded,
+ * Wrap the spatial lookups so every answer this run gives is recorded,
  * keyed exactly as `RecordingOsmAdapter` keys them (`lat|lon|radius`, the radius
  * empty when the caller passed none) so `fold-payload.ts` reads it unchanged.
  *
@@ -234,6 +234,30 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 		reverseGeocode: {},
 		nearbyTransitStops: {},
 		stationsOnLine: fixture.stationsOnLine,
+		// The three BULK readers, recorded as of the host callbacks (#952). They
+		// were absent while `walkEnv`/`roadEnv` were shells and nothing in the
+		// Lean arm could ask for them.
+		//
+		// Recorded rather than copied from the fixture, for the reason this
+		// function's header gives about `reverseGeocode`: golden replays with
+		// `osmSource: "rows"`, so the TS arm answers from a `RowSetOsmAdapter`
+		// computing over raw rows while a fixture trace is a fixed record from
+		// an older capture. Nothing should be able to hand the two arms
+		// different roads and let it read as a difference in the algorithm.
+		//
+		// ⚠ IT WAS NOT THE CAUSE OF ANYTHING, and this is recorded because the
+		// negative result is worth as much as the change. On 2026-05-14 the
+		// host draws 97 vertices on a leg TS leaves bare and draws nothing on a
+		// leg TS gives 53, and the obvious explanation was a stale oracle.
+		// Checked: the fixture's four `walkableRoads` answers and this run's
+		// recorded four are BYTE-IDENTICAL — same keys, same 13676/5389/721/821
+		// way counts. Switching to the recorded set changed the verdict not at
+		// all. Those two legs are a REAL difference between the float and
+		// quantised matchers, and the oracle is now ruled out as a suspect
+		// rather than merely assumed innocent.
+		walkableRoads: {},
+		buildingsNear: {},
+		drivableRoads: {},
 	};
 	const key = (lat: number, lon: number, r: number | undefined): string => `${lat}|${lon}|${r ?? ""}`;
 	const osm = inputs.osm;
@@ -268,6 +292,24 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 		(rec.nearbyTransitStops as Record<string, unknown>)[key(lat, lon, r)] = v;
 		return v;
 	};
+	const walkable = osm.walkableRoads.bind(osm);
+	osm.walkableRoads = async (lat, lon, r?) => {
+		const v = await walkable(lat, lon, r);
+		(rec.walkableRoads as Record<string, unknown>)[key(lat, lon, r)] = v;
+		return v;
+	};
+	const buildings = osm.buildingsNear.bind(osm);
+	osm.buildingsNear = async (lat, lon, r?) => {
+		const v = await buildings(lat, lon, r);
+		(rec.buildingsNear as Record<string, unknown>)[key(lat, lon, r)] = v;
+		return v;
+	};
+	const drivable = osm.drivableRoads.bind(osm);
+	osm.drivableRoads = async (lat, lon, r?) => {
+		const v = await drivable(lat, lon, r);
+		(rec.drivableRoads as Record<string, unknown>)[key(lat, lon, r)] = v;
+		return v;
+	};
 	const geo = osm.reverseGeocode.bind(osm);
 	osm.reverseGeocode = async (lat, lon, zoom?) => {
 		const v = await geo(lat, lon, zoom);
@@ -275,6 +317,29 @@ function recordingOsm(inputs: ClassificationInputs, fixture: OsmTrace): OsmTrace
 		return v;
 	};
 	return rec;
+}
+
+/**
+ * The lookups THIS RUN recorded, written where the host can read them.
+ *
+ * NOT the fixture's `osmTrace`, which was the first thing tried and is the
+ * defect this file's own header describes (#428): golden replays with
+ * `osmSource: "rows"`, so the TS arm answers from a `RowSetOsmAdapter` that
+ * COMPUTES over raw OSM rows and can answer any coordinate, while a captured
+ * trace is a fixed record from an older capture. Handing the fold the trace
+ * gives it a strictly smaller and possibly staler oracle than the arm it is
+ * being compared against, and then a difference in the ANSWERS reads as a
+ * difference in the ALGORITHM.
+ *
+ * Measured, which is why this exists: on 2026-05-14 the trace-fed host drew a
+ * 97-vertex path on a leg where TS drew none, and drew none on a leg where TS
+ * drew 53. Both arms hit every lookup — so it was never a miss, it was two
+ * different sets of roads.
+ */
+function osmForHost(dir: string, trace: OsmTrace): string {
+	const p = path.join(dir, "osm-answers.json");
+	writeFileSync(p, JSON.stringify({ inputs: { osmTrace: trace } }));
+	return p;
 }
 
 async function measure(file: string): Promise<Outcome> {
@@ -316,11 +381,12 @@ async function measure(file: string): Promise<Outcome> {
 	if (process.env.DAY_REQ_DUMP !== undefined) {
 		const dir = process.env.DAY_REQ_DUMP;
 		mkdirSync(dir, { recursive: true });
+		writeFileSync(path.join(dir, `${cap.date}-osm.json`), JSON.stringify(answers));
 		writeFileSync(path.join(dir, `${cap.date}.json`), request);
 	}
 	let raw: string;
 	try {
-		raw = execFileSync(HOST_BIN ?? CLI, HOST_BIN ? ["--osm", path.join(DAYS_DIR, file)] : ["day"], {
+		raw = execFileSync(HOST_BIN ?? CLI, HOST_BIN ? ["--osm", osmForHost(capDir, answers)] : ["day"], {
 			input: request,
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
@@ -401,6 +467,20 @@ async function measure(file: string): Promise<Outcome> {
 	// under it, and reading them the other way round would attribute a
 	// correction's defect to a pass.
 	const pre = diffSegs(cap.segsIn.map(encodeSeg), res.segsMid ?? [], sample).map((d) => `pre.${d}`);
+	// The OTHER half of `DAY_REQ_DUMP`: the TS arm's answer, in the same wire
+	// shape the Lean arm returns. Without it a divergence can be SEEN here and
+	// not attributed anywhere else — the request alone lets you re-run the fold,
+	// but not compare what came back to what should have.
+	if (process.env.DAY_REQ_DUMP !== undefined) {
+		writeFileSync(
+			path.join(process.env.DAY_REQ_DUMP, `${cap.date}-ts.json`),
+			JSON.stringify({
+				segs: cap.segsOut.map(encodeSeg),
+				states: (cap.statesOut ?? []).map(encodeState),
+				episodes: (cap.episodesOut ?? []).map(encodeEpisode),
+			}),
+		);
+	}
 	const diffs = diffSegs(cap.segsOut.map(encodeSeg), res.segs ?? [], sample);
 	// The stages after the fold, compared in the same call and on the same terms.
 	// Prefixed so a `place` difference in the timeline is not confused with one in
