@@ -11,6 +11,10 @@
  *   shadow — run BOTH, SERVE the TS track, compare bit-exact, record.
  *   on     — run BOTH, SERVE the verified track, still compare and record.
  *            Fall back to TS on any bridge failure.
+ *   solo   — run ONLY the verified filter. No comparison, and NO FALLBACK: a
+ *            bridge failure throws and the day fails (#975). This is the mode
+ *            that lets the TS filter be deleted; the other three all keep it
+ *            alive by calling it.
  *
  * Its own flag, for the same reason `LEAN_RAIL` is separate from `LEAN_MATCH`:
  * each tenant's soak is its own decision.
@@ -67,14 +71,19 @@ import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanKalmanMode = "off" | "shadow" | "on";
+/** `solo` — no TS arm, no comparison, no fallback. See `lean-gps-quality.ts`
+ *  for the full rationale (#975); it applies verbatim here, and this tenant has
+ *  the simpler shape: no small-input guard to audit, only the mode. */
+export type LeanKalmanMode = "off" | "shadow" | "on" | "solo";
 
 export function leanKalmanMode(): LeanKalmanMode {
 	// The settings-UI master override wins over the env default when set.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
+	// `solo` is env-only: the UI toggle means "use the verified core", and
+	// deleting the fallback is a deployment decision, not a UI preference.
 	const v = process.env.LEAN_KALMAN;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 interface KalmanStat {
@@ -222,8 +231,39 @@ function fromWire(r: readonly unknown[]): FilteredPoint {
  * bridge failure is recorded and falls back to `tsResult` (swallow-over-wrong,
  * execution edition).
  */
+/**
+ * `solo`: the verified filter alone (#975). No TS arm, no comparison, no
+ * fallback — a bridge failure throws and the day fails loudly.
+ *
+ * ⚠ Unlike `gpsquality`'s, this result is NOT a selection of the input objects.
+ * The filter emits its own rows — smoothed positions with derived speed and
+ * bearing — so `fromWire` is the only way back and there is no identity to
+ * preserve. Do not "optimise" it into an index map the way the sibling tenant
+ * uses; there is nothing to index into.
+ *
+ * There is no small-input guard to carry over: this tenant only ever branched
+ * on the mode (the guard audit in #975 found nothing else to check here).
+ */
+function soloFilter(points: readonly GpsPoint[]): FilteredPoint[] {
+	const lean = leanKalmanServe({
+		pts: points.map((p) => [
+			p.ts,
+			floatToBits(p.lat),
+			floatToBits(p.lon),
+			p.accuracy === null ? null : floatToBits(p.accuracy),
+		]),
+	});
+	if (lean.error !== undefined || lean.pts === undefined) {
+		stats.fails += 1;
+		throw new LeanBridgeError(`lean-kalman[solo]: ${lean.error ?? "no points in response"}`);
+	}
+	stats.calls += 1;
+	return lean.pts.map(fromWire);
+}
+
 export function filterGpsTrackViaLean(points: readonly GpsPoint[], ts: () => FilteredPoint[]): FilteredPoint[] {
 	const mode = leanKalmanMode();
+	if (mode === "solo") return soloFilter(points);
 	if (mode === "off") return ts();
 	const tsResult = timeTsArm("kalman", ts);
 
@@ -368,14 +408,22 @@ export function logLeanKalmanLedger(label: string): LedgerVerdict | null {
 	// never reaches, and a tenant that ran perfectly all printed the same word.
 	// Measured: `lean-hsmm[on] golden 0d (no days) EXACT` — the golden corpus
 	// replays cached decodes, so the decoder had not run at all (#392).
+	//
+	// ⚠ `solo` must not print EXACT or ULP either. Both are vacuous there — no TS
+	// arm runs, so `lenDiffs`/`rowDiffs`/`worstUlp` can never move — and on THIS
+	// tenant the ULP wording would be actively misleading: it names the measured
+	// `cos` libm class, a statement about two runtimes agreeing to within a bit,
+	// which is exactly the comparison `solo` does not make.
 	const verdict =
 		s.calls === 0
 			? "NOT EXERCISED"
-			: clean
-				? "EXACT"
-				: ulpOnly
-					? `ULP (≤${s.worstUlp}, ≤${s.worstBearingDeg}°)`
-					: `${s.lenDiffs + s.rowDiffs} DIVERGED`;
+			: mode === "solo"
+				? "SOLO (no TS arm, nothing compared)"
+				: clean
+					? "EXACT"
+					: ulpOnly
+						? `ULP (≤${s.worstUlp}, ≤${s.worstBearingDeg}°)`
+						: `${s.lenDiffs + s.rowDiffs} DIVERGED`;
 	const detail = clean
 		? ""
 		: ` — len=${s.lenDiffs} calls=${s.rowDiffs} rows=${s.rows} (≤${s.worstUlp}ulp, ≤${s.worstBearingDeg}° bearing)`;
