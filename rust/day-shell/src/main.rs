@@ -20,12 +20,18 @@
 //!
 //! # State
 //!
-//! `walkEnv`'s two reads and its `matcher` are wired; with `--osm` the fold
-//! draws its own `walkMatchedPath` on the same legs TS does, to within the
-//! quantisation (sub-centimetre). Still stubbed: `reconstruct`,
-//! `refineMatched`, `correct`, `snapPassages`, and all of `roadEnv`. So
-//! `src/lean/day-decode.ts` still grafts the TS run's geometry back, and the TS
-//! arm still runs. See #952.
+//! `walkEnv` and `roadEnv` are both wired WHOLE — every read and every solver
+//! leaf. Nothing in `PassFold.Env` is a stub any more; what is still
+//! link-dependent is the answer, since `verified_cli` links the empty stub and
+//! a leg with no ways is skipped before any leaf runs.
+//!
+//! With `--osm`, on 2026-05-14: the building corrector and the reconstruction
+//! draw BIT-IDENTICAL lines to the TS arm, and the matcher's own legs differ by
+//! 0.46 and 0.54 cm — the 1e-7° quantisation, which is the class
+//! `compare-match --gate` adjudicates and NOT something to widen a manifest
+//! over (`deploy.sh:139`). `src/lean/day-decode.ts` still grafts the TS run's
+//! geometry back and the TS arm still runs; that is the `LEAN_DAY=on` cutover
+//! (#431), not a missing callback. See #952.
 //!
 //! `--repeat N` runs the same request N times in one process. That measures the
 //! thing the round loop actually costs: the first call pays initialisation, the
@@ -115,11 +121,13 @@ fn main() {
     // has not exercised the matcher however green it looks, and must say so.
     let c = osm::take_counts();
     eprintln!(
-        "osm: walkableRoads={}/{} buildingsNear={}/{} (hit/asked){}",
+        "osm: walkableRoads={}/{} buildingsNear={}/{} drivableRoads={}/{} (hit/asked){}",
         c.walkable_hits,
         c.walkable_hits + c.walkable_misses,
         c.buildings_hits,
         c.buildings_hits + c.buildings_misses,
+        c.drivable_hits,
+        c.drivable_hits + c.drivable_misses,
         // A miss only MEANS something when there was something to hit. Without
         // `--osm` every lookup misses by design, and warning about it there
         // trains the reader to ignore the warning that matters.

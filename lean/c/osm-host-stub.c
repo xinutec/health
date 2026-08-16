@@ -48,3 +48,14 @@ LEAN_EXPORT lean_object *health_osm_buildings_near(double lat, double lon, lean_
 	lean_dec(radius_m);
 	return empty_answer();
 }
+
+/* `drivableRoads` takes its radius as a `Float`, not an `Int` — the road
+ * corridor passes a fractional radius through untouched — so there is no boxed
+ * argument to release here. A four-byte zero means "no ways" in the second wire
+ * format exactly as it means "no polylines" in the first. */
+LEAN_EXPORT lean_object *health_osm_drivable_roads(double lat, double lon, double radius_m) {
+	(void)lat;
+	(void)lon;
+	(void)radius_m;
+	return empty_answer();
+}

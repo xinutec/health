@@ -82,6 +82,7 @@ import Verified.Geo.RailJourney
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkAnnotate
 import Verified.Geo.WalkMatchAdapt
+import Verified.Geo.RoadMatchAdapt
 import Verified.Geo.OsmCorridor
 import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.Reversal

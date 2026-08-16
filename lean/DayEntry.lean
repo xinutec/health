@@ -611,15 +611,23 @@ private def parseEnv (j : Json) : Except String Env := do
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
-    -- The pedestrian matcher's two OSM reads, answered by whoever LINKS the
-    -- fold rather than by the request (#952). `UNFED` below still names
-    -- `walkEnv`, and correctly: the five solver leaves are still stubs, so this
-    -- is not yet a fed callback — it is the READ half of one.
+    -- The pedestrian matcher, whole: two OSM reads answered by whoever LINKS
+    -- the fold rather than by the request, and all five solver leaves (#952).
     --
-    -- Under `verified_cli` these resolve to `c/osm-host-stub.c`, which answers
-    -- zero polylines. That is byte-for-byte what `fun _ _ _ => #[]` did, which
-    -- is why this change is expected to move NOTHING on the day gate, and why
-    -- the gate is the right thing to ask.
+    -- Under `verified_cli` the reads resolve to `c/osm-host-stub.c`, which
+    -- answers zero polylines — and a leg whose ways come back empty is skipped
+    -- before any leaf runs, so the spawned CLI draws exactly what the shells
+    -- drew. That is why `UNFED` below still names `walkEnv`: not because a
+    -- field here is a stub, but because the answer depends on the link, and the
+    -- day gate's default arm is the one that cannot answer.
+    -- The road matcher, the same way and for the same reason: the mirror read
+    -- comes from the link, the matcher is `Verified.Geo.Match`'s quantised road
+    -- arm through `RoadMatchAdapt`. A leg whose corridor comes back empty bails
+    -- before the matcher runs (`ways.length === 0` — the pass's own third
+    -- asymmetry), so under `verified_cli` this draws what the shell drew.
+    roadEnv := {
+      drivableRoads := DayEntry.OsmHost.drivableRoads
+      matcher := Verified.Geo.RoadMatchAdapt.matcher }
     walkEnv := {
       walkableRoads := DayEntry.OsmHost.walkableRoads
       buildingsNear := DayEntry.OsmHost.buildingsNear
@@ -629,10 +637,32 @@ private def parseEnv (j : Json) : Except String Env := do
       -- shell's answer. It only becomes visible in a host that can answer
       -- `walkableRoads`, which is the point.
       matcher := Verified.Geo.WalkMatchAdapt.matcher
-      reconstruct := fun _ _ _ _ => none
-      refineMatched := fun _ _ => none
-      correct := fun drawn _ _ _ => drawn
-      snapPassages := fun drawn _ _ => drawn }
+      -- The four smoothing/correction leaves. Every one of them was ALREADY
+      -- PORTED — `WalkSmooth.reconstructWalk`, `WalkSmooth.refineMatchedPath`,
+      -- `WalkEscape.correctWalkPath`, `WalkEscape.snapPassages` — and each
+      -- speaks exactly the type its `Env` field declares (`SmoothedPoint` is
+      -- `TPt` is `PathPt`), so this is a wiring, not a port.
+      --
+      -- MEASURED 2026-08-16, and the reason they are wired together: on
+      -- 2026-05-14 both arms agreed on all four legs' display-gate decisions
+      -- (use=true/false and rawOff/matchedOff/stray to 3 decimals), yet TS drew
+      -- 53 vertices on a leg Lean left bare and Lean drew 97 on a leg TS wrote
+      -- to `walkSmoothedPath`. Both were THESE stubs: the corrector attaching a
+      -- changed raw line, and the reconstruction swap claiming a leg. Neither
+      -- was the matcher and neither was the orchestrator.
+      reconstruct := fun fixes ways buildings ev =>
+        Verified.Geo.WalkSmooth.reconstructWalk fixes ways buildings {} ev
+      refineMatched := fun fixes base => Verified.Geo.WalkSmooth.refineMatchedPath fixes base
+      -- The diagnostics arm of `correctWalkPath` is `WALK_CORRECT_DIAG=1` on the
+      -- TS side — a debug side channel that decides nothing, which is why the
+      -- `Env` field never modelled it and why dropping `.2` here is not a loss.
+      -- `stepBudgetM := none` is the TS's `correctOpts = undefined`: the same
+      -- defaults with the budget invariant switched off, not a budget of zero.
+      correct := fun drawn ways buildings budget =>
+        (Verified.Geo.WalkEscape.correctWalkPath drawn ways buildings
+          { stepBudgetM := budget }).1
+      snapPassages := fun drawn ways buildings =>
+        Verified.Geo.WalkEscape.snapPassages drawn ways buildings }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
     tzAt := fun lat lon => hit tz "tzAt" (k2 lat lon)
@@ -740,7 +770,16 @@ wrong one.
 Both entries are SOLVERS — the road and pedestrian matchers, whose street-network
 reads and search leaves are 4.31 MiB/day the wire measurement deliberately left
 shell-side. `reenrich` was here too and is not any more: it was an OSM read plus
-arithmetic, which is a port (`Verified.Geo.Enrich`), not a shell. -/
+arithmetic, which is a port (`Verified.Geo.Enrich`), not a shell.
+
+⚠ `walkEnv` is now a HALF-TRUTH here and stays only until the gate can tell the
+two arms apart. Every one of its seven fields is wired to real Lean; what is
+unfed is the LINK — `verified_cli` answers both OSM reads with zero polylines,
+and a leg with no ways never reaches a leaf. A host that answers them draws the
+same lines the TS does (2026-05-14: the corrector and the reconstruction
+bit-identical, the matcher within the quantisation). Removing it from this list
+is part of the `LEAN_DAY=on` cutover, because `compare-day`'s classifier reads
+it and the default arm would then report a divergence it cannot avoid. -/
 private def UNFED : Array String := #["roadEnv", "walkEnv"]
 
 /-- `walkDraw` and `walkFlags` stay at their `Env` defaults — `.matcher`, which

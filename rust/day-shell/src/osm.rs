@@ -73,6 +73,11 @@ type Line = Vec<(f64, f64)>;
 ///
 /// Exact and quantised hits are still counted apart, so the ULP divergence
 /// stays visible rather than being absorbed here.
+/// The radius rides in the key too, quantised at 1e-6 m rather than taken as a
+/// whole number: the walk disc is metres by the time it is read, but the road
+/// CORRIDOR radius is a `Float` the fetch passes through untouched (443.0 on
+/// one recorded read), and parsing that as an integer would drop every
+/// fractional one to a miss.
 type Key = (i64, i64, i64);
 
 /// 1e-9 degrees. See [`Key`].
@@ -80,10 +85,26 @@ fn quantise(v: f64) -> i64 {
     (v * 1e9).round() as i64
 }
 
+/// 1e-6 metres, for the radius component. See [`Key`].
+fn quantise_r(v: f64) -> i64 {
+    (v * 1e6).round() as i64
+}
+
+/// One drivable way. `walkableRoads` drops everything but the geometry because
+/// `Ways` has nowhere to put it; the road matcher's way-switch penalty reads
+/// `name`, and the corridor fetch unions by `osmId`, so this one keeps them.
+struct Way {
+    osm_id: i64,
+    name: Option<String>,
+    subtype: Option<String>,
+    coords: Line,
+}
+
 #[derive(Default)]
 struct Trace {
     walkable: HashMap<Key, Vec<Line>>,
     buildings: HashMap<Key, Vec<Line>>,
+    drivable: HashMap<Key, Vec<Way>>,
 }
 
 static TRACE: OnceLock<Trace> = OnceLock::new();
@@ -92,22 +113,31 @@ static WALKABLE_HITS: AtomicU64 = AtomicU64::new(0);
 static WALKABLE_MISSES: AtomicU64 = AtomicU64::new(0);
 static BUILDINGS_HITS: AtomicU64 = AtomicU64::new(0);
 static BUILDINGS_MISSES: AtomicU64 = AtomicU64::new(0);
+static DRIVABLE_HITS: AtomicU64 = AtomicU64::new(0);
+static DRIVABLE_MISSES: AtomicU64 = AtomicU64::new(0);
 
 pub struct Counts {
     pub walkable_hits: u64,
     pub walkable_misses: u64,
     pub buildings_hits: u64,
     pub buildings_misses: u64,
+    pub drivable_hits: u64,
+    pub drivable_misses: u64,
 }
 
 impl Counts {
     /// Any call at all — distinguishes "the matcher never asked" from "it asked
     /// and we had nothing", which are different findings.
     pub fn asked(&self) -> u64 {
-        self.walkable_hits + self.walkable_misses + self.buildings_hits + self.buildings_misses
+        self.walkable_hits
+            + self.walkable_misses
+            + self.buildings_hits
+            + self.buildings_misses
+            + self.drivable_hits
+            + self.drivable_misses
     }
     pub fn misses(&self) -> u64 {
-        self.walkable_misses + self.buildings_misses
+        self.walkable_misses + self.buildings_misses + self.drivable_misses
     }
 }
 
@@ -122,6 +152,8 @@ pub fn take_counts() -> Counts {
         walkable_misses: WALKABLE_MISSES.swap(0, Ordering::Relaxed),
         buildings_hits: BUILDINGS_HITS.swap(0, Ordering::Relaxed),
         buildings_misses: BUILDINGS_MISSES.swap(0, Ordering::Relaxed),
+        drivable_hits: DRIVABLE_HITS.swap(0, Ordering::Relaxed),
+        drivable_misses: DRIVABLE_MISSES.swap(0, Ordering::Relaxed),
     }
 }
 
@@ -131,14 +163,25 @@ fn parse_key(k: &str) -> Option<Key> {
     let mut it = k.split('|');
     let lat: f64 = it.next()?.parse().ok()?;
     let lon: f64 = it.next()?.parse().ok()?;
-    let r: i64 = it.next()?.parse().ok()?;
-    Some((quantise(lat), quantise(lon), r))
+    let r: f64 = it.next()?.parse().ok()?;
+    Some((quantise(lat), quantise(lon), quantise_r(r)))
 }
 
-/// A `[lat, lon]` pair as the trace writes coordinates.
+/// One coordinate. THE TRACE SPELLS IT TWO WAYS and both are here:
+/// `walkableRoads` writes a way's `coords` as `[lat, lon]` pairs, while
+/// `buildingsNear` writes a ring's vertices as `{lat, lon}` objects.
+///
+/// ⚠ This function used to accept only the pair, which decoded every building
+/// ring to ZERO vertices. Nothing said so: the ring COUNT survived (2522 rings
+/// in, 2522 out), the lookup counted as a HIT, and the fold ran to completion —
+/// it simply believed no walk ever entered a building, so the corrector never
+/// fired and `correctWalkPath` was scored as a divergence for two days. The
+/// emptiness guard in `load_fixture` exists so that cannot recur silently.
 fn parse_pair(v: &serde_json::Value) -> Option<(f64, f64)> {
-    let a = v.as_array()?;
-    Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))
+    if let Some(a) = v.as_array() {
+        return Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?));
+    }
+    Some((v.get("lat")?.as_f64()?, v.get("lon")?.as_f64()?))
 }
 
 /// `walkableRoads` values are `{coords, name, osmId, subtype}` and only `coords`
@@ -159,7 +202,33 @@ fn parse_ways(v: &serde_json::Value) -> Vec<Line> {
         .unwrap_or_default()
 }
 
-/// `buildingsNear` values are rings — arrays of `[lat, lon]` directly.
+/// `drivableRoads` values are `{osmId, name, subtype, coords}` and ALL of it
+/// survives — see [`Way`]. A missing `name`/`subtype` stays missing: the road
+/// matcher charges for changing way, so an unnamed way and a way named `""` are
+/// different inputs.
+fn parse_way_records(v: &serde_json::Value) -> Vec<Way> {
+    v.as_array()
+        .map(|ws| {
+            ws.iter()
+                .filter_map(|w| {
+                    Some(Way {
+                        osm_id: w.get("osmId")?.as_i64()?,
+                        name: w.get("name").and_then(|n| n.as_str()).map(str::to_owned),
+                        subtype: w.get("subtype").and_then(|s| s.as_str()).map(str::to_owned),
+                        coords: w
+                            .get("coords")?
+                            .as_array()?
+                            .iter()
+                            .filter_map(parse_pair)
+                            .collect(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `buildingsNear` values are rings — arrays of vertices directly.
 fn parse_rings(v: &serde_json::Value) -> Vec<Line> {
     v.as_array()
         .map(|rs| {
@@ -173,11 +242,11 @@ fn parse_rings(v: &serde_json::Value) -> Vec<Line> {
         .unwrap_or_default()
 }
 
-fn section(
+fn section<T>(
     root: &serde_json::Value,
     name: &str,
-    f: fn(&serde_json::Value) -> Vec<Line>,
-) -> HashMap<Key, Vec<Line>> {
+    f: fn(&serde_json::Value) -> Vec<T>,
+) -> HashMap<Key, Vec<T>> {
     root.get("inputs")
         .and_then(|i| i.get("osmTrace"))
         .and_then(|t| t.get(name))
@@ -198,6 +267,7 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     let t = Trace {
         walkable: section(&root, "walkableRoads", parse_ways),
         buildings: section(&root, "buildingsNear", parse_rings),
+        drivable: section(&root, "drivableRoads", parse_way_records),
     };
     let n = (t.walkable.len(), t.buildings.len());
     // An empty trace would answer every lookup with a miss, which reads like a
@@ -207,6 +277,31 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
         return Err(format!(
             "{path}: no walkableRoads or buildingsNear sections — nothing to answer with"
         ));
+    }
+    // A polyline with no vertices is a DECODE failure, not a small answer, and
+    // it is invisible downstream: the fold gets the right number of rings and
+    // believes every one of them is nowhere. This is the shape that hid the
+    // `{lat, lon}` vs `[lat, lon]` mismatch in `parse_pair` — so the load
+    // refuses rather than serving it.
+    for (label, sec) in [("walkableRoads", &t.walkable), ("buildingsNear", &t.buildings)] {
+        for (key, lines) in sec {
+            if let Some(i) = lines.iter().position(|l| l.is_empty()) {
+                return Err(format!(
+                    "{path}: {label} key {key:?} decoded polyline {i} of {} to ZERO vertices — \
+                     the coordinate shape is not what the parser expects",
+                    lines.len()
+                ));
+            }
+        }
+    }
+    for (key, ways) in &t.drivable {
+        if let Some(i) = ways.iter().position(|w| w.coords.is_empty()) {
+            return Err(format!(
+                "{path}: drivableRoads key {key:?} decoded way {i} of {} to ZERO vertices — \
+                 the coordinate shape is not what the parser expects",
+                ways.len()
+            ));
+        }
     }
     let _ = TRACE.set(t);
     Ok(n)
@@ -228,14 +323,55 @@ fn encode(lines: &[Line]) -> Vec<u8> {
     b
 }
 
+/// The second wire format, for `drivableRoads`: a `u32` count, then per way its
+/// `i64` osmId, an optional `name`, an optional `subtype`, and the geometry.
+/// `0xFFFFFFFF` is ABSENT and is not a length of zero — an unnamed way and a way
+/// named `""` are different to the matcher's way-switch penalty. Pinned on the
+/// Lean side by `#guard`s on literals.
+fn encode_ways(ways: &[Way]) -> Vec<u8> {
+    fn opt_str(b: &mut Vec<u8>, s: Option<&String>) {
+        match s {
+            None => b.extend_from_slice(&u32::MAX.to_le_bytes()),
+            Some(s) => {
+                b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+                b.extend_from_slice(s.as_bytes());
+            }
+        }
+    }
+    let mut b = Vec::new();
+    b.extend_from_slice(&(ways.len() as u32).to_le_bytes());
+    for w in ways {
+        b.extend_from_slice(&w.osm_id.to_le_bytes());
+        opt_str(&mut b, w.name.as_ref());
+        opt_str(&mut b, w.subtype.as_ref());
+        b.extend_from_slice(&(w.coords.len() as u32).to_le_bytes());
+        for (lat, lon) in &w.coords {
+            b.extend_from_slice(&lat.to_le_bytes());
+            b.extend_from_slice(&lon.to_le_bytes());
+        }
+    }
+    b
+}
+
 fn answer(lines: &[Line]) -> *mut c_void {
-    let b = encode(lines);
+    hand_over(&encode(lines))
+}
+
+fn hand_over(b: &[u8]) -> *mut c_void {
     // SAFETY: `b` outlives the call and the callee copies it.
     unsafe { health_shell_mk_bytes(b.as_ptr(), b.len()) }
 }
 
-fn lookup(which: bool, lat: f64, lon: f64, radius: i64) -> *mut c_void {
-    let key = (quantise(lat), quantise(lon), radius);
+fn section_name(which: bool) -> &'static str {
+    if which {
+        "walkableRoads"
+    } else {
+        "buildingsNear"
+    }
+}
+
+fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
+    let key = (quantise(lat), quantise(lon), quantise_r(radius));
     let found = TRACE.get().and_then(|t| {
         if which {
             t.walkable.get(&key)
@@ -251,6 +387,21 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: i64) -> *mut c_void {
     match found {
         Some(lines) => {
             hits.fetch_add(1, Ordering::Relaxed);
+            // `OSM_LOG=1` names every HIT too, in call order.
+            //
+            // A hit count alone cannot tell "asked the same four questions" from
+            // "asked one of them twice and another never" — both read 4/4. The
+            // trace object's key order is the TS arm's call order, so the two
+            // sequences are directly comparable, and that is the comparison
+            // that attributes a leg drawing different geometry to the two arms
+            // reaching for different roads.
+            if std::env::var_os("OSM_LOG").is_some() {
+                eprintln!(
+                    "osm: HIT  {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s)",
+                    section_name(which),
+                    lines.len()
+                );
+            }
             answer(lines)
         }
         None => {
@@ -263,16 +414,43 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: i64) -> *mut c_void {
             if TRACE.get().is_some() {
                 eprintln!(
                     "osm: MISS {} lat={lat:.17} lon={lon:.17} r={radius} bits={:016x}/{:016x}",
-                    if which {
-                        "walkableRoads"
-                    } else {
-                        "buildingsNear"
-                    },
+                    section_name(which),
                     lat.to_bits(),
                     lon.to_bits()
                 );
             }
             answer(&[])
+        }
+    }
+}
+
+/// The road twin of [`lookup`]. Separate rather than folded into it because the
+/// answer is a different SHAPE — `Array Way`, not `Array (Array Pt)` — and the
+/// second wire format exists for exactly that reason.
+fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
+    let key = (quantise(lat), quantise(lon), quantise_r(radius));
+    match TRACE.get().and_then(|t| t.drivable.get(&key)) {
+        Some(ways) => {
+            DRIVABLE_HITS.fetch_add(1, Ordering::Relaxed);
+            if std::env::var_os("OSM_LOG").is_some() {
+                eprintln!(
+                    "osm: HIT  drivableRoads lat={lat:.17} lon={lon:.17} r={radius} -> {} way(s)",
+                    ways.len()
+                );
+            }
+            hand_over(&encode_ways(ways))
+        }
+        None => {
+            DRIVABLE_MISSES.fetch_add(1, Ordering::Relaxed);
+            if TRACE.get().is_some() {
+                eprintln!(
+                    "osm: MISS drivableRoads lat={lat:.17} lon={lon:.17} r={radius} \
+                     bits={:016x}/{:016x}",
+                    lat.to_bits(),
+                    lon.to_bits()
+                );
+            }
+            hand_over(&encode_ways(&[]))
         }
     }
 }
@@ -292,7 +470,7 @@ pub extern "C" fn health_osm_walkable_roads(
         health_shell_dec(radius_m);
         v
     };
-    lookup(true, lat, lon, r)
+    lookup(true, lat, lon, r as f64)
 }
 
 /// As [`health_osm_walkable_roads`].
@@ -308,7 +486,17 @@ pub extern "C" fn health_osm_buildings_near(
         health_shell_dec(radius_m);
         v
     };
-    lookup(false, lat, lon, r)
+    lookup(false, lat, lon, r as f64)
+}
+
+/// The road mirror read. ⚠ Its radius is an UNBOXED `double`, not a boxed
+/// `Int`: `RoadMatchAnnotate.Env.drivableRoads` takes a `Float` because the
+/// corridor fetch passes a fractional radius through untouched. So there is
+/// nothing to release here, and reaching for `lean_int_value` would read a
+/// double's bits as a pointer.
+#[no_mangle]
+pub extern "C" fn health_osm_drivable_roads(lat: f64, lon: f64, radius_m: f64) -> *mut c_void {
+    lookup_ways(lat, lon, radius_m)
 }
 
 /// A Lean `Int` small enough to be a tagged scalar, as an `i64`.

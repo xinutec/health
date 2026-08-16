@@ -43,8 +43,22 @@ Wire format, little-endian throughout:
 
 `Ways` and `Array Ring` are both `Array (Array Pt)`, so one decoder serves
 `walkableRoads` and `buildingsNear` both. `drivableRoads` returns `Array Way`,
-which carries `osmId`/`name`/`subtype` as well, and is NOT this shape — it is
-deliberately left for a second format rather than smuggled through this one.
+which carries `osmId`/`name`/`subtype` as well, so it gets a SECOND format
+rather than being smuggled through this one:
+
+    u32          number of ways
+    per way:
+      u64        osmId, two's complement
+      u32        name length, or `0xFFFFFFFF` for absent, then that many
+                 UTF-8 bytes
+      u32        subtype length, same convention
+      u32        number of points
+      per point: f64 lat, f64 lon
+
+The absent marker is distinct from a length of zero on purpose. `Way.name` is an
+`Option String` and the road matcher's way-switch penalty reads it; an unnamed
+way and a way named `""` are different things to a turn prior, and collapsing
+them would be a silent routing change.
 
 # Deliberately not in `Verified`
 
@@ -57,6 +71,7 @@ the boundary goes here.
 namespace DayEntry.OsmHost
 
 open Verified.Geo.WalkableRoute (Pt)
+open Verified.Geo.OsmCorridor (Way)
 
 /-- `Ways` and `Array Ring` are the same shape; see the header. -/
 abbrev Polylines := Array (Array Pt)
@@ -111,10 +126,67 @@ def decodePolylines (b : ByteArray) : Polylines :=
   -- can be: a corrupt or hostile count cannot make this loop long.
   go b (min (u32At b 0).toNat (b.size / 4 + 1)) 4 #[]
 
+/-! ## Reading a way
+
+The second format, for `drivableRoads`. Same totality contract: every read is
+bounds-checked, a truncated buffer decodes to fewer ways, and nothing panics. -/
+
+/-- One little-endian `UInt64` at `i`, or `0` if it does not fit. -/
+def u64At (b : ByteArray) (i : Nat) : UInt64 :=
+  if i + 8 > b.size then 0
+  else
+    let byte (k : Nat) : UInt64 := (b.get! (i + k)).toUInt64
+    byte 0 ||| (byte 1 <<< 8) ||| (byte 2 <<< 16) ||| (byte 3 <<< 24)
+      ||| (byte 4 <<< 32) ||| (byte 5 <<< 40) ||| (byte 6 <<< 48) ||| (byte 7 <<< 56)
+
+/-- The same 64 bits read as a signed `Int`. An `osmId` is positive in practice;
+this is two's complement anyway so that a negative one decodes as itself rather
+than as 1.8e19. -/
+def i64At (b : ByteArray) (i : Nat) : Int :=
+  let v := (u64At b i).toNat
+  if v ≥ 9223372036854775808 then (v : Int) - 18446744073709551616 else (v : Int)
+
+/-- The absent marker for an optional string — distinct from a length of zero;
+see the header. -/
+def ABSENT : UInt32 := 0xFFFFFFFF
+
+/-- An optional UTF-8 string at `i`: `(value, bytes consumed including the
+length prefix)`. Invalid UTF-8 decodes to `none`, which is the same answer an
+absent name gives — a host writing bytes that are not a string is broken, and
+the fold's job is to keep going rather than to guess at what it meant. -/
+def strAt (b : ByteArray) (i : Nat) : Option String × Nat :=
+  let n := u32At b i
+  if n == ABSENT then (none, 4)
+  else
+    let len := n.toNat
+    if i + 4 + len > b.size then (none, 4)
+    else (String.fromUTF8? (b.extract (i + 4) (i + 4 + len)), 4 + len)
+
+/-- `fuel` bounds the way loop so this is structurally total. -/
+private def goWays (b : ByteArray) (fuel off : Nat) (acc : Array Way) : Array Way :=
+  match fuel with
+  | 0 => acc
+  | fuel + 1 =>
+    if off + 8 > b.size then acc
+    else
+      let osmId := i64At b off
+      let (name, nBytes) := strAt b (off + 8)
+      let (subtype, sBytes) := strAt b (off + 8 + nBytes)
+      let ptsOff := off + 8 + nBytes + sBytes
+      let n := (u32At b ptsOff).toNat
+      goWays b fuel (ptsOff + 4 + n * 16)
+        (acc.push { osmId, name, subtype, coords := points b (ptsOff + 4) n })
+
+/-- Decode a whole buffer written in the way format. -/
+def decodeWays (b : ByteArray) : Array Way :=
+  -- A way costs at least 20 bytes, so the buffer itself caps how many there can
+  -- be: a corrupt or hostile count cannot make this loop long.
+  goWays b (min (u32At b 0).toNat (b.size / 20 + 1)) 4 #[]
+
 /-! ## The externs
 
-Implemented by whoever links this — see the header. Both take
-`(lat, lon, radiusM)` and answer the polylines within that disc. -/
+Implemented by whoever links this — see the header. All three take
+`(lat, lon, radiusM)` and answer what lies within that disc. -/
 
 @[extern "health_osm_walkable_roads"]
 opaque walkableRoadsRaw : Float → Float → Int → ByteArray
@@ -122,11 +194,23 @@ opaque walkableRoadsRaw : Float → Float → Int → ByteArray
 @[extern "health_osm_buildings_near"]
 opaque buildingsNearRaw : Float → Float → Int → ByteArray
 
+/-- ⚠ `radiusM` is a `Float` here and an `Int` above, and that is not an
+oversight: `RoadMatchAnnotate.Env.drivableRoads` takes a `Float` because
+`OsmCorridor` passes the corridor radius through untouched, while the walk
+pass's disc radius is a whole number of metres by the time it is read. The
+lookup key the host matches against is the TS's own, so the two have to arrive
+in the shape the TS wrote them in. -/
+@[extern "health_osm_drivable_roads"]
+opaque drivableRoadsRaw : Float → Float → Float → ByteArray
+
 def walkableRoads (lat lon : Float) (radiusM : Int) : Polylines :=
   decodePolylines (walkableRoadsRaw lat lon radiusM)
 
 def buildingsNear (lat lon : Float) (radiusM : Int) : Polylines :=
   decodePolylines (buildingsNearRaw lat lon radiusM)
+
+def drivableRoads (lat lon radiusM : Float) : Array Way :=
+  decodeWays (drivableRoadsRaw lat lon radiusM)
 
 /-! ## Specs
 
@@ -157,5 +241,46 @@ fail on a FORMAT change instead of on a data change. -/
   #[1, 0, 0, 0, 1, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 240, 63,
     0, 0, 0, 0, 0, 0, 0, 64]) == #[#[{ lat := 1.0, lon := 2.0 }]]
+
+/-! ### The way format -/
+
+-- The empty answer — what the stub returns on a road leg.
+#guard decodeWays (ByteArray.mk #[0, 0, 0, 0]) == #[]
+
+/-- One way: `osmId = 7`, name `"A"`, no subtype, one point at (1.0, 2.0). -/
+private def ONE_WAY : ByteArray := ByteArray.mk
+  #[1, 0, 0, 0,
+    7, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 65,
+    255, 255, 255, 255,
+    1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 240, 63,
+    0, 0, 0, 0, 0, 0, 0, 64]
+
+#guard decodeWays ONE_WAY ==
+  #[{ osmId := 7, name := some "A", subtype := none, coords := #[{ lat := 1.0, lon := 2.0 }] }]
+
+-- Absent is not empty. A zero LENGTH is the name `""`; `0xFFFFFFFF` is `none`.
+-- Collapsing the two would change the road matcher's way-switch penalty.
+#guard (decodeWays (ByteArray.mk
+  #[1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0,
+    255, 255, 255, 255,
+    0, 0, 0, 0]))[0]!.name == some ""
+
+-- Multi-byte UTF-8 survives: "é" is 0xC3 0xA9.
+#guard (decodeWays (ByteArray.mk
+  #[1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0,
+    2, 0, 0, 0, 195, 169,
+    255, 255, 255, 255,
+    0, 0, 0, 0]))[0]!.name == some "é"
+
+-- Two's complement, so a negative id decodes as itself.
+#guard i64At (ByteArray.mk #[255, 255, 255, 255, 255, 255, 255, 255]) 0 == -1
+#guard i64At (ByteArray.mk #[7, 0, 0, 0, 0, 0, 0, 0]) 0 == 7
+
+-- Truncation loses ways rather than panicking, at every field boundary.
+#guard decodeWays (ByteArray.mk #[1, 0, 0, 0, 7, 0, 0]) == #[]
+#guard (decodeWays (ONE_WAY.extract 0 20)).size == 1
 
 end DayEntry.OsmHost
