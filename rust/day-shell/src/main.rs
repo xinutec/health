@@ -1,19 +1,31 @@
 //! `day-shell` — the Lean day fold, called in-process instead of spawned.
 //!
-//! Reads a day request on stdin and writes the fold's answer on stdout, which is
-//! byte-for-byte what `verified_cli day` does. That is the point: the two are
-//! diffable on the same input, so "the host calls the real fold" is something
-//! you can check rather than something this comment asserts.
+//! Reads a day request on stdin, writes the fold's answer on stdout. Without
+//! `--osm` that is byte-for-byte what `verified_cli day` produces, and the two
+//! are diffable on the same input — so "the host calls the real fold" is
+//! checkable rather than asserted (`scripts/rust-host-check.sh`).
 //!
-//! # What it is evidence FOR, and what it is not
+//! # What the host is FOR, which is not what it first looked like
 //!
-//! It proves the transport can go: the fold links into a foreign host, the
-//! runtime initialises, and a real day round-trips. It does NOT yet delete
-//! anything. `PassFold.Env.walkEnv`/`.roadEnv` are still declared shells, so the
-//! answer still carries no matched or smoothed geometry and `src/lean/
-//! day-decode.ts` still grafts the TS run's back. Deleting the TS arm needs
-//! those two solvers HERE — that is the ~6k lines #952 sizes, and none of it is
-//! written.
+//! Not speed, and not transport. `PassFold.Env`'s `walkEnv`/`roadEnv` fields are
+//! CALLBACKS — `walkableRoads`, `buildingsNear`, `drivableRoads` — that the fold
+//! generates mid-run. A spawned pure function cannot answer a query it invents
+//! while running; a host sharing the process can. That is the whole difference,
+//! and it is why the matcher shells could not be filled before this existed.
+//!
+//! The solvers themselves are NOT here and should not be: they are Lean
+//! (`Verified.Geo.Match`, `WalkSmooth`, `WalkEscape`), already written, and the
+//! rule is that as much as possible lives in Lean and Rust takes only what proof
+//! would not help. Rust owns the process, the lookups and the IO.
+//!
+//! # State
+//!
+//! `walkEnv`'s two reads and its `matcher` are wired; with `--osm` the fold
+//! draws its own `walkMatchedPath` on the same legs TS does, to within the
+//! quantisation (sub-centimetre). Still stubbed: `reconstruct`,
+//! `refineMatched`, `correct`, `snapPassages`, and all of `roadEnv`. So
+//! `src/lean/day-decode.ts` still grafts the TS run's geometry back, and the TS
+//! arm still runs. See #952.
 //!
 //! `--repeat N` runs the same request N times in one process. That measures the
 //! thing the round loop actually costs: the first call pays initialisation, the
@@ -95,14 +107,12 @@ fn main() {
 
     println!("{out}");
 
-    // The fold's own lookups, which nothing could see before the host existed —
-    // the shells answered empty before the question could be recorded. Zero here
-    // means the matcher never asked, which is what the remaining five stubbed
-    // `walkEnv` leaves currently guarantee: `matcher` returns `none`, so nothing
-    // downstream of it ever reaches for a road or a building.
+    // The fold's own lookups, which nothing could see before the host existed:
+    // the shells answered empty before the question could be recorded.
+    //
     // Hits and MISSES apart. An unanswered lookup returns empty, which is
-    // indistinguishable from "no roads here" — so a run with misses has not
-    // exercised the matcher however green it looks, and must say so.
+    // indistinguishable from "there are no roads here" — so a run with misses
+    // has not exercised the matcher however green it looks, and must say so.
     let c = osm::take_counts();
     eprintln!(
         "osm: walkableRoads={}/{} buildingsNear={}/{} (hit/asked){}",
@@ -120,10 +130,10 @@ fn main() {
         }
     );
     if c.asked() == 0 {
-        // Distinct from a miss, and a different finding: the matcher never
-        // reached for a road at all. That is what the five still-stubbed
-        // `walkEnv` leaves guarantee — `matcher` returns `none`, so nothing
-        // downstream of it looks anything up.
+        // Distinct from a miss, and a different finding: the fold never reached
+        // for a road at all. With `walkEnv`'s reads wired that should not happen
+        // on a day with a walking leg, so zero here is a wiring failure rather
+        // than a quiet day — `scripts/rust-host-check.sh` reds on it.
         eprintln!("osm: the fold made no lookups at all");
     }
 

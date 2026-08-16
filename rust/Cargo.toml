@@ -7,11 +7,18 @@
 # (so `day-serve.ts` runs it 2-7 times, median 6, feeding one more table each
 # round). A host that SHARES THE PROCESS deletes both.
 #
-# It does not delete the TS arm on its own. `PassFold.Env.walkEnv`/`.roadEnv`
-# are declared shells, so Lean draws no matched or smoothed geometry and
-# `graftShells` puts the TS run's back positionally (`src/lean/day-decode.ts`).
-# That graft IS the coupling: until the two solvers live here, TS runs every day
-# regardless of what LEAN_DAY says.
+# ⚠ AND THAT FRAMING WAS WRONG, kept here because the correction is the point.
+# The wire and the round loop are real costs, but they are not why the TS arm
+# survives. `PassFold.Env`'s `walkEnv`/`roadEnv` are CALLBACKS the fold generates
+# mid-run — `walkableRoads`, `buildingsNear`, `drivableRoads` — and a spawned
+# pure function cannot answer a question it invents while running. THAT is what
+# a shared process buys, and it is what makes the shells fillable at all.
+#
+# The solvers are NOT here and must not come here: they are already written in
+# Lean (`Verified.Geo.Match`, `WalkSmooth`, `WalkEscape`). The rule is that as
+# much as possible lives in Lean and Rust takes only what proof would not help —
+# the process, the lookups, the IO. An earlier note here sized "~6k lines of
+# matcher to port into Rust"; there was never such a port to do.
 [workspace]
 members = ["day-shell"]
 resolver = "2"
