@@ -45,6 +45,7 @@ import { dropGpsOutliers } from "../hmm/gps-outliers.js";
 import { saveDecode } from "../hmm/persist.js";
 import { reachablePlacesForDay } from "../hmm/place-reachability.js";
 import { logLeanBioLabelsLedger } from "../lean/lean-biometric-labels.js";
+import { logLeanDayLedger } from "../lean/lean-day.js";
 import { logLeanGpsQualityLedger } from "../lean/lean-gps-quality.js";
 import { decodeServed, logLeanHsmmLedger, shadowHsmmViaLean } from "../lean/lean-hsmm.js";
 import { logLeanKalmanLedger } from "../lean/lean-kalman.js";
@@ -269,6 +270,17 @@ async function decodeAndPersist(
 	// swallowed-bridge-failure count — was emitted by the two gates and by
 	// nothing on the serve path. A tenant whose ledger is never emitted in
 	// production is the same silence the ledger exists to break.
+	// #711 AGAIN, and on the tenant that matters most (2026-08-16). `LEAN_DAY`
+	// has been `shadow` in the manifest since `ee28e434`, and this call was
+	// missing — so production ran the whole 38-pass chain every day and printed
+	// NOTHING. Not a line nobody read: no line at all. Checked against the live
+	// pod, `lean-day` appears ZERO times in a run that prints seven other
+	// tenants' ledgers per day.
+	//
+	// It matters more here than it did for stationchain, because `day` is the
+	// tenant that WRITES: flipping it to `on` without this is flipping a
+	// persisting tenant with no live evidence at all.
+	logLeanDayLedger(date);
 	logLeanStationChainLedger(date);
 	logLeanPassLedger(date);
 	logLeanMatchLedger(date);

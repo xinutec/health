@@ -317,7 +317,7 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 	console.log(
 		`lean-day[${mode}] ${label}: ${verdict} (${s.calls} day(s), ${s.fails} failed)${depth}${shells}${detail}`,
 	);
-	return {
+	const verdictData: LedgerVerdict = {
 		tenant: "day",
 		mode,
 		calls: s.calls,
@@ -325,4 +325,12 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 		klass: s.calls === 0 ? "not-exercised" : clean ? "exact" : "diverged",
 		unexplained: [...s.unexplained],
 	};
+	// Print AND reset, the house pattern (`lean-match.ts:357`). This did not
+	// matter while the only caller was `golden-check.ts`, which calls it once at
+	// the end of a whole run — and `resetLeanDayStats` had no caller at all. The
+	// serve path calls it PER DAY (`decode-day.ts`), so without this every day's
+	// line would carry the previous days' tallies and a run over five days would
+	// end with a line claiming five.
+	resetLeanDayStats();
+	return verdictData;
 }
