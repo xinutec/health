@@ -66,3 +66,36 @@ fn placeholders_are_one_per_value() {
     assert_eq!(placeholders(3), "?,?,?");
     assert_eq!(placeholders(0), "");
 }
+
+/// An UNCONFIGURED mirror is absence, not failure — health #976.
+///
+/// `with_conn` counts every `None` it produces past the pool check, because all
+/// of them (poisoned lock, unopenable connection, errored query) reach the
+/// caller as an empty `Vec` that reads downstream as "no roads here". The pool
+/// check itself is deliberately BEFORE the counter: with no `DB_HOST`/`DB_NAME`
+/// there is no mirror to fail, and counting that would print
+/// `⚠ MIRROR FAILED` on every fixture-only and stub run — training the reader
+/// to ignore the one line that means a database fault.
+///
+/// ⚠ This pins the half that can be checked without a database. The other half
+/// — that a real query error IS counted — needs a reachable-but-broken mirror
+/// and is covered by running against prod, not here. Do not read this test as
+/// evidence that failures are counted; it is evidence that non-failures are not.
+#[test]
+fn an_unconfigured_mirror_counts_no_failures() {
+    // The three readers all route through `with_conn`. Without the env vars
+    // `configured()` is false and each returns empty without touching a socket.
+    assert!(
+        !day_shell::mirror::configured(),
+        "this test is only meaningful with no DB_HOST/DB_NAME in the environment; \
+         if the suite ever runs against a real mirror, skip rather than adapt it"
+    );
+    let _ = day_shell::mirror::walkable_roads(51.5, -0.1, 100.0);
+    let _ = day_shell::mirror::drivable_roads(51.5, -0.1, 100.0);
+    let _ = day_shell::mirror::buildings_near(51.5, -0.1, 100.0);
+    assert_eq!(
+        day_shell::mirror::take_fails(),
+        0,
+        "absence was counted as failure — every fixture run would warn"
+    );
+}
