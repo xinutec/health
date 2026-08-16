@@ -2424,3 +2424,29 @@ def main (args : List String) : IO UInt32 := do
     if timing then
       IO.eprintln s!"timing: read={t1-t0}ms parse={t2-t1}ms decode={t3-t2}ms"
     return 0
+
+/-!
+# In-process entry point (#952 spike)
+
+`main` above is the process boundary the TS bridge uses: spawn `verified_cli
+day`, write JSON to stdin, read JSON from stdout. That transport is 84% of the
+day tenant's cost (#433: 9.3 s request wire + 8.0 s typed decode against 3.4 s
+of actual work) and it is also why `converge` exists at all — a spawned fold
+cannot call back into its caller for a lookup, so `day-serve.ts` runs it 2-7
+times, feeding it one more table each round.
+
+Both costs are the WIRE, not the fold. This export is the same `Day.dayResult`
+reached through the C ABI instead, so a host that shares the process can call it
+directly. It is deliberately the SAME function `main` dispatches to on line
+2401: a spike that exported a reimplementation would prove nothing about the
+thing that actually runs.
+
+String in, string out, because that is the narrowest possible C ABI that still
+carries a real day — `lean_object*` either side, no structs to keep in sync. The
+typed decode this leaves in place is the NEXT thing to delete, not this one.
+-/
+@[export health_day_result]
+def dayResultExport (input : String) : String :=
+  match Json.parse input with
+  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
+  | .ok j => (Day.dayResult j).compress

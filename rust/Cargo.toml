@@ -1,0 +1,17 @@
+# The in-process host for the Lean day fold (#952).
+#
+# WHAT THIS IS FOR. The TS day arm survives `LEAN_DAY=on` for two reasons, both
+# transport: the fold is reached by spawning `verified_cli day` (so every call
+# pays a JSON wire — #433 measured 9.3 s request + 8.0 s typed decode against
+# 3.4 s of real work), and a spawned pure function cannot call back for a lookup
+# (so `day-serve.ts` runs it 2-7 times, median 6, feeding one more table each
+# round). A host that SHARES THE PROCESS deletes both.
+#
+# It does not delete the TS arm on its own. `PassFold.Env.walkEnv`/`.roadEnv`
+# are declared shells, so Lean draws no matched or smoothed geometry and
+# `graftShells` puts the TS run's back positionally (`src/lean/day-decode.ts`).
+# That graft IS the coupling: until the two solvers live here, TS runs every day
+# regardless of what LEAN_DAY says.
+[workspace]
+members = ["day-shell"]
+resolver = "2"

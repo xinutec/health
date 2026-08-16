@@ -21,6 +21,13 @@
             pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
             pkgs.lean4 # verified core (lean/) — includes lake; toolchain comes from nix, not elan
             pkgs.dhall-json # re-render gate.json from gate.dhall, which the gate's own staleness message tells you to do
+            # rust/ — the in-process host that is meant to delete the TS day arm
+            # (#952). Links the Lean static libs and calls the fold through the C
+            # ABI, so it needs a C toolchain alongside cargo; stdenv supplies cc.
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rustfmt
+            pkgs.clippy
           ];
         };
       });

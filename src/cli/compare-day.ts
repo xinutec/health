@@ -123,7 +123,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
@@ -280,10 +280,27 @@ async function measure(file: string): Promise<Outcome> {
 		delete process.env.FOLD_CAPTURE;
 	}
 
+	const request = JSON.stringify(buildDayRequest(cap, inputs, answers));
+	// `DAY_REQ_DUMP=<dir>` writes each day's request as the fold receives it.
+	//
+	// The request is otherwise unreachable — it is built here and piped straight
+	// into a spawn, so there is no way to run one fold call by hand, and no way
+	// to feed a real day to anything OTHER than this harness. `rust/day-shell`
+	// (#952) needs exactly that to show it computes the same answer in-process.
+	//
+	// ⚠ A dumped request contains REAL LOCATION DATA — the day's fixes, places
+	// and way names. Off by default, explicit path, and never a path inside the
+	// repo: `tests/golden/` is gitignored for this reason and a dump is the same
+	// class of data with none of that protection.
+	if (process.env.DAY_REQ_DUMP !== undefined) {
+		const dir = process.env.DAY_REQ_DUMP;
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(path.join(dir, `${cap.date}.json`), request);
+	}
 	let raw: string;
 	try {
 		raw = execFileSync(CLI, ["day"], {
-			input: JSON.stringify(buildDayRequest(cap, inputs, answers)),
+			input: request,
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
 			// WITHOUT THIS THE GATE CAN HANG FOREVER, and has: on 2026-08-15 it

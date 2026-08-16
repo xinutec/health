@@ -10,3 +10,10 @@ name = "Verified"
 [[lean_exe]]
 name = "verified_cli"
 root = "Main"
+
+# `Main` as a LIBRARY as well as an exe root (#952). The exe is unchanged and
+# still the thing the TS bridge spawns; this additionally emits
+# `libverified_Main.a` so a host process can link the fold in and call
+# `health_day_result` through the C ABI instead of paying the spawn.
+[[lean_lib]]
+name = "Main"
