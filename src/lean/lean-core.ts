@@ -116,7 +116,16 @@ class LeanCore {
 		if (this.lastServing === serving) return;
 		this.lastServing = serving;
 		if (serving) console.error(`lean-bridge: serving verified core (${detail})`);
-		else console.error(`lean-bridge: degraded — falling back to TS (${detail})`);
+		// ⚠ NOT "falling back to TS". This class is mode-agnostic — it is shared
+		// by every tenant and cannot see whether the caller has a TS arm. Under
+		// `solo` (#975) there is none: the call throws and the day FAILS, so
+		// promising a fallback here names a repair that did not happen. Observed
+		// 2026-08-17 with the bridge deliberately broken, where this line printed
+		// "falling back to TS" immediately above "2026-08-13 FAILED".
+		//
+		// What this class actually knows is that the verified core stopped
+		// serving. What happens next belongs to the caller and its ledger.
+		else console.error(`lean-bridge: degraded — verified core not serving (${detail})`);
 	}
 
 	/** Tear down the current worker (terminating its child) so the NEXT call

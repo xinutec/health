@@ -365,6 +365,9 @@ async function main(): Promise<void> {
 		`# loaded ${places.length} focus_places, ${placeNearLine.size} place-line pairs, ${routeGraph.edges.size} rail edges, ${railStopRelations.length} rail stop relations in ${Date.now() - t0Graph}ms`,
 	);
 
+	// Counted rather than thrown on, so one bad day does not abandon the rest of
+	// the week — the exit code below carries the verdict instead.
+	let failed = 0;
 	for (const date of dates) {
 		try {
 			const result = await decodeAndPersist(
@@ -383,9 +386,27 @@ async function main(): Promise<void> {
 			);
 		} catch (e) {
 			console.error(`  ${date} FAILED: ${e instanceof Error ? e.message : e}`);
+			failed += 1;
 		}
 	}
-	process.exit(0);
+	// ⚠ A FAILED DAY MUST FAIL THE PROCESS. This exited 0 unconditionally, so a
+	// run in which every day threw reported success: the CronJob showed
+	// `Complete`, and the only trace was a line in a log nobody greps.
+	//
+	// It mattered little while every tenant had a TS arm to fall back to — a
+	// bridge failure was repaired and the day decoded anyway. It stops being
+	// survivable with `solo` (#975), where there is no fallback by construction:
+	// the day is simply not decoded, and exit 0 would make that invisible in
+	// exactly the deployment that most needs it visible.
+	//
+	// Measured before changing it: the 2026-08-16 production run has ZERO
+	// `FAILED` lines, so this does not turn a healthy cron red.
+	//
+	// ⚠ Blast radius: the cron runs `decode-day && refresh-presence-log`, so a
+	// failed day now also SKIPS the presence refresh. That is the intended
+	// reading — a presence log rebuilt from a partially-decoded week is worse
+	// than a stale one — but it is a behaviour change, not a side effect.
+	process.exit(failed > 0 ? 1 : 0);
 }
 
 /** Load the continuity seed for `userId` on `date`: returns the

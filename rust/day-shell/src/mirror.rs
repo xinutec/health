@@ -38,6 +38,7 @@
 //! rings — `--osm-verify` does exactly that.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mysql::prelude::*;
 use mysql::{Opts, OptsBuilder, Pool, PooledConn};
@@ -148,24 +149,57 @@ pub fn configured() -> bool {
         .is_some()
 }
 
+/// Mirror queries that FAILED, as opposed to ones that answered nothing.
+///
+/// `with_conn` turns every failure into `None`, and every caller turns that
+/// into an empty `Vec` — so a database that is down produces byte-for-byte the
+/// same answer as an area with genuinely no roads. Worse, the miss it causes is
+/// still paired with a `MIRROR_READS` increment, so `misses() > mirror_reads`
+/// stays false and the `⚠ MISSES` guard never fires. A whole day could fold on
+/// raw chords behind a summary line identical to a healthy one (health #976).
+///
+/// This counter is the only thing that separates the two.
+///
+/// ⚠ NOT incremented when no mirror is CONFIGURED. That is absence, not
+/// failure, and counting it would light up every fixture-only run — training
+/// the reader to ignore the one signal that means something.
+static FAILS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the failure count and reset it, so a count belongs to one request.
+pub fn take_fails() -> u64 {
+    FAILS.swap(0, Ordering::Relaxed)
+}
+
 /// Run `f` with the shared connection, opening it on first use. `None` when no
 /// mirror is configured or the connection cannot be made — the caller then
 /// answers empty and counts a miss, rather than aborting a day's fold over a
 /// database that is merely absent.
 fn with_conn<T>(f: impl FnOnce(&mut PooledConn) -> mysql::Result<T>) -> Option<T> {
+    // Before the counter, deliberately: an unconfigured mirror is absence.
     let pool = POOL.get_or_init(|| opts().and_then(|o| Pool::new(o).ok())).as_ref()?;
-    let mut guard = CONN.lock().ok()?;
-    if guard.is_none() {
-        *guard = pool.get_conn().ok();
-    }
-    let conn = guard.as_mut()?;
-    match f(conn) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            eprintln!("mirror: query failed: {e}");
-            None
+    // Past this point every `None` is a real failure — a poisoned lock, a
+    // connection that would not open, or a query that errored. They are counted
+    // together because the caller cannot act on the difference: all three yield
+    // an empty answer that means "no roads here" downstream.
+    let attempt = || -> Option<T> {
+        let mut guard = CONN.lock().ok()?;
+        if guard.is_none() {
+            *guard = pool.get_conn().ok();
         }
+        let conn = guard.as_mut()?;
+        match f(conn) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("mirror: query failed: {e}");
+                None
+            }
+        }
+    };
+    let out = attempt();
+    if out.is_none() {
+        FAILS.fetch_add(1, Ordering::Relaxed);
     }
+    out
 }
 
 /// `bboxPolygonWkt(bbox)` — `osm-local.ts:843`, vertex for vertex. The ring is

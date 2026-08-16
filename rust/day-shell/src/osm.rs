@@ -144,6 +144,10 @@ pub struct Counts {
     pub drivable_hits: u64,
     pub drivable_misses: u64,
     pub mirror_reads: u64,
+    /// Mirror queries that FAILED rather than answering nothing (health #976).
+    /// Non-zero means the empty answers below are a database fault, not
+    /// coverage — the one distinction the hit/miss counts cannot express.
+    pub mirror_fails: u64,
 }
 
 impl Counts {
@@ -176,6 +180,7 @@ pub fn take_counts() -> Counts {
         drivable_hits: DRIVABLE_HITS.swap(0, Ordering::Relaxed),
         drivable_misses: DRIVABLE_MISSES.swap(0, Ordering::Relaxed),
         mirror_reads: MIRROR_READS.swap(0, Ordering::Relaxed),
+        mirror_fails: crate::mirror::take_fails(),
     }
 }
 

@@ -154,6 +154,20 @@ fn main() {
             ""
         }
     );
+    // Separate line, and unconditional on being non-zero, because it is the one
+    // fault the line above STRUCTURALLY cannot report (health #976). A failed
+    // query still increments `MIRROR_READS`, so `misses() > mirror_reads` stays
+    // false and `⚠ MISSES` never fires — a database that is down reads exactly
+    // like a healthy day whose area has no roads. Every empty answer this run
+    // gave is suspect, not just the failed ones: the fold cannot tell them
+    // apart either, so it drew whatever it could from nothing.
+    if c.mirror_fails > 0 {
+        eprintln!(
+            "osm: ⚠ MIRROR FAILED {} time(s) — empty answers this run are a database fault, \
+             not coverage; the fold drew raw chords where roads exist",
+            c.mirror_fails
+        );
+    }
     if c.asked() == 0 {
         // Distinct from a miss, and a different finding: the fold never reached
         // for a road at all. With `walkEnv`'s reads wired that should not happen

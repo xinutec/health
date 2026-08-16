@@ -53,8 +53,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	process.env.LEAN_GPSQUALITY = undefined;
-	// biome-ignore lint/performance/noDelete: the tenant distinguishes unset from ""
+	// `delete`, not `= undefined`: Node coerces an assigned `undefined` to the
+	// STRING "undefined", which the tenant would then parse (to `off`, but by
+	// accident). Only `delete` actually unsets it.
 	delete process.env.LEAN_GPSQUALITY;
 	resetLeanGpsQualityStats();
 	vi.restoreAllMocks();
