@@ -138,6 +138,27 @@ const ROOT = path.join(import.meta.dirname, "../..");
 const DAYS_DIR = path.join(ROOT, "tests/golden/days");
 const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
 
+/** `DAY_HOST_BIN=<path>` runs the day through the in-process Rust host instead
+ *  of spawning `verified_cli day`.
+ *
+ *  WHY THIS EXISTS. The two arms this gate compares are TS and `verified_cli`,
+ *  and `verified_cli` links `c/osm-host-stub.c`: its `walkableRoads` and
+ *  `buildingsNear` answer nothing, so `WalkAnnotate`'s matcher has no ways and
+ *  draws no line. That is why every day reads SHELL ONLY on `walkMatchedPath` —
+ *  not because the two arms disagree about geometry, but because one of them
+ *  structurally cannot produce any.
+ *
+ *  `rust/day-shell --osm <fixture>` CAN: it answers those lookups from the day's
+ *  own captured `osmTrace`, so the fold draws with the same roads the TS arm
+ *  saw. Pointing this gate at it turns `walkMatchedPath` from an excused absence
+ *  into a real field-by-field comparison — which is the only way the shells can
+ *  be filled with anything anyone has checked.
+ *
+ *  Same stdin/stdout contract, so nothing else here changes. The comparison,
+ *  the classifier and the accepted-shell list are all the ones the default path
+ *  uses; a host judged by a looser rule than the CLI would be worthless. */
+const HOST_BIN = process.env.DAY_HOST_BIN;
+
 interface Outcome {
 	date: string;
 	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "TIMEOUT" | "ERROR";
@@ -299,7 +320,7 @@ async function measure(file: string): Promise<Outcome> {
 	}
 	let raw: string;
 	try {
-		raw = execFileSync(CLI, ["day"], {
+		raw = execFileSync(HOST_BIN ?? CLI, HOST_BIN ? ["--osm", path.join(DAYS_DIR, file)] : ["day"], {
 			input: request,
 			env: { ...process.env, LEAN_ABORT_ON_PANIC: "1" },
 			maxBuffer: 512 * 1024 * 1024,
