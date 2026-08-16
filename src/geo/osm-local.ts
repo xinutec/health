@@ -858,11 +858,55 @@ function bboxPolygonWkt(b: CorridorBbox): string {
  * 17 decimal places and the same field order as the host on purpose — the lines
  * are meant to be sorted and diffed, not read.
  */
-function logOsmRead(section: string, lat: number, lon: number, radiusM: number, raw: number, kept: number): void {
+function logOsmRead(
+	section: string,
+	lat: number,
+	lon: number,
+	radiusM: number,
+	raw: number,
+	kept: number,
+	geom?: readonly (readonly [number, number][])[],
+): void {
 	if (!process.env.OSM_LOG) return;
+	const h = geom === undefined ? "" : ` ${geomHash(geom)}`;
 	console.error(
-		`osm: TS ${section} lat=${lat.toFixed(17)} lon=${lon.toFixed(17)} r=${radiusM} -> ${kept} line(s) (raw ${raw})`,
+		`osm: TS ${section} lat=${lat.toFixed(17)} lon=${lon.toFixed(17)} r=${radiusM} -> ${kept} line(s) (raw ${raw})${h}`,
 	);
+}
+
+/**
+ * Order-independent AND order-dependent digests of a read's geometry, at the
+ * SAME 1e-7° quantisation the matcher ultimately sees.
+ *
+ * Two digests rather than one because the two failure modes are different and a
+ * single hash cannot tell them apart. Neither query has an `ORDER BY`, and the
+ * fold consumes ways in arrival order, so:
+ *
+ *   set= differs   the two arms read different GEOMETRY — a real content
+ *                  difference, and the graph they route over is not the same.
+ *   set= equal but seq= differs
+ *                  same ways, different ORDER. Content is fine; an
+ *                  order-sensitive tie-break decides differently.
+ *
+ * A count alone distinguishes neither, which is why counts agreeing on every
+ * shared key did not settle anything.
+ */
+function geomHash(ways: readonly (readonly [number, number][])[]): string {
+	// FNV-1a over the quantised coordinates, per way; `set` sums the per-way
+	// digests (commutative, so order cannot reach it), `seq` chains them.
+	const fnv = (acc: bigint, v: bigint): bigint => BigInt.asUintN(64, (acc ^ BigInt.asUintN(64, v)) * 1099511628211n);
+	let set = 0n;
+	let seq = 1469598103934665603n;
+	for (const w of ways) {
+		let one = 1469598103934665603n;
+		for (const [la, lo] of w) {
+			one = fnv(one, BigInt(Math.round(la * 1e7)));
+			one = fnv(one, BigInt(Math.round(lo * 1e7)));
+		}
+		set = BigInt.asUintN(64, set + one);
+		seq = fnv(seq, one);
+	}
+	return `set=${set.toString(16)} seq=${seq.toString(16)}`;
 }
 
 /** Margin (m) added around a train run's fixes when reading its rail
@@ -1004,7 +1048,15 @@ export async function queryDrivableRoads(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 2) ways.push({ osmId: Number(r.osm_id), name: r.name, subtype: r.subtype, coords });
 	}
-	logOsmRead("drivableRoads", lat, lon, radiusM, rows.length, ways.length);
+	logOsmRead(
+		"drivableRoads",
+		lat,
+		lon,
+		radiusM,
+		rows.length,
+		ways.length,
+		ways.map((w) => w.coords),
+	);
 	return ways;
 }
 
@@ -1068,7 +1120,15 @@ export async function queryWalkableRoads(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 2) ways.push({ osmId: Number(r.osm_id), name: r.name, subtype: r.subtype, coords });
 	}
-	logOsmRead("walkableRoads", lat, lon, radiusM, rows.length, ways.length);
+	logOsmRead(
+		"walkableRoads",
+		lat,
+		lon,
+		radiusM,
+		rows.length,
+		ways.length,
+		ways.map((w) => w.coords),
+	);
 	return ways;
 }
 
@@ -1116,6 +1176,14 @@ export async function queryBuildingsNear(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 3) rings.push(coords.map(([la, lo]) => ({ lat: la, lon: lo })));
 	}
-	logOsmRead("buildingsNear", lat, lon, radiusM, rows.length, rings.length);
+	logOsmRead(
+		"buildingsNear",
+		lat,
+		lon,
+		radiusM,
+		rows.length,
+		rings.length,
+		rings.map((r) => r.map((p) => [p.lat, p.lon] as [number, number])),
+	);
 	return rings;
 }

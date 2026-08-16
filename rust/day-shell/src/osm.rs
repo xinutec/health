@@ -499,6 +499,34 @@ fn encode_ways(ways: &[Way]) -> Vec<u8> {
     b
 }
 
+/// Order-independent AND order-dependent digests of a read's geometry, at the
+/// SAME 1e-7 degree quantisation the matcher ultimately sees.
+///
+/// The twin of `geomHash` in `src/geo/osm-local.ts` — same FNV-1a, same
+/// quantisation, same two digests, so the two arms' `OSM_LOG` lines can be
+/// compared directly. Two digests because a single one cannot separate the two
+/// failure modes: `set` is commutative so only CONTENT reaches it, while `seq`
+/// also carries ORDER. Neither query has an `ORDER BY` and the fold consumes
+/// ways in arrival order, so `set` equal with `seq` differing is a real and
+/// distinct finding from `set` differing.
+fn geom_hash(lines: &[Line]) -> String {
+    fn fnv(acc: u64, v: i64) -> u64 {
+        (acc ^ (v as u64)).wrapping_mul(1099511628211)
+    }
+    let mut set: u64 = 0;
+    let mut seq: u64 = 1469598103934665603;
+    for w in lines {
+        let mut one: u64 = 1469598103934665603;
+        for (la, lo) in w {
+            one = fnv(one, (la * 1e7).round() as i64);
+            one = fnv(one, (lo * 1e7).round() as i64);
+        }
+        set = set.wrapping_add(one);
+        seq = fnv(seq, one as i64);
+    }
+    format!("set={set:x} seq={seq:x}")
+}
+
 fn answer(lines: &[Line]) -> *mut c_void {
     hand_over(&encode(lines))
 }
@@ -543,9 +571,10 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // reaching for different roads.
             if std::env::var_os("OSM_LOG").is_some() {
                 eprintln!(
-                    "osm: HIT  {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s)",
+                    "osm: HIT  {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
                     section_name(which),
-                    lines.len()
+                    lines.len(),
+                    geom_hash(lines)
                 );
             }
             answer(lines)
@@ -584,9 +613,10 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
                 MIRROR_READS.fetch_add(1, Ordering::Relaxed);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
-                        "osm: MIRROR {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s)",
+                        "osm: MIRROR {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
                         section_name(which),
-                        lines.len()
+                        lines.len(),
+                        geom_hash(&lines)
                     );
                 }
                 return answer(&lines);

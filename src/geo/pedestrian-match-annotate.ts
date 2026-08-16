@@ -17,6 +17,7 @@
  */
 
 import { matchWalkSegmentViaLean } from "../lean/lean-match.js";
+import { rejectSpikesViaLean } from "../lean/lean-passes.js";
 import { type StepPoint, stepsInWindow } from "./biometrics.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { holdImplausibleSpeed, rejectSpikes } from "./episode-geometry.js";
@@ -257,8 +258,19 @@ export async function annotateWalkMatches(
 	// The no-op catch keeps a failing query from surfacing as an unhandled
 	// rejection while an earlier leg is still processing; the per-leg await
 	// below still rethrows it, aborting the pass like the serial version did.
-	const reads = prep.map((p) => {
+	const reads = prep.map((p, i) => {
 		if (p === null) return null;
+		// `OSM_LOG=1` maps a read KEY back to the SEGMENT that asked for it. The
+		// osm-local log prints the key (centroid+radius) but not which leg it
+		// belongs to, and the fold reads a different NUMBER of legs than this arm
+		// — so without this the two logs cannot be aligned leg by leg, only in
+		// aggregate. Bounds + mode, the same identity `day-compare.segWhere` uses.
+		if (process.env.OSM_LOG) {
+			const seg = segments[i];
+			console.error(
+				`osm: TSLEG ${seg.startTs}-${seg.endTs} ${effectiveMode(seg)} lat=${p.cLat.toFixed(17)} lon=${p.cLon.toFixed(17)} r=${p.discRadiusM}`,
+			);
+		}
 		const ways = osm.walkableRoads(p.cLat, p.cLon, p.discRadiusM);
 		const buildings = ways.then((w) => (w.length === 0 ? [] : osm.buildingsNear(p.cLat, p.cLon, p.discRadiusM)));
 		ways.catch(() => {});
@@ -293,7 +305,13 @@ export async function annotateWalkMatches(
 		const buildings = await read.buildings;
 
 		// The matcher gets the same fixes with lone teleport spikes dropped.
-		const clean = rejectSpikes(inWin);
+		//
+		// ⚠ A/B'd (#749). This was the LAST unwrapped op on the walk path, and it
+		// is the one input to the matcher that nothing compared: the leg's
+		// centroid and disc radius come from `prep`, which is computed BEFORE this
+		// filter, so two arms agreeing on the read KEY proves nothing about the
+		// fix set the matcher actually receives. Same gap `splice` had.
+		const clean = rejectSpikesViaLean<PedFix>(inWin, () => rejectSpikes(inWin));
 		if (clean.length < MIN_LEG_FIXES) {
 			out.push(seg);
 			continue;
