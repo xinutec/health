@@ -106,6 +106,27 @@ in  { name = "health"
         , argv = G.inDevShell [ "pnpm", "run", "check:cascade-parity" ]
         , timeout_s = 600
         }
+      , {-  The check above pins the pass NAMES. It cannot pin a pass's BODY,
+            and that is the gap this closes: `feefb75` added
+            MINED_LABEL_MIN_DAYS to velocity.ts with no Lean counterpart, the
+            name list still matched, and the day gate went RED on 6 of 35 days
+            with nothing to say so until the next deploy — `deploy.sh` is the
+            only place the full gate runs. THIRD silent TS/Lean drift (#417,
+            #425, this), all three found by accident.
+
+            ONE day, ~9 s, so this is a tripwire and not the gate: the 35-day
+            corpus still owns the verdict in deploy.sh. Skips cleanly when the
+            gitignored corpus is absent, which is why it can sit in a table
+            that must also pass on a clean checkout.
+
+            Verified RED as well as green — a TS-only change to the mined-label
+            gate fails it. #943.
+        -}
+        G.Check::{
+        , name = "Lean fold matches the TS day (one-day smoke)"
+        , argv = G.inDevShell [ "scripts/day-gate-smoke.sh" ]
+        , timeout_s = 600
+        }
       , G.Check::{
         , name = "lint (biome, backend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]

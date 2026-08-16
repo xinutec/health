@@ -111,6 +111,19 @@
         "develop",
         "--no-warn-dirty",
         "--command",
+        "scripts/day-gate-smoke.sh"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "Lean fold matches the TS day (one-day smoke)",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
         "pnpm",
         "run",
         "lint"
