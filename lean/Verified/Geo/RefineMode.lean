@@ -76,9 +76,15 @@ private def dist (w : NearbyWay) : Float := w.distanceM.getD posInf
 private def named (w : NearbyWay) : Bool :=
   match w.name with | some n => n ≠ "" | none => false
 
-/-- The highway that best represents what the user is on. `highways` arrives
-CLOSEST-FIRST from the adapter and the order is load-bearing: at driving speed
-this takes the first driveable one, and otherwise the first outright. -/
+/-- The highway that best represents what the user is on: at driving speed the
+first driveable one, otherwise the first outright.
+
+⚠ THE ORDER IS LOAD-BEARING AND IT IS NOT "CLOSEST-FIRST", which both this
+docstring and the TS comment claimed for a long time. It is the INSERTION order
+of `dedupNearestWays`, i.e. roughly "nearest at the FIRST sample". #445 measured
+the alternatives against golden and this accident beats both: insertion order
+leaves 5 standing regressed truth rows over 3 days, global-nearest 14 over 11,
+coverage-ranked 17 over 15. Do not "fix" it to sort by distance. -/
 private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float) : NearbyWay :=
   if speedKmh > 30 then
     match highways.find? (fun h => !(PEDESTRIAN_HIGHWAY_SUBTYPES.contains h.subtype)) with

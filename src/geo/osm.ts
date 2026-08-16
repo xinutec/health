@@ -1075,12 +1075,21 @@ export interface NearbyWay {
 	subtype: string; // "motorway", "rail", "subway", "river", etc.
 	name?: string; // e.g. "A2", "Northern Line"
 	/** Distance from the GPS sample to this way's geometry, in metres.
-	 *  Populated by `nearbyWays`. When aggregated across multiple
-	 *  sample points (e.g. velocity.ts:474), the *minimum* distance
-	 *  seen for a given (type/subtype/name) wins, so refineMode can
-	 *  tell the difference between a road we brushed past once and
-	 *  a road the GPS trace was hugging the whole way. Optional for
-	 *  back-compat with tests that don't care. */
+	 *  Populated by `nearbyWays`. When aggregated across multiple sample
+	 *  points (see the dedup in velocity.ts), the *minimum* distance seen
+	 *  for a given (type/subtype/name) wins. Optional for back-compat with
+	 *  tests that don't care.
+	 *
+	 *  ⚠ This used to claim the minimum lets refineMode "tell the difference
+	 *  between a road we brushed past once and a road the GPS trace was
+	 *  hugging the whole way". IT CANNOT, and believing it is what #445 cost
+	 *  an afternoon to: a minimum is precisely the statistic that discards
+	 *  how MUCH of the walk ran along a way. A road brushed once at 1 m beats
+	 *  a road followed throughout at 5 m.
+	 *
+	 *  Adding the missing coverage count and ranking names by it was then
+	 *  MEASURED and is worse still — see `borrowStreetName`. The comment was
+	 *  wrong about the code; the code is not obviously wrong about the world. */
 	distanceM?: number;
 }
 
@@ -1267,6 +1276,25 @@ const WALK_NAME_BORROW_MAX_KMH = 10;
  * mirrors the factor scorer's named/unnamed same-mode dedup, which is grounded
  * in the same OSM duplication.
  */
+/** ⚠ THREE ORDERINGS HAVE NOW BEEN MEASURED AGAINST GOLDEN, and the one in the
+ *  code — which nobody chose — wins. Standing regressed truth rows:
+ *
+ *      insertion order (what `highways[0]` actually is)   5 rows /  3 days
+ *      global nearest distance                           14 rows / 11 days
+ *      coverage-ranked, distance as tie-break            17 rows / 15 days
+ *
+ *  All three at 0 uncaptured days, so the denominators are comparable. The
+ *  coverage run also broke 15 CONFIRMED rows, including one on 2026-06-16 —
+ *  the very day the change was built to fix.
+ *
+ *  So "name the walk after the way it ran ALONG, not the one it passed
+ *  closest to" is a good principle and this is not how to compute it. Five
+ *  sampled point-lookups cannot answer a question about a whole path: the
+ *  resolution is 0–5 and a sample either sees a way or does not. If this is
+ *  tried again, use the MATCHED PATH — `walkMatchedPath` is already a
+ *  polyline along real ways, so arc length per way is directly available and
+ *  is the actual quantity the principle names. Do NOT re-derive it from the
+ *  sample set. */
 function borrowStreetName(highways: readonly NearbyWay[]): string | undefined {
 	let best: NearbyWay | undefined;
 	let bestDist = Number.POSITIVE_INFINITY;
