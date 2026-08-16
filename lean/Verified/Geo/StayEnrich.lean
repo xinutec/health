@@ -124,6 +124,20 @@ def hasOvernightPresence (startTs endTs : Int) (lon : Float) : Bool := Id.run do
 address beats a co-located venue label. -/
 def RESIDENCE_SLEEP_THRESHOLD_H : Float := 5
 
+/-- How many DISTINCT days a cluster must have been visited before its mined
+`amenityLabel` is allowed to name a stay.
+
+A majority vote taken over a single visit is not a majority — it is one
+observation wearing the shape of a consensus. Below this bar the label is
+dropped and the cascade falls through to the address, which is the neutral
+answer rather than a confident wrong one.
+
+⚠ A cluster that HAS a label and fails this bar is still not `venueless`: the
+TS reads `venueless = wp.amenityLabel === null`, testing the FIELD and not this
+gate's verdict, so it falls through with `preferResidential := false`. Gating
+`venueless` on this too would be the natural-looking change and would diverge. -/
+def MINED_LABEL_MIN_DAYS : Float := 2
+
 /-- A mined `focus_places` row as this branch reads it: the scorer's candidate
 fields plus the three the LABEL cascade branches on. One record rather than two
 projections, because unlike the fix series both halves are read on the same
@@ -198,7 +212,8 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         -- 4. A mined amenity label, but only off a residential cluster: a
         -- residential address beats a co-located cafe, because the cluster's
         -- sleep hours dwarf its awake hours.
-        match (if isResidential then none else wp.amenityLabel) with
+        let tooFew := wp.cand.uniqueDays < MINED_LABEL_MIN_DAYS
+        match (if isResidential || tooFew then none else wp.amenityLabel) with
         | some label =>
           withCity
             { seg with place := some label, focusPlaceId := some wp.cand.id }
@@ -306,6 +321,13 @@ private def resid : NamedPlace :=
 private def venueless : NamedPlace :=
   { cand := cand 4 LAT LON 40, displayName := some "Stay", sleepHours := 0 }
 
+/-- The same cafe seen on ONE day and on TWO — the pair straddles
+`MINED_LABEL_MIN_DAYS`, so they pin the bar's value and its strictness rather
+than merely exercising the branch. -/
+private def cafe1day : NamedPlace := { cafe with cand := cand 5 LAT LON 1 }
+
+private def cafe2day : NamedPlace := { cafe with cand := cand 6 LAT LON 2 }
+
 /-- A resolver that reports WHICH coordinate and WHICH flags it was asked
 about, so a guard can pin the question rather than only the answer. -/
 private def spy : Reads :=
@@ -340,6 +362,17 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 -- 4. A non-residential cluster with a mined label takes the label.
 #guard (run spy [cafe]).place == some "Loft Coffee Company"
 #guard (run spy [cafe]).focusPlaceId == some 2
+-- ... but only once the cluster has been seen on MINED_LABEL_MIN_DAYS distinct
+-- days. One visit is not a majority vote, so the label is dropped and the
+-- address answers instead. The pair straddles the bar, pinning 2 and the `<`.
+#guard (run spy [cafe2day]).place == some "Loft Coffee Company"
+#guard (run spy [cafe1day]).place == some "51.52|-0.13|false|true"
+-- And note WHICH question the one-day cluster asks: `preferResidential=false`.
+-- A cluster that fails the day bar still carries an `amenityLabel`, so it is
+-- NOT `venueless` — contrast the venueless guard below, which asks with `true`.
+-- Folding this gate into `venueless` is the plausible-looking change that would
+-- diverge from the TS, which tests the FIELD and not this verdict.
+#guard (run spy [cafe1day]).focusPlaceId == some 5
 -- ... and a RESIDENTIAL one does not, even carrying the same label: it falls
 -- through to the resolver, which the spy answers with its arguments —
 -- `preferResidential=true` (residential) and a stay.
