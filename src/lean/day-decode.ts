@@ -194,13 +194,36 @@ export function decodeEpisode(v: unknown): EpisodeGeometry {
 }
 
 /**
- * Put the TS run's solver geometry back on Lean's segments, positionally.
+ * Fill in the TS run's solver geometry where — and only where — the Lean arm
+ * drew none.
  *
  * Positional because the graft is only defined when the two cascades produced
  * the same segments: `undefined` on a count mismatch, and the caller then serves
  * TS. A segment-by-segment graft across differing counts would be pairing
  * whichever legs happen to share an index, which is not a repair — it is two
  * days spliced together.
+ *
+ * # ⚠ ONLY WHERE LEAN IS ABSENT, and that condition used to be missing
+ *
+ * This took the TS value whenever the TS had one, and that was invisible for as
+ * long as it was also true that the Lean arm never had one: `walkEnv`/`roadEnv`
+ * were shells, so `l[k]` was always `undefined` and "prefer TS" and "fill the
+ * gap" were the same function.
+ *
+ * They stopped being the same function when the fold got a host that can answer
+ * its own OSM lookups (#959). Under `LEAN_DAY_HOST` the fold DRAWS — measured
+ * bit-identical to the TS corrector and reconstruction, and within the 1e-7°
+ * quantisation on the matcher's own legs — and an unconditional graft would
+ * throw all of that away and serve the TS line, making the host a no-op nobody
+ * could see. Worse, it would hide exactly the divergences `on` exists to
+ * surface: `serveLeanDay`'s own contract is "A FIELD divergence is served".
+ *
+ * `graftEpisodes` below has always had the condition (`SOLVER.has(ts.kind) &&
+ * l.kind === "raw"`). The two halves of one rule disagreed; now they do not.
+ *
+ * Inert without a host: `verified_cli` links the empty OSM stub, so a leg with
+ * no ways is skipped before any solver leaf runs, `l[k]` is `undefined`, and
+ * this is the graft it always was.
  */
 export function graftShells(
 	lean: readonly EnrichedSegment[],
@@ -210,6 +233,7 @@ export function graftShells(
 	return lean.map((l, i) => {
 		const out = { ...l };
 		for (const k of SHELLED) {
+			if ((l as unknown as Record<string, unknown>)[k] !== undefined) continue;
 			const v = (ts[i] as unknown as Record<string, unknown>)[k];
 			if (v !== undefined) (out as Record<string, unknown>)[k] = v;
 		}

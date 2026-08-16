@@ -158,6 +158,19 @@ describe("the shells are grafted, and only where they are shells", () => {
 		expect(graftShells([leanSeg], [FULL_SEG, FULL_SEG])).toBeUndefined();
 	});
 
+	// The condition that only started to matter when the fold got a host that
+	// answers its own OSM lookups (#959). Before that the Lean arm never had a
+	// path, so "fill the gap" and "prefer TS" were the same function — and the
+	// unconditional version would now throw away geometry the fold really drew
+	// and serve the TS line, making the host invisible.
+	it("KEEPS Lean's own path where the fold drew one", () => {
+		const drawnByLean = [{ lat: 51.5, lon: -0.1, ts: 1_778_804_979 }];
+		const [got] = graftShells([{ ...leanSeg, walkMatchedPath: drawnByLean }], [FULL_SEG]) ?? [];
+		expect(got.walkMatchedPath).toEqual(drawnByLean);
+		// …and still fills the one the fold left alone.
+		expect(got.walkSmoothedPath).toEqual(FULL_SEG.walkSmoothedPath);
+	});
+
 	const raw = (e: EpisodeGeometry): EpisodeGeometry => ({ ...e, kind: "raw", points: [{ lat: 0, lon: 0 }] });
 	const drawn: EpisodeGeometry = {
 		startTs: 1,
