@@ -61,6 +61,7 @@
  * does.
  */
 
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
@@ -268,8 +269,18 @@ async function runLeanDay(
 		// First occurrence per field is enough to find the leg; `segWhere` is
 		// bounds + mode, so this adds times and a mode, not places.
 		const firstAt = new Map<string, string>();
-		const sample: Sample = (key, _i, _a, _b, where) => {
+		const sample: Sample = (key, _i, a, b, where) => {
 			if (where !== undefined && !firstAt.has(key)) firstAt.set(key, where);
+			// `LEAN_DAY_DUMP=<file>` writes BOTH arms' values for every difference,
+			// which is the only way to ask WHERE two drawn polylines part rather
+			// than just how far apart their worst vertex is. A deviation is one
+			// number; the vertex it first appears at names the way each matcher
+			// chose. Off unless the variable is set — this is an attribution tool,
+			// not telemetry.
+			const dump = process.env.LEAN_DAY_DUMP;
+			if (dump !== undefined && dump !== "") {
+				appendFileSync(dump, `${JSON.stringify({ label, key, where, ts: a, lean: b })}\n`);
+			}
 		};
 		const all = [
 			...diffSegs(ts.segs.map(encodeSeg), res.segs ?? [], sample),
