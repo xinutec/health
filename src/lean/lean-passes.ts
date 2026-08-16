@@ -498,13 +498,19 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 /**
  * Route-detail splice through the verified core (`qSplice`, op `splice`).
  *
- * ⚠ **This op had NO A/B until 2026-08-16, and it is where the first live day
- * diverged.** `simplify`, `spurs`, `spikes`, `trim` and `despike` were all
- * compared and all read EXACT on every live day; `splice` was not compared at
- * all, and 2026-08-11 shipped a 2.55 m out-and-back spur that the Lean arm
- * keeps and the TS arm excises (#749). The uncompared op is the one that broke,
- * which is the argument for this function existing rather than for the fix
- * alone.
+ * ⚠ **This op had NO A/B until 2026-08-16.** It was added while chasing #749's
+ * 2.55 m out-and-back spur on 2026-08-11, on the hypothesis that `qSplice`
+ * re-injected an excursion `removeSpurs` had already excised.
+ *
+ * **That hypothesis is REFUTED, and this comment said otherwise for one
+ * commit.** With the A/B in place, `splice` reads `n/0f/0d` on every live day:
+ * given the same inputs, `qSplice` and `spliceRouteDetail` agree. Splice is not
+ * the cause of the spur and nothing here should be read as implicating it.
+ *
+ * The function stays because the COVERAGE GAP was real independent of that
+ * bug — splice was the one geometry op nothing compared, and an uncompared op
+ * is a place a divergence can reach a live day unseen. Keeping it is the
+ * argument; the bug it was built to catch turned out to be elsewhere.
  *
  * ⚠ **Not drop-only, unlike every other pass here.** Splice ADDS vertices
  * carried back from the route, so the result is not a subsequence of the input
