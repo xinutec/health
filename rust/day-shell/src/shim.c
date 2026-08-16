@@ -75,3 +75,19 @@ char *health_shell_day(const char *input) {
 }
 
 void health_shell_free(char *p) { free(p); }
+
+/* Lean object construction, for the host's `@[extern]` answers.
+ *
+ * The lookups themselves live in Rust — that is where the OSM reads will be —
+ * but `lean_alloc_sarray` and `lean_dec` are `lean.h` inlines with no linkable
+ * symbols, so Rust cannot call them directly. Same reason this file exists at
+ * all. */
+lean_object *health_shell_mk_bytes(const uint8_t *p, size_t n) {
+	lean_object *a = lean_alloc_sarray(1, n, n);
+	memcpy(lean_sarray_cptr(a), p, n);
+	return a;
+}
+
+/* Release a boxed argument an `@[extern]` callee owns. A no-op for a tagged
+ * scalar, which is what every radius this passes actually is. */
+void health_shell_dec(lean_object *o) { lean_dec(o); }

@@ -47,6 +47,16 @@ fn main() {
 		// The compiled modules. We take them from the archives instead, so that
 		// the linker drops what the host does not reach.
 		.filter(|t| !t.ends_with(".o.export") && !t.ends_with(".o"))
+		// ⚠ THE STUB, WHICH IS THE ONE THING IN THE RSP THIS BINARY MUST NOT
+		// HAVE. `c/osm-host-stub.c` answers `DayEntry.OsmHost`'s externs with
+		// zero polylines so that the SPAWNED CLI keeps its shell behaviour. A
+		// host that linked it would resolve those symbols to the empty answer
+		// and never call its own — and, exactly like the duplicate `_main`, it
+		// would build, run and print well-formed JSON while doing so.
+		//
+		// Caught by noticing the host linked when it should not have: the
+		// externs were unresolved, and the rsp quietly resolved them.
+		.filter(|t| !t.contains("libosmhoststub"))
 		.collect();
 
 	// Ours FIRST: a static archive only satisfies symbols already undefined when

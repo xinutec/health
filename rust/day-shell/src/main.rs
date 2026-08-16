@@ -20,6 +20,8 @@
 //! rest pay only the fold, and the gap between them is what a shared process
 //! buys over `converge`'s 2-7 spawns.
 
+mod osm;
+
 use std::ffi::{CStr, CString};
 use std::io::Read;
 use std::os::raw::c_char;
@@ -75,6 +77,14 @@ fn main() {
 	}
 
 	println!("{out}");
+
+	// The fold's own lookups, which nothing could see before the host existed —
+	// the shells answered empty before the question could be recorded. Zero here
+	// means the matcher never asked, which is what the remaining five stubbed
+	// `walkEnv` leaves currently guarantee: `matcher` returns `none`, so nothing
+	// downstream of it ever reaches for a road or a building.
+	let (roads, buildings) = osm::take_counts();
+	eprintln!("osm: walkableRoads={roads} buildingsNear={buildings}");
 
 	// To stderr, so stdout stays diffable against `verified_cli day`.
 	if repeat > 1 {

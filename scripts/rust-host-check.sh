@@ -15,6 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   1. it builds        — the Lean static libs are linked, symbols resolve
 #   2. clippy is clean  — same bar as `keep the linter clean` everywhere else
 #   3. it AGREES        — same bytes as `verified_cli day` on a real day
+#   4. it ANSWERS        — the fold's OSM callbacks reach the HOST, not the stub
 #
 # (3) is the one that matters and the one that can skip: the day request is
 # built from `tests/golden/`, which is gitignored, so a clean checkout cannot
@@ -82,6 +83,29 @@ lean/.lake/build/bin/verified_cli day <"$REQ" >"$REQ_DIR/cli.json"
 if ! grep -q 'init=' "$REQ_DIR/host.err"; then
 	cat "$REQ_DIR/host.err" >&2
 	echo "rust-host-check: the host produced no init line — Lean's main may have won the link." >&2
+	exit 1
+fi
+
+# THE CALLBACK REACHED THE HOST. Only the host's implementation counts its
+# calls, so a nonzero count means the Lean fold called out mid-run and Rust
+# answered — the one thing a spawned process structurally cannot do, and the
+# whole reason this crate exists.
+#
+# VERIFIED RED: removing the `walkEnv` wiring in DayEntry.lean drops it to 0 and
+# fails this. What it does NOT catch, tested and refuted rather than assumed:
+# re-adding `libosmhoststub` to the host's link does NOT make the stub win, so
+# the count stays 4. Rust's own `#[no_mangle]` object defines the symbols before
+# the linker reaches the archive, so the archive member is never pulled. The
+# stub could only win BEFORE `src/osm.rs` existed — which it briefly did.
+# build.rs still filters it out, as defence rather than as the thing this checks.
+#
+# 2026-05-14 asks 4 times. A day that asks ZERO cannot discriminate and must not
+# be the sentinel.
+if ! grep -qE 'osm: walkableRoads=[1-9]' "$REQ_DIR/host.err"; then
+	cat "$REQ_DIR/host.err" >&2
+	echo "rust-host-check: the fold made no OSM callbacks on $DAY." >&2
+	echo "  Either the stub won the link again, or this day stopped asking." >&2
+	echo "  Both are real; neither may pass silently." >&2
 	exit 1
 fi
 

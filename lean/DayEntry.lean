@@ -1,5 +1,6 @@
 import Verified
 import DayEntry.Wire
+import DayEntry.OsmHost
 
 /-!
 # `DayEntry` — the day cascade's JSON boundary, and the C entry point
@@ -609,6 +610,23 @@ private def parseEnv (j : Json) : Except String Env := do
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
+    -- The pedestrian matcher's two OSM reads, answered by whoever LINKS the
+    -- fold rather than by the request (#952). `UNFED` below still names
+    -- `walkEnv`, and correctly: the five solver leaves are still stubs, so this
+    -- is not yet a fed callback — it is the READ half of one.
+    --
+    -- Under `verified_cli` these resolve to `c/osm-host-stub.c`, which answers
+    -- zero polylines. That is byte-for-byte what `fun _ _ _ => #[]` did, which
+    -- is why this change is expected to move NOTHING on the day gate, and why
+    -- the gate is the right thing to ask.
+    walkEnv := {
+      walkableRoads := DayEntry.OsmHost.walkableRoads
+      buildingsNear := DayEntry.OsmHost.buildingsNear
+      matcher := fun _ _ _ => none
+      reconstruct := fun _ _ _ _ => none
+      refineMatched := fun _ _ => none
+      correct := fun drawn _ _ _ => drawn
+      snapPassages := fun drawn _ _ => drawn }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
     tzAt := fun lat lon => hit tz "tzAt" (k2 lat lon)
