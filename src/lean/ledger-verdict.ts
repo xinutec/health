@@ -44,8 +44,13 @@ export interface LedgerVerdict {
 	tenant: string;
 	/** The staging mode that produced it. `off` never yields a verdict at all;
 	 *  a ledger returns `null` in that case, so an untouched tenant costs the
-	 *  gate nothing and can never fail it. */
-	mode: "shadow" | "on";
+	 *  gate nothing and can never fail it.
+	 *
+	 *  `solo` (#975) reports CALLS and nothing comparative: with no TS arm there
+	 *  is no comparison, so it can never be `diverged` and its `unexplained` is
+	 *  always empty. Zero calls still fails — a tenant serving alone that never
+	 *  ran is the most serious version of that fault, not an exempt one. */
+	mode: "shadow" | "on" | "solo";
 	/** Successful bridge calls — for `hsmm`, days shadowed. Zero is the whole
 	 *  point of `not-exercised`. */
 	calls: number;
@@ -94,6 +99,12 @@ export function servedNote(mode: LedgerVerdict["mode"], count: number): string {
 	// user's real days out of the persisted decode, not measurement scratch, and
 	// that distinction is the one worth keeping greppable. `(TS served)` then
 	// removes any doubt about which arm drew what they actually saw.
+	// `solo` is unreachable here today — with no TS arm nothing can be recorded
+	// as a divergence, so `count` is structurally zero. It is named anyway
+	// because the fallthrough would label it `(TS served)`, which is the one
+	// thing that is certainly false under `solo`, and the next tenant ported to
+	// it would inherit that wrong label rather than a type error.
+	if (mode === "solo") return ` ${count} IN SERVED OUTPUT (no TS arm)`;
 	return mode === "on" ? ` ${count} IN SERVED OUTPUT` : ` ${count} ON THE SERVED PATH (TS served)`;
 }
 
@@ -146,7 +157,17 @@ export function gateLedgers(
 			);
 		}
 		if (v.fails > 0) {
-			reasons.push(`${v.fails} bridge failure(s) swallowed and fallen back to TS`);
+			// The wording is the finding. Under `shadow`/`on` a failure is
+			// SWALLOWED and TS is served, so the run completed and the count is
+			// the only trace. Under `solo` there is no TS to fall back to and the
+			// call THREW — so a non-zero count here means a decode aborted, and
+			// describing that as "fallen back to TS" would name a repair that
+			// cannot have happened.
+			reasons.push(
+				v.mode === "solo"
+					? `${v.fails} bridge failure(s) — no TS arm to fall back to, so the call threw`
+					: `${v.fails} bridge failure(s) swallowed and fallen back to TS`,
+			);
 		}
 		if (v.klass === "diverged") {
 			// Split the unexplained set against the committed ceiling. Debt the

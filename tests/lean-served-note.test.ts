@@ -58,4 +58,16 @@ describe("servedNote", () => {
 		expect(servedNote("on", 1)).toContain("SERVED");
 		expect(servedNote("shadow", 1)).toContain("SERVED");
 	});
+
+	// `solo` (#975) has no TS arm at all, so the one thing that is certainly
+	// false about it is the `shadow` phrasing. The count is structurally zero
+	// today — nothing can be recorded as a divergence without a second arm — so
+	// this pins the wording against the day a tenant DOES reach it, rather than
+	// against current behaviour.
+	it("never says TS served under solo", () => {
+		const note = servedNote("solo", 2);
+		expect(note).not.toContain("TS served");
+		expect(note).toContain("SERVED");
+		expect(note).toContain("no TS arm");
+	});
 });

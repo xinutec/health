@@ -42,14 +42,32 @@ import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanGpsQualityMode = "off" | "shadow" | "on";
+/**
+ * `solo` is the mode that DELETES TypeScript (#975); the other three do not.
+ *
+ * `off`/`shadow`/`on` all run BOTH arms — that is what makes a ledger line
+ * possible, and it is why flipping nine tenants to `on` removed no TS at all.
+ * `solo` does not call the TS thunk, so the `() => qualityFilterGps(points)`
+ * closure at the call site becomes the last reference to the TS filter and the
+ * implementation falls out where the compiler can see it.
+ *
+ * ⚠ **There is no fallback in `solo`, by construction.** The other modes
+ * swallow a `LeanBridgeError` and serve `tsResult`; with no TS arm there is
+ * nothing to serve, so a bridge failure THROWS and the decode fails loudly.
+ * That is the intended trade and not an oversight — serving a degraded track
+ * would be exactly the masking fallback the house rules forbid. Do not stage a
+ * tenant to `solo` until its ledger has read `0f` over live days.
+ */
+export type LeanGpsQualityMode = "off" | "shadow" | "on" | "solo";
 
 export function leanGpsQualityMode(): LeanGpsQualityMode {
-	// The settings-UI master override wins over the env default when set.
+	// The settings-UI master override wins over the env default when set. It
+	// cannot select `solo`: the toggle means "use the verified core", and
+	// deleting the fallback is a deployment decision, not a UI preference.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
 	const v = process.env.LEAN_GPSQUALITY;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 interface GpsQualityStat {
@@ -121,6 +139,45 @@ function symdiffNote(ts: readonly number[], lean: readonly number[]): string {
 }
 
 /**
+ * `solo`: the verified filter alone. No TS arm, no comparison, no fallback.
+ *
+ * ⚠ **The `points.length <= 2` guard is deliberately NOT carried over**, and
+ * that is a correctness point rather than a simplification. In the other modes
+ * it short-circuits to `ts()` to avoid spending a bridge call on a trivial
+ * input — but `qualityFilterGps` is not the identity on a short track: it drops
+ * fixes the phone itself disclaims (`accuracy > ACCURACY_UNINFORMATIVE_M`)
+ * BEFORE it counts to two (`gps-quality.ts:150`). Returning `points` unfiltered
+ * here would serve fixes every other mode discards.
+ *
+ * Lean covers the case exactly — `GpsQuality.lean:95` applies the same accuracy
+ * filter and then `if points.size ≤ 2 then points` — so the honest translation
+ * of the guard is to delete it and always ask.
+ *
+ * Throws `LeanBridgeError` on a bridge failure. That is the point of `solo`:
+ * there is no second answer to serve, and inventing one would be the masking
+ * fallback the house rules forbid.
+ */
+function soloFilter(points: readonly GpsPoint[]): GpsPoint[] {
+	const lean = leanGpsQualityServe({
+		pts: points.map((p) => [
+			p.ts,
+			floatToBits(p.lat),
+			floatToBits(p.lon),
+			p.accuracy === null ? null : floatToBits(p.accuracy),
+		]),
+	});
+	if (lean.error !== undefined || lean.pts === undefined) {
+		stats.fails += 1;
+		throw new LeanBridgeError(`lean-gpsquality[solo]: ${lean.error ?? "no points in response"}`);
+	}
+	stats.calls += 1;
+	const keys = lean.pts.map((r) => `${r[0]}|${r[1]}|${r[2]}|${r[3] === null ? "n" : r[3]}`);
+	// Indexes the ORIGINAL array, so the caller gets the input objects rather
+	// than round-tripped copies — the same identity guarantee `on` gives.
+	return keptIndices(points, keys).map((i) => points[i]);
+}
+
+/**
  * Quality-filter a raw GPS track through the verified core, staged behind
  * `LEAN_GPSQUALITY`. `ts` computes the TS arm (`qualityFilterGps(points)`).
  * Both `shadow` and `on` run the verified filter and compare; `on` serves the
@@ -133,6 +190,7 @@ function symdiffNote(ts: readonly number[], lean: readonly number[]): string {
  */
 export function qualityFilterGpsViaLean(points: readonly GpsPoint[], ts: () => GpsPoint[]): GpsPoint[] {
 	const mode = leanGpsQualityMode();
+	if (mode === "solo") return soloFilter(points);
 	if (mode === "off" || points.length <= 2) return ts();
 	const tsResult = timeTsArm("gpsquality", ts);
 
@@ -201,7 +259,20 @@ export function logLeanGpsQualityLedger(label: string): LedgerVerdict | null {
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.pickDiffs === 0;
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
-	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.lenDiffs + s.pickDiffs} DIVERGED`;
+	//
+	// ⚠ `solo` must NOT print EXACT. `clean` is vacuously true there — no TS arm
+	// ran, so `lenDiffs`/`pickDiffs` can never be incremented — and EXACT would
+	// claim agreement with a comparison that did not happen. That is the same
+	// false-green as a gate excusing a field by name: a reader cannot tell
+	// "agreed everywhere" from "nothing was checked". SOLO says which.
+	const verdict =
+		s.calls === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? "SOLO (no TS arm, nothing compared)"
+				: clean
+					? "EXACT"
+					: `${s.lenDiffs + s.pickDiffs} DIVERGED`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} pick=${s.pickDiffs} (${s.fixes} fixes)`;
 	const served = divergences.filter((d) => d.scope === "decode").length;
 	const servedTag = servedNote(mode, served);
