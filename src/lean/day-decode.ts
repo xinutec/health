@@ -39,35 +39,31 @@
  *      fractional `ts` survives exactly (#420). It is the ROUNDING that would
  *      have been the loss here.
  *
- * # Why the graft exists, and why it is now a BACKSTOP
+ * # The graft is GONE (2026-08-16, #959). What it was, so nobody rebuilds it
  *
- * ⚠ **The premise below changed on 2026-08-16. Read this before trusting any
- * "the shells are empty" statement elsewhere.**
- *
- * `PassFold.Env.walkEnv` / `.roadEnv` USED to be declared shells, so the Lean
+ * `PassFold.Env.walkEnv` / `.roadEnv` used to be declared shells, so the Lean
  * arm wrote no `walkMatchedPath` / `walkSmoothedPath` / `matchedPath` and its
- * episodes fell back to raw chords where a solver drew the TS ones
- * (`day-compare.ts`'s `SHELLED` and `SOLVER_KINDS`). Serving those verbatim
- * would not have been "Lean's answer" — it would have been a REGRESSION to
- * undrawn geometry, the exact user-visible loss #398 caused.
+ * episodes fell back to raw chords where a solver drew the TS ones. Serving
+ * those verbatim would have been a REGRESSION to undrawn geometry — the exact
+ * user-visible loss #398 caused — so `graftShells` / `graftEpisodes` put the TS
+ * geometry back wherever Lean had drawn none.
  *
- * Every shell is filled now, and under `LEAN_DAY_HOST` the fold answers its own
- * OSM lookups and DRAWS. So the graft fills only where Lean drew NOTHING, and on
- * seven live days it filled nothing at all (`shellOnly == 0` on every ledger
- * line). It is a backstop against a fold that fails to draw, not the mechanism
- * that makes `on` honest.
+ * The shells are filled now and, under `LEAN_DAY_HOST`, the fold answers its own
+ * OSM lookups and draws for itself. The deletion was gated on a measurement
+ * rather than on that argument: the two grafts were made to COUNT what they
+ * took, and across seven live days on the production transport they took
+ * nothing — zero fields, zero episodes, `shellOnly == 0` on every ledger line.
  *
- * It is still load-bearing for a caller WITHOUT the host: `verified_cli` links
- * the empty OSM stub, so a leg with no ways is skipped before any solver leaf
- * runs. Check the transport before deleting — health #959 tracks that removal
- * and asks for a week of zero-fill evidence first.
+ * ⚠ If a fold ever stops drawing, the symptom is now a served day with raw
+ * chords in it, NOT a silent repair. That is deliberate: `serveLeanDay`'s
+ * contract is that a field divergence is served, and the graft was the one
+ * place that quietly contradicted it.
  */
 
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { RefinedKind } from "../geo/segments.js";
 import type { DayState, DayStateMode } from "../sleep/day-state.js";
-import { SHELLED } from "./day-compare.js";
 import { floatFromBits } from "./float-bits.js";
 
 /** A wire row, as the response carries it. Deliberately loose: the point of the
@@ -199,107 +195,4 @@ export function decodeEpisode(v: unknown): EpisodeGeometry {
 	};
 	if (r.place !== null && r.place !== undefined) e.place = String(r.place);
 	return e;
-}
-
-/**
- * Fill in the TS run's solver geometry where — and only where — the Lean arm
- * drew none.
- *
- * Positional because the graft is only defined when the two cascades produced
- * the same segments: `undefined` on a count mismatch, and the caller then serves
- * TS. A segment-by-segment graft across differing counts would be pairing
- * whichever legs happen to share an index, which is not a repair — it is two
- * days spliced together.
- *
- * # ⚠ ONLY WHERE LEAN IS ABSENT, and that condition used to be missing
- *
- * This took the TS value whenever the TS had one, and that was invisible for as
- * long as it was also true that the Lean arm never had one: `walkEnv`/`roadEnv`
- * were shells, so `l[k]` was always `undefined` and "prefer TS" and "fill the
- * gap" were the same function.
- *
- * They stopped being the same function when the fold got a host that can answer
- * its own OSM lookups (#959). Under `LEAN_DAY_HOST` the fold DRAWS — measured
- * bit-identical to the TS corrector and reconstruction, and within the 1e-7°
- * quantisation on the matcher's own legs — and an unconditional graft would
- * throw all of that away and serve the TS line, making the host a no-op nobody
- * could see. Worse, it would hide exactly the divergences `on` exists to
- * surface: `serveLeanDay`'s own contract is "A FIELD divergence is served".
- *
- * `graftEpisodes` below has always had the condition (`SOLVER.has(ts.kind) &&
- * l.kind === "raw"`). The two halves of one rule disagreed; now they do not.
- *
- * Inert without a host: `verified_cli` links the empty OSM stub, so a leg with
- * no ways is skipped before any solver leaf runs, `l[k]` is `undefined`, and
- * this is the graft it always was.
- */
-export function graftShells(
-	lean: readonly EnrichedSegment[],
-	ts: readonly EnrichedSegment[],
-): EnrichedSegment[] | undefined {
-	if (lean.length !== ts.length) return undefined;
-	return lean.map((l, i) => {
-		const out = { ...l };
-		for (const k of SHELLED) {
-			if ((l as unknown as Record<string, unknown>)[k] !== undefined) continue;
-			const v = (ts[i] as unknown as Record<string, unknown>)[k];
-			if (v !== undefined) {
-				(out as Record<string, unknown>)[k] = v;
-				grafted.fields += 1;
-			}
-		}
-		return out;
-	});
-}
-
-/**
- * What the two grafts actually took from TS, so the claim "the graft is dead"
- * can be a measurement instead of an inference (#959).
- *
- * Both halves were written for a fold that could not draw. The fold can draw
- * now, which should leave nothing to graft — but "should" is what the shelled
- * comments said for weeks after they stopped being true. The deletion is gated
- * on this reading zero across live days, and a non-zero count is the
- * counter-example that stops it.
- *
- * ⚠ It counts a REAL fill, not a visit: the branch is entered on every segment
- * and only the assignment is evidence.
- *
- * Expect it to be non-zero without `LEAN_DAY_HOST` — `verified_cli` links the
- * empty OSM stub, so the fold genuinely draws none and the graft is still
- * load-bearing there. A count from that transport says nothing about the cron.
- */
-const grafted = { fields: 0, episodes: 0 };
-
-/** Read the graft counters and reset them, so a count belongs to one day. */
-export function takeGrafted(): { fields: number; episodes: number } {
-	const out = { ...grafted };
-	grafted.fields = 0;
-	grafted.episodes = 0;
-	return out;
-}
-
-/**
- * Take the TS episode wherever the Lean one is a solver's absence.
- *
- * `day-compare.diffEpisodes` already knows this shape and excuses it — a TS
- * `matched`/`smoothed` episode against a Lean `raw` one, with the shelled path
- * missing on the segment beneath. Serving has to make the same judgement in the
- * other direction, and the two must not drift apart, so the predicate is the
- * same one: solver kind on the TS side, `raw` on Lean's.
- *
- * Only those. A Lean episode that differs for any other reason is served AS IS,
- * because that difference is exactly what `on` exists to make visible.
- */
-export function graftEpisodes(
-	lean: readonly EpisodeGeometry[],
-	ts: readonly EpisodeGeometry[],
-): EpisodeGeometry[] | undefined {
-	if (lean.length !== ts.length) return undefined;
-	const SOLVER = new Set(["matched", "smoothed"]);
-	return lean.map((l, i) => {
-		if (!(SOLVER.has(ts[i].kind) && l.kind === "raw")) return l;
-		grafted.episodes += 1;
-		return ts[i];
-	});
 }

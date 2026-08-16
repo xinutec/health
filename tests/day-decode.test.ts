@@ -13,17 +13,10 @@
  * literals that carry every optional field at once).
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { EnrichedSegment } from "../src/geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../src/geo/episode-geometry.js";
-import {
-	decodeEpisode,
-	decodeSeg,
-	decodeState,
-	graftEpisodes,
-	graftShells,
-	takeGrafted,
-} from "../src/lean/day-decode.js";
+import { decodeEpisode, decodeSeg, decodeState } from "../src/lean/day-decode.js";
 import { encodeEpisode, encodeSeg, encodeState } from "../src/lean/fold-payload.js";
 import type { DayState } from "../src/sleep/day-state.js";
 
@@ -146,97 +139,5 @@ describe("the day wire round-trips", () => {
 		const back = decodeEpisode(encodeEpisode(ep));
 		expect(back).toEqual(ep);
 		expect("ts" in back.points[1]).toBe(false);
-	});
-});
-
-describe("the shells are grafted, and only where they are shells", () => {
-	const leanSeg: EnrichedSegment = { ...FULL_SEG, walkMatchedPath: undefined, walkSmoothedPath: undefined };
-
-	it("puts the TS solver paths back and leaves everything else alone", () => {
-		const [got] = graftShells([{ ...leanSeg, place: "Lean says here" }], [FULL_SEG]) ?? [];
-		expect(got.walkMatchedPath).toEqual(FULL_SEG.walkMatchedPath);
-		expect(got.walkSmoothedPath).toEqual(FULL_SEG.walkSmoothedPath);
-		// The graft must not become a general "prefer TS": a real divergence in a
-		// field the fold DOES decide is the whole point of serving.
-		expect(got.place).toBe("Lean says here");
-	});
-
-	it("refuses to graft across a count mismatch", () => {
-		expect(graftShells([leanSeg], [FULL_SEG, FULL_SEG])).toBeUndefined();
-	});
-
-	// The condition that only started to matter when the fold got a host that
-	// answers its own OSM lookups (#959). Before that the Lean arm never had a
-	// path, so "fill the gap" and "prefer TS" were the same function — and the
-	// unconditional version would now throw away geometry the fold really drew
-	// and serve the TS line, making the host invisible.
-	it("KEEPS Lean's own path where the fold drew one", () => {
-		const drawnByLean = [{ lat: 51.5, lon: -0.1, ts: 1_778_804_979 }];
-		const [got] = graftShells([{ ...leanSeg, walkMatchedPath: drawnByLean }], [FULL_SEG]) ?? [];
-		expect(got.walkMatchedPath).toEqual(drawnByLean);
-		// …and still fills the one the fold left alone.
-		expect(got.walkSmoothedPath).toEqual(FULL_SEG.walkSmoothedPath);
-	});
-
-	const raw = (e: EpisodeGeometry): EpisodeGeometry => ({ ...e, kind: "raw", points: [{ lat: 0, lon: 0 }] });
-	const drawn: EpisodeGeometry = {
-		startTs: 1,
-		endTs: 2,
-		mode: "walking",
-		kind: "matched",
-		points: [{ lat: 51, lon: -0.1 }],
-	};
-
-	it("takes the TS episode where the Lean one fell back to raw chords", () => {
-		expect(graftEpisodes([raw(drawn)], [drawn])).toEqual([drawn]);
-	});
-
-	it("serves a Lean episode that differs for any OTHER reason", () => {
-		// Both arms raw, different geometry: nothing about a missing solver
-		// explains this, so it is exactly what `on` is for.
-		const tsRaw = raw(drawn);
-		const leanRaw: EpisodeGeometry = { ...tsRaw, points: [{ lat: 9, lon: 9 }] };
-		expect(graftEpisodes([leanRaw], [tsRaw])).toEqual([leanRaw]);
-	});
-
-	it("does not take the TS episode when the kinds disagree in any other way", () => {
-		const tsAnchor: EpisodeGeometry = { ...drawn, kind: "anchor" };
-		const leanRaw = raw(drawn);
-		expect(graftEpisodes([leanRaw], [tsAnchor])).toEqual([leanRaw]);
-	});
-
-	// #959 deletes both halves once this reads zero across live days, so the
-	// counter has to be trustworthy in both directions before it is evidence.
-	describe("counts what it took, so the deletion can be measured", () => {
-		beforeEach(() => {
-			takeGrafted();
-		});
-
-		it("counts a fill and a replaced episode", () => {
-			graftShells([leanSeg], [FULL_SEG]);
-			graftEpisodes([raw(drawn)], [drawn]);
-			expect(takeGrafted()).toEqual({ fields: 2, episodes: 1 });
-		});
-
-		it("counts NOTHING when the fold drew everything itself", () => {
-			graftShells([FULL_SEG], [FULL_SEG]);
-			graftEpisodes([drawn], [drawn]);
-			expect(takeGrafted()).toEqual({ fields: 0, episodes: 0 });
-		});
-
-		// A field TS does not have either is not a graft — otherwise every day
-		// with a segment neither arm drew would read as a counter-example and
-		// the deletion would never clear.
-		it("does not count a field that is absent on BOTH sides", () => {
-			const neither: EnrichedSegment = { ...FULL_SEG, walkMatchedPath: undefined, walkSmoothedPath: undefined };
-			graftShells([leanSeg], [neither]);
-			expect(takeGrafted().fields).toBe(0);
-		});
-
-		it("resets, so a count belongs to one day", () => {
-			graftShells([leanSeg], [FULL_SEG]);
-			takeGrafted();
-			expect(takeGrafted()).toEqual({ fields: 0, episodes: 0 });
-		});
 	});
 });

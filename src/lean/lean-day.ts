@@ -54,14 +54,12 @@
  *
  * Two things it does NOT do, both deliberate. It does not delete the TS
  * cascade — the TS run still happens, because the comparison above needs both
- * arms and `day-decode.ts`'s graft still fills any field the fold left undrawn.
- * ⚠ The solvers are NO LONGER SHELLED (2026-08-16): every `PassFold.Env` shell
- * is filled and, under `LEAN_DAY_HOST`, the fold answers its own OSM lookups
- * and DRAWS. So the graft is a backstop rather than the mechanism, and it is
- * expected to fill nothing — health #959 is deleting it once a week of live
- * days proves that count is zero. And it does not serve through a failure: a
- * bridge error, a non-convergent loop or a count mismatch falls back to TS,
- * counted and warned, the way `LEAN_STATIONCHAIN=on` does.
+ * arms. That is the whole of why: the graft that used to be the other reason is
+ * gone (#959, 2026-08-16), so nothing on the serve path reads a TS field any
+ * more. Deleting the TS arm is #975, and it is a different change. And it does
+ * not serve through a failure: a bridge error, a non-convergent loop or a count
+ * mismatch falls back to TS, counted and warned, the way `LEAN_STATIONCHAIN=on`
+ * does.
  */
 
 import { appendFileSync } from "node:fs";
@@ -71,7 +69,7 @@ import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { DayState } from "../sleep/day-state.js";
 import { classify, diffEpisodes, diffSegs, type Sample } from "./day-compare.js";
-import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells, takeGrafted } from "./day-decode.js";
+import { decodeEpisode, decodeSeg, decodeState } from "./day-decode.js";
 import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
 import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
@@ -103,7 +101,15 @@ const DAY_TENANT_TIMEOUT_MS = Number(process.env.LEAN_DAY_TIMEOUT_MS ?? 60_000);
  * mirror as they are generated. `verified_cli` structurally cannot: it is a
  * spawned pure function, its externs resolve to `lean/c/osm-host-stub.c`, and a
  * walking leg whose ways come back empty is skipped before any solver leaf
- * runs. That is what `day-decode.ts` grafts the TS geometry back for (#959).
+ * runs.
+ *
+ * ⚠ So this variable is now LOAD-BEARING, not an optimisation. The graft that
+ * used to repair an undrawn fold was deleted in #959 on the evidence that the
+ * host makes it unnecessary. A caller that serves `on` WITHOUT the host would
+ * now serve raw chords where a solver should have drawn. `Dockerfile` sets it
+ * (`ENV LEAN_DAY_HOST=/app/lean/day-shell`) — note that a Docker `ENV` is
+ * invisible to `kubectl get pod -o jsonpath`, so check the image, not the
+ * manifest, before concluding it is unset.
  *
  * ⚠ It is a SEPARATE variable rather than a change to `LEAN_CLI`, and that is
  * not a preference. `LEAN_CLI` is read by `lean-core.ts`, `lean-hsmm.ts` and
@@ -332,11 +338,10 @@ async function runLeanDay(
  * shadowed one, not less. What changes is only what the caller does with it.
  *
  * `undefined` on a bridge failure, a non-convergent round loop, or a count
- * mismatch at either boundary. The first two are the house pattern
- * (`lean-station-chain.ts`: serve TS, count it, say so loudly) and the third is
- * a limit of the graft rather than a policy — solver geometry the fold did not
- * draw can only be put back positionally, and across differing counts that
- * would splice two days together rather than repair one.
+ * mismatch at either boundary. All three are the house pattern
+ * (`lean-station-chain.ts`: serve TS, count it, say so loudly). The third used
+ * to be justified as a limit of the graft; it survived the graft's deletion on
+ * its own merits, which the guard itself now states.
  *
  * A FIELD divergence is served. That is the point of `on`: shadow already
  * reports it and nothing sees it, and the flip exists to make it user-visible.
@@ -350,27 +355,32 @@ export async function serveLeanDay(
 	const res = await runLeanDay(req, inputs, ts, label);
 	if (res === undefined) return undefined;
 
-	const segs = graftShells(res.segs.map(decodeSeg), ts.segs);
-	const episodes = graftEpisodes(res.episodes.map(decodeEpisode), ts.episodes);
-	// Read it here, not after the early return, or a count-mismatch day leaks
-	// its tally onto the next one.
-	const g = takeGrafted();
-	if (g.fields > 0 || g.episodes > 0) {
-		console.warn(
-			`lean-day[on] ${label}: GRAFTED ${g.fields} field(s) and ${g.episodes} ` +
-				`episode(s) from TS — the fold drew none there (#959)`,
-		);
-	}
-	if (segs === undefined || episodes === undefined) {
+	// ⚠ THE COUNT GUARD OUTLIVES THE GRAFT (#959), and deliberately.
+	//
+	// It was written as the graft's precondition — solver geometry the fold did
+	// not draw can only be put back POSITIONALLY, and pairing whichever legs
+	// share an index across differing counts splices two days together rather
+	// than repairing one. That reasoning died with the graft.
+	//
+	// What it actually guards did not: serving a day whose cascade disagreed
+	// with TS about how many segments the day HAS. A fold that returned no
+	// segments at all would otherwise serve an EMPTY day, and "a field
+	// divergence is served" is not a licence for that — a field divergence is a
+	// judgement about geometry, not about whether the day happened.
+	if (res.segs.length !== ts.segs.length || res.episodes.length !== ts.episodes.length) {
 		stats.fails += 1;
 		console.warn(
-			`lean-day[on] ${label}: count mismatch at the graft — serving TS ` +
+			`lean-day[on] ${label}: count mismatch — serving TS ` +
 				`(segs TS ${ts.segs.length}/Lean ${res.segs.length}, ` +
 				`episodes TS ${ts.episodes.length}/Lean ${res.episodes.length})`,
 		);
 		return undefined;
 	}
-	return { segs, states: res.states.map(decodeState), episodes };
+	return {
+		segs: res.segs.map(decodeSeg),
+		states: res.states.map(decodeState),
+		episodes: res.episodes.map(decodeEpisode),
+	};
 }
 
 /** Print the run's accounting and return it as the gate's data. `null` when the

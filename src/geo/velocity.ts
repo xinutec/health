@@ -2220,9 +2220,11 @@ export async function computeVelocityFromInputs(
 	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);
 	// Under `on` this is the whole flip: the three values the day is MADE of come
 	// from the Lean chain instead of the TS one. Everything above still ran —
-	// `on` does not delete the TS cascade, because the two solvers are shelled and
-	// their geometry is grafted back from it (`day-decode.ts`). What changes is
-	// which arm's answer leaves this function.
+	// `on` does not delete the TS cascade, because the comparison needs both
+	// arms. Nothing on the serve path reads a TS field any more: the graft that
+	// used to put the solvers' geometry back was deleted in #959 once the fold
+	// could draw for itself. What changes is which arm's answer leaves this
+	// function; deleting the TS arm is #975.
 	//
 	// The feasibility check above deliberately still grades the TS states. It is
 	// an invariant on the day, not on an arm, and running it on whichever arm won

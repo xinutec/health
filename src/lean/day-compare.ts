@@ -108,8 +108,9 @@ function asPath(v: unknown): Array<{ lat: number; lon: number }> | null {
  * `LEAN_DAY_HOST` ships it). An unconditional excusal therefore says
  * "shell-only" about geometry BOTH arms produced and nobody compared — a green
  * that means the gate stopped looking, which is the failure this whole gate
- * exists to prevent. Same defect, same day, as `graftShells` preferring TS
- * unconditionally.
+ * exists to prevent. The same defect, on the same day, lived in the serve path
+ * as `graftShells` preferring TS unconditionally; that half was deleted in
+ * #959 once it was measured taking nothing.
  *
  *   `shell`   TS drew, Lean did not — the declared absence, still excused
  *   `extra`   LEAN drew, TS did not — never a shell: nothing declares the fold
