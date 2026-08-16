@@ -66,7 +66,7 @@ import type { ClassificationInputs } from "../geo/classification-inputs.js";
 import type { EnrichedSegment } from "../geo/enriched-segment.js";
 import type { EpisodeGeometry } from "../geo/episode-geometry.js";
 import type { DayState } from "../sleep/day-state.js";
-import { classify, diffEpisodes, diffSegs } from "./day-compare.js";
+import { classify, diffEpisodes, diffSegs, type Sample } from "./day-compare.js";
 import { decodeEpisode, decodeSeg, decodeState, graftEpisodes, graftShells } from "./day-decode.js";
 import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
@@ -260,8 +260,19 @@ async function runLeanDay(
 		// exist on a live request — that asymmetry is deliberate and is why the
 		// gate stays the finer instrument.
 		const eps = diffEpisodes(ts.episodes.map(encodeEpisode), res.episodes ?? []);
+		// WHICH segment, not just how many. `diffSegs` counts per FIELD, so a line
+		// reads "1/8 segments differ" and cannot say which of the eight — and the
+		// first thing anyone attributing a divergence needs is the leg. The gate
+		// has always passed a sample; the tenant did not, so the production line
+		// was strictly less readable than the offline one about the same defect.
+		// First occurrence per field is enough to find the leg; `segWhere` is
+		// bounds + mode, so this adds times and a mode, not places.
+		const firstAt = new Map<string, string>();
+		const sample: Sample = (key, _i, _a, _b, where) => {
+			if (where !== undefined && !firstAt.has(key)) firstAt.set(key, where);
+		};
 		const all = [
-			...diffSegs(ts.segs.map(encodeSeg), res.segs ?? []),
+			...diffSegs(ts.segs.map(encodeSeg), res.segs ?? [], sample),
 			...diffSegs(ts.states.map(encodeState), res.states ?? []).map((d) => `states.${d}`),
 			...eps.real,
 		];
@@ -277,7 +288,13 @@ async function runLeanDay(
 			// is tallied apart even though both are divergences.
 			if (real.some((d) => d.includes("count:"))) stats.lenDiffs += 1;
 			else stats.segDiffs += 1;
-			for (const d of real) stats.unexplained.push(`${label}/${d}`);
+			for (const d of real) {
+				// `diffSegs` emits `<field>: n/N segments differ…`, so the field name
+				// is the prefix — that is how a summary line is matched back to the
+				// leg the sample recorded it on.
+				const at = [...firstAt].find(([k]) => d.startsWith(`${k}:`))?.[1];
+				stats.unexplained.push(`${label}/${d}${at === undefined ? "" : ` @ ${at}`}`);
+			}
 		}
 		return { segs: res.segs ?? [], states: res.states ?? [], episodes: res.episodes ?? [] };
 	} catch (e) {
