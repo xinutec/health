@@ -70,6 +70,7 @@ import { type QPt, quantPt } from "../geo/quant-twin.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
 import { shadowWalkLeg } from "../geo/walk-shadow-core.js";
 import { ACCEPTED_MATCH_DELTAS, isAcceptedMatchDelta, type MatchLegClass } from "../lean/accepted-match-deltas.js";
+import { type DeltaCeiling, gateDeltaCeiling } from "../lean/delta-ceiling.js";
 import { errorText } from "../util/error-text.js";
 import { inputsFromFixture, parseCapturedDay } from "./fixture-day.js";
 
@@ -633,11 +634,50 @@ const accepts = (d: DivergentLeg): boolean =>
 		{ coarse: d.coarseVtxM, path: d.pathVtxM },
 		{ coarse: d.coarseDtsS, path: d.pathDtsS },
 	);
-const unexplained = divergent.filter((d) => !accepts(d));
+/**
+ * The THIRD state this gate did not have, and could not be wired without.
+ *
+ * Until now a divergence was either in the accepted manifest or it failed the
+ * run. That is two states for three situations, and the missing one is the
+ * common one: a leg somebody knows about, has not adjudicated, and does not
+ * want to bless. With no way to say it, the only lever for a red gate was to
+ * widen the manifest — "recording 'we checked this and it is fine' about legs
+ * nobody had checked", which `deploy.sh:189` names as the one thing not to do.
+ *
+ * So it reads the same one-way ceiling the tenant ledgers already use
+ * (`delta-ceiling.ts`, `tests/golden/lean-delta-baseline.json`), under the same
+ * `match` key and on the same leg fingerprints — this harness computes them
+ * with the very function `lean-match` does. A ceiling entry is DEBT, an
+ * accepted delta is a JUDGEMENT, and the module is explicit that the two must
+ * not merge; nothing here merges them, and the report prints them apart.
+ *
+ * ⚠ It cannot launder anything in. `gateDeltaCeiling` fails on any fingerprint
+ * the committed file does not already list, and the ceiling may only ever
+ * shrink — recording new debt means hand-editing that file, which leaves a
+ * reviewable diff naming exactly what someone chose to tolerate. That review is
+ * the point.
+ *
+ * A missing file is the bootstrap case and passes, exactly as it does for
+ * `golden-check`; an EMPTY file asserts every tenant is clean and is not the
+ * same thing.
+ */
+const ceiling: DeltaCeiling | null = (() => {
+	const p = path.join(process.cwd(), "tests", "golden", "lean-delta-baseline.json");
+	if (!existsSync(p)) return null;
+	return JSON.parse(readFileSync(p, "utf8")) as DeltaCeiling;
+})();
+const notAccepted = divergent.filter((d) => !accepts(d));
+const ceilingVerdict = gateDeltaCeiling(ceiling, { match: notAccepted.map((d) => d.leg).sort() });
+const freshFingerprints = new Set(ceilingVerdict.fresh.map((f) => f.fingerprint));
+const unexplained = notAccepted.filter((d) => freshFingerprints.has(d.leg));
+const knownDebt = notAccepted.filter((d) => !freshFingerprints.has(d.leg));
 if (divergent.length > 0) {
-	console.log(`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained):`);
+	console.log(
+		`float↔quant divergences (${divergent.length}; ${unexplained.length} unexplained, ` +
+			`${knownDebt.length} known debt):`,
+	);
 	for (const d of divergent) {
-		const tag = accepts(d) ? "accepted" : "UNEXPLAINED";
+		const tag = accepts(d) ? "accepted" : freshFingerprints.has(d.leg) ? "UNEXPLAINED" : "debt";
 		console.log(
 			`  [${tag}] ${d.date} ${d.hhmm} leg=${d.leg} coarse=${d.coarse}/path=${d.path} (${d.note})` +
 				`  dev coarse=${fmtDev(d.coarseDevM)} path=${fmtDev(d.pathDevM)}` +
@@ -705,11 +745,31 @@ if (legs === 0) problems.push("NO COVERAGE — no legs matched; nothing was veri
 if (leanMismatches.length > 0)
 	problems.push(`${leanMismatches.length} quant↔Lean mismatch(es) — Lean diverges from the verified twin`);
 if (unexplained.length > 0)
-	problems.push(`${unexplained.length} unexplained float↔quant divergence(s) — not in the accepted manifest`);
+	problems.push(
+		`${unexplained.length} unexplained float↔quant divergence(s) — in neither the accepted ` +
+			`manifest nor the delta ceiling`,
+	);
+// Debt the ceiling covers that this run no longer produces. Never a failure —
+// it is the ratchet's whole direction — but it must be SAID, or the ceiling
+// silently keeps covering legs that stopped diverging and stops meaning
+// anything. `compare-match --gate` cannot re-bless it: that is
+// `ratchetDownCeiling`, and it belongs to whoever owns the file.
+for (const c of ceilingVerdict.cleared)
+	console.log(`  CLEARED          ${c.tenant} ${c.fingerprint} — no longer diverges; ratchet the ceiling down`);
 
 console.log(`\n${files.length} day(s), ${legs} leg(s), ${divergent.length} float↔quant delta(s).`);
 if (problems.length === 0) {
-	console.log("GATE GREEN — every leg matched the verified twin, all float↔quant deltas accepted. Ready to flip.");
+	// ⚠ Says DEBT out loud when there is any. "all deltas accepted" would be
+	// false the moment the ceiling covers one, and a green line that overstates
+	// itself is how a ratchet becomes a rubber stamp — the exact failure
+	// `delta-ceiling.ts` opens by naming.
+	console.log(
+		knownDebt.length === 0
+			? "GATE GREEN — every leg matched the verified twin, all float↔quant deltas accepted. Ready to flip."
+			: `GATE GREEN — every leg matched the verified twin; ${divergent.length - knownDebt.length} ` +
+					`float↔quant delta(s) accepted and ${knownDebt.length} standing as un-adjudicated debt ` +
+					"under the ceiling. NOT the same as clean.",
+	);
 	process.exit(0);
 }
 console.log("GATE RED:");

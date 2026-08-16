@@ -254,6 +254,17 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# `shadow`, so the TS matcher is what serves. It means the manifest no longer
 	# describes the corpus, and the fix is to adjudicate the leg it names, never
 	# to widen the manifest to match.
+	#
+	# ⚠ "Adjudicate it" is not the only honest answer, and reading it as the only
+	# one is what makes the manifest grow. As of 2026-08-16 this gate reads the
+	# same one-way delta CEILING the tenant ledgers use
+	# (`tests/golden/lean-delta-baseline.json`, key `match`), so a leg nobody has
+	# adjudicated yet can stand as DEBT — reported on its own line, printed apart
+	# from the accepted ones, and named in the green verdict, which then says
+	# "NOT the same as clean". That is the third option this file introduces
+	# seventy lines above for exactly this situation; it is not a way to make a
+	# red go away, because the ceiling may only ever shrink and recording new
+	# debt means hand-editing that file into a reviewable diff.
 	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match --gate
 else
 	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
