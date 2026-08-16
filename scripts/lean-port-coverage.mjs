@@ -277,13 +277,29 @@ console.log(`    src/eval is out by DESIGN — it is the judge, not the subject;
 console.log(`    move the referee inside the thing it referees. Not a gap, and not future work.`);
 console.log(`    ${intoBlind.length} Lean def(s) claim a function in there, so the real port is`);
 console.log(`    further along than these numbers say — by an amount this script does not measure.`);
+// Hand-maintained, and it went stale once already: it listed six tenants for
+// weeks after nine were serving, omitting the one that matters most. Anyone
+// reading this to scope "what is left" would have concluded the day fold was
+// idle when it had been writing to `decoded_days` since 2026-08-16.
+//
+// The authority is the manifest (`code/kubes/dhall/apps/health.dhall` in
+// xinutec/pippijn), not this list. Re-read it before trusting these lines.
 console.log(`
-  SERVE SURFACE (what actually executes for a request — a different question):
+  SERVE SURFACE (what actually executes for a request — a different question).
+  All nine are \`on\` as of 2026-08-16:
+    LEAN_DAY     the whole day fold — the only tenant that WRITES (decoded_days)
     LEAN_HSMM    the HSMM decode
     LEAN_MATCH   the walk map-matcher
     LEAN_RAIL    rail shortest-path
-    LEAN_PASSES  five display-geometry helpers: simplify, spurs, spikes, trim, despike
+    LEAN_PASSES  six display-geometry helpers: simplify, spurs, spikes, trim,
+                 despike, splice
     LEAN_KALMAN  the GPS Kalman filter
     LEAN_GPSQUALITY  the GPS quality pre-filter
+    LEAN_STATIONCHAIN  the station-chain solver
+    LEAN_BIOLABELS     the biometric labellers
   Everything else above is written-but-idle. Closing that is the remaining work.
+
+  ⚠ SERVING IS NOT DELETING. In \`on\` BOTH arms still run — that is why the
+  ledgers can print a comparison at all. Nine tenants at \`on\` removed zero
+  lines of TypeScript; #975 is the step that removes them.
 `);
