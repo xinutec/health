@@ -844,6 +844,27 @@ function bboxPolygonWkt(b: CorridorBbox): string {
 	return `POLYGON((${b.minLon} ${b.minLat},${b.maxLon} ${b.minLat},${b.maxLon} ${b.maxLat},${b.minLon} ${b.maxLat},${b.minLon} ${b.minLat}))`;
 }
 
+/**
+ * `OSM_LOG=1` names every mirror read this arm makes, to be diffed against the
+ * Lean host's own `osm: MIRROR …` lines (`rust/day-shell/src/osm.rs`).
+ *
+ * The two arms read the SAME live mirror, so a leg that draws differently in
+ * each has to be reaching for different roads — but a divergence alone cannot
+ * say whether they asked different QUESTIONS or got different ANSWERS. Logging
+ * the key and the count on both sides separates those: a differing count for
+ * the same key is a different answer set, which is a defect in one of the two
+ * query ports; identical counts throughout points at the matchers instead.
+ *
+ * 17 decimal places and the same field order as the host on purpose — the lines
+ * are meant to be sorted and diffed, not read.
+ */
+function logOsmRead(section: string, lat: number, lon: number, radiusM: number, raw: number, kept: number): void {
+	if (!process.env.OSM_LOG) return;
+	console.error(
+		`osm: TS ${section} lat=${lat.toFixed(17)} lon=${lon.toFixed(17)} r=${radiusM} -> ${kept} line(s) (raw ${raw})`,
+	);
+}
+
 /** Margin (m) added around a train run's fixes when reading its rail
  *  corridor — wide enough that the line and both stations fall inside
  *  the box even where the fixes scatter off the track. */
@@ -983,6 +1004,7 @@ export async function queryDrivableRoads(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 2) ways.push({ osmId: Number(r.osm_id), name: r.name, subtype: r.subtype, coords });
 	}
+	logOsmRead("drivableRoads", lat, lon, radiusM, rows.length, ways.length);
 	return ways;
 }
 
@@ -1046,6 +1068,7 @@ export async function queryWalkableRoads(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 2) ways.push({ osmId: Number(r.osm_id), name: r.name, subtype: r.subtype, coords });
 	}
+	logOsmRead("walkableRoads", lat, lon, radiusM, rows.length, ways.length);
 	return ways;
 }
 
@@ -1093,5 +1116,6 @@ export async function queryBuildingsNear(lat: number, lon: number, radiusM: numb
 		const coords = parseLineStringWkt(r.wkt);
 		if (coords.length >= 3) rings.push(coords.map(([la, lo]) => ({ lat: la, lon: lo })));
 	}
+	logOsmRead("buildingsNear", lat, lon, radiusM, rows.length, rings.length);
 	return rings;
 }

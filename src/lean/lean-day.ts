@@ -226,7 +226,15 @@ async function runLeanDay(
 				timeout: DAY_TENANT_TIMEOUT_MS,
 				encoding: "utf8",
 			});
-			return { out: r.stdout ?? "", err: r.stderr ?? "" };
+			const err = r.stderr ?? "";
+			// The host's stderr is CAPTURED (spawnSync pipes by default) because
+			// `missesIn` parses it, which also means `OSM_LOG=1` inside the host
+			// prints into a string nobody shows. Forward it when that flag is on,
+			// so the host's `osm: MIRROR …` lines and the TS arm's `osm: TS …`
+			// lines land in one stream and can be diffed — the comparison that
+			// attributes a leg drawing differently in each arm.
+			if (process.env.OSM_LOG && err !== "") process.stderr.write(err);
+			return { out: r.stdout ?? "", err };
 		});
 		if (c.rounds < 0) {
 			stats.fails += 1;
