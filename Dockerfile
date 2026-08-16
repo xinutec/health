@@ -12,16 +12,19 @@ COPY lean/ lean/
 # day-shell's build.rs reads its link line out of the .rsp lake writes when it
 # links verified_cli. See the flake.
 COPY rust/ rust/
-RUN nix --extra-experimental-features 'nix-command flakes' build .#verified-cli
-RUN mkdir -p /export/nix/store /export/bin && \
-    cp -a $(nix-store -qR result) /export/nix/store/ && \
-    install -m755 "$(readlink -f result)/bin/verified_cli" /export/bin/verified_cli
-# The in-process host. Same contract as verified_cli — byte for byte, which
-# scripts/rust-host-check.sh is the gate for — and additionally able to answer
-# the fold's OSM callbacks from the mirror while it runs (#959).
-RUN nix --extra-experimental-features 'nix-command flakes' build .#day-shell && \
-    cp -a $(nix-store -qR result) /export/nix/store/ && \
-    install -m755 "$(readlink -f result)/bin/day-shell" /export/bin/day-shell
+# Both binaries, and their closures copied ONCE as a union.
+#
+# ⚠ Not two `cp -a $(nix-store -qR result)` calls. The two closures overlap
+# heavily — glibc, gmp, the Lean runtime — and `cp -a` of a store path that is
+# already in the destination descends into a read-only directory instead of
+# skipping it. `nix-store -qR` over both roots already returns each path once,
+# so asking the question once is both correct and cheaper.
+RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli && \
+    nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/ds .#day-shell && \
+    mkdir -p /export/nix/store /export/bin && \
+    cp -a $(nix-store -qR /tmp/vc /tmp/ds) /export/nix/store/ && \
+    install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli && \
+    install -m755 /tmp/ds/bin/day-shell /export/bin/day-shell
 
 FROM node:24-alpine AS backend-build
 WORKDIR /app
