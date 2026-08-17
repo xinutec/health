@@ -42,6 +42,7 @@
     "compare-stationchain": "scripts/compare-stationchain.sh",
     "compare-kalman": "scripts/compare-kalman.sh",
     "compare-gpsquality": "scripts/compare-gpsquality.sh",
+    "compare-head": "scripts/compare-head.sh",
     "compare-gps-outliers": "scripts/compare-gps-outliers.sh",
     "bench-bridge": "scripts/bench-bridge.sh",
     "render-match-compare": "node dist/cli/render-match-compare.js",
