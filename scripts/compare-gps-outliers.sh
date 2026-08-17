@@ -28,4 +28,4 @@ cd "$SCRIPT_DIR/.."
 echo "==> building (lean)"
 (cd lean && lake build >/dev/null)
 
-exec npx tsx lean/experiments/compare-gps-outliers.mts "$@"
+exec pnpm exec tsx lean/experiments/compare-gps-outliers.mts "$@"
