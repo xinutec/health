@@ -1079,6 +1079,120 @@ private def bioLabelsResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## The pipeline head (`verified_cli head`)
+
+The two TS algorithm steps still standing between the raw fixes and `segsRaw`,
+which is the day fold's ONLY input:
+
+    raw fixes → gpsquality (Lean) → snapToPlace (HERE) → kalman (Lean)
+              → classifySegments (HERE) → segsRaw → day
+
+Both have been complete and `#guard`-pinned under `Verified` for some time with
+NOTHING CALLING THEM — `scripts/lean-reachability.mjs` found the pair among 31
+such orphans. This verb is what makes them reachable, and it is the thing
+`LEAN_DAY=solo` was blocked on: with the head in TS, the fold's own inputs are
+computed by the arm the mode is meant to retire, so there is no TS to remove.
+
+    { "op": "snap",
+      "fixes":  [[latBits, lonBits, accBits|null], …],
+      "places": [[latBits, lonBits, radiusBits|null, id|null], …] }
+  → { "snapped": [[latBits, lonBits, accBits|null, moved], …] }  one per fix, in order
+
+    { "op": "segments",
+      "pts":     [[ts, latBits, lonBits, speedBits, bearingBits], …],
+      "stayPts": [[ts, latBits, lonBits], …] | null }
+  → { "segs": [ {startTs, endTs, mode, …}, … ] }
+
+⚠ `snap` is BATCHED over the whole day, deliberately. The TS calls `snapToPlace`
+once per fix inside a `.map` (`velocity.ts:687`); a round trip per fix would be
+thousands of bridge calls for one day, where every other tenant makes one. The
+response is positional — one row per input fix, same order — so the caller can
+zip it back onto its own points without matching on coordinates.
+
+`snapped` is returned as a flag rather than inferred from whether the coordinates
+moved: a fix already AT a centroid snaps without moving, and reading "moved" off
+the geometry would silently call that a non-snap. -/
+
+private def parseHeadFix (j : Json) : Except String (Float × Float × Option Float) := do
+  let a ← j.getArr?
+  let la ← jBits (← nth a 0)
+  let lo ← jBits (← nth a 1)
+  let acc ← match a[2]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  return (la, lo, acc)
+
+private def parseHeadPlace (j : Json) : Except String Verified.Geo.PlacePrior.KnownPlace := do
+  let a ← j.getArr?
+  let la ← jBits (← nth a 0)
+  let lo ← jBits (← nth a 1)
+  let r ← match a[2]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  let id ← match a[3]? with
+    | some v => if v.isNull then pure none else some <$> v.getStr?
+    | none => pure none
+  return { centroidLat := la, centroidLon := lo, radiusM := r, id := id }
+
+/-- ⚠ `Verified.Geo.Segments.FilteredPoint`, NOT `Verified.Geo.Kalman`'s. The two
+are the same shape under different field names (`speed_kmh` vs `speedKmh`) and
+`classifySegments` takes this one, so `parseKalmanPt` cannot be reused here. -/
+private def parseHeadPt (j : Json) : Except String Verified.Geo.Segments.FilteredPoint := do
+  let a ← j.getArr?
+  return {
+    ts := ← (← nth a 0).getInt?
+    lat := ← jBits (← nth a 1)
+    lon := ← jBits (← nth a 2)
+    speed_kmh := ← jBits (← nth a 3)
+    bearing := ← jBits (← nth a 4) }
+
+private def parseHeadStayPt (j : Json) : Except String Verified.Geo.Segments.StayPoint := do
+  let a ← j.getArr?
+  return { ts := ← (← nth a 0).getInt?, lat := ← jBits (← nth a 1), lon := ← jBits (← nth a 2) }
+
+private def headSegJson (s : Verified.Geo.Segments.TrackSegment) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
+    ("mode", Json.str s.mode),
+    ("confidence", fBits s.confidence), ("confidenceMargin", fBits s.confidenceMargin),
+    ("avgSpeed", fBits s.avgSpeed), ("maxSpeed", fBits s.maxSpeed),
+    ("linearity", fBits s.linearity), ("pointCount", Lean.toJson s.pointCount),
+    ("refinedReason", match s.refinedReason with | none => Json.null | some r => Json.str r),
+    ("refinedKinds", Json.arr (s.refinedKinds.map Json.str))]
+
+private def headResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    match ← (← j.getObjVal? "op").getStr? with
+    | "snap" =>
+      let fixes ← (← (← j.getObjVal? "fixes").getArr?).mapM parseHeadFix
+      let places ← (← (← j.getObjVal? "places").getArr?).mapM parseHeadPlace
+      -- `snapToPlace` takes a List; convert ONCE rather than per fix.
+      let pl := places.toList
+      return Json.mkObj [("snapped", Json.arr (fixes.map fun (la, lo, acc) =>
+        let r := Verified.Geo.PlacePrior.snapToPlace la lo acc pl
+        Json.arr #[fBits r.lat, fBits r.lon,
+          (match r.accuracy with | none => Json.null | some a => fBits a),
+          Json.bool r.snapped]))]
+    | "segments" =>
+      let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseHeadPt
+      -- Absent and null both mean "no separate stay set"; the fold then doubles
+      -- the movement fixes up as stay evidence, which is `classifySegments`' own
+      -- default and NOT the same as passing an empty array.
+      let stay ← match j.getObjVal? "stayPts" with
+        | .error _ => pure none
+        | .ok v =>
+          if v.isNull then pure none
+          else do
+            let arr ← v.getArr?
+            let sp ← arr.mapM parseHeadStayPt
+            pure (some sp)
+      return Json.mkObj [("segs", Json.arr
+        ((Verified.Geo.Segments.classifySegments pts stay).map headSegJson))]
+    | other => throw s!"unknown head op {other}"
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-! ## The refinement cascade (`verified_cli day`)
 
 `Verified.Geo.PassFold.runPassesTraced` — all 38 passes of the `velocity.ts`
@@ -1363,6 +1477,7 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
         | .ok "gpsquality" => gpsQualityResult j
         | .ok "gpsoutliers" => gpsOutliersResult j
         | .ok "biolabels" => bioLabelsResult j
+        | .ok "head" => headResult j
         | .ok "day" => Day.dayResult j
         | .ok "focus" => Focus.focusResult j
         | .ok "stationchain" => StationChain.stationChainResult j
@@ -1443,6 +1558,7 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
   if args.contains "gpsoutliers" then return ← runOne gpsOutliersResult input
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
+  if args.contains "head" then return ← runOne headResult input
   if args.contains "day" then return ← runOne Day.dayResult input
   if args.contains "focus" then return ← runOne Focus.focusResult input
   if args.contains "stationchain" then return ← runOne StationChain.stationChainResult input
