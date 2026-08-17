@@ -108,3 +108,52 @@ console.log("gapUnknown:", JSON.stringify(S.inferTransitGaps(
 const railPts = [P(0, 51.5, -0.1, 40), P(60, 51.5, -0.1, 40), P(660, 51.5570, -0.1, 40), P(720, 51.5570, -0.1, 40)];
 console.log("gapRailNeighbour:", JSON.stringify(S.inferTransitGaps(
 	[gapSeg(0, 60, "train", 0.99, 80), gapSeg(660, 720, "stationary")] as never, railPts as never)));
+
+// --- smoothSegments / findStays: the two members of this cluster that no ref
+// exercised (#1003). They are reached TRANSITIVELY via classifySegments above,
+// so they were covered on whatever inputs that one fixture happens to produce
+// and pinned independently nowhere. These call them directly.
+
+const TS_ = (startTs: number, endTs: number, mode: string, maxSpeed: number, pointCount: number) => ({
+	startTs, endTs, mode, confidence: 0.8, confidenceMargin: 5,
+	avgSpeed: 4, maxSpeed, linearity: 0.5, pointCount,
+});
+
+// A 60 s middle segment is under the 120 s floor, so it is absorbed by the one
+// before it. What survives the merge is the discriminating part: end, point
+// count and peak speed move; the absorbed segment's MODE is discarded.
+console.log("smooth.merge:", JSON.stringify(S.smoothSegments(
+	[TS_(0, 300, "walking", 6, 10), TS_(300, 360, "driving", 80, 4), TS_(360, 900, "walking", 5, 20)] as never, 120)));
+// Two consecutive shorts fold into the SAME predecessor, not into each other.
+console.log("smooth.twoShorts:", JSON.stringify(S.smoothSegments(
+	[TS_(0, 300, "walking", 6, 10), TS_(300, 350, "driving", 80, 4), TS_(350, 400, "cycling", 25, 3)] as never, 120)));
+// A single segment is returned untouched, whatever the floor.
+console.log("smooth.single:", JSON.stringify(S.smoothSegments([TS_(0, 30, "walking", 6, 2)] as never, 120)));
+// Nothing is under the floor: identity, and the copy must not renumber anything.
+console.log("smooth.noop:", JSON.stringify(S.smoothSegments(
+	[TS_(0, 300, "walking", 6, 10), TS_(300, 900, "driving", 80, 20)] as never, 120)));
+
+const SP = (ts: number, lat: number, lon: number) => ({ ts, lat, lon });
+
+// No classified segments => one gap spanning every point. Five fixes at one
+// place over 1200 s clear both bars (>= 2 fixes, >= 900 s).
+console.log("stays.one:", JSON.stringify(S.findStays(
+	[SP(0, 51.5, -0.1), SP(300, 51.5, -0.1), SP(600, 51.5001, -0.1), SP(900, 51.5, -0.1), SP(1200, 51.5, -0.1)] as never,
+	[] as never)));
+// Two places ~1.1 km apart: the second fix beyond CLUSTER_RADIUS_M closes the
+// first cluster and opens a second, so this must yield TWO stays and not one
+// spanning both — the regression that motivated trajectory segmentation.
+console.log("stays.two:", JSON.stringify(S.findStays(
+	[SP(0, 51.5, -0.1), SP(450, 51.5, -0.1), SP(900, 51.5, -0.1),
+	 SP(1200, 51.51, -0.1), SP(1700, 51.51, -0.1), SP(2200, 51.51, -0.1)] as never,
+	[] as never)));
+// Spans only 600 s: under SEGMENT_STAY_MIN_S, so no stay at all.
+console.log("stays.tooShort:", JSON.stringify(S.findStays(
+	[SP(0, 51.5, -0.1), SP(300, 51.5, -0.1), SP(600, 51.5, -0.1)] as never, [] as never)));
+// An existing segment splits the day: only the stretches around it are searched,
+// and a gap shorter than SEGMENT_STAY_MIN_S is not searched at all.
+console.log("stays.withExisting:", JSON.stringify(S.findStays(
+	[SP(0, 51.5, -0.1), SP(450, 51.5, -0.1), SP(900, 51.5, -0.1),
+	 SP(1000, 51.52, -0.1), SP(2000, 51.53, -0.1),
+	 SP(2100, 51.54, -0.1), SP(2700, 51.54, -0.1), SP(3300, 51.54, -0.1)] as never,
+	[TS_(1000, 2000, "walking", 6, 5)] as never)));

@@ -740,4 +740,53 @@ private def railPts : Array FilteredPoint :=
     refinedReason := some "inferred from GPS gap (6.3 km in 10 min)",
     refinedKinds := #["gps-gap-inferred"] }
 
+/-! ### `smoothSegments` and `findStays`
+
+Both were reached only TRANSITIVELY, through the `classifySegments` guards above,
+so they were pinned on whatever inputs that one fixture happens to produce and
+independently nowhere (#1003). Values from `segments-refs.mts` against the
+production TS. -/
+
+private def sSeg (startTs endTs : Int) (mode : String) (maxSpeed : Float) (pointCount : Nat) : TrackSegment :=
+  { startTs, endTs, mode, confidence := 0.8, confidenceMargin := 5,
+    avgSpeed := 4, maxSpeed, linearity := 0.5, pointCount }
+
+-- The 60 s middle segment is under the 120 s floor and is absorbed. End, point
+-- count and peak speed move; the absorbed segment's MODE is discarded — that
+-- discard is the whole content of the merge branch, and a port that kept the
+-- shorter segment's mode would still produce the right segment COUNT.
+#guard smoothSegments #[sSeg 0 300 "walking" 6 10, sSeg 300 360 "driving" 80 4, sSeg 360 900 "walking" 5 20] 120
+  == #[{ sSeg 0 360 "walking" 80 14 with }, { sSeg 360 900 "walking" 5 20 with }]
+-- Two consecutive shorts fold into the SAME predecessor, not into each other.
+#guard smoothSegments #[sSeg 0 300 "walking" 6 10, sSeg 300 350 "driving" 80 4, sSeg 350 400 "cycling" 25 3] 120
+  == #[{ sSeg 0 400 "walking" 80 17 with }]
+-- A lone segment is returned untouched whatever the floor (the `≤ 1` early out).
+#guard smoothSegments #[sSeg 0 30 "walking" 6 2] 120 == #[sSeg 0 30 "walking" 6 2]
+#guard smoothSegments #[sSeg 0 300 "walking" 6 10, sSeg 300 900 "driving" 80 20] 120
+  == #[sSeg 0 300 "walking" 6 10, sSeg 300 900 "driving" 80 20]
+
+private def stay (startTs endTs : Int) (pointCount : Nat) : TrackSegment :=
+  { startTs, endTs, mode := "stationary", confidence := 0.9,
+    confidenceMargin := MARGIN_MAX_FINITE, avgSpeed := 0, maxSpeed := 0,
+    linearity := 0, pointCount }
+
+-- No classified segments ⇒ one gap spanning every point.
+#guard findStays #[⟨0, 51.5, -0.1⟩, ⟨300, 51.5, -0.1⟩, ⟨600, 51.5001, -0.1⟩,
+                   ⟨900, 51.5, -0.1⟩, ⟨1200, 51.5, -0.1⟩] #[] == #[stay 0 1200 5]
+-- ⚠ TWO stays, not one spanning both. Two places ~1.1 km apart: the fix beyond
+-- CLUSTER_RADIUS_M closes the first cluster and opens a second. Collapsing these
+-- into a single stay anchored between them is the exact regression trajectory
+-- segmentation replaced, and it is invisible in a fixture with one cluster.
+#guard findStays #[⟨0, 51.5, -0.1⟩, ⟨450, 51.5, -0.1⟩, ⟨900, 51.5, -0.1⟩,
+                   ⟨1200, 51.51, -0.1⟩, ⟨1700, 51.51, -0.1⟩, ⟨2200, 51.51, -0.1⟩] #[]
+  == #[stay 0 900 3, stay 1200 2200 3]
+-- Spans 600 s, under SEGMENT_STAY_MIN_S: no stay at all.
+#guard findStays #[⟨0, 51.5, -0.1⟩, ⟨300, 51.5, -0.1⟩, ⟨600, 51.5, -0.1⟩] #[] == #[]
+-- An existing segment splits the day; the stretch it covers is not searched.
+#guard findStays #[⟨0, 51.5, -0.1⟩, ⟨450, 51.5, -0.1⟩, ⟨900, 51.5, -0.1⟩,
+                   ⟨1000, 51.52, -0.1⟩, ⟨2000, 51.53, -0.1⟩,
+                   ⟨2100, 51.54, -0.1⟩, ⟨2700, 51.54, -0.1⟩, ⟨3300, 51.54, -0.1⟩]
+                 #[sSeg 1000 2000 "walking" 6 5]
+  == #[stay 0 900 3, stay 2100 3300 3]
+
 end Verified.Geo.Segments
