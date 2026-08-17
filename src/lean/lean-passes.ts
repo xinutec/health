@@ -33,19 +33,32 @@ import { DETAIL_TOLERANCE_M } from "../geo/map-match-core.js";
 import { quantPt } from "../geo/quant-twin.js";
 import { deltaFingerprint, deltaTag, unexplainedDeltas } from "./accepted-deltas.js";
 import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js";
-import { LeanBridgeError, leanGeo } from "./lean-core.js";
+import { LeanBridgeError, type LeanGeoResp, leanGeo } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanLeg, leanRunScope, resetLeanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanPassMode = "off" | "shadow" | "on";
+/**
+ * `solo` — the verified passes alone (#975). No TS arm, no comparison, no
+ * fallback, on all SIX ops behind this one flag.
+ *
+ * ⚠ Every op's small-input guard is dropped under `solo`, and each was checked
+ * against both implementations first (#975 audit): `simplifyPath`/`rejectSpikes`
+ * /`trimOverRouteExcursions` return the input verbatim below their thresholds
+ * and so do `simplifyIdx`/`rejectSpikes`/`trim` in Lean; `removeSpurs` has no
+ * early return at all but its loop cannot execute under three points, matching
+ * `spurGo`. Do not restore a guard here without redoing that check — the
+ * `gpsquality` one looked equally harmless and was not.
+ */
+export type LeanPassMode = "off" | "shadow" | "on" | "solo";
 
 export function leanPassMode(): LeanPassMode {
 	// The settings-UI master override wins over the env default when set.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
+	// Env-only, as with the sibling tenants.
 	const v = process.env.LEAN_PASSES;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 interface PassStat {
@@ -71,6 +84,33 @@ function recordCall(op: string, diverged: boolean): void {
 	const s = stat(op);
 	s.calls += 1;
 	if (diverged) s.diffs += 1;
+}
+
+/**
+ * The `solo` body every op shares (#975): ask the bridge, count the call, and
+ * hand the response to the op's own materialiser. No TS arm, no comparison, no
+ * fallback — a `LeanBridgeError` propagates and the caller fails loudly.
+ *
+ * Factored because six ops behind ONE flag would otherwise be six copies of the
+ * same four lines, and a divergence between those copies is exactly the kind of
+ * thing nobody would notice. What stays per-op is only what genuinely differs:
+ * the request, and how the response becomes points. Those are three distinct
+ * shapes — an index list (`simplify`), a subsequence of the input
+ * (`spurs`/`spikes`/`trim`/`despike`), and materialised vertices (`splice`) —
+ * and collapsing them further would hide a real distinction.
+ *
+ * ⚠ `recordCall(op, false)` is not a claim that nothing diverged. Under `solo`
+ * there is no second arm to diverge FROM, and the ledger prints SOLO rather
+ * than EXACT so the zero is never read as agreement.
+ */
+function soloGeo<R>(op: string, req: Record<string, unknown>, take: (r: LeanGeoResp) => R): R {
+	const resp = leanGeo(req);
+	if (resp.error !== undefined) {
+		recordFail(op);
+		throw new LeanBridgeError(`lean-passes[solo] ${op}: ${resp.error}`);
+	}
+	recordCall(op, false);
+	return take(resp);
 }
 
 function recordFail(op: string): void {
@@ -223,6 +263,11 @@ function subsequenceKept<T extends LatLonTs>(pts: readonly T[], leanRows: number
  */
 export function simplifyViaLean<T extends LatLonTs>(pts: readonly T[], toleranceM: number, ts: () => T[]): T[] {
 	const mode = leanPassMode();
+	if (mode === "solo") {
+		return soloGeo("simplify", { op: "simplify", tol: Math.round(toleranceM * 1e6), pts: rows(pts) }, (r) =>
+			(r.keep ?? []).map((i) => pts[i]),
+		);
+	}
 	if (mode === "off" || pts.length <= 2) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let keep: number[];
@@ -268,11 +313,13 @@ export function removeSpursViaLean<T extends LatLonTs>(
 	ts: () => T[],
 ): T[] {
 	const mode = leanPassMode();
+	const req = { op: "spurs", ret: Math.round(returnM * 1e6), span: maxSpan, pts: rows(pts) };
+	if (mode === "solo") return soloGeo("spurs", req, (r) => subsequenceKept(pts, r.pts ?? []));
 	if (mode === "off" || pts.length < 3) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
-		leanRows = leanGeo({ op: "spurs", ret: Math.round(returnM * 1e6), span: maxSpan, pts: rows(pts) }).pts ?? [];
+		leanRows = leanGeo(req).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
 		recordFail("spurs");
@@ -297,11 +344,13 @@ export function removeSpursViaLean<T extends LatLonTs>(
  */
 export function rejectSpikesViaLean<T extends LatLonTs>(pts: readonly T[], ts: () => T[]): T[] {
 	const mode = leanPassMode();
+	const req = { op: "spikes", pts: rows(pts) };
+	if (mode === "solo") return soloGeo("spikes", req, (r) => subsequenceKept(pts, r.pts ?? []));
 	if (mode === "off" || pts.length < 3) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
-		leanRows = leanGeo({ op: "spikes", pts: rows(pts) }).pts ?? [];
+		leanRows = leanGeo(req).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
 		recordFail("spikes");
@@ -328,11 +377,13 @@ export function trimViaLean<P extends LatLonTs, F extends LatLonTs>(
 	ts: () => P[],
 ): P[] {
 	const mode = leanPassMode();
+	const req = { op: "trim", path: rows(path), fixes: rows(fixes) };
+	if (mode === "solo") return soloGeo("trim", req, (r) => subsequenceKept(path, r.pts ?? []));
 	if (mode === "off" || path.length < 3) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
-		leanRows = leanGeo({ op: "trim", path: rows(path), fixes: rows(fixes) }).pts ?? [];
+		leanRows = leanGeo(req).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
 		recordFail("trim");
@@ -362,18 +413,19 @@ export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
 	excessM = 12,
 ): P[] {
 	const mode = leanPassMode();
+	const req = {
+		op: "despike",
+		apex: Math.round(minApexM * 1e6),
+		excess: Math.round(excessM * 1e6),
+		pts: rows(path),
+		raw: rows(fixes),
+	};
+	if (mode === "solo") return soloGeo("despike", req, (r) => subsequenceKept(path, r.pts ?? []));
 	if (mode === "off" || path.length < 3) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
-		leanRows =
-			leanGeo({
-				op: "despike",
-				apex: Math.round(minApexM * 1e6),
-				excess: Math.round(excessM * 1e6),
-				pts: rows(path),
-				raw: rows(fixes),
-			}).pts ?? [];
+		leanRows = leanGeo(req).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
 		recordFail("despike");
@@ -447,14 +499,26 @@ export function logLeanPassLedger(label: string): LedgerVerdict | null {
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392). Until
 	// then this printed `(no calls) EXACT`: the marker was already there and the
 	// verdict contradicted it, which is the worst of both.
+	//
+	// ⚠ `solo` prints neither EXACT nor `all accepted`. Both are vacuous with no
+	// TS arm, and `all accepted` is the worse of the two — it asserts every
+	// divergence was adjudicated against the accepted-delta manifest, which was
+	// never opened because nothing was measured.
+	//
+	// The per-op `n/Nf/Nd` counts stay meaningful and keep printing: the `d`
+	// column is structurally zero, but `n` and `f` still say which of the six ops
+	// actually ran, which is the only way to catch an op that quietly stopped
+	// being reached.
 	const verdict =
 		calls === 0
 			? "NOT EXERCISED"
-			: divs.length === 0
-				? "EXACT"
-				: unexplained.length === 0
-					? "all accepted"
-					: `${unexplained.length} UNEXPLAINED`;
+			: mode === "solo"
+				? `SOLO (no TS arm; ${calls} call(s) across ${Object.keys(stats).length} op(s))`
+				: divs.length === 0
+					? "EXACT"
+					: unexplained.length === 0
+						? "all accepted"
+						: `${unexplained.length} UNEXPLAINED`;
 	const servedTag = servedNote(mode, served.length);
 	const detail =
 		divs.length === 0
@@ -528,18 +592,26 @@ export function spliceViaLean<P extends LatLonTs>(
 	ts: () => P[],
 ): P[] {
 	const mode = leanPassMode();
+	const req = {
+		op: "splice",
+		coarse: rows(coarse),
+		route: rows(route),
+		tol: Math.round(DETAIL_TOLERANCE_M * 1e6),
+		drop: Math.round(dropM * 1e6),
+	};
+	// ⚠ The one op whose result is NOT a subsequence of its input: splice weaves
+	// detail from `route` into `coarse`, so the output contains vertices that
+	// appear in neither list verbatim and must be materialised from the wire.
+	if (mode === "solo") {
+		return soloGeo("splice", req, (r) =>
+			(r.pts ?? []).map((row) => ({ lat: row[0] / 1e7, lon: row[1] / 1e7, ts: row[2] }) as unknown as P),
+		);
+	}
 	if (mode === "off" || coarse.length < 2 || route.length < 2) return ts();
 	const tsResult = timeTsArm("geo", ts);
 	let leanRows: number[][];
 	try {
-		leanRows =
-			leanGeo({
-				op: "splice",
-				coarse: rows(coarse),
-				route: rows(route),
-				tol: Math.round(DETAIL_TOLERANCE_M * 1e6),
-				drop: Math.round(dropM * 1e6),
-			}).pts ?? [];
+		leanRows = leanGeo(req).pts ?? [];
 	} catch (e) {
 		if (!(e instanceof LeanBridgeError)) throw e;
 		recordFail("splice");
