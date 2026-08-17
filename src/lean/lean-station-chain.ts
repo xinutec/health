@@ -57,11 +57,24 @@ import { leanStationChainServe } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { leanRunScope } from "./run-scope.js";
 
-export type LeanStationChainMode = "off" | "shadow" | "on";
+/**
+ * `solo` — the verified resolver alone (#975). No TS arm, no comparison, no
+ * fallback.
+ *
+ * ⚠ The `namedTrainLegs(opts) === 0` guard is dropped, and it is the one guard
+ * in the audit that LOOKED like a second code path: it returns
+ * `resolveStationChain(opts)` — the whole TS function — rather than a trivial
+ * value. It is not. `station-chain.ts:644` skips every segment on exactly the
+ * predicate `namedTrainLegs` counts (`mode !== "train" || lineName === null ||
+ * lineName === "unknown_rail"`), so with zero named legs it provably returns an
+ * empty Map. Lean is asked instead and returns the same.
+ */
+export type LeanStationChainMode = "off" | "shadow" | "on" | "solo";
 
 export function leanStationChainMode(): LeanStationChainMode {
+	// Env-only, as with the sibling tenants.
 	const v = process.env.LEAN_STATIONCHAIN;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 /** The wire form of the route graph.
@@ -230,6 +243,14 @@ function record(date: string, kind: ChainDivergence["kind"], detail: string): vo
  */
 export function resolveStationsServed(opts: ResolveStationChainOpts, date: string): Map<number, ResolvedStations> {
 	const mode = leanStationChainMode();
+	// ⚠ BEFORE the legs guard, which would otherwise route straight into the TS
+	// resolver — the one thing `solo` exists to stop. A day with no named train
+	// legs simply asks Lean and gets an empty Map back.
+	if (mode === "solo") {
+		stats.days += 1;
+		stats.legs += namedTrainLegs(opts);
+		return resolveViaLean(opts);
+	}
 	if (mode === "off" || namedTrainLegs(opts) === 0) return resolveStationChain(opts);
 
 	if (mode === "on") {
@@ -284,7 +305,18 @@ export function logLeanStationChainLedger(label: string): LedgerVerdict | null {
 	if (mode === "off") return null;
 	const s = stats;
 	const bad = s.diverged + s.skipped;
-	const verdict = s.days === 0 ? "NOT EXERCISED" : bad === 0 ? "EXACT" : `${bad} DIVERGED`;
+	// ⚠ `solo` must not print EXACT: `diverged`/`skipped` are structurally zero
+	// with no TS arm and nothing to skip TO. The leg count stays in the line and
+	// is the useful part — it is the evidence that the days counted had
+	// something to decide, which matters more once nothing is compared.
+	const verdict =
+		s.days === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? `SOLO (no TS arm; ${s.days} day(s) / ${s.legs} leg(s) resolved)`
+				: bad === 0
+					? "EXACT"
+					: `${bad} DIVERGED`;
 	const detail = bad === 0 ? "" : ` — pairs=${s.diverged} skip=${s.skipped}`;
 	const legs =
 		divergences.length === 0
