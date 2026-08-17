@@ -17,45 +17,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_MIN_DURATION_BY_MODE,
-	fitDurationDistribution,
 	type GammaFit,
 	HARD_FLOOR_LOG_PROB,
 	logDurationProb,
 } from "../src/hmm/duration-dist.js";
-
-describe("fitDurationDistribution", () => {
-	it("returns Gamma parameters whose mean matches the input mean", () => {
-		const values = [10, 15, 20, 25, 30, 35, 40]; // mean = 25
-		const fit = fitDurationDistribution(values);
-		const fittedMean = fit.alpha / fit.beta;
-		expect(fittedMean).toBeCloseTo(25, 1);
-	});
-
-	it("returns Gamma parameters whose variance matches the input variance", () => {
-		const values: number[] = [];
-		for (let i = 0; i < 1000; i++) {
-			// roughly uniform in [10, 60], so var ≈ (50)^2 / 12 ≈ 208
-			values.push(10 + (i % 50));
-		}
-		const fit = fitDurationDistribution(values);
-		const fittedVar = fit.alpha / (fit.beta * fit.beta);
-		expect(Math.abs(fittedVar - 208)).toBeLessThan(50);
-	});
-
-	it("handles small sample count gracefully (returns fallback Gamma)", () => {
-		const fit = fitDurationDistribution([10]);
-		expect(fit.sampleCount).toBe(1);
-		expect(Number.isFinite(fit.alpha)).toBe(true);
-		expect(Number.isFinite(fit.beta)).toBe(true);
-	});
-
-	it("returns fallback Gamma for empty input (so HSMM doesn't crash)", () => {
-		const fit = fitDurationDistribution([]);
-		expect(fit.sampleCount).toBe(0);
-		expect(fit.alpha).toBeGreaterThan(0);
-		expect(fit.beta).toBeGreaterThan(0);
-	});
-});
 
 describe("logDurationProb", () => {
 	// Stationary: longish stays, fit a Gamma with mean ~30 min.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONFIDENCE_FLOOR, dwellContinuation, dwellSurvival, meanDwellSec } from "../src/geo/dwell-continuation.js";
+import { CONFIDENCE_FLOOR, dwellContinuation, meanDwellSec } from "../src/geo/dwell-continuation.js";
 
 const HOUR = 3600;
 
@@ -9,13 +9,6 @@ describe("meanDwellSec", () => {
 	});
 	it("is null for unusable stats", () => {
 		expect(meanDwellSec({ totalDwellSec: 0, visitCount: 0, uniqueDays: 10 })).toBeNull();
-	});
-});
-
-describe("dwellSurvival", () => {
-	it("is 1 at zero elapsed and decays with time", () => {
-		expect(dwellSurvival(0, 10 * HOUR)).toBe(1);
-		expect(dwellSurvival(10 * HOUR, 10 * HOUR)).toBeCloseTo(Math.exp(-1), 6);
 	});
 });
 

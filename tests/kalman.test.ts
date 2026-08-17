@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyMode, filterGpsTrack, type GpsPoint } from "../src/geo/kalman.js";
+import { filterGpsTrack, type GpsPoint } from "../src/geo/kalman.js";
 
 describe("filterGpsTrack", () => {
 	it("returns empty for empty input", () => {
@@ -347,12 +347,4 @@ describe("filterGpsTrack", () => {
 			expect(p.speed_kmh).toBeLessThan(8);
 		}
 	});
-});
-
-describe("classifyMode", () => {
-	it("classifies stationary", () => expect(classifyMode(0)).toBe("stationary"));
-	it("classifies walking", () => expect(classifyMode(5)).toBe("walking"));
-	it("classifies cycling", () => expect(classifyMode(20)).toBe("cycling"));
-	it("classifies driving", () => expect(classifyMode(80)).toBe("driving"));
-	it("classifies transit", () => expect(classifyMode(200)).toBe("transit"));
 });

@@ -56,11 +56,10 @@ export function meanDwellSec(place: DwellPlace): number | null {
 	return place.totalDwellSec / place.visitCount;
 }
 
-/** P(still here) after `elapsedSec` at a place with mean dwell `tauSec`. */
-export function dwellSurvival(elapsedSec: number, tauSec: number): number {
-	if (tauSec <= 0) return 0;
-	return Math.exp(-Math.max(0, elapsedSec) / tauSec);
-}
+// `dwellSurvival` — P(still here) after `elapsedSec`, an exponential survival on
+// mean dwell τ — lived here. Deleted 2026-08-17: nothing called it.
+// `dwellContinuation` below answers the question the pipeline actually asks (how
+// far to continue a stay) without going through a survival probability.
 
 export interface DwellContinuation {
 	/** Local-day-clamped timestamp to continue the stay to. */

@@ -894,7 +894,18 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
 /-- Nudge each vertex fully onto its nearest walkable way when that way is
     within `nudgeReachM`, and otherwise leave it EXACTLY where the GPS put it.
     Deliberately never a partial move: half-way would strand the point in
-    no-man's-land, neither the GPS truth nor the pavement. -/
+    no-man's-land, neither the GPS truth nor the pavement.
+
+    ⚠ ITS TS TWIN IS GONE (deleted 2026-08-17: nothing called it; the walk draw
+    goes through `walk-smooth-map.ts`). This is no longer a port of anything, and
+    it stays for one reason — the `#guard`s below are the only direct pin on
+    `nearestWalkable`, which IS live, on both sides, via the building-escape
+    path. Deleting this would have quietly dropped that coverage.
+
+    So its reference values can no longer be regenerated: `walk-escape-refs.mts`
+    lost the section that produced them when the TS went. They pin Lean against
+    the TS behaviour as of that date, which is worth more than nothing and less
+    than a live ref — see #1003. -/
 def nudgeTowardWays (drawn : Array TPt) (walkable : Ways) (nudgeReachM : Float) : Array TPt :=
   if walkable.isEmpty then drawn
   else drawn.map fun p =>

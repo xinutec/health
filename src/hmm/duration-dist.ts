@@ -80,43 +80,13 @@ export const DEFAULT_MIN_DURATION_BY_MODE: Record<ModelledMode, number> = {
 	unknown: 1,
 };
 
-/** Fallback Gamma for modes with no/insufficient training data —
- *  a wide right-skewed shape with mean ~15 min. Used when the
- *  fitter sees < 5 samples (any narrower fit would be noise). */
-const FALLBACK_GAMMA: GammaFit = {
-	alpha: 1.5,
-	beta: 0.1,
-	sampleCount: 0,
-};
-
-/** Floor on stddev when fitting to prevent pathological narrow
- *  fits with σ ≈ 0 (which collapses the Gamma to a delta). */
-const VAR_FLOOR = 4; // stddev floor ≈ 2 min
-
-/**
- * Fit a Gamma distribution via method-of-moments.
- *
- *   α = mean² / variance
- *   β = mean / variance
- *
- * Returns the fallback Gamma for empty / degenerate input rather
- * than throwing — HSMM inference shouldn't crash on a thin
- * training day.
- */
-export function fitDurationDistribution(values: readonly number[]): GammaFit {
-	if (values.length < 5) {
-		return { ...FALLBACK_GAMMA, sampleCount: values.length };
-	}
-	let sum = 0;
-	for (const v of values) sum += v;
-	const mean = sum / values.length;
-	let sumSq = 0;
-	for (const v of values) sumSq += (v - mean) ** 2;
-	const variance = Math.max(VAR_FLOOR, sumSq / (values.length - 1));
-	const alpha = (mean * mean) / variance;
-	const beta = mean / variance;
-	return { alpha, beta, sampleCount: values.length };
-}
+// `fitDurationDistribution` lived here, with its `FALLBACK_GAMMA` and
+// `VAR_FLOOR`. Deleted 2026-08-17: nothing in `src/` called it — the fits the
+// HSMM actually uses are the hand-set `BASELINE_DURATION_FITS` in `decode.ts`,
+// never a fit computed from data. Its only caller was its own test.
+//
+// `GammaFit`, `logDurationProb` and the Lanczos `logGamma` below all stay: they
+// are what consumes those baseline fits and they are very much live.
 
 /**
  * Log-probability of a `d`-minute segment under `mode`'s fitted

@@ -360,13 +360,8 @@ export function filterGpsTrack(points: GpsPoint[]): FilteredPoint[] {
 	return result;
 }
 
-/**
- * Classify transport mode from speed.
- */
-export function classifyMode(speedKmh: number): "stationary" | "walking" | "cycling" | "driving" | "transit" {
-	if (speedKmh < 2) return "stationary";
-	if (speedKmh < 7) return "walking";
-	if (speedKmh < 30) return "cycling";
-	if (speedKmh < 120) return "driving";
-	return "transit";
-}
+// `classifyMode` (speed → mode by four fixed thresholds) lived here. Deleted
+// 2026-08-17: nothing called it. Mode classification is `segments.ts`'s scored
+// window classifier, which weighs linearity, variance and stop fraction as well
+// as speed — this was an earlier, cruder answer to the same question that
+// survived only in its own test.

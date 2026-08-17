@@ -9,11 +9,6 @@ console.log("meanDwell ok:", D.meanDwellSec({ totalDwellSec: 72000, visitCount: 
 console.log("meanDwell zeroVisits:", D.meanDwellSec({ totalDwellSec: 72000, visitCount: 0, uniqueDays: 30 }));
 console.log("meanDwell zeroDwell:", D.meanDwellSec({ totalDwellSec: 0, visitCount: 24, uniqueDays: 30 }));
 
-console.log("survival 1800/3600:", D.dwellSurvival(1800, 3600));
-console.log("survival 0/3600:", D.dwellSurvival(0, 3600));
-console.log("survival tau0:", D.dwellSurvival(3600, 0));
-console.log("survival negElapsed:", D.dwellSurvival(-500, 3600));
-
 const home = { totalDwellSec: 1080000, visitCount: 30, uniqueDays: 30 }; // tau = 36000
 console.log("cont home:", JSON.stringify(D.dwellContinuation({ place: home, lastEndTs: 1000, dayEndTs: 100000 })));
 console.log("cont clampedDay:", JSON.stringify(D.dwellContinuation({ place: home, lastEndTs: 1000, dayEndTs: 10000 })));

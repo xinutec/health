@@ -29,7 +29,6 @@ import { buildWalkGraph } from "../../src/geo/walkable-route.js";
 import {
 	correctWalkPath,
 	escapeBuildings,
-	nudgeTowardWays,
 	routeChordAroundBuildings,
 	snapPassages,
 	DEFAULT_CORRECT_OPTIONS,
@@ -112,25 +111,6 @@ console.log("=== buildWalkGraph(STREETS) (shell-side topology) ===");
 			console.log(`  edge ${k++}: ids=${ia},${ib}`);
 		}
 	}
-}
-
-console.log("");
-console.log("=== nudgeTowardWays (reads nearestWalkable out) ===");
-{
-	const probes: Array<[string, { lat: number; lon: number }]> = [
-		["on the south street", P(0, 50)],
-		["3 m north of it", P(3, 50)],
-		["at reach exactly (8 m)", P(8, 50)],
-		["beyond reach (9 m)", P(9, 50)],
-		["near the SW corner", P(2, 2)],
-		["mid-block, far from all", P(50, 50)],
-	];
-	for (const [label, p] of probes) {
-		const [out] = nudgeTowardWays([p], GEO, 8);
-		console.log(`${label}: ${f(out.lat)} ${f(out.lon)} moved=${out.lat !== p.lat || out.lon !== p.lon}`);
-	}
-	const none = nudgeTowardWays([P(50, 50)], geoOf([]), 8);
-	console.log(`empty network: ${f(none[0].lat)} ${f(none[0].lon)}`);
 }
 
 console.log("");
