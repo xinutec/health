@@ -46,11 +46,23 @@ import { errorText } from "../util/error-text.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { leanRunScope } from "./run-scope.js";
 
-export type LeanHsmmMode = "off" | "shadow" | "on";
+/**
+ * `solo` — the verified decode alone (#975). No TS decode, no shadow, no
+ * fallback.
+ *
+ * ⚠ This tenant is shaped differently from its siblings and `solo` has to undo
+ * MORE here. The others take the TS arm as a thunk in one place; `decodeServed`
+ * calls `decodeHsmm` DIRECTLY from three separate branches — wrong mode, absent
+ * `LEAN_CLI`, and a thrown bridge — and `shadowLeanHsmm` runs the TS trellis a
+ * second time as measurement. `solo` closes all four, or the TS decode stays
+ * reachable and nothing can be deleted.
+ */
+export type LeanHsmmMode = "off" | "shadow" | "on" | "solo";
 
 export function leanHsmmMode(): LeanHsmmMode {
+	// Env-only, as with the sibling tenants.
 	const v = process.env.LEAN_HSMM;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 /**
@@ -66,7 +78,18 @@ export function leanHsmmMode(): LeanHsmmMode {
  *                  warned so a silently-degrading serve path stays visible.
  */
 export function decodeServed(inputs: HsmmInputs, date: string): HmmSegment[] {
-	if (leanHsmmMode() !== "on") return decodeHsmm(inputs);
+	const mode = leanHsmmMode();
+	// ⚠ BEFORE the `LEAN_CLI` check, deliberately. Under `solo` an absent binary
+	// is not a reason to serve TS — there is no TS to serve — so it must reach
+	// `decodeHsmmViaLean` and throw there rather than be caught by a guard whose
+	// only remedy is the arm being deleted. Counted here because the shadow does
+	// not run under `solo`, so this is the tenant's ONLY evidence it did anything
+	// (#392: a ledger that cannot tell "never ran" from "ran clean" is useless).
+	if (mode === "solo") {
+		stats.days += 1;
+		return decodeHsmmViaLean(inputs);
+	}
+	if (mode !== "on") return decodeHsmm(inputs);
 	const leanBin = process.env.LEAN_CLI;
 	if (leanBin === undefined || leanBin === "" || !existsSync(leanBin)) {
 		console.warn(`[lean-hsmm] on but LEAN_CLI missing — serving TS decode for ${date}`);
@@ -123,7 +146,13 @@ function record(date: string, kind: HsmmDivergence["kind"], detail: string): voi
  */
 export function shadowHsmmViaLean(inputs: HsmmInputs, date: string): void {
 	const mode = leanHsmmMode();
-	if (mode === "off") return;
+	// ⚠ `solo` skips the shadow, and that is the POINT rather than an omission.
+	// `shadowHsmmDay` runs the TS trellis to compare against — under `solo` that
+	// would keep the very implementation this mode exists to delete alive and
+	// executing on every day, buying nothing: there is no serving decision to
+	// inform, because Lean is already the only arm. `decodeServed` counts the
+	// day instead, so the ledger still distinguishes "never ran" from "ran".
+	if (mode === "off" || mode === "solo") return;
 	stats.days += 1;
 	try {
 		const r = shadowHsmmDay(buildHsmmModel(inputs));
@@ -163,7 +192,20 @@ export function logLeanHsmmLedger(label: string): LedgerVerdict | null {
 	// the 11 cached decodes in `tests/golden/decoded_days` instead of decoding, so
 	// the decoder never runs. That determinism is deliberate (#233); it just means
 	// golden cannot gate this tenant, and a green corpus never could.
-	const verdict = s.days === 0 ? "NOT EXERCISED" : bad === 0 ? "EXACT" : `${bad} DIVERGED`;
+	// ⚠ Under `solo`, `days` counts SERVED decodes rather than shadowed ones, and
+	// `bad` is structurally zero because the shadow that would populate it never
+	// ran. EXACT would therefore assert agreement between two arms of which only
+	// one exists — the same vacuous green the other tenants guard against, and
+	// worse here because this tenant's EXACT is documented as meaning "cleared
+	// BOTH the bridge and the quantisation", neither of which was checked.
+	const verdict =
+		s.days === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? `SOLO (no TS decode, no shadow; ${s.days} day(s) served)`
+				: bad === 0
+					? "EXACT"
+					: `${bad} DIVERGED`;
 	const detail = bad === 0 ? "" : ` — bridge=${s.bridgeDiverged} quantDrift=${s.quantDrift} skip=${s.skipped}`;
 	const legs =
 		divergences.length === 0

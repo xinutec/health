@@ -133,3 +133,66 @@ describe("decodeServed", () => {
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("bridge failed"));
 	});
 });
+
+/**
+ * `solo` (#975) — the mode that lets `decodeHsmm` be deleted.
+ *
+ * This tenant needs more undone than its siblings. The others take the TS arm as
+ * a thunk in ONE place; here `decodeServed` calls `decodeHsmm` directly from
+ * three branches (wrong mode, absent `LEAN_CLI`, thrown bridge) and
+ * `shadowLeanHsmm` runs the TS trellis again as measurement. If any of the four
+ * survives, the TS decode is still reachable and nothing can be removed.
+ */
+describe("LEAN_HSMM=solo", () => {
+	it("parses, and a typo still falls back to off", () => {
+		process.env.LEAN_HSMM = "solo";
+		expect(leanHsmmMode()).toBe("solo");
+		process.env.LEAN_HSMM = "SOLO";
+		expect(leanHsmmMode()).toBe("off");
+	});
+
+	it("serves the verified decode and never calls the TS one", () => {
+		process.env.LEAN_HSMM = "solo";
+		expect(decodeServed(inputs, "2026-08-17")).toBe(LEAN_SEGS);
+		expect(decodeHsmm).not.toHaveBeenCalled();
+	});
+
+	// ⚠ The `LEAN_CLI` guard exists to serve TS when the binary is missing. Under
+	// solo that remedy does not exist, so the guard must NOT intercept — the call
+	// has to reach the bridge and fail there, loudly.
+	it("does not fall back to TS when LEAN_CLI is missing", () => {
+		process.env.LEAN_HSMM = "solo";
+		delete process.env.LEAN_CLI;
+		vi.mocked(decodeHsmmViaLean).mockImplementation(() => {
+			throw new Error("no bridge");
+		});
+		expect(() => decodeServed(inputs, "2026-08-17")).toThrow("no bridge");
+		expect(decodeHsmm).not.toHaveBeenCalled();
+	});
+
+	it("lets a bridge failure throw instead of serving TS", () => {
+		process.env.LEAN_HSMM = "solo";
+		vi.mocked(decodeHsmmViaLean).mockImplementation(() => {
+			throw new Error("bridge died");
+		});
+		expect(() => decodeServed(inputs, "2026-08-17")).toThrow("bridge died");
+		expect(decodeHsmm).not.toHaveBeenCalled();
+	});
+
+	// The shadow's whole job is to compare against TS. Running it under solo
+	// would keep the implementation alive on every decoded day for a comparison
+	// that can no longer inform anything.
+	it("skips the shadow, and still counts the day it served", () => {
+		process.env.LEAN_HSMM = "solo";
+		decodeServed(inputs, "2026-08-17");
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		const verdict = logLeanHsmmLedger("2026-08-17");
+		const line = log.mock.calls[0]?.[0] as string;
+		expect(line).toContain("lean-hsmm[solo]");
+		expect(line).toContain("SOLO");
+		// EXACT here is documented as "cleared BOTH the bridge and the
+		// quantisation" — neither of which was checked.
+		expect(line).not.toContain("EXACT");
+		expect(verdict?.calls).toBe(1);
+	});
+});
