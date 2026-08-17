@@ -56,6 +56,12 @@ if (files.length === 0) {
 
 const FIELDS = ["ts", "lat", "lon", "speed", "bearing"];
 let bad = 0;
+// Collected so the EXIT CODE can be judged on the header's three criteria
+// rather than on bit-exactness — see the note at the bottom. `n` per day is kept
+// whole rather than reduced here, because which FIELD moved is the whole
+// question: `lat` never calls `cos`, so a `lat` difference is not the libm band.
+const counts: Array<{ file: string; tsRows: number; leanRows: number }> = [];
+const perDay: Array<{ file: string; n: Record<string, number> }> = [];
 
 for (const file of files) {
 	const fixture = JSON.parse(readFileSync(path.join(dir, file), "utf8"));
@@ -86,6 +92,7 @@ for (const file of files) {
 
 	if (lean.length !== ts.length) {
 		console.log(`${file}  in=${points.length}  LENGTH ts=${ts.length} lean=${lean.length}`);
+		counts.push({ file, tsRows: ts.length, leanRows: lean.length });
 		bad += 1;
 		continue;
 	}
@@ -126,6 +133,8 @@ for (const file of files) {
 			worst[f] = Math.max(worst[f] ?? 0, Math.abs(d));
 		}
 	}
+	counts.push({ file, tsRows: ts.length, leanRows: lean.length });
+	perDay.push({ file, n });
 	const fields = FIELDS.filter((f) => n[f] !== undefined);
 	if (fields.length > 0) {
 		const tally = fields
@@ -140,4 +149,47 @@ for (const file of files) {
 }
 
 console.log(`\n${files.length - bad}/${files.length} days bit-exact`);
-process.exit(bad === 0 ? 0 : 1);
+
+// ⚠ THE EXIT CODE FOLLOWS THE HEADER'S BAR, NOT BIT-EXACTNESS.
+//
+// It used to be `process.exit(bad === 0 ? 0 : 1)` — non-zero whenever any day
+// was not bit-exact. That contradicted this file's own premise: nothing here is
+// quantised, `metersToDegreesLon` calls `cos`, and Lean's and V8's disagree by
+// 1 ULP on ~7.6% of real latitudes, so a handful of `lon` rows differing is the
+// EXPECTED state. Measured 2026-08-17: 6/35 bit-exact, and that is health.
+//
+// A tool that exits 1 on its healthy state is one nobody can gate on, and one
+// that teaches its reader to ignore the exit code. That is the likeliest reason
+// nobody noticed this harness had stopped running at all (#1020).
+//
+// The three criteria the header actually names:
+//   * row COUNTS agree — same fixes kept. A mismatch means the arms disagreed
+//     about which fixes are real, not about the last bit of one.
+//   * `lat` is EXACT everywhere. It is the control: it never calls `cos`, so a
+//     `lat` difference cannot be the libm gap and is a genuine defect.
+//   * the `lon` gap stays in SINGLE DIGITS of rows per day.
+const rowMismatch = counts.filter((c) => c.tsRows !== c.leanRows);
+const latDrift = perDay.filter((d) => (d.n.lat ?? 0) > 0);
+// "single digits" from the header, named once so the threshold and the message
+// below cannot drift apart. A red test with the bound at 1 printed "10+ rows"
+// while faulting on days with 1 — the number was written twice.
+const LON_ROWS_MAX = 9;
+const lonWide = perDay.filter((d) => (d.n.lon ?? 0) > LON_ROWS_MAX);
+
+const faults: string[] = [];
+if (rowMismatch.length > 0) {
+	faults.push(`${rowMismatch.length} day(s) kept a different NUMBER of fixes: ${rowMismatch.map((c) => c.file).join(", ")}`);
+}
+if (latDrift.length > 0) {
+	faults.push(`${latDrift.length} day(s) differ in lat, the control field: ${latDrift.map((d) => d.file).join(", ")}`);
+}
+if (lonWide.length > 0) {
+	faults.push(`${lonWide.length} day(s) differ in lon on more than ${LON_ROWS_MAX} rows: ${lonWide.map((d) => `${d.file} (${d.n.lon})`).join(", ")}`);
+}
+
+if (faults.length === 0) {
+	console.log("within the documented libm band: row counts agree, lat exact, lon gap single-digit");
+	process.exit(0);
+}
+for (const f of faults) console.log(`FAULT: ${f}`);
+process.exit(1);
