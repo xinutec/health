@@ -65,16 +65,25 @@ pub const RANGE_WINDOW_DAYS: i64 = 30;
 /// A stream the backfill walks one day at a time.
 ///
 /// The closures are what the TypeScript's object literal held: `sync` fetches
-/// one day and answers how many points it wrote, `skip_if` answers whether
-/// another stream's stored data already proves the day empty. Boxed futures
-/// rather than `async fn` in a trait because the orchestrator holds a
-/// heterogeneous list of these and calls them through `dyn`.
+/// one day and answers what happened to it, `skip_if` answers whether another
+/// stream's stored data already proves the day empty. Boxed futures rather than
+/// `async fn` in a trait because the orchestrator holds a heterogeneous list of
+/// these and calls them through `dyn`.
+///
+/// ⚠ **`fetch` RETURNS A [`DayResult`], NOT A COUNT.** It has to, and the first
+/// version of this type got it wrong: with a bare `u64` a day whose fetch threw
+/// had two spellings available, `Ok(0)` or an error, and both were wrong.
+/// `Ok(0)` says the day is EMPTY, which advances the streak that eventually
+/// declares the stream complete — the 5xx-truncates-history bug
+/// [`crate::backfill`] exists to prevent. An error would abort the user's whole
+/// walk over one bad day. [`DayResult::Failed`] is the third answer, and it was
+/// unconstructible until this signature admitted it.
 pub struct DayStream<'a> {
     /// Stable; names the `sync_state` keys, so changing it restarts the walk.
     pub name: String,
     pub max_empty_days: i64,
     pub fetch:
-        Box<dyn Fn(String) -> BoxFut<'a, Result<u64, RateLimitExhausted>> + Send + Sync + 'a>,
+        Box<dyn Fn(String) -> BoxFut<'a, Result<DayResult, RateLimitExhausted>> + Send + Sync + 'a>,
     /// Skip a day without spending a call. Counts toward the empty streak —
     /// a long run of skips terminates the walk exactly as a long run of empty
     /// fetches does. ⚠ Without that, a permanently-true condition walks the
@@ -88,9 +97,13 @@ pub struct DayStream<'a> {
 pub struct RangeStream<'a> {
     pub name: String,
     pub max_empty_windows: i64,
+    /// As [`DayStream::fetch`], over a window rather than a day.
     #[allow(clippy::type_complexity)]
     pub fetch: Box<
-        dyn Fn(String, String) -> BoxFut<'a, Result<u64, RateLimitExhausted>> + Send + Sync + 'a,
+        dyn Fn(String, String) -> BoxFut<'a, Result<DayResult, RateLimitExhausted>>
+            + Send
+            + Sync
+            + 'a,
     >,
 }
 
@@ -194,11 +207,10 @@ pub async fn run_intraday_backfill(
         } else {
             // ⚠ Exhaustion propagates. It means the budget for the whole run is
             // spent, not that this day failed, and swallowing it here would
-            // advance the cursor past a day nothing ever fetched.
-            let result = match (stream.fetch)(date.clone()).await {
-                Ok(points) => DayResult::Ok { points },
-                Err(e) => return Err(e.into()),
-            };
+            // advance the cursor past a day nothing ever fetched. A day that
+            // merely FAILED comes back as `DayResult::Failed` and the walk goes
+            // on — see the note on `DayStream::fetch`.
+            let result = (stream.fetch)(date.clone()).await?;
             if should_advance_empty_streak(&result) {
                 empty_streak += 1;
             } else {
@@ -255,10 +267,7 @@ pub async fn run_range_backfill(
             RangeBackfillStep::Fetch { start, end } => (start, end),
         };
 
-        let result = match (stream.fetch)(start.clone(), end.clone()).await {
-            Ok(points) => DayResult::Ok { points },
-            Err(e) => return Err(e.into()),
-        };
+        let result = (stream.fetch)(start.clone(), end.clone()).await?;
         if should_advance_empty_streak(&result) {
             empty_streak += 1;
         } else {

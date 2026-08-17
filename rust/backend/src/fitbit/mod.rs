@@ -16,6 +16,7 @@
 pub mod backfill_runner;
 pub mod client;
 pub mod rate_limit;
+pub mod run;
 pub mod sync;
 pub mod tokens;
 pub mod tz_source;

@@ -52,6 +52,18 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # The IANA zone database. Fitbit sends a wall clock with no offset, so turning
 # one into an instant needs real zone data. Version matches the fleet.
 chrono-tz = "0.10"
+# Timezone POLYGONS — which IANA zone a latitude/longitude falls in. Distinct
+# from chrono-tz above, which answers what a zone's offset is once you know its
+# name; nothing in the zone database can tell you the name from a coordinate.
+#
+# ⚠ THIS IS A DIFFERENT DATASET FROM THE `tz-lookup` NPM PACKAGE THE TYPESCRIPT
+# USED, and the two can disagree near a zone border. That is a real behaviour
+# difference in a port, not a detail: the answer is written into a `tz` column
+# and never revisited. It is accepted rather than overlooked because there is no
+# Rust binding to tz-lookup's dataset, and because tzf's polygons are the more
+# accurate of the two — tz-lookup ships a deliberately coarsened approximation.
+# `bundled` embeds the compressed polygons so the image needs no data file.
+tzf-rs = { version = "1.3.7", default-features = false, features = ["bundled"] }
 
 [build-dependencies]
 # Compiles src/shim.c, which is how Rust reaches the  half of

@@ -1,20 +1,26 @@
 //! The backend entrypoint.
 //!
-//! Two subcommands today:
+//! Three subcommands:
 //!
 //!   check  — read the config, open the pool, and prove both against the real
 //!            database. READ-ONLY, so it is safe to point at production.
-//!   sync   — the port of `dist/sync.js`. NOT IMPLEMENTED, and it says so and
-//!            exits non-zero rather than completing silently.
+//!   sync   — the port of `dist/sync.js`: Fitbit ingestion, forward then
+//!            backward, for every linked user.
+//!   serve  — the HTTP skeleton. NOT production's server; `src/server.ts` still
+//!            owns every real route.
 //!
-//! ⚠ `sync` exiting 2 is deliberate and is not a placeholder's politeness. This
-//! binary will one day be wired into the `health-sync` CronJob, and a `sync`
-//! that returned 0 having done nothing would show as a healthy scheduled run
-//! while data silently stopped flowing — the exact failure the TypeScript job
-//! exists to prevent. An entrypoint that cannot do its job must fail.
+//! ⚠ `sync` NO LONGER EXITS 2. It did, and the reason it did still holds: a
+//! `sync` returning 0 having done nothing shows as a healthy scheduled run while
+//! data silently stops. That guard is now carried by the code rather than by the
+//! stub — the run fails loudly when it cannot read its users or reach Lean, and
+//! reports a spent rate budget as the ordinary ending it is.
+//!
+//! ⚠ IT IS NOT WIRED INTO THE CRONJOB. `health-sync` still runs `dist/sync.js`.
+//! Nothing switches over until this has been run by hand against production and
+//! its writes compared with the TypeScript's.
 
 use anyhow::{Context, Result};
-use backend::{config::Config, db, lean, routes, state::AppState, sync_state};
+use backend::{config::Config, db, fitbit, lean, routes, state::AppState, sync_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,13 +35,7 @@ async fn main() -> Result<()> {
     match cmd.as_str() {
         "check" => check().await,
         "serve" => serve().await,
-        "sync" => {
-            eprintln!(
-                "backend sync: not implemented — the ingestion still runs in TypeScript \
-                 (dist/sync.js). This binary is the skeleton only (#982)."
-            );
-            std::process::exit(2);
-        }
+        "sync" => sync().await,
         "" => {
             eprintln!("usage: backend <check|serve|sync>");
             std::process::exit(64);
@@ -45,6 +45,63 @@ async fn main() -> Result<()> {
             std::process::exit(64);
         }
     }
+}
+
+/// Run one Fitbit ingestion pass over every linked user.
+///
+/// # ⚠ NOT YET AT PARITY WITH `dist/sync.js` — two things are missing
+///
+/// Named here rather than left to be discovered from a diff, because both are
+/// silent absences: the run would look healthy and simply not do them.
+///
+///   * **The Google Health weight sync.** `sync.ts` runs `runGoogleWeightSync`
+///     before the Fitbit passes, gated on `GH_*` and `GH_USER_ID`. Weight lives
+///     only on the Google side since the Fitbit feed froze in Apr 2026 (#260),
+///     so a cutover before this is ported would stop weight updating — while
+///     every existing row stayed in place, which is what makes it quiet.
+///   * **`migrate()`**, below.
+///
+/// # It does NOT migrate the schema, and the TypeScript's `sync.ts` does
+///
+/// `dist/sync.js` calls `migrate()` on startup, so whichever of the sync cron
+/// and the server started first brought the schema up. This does not, because
+/// two processes racing to apply migrations is a worse failure than a missing
+/// one, and `health-auth` already migrates on every start. ⚠ That means this
+/// binary must not be the FIRST thing to run against a fresh database.
+///
+/// # The zone lookup is built once
+///
+/// `tzf-rs` decompresses its polygon set on construction, which is the
+/// expensive part; the finder is then queried per fix. Building it per user, or
+/// per row, is how a lookup that costs microseconds becomes one that costs
+/// hundreds of milliseconds.
+async fn sync() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let cfg = Config::from_env()?;
+    let pool = db::connect(&cfg.db.url()).await?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .context("building the HTTP client")?;
+
+    let polygons = fitbit::tz_source::PolygonLookup::new();
+    let lookup = |lat: f64, lon: f64| polygons.zone(lat, lon);
+
+    fitbit::run::run(
+        &pool,
+        &http,
+        &cfg.fitbit.client_id,
+        &cfg.fitbit.client_secret,
+        cfg.nextcloud_base_url.as_deref(),
+        &lookup,
+    )
+    .await
 }
 
 /// Serve the HTTP surface.

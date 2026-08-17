@@ -33,7 +33,11 @@ pub mod steps;
 /// It is asked PER WALL CLOCK and not per day, because the inference genuinely
 /// can change within a day — a parser that resolved once would stamp a whole
 /// day with the morning's zone.
-pub type TzSource<'a> = &'a dyn Fn(&str, &str) -> Option<String>;
+/// ⚠ `Send + Sync` is load-bearing, not decoration. Every fetcher holds this
+/// across an `await`, so without the bounds the resulting future is not `Send`
+/// and cannot be spawned or awaited inside the run — which shows up as a wall
+/// of errors pointing at the fetchers rather than at this line.
+pub type TzSource<'a> = &'a (dyn Fn(&str, &str) -> Option<String> + Send + Sync + 'a);
 
 /// The backfill's answer: nothing is known, so nothing is claimed.
 pub fn null_tz(_date: &str, _time: &str) -> Option<String> {
