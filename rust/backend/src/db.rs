@@ -17,8 +17,8 @@
 //! first query in whatever CronJob invocation happens to run next.
 
 use anyhow::{Context, Result};
-use sqlx::mysql::MySqlPoolOptions;
 use sqlx::MySqlPool;
+use sqlx::mysql::MySqlPoolOptions;
 
 /// Enough for the sync job's fan-out without being a second opinion about the
 /// server's needs. The TypeScript pool is 20, sized for `velocity.ts`'s
@@ -44,7 +44,9 @@ pub async fn connect(database_url: &str) -> Result<MySqlPool> {
         // what `NOW()` means.
         .after_connect(|conn, _meta| {
             Box::pin(async move {
-                sqlx::query("SET time_zone = '+00:00'").execute(conn).await?;
+                sqlx::query("SET time_zone = '+00:00'")
+                    .execute(conn)
+                    .await?;
                 Ok(())
             })
         })

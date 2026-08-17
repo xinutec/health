@@ -139,10 +139,16 @@ fn the_config_layer_refuses_rather_than_defaults() {
     unsafe { fresh() };
     unsafe { std::env::set_var("DB_PORT", "three") };
     match Config::from_env() {
-        Ok(c) => panic!("a non-numeric DB_PORT must be refused, got port {}", c.db.port),
+        Ok(c) => panic!(
+            "a non-numeric DB_PORT must be refused, got port {}",
+            c.db.port
+        ),
         Err(e) => {
             let msg = format!("{e:#}");
-            assert!(msg.contains("DB_PORT"), "the error must name DB_PORT: {msg}");
+            assert!(
+                msg.contains("DB_PORT"),
+                "the error must name DB_PORT: {msg}"
+            );
         }
     }
 
@@ -170,7 +176,10 @@ fn the_config_layer_refuses_rather_than_defaults() {
     unsafe { fresh() };
     unsafe { std::env::set_var("NC_BASE_URL", "https://dash.example") };
     let c = Config::from_env().unwrap();
-    assert_eq!(c.nextcloud_base_url.as_deref(), Some("https://dash.example"));
+    assert_eq!(
+        c.nextcloud_base_url.as_deref(),
+        Some("https://dash.example")
+    );
 
     unsafe { clear_all() };
 }

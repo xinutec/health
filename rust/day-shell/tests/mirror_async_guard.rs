@@ -54,7 +54,10 @@ fn calling_from_inside_a_runtime_refuses_instead_of_panicking() {
         )
     });
 
-    assert!(ways.is_empty(), "a refused read must answer empty, as every other failure does");
+    assert!(
+        ways.is_empty(),
+        "a refused read must answer empty, as every other failure does"
+    );
     assert!(buildings.is_empty());
     assert_eq!(
         day_shell::mirror::take_fails(),

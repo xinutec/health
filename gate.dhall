@@ -127,6 +127,33 @@ in  { name = "health"
         , argv = G.inDevShell [ "scripts/day-gate-smoke.sh" ]
         , timeout_s = 600
         }
+      , {-  The house `cargo fmt --all --check` row, which ten sibling repos have
+            and this one did not (#990). Cheapest of the three Rust rows and
+            therefore first, matching the fmt → clippy → tests order everywhere
+            else in the fleet.
+
+            `--manifest-path`, because health's crates live under `rust/` rather
+            than at the root — same reason the tests row below carries it.
+
+            First run rewrote 14 sites across 6 files. All of them were wrapping
+            and import order; not one comment moved. That is the argument for the
+            row: nothing had ever run rustfmt here, so every future Rust diff
+            would have carried unrelated reformatting noise the moment anyone
+            did.
+        -}
+        G.Check::{
+        , name = "rust formatting"
+        , argv =
+            G.inDevShell
+              [ "cargo"
+              , "fmt"
+              , "--all"
+              , "--check"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              ]
+        , timeout_s = 180
+        }
       , {-  `rust/day-shell` calls the SAME Lean fold in-process that
             `verified_cli day` is spawned for, and the entire argument for it is
             that the two answers are identical. That is a third arm computing the

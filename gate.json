@@ -124,6 +124,24 @@
         "develop",
         "--no-warn-dirty",
         "--command",
+        "cargo",
+        "fmt",
+        "--all",
+        "--check",
+        "--manifest-path",
+        "rust/Cargo.toml"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "rust formatting",
+      "timeout_s": 180
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
         "scripts/rust-host-check.sh"
       ],
       "cwd": ".",

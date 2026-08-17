@@ -38,10 +38,14 @@
 
 use std::collections::HashMap;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-extern "C" {
+// `unsafe extern` and not plain `extern`: edition 2024 makes the block itself
+// carry the word, because what is unchecked here is the DECLARATION — that these
+// two symbols really have these signatures in the Lean runtime. Getting that
+// wrong is undefined behaviour at the first call, and no call site can see it.
+unsafe extern "C" {
     fn health_shell_mk_bytes(p: *const u8, n: usize) -> *mut c_void;
     fn health_shell_dec(o: *mut c_void);
 }
@@ -290,7 +294,13 @@ fn raw_keys(root: &serde_json::Value) -> Vec<RawKey> {
         };
         for k in o.keys() {
             if let (Some((lat, lon, radius)), Some(key)) = (parse_key_floats(k), parse_key(k)) {
-                out.push(RawKey { section: name.to_owned(), key, lat, lon, radius });
+                out.push(RawKey {
+                    section: name.to_owned(),
+                    key,
+                    lat,
+                    lon,
+                    radius,
+                });
             }
         }
     }
@@ -340,7 +350,10 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     // believes every one of them is nowhere. This is the shape that hid the
     // `{lat, lon}` vs `[lat, lon]` mismatch in `parse_pair` — so the load
     // refuses rather than serving it.
-    for (label, sec) in [("walkableRoads", &t.walkable), ("buildingsNear", &t.buildings)] {
+    for (label, sec) in [
+        ("walkableRoads", &t.walkable),
+        ("buildingsNear", &t.buildings),
+    ] {
         for (key, lines) in sec {
             if let Some(i) = lines.iter().position(|l| l.is_empty()) {
                 return Err(format!(
@@ -692,7 +705,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
 ///
 /// # Safety
 /// `radius_m` must be a live boxed Lean `Int` this function may consume.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn health_osm_walkable_roads(
     lat: f64,
     lon: f64,
@@ -712,7 +725,7 @@ pub unsafe extern "C" fn health_osm_walkable_roads(
 ///
 /// # Safety
 /// `radius_m` must be a live boxed Lean `Int` this function may consume.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn health_osm_buildings_near(
     lat: f64,
     lon: f64,
@@ -732,7 +745,7 @@ pub unsafe extern "C" fn health_osm_buildings_near(
 /// corridor fetch passes a fractional radius through untouched. So there is
 /// nothing to release here, and reaching for `lean_int_value` would read a
 /// double's bits as a pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn health_osm_drivable_roads(lat: f64, lon: f64, radius_m: f64) -> *mut c_void {
     lookup_ways(lat, lon, radius_m)
 }

@@ -4,7 +4,7 @@
 //! `#[cfg(test)]` inside `src/` (`rust-test-module-in-src`). `main.rs` is left
 //! as a thin `fn main`.
 //!
-//! ⚠ `osm`'s `#[no_mangle]` entry points — what Lean's `@[extern]` resolves
+//! ⚠ `osm`'s `#[unsafe(no_mangle)]` entry points — what Lean's `@[extern]` resolves
 //! against — are defined HERE now. `scripts/rust-host-check.sh` is what proves
 //! they survive the link.
 

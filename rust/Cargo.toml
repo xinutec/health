@@ -22,3 +22,17 @@
 [workspace]
 members = ["backend", "day-shell"]
 resolver = "2"
+
+# ⚠ THE EDITION LIVES HERE, not in the members, and the reason is a mistake I
+# made rather than a preference. `rust/backend` was created by copying
+# `day-shell/Cargo.toml`, which said `edition = "2021"` — so it inherited the
+# one thing about that manifest that was already wrong, and health went from
+# being the fleet's only 2021 crate (1 of 32) to two of them. #990 predicted
+# exactly this ("#982 is about to make it much worse") and was right.
+#
+# A per-crate literal is a value a third member can only get right by knowing to
+# look. Inherited, a copied manifest carries `edition.workspace = true` and is
+# correct by construction. The fleet's other Rust repos state it per crate
+# because they are single-crate; this is the only workspace with members.
+[workspace.package]
+edition = "2024"

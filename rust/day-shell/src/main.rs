@@ -45,7 +45,8 @@ use std::io::Read;
 use std::os::raw::c_char;
 use std::time::Instant;
 
-extern "C" {
+// `unsafe extern` — see the same block in `osm.rs`.
+unsafe extern "C" {
     fn health_shell_init() -> i32;
     fn health_shell_day(input: *const c_char) -> *mut c_char;
     fn health_shell_free(p: *mut c_char);

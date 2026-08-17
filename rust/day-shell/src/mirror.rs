@@ -127,8 +127,13 @@ static POOL: std::sync::OnceLock<Option<MySqlPool>> = std::sync::OnceLock::new()
 static RT: std::sync::OnceLock<Option<tokio::runtime::Runtime>> = std::sync::OnceLock::new();
 
 fn runtime() -> Option<&'static tokio::runtime::Runtime> {
-    RT.get_or_init(|| tokio::runtime::Builder::new_current_thread().enable_all().build().ok())
-        .as_ref()
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()
+    })
+    .as_ref()
 }
 
 /// `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` — the same five the TS
@@ -195,7 +200,11 @@ fn pool() -> Option<&'static MySqlPool> {
         // pre-existing test never builds a pool at all, so nothing else here
         // would have caught it before production did.
         let _guard = runtime()?.enter();
-        Some(MySqlPoolOptions::new().max_connections(1).connect_lazy_with(o))
+        Some(
+            MySqlPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy_with(o),
+        )
     })
     .as_ref()
 }
@@ -227,7 +236,9 @@ pub fn take_fails() -> u64 {
 /// that is merely absent.
 fn with_pool<T, F>(f: F) -> Option<T>
 where
-    F: FnOnce(&'static MySqlPool) -> std::pin::Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + '_>>,
+    F: FnOnce(
+        &'static MySqlPool,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + '_>>,
 {
     // Before the counter, deliberately: an unconfigured mirror is absence.
     let pool = pool()?;
@@ -391,8 +402,8 @@ pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Vec<Vec<(f64, f64)>>
         })
     })
     .unwrap_or_default()
-        .into_iter()
-        // `coords.length >= 3` — fewer than three vertices is not a polygon.
-        .filter(|r| r.len() >= 3)
-        .collect()
+    .into_iter()
+    // `coords.length >= 3` — fewer than three vertices is not a polygon.
+    .filter(|r| r.len() >= 3)
+    .collect()
 }

@@ -91,7 +91,9 @@ async fn check() -> Result<()> {
         .context("reading session time_zone")?;
     println!("db: session time_zone = {tz}");
     if tz != "+00:00" {
-        anyhow::bail!("session time_zone is {tz:?}, expected \"+00:00\" — the UTC pin did not apply");
+        anyhow::bail!(
+            "session time_zone is {tz:?}, expected \"+00:00\" — the UTC pin did not apply"
+        );
     }
 
     // The cursor table, which is the first thing any scheduled work reads.

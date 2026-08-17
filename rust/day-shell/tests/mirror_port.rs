@@ -38,7 +38,10 @@ fn the_margin_widens_the_box() {
 #[test]
 fn wkt_is_lon_lat_and_comes_back_lat_lon() {
     let pts = parse_linestring_wkt("LINESTRING(-0.2649138 51.5675888,-0.2649053 51.5675617)");
-    assert_eq!(pts, vec![(51.5675888, -0.2649138), (51.5675617, -0.2649053)]);
+    assert_eq!(
+        pts,
+        vec![(51.5675888, -0.2649138), (51.5675617, -0.2649053)]
+    );
 }
 
 /// `LINESTRING (…)` with a space is what some writers emit; both are accepted,
