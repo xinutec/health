@@ -30,7 +30,27 @@
 //! the parts #975 is still moving: it reads and writes its own tables and talks
 //! to two HTTP APIs. The HTTP server (`dist/server.js`), its auth surface and
 //! the `/api` routes come after the tenants retire, not before.
+//!
+//! # The Lean/Rust line, drawn by example
+//!
+//! Pippijn, 2026-08-17: *"anything that can be in Lean should be in Lean."*
+//! `src/share/token.ts` is the worked example and the shape to copy. Four
+//! functions; the split is not 50/50 and was not a judgement call:
+//!
+//!   * `generateShareToken` reads the CSPRNG → **Rust**. There is nothing to
+//!     prove about `randomBytes(32)` beyond that it was asked for 32 bytes, and
+//!     a Lean model of it would be fiction.
+//!   * `buildShareUrl`, `shareableDateRange`, `clampShareDaysBack` are total
+//!     functions of their arguments → **Lean** (`Verified/Share.lean`), on top
+//!     of `Verified/Civil.lean`.
+//!
+//! The test to apply at each module: *does this decide anything, or does it
+//! only move bytes?* Deciding goes to Lean even when it is three lines, because
+//! three lines is exactly the size at which a wrong clamp survives review.
 
 pub mod config;
 pub mod db;
+pub mod error;
+pub mod routes;
+pub mod state;
 pub mod sync_state;

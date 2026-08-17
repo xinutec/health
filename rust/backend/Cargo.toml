@@ -26,6 +26,25 @@ sqlx = { version = "0.9", default-features = false, features = [
     "migrate",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+# The fleet's HTTP stack, matching the ten sibling repos that serve: axum 0.8,
+# axum-extra 0.12 for cookies, tower-http 0.7 for static files and tracing.
+# Health's TypeScript serves the built Angular app from ./public alongside the
+# API, so `fs` is not optional here.
+axum = "0.8"
+axum-extra = { version = "0.12", features = ["cookie"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["fs", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Bounded outbound calls (Nextcloud, Fitbit). rustls to match the sqlx TLS
+# choice above rather than dragging in a second TLS stack.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 # Errors that carry WHICH env var was missing rather than a bare `None`. The
 # whole value of the config layer is refusing to start with a specific reason.
 anyhow = "1"

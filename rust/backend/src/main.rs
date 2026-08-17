@@ -14,13 +14,14 @@
 //! exists to prevent. An entrypoint that cannot do its job must fail.
 
 use anyhow::{Context, Result};
-use backend::{config::Config, db, sync_state};
+use backend::{config::Config, db, routes, state::AppState, sync_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cmd = std::env::args().nth(1).unwrap_or_default();
     match cmd.as_str() {
         "check" => check().await,
+        "serve" => serve().await,
         "sync" => {
             eprintln!(
                 "backend sync: not implemented — the ingestion still runs in TypeScript \
@@ -29,14 +30,71 @@ async fn main() -> Result<()> {
             std::process::exit(2);
         }
         "" => {
-            eprintln!("usage: backend <check|sync>");
+            eprintln!("usage: backend <check|serve|sync>");
             std::process::exit(64);
         }
         other => {
-            eprintln!("backend: unknown subcommand {other:?} — expected check or sync");
+            eprintln!("backend: unknown subcommand {other:?} — expected check, serve or sync");
             std::process::exit(64);
         }
     }
+}
+
+/// Serve the HTTP surface.
+///
+/// ⚠ NOT PRODUCTION'S SERVER. `src/server.ts` owns every real route; this binds
+/// the skeleton so the config → pool → axum stack is exercised by something
+/// other than a unit test. `PORT` defaults to 8081 rather than the TypeScript
+/// server's port: the two must be able to run side by side on one host during
+/// the port, and defaulting to the same number would make the first accidental
+/// double-start look like a crash.
+async fn serve() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let cfg = Config::from_env()?;
+    let pool = db::connect(&cfg.db.url()).await?;
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse()
+                .with_context(|| format!("PORT is not a port number: {s:?}"))
+        })
+        .transpose()?
+        .unwrap_or(8081);
+
+    // Bounded, for the same reason the pool is: a hung Nextcloud or Fitbit must
+    // not tie up a pod.
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    let app = routes::router(AppState::new(pool, cfg, http));
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("binding port {port}"))?;
+    tracing::info!("health backend (rust) listening on {port}");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            // SIGTERM is what Kubernetes sends; without this the pod is killed
+            // mid-request at the end of the grace period instead of draining.
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("installing SIGTERM handler");
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = tokio::signal::ctrl_c() => {}
+            }
+            tracing::info!("shutting down");
+        })
+        .await
+        .context("serving")?;
+    Ok(())
 }
 
 /// Prove the config and the pool against the real database, and read nothing

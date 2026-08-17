@@ -1,3 +1,5 @@
+import Verified.Share
+import Verified.Civil
 import Verified.Hsmm.Score
 import Verified.Hsmm.Spec
 import Verified.Hsmm.Oracle
