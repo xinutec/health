@@ -156,6 +156,28 @@
         "--no-warn-dirty",
         "--command",
         "cargo",
+        "clippy",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": ".",
+      "env": {
+        "CARGO_TARGET_DIR": "/Users/pippijn/.cache/cargo/clippy-target"
+      },
+      "name": "clippy",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "cargo",
         "test",
         "--manifest-path",
         "rust/Cargo.toml",

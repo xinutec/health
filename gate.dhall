@@ -173,12 +173,60 @@ in  { name = "health"
         , argv = G.inDevShell [ "scripts/rust-host-check.sh" ]
         , timeout_s = 1800
         }
+      , {-  Clippy at `-D warnings`, over the whole workspace.
+
+            A MOVE, not new coverage: `scripts/rust-host-check.sh` ran exactly
+            this from the day the crate existed. What the row buys is the NAME.
+            That script builds, linted, checked the host/CLI equivalence and
+            checked the callbacks reached the host — four failures under one
+            name, which is the thing the header of this file exists to argue
+            against. A lint failure reported "the in-process Rust host agrees
+            with the spawned CLI", and that was never what broke.
+
+            It also clears a fleet red that was NOT a real gap, and the
+            distinction is worth writing down: `check -c` derives the rows a
+            repo's contents demand, but `fleet.py`'s `_gate_text` reads
+            `verify.sh` plus each row's `argv` — it does not follow into a
+            script a row invokes, and row names are not part of the text. health
+            was the first repo to run a demanded tool from inside a script, so
+            it was the first to look uncovered while being covered.
+
+            ⚠ ORDERING: this must come after the host row above, which is what
+            runs `lake build … DayEntry:static Verified:static`. `day-shell`'s
+            `build.rs` reads its link line out of the `.rsp` that build writes,
+            so cargo cannot even run its build script on a clean checkout until
+            then. The gate runs rows in table order (`gate/src/main.rs`), and
+            the tests row below already depends on this — it is stated here
+            because an implicit dependency that nothing writes down is one a
+            reorder breaks silently.
+
+            Own target directory, the house `clippyTarget`: clippy-driver and
+            rustc fingerprint the workspace differently and evict each other in
+            a shared one. Costs one extra copy of the deps on disk.
+        -}
+        G.Check::{
+        , name = "clippy"
+        , argv =
+            G.inDevShell
+              [ "cargo"
+              , "clippy"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "--all-targets"
+              , "--"
+              , "-D"
+              , "warnings"
+              ]
+        , env = G.clippyTarget
+        , timeout_s = 1800
+        }
       , {-  The Rust workspace's own tests, which NOTHING ran until #982.
 
-            The check above builds the workspace and clippies it at
-            `-D warnings`, so a compile error or a lint in `rust/backend` was
-            already a red row. `cargo test` was not in it — the script is about
-            one equivalence, and widening it would have made its name a lie.
+            A compile error or a lint in `rust/backend` was already a red row —
+            `scripts/rust-host-check.sh` built the workspace and, until #990
+            moved it to the row above, linted it too. `cargo test` was in
+            neither: that script is about one equivalence, and widening it would
+            have made its name a lie.
 
             So `rust/backend/tests/config.rs` — the file whose whole subject is
             that a missing `DB_PASSWORD` is REFUSED rather than defaulted to the

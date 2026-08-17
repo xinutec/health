@@ -13,11 +13,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #
 # Three things, cheapest first:
 #   1. it builds        — the Lean static libs are linked, symbols resolve
-#   2. clippy is clean  — same bar as `keep the linter clean` everywhere else
-#   3. it AGREES        — same bytes as `verified_cli day` on a real day
-#   4. it ANSWERS        — the fold's OSM callbacks reach the HOST, not the stub
+#   2. it AGREES        — same bytes as `verified_cli day` on a real day
+#   3. it ANSWERS       — the fold's OSM callbacks reach the HOST, not the stub
 #
-# (3) is the one that matters and the one that can skip: the day request is
+# ⚠ CLIPPY USED TO BE ITEM 2 AND IS NOW ITS OWN GATE ROW (#990). Not because it
+# stopped mattering — it runs at the same `-D warnings` bar — but because a
+# lint failure here reported "the in-process Rust host agrees with the spawned
+# CLI", which is not what broke. `gate.dhall`'s header is an argument against
+# one name standing for several failures, and this script was four of them.
+# It still builds, because item 2 needs the binary.
+#
+# (2) is the one that matters and the one that can skip: the day request is
 # built from `tests/golden/`, which is gitignored, so a clean checkout cannot
 # produce one. It skips OUT LOUD. A check that silently passes when it reached
 # nothing is the exact defect `day-gate-smoke.sh`'s header is about, and this
@@ -34,11 +40,9 @@ cd "$ROOT"
 echo "rust-host-check: lean static libs"
 (cd lean && lake build verified_cli DayEntry:static Verified:static >/dev/null)
 
-echo "rust-host-check: build + clippy"
+echo "rust-host-check: build"
 cd rust
 cargo build --release
-# `-D warnings` so a lint is a red row rather than a line nobody reads.
-cargo clippy --release --all-targets -- -D warnings
 cd "$ROOT"
 
 BIN="$(cd rust && cargo metadata --format-version 1 --no-deps 2>/dev/null |
