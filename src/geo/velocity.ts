@@ -21,6 +21,7 @@ import {
 } from "../lean/lean-biometric-labels.js";
 import { leanDayMode, serveLeanDay, shadowLeanDay } from "../lean/lean-day.js";
 import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
+import { classifySegmentsViaLean, snapAllViaLean } from "../lean/lean-head.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
 import type { NextcloudConfig } from "../nextcloud/phonetrack.js";
 import { type DayState, segmentsToDayStates } from "../sleep/day-state.js";
@@ -681,13 +682,17 @@ export async function computeVelocityFromInputs(
 	// enrichment loop asks `bestPlace` too (#430), and it runs long before.
 	const foldCapture = foldCaptureFromEnv();
 
-	const snapped =
+	// ONE bridge call for the whole day, not one per fix (#975). The thunk is the
+	// original per-fix `.map`; under `LEAN_HEAD=solo` it is never evaluated and
+	// becomes the last reference to the TS `snapToPlace`.
+	const snapped = snapAllViaLean(cleaned, knownPlaces, () =>
 		knownPlaces.length > 0
 			? cleaned.map((p) => {
 					const r = snapToPlace({ lat: p.lat, lon: p.lon, accuracy: p.accuracy }, knownPlaces);
 					return r.snapped ? { ...p, lat: r.lat, lon: r.lon, accuracy: r.accuracy } : p;
 				})
-			: cleaned;
+			: cleaned,
+	);
 
 	// Use the same loose accuracy ceiling (≤200m) for both movement and stay
 	// detection. The Kalman filter already weights measurements by their
@@ -717,7 +722,11 @@ export async function computeVelocityFromInputs(
 		.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy }));
 
 	const points = timeSync("kalman", () => filterGpsTrackViaLean(gpsPoints, () => filterGpsTrack(gpsPoints)));
-	const segments = timeSync("segments", () => classifySegments(points, stayPoints));
+	// The step whose output IS the fold's `segsRaw`, so this is the last TS
+	// algorithm between the raw fixes and the day chain (#975).
+	const segments = timeSync("segments", () =>
+		classifySegmentsViaLean(points, stayPoints, () => classifySegments(points, stayPoints)),
+	);
 
 	// Where the Lean `day` chain's input is produced, and therefore where the
 	// region a Lean tenant would REPLACE begins (#431 gap 3). Everything below —

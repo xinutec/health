@@ -455,3 +455,44 @@ export interface LeanBioLabelsResp {
 export function leanBioLabelsServe(req: Record<string, unknown>): LeanBioLabelsResp {
 	return leanCore.call("biolabels", req) as LeanBioLabelsResp;
 }
+
+/** Result shape of a `head` pass (mirrors `verified_cli head` and the
+ *  `serveLoop` `headResult` handler). Exactly one field is populated, decided by
+ *  the request's `op`.
+ *
+ *  `snapped` is POSITIONAL — one row per input fix, in input order — so the
+ *  caller zips it back onto its own points rather than matching coordinates. Its
+ *  fourth element is the snap DECISION, not a "did it move": a fix already at a
+ *  centroid snaps without moving, and inferring the decision from the geometry
+ *  would record that as a non-snap.
+ *
+ *  `segs` are whole objects rather than rows because a `TrackSegment` has eleven
+ *  fields of four different types; positional tuples at that width are where
+ *  transcription errors live. */
+export interface LeanHeadResp {
+	snapped?: Array<[string, string, string | null, boolean]>;
+	segs?: Array<{
+		startTs: number;
+		endTs: number;
+		mode: string;
+		confidence: string;
+		confidenceMargin: string;
+		avgSpeed: string;
+		maxSpeed: string;
+		linearity: string;
+		pointCount: number;
+		refinedReason: string | null;
+		refinedKinds: string[];
+	}>;
+	error?: string;
+}
+
+/**
+ * Run one verified pipeline-HEAD pass — `snapToPlace` over a whole day's fixes,
+ * or `classifySegments` over its filtered track — through the persistent core,
+ * synchronously. Throws `LeanBridgeError` on any bridge failure; the caller
+ * falls back to TS except under `solo`, where there is no TS arm to fall back to.
+ */
+export function leanHeadServe(req: Record<string, unknown>): LeanHeadResp {
+	return leanCore.call("head", req) as LeanHeadResp;
+}
