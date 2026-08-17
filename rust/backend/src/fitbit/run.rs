@@ -96,6 +96,8 @@ pub async fn run(
     }
     tracing::info!("Found {} user(s) with Fitbit tokens", users.len());
 
+    google_weight(pool, http).await;
+
     // ⚠ ONE client and ONE token store for the whole run, not one per user. The
     // Fitbit budget is charged against the APPLICATION, so a per-user client
     // would give each user a fresh optimistic 150 and the second user would
@@ -224,6 +226,47 @@ async fn sync_one_user(
 
     migrate_legacy_backfill_keys(pool, user_id).await?;
     backfill_pass(pool, client, access, user_id, &window_start).await
+}
+
+/// Reconcile weight against Google Health, if it is configured.
+///
+/// # Why it runs FIRST, and why it cannot fail the run
+///
+/// It shares nothing with the Fitbit passes — no token, no rate budget, no
+/// cursor — and the whole job is one page plus ~150 idempotent row writes. So it
+/// goes first, where a spent Fitbit budget cannot starve it: the deep backfill
+/// can consume the hour, and weight would then never be reconciled on a busy
+/// day. Matching `sync.ts`, which puts it above the user loop for the same
+/// reason.
+///
+/// ⚠ INERT without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN` and
+/// `GH_USER_ID`, and that silence is deliberate — the sync runs on hosts where
+/// Google is not set up. It is logged at DEBUG rather than WARN so it does not
+/// cry wolf, which does mean a credential that goes missing looks like a host
+/// that never had one.
+async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
+    let (Some(creds), Some(user_id)) = (
+        crate::google::oauth::GoogleCreds::from_env(),
+        std::env::var("GH_USER_ID").ok().filter(|s| !s.is_empty()),
+    ) else {
+        tracing::debug!("google weight: not configured, skipping");
+        return;
+    };
+
+    match crate::google::body::run_google_weight_sync(pool, http, &creds, &user_id, true).await {
+        Ok(r) => tracing::info!(
+            "[{user_id}] google weight: {} weigh-in(s) over {} day(s), {} stale row(s) replaced, {} → {}",
+            r.fetched,
+            r.days,
+            r.deleted_stale,
+            r.earliest.as_deref().unwrap_or("-"),
+            r.latest.as_deref().unwrap_or("-")
+        ),
+        // Logged, never propagated: weight has no bearing on whether the Fitbit
+        // ingestion should run, and failing the whole job over it would stop
+        // heart rate and sleep for a reason unrelated to either.
+        Err(e) => tracing::error!("[{user_id}] google weight sync failed: {e:#}"),
+    }
 }
 
 /// Run one stream, logging and continuing on anything but exhaustion.

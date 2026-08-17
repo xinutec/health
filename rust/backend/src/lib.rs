@@ -53,6 +53,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod fitbit;
+pub mod google;
 pub mod lean;
 pub mod nextcloud;
 pub mod routes;

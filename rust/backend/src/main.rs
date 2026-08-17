@@ -67,17 +67,15 @@ async fn main() -> Result<()> {
 
 /// Run one Fitbit ingestion pass over every linked user.
 ///
-/// # ⚠ NOT YET AT PARITY WITH `dist/sync.js` — two things are missing
+/// # ⚠ NOT YET AT PARITY WITH `dist/sync.js` — one thing is missing
 ///
-/// Named here rather than left to be discovered from a diff, because both are
-/// silent absences: the run would look healthy and simply not do them.
+/// Named here rather than left to be discovered from a diff, because it is a
+/// silent absence: the run would look healthy and simply not do it.
 ///
-///   * **The Google Health weight sync.** `sync.ts` runs `runGoogleWeightSync`
-///     before the Fitbit passes, gated on `GH_*` and `GH_USER_ID`. Weight lives
-///     only on the Google side since the Fitbit feed froze in Apr 2026 (#260),
-///     so a cutover before this is ported would stop weight updating — while
-///     every existing row stayed in place, which is what makes it quiet.
 ///   * **`migrate()`**, below.
+///
+/// The Google Health weight sync USED to be the other entry and now runs — see
+/// [`backend::google`]. It is still inert without `GH_*` and `GH_USER_ID`.
 ///
 /// # It does NOT migrate the schema, and the TypeScript's `sync.ts` does
 ///

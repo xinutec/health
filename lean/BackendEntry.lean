@@ -3,6 +3,7 @@ import Verified.Backfill
 import Verified.Civil
 import Verified.FitbitTz
 import Verified.Token
+import Verified.Weight
 import Verified.Sync
 
 /-!
@@ -93,6 +94,29 @@ private def streams? (j : Json) : Option (List (String × Option String)) :=
       | none => none
       | some n => some (n, str? e "cursor")
 
+/-- `[{"date": …, "grams": …, "ts": …}, …]`.
+
+⚠ EVERY field is required and a malformed element refuses the whole call rather
+than being dropped. A dropped weigh-in is not a smaller answer: it can move the
+`replaceFrom` boundary later, leaving the stale forward-filled rows it was
+supposed to delete. -/
+private def weighIns? (j : Json) : Option (List Verified.Weight.Weigh) :=
+  match j.getObjVal? "weighIns" with
+  | .error _ => none
+  | .ok v =>
+    match v.getArr? with
+    | .error _ => none
+    | .ok arr => arr.toList.mapM fun e =>
+      match str? e "date", int? e "grams", str? e "ts" with
+      | some d, some g, some t => some ⟨d, g, t⟩
+      | _, _, _ => none
+
+private def weighJson (w : Verified.Weight.Weigh) : Json :=
+  Json.mkObj
+    [ ("date", Json.str w.date)
+    , ("grams", Json.num w.grams)
+    , ("ts", Json.str w.ts) ]
+
 /-- A required array of integers. -/
 private def ints? (j : Json) (k : String) : Option (List Int) :=
   match j.getObjVal? k with
@@ -150,6 +174,16 @@ def dispatch (j : Json) : Json :=
         Json.mkObj [("value", Json.arr (cs.map (fun (a, b) =>
           Json.mkObj [("start", Json.str a), ("end", Json.str b)])).toArray)]
     | _, _, _, _ => err "chunkRange: start, end, days, maxChunks required"
+  -- Both answers in ONE call, deliberately: the delete boundary and the rows
+  -- that replace what it deletes have to come from the SAME dedup, or the
+  -- window and its contents can disagree.
+  | some "dedupeWeighIns" =>
+    match weighIns? j with
+    | some ms =>
+      Json.mkObj
+        [ ("replaceFrom", optStr (Verified.Weight.replaceFrom ms))
+        , ("kept", Json.arr ((Verified.Weight.dedupeByDate ms).map weighJson).toArray) ]
+    | none => err "dedupeWeighIns: weighIns [{date, grams, ts}] required"
   | some "midnightUtc" =>
     match str? j "date" with
     | some d =>

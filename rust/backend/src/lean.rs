@@ -24,7 +24,7 @@ use std::os::raw::c_char;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 unsafe extern "C" {
     fn health_backend_init() -> i32;
@@ -486,6 +486,44 @@ pub fn chunk_range(
         )
     })?;
     Ok(chunks.into_iter().map(|w| (w.start, w.end)).collect())
+}
+
+/// One Google Health weigh-in. Mirrors `Verified.Weight.Weigh`.
+///
+/// `grams` is an integer end to end — Google stores it that way, and the
+/// conversion to the `DECIMAL(5,2)` kilograms the table holds happens at the
+/// write. Carrying it as a float through the FFI would round twice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Weigh {
+    pub date: String,
+    pub grams: i64,
+    /// RFC-3339, used ONLY to order two weigh-ins on the same civil date.
+    pub ts: String,
+}
+
+/// What [`dedupe_weigh_ins`] answers: the delete boundary and the rows that
+/// replace what it deletes.
+#[derive(Debug, Deserialize)]
+pub struct WeighPlan {
+    /// The earliest covered day, or `None` for an empty fetch.
+    ///
+    /// ⚠ `None` MUST NOT be read as "replace everything". A Google outage, a
+    /// revoked token and a scope change all return zero points, and treating
+    /// that as a boundary would delete every weight row there is.
+    #[serde(rename = "replaceFrom")]
+    pub replace_from: Option<String>,
+    pub kept: Vec<Weigh>,
+}
+
+/// See `Verified.Weight.dedupeByDate` / `replaceFrom`.
+///
+/// Both answers come from ONE call because they must come from the SAME dedup:
+/// a boundary computed from one pass and rows from another can disagree about
+/// which days are covered.
+pub fn dedupe_weigh_ins(weigh_ins: &[Weigh]) -> Result<WeighPlan> {
+    call_json(&serde_json::json!({
+        "op": "dedupeWeighIns", "weighIns": weigh_ins,
+    }))
 }
 
 #[derive(Deserialize)]
