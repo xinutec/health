@@ -45,14 +45,31 @@ import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope, setLeanLeg } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanMatchMode = "off" | "shadow" | "on";
+/**
+ * `solo` — the verified matcher alone (#975). No TS arm, no comparison, no
+ * fallback.
+ *
+ * ⚠ This is the tenant with the LARGEST TypeScript behind it: `ts()` is
+ * `matchWalkSegment` → `matchTrajectory` (`map-match-core.ts`, 1,982 lines),
+ * the real trellis, not a thin wrapper. Do not confuse this with #749's finding
+ * that "both arms run the same Lean matcher" — that was about the DAY FOLD and
+ * the match tenant reaching `qMatchWalkSegment` through two transports, not
+ * about this tenant's own two arms. Here the TS arm is genuinely TS.
+ *
+ * ⚠ The `fixes.length < 3` guard is NOT carried over. It hard-codes what is
+ * `minFixes: 3` on both sides (`match-twin.ts:78`, `WALK_QPROFILE`), and both
+ * matchers already return null/none below it — so deleting it removes a
+ * constant that could silently drift from the profile it mirrors (#975 audit).
+ */
+export type LeanMatchMode = "off" | "shadow" | "on" | "solo";
 
 export function leanMatchMode(): LeanMatchMode {
 	// The settings-UI master override wins over the env default when set.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
+	// Env-only, as with the sibling tenants.
 	const v = process.env.LEAN_MATCH;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 interface MatchStat {
@@ -207,12 +224,31 @@ export function matchWalkSegmentViaLean(
 	}
 }
 
+/**
+ * `solo`: the verified matcher alone (#975). No TS arm, no fallback — a bridge
+ * failure throws and the leg's caller fails loudly.
+ *
+ * ⚠ `null` is an ANSWER, not a failure. The matcher returns none when it cannot
+ * match the fixes to the graph — too few fixes, no candidate segments — and the
+ * caller already handles that by drawing the raw line. Throwing on it would
+ * fail every day containing an unmatchable leg, which is most of them.
+ *
+ * No guard on `fixes.length` here: `qMatchTrajectory` applies `minFixes` itself
+ * and returns none below it, exactly as the TS does.
+ */
+function soloMatch(fixes: readonly RoadFix[], geo: RoadGeometry): WalkMatchResult | null {
+	const lean = leanMatchServe(quantReq(fixes, geo));
+	stat().calls += 1;
+	return leanToResult(lean);
+}
+
 function matchWalkSegmentInner(
 	fixes: readonly RoadFix[],
 	geo: RoadGeometry,
 	ts: () => WalkMatchResult | null,
 ): WalkMatchResult | null {
 	const mode = leanMatchMode();
+	if (mode === "solo") return soloMatch(fixes, geo);
 	if (mode === "off" || fixes.length < 3) return ts();
 	const tsResult = timeTsArm("match", ts);
 	let lean: LeanMatchResp;
@@ -307,14 +343,22 @@ export function logLeanMatchLedger(label: string): LedgerVerdict | null {
 	const divs = leanMatchDivergences();
 	const unexplained = divs.filter((d) => !isAcceptedMatchDelta(d.leg, d.coarse, d.path, d.note, d.devM));
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
+	//
+	// ⚠ `solo` must print neither EXACT nor `all accepted`. Both are vacuous
+	// there — no leg is measured, so `divs` is empty — and `all accepted` would
+	// be the worse lie of the two: it asserts every divergence was adjudicated
+	// against the accepted-delta manifest, when the manifest was never consulted
+	// because there were no deltas to consult it about.
 	const verdict =
 		s.calls === 0
 			? "NOT EXERCISED"
-			: divs.length === 0
-				? "EXACT"
-				: unexplained.length === 0
-					? "all accepted"
-					: `${unexplained.length} UNEXPLAINED`;
+			: mode === "solo"
+				? `SOLO (no TS arm; ${s.calls} leg(s) matched, nothing compared)`
+				: divs.length === 0
+					? "EXACT"
+					: unexplained.length === 0
+						? "all accepted"
+						: `${unexplained.length} UNEXPLAINED`;
 	// The deviation is printed, not just used: the manifest now ACCEPTS on this
 	// number, so a reader adjudicating a production line has to be able to see
 	// what it was adjudicated against. Same reason the gate prints it (#400).
