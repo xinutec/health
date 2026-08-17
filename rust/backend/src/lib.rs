@@ -48,6 +48,7 @@
 //! only move bytes?* Deciding goes to Lean even when it is three lines, because
 //! three lines is exactly the size at which a wrong clamp survives review.
 
+pub mod backfill;
 pub mod config;
 pub mod db;
 pub mod error;
