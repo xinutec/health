@@ -48,20 +48,17 @@ console.log(`  exactly1h -> ${hasOvernightPresence(t0 + 2 * 3600, t0 + 2 * 3600 
 function computeRailRoadProximity(wr: { type: string; subtype: string; distanceM?: number }[][]) {
 	const railDists: number[] = [];
 	const roadDists: number[] = [];
+	// ⚠ CALL the real per-sample reducer, do not restate it. This loop used to be
+	// a verbatim copy of `railRoadDistFromWays`'s body, sharing its two constant
+	// sets but not its logic — so the "reference" values for the Lean guards were
+	// produced by a SECOND implementation that merely looked like the one being
+	// ported. A change to the real function would not have moved these numbers,
+	// and the guard would have gone on pinning the copy (#1003). It was the only
+	// orphan in the port with no ref exercising it, and it read as covered.
 	for (const sample of wr) {
-		let minRail = Number.POSITIVE_INFINITY;
-		let minRoad = Number.POSITIVE_INFINITY;
-		for (const w of sample) {
-			const d = w.distanceM;
-			if (d === null || d === undefined || !Number.isFinite(d)) continue;
-			if (w.type === "railway" && RRP.RAIL_ONLY_SUBTYPES.has(w.subtype)) {
-				if (d < minRail) minRail = d;
-			} else if (w.type === "highway" && RRP.DRIVABLE_HIGHWAY_SUBTYPES.has(w.subtype)) {
-				if (d < minRoad) minRoad = d;
-			}
-		}
-		if (Number.isFinite(minRail)) railDists.push(minRail);
-		if (Number.isFinite(minRoad)) roadDists.push(minRoad);
+		const { railDistM, roadDistM } = RRP.railRoadDistFromWays(sample as never);
+		if (railDistM !== null) railDists.push(railDistM);
+		if (roadDistM !== null) roadDists.push(roadDistM);
 	}
 	const mean = (xs: number[]): number | null => (xs.length === 0 ? null : xs.reduce((s, x) => s + x, 0) / xs.length);
 	return { meanRailDistM: mean(railDists), meanDrivableRoadDistM: mean(roadDists) };
