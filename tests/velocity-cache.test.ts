@@ -13,7 +13,7 @@
  *   - In-flight dedup — concurrent calls for the same key share
  *     one compute promise.
  *   - _resetVelocityCache clears both cache and in-flight maps.
- *   - invalidateVelocityCache drops cached AND in-flight entries,
+ *   - _resetVelocityCache drops cached AND in-flight entries,
  *     and a compute that spans an invalidation is not seated in
  *     the cache afterwards — see #391: the verified-core toggle
  *     changes the pipeline's answer without a pod restart, and a
@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VelocityResult } from "../src/geo/velocity.js";
-import { _resetVelocityCache, getVelocityCached, invalidateVelocityCache } from "../src/routes/velocity-cache.js";
+import { _resetVelocityCache, getVelocityCached } from "../src/routes/velocity-cache.js";
 
 function makeResult(tag: string): VelocityResult {
 	// Carry a tag so tests can tell different results apart. The shape
@@ -156,7 +156,7 @@ describe("velocity-cache", () => {
 	it("invalidation drops cached entries — the next call recomputes inside the TTL", async () => {
 		const compute = vi.fn(async () => makeResult("lean"));
 		await getVelocityCached("u1|2026-05-12|UTC", compute);
-		invalidateVelocityCache("test");
+		_resetVelocityCache();
 		// No clock advance: without the invalidation this would be a HIT.
 		const after = await getVelocityCached("u1|2026-05-12|UTC", async () => makeResult("ts"));
 		expect(after.states?.[0].place).toBe("ts");
@@ -173,7 +173,7 @@ describe("velocity-cache", () => {
 		);
 		const inflight = getVelocityCached("u1|2026-05-12|UTC", slow);
 		// Flip mid-compute, then let the old-engine run finish.
-		invalidateVelocityCache("test");
+		_resetVelocityCache();
 		resolveCompute(makeResult("pre-flip"));
 		// The caller who asked before the flip still gets their answer …
 		expect((await inflight).states?.[0].place).toBe("pre-flip");
@@ -191,7 +191,7 @@ describe("velocity-cache", () => {
 				}),
 		);
 		const inflight = getVelocityCached("u1|2026-05-12|UTC", slow);
-		invalidateVelocityCache("test");
+		_resetVelocityCache();
 		// Arrives after the flip: must start its own compute, not JOIN the
 		// pre-flip promise, which would serve it the other engine's answer.
 		const fresh = getVelocityCached("u1|2026-05-12|UTC", async () => makeResult("post-flip"));

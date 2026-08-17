@@ -33,9 +33,10 @@
  *     flip — the one thing the soak must surface, because on THAT day flipping
  *     would change a minute or two of the output.
  *
- * `on` is deliberately NOT tied to `verifiedCoreOverride` (unlike the rail
- * tenant): the settings-UI master switch must not imply an HSMM serving
- * behaviour that does not exist yet.
+ * This tenant was deliberately NOT tied to the settings-UI master override,
+ * unlike the rail tenant, so that the switch could not imply an HSMM serving
+ * behaviour that did not exist. The override itself is gone (#975) and the
+ * distinction with it; the mode is the env flag alone.
  */
 
 import { existsSync } from "node:fs";

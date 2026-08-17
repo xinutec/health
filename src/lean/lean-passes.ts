@@ -36,7 +36,6 @@ import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js
 import { LeanBridgeError, type LeanGeoResp, leanGeo } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanLeg, leanRunScope, resetLeanRunScope } from "./run-scope.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 /**
  * `solo` — the verified passes alone (#975). No TS arm, no comparison, no
@@ -53,10 +52,8 @@ import { verifiedCoreOverride } from "./runtime-mode.js";
 export type LeanPassMode = "off" | "shadow" | "on" | "solo";
 
 export function leanPassMode(): LeanPassMode {
-	// The settings-UI master override wins over the env default when set.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
-	// Env-only, as with the sibling tenants.
+	// Env only; the settings-UI master override is gone (#975). See
+	// `lean-head.ts` for why it had to go before `solo` meant anything.
 	const v = process.env.LEAN_PASSES;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
@@ -472,9 +469,11 @@ export function despikeViaLean<P extends LatLonTs, F extends LatLonTs>(
  */
 export function logLeanPassLedger(label: string): LedgerVerdict | null {
 	// `leanPassMode()`, not a bare read of `process.env.LEAN_PASSES` as this did
-	// in `decode-day`: the settings-UI master override can put this tenant into
-	// `on` without the env var, and the old read stayed SILENT through exactly
-	// that case — the tenant serving Lean with no ledger at all.
+	// in `decode-day`. The original reason was the settings-UI master override,
+	// which could put this tenant into `on` without the env var and left the old
+	// read SILENT through exactly that case — serving Lean with no ledger at
+	// all. That override is gone (#975), so the two now agree; the call stays
+	// because one accessor is where the mode is decided.
 	const mode = leanPassMode();
 	if (mode === "off") return null;
 	const stats = leanPassStats();

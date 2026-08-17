@@ -41,7 +41,6 @@ import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js
 import { LeanBridgeError, type LeanRailResp, leanRailServe } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 /**
  * `solo` — no TS arm, no comparison, no fallback (#975). See
@@ -57,11 +56,8 @@ import { verifiedCoreOverride } from "./runtime-mode.js";
 export type LeanRailMode = "off" | "shadow" | "on" | "solo";
 
 export function leanRailMode(): LeanRailMode {
-	// The settings-UI master override wins over the env default when set.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
-	// Env-only, like the sibling tenants: dropping the fallback is a deployment
-	// decision, not something the settings toggle should be able to express.
+	// Env only; the settings-UI master override is gone (#975). See
+	// `lean-head.ts` for why it had to go before `solo` meant anything.
 	const v = process.env.LEAN_RAIL;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }

@@ -43,7 +43,6 @@ import { armPair, formatArmPair, resetArmPair, timeTsArm } from "./arm-timing.js
 import { LeanBridgeError, type LeanMatchResp, leanMatchServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope, resetLeanRunScope, setLeanLeg } from "./run-scope.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 /**
  * `solo` — the verified matcher alone (#975). No TS arm, no comparison, no
@@ -64,10 +63,8 @@ import { verifiedCoreOverride } from "./runtime-mode.js";
 export type LeanMatchMode = "off" | "shadow" | "on" | "solo";
 
 export function leanMatchMode(): LeanMatchMode {
-	// The settings-UI master override wins over the env default when set.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
-	// Env-only, as with the sibling tenants.
+	// Env only; the settings-UI master override is gone (#975). See
+	// `lean-head.ts` for why it had to go before `solo` meant anything.
 	const v = process.env.LEAN_MATCH;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }

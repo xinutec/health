@@ -39,16 +39,13 @@ import type { TrackSegment } from "../geo/segments.js";
 import { floatFromBits, floatToBits } from "./float-bits.js";
 import { LeanBridgeError, type LeanHeadResp, leanHeadServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 export type LeanHeadMode = "off" | "shadow" | "on" | "solo";
 
 export function leanHeadMode(): LeanHeadMode {
-	// Same precedence as every other tenant: the settings-UI master override
-	// beats the env default, and it cannot select `solo` — deleting the fallback
-	// is a deployment decision, not a UI preference.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
+	// Env only. The settings-UI master override is gone (#975): it could select
+	// `on` or `off` and thereby reach the TS arm at runtime whatever the deploy
+	// said, which made `solo` a default rather than a guarantee.
 	const v = process.env.LEAN_HEAD;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }

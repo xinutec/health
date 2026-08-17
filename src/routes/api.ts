@@ -7,9 +7,6 @@ import { loadWatchBattery } from "../fitbit/watch-battery.js";
 import { scheduleRailRouteFill, unsnappedTrainRoutes } from "../geo/rail-route-fill.js";
 import { dateBoundsUtc, isValidTimezone } from "../geo/timezone.js";
 import { computeVelocity } from "../geo/velocity.js";
-import { leanMatchMode } from "../lean/lean-match.js";
-import { leanPassMode } from "../lean/lean-passes.js";
-import { setVerifiedCoreOverride, verifiedCoreOverride } from "../lean/runtime-mode.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireOwnerOnly } from "../middleware/share-auth.js";
 import { NextcloudClient } from "../nextcloud/client.js";
@@ -31,7 +28,7 @@ import {
 import { buildShareUrl, clampShareDaysBack } from "../share/token.js";
 import { clipInferredFuture } from "../sleep/day-state.js";
 import type { UserSession } from "../types.js";
-import { getVelocityCached, invalidateVelocityCache, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
+import { getVelocityCached, isLiveDay, LIVE_TTL_MS } from "./velocity-cache.js";
 
 /** Subset of the full Config that the API routes actually need. Narrowing
  *  the type here keeps test stubs minimal and surfaces dependency drift
@@ -486,41 +483,16 @@ export function apiRoutes(config: ApiRoutesConfig): Hono<AppEnv> {
 		return c.json(rows);
 	});
 
-	// ─── Verified Lean core master toggle (owner only) ────────────────
-	// A live override that switches the WHOLE verified core (the geometry
-	// passes + the walk matcher) between Lean and TS without a redeploy — a
-	// transition affordance for building confidence on real data and a
-	// one-click fallback. Process-global (single-user); the decode cron is a
-	// separate process and stays on the deploy-time env flags. See
-	// src/lean/runtime-mode.ts.
-	//   GET → { override, effective, defaults }
-	//   PUT → body { enabled: boolean | null }; null resets to the env default.
-	const verifiedCoreState = (): Record<string, unknown> => ({
-		override: verifiedCoreOverride(),
-		effective: { passes: leanPassMode(), matcher: leanMatchMode() },
-		defaults: { passes: process.env.LEAN_PASSES ?? "off", matcher: process.env.LEAN_MATCH ?? "off" },
-	});
-
-	app.get("/verified-core", (c) => c.json(verifiedCoreState()));
-
-	app.put("/verified-core", async (c) => {
-		let enabled: boolean | null = null;
-		try {
-			const body = (await c.req.json()) as { enabled?: unknown };
-			enabled = body.enabled === true ? true : body.enabled === false ? false : null;
-		} catch {
-			// no / invalid body → clear the override (fall back to the env default)
-		}
-		// Flipping the engine changes what computeVelocity returns, so every
-		// cached result is now the other engine's answer. Clear them, or the
-		// toggle appears to do nothing for exactly the days the user has been
-		// looking at — see routes/velocity-cache.ts (#391). Only on a real
-		// change: a repeat PUT of the current value should not cost a cold cache.
-		const before = verifiedCoreOverride();
-		setVerifiedCoreOverride(enabled);
-		if (before !== enabled) invalidateVelocityCache(`verified-core override ${before} → ${enabled}`);
-		return c.json(verifiedCoreState());
-	});
+	// ⚠ `GET`/`PUT /api/verified-core` ARE GONE (#975), and their absence is the
+	// point rather than a tidy-up. The master toggle could put every tenant into
+	// `on` or `off` at runtime, and `off` meant pure TypeScript — so while it
+	// existed, `LEAN_*=solo` was a DEFAULT and not a guarantee, and the TS arm
+	// was reachable on a live pod whatever the deployment said. Its own module
+	// doc always said it comes out once TS is retired; this is that.
+	//
+	// The frontend card went with it. A client still holding the old bundle gets
+	// a 404 from this router rather than a silent no-op, which is the honest
+	// failure — the toggle genuinely cannot do anything any more.
 
 	// ─── Share-link management ────────────────────────────────────────
 	// GET /api/share → current share status (token, url, days_back) or null

@@ -69,7 +69,6 @@ import { circularDegGap, ulpGap } from "./float-gap.js";
 import { LeanBridgeError, type LeanKalmanResp, leanKalmanServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 /** `solo` — no TS arm, no comparison, no fallback. See `lean-gps-quality.ts`
  *  for the full rationale (#975); it applies verbatim here, and this tenant has
@@ -77,11 +76,8 @@ import { verifiedCoreOverride } from "./runtime-mode.js";
 export type LeanKalmanMode = "off" | "shadow" | "on" | "solo";
 
 export function leanKalmanMode(): LeanKalmanMode {
-	// The settings-UI master override wins over the env default when set.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
-	// `solo` is env-only: the UI toggle means "use the verified core", and
-	// deleting the fallback is a deployment decision, not a UI preference.
+	// Env only; the settings-UI master override is gone (#975). See
+	// `lean-head.ts` for why it had to go before `solo` meant anything.
 	const v = process.env.LEAN_KALMAN;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }

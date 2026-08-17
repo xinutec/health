@@ -40,7 +40,6 @@ import { floatToBits } from "./float-bits.js";
 import { LeanBridgeError, type LeanGpsQualityResp, leanGpsQualityServe } from "./lean-core.js";
 import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
-import { verifiedCoreOverride } from "./runtime-mode.js";
 
 /**
  * `solo` is the mode that DELETES TypeScript (#975); the other three do not.
@@ -61,11 +60,8 @@ import { verifiedCoreOverride } from "./runtime-mode.js";
 export type LeanGpsQualityMode = "off" | "shadow" | "on" | "solo";
 
 export function leanGpsQualityMode(): LeanGpsQualityMode {
-	// The settings-UI master override wins over the env default when set. It
-	// cannot select `solo`: the toggle means "use the verified core", and
-	// deleting the fallback is a deployment decision, not a UI preference.
-	const o = verifiedCoreOverride();
-	if (o !== null) return o ? "on" : "off";
+	// Env only; the settings-UI master override is gone (#975). See
+	// `lean-head.ts` for why it had to go before `solo` meant anything.
 	const v = process.env.LEAN_GPSQUALITY;
 	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }

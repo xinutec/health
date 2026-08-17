@@ -16,10 +16,10 @@
  *     schema-version tag, no stale-cache-after-logic-change risk.
  *     The trade-off: cold cache after each deploy, so the first
  *     view of any day after deploy still pays the full compute.
- *     One thing does change the pipeline's answer WITHOUT a
- *     restart — the verified-core master toggle — so it calls
- *     {@link invalidateVelocityCache}. Any future switch of that
- *     kind must do the same.
+ *     Nothing changes the pipeline's answer WITHOUT a restart any
+ *     more: the verified-core master toggle was the one exception
+ *     and it was removed with the TS arm (#975). Anything that
+ *     reintroduces live switching must clear this cache too.
  *
  *   - **Short TTL (5 min).** Today's date keeps accumulating new
  *     Owntracks pushes, and Fitbit sleep sync can land any time.
@@ -159,35 +159,23 @@ export async function getVelocityCached<T extends VelocityResult>(
 	return promise;
 }
 
-/** Drop every cached result — the pipeline's answer just changed under a
- *  running pod.
+/** Clear the cache, dropping in-flight computes as well as seated entries.
  *
- *  The cache's per-pod design (see the header) leans on one assumption: only a
- *  deploy changes what `computeVelocity` returns, and a deploy restarts the pod.
- *  The verified-core master toggle breaks it — it swaps the Lean core for TS
- *  inside a live process, so every entry cached before the flip was produced by
- *  the other engine. Without this the toggle silently does nothing for any day
- *  already viewed, which is precisely the day the user is looking at when they
- *  reach for it: the A/B it exists for would compare a day against a cached copy
- *  of itself. See ../lean/runtime-mode.ts.
+ * ⚠ `invalidateVelocityCache` IS GONE (#975), and so is the reason it existed.
+ * Its only caller was the verified-core master toggle, which swapped the Lean
+ * core for TS inside a live process — the one thing that changed what
+ * `computeVelocity` returns WITHOUT a restart. With the toggle removed, the
+ * cache's per-pod assumption holds again on its own: only a deploy changes the
+ * answer, and a deploy restarts the pod. The invalidator is not unused so much
+ * as unnecessary.
  *
- *  In-flight computes are dropped too, not just cached ones. A run that began
- *  before the flip will finish under the old engine; joining it would serve a
- *  pre-flip answer to a post-flip request. It still completes (nothing here
- *  cancels it) and still returns to whoever was already awaiting it — they
- *  asked before the switch — but its result is not seated in the cache. */
-export function invalidateVelocityCache(reason: string): void {
-	const dropped = cache.size;
-	const abandoned = inFlight.size;
-	generation++;
-	cache.clear();
-	inFlight.clear();
-	console.log(`velocity-cache INVALIDATE (${reason}) dropped=${dropped} in-flight=${abandoned}`);
-}
-
-/** Test seam: clear the cache between test runs. Bumps the generation for the
- *  same reason {@link invalidateVelocityCache} does — a promise still pending
- *  from the previous test must not write its result into the next one's cache. */
+ * ⚠ Anything that later changes the pipeline's answer under a running pod must
+ * bring it back. This is the note that says so.
+ *
+ * The generation bump is what drops in-flight work: a compute that began before
+ * the clear still completes and still returns to whoever was already awaiting
+ * it, but its result is not seated afterwards. Underscored because production
+ * has no caller — the tests are the only ones, and that is the point. */
 export function _resetVelocityCache(): void {
 	generation++;
 	cache.clear();
