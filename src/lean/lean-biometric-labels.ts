@@ -41,7 +41,22 @@ import { type LedgerVerdict, servedNote } from "./ledger-verdict.js";
 import { type LeanRunScope, leanRunScope } from "./run-scope.js";
 import { verifiedCoreOverride } from "./runtime-mode.js";
 
-export type LeanBioLabelsMode = "off" | "shadow" | "on";
+/**
+ * `solo` — the verified labellers alone (#975). No TS arm, no comparison, no
+ * fallback, on BOTH entry points.
+ *
+ * ⚠ The `segments.length === 0` guard is dropped. It looked like the one guard
+ * that must be kept — an empty day would have nothing to label — but the bridge
+ * was asked directly and answers cleanly rather than erroring:
+ *
+ *     {"pass":"cadence","segs":[],"steps":[],"pts":[]}    → {"decisions":[]}
+ *     {"pass":"walkthrough","segs":[],"steps":[],"pts":[]} → {"decisions":[],"runs":[]}
+ *
+ * So an empty day costs one trivial bridge call and needs no short-circuit
+ * (#975 audit). Restoring the guard would be harmless but is not needed, and
+ * leaving it would keep `ts()` reachable — which is the whole point of `solo`.
+ */
+export type LeanBioLabelsMode = "off" | "shadow" | "on" | "solo";
 
 /** The four passes, named as the wire protocol names them. */
 export type LeanLabelPass = "cadence" | "revert" | "jitter" | "walkthrough";
@@ -50,8 +65,9 @@ export function leanBioLabelsMode(): LeanBioLabelsMode {
 	// The settings-UI master override wins over the env default when set.
 	const o = verifiedCoreOverride();
 	if (o !== null) return o ? "on" : "off";
+	// Env-only, as with the sibling tenants.
 	const v = process.env.LEAN_BIOLABELS;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 /** The segment shape these passes read and rewrite. Structural, matching the
@@ -283,6 +299,17 @@ function viaLean<T extends LabelSeg>(
 	ts: () => T[],
 ): T[] {
 	const mode = leanBioLabelsMode();
+	if (mode === "solo") {
+		// `serve` SWALLOWS a bridge failure and returns null — that is its
+		// contract for the modes with a TS arm. Under `solo` the null has to be
+		// turned back into a throw, or the tenant would silently return the
+		// segments unlabelled and look like a day on which nothing needed a flip.
+		const solo = serve(pass, segments, steps, []);
+		if (solo?.decisions === undefined) {
+			throw new LeanBridgeError(`lean-biolabels[solo] ${pass}: no decisions in response`);
+		}
+		return segments.map((sg, i) => applyDecision(sg, solo.decisions?.[i] ?? null));
+	}
 	if (mode === "off" || segments.length === 0) return ts();
 	const tsResult = timeTsArm("biolabels", ts);
 
@@ -334,6 +361,17 @@ export function applyStationaryWalkThroughViaLean<T extends LabelSeg>(
 	ts: () => T[],
 ): T[] {
 	const mode = leanBioLabelsMode();
+	if (mode === "solo") {
+		const solo = serve("walkthrough", segments, steps, points);
+		if (solo?.decisions === undefined || solo.runs === undefined) {
+			throw new LeanBridgeError("lean-biolabels[solo] walkthrough: no decisions/runs in response");
+		}
+		// ⚠ `rebuildWalkThrough` is NOT a comparison helper — it is how the
+		// walkthrough result is CONSTRUCTED from the decisions and their run
+		// boundaries. It stays under `solo`; only the TS arm it was compared
+		// against goes.
+		return rebuildWalkThrough(segments, solo.decisions, solo.runs);
+	}
 	if (mode === "off" || segments.length === 0) return ts();
 	const tsResult = timeTsArm("biolabels", ts);
 
@@ -381,7 +419,18 @@ export function logLeanBioLabelsLedger(label: string): LedgerVerdict | null {
 	const s = stats;
 	const clean = s.lenDiffs === 0 && s.segs === 0;
 	// Zero calls is not a pass — see the note in lean-kalman.ts (#392).
-	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.lenDiffs + s.segs} DIVERGED`;
+	// ⚠ `solo` must not print EXACT: `lenDiffs`/`segs` are structurally zero with
+	// no TS arm, and this tenant's EXACT is documented as "two levels, not three
+	// — anything other than EXACT is a decision flip". A vacuous EXACT here would
+	// therefore read as the strongest possible claim.
+	const verdict =
+		s.calls === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? `SOLO (no TS arm; ${s.calls} call(s))`
+				: clean
+					? "EXACT"
+					: `${s.lenDiffs + s.segs} DIVERGED`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segs}`;
 	const served = divergences.filter((d) => d.scope === "decode").length;
 	const servedTag = servedNote(mode, served);
