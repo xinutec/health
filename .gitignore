@@ -67,3 +67,10 @@ lean/experiments/osm-rowset-parity.json
 # rust/ builds into the shared cargo target dir (see mac notes), but a plain
 # `cargo build` outside the dev shell would write here.
 /rust/target/
+
+# `nix build` drops a `result` symlink into the repo root. Untracked and, until
+# now, not ignored — and `scripts/deploy.sh` runs `git add -A` after its gates,
+# so a store symlink could be swept into a deploy commit by anyone who had built
+# the package locally.
+result
+result-*

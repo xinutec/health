@@ -83,7 +83,7 @@ fn placeholders_are_one_per_value() {
 /// evidence that failures are counted; it is evidence that non-failures are not.
 #[test]
 fn an_unconfigured_mirror_counts_no_failures() {
-    // The three readers all route through `with_conn`. Without the env vars
+    // The three readers all route through `with_pool`. Without the env vars
     // `configured()` is false and each returns empty without touching a socket.
     assert!(
         !day_shell::mirror::configured(),

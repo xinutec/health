@@ -5,7 +5,29 @@ edition = "2021"
 publish = false
 
 [dependencies]
-mysql = { version = "28.0.0", default-features = false, features = ["minimal"] }
+# sqlx rather than the `mysql` crate it replaced (health #982): the Rust backend
+# will be built on sqlx, and six sibling repos (tasks, life, coach, fleetwatch,
+# messages, signal) already carry exactly this line. The mirror is the cheapest
+# place to prove the setup before the rest of the backend depends on it.
+#
+# A SUBSET of the house feature list on purpose. Those repos add `chrono`,
+# `json`, `derive`, `macros` and `migrate`; this binary is a Lean host with two
+# read queries and no migrations, and every feature is compile time and binary
+# size in a process the fold spawns. The crate and version match, which is what
+# consistency here is worth.
+#
+# ⚠ RUNTIME QUERIES ONLY — `sqlx::query(…)`, never the checked `query!` macros.
+# Those need a live database or a committed `.sqlx` cache at COMPILE time, and
+# no repo here has one; reaching for them breaks the image build.
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "mysql",
+] }
+# Only the runtime. sqlx is async and this path is deliberately synchronous, so
+# one current-thread runtime is created and blocked on at the boundary — see the
+# note on `block_on` in mirror.rs.
+tokio = { version = "1", default-features = false, features = ["rt"] }
 # Reading a captured `OsmTrace` so the host can answer the fold's lookups with
 # REAL roads before the live reads exist. Test instrument, not the production
 # path — that one will read the OSM mirror directly.
@@ -13,3 +35,9 @@ serde_json = "1"
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+# The async-guard test needs a runtime to call the mirror from INSIDE one.
+# tokio is already a normal dependency; an integration test links the crate but
+# not its dependencies, so it has to be named again here.
+tokio = { version = "1", default-features = false, features = ["rt"] }

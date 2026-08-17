@@ -37,11 +37,11 @@
 //! run against each other on identical keys and must produce identical ways and
 //! rings — `--osm-verify` does exactly that.
 
-use std::sync::Mutex;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mysql::prelude::*;
-use mysql::{Opts, OptsBuilder, Pool, PooledConn};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions};
+use sqlx::{AssertSqlSafe, Row, query};
 
 /// `ROAD_CORRIDOR_MARGIN_M` — `osm-local.ts:951`.
 const ROAD_CORRIDOR_MARGIN_M: f64 = 400.0;
@@ -102,12 +102,34 @@ pub struct MirrorWay {
     pub coords: Vec<(f64, f64)>,
 }
 
-/// The pool, opened once on first use. A `Mutex` rather than a connection per
-/// call: the fold's callbacks are synchronous and strictly sequential — it asks
-/// one question, waits, and asks the next — so there is never contention to
-/// resolve, only a borrow to make safe.
-static CONN: Mutex<Option<PooledConn>> = Mutex::new(None);
-static POOL: std::sync::OnceLock<Option<Pool>> = std::sync::OnceLock::new();
+/// The pool, opened once on first use.
+///
+/// The `Mutex<Option<PooledConn>>` this replaced is GONE, and its disappearance
+/// is the point rather than a tidy-up: an `sqlx` pool is internally
+/// synchronised and cheap to clone, so the borrow the `Mutex` existed to make
+/// safe is the pool's own problem now. The fold's callbacks are still
+/// synchronous and strictly sequential; nothing about that changed.
+static POOL: std::sync::OnceLock<Option<MySqlPool>> = std::sync::OnceLock::new();
+
+/// ⚠ ONE current-thread runtime, because `sqlx` is async and this path is not.
+///
+/// The fold reaches here through a Lean callback, which is synchronous by
+/// construction — there is no `await` to hand the answer back through. So every
+/// query is `block_on`ed at this boundary.
+///
+/// **`block_on` PANICS inside an async context**, and that is a real hazard for
+/// exactly one future caller: when the Rust backend (#982) is built on axum it
+/// will be async everywhere, and calling `walkable_roads` from a handler would
+/// abort the process rather than return an error. `with_pool` detects that case
+/// and refuses instead — see there. Do not remove that check because "nothing
+/// calls it from async today"; the whole point of this port is that something
+/// will.
+static RT: std::sync::OnceLock<Option<tokio::runtime::Runtime>> = std::sync::OnceLock::new();
+
+fn runtime() -> Option<&'static tokio::runtime::Runtime> {
+    RT.get_or_init(|| tokio::runtime::Builder::new_current_thread().enable_all().build().ok())
+        .as_ref()
+}
 
 /// `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` — the same five the TS
 /// reads in `src/config.ts:72`. Absent host or database means "no mirror
@@ -123,30 +145,59 @@ static POOL: std::sync::OnceLock<Option<Pool>> = std::sync::OnceLock::new();
 /// in the production pod (checked against the live CronJob), so the difference
 /// never shows there. `DB_PORT` DOES default, to the same 3306, because a port
 /// is not evidence of intent the way a hostname is.
-fn opts() -> Option<Opts> {
+fn opts() -> Option<MySqlConnectOptions> {
     let host = std::env::var("DB_HOST").ok()?;
     let database = std::env::var("DB_NAME").ok()?;
-    Some(
-        OptsBuilder::new()
-            .ip_or_hostname(Some(host))
-            .tcp_port(
-                std::env::var("DB_PORT")
-                    .ok()
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(3306),
-            )
-            .user(std::env::var("DB_USER").ok())
-            .pass(std::env::var("DB_PASSWORD").ok())
-            .db_name(Some(database))
-            .into(),
-    )
+    let mut o = MySqlConnectOptions::new()
+        .host(&host)
+        .port(
+            std::env::var("DB_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(3306),
+        )
+        .database(&database);
+    // Absent user/password stay ABSENT rather than becoming empty strings: the
+    // `mysql` crate took `Option`s and sqlx takes values, and defaulting here
+    // would send a blank credential where the old code sent none.
+    if let Ok(u) = std::env::var("DB_USER") {
+        o = o.username(&u);
+    }
+    if let Ok(p) = std::env::var("DB_PASSWORD") {
+        o = o.password(&p);
+    }
+    Some(o)
 }
 
 /// Whether a mirror is configured at all. Distinct from "the mirror answered
 /// nothing", which is a finding about coverage.
 pub fn configured() -> bool {
-    POOL.get_or_init(|| opts().and_then(|o| Pool::new(o).ok()))
-        .is_some()
+    pool().is_some()
+}
+
+/// The pool, built lazily. `connect_lazy_with` rather than `connect`: the old
+/// `Pool::new` did not open a socket either, so keeping it lazy preserves the
+/// behaviour that an unreachable database costs nothing until something asks.
+fn pool() -> Option<&'static MySqlPool> {
+    POOL.get_or_init(|| {
+        let o = opts()?;
+        // ⚠ BUILT INSIDE THE RUNTIME, and this is not a style choice. An sqlx
+        // pool spawns a maintenance task the moment it is constructed, so
+        // `connect_lazy_with` panics with "this functionality requires a Tokio
+        // context" when called from plain sync code — which is exactly what
+        // `configured()` is (`osm.rs:609`). The first mirror question in
+        // production would have aborted the process.
+        //
+        // `mysql::Pool::new` had no such requirement, so this is a hazard the
+        // port INTRODUCED rather than one it inherited. Found by
+        // `tests/mirror_async_guard.rs`, which was written for a different
+        // reason entirely and had to set DB_HOST to reach the guard — the
+        // pre-existing test never builds a pool at all, so nothing else here
+        // would have caught it before production did.
+        let _guard = runtime()?.enter();
+        Some(MySqlPoolOptions::new().max_connections(1).connect_lazy_with(o))
+    })
+    .as_ref()
 }
 
 /// Mirror queries that FAILED, as opposed to ones that answered nothing.
@@ -170,36 +221,45 @@ pub fn take_fails() -> u64 {
     FAILS.swap(0, Ordering::Relaxed)
 }
 
-/// Run `f` with the shared connection, opening it on first use. `None` when no
-/// mirror is configured or the connection cannot be made — the caller then
-/// answers empty and counts a miss, rather than aborting a day's fold over a
-/// database that is merely absent.
-fn with_conn<T>(f: impl FnOnce(&mut PooledConn) -> mysql::Result<T>) -> Option<T> {
+/// Run `f` against the shared pool, blocking on the shared runtime. `None`
+/// when no mirror is configured or the query fails — the caller then answers
+/// empty and counts a miss, rather than aborting a day's fold over a database
+/// that is merely absent.
+fn with_pool<T, F>(f: F) -> Option<T>
+where
+    F: FnOnce(&'static MySqlPool) -> std::pin::Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + '_>>,
+{
     // Before the counter, deliberately: an unconfigured mirror is absence.
-    let pool = POOL.get_or_init(|| opts().and_then(|o| Pool::new(o).ok())).as_ref()?;
-    // Past this point every `None` is a real failure — a poisoned lock, a
-    // connection that would not open, or a query that errored. They are counted
-    // together because the caller cannot act on the difference: all three yield
-    // an empty answer that means "no roads here" downstream.
-    let attempt = || -> Option<T> {
-        let mut guard = CONN.lock().ok()?;
-        if guard.is_none() {
-            *guard = pool.get_conn().ok();
-        }
-        let conn = guard.as_mut()?;
-        match f(conn) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!("mirror: query failed: {e}");
-                None
-            }
-        }
-    };
-    let out = attempt();
-    if out.is_none() {
+    let pool = pool()?;
+
+    // ⚠ REFUSE rather than panic when already inside a runtime. `block_on`
+    // aborts the process with "cannot start a runtime from within a runtime",
+    // which for the async backend (#982) would turn a mirror read into a crash
+    // instead of the empty answer every other failure produces here. Counted as
+    // a failure, because it IS one — the caller gets no roads.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        eprintln!(
+            "mirror: called from inside a tokio runtime; this path is sync-only. \
+             Use an async mirror read from async code rather than blocking here."
+        );
         FAILS.fetch_add(1, Ordering::Relaxed);
+        return None;
     }
-    out
+
+    let Some(rt) = runtime() else {
+        eprintln!("mirror: could not build a tokio runtime");
+        FAILS.fetch_add(1, Ordering::Relaxed);
+        return None;
+    };
+
+    match rt.block_on(f(pool)) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            eprintln!("mirror: query failed: {e}");
+            FAILS.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+    }
 }
 
 /// `bboxPolygonWkt(bbox)` — `osm-local.ts:843`, vertex for vertex. The ring is
@@ -257,19 +317,33 @@ fn query_ways(lat: f64, lon: f64, radius_m: f64, subtypes: &[&str]) -> Vec<Mirro
          LIMIT 20000",
         placeholders(subtypes.len())
     );
-    let mut params: Vec<mysql::Value> = subtypes.iter().map(|s| (*s).into()).collect();
-    params.push(poly.into());
-    with_conn(|c| {
-        c.exec_map(
-            &sql,
-            params,
-            |(osm_id, name, subtype, wkt): (i64, Option<String>, Option<String>, String)| MirrorWay {
-                osm_id,
-                name,
-                subtype,
-                coords: parse_linestring_wkt(&wkt),
-            },
-        )
+    let subtypes: Vec<String> = subtypes.iter().map(|s| (*s).to_string()).collect();
+    with_pool(move |pool| {
+        Box::pin(async move {
+            // Bound in the same order the placeholders appear: every subtype,
+            // then the polygon. Still never interpolated, so a subtype list can
+            // never become SQL.
+            // ⚠ `AssertSqlSafe` because sqlx 0.9 refuses a non-'static SQL string by
+            // default — a good rule, and this is the audited exception it exists
+            // for. The only runtime part of this statement is `placeholders(n)`,
+            // which emits nothing but `?` and commas; every value, each subtype
+            // included, is BOUND. No caller data reaches the SQL text.
+            let mut q = query(AssertSqlSafe(sql));
+            for st in &subtypes {
+                q = q.bind(st);
+            }
+            q = q.bind(&poly);
+            let rows = q.fetch_all(pool).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| MirrorWay {
+                    osm_id: r.get::<i64, _>("osm_id"),
+                    name: r.get::<Option<String>, _>("name"),
+                    subtype: r.get::<Option<String>, _>("subtype"),
+                    coords: parse_linestring_wkt(&r.get::<String, _>("wkt")),
+                })
+                .collect::<Vec<_>>())
+        })
     })
     .unwrap_or_default()
     .into_iter()
@@ -300,13 +374,23 @@ pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Vec<Vec<(f64, f64)>>
          LIMIT 20000",
         placeholders(NON_ENCLOSING_BUILDING_SUBTYPES.len())
     );
-    let mut params: Vec<mysql::Value> = NON_ENCLOSING_BUILDING_SUBTYPES
-        .iter()
-        .map(|s| (*s).into())
-        .collect();
-    params.push(poly.into());
-    with_conn(|c| c.exec_map(&sql, params, |wkt: String| parse_linestring_wkt(&wkt)))
-        .unwrap_or_default()
+    with_pool(move |pool| {
+        Box::pin(async move {
+            // Same audited exception as `query_ways`: `placeholders(n)` is the
+            // only dynamic part and it emits `?` and commas alone.
+            let mut q = query(AssertSqlSafe(sql));
+            for st in NON_ENCLOSING_BUILDING_SUBTYPES {
+                q = q.bind(*st);
+            }
+            q = q.bind(&poly);
+            let rows = q.fetch_all(pool).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| parse_linestring_wkt(&r.get::<String, _>("wkt")))
+                .collect::<Vec<_>>())
+        })
+    })
+    .unwrap_or_default()
         .into_iter()
         // `coords.length >= 3` — fewer than three vertices is not a polygon.
         .filter(|r| r.len() >= 3)
