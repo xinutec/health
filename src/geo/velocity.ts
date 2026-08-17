@@ -783,33 +783,28 @@ export async function computeVelocityFromInputs(
 	});
 
 	/**
-	 * Physical-feasibility report on a timeline — every day, not just the golden
-	 * corpus. The cascade has no global physical invariant of its own (each pass
-	 * guards only its own seam), so this is where an impossible output — a walking
-	 * leg sustaining vehicle pace, a rail discontinuity — becomes a logged defect
-	 * instead of a confident line on the map. Log-only: repair stays upstream in
-	 * the passes; fabricating a correction here would hide the defect the log
-	 * exists to count.
+	 * Physical-feasibility report on a timeline — every day, not just the golden corpus.
+	 * The cascade has no global physical invariant of its own, each pass guarding only
+	 * its own seam, so this is where an impossible output — a walking leg at vehicle
+	 * pace, a rail discontinuity — becomes a logged defect instead of a confident line
+	 * on the map. Log-only: repair stays upstream, and fabricating a correction here
+	 * would hide the defect the log exists to count.
 	 *
-	 * Line membership for the valid-triple invariant (#181/#351): resolve each
-	 * labelled line's station set through the adapter (memoised in prod; also what
-	 * makes every future golden capture record membership for every labelled
-	 * line). A line the adapter cannot answer — an older fixture replaying without
-	 * that trace key — is skipped, never a violation.
+	 * Line membership for the valid-triple invariant (#181/#351) resolves through the
+	 * adapter, memoised in prod. A line it cannot answer — an older fixture replaying
+	 * without that trace key — is skipped, never a violation.
 	 *
-	 * Timed as its own phase because it sits INSIDE the Lean-covered bracket and
-	 * is not part of it: the Lean day produces the timeline, not this report, so a
-	 * tenant would still pay for it. `leanCovered` subtracts it.
+	 * Timed as its own phase because it sits INSIDE the Lean-covered bracket without
+	 * being part of it: the Lean day produces the timeline, not this report, so a tenant
+	 * would still pay for it. `leanCovered` subtracts it.
 	 *
-	 * ⚠ WHICH TIMELINE IT GRADES CHANGES UNDER `solo`, and that is a decision
-	 * rather than a side effect (#975). The tail calls it on the TS states even
-	 * when Lean serves, on the stated grounds that this is an invariant on the DAY
-	 * and its verdict should not depend on a flag. Under solo there are no TS
-	 * states — the argument does not survive the second arm's removal — so it
-	 * grades the SERVED ones. The alternative was to skip it under solo, which
-	 * would silently drop the only global physical check on exactly the mode that
-	 * has no second arm to catch anything. Grading the served timeline is the
-	 * weaker guarantee of the two; grading nothing is not a guarantee at all.
+	 * ⚠ WHICH TIMELINE IT GRADES CHANGES UNDER `solo`, by decision rather than side
+	 * effect (#975). The tail calls it on the TS states even when Lean serves, on the
+	 * grounds that this is an invariant on the DAY and should not depend on a flag —
+	 * but under solo there are no TS states, so that argument does not survive and it
+	 * grades the SERVED ones. Skipping it under solo would silently drop the only
+	 * global physical check on exactly the mode with no second arm to catch anything.
+	 * The served timeline is the weaker guarantee; grading nothing is none at all.
 	 */
 	const reportFeasibility = async (timeline: DayState[], steps: readonly StepPoint[]): Promise<void> => {
 		await time(
@@ -865,33 +860,30 @@ export async function computeVelocityFromInputs(
 		return { points, rawFixes: displayFixes, segments, states, episodes, battery, timing: phaseTimes };
 	}
 
-	// ⚠ `LEAN_DAY=solo` — the fold is the ONLY arm, and the ~1,340 lines below are
-	// never executed. That is the whole point of the mode: `on` runs both arms
-	// because its comparison needs both, which is why flipping nine tenants to
-	// `on` deleted no TypeScript at all. `solo` is what turns the region below
-	// into dead code (#975).
+	// ⚠ `LEAN_DAY=solo` — the fold is the ONLY arm and the ~1,340 lines below never
+	// execute. That is the point of the mode: `on` runs both arms because its comparison
+	// needs both, which is why flipping nine tenants to `on` deleted no TypeScript at
+	// all. `solo` is what turns the region below into dead code (#975).
 	//
-	// It returns HERE, immediately after the last input the fold consumes, and not
-	// at the tail beside `leanDay`. At the tail the region has already run and
-	// solo would only discard its output — which is `on` with extra steps, and
-	// deletes nothing.
+	// It returns HERE, immediately after the last input the fold consumes, rather than
+	// at the tail beside `leanDay`: there the region has already run and solo would only
+	// discard its output, which is `on` with extra steps.
 	//
-	// Everything the request needs is in scope, and none of it comes from the
-	// skipped region:
+	// Everything the request needs is in scope and none of it comes from the skipped
+	// region:
 	//   segsRaw    `segments` — the last TS algorithm before the fold
-	//   modeStats  `inputs.modeBiometrics`, which is what the tail's `modeStats`
-	//              resolves to on both of its branches
-	//   obs        `points`, `inDay`, `displayFixes`, and `inputs.biometrics`,
-	//              which is what the tail's `biomForStaySplit` resolves to
+	//   modeStats  `inputs.modeBiometrics`, what the tail's `modeStats` resolves to on
+	//              both branches
+	//   obs        `points`, `inDay`, `displayFixes`, `inputs.biometrics` — what the
+	//              tail's `biomForStaySplit` resolves to
 	//   tail       raw fixes and clock bounds — see `downstreamInputs`
-	// The two "resolves to" claims are the load-bearing part of the argument that
-	// the region is skippable, so they are pinned by `tests/lean-day-solo.test.ts`
-	// rather than left as a comment that cannot fail.
+	// ⚠ The two "resolves to" claims carry the argument that the region is skippable,
+	// so `tests/lean-day-solo.test.ts` pins them rather than leaving a comment that
+	// cannot fail.
 	//
-	// It comes AFTER the `enrich === false` return on purpose. That path is a
-	// caller asking for raw segments with no OSM, biometrics or sleep; the fold
-	// does all three, so serving it there would answer a different question than
-	// the one asked.
+	// AFTER the `enrich === false` return on purpose: that path is a caller asking for
+	// raw segments with no OSM, biometrics or sleep, and the fold does all three, so
+	// serving it there would answer a different question than the one asked.
 	if (leanDayMode() === "solo") {
 		// `FOLD_CAPTURE` and solo are mutually exclusive BY CONSTRUCTION, so this
 		// refuses instead of writing a misleading file. The capture records the TS
@@ -990,31 +982,26 @@ export async function computeVelocityFromInputs(
 	);
 
 	// Enrich each (post-stay-split) segment with OSM data. Bounded
-	// concurrency: each segment fans out several DB-backed OSM queries,
-	// so an unbounded Promise.all over a long day starves the fixed
-	// 20-connection pool whenever per-query latency is high — capture
-	// runs over the SSH tunnel failed deterministically at 16 segments
-	// (2026-06-10, "pool timeout after 10000ms", two segments dropped
-	// unenriched). The cap keeps total in-flight queries safely under
-	// the pool size; segments are independent, so only wall-clock shape
-	// changes, never results.
+	// ⚠ Each segment fans out several DB-backed OSM queries, so an unbounded
+	// Promise.all over a long day starves the fixed 20-connection pool whenever
+	// per-query latency is high — capture runs over the SSH tunnel failed
+	// deterministically at 16 segments ("pool timeout after 10000ms", two
+	// segments dropped unenriched). Segments are independent, so the cap changes
+	// wall-clock shape and never results.
 	/**
 	 * OSM enrichment for a *moving* segment: sample along the path, aggregate
 	 * the nearby ways, refine the mode, name the road, tag the city.
 	 *
-	 * Extracted so it can be run a second time. `splitWalksOnVehicleLeg` carves
-	 * a hidden ride out of a walk long *after* this pass, leaving two on-foot
-	 * remainders whose inherited enrichment was derived from the parent's
-	 * window — a window that spanned the ride. The `reenrichSplitWalks` pass
-	 * sends those remainders back through here to be named from their own
-	 * geometry (2026-07-12: a walk from Highbury & Islington down Upper Street,
-	 * labelled "Euston Road" because the parent segment had begun at King's
-	 * Cross, on the far side of a tube ride).
+	 * Extracted so it can run a second time. `splitWalksOnVehicleLeg` carves a hidden
+	 * ride out of a walk long *after* this pass, leaving two on-foot remainders whose
+	 * inherited enrichment came from the parent's window — one that spanned the ride.
+	 * `reenrichSplitWalks` sends them back through here to be named from their own
+	 * geometry (a walk down Upper Street labelled "Euston Road", because the parent
+	 * began at King's Cross on the far side of a tube ride).
 	 *
-	 * It reads `seg.mode`, `seg.avgSpeed` and `seg.maxSpeed`, so a remainder's
-	 * kinematics must be recomputed *before* it is re-enriched — otherwise
-	 * refineMode is handed the ride's speeds and duly reaches the ride's
-	 * conclusion about a walk.
+	 * ⚠ It reads `seg.mode`, `seg.avgSpeed` and `seg.maxSpeed`, so a remainder's
+	 * kinematics must be recomputed *before* re-enrichment — otherwise refineMode is
+	 * handed the ride's speeds and duly reaches the ride's conclusion about a walk.
 	 */
 	const enrichMovingSegment = async (
 		seg: EnrichedSegment,
@@ -2175,25 +2162,18 @@ export async function computeVelocityFromInputs(
 	// place rewrites the mode to "sleeping"; sleep while moving sets
 	// `asleep: true` as an attribute. See `src/sleep/day-state.ts`.
 	//
-	// For sleep-place attribution, augment today's segments with
-	// synthetic stationary candidates derived from the neighbouring
-	// days' fixes. Two cases:
-	//   - Next-day morning fixes: handle the post-midnight evening
-	//     sleep case (taxi home from a late hospital stay, then sleep
-	//     at home; today's last segment is the hospital, but the user
-	//     actually slept at home).
-	//   - Prior-day evening fixes: handle the morning sleep case
-	//     where today's first stationary segment is hours later
-	//     (sleeping starts before that segment, and the user actually
-	//     slept where they stayed yesterday evening — e.g. a
-	//     guesthouse from the night before).
-	// The synthetic candidates are only fed to derivePlaceForSleep —
-	// they never enter the day's segment output. Each candidate's
-	// label is re-resolved through `bestPlace` (preferResidential: true,
-	// since these stays sit inside the sleep window) so a lodging POI
-	// near the centroid wins over a focus_place's generic "Stay" label
-	// — without this, a hotel stay attaches "Stay" instead of the
-	// hotel's name. See `src/sleep/known-place-stays.ts`.
+	// For sleep-place attribution, today's segments are augmented with synthetic
+	// stationary candidates from the neighbouring days' fixes:
+	//   - next-day morning fixes, for evening sleep past midnight (taxi home from a
+	//     late hospital stay — today's last segment is the hospital, but the user
+	//     slept at home);
+	//   - prior-day evening fixes, for morning sleep where today's first stationary
+	//     segment is hours later (the user slept where they stayed last night).
+	// ⚠ They are fed only to derivePlaceForSleep and never enter the segment output.
+	// Each label is re-resolved through `bestPlace` with `preferResidential`, these
+	// stays sitting inside the sleep window, so a lodging POI near the centroid beats
+	// a focus_place's generic "Stay" — without it a hotel stay attaches "Stay" rather
+	// than the hotel's name. See `src/sleep/known-place-stays.ts`.
 	const morningStays = timeSync("morningStays", () =>
 		detectKnownPlaceStays(
 			morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),

@@ -1,43 +1,30 @@
 /**
- * Re-evaluate emitted stationary stays for hidden mid-stay departures,
- * using multi-signal weighted evidence. Companion to the segment-level
- * `unknown` mode emission (honest-gaps Phase 1) — together they pull
- * fabricated motion / over-merged stays back to what the data supports.
+ * Re-evaluate emitted stationary stays for hidden mid-stay departures. Companion to the
+ * segment-level `unknown` mode emission: together they pull fabricated motion and
+ * over-merged stays back to what the data supports.
  *
- * `findStays` in `segments.ts` emits one stationary segment per spatial
- * cluster, but cannot tell from GPS alone whether a long gap between
- * two in-cluster fixes is "user stayed silently, phone went idle" or
- * "user briefly left and came back". Both patterns leave the same
- * trace: two clusters of in-place fixes bracketing a no-fix window.
+ * `findStays` emits one stationary segment per spatial cluster but cannot tell from GPS
+ * alone whether a long gap between two in-cluster fixes is "stayed silently, phone went
+ * idle" or "briefly left and came back" — both leave the same trace, two clusters of
+ * in-place fixes bracketing a no-fix window.
  *
- * This pass combines four signals to estimate the likelihood of
- * mid-stay departure, then splits only when the evidence is strong
- * enough to warrant breaking the stay (and emits an `unknown` segment
- * in the gap so downstream rendering shows the departure honestly):
+ * Four signals estimate the likelihood, and a split emits an `unknown` segment in the
+ * gap so the departure renders honestly:
  *
- *   - **Biometric step count during the gap.** This is the *only*
- *     direct evidence of movement we have. Steps mid-gap = the user
- *     moved. Zero steps = the user sat. Drives the score on its own.
- *   - **Gap-anomaly ratio.** When the cluster has a dense pre-gap
- *     fix history, an anomalously long gap *amplifies* the step
- *     signal — but contributes nothing on its own. A long gap with
- *     no steps is the "phone died" pattern, not the "user left"
- *     pattern.
- *   - **HR during the gap.** Sustained elevation above resting
- *     baseline is supporting evidence of activity; restful HR is
- *     mild counter-evidence.
- *   - **Post-gap fix proximity.** A fix that lands back inside ~20 m
- *     of the cluster centroid is mild counter-evidence (the user
- *     returned to the exact same spot, more consistent with
- *     "didn't really leave").
+ *   - **Step count during the gap** — the *only* direct evidence of movement, and it
+ *     drives the score on its own.
+ *   - **Gap-anomaly ratio** — with a dense pre-gap fix history, an anomalously long gap
+ *     *amplifies* the step signal but contributes nothing alone. A long gap with no
+ *     steps is the "phone died" pattern, not the "user left" one.
+ *   - **HR during the gap** — sustained elevation supports activity, restful HR is mild
+ *     counter-evidence.
+ *   - **Post-gap fix proximity** — landing back inside ~20 m of the centroid is mild
+ *     counter-evidence.
  *
- * Calibration is deliberately conservative — the bias is toward NOT
- * splitting. A slight over-merge ("user was at hotel for 1h25m" when
- * they actually went out briefly) is far less misleading than a
- * fabricated split that breaks a quiet at-home evening into multiple
- * sub-stays. Cases where step data is too ambiguous to distinguish
- * "brief errand" from "sat silently" stay merged — the honest
- * "don't know" answer is to leave the data's ambiguity intact.
+ * ⚠ Calibration is deliberately conservative, biased toward NOT splitting. A slight
+ * over-merge is far less misleading than a fabricated split breaking a quiet evening
+ * into sub-stays, so cases too ambiguous to tell "brief errand" from "sat silently" stay
+ * merged — leaving the data's ambiguity intact is the honest answer.
  */
 
 import {

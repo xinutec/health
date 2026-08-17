@@ -789,35 +789,28 @@ export interface NearbyStation {
 /**
  * Pick the most station-like entry from a `nearbyStations` result list.
  *
- * The complication: OSM models one station as many nodes, and the node that
- * NAMES the station is rarely the closest one. Two kinds outrank it by
- * distance and must not win:
+ * ⚠ OSM models one station as many nodes, and the node that NAMES it is rarely the
+ * closest. Two kinds outrank it by distance and must not win:
  *
- *   - **entrances** (`railway=subway_entrance`), one per gate, often labelled
- *     "A", "B", "C" — so a single-letter name is treated as an entrance too,
- *     as a proxy for when the subtype is missing or coincidentally "subway";
- *   - **platform positions** (`public_transport=stop_position`), one per
- *     platform. A terminus carries a dozen, spread along the trainshed. At an
- *     interchange this puts the WRONG operator's platforms nearest: the
- *     2026-05-18 / 2026-07-02 Metropolitan boarding read "London St Pancras"
- *     (a National Rail platform node 37 m out) instead of King's Cross St
- *     Pancras (the tube station node 82 m out) — a station the Met does not
- *     serve, which is a physically impossible ride.
+ *   - **entrances** (`railway=subway_entrance`), one per gate, often labelled "A",
+ *     "B", "C" — so a single-letter name counts as an entrance too, standing in for
+ *     a missing or coincidental subtype;
+ *   - **platform positions** (`public_transport=stop_position`), one per platform. A
+ *     terminus carries a dozen along the trainshed, and at an interchange this puts
+ *     the WRONG operator's nearest: a Metropolitan boarding read "London St Pancras"
+ *     (a National Rail platform node 37 m out) instead of King's Cross St Pancras
+ *     (the tube node 82 m out) — a station the Met does not serve, so a physically
+ *     impossible ride.
  *
- * So the pick is by TIER first — station node, then platform position, then
- * entrance — and by distance only within a tier. Each lower tier is a genuine
- * fallback: when no station node is in range, a platform position still names
- * the place correctly.
+ * So the pick is by TIER first — station node, platform position, entrance — and by
+ * distance only within a tier. Each lower tier is a genuine fallback.
  *
- * `prefer` splits the station tier when the CALLER knows what kind of station
- * it is looking for. A big interchange carries one station node per operator —
- * King's Cross has "London King's Cross" (National Rail) and "King's Cross St
- * Pancras" (`station=subway`) ~200 m apart — and distance alone picks whichever
- * the reacquire fix landed nearest, so an underground reconstruction could name
- * a tube ride after the mainline terminus (2026-07-10 "London King's Cross →
- * Victoria · Victoria Line"). A caller that is reconstructing an UNDERGROUND
- * run passes `"subway"`; it is a preference, not a filter, so a complex without
- * a tube node still resolves to its nearest station.
+ * `prefer` splits the station tier when the CALLER knows what it is looking for. A big
+ * interchange carries one station node per operator — King's Cross has "London King's
+ * Cross" and "King's Cross St Pancras" ~200 m apart — and distance alone picks whichever
+ * the reacquire fix landed nearest, so an underground reconstruction could name a tube
+ * ride after the mainline terminus. A caller reconstructing an UNDERGROUND run passes
+ * `"subway"`; a preference, not a filter, so a complex with no tube node still resolves.
  */
 export function pickBestStation(stations: NearbyStation[], prefer?: string): NearbyStation | null {
 	return rankStations(stations, prefer)[0] ?? null;
@@ -1251,50 +1244,40 @@ const WALK_NAME_BORROW_MAX_KMH = 10;
 /**
  * Name a walk after the street its pavement belongs to.
  *
- * OSM models a street's pavement and its carriageway as two separate ways at
- * the same physical place, and the pavement is almost always unnamed. So the
- * way *closest* to a walking GPS fix is an anonymous `footway`, and reading its
- * `.name` renders the leg with no street at all — even though the street is
- * sitting right there in the same result set, a few metres away.
+ * ⚠ OSM models a street's pavement and its carriageway as two separate ways at the same
+ * place, and the pavement is almost always unnamed. So the way *closest* to a walking
+ * fix is an anonymous `footway`, and reading its `.name` renders the leg with no street
+ * at all — while the street sits in the same result set a few metres away.
  *
- * The pavement is genuinely where the user is, so it must keep deciding the
- * MODE (see `pickBestHighway`). It simply cannot supply the NAME. This borrows
- * the name of the nearest named way within {@link WALK_NAME_BORROW_MAX_M},
- * returning undefined when nothing is close enough to be the same street.
+ * The pavement is genuinely where the user is, so it keeps deciding the MODE (see
+ * `pickBestHighway`); it simply cannot supply the NAME. This borrows the nearest named
+ * way within {@link WALK_NAME_BORROW_MAX_M}, undefined when nothing is close enough.
  *
- * The bug was masked for as long as walks were glued to the rides that
- * followed them: the ride's speed pushed `avgSpeed` past the 30 km/h bar into
- * `pickBestHighway`'s driveable branch, which skips pedestrian ways and picks
- * the road. Those labels were right by accident of a wrong speed
- * (2026-07-01 "walking on Euston Road"). Once `splitWalksOnVehicleLeg` gives a
- * remainder its own honest kinematics, the accident stops happening and the
- * underlying gap shows — so this is the other half of that fix, not a separate
- * concern.
- *
- * The driving side of this asymmetry was fixed long ago (#99: prefer a
- * driveable road over a closer footway). This is its pedestrian sibling, and
- * mirrors the factor scorer's named/unnamed same-mode dedup, which is grounded
- * in the same OSM duplication.
+ * It was masked while walks were glued to the rides that followed them: the ride's speed
+ * pushed `avgSpeed` past the 30 km/h bar into `pickBestHighway`'s driveable branch,
+ * which skips pedestrian ways and picks the road, so those labels were right by accident
+ * of a wrong speed ("walking on Euston Road"). Once `splitWalksOnVehicleLeg` gives a
+ * remainder honest kinematics the accident stops and the gap shows — so this is the
+ * other half of that fix, not a separate concern. (#99 fixed the driving side; this is
+ * its pedestrian sibling.)
  */
-/** ⚠ THREE ORDERINGS HAVE NOW BEEN MEASURED AGAINST GOLDEN, and the one in the
- *  code — which nobody chose — wins. Standing regressed truth rows:
+/** ⚠ THREE ORDERINGS MEASURED AGAINST GOLDEN, and the one in the code — which nobody
+ *  chose — wins. Standing regressed truth rows, all at 0 uncaptured days so the
+ *  denominators are comparable:
  *
  *      insertion order (what `highways[0]` actually is)   5 rows /  3 days
  *      global nearest distance                           14 rows / 11 days
  *      coverage-ranked, distance as tie-break            17 rows / 15 days
  *
- *  All three at 0 uncaptured days, so the denominators are comparable. The
- *  coverage run also broke 15 CONFIRMED rows, including one on 2026-06-16 —
- *  the very day the change was built to fix.
+ *  The coverage run also broke 15 CONFIRMED rows, one of them on the very day the
+ *  change was built to fix.
  *
- *  So "name the walk after the way it ran ALONG, not the one it passed
- *  closest to" is a good principle and this is not how to compute it. Five
- *  sampled point-lookups cannot answer a question about a whole path: the
- *  resolution is 0–5 and a sample either sees a way or does not. If this is
- *  tried again, use the MATCHED PATH — `walkMatchedPath` is already a
- *  polyline along real ways, so arc length per way is directly available and
- *  is the actual quantity the principle names. Do NOT re-derive it from the
- *  sample set. */
+ *  So "name the walk after the way it ran ALONG, not the one it passed closest to" is a
+ *  good principle and this is not how to compute it: five sampled point-lookups cannot
+ *  answer a question about a whole path, the resolution being 0–5 and a sample either
+ *  seeing a way or not. ⚠ If tried again, use the MATCHED PATH — `walkMatchedPath` is
+ *  already a polyline along real ways, so arc length per way is directly available and
+ *  is the quantity the principle names. Do NOT re-derive it from the sample set. */
 function borrowStreetName(highways: readonly NearbyWay[]): string | undefined {
 	let best: NearbyWay | undefined;
 	let bestDist = Number.POSITIVE_INFINITY;
