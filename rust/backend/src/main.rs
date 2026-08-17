@@ -14,10 +14,17 @@
 //! exists to prevent. An entrypoint that cannot do its job must fail.
 
 use anyhow::{Context, Result};
-use backend::{config::Config, db, routes, state::AppState, sync_state};
+use backend::{config::Config, db, lean, routes, state::AppState, sync_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // ⚠ BEFORE ANYTHING ELSE, AND FATAL IF IT FAILS. The rate-limit policy and
+    // the backfill cursor arithmetic live in Lean, so a process that could not
+    // start the runtime cannot decide anything — and a sync that ran without
+    // being able to decide would spend a budget nobody checked and walk a cursor
+    // nobody bounded. Refusing to start is the safe failure; limping is not.
+    lean::init().context("starting the Lean runtime")?;
+
     let cmd = std::env::args().nth(1).unwrap_or_default();
     match cmd.as_str() {
         "check" => check().await,

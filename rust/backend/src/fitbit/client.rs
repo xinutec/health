@@ -23,9 +23,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use anyhow::{Context, Result};
 
-use super::rate_limit::{
-    MAX_INPROCESS_WAIT_MS, RateLimitAction, RateLimitExhausted, decide_rate_limit_wait,
-};
+use super::rate_limit::{MAX_INPROCESS_WAIT_MS, RateLimitExhausted};
+use crate::lean::{self, RateLimitAction};
 
 /// Fitbit's starting budget per hour.
 const INITIAL_BUDGET: i64 = 150;
@@ -149,10 +148,24 @@ impl FitbitClient {
         }
     }
 
+    /// Ask Lean what to do before the next call.
+    ///
+    /// ⚠ A FAILED FFI CALL IS NOT "PROCEED". If the decision cannot be reached,
+    /// the honest answer is to stop: proceeding would spend a budget nobody
+    /// checked, and the resulting 429s would look like a Fitbit problem. It is
+    /// reported as exhausted-with-zero so the caller takes its existing bail-out
+    /// path — the next scheduled run resumes from the stored cursor, which is
+    /// exactly the recovery this whole policy is built around.
     async fn wait_for_budget(&self) -> Result<(), RateLimitExhausted> {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let until_reset = self.rate.reset_at_ms.load(Ordering::Relaxed) - now_ms;
-        match decide_rate_limit_wait(self.rate.remaining(), until_reset, MAX_INPROCESS_WAIT_MS) {
+        let action =
+            lean::decide_rate_limit_wait(self.rate.remaining(), until_reset, MAX_INPROCESS_WAIT_MS)
+                .unwrap_or_else(|e| {
+                    tracing::error!("rate-limit decision unavailable, stopping the run: {e:#}");
+                    RateLimitAction::Exhausted { resume_in_sec: 0 }
+                });
+        match action {
             RateLimitAction::Proceed => Ok(()),
             RateLimitAction::Exhausted { resume_in_sec } => {
                 Err(RateLimitExhausted { resume_in_sec })

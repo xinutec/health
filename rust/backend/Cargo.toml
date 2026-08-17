@@ -52,3 +52,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # The IANA zone database. Fitbit sends a wall clock with no offset, so turning
 # one into an instant needs real zone data. Version matches the fleet.
 chrono-tz = "0.10"
+
+[build-dependencies]
+# Compiles src/shim.c, which is how Rust reaches the  half of
+# Lean's runtime interface. Same reason and same version as day-shell.
+cc = "1"

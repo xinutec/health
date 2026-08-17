@@ -33,12 +33,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 cd "$ROOT"
 
-# The crate links `libverified_DayEntry.a` and `libverified_Verified.a`, and
-# `build.rs` fails with a message naming the missing one — but only if lake has
-# been asked for them. `lake build verified_cli` alone does NOT emit the static
-# libs, which is the same shape as `lake build <Module>` not relinking the CLI.
+# The crates link `libverified_DayEntry.a` (day-shell), `libverified_BackendEntry.a`
+# (backend, #982) and `libverified_Verified.a`, and each `build.rs` fails with a
+# message naming the missing one — but only if lake has been asked for them.
+# `lake build verified_cli` alone does NOT emit the static libs, which is the
+# same shape as `lake build <Module>` not relinking the CLI.
+#
+# ⚠ THE ROWS AFTER THIS ONE DEPEND ON IT. `clippy` and `rust workspace tests`
+# both compile `backend`, whose build.rs reads these archives; on a clean
+# checkout they exist only because this ran first. The gate runs rows in table
+# order (gate/src/main.rs) and gate.dhall records the dependency.
 echo "rust-host-check: lean static libs"
-(cd lean && lake build verified_cli DayEntry:static Verified:static >/dev/null)
+(cd lean && lake build verified_cli DayEntry:static BackendEntry:static Verified:static >/dev/null)
 
 echo "rust-host-check: build"
 cd rust

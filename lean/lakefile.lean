@@ -26,6 +26,12 @@ silently — it built, ran, and printed well-formed JSON from the WRONG entry
 point. `DayEntry` defines no `main`, so there is nothing to collide. -/
 lean_lib DayEntry
 
+/-- The backend's entry point as a LIBRARY, for the same reason `DayEntry` is
+one: an exe's root module emits `main`, and an archive carrying `_main` wins the
+link in a foreign host silently. `rust/backend` links this to call the decisions
+in `Verified.Sync` rather than reimplementing them beside it (#982). -/
+lean_lib BackendEntry
+
 @[default_target]
 lean_exe verified_cli where
   root := `Main
