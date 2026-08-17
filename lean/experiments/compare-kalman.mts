@@ -7,14 +7,37 @@
  * kalman`, and demands the outputs be identical BIT-FOR-BIT — same row count,
  * same IEEE-754 pattern in every lat/lon/speed/bearing.
  *
- * Why the bar is bit-exactness and not a tolerance: nothing here is quantised.
- * The filter is a covariance recursion over raw degrees, so the two arms run
- * the same IEEE arithmetic on the same inputs and must agree exactly. The
- * transcendentals (`cos`, `atan2`) reach the emitted values only through
- * `Math.round`, which absorbs a ≤1-ULP difference except at a round boundary.
- * A divergence is therefore a finding, not noise.
+ * Why the tally is in ULP and not a tolerance: nothing here is quantised. The
+ * filter is a covariance recursion over raw degrees, so the two arms run the
+ * same IEEE arithmetic on the same inputs and can only differ where their libms
+ * do — `cos` and `atan2`.
  *
- * That last paragraph is the MODEL, and the corpus has already exceeded it:
+ * ⚠ A ONE-ULP `cos` DISAGREEMENT DOES NOT MEAN A ONE-ULP OUTPUT. This file used
+ * to say the transcendentals reach the emitted values "only through
+ * `Math.round`, which absorbs a ≤1-ULP difference", and that was simply wrong:
+ * `lon` and `speed` are not rounded at all, and the recursion AMPLIFIES the
+ * last bit. Measured 2026-08-17 (#1020) by perturbing `Math.cos` by ±1 ULP on
+ * 7.6% of calls — the rate the two libms actually disagree — and running the
+ * filter against itself, 300 samples per day over the 35-day corpus:
+ *
+ *     the amplification band, per day     1 … 75 ULP on `lon`
+ *     the widest (2026-05-14, 05-15)      75 ULP, where the arms differ by 1
+ *     no day's real divergence exceeds its own band
+ *     no sample, of 10 500, moved a ROW COUNT
+ *     `lat` exact on all 35 days — it never calls `cos`, and it shows
+ *
+ * So a double-digit ULP gap is the documented band, not a second phenomenon.
+ * 2026-07-14 (`lon ≤19ulp`, band 19) looked alarming for years' worth of
+ * readings and is simply the one day where the real libm difference landed on
+ * that day's worst case. In absolute terms it is 3.65e-11 m.
+ *
+ * That is also why the exit code at the bottom judges ROW COUNTS, `lat`, and
+ * the NUMBER of divergent `lon` rows, and never a ULP magnitude: the magnitude
+ * has a legitimate range two orders of magnitude wide, so a threshold on it
+ * would be a number nobody could justify. `lean/experiments/probe-kalman-ulp.mts`
+ * is what measures the band when a reading looks surprising.
+ *
+ * A separate model this file once carried, and the corpus exceeded:
  * under `LEAN_KALMAN=on` the golden gate reports a bearing gap of 17° between
  * two ROUNDED (integer) bearings — 17 whole degrees is not a round boundary
  * and not a last-bit `cos`. See #393. This referee did not catch it for two
