@@ -611,6 +611,12 @@ private def approxRel (a b : Float) : Bool :=
   | (m, p, mg) => m == "stationary" && approxRel p 0.999650345935714 && mg == 1000
 #guard match normalizeScores (scoreWindow wfDriving) with
   | (m, p, mg) => m == "driving" && approxRel p 0.9953900869184644 && approxRel mg 215.966224361806
+-- The train window was the one `segments-refs.mts` GENERATED and nothing pinned:
+-- `scoreWindow wfTrain` had a guard, `normalizeScores` of it did not, so the
+-- margin here was unconstrained while its three neighbours were. Values from the
+-- refs against the production TS, 2026-08-17.
+#guard match normalizeScores (scoreWindow wfTrain) with
+  | (m, p, mg) => m == "train" && approxRel p 0.8601206941870266 && approxRel mg 6.288316014717662
 
 #guard roadSupportedConfidence "driving" 0.9 (some 1.0) == 0.9
 #guard roadSupportedConfidence "driving" 0.9 (some 0.0) == 0.45
