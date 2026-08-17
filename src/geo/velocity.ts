@@ -19,7 +19,7 @@ import {
 	demoteJitterWalkToStationaryViaLean,
 	revertIsolatedCadenceDrivesViaLean,
 } from "../lean/lean-biometric-labels.js";
-import { leanDayMode, serveLeanDay, shadowLeanDay } from "../lean/lean-day.js";
+import { leanDayMode, serveLeanDay, shadowLeanDay, soloLeanDay } from "../lean/lean-day.js";
 import { qualityFilterGpsViaLean } from "../lean/lean-gps-quality.js";
 import { classifySegmentsViaLean, snapAllViaLean } from "../lean/lean-head.js";
 import { filterGpsTrackViaLean } from "../lean/lean-kalman.js";
@@ -42,7 +42,7 @@ import {
 import { bridgeStaysWithBiometrics } from "./bridge-stays-biometrics.js";
 import { annotateBusEvidence } from "./bus-evidence.js";
 import { annotateBusRoutes } from "./bus-route-match.js";
-import type { ClassificationInputs } from "./classification-inputs.js";
+import type { BiometricsSnapshot, ClassificationInputs } from "./classification-inputs.js";
 import { applyDwellContinuation } from "./dwell-continuation.js";
 import type { EnrichedSegment } from "./enriched-segment.js";
 import { buildEpisodes, type EpisodeGeometry } from "./episode-geometry.js";
@@ -728,6 +728,120 @@ export async function computeVelocityFromInputs(
 		classifySegmentsViaLean(points, stayPoints, () => classifySegments(points, stayPoints)),
 	);
 
+	// The inputs the Lean chain replays, and NONE of them come from the cascade —
+	// `morningRaw` / `prevEveningRaw` are raw fixes, `rawSleep` is
+	// `inputs.sleepWindows`, `dayEndTs` is a clock bound. Hoisted here from the
+	// tail (#975) for exactly that reason: under `LEAN_DAY=solo` the fold's
+	// request has to be built BEFORE the region it replaces, and this compiling
+	// up here is the proof that the tail adds nothing to it.
+	const rawSleep = inputs.sleepWindows;
+	const downstreamInputs = {
+		morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+		prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
+		rawSleep: rawSleep.map((w) => ({
+			startTs: w.startTs,
+			endTs: w.endTs,
+			tz: w.tz,
+			minutesAsleep: w.minutesAsleep,
+		})),
+		dayEndTs: bounds.endUtc,
+	};
+
+	/**
+	 * The fold's request, in ONE place, built by whichever arm gets there first.
+	 *
+	 * `solo` builds it here and `shadow`/`on` build it at the tail, ~1,340 lines
+	 * apart, and a second copy of this object literal is how the mode that serves
+	 * production and the mode that stages it end up sending different requests —
+	 * silently, because both would still be well-formed. So it is a closure over
+	 * the values that are common, parameterised by the two that are not YET in
+	 * scope at the earlier site.
+	 *
+	 * Those two are `biom` and `ms`, and they are parameters rather than reads of
+	 * `inputs` only because the tail already has locals for them. They are the
+	 * same values: `biomForStaySplit` is `inputs.biometrics` on both of its
+	 * branches, and `modeStats` is `inputs.modeBiometrics` on both of its. That
+	 * equality is what makes solo possible at all, so it is pinned by a test
+	 * rather than left as a comment (`tests/lean-day-solo.test.ts`).
+	 */
+	const dayRequest = (biom: BiometricsSnapshot, ms: ModeStats[]): DayRequestInputs => ({
+		segsRaw: segments,
+		modeStats: ms,
+		obs: {
+			points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
+			rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+			displayFixes,
+			steps: biom.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
+			hr: biom.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
+			sleep: biom.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
+		},
+		tail: downstreamInputs,
+		// The answer tables start EMPTY. A serving caller has no recorded trace to
+		// seed them from; the round loop fills them by asking.
+		tzAt: [],
+		bestPlace: [],
+	});
+
+	/**
+	 * Physical-feasibility report on a timeline — every day, not just the golden
+	 * corpus. The cascade has no global physical invariant of its own (each pass
+	 * guards only its own seam), so this is where an impossible output — a walking
+	 * leg sustaining vehicle pace, a rail discontinuity — becomes a logged defect
+	 * instead of a confident line on the map. Log-only: repair stays upstream in
+	 * the passes; fabricating a correction here would hide the defect the log
+	 * exists to count.
+	 *
+	 * Line membership for the valid-triple invariant (#181/#351): resolve each
+	 * labelled line's station set through the adapter (memoised in prod; also what
+	 * makes every future golden capture record membership for every labelled
+	 * line). A line the adapter cannot answer — an older fixture replaying without
+	 * that trace key — is skipped, never a violation.
+	 *
+	 * Timed as its own phase because it sits INSIDE the Lean-covered bracket and
+	 * is not part of it: the Lean day produces the timeline, not this report, so a
+	 * tenant would still pay for it. `leanCovered` subtracts it.
+	 *
+	 * ⚠ WHICH TIMELINE IT GRADES CHANGES UNDER `solo`, and that is a decision
+	 * rather than a side effect (#975). The tail calls it on the TS states even
+	 * when Lean serves, on the stated grounds that this is an invariant on the DAY
+	 * and its verdict should not depend on a flag. Under solo there are no TS
+	 * states — the argument does not survive the second arm's removal — so it
+	 * grades the SERVED ones. The alternative was to skip it under solo, which
+	 * would silently drop the only global physical check on exactly the mode that
+	 * has no second arm to catch anything. Grading the served timeline is the
+	 * weaker guarantee of the two; grading nothing is not a guarantee at all.
+	 */
+	const reportFeasibility = async (timeline: DayState[], steps: readonly StepPoint[]): Promise<void> => {
+		await time(
+			"feasibility",
+			(async () => {
+				const labelledLines = new Set<string>();
+				for (const s of timeline) {
+					if (s.mode !== "train") continue;
+					const line = parseRailWayName(s.wayName ?? undefined)?.line;
+					if (line) labelledLines.add(line);
+				}
+				const lineStations = new Map<string, Awaited<ReturnType<typeof inputs.osm.stationsOnLine>>>();
+				for (const line of labelledLines) {
+					try {
+						lineStations.set(line, await inputs.osm.stationsOnLine(line));
+					} catch (e) {
+						// This used to swallow EVERYTHING with the note "uncaptured in a fixture
+						// trace — no membership, no assertion", which is the defect stated as if
+						// it were the design: with no membership the rail-triple check has
+						// nothing to test, so a stale fixture turned the feasibility gate into a
+						// silent pass on exactly the days whose line labels moved. A live
+						// adapter returning nothing is still fine — that is a genuine absence.
+						if (isUncapturedLookup(e)) throw e;
+					}
+				}
+				for (const v of checkWorldlineFeasibility(timeline, points, steps, lineStations)) {
+					console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
+				}
+			})(),
+		);
+	};
+
 	// Where the Lean `day` chain's input is produced, and therefore where the
 	// region a Lean tenant would REPLACE begins (#431 gap 3). Everything below —
 	// the OSM enrichment loop, the five corrections, the 38 passes, the sleep
@@ -749,6 +863,63 @@ export async function computeVelocityFromInputs(
 		const states = segmentsToDayStates(segments as EnrichedSegment[], []);
 		const episodes = buildEpisodes(states, segments as EnrichedSegment[], points, displayFixes);
 		return { points, rawFixes: displayFixes, segments, states, episodes, battery, timing: phaseTimes };
+	}
+
+	// ⚠ `LEAN_DAY=solo` — the fold is the ONLY arm, and the ~1,340 lines below are
+	// never executed. That is the whole point of the mode: `on` runs both arms
+	// because its comparison needs both, which is why flipping nine tenants to
+	// `on` deleted no TypeScript at all. `solo` is what turns the region below
+	// into dead code (#975).
+	//
+	// It returns HERE, immediately after the last input the fold consumes, and not
+	// at the tail beside `leanDay`. At the tail the region has already run and
+	// solo would only discard its output — which is `on` with extra steps, and
+	// deletes nothing.
+	//
+	// Everything the request needs is in scope, and none of it comes from the
+	// skipped region:
+	//   segsRaw    `segments` — the last TS algorithm before the fold
+	//   modeStats  `inputs.modeBiometrics`, which is what the tail's `modeStats`
+	//              resolves to on both of its branches
+	//   obs        `points`, `inDay`, `displayFixes`, and `inputs.biometrics`,
+	//              which is what the tail's `biomForStaySplit` resolves to
+	//   tail       raw fixes and clock bounds — see `downstreamInputs`
+	// The two "resolves to" claims are the load-bearing part of the argument that
+	// the region is skippable, so they are pinned by `tests/lean-day-solo.test.ts`
+	// rather than left as a comment that cannot fail.
+	//
+	// It comes AFTER the `enrich === false` return on purpose. That path is a
+	// caller asking for raw segments with no OSM, biometrics or sleep; the fold
+	// does all three, so serving it there would answer a different question than
+	// the one asked.
+	if (leanDayMode() === "solo") {
+		// `FOLD_CAPTURE` and solo are mutually exclusive BY CONSTRUCTION, so this
+		// refuses instead of writing a misleading file. The capture records the TS
+		// arm's answer as the GATE's input closure; under solo there is no TS
+		// answer, so a capture written here would hold the fold's OWN output and the
+		// gate would be the fold grading itself — the exact trap #431 gap 1 was
+		// about. Refusing is safe: a capture run is a deliberate offline act, and
+		// the operator who set both flags wants the other one.
+		if (foldCapture !== undefined) {
+			throw new Error(
+				"FOLD_CAPTURE and LEAN_DAY=solo are mutually exclusive: solo has no TS arm to capture, " +
+					"so the file would record the fold's own output as its oracle. Unset one.",
+			);
+		}
+
+		const served = await soloLeanDay(dayRequest(inputs.biometrics, inputs.modeBiometrics), inputs, `${date} ${userId}`);
+		// The served timeline, because there is no TS one — see `reportFeasibility`.
+		await reportFeasibility(served.states, inputs.biometrics.steps);
+		phaseTimes.leanCovered = Date.now() - leanCoveredFrom - (phaseTimes.feasibility ?? 0);
+		return {
+			points,
+			rawFixes: displayFixes,
+			segments: served.segs,
+			states: served.states,
+			episodes: served.episodes,
+			battery,
+			timing: phaseTimes,
+		};
 	}
 
 	const N_SAMPLES = 5;
@@ -2062,7 +2233,6 @@ export async function computeVelocityFromInputs(
 		...withBiometrics,
 		...resolvedSleepStays.map(synthesizeStayCandidateSegment),
 	];
-	const rawSleep = inputs.sleepWindows;
 	const sleepWindows = enrichSleepWindows(rawSleep, sleepPlaceCandidates);
 	const states = timeSync("dayStates", () => segmentsToDayStates(withBiometrics, sleepWindows));
 
@@ -2072,21 +2242,11 @@ export async function computeVelocityFromInputs(
 	// hospital-stay case. Confidence comes from constraint, not data
 	// volume. See infer-empty-day.ts. Days that aren't bracketed stay
 	// blank (genuinely unknown).
-	// The inputs the Lean chain replays. Bound here rather than at each return
-	// site so both arms record the SAME closure — the empty-day arm returns a
-	// real timeline, and a capture that skipped it would compare the Lean chain
-	// against nothing on exactly the days with the least other evidence.
-	const downstreamInputs = {
-		morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
-		prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
-		rawSleep: rawSleep.map((w) => ({
-			startTs: w.startTs,
-			endTs: w.endTs,
-			tz: w.tz,
-			minutesAsleep: w.minutesAsleep,
-		})),
-		dayEndTs: bounds.endUtc,
-	};
+	// `downstreamInputs` is bound near the top of the function, not here: both
+	// arms have to record the SAME closure — the empty-day arm returns a real
+	// timeline, and a capture that skipped it would compare the Lean chain
+	// against nothing on exactly the days with the least other evidence — and
+	// `solo` needs it before this point exists at all.
 
 	// The LIVE day request — the same inputs `foldCapture.write` and `writeTail`
 	// record, handed straight to the Lean chain instead of to a file. This is what
@@ -2112,26 +2272,11 @@ export async function computeVelocityFromInputs(
 	): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] } | undefined> => {
 		const mode = leanDayMode();
 		if (mode === "off") return undefined;
-		const req: DayRequestInputs = {
-			segsRaw: segments,
-			modeStats,
-			obs: {
-				points: points.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, speedKmh: p.speed_kmh })),
-				rawFixes: inDay.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
-				displayFixes,
-				steps: biomForStaySplit.steps.map((s) => ({ ts: s.ts, steps: s.steps })),
-				hr: biomForStaySplit.hr.map((h) => ({ ts: h.ts, bpm: h.bpm })),
-				sleep: biomForStaySplit.sleep.map((s) => ({ startTs: s.startTs, endTs: s.endTs })),
-			},
-			// The same closure the capture records, not a second copy of it:
-			// nothing in the tail derives from the cascade, so there is one
-			// definition and both arms read it.
-			tail: downstreamInputs,
-			// The answer tables start EMPTY. A serving caller has no recorded
-			// trace to seed them from; the round loop fills them by asking.
-			tzAt: [],
-			bestPlace: [],
-		};
+		// `solo` never reaches here — it returned ~1,340 lines above, which is the
+		// entire point of the mode. If it ever does, the region it exists to skip
+		// has run, so serving its answer would be `on` wearing a different name.
+		if (mode === "solo") throw new Error("LEAN_DAY=solo reached the tail: the skipped region ran");
+		const req = dayRequest(biomForStaySplit, modeStats);
 		const tsArm = { segs: withBiometrics, states: tsStates, episodes: tsEpisodes };
 		const label = `${date} ${userId}`;
 		if (mode === "on") return serveLeanDay(req, inputs, tsArm, label);
@@ -2179,51 +2324,11 @@ export async function computeVelocityFromInputs(
 		}),
 	);
 
-	// Physical-feasibility report on the SERVED timeline — every day, not just
-	// the golden corpus. The cascade has no global physical invariant of its
-	// own (each pass guards only its own seam), so this is where an impossible
-	// output — a walking leg sustaining vehicle pace, a rail discontinuity —
-	// becomes a logged defect instead of a confident line on the map. Log-only:
-	// repair stays upstream in the passes; fabricating a correction here would
-	// hide the defect the log exists to count.
-	//
-	// Line membership for the valid-triple invariant (#181/#351): resolve each
-	// labelled line's station set through the adapter (memoised in prod; also
-	// what makes every future golden capture record membership for every
-	// labelled line). A line the adapter cannot answer — an older fixture
-	// replaying without that trace key — is skipped, never a violation.
-	//
-	// Timed as its own phase because it sits INSIDE the Lean-covered bracket and
-	// is not part of it: the Lean day produces the timeline, not this report, so
-	// a tenant would still pay for it. `leanCovered` subtracts it below.
-	await time(
-		"feasibility",
-		(async () => {
-			const labelledLines = new Set<string>();
-			for (const s of finalStates) {
-				if (s.mode !== "train") continue;
-				const line = parseRailWayName(s.wayName ?? undefined)?.line;
-				if (line) labelledLines.add(line);
-			}
-			const lineStations = new Map<string, Awaited<ReturnType<typeof inputs.osm.stationsOnLine>>>();
-			for (const line of labelledLines) {
-				try {
-					lineStations.set(line, await inputs.osm.stationsOnLine(line));
-				} catch (e) {
-					// This used to swallow EVERYTHING with the note "uncaptured in a fixture
-					// trace — no membership, no assertion", which is the defect stated as if
-					// it were the design: with no membership the rail-triple check has
-					// nothing to test, so a stale fixture turned the feasibility gate into a
-					// silent pass on exactly the days whose line labels moved. A live
-					// adapter returning nothing is still fine — that is a genuine absence.
-					if (isUncapturedLookup(e)) throw e;
-				}
-			}
-			for (const v of checkWorldlineFeasibility(finalStates, points, biomForStaySplit.steps, lineStations)) {
-				console.error(`velocity ${date} user=${userId}: INFEASIBLE ${v.kind}: ${v.detail}`);
-			}
-		})(),
-	);
+	// ⚠ Grades the TS timeline here, deliberately — see `reportFeasibility`. Under
+	// `solo` there is no TS timeline and the served one is graded instead; that is
+	// a real change in what the invariant is computed over, and it is stated at
+	// the definition rather than left to be discovered.
+	await reportFeasibility(finalStates, biomForStaySplit.steps);
 
 	const episodes = buildEpisodes(finalStates, withBiometrics, points, displayFixes);
 	foldCapture?.writeTail(downstreamInputs, finalStates, episodes);

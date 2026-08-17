@@ -73,13 +73,14 @@ import { decodeEpisode, decodeSeg, decodeState } from "./day-decode.js";
 import { converge } from "./day-serve.js";
 import type { DayRequestInputs } from "./fold-capture.js";
 import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
+import { LeanBridgeError } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 
-export type LeanDayMode = "off" | "shadow" | "on";
+export type LeanDayMode = "off" | "shadow" | "on" | "solo";
 
 export function leanDayMode(): LeanDayMode {
 	const v = process.env.LEAN_DAY;
-	return v === "on" || v === "shadow" ? v : "off";
+	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
 }
 
 /** How long ONE round of the day fold may take before the bridge is called
@@ -186,21 +187,33 @@ export async function shadowLeanDay(
 }
 
 /**
- * The chain, the comparison and the accounting — everything both modes share.
+ * The chain, the comparison and the accounting — everything every mode shares.
  *
- * Returns the response's three arrays, still in wire shape, or `undefined` when
- * nothing usable came back. `shadow` drops that value on the floor and `on`
- * decodes it, so the two modes cannot diverge in what they MEASURE: a served
+ * Returns the response's three arrays, still in wire shape, or `{ failure }`
+ * when nothing usable came back. `shadow` drops the arrays on the floor and `on`
+ * decodes them, so the two modes cannot diverge in what they MEASURE: a served
  * day is graded by the same rule and lands in the same ledger as a shadowed one.
  * Splitting the comparison out per mode is how a tenant ends up serving under a
  * looser definition of agreement than it stages under.
+ *
+ * ⚠ `ts === null` IS `solo`, and it is a null rather than a second function so
+ * that the accounting cannot drift. With no TS arm there is nothing to compare
+ * against, but `calls`, `fails` and `rounds` still mean exactly what they mean
+ * in the other modes — a solo day that failed to converge has to be countable
+ * the same way a shadowed one is, or the ledger stops being comparable across a
+ * promotion. Only the comparison is skipped, and only because it is vacuous.
+ *
+ * The failure is returned rather than thrown because the modes disagree about
+ * what it MEANS: `shadow`/`on` degrade to the TS arm, `solo` has no arm to
+ * degrade to and must fail the decode. Returning the reason makes each caller
+ * state its own policy instead of inheriting one.
  */
 async function runLeanDay(
 	req: DayRequestInputs,
 	inputs: ClassificationInputs,
-	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
+	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] } | null,
 	label: string,
-): Promise<{ segs: unknown[]; states: unknown[]; episodes: unknown[] } | undefined> {
+): Promise<{ segs: unknown[]; states: unknown[]; episodes: unknown[] } | { failure: string }> {
 	const mode = leanDayMode();
 	const { spawnSync } = await import("node:child_process");
 	try {
@@ -254,17 +267,27 @@ async function runLeanDay(
 		});
 		if (c.rounds < 0) {
 			stats.fails += 1;
-			console.log(`lean-day[${mode}] ${label}: NOT CONVERGED — ${c.failure ?? "no reason given"}`);
-			return undefined;
+			const failure = `NOT CONVERGED — ${c.failure ?? "no reason given"}`;
+			console.log(`lean-day[${mode}] ${label}: ${failure}`);
+			return { failure };
 		}
 		const res = JSON.parse(c.out) as { segs?: unknown[]; states?: unknown[]; episodes?: unknown[]; error?: string };
 		if (res.error !== undefined) {
 			stats.fails += 1;
-			console.log(`lean-day[${mode}] ${label}: LEAN ERROR — ${res.error}`);
-			return undefined;
+			const failure = `LEAN ERROR — ${res.error}`;
+			console.log(`lean-day[${mode}] ${label}: ${failure}`);
+			return { failure };
 		}
 		stats.calls += 1;
 		stats.rounds.push(c.rounds);
+
+		const out = { segs: res.segs ?? [], states: res.states ?? [], episodes: res.episodes ?? [] };
+		// `solo`: no second arm, so there is nothing to compare and every diff below
+		// would be measured against an empty array — which `diffSegs` would report
+		// as a total divergence, i.e. the ledger would scream on a perfectly good
+		// day. Returning here rather than guarding each diff keeps the comparison
+		// written for exactly one situation: two arms exist.
+		if (ts === null) return out;
 
 		// The WHOLE chain, at the three boundaries the response carries — the
 		// cascade's segments and the two stages after it. The tail was left out
@@ -322,11 +345,12 @@ async function runLeanDay(
 				stats.unexplained.push(`${label}/${d}${at === undefined ? "" : ` @ ${at}`}`);
 			}
 		}
-		return { segs: res.segs ?? [], states: res.states ?? [], episodes: res.episodes ?? [] };
+		return out;
 	} catch (e) {
 		stats.fails += 1;
-		console.log(`lean-day[${mode}] ${label}: BRIDGE FAILED — ${e instanceof Error ? e.message : "non-Error throw"}`);
-		return undefined;
+		const failure = `BRIDGE FAILED — ${e instanceof Error ? e.message : "non-Error throw"}`;
+		console.log(`lean-day[${mode}] ${label}: ${failure}`);
+		return { failure };
 	}
 }
 
@@ -353,7 +377,7 @@ export async function serveLeanDay(
 	label: string,
 ): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] } | undefined> {
 	const res = await runLeanDay(req, inputs, ts, label);
-	if (res === undefined) return undefined;
+	if ("failure" in res) return undefined;
 
 	// ⚠ THE COUNT GUARD OUTLIVES THE GRAFT (#959), and deliberately.
 	//
@@ -383,6 +407,67 @@ export async function serveLeanDay(
 	};
 }
 
+/**
+ * The `solo` path: the Lean chain is the ONLY arm, and a failure THROWS.
+ *
+ * This is the mode the TypeScript deletion waits on. `on` still runs the whole
+ * TS cascade — it has to, because the comparison needs both arms — which is why
+ * flipping nine tenants to `on` removed no TypeScript at all (#975). Under solo
+ * the caller skips the ~1,340-line region between `classifySegments` and here,
+ * so the closure that region pulls in becomes dead code rather than a live
+ * dependency.
+ *
+ * ⚠ NO FALLBACK, BY CONSTRUCTION. Every other mode answers `undefined` and lets
+ * `velocity.ts` serve `withBiometrics` — but under solo `withBiometrics` was
+ * never computed, so there is nothing to fall back TO. Returning an empty day
+ * would be the masking fallback the house rules forbid; a decode that fails
+ * loudly is recoverable, a day silently recorded as empty is not.
+ *
+ * @throws LeanBridgeError on a bridge failure, a non-convergent round loop, a
+ *         Lean-side error, or an empty cascade from a non-empty input.
+ */
+export async function soloLeanDay(
+	req: DayRequestInputs,
+	inputs: ClassificationInputs,
+	label: string,
+): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] }> {
+	const res = await runLeanDay(req, inputs, null, label);
+	if ("failure" in res) throw new LeanBridgeError(`lean-day[solo] ${label}: ${res.failure}`);
+
+	// ⚠ WHAT REPLACES `serveLeanDay`'s COUNT GUARD, and it is not the same check.
+	//
+	// That guard compares Lean's segment count against the TS arm's, which under
+	// solo does not exist — so it cannot be carried over, and dropping it silently
+	// would remove the one thing standing between a broken fold and a day recorded
+	// as empty. What it actually protected against survives without a second arm:
+	// serving a day with NO segments when the cascade was handed some.
+	//
+	// The precondition is what makes this honest rather than a guess. A day whose
+	// `segsRaw` is empty — no GPS at all — legitimately produces no segments, and
+	// asserting over it would fail exactly the days with the least evidence, the
+	// same trap the empty-day arm exists to avoid. So the invariant is narrow: the
+	// cascade may merge, split and drop segments, but it is not expected to
+	// annihilate every one of them.
+	//
+	// ⚠ That last clause is a DESIGN EXPECTATION, not a measured fact — no day is
+	// known to have tripped it, and no run has yet confirmed none does. If a real
+	// day ever does, this is the wrong guard rather than a real finding, and it
+	// should be replaced by whatever that day shows the invariant actually is.
+	if (req.segsRaw.length > 0 && res.segs.length === 0) {
+		stats.fails += 1;
+		throw new LeanBridgeError(
+			`lean-day[solo] ${label}: cascade returned 0 segments for ${req.segsRaw.length} raw — ` +
+				`refusing to record an empty day`,
+		);
+	}
+
+	return {
+		segs: res.segs.map(decodeSeg),
+		states: res.states.map(decodeState),
+		episodes: res.episodes.map(decodeEpisode),
+	};
+}
+
 /** Print the run's accounting and return it as the gate's data. `null` when the
  *  tenant is off, so an unstaged tenant can never fail a gate. */
 export function logLeanDayLedger(label: string): LedgerVerdict | null {
@@ -398,7 +483,19 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 	// "EXACT": the two solvers really are absent from the fold, and a verdict that
 	// silently absorbed their absence would be claiming agreement about geometry
 	// nobody compared. `day-gate` prints the same distinction.
-	const verdict = s.calls === 0 ? "NOT EXERCISED" : clean ? "EXACT" : `${s.segDiffs + s.lenDiffs} DIVERGED`;
+	// ⚠ `solo` must not print EXACT. `clean` is VACUOUSLY true with no TS arm —
+	// `runLeanDay` returns before the diff counters can be touched — so EXACT
+	// would claim an agreement nothing measured, and a reader could not tell
+	// "agreed everywhere" from "nothing was compared". Same choice, and the same
+	// reason, as `lean-head` and the seven other solo-capable tenants.
+	const verdict =
+		s.calls === 0
+			? "NOT EXERCISED"
+			: mode === "solo"
+				? "SOLO (no TS arm, nothing compared)"
+				: clean
+					? "EXACT"
+					: `${s.segDiffs + s.lenDiffs} DIVERGED`;
 	const depth = s.rounds.length === 0 ? "" : ` — rounds ${Math.min(...s.rounds)}-${Math.max(...s.rounds)}`;
 	const shells = s.shellOnly === 0 ? "" : ` — ${s.shellOnly} shell-only`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segDiffs}`;
