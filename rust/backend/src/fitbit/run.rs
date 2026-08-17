@@ -46,7 +46,32 @@ use crate::backfill::DayResult;
 use crate::lean;
 use crate::sync_state;
 
-/// Run one full sync over every linked user.
+/// Which passes a run performs.
+///
+/// # The two halves carry VERY different risk, and that is the whole reason
+/// this is a choice rather than always [`Passes::All`]
+///
+/// [`Passes::Forward`] writes idempotent upserts over a window the live cron
+/// has just written, and touches one piece of shared state: `last_sync_date`.
+/// That cursor SELF-HEALS — [`crate::lean::forward_window`] always reaches back
+/// `SYNC_OVERLAP_DAYS`, so even a wrongly-advanced one is re-covered on the next
+/// tick. Nothing it does is hard to undo, which makes it safe to run beside the
+/// scheduled job for comparison.
+///
+/// ⚠ The backfill is not like that, and the danger is NOT the row writes. It is
+/// `backfill_<stream>_complete`: durable, never revisited, and a wrongly-set one
+/// stops history being filled with no symptom at all. A run that sets one
+/// wrongly looks exactly like a run that finished its work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Passes {
+    /// Forward only. Stops before ANY backfill state is read or written —
+    /// including the legacy-key migration, which writes under the same prefix.
+    Forward,
+    /// Forward, then both backward walks. What the scheduled job does.
+    All,
+}
+
+/// Run one sync over every linked user.
 ///
 /// Returns `Ok(())` when the run finished OR when the budget ran out — both are
 /// healthy endings for a scheduled job. It fails only when something structural
@@ -58,6 +83,7 @@ pub async fn run(
     client_secret: &str,
     nextcloud_base_url: Option<&str>,
     lookup: Lookup<'_>,
+    passes: Passes,
 ) -> Result<()> {
     let users: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM tokens")
         .fetch_all(pool)
@@ -77,6 +103,16 @@ pub async fn run(
     let client = FitbitClient::new(http.clone(), RateLimitState::default());
     let tokens = TokenStore::new();
 
+    // Said once, loudly, because the difference is invisible in the per-stream
+    // output that follows: a forward-only run looks like a complete one that
+    // happened to have nothing left to backfill.
+    match passes {
+        Passes::Forward => {
+            tracing::info!("FORWARD PASS ONLY — no backfill state will be read or written")
+        }
+        Passes::All => tracing::info!("forward pass, then both backward walks"),
+    }
+
     for (user_id,) in users {
         tracing::info!("=== Syncing: {user_id} ===");
         match sync_one_user(
@@ -89,6 +125,7 @@ pub async fn run(
             nextcloud_base_url,
             lookup,
             &user_id,
+            passes,
         )
         .await
         {
@@ -121,6 +158,7 @@ async fn sync_one_user(
     nextcloud_base_url: Option<&str>,
     lookup: Lookup<'_>,
     user_id: &str,
+    passes: Passes,
 ) -> Result<()> {
     let token = tokens
         .get_valid(pool, http, user_id, client_id, client_secret)
@@ -174,6 +212,15 @@ async fn sync_one_user(
         "[{user_id}] Forward sync done. Rate limit: {}",
         client.rate.remaining()
     );
+
+    // ⚠ The return is BEFORE the legacy-key migration, not just before the
+    // walks. That migration writes `backfill_hr_intraday_*`, so returning after
+    // it would make "forward only" false in exactly the namespace the promise
+    // is about.
+    if passes == Passes::Forward {
+        tracing::info!("[{user_id}] forward pass complete; backfill skipped by request");
+        return Ok(());
+    }
 
     migrate_legacy_backfill_keys(pool, user_id).await?;
     backfill_pass(pool, client, access, user_id, &window_start).await

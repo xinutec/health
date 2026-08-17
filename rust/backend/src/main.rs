@@ -5,7 +5,9 @@
 //!   check  — read the config, open the pool, and prove both against the real
 //!            database. READ-ONLY, so it is safe to point at production.
 //!   sync   — the port of `dist/sync.js`: Fitbit ingestion, forward then
-//!            backward, for every linked user.
+//!            backward, for every linked user. `--forward-only` runs the
+//!            forward pass alone and touches NO backfill state, which is the
+//!            form that is safe to run beside the live cron.
 //!   serve  — the HTTP skeleton. NOT production's server; `src/server.ts` still
 //!            owns every real route.
 //!
@@ -31,13 +33,29 @@ async fn main() -> Result<()> {
     // nobody bounded. Refusing to start is the safe failure; limping is not.
     lean::init().context("starting the Lean runtime")?;
 
-    let cmd = std::env::args().nth(1).unwrap_or_default();
-    match cmd.as_str() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cmd = args.first().map(String::as_str).unwrap_or_default();
+    let flags = &args[args.len().min(1)..];
+    match cmd {
         "check" => check().await,
         "serve" => serve().await,
-        "sync" => sync().await,
+        "sync" => {
+            // ⚠ An UNRECOGNISED flag is refused, never ignored. The one flag
+            // here selects whether durable backfill state is written, so a
+            // typo silently falling through to the full run is the one outcome
+            // this must not have.
+            let passes = match flags {
+                [] => fitbit::run::Passes::All,
+                [f] if f == "--forward-only" => fitbit::run::Passes::Forward,
+                _ => {
+                    eprintln!("usage: backend sync [--forward-only]");
+                    std::process::exit(64);
+                }
+            };
+            sync(passes).await
+        }
         "" => {
-            eprintln!("usage: backend <check|serve|sync>");
+            eprintln!("usage: backend <check|serve|sync [--forward-only]>");
             std::process::exit(64);
         }
         other => {
@@ -75,7 +93,7 @@ async fn main() -> Result<()> {
 /// expensive part; the finder is then queried per fix. Building it per user, or
 /// per row, is how a lookup that costs microseconds becomes one that costs
 /// hundreds of milliseconds.
-async fn sync() -> Result<()> {
+async fn sync(passes: fitbit::run::Passes) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -100,6 +118,7 @@ async fn sync() -> Result<()> {
         &cfg.fitbit.client_secret,
         cfg.nextcloud_base_url.as_deref(),
         &lookup,
+        passes,
     )
     .await
 }
