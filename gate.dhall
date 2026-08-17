@@ -146,6 +146,28 @@ in  { name = "health"
         , argv = G.inDevShell [ "scripts/rust-host-check.sh" ]
         , timeout_s = 1800
         }
+      , {-  The Rust workspace's own tests, which NOTHING ran until #982.
+
+            The check above builds the workspace and clippies it at
+            `-D warnings`, so a compile error or a lint in `rust/backend` was
+            already a red row. `cargo test` was not in it — the script is about
+            one equivalence, and widening it would have made its name a lie.
+
+            So `rust/backend/tests/config.rs` — the file whose whole subject is
+            that a missing `DB_PASSWORD` is REFUSED rather than defaulted to the
+            empty string — could have failed for a week without anything saying
+            so. That is the same shape as a ledger nobody's build fails on.
+
+            Whole workspace, not `-p backend`: `day-shell`'s own tests
+            (`mirror_port`, `mirror_async_guard`) were in the same position.
+        -}
+        G.Check::{
+        , name = "rust workspace tests"
+        , argv =
+            G.inDevShell
+              [ "cargo", "test", "--manifest-path", "rust/Cargo.toml", "--workspace" ]
+        , timeout_s = 900
+        }
       , G.Check::{
         , name = "lint (biome, backend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint" ]

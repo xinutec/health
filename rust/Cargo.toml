@@ -20,5 +20,5 @@
 # the process, the lookups, the IO. An earlier note here sized "~6k lines of
 # matcher to port into Rust"; there was never such a port to do.
 [workspace]
-members = ["day-shell"]
+members = ["backend", "day-shell"]
 resolver = "2"

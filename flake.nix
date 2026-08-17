@@ -75,7 +75,7 @@
           # unrelated file changed.
           cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
             src = ./rust;
-            hash = "sha256-NKrGrLC7Ks0BaUItXEjWfZvEJuJSfF5l3dxSJbPZKrY=";
+            hash = "sha256-9pUVST+b8oVKX3fwIUR9rcLLEg5Cxzi6s/o0YF6T17A=";
           };
           cargoRoot = "rust";
           nativeBuildInputs = [
@@ -87,7 +87,14 @@
           buildPhase = ''
             export HOME=$TMPDIR
             (cd lean && lake build verified_cli DayEntry:static Verified:static)
-            (cd rust && cargo build --release --offline)
+            # ⚠ `-p day-shell`, not the whole workspace. `rust/backend` joined
+            # the workspace in #982 and this derivation exports the Lean host
+            # ALONE — without the selector, the production image build compiles
+            # the backend (sqlx with the full house feature list, tokio
+            # multi-thread, chrono) for a binary it then does not install. The
+            # vendor set still covers the whole lockfile, because that is what
+            # `Cargo.lock` describes; only the compile is narrowed.
+            (cd rust && cargo build --release --offline -p day-shell)
           '';
           installPhase = ''
             mkdir -p $out/bin

@@ -1,0 +1,32 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The house sqlx line (#982): crate, version and FULL feature list matching
+# `tasks`, `messages`, `life`, `coach`, `fleetwatch` and `signal`. `day-shell`
+# deliberately took a subset because it is a Lean host with two reads; this is
+# the backend those repos are siblings of, so it matches them exactly.
+#
+# ⚠ RUNTIME QUERIES ONLY — `sqlx::query(…)` / `query_as(…)`, never the checked
+# `query!` macros. The `macros` feature is present because the siblings carry
+# it, not as licence to use it: the checked forms need a live database or a
+# committed `.sqlx` cache at COMPILE time, and no repo here has one. Reaching
+# for `query!` breaks the image build for a benefit nothing else here takes.
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "mysql",
+    "chrono",
+    "json",
+    "derive",
+    "macros",
+    "migrate",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+# Errors that carry WHICH env var was missing rather than a bare `None`. The
+# whole value of the config layer is refusing to start with a specific reason.
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
