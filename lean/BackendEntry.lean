@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import Verified.Backfill
 import Verified.FitbitTz
+import Verified.Token
 import Verified.Sync
 
 /-!
@@ -175,6 +176,34 @@ def dispatch (j : Json) : Json :=
     match ints? j "times" with
     | some ts => tzChoiceJson (Verified.FitbitTz.decideTz ts (optInt? j "seedUtc"))
     | none => err "decideTz: times required"
+  | some "forwardWindow" =>
+    match str? j "today" with
+    | some t =>
+      (match Verified.Sync.forwardWindow t (str? j "storedCursor") with
+       | none => Json.mkObj [("value", Json.null)]
+       | some (s, e) =>
+         Json.mkObj [("value", Json.mkObj [("start", Json.str s), ("end", Json.str e)])])
+    | none => err "forwardWindow: today required"
+  | some "decideTokenUse" =>
+    match int? j "nowMs", int? j "expiresAtMs" with
+    | some n, some e =>
+      Json.mkObj [("kind", Json.str
+        (match Verified.Token.decideTokenUse n e with | .use => "use" | .refresh => "refresh"))]
+    | _, _ => err "decideTokenUse: nowMs, expiresAtMs required"
+  | some "classifyRefreshStatus" =>
+    match int? j "status" with
+    | some s =>
+      Json.mkObj [("kind", Json.str
+        (match Verified.Token.classifyRefreshStatus s with
+         | .rotated => "rotated"
+         | .reauthRequired => "reauthRequired"
+         | .transient => "transient"))]
+    | none => err "classifyRefreshStatus: status required"
+  | some "expiryFromNow" =>
+    match int? j "nowMs" with
+    | some n =>
+      Json.mkObj [("value", Json.num (Verified.Token.expiryFromNow n (optInt? j "expiresInS")))]
+    | none => err "expiryFromNow: nowMs required"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]

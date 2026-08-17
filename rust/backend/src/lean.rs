@@ -303,6 +303,77 @@ pub fn order_by_cursor_recency(
 }
 
 #[derive(Deserialize)]
+struct Kind {
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct IntValue {
+    value: i64,
+}
+
+/// See `Verified.Sync.forwardWindow`. `None` means a date did not parse.
+pub fn forward_window(
+    today: &str,
+    stored_cursor: Option<&str>,
+) -> Result<Option<(String, String)>> {
+    let r: OptWindow = call_json(&serde_json::json!({
+        "op": "forwardWindow", "today": today, "storedCursor": stored_cursor,
+    }))?;
+    Ok(r.value.map(|w| (w.start, w.end)))
+}
+
+/// Whether a cached access token can still be used. See
+/// `Verified.Token.decideTokenUse`.
+pub fn token_needs_refresh(now_ms: i64, expires_at_ms: i64) -> Result<bool> {
+    let k: Kind = call_json(&serde_json::json!({
+        "op": "decideTokenUse", "nowMs": now_ms, "expiresAtMs": expires_at_ms,
+    }))?;
+    match k.kind.as_str() {
+        "use" => Ok(false),
+        "refresh" => Ok(true),
+        other => Err(anyhow!("unknown token action: {other}")),
+    }
+}
+
+/// What a refresh response means. See `Verified.Token.RefreshOutcome`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshOutcome {
+    /// 2xx — new tokens to persist.
+    Rotated,
+    /// 4xx — the refresh token is dead. ⚠ DURABLE: flips `needs_reauth`.
+    ReauthRequired,
+    /// Anything else, 3xx and 5xx included. Retry later; change nothing.
+    Transient,
+}
+
+/// See `Verified.Token.classifyRefreshStatus`.
+///
+/// ⚠ A FAILED CALL MUST NOT BE READ AS `ReauthRequired`. That answer stops the
+/// sync until somebody re-links the account by hand, so an undecidable status
+/// is `Transient` — the outcome that changes nothing and retries.
+pub fn classify_refresh_status(status: u16) -> Result<RefreshOutcome> {
+    let k: Kind = call_json(&serde_json::json!({
+        "op": "classifyRefreshStatus", "status": status,
+    }))?;
+    Ok(match k.kind.as_str() {
+        "rotated" => RefreshOutcome::Rotated,
+        "reauthRequired" => RefreshOutcome::ReauthRequired,
+        "transient" => RefreshOutcome::Transient,
+        other => return Err(anyhow!("unknown refresh outcome: {other}")),
+    })
+}
+
+/// See `Verified.Token.expiryFromNow`. `None` for `expires_in` takes Fitbit's
+/// documented eight-hour default.
+pub fn expiry_from_now(now_ms: i64, expires_in_s: Option<i64>) -> Result<i64> {
+    let r: IntValue = call_json(&serde_json::json!({
+        "op": "expiryFromNow", "nowMs": now_ms, "expiresInS": expires_in_s,
+    }))?;
+    Ok(r.value)
+}
+
+#[derive(Deserialize)]
 struct OptIndex {
     value: Option<usize>,
 }

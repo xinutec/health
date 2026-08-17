@@ -277,6 +277,91 @@ fn the_lean_decisions_answer_through_the_ffi() {
     );
     assert!(order(vec![]).is_empty());
 
+    // ---- the forward window -------------------------------------------------
+    let win = |today: &str, cursor: Option<&str>| lean::forward_window(today, cursor).unwrap();
+    assert_eq!(
+        win("2026-08-17", None),
+        Some(("2026-07-18".to_string(), "2026-08-17".to_string())),
+        "a first-ever sync reaches 30 days back"
+    );
+    assert_eq!(
+        win("2026-08-17", Some("2026-08-01")),
+        Some(("2026-08-01".to_string(), "2026-08-17".to_string())),
+        "a cursor older than the overlap start is used as given"
+    );
+    // ⚠ THE RULE. A cursor NEWER than the overlap start is pulled BACK to it,
+    // because Fitbit finalises a day's sleep only after you wake and revises
+    // recent days — an advanced cursor would skip them permanently.
+    assert_eq!(
+        win("2026-08-17", Some("2026-08-17")),
+        Some(("2026-08-15".to_string(), "2026-08-17".to_string()))
+    );
+    assert_eq!(
+        win("2024-03-01", Some("2024-03-01")),
+        Some(("2024-02-28".to_string(), "2024-03-01".to_string())),
+        "the overlap crosses a leap boundary via Civil, not string arithmetic"
+    );
+    for (today, cursor) in [("garbage", None), ("2026-08-17", Some("2026-02-30"))] {
+        assert_eq!(
+            win(today, cursor),
+            None,
+            "a malformed date refuses rather than being compounded"
+        );
+    }
+
+    // ---- the token decisions ------------------------------------------------
+    const SKEW_MS: i64 = 5 * 60 * 1000;
+    assert!(
+        !lean::token_needs_refresh(0, 3_600_000).unwrap(),
+        "well inside the window"
+    );
+    assert!(!lean::token_needs_refresh(0, SKEW_MS + 1).unwrap());
+    // The comparison is strict: exactly at the skew boundary refreshes.
+    assert!(lean::token_needs_refresh(0, SKEW_MS).unwrap());
+    assert!(lean::token_needs_refresh(2000, 1000).unwrap(), "expired");
+
+    use lean::RefreshOutcome as O;
+    for (status, want) in [
+        (200u16, O::Rotated),
+        (201, O::Rotated),
+        (299, O::Rotated),
+        (199, O::Transient),
+        // ⚠ 3xx is TRANSIENT, not a re-auth: `res.ok` is 200–299 only.
+        (300, O::Transient),
+        (301, O::Transient),
+        (399, O::Transient),
+        (400, O::ReauthRequired),
+        (401, O::ReauthRequired),
+        (403, O::ReauthRequired),
+        (429, O::ReauthRequired),
+        (499, O::ReauthRequired),
+        // ⚠ 5xx MUST NOT flip the durable flag. Getting this wrong forces a
+        // pointless re-link and destroys the evidence that it was wrong.
+        (500, O::Transient),
+        (503, O::Transient),
+        (599, O::Transient),
+        (0, O::Transient),
+        (600, O::Transient),
+    ] {
+        assert_eq!(
+            lean::classify_refresh_status(status).unwrap(),
+            want,
+            "status {status}"
+        );
+    }
+
+    assert_eq!(lean::expiry_from_now(1000, Some(3600)).unwrap(), 3_601_000);
+    assert_eq!(
+        lean::expiry_from_now(1000, None).unwrap(),
+        1000 + 8 * 3600 * 1000,
+        "Fitbit's documented default when expires_in is absent"
+    );
+    assert_eq!(
+        lean::expiry_from_now(1000, Some(0)).unwrap(),
+        1000,
+        "a zero expires_in is honoured, not silently replaced with eight hours"
+    );
+
     // ---- a bad request is an error, not a wrong answer ----------------------
     // The dispatch reports `{"error": …}` for anything it cannot serve, and the
     // Rust side must surface that rather than decode it as a verdict.

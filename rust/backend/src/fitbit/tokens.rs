@@ -27,11 +27,12 @@ use chrono::{DateTime, Utc};
 use sqlx::MySqlPool;
 use tokio::sync::Mutex;
 
-/// Refresh at least this long before expiry.
-const REFRESH_SKEW: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
+use crate::lean;
 
-/// Fitbit's default when the response omits `expires_in`.
-const DEFAULT_EXPIRES_IN_SEC: i64 = 8 * 3600;
+// ⚠ THE SKEW AND THE DEFAULT EXPIRY ARE NOT HERE ANY MORE. Both live in
+// `Verified/Token.lean` with their boundaries guarded, because both decide
+// whether a token is usable and a wrong answer is invisible until a request
+// fails with it.
 
 #[derive(Debug, Clone)]
 pub struct FitbitTokens {
@@ -127,7 +128,10 @@ impl TokenStore {
         }
         let current = held.as_ref().expect("just loaded").clone();
 
-        if Utc::now() < current.expires_at - REFRESH_SKEW {
+        if !lean::token_needs_refresh(
+            Utc::now().timestamp_millis(),
+            current.expires_at.timestamp_millis(),
+        )? {
             return Ok(current);
         }
 
@@ -182,20 +186,26 @@ async fn refresh(
     let status = res.status();
     let body = res.text().await.context("reading refresh response")?;
 
-    if !status.is_success() {
-        // 4xx: the refresh token is dead. Permanent — flip the DB status so
-        // /api/me surfaces "needs_reauth". 5xx and network errors are transient
-        // and the caller may retry, so they must NOT flip it.
-        if status.is_client_error() {
+    // ⚠ THE CLASSIFICATION IS LEAN'S, not `status.is_client_error()`. 4xx flips
+    // a DURABLE, user-visible flag: `/api/me` surfaces `needs_reauth` and the
+    // sync stops until somebody re-links by hand. 5xx is Fitbit having a bad
+    // minute, and 3xx is neither — `res.ok` covers 200–299 only, so the
+    // TypeScript falls through a redirect to its generic throw. All three
+    // boundaries are guarded in `Verified/Token.lean`.
+    match lean::classify_refresh_status(status.as_u16())? {
+        lean::RefreshOutcome::Rotated => {}
+        lean::RefreshOutcome::ReauthRequired => {
             mark_reauth_required(pool, user_id).await?;
             return Err(TokenError::ReauthRequired {
                 status: status.as_u16(),
                 body,
             });
         }
-        return Err(TokenError::Other(anyhow::anyhow!(
-            "Fitbit token refresh failed: {status} {body}"
-        )));
+        lean::RefreshOutcome::Transient => {
+            return Err(TokenError::Other(anyhow::anyhow!(
+                "Fitbit token refresh failed: {status} {body}"
+            )));
+        }
     }
 
     #[derive(serde::Deserialize)]
@@ -206,14 +216,18 @@ async fn refresh(
     }
     let data: RefreshBody =
         serde_json::from_str(&body).context("parsing fitbit refresh response")?;
-    let expires_in = data.expires_in.unwrap_or(DEFAULT_EXPIRES_IN_SEC);
+    // The expiry, and the eight-hour default when Fitbit omits `expires_in`,
+    // are Lean's too — a wrong default hands out a token already past its life.
+    let expires_at_ms = lean::expiry_from_now(Utc::now().timestamp_millis(), data.expires_in)?;
+    let expires_at = DateTime::from_timestamp_millis(expires_at_ms)
+        .ok_or_else(|| anyhow::anyhow!("refresh expiry out of range: {expires_at_ms}"))?;
     let tokens = FitbitTokens {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
-        expires_at: Utc::now() + chrono::TimeDelta::seconds(expires_in),
+        expires_at,
     };
     persist(pool, user_id, &tokens).await?;
-    tracing::info!("Fitbit token refreshed for user={user_id} (expires in {expires_in}s)");
+    tracing::info!("Fitbit token refreshed for user={user_id} (expires {expires_at})");
     Ok(tokens)
 }
 

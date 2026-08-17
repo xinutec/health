@@ -128,6 +128,49 @@ def dateRangeInclusive (startDate endDate : String) (maxDays : Int) : Option (Li
     else some (daysFrom zs (ze - zs + 1).toNat)
   | _, _ => none
 
+/-! ## The forward window -/
+
+/-- Forward sync always re-queries at least this many days, however far the
+stored cursor has advanced. -/
+def SYNC_OVERLAP_DAYS : Int := 2
+
+/-- How far back a first-ever forward sync reaches. -/
+def SYNC_DEFAULT_DAYS_BACK : Int := 30
+
+/-- The `[start, today]` window the forward pass fetches.
+
+⚠ THE OVERLAP IS NOT A SAFETY MARGIN, IT IS THE POINT. Fitbit finalises a day's
+sleep and biometrics only after you wake, and revises recent days afterwards. A
+window of just `[cursor, today]` would permanently miss anything Fitbit
+completed after the cursor moved past that date — last night's sleep, if every
+sync that day ran while it was still being recorded. So the start is the EARLIER
+of the stored cursor and today-minus-overlap, never the cursor alone.
+
+Re-fetching is safe because every write on this path is an upsert or a
+delete-then-insert, which is a property of the fetchers rather than of this
+function, and is why the overlap costs only a few cheap calls.
+
+`none` when `today` does not parse, or when a stored cursor is present and does
+not — the same refusal as the backfill cursor, and for the same reason: a
+malformed date must not be compounded into a window. -/
+def forwardWindow (today : String) (storedCursor : Option String) : Option (String × String) :=
+  match Verified.Civil.parseDate today with
+  | none => none
+  | some (y, m, d) =>
+    let z := Verified.Civil.daysFromCivil y m d
+    let dayBack := fun (n : Int) =>
+      let (yy, mm, dd) := Verified.Civil.civilFromDays (z - n)
+      Verified.Civil.formatDate yy mm dd
+    let overlapStart := dayBack SYNC_OVERLAP_DAYS
+    match storedCursor with
+    | none => some (dayBack SYNC_DEFAULT_DAYS_BACK, today)
+    | some c =>
+      match Verified.Civil.parseDate c with
+      | none => none
+      -- Lexicographic, exact for fixed-width `YYYY-MM-DD`, and what the
+      -- TypeScript compares.
+      | some _ => some (if c < overlapStart then c else overlapStart, today)
+
 /-! ## Guards
 
 Values match `src/backfill.ts` and `src/fitbit/rate-limit.ts`, and both sides of
@@ -200,5 +243,25 @@ every boundary are named — the edges are where these are wrong. -/
 #guard dateRangeInclusive "2026-08-15" "" 400 == none
 #guard dateRangeInclusive "2026-8-15" "2026-08-17" 400 == none
 #guard dateRangeInclusive "2026-02-30" "2026-03-05" 400 == none
+
+-- No cursor: a first-ever sync reaches 30 days back.
+#guard forwardWindow "2026-08-17" none == some ("2026-07-18", "2026-08-17")
+-- A cursor OLDER than the overlap start is used as given.
+#guard forwardWindow "2026-08-17" (some "2026-08-01") == some ("2026-08-01", "2026-08-17")
+-- ⚠ A cursor NEWER than the overlap start is pulled BACK to it. This is the
+-- whole rule: an advanced cursor must not skip days Fitbit has since revised.
+#guard forwardWindow "2026-08-17" (some "2026-08-17") == some ("2026-08-15", "2026-08-17")
+#guard forwardWindow "2026-08-17" (some "2026-08-16") == some ("2026-08-15", "2026-08-17")
+-- Exactly at the overlap start, either branch gives the same answer.
+#guard forwardWindow "2026-08-17" (some "2026-08-15") == some ("2026-08-15", "2026-08-17")
+-- The overlap crosses a month and a leap boundary via `Civil`, not arithmetic
+-- on the string.
+#guard forwardWindow "2026-03-01" (some "2026-03-01") == some ("2026-02-27", "2026-03-01")
+#guard forwardWindow "2024-03-01" (some "2024-03-01") == some ("2024-02-28", "2024-03-01")
+#guard forwardWindow "2026-01-01" none == some ("2025-12-02", "2026-01-01")
+-- A malformed date refuses rather than being compounded into a window.
+#guard forwardWindow "garbage" none == none
+#guard forwardWindow "2026-08-17" (some "not-a-date") == none
+#guard forwardWindow "2026-08-17" (some "2026-02-30") == none
 
 end Verified.Sync
