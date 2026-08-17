@@ -449,6 +449,64 @@ struct Window {
 }
 
 #[derive(Deserialize)]
+struct OptChunks {
+    value: Option<Vec<Window>>,
+}
+
+/// How many days of PhoneTrack history one request asks for.
+/// Mirrors `Verified.Sync.TRACK_CHUNK_DAYS`.
+pub const TRACK_CHUNK_DAYS: i64 = 7;
+
+/// How many chunks one tz-inference window may be split into.
+/// Mirrors `Verified.Sync.MAX_TRACK_CHUNKS`.
+pub const MAX_TRACK_CHUNKS: i64 = 60;
+
+/// See `Verified.Sync.chunkRange`.
+///
+/// As with [`date_range_inclusive`], the Lean `none` is an `Err` and NOT an
+/// empty list: empty means the span asks for nothing, `none` means it was
+/// malformed or would take more requests than the bound allows.
+///
+/// ⚠ Adjacent chunks share an endpoint by design, so a fix on a boundary day is
+/// fetched twice. See the Lean docstring for why that is kept.
+pub fn chunk_range(
+    start: &str,
+    end: &str,
+    days: i64,
+    max_chunks: i64,
+) -> Result<Vec<(String, String)>> {
+    let r: OptChunks = call_json(&serde_json::json!({
+        "op": "chunkRange", "start": start, "end": end,
+        "days": days, "maxChunks": max_chunks,
+    }))?;
+    let chunks = r.value.ok_or_else(|| {
+        anyhow!(
+            "refused track range {start}..{end}: unparseable, \
+             a non-positive step, or more than {max_chunks} chunks of {days} days"
+        )
+    })?;
+    Ok(chunks.into_iter().map(|w| (w.start, w.end)).collect())
+}
+
+#[derive(Deserialize)]
+struct OptInt {
+    value: Option<i64>,
+}
+
+/// See `Verified.Civil.midnightUtc` — a `YYYY-MM-DD` as Unix SECONDS at UTC
+/// midnight.
+///
+/// ⚠ Stricter than the `new Date(s)` the TypeScript used, and that is the
+/// point. `new Date("2026-02-30")` yields the 2nd of March and
+/// `new Date("nonsense")` yields `NaN`, whose `getTime()/1000` floors to `NaN`
+/// and goes into a query string as the literal text `NaN`. Here both refuse.
+pub fn midnight_utc(date: &str) -> Result<i64> {
+    let r: OptInt = call_json(&serde_json::json!({ "op": "midnightUtc", "date": date }))?;
+    r.value
+        .ok_or_else(|| anyhow!("not a calendar date: {date:?}"))
+}
+
+#[derive(Deserialize)]
 struct OptWindow {
     value: Option<Window>,
 }

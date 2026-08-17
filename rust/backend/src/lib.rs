@@ -54,6 +54,7 @@ pub mod db;
 pub mod error;
 pub mod fitbit;
 pub mod lean;
+pub mod nextcloud;
 pub mod routes;
 pub mod state;
 pub mod sync_state;

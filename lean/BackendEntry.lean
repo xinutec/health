@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import Verified.Backfill
+import Verified.Civil
 import Verified.FitbitTz
 import Verified.Token
 import Verified.Sync
@@ -140,6 +141,23 @@ def dispatch (j : Json) : Json :=
       | none => Json.mkObj [("value", Json.null)]
       | some ds => Json.mkObj [("value", Json.arr (ds.map Json.str).toArray)]
     | _, _, _ => err "dateRangeInclusive: start, end, maxDays required"
+  | some "chunkRange" =>
+    match str? j "start", str? j "end", int? j "days", int? j "maxChunks" with
+    | some s, some e, some d, some m =>
+      match Verified.Sync.chunkRange s e d m with
+      | none => Json.mkObj [("value", Json.null)]
+      | some cs =>
+        Json.mkObj [("value", Json.arr (cs.map (fun (a, b) =>
+          Json.mkObj [("start", Json.str a), ("end", Json.str b)])).toArray)]
+    | _, _, _, _ => err "chunkRange: start, end, days, maxChunks required"
+  | some "midnightUtc" =>
+    match str? j "date" with
+    | some d =>
+      Json.mkObj [("value",
+        match Verified.Civil.midnightUtc d with
+        | none => Json.null
+        | some s => Json.num s)]
+    | none => err "midnightUtc: date required"
   | some "decideBackfillStep" =>
     match int? j "remaining", int? j "emptyStreak", int? j "maxEmpty",
           str? j "cursor", str? j "floor" with
