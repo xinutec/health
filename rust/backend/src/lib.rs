@@ -56,3 +56,4 @@ pub mod fitbit;
 pub mod routes;
 pub mod state;
 pub mod sync_state;
+pub mod timezone;

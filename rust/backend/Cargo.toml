@@ -49,3 +49,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 # whole value of the config layer is refusing to start with a specific reason.
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The IANA zone database. Fitbit sends a wall clock with no offset, so turning
+# one into an instant needs real zone data. Version matches the fleet.
+chrono-tz = "0.10"
