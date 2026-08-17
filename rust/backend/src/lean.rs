@@ -140,6 +140,168 @@ pub fn prev_day_bounded(date: &str, floor: &str) -> Result<Option<String>> {
     Ok(r.value)
 }
 
+/// Why a backfill stream stopped for good. See
+/// `Verified.Backfill.CompleteReason` — the three look identical in
+/// `sync_state` and mean different things, so the reason is carried out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompleteReason {
+    ReachedFloor,
+    CursorUnusable,
+    EmptyStreak,
+}
+
+impl CompleteReason {
+    fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "reachedFloor" => Self::ReachedFloor,
+            "cursorUnusable" => Self::CursorUnusable,
+            "emptyStreak" => Self::EmptyStreak,
+            other => return Err(anyhow!("unknown complete reason: {other}")),
+        })
+    }
+}
+
+/// What an intraday stream does next. See `Verified.Backfill.Step`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackfillStep {
+    /// Fetch this day, then call again with it as the cursor.
+    Fetch { date: String },
+    /// Stop for this run. Nothing durable is written.
+    Pause,
+    /// Stop for good, and record it.
+    Complete { reason: CompleteReason },
+}
+
+/// What a range stream does next. See `Verified.Backfill.RangeStep`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RangeBackfillStep {
+    /// Fetch this inclusive window, then call again with `start` as the cursor.
+    Fetch {
+        start: String,
+        end: String,
+    },
+    Pause,
+    Complete {
+        reason: CompleteReason,
+    },
+}
+
+#[derive(Deserialize)]
+struct StepWire {
+    kind: String,
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    start: Option<String>,
+    #[serde(default)]
+    end: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+impl StepWire {
+    fn reason(&self) -> Result<CompleteReason> {
+        CompleteReason::parse(
+            self.reason
+                .as_deref()
+                .ok_or_else(|| anyhow!("complete without a reason"))?,
+        )
+    }
+}
+
+/// See `Verified.Backfill.decideStep`.
+///
+/// `cursor` is the OLDEST day already fetched; the answer names the day before
+/// it. ⚠ `Complete` is DURABLE — it writes a flag that stops the stream being
+/// walked again — so the caller must not treat a failed call as one. There is
+/// no fallback here for the same reason [`decide_rate_limit_wait`]'s caller has
+/// none: an undecidable step is a stop, not a guess.
+pub fn decide_backfill_step(
+    remaining: i64,
+    empty_streak: i64,
+    max_empty: i64,
+    cursor: &str,
+    floor: &str,
+) -> Result<BackfillStep> {
+    let w: StepWire = call_json(&serde_json::json!({
+        "op": "decideBackfillStep",
+        "remaining": remaining,
+        "emptyStreak": empty_streak,
+        "maxEmpty": max_empty,
+        "cursor": cursor,
+        "floor": floor,
+    }))?;
+    Ok(match w.kind.as_str() {
+        "fetch" => BackfillStep::Fetch {
+            date: w
+                .date
+                .clone()
+                .ok_or_else(|| anyhow!("fetch without a date"))?,
+        },
+        "pause" => BackfillStep::Pause,
+        "complete" => BackfillStep::Complete {
+            reason: w.reason()?,
+        },
+        other => return Err(anyhow!("unknown backfill step: {other}")),
+    })
+}
+
+/// See `Verified.Backfill.decideRangeStep`.
+pub fn decide_range_backfill_step(
+    remaining: i64,
+    empty_streak: i64,
+    max_empty: i64,
+    window_days: i64,
+    cursor: &str,
+    floor: &str,
+) -> Result<RangeBackfillStep> {
+    let w: StepWire = call_json(&serde_json::json!({
+        "op": "decideRangeBackfillStep",
+        "remaining": remaining,
+        "emptyStreak": empty_streak,
+        "maxEmpty": max_empty,
+        "windowDays": window_days,
+        "cursor": cursor,
+        "floor": floor,
+    }))?;
+    Ok(match w.kind.as_str() {
+        "fetch" => RangeBackfillStep::Fetch {
+            start: w
+                .start
+                .clone()
+                .ok_or_else(|| anyhow!("fetch without a start"))?,
+            end: w
+                .end
+                .clone()
+                .ok_or_else(|| anyhow!("fetch without an end"))?,
+        },
+        "pause" => RangeBackfillStep::Pause,
+        "complete" => RangeBackfillStep::Complete {
+            reason: w.reason()?,
+        },
+        other => return Err(anyhow!("unknown range backfill step: {other}")),
+    })
+}
+
+/// See `Verified.Backfill.orderByCursorRecency`.
+///
+/// `streams` is `(name, stored cursor)`; a `None` cursor takes `fallback` and
+/// therefore sorts to the front.
+pub fn order_by_cursor_recency(
+    streams: &[(String, Option<String>)],
+    fallback: &str,
+) -> Result<Vec<String>> {
+    let wire: Vec<serde_json::Value> = streams
+        .iter()
+        .map(|(name, cursor)| serde_json::json!({"name": name, "cursor": cursor}))
+        .collect();
+    let r: OptDays = call_json(&serde_json::json!({
+        "op": "orderByCursorRecency", "streams": wire, "fallback": fallback,
+    }))?;
+    r.value
+        .ok_or_else(|| anyhow!("orderByCursorRecency returned no order"))
+}
+
 #[derive(Deserialize)]
 struct OptDays {
     value: Option<Vec<String>>,

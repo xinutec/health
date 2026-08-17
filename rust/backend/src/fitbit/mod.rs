@@ -13,6 +13,7 @@
 //!
 //! ⚠ THIS DOES NOT MOVE THE SHUTDOWN DATE. #260 stays open and still due.
 
+pub mod backfill_runner;
 pub mod client;
 pub mod rate_limit;
 pub mod sync;

@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import Verified.Backfill
 import Verified.Sync
 
 /-!
@@ -57,6 +58,38 @@ private def optStr : Option String → Json
   | none => Json.null
   | some s => Json.str s
 
+private def reasonStr : Verified.Backfill.CompleteReason → String
+  | .reachedFloor => "reachedFloor"
+  | .cursorUnusable => "cursorUnusable"
+  | .emptyStreak => "emptyStreak"
+
+private def stepJson : Verified.Backfill.Step → Json
+  | .fetch d => Json.mkObj [("kind", Json.str "fetch"), ("date", Json.str d)]
+  | .pause => Json.mkObj [("kind", Json.str "pause")]
+  | .complete r =>
+    Json.mkObj [("kind", Json.str "complete"), ("reason", Json.str (reasonStr r))]
+
+private def rangeStepJson : Verified.Backfill.RangeStep → Json
+  | .fetch s e =>
+    Json.mkObj [("kind", Json.str "fetch"), ("start", Json.str s), ("end", Json.str e)]
+  | .pause => Json.mkObj [("kind", Json.str "pause")]
+  | .complete r =>
+    Json.mkObj [("kind", Json.str "complete"), ("reason", Json.str (reasonStr r))]
+
+/-- `[{"name": …, "cursor": … | null}, …]`. A stream whose cursor is absent or
+`null` takes the fallback, which is the whole point of the ordering — an
+unstarted stream must not queue behind a deep backfill. -/
+private def streams? (j : Json) : Option (List (String × Option String)) :=
+  match j.getObjVal? "streams" with
+  | .error _ => none
+  | .ok v =>
+    match v.getArr? with
+    | .error _ => none
+    | .ok arr => arr.toList.mapM fun e =>
+      match str? e "name" with
+      | none => none
+      | some n => some (n, str? e "cursor")
+
 def dispatch (j : Json) : Json :=
   match str? j "op" with
   | none => err "missing op"
@@ -83,6 +116,26 @@ def dispatch (j : Json) : Json :=
       | none => Json.mkObj [("value", Json.null)]
       | some ds => Json.mkObj [("value", Json.arr (ds.map Json.str).toArray)]
     | _, _, _ => err "dateRangeInclusive: start, end, maxDays required"
+  | some "decideBackfillStep" =>
+    match int? j "remaining", int? j "emptyStreak", int? j "maxEmpty",
+          str? j "cursor", str? j "floor" with
+    | some r, some s, some m, some c, some f =>
+      stepJson (Verified.Backfill.decideStep r s m c f)
+    | _, _, _, _, _ =>
+      err "decideBackfillStep: remaining, emptyStreak, maxEmpty, cursor, floor required"
+  | some "decideRangeBackfillStep" =>
+    match int? j "remaining", int? j "emptyStreak", int? j "maxEmpty", int? j "windowDays",
+          str? j "cursor", str? j "floor" with
+    | some r, some s, some m, some w, some c, some f =>
+      rangeStepJson (Verified.Backfill.decideRangeStep r s m w c f)
+    | _, _, _, _, _, _ =>
+      err "decideRangeBackfillStep: remaining, emptyStreak, maxEmpty, windowDays, cursor, floor required"
+  | some "orderByCursorRecency" =>
+    match streams? j, str? j "fallback" with
+    | some ss, some f =>
+      Json.mkObj [("value",
+        Json.arr ((Verified.Backfill.orderByCursorRecency ss f).map Json.str).toArray)]
+    | _, _ => err "orderByCursorRecency: streams, fallback required"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]

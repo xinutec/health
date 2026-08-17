@@ -164,6 +164,119 @@ fn the_lean_decisions_answer_through_the_ffi() {
         );
     }
 
+    // ---- the backfill walk --------------------------------------------------
+    use lean::BackfillStep as S;
+    use lean::CompleteReason as R;
+    let fetch = |d: &str| S::Fetch {
+        date: d.to_string(),
+    };
+    let done = |r| S::Complete { reason: r };
+
+    assert_eq!(
+        lean::decide_backfill_step(150, 0, 14, "2026-08-17", FLOOR).unwrap(),
+        fetch("2026-08-16"),
+        "the ordinary step is the day before the cursor"
+    );
+    // The budget boundary is `<=`.
+    assert_eq!(
+        lean::decide_backfill_step(15, 0, 14, "2026-08-17", FLOOR).unwrap(),
+        S::Pause
+    );
+    assert_eq!(
+        lean::decide_backfill_step(16, 0, 14, "2026-08-17", FLOOR).unwrap(),
+        fetch("2026-08-16")
+    );
+    // The streak boundary is `>=`.
+    assert_eq!(
+        lean::decide_backfill_step(150, 14, 14, "2026-08-17", FLOOR).unwrap(),
+        done(R::EmptyStreak)
+    );
+    // ⚠ THE ONE THAT MATTERS. `complete` is durable — it stops the stream being
+    // walked again — so a spent budget must never reach it. With the streak
+    // unmet, an exhausted run can only pause.
+    assert_eq!(
+        lean::decide_backfill_step(0, 13, 14, "2026-08-17", FLOOR).unwrap(),
+        S::Pause,
+        "a rate-limited run must not conclude a stream is complete"
+    );
+    // The floor is a statement about the data, so it wins over both.
+    assert_eq!(
+        lean::decide_backfill_step(0, 20, 14, "2010-01-02", FLOOR).unwrap(),
+        done(R::ReachedFloor)
+    );
+    // ⚠ The runaway cursor, reported as its own reason rather than as the floor.
+    for bad in ["-000026-02", "not-a-date", "2026-2-3", "2026-02-30", ""] {
+        assert_eq!(
+            lean::decide_backfill_step(150, 0, 14, bad, FLOOR).unwrap(),
+            done(R::CursorUnusable),
+            "cursor {bad:?}"
+        );
+    }
+
+    // ---- the range walk -----------------------------------------------------
+    use lean::RangeBackfillStep as RS;
+    assert_eq!(
+        lean::decide_range_backfill_step(150, 0, 3, 30, "2026-08-17", FLOOR).unwrap(),
+        RS::Fetch {
+            start: "2026-07-18".to_string(),
+            end: "2026-08-16".to_string(),
+        },
+        "the window ends the day BEFORE the cursor and spans 30 inclusive days"
+    );
+    assert_eq!(
+        lean::decide_range_backfill_step(150, 0, 3, 30, "2010-01-20", FLOOR).unwrap(),
+        RS::Fetch {
+            start: FLOOR.to_string(),
+            end: "2010-01-19".to_string(),
+        },
+        "a window may straddle the floor but its start clamps up"
+    );
+    assert_eq!(
+        lean::decide_range_backfill_step(0, 2, 3, 30, "2026-08-17", FLOOR).unwrap(),
+        RS::Pause,
+        "same rule as the day walk: a spent budget pauses, it does not complete"
+    );
+    assert_eq!(
+        lean::decide_range_backfill_step(0, 3, 3, 30, "2026-08-17", FLOOR).unwrap(),
+        RS::Complete {
+            reason: R::EmptyStreak
+        }
+    );
+
+    // ---- stream priority ----------------------------------------------------
+    let order = |v: Vec<(&str, Option<&str>)>| {
+        let pairs: Vec<(String, Option<String>)> = v
+            .into_iter()
+            .map(|(n, c)| (n.to_string(), c.map(str::to_string)))
+            .collect();
+        lean::order_by_cursor_recency(&pairs, "2026-08-17").unwrap()
+    };
+    assert_eq!(
+        order(vec![
+            ("hr", Some("2024-03-01")),
+            ("steps", Some("2026-08-01")),
+            ("hrv", Some("2025-01-01")),
+        ]),
+        ["steps", "hrv", "hr"],
+        "most recent cursor first"
+    );
+    assert_eq!(
+        order(vec![("hr", Some("2024-03-01")), ("steps", None)]),
+        ["steps", "hr"],
+        "an unstarted stream takes the fallback and is not starved by a deep backfill"
+    );
+    // Stable, both ways round — so priority between equals is the caller's list
+    // order rather than a property of the sort.
+    assert_eq!(
+        order(vec![("a", Some("2026-01-01")), ("b", Some("2026-01-01"))]),
+        ["a", "b"]
+    );
+    assert_eq!(
+        order(vec![("b", Some("2026-01-01")), ("a", Some("2026-01-01"))]),
+        ["b", "a"]
+    );
+    assert!(order(vec![]).is_empty());
+
     // ---- a bad request is an error, not a wrong answer ----------------------
     // The dispatch reports `{"error": …}` for anything it cannot serve, and the
     // Rust side must surface that rather than decode it as a verdict.
