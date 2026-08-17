@@ -106,6 +106,37 @@ in  { name = "health"
         , argv = G.inDevShell [ "pnpm", "run", "check:cascade-parity" ]
         , timeout_s = 600
         }
+      , {-  The `*-refs.mts` generators, held to a committed snapshot.
+
+            A Lean port that is SERVED is protected from TS drift by the day gate
+            — which exists because `feefb75` moved a constant in `velocity.ts`
+            and the fold never got it. A port that is written but UNREACHABLE has
+            no such protection: the day gate compares arms, and an orphan is in
+            neither. 31 covered TS exports are in that state today (#1003).
+
+            What those orphans have instead is a `#guard` pinned to a constant
+            copied by hand from a run of the sibling refs file. Those refs import
+            the production TypeScript, so they are real parity evidence — but
+            nothing re-ran them, so if the TS moved the guard still passed. This
+            row is what re-runs them. All 69 generators, ~30 s, no database, no
+            network, and none of them reads the gitignored corpus, so it passes
+            on a clean checkout.
+
+            ⚠ GREEN DOES NOT MEAN NO TS DRIFTED, and the row is worth having
+            anyway. It holds what the generators PRINT; it cannot check that any
+            `#guard` agrees with them, because no machine-readable link from a
+            guard to a ref value exists. Measured by ablation rather than
+            asserted: every numeric constant in `src/geo/segments.ts` is caught,
+            36 perturbations for 36 catches, at a tuning-sized edit as well as a
+            gross one — one module of the 77 the refs import. The rest are
+            unmeasured. See the header of `refs-snapshot.mts`, including the one
+            unexplained reading recorded there.
+        -}
+        G.Check::{
+        , name = "the reference generators still agree with their snapshot"
+        , argv = G.inDevShell [ "pnpm", "run", "check:refs-snapshot" ]
+        , timeout_s = 600
+        }
       , {-  The check above pins the pass NAMES. It cannot pin a pass's BODY,
             and that is the gap this closes: `feefb75` added
             MINED_LABEL_MIN_DAYS to velocity.ts with no Lean counterpart, the

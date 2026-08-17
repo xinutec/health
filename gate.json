@@ -111,6 +111,21 @@
         "develop",
         "--no-warn-dirty",
         "--command",
+        "pnpm",
+        "run",
+        "check:refs-snapshot"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "the reference generators still agree with their snapshot",
+      "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
         "scripts/day-gate-smoke.sh"
       ],
       "cwd": ".",

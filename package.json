@@ -18,6 +18,8 @@
     "check:schema-types": "node scripts/check-schema-types.mjs",
     "check:frontend-unions": "node scripts/check-frontend-unions.mjs",
     "check:cascade-parity": "node scripts/check-cascade-parity.mjs",
+    "check:refs-snapshot": "tsx lean/experiments/refs-snapshot.mts --check",
+    "refs-snapshot": "tsx lean/experiments/refs-snapshot.mts",
     "lint": "biome check .",
     "lint:frontend": "cd frontend && pnpm run lint",
     "format": "biome check --write .",
