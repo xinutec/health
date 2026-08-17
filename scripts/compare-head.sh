@@ -29,8 +29,4 @@ cd "$SCRIPT_DIR/.."
 echo "==> building (lean)"
 (cd lean && lake build >/dev/null)
 
-# `npx tsx`, not `pnpm exec tsx`: tsx is not a dependency of this repo, so
-# `pnpm exec` cannot find it. The sibling compare-*.sh scripts all say
-# `pnpm exec tsx` and fail the same way here — the .mts files themselves carry
-# `#!/usr/bin/env -S npx tsx`, which is the invocation that actually resolves.
-exec npx tsx lean/experiments/compare-head.mts "$@"
+exec pnpm exec tsx lean/experiments/compare-head.mts "$@"
