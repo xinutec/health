@@ -48,6 +48,7 @@
 //   nix develop . --command node scripts/lean-port-coverage.mjs [--all]
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { reachableNames } from "./lean-reachability.mjs";
 
 function filesUnder(dir, ext) {
 	const out = [];
@@ -284,6 +285,88 @@ console.log(`    further along than these numbers say — by an amount this scri
 //
 // The authority is the manifest (`code/kubes/dhall/apps/health.dhall` in
 // xinutec/pippijn), not this list. Re-read it before trusting these lines.
+// WRITTEN is not REACHABLE, and this section exists because the two were quoted
+// as one number on 2026-08-17 while scoping how much TS the Lean port can delete.
+// Every export below is counted as covered above — by name or by a declared
+// rename — and no request can reach any of its Lean twins, so deleting its TS
+// would delete the working implementation. `snapToPlace` and `classifySegments`
+// are the clearest: complete, heavily #guard-ed, and called by nothing.
+//
+// Guards are exactly what disguises this. They run in `lake build`, so an orphan
+// looks more exercised than a served def with few of them. Reachability is
+// computed with guards contributing NO edges, which is the only way the
+// distinction shows up at all.
+const reach = reachableNames();
+const twinsLive = (e) =>
+	(definedIn.has(e) && reach.has(e)) ||
+	(claimedBy.get(e) ?? []).some((site) => reach.has(site.slice(site.lastIndexOf(".") + 1)));
+const orphaned = rows.flatMap((r) =>
+	r.base && r.have > 0
+		? exportsOf(r.base)
+				.filter((e) => (definedIn.has(e) || claimedBy.has(e)) && !twinsLive(e))
+				.map((e) => ({ base: r.base, e }))
+		: [],
+);
+// An orphaned twin splits two ways, and the split decides what to DO about it.
+// `classifyMode` was the one that forced this: no Lean caller, and its only TS
+// reference outside its own file is `tests/kalman.test.ts`. It is not an
+// incomplete port — it is dead on both sides, deletable today, and counting it as
+// port debt would overstate the work left. Whereas `classifySegments` is live TS
+// with an idle twin, which is the real gap.
+//
+// ⚠ CALLERS ARE SEARCHED ACROSS ALL OF `src/`, NOT `TS_ROOTS`. The first cut
+// reused TS_ROOTS — the roots of the SUBJECT — and so looked for callers of
+// `src/geo` + `src/hmm` exports only within `src/geo` + `src/hmm`. It called nine
+// functions dead and FIVE were live: `isNamedPlace` and `pickCurrentPlace` are
+// used by `src/routes/internal.ts`, the HTTP API, and three more by `src/cli/`.
+// Acting on that list would have deleted working API code. The corpus you search
+// for USES is not the corpus you are studying; a caller outside the scan is
+// invisible, and invisible reads as absent.
+//
+// `tests/` stays OUT, which is the opposite decision on purpose: a test-only
+// caller is precisely what makes something production-dead, so counting tests
+// would erase the distinction being drawn. `src/lean/` stays IN — a thunk there
+// is the live fallback arm, so a reference from it means "not dead".
+//
+// ⚠ A SAME-FILE CALLER STILL COUNTS. The first cut asked only "is it mentioned
+// in another file", and put `shortestPath` and `nearestVertex` under DEAD BOTH
+// SIDES — while `rail-snap.ts:505` calls both, in their own file, as the TS
+// fallback thunk `LEAN_RAIL` hands to the bridge. Deleting on that reading would
+// have removed the arm the tenant falls back to. So a name occurring more than
+// ONCE in its defining file is live: the definition is the first occurrence,
+// anything further is a use.
+//
+// That over-counts doc comments naming the function, which biases toward LIVE —
+// the same direction as the reachability graph's, and the only safe one here:
+// the cost of a false "dead" is deleting working code.
+const srcRefs = new Map(); // name -> Map(file -> occurrences)
+for (const base of tsFilesUnder("src")) {
+	const src = readFileSync(`src/${base}.ts`, "utf8");
+	for (const m of src.matchAll(/\b[a-z][a-zA-Z0-9_]*\b/g)) {
+		if (!srcRefs.has(m[0])) srcRefs.set(m[0], new Map());
+		const per = srcRefs.get(m[0]);
+		per.set(base, (per.get(base) ?? 0) + 1);
+	}
+}
+const tsLive = ({ base, e }) =>
+	[...(srcRefs.get(e) ?? new Map()).entries()].some(([f, n]) => (f === base ? n > 1 : n > 0));
+const gap = orphaned.filter(tsLive);
+const bothDead = orphaned.filter((o) => !tsLive(o));
+
+const coveredTotal = rows.reduce((n, r) => n + r.have, 0);
+console.log(`\n  REACHABLE vs WRITTEN — of ${coveredTotal} covered export(s), ${orphaned.length} have NO reachable Lean twin.`);
+console.log(`  These count as ported above and would delete NOTHING: the request cannot get to them.`);
+console.log(`    ${String(gap.length).padStart(3)} PORT GAP    live TS, idle twin — the twin has to be wired up`);
+console.log(`    ${String(bothDead.length).padStart(3)} DEAD BOTH SIDES  no src/ caller either — delete both, no port needed`);
+if (all) {
+	console.log(`  PORT GAP:`);
+	for (const { base, e } of gap) console.log(`    ${e.padEnd(36)} ${base}`);
+	console.log(`  DEAD BOTH SIDES:`);
+	for (const { base, e } of bothDead) console.log(`    ${e.padEnd(36)} ${base}`);
+} else {
+	console.log(`  (--all to list; scripts/lean-reachability.mjs explains the method and its error direction.)`);
+}
+
 console.log(`
   SERVE SURFACE (what actually executes for a request — a different question).
   All nine are \`on\` as of 2026-08-16:
