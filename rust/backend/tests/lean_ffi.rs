@@ -116,6 +116,54 @@ fn the_lean_decisions_answer_through_the_ffi() {
         );
     }
 
+    // ---- the forward day walk ----------------------------------------------
+    assert_eq!(
+        lean::date_range_inclusive("2026-08-15", "2026-08-17", 400).unwrap(),
+        ["2026-08-15", "2026-08-16", "2026-08-17"],
+        "inclusive of both ends"
+    );
+    assert_eq!(
+        lean::date_range_inclusive("2026-08-17", "2026-08-17", 400).unwrap(),
+        ["2026-08-17"],
+        "a single day is a one-element walk, not an empty one"
+    );
+    assert_eq!(
+        lean::date_range_inclusive("2024-02-28", "2024-03-01", 400).unwrap(),
+        ["2024-02-28", "2024-02-29", "2024-03-01"],
+        "the leap day comes from Civil, not from a day counter here"
+    );
+    assert!(
+        lean::date_range_inclusive("2026-08-17", "2026-08-15", 400)
+            .unwrap()
+            .is_empty(),
+        "backwards is empty — what a caught-up cursor asks for"
+    );
+    assert_eq!(
+        lean::date_range_inclusive("2026-08-01", "2026-08-03", 3)
+            .unwrap()
+            .len(),
+        3,
+        "exactly at the bound passes"
+    );
+    // ⚠ REFUSES RATHER THAN TRUNCATING. A shortened list would be a sync that
+    // quietly did less than it reported.
+    for (start, end, max) in [
+        ("2026-08-01", "2026-08-04", 3),
+        ("2026-08-01", "2026-08-01", 0),
+        // The TypeScript's silent-zero-days case: `new Date("garbage")` compares
+        // false against everything, so its loop body never runs and the caller
+        // is told the sync succeeded.
+        ("garbage", "2026-08-17", 400),
+        ("2026-08-15", "", 400),
+        ("2026-8-15", "2026-08-17", 400),
+        ("2026-02-30", "2026-03-05", 400),
+    ] {
+        assert!(
+            lean::date_range_inclusive(start, end, max).is_err(),
+            "dateRangeInclusive({start:?}, {end:?}, {max}) must refuse"
+        );
+    }
+
     // ---- a bad request is an error, not a wrong answer ----------------------
     // The dispatch reports `{"error": …}` for anything it cannot serve, and the
     // Rust side must surface that rather than decode it as a verdict.

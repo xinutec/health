@@ -86,6 +86,48 @@ def prevWindowBounded (endDate : String) (windowDays : Int) (floor : String)
         let start := Verified.Civil.formatDate sy sm sd
         some (if start < floor then floor else start, endDate)
 
+/-! ## Forward day walks -/
+
+/-- `count` consecutive days starting at day number `z`.
+
+Structural on `Nat`, so it terminates by construction rather than by a bound
+somebody remembered to check. -/
+private def daysFrom (z : Int) : Nat → List String
+  | 0 => []
+  | n + 1 =>
+    let (y, m, d) := Verified.Civil.civilFromDays z
+    Verified.Civil.formatDate y m d :: daysFrom (z + 1) n
+
+/-- The inclusive `[startDate, endDate]` list of days a forward sync walks.
+
+The TypeScript writes this as `for (let d = new Date(start); d <= new Date(end);
+d.setDate(d.getDate() + 1))` in three separate files, and that loop has two
+failure modes this shape removes:
+
+* AN UNPARSEABLE ENDPOINT SYNCS NOTHING, SILENTLY. `new Date("garbage")` is
+  `Invalid Date`, every comparison against it is `false`, so the loop body never
+  runs and the caller sees a successful sync of zero days. Here a bad endpoint
+  is `none` and the caller has to deal with it.
+* AN ABSURD RANGE IS WALKED IN FULL. A corrupt cursor naming year 9999 asks for
+  ~2.9 million days.
+
+⚠ `maxDays` REFUSES, it does not truncate. Returning a shortened list would be a
+sync that quietly did less than it reported; `none` is the caller's problem to
+handle. It is a contract bound on the request, not fuel for the recursion —
+`daysFrom` terminates without it.
+
+`startDate` after `endDate` is the empty list and NOT an error: that is the
+TypeScript's behaviour and it is what an already-caught-up cursor produces. -/
+def dateRangeInclusive (startDate endDate : String) (maxDays : Int) : Option (List String) :=
+  match Verified.Civil.parseDate startDate, Verified.Civil.parseDate endDate with
+  | some (sy, sm, sd), some (ey, em, ed) =>
+    let zs := Verified.Civil.daysFromCivil sy sm sd
+    let ze := Verified.Civil.daysFromCivil ey em ed
+    if ze < zs then some []
+    else if maxDays < 1 || ze - zs + 1 > maxDays then none
+    else some (daysFrom zs (ze - zs + 1).toNat)
+  | _, _ => none
+
 /-! ## Guards
 
 Values match `src/backfill.ts` and `src/fitbit/rate-limit.ts`, and both sides of
@@ -134,5 +176,29 @@ every boundary are named — the edges are where these are wrong. -/
 #guard prevWindowBounded "2010-01-01" 7 "2010-01-01" == none
 #guard prevWindowBounded "2009-12-31" 7 "2010-01-01" == none
 #guard prevWindowBounded "garbage" 7 "2010-01-01" == none
+
+#guard dateRangeInclusive "2026-08-15" "2026-08-17" 400
+  == some ["2026-08-15", "2026-08-16", "2026-08-17"]
+-- A single day is a one-element walk, not an empty one.
+#guard dateRangeInclusive "2026-08-17" "2026-08-17" 400 == some ["2026-08-17"]
+-- Month and leap-year rollovers come from `Civil`, not from a day counter here.
+#guard dateRangeInclusive "2026-02-27" "2026-03-01" 400
+  == some ["2026-02-27", "2026-02-28", "2026-03-01"]
+#guard dateRangeInclusive "2024-02-28" "2024-03-01" 400
+  == some ["2024-02-28", "2024-02-29", "2024-03-01"]
+#guard dateRangeInclusive "2025-12-30" "2026-01-02" 400
+  == some ["2025-12-30", "2025-12-31", "2026-01-01", "2026-01-02"]
+-- Backwards is empty, which is what a caught-up cursor asks for.
+#guard dateRangeInclusive "2026-08-17" "2026-08-15" 400 == some []
+-- The bound refuses rather than truncating, and it is `>` — exactly at it passes.
+#guard (dateRangeInclusive "2026-08-01" "2026-08-03" 3).map List.length == some 3
+#guard dateRangeInclusive "2026-08-01" "2026-08-04" 3 == none
+#guard dateRangeInclusive "2026-08-01" "2026-08-01" 0 == none
+#guard dateRangeInclusive "2026-08-01" "2026-08-01" (-1) == none
+-- ⚠ The silent-zero-days case the TypeScript has.
+#guard dateRangeInclusive "garbage" "2026-08-17" 400 == none
+#guard dateRangeInclusive "2026-08-15" "" 400 == none
+#guard dateRangeInclusive "2026-8-15" "2026-08-17" 400 == none
+#guard dateRangeInclusive "2026-02-30" "2026-03-05" 400 == none
 
 end Verified.Sync

@@ -30,6 +30,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use sqlx::MySqlPool;
 
+use super::TzSource;
 use crate::fitbit::client::{FitbitClient, FitbitError};
 use crate::timezone::wall_clock_to_utc_string;
 
@@ -64,16 +65,8 @@ pub struct StepsRow {
 
 /// The pure part: a response and a per-minute tz, as rows.
 ///
-/// `tz_for` is the caller's inference — forward sync passes one derived from
-/// PhoneTrack and the Fitbit profile, and the backward backfill passes one that
-/// always answers `None`, which writes `tz=NULL` rows for the backfill CLI to
-/// fill in later. Taking it as a closure keeps that choice at the call site
-/// rather than smuggling a mode flag in here.
-pub fn parse_steps_dataset(
-    body: &str,
-    date: &str,
-    tz_for: &dyn Fn(&str, &str) -> Option<String>,
-) -> Result<Vec<StepsRow>> {
+/// See [`TzSource`] for what the caller passes and why it is a closure.
+pub fn parse_steps_dataset(body: &str, date: &str, tz_for: TzSource<'_>) -> Result<Vec<StepsRow>> {
     let parsed: StepsResponse = serde_json::from_str(body).context("parsing steps response")?;
     let Some(intraday) = parsed.intraday else {
         return Ok(Vec::new());
@@ -104,7 +97,7 @@ pub async fn sync_steps_intraday(
     access_token: &str,
     user_id: &str,
     dates: &[String],
-    tz_for: &dyn Fn(&str, &str) -> Option<String>,
+    tz_for: TzSource<'_>,
 ) -> Result<usize, FitbitError> {
     let mut total = 0usize;
     for date in dates {

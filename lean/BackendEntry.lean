@@ -76,6 +76,13 @@ def dispatch (j : Json) : Json :=
       | some (s, e') =>
         Json.mkObj [("value", Json.mkObj [("start", Json.str s), ("end", Json.str e')])]
     | _, _, _ => err "prevWindowBounded: end, windowDays, floor required"
+  | some "dateRangeInclusive" =>
+    match str? j "start", str? j "end", int? j "maxDays" with
+    | some s, some e, some m =>
+      match Verified.Sync.dateRangeInclusive s e m with
+      | none => Json.mkObj [("value", Json.null)]
+      | some ds => Json.mkObj [("value", Json.arr (ds.map Json.str).toArray)]
+    | _, _, _ => err "dateRangeInclusive: start, end, maxDays required"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]

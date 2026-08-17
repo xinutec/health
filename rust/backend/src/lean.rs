@@ -141,6 +141,27 @@ pub fn prev_day_bounded(date: &str, floor: &str) -> Result<Option<String>> {
 }
 
 #[derive(Deserialize)]
+struct OptDays {
+    value: Option<Vec<String>>,
+}
+
+/// See `Verified.Sync.dateRangeInclusive`.
+///
+/// The Lean `none` becomes an `Err` rather than an empty range, and the two are
+/// deliberately not the same answer: empty means the cursor is caught up, and
+/// `none` means the request was malformed or absurdly large. Collapsing them is
+/// exactly the TypeScript bug this replaced — an unparseable date syncing zero
+/// days and reporting success.
+pub fn date_range_inclusive(start: &str, end: &str, max_days: i64) -> Result<Vec<String>> {
+    let r: OptDays = call_json(&serde_json::json!({
+        "op": "dateRangeInclusive", "start": start, "end": end, "maxDays": max_days,
+    }))?;
+    r.value.ok_or_else(|| {
+        anyhow!("refused date range {start}..{end}: unparseable, or wider than {max_days} days")
+    })
+}
+
+#[derive(Deserialize)]
 struct Window {
     start: String,
     end: String,
