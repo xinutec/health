@@ -303,6 +303,54 @@ pub fn order_by_cursor_recency(
 }
 
 #[derive(Deserialize)]
+struct OptIndex {
+    value: Option<usize>,
+}
+
+/// See `Verified.FitbitTz.nearestFix`.
+///
+/// ⚠ THE SPECIFICATION, NOT THE PRODUCTION PATH. It is a linear scan and the
+/// backend binary-searches instead — 86 400 rows a day of 1-second heart rate
+/// makes a JSON round trip per row untenable. This exists so
+/// `tests/tz_source.rs` can drive both over the same inputs and compare.
+pub fn nearest_fix_spec(times: &[i64], target: i64) -> Result<Option<usize>> {
+    let r: OptIndex = call_json(&serde_json::json!({
+        "op": "nearestFix", "times": times, "target": target,
+    }))?;
+    Ok(r.value)
+}
+
+/// What to stamp a Fitbit row with. See `Verified.FitbitTz.TzChoice`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TzChoice {
+    /// Use the account's profile zone, which may itself be absent.
+    Profile,
+    /// Look up the zone at this fix's coordinates.
+    Fix { index: usize },
+}
+
+#[derive(Deserialize)]
+struct TzChoiceWire {
+    kind: String,
+    #[serde(default)]
+    index: Option<usize>,
+}
+
+/// See `Verified.FitbitTz.decideTz`. The specification half of the pair.
+pub fn decide_tz_spec(times: &[i64], seed_utc: Option<i64>) -> Result<TzChoice> {
+    let w: TzChoiceWire = call_json(&serde_json::json!({
+        "op": "decideTz", "times": times, "seedUtc": seed_utc,
+    }))?;
+    Ok(match w.kind.as_str() {
+        "profile" => TzChoice::Profile,
+        "fix" => TzChoice::Fix {
+            index: w.index.ok_or_else(|| anyhow!("fix without an index"))?,
+        },
+        other => return Err(anyhow!("unknown tz choice: {other}")),
+    })
+}
+
+#[derive(Deserialize)]
 struct OptDays {
     value: Option<Vec<String>>,
 }

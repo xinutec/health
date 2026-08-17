@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import Verified.Backfill
+import Verified.FitbitTz
 import Verified.Sync
 
 /-!
@@ -90,6 +91,28 @@ private def streams? (j : Json) : Option (List (String × Option String)) :=
       | none => none
       | some n => some (n, str? e "cursor")
 
+/-- A required array of integers. -/
+private def ints? (j : Json) (k : String) : Option (List Int) :=
+  match j.getObjVal? k with
+  | .error _ => none
+  | .ok v =>
+    match v.getArr? with
+    | .error _ => none
+    | .ok arr => arr.toList.mapM fun e =>
+      match e.getInt? with | .ok i => some i | .error _ => none
+
+/-- An OPTIONAL integer, where absent and `null` both mean absent. Distinct
+from `int?` failing on a wrong type: `seedUtc` is legitimately absent when the
+wall clock did not parse, and that is a decision input rather than a bad call. -/
+private def optInt? (j : Json) (k : String) : Option Int :=
+  match j.getObjVal? k with
+  | .error _ => none
+  | .ok v => match v.getInt? with | .ok i => some i | .error _ => none
+
+private def tzChoiceJson : Verified.FitbitTz.TzChoice → Json
+  | .profile => Json.mkObj [("kind", Json.str "profile")]
+  | .fix i => Json.mkObj [("kind", Json.str "fix"), ("index", Json.num (.fromNat i))]
+
 def dispatch (j : Json) : Json :=
   match str? j "op" with
   | none => err "missing op"
@@ -136,6 +159,22 @@ def dispatch (j : Json) : Json :=
       Json.mkObj [("value",
         Json.arr ((Verified.Backfill.orderByCursorRecency ss f).map Json.str).toArray)]
     | _, _ => err "orderByCursorRecency: streams, fallback required"
+  -- ⚠ These two are the SPECIFICATION side of a differential test, not the
+  -- production path. The backend binary-searches its own sorted fixes; a JSON
+  -- round trip per row would be 86 400 of them for one day of 1-second heart
+  -- rate. See `Verified/FitbitTz.lean`'s header.
+  | some "nearestFix" =>
+    match ints? j "times", int? j "target" with
+    | some ts, some t =>
+      Json.mkObj [("value",
+        match Verified.FitbitTz.nearestFix ts t with
+        | none => Json.null
+        | some i => Json.num (.fromNat i))]
+    | _, _ => err "nearestFix: times, target required"
+  | some "decideTz" =>
+    match ints? j "times" with
+    | some ts => tzChoiceJson (Verified.FitbitTz.decideTz ts (optInt? j "seedUtc"))
+    | none => err "decideTz: times required"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]
