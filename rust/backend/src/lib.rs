@@ -51,6 +51,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod fitbit;
 pub mod routes;
 pub mod state;
 pub mod sync_state;
