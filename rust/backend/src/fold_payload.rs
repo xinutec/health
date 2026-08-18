@@ -623,11 +623,15 @@ fn list_of<F: Fn(&Map<String, Value>) -> Value>(v: &Value, f: F) -> Value {
 /// output is poisoned — which is how the converge loop discovers what to answer
 /// next. So a table that is subtly mis-keyed does not fail here; it fails as an
 /// extra round, or as a day that never converges.
-pub fn encode_lookups(trace: Option<&Value>, tz_at: Option<&Value>) -> Value {
+pub fn encode_lookups(
+    trace: Option<&Value>,
+    tz_at: Option<&Value>,
+    best: Option<&Value>,
+) -> Result<Value> {
     let t = trace.and_then(Value::as_object);
     let sec = |k: &str| t.and_then(|t| t.get(k));
 
-    json!({
+    Ok(json!({
         "nearbyStations": table3(sec("nearbyStations"), default_radius_m::NEARBY_STATIONS, |v| {
             list_of(v, |s| json!({
                 "name": raw(s, "name"),
@@ -662,16 +666,6 @@ pub fn encode_lookups(trace: Option<&Value>, tz_at: Option<&Value>) -> Value {
             num_bits(q, "lon"),
             raw(q, "tz")
         ])),
-        // ⚠ NOT YET PORTED, and empty is NOT a safe default — an absent entry
-        // is a MISS the fold reports and the converge loop must answer, so a
-        // day with stays will simply not converge until this is filled.
-        //
-        // It is the only table whose entries are DERIVED rather than passed
-        // through: each carries `localStaySamples(start, end, tz)` — a
-        // per-minute walk of the stay in the venue's local clock — and
-        // `localHourOf((start + end) / 2, tz)`, unfloored. Both need the tz
-        // database, so they belong beside `date_bounds_utc` in `timezone`.
-        "bestPlace": json!([]),
         "reverseGeocode": geocode_table(sec("reverseGeocode")),
         "nearbyLandmarks": table3(sec("nearbyLandmarks"), default_radius_m::NEARBY_LANDMARKS, |v| {
             list_of(v, |l| json!({
@@ -684,7 +678,59 @@ pub fn encode_lookups(trace: Option<&Value>, tz_at: Option<&Value>) -> Value {
                 "enclosing": l.get("enclosing") == Some(&Value::Bool(true)),
             }))
         }),
-    })
+        // The stay CONTEXT of each naming question, not its answer: Lean
+        // computes the label, and what it cannot compute is the venue-local
+        // clock. ⚠ The only table whose entries are DERIVED rather than passed
+        // through — see `timezone::local_stay_samples`.
+        "bestPlace": best_place(best)?,
+    }))
+}
+
+/// `[latBits, lonBits, startTs, endTs, tz, staySamples, midpointHour]`.
+///
+/// ⚠ The tz stays IN THE KEY even though nothing downstream reads it: the two
+/// derived fields were resolved AGAINST it, and a key that dropped it would
+/// answer a different question with the same spelling if the pass ever asked at
+/// two zones.
+///
+/// ⚠ The midpoint is `(start + end) / 2` UNFLOORED in the TypeScript, because
+/// `new Date(x * 1000)` takes the half-second. Flooring cannot change the HOUR
+/// — an instant and its floor lie in the same hour, since hour boundaries fall
+/// on whole seconds — so the integer division here is safe. It is written down
+/// because "the TypeScript does not floor it" invites the conclusion that the
+/// difference matters somewhere.
+fn best_place(section: Option<&Value>) -> Result<Value> {
+    let mut out = Vec::new();
+    for q in section.and_then(Value::as_array).into_iter().flatten() {
+        let o = q.as_object().context("bestPlace entry is not an object")?;
+        let start = o
+            .get("startTs")
+            .and_then(Value::as_i64)
+            .context("bestPlace entry has no startTs")?;
+        let end = o
+            .get("endTs")
+            .and_then(Value::as_i64)
+            .context("bestPlace entry has no endTs")?;
+        let tz = o
+            .get("tz")
+            .and_then(Value::as_str)
+            .context("bestPlace entry has no tz")?;
+        let samples = crate::timezone::local_stay_samples(start, end, tz)?;
+        let hour = crate::timezone::local_hour_of((start + end) / 2, tz)?;
+        out.push(json!([
+            num_bits(o, "lat"),
+            num_bits(o, "lon"),
+            start,
+            end,
+            tz,
+            samples
+                .iter()
+                .map(|(d, m)| json!([d, m]))
+                .collect::<Vec<_>>(),
+            hour
+        ]));
+    }
+    Ok(Value::Array(out))
 }
 
 /// `[line, [[name, latBits, lonBits], …]]` — keyed by LINE NAME, not by

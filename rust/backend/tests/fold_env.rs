@@ -48,7 +48,8 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
             }
             if k == "lookups" {
                 assert_eq!(
-                    &encode_lookups(cap.get("trace"), cap.get("tzAt")),
+                    &encode_lookups(cap.get("trace"), cap.get("tzAt"), cap.get("bestPlace"))
+                        .expect("lookups encode"),
                     expected,
                     "{name}: env.lookups differs"
                 );

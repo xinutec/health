@@ -31,7 +31,10 @@ for (const f of readdirSync(CAP).sort()) {
     // Real tzAt entries from the capture, truncated; bestPlace stays empty
     // because the Rust encoder does not build it yet (see fold_payload.rs).
     tzAt: (c.tzAt ?? []).slice(0, 6).map((q) => ({ ...q, lat: shift(q.lat), lon: shift(q.lon) })),
-    bestPlace: [], sleepPlace: [],
+    // Real bestPlace entries — the derived fields (per-minute stay samples and
+    // the midpoint hour) are what the Rust port must reproduce.
+    bestPlace: (c.bestPlace ?? []).slice(0, 3).map((q) => ({ ...q, lat: shift(q.lat), lon: shift(q.lon) })),
+    sleepPlace: [],
     modeStats: c.modeStats ?? [],
     obs: {
       points: (c.obs.points ?? []).slice(0, N).map(pt),

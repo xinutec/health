@@ -190,3 +190,63 @@ pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
         end_utc: start_utc + 86_400,
     })
 }
+
+/// The local hour of an instant in a zone, `0..=23`.
+///
+/// Port of `localHourOf` in `src/geo/venue-prior.ts`. ⚠ The TypeScript maps an
+/// hour of 24 to 0 because some `Intl` locales render midnight that way; that
+/// cannot arise from `chrono`, so there is no branch for it here and the result
+/// is the same.
+pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
+    let zone: Tz = tz
+        .parse()
+        .with_context(|| format!("{tz} is not a known timezone"))?;
+    let dt = chrono::DateTime::from_timestamp(ts_unix, 0)
+        .with_context(|| format!("{ts_unix} is not a representable instant"))?;
+    Ok(dt.with_timezone(&zone).hour())
+}
+
+/// The stay's minutes as `(dayIdx, minuteOfDay)` in the venue's local zone —
+/// every minute of `[start, end)`, or the single instant at `start` for a
+/// zero-length window.
+///
+/// Port of `localStaySamples` in `src/geo/opening-hours.ts`, which exists for
+/// exactly the reason this does: `Verified.Geo.OpeningHours` decides
+/// open-versus-closed, but instant → local `(weekday, minute)` is tzdata, so
+/// the shell resolves the pairs and puts them on the wire.
+///
+/// ⚠ `dayIdx` is MONDAY-BASED (`Mon = 0 … Sun = 6`), matching the
+/// TypeScript's `WEEKDAY_IDX`. `chrono`'s `num_days_from_sunday` is not it, and
+/// getting this wrong shifts every opening-hours judgement by one day without
+/// changing the shape of anything.
+///
+/// ⚠ ONE ENTRY PER MINUTE. An eight-hour stay is 480 pairs, and a day's worth
+/// of stays is why this table dominates the request. The TypeScript steps by 60
+/// seconds from `start` rather than snapping to minute boundaries, so a stay
+/// beginning at 09:00:30 samples :30 of each minute — kept, because the pairs
+/// it produces are what the scorer was measured against.
+pub fn local_stay_samples(start_unix: i64, end_unix: i64, tz: &str) -> Result<Vec<(u32, u32)>> {
+    let zone: Tz = tz
+        .parse()
+        .with_context(|| format!("{tz} is not a known timezone"))?;
+
+    let at = |ts: i64| -> Result<(u32, u32)> {
+        let dt = chrono::DateTime::from_timestamp(ts, 0)
+            .with_context(|| format!("{ts} is not a representable instant"))?
+            .with_timezone(&zone);
+        // Monday-based, as `WEEKDAY_IDX` is.
+        let day_idx = dt.weekday().num_days_from_monday();
+        Ok((day_idx, dt.hour() * 60 + dt.minute()))
+    };
+
+    if end_unix <= start_unix {
+        return Ok(vec![at(start_unix)?]);
+    }
+    let mut out = Vec::with_capacity(((end_unix - start_unix) / 60 + 1) as usize);
+    let mut t = start_unix;
+    while t < end_unix {
+        out.push(at(t)?);
+        t += 60;
+    }
+    Ok(out)
+}
