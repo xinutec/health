@@ -37,13 +37,12 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::Result;
-use sqlx::MySqlPool;
 
 use crate::backfill::{DayResult, fold_empty_streak};
-use crate::fitbit::client::FitbitClient;
+use crate::fitbit::client::RateLimitState;
 use crate::fitbit::rate_limit::RateLimitExhausted;
 use crate::lean::{self, BackfillStep, CompleteReason, RangeBackfillStep};
-use crate::sync_state;
+use crate::sync_state::CursorStore;
 
 type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -118,8 +117,8 @@ fn complete_key(name: &str) -> String {
 }
 
 /// Whether this stream has already finished, so the walk can be skipped whole.
-async fn already_complete(pool: &MySqlPool, user_id: &str, name: &str) -> Result<bool> {
-    Ok(sync_state::get(pool, user_id, &complete_key(name)).await? == Some("true".to_string()))
+async fn already_complete(store: &dyn CursorStore, user_id: &str, name: &str) -> Result<bool> {
+    Ok(store.get(user_id, &complete_key(name)).await? == Some("true".to_string()))
 }
 
 /// Record that a stream has run out of history, and why.
@@ -128,7 +127,7 @@ async fn already_complete(pool: &MySqlPool, user_id: &str, name: &str) -> Result
 /// three different findings collapsing into `true` is precisely why the walk
 /// used to be hard to diagnose.
 async fn mark_complete(
-    pool: &MySqlPool,
+    store: &dyn CursorStore,
     user_id: &str,
     name: &str,
     reason: CompleteReason,
@@ -153,31 +152,32 @@ async fn mark_complete(
             );
         }
     }
-    sync_state::set(pool, user_id, &complete_key(name), "true").await
+    store.set(user_id, &complete_key(name), "true").await
 }
 
 /// Walk one intraday stream backwards until Lean says to stop.
 pub async fn run_intraday_backfill(
-    client: &FitbitClient,
-    pool: &MySqlPool,
+    rate: &RateLimitState,
+    store: &dyn CursorStore,
     user_id: &str,
     stream: &DayStream<'_>,
     default_start: &str,
 ) -> Result<()> {
     let name = &stream.name;
-    if already_complete(pool, user_id, name).await? {
+    if already_complete(store, user_id, name).await? {
         tracing::info!("[{user_id}] {name}: backfill already complete");
         return Ok(());
     }
 
-    let mut cursor = sync_state::get(pool, user_id, &cursor_key(name))
+    let mut cursor = store
+        .get(user_id, &cursor_key(name))
         .await?
         .unwrap_or_else(|| default_start.to_string());
     let mut empty_streak = 0i64;
 
     loop {
         let step = lean::decide_backfill_step(
-            client.rate.remaining(),
+            rate.remaining(),
             empty_streak,
             stream.max_empty_days,
             &cursor,
@@ -187,12 +187,12 @@ pub async fn run_intraday_backfill(
             BackfillStep::Pause => {
                 tracing::info!(
                     "[{user_id}] {name}: paused at {cursor}, {} calls left",
-                    client.rate.remaining()
+                    rate.remaining()
                 );
                 return Ok(());
             }
             BackfillStep::Complete { reason } => {
-                return mark_complete(pool, user_id, name, reason).await;
+                return mark_complete(store, user_id, name, reason).await;
             }
             BackfillStep::Fetch { date } => date,
         };
@@ -219,7 +219,7 @@ pub async fn run_intraday_backfill(
             empty_streak = fold_empty_streak(&result).apply(empty_streak);
         }
 
-        sync_state::set(pool, user_id, &cursor_key(name), &date).await?;
+        store.set(user_id, &cursor_key(name), &date).await?;
         cursor = date;
     }
 }
@@ -228,26 +228,27 @@ pub async fn run_intraday_backfill(
 ///
 /// The same shape as the intraday walk at a coarser unit, and now visibly so.
 pub async fn run_range_backfill(
-    client: &FitbitClient,
-    pool: &MySqlPool,
+    rate: &RateLimitState,
+    store: &dyn CursorStore,
     user_id: &str,
     stream: &RangeStream<'_>,
     default_start: &str,
 ) -> Result<()> {
     let name = &stream.name;
-    if already_complete(pool, user_id, name).await? {
+    if already_complete(store, user_id, name).await? {
         tracing::info!("[{user_id}] {name}: backfill already complete");
         return Ok(());
     }
 
-    let mut cursor = sync_state::get(pool, user_id, &cursor_key(name))
+    let mut cursor = store
+        .get(user_id, &cursor_key(name))
         .await?
         .unwrap_or_else(|| default_start.to_string());
     let mut empty_streak = 0i64;
 
     loop {
         let step = lean::decide_range_backfill_step(
-            client.rate.remaining(),
+            rate.remaining(),
             empty_streak,
             stream.max_empty_windows,
             RANGE_WINDOW_DAYS,
@@ -258,12 +259,12 @@ pub async fn run_range_backfill(
             RangeBackfillStep::Pause => {
                 tracing::info!(
                     "[{user_id}] {name}: paused at {cursor}, {} calls left",
-                    client.rate.remaining()
+                    rate.remaining()
                 );
                 return Ok(());
             }
             RangeBackfillStep::Complete { reason } => {
-                return mark_complete(pool, user_id, name, reason).await;
+                return mark_complete(store, user_id, name, reason).await;
             }
             RangeBackfillStep::Fetch { start, end } => (start, end),
         };
@@ -273,7 +274,7 @@ pub async fn run_range_backfill(
 
         // The cursor is the OLDEST day now covered, not the newest — the next
         // window is measured back from it.
-        sync_state::set(pool, user_id, &cursor_key(name), &start).await?;
+        store.set(user_id, &cursor_key(name), &start).await?;
         cursor = start;
     }
 }
@@ -284,14 +285,14 @@ pub async fn run_range_backfill(
 /// stream has none, takes the fallback, and therefore goes first — otherwise a
 /// deep backfill through 2024 starves every newly-deployed stream for many runs.
 pub async fn order_streams(
-    pool: &MySqlPool,
+    store: &dyn CursorStore,
     user_id: &str,
     names: &[String],
     fallback: &str,
 ) -> Result<Vec<String>> {
     let mut pairs = Vec::with_capacity(names.len());
     for name in names {
-        let cursor = sync_state::get(pool, user_id, &cursor_key(name)).await?;
+        let cursor = store.get(user_id, &cursor_key(name)).await?;
         pairs.push((name.clone(), cursor));
     }
     lean::order_by_cursor_recency(&pairs, fallback)

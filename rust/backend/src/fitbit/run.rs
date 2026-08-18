@@ -484,7 +484,7 @@ async fn backfill_pass(
             .iter()
             .find(|s| s.name == name)
             .expect("order_streams returns the names it was given");
-        backfill_runner::run_intraday_backfill(client, pool, user_id, stream, default_start)
+        backfill_runner::run_intraday_backfill(&client.rate, pool, user_id, stream, default_start)
             .await?;
     }
 
@@ -528,7 +528,8 @@ async fn backfill_pass(
             .iter()
             .find(|s| s.name == name)
             .expect("order_streams returns the names it was given");
-        backfill_runner::run_range_backfill(client, pool, user_id, stream, default_start).await?;
+        backfill_runner::run_range_backfill(&client.rate, pool, user_id, stream, default_start)
+            .await?;
     }
     Ok(())
 }

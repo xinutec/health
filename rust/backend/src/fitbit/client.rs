@@ -53,6 +53,18 @@ impl RateLimitState {
     pub fn remaining(&self) -> i64 {
         self.remaining.load(Ordering::Relaxed)
     }
+
+    /// Start from a chosen budget rather than the full 150.
+    ///
+    /// Exists for the backfill walk's tests: `pause` is the one step that
+    /// depends on the budget rather than on the data, so a test that cannot set
+    /// the budget cannot reach it.
+    pub fn with_budget(remaining: i64) -> Self {
+        Self {
+            remaining: Arc::new(AtomicI64::new(remaining)),
+            reset_at_ms: Arc::new(AtomicI64::new(0)),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
