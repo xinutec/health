@@ -32,6 +32,13 @@ link in a foreign host silently. `rust/backend` links this to call the decisions
 in `Verified.Sync` rather than reimplementing them beside it (#982). -/
 lean_lib BackendEntry
 
+/-- The serve-mode handlers as a LIBRARY (#982), for the third time and the same
+reason as `DayEntry` and `BackendEntry`: an exe root emits `main`, so anything
+sharing a module with it cannot be linked by a host. `geo`, `match`, `rail`,
+`hsmm`, `kalman`, `gpsquality`, `biolabels`, `head` and `stationchain` all lived
+beside `main` and were unreachable from Rust for that reason alone. -/
+lean_lib ServeEntry
+
 @[default_target]
 lean_exe verified_cli where
   root := `Main
