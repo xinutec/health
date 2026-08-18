@@ -369,8 +369,10 @@ if (all) {
 
 console.log(`
   SERVE SURFACE (what actually executes for a request — a different question).
-  All nine are \`on\` as of 2026-08-16:
+  All TEN are \`solo\` as of 2026-08-18 — the decode cron since pippijn
+  \`a6c9484d\`, and the request path (health-auth) since \`48be1207\`:
     LEAN_DAY     the whole day fold — the only tenant that WRITES (decoded_days)
+    LEAN_HEAD    snapToPlace + classifySegments, the pipeline head the fold eats
     LEAN_HSMM    the HSMM decode
     LEAN_MATCH   the walk map-matcher
     LEAN_RAIL    rail shortest-path
@@ -382,7 +384,11 @@ console.log(`
     LEAN_BIOLABELS     the biometric labellers
   Everything else above is written-but-idle. Closing that is the remaining work.
 
-  ⚠ SERVING IS NOT DELETING. In \`on\` BOTH arms still run — that is why the
-  ledgers can print a comparison at all. Nine tenants at \`on\` removed zero
-  lines of TypeScript; #975 is the step that removes them.
+  ⚠ SERVING IS NOT DELETING, AND \`solo\` IS NOT DELETING EITHER — but they
+  differ. Under \`on\` BOTH arms ran, which is why the ledgers could print a
+  comparison, and why ten tenants at \`on\` removed zero lines of TypeScript.
+  Under \`solo\` the TS arm no longer EXECUTES — the ledgers say
+  \"SOLO (no TS arm, nothing compared)\" and must never say EXACT — so the code
+  is unreachable rather than gone. #975 is still the step that removes it, and
+  it is parked on #1054.
 `);
