@@ -27,9 +27,11 @@
 //!
 //! A day whose fetch throws still moves the cursor past it. Otherwise a single
 //! permanently-failing day is an infinite loop across every future run. What it
-//! does NOT do is advance the empty streak — a transient 5xx is not evidence
-//! that history has run out, and conflating the two once truncated a stream
-//! after fourteen consecutive failures.
+//! does NOT do is MOVE the empty streak, in either direction — a transient 5xx
+//! is not evidence that history has run out, and it is not evidence that it has
+//! not. Conflating failure with emptiness once truncated a stream after fourteen
+//! consecutive failures; conflating it with data is the mirror mistake, and the
+//! first version of this file made it. See [`crate::backfill::StreakFold`].
 
 use std::future::Future;
 use std::pin::Pin;
@@ -37,7 +39,7 @@ use std::pin::Pin;
 use anyhow::Result;
 use sqlx::MySqlPool;
 
-use crate::backfill::{DayResult, should_advance_empty_streak};
+use crate::backfill::{DayResult, fold_empty_streak};
 use crate::fitbit::client::FitbitClient;
 use crate::fitbit::rate_limit::RateLimitExhausted;
 use crate::lean::{self, BackfillStep, CompleteReason, RangeBackfillStep};
@@ -211,11 +213,10 @@ pub async fn run_intraday_backfill(
             // merely FAILED comes back as `DayResult::Failed` and the walk goes
             // on — see the note on `DayStream::fetch`.
             let result = (stream.fetch)(date.clone()).await?;
-            if should_advance_empty_streak(&result) {
-                empty_streak += 1;
-            } else {
-                empty_streak = 0;
-            }
+            // ⚠ Three outcomes, folded by `StreakFold` rather than by an
+            // `if/else` here — a FAILED day must leave the streak alone, and
+            // this call site is where a boolean used to force it to zero.
+            empty_streak = fold_empty_streak(&result).apply(empty_streak);
         }
 
         sync_state::set(pool, user_id, &cursor_key(name), &date).await?;
@@ -268,11 +269,7 @@ pub async fn run_range_backfill(
         };
 
         let result = (stream.fetch)(start.clone(), end.clone()).await?;
-        if should_advance_empty_streak(&result) {
-            empty_streak += 1;
-        } else {
-            empty_streak = 0;
-        }
+        empty_streak = fold_empty_streak(&result).apply(empty_streak);
 
         // The cursor is the OLDEST day now covered, not the newest — the next
         // window is measured back from it.

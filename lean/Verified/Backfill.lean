@@ -27,16 +27,25 @@ failure `shouldAdvanceEmptyStreak` already guards at the day level — a transie
 5xx counted as an empty day truncated history after 14 of them — and the same
 mistake at the stream level is what `pause` exists to prevent.
 
-## One ordering difference from the TypeScript, deliberate
+## Two differences from the TypeScript, both deliberate
 
-The TypeScript checks the budget BEFORE the cursor on entry, and AFTER it inside
-the loop, so a stream whose cursor sits at the floor is marked complete on one
-path and merely skipped on the other. That asymmetry is a consequence of where
-the `while` condition sits, not a decision anybody made.
+**Budget before cursor.** The TypeScript checks the budget BEFORE the cursor on
+entry, and AFTER it inside the loop, so a stream whose cursor sits at the floor
+is marked complete on one path and merely skipped on the other. That asymmetry
+is a consequence of where the `while` condition sits, not a decision anybody
+made.
 
 Here the data questions are always asked first. A cursor at the floor means the
 stream IS complete, and how much budget is left has no bearing on whether that
 is true.
+
+**Reaching the floor by skipping.** In the TypeScript the two ways of arriving
+at the floor end differently: a FETCH that lands on it writes `complete`, a SKIP
+that lands on it `break`s and falls through to the "paused" branch, so the flag
+waits for the next scheduled run to notice the cursor has nowhere left to go.
+Here there is one answer, because `reachedFloor` is a fact about the cursor and
+not about how the walk got there. The two converge — the TypeScript reaches the
+same flag one run later — so this changes when the write happens, never whether.
 -/
 
 namespace Verified.Backfill
