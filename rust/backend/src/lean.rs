@@ -21,7 +21,7 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -611,12 +611,28 @@ pub struct Miss {
 /// would deadlock inside Lean rather than return a long list. A file has no
 /// such limit and the call is synchronous, so there is nothing to drain.
 ///
-/// ⚠ NOT THREAD-SAFE, and it cannot be: fd 2 is process-wide. The walk is
-/// sequential, which is the only reason this is sound; a concurrent caller
-/// would capture the other's output or lose its own.
+/// ⚠ FD 2 IS PROCESS-WIDE, so this SERIALISES. Two callers redirecting at once
+/// means one captures the other's misses or loses its own — and the failure does
+/// not look like a race, it looks like convergence: the fold appears to re-ask a
+/// key that was already answered, because the answer went to the other caller's
+/// file. This comment used to say "not thread-safe, and it cannot be", with the
+/// sequential walk as the argument. That argument held for production and NOT
+/// for the tests, which `cargo test` runs on parallel threads in one process —
+/// `fold_converge_corpus` has two, and they raced. It surfaced only under a
+/// loaded gate, where the windows overlap; three unloaded runs "refuted" it.
+///
+/// The lock is free where the walk really is sequential, so making the guarantee
+/// true costs nothing and removes a landmine that a documented precondition
+/// could not.
 pub fn serve_capturing_misses(request: &str) -> Result<(String, Vec<Miss>)> {
     use std::io::{Read, Seek};
     use std::os::fd::AsRawFd;
+
+    static FD2: Mutex<()> = Mutex::new(());
+    // Poisoning is not a reason to stop: the guard protects fd 2, and a previous
+    // caller panicking mid-serve leaves the fd restored (that happens before the
+    // `?`). Refusing here would turn one failed day into every later day failing.
+    let _fd2 = FD2.lock().unwrap_or_else(|e| e.into_inner());
 
     init()?;
 
