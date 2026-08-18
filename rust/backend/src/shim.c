@@ -28,6 +28,18 @@ extern lean_object *health_backend_call(lean_object *input);
  * file again rather than reasoning about what the signature ought to be. */
 extern lean_object *initialize_verified_BackendEntry(uint8_t builtin);
 
+/* Emitted by `@[export health_serve_dispatch]` in lean/ServeEntry.lean — the
+ * whole algorithm mode table (geo, match, rail, hsmm, kalman, gpsquality,
+ * biolabels, head, day, focus, stationchain), asked with the same request
+ * object `verified_cli serve` reads off a line. */
+extern lean_object *health_serve_dispatch(lean_object *input);
+
+/* ⚠ ServeEntry pulls in DayEntry, whose `OsmHost` externs must resolve. This
+ * binary links `day-shell`'s REAL implementations, not `c/osm-host-stub.c` —
+ * the stub answers every lookup with zero polylines, which is a decode that
+ * silently draws no map rather than one that fails. */
+extern lean_object *initialize_verified_ServeEntry(uint8_t builtin);
+
 /* <lean/lean.h> does not declare it; Lean's own generated `main`
  * forward-declares it the same way. It lives in libleancpp. */
 void lean_initialize(void);
@@ -46,6 +58,10 @@ void lean_initialize(void);
 int health_backend_init(void) {
 	lean_initialize();
 	lean_object *res = initialize_verified_BackendEntry(1 /* builtin */);
+	if (lean_io_result_is_ok(res)) {
+		lean_dec_ref(res);
+		res = initialize_verified_ServeEntry(1 /* builtin */);
+	}
 	lean_io_mark_end_initialization();
 	if (!lean_io_result_is_ok(res)) {
 		lean_io_result_show_error(res);
@@ -66,6 +82,14 @@ int health_backend_init(void) {
 char *health_backend_json(const char *input) {
 	lean_object *arg = lean_mk_string(input);
 	lean_object *res = health_backend_call(arg);
+	char *out = strdup(lean_string_cstr(res));
+	lean_dec_ref(res);
+	return out;
+}
+
+char *health_serve_json(const char *input) {
+	lean_object *arg = lean_mk_string(input);
+	lean_object *res = health_serve_dispatch(arg);
 	char *out = strdup(lean_string_cstr(res));
 	lean_dec_ref(res);
 	return out;

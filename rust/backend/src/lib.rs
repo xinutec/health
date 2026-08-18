@@ -56,6 +56,7 @@ pub mod fitbit;
 pub mod google;
 pub mod lean;
 pub mod nextcloud;
+pub mod osm_host;
 pub mod routes;
 pub mod state;
 pub mod sync_state;

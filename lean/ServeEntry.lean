@@ -1457,7 +1457,12 @@ Mirrors `health_day_result` in `DayEntry` and `health_backend_call` in
 in `rust/*/src/shim.c` stays the same three functions. The payload is one
 `serve` request — the same object `serveLoop` reads off a line — so a host and
 the subprocess ask the identical question, and any divergence between them is a
-transport bug rather than a difference in what was asked. -/
+transport bug rather than a difference in what was asked.
+
+⚠ It returns the BODY, not `serveLoop`'s `{"id", "result"}` envelope. That
+envelope correlates replies on one NDJSON pipe; a caller that has just invoked a
+function has nothing to correlate, and handing it back would make every host
+strip a field the transport invented. -/
 @[export health_serve_dispatch]
 def serveDispatchExport (input : String) : String :=
   match Json.parse input with

@@ -26,6 +26,9 @@ fn main() {
 
     let libs = [
         build.join("lib/libverified_BackendEntry.a"),
+        // The algorithm mode table (#982) and the day fold it imports.
+        build.join("lib/libverified_ServeEntry.a"),
+        build.join("lib/libverified_DayEntry.a"),
         build.join("lib/libverified_Verified.a"),
     ];
     // A stale or absent input is the difference between "this backend is wrong"
@@ -36,7 +39,7 @@ fn main() {
             panic!(
                 "missing {}\n\
                  Build the Lean side first:\n    \
-                 cd lean && lake build verified_cli BackendEntry:static Verified:static",
+                 cd lean && lake build verified_cli BackendEntry:static ServeEntry:static DayEntry:static Verified:static",
                 p.display()
             );
         }
@@ -48,11 +51,11 @@ fn main() {
         .map(|t| t.trim_matches('"').to_string())
         .filter(|t| !t.is_empty())
         .filter(|t| !t.ends_with(".o.export") && !t.ends_with(".o"))
-        // The OSM stub answers `DayEntry.OsmHost`'s externs with zero
-        // polylines. This binary does not link `DayEntry` and so has no such
-        // externs to resolve; the filter is kept because the `.rsp` is the
-        // CLI's, and inheriting a stub for a module that is not here would be a
-        // silent way to acquire one later.
+        // ⚠ THE STUB MUST NOT COME IN. It answers `DayEntry.OsmHost`'s externs
+        // with zero polylines, and this binary DOES link `DayEntry` now, so
+        // taking it would give a decode that draws no map and reports success.
+        // The real implementations come from the `day-shell` crate, whose
+        // `#[unsafe(no_mangle)]` symbols satisfy the same externs.
         .filter(|t| !t.contains("libosmhoststub"))
         .collect();
 

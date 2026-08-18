@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 unsafe extern "C" {
     fn health_backend_init() -> i32;
     fn health_backend_json(input: *const c_char) -> *mut c_char;
+    fn health_serve_json(input: *const c_char) -> *mut c_char;
     fn health_backend_free(p: *mut c_char);
 }
 
@@ -559,4 +560,28 @@ pub fn prev_window_bounded(
         "op": "prevWindowBounded", "end": end, "windowDays": window_days, "floor": floor,
     }))?;
     Ok(r.value.map(|w| (w.start, w.end)))
+}
+
+/// Ask the Lean algorithm mode table one question.
+///
+/// The request is the same object `verified_cli serve` reads off a line
+/// (`{"mode": "focus", …}`), so this host and the subprocess ask an identical
+/// question and any difference between their answers is transport rather than
+/// intent. That is what makes the subprocess a usable oracle for this path.
+pub fn serve(request: &str) -> Result<String> {
+    init()?;
+    let c = CString::new(request).context("request contains a NUL byte")?;
+    // SAFETY: `init` has succeeded, the pointer is valid for the call, and the
+    // result is copied out before it is freed — see the note in `shim.c` about
+    // `lean_string_cstr` pointing into a heap object the caller must not keep.
+    let out = unsafe {
+        let p = health_serve_json(c.as_ptr());
+        if p.is_null() {
+            anyhow::bail!("lean serve returned null");
+        }
+        let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+        health_backend_free(p);
+        s
+    };
+    Ok(out)
 }

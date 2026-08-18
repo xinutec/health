@@ -5,6 +5,13 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# ⚠ LINKED FOR ITS SYMBOLS, not for its API. `day-shell`'s `osm` module defines
+# the `#[unsafe(no_mangle)]` entry points that `DayEntry.OsmHost`'s `@[extern]`
+# lookups resolve against, and this binary links `ServeEntry`, which imports
+# `DayEntry`. Without it the link falls back to nothing — or worse, to
+# `c/osm-host-stub.c`, which answers every lookup with zero polylines and so
+# decodes a day with no map while reporting success.
+day-shell = { path = "../day-shell" }
 # The house sqlx line (#982): crate, version and FULL feature list matching
 # `tasks`, `messages`, `life`, `coach`, `fleetwatch` and `signal`. `day-shell`
 # deliberately took a subset because it is a Lean host with two reads; this is
