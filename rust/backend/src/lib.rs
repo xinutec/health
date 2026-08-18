@@ -60,6 +60,7 @@ pub mod lean;
 pub mod nextcloud;
 pub mod osm_host;
 pub mod routes;
+pub mod rowset_answerer;
 pub mod state;
 pub mod sync_state;
 pub mod timezone;

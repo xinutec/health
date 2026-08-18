@@ -17,6 +17,7 @@
 use std::path::Path;
 
 use backend::fold_converge::{RecordOnly, converge};
+use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
 
 fn capture_dir() -> String {
@@ -98,5 +99,78 @@ fn every_day_either_converges_or_names_what_it_needs() {
         clean >= 15,
         "only {clean} day(s) converge on the recorded tables; it was 22 when the \
          encoder was verified byte-identical, so the request has probably changed"
+    );
+}
+
+/// The same walk, ANSWERING from the fixture's row set.
+///
+/// This is the question the port actually has to pass: given the rows a day
+/// carries, does the Rust host converge it?  measures; this one
+/// resolves.
+#[test]
+fn answering_from_the_row_set_converges_more_days() {
+    let caps = capture_dir();
+    let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
+    if !Path::new(&caps).is_dir() || !Path::new(golden).is_dir() {
+        eprintln!("SKIPPED: no corpus");
+        return;
+    }
+    let mut names: Vec<String> = std::fs::read_dir(&caps)
+        .expect("caps")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".json"))
+        .collect();
+    names.sort();
+
+    let (mut clean, mut still) = (0usize, 0usize);
+    let mut left: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut rounds_max = 0u32;
+
+    for name in &names {
+        let (Ok(c), Ok(f)) = (
+            std::fs::read_to_string(format!("{caps}/{name}")),
+            std::fs::read_to_string(format!("{golden}/{name}")),
+        ) else {
+            continue;
+        };
+        let cap: Value = serde_json::from_str(&c).expect("capture");
+        let fx: Value = serde_json::from_str(&f).expect("fixture");
+        let inputs = &fx["inputs"];
+        let Some(rs) = inputs.get("osmRowSet") else {
+            continue;
+        };
+        let mut a = RowSetAnswerer::new(rs).expect("row set");
+        let r = converge(&cap, inputs, inputs.get("osmTrace"), &mut a)
+            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        rounds_max = rounds_max.max(r.rounds);
+        if r.unanswerable.is_empty() {
+            clean += 1
+        } else {
+            still += 1;
+            for m in &r.unanswerable {
+                *left.entry(m.what.clone()).or_default() += 1;
+            }
+        }
+    }
+    eprintln!("converged: {clean}   still short: {still}   deepest walk: {rounds_max} rounds");
+    eprintln!("still unanswered: {left:?}");
+    // ⚠ The measured state, pinned. 34 of 35 converge; the ONE key left in the
+    // whole corpus is a `transitStops`, which `RowSetAnswerer` declines on
+    // purpose because `Verified/Geo/Bus.lean` records stop resolution as
+    // INJECTED rather than computed from rows. Anything else appearing here is
+    // a real gap, not a known one.
+    assert!(
+        clean >= 34,
+        "only {clean} day(s) converged; it was 34 when the answerer landed"
+    );
+    assert!(
+        left.keys().all(|k| k == "transitStops"),
+        "something other than the known transitStops gap is unanswered: {left:?}"
+    );
+    assert!(
+        rounds_max >= 2,
+        "a walk that never took a second round is not converging, \
+                              it is finding nothing to answer"
     );
 }
