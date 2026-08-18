@@ -58,6 +58,18 @@ fn opt_str(o: &Map<String, Value>, k: &str) -> Value {
     }
 }
 
+/// `opt_str` for a value already looked up, rather than a key in a map.
+///
+/// Absent and `null` both encode as `null`, which is what the TypeScript's
+/// `optStr` does with `undefined` — and what Lean's `getObjValAs? String` reads
+/// back as `none`. The string "null" would parse as a PLACE NAME.
+fn opt_str_at(v: Option<&Value>) -> Value {
+    match v {
+        Some(Value::String(s)) => Value::String(s.clone()),
+        _ => Value::Null,
+    }
+}
+
 /// A field passed through UNENCODED.
 ///
 /// Timestamps, counts and ids are not bit-encoded: JSON carries an integer
@@ -271,6 +283,20 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
         "dayEndTs".into(),
         tg("dayEndTs").cloned().unwrap_or_else(|| json!(0)),
     );
+    // The empty-day arm's three (health #1055). A fixture captured before they
+    // existed carries none of them, and the defaults are what the TypeScript
+    // sends in that case — `null` for both strings, not the string "null", and
+    // 0 for the start, which the fold never reads without a bracket.
+    //
+    // ⚠ These are here because `fold_request_corpus` FAILED when they were not:
+    // the encoder has to match the TypeScript byte for byte, so a field added on
+    // one side and not the other is a divergence, not an omission.
+    m.insert(
+        "dayStartTs".into(),
+        tg("dayStartTs").cloned().unwrap_or_else(|| json!(0)),
+    );
+    m.insert("dayTz".into(), opt_str_at(tg("dayTz")));
+    m.insert("bracketPlace".into(), opt_str_at(tg("bracketPlace")));
     m
 }
 

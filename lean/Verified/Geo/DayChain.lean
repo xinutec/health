@@ -89,6 +89,21 @@ structure Env where
   /-- SHELL: re-resolve a stay centroid to a lodging name. `none` keeps the label
   the focus-place match gave it, which is the TS's own fallback. -/
   sleepPlace : Float → Float → Option String := fun _ _ => none
+  /-- The day's start instant. Only the EMPTY-DAY arm reads it — a day with
+  observations takes its bounds from the observations. -/
+  dayStartTs : Int := 0
+  /-- The day's display zone, carried onto an inferred stay so it renders in
+  local time like every other state. -/
+  dayTz : Option String := none
+  /-- SHELL: the cross-day bracket, already RESOLVED TO A NAME.
+  `Verified.Geo.DayState.buildInferredStayState`'s doc has said since it was
+  written that the shell does this resolution, and it does: the centroid comes
+  from `presence_log` and is named through the OSM mirror, neither of which the
+  fold can reach.
+
+  `none` means the day is not bracketed by the SAME place on both sides, which
+  is the honest "genuinely unknown" case, not a failure. -/
+  bracketPlace : Option String := none
 
 /-- The placeholder a focus-place match emits when it knows a stay happened but
 not what is there. The ONLY label re-resolution is offered: a specific one (Home,
@@ -155,6 +170,20 @@ def enrichSleepWindows (raw : List RawSleepWindow)
     { startTs := w.startTs, endTs := w.endTs, tz := w.tz, minutesAsleep := w.minutesAsleep
       place := derivePlaceForSleep w.startTs w.endTs candidates }
 
+/-- The one state a fully-unobserved day gets, or nothing.
+
+⚠ A no-data day is NOT automatically an unknown day. Bracketed by the same place
+on both sides — yesterday ended there, tomorrow is dominated by it — the day in
+between is constrained rather than unevidenced, and a multi-day stay is exactly
+the shape that produces no fixes at all. Confidence comes from how CONSTRAINED
+the day is, not from how much data it has.
+
+`inferred := true` is not decoration: it is what lets the renderer say "no data"
+rather than presenting an asserted stay as an observed one. -/
+def inferredEmptyDay (e : Env) : Option DayState :=
+  e.bracketPlace.map fun place =>
+    Verified.Geo.DayState.buildInferredStayState place e.dayTz e.dayStartTs e.dayEndTs
+
 /-- The served timeline and its geometry.
 
 Returns both because they are one decision: the episodes are 1:1 with the FINAL
@@ -164,9 +193,56 @@ def dayChain (e : Env) :
     Array DayState × Array Verified.Geo.EpisodeGeometry.Episode :=
   let windows := enrichSleepWindows e.sleep (sleepCandidates e)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
+  -- ⚠ THE EMPTY-DAY ARM, and it is tested on `states` rather than on
+  -- `e.segments`: a day with no segments can still have SLEEP windows, and that
+  -- day is observed. The TS this ports asked the same question in the same place
+  -- and in the same order — after the states are built, before the dwell
+  -- continuation, which has nothing to continue here anyway.
+  if states.isEmpty && e.points.isEmpty then
+    match inferredEmptyDay e with
+    | some st => (#[st], #[])
+    | none => (#[], #[])
+  else
   let final := Verified.Geo.DwellContinuation.applyDwellContinuation
     states e.segments e.dwellPlaces e.dayEndTs
   (final, Verified.Geo.EpisodeGeometry.buildEpisodes (final.map episodeState)
     (e.segments.map episodeSeg) e.points (some e.displayFixes))
+
+/-! ## The empty-day arm (health #1055)
+
+⚠ These exist because NO GOLDEN DAY CAN REACH THIS. 0 of the 42 fixtures has
+zero fixes, so the corpus and the day gate both pass whether this arm works or
+not — the regression it fixes was live in production for a day and invisible to
+every gate. A `#guard` is the only thing here that can fail. -/
+
+private def emptyEnv : Env :=
+  { segments := #[], points := #[], displayFixes := #[]
+    morningFixes := [], prevEveningFixes := [], stayPlaces := []
+    dwellPlaces := #[], sleep := [], dayEndTs := 86400
+    dayStartTs := 0, dayTz := some "Europe/London" }
+
+-- Bracketed: one inferred stay spanning the whole local day.
+#guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).1 ==
+  #[{ startTs := 0, endTs := 86400, mode := "stationary", place := some "St Elsewhere",
+      tz := some "Europe/London", inferred := some true }]
+
+-- ⚠ `inferred` must be `some true`, never `none`. Without it the renderer shows
+-- an ASSERTED day as an observed one, which is the failure this arm must not
+-- have: the day is a claim from cross-day constraint, and it has to say so.
+#guard ((dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).1[0]!).inferred == some true
+
+-- Not bracketed: the day stays genuinely unknown rather than being invented.
+#guard (dayChain { emptyEnv with bracketPlace := none }).1 == #[]
+
+-- An empty day draws no episodes either way.
+#guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).2 == #[]
+
+-- ⚠ THE CONTROL. With a fix present the day is OBSERVED, so the arm must not
+-- fire even when a bracket is offered — otherwise this replaces a real day with
+-- an inferred one, which is far worse than the gap it closes.
+private def observedEnv : Env :=
+  { emptyEnv with points := #[{ ts := 100, lat := 51.5, lon := -0.1, speedKmh := 0.0 }] }
+
+#guard (dayChain { observedEnv with bracketPlace := some "St Elsewhere" }).1 == #[]
 
 end Verified.Geo.DayChain

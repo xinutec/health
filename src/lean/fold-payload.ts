@@ -379,6 +379,12 @@ export function buildDayRequest(
 			// different fields, and neither derives the other.
 			rawSleep: (cap.tail?.rawSleep ?? []).map((w) => [w.startTs, w.endTs, optStr(w.tz), w.minutesAsleep]),
 			dayEndTs: cap.tail?.dayEndTs ?? 0,
+			// The empty-day arm's three (#1055). `dayStartTs` defaults to 0 rather
+			// than to `dayEndTs`: a fixture captured before this existed has no
+			// bracket either, so the arm cannot fire and the span is never read.
+			dayStartTs: cap.tail?.dayStartTs ?? 0,
+			dayTz: optStr(cap.tail?.dayTz ?? null),
+			bracketPlace: optStr(cap.tail?.bracketPlace ?? null),
 			// The mined places, twice. The dwell DETECTOR wants a display name to
 			// snap a cluster to; the dwell CONTINUATION wants visit counts and
 			// totals for its survival curve. Two projections of one row rather than

@@ -87,6 +87,17 @@ export interface DownstreamInputs {
 	rawSleep: { startTs: number; endTs: number; tz: string | null; minutesAsleep: number }[];
 	/** `bounds.endUtc` — how far `applyDwellContinuation` may continue a dwell. */
 	dayEndTs: number;
+	/** `bounds.startUtc`. Read ONLY by the empty-day arm (#1055): a day with
+	 *  observations takes its bounds from them. */
+	dayStartTs?: number;
+	/** The day's display zone, carried onto an inferred stay so it renders local
+	 *  like every other state. */
+	dayTz?: string | null;
+	/** The cross-day bracket, ALREADY NAMED by the shell — the place a no-data
+	 *  day is attributed to. `undefined` when the day is not bracketed by the
+	 *  same place on both sides, which is honestly unknown rather than a
+	 *  failure. */
+	bracketPlace?: string;
 }
 
 /** A recorded `bestPlace` naming question asked at a stay WINDOW — the key, not

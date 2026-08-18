@@ -562,6 +562,14 @@ private def parseChain (j : Json) (segs : Array Seg)
     dwellPlaces := ← (← optArr j "dwellPlaces").mapM parseDwellPlace
     sleep := (← (← optArr j "rawSleep").mapM parseRawSleep).toList
     dayEndTs := (← optInt j "dayEndTs").getD 0
+    dayStartTs := (← optInt j "dayStartTs").getD 0
+    dayTz := (j.getObjValAs? String "dayTz").toOption
+    -- ⚠ INJECTED, not computed here, unlike `sleepPlace` below (#1055). The
+    -- bracket is two `presence_log` reads plus a `focus_places` centroid — DB,
+    -- not mirror — so the fold cannot ask for it and is handed the answer. The
+    -- shell also names it, which is what `buildInferredStayState`'s doc has
+    -- said all along.
+    bracketPlace := (j.getObjValAs? String "bracketPlace").toOption
     -- `bestPlace(preferResidential: true)` composed with `placeLabel`, computed
     -- rather than injected as of #430. No stay window: the sleep attribution
     -- asks about a centroid, not about a visit.

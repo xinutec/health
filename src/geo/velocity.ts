@@ -735,6 +735,26 @@ export async function computeVelocityFromInputs(
 	// request has to be built BEFORE the region it replaces, and this compiling
 	// up here is the proof that the tail adds nothing to it.
 	const rawSleep = inputs.sleepWindows;
+	// The cross-day bracket for a day with NOTHING observed, resolved to a name
+	// here because neither half of that resolution is reachable from the fold:
+	// the bracket itself is two `presence_log` reads plus a `focus_places`
+	// centroid (DB), and naming the centroid is a mirror read. `DayChain.Env`
+	// takes the finished name, which is what `buildInferredStayState`'s doc has
+	// prescribed since it was written.
+	//
+	// ⚠ GATED ON THE DAY BEING EMPTY so the lookup is not paid on every day. The
+	// fold applies its own emptiness test as well and is the one that decides —
+	// this gate is a cost optimisation, not the rule. Before #1055 the whole
+	// inference lived past `solo`'s early return and simply stopped happening.
+	const bracketPlace = await (async () => {
+		if (points.length > 0 || segments.length > 0) return undefined;
+		if (inputs.emptyDayBracket === null || inputs.emptyDayBracket === undefined) return undefined;
+		const p = await bestPlace(inputs.osm, inputs.emptyDayBracket.centroidLat, inputs.emptyDayBracket.centroidLon, {
+			preferResidential: false,
+		});
+		return p === null ? undefined : placeLabel(p);
+	})();
+
 	const downstreamInputs = {
 		morningRaw: morningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
 		prevEveningRaw: prevEveningRaw.map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon })),
@@ -745,6 +765,9 @@ export async function computeVelocityFromInputs(
 			minutesAsleep: w.minutesAsleep,
 		})),
 		dayEndTs: bounds.endUtc,
+		dayStartTs: bounds.startUtc,
+		dayTz: tz ?? null,
+		bracketPlace,
 	};
 
 	/**
