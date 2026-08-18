@@ -1054,20 +1054,21 @@ String in, string out, because that is the narrowest possible C ABI that still
 carries a real day — `lean_object*` either side, no structs to keep in sync. The
 typed decode this leaves in place is the NEXT thing to delete, not this one.
 -/
-/-! ## `focus`, moved here from `Main.lean` (#982)
+/-! ## `focus` lives here, with its helpers (#982)
 
-It was unreachable from a host process for exactly the reason this file exists:
-its handler sat in the exe's root module, and a `lean_exe`'s root emits `main`,
-so an archive carrying it wins the link in a foreign host silently. Every helper
-it uses — `nth`, `optArr`, `jBits` — was already in this library's `Wire`, so
-nothing moved but the namespace itself.
+Moved out of `Main.lean` because its handler sat in the exe's root module, which
+is the one place a host cannot link: a `lean_exe` root emits `main`, and an
+archive carrying it wins the link in a foreign host silently. Every helper it
+uses — `nth`, `optArr`, `jBits` — was already in this library's `Wire`, so
+nothing moved but the namespace itself, byte for byte.
 
-`verified_cli` still serves the mode; it imports this file and always did.
-
-⚠ `stationchain` did NOT come with it. Its parsers share `parseEdge` /
-`parseObsRow` / `jFloatField` with the hsmm and rail handlers, which are still
-in `Main.lean`; moving one without the others would duplicate them. It moves
-when those do. -/
+⚠ THAT REASON NO LONGER DISTINGUISHES IT. The same problem was then fixed for
+every other handler at once: `Main.lean` is an eleven-line shim and the rest are
+`ServeEntry`, a library. So `focus` is here rather than there for the smaller
+reason only — this is where its wire helpers are, and it has its own
+`health_focus_result` export beside `health_day_result`. A later tidy that moved
+it back beside its siblings would not be wrong.
+-/
 
 namespace Focus
 
