@@ -1054,6 +1054,122 @@ String in, string out, because that is the narrowest possible C ABI that still
 carries a real day — `lean_object*` either side, no structs to keep in sync. The
 typed decode this leaves in place is the NEXT thing to delete, not this one.
 -/
+/-! ## `focus`, moved here from `Main.lean` (#982)
+
+It was unreachable from a host process for exactly the reason this file exists:
+its handler sat in the exe's root module, and a `lean_exe`'s root emits `main`,
+so an archive carrying it wins the link in a foreign host silently. Every helper
+it uses — `nth`, `optArr`, `jBits` — was already in this library's `Wire`, so
+nothing moved but the namespace itself.
+
+`verified_cli` still serves the mode; it imports this file and always did.
+
+⚠ `stationchain` did NOT come with it. Its parsers share `parseEdge` /
+`parseObsRow` / `jFloatField` with the hsmm and rail handlers, which are still
+in `Main.lean`; moving one without the others would duplicate them. It moves
+when those do. -/
+
+namespace Focus
+
+open Verified.Geo.FocusPlaces
+open Verified.Geo.FocusIdentity (ExistingPlace NewCluster matchClusters)
+-- The tuple accessors live in `Day` (private, so same-file only, which this is).
+
+private def parseRawPoint (j : Json) : Except String RawPoint := do
+  let a ← j.getArr?
+  let acc ← match a[3]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
+  return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2), acc⟩
+
+private def parseStay (j : Json) : Except String Stay := do
+  let a ← j.getArr?
+  return { startTs := ← (← nth a 0).getInt?, endTs := ← (← nth a 1).getInt?,
+           centroidLat := ← jBits (← nth a 2), centroidLon := ← jBits (← nth a 3),
+           pointCount := (← (← nth a 4).getInt?).toNat, durationSec := ← (← nth a 5).getInt? }
+
+private def parseCluster (j : Json) : Except String Cluster := do
+  let stays ← (← optArr j "stays").mapM parseStay
+  return { id := ← (← j.getObjVal? "id").getInt?,
+           centroidLat := ← jBits (← j.getObjVal? "lat"),
+           centroidLon := ← jBits (← j.getObjVal? "lon"),
+           stays := stays.toList,
+           totalDwellSec := ← (← j.getObjVal? "dwell").getInt? }
+
+private def parseWindow (j : Json) : Except String (Int × Int) := do
+  let a ← j.getArr?
+  return (← (← nth a 0).getInt?, ← (← nth a 1).getInt?)
+
+private def parseExisting (j : Json) : Except String ExistingPlace := do
+  let a ← j.getArr?
+  return ⟨← (← nth a 0).getInt?, ← jBits (← nth a 1), ← jBits (← nth a 2), ← (← nth a 3).getInt?⟩
+
+private def encStay (s : Stay) : Json :=
+  Json.arr #[Lean.toJson s.startTs, Lean.toJson s.endTs, fBits s.centroidLat, fBits s.centroidLon,
+             Lean.toJson s.pointCount, Lean.toJson s.durationSec]
+
+/-- A cluster and everything the mining cron derives from it.
+
+The hour profile is emitted BOTH serialised and re-parsed, because
+`serializeHourProfile` rounds to permille: comparing only the string would let
+`parseHourProfile` drift unseen, and comparing only the parse would hide a
+rounding difference the column actually stores. -/
+private def report (windows : List (Int × Int)) (c : Cluster) : Json :=
+  let profile := serializeHourProfile (hourProfileOf c)
+  Json.mkObj [
+    ("id", Lean.toJson c.id),
+    ("lat", fBits c.centroidLat),
+    ("lon", fBits c.centroidLon),
+    ("dwell", Lean.toJson c.totalDwellSec),
+    ("stays", Json.arr ((c.stays.map encStay).toArray)),
+    ("label", Json.str (classifyClusterLabel c)),
+    ("profile", Json.str profile),
+    ("reparsed", match parseHourProfile (some profile) with
+      | none => Json.null
+      | some xs => Json.arr ((xs.map fBits).toArray)),
+    -- `hourProfileForRange` is the RUNTIME counterpart of `hourProfileOf` — it
+    -- scores one live stay against a mined profile — so it is exercised on the
+    -- cluster's own first stay rather than left to the guards.
+    ("firstStayProfile", match c.stays.head? with
+      | none => Json.null
+      | some s => Json.str (serializeHourProfile (hourProfileForRange s.startTs s.endTs c.centroidLon))),
+    ("sleepH", fBits (sleepHoursOf c)),
+    ("sleepFitbitH", fBits (sleepHoursFromFitbit c.stays windows)),
+    ("uniqueDays", Lean.toJson (uniqueDayCount c.stays c.centroidLon))]
+
+def focusResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let windows := (← (← optArr j "sleepWindows").mapM parseWindow).toList
+    let points := (← (← optArr j "points").mapM parseRawPoint).toList
+    let (stays, mined) := detectFocusPlaces points
+    let groups ← (← optArr j "clusters").mapM parseCluster
+    let old ← (← optArr j "old").mapM parseExisting
+    let identity := matchClusters old
+      ((mined.map (fun c => ({ centroidLat := c.centroidLat, centroidLon := c.centroidLon } : NewCluster))).toArray)
+    return Json.mkObj [
+      ("stays", Json.arr ((stays.map encStay).toArray)),
+      ("mined", Json.arr ((mined.map (report windows)).toArray)),
+      ("names", Json.arr (((assignDisplayNames mined).map
+        (fun (id, n) => Json.arr #[Lean.toJson id, Json.str n])).toArray)),
+      -- One entry per input cluster: the lobes `splitCluster` returned, which is
+      -- the cluster itself when it refused to split.
+      ("split", Json.arr (groups.map (fun c => Json.arr (((splitCluster c).map (report windows)).toArray)))),
+      ("identity", Json.mkObj [
+        ("assignments", Json.arr (identity.assignments.map (fun a =>
+          match a.oldId with | none => Json.null | some i => Lean.toJson i))),
+        ("deleted", Json.arr (identity.deletedOldIds.map Lean.toJson))])]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end Focus
+
+@[export health_focus_result]
+def focusResultExport (input : String) : String :=
+  match Json.parse input with
+  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
+  | .ok j => (Focus.focusResult j).compress
+
 @[export health_day_result]
 def dayResultExport (input : String) : String :=
   match Json.parse input with
