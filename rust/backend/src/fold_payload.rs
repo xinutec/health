@@ -168,3 +168,122 @@ fn encode_biometrics(v: Option<&Value>) -> Value {
         "stepsTotal": num_bits(b, "stepsTotal"),
     })
 }
+
+/// A `[ts, bits(lat), bits(lon)]` fixture list — the shape both cross-day
+/// fixture arrays take.
+fn fixes3(v: Option<&Value>) -> Value {
+    arr_map(v, |o| {
+        json!([int(o, "ts"), num_bits(o, "lat"), num_bits(o, "lon")])
+    })
+}
+
+/// A `[ts, bits(lat), bits(lon), optBits(accuracy)]` fixture list.
+fn fixes4(v: Option<&Value>) -> Value {
+    arr_map(v, |o| {
+        json!([
+            int(o, "ts"),
+            num_bits(o, "lat"),
+            num_bits(o, "lon"),
+            num_bits(o, "accuracy")
+        ])
+    })
+}
+
+/// Map over a JSON array of objects, skipping anything that is not one.
+///
+/// An absent array becomes `[]`, not `null`: every one of these fields is a
+/// list on the Lean side, and the TypeScript spells the same default with
+/// `?? []`.
+fn arr_map<F: Fn(&Map<String, Value>) -> Value>(v: Option<&Value>, f: F) -> Value {
+    Value::Array(
+        v.and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_object).map(&f).collect())
+            .unwrap_or_default(),
+    )
+}
+
+/// The observation series and the cross-day tail, as `env` carries them.
+///
+/// ⚠ `points` and `speedByTs` are the SAME source read twice, and both are
+/// sent: the fold wants the track and the speed lookup separately, and
+/// deriving one from the other here would be this encoder deciding something.
+///
+/// ⚠ `sleep` and `rawSleep` are NOT the same list. `sleep` is the projection
+/// the biometric windows read; `rawSleep` is the Fitbit windows before place
+/// attribution — same rows, different fields, and neither derives the other.
+pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Value> {
+    let o = obs.as_object();
+    let g = |k: &str| o.and_then(|o| o.get(k));
+    let t = tail.and_then(Value::as_object);
+    let tg = |k: &str| t.and_then(|t| t.get(k));
+
+    let mut m = Map::new();
+    m.insert(
+        "points".into(),
+        arr_map(g("points"), |p| {
+            json!([
+                int(p, "ts"),
+                num_bits(p, "lat"),
+                num_bits(p, "lon"),
+                num_bits(p, "speedKmh")
+            ])
+        }),
+    );
+    m.insert("rawFixes".into(), fixes4(g("rawFixes")));
+    m.insert("displayFixes".into(), fixes4(g("displayFixes")));
+    m.insert(
+        "steps".into(),
+        arr_map(g("steps"), |s| json!([int(s, "ts"), num_bits(s, "steps")])),
+    );
+    m.insert(
+        "hr".into(),
+        arr_map(g("hr"), |h| json!([int(h, "ts"), num_bits(h, "bpm")])),
+    );
+    m.insert(
+        "sleep".into(),
+        arr_map(g("sleep"), |s| json!([int(s, "startTs"), int(s, "endTs")])),
+    );
+    m.insert(
+        "speedByTs".into(),
+        arr_map(g("points"), |p| {
+            json!([int(p, "ts"), num_bits(p, "speedKmh")])
+        }),
+    );
+    m.insert("morningFixes".into(), fixes3(tg("morningRaw")));
+    m.insert("prevEveningFixes".into(), fixes3(tg("prevEveningRaw")));
+    m.insert(
+        "rawSleep".into(),
+        arr_map(tg("rawSleep"), |w| {
+            json!([
+                int(w, "startTs"),
+                int(w, "endTs"),
+                opt_str(w, "tz"),
+                int(w, "minutesAsleep")
+            ])
+        }),
+    );
+    m.insert(
+        "dayEndTs".into(),
+        tg("dayEndTs").cloned().unwrap_or_else(|| json!(0)),
+    );
+    m
+}
+
+/// The mined `mode_biometrics` rows, as the eleven-tuple `env.modeStats` takes.
+pub fn encode_mode_stats(v: Option<&Value>) -> Value {
+    arr_map(v, |m| {
+        json!([
+            opt_str(m, "mode"),
+            num_bits(m, "hrMean"),
+            num_bits(m, "hrStd"),
+            int(m, "hrSampleCount"),
+            num_bits(m, "cadenceMean"),
+            num_bits(m, "cadenceStd"),
+            int(m, "cadenceSampleCount"),
+            num_bits(m, "speedMean"),
+            num_bits(m, "speedStd"),
+            int(m, "speedSampleCount"),
+            int(m, "sampleCount"),
+        ])
+    })
+}
