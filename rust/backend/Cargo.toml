@@ -5,6 +5,11 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# For the converge loop: the fold reports unanswered keys by panicking to
+# stderr, so a host has to capture fd 2 around the call. A temporary FILE, not a
+# pipe — see lean::serve_capturing_misses.
+tempfile = "3"
+libc = "0.2"
 # ⚠ LINKED FOR ITS SYMBOLS, not for its API. `day-shell`'s `osm` module defines
 # the `#[unsafe(no_mangle)]` entry points that `DayEntry.OsmHost`'s `@[extern]`
 # lookups resolve against, and this binary links `ServeEntry`, which imports

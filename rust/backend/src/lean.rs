@@ -585,3 +585,100 @@ pub fn serve(request: &str) -> Result<String> {
     };
     Ok(out)
 }
+
+/// One key the fold asked for and did not find in its answer tables.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Miss {
+    /// The table: `nearbyWays`, `tzAt`, `nearbyStations`, `transitStops`, …
+    pub what: String,
+    /// The key as the fold spelled it — bit patterns joined by `|`.
+    pub key: String,
+}
+
+/// Call the fold and collect the keys it could not answer.
+///
+/// # Why the misses come back on stderr
+///
+/// `DayEntry`'s `hit` uses `panic!`, which in Lean PRINTS AND CONTINUES: the
+/// round runs to the end naming every key it reached, rather than stopping at
+/// the first. The rest of that round's output is poisoned by the defaults it
+/// read and is thrown away — only the key set is kept. That is what makes the
+/// converge loop possible at all, and it is why this cannot simply read a field
+/// off the response.
+///
+/// ⚠ FD 2 IS REDIRECTED TO A TEMPORARY FILE, not to a pipe. A pipe has a 64 KiB
+/// buffer and nothing draining it during the call, so a day with enough misses
+/// would deadlock inside Lean rather than return a long list. A file has no
+/// such limit and the call is synchronous, so there is nothing to drain.
+///
+/// ⚠ NOT THREAD-SAFE, and it cannot be: fd 2 is process-wide. The walk is
+/// sequential, which is the only reason this is sound; a concurrent caller
+/// would capture the other's output or lose its own.
+pub fn serve_capturing_misses(request: &str) -> Result<(String, Vec<Miss>)> {
+    use std::io::{Read, Seek};
+    use std::os::fd::AsRawFd;
+
+    init()?;
+
+    let mut sink = tempfile::tempfile().context("creating the stderr capture file")?;
+    // SAFETY: `dup`/`dup2` on fd 2 with a live fd. The original is restored
+    // below on every path, including the error one.
+    let saved = unsafe { libc::dup(2) };
+    if saved < 0 {
+        anyhow::bail!("could not duplicate stderr");
+    }
+    let redirect = unsafe { libc::dup2(sink.as_raw_fd(), 2) };
+    if redirect < 0 {
+        unsafe { libc::close(saved) };
+        anyhow::bail!("could not redirect stderr");
+    }
+
+    let answer = serve(request);
+
+    // Restore BEFORE inspecting the result, so a failure below still leaves the
+    // process able to report itself.
+    unsafe {
+        libc::dup2(saved, 2);
+        libc::close(saved);
+    }
+
+    let out = answer?;
+    sink.rewind().context("rewinding the stderr capture")?;
+    let mut text = String::new();
+    sink.read_to_string(&mut text)
+        .context("reading the stderr capture")?;
+    Ok((out, misses_in(&text)))
+}
+
+/// Every key a round asked for, deduplicated.
+///
+/// ⚠ ANCHORED ON THE TAIL of the message, not on the first `)`. A line name is
+/// a key and line names contain brackets — `Northern Line (Charing Cross
+/// Branch) Southbound`. Stopping at the first one answers a DIFFERENT key,
+/// which the loop then believes it has handled; the TypeScript records two days
+/// that converged wrongly that way before its own parser was anchored.
+pub fn misses_in(stderr: &str) -> Vec<Miss> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        let Some(i) = line.find("uncaptured ") else {
+            continue;
+        };
+        let rest = &line[i + "uncaptured ".len()..];
+        let Some(end) = rest.rfind(") — re-capture required") else {
+            continue;
+        };
+        let head = &rest[..end];
+        let Some(open) = head.find('(') else {
+            continue;
+        };
+        let m = Miss {
+            what: head[..open].to_string(),
+            key: head[open + 1..].to_string(),
+        };
+        if seen.insert(m.clone()) {
+            out.push(m);
+        }
+    }
+    out
+}
