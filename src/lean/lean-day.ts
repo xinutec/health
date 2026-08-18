@@ -76,11 +76,27 @@ import { encodeEpisode, encodeSeg, encodeState } from "./fold-payload.js";
 import { LeanBridgeError } from "./lean-core.js";
 import type { LedgerVerdict } from "./ledger-verdict.js";
 
-export type LeanDayMode = "off" | "shadow" | "on" | "solo";
-
-export function leanDayMode(): LeanDayMode {
+/**
+ * ⚠ THERE IS NO MODE ANY MORE (#975). `off`, `shadow` and `on` each named a
+ * second arm, and the TS day cascade is deleted — there is nothing left for a
+ * flag to select.
+ *
+ * This survives as an ASSERTION rather than being removed outright because the
+ * manifests still set `LEAN_DAY=solo`. A flag nothing reads is a lie waiting for
+ * someone to set `off` during an incident and conclude, wrongly, that they have
+ * turned the fold off. Refusing loudly is the difference between a documented
+ * constant and a dead switch.
+ *
+ * Remove this and the manifest entry together, or not at all.
+ */
+export function assertLeanDaySupported(): void {
 	const v = process.env.LEAN_DAY;
-	return v === "on" || v === "shadow" || v === "solo" ? v : "off";
+	if (v !== undefined && v !== "" && v !== "solo") {
+		throw new Error(
+			`LEAN_DAY=${v} is not a mode any more: #975 deleted the TS day arm, so the fold is the only arm. ` +
+				`Unset it, or set it to "solo" to say so explicitly.`,
+		);
+	}
 }
 
 /** How long ONE round of the day fold may take before the bridge is called
@@ -121,12 +137,24 @@ const DAY_TENANT_TIMEOUT_MS = Number(process.env.LEAN_DAY_TIMEOUT_MS ?? 60_000);
  * gate's own name.
  *
  * Unset, this is exactly what it was: `LEAN_CLI`, else the local `lake` build.
+ *
+ * ⚠ THE FALLBACK IS REPO-RELATIVE, NOT CWD-RELATIVE (#975). It used to be
+ * `process.cwd()`, which is right only when the caller happens to run from the
+ * repo root. `golden-check` invoked from a scratch directory resolved a path
+ * that does not exist, the spawn produced nothing, and the failure surfaced as
+ * `BRIDGE FAILED — Unexpected end of JSON input`: a JSON parser complaining
+ * about a binary that was never there.
+ *
+ * It went unnoticed because the TS arm caught it. With `LEAN_DAY` unset the day
+ * ran in TypeScript and the broken path cost nothing; #975 deleted that arm, so
+ * the same mistake is now a failed day. `compare-day.ts` has always resolved it
+ * from `import.meta.dirname` — this is that, not a new idea.
  */
 function cliPath(): string {
 	return (
 		process.env.LEAN_DAY_HOST ??
 		process.env.LEAN_CLI ??
-		path.join(process.cwd(), "lean", ".lake", "build", "bin", "verified_cli")
+		path.join(import.meta.dirname, "..", "..", "lean", ".lake", "build", "bin", "verified_cli")
 	);
 }
 
@@ -171,22 +199,6 @@ export function resetLeanDayStats(): void {
 }
 
 /**
- * Run the Lean day beside the TS cascade and record what differed.
- *
- * Never throws and never changes its caller's output: a bridge failure, a
- * non-convergent round loop and a divergence are all recorded and swallowed.
- * That is what makes it safe to stage before anything serves.
- */
-export async function shadowLeanDay(
-	req: DayRequestInputs,
-	inputs: ClassificationInputs,
-	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
-	label: string,
-): Promise<void> {
-	await runLeanDay(req, inputs, ts, label);
-}
-
-/**
  * The chain, the comparison and the accounting — everything every mode shares.
  *
  * Returns the response's three arrays, still in wire shape, or `{ failure }`
@@ -214,7 +226,9 @@ async function runLeanDay(
 	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] } | null,
 	label: string,
 ): Promise<{ segs: unknown[]; states: unknown[]; episodes: unknown[] } | { failure: string }> {
-	const mode = leanDayMode();
+	// One arm, so one label. Kept as a name rather than inlined into four
+	// template strings so the ledger prefix stays greppable.
+	const mode = "solo";
 	const { spawnSync } = await import("node:child_process");
 	try {
 		const c = await converge(req, inputs, inputs.osm, async (payload) => {
@@ -249,12 +263,21 @@ async function runLeanDay(
 			// returns `undefined` so the TS answer serves. Degrading to TS is
 			// exactly what shadow does anyway, so the bound cannot change a
 			// served result — only stop a hang.
-			const r = spawnSync(cliPath(), ["day"], {
+			// ⚠ SAY WHICH BINARY IS MISSING. `spawnSync` on an absent path sets
+			// `r.error` and leaves stdout empty, and the empty stdout is what the
+			// caller notices — as `Unexpected end of JSON input`, a parser
+			// complaining about a file that was never there. Naming the path turns
+			// a five-minute misread into a one-line fix (#975).
+			const bin = cliPath();
+			const r = spawnSync(bin, ["day"], {
 				input: JSON.stringify(payload),
 				maxBuffer: 512 * 1024 * 1024,
 				timeout: DAY_TENANT_TIMEOUT_MS,
 				encoding: "utf8",
 			});
+			if (r.error !== undefined) {
+				throw new LeanBridgeError(`cannot run the day binary at ${bin}: ${r.error.message}`);
+			}
 			const err = r.stderr ?? "";
 			// The host's stderr is CAPTURED (spawnSync pipes by default) because
 			// `missesIn` parses it, which also means `OSM_LOG=1` inside the host
@@ -355,59 +378,6 @@ async function runLeanDay(
 }
 
 /**
- * The `on` path: run the chain and RETURN its answer, or `undefined` to serve TS.
- *
- * Everything `shadowLeanDay` does, plus a decode — the comparison still runs and
- * still records, because a served divergence is more worth counting than a
- * shadowed one, not less. What changes is only what the caller does with it.
- *
- * `undefined` on a bridge failure, a non-convergent round loop, or a count
- * mismatch at either boundary. All three are the house pattern
- * (`lean-station-chain.ts`: serve TS, count it, say so loudly). The third used
- * to be justified as a limit of the graft; it survived the graft's deletion on
- * its own merits, which the guard itself now states.
- *
- * A FIELD divergence is served. That is the point of `on`: shadow already
- * reports it and nothing sees it, and the flip exists to make it user-visible.
- */
-export async function serveLeanDay(
-	req: DayRequestInputs,
-	inputs: ClassificationInputs,
-	ts: { segs: readonly EnrichedSegment[]; states: readonly DayState[]; episodes: readonly EpisodeGeometry[] },
-	label: string,
-): Promise<{ segs: EnrichedSegment[]; states: DayState[]; episodes: EpisodeGeometry[] } | undefined> {
-	const res = await runLeanDay(req, inputs, ts, label);
-	if ("failure" in res) return undefined;
-
-	// ⚠ THE COUNT GUARD OUTLIVES THE GRAFT (#959), and deliberately.
-	//
-	// It was written as the graft's precondition — solver geometry the fold did
-	// not draw can only be put back POSITIONALLY, and pairing whichever legs
-	// share an index across differing counts splices two days together rather
-	// than repairing one. That reasoning died with the graft.
-	//
-	// What it actually guards did not: serving a day whose cascade disagreed
-	// with TS about how many segments the day HAS. A fold that returned no
-	// segments at all would otherwise serve an EMPTY day, and "a field
-	// divergence is served" is not a licence for that — a field divergence is a
-	// judgement about geometry, not about whether the day happened.
-	if (res.segs.length !== ts.segs.length || res.episodes.length !== ts.episodes.length) {
-		stats.fails += 1;
-		console.warn(
-			`lean-day[on] ${label}: count mismatch — serving TS ` +
-				`(segs TS ${ts.segs.length}/Lean ${res.segs.length}, ` +
-				`episodes TS ${ts.episodes.length}/Lean ${res.episodes.length})`,
-		);
-		return undefined;
-	}
-	return {
-		segs: res.segs.map(decodeSeg),
-		states: res.states.map(decodeState),
-		episodes: res.episodes.map(decodeEpisode),
-	};
-}
-
-/**
  * The `solo` path: the Lean chain is the ONLY arm, and a failure THROWS.
  *
  * This is the mode the TypeScript deletion waits on. `on` still runs the whole
@@ -471,8 +441,11 @@ export async function soloLeanDay(
 /** Print the run's accounting and return it as the gate's data. `null` when the
  *  tenant is off, so an unstaged tenant can never fail a gate. */
 export function logLeanDayLedger(label: string): LedgerVerdict | null {
-	const mode = leanDayMode();
-	if (mode === "off") return null;
+	// ⚠ NO LONGER RETURNS NULL. It used to, when `off` meant an unstaged tenant
+	// that must not fail a gate; there is no `off` now, so a silent ledger would
+	// only ever mean the day never ran — which is what `NOT EXERCISED` says out
+	// loud, and #392 is the trap of not saying it.
+	const mode = "solo";
 	const s = stats;
 	const clean = s.segDiffs === 0 && s.lenDiffs === 0;
 	// Zero calls is NOT a pass — the trap every other tenant carries (#392). A
@@ -488,14 +461,11 @@ export function logLeanDayLedger(label: string): LedgerVerdict | null {
 	// would claim an agreement nothing measured, and a reader could not tell
 	// "agreed everywhere" from "nothing was compared". Same choice, and the same
 	// reason, as `lean-head` and the seven other solo-capable tenants.
-	const verdict =
-		s.calls === 0
-			? "NOT EXERCISED"
-			: mode === "solo"
-				? "SOLO (no TS arm, nothing compared)"
-				: clean
-					? "EXACT"
-					: `${s.segDiffs + s.lenDiffs} DIVERGED`;
+	// ⚠ NEVER "EXACT". There is no arm to be exact AGAINST, and a ledger claiming
+	// agreement where nothing was compared is the precise lie #975 removed the
+	// second arm to stop telling. `clean` stays computed below for the detail
+	// line, but it cannot promote the verdict.
+	const verdict = s.calls === 0 ? "NOT EXERCISED" : "SOLO (no TS arm, nothing compared)";
 	const depth = s.rounds.length === 0 ? "" : ` — rounds ${Math.min(...s.rounds)}-${Math.max(...s.rounds)}`;
 	const shells = s.shellOnly === 0 ? "" : ` — ${s.shellOnly} shell-only`;
 	const detail = clean ? "" : ` — len=${s.lenDiffs} segs=${s.segDiffs}`;

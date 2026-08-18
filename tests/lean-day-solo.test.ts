@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClassificationInputs } from "../src/geo/classification-inputs.js";
 import type { DayRequestInputs } from "../src/lean/fold-capture.js";
 import { LeanBridgeError } from "../src/lean/lean-core.js";
-import { leanDayMode, logLeanDayLedger, resetLeanDayStats, shadowLeanDay, soloLeanDay } from "../src/lean/lean-day.js";
+import { assertLeanDaySupported, logLeanDayLedger, resetLeanDayStats, soloLeanDay } from "../src/lean/lean-day.js";
 
 // `converge` is the seam every mode goes through, so stubbing it exercises the
 // tenant's OWN failure handling rather than a mock of it. `soloLeanDay` is the
@@ -93,20 +93,23 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe("the solo flag parses, and fails safe", () => {
-	it("recognises solo", () => {
+describe("the flag no longer selects an arm, and refuses to pretend it does", () => {
+	// ⚠ The old test here asserted that an unknown value read as `off`, on the
+	// house rule that a typo must not be read as staging. That rule protected a
+	// CHOICE between arms. #975 deleted the second arm, so the failure mode
+	// inverted: the danger is no longer a typo turning the fold ON, it is someone
+	// setting `off` during an incident and believing they turned it OFF.
+	it("accepts solo, and unset", () => {
 		process.env.LEAN_DAY = "solo";
-		expect(leanDayMode()).toBe("solo");
+		expect(() => assertLeanDaySupported()).not.toThrow();
+		delete process.env.LEAN_DAY;
+		expect(() => assertLeanDaySupported()).not.toThrow();
 	});
 
-	// The house rule for every tenant flag (#392 lineage): an unknown value must
-	// not be read as "some staging is on". `day` is the tenant where getting this
-	// wrong is worst — a typo'd `sol` falling through to `solo` would skip the
-	// whole TS cascade and serve whatever the fold said, with no comparison.
-	it("reads an unknown value as off, not as solo", () => {
-		for (const v of ["sol", "SOLO", "solo ", "true", ""]) {
+	it("refuses a value that implies a mode still exists", () => {
+		for (const v of ["off", "shadow", "on", "sol", "SOLO", "true"]) {
 			process.env.LEAN_DAY = v;
-			expect(leanDayMode()).toBe("off");
+			expect(() => assertLeanDaySupported(), v).toThrow(/not a mode any more/);
 		}
 	});
 });
@@ -232,20 +235,5 @@ describe("the ledger does not claim an agreement nobody measured", () => {
 		const verdict = logLeanDayLedger("2026-05-15");
 		expect(verdict?.unexplained).toEqual([]);
 		expect(verdict?.klass).toBe("exact");
-	});
-});
-
-describe("shadow still compares — solo did not disarm the other modes", () => {
-	// The `ts === null` early return is one line away from being `ts !== null`,
-	// and that mistake would silence every comparison in production while every
-	// solo test above still passed.
-	it("counts a divergence when the arms differ under shadow", async () => {
-		process.env.LEAN_DAY = "shadow";
-		conv.mockResolvedValue(ok([wireSeg(1000), wireSeg(2000)]));
-		await shadowLeanDay(req(2), noInputs, { segs: [], states: [], episodes: [] }, "d");
-		vi.spyOn(console, "log").mockImplementation(() => {});
-		const verdict = logLeanDayLedger("2026-05-15");
-		expect(verdict?.klass).toBe("diverged");
-		expect(verdict?.unexplained.length).toBeGreaterThan(0);
 	});
 });

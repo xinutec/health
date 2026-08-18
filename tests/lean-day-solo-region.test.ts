@@ -1,28 +1,20 @@
 /**
- * `LEAN_DAY=solo` skips the TS cascade — measured, not asserted (#975).
+ * The fold IS the day: what `computeVelocity` returns comes from it (#975).
  *
- * The other eight tenants take the TS arm as a THUNK, so `solo` is "don't call
- * it" and a spy proves the mode works. `day` is not like them: the TS arm is the
- * ENCLOSING ~1,340 lines of `computeVelocity` — the OSM enrichment loop, the
- * five corrections, the 38 passes, the sleep attribution, the timeline and the
- * episodes — and `leanDay` is invoked at the END of it. There is no thunk to
- * leave uncalled, so there is nothing for a spy to count.
+ * # What this file used to be, and why it shrank
  *
- * The instrument is therefore an OSM adapter that THROWS on every method. A day
- * with real movement cannot get through the enrichment loop without asking it
- * something, so:
+ * It measured that `LEAN_DAY=solo` SKIPPED the ~1,420-line TS cascade, using an
+ * OSM adapter that throws as the instrument and a `shadow` run as the control:
+ * solo completed, shadow threw, so the region demonstrably did not execute.
  *
- *   - under `solo` the run completes  → the region did not execute
- *   - under `shadow` the run throws   → the region does execute, on this day
+ * #975 deleted the region. Those tests are gone rather than adapted, because
+ * the property they measured cannot be stated any more — there is no second arm
+ * to skip, no `shadow` to contrast with, and no tail to build a rival request.
+ * A test kept alive past its subject reads as coverage and asserts nothing.
  *
- * The second half is what makes the first half evidence rather than a tautology.
- * A day that happened to need no OSM would pass the solo test while proving
- * nothing at all, and that is the failure mode this file is shaped to avoid.
- *
- * ⚠ This file mocks `lean-day.js` and `tests/lean-day-solo.test.ts` mocks
- * `day-serve.js` underneath the real one. They cannot share a file: this one
- * needs the tenant stubbed to observe what `velocity.ts` hands it, that one
- * needs the tenant real to test its own failure handling.
+ * What survives is what is still true and still worth breaking a build over:
+ * the returned day comes from the fold, and the fields that do NOT come from
+ * the fold are still produced.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,15 +27,12 @@ import type { DayRequestInputs } from "../src/lean/fold-capture.js";
 vi.mock("../src/lean/lean-day.js", async (orig) => ({
 	...(await orig<typeof import("../src/lean/lean-day.js")>()),
 	soloLeanDay: vi.fn(),
-	shadowLeanDay: vi.fn(),
-	serveLeanDay: vi.fn(),
 }));
 
 import { computeVelocityFromInputs } from "../src/geo/velocity.js";
-import { shadowLeanDay, soloLeanDay } from "../src/lean/lean-day.js";
+import { soloLeanDay } from "../src/lean/lean-day.js";
 
 const solo = vi.mocked(soloLeanDay);
-const shadow = vi.mocked(shadowLeanDay);
 
 /** Throws if any method is called. Under solo nothing may reach it. */
 function throwingOsmAdapter(): OsmAdapter {
@@ -155,9 +144,7 @@ const served = { segs: [], states: [], episodes: [] };
 
 beforeEach(() => {
 	solo.mockReset();
-	shadow.mockReset();
 	solo.mockResolvedValue(served);
-	shadow.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -175,13 +162,6 @@ describe("solo does not execute the TS region", () => {
 		const out = await computeVelocityFromInputs(movingDay(throwingOsmAdapter()));
 		expect(solo).toHaveBeenCalledOnce();
 		expect(out.segments).toEqual([]);
-	});
-
-	// The control. Without this, the test above would pass on a day that needed
-	// no OSM at all — green, and evidence of nothing.
-	it("the same day under shadow DOES reach the adapter", async () => {
-		process.env.LEAN_DAY = "shadow";
-		await expect(computeVelocityFromInputs(movingDay(throwingOsmAdapter()))).rejects.toThrow(/the TS region ran/);
 	});
 
 	// Solo answers from the fold, not from a TS arm that quietly still ran.
@@ -203,32 +183,20 @@ describe("solo does not execute the TS region", () => {
 	});
 });
 
-describe("solo sends the same request the tail would have sent", () => {
-	/** Run the day under one mode and return the request the tenant received. */
-	async function requestUnder(mode: "solo" | "shadow"): Promise<DayRequestInputs> {
-		process.env.LEAN_DAY = mode;
+describe("the request carries the day", () => {
+	/** Run the day and return the request the fold received. */
+	async function requestUnder(): Promise<DayRequestInputs> {
+		process.env.LEAN_DAY = "solo";
 		await computeVelocityFromInputs(movingDay(emptyOsmAdapter()));
-		const spy = mode === "solo" ? solo : shadow;
-		expect(spy).toHaveBeenCalledOnce();
-		return spy.mock.calls[0][0] as DayRequestInputs;
+		expect(solo).toHaveBeenCalledOnce();
+		return solo.mock.calls[0][0] as DayRequestInputs;
 	}
-
-	// ⚠ THE CLAIM THE WHOLE MODE RESTS ON. Solo builds the request ~1,340 lines
-	// before the tail does, from `inputs.biometrics` / `inputs.modeBiometrics`
-	// rather than from the locals `biomForStaySplit` / `modeStats`. `velocity.ts`
-	// asserts in a comment that those resolve to the same values on every branch.
-	// A comment cannot fail; this can.
-	it("builds a byte-identical request from inputs alone", async () => {
-		const soloReq = await requestUnder("solo");
-		const tailReq = await requestUnder("shadow");
-		expect(soloReq).toEqual(tailReq);
-	});
 
 	// Guards the test above against passing vacuously. Two empty requests are
 	// equal, and a fixture that drifted into producing one would turn the
 	// comparison into a tautology without failing anything.
 	it("compares a request that actually carries the day", async () => {
-		const r = await requestUnder("solo");
+		const r = await requestUnder();
 		expect(r.segsRaw.length).toBeGreaterThan(0);
 		expect(r.modeStats.length).toBeGreaterThan(0);
 		expect(r.obs.points.length).toBeGreaterThan(0);
@@ -240,21 +208,5 @@ describe("solo sends the same request the tail would have sent", () => {
 		expect(r.tail?.morningRaw.length).toBeGreaterThan(0);
 		expect(r.tail?.prevEveningRaw.length).toBeGreaterThan(0);
 		expect(r.tail?.rawSleep.length).toBeGreaterThan(0);
-	});
-});
-
-describe("FOLD_CAPTURE and solo are mutually exclusive", () => {
-	// The capture records the TS arm's answer as the GATE's input closure. Under
-	// solo there is no TS answer, so a file written here would hold the fold's own
-	// output and the gate would be the fold grading itself. Refusing is the only
-	// honest option; writing it silently is the one this test exists to prevent.
-	it("refuses rather than writing a capture of the fold's own output", async () => {
-		process.env.LEAN_DAY = "solo";
-		process.env.FOLD_CAPTURE = "/tmp/should-never-be-written";
-		try {
-			await expect(computeVelocityFromInputs(movingDay(throwingOsmAdapter()))).rejects.toThrow(/mutually exclusive/);
-		} finally {
-			delete process.env.FOLD_CAPTURE;
-		}
 	});
 });
