@@ -55,6 +55,28 @@ fn the_mode_table_answers_in_process() {
         );
     }
 
+    // ⚠ The battery chart, which the velocity pipeline computes BESIDE the day
+    // fold rather than inside it — so a host porting that pipeline needs it
+    // callable. It was ported to Lean and `#guard`ed, then reachable from no
+    // entry point at all (#1003's shape) until this mode existed.
+    //
+    // The tail case is the one worth pinning: the last in-day reading is
+    // (200, 60), the tail is (300, 40) and the day ends at 250, so the level
+    // where that line crosses the boundary is 60 + (40-60) * 0.5 = 50.
+    let battery = lean::serve(
+        r#"{"mode":"battery","points":[[100,80],[200,60]],"tail":[300,40],"dayEndTs":250}"#,
+    )
+    .expect("battery must answer");
+    assert_eq!(battery, r#"{"series":[[100,80],[200,60],[250,50]]}"#);
+
+    // A tail that does not postdate the last in-day sample is a no-op, not an
+    // extrapolation backwards.
+    let stale = lean::serve(
+        r#"{"mode":"battery","points":[[100,80],[200,60]],"tail":[150,40],"dayEndTs":250}"#,
+    )
+    .expect("battery must answer");
+    assert_eq!(stale, r#"{"series":[[100,80],[200,60]]}"#);
+
     // The dispatch still refuses what it does not know, rather than falling
     // through to something.
     let unknown = lean::serve(r#"{"id":1,"mode":"nope"}"#).expect("must answer");

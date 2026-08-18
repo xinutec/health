@@ -31,7 +31,8 @@
 //! "whatever `Intl` did" is not a specification, and the next person to touch
 //! this needs to know a decision was made.
 
-use chrono::{NaiveDateTime, TimeZone};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
 /// Parse Fitbit's wall-clock form: `YYYY-MM-DD HH:MM:SS`, or the same with `T`.
@@ -108,4 +109,84 @@ pub fn wall_clock_to_utc_string(wall_clock: &str, tz: Option<&str>) -> Option<St
     let unix = wall_clock_to_unix(wall_clock, tz)?;
     let dt = chrono::DateTime::from_timestamp(unix, 0)?;
     Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// The half-open UTC instant range `[start_utc, end_utc)` a civil date covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DayBounds {
+    pub start_utc: i64,
+    pub end_utc: i64,
+}
+
+/// The UTC bounds of a civil date in a zone.
+///
+/// The calendar arithmetic could be Lean's — `Verified.Civil` has it — but the
+/// ZONE cannot: that file's own header says "nothing here needs a `Float`, a
+/// timezone database, or a clock", and a tz database is data about what
+/// governments did, not a rule a proof constrains. Same split as the Fitbit tz
+/// decision already uses.
+///
+/// # ⚠ A TRANSLITERATION, REPRODUCING TWO DEFECTS ON PURPOSE
+///
+/// Unlike [`wall_clock_to_unix`] above — which asks `chrono-tz` directly and
+/// merely MATCHES the TypeScript's observed answers — this copies the
+/// TypeScript's method, because its method is where its answers come from:
+///
+///   * **The day is always 86400 seconds.** `end_utc` is `start_utc + 86400`,
+///     not the next local midnight, so a spring-forward day runs an hour past
+///     it and an autumn day stops an hour short.
+///   * **The offset is read from the HOUR FIELD ALONE**, so a half-hour zone
+///     truncates: Asia/Kolkata (+05:30) is applied as +05:00 and
+///     America/St_Johns (−03:30) as −04:00.
+///
+/// Both are wrong and both are kept, because the 35-day golden corpus is the
+/// only oracle for the pipeline this feeds and a port that deliberately differs
+/// cannot be checked against it. Every corpus day is Europe/London, where the
+/// offset is a whole number of hours and the truncation cannot be seen — so
+/// "correct" and "faithful" agree there, and the divergence would only appear
+/// for a user this backend has never had. Fixing it is a deliberate change that
+/// re-blesses the corpus, not a tidy-up.
+pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
+    let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .with_context(|| format!("{date} is not a YYYY-MM-DD date"))?;
+    let midnight: DateTime<Utc> =
+        Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).expect("midnight is a valid time"));
+    let start_utc = midnight.timestamp();
+
+    let Some(tz) = tz.filter(|t| !t.is_empty()) else {
+        // No zone: the boundaries are UTC midnight, the loader's own fallback.
+        return Ok(DayBounds {
+            start_utc,
+            end_utc: start_utc + 86_400,
+        });
+    };
+
+    let zone: Tz = tz
+        .parse()
+        .with_context(|| format!("{tz} is not a known timezone"))?;
+    let local = midnight.with_timezone(&zone);
+
+    // ⚠ `hour()` and `day()` ONLY. This is the truncation, and it is the
+    // TypeScript's `formatToParts` reading exactly these two fields. Replacing
+    // it with `local.offset()` changes the answer for zones the corpus cannot
+    // see, which is a re-blessing rather than a refactor.
+    let local_hour = i64::from(local.hour());
+    let local_day = i64::from(local.day());
+    let date_day = i64::from(day.day());
+
+    let offset_seconds = if local_day == date_day {
+        local_hour * 3600
+    } else if local_day > date_day || (date_day > 27 && local_day == 1) {
+        // So far east the local clock already rolled over. The `> 27` arm is
+        // how a month boundary is told from a genuinely smaller day number.
+        (local_hour + 24) * 3600
+    } else {
+        (local_hour - 24) * 3600
+    };
+
+    let start_utc = start_utc - offset_seconds;
+    Ok(DayBounds {
+        start_utc,
+        end_utc: start_utc + 86_400,
+    })
 }

@@ -1,0 +1,662 @@
+[
+ {
+  "date": "2026-01-15",
+  "tz": null,
+  "startUtc": 1768435200,
+  "endUtc": 1768521600
+ },
+ {
+  "date": "2026-03-29",
+  "tz": null,
+  "startUtc": 1774742400,
+  "endUtc": 1774828800
+ },
+ {
+  "date": "2026-10-25",
+  "tz": null,
+  "startUtc": 1792886400,
+  "endUtc": 1792972800
+ },
+ {
+  "date": "2026-02-28",
+  "tz": null,
+  "startUtc": 1772236800,
+  "endUtc": 1772323200
+ },
+ {
+  "date": "2026-12-31",
+  "tz": null,
+  "startUtc": 1798675200,
+  "endUtc": 1798761600
+ },
+ {
+  "date": "2026-01-01",
+  "tz": null,
+  "startUtc": 1767225600,
+  "endUtc": 1767312000
+ },
+ {
+  "date": "2024-02-29",
+  "tz": null,
+  "startUtc": 1709164800,
+  "endUtc": 1709251200
+ },
+ {
+  "date": "2026-06-30",
+  "tz": null,
+  "startUtc": 1782777600,
+  "endUtc": 1782864000
+ },
+ {
+  "date": "2026-11-01",
+  "tz": null,
+  "startUtc": 1793491200,
+  "endUtc": 1793577600
+ },
+ {
+  "date": "2026-03-31",
+  "tz": null,
+  "startUtc": 1774915200,
+  "endUtc": 1775001600
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "UTC",
+  "startUtc": 1768435200,
+  "endUtc": 1768521600
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "UTC",
+  "startUtc": 1774742400,
+  "endUtc": 1774828800
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "UTC",
+  "startUtc": 1792886400,
+  "endUtc": 1792972800
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "UTC",
+  "startUtc": 1772236800,
+  "endUtc": 1772323200
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "UTC",
+  "startUtc": 1798675200,
+  "endUtc": 1798761600
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "UTC",
+  "startUtc": 1767225600,
+  "endUtc": 1767312000
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "UTC",
+  "startUtc": 1709164800,
+  "endUtc": 1709251200
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "UTC",
+  "startUtc": 1782777600,
+  "endUtc": 1782864000
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "UTC",
+  "startUtc": 1793491200,
+  "endUtc": 1793577600
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "UTC",
+  "startUtc": 1774915200,
+  "endUtc": 1775001600
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Europe/London",
+  "startUtc": 1768435200,
+  "endUtc": 1768521600
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Europe/London",
+  "startUtc": 1774742400,
+  "endUtc": 1774828800
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Europe/London",
+  "startUtc": 1792882800,
+  "endUtc": 1792969200
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Europe/London",
+  "startUtc": 1772236800,
+  "endUtc": 1772323200
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Europe/London",
+  "startUtc": 1798675200,
+  "endUtc": 1798761600
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Europe/London",
+  "startUtc": 1767225600,
+  "endUtc": 1767312000
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Europe/London",
+  "startUtc": 1709164800,
+  "endUtc": 1709251200
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Europe/London",
+  "startUtc": 1782774000,
+  "endUtc": 1782860400
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Europe/London",
+  "startUtc": 1793491200,
+  "endUtc": 1793577600
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Europe/London",
+  "startUtc": 1774911600,
+  "endUtc": 1774998000
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "America/New_York",
+  "startUtc": 1768453200,
+  "endUtc": 1768539600
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "America/New_York",
+  "startUtc": 1774756800,
+  "endUtc": 1774843200
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "America/New_York",
+  "startUtc": 1792900800,
+  "endUtc": 1792987200
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "America/New_York",
+  "startUtc": 1772254800,
+  "endUtc": 1772341200
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "America/New_York",
+  "startUtc": 1798693200,
+  "endUtc": 1798779600
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "America/New_York",
+  "startUtc": 1767070800,
+  "endUtc": 1767157200
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "America/New_York",
+  "startUtc": 1709182800,
+  "endUtc": 1709269200
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "America/New_York",
+  "startUtc": 1782792000,
+  "endUtc": 1782878400
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "America/New_York",
+  "startUtc": 1793332800,
+  "endUtc": 1793419200
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "America/New_York",
+  "startUtc": 1774929600,
+  "endUtc": 1775016000
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1768402800,
+  "endUtc": 1768489200
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1774710000,
+  "endUtc": 1774796400
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1792854000,
+  "endUtc": 1792940400
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1772204400,
+  "endUtc": 1772290800
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1798642800,
+  "endUtc": 1798729200
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1767193200,
+  "endUtc": 1767279600
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1709132400,
+  "endUtc": 1709218800
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1782745200,
+  "endUtc": 1782831600
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1793458800,
+  "endUtc": 1793545200
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Asia/Tokyo",
+  "startUtc": 1774882800,
+  "endUtc": 1774969200
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1768384800,
+  "endUtc": 1768471200
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1774692000,
+  "endUtc": 1774778400
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1792836000,
+  "endUtc": 1792922400
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1772186400,
+  "endUtc": 1772272800
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1798624800,
+  "endUtc": 1798711200
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1767175200,
+  "endUtc": 1767261600
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1709114400,
+  "endUtc": 1709200800
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1782727200,
+  "endUtc": 1782813600
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1793440800,
+  "endUtc": 1793527200
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Pacific/Kiritimati",
+  "startUtc": 1774864800,
+  "endUtc": 1774951200
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Pacific/Midway",
+  "startUtc": 1768474800,
+  "endUtc": 1768561200
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Pacific/Midway",
+  "startUtc": 1774782000,
+  "endUtc": 1774868400
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Pacific/Midway",
+  "startUtc": 1792926000,
+  "endUtc": 1793012400
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Pacific/Midway",
+  "startUtc": 1772276400,
+  "endUtc": 1772362800
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Pacific/Midway",
+  "startUtc": 1798714800,
+  "endUtc": 1798801200
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Pacific/Midway",
+  "startUtc": 1767092400,
+  "endUtc": 1767178800
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Pacific/Midway",
+  "startUtc": 1709204400,
+  "endUtc": 1709290800
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Pacific/Midway",
+  "startUtc": 1782817200,
+  "endUtc": 1782903600
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Pacific/Midway",
+  "startUtc": 1793358000,
+  "endUtc": 1793444400
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Pacific/Midway",
+  "startUtc": 1774954800,
+  "endUtc": 1775041200
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1768417200,
+  "endUtc": 1768503600
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1774724400,
+  "endUtc": 1774810800
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1792868400,
+  "endUtc": 1792954800
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1772218800,
+  "endUtc": 1772305200
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1798657200,
+  "endUtc": 1798743600
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1767207600,
+  "endUtc": 1767294000
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1709146800,
+  "endUtc": 1709233200
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1782759600,
+  "endUtc": 1782846000
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1793473200,
+  "endUtc": 1793559600
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Asia/Kolkata",
+  "startUtc": 1774897200,
+  "endUtc": 1774983600
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "America/St_Johns",
+  "startUtc": 1768449600,
+  "endUtc": 1768536000
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "America/St_Johns",
+  "startUtc": 1774753200,
+  "endUtc": 1774839600
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "America/St_Johns",
+  "startUtc": 1792897200,
+  "endUtc": 1792983600
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "America/St_Johns",
+  "startUtc": 1772251200,
+  "endUtc": 1772337600
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "America/St_Johns",
+  "startUtc": 1798689600,
+  "endUtc": 1798776000
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "America/St_Johns",
+  "startUtc": 1767067200,
+  "endUtc": 1767153600
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "America/St_Johns",
+  "startUtc": 1709179200,
+  "endUtc": 1709265600
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "America/St_Johns",
+  "startUtc": 1782788400,
+  "endUtc": 1782874800
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "America/St_Johns",
+  "startUtc": 1793329200,
+  "endUtc": 1793415600
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "America/St_Johns",
+  "startUtc": 1774926000,
+  "endUtc": 1775012400
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1768395600,
+  "endUtc": 1768482000
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1774702800,
+  "endUtc": 1774789200
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1792846800,
+  "endUtc": 1792933200
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1772197200,
+  "endUtc": 1772283600
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1798635600,
+  "endUtc": 1798722000
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1767186000,
+  "endUtc": 1767272400
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1709125200,
+  "endUtc": 1709211600
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1782741600,
+  "endUtc": 1782828000
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1793451600,
+  "endUtc": 1793538000
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Australia/Lord_Howe",
+  "startUtc": 1774875600,
+  "endUtc": 1774962000
+ },
+ {
+  "date": "2026-01-15",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1768388400,
+  "endUtc": 1768474800
+ },
+ {
+  "date": "2026-03-29",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1774695600,
+  "endUtc": 1774782000
+ },
+ {
+  "date": "2026-10-25",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1792839600,
+  "endUtc": 1792926000
+ },
+ {
+  "date": "2026-02-28",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1772190000,
+  "endUtc": 1772276400
+ },
+ {
+  "date": "2026-12-31",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1798628400,
+  "endUtc": 1798714800
+ },
+ {
+  "date": "2026-01-01",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1767178800,
+  "endUtc": 1767265200
+ },
+ {
+  "date": "2024-02-29",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1709118000,
+  "endUtc": 1709204400
+ },
+ {
+  "date": "2026-06-30",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1782734400,
+  "endUtc": 1782820800
+ },
+ {
+  "date": "2026-11-01",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1793444400,
+  "endUtc": 1793530800
+ },
+ {
+  "date": "2026-03-31",
+  "tz": "Pacific/Chatham",
+  "startUtc": 1774868400,
+  "endUtc": 1774954800
+ }
+]

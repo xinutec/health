@@ -1371,6 +1371,46 @@ def stationChainResult (j : Json) : Json :=
 
 end StationChain
 
+/-! ## `battery` — the chart series (#982)
+
+⚠ ORPHANED UNTIL NOW. `Verified.Geo.Velocity.batterySeries` and
+`appendBatteryTail` were ported and `#guard`ed against the Node references, then
+reachable from no entry point at all — the shape #1003 is open about. The
+velocity pipeline computes the chart beside the fold rather than inside it, so a
+host porting that pipeline needs them callable, not merely written.
+
+Composed in ONE mode rather than exposed as two, because the pipeline never
+wants the raw series: `computeVelocity` writes
+`appendBatteryTail(batterySeries(inDay), tail, endUtc)` as a single expression,
+and splitting it across two round trips would let a caller ship the untailed
+series by forgetting the second. -/
+private def batteryResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let pts ← (← optArr j "points").mapM (fun e => do
+      let a ← e.getArr?
+      let ts ← (← nth a 0).getInt?
+      let lvl ← match a[1]? with
+        | some v => if v.isNull then pure none else some <$> v.getInt?
+        | none => pure none
+      pure (ts, lvl))
+    let tail ← match j.getObjVal? "tail" with
+      | .ok v =>
+        if v.isNull then pure none
+        else do
+          let a ← v.getArr?
+          let ts ← (← nth a 0).getInt?
+          let lvl ← (← nth a 1).getInt?
+          pure (some (ts, lvl))
+      | .error _ => pure none
+    let dayEndTs ← (← j.getObjVal? "dayEndTs").getInt?
+    let series := Verified.Geo.Velocity.appendBatteryTail
+      (Verified.Geo.Velocity.batterySeries pts.toList) tail dayEndTs
+    return Json.mkObj [("series", Json.arr ((series.map
+      (fun (ts, lvl) => Json.arr #[Lean.toJson ts, Lean.toJson lvl])).toArray))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -1394,6 +1434,7 @@ def dispatch (j : Json) : Json :=
   | .ok "head" => headResult j
   | .ok "day" => Day.dayResult j
   | .ok "focus" => Focus.focusResult j
+  | .ok "battery" => batteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
