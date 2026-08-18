@@ -1450,6 +1450,21 @@ def dispatch (j : Json) : Json :=
   | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
   | .error _ => Json.mkObj [("error", Json.str "missing mode")]
 
+/-- The C ABI a host links this library for.
+
+Mirrors `health_day_result` in `DayEntry` and `health_backend_call` in
+`BackendEntry`: an owned Lean string in, an owned Lean string out, so the shim
+in `rust/*/src/shim.c` stays the same three functions. The payload is one
+`serve` request — the same object `serveLoop` reads off a line — so a host and
+the subprocess ask the identical question, and any divergence between them is a
+transport bug rather than a difference in what was asked. -/
+@[export health_serve_dispatch]
+def serveDispatchExport (input : String) : String :=
+  match Json.parse input with
+  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
+  | .ok j => (dispatch j).compress
+
+
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
 (`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
