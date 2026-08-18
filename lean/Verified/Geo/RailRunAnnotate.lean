@@ -197,8 +197,20 @@ def couldBeTrainPause (points : Array Fix) (s : Seg) : Bool :=
   -- corpus-wide, absorption fires exactly twice and both are confirmed
   -- interchange walks; it has never absorbed a stationary segment. The
   -- 2026-04-29 case cited above is one of the two.
-  -- Mirrors `couldBeTrainPause` in src/geo/passes/rail-runs.ts.
-  else if Verified.Geo.SegmentMerge.effectiveMode s == "walking" then false
+  --
+  -- ⚠ EITHER field, not `effectiveMode` (health #1054). The TS asks
+  -- `refinedMode === "walking" || mode === "walking"`; `effectiveMode` is
+  -- `refinedMode ?? mode`, which STOPS LOOKING at `mode` as soon as a
+  -- refinement exists. A leg the biometric labeller re-called — `mode`
+  -- "walking", `refinedMode` something else — then failed the guard here and
+  -- fell through to the speed and dwell tests, so Lean absorbed an interchange
+  -- walk that TS refuses. That grows the run past a boundary TS stops at, and
+  -- the run arrives at `applyFrom` multi-segment: `collapse` instead of
+  -- `upgradeSingle`, which is the whole of the 2026-08-07 divergence.
+  --
+  -- Weakening this guard is exactly the harm #810 names: it welds two different
+  -- trains together and deletes the confirmed row between them.
+  else if s.refinedMode == some "walking" || s.mode == "walking" then false
   else if s.avgSpeed ≤ TRAIN_PAUSE_MAX_AVG_KMH then true
   else
     let segPoints := samplesInWindow points s
@@ -745,6 +757,35 @@ private def traceOf (segs : Array Seg) (fixes : Array Fix)
 
 -- One train segment, one run, unambiguous line. Trace: two station lookups
 -- then two line lookups, board before alight in both pairs.
+/-! ### `couldBeTrainPause` reads BOTH mode fields (health #1054) -/
+
+private def pauseSeg (mode : String) (refined : Option String) : Seg :=
+  { startTs := 1000, endTs := 1100, mode := mode, refinedMode := refined
+    refinedReason := none, refinedKinds := #[], wayName := none
+    confidence := 0.8, confidenceMargin := 2.0
+    -- Under the speed threshold, so everything below the walk guard would say
+    -- "pause". Only the walk guard can refuse these.
+    avgSpeed := 5.0, maxSpeed := 6.0, linearity := 0.9, pointCount := 4 }
+
+-- ⚠ THE REGRESSION. `mode` says walking, a refinement says otherwise. Under
+-- `effectiveMode` (`refinedMode ?? mode`) this read as NOT-walking, fell through
+-- to the speed test, and absorbed — welding two trains into one leg and deleting
+-- the interchange between them, which is the harm #810 names. The TS asks
+-- `refinedMode === "walking" || mode === "walking"`, so it never absorbed this.
+#guard couldBeTrainPause #[] (pauseSeg "walking" (some "train")) == false
+#guard couldBeTrainPause #[] (pauseSeg "walking" (some "driving")) == false
+
+-- The other order, which `effectiveMode` did get right — kept so a fix that
+-- swings the predicate the other way is caught too.
+#guard couldBeTrainPause #[] (pauseSeg "driving" (some "walking")) == false
+#guard couldBeTrainPause #[] (pauseSeg "walking" none) == false
+
+-- ⚠ THE CONTROL. With neither field walking the guard must NOT fire, or nothing
+-- is ever absorbed and the pass stops doing its job. A guard that refuses
+-- everything looks identical to one that works.
+#guard couldBeTrainPause #[] (pauseSeg "driving" (some "train")) == true
+#guard couldBeTrainPause #[] (pauseSeg "stationary" none) == true
+
 private def segsS1 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS1 : Array Fix := #[⟨1000, 51.5, (-0.1), 2.0⟩, ⟨1060, 51.5, (-0.1), 2.0⟩, ⟨1120, 51.505, (-0.1), 45.0⟩, ⟨1180, 51.515, (-0.1), 50.0⟩, ⟨1240, 51.53, (-0.1), 50.0⟩, ⟨1300, 51.5395, (-0.1), 20.0⟩, ⟨1360, 51.54, (-0.1), 2.0⟩, ⟨1420, 51.54, (-0.1), 2.0⟩]
