@@ -15,7 +15,7 @@
 //! not a decode error: the fold reads a longitude as a speed and answers. The
 //! only honest check is the entire array.
 
-use backend::fold_payload::{encode_mode_stats, encode_obs_and_tail, encode_places};
+use backend::fold_payload::{encode_caches, encode_mode_stats, encode_obs_and_tail, encode_places};
 use serde_json::Value;
 
 #[test]
@@ -32,12 +32,19 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
         let got = encode_obs_and_tail(cap.get("obs").expect("obs"), cap.get("tail"));
 
         let places = encode_places(cap.get("knownPlaces"));
+        let caches = encode_caches(
+            cap.get("hsmmDecode"),
+            cap.get("railRouteCache"),
+            cap.get("busRouteCache"),
+            cap.get("railStopsCache"),
+        )
+        .expect("the caches encode");
 
         for (k, expected) in want {
             if k == "modeStats" {
                 continue;
             }
-            if let Some(actual) = places.get(k) {
+            if let Some(actual) = places.get(k).or_else(|| caches.get(k)) {
                 assert_eq!(actual, expected, "{name}: env.{k} differs");
                 continue;
             }
@@ -114,4 +121,29 @@ fn an_absent_radius_defaults_in_one_view_and_stays_absent_in_another() {
         Value::Null,
         "no hour profile is not a profile of zeroes"
     );
+}
+
+/// ⚠ A CORRUPT CACHE ROW IS AN ERROR, not an absent route.
+///
+/// `railRouteCache` carries its geometry as a JSON string inside the row. The
+/// first version of the encoder dropped a row that would not parse and called
+/// that an improvement on the TypeScript, which throws; `dev-lint`'s
+/// `rust-serde-swallow` rejected it and was right. A dropped route is a matcher
+/// scoring the day against a route set that is quietly missing something.
+#[test]
+fn an_unparseable_route_geometry_is_reported_not_skipped() {
+    let bad = serde_json::json!([
+        {"routeKey": "good", "geometryJson": "[{\"lat\":51.5,\"lon\":-0.1}]"},
+        {"routeKey": "corrupt", "geometryJson": "{not json"}
+    ]);
+    let err = encode_caches(None, Some(&bad), None, None)
+        .expect_err("a corrupt row must not be silently dropped");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("corrupt"), "the error names the row: {msg}");
+
+    // And the well-formed neighbour alone still encodes.
+    let good =
+        serde_json::json!([{"routeKey": "good", "geometryJson": "[{\"lat\":51.5,\"lon\":-0.1}]"}]);
+    let ok = encode_caches(None, Some(&good), None, None).expect("a good row encodes");
+    assert_eq!(ok["railRouteCache"].as_array().map(Vec::len), Some(1));
 }

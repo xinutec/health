@@ -58,13 +58,33 @@ for (const f of readdirSync(CAP).sort()) {
     displayName: p.displayName == null ? p.displayName : `place-${p.id % 7}`,
     amenityLabel: p.amenityLabel == null ? p.amenityLabel : `amenity-${p.id % 5}`,
   }));
-  const inputs = { homeTz: "UTC", knownPlaces: places, venuePriors: null, hsmmDecode: null,
-                   busRouteCache: [], railRouteCache: [], railStopsCache: [] };
+  // The caches come from the fixture too, truncated. Coordinates are shifted
+  // like everything else; route names are real OSM line names (public data, but
+  // they localise the user, so they are replaced).
+  const stopsOf = (ss) => (ss ?? []).slice(0, 4).map((x, j) => ({
+    ...x, name: x.name == null ? x.name : `stop-${j}`, lat: shift(x.lat), lon: shift(x.lon) }));
+  const railRouteCache = (fx.inputs.railRouteCache ?? []).slice(0, 3).map((r, j) => ({
+    routeKey: `route-${j}`,
+    geometryJson: JSON.stringify(JSON.parse(r.geometryJson).slice(0, 4)
+      .map((q) => ({ lat: shift(q.lat), lon: shift(q.lon) }))) }));
+  const busRouteCache = (fx.inputs.busRouteCache ?? []).slice(0, 3).map((b, j) => ({
+    ...b, routeRef: `bus-${j}`, routeName: b.routeName == null ? b.routeName : `busname-${j}`,
+    stops: stopsOf(b.stops) }));
+  const railStopsCache = (fx.inputs.railStopsCache ?? []).slice(0, 3).map((r, j) => ({
+    ...r, lineRef: r.lineRef == null ? r.lineRef : `line-${j}`,
+    lineName: r.lineName == null ? r.lineName : `linename-${j}`, stops: stopsOf(r.stops) }));
+  const hsmmDecode = (fx.inputs.hsmmDecode ?? []).slice(0, 6).map((h, j) => ({
+    ...h, lineName: h.lineName == null ? h.lineName : `hline-${j}` }));
+
+  const inputs = { homeTz: "UTC", knownPlaces: places, venuePriors: null,
+                   hsmmDecode, busRouteCache, railRouteCache, railStopsCache };
   const trace = { nearbyWays: {}, nearbyStations: {}, nearbyTransitStops: {},
                   nearbyLandmarks: {}, linesAtPoint: {}, reverseGeocode: {}, stationsOnLine: {} };
   const req = buildDayRequest(cap, inputs, trace);
   cap.knownPlaces = places;
-  const keep = ["stayPlaces", "dwellPlaces", "enrichPlaces", "knownPlaces", "focusPlaceDays", "hsmmPlaces",
+  Object.assign(cap, { railRouteCache, busRouteCache, railStopsCache, hsmmDecode });
+  const keep = ["hmmDecode", "railRouteCache", "busRouteCache", "railStops",
+                "stayPlaces", "dwellPlaces", "enrichPlaces", "knownPlaces", "focusPlaceDays", "hsmmPlaces",
                 "points", "rawFixes", "displayFixes", "steps", "hr", "sleep", "speedByTs",
                 "morningFixes", "prevEveningFixes", "rawSleep", "dayEndTs", "modeStats"];
   const env = {};

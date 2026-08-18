@@ -21,6 +21,7 @@
 //! than in most ports: the shape is 25 keys of mostly-pass-through data where a
 //! wrong field name produces a well-formed request the fold answers anyway.
 
+use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 
 /// An `f64` as the decimal of its IEEE-754 bit pattern.
@@ -57,11 +58,15 @@ fn opt_str(o: &Map<String, Value>, k: &str) -> Value {
     }
 }
 
-/// An integer field, passed through unchanged.
+/// A field passed through UNENCODED.
 ///
-/// Timestamps and counts are NOT bit-encoded: they are integers on both sides
-/// and JSON carries them exactly.
-fn int(o: &Map<String, Value>, k: &str) -> Value {
+/// Timestamps, counts and ids are not bit-encoded: JSON carries an integer
+/// exactly, so there is nothing to preserve. It also carries the string keys —
+/// `routeKey`, and the enum-ish `mode` values — which is why this is `raw`
+/// rather than `int`: the TypeScript writes `r.routeKey` with no conversion at
+/// all, and naming it for one of the types it passes would invite someone to
+/// "fix" the others.
+fn raw(o: &Map<String, Value>, k: &str) -> Value {
     o.get(k).cloned().unwrap_or(Value::Null)
 }
 
@@ -98,8 +103,8 @@ pub fn encode_seg(seg: &Value) -> Value {
         return Value::Null;
     };
     json!({
-        "startTs": int(o, "startTs"),
-        "endTs": int(o, "endTs"),
+        "startTs": raw(o, "startTs"),
+        "endTs": raw(o, "endTs"),
         "mode": opt_str(o, "mode"),
         "refinedMode": opt_str(o, "refinedMode"),
         "confidence": num_bits(o, "confidence"),
@@ -107,7 +112,7 @@ pub fn encode_seg(seg: &Value) -> Value {
         "avgSpeed": num_bits(o, "avgSpeed"),
         "maxSpeed": num_bits(o, "maxSpeed"),
         "linearity": num_bits(o, "linearity"),
-        "pointCount": int(o, "pointCount"),
+        "pointCount": raw(o, "pointCount"),
         "place": opt_str(o, "place"),
         "city": opt_str(o, "city"),
         "wayName": opt_str(o, "wayName"),
@@ -162,7 +167,7 @@ fn encode_biometrics(v: Option<&Value>) -> Value {
         "hrMin": num_bits(b, "hrMin"),
         "hrMax": num_bits(b, "hrMax"),
         "hrStd": num_bits(b, "hrStd"),
-        "sampleCount": int(b, "sampleCount"),
+        "sampleCount": raw(b, "sampleCount"),
         "overlapsSleep": b.get("overlapsSleep").cloned().unwrap_or(Value::Null),
         "sleepFraction": num_bits(b, "sleepFraction"),
         "stepsTotal": num_bits(b, "stepsTotal"),
@@ -173,7 +178,7 @@ fn encode_biometrics(v: Option<&Value>) -> Value {
 /// fixture arrays take.
 fn fixes3(v: Option<&Value>) -> Value {
     arr_map(v, |o| {
-        json!([int(o, "ts"), num_bits(o, "lat"), num_bits(o, "lon")])
+        json!([raw(o, "ts"), num_bits(o, "lat"), num_bits(o, "lon")])
     })
 }
 
@@ -181,7 +186,7 @@ fn fixes3(v: Option<&Value>) -> Value {
 fn fixes4(v: Option<&Value>) -> Value {
     arr_map(v, |o| {
         json!([
-            int(o, "ts"),
+            raw(o, "ts"),
             num_bits(o, "lat"),
             num_bits(o, "lon"),
             num_bits(o, "accuracy")
@@ -222,7 +227,7 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
         "points".into(),
         arr_map(g("points"), |p| {
             json!([
-                int(p, "ts"),
+                raw(p, "ts"),
                 num_bits(p, "lat"),
                 num_bits(p, "lon"),
                 num_bits(p, "speedKmh")
@@ -233,20 +238,20 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
     m.insert("displayFixes".into(), fixes4(g("displayFixes")));
     m.insert(
         "steps".into(),
-        arr_map(g("steps"), |s| json!([int(s, "ts"), num_bits(s, "steps")])),
+        arr_map(g("steps"), |s| json!([raw(s, "ts"), num_bits(s, "steps")])),
     );
     m.insert(
         "hr".into(),
-        arr_map(g("hr"), |h| json!([int(h, "ts"), num_bits(h, "bpm")])),
+        arr_map(g("hr"), |h| json!([raw(h, "ts"), num_bits(h, "bpm")])),
     );
     m.insert(
         "sleep".into(),
-        arr_map(g("sleep"), |s| json!([int(s, "startTs"), int(s, "endTs")])),
+        arr_map(g("sleep"), |s| json!([raw(s, "startTs"), raw(s, "endTs")])),
     );
     m.insert(
         "speedByTs".into(),
         arr_map(g("points"), |p| {
-            json!([int(p, "ts"), num_bits(p, "speedKmh")])
+            json!([raw(p, "ts"), num_bits(p, "speedKmh")])
         }),
     );
     m.insert("morningFixes".into(), fixes3(tg("morningRaw")));
@@ -255,10 +260,10 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
         "rawSleep".into(),
         arr_map(tg("rawSleep"), |w| {
             json!([
-                int(w, "startTs"),
-                int(w, "endTs"),
+                raw(w, "startTs"),
+                raw(w, "endTs"),
                 opt_str(w, "tz"),
-                int(w, "minutesAsleep")
+                raw(w, "minutesAsleep")
             ])
         }),
     );
@@ -276,14 +281,14 @@ pub fn encode_mode_stats(v: Option<&Value>) -> Value {
             opt_str(m, "mode"),
             num_bits(m, "hrMean"),
             num_bits(m, "hrStd"),
-            int(m, "hrSampleCount"),
+            raw(m, "hrSampleCount"),
             num_bits(m, "cadenceMean"),
             num_bits(m, "cadenceStd"),
-            int(m, "cadenceSampleCount"),
+            raw(m, "cadenceSampleCount"),
             num_bits(m, "speedMean"),
             num_bits(m, "speedStd"),
-            int(m, "speedSampleCount"),
-            int(m, "sampleCount"),
+            raw(m, "speedSampleCount"),
+            raw(m, "sampleCount"),
         ])
     })
 }
@@ -331,7 +336,7 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
                 // ⚠ `?? null` in the TypeScript, NOT `?? 0`: a place with no
                 // recorded visits is not a place visited zero times.
                 p.get("visitCount").cloned().unwrap_or(Value::Null),
-                int(p, "uniqueDays")
+                raw(p, "uniqueDays")
             ])
         }),
     );
@@ -339,7 +344,7 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
         "enrichPlaces".into(),
         arr_map(known, |p| {
             json!([
-                int(p, "id"),
+                raw(p, "id"),
                 num_bits(p, "centroidLat"),
                 num_bits(p, "centroidLon"),
                 // ⚠ Defaults to 50 m here and stays null in `stayPlaces` above.
@@ -357,7 +362,7 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
         "knownPlaces".into(),
         arr_map(known, |p| {
             json!([
-                int(p, "id"),
+                raw(p, "id"),
                 num_bits(p, "centroidLat"),
                 num_bits(p, "centroidLon")
             ])
@@ -365,13 +370,13 @@ pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
     );
     m.insert(
         "focusPlaceDays".into(),
-        arr_map(known, |p| json!([int(p, "id"), int(p, "uniqueDays")])),
+        arr_map(known, |p| json!([raw(p, "id"), raw(p, "uniqueDays")])),
     );
     m.insert(
         "hsmmPlaces".into(),
         arr_map(known, |p| {
             json!([
-                int(p, "id"),
+                raw(p, "id"),
                 opt_str(p, "displayName"),
                 num_bits(p, "centroidLat"),
                 num_bits(p, "centroidLon")
@@ -388,4 +393,107 @@ fn hour_profile(v: Option<&Value>) -> Value {
         None => Value::Null,
         Some(hs) => Value::Array(hs.iter().map(|h| opt_bits(h.as_f64()).clone()).collect()),
     }
+}
+
+/// A route's stop list: `[optStr(name), bits(lat), bits(lon), seq]`.
+///
+/// Shared by the bus and rail caches — the same four columns in the same order,
+/// which is why one helper serves both rather than two that could drift.
+fn stops(v: Option<&Value>) -> Value {
+    arr_map(v, |s| {
+        json!([
+            opt_str(s, "name"),
+            num_bits(s, "lat"),
+            num_bits(s, "lon"),
+            raw(s, "seq")
+        ])
+    })
+}
+
+/// The route and decode caches, as `env` carries them.
+///
+/// ⚠ `railRouteCache` holds its geometry as a JSON STRING inside the row, so
+/// this parses a document out of a field, and a row that does not parse is an
+/// ERROR rather than a row that is quietly skipped.
+///
+/// The first version dropped it and called that a deliberate improvement on the
+/// TypeScript, which throws. `dev-lint`'s `rust-serde-swallow` rejected it, and
+/// the linter was right: a corrupt cache row silently becoming "this route does
+/// not exist" is a matcher scoring a day against a route set that is missing
+/// something, with nothing anywhere saying so. The three outcomes are not
+/// symmetric — an empty polyline is a route that goes nowhere, a dropped row is
+/// a route nobody offered, and only an error is a statement about the cache.
+pub fn encode_caches(
+    hsmm_decode: Option<&Value>,
+    rail_routes: Option<&Value>,
+    bus_routes: Option<&Value>,
+    rail_stops: Option<&Value>,
+) -> Result<Map<String, Value>> {
+    let mut m = Map::new();
+
+    m.insert(
+        "hmmDecode".into(),
+        arr_map(hsmm_decode, |h| {
+            json!({
+                "startTs": raw(h, "startTs"),
+                "endTs": raw(h, "endTs"),
+                "mode": opt_str(h, "mode"),
+                "lineName": opt_str(h, "lineName"),
+                // `?? null`: an absent place id is unknown, not place zero.
+                "placeId": h.get("placeId").cloned().unwrap_or(Value::Null),
+            })
+        }),
+    );
+
+    let mut routes = Vec::new();
+    for row in rail_routes.and_then(Value::as_array).into_iter().flatten() {
+        let r = row
+            .as_object()
+            .context("railRouteCache row is not an object")?;
+        let geom_str = r
+            .get("geometryJson")
+            .and_then(Value::as_str)
+            .context("railRouteCache row has no geometryJson string")?;
+        let geom: Value = serde_json::from_str(geom_str).with_context(|| {
+            format!(
+                "railRouteCache row {} has unparseable geometryJson",
+                r.get("routeKey").and_then(Value::as_str).unwrap_or("?")
+            )
+        })?;
+        routes.push(json!([
+            raw(r, "routeKey"),
+            arr_map(Some(&geom), |p| json!([
+                num_bits(p, "lat"),
+                num_bits(p, "lon")
+            ]))
+        ]));
+    }
+    m.insert("railRouteCache".into(), Value::Array(routes));
+
+    m.insert(
+        "busRouteCache".into(),
+        arr_map(bus_routes, |b| {
+            json!({
+                "routeRef": raw(b, "routeRef"),
+                "routeName": opt_str(b, "routeName"),
+                "osmRelationId": raw(b, "osmRelationId"),
+                "stops": stops(b.get("stops")),
+            })
+        }),
+    );
+
+    m.insert(
+        "railStops".into(),
+        arr_map(rail_stops, |r| {
+            json!({
+                "lineRef": opt_str(r, "lineRef"),
+                "lineName": opt_str(r, "lineName"),
+                "osmRelationId": raw(r, "osmRelationId"),
+                "routeType": raw(r, "routeType"),
+                "stops": stops(r.get("stops")),
+            })
+        }),
+    );
+
+    Ok(m)
 }
