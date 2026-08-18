@@ -48,7 +48,18 @@ serde = { version = "1", features = ["derive"] }
 # Rust's own str::parse. The day fold's wire format exists to carry the exact
 # double (see src/fold_payload.rs), so an off-by-one-ULP parse asks the verified
 # core a different question than the TypeScript asked.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# ⚠ BOTH FEATURES ARE LOAD-BEARING for the day fold's wire format.
+#
+# float_roundtrip: without it `Value::as_f64` disagrees with V8 by one ULP on
+# some decimals — 1.3051391499999703 parses to ...425 here and ...424 in Node,
+# Python and Rust's own str::parse.
+#
+# preserve_order: the answer tables are emitted by iterating a JSON object, and
+# JavaScript iterates in INSERTION order while serde_json's default Map is
+# sorted. Lean builds a HashMap from them so it does not care — but the
+# comparison against the TypeScript does, and a diff that is really just a sort
+# hides a diff that is not.
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

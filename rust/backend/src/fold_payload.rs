@@ -497,3 +497,296 @@ pub fn encode_caches(
 
     Ok(m)
 }
+
+/// The numbers in a trace key, `lat|lon[|radius]`.
+///
+/// ⚠ An unparseable part becomes NaN rather than an error, because that is what
+/// `Number("x")` does on the other side and the key then encodes as a NaN bit
+/// pattern. Rejecting it here would refuse a request the TypeScript sends.
+fn key_nums(k: &str) -> Vec<f64> {
+    k.split('|')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<f64>().unwrap_or(f64::NAN))
+        .collect()
+}
+
+/// `[latBits, lonBits, radiusBits, answer]` from a trace section.
+///
+/// ⚠ THE DEFAULT RADIUS IS NOT A WIDENING. The trace keys on the radius the
+/// CALLER passed, and several call sites omit it; the Lean fold passes one
+/// explicitly, as a function of three arguments must. Filling it in records the
+/// EFFECTIVE argument, so `lat|lon` and `lat|lon|100` are the same question
+/// rather than a hit and a miss.
+fn table3<F: Fn(&Value) -> Value>(section: Option<&Value>, dflt: f64, map: F) -> Value {
+    let mut out = Vec::new();
+    for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
+        let n = key_nums(k);
+        if n.len() < 2 {
+            continue;
+        }
+        out.push(json!([
+            bits(n[0]),
+            bits(n[1]),
+            bits(if n.len() >= 3 { n[2] } else { dflt }),
+            map(v)
+        ]));
+    }
+    Value::Array(out)
+}
+
+/// `[latBits, lonBits, answer]`, for the one lookup that takes no radius.
+///
+/// ⚠ EXACTLY two key parts, where [`table3`] takes two-or-more. The cascade's
+/// `nearbyWays` never passes a radius, so `Env.nearbyWays` is a function of two
+/// arguments and a three-part key is a DIFFERENT question — skipped rather than
+/// truncated into this one.
+fn table2<F: Fn(&Value) -> Value>(section: Option<&Value>, map: F) -> Value {
+    let mut out = Vec::new();
+    for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
+        let n = key_nums(k);
+        if n.len() != 2 {
+            continue;
+        }
+        out.push(json!([bits(n[0]), bits(n[1]), map(v)]));
+    }
+    Value::Array(out)
+}
+
+/// One mined visit-shape prior.
+fn venue_stats(v: &Value) -> Value {
+    let Some(o) = v.as_object() else {
+        return Value::Null;
+    };
+    let list = |k: &str| {
+        Value::Array(
+            o.get(k)
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(|x| opt_bits(x.as_f64())).collect())
+                .unwrap_or_default(),
+        )
+    };
+    json!({ "visits": num_bits(o, "visits"), "dwell": list("dwell"), "hours": list("hours") })
+}
+
+/// The mined visit-shape priors, or `null`.
+///
+/// ⚠ `null` is not "no evidence about this venue" but "no evidence about ANY
+/// venue", and `rankVenues` drops the whole shape term rather than scoring
+/// every candidate at a base rate. Encoding an empty object instead would turn
+/// a dropped term into a uniform one.
+pub fn encode_venue_priors(v: Option<&Value>) -> Value {
+    let Some(o) = v.and_then(Value::as_object) else {
+        return Value::Null;
+    };
+    let entries = |k: &str| {
+        Value::Array(
+            o.get(k)
+                .and_then(Value::as_object)
+                .map(|m| {
+                    m.iter()
+                        .map(|(kk, vv)| json!([kk, venue_stats(vv)]))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        )
+    };
+    json!({
+        "bySubtype": entries("bySubtype"),
+        "byCategory": entries("byCategory"),
+        "totalVisits": num_bits(o, "totalVisits"),
+    })
+}
+
+/// `DEFAULT_RADIUS_M` from `src/geo/osm.ts`, in metres.
+///
+/// ⚠ These are the EFFECTIVE arguments of the lookups whose callers omit a
+/// radius, so they decide whether a recorded answer is found or missed. They
+/// are not tuning knobs: changing one here does not change what the mirror was
+/// asked, it changes which recorded answer the fold is offered.
+pub mod default_radius_m {
+    pub const NEARBY_WAYS: f64 = 50.0;
+    pub const NEARBY_STATIONS: f64 = 200.0;
+    pub const NEARBY_LANDMARKS: f64 = 100.0;
+    pub const LINES_AT_POINT: f64 = 100.0;
+    pub const NEARBY_TRANSIT_STOPS: f64 = 50.0;
+}
+
+/// Map a JSON array through a per-element encoder, `[]` when absent.
+fn list_of<F: Fn(&Map<String, Value>) -> Value>(v: &Value, f: F) -> Value {
+    arr_map(Some(v), f)
+}
+
+/// The seven recorded-answer tables the fold consults.
+///
+/// ⚠ These are ANSWER TABLES, not inputs. A key the fold asks for and does not
+/// find is a MISS: `DayEntry`'s `hit` panics, names the key, and the round's
+/// output is poisoned — which is how the converge loop discovers what to answer
+/// next. So a table that is subtly mis-keyed does not fail here; it fails as an
+/// extra round, or as a day that never converges.
+pub fn encode_lookups(trace: Option<&Value>, tz_at: Option<&Value>) -> Value {
+    let t = trace.and_then(Value::as_object);
+    let sec = |k: &str| t.and_then(|t| t.get(k));
+
+    json!({
+        "nearbyStations": table3(sec("nearbyStations"), default_radius_m::NEARBY_STATIONS, |v| {
+            list_of(v, |s| json!({
+                "name": raw(s, "name"),
+                "subtype": raw(s, "subtype"),
+                "distanceM": num_bits(s, "distanceM"),
+                "lat": num_bits(s, "lat"),
+                "lon": num_bits(s, "lon"),
+            }))
+        }),
+        // The answer is a bare string list, passed through as-is.
+        "linesAtPoint": table3(sec("linesAtPoint"), default_radius_m::LINES_AT_POINT, Value::clone),
+        "transitStops": table3(sec("nearbyTransitStops"), default_radius_m::NEARBY_TRANSIT_STOPS, |v| {
+            list_of(v, |s| json!({
+                "subtype": raw(s, "subtype"),
+                "distanceM": num_bits(s, "distanceM"),
+            }))
+        }),
+        "nearbyWays": table2(sec("nearbyWays"), |v| {
+            list_of(v, |w| json!({
+                "type": raw(w, "type"),
+                "subtype": raw(w, "subtype"),
+                "name": opt_str(w, "name"),
+                "distanceM": num_bits(w, "distanceM"),
+            }))
+        }),
+        "stationsOnLine": stations_on_line(sec("stationsOnLine")),
+        // ⚠ NOT from the trace — the adapter never saw these. `tzAt` is a
+        // direct `tzLookup` import in the pipeline, so `RecordingOsmAdapter`
+        // has no record of it and the fold capture carries it separately.
+        "tzAt": arr_map(tz_at, |q| json!([
+            num_bits(q, "lat"),
+            num_bits(q, "lon"),
+            raw(q, "tz")
+        ])),
+        // ⚠ NOT YET PORTED, and empty is NOT a safe default — an absent entry
+        // is a MISS the fold reports and the converge loop must answer, so a
+        // day with stays will simply not converge until this is filled.
+        //
+        // It is the only table whose entries are DERIVED rather than passed
+        // through: each carries `localStaySamples(start, end, tz)` — a
+        // per-minute walk of the stay in the venue's local clock — and
+        // `localHourOf((start + end) / 2, tz)`, unfloored. Both need the tz
+        // database, so they belong beside `date_bounds_utc` in `timezone`.
+        "bestPlace": json!([]),
+        "reverseGeocode": geocode_table(sec("reverseGeocode")),
+        "nearbyLandmarks": table3(sec("nearbyLandmarks"), default_radius_m::NEARBY_LANDMARKS, |v| {
+            list_of(v, |l| json!({
+                "name": raw(l, "name"),
+                "type": raw(l, "type"),
+                "subtype": raw(l, "subtype"),
+                "distanceM": num_bits(l, "distanceM"),
+                "openingHours": opt_str(l, "openingHours"),
+                // ⚠ `=== true`, so a missing flag is false rather than null.
+                "enclosing": l.get("enclosing") == Some(&Value::Bool(true)),
+            }))
+        }),
+    })
+}
+
+/// `[line, [[name, latBits, lonBits], …]]` — keyed by LINE NAME, not by
+/// coordinate, so there is no key parsing and no radius.
+fn stations_on_line(section: Option<&Value>) -> Value {
+    Value::Array(
+        section
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .map(|(line, v)| {
+                        json!([
+                            line,
+                            list_of(v, |s| json!([
+                                raw(s, "name"),
+                                num_bits(s, "lat"),
+                                num_bits(s, "lon")
+                            ]))
+                        ])
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+/// `reverseGeocode`'s `zoom = 18` default, so a key that omitted it records the
+/// EFFECTIVE argument rather than a blank.
+const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
+
+/// `[latBits, lonBits, zoom, address|null]`.
+///
+/// ⚠ THE ZOOM CROSSES AS A PLAIN INTEGER, unlike every other numeric in every
+/// other table. It is a literal the caller writes, not a measurement, so there
+/// is no precision to preserve — but it means this one table cannot reuse
+/// `table3`, and a copy of that helper "tidied" to share it would silently
+/// bit-encode the zoom and miss every key.
+fn geocode_table(section: Option<&Value>) -> Value {
+    let mut out = Vec::new();
+    for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
+        let n = key_nums(k);
+        if n.len() < 2 {
+            continue;
+        }
+        // ⚠ An INTEGER on the wire. JavaScript has one number type, so
+        // `JSON.stringify(16)` writes `16`; emitting the f64 would write `16.0`
+        // and Lean's `getInt?` would refuse it.
+        let zoom = if n.len() >= 3 {
+            n[2]
+        } else {
+            NOMINATIM_DEFAULT_ZOOM
+        };
+        let zoom = if zoom.fract() == 0.0 && zoom.is_finite() {
+            json!(zoom as i64)
+        } else {
+            json!(zoom)
+        };
+        out.push(json!([
+            bits(n[0]),
+            bits(n[1]),
+            zoom,
+            if v.is_null() {
+                Value::Null
+            } else {
+                encode_geocode(v)
+            }
+        ]));
+    }
+    Value::Array(out)
+}
+
+/// One Nominatim answer, flattened: the three top-level fields plus the address
+/// components the naming cascade reads.
+fn encode_geocode(v: &Value) -> Value {
+    let Some(o) = v.as_object() else {
+        return Value::Null;
+    };
+    let empty = Map::new();
+    let a = o
+        .get("address")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    json!({
+        "displayName": raw(o, "displayName"),
+        "type": raw(o, "type"),
+        "category": raw(o, "category"),
+        "amenity": opt_str(a, "amenity"),
+        "tourism": opt_str(a, "tourism"),
+        "leisure": opt_str(a, "leisure"),
+        "shop": opt_str(a, "shop"),
+        "building": opt_str(a, "building"),
+        // ⚠ snake_case on the wire in, camelCase out — the Nominatim payload
+        // keeps OSM's spelling and Lean reads the renamed field.
+        "houseNumber": opt_str(a, "house_number"),
+        "road": opt_str(a, "road"),
+        "pedestrian": opt_str(a, "pedestrian"),
+        "neighbourhood": opt_str(a, "neighbourhood"),
+        "suburb": opt_str(a, "suburb"),
+        "stateDistrict": opt_str(a, "state_district"),
+        "city": opt_str(a, "city"),
+        "town": opt_str(a, "town"),
+        "village": opt_str(a, "village"),
+        "municipality": opt_str(a, "municipality"),
+    })
+}

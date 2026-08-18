@@ -28,7 +28,10 @@ for (const f of readdirSync(CAP).sort()) {
     segsRaw: [],
     // The answer tables. Empty is fine — this fixture checks the OBSERVATION
     // encoding, and buildDayRequest reads these unconditionally.
-    tzAt: [], bestPlace: [], sleepPlace: [],
+    // Real tzAt entries from the capture, truncated; bestPlace stays empty
+    // because the Rust encoder does not build it yet (see fold_payload.rs).
+    tzAt: (c.tzAt ?? []).slice(0, 6).map((q) => ({ ...q, lat: shift(q.lat), lon: shift(q.lon) })),
+    bestPlace: [], sleepPlace: [],
     modeStats: c.modeStats ?? [],
     obs: {
       points: (c.obs.points ?? []).slice(0, N).map(pt),
@@ -78,12 +81,32 @@ for (const f of readdirSync(CAP).sort()) {
 
   const inputs = { homeTz: "UTC", knownPlaces: places, venuePriors: null,
                    hsmmDecode, busRouteCache, railRouteCache, railStopsCache };
-  const trace = { nearbyWays: {}, nearbyStations: {}, nearbyTransitStops: {},
-                  nearbyLandmarks: {}, linesAtPoint: {}, reverseGeocode: {}, stationsOnLine: {} };
+  // A real recorded trace, truncated. The keys are "lat|lon[|radius]" decimals;
+  // they are NOT shifted, because the key IS the question and a shifted key
+  // would test a different lookup than the one recorded. They are dropped to
+  // the first few entries per section instead, and the ANSWERS are scrubbed.
+  const take = (o, n) => Object.fromEntries(Object.entries(o ?? {}).slice(0, n));
+  const scrubName = (x, j) => (x == null ? x : `name-${j}`);
+  const tr = fx.inputs.osmTrace ?? {};
+  const trace = {
+    nearbyWays: Object.fromEntries(Object.entries(take(tr.nearbyWays, 3)).map(([k, v]) => [k,
+      v.slice(0, 3).map((w, j) => ({ ...w, name: scrubName(w.name, j) }))])),
+    nearbyStations: Object.fromEntries(Object.entries(take(tr.nearbyStations, 2)).map(([k, v]) => [k,
+      v.slice(0, 3).map((x, j) => ({ ...x, name: scrubName(x.name, j) }))])),
+    nearbyTransitStops: take(tr.nearbyTransitStops, 2),
+    nearbyLandmarks: Object.fromEntries(Object.entries(take(tr.nearbyLandmarks, 2)).map(([k, v]) => [k,
+      v.slice(0, 3).map((x, j) => ({ ...x, name: scrubName(x.name, j) }))])),
+    linesAtPoint: take(tr.linesAtPoint, 2),
+    reverseGeocode: Object.fromEntries(Object.entries(take(tr.reverseGeocode, 2)).map(([k, v]) => [k,
+      v == null ? null : { ...v, displayName: "display", address: { ...v.address, road: v.address?.road == null ? v.address?.road : "road" } }])),
+    stationsOnLine: Object.fromEntries(Object.entries(take(tr.stationsOnLine, 2)).map(([k, v]) => [k,
+      v.slice(0, 3).map((x, j) => ({ ...x, name: scrubName(x.name, j) }))])),
+  };
   const req = buildDayRequest(cap, inputs, trace);
   cap.knownPlaces = places;
+  cap.trace = trace;
   Object.assign(cap, { railRouteCache, busRouteCache, railStopsCache, hsmmDecode });
-  const keep = ["hmmDecode", "railRouteCache", "busRouteCache", "railStops",
+  const keep = ["lookups", "hmmDecode", "railRouteCache", "busRouteCache", "railStops",
                 "stayPlaces", "dwellPlaces", "enrichPlaces", "knownPlaces", "focusPlaceDays", "hsmmPlaces",
                 "points", "rawFixes", "displayFixes", "steps", "hr", "sleep", "speedByTs",
                 "morningFixes", "prevEveningFixes", "rawSleep", "dayEndTs", "modeStats"];

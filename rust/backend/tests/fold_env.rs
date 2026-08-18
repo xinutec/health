@@ -15,7 +15,9 @@
 //! not a decode error: the fold reads a longitude as a speed and answers. The
 //! only honest check is the entire array.
 
-use backend::fold_payload::{encode_caches, encode_mode_stats, encode_obs_and_tail, encode_places};
+use backend::fold_payload::{
+    encode_caches, encode_lookups, encode_mode_stats, encode_obs_and_tail, encode_places,
+};
 use serde_json::Value;
 
 #[test]
@@ -42,6 +44,14 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
 
         for (k, expected) in want {
             if k == "modeStats" {
+                continue;
+            }
+            if k == "lookups" {
+                assert_eq!(
+                    &encode_lookups(cap.get("trace"), cap.get("tzAt")),
+                    expected,
+                    "{name}: env.lookups differs"
+                );
                 continue;
             }
             if let Some(actual) = places.get(k).or_else(|| caches.get(k)) {
