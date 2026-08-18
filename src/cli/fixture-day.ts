@@ -20,6 +20,7 @@ import { FixtureOsmAdapter } from "../geo/osm-adapter-fixture.js";
 import type { OsmTrace } from "../geo/osm-adapter-recording.js";
 import { RowSetOsmAdapter } from "../geo/osm-adapter-rowset.js";
 import type { OsmRowSet } from "../geo/osm-rowset.js";
+import type { FoldCaptureFile } from "../lean/fold-capture.js";
 import type { NormalizedState } from "./state-diff.js";
 
 /** Bumped only when a schema change alters classifier output. See the
@@ -64,6 +65,36 @@ export interface CapturedDay {
 	expected: {
 		/** What `golden-check-v2` diffs: the normalised day-state timeline. */
 		velocity: NormalizedState[];
+		/**
+		 * The TS cascade's own run, frozen as data (#975).
+		 *
+		 * The day gate's oracle used to be produced by RUNNING the TS arm under
+		 * `FOLD_CAPTURE` at gate time. That arm is being deleted, and an oracle
+		 * that has to be executed dies with the code that computes it — so it is
+		 * recorded here, once, while the arm still exists.
+		 *
+		 * ⚠ BOTH halves are the oracle, and neither can be recomputed later.
+		 *
+		 * `capture` holds what the TS run was handed (`segsSplit`/`segsIn`, the tz
+		 * and place answers) AND what it produced (`segsPre`/`segsOut`/`statesOut`/
+		 * `episodesOut`). See `lean/fold-capture.ts` on why it records rather than
+		 * re-derives: a recomputed input would ask the LEAN question and answer it,
+		 * hiding a disagreement about which coordinate to ask about.
+		 *
+		 * `osmAnswers` is the trace the TS run's own lookups produced — NOT the
+		 * fixture's `inputs.osmTrace`, which is a superset. Substituting the
+		 * superset would answer a lookup the TS arm never made, so a leg the Lean
+		 * arm re-enriches and the TS arm did not would quietly get an answer
+		 * instead of surfacing as a miss. The miss is the finding.
+		 *
+		 * ⚠ Optional ONLY during the migration. Once the TS arm is gone a fixture
+		 * without this cannot be gated at all — there is no second arm to fall back
+		 * to — so `compare-day` must REPORT that rather than skip the day.
+		 */
+		tsArm?: {
+			capture: FoldCaptureFile;
+			osmAnswers: OsmTrace;
+		};
 	};
 }
 
@@ -83,7 +114,10 @@ const capturedDaySchema = z.object({
 		description: z.string().default(""),
 	}),
 	inputs: z.unknown(),
-	expected: z.object({ velocity: z.array(z.unknown()) }),
+	// ⚠ `tsArm` must be DECLARED, not merely permitted: zod strips unknown
+	// keys, so an undeclared field would be silently dropped on every parse — the
+	// fixture would keep it on disk and the gate would never see it.
+	expected: z.object({ velocity: z.array(z.unknown()), tsArm: z.unknown().optional() }),
 });
 
 /** Parse + version-gate a fixture file's JSON. Throws on a format

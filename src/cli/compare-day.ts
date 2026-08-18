@@ -123,7 +123,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ClassificationInputs } from "../geo/classification-inputs.js";
@@ -157,11 +157,25 @@ const CLI = path.join(ROOT, "lean/.lake/build/bin/verified_cli");
  *  Same stdin/stdout contract, so nothing else here changes. The comparison,
  *  the classifier and the accepted-shell list are all the ones the default path
  *  uses; a host judged by a looser rule than the CLI would be worthless. */
+/**
+ * `--freeze`: RUN the TS cascade and record its answer into each fixture's
+ * `expected.tsArm`, instead of gating against one already there.
+ *
+ * ⚠ A one-time migration for #975, and it only runs in one direction. The day
+ * gate's oracle used to be recomputed by executing the arm on every run; the arm
+ * is being deleted, so the oracle has to become data first. After the deletion
+ * this flag cannot work — there is nothing left to record.
+ */
+const FREEZE = process.argv.includes("--freeze");
+
 const HOST_BIN = process.env.DAY_HOST_BIN;
 
 interface Outcome {
 	date: string;
-	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "TIMEOUT" | "ERROR";
+	// ⚠ `NO ORACLE` is a RED verdict, not a skip. After #975 a fixture with no
+	// frozen `expected.tsArm` cannot be measured at all, and the failure mode worth
+	// preventing is a corpus quietly shrinking to the days that happen to carry one.
+	verdict: "IDENTICAL" | "SHELL ONLY" | "DIVERGED" | "LOOKUP MISS" | "TIMEOUT" | "ERROR" | "NO ORACLE";
 	detail: string;
 }
 
@@ -342,29 +356,91 @@ function osmForHost(dir: string, trace: OsmTrace): string {
 	return p;
 }
 
-async function measure(file: string): Promise<Outcome> {
-	const date = file.slice(0, 10);
-	const captured = parseCapturedDay(readFileSync(path.join(DAYS_DIR, file), "utf8"));
+/** The TS arm's run: what the fold was handed, and the answers the run's own
+ *  lookups gave. `expected.tsArm` on the fixture holds exactly this. */
+interface TsArm {
+	capture: FoldCaptureFile;
+	osmAnswers: OsmTrace;
+}
+
+/**
+ * Run the TS cascade and record both halves of the oracle.
+ *
+ * ⚠ This is the MIGRATION path, not the gate's path. It exists to produce a
+ * fixture's `expected.tsArm` (`--freeze`) while the cascade still exists; #975
+ * deletes it, and after that the only source is the frozen one. A gate that
+ * silently fell back here would go green by re-deriving its own oracle.
+ */
+async function runTsArm(inputs: ClassificationInputs, fixtureTrace: OsmTrace): Promise<TsArm> {
 	const capDir = mkdtempSync(path.join(tmpdir(), "foldcap-"));
 	process.env.FOLD_CAPTURE = capDir;
-
-	const inputs = inputsFromFixture(captured, "rows");
-	const answers = recordingOsm(inputs, captured.inputs.osmTrace);
-
-	let cap: FoldCaptureFile;
+	// ⚠ Wraps `inputs.osm` IN PLACE, so it must not run when the arm is frozen:
+	// there is nothing to record, and the wrapper would answer from an empty
+	// table.
+	const osmAnswers = recordingOsm(inputs, fixtureTrace);
 	try {
 		await computeVelocityFromInputs(inputs);
 		const written = readdirSync(capDir);
 		if (written.length === 0) throw new Error("cascade wrote no capture (did it return early?)");
-		cap = JSON.parse(readFileSync(path.join(capDir, written[0]), "utf8")) as FoldCaptureFile;
-	} catch (e) {
-		return { date, verdict: "ERROR", detail: `TS arm: ${(e as Error).message}` };
+		return {
+			capture: JSON.parse(readFileSync(path.join(capDir, written[0]), "utf8")) as FoldCaptureFile,
+			osmAnswers,
+		};
 	} finally {
 		// `delete`, not `= undefined`: assigning to `process.env` coerces, so
 		// `undefined` would leave the literal string "undefined" and the next
 		// day would capture into a directory of that name.
 		delete process.env.FOLD_CAPTURE;
 	}
+}
+
+/**
+ * Write the recorded arm into the fixture, in place.
+ *
+ * ⚠ Rewrites the RAW parsed JSON, never the zod-parsed `CapturedDay`. The
+ * envelope schema is permissive on the inner closure by design, which means
+ * round-tripping through it would silently DROP every field the schema does not
+ * name — a 20 MB fixture rewritten as a much smaller and much wronger one.
+ *
+ * Write-then-rename because a reader that catches a half-written 20 MB fixture
+ * sees a JSON parse error at best, and at worst a truncated day.
+ */
+function freeze(file: string, arm: TsArm): void {
+	const full = path.join(DAYS_DIR, file);
+	const raw = JSON.parse(readFileSync(full, "utf8")) as { expected: Record<string, unknown> };
+	raw.expected.tsArm = arm;
+	const tmp = `${full}.freezing`;
+	writeFileSync(tmp, JSON.stringify(raw));
+	renameSync(tmp, full);
+	console.log(`    froze expected.tsArm — ${arm.capture.segsOut.length} segment(s) out`);
+}
+
+async function measure(file: string): Promise<Outcome> {
+	const date = file.slice(0, 10);
+	const captured = parseCapturedDay(readFileSync(path.join(DAYS_DIR, file), "utf8"));
+	const capDir = mkdtempSync(path.join(tmpdir(), "foldcap-"));
+
+	const inputs = inputsFromFixture(captured, "rows");
+
+	// ⚠ FROZEN FIRST, and never a silent fallback. A fixture with no frozen arm
+	// is REPORTED, because after #975 there is no cascade to fall back to and a
+	// gate that quietly skipped such a day would read green having measured
+	// nothing. `--freeze` is the one caller that runs the arm.
+	let arm: TsArm;
+	try {
+		if (captured.expected.tsArm !== undefined) {
+			arm = captured.expected.tsArm as TsArm;
+		} else if (FREEZE) {
+			arm = await runTsArm(inputs, captured.inputs.osmTrace);
+			freeze(file, arm);
+		} else {
+			return { date, verdict: "NO ORACLE", detail: "fixture has no expected.tsArm — run `--freeze` (#975)" };
+		}
+	} catch (e) {
+		return { date, verdict: "ERROR", detail: `TS arm: ${(e as Error).message}` };
+	}
+	const cap = arm.capture;
+	const answers = arm.osmAnswers;
 
 	const request = JSON.stringify(buildDayRequest(cap, inputs, answers));
 	// `DAY_REQ_DUMP=<dir>` writes each day's request as the fold receives it.
@@ -501,7 +577,10 @@ async function measure(file: string): Promise<Outcome> {
 	};
 }
 
-const only = new Set(process.argv.slice(2));
+// ⚠ Flags filtered out, or `--freeze` reads as a requested DATE: `only` would be
+// non-empty, match no fixture, and the run would exit 2 saying there is no
+// corpus — a flag typo reported as missing data.
+const only = new Set(process.argv.slice(2).filter((a) => !a.startsWith("--")));
 const files = readdirSync(DAYS_DIR)
 	.filter((f) => f.endsWith(".json"))
 	.filter((f) => only.size === 0 || only.has(f.slice(0, 10)))
