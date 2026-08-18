@@ -231,6 +231,20 @@ export function foldCaptureFromEnv(): FoldCapture | undefined {
 		// exactly what stopped crossing when `bestPlace` became Lean (#430).
 		recordBestPlace: ({ lat, lon, startTs, endTs, tz }) => {
 			bestPlace.push({ lat, lon, startTs, endTs, tz });
+			// ⚠ THE SAME QUESTION ALSO GOES IN THE TZ TABLE (#1054). `stays.ts`
+			// computes this `tz` with `tzLookup(cLat, cLon)` at the consolidated
+			// centre and passes it here as part of the place query — it never
+			// reaches `recordTz`, which only `velocity.ts` calls. The Lean fold
+			// asks `Env.tzAt` at that same centre as a SEPARATE lookup, found
+			// nothing, and aborted the day.
+			//
+			// This is not a recomputed answer: it is the value the TS run
+			// actually obtained at that coordinate, filed under the table the
+			// consumer reads. 2026-08-09 failed the day gate for a whole day on
+			// this, and the miss LOOKED like an algorithmic divergence — the
+			// coordinate is real, both arms agree on it, and only the recording
+			// was incomplete.
+			tzAt.push({ lat, lon, tz });
 		},
 		recordSleepPlace: (q) => {
 			sleepPlace.push(q);
