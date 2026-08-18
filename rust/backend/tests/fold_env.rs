@@ -15,7 +15,7 @@
 //! not a decode error: the fold reads a longitude as a speed and answers. The
 //! only honest check is the entire array.
 
-use backend::fold_payload::{encode_mode_stats, encode_obs_and_tail};
+use backend::fold_payload::{encode_mode_stats, encode_obs_and_tail, encode_places};
 use serde_json::Value;
 
 #[test]
@@ -31,8 +31,14 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
 
         let got = encode_obs_and_tail(cap.get("obs").expect("obs"), cap.get("tail"));
 
+        let places = encode_places(cap.get("knownPlaces"));
+
         for (k, expected) in want {
             if k == "modeStats" {
+                continue;
+            }
+            if let Some(actual) = places.get(k) {
+                assert_eq!(actual, expected, "{name}: env.{k} differs");
                 continue;
             }
             let actual = got.get(k).unwrap_or_else(|| panic!("{name}: missing {k}"));
@@ -66,4 +72,46 @@ fn the_speed_lookup_matches_the_track_it_is_derived_from() {
         assert_eq!(p[0], s[0], "timestamps must line up");
         assert_eq!(p[3], s[1], "the speed must be the same bit pattern");
     }
+}
+
+/// ⚠ THE SAME FIELD, TWO DEFAULTS, AND THE CORPUS EXERCISES NEITHER.
+///
+/// `radiusM` is `optBits(p.radiusM)` in `stayPlaces` and `bits(p.radiusM ?? 50)`
+/// in `enrichPlaces` — absent stays absent in one and becomes fifty metres in
+/// the other. Both are the TypeScript's, on one field, three lines apart.
+///
+/// This is a hand-built case because ABLATION SHOWED THE CORPUS CANNOT SEE IT:
+/// every captured place carries a radius, so changing the default from 50 to 0
+/// left all 35 days passing. A comment asserting the default matters, with
+/// nothing able to fail, is the shape this repository keeps getting bitten by.
+#[test]
+fn an_absent_radius_defaults_in_one_view_and_stays_absent_in_another() {
+    let places = serde_json::json!([{
+        "id": 1, "centroidLat": 51.5, "centroidLon": -0.1,
+        "uniqueDays": 3, "sleepHours": 0.0, "hourProfile": null,
+        "displayName": null, "amenityLabel": null
+        // radiusM deliberately absent
+    }]);
+    let got = encode_places(Some(&places));
+
+    let stay = &got["stayPlaces"][0];
+    assert_eq!(
+        stay[2],
+        Value::Null,
+        "stayPlaces keeps an absent radius absent"
+    );
+
+    let enrich = &got["enrichPlaces"][0];
+    assert_eq!(
+        enrich[3],
+        Value::String(backend::fold_payload::bits(50.0)),
+        "enrichPlaces substitutes fifty metres"
+    );
+
+    // And the same run must not have invented a profile.
+    assert_eq!(
+        enrich[5],
+        Value::Null,
+        "no hour profile is not a profile of zeroes"
+    );
 }

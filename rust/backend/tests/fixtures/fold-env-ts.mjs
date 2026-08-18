@@ -15,6 +15,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { buildDayRequest } from "../../../../dist/lean/fold-payload.js";
 
 const CAP = process.env.FOLD_CAPTURE ?? "/tmp/foldcap";
+const GOLD = new URL("../../../../tests/golden/days/", import.meta.url).pathname;
 const N = 12; // rows kept per series
 const shift = (x) => (typeof x === "number" ? (x % 1) + 1 : x);
 const pt = (p) => ({ ...p, lat: shift(p.lat), lon: shift(p.lon) });
@@ -49,12 +50,22 @@ for (const f of readdirSync(CAP).sort()) {
   // Exactly what buildDayRequest reads off `inputs` and the trace, and nothing
   // more — the fields feed env keys this test does not read, but they must be
   // present or the encoder throws.
-  const inputs = { homeTz: "UTC", knownPlaces: [], venuePriors: null, hsmmDecode: null,
+  // knownPlaces come from the golden FIXTURE, not the capture: buildDayRequest
+  // reads them off `inputs`, and six env fields are different views of them.
+  const fx = JSON.parse(readFileSync(`${GOLD}/${f}`, "utf8"));
+  const places = (fx.inputs.knownPlaces ?? []).slice(0, 8).map((p) => ({
+    ...p, centroidLat: shift(p.centroidLat), centroidLon: shift(p.centroidLon),
+    displayName: p.displayName == null ? p.displayName : `place-${p.id % 7}`,
+    amenityLabel: p.amenityLabel == null ? p.amenityLabel : `amenity-${p.id % 5}`,
+  }));
+  const inputs = { homeTz: "UTC", knownPlaces: places, venuePriors: null, hsmmDecode: null,
                    busRouteCache: [], railRouteCache: [], railStopsCache: [] };
   const trace = { nearbyWays: {}, nearbyStations: {}, nearbyTransitStops: {},
                   nearbyLandmarks: {}, linesAtPoint: {}, reverseGeocode: {}, stationsOnLine: {} };
   const req = buildDayRequest(cap, inputs, trace);
-  const keep = ["points", "rawFixes", "displayFixes", "steps", "hr", "sleep", "speedByTs",
+  cap.knownPlaces = places;
+  const keep = ["stayPlaces", "dwellPlaces", "enrichPlaces", "knownPlaces", "focusPlaceDays", "hsmmPlaces",
+                "points", "rawFixes", "displayFixes", "steps", "hr", "sleep", "speedByTs",
                 "morningFixes", "prevEveningFixes", "rawSleep", "dayEndTs", "modeStats"];
   const env = {};
   for (const k of keep) env[k] = req.env[k];

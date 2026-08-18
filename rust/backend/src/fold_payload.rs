@@ -287,3 +287,105 @@ pub fn encode_mode_stats(v: Option<&Value>) -> Value {
         ])
     })
 }
+
+/// A required float field: `bits`, with a default when absent.
+///
+/// ⚠ Distinct from [`num_bits`] and the difference is load-bearing. These
+/// fields are `bits(x ?? d)` in the TypeScript — a number Lean always reads —
+/// whereas `num_bits` is `optBits`, where absent stays `null`. Using the wrong
+/// one turns "unknown" into a specific value or vice versa.
+fn num_bits_or(o: &Map<String, Value>, k: &str, dflt: f64) -> Value {
+    Value::String(bits(o.get(k).and_then(Value::as_f64).unwrap_or(dflt)))
+}
+
+/// The mined places, SIX WAYS, as `env` carries them.
+///
+/// ⚠ One source list, six different tuples, and they are not redundant: each
+/// stage reads the columns it needs and Lean indexes them positionally. The
+/// stay DETECTOR wants a display name to snap a cluster to; the dwell
+/// CONTINUATION wants visit counts; the enrichment stage wants the whole row
+/// because it scores geometry and hour profile and then branches the LABEL on
+/// the same row. Emitting five of the six, or the right six in the wrong
+/// order, is not a decode error on the far side.
+pub fn encode_places(known: Option<&Value>) -> Map<String, Value> {
+    let mut m = Map::new();
+    m.insert(
+        "stayPlaces".into(),
+        arr_map(known, |p| {
+            json!([
+                num_bits(p, "centroidLat"),
+                num_bits(p, "centroidLon"),
+                num_bits(p, "radiusM"),
+                opt_str(p, "displayName")
+            ])
+        }),
+    );
+    m.insert(
+        "dwellPlaces".into(),
+        arr_map(known, |p| {
+            json!([
+                num_bits(p, "centroidLat"),
+                num_bits(p, "centroidLon"),
+                num_bits(p, "radiusM"),
+                num_bits(p, "totalDwellSec"),
+                // ⚠ `?? null` in the TypeScript, NOT `?? 0`: a place with no
+                // recorded visits is not a place visited zero times.
+                p.get("visitCount").cloned().unwrap_or(Value::Null),
+                int(p, "uniqueDays")
+            ])
+        }),
+    );
+    m.insert(
+        "enrichPlaces".into(),
+        arr_map(known, |p| {
+            json!([
+                int(p, "id"),
+                num_bits(p, "centroidLat"),
+                num_bits(p, "centroidLon"),
+                // ⚠ Defaults to 50 m here and stays null in `stayPlaces` above.
+                // Both are the TypeScript's, on the same field.
+                num_bits_or(p, "radiusM", 50.0),
+                num_bits_or(p, "uniqueDays", 0.0),
+                hour_profile(p.get("hourProfile")),
+                opt_str(p, "displayName"),
+                num_bits_or(p, "sleepHours", 0.0),
+                opt_str(p, "amenityLabel")
+            ])
+        }),
+    );
+    m.insert(
+        "knownPlaces".into(),
+        arr_map(known, |p| {
+            json!([
+                int(p, "id"),
+                num_bits(p, "centroidLat"),
+                num_bits(p, "centroidLon")
+            ])
+        }),
+    );
+    m.insert(
+        "focusPlaceDays".into(),
+        arr_map(known, |p| json!([int(p, "id"), int(p, "uniqueDays")])),
+    );
+    m.insert(
+        "hsmmPlaces".into(),
+        arr_map(known, |p| {
+            json!([
+                int(p, "id"),
+                opt_str(p, "displayName"),
+                num_bits(p, "centroidLat"),
+                num_bits(p, "centroidLon")
+            ])
+        }),
+    );
+    m
+}
+
+/// The 24-hour visit profile: every entry `bits`, or `null` for the whole
+/// thing. ⚠ `null` means "no profile", which is not a profile of zeroes.
+fn hour_profile(v: Option<&Value>) -> Value {
+    match v.and_then(Value::as_array) {
+        None => Value::Null,
+        Some(hs) => Value::Array(hs.iter().map(|h| opt_bits(h.as_f64()).clone()).collect()),
+    }
+}
