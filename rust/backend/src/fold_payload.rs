@@ -836,3 +836,57 @@ fn encode_geocode(v: &Value) -> Value {
         "municipality": opt_str(a, "municipality"),
     })
 }
+
+/// The whole fold request: `{segsRaw, trace, env}`.
+///
+/// Port of `buildDayRequest`. The pieces are separately verified against the
+/// TypeScript; this is the assembly, and the assembly is where a field can be
+/// correct and in the wrong place.
+///
+/// ⚠ KEY ORDER MATTERS FOR THE COMPARISON, not for the fold. Lean reads the
+/// object by name, but the byte-diff against the TypeScript is what makes this
+/// checkable at all, and `preserve_order` means the order written here is the
+/// order emitted. It follows `buildDayRequest`'s.
+pub fn build_day_request(cap: &Value, inputs: &Value, trace: Option<&Value>) -> Result<Value> {
+    let c = cap.as_object().context("capture is not an object")?;
+    let i = inputs.as_object().context("inputs is not an object")?;
+
+    let mut env = Map::new();
+    env.insert(
+        "homeTz".into(),
+        i.get("homeTz").cloned().unwrap_or(Value::Null),
+    );
+    env.insert("modeStats".into(), encode_mode_stats(c.get("modeStats")));
+
+    let obs = c.get("obs").context("capture has no obs")?;
+    for (k, v) in encode_obs_and_tail(obs, c.get("tail")) {
+        env.insert(k, v);
+    }
+    for (k, v) in encode_places(i.get("knownPlaces")) {
+        env.insert(k, v);
+    }
+    env.insert(
+        "venuePriors".into(),
+        encode_venue_priors(i.get("venuePriors")),
+    );
+    for (k, v) in encode_caches(
+        i.get("hsmmDecode"),
+        i.get("railRouteCache"),
+        i.get("busRouteCache"),
+        i.get("railStopsCache"),
+    )? {
+        env.insert(k, v);
+    }
+    env.insert(
+        "lookups".into(),
+        encode_lookups(trace, c.get("tzAt"), c.get("bestPlace"))?,
+    );
+
+    let segs: Vec<Value> = c
+        .get("segsRaw")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(encode_seg).collect())
+        .unwrap_or_default();
+
+    Ok(json!({ "segsRaw": segs, "trace": false, "env": env }))
+}
