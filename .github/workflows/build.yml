@@ -65,9 +65,18 @@ jobs:
       # can reach it. `typecheck` above is `tsc --noEmit`, so without this step
       # dist/ does not exist here and the spawn fails with a bare exit 1.
       - run: pnpm run build
+      # ⚠ `lean-check` BEFORE `pnpm test`, and the order is load-bearing (#975).
+      # It runs `lake build`, which is what produces
+      # `lean/.lake/build/bin/verified_cli` — and since the TypeScript day
+      # cascade was deleted, the fold is the ONLY arm, so any test that drives a
+      # day now spawns that binary. Run afterwards, as it used to be, every such
+      # test fails with ENOENT on a path that has not been built yet.
+      #
+      # It cost nothing before because `LEAN_DAY` unset meant the TS arm ran and
+      # the binary was never needed here.
+      - run: pnpm run lean-check
       - run: pnpm test
       - run: pnpm run test:frontend
-      - run: pnpm run lean-check
 
   image:
     needs: verify
