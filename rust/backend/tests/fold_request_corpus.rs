@@ -21,7 +21,7 @@
 
 use std::path::Path;
 
-use backend::fold_payload::build_day_request;
+use backend::fold_payload::{AnswerTables, build_day_request};
 use serde_json::Value;
 
 /// Where `FOLD_CAPTURE` wrote the per-day captures.
@@ -62,8 +62,13 @@ fn the_whole_request_matches_the_typescript_on_every_captured_day() {
         let fx: Value = serde_json::from_str(&fx_raw).expect("fixture parses");
         let inputs = &fx["inputs"];
 
-        let got = build_day_request(&cap, inputs, inputs.get("osmTrace"))
-            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let got = build_day_request(
+            &cap,
+            inputs,
+            inputs.get("osmTrace"),
+            &AnswerTables::default(),
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e:#}"));
 
         // The oracle is the TypeScript's own encoder, run over the same two
         // files — not a stored copy, so it cannot go stale against `dist/`.

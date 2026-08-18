@@ -837,6 +837,55 @@ fn encode_geocode(v: &Value) -> Value {
     })
 }
 
+/// Answers gathered across converge rounds, ALREADY IN WIRE FORM.
+///
+/// ⚠ WIRE FORM ON PURPOSE, and this is the one design decision in the loop
+/// worth stating. The fold spells a miss as BIT PATTERNS
+/// (`4632448131755700645|13818229285013219213`) because that is how it holds
+/// the coordinate; the recorded trace is keyed by DECIMAL, and `table2` /
+/// `table3` convert decimal → bits on the way out. Answering a miss by writing
+/// a decimal key would round-trip the float twice for nothing, and float
+/// round-trips through text are exactly where this port already found a
+/// one-ULP disagreement with V8. So a round's answers are appended as the rows
+/// the fold reads, and the loop never converts back.
+#[derive(Debug, Default, Clone)]
+pub struct AnswerTables {
+    rows: std::collections::BTreeMap<String, Vec<Value>>,
+}
+
+impl AnswerTables {
+    /// Append one already-encoded row to a lookup table.
+    pub fn push(&mut self, table: &str, row: Value) {
+        self.rows.entry(table.to_string()).or_default().push(row);
+    }
+
+    /// How many rows have been gathered, across every table.
+    pub fn len(&self) -> usize {
+        self.rows.values().map(Vec::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Append these rows onto an encoded `lookups` object.
+    fn merge_into(&self, lookups: &mut Value) {
+        let Some(o) = lookups.as_object_mut() else {
+            return;
+        };
+        for (table, rows) in &self.rows {
+            // ⚠ An unknown table name is created rather than dropped. The fold
+            // reads by name, so a typo here would silently answer nothing —
+            // and the loop would report the same key unanswered forever, which
+            // it treats as a harness fault rather than convergence.
+            let entry = o.entry(table.clone()).or_insert_with(|| json!([]));
+            if let Some(arr) = entry.as_array_mut() {
+                arr.extend(rows.iter().cloned());
+            }
+        }
+    }
+}
+
 /// The whole fold request: `{segsRaw, trace, env}`.
 ///
 /// Port of `buildDayRequest`. The pieces are separately verified against the
@@ -847,7 +896,12 @@ fn encode_geocode(v: &Value) -> Value {
 /// object by name, but the byte-diff against the TypeScript is what makes this
 /// checkable at all, and `preserve_order` means the order written here is the
 /// order emitted. It follows `buildDayRequest`'s.
-pub fn build_day_request(cap: &Value, inputs: &Value, trace: Option<&Value>) -> Result<Value> {
+pub fn build_day_request(
+    cap: &Value,
+    inputs: &Value,
+    trace: Option<&Value>,
+    extra: &AnswerTables,
+) -> Result<Value> {
     let c = cap.as_object().context("capture is not an object")?;
     let i = inputs.as_object().context("inputs is not an object")?;
 
@@ -877,10 +931,9 @@ pub fn build_day_request(cap: &Value, inputs: &Value, trace: Option<&Value>) -> 
     )? {
         env.insert(k, v);
     }
-    env.insert(
-        "lookups".into(),
-        encode_lookups(trace, c.get("tzAt"), c.get("bestPlace"))?,
-    );
+    let mut lookups = encode_lookups(trace, c.get("tzAt"), c.get("bestPlace"))?;
+    extra.merge_into(&mut lookups);
+    env.insert("lookups".into(), lookups);
 
     let segs: Vec<Value> = c
         .get("segsRaw")

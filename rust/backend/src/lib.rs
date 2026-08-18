@@ -53,6 +53,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod fitbit;
+pub mod fold_converge;
 pub mod fold_payload;
 pub mod google;
 pub mod lean;
