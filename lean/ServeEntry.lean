@@ -1371,6 +1371,93 @@ def stationChainResult (j : Json) : Json :=
 
 end StationChain
 
+/-! ## `osmspatial` — the row-set kernel (#982)
+
+⚠ ORPHANED UNTIL NOW, like `batterySeries` before it and for the same reason:
+`Verified.Geo.OsmSpatial` was ported and given reference values against
+MariaDB's earth radius, then reachable from no entry point at all (#1003).
+
+A host answering the day fold's converge loop needs exactly these: the fold
+names a coordinate it has no answer for, and the host computes one from pushed
+rows rather than from a database.
+
+⚠ NO FEATURE-BUCKET FILTER HERE, deliberately. The TypeScript's
+`queryLinesFromRows` takes a `featureType` and drops non-matching rows before
+scoring; `LineRow` has no such field and should not gain one. The bucket is a
+plain equality the caller can do while it is assembling the rows, and putting it
+here would give this function two jobs and one of them would be filtering. -/
+private def parsePointRow (j : Json) : Except String Verified.Geo.OsmSpatial.PointRow := do
+  let a ← j.getArr?
+  let tags ← match a[5]? with
+    | some v => if v.isNull then pure #[] else do
+        let ts ← v.getArr?
+        ts.mapM (fun kv => do
+          let p ← kv.getArr?
+          return ((← (← nth p 0).getStr?), (← (← nth p 1).getStr?)))
+    | none => pure #[]
+  return { osmId := ← (← nth a 0).getInt?, subtype := ← (← nth a 1).getStr?,
+           name := ← (match a[2]? with
+             | some v => if v.isNull then pure none else some <$> v.getStr?
+             | none => pure none),
+           lat := ← jBits (← nth a 3), lon := ← jBits (← nth a 4), tags := tags }
+
+private def parseLineRow (j : Json) : Except String Verified.Geo.OsmSpatial.Lines.LineRow := do
+  let a ← j.getArr?
+  let coords ← (← (← nth a 3).getArr?).mapM (fun c => do
+    let p ← c.getArr?
+    return ((← jBits (← nth p 0)), (← jBits (← nth p 1))))
+  return { osmId := ← (← nth a 0).getInt?, subtype := ← (← nth a 1).getStr?,
+           name := ← (match a[2]? with
+             | some v => if v.isNull then pure none else some <$> v.getStr?
+             | none => pure none),
+           coords := coords }
+
+private def scoredPointJson (s : Verified.Geo.OsmSpatial.ScoredPoint) : Json :=
+  Json.mkObj [("osmId", Lean.toJson s.row.osmId), ("subtype", Json.str s.row.subtype),
+    ("name", match s.row.name with | none => Json.null | some n => Json.str n),
+    ("distanceM", fBits s.distanceM)]
+
+private def scoredLineJson (s : Verified.Geo.OsmSpatial.Lines.ScoredLine) : Json :=
+  Json.mkObj [("osmId", Lean.toJson s.row.osmId), ("subtype", Json.str s.row.subtype),
+    ("name", match s.row.name with | none => Json.null | some n => Json.str n),
+    ("distanceM", fBits s.distanceM), ("encloses", Json.bool s.encloses)]
+
+private def stationJson (n : Verified.Geo.OsmSpatial.NearbyStation) : Json :=
+  Json.mkObj [("name", Json.str n.name), ("subtype", Json.str n.subtype),
+    ("distanceM", fBits n.distanceM),
+    ("lat", fBits n.lat), ("lon", fBits n.lon)]
+
+private def osmSpatialResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let op ← (← j.getObjVal? "op").getStr?
+    let lat ← jBits (← j.getObjVal? "lat")
+    let lon ← jBits (← j.getObjVal? "lon")
+    let radiusM ← jBits (← j.getObjVal? "radiusM")
+    let subtypes ← match j.getObjVal? "subtypes" with
+      | .ok v => if v.isNull then pure #[] else do (← v.getArr?).mapM (·.getStr?)
+      | .error _ => pure #[]
+    match op with
+    | "queryPoints" => do
+      let rows ← (← optArr j "rows").mapM parsePointRow
+      let out := Verified.Geo.OsmSpatial.queryPoints rows lat lon radiusM subtypes
+      return Json.mkObj [("rows", Json.arr (out.map scoredPointJson))]
+    | "queryLines" => do
+      let rows ← (← optArr j "rows").mapM parseLineRow
+      let out := Verified.Geo.OsmSpatial.Lines.queryLines rows lat lon radiusM subtypes
+      return Json.mkObj [("rows", Json.arr (out.map scoredLineJson))]
+    | "nearbyStations" => do
+      let rows ← (← optArr j "rows").mapM parsePointRow
+      let out := Verified.Geo.OsmSpatial.nearbyStations rows lat lon radiusM
+      return Json.mkObj [("rows", Json.arr (out.map stationJson))]
+    | "linesAtPoint" => do
+      let rows ← (← optArr j "rows").mapM parseLineRow
+      let out := Verified.Geo.OsmSpatial.Lines.linesAtPoint rows lat lon radiusM
+      return Json.mkObj [("names", Json.arr (out.map Json.str))]
+    | other => throw s!"unknown osmspatial op {other}"
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-! ## `battery` — the chart series (#982)
 
 ⚠ ORPHANED UNTIL NOW. `Verified.Geo.Velocity.batterySeries` and
@@ -1435,6 +1522,7 @@ def dispatch (j : Json) : Json :=
   | .ok "day" => Day.dayResult j
   | .ok "focus" => Focus.focusResult j
   | .ok "battery" => batteryResult j
+  | .ok "osmspatial" => osmSpatialResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
