@@ -49,6 +49,7 @@
 //! three lines is exactly the size at which a wrong clamp survives review.
 
 pub mod backfill;
+pub mod classification_inputs;
 pub mod config;
 pub mod db;
 pub mod error;

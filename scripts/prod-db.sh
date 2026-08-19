@@ -32,7 +32,14 @@ NS=health
 LOCAL_PORT=13306
 
 echo "==> fetching DB credentials from prod" >&2
-POD=$(ssh "$HEALTH_HOST" "kubectl -n $NS get pods -l app=health-auth -o jsonpath='{.items[0].metadata.name}'")
+# ⚠ NEWEST RUNNING pod, not `items[0]`. During a rollout there are two, and
+# `items[0]` is as likely to be the one terminating — the same trap health #975
+# records for reading env off a pod. Credentials rarely differ between them, so
+# this fails silently when it fails at all, which is why it is sorted rather
+# than trusted.
+POD=$(ssh "$HEALTH_HOST" "kubectl -n $NS get pods -l app=health-auth \
+  --field-selector=status.phase=Running --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1:].metadata.name}'")
 [ -n "$POD" ] || {
 	echo "could not find a health-auth pod" >&2
 	exit 1
@@ -47,6 +54,12 @@ DB_NAME=$(get DB_NAME)
 NC_BASE_URL=$(get NC_BASE_URL)
 NC_CLIENT_ID=$(get NC_CLIENT_ID)
 NC_CLIENT_SECRET=$(get NC_CLIENT_SECRET)
+# The Rust backend's config layer REFUSES a missing required var by name rather
+# than defaulting it, so `backend check` cannot start without these even though
+# it only reads the database (health #982). Pulled from the same dump as the
+# rest; never echoed.
+FITBIT_CLIENT_ID=$(get FITBIT_CLIENT_ID)
+FITBIT_CLIENT_SECRET=$(get FITBIT_CLIENT_SECRET)
 # Feature flags that gate which classification pipeline runs. Without
 # these the Mac falls back to defaults — silently testing the legacy
 # cascade while production runs the factor scorer, and goldens drift
@@ -66,6 +79,7 @@ USE_REACQUIRE_ROBUST_SPEED=$(get USE_REACQUIRE_ROBUST_SPEED)
 	exit 1
 }
 export DB_USER DB_PASSWORD DB_NAME NC_CLIENT_ID NC_CLIENT_SECRET
+export FITBIT_CLIENT_ID FITBIT_CLIENT_SECRET
 export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
 # Only export feature flags when prod actually sets them — exporting
 # an empty string is not the same as unset (the code reads === "1").

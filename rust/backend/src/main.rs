@@ -22,7 +22,9 @@
 //! its writes compared with the TypeScript's.
 
 use anyhow::{Context, Result};
-use backend::{config::Config, db, fitbit, lean, routes, state::AppState, sync_state};
+use backend::{
+    classification_inputs, config::Config, db, fitbit, lean, routes, state::AppState, sync_state,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -255,6 +257,61 @@ async fn check() -> Result<()> {
         anyhow::bail!("sync_state::get returned a value for a key that cannot exist");
     }
     println!("sync_state: absent-key read decodes as None");
+
+    // The day-input loaders (#982). Counts, not contents: this runs against
+    // PRODUCTION and the rows are real places and real movement.
+    //
+    // ⚠ The point is that the SQL EXECUTES — column names, bind order, and the
+    // decode of every DECIMAL and every nullable. None of that is exercised by
+    // compiling, and none of it is exercised by a unit test, because no unit
+    // test in this crate runs SQL. It is the same bar `sync_state` above is
+    // held to, and for the same reason.
+    let user = std::env::var("CHECK_USER").unwrap_or_else(|_| "pippijn".into());
+    let places = classification_inputs::known_places(&pool, &user).await?;
+    let modes = classification_inputs::mode_biometrics(&pool, &user).await?;
+    let rail = classification_inputs::rail_route_cache(&pool).await?;
+    let priors = classification_inputs::venue_priors(&pool, &user).await?;
+    let len = |v: &serde_json::Value| v.as_array().map_or(0, Vec::len);
+    // ⚠ VALUES, NOT JUST COUNTS. `focus_places.centroid_lat` is DECIMAL, which
+    // the driver hands back as a STRING — the TypeScript wraps every one in
+    // `Number(...)` for exactly that reason. A row count proves the query ran;
+    // it does not prove one coordinate decoded, and 117 rows of 0.0 print
+    // identically to 117 real ones. This check had that hole when it was written.
+    let zero_centroids = places.as_array().map_or(0, |a| {
+        a.iter()
+            .filter(|p| p["centroidLat"].as_f64() == Some(0.0))
+            .count()
+    });
+    println!(
+        "inputs[{user}]: focus_places {} · mode_biometrics {} · rail_route_cache {} · venue_priors {}",
+        len(&places),
+        len(&modes),
+        len(&rail),
+        if priors.is_null() {
+            "absent"
+        } else {
+            "present"
+        },
+    );
+    // ⚠ A read that returns NOTHING is not a read that worked. Every one of
+    // these is populated in production, so an empty answer means a query that
+    // ran against the wrong column or the wrong user and said so quietly.
+    if len(&places) == 0 || len(&modes) == 0 || len(&rail) == 0 {
+        anyhow::bail!(
+            "a day-input loader came back empty for {user} — production has rows in all three,              so this is a query that ran and found nothing, not an empty database"
+        );
+    }
+
+    if zero_centroids > 0 {
+        anyhow::bail!(
+            "{zero_centroids} focus place(s) decoded to centroidLat 0.0 — a DECIMAL that did not \
+             decode reads as zero, and null island is not where anyone lives"
+        );
+    }
+    println!(
+        "inputs[{user}]: centroids decoded non-zero: {}",
+        len(&places) - zero_centroids
+    );
 
     pool.close().await;
     println!("check: OK");
