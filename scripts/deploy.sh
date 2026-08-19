@@ -51,6 +51,27 @@ fi
 
 # --- argument parsing ----------------------------------------------------
 MSG_FILE=""
+
+# ⚠ THE SKIP MUST NAME A REASON. `DEPLOY_SKIP_GOLDEN=1` is refused: a bare `1`
+# records that someone wanted past the gates and not why, and the second use is
+# always easier than the first. Set it to the reason —
+#
+#   DEPLOY_SKIP_GOLDEN="health #1052: the 06-16 truth rows need a re-audit"
+#
+# — and the reason is printed here and again at the end, so a deploy that
+# skipped nine gates cannot read like an ordinary one.
+if [[ -n "${DEPLOY_SKIP_GOLDEN:-}" && "${DEPLOY_SKIP_GOLDEN}" == "1" ]]; then
+	cat >&2 <<-'REFUSE'
+	DEPLOY_SKIP_GOLDEN=1 is refused: give the REASON instead of a 1.
+
+	    DEPLOY_SKIP_GOLDEN="health #1052: the 06-16 truth rows need a re-audit" \
+	      ./scripts/deploy.sh -m '...'
+
+	It disables NINE gates. Naming why is the difference between a considered
+	exception and a habit.
+	REFUSE
+	exit 2
+fi
 CLEANUP_MSG_FILE=0
 case "${1:-}" in
 	-m)
@@ -145,7 +166,7 @@ $DEV pnpm run verify
 # cron actually runs on, and the only input that reaches the long-span
 # classification branches — and finally the captured conflated café/residence
 # cluster through `splitCluster`. 8 s for 35 cases.
-if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
+if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean day/focus parity"
 	$DEV pnpm run golden
 	$DEV pnpm run walk-gate
@@ -267,7 +288,25 @@ if [[ "${DEPLOY_SKIP_GOLDEN:-0}" != "1" ]]; then
 	# debt means hand-editing that file into a reviewable diff.
 	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match --gate
 else
-	echo "==> [2/7] SKIPPED golden + walk-gate + score-decoder (DEPLOY_SKIP_GOLDEN=1)"
+	# ⚠ EVERY gate this block contains, by name. The old message said "golden +
+	# walk-gate + score-decoder" and skipped six more without mentioning them —
+	# including the day gate, which is the only thing that asks whether the Lean
+	# port still matches what it ports.
+	cat >&2 <<-BANNER
+
+	================================================================
+	  ⚠  DEPLOYING WITH NINE GATES SKIPPED
+	  reason: ${DEPLOY_SKIP_GOLDEN}
+	================================================================
+	    golden corpus              day gate
+	    walk-geometry ratchet      focus gate
+	    decoder scoreboard         golden with tenants ON
+	    golden-hsmm                compare-gps-outliers
+	    compare-match
+	================================================================
+
+	BANNER
+	SKIPPED_GOLDEN=1
 fi
 
 # --- stage + commit ------------------------------------------------------
@@ -337,4 +376,13 @@ echo "==> [7/7] rollout on isis"
 ssh root@isis.xinutec.org \
 	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
 
+if [[ -n "${SKIPPED_GOLDEN:-}" ]]; then
+	# Again at the END. The banner above is thousands of lines back by now, and a
+	# deploy is judged by its last line.
+	cat >&2 <<-BANNER
+
+	⚠ THIS DEPLOY SKIPPED NINE GATES — ${DEPLOY_SKIP_GOLDEN}
+	   The day gate, the golden corpus and the walk ratchet did NOT run.
+	BANNER
+fi
 echo "==> done."
