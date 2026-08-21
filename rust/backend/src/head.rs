@@ -362,6 +362,13 @@ fn seg_json(row: &Value) -> Result<Value> {
     Ok(Value::Object(out))
 }
 
+/// The day's phone-battery trace, compressed to run boundaries.
+///
+/// `(ts, level)`. Derived from the same in-day fixes as the track, but BEFORE
+/// the quality and accuracy filters touch them: a fix dropped for an incoherent
+/// position still carries a valid battery reading.
+pub type Battery = Vec<(i64, i64)>;
+
 /// Everything the head produces from one day's inputs.
 pub struct Head {
     /// The day fold's only input.
@@ -372,6 +379,8 @@ pub struct Head {
     pub in_day: Vec<Fix>,
     /// Quality-filtered, accuracy-capped, but UN-snapped: what the map draws.
     pub display_fixes: Vec<Fix>,
+    /// The battery chart series.
+    pub battery: Battery,
 }
 
 /// Run the head over one day's `ClassificationInputs`.
@@ -389,11 +398,23 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
         .pointer("/phonetrack/today")
         .and_then(Value::as_array)
         .context("inputs have no phonetrack.today")?;
-    let in_day: Vec<Fix> = today
+    let in_day_rows: Vec<&Value> = today
         .iter()
-        .filter_map(parse_input_fix)
-        .filter(|p| p.ts >= bounds.start_utc && p.ts < bounds.end_utc)
+        .filter(|p| {
+            p.get("ts")
+                .and_then(Value::as_i64)
+                .is_some_and(|ts| ts >= bounds.start_utc && ts < bounds.end_utc)
+        })
         .collect();
+    let in_day: Vec<Fix> = in_day_rows
+        .iter()
+        .filter_map(|p| parse_input_fix(p))
+        .collect();
+
+    // ⚠ From the RAW in-day rows, before the filters below. A fix dropped for an
+    // incoherent position still reported a real battery level, and the chart is
+    // about the phone rather than about where it was.
+    let battery = battery_series(&in_day_rows, inputs.get("batteryTail"), bounds.end_utc)?;
 
     let cleaned = quality_filter(&in_day)?;
 
@@ -426,7 +447,75 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
         points,
         in_day,
         display_fixes,
+        battery,
     })
+}
+
+/// `Verified.Geo.Velocity.appendBatteryTail (batterySeries pts) tail dayEndTs`.
+///
+/// ⚠ ONE call, not two. The pipeline never wants the untailed series — the
+/// TypeScript writes the pair as a single expression — and splitting it across
+/// two round trips would let a caller ship the raw series by forgetting the
+/// second. The Lean mode is composed the same way for the same reason.
+///
+/// The tail is the first reading AFTER the local day end, fetched cross-day. It
+/// sets the slope of the line the chart draws up to midnight when the phone went
+/// idle in the evening; absent, the series simply ends at its last reading.
+pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) -> Result<Battery> {
+    let mut req = Map::new();
+    req.insert(
+        "points".into(),
+        Value::Array(
+            rows.iter()
+                .map(|p| {
+                    json!([
+                        p.get("ts").cloned().unwrap_or(Value::Null),
+                        // Absent and null are the same thing: no reading. The
+                        // filter that drops them is Lean's, so both spellings
+                        // have to arrive as null rather than as a zero level.
+                        //
+                        // ⚠ THE ABSENT CASE IS NOT EXERCISED BY THE CORPUS.
+                        // Ablated 2026-08-21 by sending `0` for it: all 42 days
+                        // still agreed, because every PhoneTrack row the loader
+                        // produces carries the key. A synthetic test holds it —
+                        // `battery_drops_a_missing_reading`.
+                        match p.get("battery") {
+                            None => Value::Null,
+                            Some(b) => b.clone(),
+                        }
+                    ])
+                })
+                .collect(),
+        ),
+    );
+    req.insert(
+        "tail".into(),
+        match tail {
+            None | Some(Value::Null) => Value::Null,
+            Some(t) => json!([
+                t.get("ts").cloned().unwrap_or(Value::Null),
+                t.get("level").cloned().unwrap_or(Value::Null)
+            ]),
+        },
+    );
+    req.insert("dayEndTs".into(), json!(day_end_ts));
+    let out = ask("battery", req)?;
+    out.get("series")
+        .and_then(Value::as_array)
+        .context("battery reply has no series")?
+        .iter()
+        .map(|r| {
+            let a = r.as_array().context("a battery row is not an array")?;
+            Ok((
+                a.first()
+                    .and_then(Value::as_i64)
+                    .context("a battery row has no ts")?,
+                a.get(1)
+                    .and_then(Value::as_i64)
+                    .context("a battery row has no level")?,
+            ))
+        })
+        .collect()
 }
 
 /// A PhoneTrack row from the loader's JSON. A row missing a coordinate is not a

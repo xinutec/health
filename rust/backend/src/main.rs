@@ -622,7 +622,7 @@ async fn check() -> Result<()> {
     Ok(())
 }
 
-/// Print the capture this crate's head computes from a golden fixture's inputs.
+/// Print the capture and battery trace the head computes from a fixture's inputs.
 ///
 /// The parity instrument for #982's second half. `backend check` proves the
 /// stages RUN, which is strictly weaker than proving they agree; this prints
@@ -646,7 +646,14 @@ fn head(fixture: &str) -> Result<()> {
         .with_context(|| format!("{name} is not <YYYY-MM-DD>-<user>"))?;
     let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
     let cap = backend::head::capture(inputs, date, user)?;
-    println!("{cap}");
+    // The battery trace rides alongside rather than inside: the fold's capture
+    // shape has no room for it — the TypeScript computes the chart BESIDE the
+    // fold, not in it — and `backend day` reads this same struct.
+    let battery = backend::head::run(inputs, date)?.battery;
+    println!(
+        "{}",
+        serde_json::json!({ "capture": cap, "battery": battery })
+    );
     Ok(())
 }
 

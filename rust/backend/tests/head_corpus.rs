@@ -349,3 +349,79 @@ fn points_verdict(got: Option<&Value>, want: Option<&Value>) -> Result<String, S
         .collect::<Vec<_>>()
         .join(" "))
 }
+
+/// Where `lean/experiments/battery-oracle.mts` wrote the TypeScript answer.
+fn battery_oracle() -> String {
+    std::env::var("BATTERY_ORACLE").unwrap_or_else(|_| "/tmp/battery-ts.json".to_string())
+}
+
+/// The battery chart series, against the TypeScript that builds it today.
+///
+/// ⚠ THE ONLY PIECE OF THE HEAD WITH NO ORACLE IN THE FIXTURE. `computeVelocity`
+/// builds the chart BESIDE the fold rather than inside it, so no day request
+/// carries it and `expected.tsArm.capture` has nowhere to have frozen it. The
+/// oracle is produced on demand instead:
+///
+/// ```text
+/// npx tsx lean/experiments/battery-oracle.mts
+/// ```
+///
+/// The algorithm itself is already pinned — `Verified.Geo.Velocity.batterySeries`
+/// and `appendBatteryTail` are `#guard`ed against the Node references, and the
+/// gate runs `velocity-refs.mts` every verify. What this checks is the part that
+/// is new in Rust: WHICH rows are handed over, that a missing `battery` field
+/// and an explicit `null` both arrive as no-reading, and that the cross-day tail
+/// and day end reach the call.
+#[test]
+fn the_battery_trace_matches_the_typescript() {
+    let oracle = battery_oracle();
+    if !Path::new(GOLDEN).is_dir() || !Path::new(&oracle).is_file() {
+        eprintln!(
+            "SKIPPED: needs the corpus at {GOLDEN} and the oracle at {oracle} \
+             (npx tsx lean/experiments/battery-oracle.mts)."
+        );
+        return;
+    }
+    let want: Value =
+        serde_json::from_str(&std::fs::read_to_string(&oracle).expect("the oracle file reads"))
+            .expect("the oracle parses");
+    let days = want.as_object().expect("the oracle is an object");
+    assert!(!days.is_empty(), "the oracle is empty");
+
+    let mut agreed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for (name, series) in days {
+        let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
+            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
+        let fx: Value = serde_json::from_str(&text).expect("a fixture parses");
+        let got = match backend::head::run(&fx["inputs"], date_of(name)) {
+            Ok(h) => h,
+            Err(e) => {
+                failures.push(format!("{name}: head: {e:#}"));
+                continue;
+            }
+        };
+        let rows: Vec<Value> = got
+            .battery
+            .iter()
+            .map(|(ts, lvl)| serde_json::json!([ts, lvl]))
+            .collect();
+        let got_text = serde_json::to_string(&rows).expect("the rows serialise");
+        let want_text = series.to_string();
+        if got_text == want_text {
+            agreed += 1;
+        } else {
+            failures.push(format!(
+                "{name}: {}",
+                first_difference(&rows, series.as_array().map_or(&[], Vec::as_slice))
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{agreed}/{} days agree on the battery trace.\n{}",
+        days.len(),
+        failures.join("\n")
+    );
+    eprintln!("{agreed}/{} days agree on the battery trace", days.len());
+}
