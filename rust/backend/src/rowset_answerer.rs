@@ -35,14 +35,60 @@ use crate::fitbit::tz_source::PolygonLookup;
 use crate::fold_payload::{bits, default_radius_m};
 use crate::lean::{self, Miss};
 
-/// The row set a fixture carries: OSM points and lines, each tagged with the
-/// feature bucket it was fetched for.
-pub struct RowSetAnswerer<'a> {
-    points: &'a [Value],
-    lines: &'a [Value],
+/// Where candidate rows come from, in the positional form `osmspatial` reads.
+///
+/// The two implementations differ in ONE way that matters: a fixture's row set
+/// is complete by construction — it was extracted for these days — while a
+/// live mirror is filled lazily and can only vouch for areas someone has
+/// fetched. So a source may say it cannot answer.
+///
+/// ⚠ `None` MEANS DECLINE, NOT EMPTY. An empty row list is a real answer — "no
+/// ways within the radius" — and returning one for an unfetched area is a claim
+/// about the world. `converge` already counts a decline; it cannot count a lie.
+pub trait RowSource {
+    /// Line rows of one feature bucket near a point.
+    fn line_rows(
+        &mut self,
+        bucket: &str,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<Vec<Value>>>;
+    /// Point rows of one feature bucket near a point.
+    fn point_rows(
+        &mut self,
+        bucket: &str,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<Vec<Value>>>;
+}
+
+/// Answers the fold's misses, whatever the rows come from.
+///
+/// The arms below are the part that must not be written twice: the bucket
+/// fan-out, the wire form and the two tables that need no rows at all (`tzAt`,
+/// `bestPlace`). Only the ROW SUPPLY differs between a fixture and a live
+/// mirror, and that is what [`RowSource`] abstracts.
+pub struct OsmAnswerer<S: RowSource> {
+    source: S,
     /// The zone lookup, built lazily — `tzf-rs` decompresses its polygon set on
     /// construction, so a day that never asks for a zone must not pay for it.
     zones: Option<PolygonLookup>,
+}
+
+/// Answering from the row set a golden fixture carries.
+///
+/// A fixture's rows are complete by construction — extracted for exactly these
+/// days — so this source never declines, and every `Ok(None)` a day reports
+/// comes from a table with no arm rather than from missing rows.
+pub type RowSetAnswerer<'a> = OsmAnswerer<RowSetSource<'a>>;
+
+/// OSM points and lines from a fixture, each tagged with the feature bucket it
+/// was fetched for.
+pub struct RowSetSource<'a> {
+    points: &'a [Value],
+    lines: &'a [Value],
     /// Whether to drop rows that cannot be in range before shipping them.
     ///
     /// ⚠ Off only for `tests/rowset_prefilter.rs`, which exists to prove the
@@ -52,11 +98,40 @@ pub struct RowSetAnswerer<'a> {
     prefilter: bool,
 }
 
-impl<'a> RowSetAnswerer<'a> {
+impl<'a> OsmAnswerer<RowSetSource<'a>> {
     pub fn new(row_set: &'a Value) -> Result<Self> {
-        let o = row_set.as_object().context("osmRowSet is not an object")?;
         Ok(Self {
             zones: None,
+            source: RowSetSource::new(row_set)?,
+        })
+    }
+
+    /// As [`RowSetAnswerer::new`], with the prefilter off. Test-only — see the
+    /// field's note.
+    pub fn new_unfiltered(row_set: &'a Value) -> Result<Self> {
+        let mut s = Self::new(row_set)?;
+        s.source.prefilter = false;
+        Ok(s)
+    }
+}
+
+impl<S: RowSource> OsmAnswerer<S> {
+    /// Answer from any source. The row-set constructor is
+    /// [`RowSetAnswerer::new`]; this is what a live mirror uses, and what
+    /// `tests/row_source.rs` uses to reach the decline path a fixture's
+    /// complete row set can never produce.
+    pub fn with_source(source: S) -> Self {
+        Self {
+            source,
+            zones: None,
+        }
+    }
+}
+
+impl<'a> RowSetSource<'a> {
+    fn new(row_set: &'a Value) -> Result<Self> {
+        let o = row_set.as_object().context("osmRowSet is not an object")?;
+        Ok(Self {
             prefilter: true,
             points: o
                 .get("points")
@@ -69,14 +144,6 @@ impl<'a> RowSetAnswerer<'a> {
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
         })
-    }
-
-    /// As [`RowSetAnswerer::new`], with the prefilter off. Test-only — see the
-    /// field's note.
-    pub fn new_unfiltered(row_set: &'a Value) -> Result<Self> {
-        let mut s = Self::new(row_set)?;
-        s.prefilter = false;
-        Ok(s)
     }
 
     /// Degrees of longitude per metre at this latitude — `mPerDegAt`'s inverse,
@@ -209,28 +276,50 @@ impl<'a> RowSetAnswerer<'a> {
             })
             .collect()
     }
+}
 
-    /// One `osmspatial` call.
-    fn spatial(
-        &self,
-        op: &str,
-        lat: &str,
-        lon: &str,
-        radius: &str,
-        rows: Vec<Value>,
-    ) -> Result<Value> {
-        let req = json!({
-            "mode": "osmspatial", "op": op,
-            "lat": lat, "lon": lon, "radiusM": radius,
-            "rows": rows,
-        });
-        let out = lean::serve(&serde_json::to_string(&req)?)?;
-        let v: Value = serde_json::from_str(&out).context("osmspatial answer is not JSON")?;
-        if let Some(e) = v.get("error").and_then(Value::as_str) {
-            bail!("osmspatial {op}: {e}");
-        }
-        Ok(v)
+/// Answering from a fixture's rows never declines: the set was extracted for
+/// these days, so "no rows near here" is a real answer rather than a gap.
+impl RowSource for RowSetSource<'_> {
+    fn line_rows(
+        &mut self,
+        bucket: &str,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<Vec<Value>>> {
+        Ok(Some(RowSetSource::line_rows(
+            self, bucket, lat, lon, radius_m,
+        )))
     }
+
+    fn point_rows(
+        &mut self,
+        bucket: &str,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<Vec<Value>>> {
+        Ok(Some(RowSetSource::point_rows(
+            self, bucket, lat, lon, radius_m,
+        )))
+    }
+}
+
+/// One `osmspatial` call. Source-independent: the rows are already in the wire
+/// form, and every distance, ordering and cap below this point is Lean's.
+fn spatial(op: &str, lat: &str, lon: &str, radius: &str, rows: Vec<Value>) -> Result<Value> {
+    let req = json!({
+        "mode": "osmspatial", "op": op,
+        "lat": lat, "lon": lon, "radiusM": radius,
+        "rows": rows,
+    });
+    let out = lean::serve(&serde_json::to_string(&req)?)?;
+    let v: Value = serde_json::from_str(&out).context("osmspatial answer is not JSON")?;
+    if let Some(e) = v.get("error").and_then(Value::as_str) {
+        bail!("osmspatial {op}: {e}");
+    }
+    Ok(v)
 }
 
 /// The bit-pattern parts of a miss key, verbatim.
@@ -238,7 +327,7 @@ fn key_parts(key: &str) -> Vec<&str> {
     key.split('|').filter(|s| !s.is_empty()).collect()
 }
 
-impl crate::fold_converge::Answerer for RowSetAnswerer<'_> {
+impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
     fn answer(&mut self, miss: &Miss) -> Result<Option<(String, Value)>> {
         let p = key_parts(&miss.key);
         if p.len() < 2 {
@@ -259,23 +348,27 @@ impl crate::fold_converge::Answerer for RowSetAnswerer<'_> {
             "nearbyWays" => {
                 let r = bits(default_radius_m::NEARBY_WAYS);
                 let mut ways = Vec::new();
+                // ⚠ ANY bucket the source cannot vouch for declines the WHOLE
+                // answer. `nearbyWays` is one table built from five queries, so
+                // answering with four of them would report the aerodrome-free
+                // version of a coordinate as if it were complete.
                 for bucket in ["highway", "railway", "waterway", "aeroway"] {
-                    let v = self.spatial(
-                        "queryLines",
-                        lat,
-                        lon,
-                        &r,
-                        self.line_rows(bucket, flat, flon, default_radius_m::NEARBY_WAYS),
-                    )?;
+                    let Some(rows) =
+                        self.source
+                            .line_rows(bucket, flat, flon, default_radius_m::NEARBY_WAYS)?
+                    else {
+                        return Ok(None);
+                    };
+                    let v = spatial("queryLines", lat, lon, &r, rows)?;
                     push_ways(&mut ways, bucket, &v);
                 }
-                let v = self.spatial(
-                    "queryPoints",
-                    lat,
-                    lon,
-                    &r,
-                    self.point_rows("aeroway", flat, flon, default_radius_m::NEARBY_WAYS),
-                )?;
+                let Some(rows) =
+                    self.source
+                        .point_rows("aeroway", flat, flon, default_radius_m::NEARBY_WAYS)?
+                else {
+                    return Ok(None);
+                };
+                let v = spatial("queryPoints", lat, lon, &r, rows)?;
                 push_ways(&mut ways, "aeroway", &v);
                 Ok(Some((
                     "nearbyWays".into(),
@@ -287,26 +380,23 @@ impl crate::fold_converge::Answerer for RowSetAnswerer<'_> {
             // fields the table holds, so there is no shaping here.
             "nearbyStations" => {
                 let r = p.get(2).copied().unwrap_or("0");
-                let v = self.spatial(
-                    "nearbyStations",
-                    lat,
-                    lon,
-                    r,
-                    self.point_rows("railway", flat, flon, radius_of(r)),
-                )?;
+                let Some(rows) = self
+                    .source
+                    .point_rows("railway", flat, flon, radius_of(r))?
+                else {
+                    return Ok(None);
+                };
+                let v = spatial("nearbyStations", lat, lon, r, rows)?;
                 let rows = v.get("rows").cloned().unwrap_or_else(|| json!([]));
                 Ok(Some(("nearbyStations".into(), json!([lat, lon, r, rows]))))
             }
 
             "linesAtPoint" => {
                 let r = p.get(2).copied().unwrap_or("0");
-                let v = self.spatial(
-                    "linesAtPoint",
-                    lat,
-                    lon,
-                    r,
-                    self.line_rows("railway", flat, flon, radius_of(r)),
-                )?;
+                let Some(rows) = self.source.line_rows("railway", flat, flon, radius_of(r))? else {
+                    return Ok(None);
+                };
+                let v = spatial("linesAtPoint", lat, lon, r, rows)?;
                 let names = v.get("names").cloned().unwrap_or_else(|| json!([]));
                 Ok(Some(("linesAtPoint".into(), json!([lat, lon, r, names]))))
             }
@@ -373,11 +463,28 @@ impl crate::fold_converge::Answerer for RowSetAnswerer<'_> {
                 )))
             }
 
-            // ⚠ DECLINED, not answered empty. `Verified/Geo/Bus.lean` records
-            // that stop resolution is INJECTED and modelled as an ordinary
+            // ⚠ EVERYTHING ELSE IS DECLINED, and the reasons are NOT the same.
+            // This comment used to justify `transitStops` alone, which read as
+            // if the whole catch-all had been adjudicated; it had not, and that
+            // is how a missing arm came to be filed as a missing lookup
+            // (#1054, corrected 2026-08-22).
+            //
+            // `transitStops` — declined on purpose. `Verified/Geo/Bus.lean`
+            // records stop resolution as INJECTED, modelled as an ordinary
             // function rather than computed from rows, so there is nothing here
             // to compute it from. An empty answer would be a coordinate with no
             // transit stops near it, which is a claim; declining is not.
+            //
+            // `nearbyLandmarks` — NOT adjudicated, just unported. The rows are
+            // in the set, but the table wants `{name, type, subtype, distanceM,
+            // openingHours, enclosing}` and `osmspatial` has no landmark op:
+            // `shapeLandmarks` / `filterLandmarks` (`src/geo/osm.ts`) have no
+            // Lean twin, so only `distanceM` is derivable today. An arm here
+            // would have to invent the other five.
+            //
+            // `reverseGeocode` — never answerable from rows at all. It is a
+            // Nominatim call, permanently delegated to the captured trace, and
+            // its keys are coordinates the pipeline DERIVES.
             _ => Ok(None),
         }
     }
