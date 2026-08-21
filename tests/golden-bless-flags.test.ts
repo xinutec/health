@@ -55,7 +55,10 @@ function emptyDay() {
 			emptyDayBracket: null,
 			osmTrace: emptyOsmTrace(),
 		},
-		expected: { velocity: [] },
+		// ⚠ A FROZEN ARM, because `--bless` once deleted it. The shape does not
+		// have to be a real capture — `compare-day` is not run here — only
+		// present, distinguishable, and under `expected` where a bless writes.
+		expected: { velocity: [], tsArm: { capture: { date: DATE }, osmAnswers: {} } },
 	};
 }
 
@@ -90,6 +93,29 @@ describe("golden-check --bless-* flags", () => {
 		await access(CLI).catch(() => {
 			throw new Error(`${CLI} is missing — this suite drives the built CLI. Run \`pnpm run build\` first.`);
 		});
+	});
+
+	it("leaves the frozen TS arm alone — it blesses one field, not the object", async () => {
+		// ⚠ REGRESSION TEST FOR A DESTRUCTIVE BLESS. `--bless` wrote
+		// `expected: { velocity: actual }`, rebuilding the object and dropping
+		// `expected.tsArm` — the frozen TS arm (#975) that is the day gate's ONLY
+		// oracle now the cascade is deleted. One run erased it from all 41
+		// fixtures.
+		//
+		// It was not silent — `compare-day` calls a missing arm NO ORACLE and
+		// that is red — but it was UNRECOVERABLE: `--freeze` went with the
+		// cascade, so nothing in the tree can rebuild an oracle. Recovery meant
+		// restoring 41 files from the corpus repo's history.
+		//
+		// `docs/proposals/2026-06-deterministic-fixtures.md` already said the
+		// rule: "`--bless` updates `expected.velocity` only". This pins it.
+		const dir = await seed({});
+		await run("node", [CLI, "--bless"], { cwd: dir });
+
+		const after = JSON.parse(await readFile(path.join(dir, "tests", "golden", "days", `${DATE}.json`), "utf8"));
+		expect(after.expected.tsArm).toEqual({ capture: { date: DATE }, osmAnswers: {} });
+		// And the bless still did its own job, so this cannot pass by not running.
+		expect(after.expected.velocity).toEqual([]);
 	});
 
 	it("applies every requested ratchet in one run, not just the first", async () => {

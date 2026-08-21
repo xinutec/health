@@ -361,7 +361,13 @@ async function measure(file: string): Promise<Outcome> {
 	// ⚠ FROZEN FIRST, and never a silent fallback. A fixture with no frozen arm
 	// is REPORTED, because after #975 there is no cascade to fall back to and a
 	// gate that quietly skipped such a day would read green having measured
-	// nothing. `--freeze` is the one caller that runs the arm.
+	// nothing.
+	//
+	// ⚠ AN ORACLE CANNOT BE REBUILT. `--freeze` was deleted with the cascade it
+	// ran, so a fixture that loses its `tsArm` — by re-capture, or by a bless
+	// that rebuilds `expected` instead of spreading it — leaves the day gate
+	// permanently unable to measure that day. Restoring it means the corpus
+	// repo's history, not a command.
 	// ⚠ THE FROZEN ARM IS THE ONLY SOURCE. #975 deleted the cascade, so there is
 	// nothing left to run — a fixture without one cannot be gated at all, and
 	// saying so is the whole point: a corpus quietly shrinking to the days that
@@ -508,7 +514,7 @@ async function measure(file: string): Promise<Outcome> {
 	};
 }
 
-// ⚠ Flags filtered out, or `--freeze` reads as a requested DATE: `only` would be
+// ⚠ Flags filtered out, or a flag reads as a requested DATE: `only` would be
 // non-empty, match no fixture, and the run would exit 2 saying there is no
 // corpus — a flag typo reported as missing data.
 const only = new Set(process.argv.slice(2).filter((a) => !a.startsWith("--")));

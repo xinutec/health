@@ -631,7 +631,24 @@ for (const file of files) {
 			);
 			continue;
 		}
-		const updated: CapturedDay = { ...captured, expected: { velocity: actual } };
+		// ⚠ SPREAD `captured.expected`, NEVER REBUILD IT. Writing
+		// `expected: { velocity: actual }` DROPPED `expected.tsArm` — the frozen
+		// TS arm (#975) that is the day gate's only oracle now that the cascade is
+		// deleted. One `--bless` erased it from all 41 fixtures at once.
+		//
+		// It would not have been silent — `compare-day` calls a missing arm
+		// NO ORACLE and that is a RED verdict by design — but it would have been
+		// UNRECOVERABLE: `--freeze` went with the cascade, so nothing left in the
+		// tree can rebuild an oracle, and the day gate would have been dead until
+		// someone restored 41 fixtures from the corpus repo's history.
+		//
+		// The bless path owns ONE field. Anything else under `expected` belongs to
+		// whoever put it there, and a new one must survive a bless without this
+		// line being touched again.
+		const updated: CapturedDay = {
+			...captured,
+			expected: { ...captured.expected, velocity: actual },
+		};
 		await writeFile(full, `${JSON.stringify(updated, null, "\t")}\n`, "utf8");
 		blessed++;
 		console.log(`blessed  ${label}  (${actual.length} states)`);
