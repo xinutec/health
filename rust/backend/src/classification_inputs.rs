@@ -4,12 +4,19 @@
 //! loads twelve things in parallel plus four PhoneTrack range fetches; this is
 //! the nine whose shape is pure SQL and whose output is a fixture field.
 //!
-//! ⚠ WHAT IS STILL MISSING IS NAMED, not left to be inferred from a count:
-//! `biometrics` (three streams of its own), `emptyDayBracket` (two presence_log
-//! reads plus a focus_places centroid), `homeTz` (a `sync_state` read that
-//! already has its own module), and PhoneTrack itself (four range fetches
-//! against Nextcloud, not SQL). `load_partial` is named for that gap and keeps
-//! the name until they land — see #982.
+//! ⚠ ONE THING IS STILL MISSING, and it is named rather than left to be
+//! inferred from a count: PhoneTrack — `phonetrack` and `batteryTail`, four
+//! range fetches against Nextcloud. It is NOT a SQL port, which is why it is
+//! not here and why `load_partial` keeps its name: every SQL input has landed,
+//! and the remaining gap is a different kind of work (see #982, and #1032 /
+//! #1037 for two defects on that path that predate the port).
+//!
+//! ⚠ `biometrics` TAKES home_tz TWICE, as `home_tz` and as the caller's `tz`.
+//! In `loadBiometrics` those are two distinct arguments: `home_tz` read from
+//! sync_state, and the display tz the request resolved. On the loader path they
+//! are the same value, and passing it twice is honest about that rather than
+//! dropping a parameter the TypeScript has — the two differ only for a caller
+//! that does not exist yet.
 //!
 //! The insertion order below is `load-classification-inputs.ts`'s RETURN order,
 //! not its `Promise.all` order, because the return object is what a fixture
@@ -22,30 +29,47 @@
 //! 2026-08-13, keyed row by row:
 //!
 //! ```text
-//! knownPlaces      117/117 identical
-//! modeBiometrics       6/6 identical
-//! motionLog        611/611 identical
-//! venuePriors          identical
-//! sleepWindows         identical
-//! hsmmDecode        29 segments, identical
-//! railRouteCache     48/51  - 3 re-mined 2026-08-20 05:10
-//! busRouteCache    959/994  - 35 re-mined, newest 2026-08-21 05:42
-//! railStopsCache   231/259  - whole table rewritten 2026-08-20 06:11
+//! knownPlaces      117 places      byte-identical
+//! biometrics       1440 hr, 30 sleep, 250 steps   byte-identical
+//! motionLog        611 fixes       byte-identical
+//! modeBiometrics   6 modes         byte-identical
+//! hsmmDecode       29 segments     byte-identical
+//! homeTz                           byte-identical
+//! sleepWindows                     byte-identical
+//! emptyDayBracket                  byte-identical
+//! venuePriors                      byte-identical
+//! railRouteCache    48/51 shared rows byte-identical - 3 re-mined 08-20 05:10
+//! busRouteCache    959/994           - 35 re-mined, newest 08-21 05:42
+//! railStopsCache   231/259           - table rewritten 08-20 06:11
 //! ```
+//!
+//! ⚠ BYTE-identical, compared as SERIALISED TEXT. A `jq` comparison is not
+//! enough and said "no mismatch" while three fields were still wrong: jq parses
+//! both sides to doubles, so `25.0 == 25`. See `js_num`.
 //!
 //! ⚠ THE THREE PARTIAL ROWS ARE DRIFT, AND THAT IS MEASURED RATHER THAN
 //! ASSUMED: every differing row's `computed_at` is later than the fixture's
 //! capture, and the differences are changed COORDINATES, not changed
 //! renderings. "It must be drift" is what the first reading of #1052 said too.
 //!
-//! Three defects this diff caught that `backend check` could not, all of the
-//! same kind — a value that decodes to something plausible and wrong:
+//! Five defects this diff caught that `backend check` could not, all of the
+//! same kind — a value that decodes or renders to something plausible and
+//! wrong:
 //!
 //!   * `hour_profile` read as JSON when it is comma-separated per-mille
 //!     integers, so all 117 profiles decoded to absent;
 //!   * `minutesAsleep` rendered `553.0` against the TypeScript's `553`;
 //!   * `osmRelationId` likewise, which made a thousand identical rows share
-//!     ZERO keys.
+//!     ZERO keys when diffed on it;
+//!   * every integral `f64` — `radiusM`, `sleepHours`, `accM`, and each zero
+//!     bucket of an hour profile — for the same reason, now `js_num`;
+//!   * `ROUND(AVG(bpm))` is a DECIMAL, so the HR stream would not decode at
+//!     all until it was CAST AS CHAR.
+//!
+//! ⚠ TWO OF THOSE WERE CAUGHT BY THE HELPERS REFUSING RATHER THAN DEFAULTING —
+//! `num` errors on a type it cannot read, and `presence_log`'s INT UNSIGNED and
+//! the bpm DECIMAL both came back as errors naming the column. That is the
+//! whole argument for not writing `unwrap_or_default()` in a loader.
 //!
 //! # Why the output is `serde_json::Value` and not a struct
 //!
@@ -142,9 +166,44 @@ fn num_opt(row: &sqlx::mysql::MySqlRow, col: &str) -> Result<Option<f64>> {
     }
 }
 
+/// A `f64` rendered the way `JSON.stringify` renders a JS number.
+///
+/// ⚠ THIS IS NOT COSMETIC. Every one of these columns reaches the TypeScript
+/// through `Number(...)`, and JS has ONE number type: `JSON.stringify(25)` is
+/// `25`, never `25.0`. `serde_json` keeps the f64-ness and writes `25.0`, so a
+/// radius of 25 m, a sleep total of 998 h and an accuracy of 15 m all rendered
+/// differently in the two arms while being the same number.
+///
+/// A cast to `i64` would NOT do: `radius_m` is genuinely fractional for most
+/// places, and forcing it to an integer would change the value rather than the
+/// rendering. The rule is JS's own — integral doubles print without a fraction,
+/// everything else prints as itself.
+///
+/// ⚠ INVISIBLE TO A `jq` COMPARISON, which is how it survived the first parity
+/// pass: jq parses both sides to doubles, so `25.0 == 25` and a keyed diff
+/// reports no mismatch. It shows up only when the SERIALISED text is compared,
+/// which is what a fixture actually stores.
+pub fn js_num(v: f64) -> Value {
+    // ⚠ THE BOUND IS i64's RANGE, NOT 2^53. An integral f64 casts to i64
+    // exactly anywhere it fits, and JS prints plain digits until 1e21 — which
+    // is past i64::MAX — so inside this window the two agree. Outside it, and
+    // for NaN or an infinity, fall through: `as i64` SATURATES rather than
+    // failing, and a saturated value is a wrong number that looks like a right
+    // one. None of these columns can reach that, and the branch is here so
+    // that stays true if one ever does.
+    if v.fract() == 0.0
+        && v.is_finite()
+        && (-9.223_372_036_854_776e18..=9.223_372_036_854_776e18).contains(&v)
+    {
+        json!(v as i64)
+    } else {
+        json!(v)
+    }
+}
+
 /// `num_opt` rendered as JSON — `null` stays null rather than becoming zero.
 fn num_json(row: &sqlx::mysql::MySqlRow, col: &str) -> Result<Value> {
-    Ok(num_opt(row, col)?.map_or(Value::Null, |v| json!(v)))
+    Ok(num_opt(row, col)?.map_or(Value::Null, js_num))
 }
 
 /// `focus_places`, projected as `snapToPlace` and the place picker read it.
@@ -172,19 +231,19 @@ pub async fn known_places(pool: &MySqlPool, user_id: &str) -> Result<Value> {
     for r in &rows {
         out.push(json!({
             "id": num(r, "id")? as i64,
-            "centroidLat": num(r, "centroid_lat")?,
-            "centroidLon": num(r, "centroid_lon")?,
-            "radiusM": num(r, "radius_m")?,
+            "centroidLat": js_num(num(r, "centroid_lat")?),
+            "centroidLon": js_num(num(r, "centroid_lon")?),
+            "radiusM": js_num(num(r, "radius_m")?),
             "displayName": r.try_get::<Option<String>, _>("display_name").context("display_name")?,
             // `?? 0` in the TS: an unmined row has no sleep evidence, which is
             // zero hours, not "unknown".
-            "sleepHours": num_opt(r, "sleep_hours")?.unwrap_or(0.0),
+            "sleepHours": js_num(num_opt(r, "sleep_hours")?.unwrap_or(0.0)),
             "amenityLabel": r.try_get::<Option<String>, _>("amenity_label").context("amenity_label")?,
             "uniqueDays": num_opt(r, "unique_days")?.map(|v| v as i64),
             "hourProfile": parse_hour_profile(
                 r.try_get::<Option<String>, _>("hour_profile").context("hour_profile")?.as_deref(),
             ),
-            "totalDwellSec": num(r, "total_dwell_sec")?,
+            "totalDwellSec": js_num(num(r, "total_dwell_sec")?),
             "visitCount": num_opt(r, "visit_count")?.map(|v| v as i64),
         }));
     }
@@ -248,7 +307,9 @@ pub fn parse_hour_profile(raw: Option<&str>) -> Value {
                 }
             }
         };
-        out.push(json!(n / 1000.0));
+        // ⚠ `js_num`: a zero bucket is `0` in the TypeScript, not `0.0`, and
+        // most profiles have several.
+        out.push(js_num(n / 1000.0));
     }
     Value::Array(out)
 }
@@ -377,8 +438,8 @@ pub async fn motion_log(
     for r in &rows {
         out.push(json!({
             "ts": num(r, "ts")? as i64,
-            "lat": num(r, "lat")?,
-            "lon": num(r, "lon")?,
+            "lat": js_num(num(r, "lat")?),
+            "lon": js_num(num(r, "lon")?),
             "cogDeg": num_json(r, "cog")?,
             "velKmh": num_json(r, "vel")?,
             "accM": num_json(r, "acc")?,
@@ -598,6 +659,321 @@ pub fn next_date_string(date: &str) -> Result<String> {
         .to_string())
 }
 
+/// The day's Fitbit streams: per-minute HR, sleep stages, and stepped minutes.
+///
+/// Port of `loadBiometrics` in `src/geo/velocity.ts`. SIX queries, not three:
+/// each stream has a primary read on the derived `ts_utc` column and a fallback
+/// for the stragglers where `ts_utc IS NULL`.
+///
+/// ⚠ THE FALLBACK IS NOT DEAD CODE AND MUST NOT BE DROPPED. Those rows predate
+/// the backfill that derives `ts_utc`; they carry a WALL CLOCK plus a `tz`, and
+/// the tz chain is `row.tz -> home_tz -> the caller's tz` (`docs/design/
+/// timezone.md`). A port that kept only the primary read would lose them
+/// silently — the day would decode, with less biometric evidence than the
+/// TypeScript had, and nothing would say so.
+///
+/// ⚠ THE TWO PATHS BOUND THE WINDOW DIFFERENTLY, and that asymmetry is copied
+/// deliberately rather than tidied: the primary is `>= start AND < end` in SQL,
+/// the fallback is `>= start AND <= end` in the loop (`ts < startUtc || ts >
+/// endUtc` skips). Sleep's fallback is different again — an OVERLAP test, since
+/// a stage that begins before the window can still land inside it. Making these
+/// agree would be a behaviour change wearing a cleanup's clothes.
+///
+/// ⚠ `ROUND(AVG(bpm))` STAYS IN SQL. Fitbit stores HR at 1 s (~21 k rows/day)
+/// and the pipeline wants per-minute; doing the rounding in MySQL is what the
+/// TypeScript does, so both arms inherit the same half-away-from-zero rule
+/// rather than Rust's round-half-to-even disagreeing on every .5.
+///
+/// ⚠ AND IT IS CAST TO CHAR, because `AVG` returns a DECIMAL and sqlx will not
+/// decode one — the same trap as `focus_places.centroid_lat`, one aggregate
+/// further along. `num` REFUSED it rather than defaulting, which is exactly why
+/// that helper errors instead of falling back to zero: a bpm of 0 for every
+/// minute of a day would otherwise have printed as a full stream.
+pub async fn biometrics(
+    pool: &MySqlPool,
+    user_id: &str,
+    start_utc: i64,
+    end_utc: i64,
+    home_tz: Option<&str>,
+    tz: Option<&str>,
+) -> Result<Value> {
+    let start_dt = utc_seconds_to_datetime_str(start_utc);
+    let end_dt = utc_seconds_to_datetime_str(end_utc);
+    // The fallback rows are matched on a WALL CLOCK, which can sit up to a day
+    // either side of the UTC window depending on the zone — so the SQL casts a
+    // wider net and the loop below narrows it once the tz is known.
+    let day_before = utc_seconds_to_date_str(start_utc - 86_400);
+    let day_after = utc_seconds_to_date_str(end_utc + 86_400);
+    let resolve_tz = |row_tz: Option<&str>| -> Option<String> {
+        row_tz
+            .map(str::to_string)
+            .or_else(|| home_tz.map(str::to_string))
+            .or_else(|| tz.map(str::to_string))
+    };
+
+    // ---- heart rate -------------------------------------------------------
+    let mut hr: Vec<(i64, f64)> = Vec::new();
+    let rows = sqlx::query(
+        "SELECT DATE_FORMAT(MIN(ts_utc), '%Y-%m-%d %H:%i:00') AS ts_utc, CAST(ROUND(AVG(bpm)) AS CHAR) AS bpm \
+         FROM heart_rate_intraday \
+         WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ? \
+         GROUP BY DATE_FORMAT(ts_utc, '%Y-%m-%d %H:%i') ORDER BY ts_utc",
+    )
+    .bind(user_id)
+    .bind(&start_dt)
+    .bind(&end_dt)
+    .fetch_all(pool)
+    .await
+    .context("reading heart_rate_intraday")?;
+    for r in &rows {
+        let ts: String = r.try_get("ts_utc").context("hr ts_utc")?;
+        hr.push((
+            utc_datetime_str_to_seconds(&ts).context("hr ts_utc is not a UTC datetime")?,
+            num(r, "bpm")?,
+        ));
+    }
+    let rows = sqlx::query(
+        "SELECT DATE_FORMAT(MIN(ts), '%Y-%m-%d %H:%i:00') AS ts, CAST(ROUND(AVG(bpm)) AS CHAR) AS bpm, \
+         MAX(tz) AS tz FROM heart_rate_intraday \
+         WHERE user_id = ? AND ts >= ? AND ts < ? AND ts_utc IS NULL \
+         GROUP BY DATE_FORMAT(ts, '%Y-%m-%d %H:%i')",
+    )
+    .bind(user_id)
+    .bind(&day_before)
+    .bind(&day_after)
+    .fetch_all(pool)
+    .await
+    .context("reading heart_rate_intraday (ts_utc IS NULL)")?;
+    for r in &rows {
+        let raw: String = r.try_get("ts").context("hr fallback ts")?;
+        let row_tz: Option<String> = r.try_get("tz").context("hr fallback tz")?;
+        let Some(ts) = wall_clock_ts_str(&raw, resolve_tz(row_tz.as_deref()).as_deref()) else {
+            continue;
+        };
+        if ts < start_utc || ts > end_utc {
+            continue;
+        }
+        hr.push((ts, num(r, "bpm")?));
+    }
+    hr.sort_by_key(|&(ts, _)| ts);
+
+    // ---- sleep stages -----------------------------------------------------
+    let mut sleep: Vec<(i64, i64, String)> = Vec::new();
+    let rows = sqlx::query(
+        "SELECT ts_utc, stage, duration_seconds FROM sleep_stages \
+         WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ?",
+    )
+    .bind(user_id)
+    .bind(&start_dt)
+    .bind(&end_dt)
+    .fetch_all(pool)
+    .await
+    .context("reading sleep_stages")?;
+    for r in &rows {
+        // ⚠ The TS skips a NULL here even though the WHERE cannot return one.
+        // Kept: it costs nothing and it is the shape of the row, not a guess.
+        let Some(ts_utc) = r
+            .try_get::<Option<chrono::NaiveDateTime>, _>("ts_utc")
+            .context("sleep ts_utc")?
+        else {
+            continue;
+        };
+        let start = ts_utc.and_utc().timestamp();
+        let dur = num(r, "duration_seconds")? as i64;
+        sleep.push((start, start + dur, r.try_get("stage").context("stage")?));
+    }
+    let rows = sqlx::query(
+        "SELECT ts, stage, duration_seconds, tz FROM sleep_stages \
+         WHERE user_id = ? AND ts >= ? AND ts < ? AND ts_utc IS NULL",
+    )
+    .bind(user_id)
+    .bind(&day_before)
+    .bind(&day_after)
+    .fetch_all(pool)
+    .await
+    .context("reading sleep_stages (ts_utc IS NULL)")?;
+    for r in &rows {
+        let raw: chrono::NaiveDateTime = r.try_get("ts").context("sleep fallback ts")?;
+        let row_tz: Option<String> = r.try_get("tz").context("sleep fallback tz")?;
+        let text = raw.format("%Y-%m-%d %H:%M:%S").to_string();
+        let Some(start) = wall_clock_ts_str(&text, resolve_tz(row_tz.as_deref()).as_deref()) else {
+            continue;
+        };
+        let end = start + num(r, "duration_seconds")? as i64;
+        // ⚠ An OVERLAP test, not a containment one — a stage beginning before
+        // the window still covers time inside it.
+        if end < start_utc || start > end_utc {
+            continue;
+        }
+        sleep.push((start, end, r.try_get("stage").context("stage")?));
+    }
+    sleep.sort_by_key(|&(start, _, _)| start);
+
+    // ---- stepped minutes --------------------------------------------------
+    // Only non-zero minutes are stored, so a row IS "at least one step here".
+    let mut steps: Vec<(i64, f64)> = Vec::new();
+    let rows = sqlx::query(
+        "SELECT ts_utc, steps FROM steps_intraday WHERE user_id = ? AND ts_utc >= ? AND ts_utc < ?",
+    )
+    .bind(user_id)
+    .bind(&start_dt)
+    .bind(&end_dt)
+    .fetch_all(pool)
+    .await
+    .context("reading steps_intraday")?;
+    for r in &rows {
+        let Some(ts_utc) = r
+            .try_get::<Option<chrono::NaiveDateTime>, _>("ts_utc")
+            .context("steps ts_utc")?
+        else {
+            continue;
+        };
+        steps.push((ts_utc.and_utc().timestamp(), num(r, "steps")?));
+    }
+    let rows = sqlx::query(
+        "SELECT ts, steps, tz FROM steps_intraday \
+         WHERE user_id = ? AND ts >= ? AND ts < ? AND ts_utc IS NULL",
+    )
+    .bind(user_id)
+    .bind(&day_before)
+    .bind(&day_after)
+    .fetch_all(pool)
+    .await
+    .context("reading steps_intraday (ts_utc IS NULL)")?;
+    for r in &rows {
+        let raw: chrono::NaiveDateTime = r.try_get("ts").context("steps fallback ts")?;
+        let row_tz: Option<String> = r.try_get("tz").context("steps fallback tz")?;
+        let text = raw.format("%Y-%m-%d %H:%M:%S").to_string();
+        let Some(ts) = wall_clock_ts_str(&text, resolve_tz(row_tz.as_deref()).as_deref()) else {
+            continue;
+        };
+        if ts < start_utc || ts > end_utc {
+            continue;
+        }
+        steps.push((ts, num(r, "steps")?));
+    }
+    steps.sort_by_key(|&(ts, _)| ts);
+
+    Ok(json!({
+        "hr": hr.iter().map(|&(ts, bpm)| json!({"ts": ts, "bpm": bpm as i64})).collect::<Vec<_>>(),
+        "sleep": sleep.iter()
+            .map(|(a, b, st)| json!({"startTs": a, "endTs": b, "stage": st}))
+            .collect::<Vec<_>>(),
+        "steps": steps.iter()
+            .map(|&(ts, n)| json!({"ts": ts, "steps": n as i64}))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// A wall clock plus a resolved zone, as a Unix timestamp — or `None`.
+///
+/// `None` covers both of the TS's `Number.isNaN` exits: an unparseable clock,
+/// and a row whose tz chain resolved to nothing. The caller SKIPS the row in
+/// both cases, which is what `if (Number.isNaN(ts)) continue` does.
+fn wall_clock_ts_str(raw: &str, tz: Option<&str>) -> Option<i64> {
+    match tz {
+        // `fitbitTsToUnix` with no tz reads the components as UTC.
+        None => crate::timezone::parse_wall_clock(raw).map(|d| d.and_utc().timestamp()),
+        Some(tz) => crate::timezone::wall_clock_to_unix(raw, tz),
+    }
+}
+
+/// `YYYY-MM-DD HH:MM:SS` in UTC. Mirrors `utcSecondsToDatetimeStr`.
+fn utc_seconds_to_datetime_str(unix: i64) -> String {
+    chrono::DateTime::from_timestamp(unix, 0)
+        .unwrap_or_default()
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
+/// `YYYY-MM-DD` in UTC — the TS `padDate`.
+fn utc_seconds_to_date_str(unix: i64) -> String {
+    chrono::DateTime::from_timestamp(unix, 0)
+        .unwrap_or_default()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// A `YYYY-MM-DD HH:MM:SS` UTC datetime as Unix seconds. Mirrors
+/// `utcDatetimeStrToSeconds`, which reads the components AS UTC — the stored
+/// bytes are UTC by the column's contract, not by a zone conversion.
+fn utc_datetime_str_to_seconds(s: &str) -> Option<i64> {
+    crate::timezone::parse_wall_clock(s).map(|d| d.and_utc().timestamp())
+}
+
+/// The pre-resolved cross-day bracket for a no-data day, or `null`.
+///
+/// ⚠ THE RULE IS AGREEMENT, NOT PRESENCE. A day with no observations is not
+/// automatically unknown: if the previous day ENDED at place X and the next
+/// day's DOMINANT place is also X, the user was at X throughout — the classic
+/// multi-day hospital stay. Either side missing, or the two disagreeing, and
+/// there is no bracket; the day stays blank rather than being guessed at.
+/// `bracketedStayPlaceId` is that whole rule and it is three lines, so it is
+/// inlined here rather than given a module.
+///
+/// Only consumed when the day has no states AND no points (#1055).
+pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
+    // ⚠ `u64`, NOT `i64`. `presence_log.*_place_id` is INT UNSIGNED, which sqlx
+    // treats as a distinct type and refuses to hand back as a signed integer —
+    // the same trap `num` carries a branch for, met here through `query_scalar`
+    // where there is no helper to fall back through.
+    let prev: Option<u64> = sqlx::query_scalar(
+        "SELECT end_of_day_place_id FROM presence_log WHERE user_id = ? AND date = ?",
+    )
+    .bind(user_id)
+    .bind(shift_day(date, -1)?)
+    .fetch_optional(pool)
+    .await
+    .context("reading presence_log for the day before")?
+    .flatten();
+    let next: Option<u64> = sqlx::query_scalar(
+        "SELECT dominant_place_id FROM presence_log WHERE user_id = ? AND date = ?",
+    )
+    .bind(user_id)
+    .bind(shift_day(date, 1)?)
+    .fetch_optional(pool)
+    .await
+    .context("reading presence_log for the day after")?
+    .flatten();
+
+    let (Some(prev), Some(next)) = (prev, next) else {
+        return Ok(Value::Null);
+    };
+    if prev != next {
+        return Ok(Value::Null);
+    }
+
+    // ⚠ CAST AS CHAR: DECIMAL again, and this one is the centroid that names
+    // the stay. Getting 0.0 here would place a hospital admission in the Gulf
+    // of Guinea and still return a bracket.
+    let row = sqlx::query(
+        "SELECT CAST(centroid_lat AS CHAR) AS centroid_lat, \
+         CAST(centroid_lon AS CHAR) AS centroid_lon FROM focus_places WHERE id = ?",
+    )
+    .bind(prev)
+    .fetch_optional(pool)
+    .await
+    .context("reading the bracket's focus place")?;
+    // A bracket pointing at a place that no longer exists is no bracket. The TS
+    // returns null on `fp === undefined` for the same reason.
+    let Some(row) = row else {
+        return Ok(Value::Null);
+    };
+    Ok(json!({
+        "centroidLat": js_num(num(&row, "centroid_lat")?),
+        "centroidLon": js_num(num(&row, "centroid_lon")?),
+    }))
+}
+
+/// `date` shifted by whole days, as `YYYY-MM-DD`. Mirrors `shiftDay`.
+fn shift_day(date: &str, days: i64) -> Result<String> {
+    let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .with_context(|| format!("{date:?} is not a YYYY-MM-DD date"))?;
+    Ok((d + chrono::Duration::days(days))
+        .format("%Y-%m-%d")
+        .to_string())
+}
+
 /// Everything above, in the field order `SerializedInputs` uses.
 ///
 /// ⚠ PARTIAL, and it says so by NAMING what it does not load rather than
@@ -609,9 +985,14 @@ pub async fn load_partial(
     date: &str,
     start_utc: i64,
     end_utc: i64,
+    home_tz: Option<&str>,
 ) -> Result<Value> {
     let mut m = Map::new();
     m.insert("knownPlaces".into(), known_places(pool, user_id).await?);
+    m.insert(
+        "biometrics".into(),
+        biometrics(pool, user_id, start_utc, end_utc, home_tz, home_tz).await?,
+    );
     m.insert(
         "motionLog".into(),
         motion_log(pool, user_id, start_utc, end_utc).await?,
@@ -627,6 +1008,19 @@ pub async fn load_partial(
     m.insert(
         "sleepWindows".into(),
         sleep_windows(pool, user_id, date).await?,
+    );
+    // ⚠ `homeTz` is ALREADY DEFAULTED by the time it reaches here, matching the
+    // TS `homeTzRaw ?? "Europe/Amsterdam"`. The default is the pipeline's
+    // displayTz fallback for segments no GPS fix covers, so an absent value and
+    // the default are the same day — but the defaulting has to happen once, and
+    // the caller is where it happens.
+    m.insert(
+        "homeTz".into(),
+        Value::String(home_tz.unwrap_or("Europe/Amsterdam").to_string()),
+    );
+    m.insert(
+        "emptyDayBracket".into(),
+        empty_day_bracket(pool, user_id, date).await?,
     );
     m.insert("venuePriors".into(), venue_priors(pool, user_id).await?);
     Ok(Value::Object(m))

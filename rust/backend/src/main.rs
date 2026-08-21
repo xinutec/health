@@ -111,9 +111,15 @@ async fn inputs(user: &str, date: &str) -> Result<()> {
         .unwrap_or_else(|| "Europe/Amsterdam".into());
     let bounds = backend::timezone::date_bounds_utc(date, Some(&home_tz))
         .with_context(|| format!("bounding {date} in {home_tz}"))?;
-    let out =
-        classification_inputs::load_partial(&pool, user, date, bounds.start_utc, bounds.end_utc)
-            .await?;
+    let out = classification_inputs::load_partial(
+        &pool,
+        user,
+        date,
+        bounds.start_utc,
+        bounds.end_utc,
+        Some(&home_tz),
+    )
+    .await?;
     pool.close().await;
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
@@ -475,6 +481,51 @@ async fn check() -> Result<()> {
         "inputs[{user}] @{check_date}: {} sleep window(s), all forward",
         len(&sleeps)
     );
+
+    // The last of the SQL loaders (#982). `biometrics` is the one that COMPUTES
+    // — six queries, three of them a wall-clock fallback — so an empty stream
+    // is the shape most of its failure modes take.
+    let home_tz = sync_state::get(&pool, &user, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let bounds = backend::timezone::date_bounds_utc(&check_date, Some(&home_tz))
+        .with_context(|| format!("bounding {check_date} in {home_tz}"))?;
+    let bio = classification_inputs::biometrics(
+        &pool,
+        &user,
+        bounds.start_utc,
+        bounds.end_utc,
+        Some(&home_tz),
+        Some(&home_tz),
+    )
+    .await?;
+    let bracket = classification_inputs::empty_day_bracket(&pool, &user, &check_date).await?;
+    println!(
+        "inputs[{user}] @{check_date}: hr {} · sleep stages {} · stepped minutes {} · bracket {}",
+        len(&bio["hr"]),
+        len(&bio["sleep"]),
+        len(&bio["steps"]),
+        if bracket.is_null() { "none" } else { "present" },
+    );
+    // ⚠ HR is the one that cannot legitimately be empty on a decoded day: the
+    // date was chosen because it HAS an HSMM decode, and the decoder reads
+    // these streams. Sleep and steps can be genuinely empty (a watch off the
+    // wrist, a day sat still), so they are reported and not enforced.
+    if len(&bio["hr"]) == 0 {
+        anyhow::bail!(
+            "no heart rate for {user} on {check_date}, a day that HAS a decode — the window \
+             bounds or the ts_utc filter, not a missing Fitbit"
+        );
+    }
+    // ⚠ A bpm of 0 is what a DECIMAL that did not decode looks like, and
+    // `ROUND(AVG(bpm))` returns a DECIMAL. This is the third column in this
+    // file to hit that trap.
+    let dead_bpm = bio["hr"]
+        .as_array()
+        .map_or(0, |a| a.iter().filter(|p| p["bpm"] == 0).count());
+    if dead_bpm > 0 {
+        anyhow::bail!("{dead_bpm} heart-rate minute(s) decoded to 0 bpm — nobody survives that");
+    }
 
     pool.close().await;
     println!("check: OK");

@@ -8,7 +8,7 @@
 //! What IS testable off a database is what the loader does with a blob it
 //! cannot read — which is where a masking fallback would live.
 
-use backend::classification_inputs::{next_date_string, parse_hour_profile, parse_stops};
+use backend::classification_inputs::{js_num, next_date_string, parse_hour_profile, parse_stops};
 use serde_json::Value;
 
 #[test]
@@ -135,4 +135,43 @@ fn a_date_that_is_not_a_date_is_an_error_not_a_guess() {
     assert!(next_date_string("not-a-date").is_err());
     assert!(next_date_string("2026-13-01").is_err());
     assert!(next_date_string("").is_err());
+}
+
+// ---------------------------------------------------------------------------
+// JS number rendering (#982)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_integral_double_renders_without_a_fraction() {
+    // ⚠ THE POINT IS THE BYTE STRING, not the value. Every one of these columns
+    // reaches the TypeScript through `Number(...)`, and JS has one number type:
+    // `JSON.stringify(25)` is `25`. serde_json keeps the f64-ness and writes
+    // `25.0`, so a 25 m radius rendered differently in the two arms while being
+    // the same number.
+    assert_eq!(js_num(25.0).to_string(), "25");
+    assert_eq!(js_num(0.0).to_string(), "0");
+    assert_eq!(js_num(998.0).to_string(), "998");
+    assert_eq!(js_num(-3.0).to_string(), "-3");
+    // ⚠ INVISIBLE TO A `jq` DIFF, which is how this survived the first parity
+    // pass: jq parses both sides to doubles, so 25.0 == 25 and a keyed
+    // comparison reports no mismatch. Only the serialised text shows it.
+    assert_ne!(serde_json::json!(25.0_f64).to_string(), "25");
+}
+
+#[test]
+fn a_fractional_double_keeps_its_fraction() {
+    // A cast to i64 would have changed the VALUE rather than the rendering, and
+    // `radius_m` is fractional for most places.
+    assert_eq!(js_num(25.5).to_string(), "25.5");
+    assert_eq!(js_num(0.059).to_string(), "0.059");
+    assert_eq!(js_num(-0.278999).to_string(), "-0.278999");
+}
+
+#[test]
+fn a_value_outside_i64_is_left_alone_rather_than_saturated() {
+    // `as i64` SATURATES, so an out-of-range integral double would otherwise
+    // become i64::MAX — a wrong number that looks like a right one.
+    assert!(js_num(f64::NAN).is_null() || js_num(f64::NAN) == "null");
+    // serde and V8 agree on the exponent form here — both write `1e+30`.
+    assert_eq!(js_num(1e30).to_string(), "1e+30");
 }
