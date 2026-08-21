@@ -57,11 +57,20 @@ async fn main() -> Result<()> {
             sync(passes).await
         }
         "inputs" => {
-            let [user, date] = flags else {
-                eprintln!("usage: backend inputs <user> <date>");
-                std::process::exit(64);
+            // ⚠ The tz is the DISPLAY tz and it is a separate thing from
+            // `home_tz`: it bounds the local day, and a fixture captured for a
+            // trip abroad carries the zone the day was LIVED in, not the one the
+            // profile stores. They coincide for a user at home, which is exactly
+            // why passing one for the other would go unnoticed.
+            let (user, date, tz) = match flags {
+                [user, date] => (user, date, None),
+                [user, date, tz] => (user, date, Some(tz.as_str())),
+                _ => {
+                    eprintln!("usage: backend inputs <user> <date> [display-tz]");
+                    std::process::exit(64);
+                }
             };
-            inputs(user, date).await
+            inputs(user, date, tz).await
         }
         "" => {
             eprintln!("usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>>");
@@ -99,7 +108,7 @@ async fn main() -> Result<()> {
 ///
 /// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
 /// /tmp, never into the repo: both health repos are public.
-async fn inputs(user: &str, date: &str) -> Result<()> {
+async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -109,14 +118,27 @@ async fn inputs(user: &str, date: &str) -> Result<()> {
     let home_tz = sync_state::get(&pool, user, "home_tz")
         .await?
         .unwrap_or_else(|| "Europe/Amsterdam".into());
-    let bounds = backend::timezone::date_bounds_utc(date, Some(&home_tz))
-        .with_context(|| format!("bounding {date} in {home_tz}"))?;
-    let out = classification_inputs::load_partial(
+    // Defaults to `home_tz` when not given, which is what a day at home means.
+    let display_tz = display_tz.unwrap_or(&home_tz);
+    let bounds = backend::timezone::date_bounds_utc(date, Some(display_tz))
+        .with_context(|| format!("bounding {date} in {display_tz}"))?;
+    // ⚠ The DAY path's base URL has a default; the SYNC path's is an Option.
+    // See `DAY_NEXTCLOUD_BASE_URL` — collapsing the two would either break
+    // sync's "no PhoneTrack configured" case or blank every timeline.
+    let base_url = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
+    let out = classification_inputs::load(
         &pool,
-        user,
-        date,
-        bounds.start_utc,
-        bounds.end_utc,
+        &reqwest::Client::new(),
+        &base_url,
+        &classification_inputs::DayIdentity {
+            user_id: user,
+            date,
+            display_tz,
+        },
+        bounds,
         Some(&home_tz),
     )
     .await?;
@@ -525,6 +547,54 @@ async fn check() -> Result<()> {
         .map_or(0, |a| a.iter().filter(|p| p["bpm"] == 0).count());
     if dead_bpm > 0 {
         anyhow::bail!("{dead_bpm} heart-rate minute(s) decoded to 0 bpm — nobody survives that");
+    }
+
+    // PhoneTrack — the only input that is not SQL, and the only one this check
+    // cannot reach without the network. Run last so a Nextcloud outage does not
+    // hide a database problem behind it.
+    //
+    // ⚠ ZERO FIXES IS NOT PROOF OF A WORKING FETCH. A revoked app password, a
+    // wrong base URL and a phone left at home all produce an empty array, and
+    // the pipeline reads an empty day as "stationary at the bracketed place".
+    // So this asserts fixes exist on a day that HAS a decode — the decoder runs
+    // on GPS, so a decoded day had fixes when the TypeScript looked.
+    let base_url = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
+    let pt = backend::nextcloud::phonetrack::PhoneTrack::open(
+        reqwest::Client::new(),
+        &pool,
+        &base_url,
+        &user,
+    )
+    .await
+    .context("opening PhoneTrack")?;
+    let fetched = pt
+        .fetch_window(&pool, bounds.start_utc, bounds.end_utc)
+        .await
+        .context("fetching the check day's PhoneTrack fixes")?;
+    println!(
+        "inputs[{user}] @{check_date}: phonetrack {} fix(es) from {} device(s), {} failed",
+        fetched.points.len(),
+        pt.device_count(),
+        fetched.failed_devices,
+    );
+    if fetched.points.is_empty() {
+        anyhow::bail!(
+            "no PhoneTrack fixes for {user} on {check_date}, a day that HAS an HSMM decode — the \
+             decoder runs on GPS, so the TypeScript saw fixes here and this arm did not"
+        );
+    }
+    // ⚠ A partial walk is a FAILED check here, not a warning. Unlike the loader
+    // — which prefers a partial day to none — this exists to say the path works,
+    // and a path that half works is the case it is meant to catch.
+    if fetched.failed_devices > 0 {
+        anyhow::bail!(
+            "{} PhoneTrack device(s) failed — these fixes are a subset, and a gap in them is \
+             indistinguishable from a phone that was switched off",
+            fetched.failed_devices
+        );
     }
 
     pool.close().await;

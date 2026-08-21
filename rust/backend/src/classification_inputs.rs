@@ -4,12 +4,15 @@
 //! loads twelve things in parallel plus four PhoneTrack range fetches; this is
 //! the nine whose shape is pure SQL and whose output is a fixture field.
 //!
-//! ⚠ ONE THING IS STILL MISSING, and it is named rather than left to be
-//! inferred from a count: PhoneTrack — `phonetrack` and `batteryTail`, four
-//! range fetches against Nextcloud. It is NOT a SQL port, which is why it is
-//! not here and why `load_partial` keeps its name: every SQL input has landed,
-//! and the remaining gap is a different kind of work (see #982, and #1032 /
-//! #1037 for two defects on that path that predate the port).
+//! ⚠ ALL TWELVE ARE HERE. `load` was `load_partial` while any were missing, and
+//! the rename is the record of that closing — the day's inputs no longer need
+//! Node to be assembled.
+//!
+//! ⚠ ONE OF THEM REPRODUCES A KNOWN DEFECT ON PURPOSE: PhoneTrack's
+//! `maxPoints=10000` silently truncates (#1032). Parity is what makes the
+//! TypeScript deletable, so the port keeps the cap rather than quietly
+//! out-fetching the arm it is being compared against. See
+//! `phonetrack_windows`.
 //!
 //! ⚠ `biometrics` TAKES home_tz TWICE, as `home_tz` and as the caller's `tz`.
 //! In `loadBiometrics` those are two distinct arguments: `home_tz` read from
@@ -974,20 +977,174 @@ fn shift_day(date: &str, days: i64) -> Result<String> {
         .to_string())
 }
 
-/// Everything above, in the field order `SerializedInputs` uses.
+/// The PhoneTrack half of the day's inputs: three fix windows and the battery
+/// tail. The last input, and the only one that is not SQL.
 ///
-/// ⚠ PARTIAL, and it says so by NAMING what it does not load rather than
-/// emitting an empty array for it. An absent key is a caller's error; an empty
-/// array is a day with no rail cache, and the two must not look alike.
-pub async fn load_partial(
+/// ⚠ THE THREE WINDOWS ARE NOT THE DAY. `today` is the date's own UTC span,
+/// `morning` reaches to noon UTC on the following day, and `priorEvening` back
+/// to noon UTC on the previous one — because a local day is not a UTC day, and
+/// a segment that starts before local midnight or ends after it needs fixes
+/// from outside the date to be reconstructed at all.
+///
+/// ⚠ `batteryTail` IS DISPLAY-ONLY and its window covers a gap neither of the
+/// others does: from the LOCAL day end to 18 h later. When the phone goes on
+/// charge in the evening and stops reporting, the next reading lands in the
+/// local-day-end..next-UTC-midnight hole, and the battery chart needs it to
+/// draw an angled line instead of stopping dead.
+///
+/// # ⚠ THIS REPRODUCES A KNOWN DEFECT, DELIBERATELY (#1032)
+///
+/// `maxPoints=10000` is a silent cap: PhoneTrack truncates and says nothing, and
+/// a 7-day chunk at one fix a minute is 10,080. The port keeps it because
+/// PARITY IS WHAT MAKES THE TYPESCRIPT DELETABLE — a Rust arm that quietly
+/// fetched more would diff against the TS as a defect in the port, and the real
+/// defect would be harder to see, not easier. Fixing it is #1032's job and it
+/// has to move both arms at once, or neither.
+async fn phonetrack_windows(
     pool: &MySqlPool,
+    http: &reqwest::Client,
+    base_url: &str,
     user_id: &str,
     date: &str,
-    start_utc: i64,
-    end_utc: i64,
+    day_end_utc: i64,
+) -> Result<(Value, Value)> {
+    let pt = crate::nextcloud::phonetrack::PhoneTrack::open(http.clone(), pool, base_url, user_id)
+        .await
+        .with_context(|| format!("opening PhoneTrack for {user_id}"))?;
+
+    let next_day = shift_day(date, 1)?;
+    let prev_day = shift_day(date, -1)?;
+    let midnight = |d: &str| -> Result<i64> {
+        crate::lean::midnight_utc(d).with_context(|| format!("resolving UTC midnight for {d}"))
+    };
+    // `${nextDay}T12:00:00Z` and `${prevDay}T12:00:00Z` — noon UTC, expressed
+    // as midnight plus half a day so there is one date parser here, not two.
+    let noon = 12 * 3600;
+    let today = (midnight(date)?, midnight(&next_day)?);
+    let morning = (midnight(&next_day)?, midnight(&next_day)? + noon);
+    let prior_evening = (midnight(&prev_day)? + noon, midnight(date)?);
+    let tail = (day_end_utc, day_end_utc + BATTERY_TAIL_LOOKAHEAD_H * 3600);
+
+    let mut fetched = Vec::with_capacity(4);
+    for (a, b) in [today, morning, prior_evening, tail] {
+        let f = pt
+            .fetch_window(pool, a, b)
+            .await
+            .with_context(|| format!("fetching PhoneTrack fixes for [{a}, {b}]"))?;
+        // ⚠ A PARTIAL WALK IS SAID OUT LOUD. `failed_devices` is the difference
+        // between "the phone was off" and "one device 500ed", and the whole
+        // pipeline reads absence of fixes as evidence about where someone was.
+        if f.failed_devices > 0 {
+            tracing::warn!(
+                "phonetrack: {} device(s) failed for [{a}, {b}] — these fixes are a SUBSET of the \
+                 window, and a gap in them is not evidence of stillness",
+                f.failed_devices
+            );
+        }
+        fetched.push(f.points);
+    }
+    let after_day = fetched.pop().expect("four windows fetched");
+    let prior_evening = fetched.pop().expect("four windows fetched");
+    let morning = fetched.pop().expect("four windows fetched");
+    let today = fetched.pop().expect("four windows fetched");
+
+    // `after_day` is ascending, so the first battery-bearing fix is the earliest
+    // reading after the day end — which is what the chart wants to draw to.
+    let battery_tail = after_day.iter().find(|p| p.battery.is_some()).map_or(
+        Value::Null,
+        |p| json!({"ts": p.ts, "level": js_num(p.battery.unwrap_or_default())}),
+    );
+
+    Ok((
+        json!({
+            "today": fixes_json(&today),
+            "morning": fixes_json(&morning),
+            "priorEvening": fixes_json(&prior_evening),
+        }),
+        battery_tail,
+    ))
+}
+
+/// PhoneTrack fixes in the field order `RawPhonetrackFix` uses.
+fn fixes_json(points: &[crate::nextcloud::phonetrack::RawTrackPoint]) -> Value {
+    Value::Array(
+        points
+            .iter()
+            .map(|p| {
+                json!({
+                    "ts": p.ts,
+                    "lat": js_num(p.lat),
+                    "lon": js_num(p.lon),
+                    "altitude": p.altitude.map_or(Value::Null, js_num),
+                    "speed": p.speed.map_or(Value::Null, js_num),
+                    "accuracy": p.accuracy.map_or(Value::Null, js_num),
+                    "battery": p.battery.map_or(Value::Null, js_num),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `BATTERY_TAIL_LOOKAHEAD_H` from `src/geo/load-classification-inputs.ts`.
+const BATTERY_TAIL_LOOKAHEAD_H: i64 = 18;
+
+/// The day-path default for the Nextcloud base URL.
+///
+/// ⚠ NOT the same as `Config::nextcloud_base_url` being `None`. That Option is
+/// the SYNC path's, where an unset `NC_BASE_URL` legitimately means "do not do
+/// PhoneTrack tz inference" (#1037). The DAY path has always had a default —
+/// `decode-day.ts` and `config.ts` both `.default(...)` it — because a day
+/// without GPS is not a day. Collapsing the two would either break sync or
+/// silently blank every timeline.
+pub const DAY_NEXTCLOUD_BASE_URL: &str = "https://dash.xinutec.org";
+
+/// Which day, for whom, in which zone — the TypeScript's `DayIdentity`.
+///
+/// ⚠ `display_tz` IS NOT `home_tz`. This one bounds the local day and is the
+/// zone the day was LIVED in; `home_tz` is the profile's, and is only the
+/// fallback for segments no GPS fix covers. They coincide for a user at home,
+/// which is exactly why passing one for the other goes unnoticed until someone
+/// travels.
+#[derive(Debug, Clone, Copy)]
+pub struct DayIdentity<'a> {
+    pub user_id: &'a str,
+    pub date: &'a str,
+    pub display_tz: &'a str,
+}
+
+/// Every day input, in the field order `SerializedInputs` uses.
+///
+/// ⚠ NO LONGER PARTIAL. It was `load_partial` while any input was missing, and
+/// the name was the record of that — an absent key is a caller's error, an empty
+/// array is a day with no rail cache, and the two must not look alike. All
+/// twelve are here now.
+///
+/// `osm` is deliberately absent: it is an ADAPTER, not data, and
+/// `toSerializedInputs` strips it for the same reason. `osmTrace` / `osmRowSet`
+/// belong to fixture capture, not to loading.
+pub async fn load(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    base_url: &str,
+    identity: &DayIdentity<'_>,
+    bounds: crate::timezone::DayBounds,
     home_tz: Option<&str>,
 ) -> Result<Value> {
+    let DayIdentity {
+        user_id,
+        date,
+        display_tz,
+    } = *identity;
+    let (start_utc, end_utc) = (bounds.start_utc, bounds.end_utc);
+    let (phonetrack, battery_tail) =
+        phonetrack_windows(pool, http, base_url, user_id, date, end_utc).await?;
     let mut m = Map::new();
+    m.insert(
+        "identity".into(),
+        json!({"userId": user_id, "date": date, "displayTz": display_tz}),
+    );
+    m.insert("phonetrack".into(), phonetrack);
+    m.insert("batteryTail".into(), battery_tail);
     m.insert("knownPlaces".into(), known_places(pool, user_id).await?);
     m.insert(
         "biometrics".into(),
@@ -1005,10 +1162,6 @@ pub async fn load_partial(
     m.insert("railRouteCache".into(), rail_route_cache(pool).await?);
     m.insert("busRouteCache".into(), bus_route_cache(pool).await?);
     m.insert("railStopsCache".into(), rail_stops_cache(pool).await?);
-    m.insert(
-        "sleepWindows".into(),
-        sleep_windows(pool, user_id, date).await?,
-    );
     // ⚠ `homeTz` is ALREADY DEFAULTED by the time it reaches here, matching the
     // TS `homeTzRaw ?? "Europe/Amsterdam"`. The default is the pipeline's
     // displayTz fallback for segments no GPS fix covers, so an absent value and
@@ -1017,6 +1170,10 @@ pub async fn load_partial(
     m.insert(
         "homeTz".into(),
         Value::String(home_tz.unwrap_or("Europe/Amsterdam").to_string()),
+    );
+    m.insert(
+        "sleepWindows".into(),
+        sleep_windows(pool, user_id, date).await?,
     );
     m.insert(
         "emptyDayBracket".into(),

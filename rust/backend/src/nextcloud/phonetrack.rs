@@ -179,7 +179,23 @@ impl PhoneTrack {
     ) -> Result<TrackFetch, NcError> {
         let min_ts = lean::midnight_utc(start_date).map_err(NcError::Other)?;
         let max_ts = lean::midnight_utc(end_date).map_err(NcError::Other)?;
+        self.fetch_window(pool, min_ts, max_ts).await
+    }
 
+    /// The same walk, bounded by explicit Unix seconds.
+    ///
+    /// ⚠ EXISTS BECAUSE NOT EVERY WINDOW IS DATE-ALIGNED. The day loader asks
+    /// for four ranges and only one of them starts at a midnight: the others
+    /// are `<date>T12:00:00Z` cut-offs and an 18-hour battery-tail look-ahead
+    /// off the LOCAL day end. `fetchTrackPointsRange` takes strings and lets
+    /// `new Date(...)` parse either shape; splitting the bound resolution out
+    /// here is the same thing said in a type.
+    pub async fn fetch_window(
+        &self,
+        pool: &MySqlPool,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Result<TrackFetch, NcError> {
         let mut out = TrackFetch::default();
         for session in &self.sessions {
             let Some(devices) = &session.devices else {
