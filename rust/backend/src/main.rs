@@ -90,15 +90,26 @@ async fn main() -> Result<()> {
             };
             day(fixture)
         }
+        "day-live" => {
+            let (user, date, tz) = match flags {
+                [user, date] => (user, date, None),
+                [user, date, tz] => (user, date, Some(tz.as_str())),
+                _ => {
+                    eprintln!("usage: backend day-live <user> <date> [display-tz]");
+                    std::process::exit(64);
+                }
+            };
+            day_live(user, date, tz).await
+        }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head or day"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day or day-live"
             );
             std::process::exit(64);
         }
@@ -697,6 +708,87 @@ fn day(fixture: &str) -> Result<()> {
     );
     for m in &r.unanswerable {
         eprintln!("  UNANSWERED {}({})", m.what, m.key);
+    }
+    println!("{}", r.out);
+    Ok(())
+}
+
+/// Run a day from the PRODUCTION database, and name every lookup it needs.
+///
+/// The offline `day` proves the chain on a fixture, which carries an
+/// `osmRowSet` and an `osmTrace` the loader does not produce. Production has
+/// neither: `ClassificationInputs.osm` is an ADAPTER there, not data. So this
+/// walks with `RecordOnly`, which answers nothing, and the keys it reports are
+/// exactly what a live answerer has to supply.
+///
+/// That is a measurement, not a failure — `fold_converge`'s own note calls
+/// `RecordOnly` "how a day is MEASURED". The timeline it prints was built from
+/// DEFAULTS for every key listed, so it is not a day to judge; the key list is
+/// the output that means something.
+///
+/// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
+/// /tmp, never into the repo: both health repos are public.
+async fn day_live(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let home_tz = sync_state::get(&pool, user, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let display_tz = display_tz.unwrap_or(&home_tz);
+    let bounds = backend::timezone::date_bounds_utc(date, Some(display_tz))
+        .with_context(|| format!("bounding {date} in {display_tz}"))?;
+    let base_url = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
+    let inputs = classification_inputs::load(
+        &pool,
+        &reqwest::Client::new(),
+        &base_url,
+        &classification_inputs::DayIdentity {
+            user_id: user,
+            date,
+            display_tz,
+        },
+        bounds,
+        Some(&home_tz),
+    )
+    .await?;
+    pool.close().await;
+
+    let cap = backend::head::capture(&inputs, date, user)?;
+    let segs = cap
+        .get("segsRaw")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let pts = cap
+        .pointer("/obs/points")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    eprintln!("head: {pts} smoothed point(s), {segs} segment(s)");
+
+    // No trace: production has no recording to seed the tables from, and
+    // passing one would answer questions this measurement exists to count.
+    let r = backend::fold_converge::converge(
+        &cap,
+        &inputs,
+        None,
+        &mut backend::fold_converge::RecordOnly,
+    )?;
+
+    let mut by_table: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for m in &r.unanswerable {
+        *by_table.entry(m.what.as_str()).or_default() += 1;
+    }
+    eprintln!(
+        "fold: {} round(s); {} key(s) a live answerer must supply",
+        r.rounds,
+        r.unanswerable.len()
+    );
+    for (table, n) in &by_table {
+        eprintln!("  {table}: {n}");
     }
     println!("{}", r.out);
     Ok(())
