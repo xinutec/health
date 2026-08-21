@@ -1446,6 +1446,23 @@ subtype: ["subway_entrance","subway","light_rail","tram","tram","halt","rail","r
 dedupe.in: [[2,"Willesden Green","subway_entrance",6.321661364546672],[4,"Dollis Hill","subway_entrance",9.00242675811233],[3,"Willesden Green","subway_entrance",18.62910458155114],[7,null,"tram",23.53596106517274],[12,"Dollis Hill","subway_entrance",30.411646429815775],[1,"Willesden Green","rail",38.434289529776485],[8,"Just In","rail",99.00000000004454],[11,"On The Bar","rail",100.00000000028437],[9,"Just Out","rail",100.99999999973417]]
 dedupe.out: [["Dollis Hill","subway_entrance",9.00242675811233],["Willesden Green","rail",38.434289529776485],["Just In","rail",99.00000000004454],["On The Bar","rail",100.00000000028437],["Just Out","rail",100.99999999973417]]
 
+### osmcoverage-refs.mts
+COVERAGE_FRESH_DAYS = 180
+metersPerDegLon(51.5) = 69099.12466677578
+metersPerDegLon(70)   = 37964.23590914924
+covered      hasLocalData short-circuits an EMPTY coverage list
+covered      hasLocalData short-circuits a STALE row
+needs-fetch  no rows at all
+covered      one fresh containing row
+needs-fetch  the same row, stale
+covered      the same row, no fetched_at
+needs-fetch  radius pokes outside the row
+needs-fetch  two rows that JOINTLY cover, neither alone
+covered      a row exactly equal to the search bbox (inclusive)
+covered      isPointCovered directly, containing
+covered      isPointCovered directly, exact
+covered      isPointCovered at high latitude (dLon >> dLat)
+
 ### place-override-refs.mts
 /-! ## Guards
 

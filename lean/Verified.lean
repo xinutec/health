@@ -91,6 +91,7 @@ import Verified.Geo.WalkAnnotate
 import Verified.Geo.WalkMatchAdapt
 import Verified.Geo.RoadMatchAdapt
 import Verified.Geo.OsmCorridor
+import Verified.Geo.OsmCoverage
 import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.Reversal
 import Verified.Geo.Enrich
