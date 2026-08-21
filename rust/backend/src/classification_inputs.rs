@@ -2,10 +2,50 @@
 //!
 //! Port of the DB half of `src/geo/load-classification-inputs.ts`. That file
 //! loads twelve things in parallel plus four PhoneTrack range fetches; this is
-//! the five whose shape is pure SQL and whose output is a fixture field. The
-//! rest — biometrics, the HSMM decode, the bus and rail-stop caches, the sleep
-//! windows, the empty-day bracket, and PhoneTrack itself — are named in #982
-//! and not here.
+//! the nine whose shape is pure SQL and whose output is a fixture field.
+//!
+//! ⚠ WHAT IS STILL MISSING IS NAMED, not left to be inferred from a count:
+//! `biometrics` (three streams of its own), `emptyDayBracket` (two presence_log
+//! reads plus a focus_places centroid), `homeTz` (a `sync_state` read that
+//! already has its own module), and PhoneTrack itself (four range fetches
+//! against Nextcloud, not SQL). `load_partial` is named for that gap and keeps
+//! the name until they land — see #982.
+//!
+//! The insertion order below is `load-classification-inputs.ts`'s RETURN order,
+//! not its `Promise.all` order, because the return object is what a fixture
+//! records and what a diff compares.
+//!
+//! # Measured against the TypeScript, 2026-08-21
+//!
+//! `backend inputs <user> <date>` prints this module's output; a golden
+//! fixture's `inputs` block IS the TypeScript loader's output for that day. On
+//! 2026-08-13, keyed row by row:
+//!
+//! ```text
+//! knownPlaces      117/117 identical
+//! modeBiometrics       6/6 identical
+//! motionLog        611/611 identical
+//! venuePriors          identical
+//! sleepWindows         identical
+//! hsmmDecode        29 segments, identical
+//! railRouteCache     48/51  - 3 re-mined 2026-08-20 05:10
+//! busRouteCache    959/994  - 35 re-mined, newest 2026-08-21 05:42
+//! railStopsCache   231/259  - whole table rewritten 2026-08-20 06:11
+//! ```
+//!
+//! ⚠ THE THREE PARTIAL ROWS ARE DRIFT, AND THAT IS MEASURED RATHER THAN
+//! ASSUMED: every differing row's `computed_at` is later than the fixture's
+//! capture, and the differences are changed COORDINATES, not changed
+//! renderings. "It must be drift" is what the first reading of #1052 said too.
+//!
+//! Three defects this diff caught that `backend check` could not, all of the
+//! same kind — a value that decodes to something plausible and wrong:
+//!
+//!   * `hour_profile` read as JSON when it is comma-separated per-mille
+//!     integers, so all 117 profiles decoded to absent;
+//!   * `minutesAsleep` rendered `553.0` against the TypeScript's `553`;
+//!   * `osmRelationId` likewise, which made a thousand identical rows share
+//!     ZERO keys.
 //!
 //! # Why the output is `serde_json::Value` and not a struct
 //!
@@ -109,11 +149,10 @@ fn num_json(row: &sqlx::mysql::MySqlRow, col: &str) -> Result<Value> {
 
 /// `focus_places`, projected as `snapToPlace` and the place picker read it.
 ///
-/// ⚠ `hour_profile` is stored as text and parsed into an array. A row whose
-/// blob does not parse yields an EMPTY profile rather than failing the day —
-/// which is what the TS `parseHourProfile` does, and the reason is that a
-/// mined-profile blob is evidence, not structure: a day should still decode
-/// without it.
+/// ⚠ `hour_profile` is a COMMA-SEPARATED list of per-mille integers, not JSON.
+/// A row that does not parse yields `null` — "no time-of-day signal" — because
+/// a mined profile is evidence, not structure: a day should still decode
+/// without it. See `parse_hour_profile`.
 pub async fn known_places(pool: &MySqlPool, user_id: &str) -> Result<Value> {
     let rows = sqlx::query(
         "SELECT id, CAST(centroid_lat AS CHAR) AS centroid_lat, \
@@ -152,34 +191,71 @@ pub async fn known_places(pool: &MySqlPool, user_id: &str) -> Result<Value> {
     Ok(Value::Array(out))
 }
 
-/// A stored hour profile, or an empty array when it is absent or unparseable.
+/// A stored hour profile as 24 fractions, or `null` when it cannot be read.
 ///
-/// ⚠ IT WARNS, and that is the whole difference between this and a mask. The
-/// TypeScript's equivalent logs before returning its default; dropping the log
-/// while keeping the default would turn a corrupt blob into a place that simply
-/// has no hour profile, which is a claim about the user's habits rather than an
-/// admission that a row could not be read. `dev-lint`'s `rust-serde-swallow`
-/// caught exactly that here.
+/// ⚠ THE STORED FORM IS NOT JSON. `serializeHourProfile` writes
+/// `profile.map(f => Math.round(f * 1000)).join(",")` into a VARCHAR(127) —
+/// `59,58,56,…` — and the column is per-mille INTEGERS, quantised deliberately
+/// (the round-trip is lossy to ~0.1 %, which is fine for a soft scoring signal).
 ///
-/// Absent is NOT warned: a row mined before profiles existed has nothing to say.
+/// ⚠ THE FIRST VERSION OF THIS FUNCTION READ IT AS JSON, and it was wrong in
+/// the quiet direction: every profile "parsed" to empty, so all 117 of
+/// production's focus places lost their time-of-day signal while the loader
+/// reported success. Its unit tests passed because they asserted the JSON form
+/// — they tested this function against its own assumption rather than against
+/// the writer. Found by diffing the two arms' JSON, which is the only check
+/// here that consults the TypeScript instead of me.
+///
+/// ⚠ `null`, NOT an empty array. `parseHourProfile` returns null and the
+/// consumer (`hourProfileMatch`) tests for it to mean "no signal"; an empty
+/// array is a profile that says every hour is equally unlikely, which is a
+/// claim about the user's habits rather than an absence of one.
+///
+/// A wrong LENGTH is rejected whole, matching the TS: 23 buckets is not a
+/// profile missing an hour, it is a value written by something else.
+///
+/// ⚠ `""` PARSES AS 0, deliberately, because JS `Number("")` is 0 and this has
+/// to agree with what the writer's reader does. Rust's `str::parse` errors on
+/// it, so the empty case is handled before parsing. Not mirrored: JS's hex and
+/// `Infinity` literals, which `serializeHourProfile` cannot emit.
 pub fn parse_hour_profile(raw: Option<&str>) -> Value {
-    let Some(s) = raw else {
-        return Value::Array(vec![]);
+    let Some(s) = raw.filter(|s| !s.is_empty()) else {
+        // Absent is not warned: a row mined before the column existed has
+        // nothing to say, and the TS `if (!s) return null` treats "" the same.
+        return Value::Null;
     };
-    match serde_json::from_str::<Value>(s) {
-        Ok(v) if v.is_array() => v,
-        Ok(_) => {
-            tracing::warn!(
-                "focus_places.hour_profile is valid JSON but not an array — ignoring it"
-            );
-            Value::Array(vec![])
-        }
-        Err(e) => {
-            tracing::warn!("focus_places.hour_profile did not parse ({e}) — ignoring it");
-            Value::Array(vec![])
-        }
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != HOUR_BUCKETS {
+        tracing::warn!(
+            "focus_places.hour_profile has {} bucket(s), not {HOUR_BUCKETS} — ignoring it",
+            parts.len()
+        );
+        return Value::Null;
     }
+    let mut out = Vec::with_capacity(HOUR_BUCKETS);
+    for p in parts {
+        let t = p.trim();
+        let n = if t.is_empty() {
+            0.0
+        } else {
+            match t.parse::<f64>() {
+                Ok(v) if !v.is_nan() => v,
+                _ => {
+                    tracing::warn!(
+                        "focus_places.hour_profile has a non-numeric bucket {p:?} — ignoring it"
+                    );
+                    return Value::Null;
+                }
+            }
+        };
+        out.push(json!(n / 1000.0));
+    }
+    Value::Array(out)
 }
+
+/// `HOUR_BUCKETS` from `src/geo/focus-places.ts` — hours in a day, and the
+/// exact length a stored profile must have.
+const HOUR_BUCKETS: usize = 24;
 
 /// `mode_biometrics` — the per-user, per-mode signatures the cadence and speed
 /// scorers read.
@@ -311,6 +387,217 @@ pub async fn motion_log(
     Ok(Value::Array(out))
 }
 
+/// `bus_route_cache`, every mirrored OSM bus route.
+///
+/// Global, not user-scoped, and small — a city is a few thousand stops of JSON.
+///
+/// ⚠ A MALFORMED ROW IS DROPPED, NOT FATAL, and the two are different claims.
+/// `parseBusRouteRow` returns null on unparseable `stops_json` or a route left
+/// with fewer than two stops, because bus naming is purely ADDITIVE evidence:
+/// a corrupt row must cost the day its bus label, never its timeline. That is
+/// the TS posture and it is copied deliberately — it is NOT the `num` posture
+/// two screens up, where a column that will not decode is an error, because
+/// there the failure would be silent and wrong rather than absent.
+pub async fn bus_route_cache(pool: &MySqlPool) -> Result<Value> {
+    let rows = sqlx::query(
+        "SELECT osm_relation_id, route_ref, route_name, stops_json FROM bus_route_cache",
+    )
+    .fetch_all(pool)
+    .await
+    .context("reading bus_route_cache")?;
+    let mut out: Vec<Value> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let Some(stops) = stops_array(r, "stops_json") else {
+            continue;
+        };
+        out.push(json!({
+            "routeRef": r.try_get::<String, _>("route_ref").context("route_ref")?,
+            "routeName": r.try_get::<Option<String>, _>("route_name").context("route_name")?,
+            // ⚠ BIGINT, narrowed with `as i64` so it RENDERS as `8336` and not
+            // `8336.0`. The TS narrows with `Number(...)` for the size reason
+            // (ids are well under 2^53); the cast here is additionally about
+            // the byte string, which is what the parity diff compares — and
+            // what caught this: keyed on the id, the two arms shared ZERO rows
+            // out of a thousand that were in fact the same thousand rows.
+            "osmRelationId": num(r, "osm_relation_id")? as i64,
+            "stops": stops,
+        }));
+    }
+    Ok(Value::Array(out))
+}
+
+/// `rail_stops_cache`, every mirrored rail route relation (#364).
+///
+/// The ORDERED stop-role members of each service — which stations it actually
+/// calls at, as opposed to which it merely passes within 300 m of. Same drop
+/// rule and same reason as `bus_route_cache`.
+pub async fn rail_stops_cache(pool: &MySqlPool) -> Result<Value> {
+    let rows = sqlx::query(
+        "SELECT osm_relation_id, route_type, line_ref, line_name, stops_json \
+         FROM rail_stops_cache",
+    )
+    .fetch_all(pool)
+    .await
+    .context("reading rail_stops_cache")?;
+    let mut out: Vec<Value> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let Some(stops) = stops_array(r, "stops_json") else {
+            continue;
+        };
+        out.push(json!({
+            // `as i64` for the same reason as the bus mirror above.
+            "osmRelationId": num(r, "osm_relation_id")? as i64,
+            "routeType": r.try_get::<String, _>("route_type").context("route_type")?,
+            "lineRef": r.try_get::<Option<String>, _>("line_ref").context("line_ref")?,
+            "lineName": r.try_get::<Option<String>, _>("line_name").context("line_name")?,
+            "stops": stops,
+        }));
+    }
+    Ok(Value::Array(out))
+}
+
+/// The ordered stop array of a `stops_json` blob, or `None` if it is unusable.
+///
+/// Shared by the two mirrors because they apply the SAME rule and it is a rule,
+/// not a coincidence: fewer than two stops cannot anchor a leg's endpoints, so
+/// such a row is not a smaller answer, it is no answer.
+///
+/// Takes the STRING rather than the row so it can be tested without a database,
+/// which is the same split the TypeScript makes — `parseBusRouteRow` is pure and
+/// round-trip-tested, and the read around it is a thin wrapper.
+pub fn parse_stops(raw: &str) -> Option<Value> {
+    let parsed: Value = serde_json::from_str(raw).ok()?;
+    if parsed.as_array()?.len() < 2 {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// `parse_stops` against a column, dropping a row the driver will not hand over
+/// as text at all.
+fn stops_array(row: &sqlx::mysql::MySqlRow, col: &str) -> Option<Value> {
+    parse_stops(&row.try_get::<String, _>(col).ok()?)
+}
+
+/// The day's HSMM decode from `decoded_days`, or `null`.
+///
+/// ⚠ `null` HAS TWO CAUSES AND THEY MEAN THE SAME THING HERE: no row, or a row
+/// left by an older classifier. `loadDecode` checks `classifier_version` and
+/// discards a mismatch, so a stale decode reads as "not decoded yet" rather
+/// than as evidence — which is right, because the segments a version-6 run
+/// produced are not the segments version 7 would.
+///
+/// The version is filtered IN SQL rather than after the fetch. Same answer,
+/// and it does not drag a MEDIUMTEXT across the wire to throw it away.
+pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
+    let row = sqlx::query(
+        "SELECT segments_json FROM decoded_days \
+         WHERE user_id = ? AND date = ? AND classifier_version = ?",
+    )
+    .bind(user_id)
+    .bind(date)
+    .bind(CLASSIFIER_VERSION)
+    .fetch_optional(pool)
+    .await
+    .context("reading decoded_days")?;
+    let Some(row) = row else {
+        return Ok(Value::Null);
+    };
+    let raw: String = row.try_get("segments_json").context("segments_json")?;
+    // ⚠ NOT `.ok().unwrap_or(Null)`. The two mirrors above drop a corrupt row
+    // because their evidence is additive; this one is not. The decode drives
+    // stationary placeId attribution, and a day that silently decoded without
+    // it is a different day — so an unparseable blob is an ERROR, and the TS
+    // agrees: `JSON.parse` there is unguarded and throws.
+    serde_json::from_str(&raw).context("decoded_days.segments_json is not JSON")
+}
+
+/// `CLASSIFIER_VERSION` from `src/hmm/persist.ts`.
+///
+/// ⚠ BUMPED IN TWO PLACES OR IN NEITHER. A decode written by the TypeScript
+/// cron and read by this loader has to agree on the number, and there is no
+/// shared header to put it in — the TS constant is the original. `decoded_days`
+/// reading empty for a day the cron decoded is the symptom of these drifting.
+const CLASSIFIER_VERSION: i32 = 7;
+
+/// The main-sleep windows bracketing this day: today's morning sleep and the
+/// night beginning this evening.
+///
+/// ⚠ TWO ROWS BY TWO DATES, NOT A RANGE. A sleep row is filed under the date it
+/// ENDS on, so the night that starts tonight is stored under tomorrow — which
+/// is why the TS issues two point queries rather than a `BETWEEN`, and why the
+/// order of the result is morning-then-evening rather than anything the
+/// database chose. Both are optional; a day with neither yields `[]`.
+///
+/// ⚠ `start_time` / `end_time` are WALL CLOCK, not UTC (#340, and
+/// `docs/design/timezone.md`). `tz` rides alongside and may be NULL, in which
+/// case the TS falls back to reading the components AS UTC — a guess, but the
+/// established one, and changing it here would re-time rows nothing else moved.
+pub async fn sleep_windows(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for d in [date.to_string(), next_date_string(date)?] {
+        let row = sqlx::query(
+            "SELECT start_time, end_time, tz, minutes_asleep FROM sleep \
+             WHERE user_id = ? AND date = ? AND is_main_sleep = 1",
+        )
+        .bind(user_id)
+        .bind(&d)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("reading sleep for {d}"))?;
+        let Some(row) = row else { continue };
+        let tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
+        out.push(json!({
+            "startTs": wall_clock_ts(&row, "start_time", tz.as_deref())?,
+            "endTs": wall_clock_ts(&row, "end_time", tz.as_deref())?,
+            "tz": tz,
+            // ⚠ NULL becomes 0, matching the TS `?? 0`. Not a mask: the field
+            // is a reported duration, and "we do not know how long" is not a
+            // reason to drop a window whose BOUNDS are known.
+            //
+            // ⚠ `as i64`, like every other integer column here. Without it this
+            // serialises as `553.0` where the TypeScript writes `553` — the
+            // SAME number and a different byte string, which is exactly what
+            // the JSON-diff parity check compares. Caught by that diff, not by
+            // reading: `minutes_asleep` is an INT and both arms agree on its
+            // value, so nothing but the rendering was ever wrong.
+            "minutesAsleep": num_opt(&row, "minutes_asleep")?.unwrap_or(0.0) as i64,
+        }));
+    }
+    Ok(Value::Array(out))
+}
+
+/// One wall-clock DATETIME column as a Unix timestamp.
+///
+/// The driver hands a DATETIME back as a `NaiveDateTime` whose components ARE
+/// the stored wall clock, which is exactly what `fitbitTsToUnix` reconstructs
+/// by regex from the ISO rendering. So this formats and defers to
+/// `timezone::wall_clock_to_unix` rather than restating the DST choices — those
+/// were measured against the production TypeScript once, and once is the point.
+fn wall_clock_ts(row: &sqlx::mysql::MySqlRow, col: &str, tz: Option<&str>) -> Result<i64> {
+    let naive: chrono::NaiveDateTime = row
+        .try_get(col)
+        .with_context(|| format!("{col} is not a DATETIME"))?;
+    let text = naive.format("%Y-%m-%d %H:%M:%S").to_string();
+    match tz {
+        // No tz: read the components as UTC. `fitbitTsToUnix` returns
+        // `Date.UTC(...)` when its `tz` argument is absent.
+        None => Ok(naive.and_utc().timestamp()),
+        Some(tz) => crate::timezone::wall_clock_to_unix(&text, tz)
+            .with_context(|| format!("{col} {text:?} is not a wall clock in {tz:?}")),
+    }
+}
+
+/// `date` plus one day, as `YYYY-MM-DD`. Mirrors `nextDateString`.
+pub fn next_date_string(date: &str) -> Result<String> {
+    let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .with_context(|| format!("{date:?} is not a YYYY-MM-DD date"))?;
+    Ok(d.succ_opt()
+        .with_context(|| format!("{date:?} has no next day"))?
+        .format("%Y-%m-%d")
+        .to_string())
+}
+
 /// Everything above, in the field order `SerializedInputs` uses.
 ///
 /// ⚠ PARTIAL, and it says so by NAMING what it does not load rather than
@@ -319,20 +606,28 @@ pub async fn motion_log(
 pub async fn load_partial(
     pool: &MySqlPool,
     user_id: &str,
+    date: &str,
     start_utc: i64,
     end_utc: i64,
 ) -> Result<Value> {
     let mut m = Map::new();
     m.insert("knownPlaces".into(), known_places(pool, user_id).await?);
     m.insert(
-        "modeBiometrics".into(),
-        mode_biometrics(pool, user_id).await?,
-    );
-    m.insert(
         "motionLog".into(),
         motion_log(pool, user_id, start_utc, end_utc).await?,
     );
+    m.insert(
+        "modeBiometrics".into(),
+        mode_biometrics(pool, user_id).await?,
+    );
+    m.insert("hsmmDecode".into(), hsmm_decode(pool, user_id, date).await?);
     m.insert("railRouteCache".into(), rail_route_cache(pool).await?);
+    m.insert("busRouteCache".into(), bus_route_cache(pool).await?);
+    m.insert("railStopsCache".into(), rail_stops_cache(pool).await?);
+    m.insert(
+        "sleepWindows".into(),
+        sleep_windows(pool, user_id, date).await?,
+    );
     m.insert("venuePriors".into(), venue_priors(pool, user_id).await?);
     Ok(Value::Object(m))
 }

@@ -56,15 +56,67 @@ async fn main() -> Result<()> {
             };
             sync(passes).await
         }
+        "inputs" => {
+            let [user, date] = flags else {
+                eprintln!("usage: backend inputs <user> <date>");
+                std::process::exit(64);
+            };
+            inputs(user, date).await
+        }
         "" => {
-            eprintln!("usage: backend <check|serve|sync [--forward-only]>");
+            eprintln!("usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>>");
             std::process::exit(64);
         }
         other => {
-            eprintln!("backend: unknown subcommand {other:?} — expected check, serve or sync");
+            eprintln!(
+                "backend: unknown subcommand {other:?} — expected check, serve, sync or inputs"
+            );
             std::process::exit(64);
         }
     }
+}
+
+/// Print the day's DB inputs as JSON, for diffing against the TypeScript.
+///
+/// ⚠ THIS IS THE PARITY INSTRUMENT, not a convenience. `backend check` proves
+/// each query EXECUTES; it cannot prove the answer is the same one
+/// `load-classification-inputs.ts` produces, and those are different claims —
+/// a query can run, return rows, and still read the wrong column. The module
+/// header says the honest comparison is both arms against one database with the
+/// JSON diffed, and this is the half of that which did not exist.
+///
+/// Compare against a golden fixture's `inputs`, which IS the TypeScript
+/// loader's output for that day:
+///
+///   scripts/prod-db.sh backend inputs pippijn 2026-08-13 > /tmp/rust.json
+///   jq -S '{sleepWindows, hsmmDecode}' tests/golden/days/2026-08-13-pippijn.json
+///
+/// ⚠ ONLY THE PER-DAY FIELDS COMPARE CLEANLY. `busRouteCache`,
+/// `railStopsCache`, `railRouteCache`, `knownPlaces` and `venuePriors` are
+/// global or re-mined, so a fixture's copy is a snapshot of a moving table and a
+/// difference there is drift, not a defect. `sleepWindows` and `hsmmDecode` are
+/// fixed history for a past day and are the ones that mean something.
+///
+/// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
+/// /tmp, never into the repo: both health repos are public.
+async fn inputs(user: &str, date: &str) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    // The day's UTC bounds, for the window `motion_log` is read over. The tz is
+    // the user's stored home zone, exactly as the TypeScript resolves it.
+    let home_tz = sync_state::get(&pool, user, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let bounds = backend::timezone::date_bounds_utc(date, Some(&home_tz))
+        .with_context(|| format!("bounding {date} in {home_tz}"))?;
+    let out =
+        classification_inputs::load_partial(&pool, user, date, bounds.start_utc, bounds.end_utc)
+            .await?;
+    pool.close().await;
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
 }
 
 /// Run one Fitbit ingestion pass over every linked user.
@@ -311,6 +363,117 @@ async fn check() -> Result<()> {
     println!(
         "inputs[{user}]: centroids decoded non-zero: {}",
         len(&places) - zero_centroids
+    );
+
+    // ⚠ THE SAME HAZARD ONE COLUMN OVER, and it was live: `hour_profile` is a
+    // comma-separated per-mille list, the first port read it as JSON, and all
+    // 117 profiles decoded to "absent" while this check printed OK — because
+    // the check looked at centroids and nothing else. A place legitimately has
+    // no profile before it is mined, so SOME nulls are right and ALL nulls is
+    // the shape a format error takes here.
+    let profiled = places.as_array().map_or(0, |a| {
+        a.iter()
+            .filter(|p| p["hourProfile"].as_array().is_some_and(|h| h.len() == 24))
+            .count()
+    });
+    if profiled == 0 {
+        anyhow::bail!(
+            "not one of {} focus places has a 24-bucket hour profile — production mines them, so \
+             this is the stored FORMAT being misread, not an unmined user",
+            len(&places)
+        );
+    }
+    println!("inputs[{user}]: hour profiles with 24 buckets: {profiled}");
+
+    // The second tranche (#982). These need a DATE, and picking one by hand
+    // would be a check that rots: the corpus moves and a hardcoded day
+    // eventually has no decode, at which point the assertions below turn into
+    // "production is empty" and get deleted by whoever is unblocking a deploy.
+    //
+    // So the date is CHOSEN FROM THE DATA — the newest day this user has a
+    // current-version decode for. That makes `hsmm_decode` non-null BY
+    // CONSTRUCTION, which is the point: a loader that returned null for every
+    // day would otherwise be indistinguishable from a day that has no decode.
+    let check_date: Option<String> = sqlx::query_scalar(
+        "SELECT DATE_FORMAT(MAX(date), '%Y-%m-%d') FROM decoded_days \
+         WHERE user_id = ? AND classifier_version = 7",
+    )
+    .bind(&user)
+    .fetch_one(&pool)
+    .await
+    .context("choosing a check date from decoded_days")?;
+    let Some(check_date) = check_date else {
+        anyhow::bail!(
+            "{user} has no decoded_days row at the current classifier version — either the \
+             decode cron has not run, or CLASSIFIER_VERSION has drifted between the TypeScript \
+             that writes and the Rust that reads"
+        );
+    };
+
+    let buses = classification_inputs::bus_route_cache(&pool).await?;
+    let rail_stops = classification_inputs::rail_stops_cache(&pool).await?;
+    let decode = classification_inputs::hsmm_decode(&pool, &user, &check_date).await?;
+    let sleeps = classification_inputs::sleep_windows(&pool, &user, &check_date).await?;
+    println!(
+        "inputs[{user}] @{check_date}: bus_route_cache {} · rail_stops_cache {} · \
+         decoded_days {} segment(s) · sleep_windows {}",
+        len(&buses),
+        len(&rail_stops),
+        len(&decode),
+        len(&sleeps),
+    );
+    if len(&buses) == 0 || len(&rail_stops) == 0 {
+        anyhow::bail!(
+            "a mirror cache came back empty — both are populated in production, and these two \
+             loaders DROP a malformed row silently, so empty is the shape a wrong column name \
+             takes here rather than an error"
+        );
+    }
+    if decode.is_null() || len(&decode) == 0 {
+        anyhow::bail!(
+            "decoded_days({user}, {check_date}) is empty, but the date was chosen BECAUSE it has \
+             a row — so this is the version filter or the bind order, not missing data"
+        );
+    }
+
+    // ⚠ VALUES AGAIN, and the same hazard as the centroids: a BIGINT that fails
+    // to decode reads as 0, and 995 routes numbered zero print the same count
+    // as 995 real ones.
+    let zero_ids = |v: &serde_json::Value| {
+        v.as_array().map_or(0, |a| {
+            a.iter()
+                .filter(|r| r["osmRelationId"].as_f64().unwrap_or(0.0) == 0.0)
+                .count()
+        })
+    };
+    if zero_ids(&buses) > 0 || zero_ids(&rail_stops) > 0 {
+        anyhow::bail!(
+            "{} bus and {} rail relation id(s) decoded to 0 — OSM has no relation 0",
+            zero_ids(&buses),
+            zero_ids(&rail_stops)
+        );
+    }
+
+    // Sleep windows are the only loader here that COMPUTES rather than copies:
+    // `start_time` is a wall clock and the timestamp comes from a tz conversion.
+    // A conversion that silently produced nothing reads as 0 (1970), and an
+    // inverted window reads as a plausible-looking pair of numbers, so both are
+    // named. A day with no main sleep is legitimate and is not an error.
+    for w in sleeps.as_array().into_iter().flatten() {
+        let (a, b) = (
+            w["startTs"].as_i64().unwrap_or(0),
+            w["endTs"].as_i64().unwrap_or(0),
+        );
+        if a <= 0 || b <= a {
+            anyhow::bail!(
+                "sleep window [{a}, {b}] for {user} on {check_date} is not a forward interval in \
+                 the present — the wall-clock conversion did not run"
+            );
+        }
+    }
+    println!(
+        "inputs[{user}] @{check_date}: {} sleep window(s), all forward",
+        len(&sleeps)
     );
 
     pool.close().await;
