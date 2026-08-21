@@ -145,6 +145,35 @@ export function toSerializedInputs(
 }
 
 /**
+ * The `expected` block for a rewritten fixture: a NEW timeline, and everything
+ * else the old one carried.
+ *
+ * ⚠ THIS EXISTS BECAUSE TWO WRITERS HAD THE SAME DEFECT. `golden-check --bless`
+ * and `capture-golden` both built `expected: { velocity }` from scratch, which
+ * DROPS `expected.tsArm` — the frozen TS arm that is the day gate's only oracle
+ * now the cascade is deleted. The bless fired on 2026-08-21 and erased it from
+ * all 41 fixtures at once; the capture path had not fired yet.
+ *
+ * It was never silent — `compare-day` calls a missing arm `NO ORACLE`, which is
+ * red — but it was UNRECOVERABLE: `--freeze` went with the cascade it ran, so
+ * nothing in the tree can rebuild an oracle, and recovery means the corpus
+ * repo's history.
+ *
+ * ⚠ SO THE RULE LIVES HERE, ONCE. A third writer must call this rather than
+ * restate the spread, and anything added under `expected` then survives a
+ * rewrite without this function being touched again.
+ *
+ * `previous` is null for a day captured for the first time. That day legitimately
+ * has no arm, and this cannot invent one — see #1063.
+ */
+export function nextExpected(
+	previous: CapturedDay | null | undefined,
+	velocity: NormalizedState[],
+): CapturedDay["expected"] {
+	return { ...(previous?.expected ?? {}), velocity };
+}
+
+/**
  * Rebuild a runnable `ClassificationInputs` from a stored closure. Pure — no
  * DB, no network.
  *

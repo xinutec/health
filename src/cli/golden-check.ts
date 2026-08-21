@@ -78,6 +78,7 @@ import {
 	fixtureAnswersFromRows,
 	fixtureAnswersLinesFromRows,
 	inputsFromFixture,
+	nextExpected,
 	type OsmSource,
 	parseCapturedDay,
 } from "./fixture-day.js";
@@ -645,10 +646,7 @@ for (const file of files) {
 		// The bless path owns ONE field. Anything else under `expected` belongs to
 		// whoever put it there, and a new one must survive a bless without this
 		// line being touched again.
-		const updated: CapturedDay = {
-			...captured,
-			expected: { ...captured.expected, velocity: actual },
-		};
+		const updated: CapturedDay = { ...captured, expected: nextExpected(captured, actual) };
 		await writeFile(full, `${JSON.stringify(updated, null, "\t")}\n`, "utf8");
 		blessed++;
 		console.log(`blessed  ${label}  (${actual.length} states)`);

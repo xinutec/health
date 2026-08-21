@@ -34,7 +34,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { initPool, withConnection } from "../db/pool.js";
@@ -45,7 +45,14 @@ import { RecordingOsmAdapter } from "../geo/osm-adapter-recording.js";
 import { RowSetOsmAdapter } from "../geo/osm-adapter-rowset.js";
 import { loadOsmRowSet } from "../geo/osm-rowset.js";
 import { computeVelocityFromInputs } from "../geo/velocity.js";
-import { type CapturedDay, FIXTURE_FORMAT_VERSION, toSerializedInputs } from "./fixture-day.js";
+import { errorText } from "../util/error-text.js";
+import {
+	type CapturedDay,
+	FIXTURE_FORMAT_VERSION,
+	nextExpected,
+	parseCapturedDay,
+	toSerializedInputs,
+} from "./fixture-day.js";
 import { normalizeStates } from "./state-diff.js";
 
 const config = z
@@ -157,6 +164,50 @@ console.log(`  ${osmRowSet.points.length} points / ${osmRowSet.lines.length} lin
 console.log("Pass 2/2: running the kernel branch (this is what gets blessed)…");
 const result = await computeVelocityFromInputs({ ...inputs, osm: new RowSetOsmAdapter(osmRowSet, recorder) });
 
+/** The previous capture of this day, or `null` when there is none.
+ *
+ *  ⚠ TOLERANT BY DESIGN, and only here. A first capture has no file, and a file
+ *  that will not parse must not stop a re-capture — the run's job is to write a
+ *  good fixture, not to adjudicate the old one. The COST of tolerance is that a
+ *  corrupt previous file silently loses its frozen arm, so the outcome is
+ *  printed either way: the caller says when it carries one forward, and a
+ *  parse failure warns rather than passing quietly. */
+async function readCapturedDay(file: string): Promise<CapturedDay | null> {
+	try {
+		return parseCapturedDay(await readFile(file, "utf8"));
+	} catch (e: unknown) {
+		if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+		console.warn(
+			`  ⚠ could not read the previous ${file} (${errorText(e)}) — any frozen TS arm on it is LOST (#975, #1063)`,
+		);
+		return null;
+	}
+}
+
+const outPath = path.join(DAYS_DIR, `${date}-${user}.json`);
+
+// ⚠ A RE-CAPTURE MUST CARRY THE FROZEN ARM FORWARD, NOT DROP IT.
+//
+// `expected.tsArm` is the frozen TS cascade output (#975), and after the
+// cascade was deleted it is the day gate's ONLY oracle — `compare-day` reports
+// `NO ORACLE` for a fixture without one, which is RED. There is no way to make
+// a new one: `--freeze` was deleted along with the arm it ran. So a re-capture
+// that rebuilt `expected` would leave that day permanently unmeasurable, and
+// the only recovery would be the corpus repo's history.
+//
+// This is the second place with that defect. `golden-check --bless` had it too
+// and erased the arm from all 41 fixtures in one run on 2026-08-21 (2920ceb);
+// this one was found in the same sweep, before it fired. Both now SPREAD the
+// existing `expected` rather than rebuilding it.
+//
+// ⚠ A day captured for the FIRST TIME still gets no arm, and that gap is real
+// and NOT closed here — see #1063, where the two honest options are set out.
+// Preserving an arm that exists needs no such decision.
+const previous = await readCapturedDay(outPath);
+if (previous?.expected.tsArm !== undefined) {
+	console.log(`  carrying forward the frozen TS arm from the previous capture (#975)`);
+}
+
 const captured: CapturedDay = {
 	meta: {
 		fixtureFormatVersion: FIXTURE_FORMAT_VERSION,
@@ -168,7 +219,7 @@ const captured: CapturedDay = {
 		description,
 	},
 	inputs: toSerializedInputs(inputs, recorder.trace, osmRowSet),
-	expected: { velocity: normalizeStates(result.states, tz) },
+	expected: nextExpected(previous, normalizeStates(result.states, tz)),
 };
 
 const traceCount =
@@ -179,7 +230,6 @@ const traceCount =
 	Object.keys(recorder.trace.reverseGeocode).length;
 
 await mkdir(DAYS_DIR, { recursive: true });
-const outPath = path.join(DAYS_DIR, `${date}-${user}.json`);
 await writeFile(outPath, `${JSON.stringify(captured, null, "\t")}\n`, "utf8");
 
 console.log(

@@ -22,7 +22,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { FIXTURE_FORMAT_VERSION } from "../src/cli/fixture-day.js";
+import { type CapturedDay, FIXTURE_FORMAT_VERSION, nextExpected } from "../src/cli/fixture-day.js";
+import type { NormalizedState } from "../src/cli/state-diff.js";
 import { emptyOsmTrace } from "../src/geo/osm-adapter-recording.js";
 
 const run = promisify(execFile);
@@ -161,4 +162,43 @@ describe("golden-check --bless-* flags", () => {
 		const truth = await readFile(path.join(dir, "tests", "golden", "truth-baseline.json"), "utf8");
 		expect(truth).toBe(JSON.stringify({ [DATE]: [1700000000] }));
 	}, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+// The rule both fixture writers share
+// ---------------------------------------------------------------------------
+
+describe("nextExpected", () => {
+	// ⚠ TWO WRITERS HAD THE SAME DEFECT. `golden-check --bless` and
+	// `capture-golden` each built `expected: { velocity }` from scratch, dropping
+	// `expected.tsArm` — the day gate's only oracle once the cascade is deleted,
+	// and one nothing in the tree can rebuild. The bless fired and erased it from
+	// 41 fixtures; the capture path had not fired yet. The rule lives in one
+	// place now so a third writer cannot re-derive the bug.
+	type Arm = NonNullable<CapturedDay["expected"]["tsArm"]>;
+	// The arm's shape does not matter here — only that it is carried by
+	// IDENTITY. A structural stand-in keeps the test about the rule.
+	const arm = { capture: { date: DATE }, osmAnswers: {} } as unknown as Arm;
+	const state = (from: string): NormalizedState => ({ from, to: from, mode: "stationary", label: "", asleep: false });
+	const withArm = (): CapturedDay => ({ expected: { velocity: [state("00:00")], tsArm: arm } }) as CapturedDay;
+
+	it("carries every other key forward while replacing the timeline", () => {
+		const out = nextExpected(withArm(), [state("09:00")]);
+		expect(out.tsArm).toBe(arm);
+		expect(out.velocity).toEqual([state("09:00")]);
+	});
+
+	it("writes a bare timeline for a day captured for the first time", () => {
+		// ⚠ It cannot INVENT an arm, and must not pretend to — a first capture
+		// legitimately has none, and closing that gap is #1063's decision.
+		expect(nextExpected(null, [])).toEqual({ velocity: [] });
+		expect(nextExpected(undefined, [])).toEqual({ velocity: [] });
+	});
+
+	it("does not mutate the fixture it read", () => {
+		// The callers reuse `previous` after this — `capture-golden` logs off it.
+		const previous = withArm();
+		nextExpected(previous, [state("09:00")]);
+		expect(previous.expected.velocity).toEqual([state("00:00")]);
+	});
 });
