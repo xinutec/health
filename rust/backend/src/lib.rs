@@ -57,6 +57,7 @@ pub mod fitbit;
 pub mod fold_converge;
 pub mod fold_payload;
 pub mod google;
+pub mod head;
 pub mod lean;
 pub mod nextcloud;
 pub mod osm_host;

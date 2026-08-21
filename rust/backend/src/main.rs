@@ -72,13 +72,26 @@ async fn main() -> Result<()> {
             };
             inputs(user, date, tz).await
         }
+        "head" => {
+            // Reads a golden fixture rather than the database on purpose: the
+            // head's oracle is the frozen `expected.tsArm.capture` sitting in
+            // the same file as the `inputs` it was computed from, so the whole
+            // chain is checkable with no DB, no network and no Node.
+            let [fixture] = flags else {
+                eprintln!("usage: backend head <fixture.json>");
+                std::process::exit(64);
+            };
+            head(fixture)
+        }
         "" => {
-            eprintln!("usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>>");
+            eprintln!(
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>>"
+            );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync or inputs"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs or head"
             );
             std::process::exit(64);
         }
@@ -599,5 +612,33 @@ async fn check() -> Result<()> {
 
     pool.close().await;
     println!("check: OK");
+    Ok(())
+}
+
+/// Print the capture this crate's head computes from a golden fixture's inputs.
+///
+/// The parity instrument for #982's second half. `backend check` proves the
+/// stages RUN, which is strictly weaker than proving they agree; this prints
+/// what a diff can be taken of.
+///
+/// ⚠ DIFF THE TEXT, NOT THROUGH `jq`. jq parses both sides to doubles, so
+/// `25.0 == 25` and it calls a rendering difference clean — which is how three
+/// wrong fields survived the loaders' first parity pass. `tests/head_corpus.rs`
+/// does this over the whole corpus; this is for looking at one day.
+fn head(fixture: &str) -> Result<()> {
+    let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {fixture}"))?;
+    let name = std::path::Path::new(fixture)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("the fixture path has no file name")?;
+    let (date, user) = name
+        .split_once('-')
+        .and_then(|_| Some((name.get(..10)?, name.get(11..)?)))
+        .with_context(|| format!("{name} is not <YYYY-MM-DD>-<user>"))?;
+    let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
+    let cap = backend::head::capture(inputs, date, user)?;
+    println!("{cap}");
     Ok(())
 }
