@@ -1,10 +1,6 @@
 import { db } from "../db/pool.js";
-import type { DayState } from "../sleep/day-state.js";
 import type { EmptyDayBracket } from "./classification-inputs.js";
-import { bracketedStayPlaceId, buildInferredStayState } from "./inferred-stay.js";
-import { bestPlace, placeLabel } from "./osm.js";
-import type { OsmAdapter } from "./osm-adapter.js";
-import { dateBoundsUtc } from "./timezone.js";
+import { bracketedStayPlaceId } from "./inferred-stay.js";
 
 function shiftDay(date: string, days: number): string {
 	const d = new Date(`${date}T00:00:00Z`);
@@ -21,9 +17,14 @@ function shiftDay(date: string, days: number): string {
  * that focus place's centroid.
  *
  * Returns `null` when the day isn't bracketed by the same place on both
- * sides (then it is genuinely unknown) or the place row is missing. The
- * pure inference (`inferEmptyDayStatesFromBracket`) consumes the centroid
- * and names it through the OSM adapter — no DB.
+ * sides (then it is genuinely unknown) or the place row is missing.
+ *
+ * ⚠ THE INFERENCE ITSELF IS NO LONGER HERE. `inferEmptyDayStatesFromBracket`
+ * lived beside this and was deleted 2026-08-21: `1128b8e` removed its only
+ * caller when the TS cascade went, and the decision moved to Lean
+ * (`Verified.Geo.DayChain.inferredEmptyDay`, pinned by five `#guard`s including
+ * an observed-day control). This function is the DB read that feeds it, and the
+ * centroid now crosses the wire as `env.bracketPlace` (#1055).
  */
 export async function loadEmptyDayBracket(userId: string, date: string): Promise<EmptyDayBracket | null> {
 	const [prev, next] = await Promise.all([
@@ -52,42 +53,4 @@ export async function loadEmptyDayBracket(userId: string, date: string): Promise
 	if (fp === undefined) return null;
 
 	return { centroidLat: Number(fp.centroid_lat), centroidLon: Number(fp.centroid_lon) };
-}
-
-/**
- * Infer the "your day" for a day with no observed data, from a
- * pre-resolved cross-day bracket.
- *
- * A no-data day is not automatically *unknown*: if the previous day
- * ended at place X and the next day's dominant place is also X, the user
- * was at X the whole time in between (the classic multi-day hospital
- * stay). Confidence comes from the day being fully *constrained* on both
- * sides, not from data volume — so this surfaces one stationary stay
- * spanning the local day, named from the bracket's centroid via the OSM
- * adapter, and flagged `inferred: true` so the UI marks it "no data".
- *
- * Returns `[]` when there is no bracket (the day stays blank) or the
- * centroid can't be named. Pure of DB — the bounded reads happen in
- * `loadEmptyDayBracket` on the loader side.
- */
-export async function inferEmptyDayStatesFromBracket(
-	bracket: EmptyDayBracket | null,
-	date: string,
-	tz: string | undefined,
-	osm: OsmAdapter,
-): Promise<DayState[]> {
-	if (bracket === null) return [];
-
-	const place = await bestPlace(osm, bracket.centroidLat, bracket.centroidLon, { preferResidential: false });
-	if (place === null) return [];
-
-	const bounds = dateBoundsUtc(date, tz);
-	return [
-		buildInferredStayState({
-			place: placeLabel(place),
-			tz: tz ?? null,
-			startTs: bounds.startUtc,
-			endTs: bounds.endUtc,
-		}),
-	];
 }

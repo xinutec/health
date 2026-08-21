@@ -133,6 +133,17 @@ const EXCLUDE = [
 	// src/geo — the OSM/DB/timezone boundary, the shadow+twin harnesses, the
 	// diagnostic sinks.
 	/^geo\/(osm|osm-.*|.*-cache|.*-adapter.*|timezone|fitbit-tz|route-graph|route-graph-loader|opening-hours|load-classification-inputs|.*shadow.*|.*twin.*|leg-compare|venue-trace)$/,
+	// `geo/infer-empty-day` holds ONE export now — `loadEmptyDayBracket`, two
+	// presence_log reads plus a focus_places centroid. It is the same class as
+	// `load-classification-inputs` above and sits beside it for the same reason:
+	// a DB read is shell, not a port gap. VERIFIED rather than asserted (#942
+	// asked for exactly that): the file's other export,
+	// `inferEmptyDayStatesFromBracket`, was DEAD — `1128b8e` removed its only
+	// caller — and it was deleted 2026-08-21 once the decision landed in Lean as
+	// `Verified.Geo.DayChain.inferredEmptyDay` (#1055). So this is not a shell
+	// exclusion hiding an unported decision; the decision is ported and the TS
+	// that held it is gone.
+	/^geo\/infer-empty-day$/,
 	// Env-flag reads, not algorithm. `src/geo/factors` reached the scan only when
 	// the walk went recursive (2026-08-05) — before that the whole directory was
 	// invisible and undeclared, which is the worst of both: not measured, and not
