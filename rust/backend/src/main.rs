@@ -83,15 +83,22 @@ async fn main() -> Result<()> {
             };
             head(fixture)
         }
+        "day" => {
+            let [fixture] = flags else {
+                eprintln!("usage: backend day <fixture.json>");
+                std::process::exit(64);
+            };
+            day(fixture)
+        }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs or head"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head or day"
             );
             std::process::exit(64);
         }
@@ -640,5 +647,50 @@ fn head(fixture: &str) -> Result<()> {
     let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
     let cap = backend::head::capture(inputs, date, user)?;
     println!("{cap}");
+    Ok(())
+}
+
+/// Run a whole day from a golden fixture: inputs → head → request → fold.
+///
+/// The chain end to end with no Node and no database. `head` prints what the
+/// fold is asked; this prints what it answers, having walked the converge loop
+/// against the fixture's own OSM row set.
+///
+/// The oracle is `expected.velocity` in the same file. This prints the timeline
+/// rather than judging it — `tests/day_corpus.rs` is what compares.
+fn day(fixture: &str) -> Result<()> {
+    let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {fixture}"))?;
+    let name = std::path::Path::new(fixture)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("the fixture path has no file name")?;
+    let (date, user) = name
+        .split_once('-')
+        .and_then(|_| Some((name.get(..10)?, name.get(11..)?)))
+        .with_context(|| format!("{name} is not <YYYY-MM-DD>-<user>"))?;
+    let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
+
+    let cap = backend::head::capture(inputs, date, user)?;
+    let rows = inputs
+        .get("osmRowSet")
+        .context("the fixture has no osmRowSet to answer from")?;
+    let mut answerer = backend::rowset_answerer::RowSetAnswerer::new(rows)?;
+    let r = backend::fold_converge::converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer)?;
+
+    // ⚠ On stderr, so stdout stays a clean timeline to diff. A walk that left
+    // keys unanswered produced a timeline from DEFAULTS for them, and that is
+    // not the same day — it has to be visible without reading the JSON.
+    eprintln!(
+        "{date} {user}: {} round(s), {} key(s) answered, {} unanswerable",
+        r.rounds,
+        r.answered,
+        r.unanswerable.len()
+    );
+    for m in &r.unanswerable {
+        eprintln!("  UNANSWERED {}({})", m.what, m.key);
+    }
+    println!("{}", r.out);
     Ok(())
 }

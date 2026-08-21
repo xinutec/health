@@ -328,6 +328,51 @@ impl crate::fold_converge::Answerer for RowSetAnswerer<'_> {
                 }
             }
 
+            // The venue-local CLOCK of a naming question — `[dayIdx, minute]`
+            // per minute of the stay, plus the hour at its midpoint. Not an
+            // answer to "what is this place": Lean computes the label, and what
+            // it cannot compute is tzdata. `fold_payload::best_place` derives
+            // the same two fields from a recorded capture; this derives them
+            // from the key, which is what a serving caller has.
+            //
+            // ⚠ AN EMPTY ZONE IS DECLINED. The fold asks this table once before
+            // `tzAt` has resolved the stay's zone and again after, so the blank
+            // spelling is a question asked too early rather than a stay with no
+            // zone — measured on 2026-04-29, where all 8 spans are asked twice
+            // and the TypeScript recorded every one at `Europe/Amsterdam`.
+            // Answering the blank one with UTC would put a second row on the
+            // table for the same stay, keyed differently and scored against the
+            // wrong clock.
+            "bestPlace" => {
+                let (Some(start), Some(end), Some(tz)) = (
+                    p.get(2).and_then(|s| s.parse::<i64>().ok()),
+                    p.get(3).and_then(|s| s.parse::<i64>().ok()),
+                    p.get(4),
+                ) else {
+                    return Ok(None);
+                };
+                if tz.is_empty() {
+                    return Ok(None);
+                }
+                let samples = crate::timezone::local_stay_samples(start, end, tz)?;
+                let hour = crate::timezone::local_hour_of((start + end) / 2, tz)?;
+                Ok(Some((
+                    "bestPlace".into(),
+                    json!([
+                        lat,
+                        lon,
+                        start,
+                        end,
+                        tz,
+                        samples
+                            .iter()
+                            .map(|(d, m)| json!([d, m]))
+                            .collect::<Vec<_>>(),
+                        hour
+                    ]),
+                )))
+            }
+
             // ⚠ DECLINED, not answered empty. `Verified/Geo/Bus.lean` records
             // that stop resolution is INJECTED and modelled as an ordinary
             // function rather than computed from rows, so there is nothing here
