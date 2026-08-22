@@ -1596,6 +1596,51 @@ private def railFillResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## `clipinferred` — never assert the future (#982)
+
+`Verified.Geo.DayState.clipInferredFuture`. Inferred states — a dwell-prior
+continuation, an empty-day inference — extend to a survival horizon or the day
+end, which for TODAY lies ahead of the current moment and would claim presence
+at a place hours before it happened.
+
+  { "states": [ <the day mode's own state objects> ], "nowTs": int }
+→ { "states": [ … ] }
+
+⚠ PRESENTATION ONLY, and that is why it is a separate mode rather than a step of
+`day`. The pipeline stays deterministic — it fills to the horizon — so the golden
+corpus, which replays past days where `nowTs` is already past the day end, is
+unaffected. A caller applies this PER REQUEST, after the cache, because `now`
+advances while a cached result does not.
+
+⚠ Observed states are untouched. Real data cannot be in the future, so a state
+without `inferred` is passed through whatever its timestamps say. -/
+private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DayState := do
+  let optS (k : String) : Except String (Option String) :=
+    match j.getObjVal? k with
+    | .ok v => if v.isNull then .ok none else do return some (← v.getStr?)
+    | .error _ => .ok none
+  let optB (k : String) : Except String (Option Bool) :=
+    match j.getObjVal? k with
+    | .ok v => if v.isNull then .ok none else do return some (← v.getBool?)
+    | .error _ => .ok none
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+         , endTs := ← (← j.getObjVal? "endTs").getInt?
+         , mode := ← (← j.getObjVal? "mode").getStr?
+         , place := ← optS "place", wayName := ← optS "wayName"
+         , asleep := ← optB "asleep", tz := ← optS "tz"
+         , minutesAsleep := ← jOptInt j "minutesAsleep"
+         , inferred := ← optB "inferred" }
+
+private def clipInferredResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let states ← (← optArr j "states").mapM parseDayState
+    let nowTs ← (← j.getObjVal? "nowTs").getInt?
+    let out := Verified.Geo.DayState.clipInferredFuture states.toList nowTs
+    return Json.mkObj [("states", Json.arr ((out.map Day.stateJson).toArray))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -1623,6 +1668,7 @@ def dispatch (j : Json) : Json :=
   | .ok "osmspatial" => osmSpatialResult j
   | .ok "osmcoverage" => osmCoverageResult j
   | .ok "railfill" => railFillResult j
+  | .ok "clipinferred" => clipInferredResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the

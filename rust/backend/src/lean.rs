@@ -717,6 +717,41 @@ pub fn unsnapped_train_routes(
     Ok(w.candidates)
 }
 
+/// `Verified.Geo.DayState.clipInferredFuture` — never assert the future.
+///
+/// An inferred state extends to a survival horizon or the day end, which for
+/// TODAY lies ahead of the current moment. This truncates one that straddles
+/// `now_ts` and drops one wholly beyond it. Observed states pass through: real
+/// data cannot be in the future.
+///
+/// ⚠ APPLY PER REQUEST, AFTER THE CACHE. The cached result is the full
+/// deterministic day; `now` advances and the cached value does not, so clipping
+/// before seating would freeze the horizon at whatever it was when the day was
+/// computed.
+///
+/// ⚠ `states` must be the `day` mode's own state objects. They round-trip
+/// through the SAME encoder they were emitted by, so a field this port does not
+/// know about would be dropped — which is why `Day.stateJson` is shared rather
+/// than restated.
+pub fn clip_inferred_future(
+    states: &[serde_json::Value],
+    now_ts: i64,
+) -> Result<Vec<serde_json::Value>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        states: Vec<serde_json::Value>,
+    }
+    let req = serde_json::json!({ "mode": "clipinferred", "states": states, "nowTs": now_ts });
+    let out = serve(&req.to_string()).context("lean serve clipinferred")?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).context("clipinferred answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("clipinferred: {e}");
+    }
+    let w: Wire = serde_json::from_value(v).context("clipinferred answer has no `states`")?;
+    Ok(w.states)
+}
+
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line

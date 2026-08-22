@@ -736,7 +736,12 @@ private def segJson (s : Seg) : Json :=
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
     ("biometrics", match s.biometrics with | none => Json.null | some b => biomJson b)]
 
-private def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
+/-- One `DayState` on the wire.
+
+⚠ PUBLIC (as `Day.stateJson`) because `ServeEntry`'s `clipinferred` mode re-emits states with this
+same encoder. Two encoders for one record would drift, and the drift would show
+as a field quietly missing from a clipped day but present in an unclipped one. -/
+def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
     ("mode", Json.str s.mode), ("place", jOptS s.place), ("wayName", jOptS s.wayName),
