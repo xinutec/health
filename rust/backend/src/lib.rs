@@ -67,3 +67,4 @@ pub mod rowset_answerer;
 pub mod state;
 pub mod sync_state;
 pub mod timezone;
+pub mod velocity_cache;
