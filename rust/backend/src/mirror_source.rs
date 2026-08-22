@@ -52,6 +52,7 @@
 //! and is not in this module.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -101,6 +102,22 @@ const SUPERSET_MARGIN: f64 = 1.05;
 /// truncated set — a silently truncated candidate list scores as "the nearest
 /// way is 40 m away" with no way to tell it from the truth.
 pub const CANDIDATE_LIMIT: i64 = 20_000;
+
+/// SQL statements this source has issued, process-wide.
+///
+/// ⚠ NOT A PERFORMANCE COUNTER SO MUCH AS A DENOMINATOR. The fold's wall clock
+/// is dominated by round trips, and a round trip costs ~50x more over
+/// `scripts/prod-db.sh`'s SSH tunnel than inside the cluster (measured
+/// 2026-08-17: 54 s in-cluster vs 64 min tunnelled, same work). So a duration
+/// measured from the Mac says nothing about production UNLESS the query count is
+/// known — with it, the two can be compared; without it, any claim about
+/// in-cluster latency is a guess.
+static QUERIES: AtomicU64 = AtomicU64::new(0);
+
+/// Read the query count and reset it, so a count belongs to one request.
+pub fn take_queries() -> u64 {
+    QUERIES.swap(0, Ordering::Relaxed)
+}
 
 /// Rows from the live mirror. One per converge walk: the coverage decisions it
 /// memoises are only valid for the `now_ms` it was built with.
@@ -176,6 +193,10 @@ impl MirrorSource {
     where
         F: std::future::Future<Output = Result<T, sqlx::Error>>,
     {
+        // Counted here rather than at each call site: every query this source
+        // makes goes through this one boundary, so the count cannot drift from
+        // the queries.
+        QUERIES.fetch_add(1, Ordering::Relaxed);
         Ok(self.handle.block_on(f)?)
     }
 

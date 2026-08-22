@@ -91,6 +91,17 @@ async fn main() -> Result<()> {
             };
             day(fixture)
         }
+        "velocity" => {
+            let (user, date, tz) = match flags {
+                [user, date] => (user, date, None),
+                [user, date, tz] => (user, date, Some(tz.as_str())),
+                _ => {
+                    eprintln!("usage: backend velocity <user> <date> [display-tz]");
+                    std::process::exit(64);
+                }
+            };
+            velocity(user, date, tz).await
+        }
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -111,13 +122,13 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror or mirror-check"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check or velocity"
             );
             std::process::exit(64);
         }
@@ -768,6 +779,98 @@ fn day(fixture: &str) -> Result<()> {
         eprintln!("  UNANSWERED {}({})", m.what, m.key);
     }
     println!("{}", r.out);
+    Ok(())
+}
+
+/// Build `/velocity`'s response for one day, from PRODUCTION.
+///
+/// # ⚠ What this covers, and what it does not
+///
+/// The route's GATE — auth, the share window, parameter validation — is
+/// `tests/velocity_route.rs`, and none of it runs here: this calls the handler's
+/// assembly directly with no session. What it covers is the half no test can,
+/// because it needs a database and the OSM mirror: that the day actually
+/// assembles into a response, with every key the frontend reads present and
+/// populated.
+///
+/// The clip is applied here too, so the printed body is what a request would
+/// receive rather than the cached value behind it.
+///
+/// ⚠ REAL LOCATION DATA on stdout. Redirect to /tmp, never into the repo: both
+/// health repos are public.
+async fn velocity(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
+
+    let started = std::time::Instant::now();
+    let body = backend::routes::velocity::compute(&st, user, date, display_tz).await?;
+    let compute_ms = started.elapsed().as_millis();
+
+    // ⚠ The per-request clip, so this prints what a CALLER sees. Skipping it
+    // would print the cached value, which for today is a day asserting a future
+    // that has not happened.
+    let now_s = chrono::Utc::now().timestamp();
+    let states = body
+        .get("states")
+        .and_then(serde_json::Value::as_array)
+        .map(|s| lean::clip_inferred_future(s, now_s))
+        .transpose()?
+        .unwrap_or_default();
+    let clipped = states.len();
+    let mut body = body;
+    let before = body["states"].as_array().map_or(0, Vec::len);
+    body["states"] = serde_json::Value::Array(states);
+    pool.close().await;
+
+    // ⚠ COUNTS on stderr, body on stdout. A key that is present but EMPTY is the
+    // failure this exists to catch — an assembled response with no points reads
+    // as a quiet day rather than as a broken join.
+    let len = |k: &str| {
+        body.get(k)
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len)
+    };
+    // ⚠ The TIMING rides on this line too. `fold` dominates, and its cost is
+    // round trips — so `mirrorQueries` beside it is what makes the number
+    // comparable to an in-cluster run instead of a figure from a laptop over an
+    // SSH tunnel (~50x, measured 2026-08-17).
+    let t = |k: &str| {
+        body.pointer(&format!("/timing/{k}"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    eprintln!(
+        "velocity[{user}] {date}: {compute_ms} ms — load {} · head {} · fold {} \
+         ({} mirror quer(ies), {} round(s), {} key(s)) · watchBattery {}",
+        t("load"),
+        t("head"),
+        t("fold"),
+        t("mirrorQueries"),
+        t("rounds"),
+        t("answered"),
+        t("watchBattery"),
+    );
+    eprintln!(
+        "velocity[{user}] {date}: points {} · rawFixes {} · segments {} · \
+         states {before}->{clipped} · episodes {} · battery {} · watchBattery {}",
+        len("points"),
+        len("rawFixes"),
+        len("segments"),
+        len("episodes"),
+        len("battery"),
+        len("watchBattery"),
+    );
+    for k in [
+        "points", "rawFixes", "segments", "states", "episodes", "battery",
+    ] {
+        if body.get(k).is_none() {
+            anyhow::bail!("the response has no `{k}` — the frontend reads it");
+        }
+    }
+    println!("{body}");
     Ok(())
 }
 
