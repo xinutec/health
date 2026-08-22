@@ -313,6 +313,18 @@ def dispatch (j : Json) : Json :=
     | some sv, some m, some p =>
       Json.mkObj [("value", Json.bool (Verified.Session.mayProceed sv m p))]
     | _, _, _ => err "mayProceed: isShareViewer, method, path required"
+  -- ⚠ `daysBack ≤ 0` and an unparsable `today` BOTH answer null, and the caller
+  -- must treat that as "share disabled" rather than "no window". The TypeScript
+  -- produced `NaN`-shaped garbage for the second, which formatted as
+  -- "NaN-NaN-NaN" and reached the database as a string.
+  | some "shareableDateRange" =>
+    match str? j "today", int? j "daysBack" with
+    | some t, some d =>
+      match Verified.Share.shareableDateRange t d with
+      | none => Json.mkObj [("value", Json.null)]
+      | some (f, to) =>
+        Json.mkObj [("value", Json.mkObj [("from", Json.str f), ("to", Json.str to)])]
+    | _, _ => err "shareableDateRange: today, daysBack required"
   | some "sessionTtlMs" =>
     Json.mkObj
       [ ("value", Json.num Verified.Session.SESSION_TTL_MS)

@@ -100,3 +100,44 @@ fn the_cookie_lifetime_matches_the_rows() {
         "the cookie's Max-Age and the session row's TTL must be the same window"
     );
 }
+
+#[test]
+fn a_share_window_ends_today_and_a_disabled_share_has_none() {
+    lean::init().expect("the Lean runtime must start");
+
+    // Inclusive both ends, counting back from today: 7 days ending 08-17 starts
+    // on 08-11, not 08-10.
+    assert_eq!(
+        lean::shareable_date_range("2026-08-17", 7).unwrap(),
+        Some(("2026-08-11".into(), "2026-08-17".into()))
+    );
+    // A one-day share is exactly today.
+    assert_eq!(
+        lean::shareable_date_range("2026-08-17", 1).unwrap(),
+        Some(("2026-08-17".into(), "2026-08-17".into()))
+    );
+
+    // ⚠ `None` MEANS SHARE DISABLED, not "no window". A caller reading it as
+    // "unrestricted" turns a revoked share into a full-history one.
+    assert_eq!(lean::shareable_date_range("2026-08-17", 0).unwrap(), None);
+    assert_eq!(lean::shareable_date_range("2026-08-17", -1).unwrap(), None);
+    // An unparsable date is the same answer. The TypeScript produced
+    // "NaN-NaN-NaN" here and stored it.
+    assert_eq!(lean::shareable_date_range("not-a-date", 7).unwrap(), None);
+    assert_eq!(lean::shareable_date_range("", 7).unwrap(), None);
+}
+
+#[test]
+fn the_share_window_and_the_visibility_check_agree() {
+    lean::init().expect("the Lean runtime must start");
+    // ⚠ The two rules are used together — one builds the window, the other
+    // tests a date against it — and they are in different Lean functions. This
+    // is the assertion that they mean the same thing by "inclusive".
+    let (from, to) = lean::shareable_date_range("2026-08-17", 7)
+        .unwrap()
+        .expect("a 7-day share has a window");
+    assert!(lean::date_in_share_window(&from, &from, &to).unwrap());
+    assert!(lean::date_in_share_window(&to, &from, &to).unwrap());
+    assert!(!lean::date_in_share_window("2026-08-10", &from, &to).unwrap());
+    assert!(!lean::date_in_share_window("2026-08-18", &from, &to).unwrap());
+}

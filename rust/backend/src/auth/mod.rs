@@ -11,3 +11,4 @@
 //! `shareableDateRange` is a total function of its arguments and went to Lean.
 
 pub mod session;
+pub mod share;

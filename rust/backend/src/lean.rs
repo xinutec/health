@@ -656,6 +656,29 @@ pub fn may_proceed(is_share_viewer: bool, method: &str, path: &str) -> Result<bo
     Ok(w.value)
 }
 
+/// `Verified.Share.shareableDateRange` — the inclusive `[from, to]` a share with
+/// this `days_back` may show, ending at `today`.
+///
+/// ⚠ `None` means SHARE DISABLED, not "no window". It covers both `days_back ≤
+/// 0` and a `today` that does not parse — the TypeScript produced NaN-shaped
+/// garbage for the second, which formatted as `"NaN-NaN-NaN"`. A caller that
+/// treats `None` as "unrestricted" has inverted the rule.
+pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(String, String)>> {
+    #[derive(Deserialize)]
+    struct Range {
+        from: String,
+        to: String,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<Range>,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "shareableDateRange", "today": today, "daysBack": days_back,
+    }))?;
+    Ok(w.value.map(|r| (r.from, r.to)))
+}
+
 /// The session lifetime, and the cookie spelling that must agree with it.
 pub struct SessionPolicy {
     pub ttl_ms: i64,
