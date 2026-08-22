@@ -37,6 +37,7 @@ pub mod logging;
 pub mod me;
 pub mod nextcloud_connect;
 pub mod oauth;
+pub mod owntracks;
 pub mod share;
 pub mod tables;
 pub mod velocity;
@@ -150,6 +151,13 @@ pub fn router(state: AppState) -> Router {
         // `DL-WIRE-ROUTE-DRIFT` can resolve the route table statically. A route
         // table nobody can check is how a path typo becomes a 404 in
         // production.
+        // ⚠ The phone's own auth is the URL token plus Basic auth, checked in
+        // the handler. No session: this comes from an Android app, not a
+        // browser.
+        .route(
+            "/owntracks/{token}/{device}",
+            axum::routing::post(owntracks::proxy),
+        )
         .nest(
             "/internal",
             Router::new()

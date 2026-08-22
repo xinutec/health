@@ -12,6 +12,7 @@ import Verified.LogLine
 import Verified.PhoneTrackPrefs
 import Verified.Login
 import Verified.Recovery
+import Verified.Owntracks
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
 import Verified.Session
@@ -407,6 +408,71 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- How hard a phone should look for itself (#982).
+  --
+  -- ⚠ Takes the WHOLE pruned history, because the decision is about a
+  -- trajectory rather than a fix. Coordinates cross as IEEE-754 bit patterns:
+  -- the straightness ratio divides two haversine distances, and a re-rounded
+  -- coordinate moves it across the walking threshold.
+  --
+  -- ⚠ Answers a CONCRETE profile every time, never "no change". The phone gets
+  -- the full config on every fix and treats it as idempotent, which is what
+  -- removes the need for anti-flap state that could be lost.
+  | some "owntracksConfig" =>
+    let fixes : List Verified.Owntracks.Fix :=
+      match j.getObjVal? "history" with
+      | .error _ => []
+      | .ok v =>
+        match v.getArr? with
+        | .error _ => []
+        | .ok arr => arr.toList.filterMap fun e =>
+          match int? e "ts", str? e "latBits", str? e "lonBits" with
+          | some ts, some la, some lo =>
+            some { ts := ts
+                 , lat := Float.ofBits la.toNat!.toUInt64
+                 , lon := Float.ofBits lo.toNat!.toUInt64
+                 , vel := (str? e "velBits").map (fun b => Float.ofBits b.toNat!.toUInt64)
+                 , trigger := str? e "trigger"
+                 , monitoringMode := int? e "monitoringMode" }
+          | _, _, _ => none
+    -- ⚠ The gate is evaluated HERE from the places, not passed in as a boolean.
+    -- A host that computed it would own the "which places may we demote at"
+    -- decision, which is exactly the one that costs a walk home when wrong.
+    let places : List Verified.Owntracks.GatingPlace :=
+      match j.getObjVal? "places" with
+      | .error _ => []
+      | .ok v =>
+        match v.getArr? with
+        | .error _ => []
+        | .ok arr => arr.toList.filterMap fun e =>
+          match str? e "latBits", str? e "lonBits", str? e "dwellBits", str? e "sleepBits" with
+          | some la, some lo, some dw, some sl =>
+            some { centroidLat := Float.ofBits la.toNat!.toUInt64
+                 , centroidLon := Float.ofBits lo.toNat!.toUInt64
+                 , avgDwellSec := Float.ofBits dw.toNat!.toUInt64
+                 , sleepHours := Float.ofBits sl.toNat!.toUInt64 }
+          | _, _, _, _ => none
+    let atLongStay :=
+      match fixes.getLast? with
+      | none => false
+      | some last => Verified.Owntracks.isLongStayLocation last.lat last.lon places
+    let manualHold := (j.getObjVal? "manualHoldActive" >>= (·.getBool?)).toOption == some true
+    let prev : Option Verified.Owntracks.Profile :=
+      match str? j "prevProfile" with
+      | some "transit-fast" => some .transitFast
+      | some "transit" => some .transit
+      | some "walking" => some .walking
+      | some "stationary" => some .stationary
+      | _ => none
+    let signals := Verified.Owntracks.computeSignals fixes
+    let profile := Verified.Owntracks.decideRemoteConfig signals prev atLongStay manualHold
+    let (monitoring, interval) := Verified.Owntracks.configFor profile
+    Json.mkObj
+      [ ("profile", Json.str profile.name)
+      , ("monitoring", Json.num monitoring)
+      , ("moveModeLocatorInterval", match interval with
+          | none => Json.null
+          | some i => Json.num i) ]
   -- The place picker's projection of one focus place (#982).
   --
   -- ⚠ `label` and `named` are DIFFERENT questions. A bare "Stay" gets a label

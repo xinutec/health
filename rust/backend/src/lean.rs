@@ -1597,3 +1597,97 @@ pub fn pick_current_place(
         }),
     })
 }
+
+/// One retained GPS fix, as the owntracks decision reads it.
+pub struct OwntracksFix {
+    pub ts: i64,
+    pub lat: f64,
+    pub lon: f64,
+    pub vel: Option<f64>,
+    pub trigger: Option<String>,
+    pub monitoring_mode: Option<i64>,
+}
+
+/// A mined place, as the long-stay gate reads it.
+///
+/// ⚠ Passed in RAW so Lean decides whether the phone is somewhere it may be
+/// demoted. A host that computed the boolean itself would own the decision that
+/// costs a walk home when it is wrong.
+pub struct GatingPlace {
+    pub lat: f64,
+    pub lon: f64,
+    pub avg_dwell_sec: f64,
+    pub sleep_hours: f64,
+}
+
+/// What to tell the phone.
+pub struct OwntracksConfig {
+    pub profile: String,
+    pub monitoring: i64,
+    pub move_mode_locator_interval: Option<i64>,
+}
+
+/// `Verified.Owntracks.decideRemoteConfig` — how hard the phone should look.
+///
+/// ⚠ Takes the WHOLE pruned history: the decision is about a trajectory, not a
+/// fix. Coordinates cross as IEEE-754 bit patterns because the straightness
+/// ratio divides two haversine distances, and a re-rounded coordinate can move
+/// it across the walking threshold.
+pub fn owntracks_config(
+    history: &[OwntracksFix],
+    prev_profile: Option<&str>,
+    places: &[GatingPlace],
+    manual_hold_active: bool,
+) -> Result<OwntracksConfig> {
+    #[derive(Deserialize)]
+    struct Wire {
+        profile: String,
+        monitoring: i64,
+        #[serde(rename = "moveModeLocatorInterval")]
+        interval: Option<i64>,
+    }
+    let wire_history: Vec<serde_json::Value> = history
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "ts": f.ts,
+                "latBits": f.lat.to_bits().to_string(),
+                "lonBits": f.lon.to_bits().to_string(),
+                "velBits": f.vel.map(|v| v.to_bits().to_string()),
+                "trigger": f.trigger,
+                "monitoringMode": f.monitoring_mode,
+            })
+        })
+        .collect();
+    let wire_places: Vec<serde_json::Value> = places
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "latBits": p.lat.to_bits().to_string(),
+                "lonBits": p.lon.to_bits().to_string(),
+                "dwellBits": p.avg_dwell_sec.to_bits().to_string(),
+                "sleepBits": p.sleep_hours.to_bits().to_string(),
+            })
+        })
+        .collect();
+    let mut req = serde_json::json!({
+        "op": "owntracksConfig",
+        "history": wire_history,
+        "places": wire_places,
+        "manualHoldActive": manual_hold_active,
+    });
+    if let Some(p) = prev_profile {
+        req["prevProfile"] = serde_json::json!(p);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(OwntracksConfig {
+        profile: w.profile,
+        monitoring: w.monitoring,
+        move_mode_locator_interval: w.interval,
+    })
+}
+
+/// `Verified.Owntracks.HISTORY_MAX_AGE_SEC`.
+pub fn owntracks_history_max_age_sec() -> i64 {
+    600
+}

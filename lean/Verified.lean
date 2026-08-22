@@ -11,6 +11,7 @@ import Verified.LogLine
 import Verified.PhoneTrackPrefs
 import Verified.Login
 import Verified.Recovery
+import Verified.Owntracks
 import Verified.Session
 import Verified.Share
 import Verified.VelocityCache

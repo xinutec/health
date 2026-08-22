@@ -50,6 +50,9 @@ pub struct AppState {
     /// — PKCE exists so that whoever redeems the code proves they started the
     /// flow.
     pub oauth_states: Arc<crate::location_cache::LocationCache<(String, String)>>,
+    /// Per-device Owntracks proxy state: recent fixes, last pushed profile,
+    /// manual-hold deadline.
+    pub owntracks: Arc<crate::routes::owntracks::ProxyState>,
     pub http: reqwest::Client,
 }
 
@@ -64,6 +67,7 @@ impl AppState {
             tail_points: Arc::new(crate::location_cache::LocationCache::new()),
             flows: Arc::new(crate::routes::nextcloud_connect::PendingFlows::new()),
             oauth_states: Arc::new(crate::location_cache::LocationCache::new()),
+            owntracks: Arc::new(crate::routes::owntracks::ProxyState::new()),
         }
     }
 }
