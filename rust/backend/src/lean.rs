@@ -679,6 +679,53 @@ pub fn shareable_date_range(today: &str, days_back: i64) -> Result<Option<(Strin
     Ok(w.value.map(|r| (r.from, r.to)))
 }
 
+/// `Verified.ApiWindow.validateDays` — the `days` query parameter.
+///
+/// ⚠ `None` OUT MEANS REJECT, not "use the default". Zod's `.min`/`.max`
+/// validate rather than clamp, so `days=400` is a 400 and not a narrowed window.
+///
+/// ⚠ `raw` must be what JS `Number(...)` makes of the parameter: `None` ONLY
+/// when it was absent, `Some(NaN)` when present and unparseable, and
+/// `Some(0.0)` for the empty string. Mapping `""` to `None` turns a rejection
+/// into a 30-day read.
+pub fn validate_days(raw: Option<f64>) -> Result<Option<i64>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<i64>,
+    }
+    // NaN cannot cross JSON, so it is flagged rather than dropped — a dropped
+    // NaN would arrive as absent and become the default.
+    let is_nan = raw.is_some_and(f64::is_nan);
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "validateDays",
+        "days": raw.filter(|v| !v.is_nan()),
+        "daysNaN": is_nan,
+    }))?;
+    Ok(w.value)
+}
+
+/// `Verified.ApiWindow.earliestVisible` — the earliest date a request may see.
+///
+/// ⚠ `share_from` is `None` for the OWNER. Passing an empty string instead
+/// would compare against it and give the same answer by luck rather than by
+/// rule.
+pub fn earliest_visible(
+    today: &str,
+    days: i64,
+    share_from: Option<&str>,
+) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<String>,
+    }
+    let mut req = serde_json::json!({ "op": "earliestVisible", "today": today, "days": days });
+    if let Some(f) = share_from {
+        req["shareFrom"] = serde_json::json!(f);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(w.value)
+}
+
 /// The session lifetime, and the cookie spelling that must agree with it.
 pub struct SessionPolicy {
     pub ttl_ms: i64,

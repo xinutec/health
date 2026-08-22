@@ -136,6 +136,33 @@ aliased? false
 unmatched segment aliased? true
 empty-routes segment aliased? true
 
+### apiwindow-refs.mts
+--- sinceDate(today, days) ---
+sinceDate(2026-08-22, 1): "2026-08-21"
+sinceDate(2026-08-22, 30): "2026-07-23"
+sinceDate(2026-08-22, 365): "2025-08-22"
+sinceDate(2026-03-01, 1): "2026-02-28"
+sinceDate(2026-01-01, 1): "2025-12-31"
+sinceDate(2026-03-01, 60): "2025-12-31"
+sinceDate(2024-03-01, 1): "2024-02-29"
+sinceDate(2024-03-01, 2): "2024-02-28"
+--- sinceDateForSession: the share window CAPS the read ---
+days=1: owner=2026-08-21 viewer=2026-08-21 viewerIsLater=true
+days=7: owner=2026-08-15 viewer=2026-08-15 viewerIsLater=true
+days=30: owner=2026-07-23 viewer=2026-08-11 viewerIsLater=true
+days=365: owner=2025-08-22 viewer=2026-08-11 viewerIsLater=true
+--- daysParam: what does it do with each input? ---
+daysParam.parse(undefined): 30
+daysParam.parse("7"): 7
+daysParam.parse("1"): 1
+daysParam.parse("365"): 365
+daysParam.parse("0"): THROWS (too_small)
+daysParam.parse("-1"): THROWS (too_small)
+daysParam.parse("366"): THROWS (too_big)
+daysParam.parse("7.5"): THROWS (invalid_type)
+daysParam.parse("abc"): THROWS (invalid_type)
+daysParam.parse(""): THROWS (too_small)
+
 ### apply-dwell-refs.mts
 -- constants
 MIN_ESTABLISH_DAYS 5

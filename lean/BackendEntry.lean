@@ -4,6 +4,7 @@ import Verified.Civil
 import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
+import Verified.ApiWindow
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -317,6 +318,36 @@ def dispatch (j : Json) : Json :=
   -- must treat that as "share disabled" rather than "no window". The TypeScript
   -- produced `NaN`-shaped garbage for the second, which formatted as
   -- "NaN-NaN-NaN" and reached the database as a string.
+  -- The multi-day API window (#982).
+  --
+  -- ⚠ `days` is VALIDATED, not clamped: `null` out means REJECT the request.
+  -- Answering a `days=400` with a narrowed window would tell the caller nothing
+  -- about having asked for something impossible.
+  --
+  -- ⚠ `days` arrives as what JS `Number(...)` made of the parameter — ABSENT is
+  -- `null`, and a present-but-unparseable value is NaN, which JSON cannot carry.
+  -- The host sends `daysNaN: true` for that case rather than dropping it, since
+  -- a dropped NaN would read as absent and become the default.
+  | some "validateDays" =>
+    let raw : Option Float :=
+      if (j.getObjVal? "daysNaN" >>= (·.getBool?)).toOption == some true then some (0.0 / 0.0)
+      else match j.getObjVal? "days" with
+        | .error _ => none
+        | .ok v => if v.isNull then none else (v.getNum?.toOption.map (·.toFloat))
+    match Verified.ApiWindow.validateDays raw with
+    | none => Json.mkObj [("value", Json.null)]
+    | some n => Json.mkObj [("value", Json.num n)]
+  -- ⚠ `shareFrom` absent = the OWNER, who is bounded only by `days`. A host that
+  -- sent the owner an empty string here would compare against it and win, which
+  -- is the same answer by luck rather than by rule.
+  | some "earliestVisible" =>
+    match str? j "today", int? j "days" with
+    | some t, some d =>
+      let shareFrom := str? j "shareFrom"
+      match Verified.ApiWindow.earliestVisible t d shareFrom with
+      | none => Json.mkObj [("value", Json.null)]
+      | some s => Json.mkObj [("value", Json.str s)]
+    | _, _ => err "earliestVisible: today, days required"
   | some "shareableDateRange" =>
     match str? j "today", int? j "daysBack" with
     | some t, some d =>
