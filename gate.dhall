@@ -345,6 +345,12 @@ in  { name = "health"
             local `lake` tree, where this builds both halves inside a
             sandboxed derivation with vendored crates. Either can break
             without the other.
+
+            `.#backend` joined it when the image started carrying the HTTP
+            server (#982). Same argument once more, and it is the derivation
+            that will replace `node dist/server.js`: shipping a server nobody
+            built inside the sandbox is exactly the gap this check exists to
+            close.
         -}
         G.Check::{
         , name = "the verified CLI packages (what the production image consumes)"
@@ -355,6 +361,7 @@ in  { name = "health"
             , "--no-link"
             , ".#verified-cli"
             , ".#day-shell"
+            , ".#backend"
             ]
         , timeout_s = 3600
         }

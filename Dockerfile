@@ -21,10 +21,12 @@ COPY rust/ rust/
 # so asking the question once is both correct and cheaper.
 RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli && \
     nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/ds .#day-shell && \
+    nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/be .#backend && \
     mkdir -p /export/nix/store /export/bin && \
-    cp -a $(nix-store -qR /tmp/vc /tmp/ds) /export/nix/store/ && \
+    cp -a $(nix-store -qR /tmp/vc /tmp/ds /tmp/be) /export/nix/store/ && \
     install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli && \
-    install -m755 /tmp/ds/bin/day-shell /export/bin/day-shell
+    install -m755 /tmp/ds/bin/day-shell /export/bin/day-shell && \
+    install -m755 /tmp/be/bin/backend /export/bin/backend
 
 FROM node:24-alpine AS backend-build
 WORKDIR /app
@@ -65,6 +67,12 @@ ENV LEAN_CLI=/app/lean/verified_cli
 # the `day` mode only. See `cliPath()` in src/lean/lean-day.ts.
 COPY --from=lean-build /export/bin/day-shell lean/day-shell
 ENV LEAN_DAY_HOST=/app/lean/day-shell
+# The Rust+Lean HTTP server (#982). Shipped ALONGSIDE `dist/server.js` rather
+# than replacing it: which one runs is the k8s `command`, so a rollback is a
+# manifest change and a restart rather than an image rebuild. That matters
+# because the image is the slow half — CI builds it on every push to main, and
+# a bad cutover should not have to wait for one.
+COPY --from=lean-build /export/bin/backend bin/backend
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale
 # client/deploy is visible at a glance. Injected by .github/workflows/docker.yml.
 ARG GIT_SHA=dev

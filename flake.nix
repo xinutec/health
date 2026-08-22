@@ -101,6 +101,48 @@
             cp rust/target/release/day-shell $out/bin/
           '';
         });
+
+        # The HTTP server (rust/backend) — what replaces `node dist/server.js`
+        # in the production image (#982).
+        #
+        # ⚠ A SEPARATE derivation from `day-shell` even though both link Lean
+        # statics, because they need DIFFERENT ones: day-shell serves the `day`
+        # mode from `DayEntry`, while the backend answers every route and needs
+        # `BackendEntry` and `ServeEntry` too. Building both in one derivation
+        # would make each image rebuild pay for the other's compile.
+        #
+        # ⚠ The Lean statics are built HERE rather than reused from
+        # `verified-cli`, for the same reason day-shell does it: `build.rs`
+        # reads its link line out of the `.rsp` lake wrote in this tree, and
+        # that file is not exported by any other derivation.
+        backend = pkgs.stdenv.mkDerivation (finalAttrs: {
+          name = "health-backend";
+          src = ./.;
+          cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
+            src = ./rust;
+            hash = "sha256-SrSqMa+lWep+VYmybTQKZj/A1TUiCG7ikmA2K7rHJTE=";
+          };
+          cargoRoot = "rust";
+          nativeBuildInputs = [
+            pkgs.lean4
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rustPlatform.cargoSetupHook
+          ];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            # ⚠ ALL FOUR statics. The backend calls ops in `BackendEntry` and
+            # modes in `ServeEntry` as well as the day fold, and a missing one
+            # is a LINK error rather than a runtime miss — which is the good
+            # direction, but only because they are all named here.
+            (cd lean && lake build verified_cli BackendEntry:static ServeEntry:static DayEntry:static Verified:static)
+            (cd rust && cargo build --release --offline -p backend)
+          '';
+          installPhase = ''
+            mkdir -p $out/bin
+            cp rust/target/release/backend $out/bin/
+          '';
+        });
       });
     };
 }
