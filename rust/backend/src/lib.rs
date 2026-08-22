@@ -59,6 +59,7 @@ pub mod fold_payload;
 pub mod google;
 pub mod head;
 pub mod lean;
+pub mod mirror_source;
 pub mod nextcloud;
 pub mod osm_host;
 pub mod routes;

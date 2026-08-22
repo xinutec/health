@@ -22,6 +22,7 @@
 //! its writes compared with the TypeScript's.
 
 use anyhow::{Context, Result};
+use backend::fold_converge::Answerer;
 use backend::{
     classification_inputs, config::Config, db, fitbit, lean, routes, state::AppState, sync_state,
 };
@@ -90,26 +91,33 @@ async fn main() -> Result<()> {
             };
             day(fixture)
         }
-        "day-live" => {
+        "mirror-check" => {
+            let [fixture] = flags else {
+                eprintln!("usage: backend mirror-check <fixture.json>");
+                std::process::exit(64);
+            };
+            mirror_check(fixture).await
+        }
+        sub @ ("day-live" | "day-mirror") => {
             let (user, date, tz) = match flags {
                 [user, date] => (user, date, None),
                 [user, date, tz] => (user, date, Some(tz.as_str())),
                 _ => {
-                    eprintln!("usage: backend day-live <user> <date> [display-tz]");
+                    eprintln!("usage: backend {sub} <user> <date> [display-tz]");
                     std::process::exit(64);
                 }
             };
-            day_live(user, date, tz).await
+            day_live(user, date, tz, sub == "day-mirror").await
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day or day-live"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror or mirror-check"
             );
             std::process::exit(64);
         }
@@ -713,22 +721,240 @@ fn day(fixture: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run a day from the PRODUCTION database, and name every lookup it needs.
+/// Does the LIVE MIRROR answer a golden day's OSM questions the way its captured
+/// row set does?
+///
+/// # ⚠ Why a count of answered keys is not evidence
+///
+/// `day-mirror` reports how many keys the mirror answered, and every failure
+/// mode this source has produces an ANSWER rather than a decline: a swapped
+/// `lat`/`lon` in the box WKT selects rows from the wrong hemisphere, a
+/// misspelled `feature_type` selects none, and both come back as "no ways within
+/// 50 m" — well-formed, plausible, and wrong. The coverage gate does not catch
+/// either, because coverage is about the AREA and these are about the query.
+///
+/// So this asks both sources the same questions. The fixture's row set was
+/// extracted from this same mirror, so agreement is the expected result and a
+/// disagreement is either a real defect or the mirror having moved since the
+/// capture — which the FIELDS that moved distinguish, not the count.
+///
+/// Run against production on 2026-08-22, and this is the baseline a future run
+/// compares against:
+///
+///     2026-08-13   136 questions   135 agree   0 declined
+///                  nearbyWays: 1 differ (57 -> 58), a row the mirror has gained
+///     2026-04-29   120 questions   117 agree   0 declined
+///                  nearbyWays: 3 differ, all same-width, all `name`/`subtype`
+///
+/// ⚠ The older day differs MORE, and no difference anywhere moved `distanceM`.
+/// Both facts are what OSM drift looks like and neither is what a defect in this
+/// source would look like: a wrong box or a wrong bucket answers EMPTY, and a
+/// coordinate read by the wrong path moves every distance derived from it.
+///
+/// ⚠ REPORTS COUNTS, NEVER CONTENT. The answers carry street and venue names at
+/// coordinates the user stood on; both health repos are public, and this runs
+/// with a terminal open.
+async fn mirror_check(fixture: &str) -> Result<()> {
+    /// The tables a row source can answer. `nearbyWays` spells no radius in its
+    /// key — the answerer uses the default.
+    const TABLES: [&str; 3] = ["nearbyWays", "nearbyStations", "linesAtPoint"];
+
+    let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {fixture}"))?;
+    let inputs = parsed.get("inputs").context("the fixture has no inputs")?;
+    let rows = inputs
+        .get("osmRowSet")
+        .context("the fixture has no osmRowSet")?;
+    let trace = inputs
+        .get("osmTrace")
+        .context("the fixture has no osmTrace")?;
+
+    // The questions: every coordinate the day actually asked about, spelled the
+    // way the fold spells a miss — bit patterns, not decimals.
+    let mut asks: Vec<backend::lean::Miss> = Vec::new();
+    for table in TABLES {
+        let Some(keys) = trace.get(table).and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        for k in keys.keys() {
+            let p: Vec<&str> = k.split('|').collect();
+            let (Some(Ok(la)), Some(Ok(lo))) = (
+                p.first().map(|s| s.parse::<f64>()),
+                p.get(1).map(|s| s.parse::<f64>()),
+            ) else {
+                continue;
+            };
+            let key = match p.get(2).and_then(|s| s.parse::<f64>().ok()) {
+                Some(r) => format!("{}|{}|{}", la.to_bits(), lo.to_bits(), r.to_bits()),
+                None => format!("{}|{}", la.to_bits(), lo.to_bits()),
+            };
+            asks.push(backend::lean::Miss {
+                what: table.to_string(),
+                key,
+            });
+        }
+    }
+    eprintln!("{} question(s) from the fixture's trace", asks.len());
+
+    // The offline arm: the rows the fixture carries.
+    let mut offline = backend::rowset_answerer::RowSetAnswerer::new(rows)?;
+    let from_rows: Vec<Option<serde_json::Value>> = asks
+        .iter()
+        .map(|m| Ok(offline.answer(m)?.map(|(_, v)| v)))
+        .collect::<Result<_>>()?;
+
+    // The live arm.
+    let cfg = Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("the system clock is before the epoch")?
+        .as_millis() as i64;
+    let questions = asks.clone();
+    let from_mirror =
+        backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |answerer| {
+            questions
+                .iter()
+                .map(|m| Ok(answerer.answer(m)?.map(|(_, v)| v)))
+                .collect::<Result<Vec<_>>>()
+        })
+        .await?;
+    pool.close().await;
+
+    /// Answers are `[lat, lon, rows]` or `[lat, lon, radius, rows]` — the row
+    /// list is the last element either way.
+    fn rows_of(v: &serde_json::Value) -> &[serde_json::Value] {
+        v.as_array()
+            .and_then(|a| a.last())
+            .and_then(serde_json::Value::as_array)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// WHICH FIELDS moved between two answers of the same width.
+    ///
+    /// ⚠ The classification is the point, not the count. Two explanations fit a
+    /// same-width difference and they call for opposite work:
+    ///
+    ///   * only `distanceM` — the two arms read the stored coordinate by
+    ///     different paths. The capture came through the TypeScript driver's
+    ///     TEXT rendering of a `DOUBLE`; this reads `ST_X`/`ST_Y` in the binary
+    ///     protocol. A coordinate whose text form does not round-trip differs in
+    ///     the last ULP and moves every distance computed from it. That would be
+    ///     a defect in THIS port.
+    ///   * `name`, `subtype` or `osmId` — OSM itself moved since the capture.
+    ///     Nothing to fix; the fixture is a photograph of an older mirror.
+    fn moved_fields(want: &serde_json::Value, got: &serde_json::Value) -> Vec<String> {
+        let mut fields = std::collections::BTreeSet::new();
+        for (w, g) in rows_of(want).iter().zip(rows_of(got)) {
+            match (w.as_object(), g.as_object()) {
+                (Some(w), Some(g)) => {
+                    for k in w.keys().chain(g.keys()) {
+                        if w.get(k) != g.get(k) {
+                            fields.insert(k.clone());
+                        }
+                    }
+                }
+                // `linesAtPoint` answers with bare strings.
+                _ if w != g => {
+                    fields.insert("<value>".to_string());
+                }
+                _ => {}
+            }
+        }
+        fields.into_iter().collect()
+    }
+
+    let mut agree = 0usize;
+    let mut declined = 0usize;
+    #[allow(clippy::type_complexity)]
+    let mut differ: std::collections::BTreeMap<&str, Vec<(usize, usize, Vec<String>)>> =
+        Default::default();
+    for ((m, want), got) in asks.iter().zip(&from_rows).zip(&from_mirror) {
+        match (want, got) {
+            (Some(w), Some(g)) if w == g => agree += 1,
+            // ⚠ A decline is NOT a difference to average away. It means the
+            // mirror has no coverage row for an area the capture had rows for,
+            // which is a finding about the mirror rather than about this port.
+            (_, None) => declined += 1,
+            (Some(w), Some(g)) => differ.entry(m.what.as_str()).or_default().push((
+                rows_of(w).len(),
+                rows_of(g).len(),
+                moved_fields(w, g),
+            )),
+            (None, Some(_)) => {
+                // The fixture could not answer and the mirror could. Nothing in
+                // these three tables should do this; count it as a difference so
+                // it cannot pass silently.
+                differ.entry(m.what.as_str()).or_default().push((
+                    0,
+                    1,
+                    vec!["<unanswerable offline>".into()],
+                ));
+            }
+        }
+    }
+
+    eprintln!("agree: {agree}   mirror declined: {declined}");
+    for (table, ds) in &differ {
+        // ⚠ COUNTS AND FIELD NAMES, never values: a value here is a street the
+        // user walked down.
+        let empties = ds.iter().filter(|(_, g, _)| *g == 0).count();
+        let widths = ds.iter().filter(|(w, g, _)| w != g).count();
+        eprintln!(
+            "  {table}: {} differ — {empties} where the MIRROR ANSWERED EMPTY, \
+             {widths} with a different row count",
+            ds.len()
+        );
+        for (w, g, fields) in ds.iter().take(12) {
+            eprintln!(
+                "      ({w} -> {g}) fields that moved: {}",
+                fields.join(", ")
+            );
+        }
+    }
+    if differ.is_empty() && declined == 0 {
+        eprintln!(
+            "the live mirror and the captured row set give the same answer to every question"
+        );
+    }
+    Ok(())
+}
+
+/// Run a day from the PRODUCTION database, either measuring the OSM gap or
+/// answering it from the mirror.
 ///
 /// The offline `day` proves the chain on a fixture, which carries an
 /// `osmRowSet` and an `osmTrace` the loader does not produce. Production has
-/// neither: `ClassificationInputs.osm` is an ADAPTER there, not data. So this
-/// walks with `RecordOnly`, which answers nothing, and the keys it reports are
-/// exactly what a live answerer has to supply.
+/// neither: `ClassificationInputs.osm` is an ADAPTER there, not data.
 ///
-/// That is a measurement, not a failure — `fold_converge`'s own note calls
-/// `RecordOnly` "how a day is MEASURED". The timeline it prints was built from
-/// DEFAULTS for every key listed, so it is not a day to judge; the key list is
-/// the output that means something.
+/// **`day-live`** walks with `RecordOnly`, which answers nothing. The keys it
+/// reports are exactly what a live answerer has to supply — a measurement, not
+/// a failure; `fold_converge`'s own note calls `RecordOnly` "how a day is
+/// MEASURED". ⚠ Its timeline was built from DEFAULTS for every key listed, so
+/// it is not a day to judge.
+///
+/// **`day-mirror`** walks with [`mirror_source::MirrorSource`], which answers
+/// what the local OSM mirror covers. What it still reports as unanswerable is
+/// the residue: areas nobody has fetched, plus the three tables no row set can
+/// answer (`reverseGeocode`, `nearbyLandmarks`, `transitStops` — see
+/// `rowset_answerer`'s catch-all).
+///
+/// ⚠ Its timeline is NOT the timeline production serves and is not a re-bless
+/// candidate. The mirror source hands Lean every candidate in the box rather
+/// than MariaDB's `ORDER BY ST_Distance … LIMIT 50`, which is the point (#413)
+/// and means the two disagree by construction.
 ///
 /// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
 /// /tmp, never into the repo: both health repos are public.
-async fn day_live(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> {
+async fn day_live(
+    user: &str,
+    date: &str,
+    display_tz: Option<&str>,
+    from_mirror: bool,
+) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -756,7 +982,6 @@ async fn day_live(user: &str, date: &str, display_tz: Option<&str>) -> Result<()
         Some(&home_tz),
     )
     .await?;
-    pool.close().await;
 
     let cap = backend::head::capture(&inputs, date, user)?;
     let segs = cap
@@ -769,26 +994,60 @@ async fn day_live(user: &str, date: &str, display_tz: Option<&str>) -> Result<()
         .map_or(0, Vec::len);
     eprintln!("head: {pts} smoothed point(s), {segs} segment(s)");
 
-    // No trace: production has no recording to seed the tables from, and
-    // passing one would answer questions this measurement exists to count.
-    let r = backend::fold_converge::converge(
-        &cap,
-        &inputs,
-        None,
-        &mut backend::fold_converge::RecordOnly,
-    )?;
+    let r = if from_mirror {
+        // ⚠ The clock is read HERE and passed down. Lean's coverage rule takes
+        // `nowMs` as an argument so the decision does not depend on when it was
+        // asked, and a walk whose staleness cutoff moves mid-day would answer
+        // two identical questions differently.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("the system clock is before the epoch")?
+            .as_millis() as i64;
+        backend::mirror_source::converge_from_mirror(
+            pool.clone(),
+            cap.clone(),
+            inputs.clone(),
+            now_ms,
+        )
+        .await?
+    } else {
+        // No trace: production has no recording to seed the tables from, and
+        // passing one would answer questions this measurement exists to count.
+        backend::fold_converge::converge(
+            &cap,
+            &inputs,
+            None,
+            &mut backend::fold_converge::RecordOnly,
+        )?
+    };
+    pool.close().await;
 
     let mut by_table: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for m in &r.unanswerable {
         *by_table.entry(m.what.as_str()).or_default() += 1;
     }
     eprintln!(
-        "fold: {} round(s); {} key(s) a live answerer must supply",
+        "fold: {} round(s); {} key(s) answered; {} key(s) a live answerer must supply",
         r.rounds,
+        r.answered,
         r.unanswerable.len()
     );
     for (table, n) in &by_table {
         eprintln!("  {table}: {n}");
+    }
+    // ⚠ `bestPlace` has an EXPECTED decline that is not a gap, and the count
+    // alone cannot tell it from one. The fold asks a stay's naming question once
+    // before `tzAt` has resolved its zone and again after; the blank spelling is
+    // a question asked too early, and answering it with UTC would put a second
+    // row on the table for the same stay keyed differently. Splitting it here is
+    // what makes "4 unanswered" readable as "4 early asks, none missed".
+    let early = r
+        .unanswerable
+        .iter()
+        .filter(|m| m.what == "bestPlace" && m.key.split('|').nth(4).is_none_or(str::is_empty))
+        .count();
+    if by_table.contains_key("bestPlace") {
+        eprintln!("  ...of which bestPlace asked before its timezone resolved: {early}");
     }
     println!("{}", r.out);
     Ok(())
