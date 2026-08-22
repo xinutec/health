@@ -10,6 +10,7 @@ import Verified.Connection
 import Verified.LogLine
 import Verified.PhoneTrackPrefs
 import Verified.Login
+import Verified.Recovery
 import Verified.Session
 import Verified.Share
 import Verified.VelocityCache

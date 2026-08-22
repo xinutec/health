@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::error::AppResult;
 use crate::state::AppState;
 
+pub mod internal;
 pub mod locations;
 pub mod logging;
 pub mod me;
@@ -142,6 +143,21 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/callback", get(oauth::callback))
         .route("/logout", axum::routing::post(oauth::logout))
         .merge(fitbit)
+        // ⚠ Service-to-service, gated by a shared secret rather than a session.
+        // An empty token list rejects everything, which is the default.
+        //
+        // ⚠ Composed HERE rather than behind a `router()` in that module, so
+        // `DL-WIRE-ROUTE-DRIFT` can resolve the route table statically. A route
+        // table nobody can check is how a path typo becomes a 404 in
+        // production.
+        .nest(
+            "/internal",
+            Router::new()
+                .route("/places", get(internal::places))
+                .route("/place/current", get(internal::place_current))
+                .route("/recovery", get(internal::recovery))
+                .route("/recovery/history", get(internal::recovery_history)),
+        )
         .nest("/api", api)
         .with_state(state)
 }

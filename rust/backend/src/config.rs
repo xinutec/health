@@ -38,6 +38,18 @@ pub struct Config {
     /// source is spelled. Defaulting it to the production URL would make an
     /// unconfigured job quietly reach for the real Nextcloud.
     pub nextcloud_base_url: Option<String>,
+    /// Shared secrets for `/internal/*`, consumed by the coach app.
+    ///
+    /// ⚠ EMPTY DISABLES THE INTERNAL API ENTIRELY, and that is the default. A
+    /// list that fell back to "allow" when unset would expose another user's
+    /// mined places to anyone who could reach the port.
+    pub service_tokens: Vec<String>,
+    /// PhoneTrack session tokens the owntracks proxy will forward.
+    ///
+    /// ⚠ Same shape and same default: unset means forward nothing. Rejecting
+    /// before touching upstream protects Nextcloud's brute-force counters and
+    /// this process's own state maps from attacker-controlled growth.
+    pub owntracks_tokens: Vec<String>,
     /// Where the dashboard is served from, for building share URLs.
     ///
     /// ⚠ Has a DEFAULT rather than being an Option, matching `src/config.ts`.
@@ -132,6 +144,22 @@ fn with_default(key: &str, default: &str) -> String {
     }
 }
 
+/// A comma-separated secret list. Absent or empty yields NO tokens, which the
+/// callers read as "this surface is off".
+///
+/// ⚠ Blank entries are dropped rather than kept as empty strings. A stray comma
+/// would otherwise put `""` in the allowlist, and a request with an empty token
+/// header would match it.
+fn token_list(key: &str) -> Vec<String> {
+    std::env::var(key)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// An optional variable with no default. Empty reads as absent, as above.
 fn optional(key: &str) -> Option<String> {
     match std::env::var(key) {
@@ -163,6 +191,8 @@ impl Config {
                 client_secret: String::new(),
             },
             nextcloud_base_url: None,
+            service_tokens: Vec::new(),
+            owntracks_tokens: Vec::new(),
             public_base_url: "https://health.xinutec.org".to_string(),
             session_secret: None,
         }
@@ -193,6 +223,8 @@ impl Config {
                 client_secret: required("FITBIT_CLIENT_SECRET")?,
             },
             nextcloud_base_url: optional("NC_BASE_URL"),
+            service_tokens: token_list("SERVICE_TOKEN"),
+            owntracks_tokens: token_list("OWNTRACKS_ALLOWED_TOKENS"),
             public_base_url: with_default("PUBLIC_BASE_URL", "https://health.xinutec.org"),
             session_secret: optional("SESSION_SECRET"),
         })

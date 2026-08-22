@@ -1374,3 +1374,226 @@ pub fn pending_ttl_ms() -> Result<i64> {
     let w: Wire = call_json(&serde_json::json!({ "op": "pendingTtlMs" }))?;
     Ok(w.value)
 }
+
+/// One metric's latest reading and the baseline behind it.
+pub struct Stat {
+    pub latest: f64,
+    pub mean: f64,
+    pub sd: f64,
+    pub n: i64,
+}
+
+/// The raw recovery picture as of one morning.
+pub struct RecoveryAsOf {
+    pub as_of: String,
+    pub sleep_hours: Option<f64>,
+    pub hrv: Option<Stat>,
+    pub resting_hr: Option<Stat>,
+}
+
+/// A `Float` that crossed as its IEEE-754 bit pattern.
+///
+/// ⚠ The pattern is a decimal STRING, not a number: it reaches 2^64, well past
+/// the 2^53 JSON integers are exact to, so a bare number would be re-rounded on
+/// the way through. See `ServeEntry`'s float-bit-transport note.
+fn f64_from_bits_str(s: &str) -> Result<f64> {
+    let bits: u64 = s
+        .parse()
+        .with_context(|| format!("{s:?} is not an IEEE-754 bit pattern"))?;
+    Ok(f64::from_bits(bits))
+}
+
+/// `Verified.Recovery.recoveryAsOf` — three streams, judged as of `day`.
+///
+/// ⚠ Answers numbers only. Composing a readiness score is the CALLER's job and
+/// must stay there, or the two apps drift on what a bad day means.
+pub fn recovery_as_of(
+    day: &str,
+    hrv: &[(String, Option<f64>)],
+    rhr: &[(String, Option<f64>)],
+    sleep: &[(String, Option<f64>)],
+) -> Result<RecoveryAsOf> {
+    #[derive(Deserialize)]
+    struct WireStat {
+        #[serde(rename = "latestBits")]
+        latest_bits: String,
+        #[serde(rename = "meanBits")]
+        mean_bits: String,
+        #[serde(rename = "sdBits")]
+        sd_bits: String,
+        n: i64,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        #[serde(rename = "asOf")]
+        as_of: String,
+        #[serde(rename = "sleepHoursBits")]
+        sleep_hours_bits: Option<String>,
+        hrv: Option<WireStat>,
+        #[serde(rename = "restingHr")]
+        resting_hr: Option<WireStat>,
+    }
+
+    let ser = |xs: &[(String, Option<f64>)]| -> Vec<serde_json::Value> {
+        xs.iter()
+            .map(|(d, v)| serde_json::json!({ "date": d, "value": v }))
+            .collect()
+    };
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "recoveryAsOf", "day": day,
+        "hrv": ser(hrv), "rhr": ser(rhr), "sleep": ser(sleep),
+    }))?;
+
+    let stat = |s: Option<WireStat>| -> Result<Option<Stat>> {
+        match s {
+            None => Ok(None),
+            Some(s) => Ok(Some(Stat {
+                latest: f64_from_bits_str(&s.latest_bits)?,
+                mean: f64_from_bits_str(&s.mean_bits)?,
+                sd: f64_from_bits_str(&s.sd_bits)?,
+                n: s.n,
+            })),
+        }
+    };
+    Ok(RecoveryAsOf {
+        as_of: w.as_of,
+        sleep_hours: w
+            .sleep_hours_bits
+            .as_deref()
+            .map(f64_from_bits_str)
+            .transpose()?,
+        hrv: stat(w.hrv)?,
+        resting_hr: stat(w.resting_hr)?,
+    })
+}
+
+/// `Verified.Recovery.spanIsAnswerable` — is this range answerable in one call?
+pub fn recovery_span_ok(from: &str, to: &str) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: bool,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "recoverySpan", "from": from, "to": to }))?;
+    Ok(w.value)
+}
+
+/// How the place picker renders one mined place.
+pub struct PlaceProjection {
+    pub label: String,
+    pub named: bool,
+    pub category: Option<String>,
+}
+
+/// `placeLabel` / `isNamedPlace` / `categoryOfSubtype`, in one call.
+///
+/// ⚠ `label` and `named` answer DIFFERENT questions. A bare "Stay" has a label
+/// so the row renders, and is not `named` so a picker can hide it — several
+/// Stays are indistinguishable to a person choosing between them.
+pub fn place_projection(
+    display_name: Option<&str>,
+    amenity_label: Option<&str>,
+    amenity_kind: Option<&str>,
+) -> Result<PlaceProjection> {
+    #[derive(Deserialize)]
+    struct Wire {
+        label: String,
+        named: bool,
+        category: Option<String>,
+    }
+    let mut req = serde_json::json!({ "op": "placeProjection" });
+    if let Some(v) = display_name {
+        req["displayName"] = serde_json::json!(v);
+    }
+    if let Some(v) = amenity_label {
+        req["amenityLabel"] = serde_json::json!(v);
+    }
+    if let Some(v) = amenity_kind {
+        req["amenityKind"] = serde_json::json!(v);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(PlaceProjection {
+        label: w.label,
+        named: w.named,
+        category: w.category,
+    })
+}
+
+/// A focus place, as the presence selector reads it.
+pub struct PresencePlace {
+    pub id: i64,
+    pub display_name: Option<String>,
+    pub amenity_label: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// The place the user is standing in.
+pub struct CurrentPlace {
+    pub id: i64,
+    pub label: String,
+    pub display_name: Option<String>,
+    pub amenity_label: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+    pub distance_m: f64,
+}
+
+/// `Verified.Geo.CurrentPlace.pickCurrentPlace` — nearest within 100 m.
+///
+/// ⚠ Coordinates cross as IEEE-754 bit patterns: the seventh decimal of a fix
+/// moves which place wins, and a JSON number would be re-rounded on the way.
+pub fn pick_current_place(
+    lat: f64,
+    lon: f64,
+    places: &[PresencePlace],
+) -> Result<Option<CurrentPlace>> {
+    #[derive(Deserialize)]
+    struct Inner {
+        id: i64,
+        label: String,
+        #[serde(rename = "displayName")]
+        display_name: Option<String>,
+        #[serde(rename = "amenityLabel")]
+        amenity_label: Option<String>,
+        #[serde(rename = "centroidLatBits")]
+        lat_bits: String,
+        #[serde(rename = "centroidLonBits")]
+        lon_bits: String,
+        #[serde(rename = "distanceMBits")]
+        distance_bits: String,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<Inner>,
+    }
+    let wire_places: Vec<serde_json::Value> = places
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "displayName": p.display_name,
+                "amenityLabel": p.amenity_label,
+                "latBits": p.lat.to_bits().to_string(),
+                "lonBits": p.lon.to_bits().to_string(),
+            })
+        })
+        .collect();
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "pickCurrentPlace",
+        "latBits": lat.to_bits().to_string(),
+        "lonBits": lon.to_bits().to_string(),
+        "places": wire_places,
+    }))?;
+    Ok(match w.value {
+        None => None,
+        Some(i) => Some(CurrentPlace {
+            id: i.id,
+            label: i.label,
+            display_name: i.display_name,
+            amenity_label: i.amenity_label,
+            lat: f64_from_bits_str(&i.lat_bits)?,
+            lon: f64_from_bits_str(&i.lon_bits)?,
+            distance_m: f64_from_bits_str(&i.distance_bits)?,
+        }),
+    })
+}

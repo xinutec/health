@@ -11,6 +11,9 @@ import Verified.Connection
 import Verified.LogLine
 import Verified.PhoneTrackPrefs
 import Verified.Login
+import Verified.Recovery
+import Verified.Geo.CurrentPlace
+import Verified.Geo.VenuePrior
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -404,6 +407,109 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- The place picker's projection of one focus place (#982).
+  --
+  -- ⚠ `label` and `named` are DIFFERENT questions. A bare "Stay" gets a label
+  -- (so the row renders) but is not `named` (so a picker can hide it): several
+  -- Stays are indistinguishable to a person choosing one.
+  | some "placeProjection" =>
+    let dn := str? j "displayName"
+    let al := str? j "amenityLabel"
+    Json.mkObj
+      [ ("label", Json.str (Verified.Geo.CurrentPlace.placeLabel dn al))
+      , ("named", Json.bool (Verified.Geo.CurrentPlace.isNamedPlace dn al))
+      , ("category", match str? j "amenityKind" with
+          | none => Json.null
+          | some k => Json.str (Verified.Geo.VenuePrior.categoryOfSubtype k)) ]
+  -- Which mined place is the user standing in?
+  --
+  -- ⚠ NEAREST within the radius, not highest-ranked. Coordinates cross as
+  -- IEEE-754 bit patterns for the same reason the Kalman mode uses them: the
+  -- seventh decimal of a fix moves the answer.
+  | some "pickCurrentPlace" =>
+    match str? j "latBits", str? j "lonBits" with
+    | some la, some lo =>
+      let places : Array Verified.Geo.CurrentPlace.FocusPlaceForPresence :=
+        match j.getObjVal? "places" with
+        | .error _ => #[]
+        | .ok v =>
+          match v.getArr? with
+          | .error _ => #[]
+          | .ok arr => arr.filterMap fun e =>
+            match int? e "id", str? e "latBits", str? e "lonBits" with
+            | some i, some pla, some plo =>
+              some { id := i
+                   , displayName := str? e "displayName"
+                   , amenityLabel := str? e "amenityLabel"
+                   , centroidLat := Float.ofBits pla.toNat!.toUInt64
+                   , centroidLon := Float.ofBits plo.toNat!.toUInt64 }
+            | _, _, _ => none
+      match Verified.Geo.CurrentPlace.pickCurrentPlace
+              (Float.ofBits la.toNat!.toUInt64) (Float.ofBits lo.toNat!.toUInt64) places with
+      | none => Json.mkObj [("value", Json.null)]
+      | some cp =>
+        Json.mkObj
+          [ ("value", Json.mkObj
+              [ ("id", Json.num cp.id)
+              , ("label", Json.str cp.label)
+              , ("displayName", match cp.displayName with | none => Json.null | some d => Json.str d)
+              , ("amenityLabel", match cp.amenityLabel with | none => Json.null | some a => Json.str a)
+              , ("centroidLatBits", Json.str (toString cp.centroidLat.toBits))
+              , ("centroidLonBits", Json.str (toString cp.centroidLon.toBits))
+              , ("distanceMBits", Json.str (toString cp.distanceM.toBits)) ]) ]
+    | _, _ => err "pickCurrentPlace: latBits, lonBits required"
+  -- The raw recovery picture for one morning (#982).
+  --
+  -- ⚠ Answers NUMBERS, never a readiness score. Coach owns that judgment; two
+  -- apps scoring it would drift on what a bad day is.
+  --
+  -- ⚠ Floats cross as IEEE-754 BIT PATTERNS in decimal strings, the convention
+  -- `ServeEntry` documents: `Lean.JsonNumber` is a decimal that prints six
+  -- places, so a JSON number here would re-round every value on the way out.
+  | some "recoveryAsOf" =>
+    match str? j "day" with
+    | some day =>
+      let series (k : String) : List Verified.Recovery.Daily :=
+        match j.getObjVal? k with
+        | .error _ => []
+        | .ok v =>
+          match v.getArr? with
+          | .error _ => []
+          | .ok arr => arr.toList.filterMap fun e =>
+            match str? e "date" with
+            | none => none
+            | some dt =>
+              let val := match e.getObjVal? "value" with
+                | .error _ => none
+                | .ok x => if x.isNull then none else (x.getNum?.toOption.map (·.toFloat))
+              some { date := dt, value := val }
+      let statOf (k : String) : Option Verified.Recovery.Stat :=
+        Verified.Recovery.latestAndBaseline (Verified.Recovery.withinBaseline (series k) day)
+      let statJson (st : Option Verified.Recovery.Stat) : Json :=
+        match st with
+        | none => Json.null
+        | some v =>
+          Json.mkObj
+            [ ("latestBits", Json.str (toString v.latest.toBits))
+            , ("meanBits", Json.str (toString v.mean.toBits))
+            , ("sdBits", Json.str (toString v.sd.toBits))
+            , ("n", Json.num v.n) ]
+      let sleep := statOf "sleep"
+      Json.mkObj
+        [ ("asOf", Json.str day)
+        , ("sleepHoursBits", match sleep with
+            | none => Json.null
+            | some v => Json.str (toString v.latest.toBits))
+        , ("hrv", statJson (statOf "hrv"))
+        , ("restingHr", statJson (statOf "rhr")) ]
+    | none => err "recoveryAsOf: day required"
+  -- ⚠ A REFUSAL, not a truncation: answering a decade-wide request with 400
+  -- days would look complete to a caller who asked for more.
+  | some "recoverySpan" =>
+    match str? j "from", str? j "to" with
+    | some f, some t =>
+      Json.mkObj [("value", Json.bool (Verified.Recovery.spanIsAnswerable f t))]
+    | _, _ => err "recoverySpan: from, to required"
   -- The post-login redirect target (#982).
   --
   -- ⚠ An OPEN-REDIRECT guard. Anything not clearly an internal path answers
