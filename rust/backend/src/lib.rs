@@ -64,6 +64,8 @@ pub mod mirror_source;
 pub mod nextcloud;
 pub mod osm_host;
 pub mod routes;
+pub mod row_json;
+pub mod rows_check;
 pub mod rowset_answerer;
 pub mod state;
 pub mod sync_state;

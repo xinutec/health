@@ -162,6 +162,11 @@ daysParam.parse("366"): THROWS (too_big)
 daysParam.parse("7.5"): THROWS (invalid_type)
 daysParam.parse("abc"): THROWS (invalid_type)
 daysParam.parse(""): THROWS (too_small)
+daysParam.parse(" 7 "): 7
+daysParam.parse("0x10"): 16
+daysParam.parse("1e2"): 100
+daysParam.parse("7.0"): 7
+daysParam.parse("Infinity"): THROWS (invalid_type)
 
 ### apply-dwell-refs.mts
 -- constants
@@ -4747,6 +4752,30 @@ no ways = null
 300 m off-network @ radius 400 m detail = 515200000,-1300000,1000 515200000,-1292782,1030 515200000,-1285563,1060 515200000,-1278345,1090 515200000,-1271127,1117 515200539,-1271127,1120
 drift @ radius 3 m path = 515200000,-1297113,1000 515200539,-1244419,1390
 drift @ radius 3 m detail = 515200000,-1297113,1000 515200000,-1292782,1015 515200000,-1288451,1030 515200000,-1285563,1040 515200000,-1279789,1060 515200000,-1278345,1066 515200000,-1272570,1090 515200000,-1271127,1104 515200539,-1271127,1113 515200539,-1270405,1120 515200539,-1267517,1150 515200539,-1264630,1180 515200539,-1263908,1188 515200539,-1261743,1210 515200539,-1258855,1240 515200539,-1256690,1262 515200539,-1255968,1270 515200539,-1253081,1300 515200539,-1250193,1330 515200539,-1249472,1337 515200539,-1247306,1360 515200539,-1244419,1390
+
+### rowshape-refs.mts
+--- DATE: a plain date ships as a full midnight-UTC timestamp ---
+DATE 2026-8-22: "2026-08-22T00:00:00.000Z"
+DATE 2026-1-1: "2026-01-01T00:00:00.000Z"
+--- DATETIME/TIMESTAMP ---
+DATETIME 2026-8-21 23:15:0.0: "2026-08-21T23:15:00.000Z"
+DATETIME 2026-8-21 22:15:0.0: "2026-08-21T22:15:00.000Z"
+DATETIME 2026-8-22 16:30:59.0: "2026-08-22T16:30:59.000Z"
+DATETIME 2026-8-22 0:0:0.7: "2026-08-22T00:00:00.007Z"
+DATETIME 2026-8-22 0:0:0.70: "2026-08-22T00:00:00.070Z"
+DATETIME 2026-8-22 0:0:0.700: "2026-08-22T00:00:00.700Z"
+--- BIGINT: a JSON string, via the toJSON patch ---
+BIGINT 7159200472543411371: "7159200472543411371"
+BIGINT 0: "0"
+BIGINT 1: "1"
+BIGINT inside a row: {"log_id":"7159200472543411371"}
+--- TINYINT(1): a NUMBER on the wire, not a boolean ---
+as driver returns it: {"is_main_sleep":1}
+if a host decoded bool: {"is_main_sleep":true}
+--- ⚠ the same DATE column under a different process TZ ---
+TZ=UTC           local midnight 2026-08-22 renders "2026-08-22T00:00:00.000Z"
+TZ=Europe/London local midnight 2026-08-22 renders "2026-08-21T23:00:00.000Z"
+TZ=Asia/Tokyo    local midnight 2026-08-22 renders "2026-08-21T15:00:00.000Z"
 
 ### segments-refs.mts
 scoreWindow.stationary: [["stationary",30.649086792579197],["walking",0.004636346751094064],["cycling",0.004534455144287768],["driving",0.0015495242739136858],["train",3.187106149037157e-22],["plane",1.815217867109666e-88]]

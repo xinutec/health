@@ -5,8 +5,9 @@
  * Two rules sit in front of every multi-day API read, and one of them is a
  * security boundary rather than a convenience:
  *
- *   - `daysParam` coerces, clamps to [1, 365] and defaults to 30. A request
- *     asking for 100000 days must not become a full-history dump;
+ *   - `daysParam` coerces, REJECTS outside [1, 365] and defaults to 30. A
+ *     request asking for 100000 days is an error, not a full-history dump and
+ *     not a quietly narrowed window;
  *   - `sinceDateForSession` takes the LATER of `today - days` and the share
  *     window's `from`, so a share recipient's multi-day read is capped by their
  *     window NO MATTER how large `days` is. Getting the comparison backwards
@@ -63,7 +64,13 @@ console.log("--- daysParam: what does it do with each input? ---");
 {
 	const { z } = await import("zod");
 	const daysParam = z.coerce.number().int().min(1).max(365).default(30);
-	for (const raw of [undefined, "7", "1", "365", "0", "-1", "366", "7.5", "abc", ""] as const) {
+	// ⚠ The last five are the ones a host's own parser gets wrong. `Number` trims
+	// whitespace, maps "" to 0 (not NaN), reads HEX, and accepts an exponent and
+	// a trailing ".0" as integers — so `0x10` is a valid 16-day window.
+	for (const raw of [
+		undefined, "7", "1", "365", "0", "-1", "366", "7.5", "abc", "",
+		" 7 ", "0x10", "1e2", "7.0", "Infinity",
+	] as const) {
 		let out: string;
 		try {
 			out = JSON.stringify(daysParam.parse(raw));

@@ -102,6 +102,19 @@ async fn main() -> Result<()> {
             };
             velocity(user, date, tz).await
         }
+        "rows-check" => {
+            let [user, since, date] = flags else {
+                eprintln!("usage: backend rows-check <user> <since-date> <date>");
+                std::process::exit(64);
+            };
+            let cfg = Config::from_env().context("reading configuration")?;
+            let pool = db::connect(&cfg.db.url())
+                .await
+                .context("connecting to the database")?;
+            let r = backend::rows_check::run(&pool, user, since, date).await;
+            pool.close().await;
+            r
+        }
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -122,7 +135,7 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }

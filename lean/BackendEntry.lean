@@ -5,6 +5,7 @@ import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
 import Verified.ApiWindow
+import Verified.RowShape
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -115,11 +116,35 @@ private def weighIns? (j : Json) : Option (List Verified.Weight.Weigh) :=
       | some d, some g, some t => some ⟨d, g, t⟩
       | _, _, _ => none
 
+/-- The wire name of a [`Verified.RowShape.Shape`]. The host matches on these
+strings, so they are part of the interface and renaming one breaks it. -/
+private def shapeTag : Verified.RowShape.Shape → String
+  | .num => "num"
+  | .str => "str"
+  | .bigintStr => "bigintStr"
+  | .decimalStr => "decimalStr"
+  | .dateIso => "dateIso"
+  | .dateTimeIso => "dateTimeIso"
+
 private def weighJson (w : Verified.Weight.Weigh) : Json :=
   Json.mkObj
     [ ("date", Json.str w.date)
     , ("grams", Json.num w.grams)
     , ("ts", Json.str w.ts) ]
+
+/-- A required array of strings.
+
+⚠ A non-string element refuses the WHOLE array rather than being skipped. These
+are column type names, and a skipped one would shift every later column's shape
+onto the wrong column — a silent, well-formed, entirely wrong response. -/
+private def strs? (j : Json) (k : String) : Option (List String) :=
+  match j.getObjVal? k with
+  | .error _ => none
+  | .ok v =>
+    match v.getArr? with
+    | .error _ => none
+    | .ok arr => arr.toList.mapM fun e =>
+      match e.getStr? with | .ok x => some x | .error _ => none
 
 /-- A required array of integers. -/
 private def ints? (j : Json) (k : String) : Option (List Int) :=
@@ -361,6 +386,46 @@ def dispatch (j : Json) : Json :=
       [ ("value", Json.num Verified.Session.SESSION_TTL_MS)
       , ("cookieMaxAgeS", Json.num Verified.Session.SESSION_COOKIE_MAX_AGE_S)
       , ("cookieName", Json.str Verified.Session.SESSION_COOKIE_NAME) ]
+  -- The day after `date`, for the half-open `[date, nextDay)` bound a single-day
+  -- read uses.
+  --
+  -- ⚠ Through the civil calendar, so it rolls a month, a year and a leap day.
+  -- The TypeScript uses `Date.setDate`, which does too; a host adding 86400
+  -- seconds would agree with it on most days and not on a DST boundary.
+  | some "nextDay" =>
+    match str? j "date" with
+    | some d =>
+      match Verified.Civil.addDays d 1 with
+      | none => err s!"nextDay: {d} is not YYYY-MM-DD"
+      | some nx => Json.mkObj [("value", Json.str nx)]
+    | none => err "nextDay: date required"
+  -- The wire shape of a `selectAll()` row (#982).
+  --
+  -- ⚠ Asked ONCE PER COLUMN of a result set, not per value: the shape is a
+  -- property of the column type. `null` in the answer means REFUSE THE REQUEST,
+  -- not "render it as null" — an unmapped type is one whose rendering nobody
+  -- has checked, and guessing produces a well-formed response of the wrong type.
+  | some "rowShapes" =>
+    match strs? j "types" with
+    | some ts =>
+      Json.mkObj
+        [ ("value", Json.arr (ts.map fun t =>
+            match Verified.RowShape.shapeOf t with
+            | none => Json.null
+            | some s => Json.str (shapeTag s)).toArray) ]
+    | none => err "rowShapes: types required"
+  -- The ISO rendering of a date/datetime column.
+  --
+  -- ⚠ The HOST formats these on the serving path — a day of intraday heart rate
+  -- is thousands of values and a call each would be thousands of round trips.
+  -- This op exists so `tests/row_shape.rs` can hold the host's formatter against
+  -- this one over a corpus. If the two ever disagree, LEAN IS RIGHT.
+  | some "formatIso" =>
+    match ints? j "parts" with
+    | some [y, m, d] => Json.mkObj [("value", Json.str (Verified.RowShape.formatDateIso y m d))]
+    | some [y, m, d, h, mi, s, ms] =>
+      Json.mkObj [("value", Json.str (Verified.RowShape.formatDateTimeIso y m d h mi s ms))]
+    | _ => err "formatIso: parts must be [y,m,d] or [y,m,d,h,mi,s,ms]"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]

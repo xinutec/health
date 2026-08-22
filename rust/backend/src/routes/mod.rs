@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::error::AppResult;
 use crate::state::AppState;
 
+pub mod tables;
 pub mod velocity;
 
 pub fn router(state: AppState) -> Router {
@@ -52,6 +53,19 @@ pub fn router(state: AppState) -> Router {
     // invariant has a test before the route that needs it exists.
     let api = Router::new()
         .route("/velocity", get(velocity::handler))
+        // The ten table reads. Every one of these is inside the authenticated
+        // group; a share recipient reaches them too, and what they may see is
+        // capped per endpoint rather than here (see `routes::tables`).
+        .route("/activity", get(tables::activity))
+        .route("/sleep", get(tables::sleep))
+        .route("/sleep/stages", get(tables::sleep_stages))
+        .route("/heartrate/zones", get(tables::heartrate_zones))
+        .route("/heartrate/intraday", get(tables::heartrate_intraday))
+        .route("/body", get(tables::body))
+        .route("/spo2", get(tables::spo2))
+        .route("/hrv", get(tables::hrv))
+        .route("/breathing", get(tables::breathing))
+        .route("/temperature", get(tables::temperature))
         .layer(axum::middleware::from_fn(
             crate::auth::middleware::require_may_proceed,
         ))

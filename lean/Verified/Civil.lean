@@ -73,7 +73,7 @@ def monthLength (y : Int) (m : Int) : Int :=
   else 31
 
 /-- Two digits, zero-padded — the `YYYY-MM-DD` component format. -/
-private def pad2 (n : Int) : String :=
+def pad2 (n : Int) : String :=
   let s := toString n
   if s.length ≥ 2 then s else "0" ++ s
 
@@ -81,7 +81,7 @@ private def pad2 (n : Int) : String :=
 rather than truncated: this app has no such dates, and silently producing a
 5-character "year" that later parses as something else is worse than a string
 that visibly is not a date. -/
-private def pad4 (n : Int) : String :=
+def pad4 (n : Int) : String :=
   let s := toString n
   if s.length ≥ 4 then s else String.ofList (List.replicate (4 - s.length) '0') ++ s
 

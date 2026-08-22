@@ -1061,3 +1061,93 @@ pub fn misses_in(stderr: &str) -> Vec<Miss> {
     }
     out
 }
+
+/// How one column's value is rendered into JSON — `Verified.RowShape.Shape`.
+///
+/// ⚠ The variants carry the wire tags Lean emits; renaming one breaks the
+/// interface at runtime rather than at compile time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum RowShape {
+    #[serde(rename = "num")]
+    Num,
+    #[serde(rename = "str")]
+    Str,
+    #[serde(rename = "bigintStr")]
+    BigintStr,
+    #[serde(rename = "decimalStr")]
+    DecimalStr,
+    #[serde(rename = "dateIso")]
+    DateIso,
+    #[serde(rename = "dateTimeIso")]
+    DateTimeIso,
+}
+
+/// `Verified.RowShape.shapeOf` for every column of a result set, in one call.
+///
+/// ⚠ `None` means REFUSE, not "render null". An unmapped SQL type is one whose
+/// rendering nobody has checked against production, and the wrong guess is
+/// invisible: a well-formed response carrying the wrong JSON type.
+pub fn row_shapes(sql_types: &[&str]) -> Result<Vec<Option<RowShape>>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<Option<RowShape>>,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "rowShapes", "types": sql_types }))?;
+    if w.value.len() != sql_types.len() {
+        anyhow::bail!(
+            "rowShapes: asked for {} column(s), got {}",
+            sql_types.len(),
+            w.value.len()
+        );
+    }
+    Ok(w.value)
+}
+
+/// `Verified.RowShape.formatDateIso` — a DATE, as production ships it.
+///
+/// ⚠ NOT on the serving path. `crate::row_json` formats these inline, because a
+/// day of intraday heart rate is thousands of values and a host call each would
+/// be thousands of round trips. This exists so the test can hold that inline
+/// formatter against Lean over a corpus.
+pub fn format_date_iso(y: i64, m: i64, d: i64) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "formatIso", "parts": [y, m, d] }))?;
+    Ok(w.value)
+}
+
+/// `Verified.RowShape.formatDateTimeIso`. See [`format_date_iso`] on why this is
+/// not what serves.
+#[allow(clippy::too_many_arguments)]
+pub fn format_date_time_iso(
+    y: i64,
+    m: i64,
+    d: i64,
+    h: i64,
+    mi: i64,
+    s: i64,
+    ms: i64,
+) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire =
+        call_json(&serde_json::json!({ "op": "formatIso", "parts": [y, m, d, h, mi, s, ms] }))?;
+    Ok(w.value)
+}
+
+/// `Verified.Civil.addDays date 1` — the exclusive end of a single day's window.
+///
+/// ⚠ Civil-calendar arithmetic, not `+86400`. The two agree except across a DST
+/// boundary, which is exactly where a day's rows would go missing or double.
+pub fn next_day(date: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "nextDay", "date": date }))?;
+    Ok(w.value)
+}
