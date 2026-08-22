@@ -613,6 +613,76 @@ struct BoolWire {
     value: bool,
 }
 
+/// `Verified.Session.splitSigned` — the `(value, signature)` framing of a signed
+/// cookie.
+///
+/// ⚠ Splits on the LAST separator. The signature is base64url, which has no `.`,
+/// so a value containing dots round-trips whole; splitting on the first would
+/// verify a truncated value.
+pub fn split_signed(signed: &str) -> Result<Option<(String, String)>> {
+    #[derive(Deserialize)]
+    struct Part {
+        value: String,
+        sig: String,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<Part>,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "splitSigned", "signed": signed }))?;
+    Ok(w.value.map(|p| (p.value, p.sig)))
+}
+
+/// `Verified.Session.sessionIsValid` — INCLUSIVE at the boundary: a row expiring
+/// exactly now is still valid.
+pub fn session_is_valid(expires_at_ms: i64, now_ms: i64) -> Result<bool> {
+    let w: BoolWire = call_json(&serde_json::json!({
+        "op": "sessionIsValid", "expiresAtMs": expires_at_ms, "nowMs": now_ms,
+    }))?;
+    Ok(w.value)
+}
+
+/// `Verified.Session.mayProceed` — may this session do this?
+///
+/// ⚠ ANSWERS ONE QUESTION ONLY: whether a SHARE VIEWER is allowed this method on
+/// this path. An unauthenticated request is not a share viewer, so this returns
+/// `true` for one — and `true` here is not permission. The caller's own "is
+/// there a session" gate must run first.
+pub fn may_proceed(is_share_viewer: bool, method: &str, path: &str) -> Result<bool> {
+    let w: BoolWire = call_json(&serde_json::json!({
+        "op": "mayProceed", "isShareViewer": is_share_viewer,
+        "method": method, "path": path,
+    }))?;
+    Ok(w.value)
+}
+
+/// The session lifetime, and the cookie spelling that must agree with it.
+pub struct SessionPolicy {
+    pub ttl_ms: i64,
+    pub cookie_max_age_s: i64,
+    pub cookie_name: String,
+}
+
+/// `Verified.Session`'s constants. Fetched rather than restated so the row's TTL
+/// and the cookie's `Max-Age` cannot drift — a cookie outliving its row is a
+/// user who appears logged in and is not.
+pub fn session_policy() -> Result<SessionPolicy> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: i64,
+        #[serde(rename = "cookieMaxAgeS")]
+        cookie_max_age_s: i64,
+        #[serde(rename = "cookieName")]
+        cookie_name: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "sessionTtlMs" }))?;
+    Ok(SessionPolicy {
+        ttl_ms: w.value,
+        cookie_max_age_s: w.cookie_max_age_s,
+        cookie_name: w.cookie_name,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CoverageRow {
     pub min_lat: f64,

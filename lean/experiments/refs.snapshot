@@ -4790,6 +4790,17 @@ MIN_SERVED_STOPS=5 MIN_CONTAINMENT_CHARS=10
   Barbican Station                   false
   Kings Cross                        false
 
+### session-refs.mts
+round trip: "abc"
+value with dots: "a.b.c"
+empty value: ""
+no dot: null
+bad signature: null
+wrong secret: null
+same length, wrong bytes: null
+signed shape (dots in output): 2
+signed value prefix: true
+
 ### share-refs.mts
 === buildShareUrl ===
 buildShareUrl("https://h.example", "abc"): "https://h.example/share/abc"

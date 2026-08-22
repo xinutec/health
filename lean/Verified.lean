@@ -3,6 +3,7 @@ import Verified.Backfill
 import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
+import Verified.Session
 import Verified.Share
 import Verified.VelocityCache
 import Verified.Civil

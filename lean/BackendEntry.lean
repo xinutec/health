@@ -4,6 +4,7 @@ import Verified.Civil
 import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
+import Verified.Session
 import Verified.Share
 import Verified.Sync
 import Verified.VelocityCache
@@ -284,6 +285,39 @@ def dispatch (j : Json) : Json :=
     | some d, some f, some t =>
       Json.mkObj [("value", Json.bool (Verified.Share.dateInShareWindow d f t))]
     | _, _, _ => err "dateInShareWindow: date, from, to required"
+  -- Session and share-viewer rules (#982). The HMAC, the CSPRNG and the
+  -- constant-time compare stay in the host — there is nothing to prove about
+  -- them beyond that they were asked for.
+  --
+  -- ⚠ `splitSigned` splits on the LAST separator: the signature is base64url,
+  -- which has no `.`, so a value containing dots round-trips whole.
+  | some "splitSigned" =>
+    match str? j "signed" with
+    | some sgn =>
+      match Verified.Session.splitSigned sgn with
+      | none => Json.mkObj [("value", Json.null)]
+      | some (v, sig) =>
+        Json.mkObj [("value", Json.mkObj [("value", Json.str v), ("sig", Json.str sig)])]
+    | none => err "splitSigned: signed required"
+  | some "sessionIsValid" =>
+    match int? j "expiresAtMs", int? j "nowMs" with
+    | some e, some n =>
+      Json.mkObj [("value", Json.bool (Verified.Session.sessionIsValid e n))]
+    | _, _ => err "sessionIsValid: expiresAtMs, nowMs required"
+  -- ⚠ Answers "may this session do this", NOT "is there a session". An
+  -- unauthenticated request is not a share viewer, and `true` here is not
+  -- permission — the caller's own session gate runs first.
+  | some "mayProceed" =>
+    match j.getObjVal? "isShareViewer" >>= (·.getBool?) |>.toOption,
+          str? j "method", str? j "path" with
+    | some sv, some m, some p =>
+      Json.mkObj [("value", Json.bool (Verified.Session.mayProceed sv m p))]
+    | _, _, _ => err "mayProceed: isShareViewer, method, path required"
+  | some "sessionTtlMs" =>
+    Json.mkObj
+      [ ("value", Json.num Verified.Session.SESSION_TTL_MS)
+      , ("cookieMaxAgeS", Json.num Verified.Session.SESSION_COOKIE_MAX_AGE_S)
+      , ("cookieName", Json.str Verified.Session.SESSION_COOKIE_NAME) ]
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]
