@@ -63,6 +63,14 @@ for (const [name, sql] of DAYS_BACK) {
 	console.log(`${name}\t${JSON.stringify(rows)}`);
 }
 
+for (const [name, sql] of [
+	["devices", "SELECT * FROM devices WHERE user_id = ?"],
+	["sync-state", "SELECT * FROM sync_state WHERE user_id = ?"],
+]) {
+	const rows = await conn.query(sql, [user]);
+	console.log(`${name}\t${JSON.stringify(rows)}`);
+}
+
 const log = await conn.query(
 	"SELECT log_id FROM sleep WHERE user_id = ? AND date = ? AND is_main_sleep = 1 LIMIT 1",
 	[user, date],

@@ -2,7 +2,7 @@
 /**
  * Derive `#guard` expectations for `Verified.RowShape` from V8.
  *
- * Ten `/api` endpoints are `selectAll()` plus `c.json(rows)`, so their
+ * Twelve `/api` endpoints are `selectAll()` plus `c.json(rows)`, so their
  * response shape is decided entirely outside the route: by the MariaDB
  * driver's SQL-type mapping, then by `JSON.stringify`. This pins the second
  * half — the JS rendering — because that is the half V8 owns and the half a

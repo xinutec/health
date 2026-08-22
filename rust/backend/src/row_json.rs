@@ -1,6 +1,6 @@
 //! `selectAll()` rows, rendered the way the TypeScript backend renders them.
 //!
-//! Ten `/api` endpoints are one line of logic each — select every column of a
+//! Twelve `/api` endpoints are one line of logic each — select every column of a
 //! table, hand the rows to `c.json`. The logic ports in a minute; the SHAPE is
 //! the work. That response is whatever columns the table has, mapped to JS by
 //! the MariaDB driver and then to text by `JSON.stringify`, and the frontend

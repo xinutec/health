@@ -1,5 +1,5 @@
-//! Render the ten table endpoints' rows against production, for diffing against
-//! the TypeScript (#982).
+//! Render the twelve table endpoints' rows against production, for diffing
+//! against the TypeScript (#982).
 //!
 //! ⚠ THIS IS THE ONLY THING THAT CHECKS THE DECODE. `tests/row_json.rs` pins the
 //! rules — which SQL type takes which JSON shape, and that the host's ISO
@@ -136,6 +136,30 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         }
     };
     failures += emit("sleep/stages", row_json::rows_to_json(&stages))?;
+
+    // The two whole-table reads bind only the user.
+    let whole: [(&str, &str); 2] = [
+        ("devices", "SELECT * FROM devices WHERE user_id = ?"),
+        ("sync-state", "SELECT * FROM sync_state WHERE user_id = ?"),
+    ];
+    let whole_serving: [&str; 2] = [
+        crate::routes::tables::SQL_DEVICES,
+        crate::routes::tables::SQL_SYNC_STATE,
+    ];
+    for (i, (name, sql)) in whole.iter().enumerate() {
+        anyhow::ensure!(
+            *sql == whole_serving[i],
+            "{name}: rows-check would query something the route does not serve"
+        );
+    }
+    for (name, sql) in whole {
+        let rows = sqlx::query(sql)
+            .bind(user)
+            .fetch_all(pool)
+            .await
+            .with_context(|| format!("{name}: query"))?;
+        failures += emit(name, row_json::rows_to_json(&rows))?;
+    }
 
     let next = lean::next_day(date)?;
     let hr = sqlx::query(

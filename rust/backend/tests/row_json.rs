@@ -1,6 +1,6 @@
 //! The wire shape of a `selectAll()` row (#982).
 //!
-//! The ten table endpoints have almost no logic, so what is worth testing is
+//! The twelve table endpoints have almost no logic, so what is worth testing is
 //! not what they decide but what they RENDER. Three things are pinned here:
 //!
 //!   1. Lean's type → shape table, including the one that reads wrong;

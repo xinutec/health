@@ -1,6 +1,7 @@
-//! The ten `/api` reads that are a table and a window (#982).
+//! The twelve `/api` reads that are a table and a window (#982).
 //!
-//! Eight are "the last N days of one table", two are "one day of one table".
+//! Eight are "the last N days of one table", two are "one day of one table",
+//! and two are a whole table with no window at all.
 //! Each is a single line in `src/routes/api.ts` — `selectAll()`, `c.json(rows)`
 //! — and the port is almost entirely about not changing the response. See
 //! [`crate::row_json`] for what the driver and `JSON.stringify` were measured to
@@ -231,6 +232,60 @@ days_back_handler!(
     temperature,
     SQL_TEMPERATURE,
     "SELECT * FROM skin_temperature WHERE user_id = ? AND date >= ? ORDER BY date"
+);
+
+/// The two whole-table reads: no window, no date, just the user's rows.
+///
+/// ⚠ Neither has a share-window branch, and that is the TypeScript's behaviour
+/// rather than an omission here. A share recipient reading `/devices` sees the
+/// owner's watches and their last sync times; reading `/sync-state` sees the
+/// owner's per-stream cursors. Both are metadata about the account rather than
+/// about a date, so a date window has nothing to say about them — but it does
+/// mean these two endpoints are NOT narrowed by a share, which is worth knowing
+/// before a share link goes to someone new.
+macro_rules! whole_table_handler {
+    ($name:ident, $sql_const:ident, $sql:literal) => {
+        /// The query this endpoint serves, exported for `backend rows-check`.
+        pub const $sql_const: &str = $sql;
+
+        pub async fn $name(
+            State(st): State<AppState>,
+            Extension(session): Extension<UserSession>,
+        ) -> Response {
+            let run = async {
+                let rows = sqlx::query($sql)
+                    .bind(&session.user_id)
+                    .fetch_all(&st.pool)
+                    .await?;
+                Ok::<_, anyhow::Error>(Json(row_json::rows_to_json(&rows)?).into_response())
+            };
+            match run.await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, endpoint = stringify!($name), "whole-table read failed");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "internal" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    };
+}
+
+// ⚠ No ORDER BY in either, matching the TypeScript. Row order is whatever the
+// storage engine returns; adding a sort here would be a nicer API and a
+// different response.
+whole_table_handler!(
+    devices,
+    SQL_DEVICES,
+    "SELECT * FROM devices WHERE user_id = ?"
+);
+whole_table_handler!(
+    sync_state,
+    SQL_SYNC_STATE,
+    "SELECT * FROM sync_state WHERE user_id = ?"
 );
 
 /// `GET /sleep/stages?date=` — the stages of that date's MAIN sleep.

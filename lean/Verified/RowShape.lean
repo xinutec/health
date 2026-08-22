@@ -2,7 +2,7 @@ import Verified.Civil
 /-!
 # What a `selectAll()` row looks like on the wire (port of `src/routes/api.ts`)
 
-Ten `/api` endpoints are one line of logic each — `selectFrom(t).selectAll()`,
+Twelve `/api` endpoints are one line of logic each — `selectFrom(t).selectAll()`,
 then `c.json(rows)`. The logic is trivial and the *shape* is not: the response
 is whatever columns the table has, rendered by whatever the MariaDB driver
 decided each SQL type becomes in JavaScript, then by `JSON.stringify`. Change

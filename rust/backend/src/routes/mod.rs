@@ -66,6 +66,8 @@ pub fn router(state: AppState) -> Router {
         .route("/hrv", get(tables::hrv))
         .route("/breathing", get(tables::breathing))
         .route("/temperature", get(tables::temperature))
+        .route("/devices", get(tables::devices))
+        .route("/sync-state", get(tables::sync_state))
         .layer(axum::middleware::from_fn(
             crate::auth::middleware::require_may_proceed,
         ))
