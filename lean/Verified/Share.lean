@@ -69,6 +69,25 @@ def clampShareDaysBack (value : Option Int) : Option Int :=
   | none => none
   | some v => some (max SHARE_DAYS_MIN (min SHARE_DAYS_MAX v))
 
+/-- May a share-viewer see this date?
+
+The window is INCLUSIVE at both ends, and it is the same `[from, to]`
+{@link shareableDateRange} produced — a viewer who may see the boundary day must
+be able to load it.
+
+⚠ String comparison, deliberately. `YYYY-MM-DD` orders lexicographically exactly
+as it orders chronologically, and parsing to civil days first would introduce a
+failure mode (an unparsable date) where the TypeScript had none. A malformed
+date sorts somewhere and is refused or admitted consistently; it never throws
+past this check.
+
+⚠ The DEFAULT IS REFUSAL at the call site, not here. This answers "is it in the
+window" for a caller that has already established there IS a window; a session
+with no share-viewer is not a share-viewer with an empty window, and conflating
+them would silently open every date. -/
+def dateInShareWindow (date «from» to : String) : Bool :=
+  «from» ≤ date && date ≤ to
+
 /-! ## Guards -/
 
 #guard buildShareUrl "https://h.example" "abc" == "https://h.example/share/abc"
@@ -101,5 +120,17 @@ def clampShareDaysBack (value : Option Int) : Option Int :=
 #guard clampShareDaysBack (some 100000) == some 365
 #guard clampShareDaysBack (some 365) == some 365
 #guard clampShareDaysBack (some 1) == some 1
+
+
+-- The window is inclusive at both ends: a viewer who may see the boundary day
+-- must be able to load it.
+#guard dateInShareWindow "2026-08-17" "2026-08-11" "2026-08-17" == true
+#guard dateInShareWindow "2026-08-11" "2026-08-11" "2026-08-17" == true
+#guard dateInShareWindow "2026-08-14" "2026-08-11" "2026-08-17" == true
+#guard dateInShareWindow "2026-08-10" "2026-08-11" "2026-08-17" == false
+#guard dateInShareWindow "2026-08-18" "2026-08-11" "2026-08-17" == false
+-- A one-day share admits exactly its one day.
+#guard dateInShareWindow "2026-08-17" "2026-08-17" "2026-08-17" == true
+#guard dateInShareWindow "2026-08-16" "2026-08-17" "2026-08-17" == false
 
 end Verified.Share

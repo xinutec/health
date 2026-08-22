@@ -567,6 +567,52 @@ pub fn prev_window_bounded(
 /// `fetched_at` is milliseconds, and `None` means a row written before fetch
 /// times were tracked — treated as FRESH, not stale. See
 /// `Verified.Geo.OsmCoverage`.
+/// `Verified.VelocityCache.ttlMsFor` — how long a computed day may be reused,
+/// plus the LRU bound the host enforces.
+///
+/// ⚠ `today` MUST be the viewer's local civil date (`timezone::local_date_at`),
+/// not UTC's. Nothing on either side of this wire can check that: a UTC date is
+/// a well-formed argument asking a different question, and the answer to it
+/// looks exactly the same.
+pub fn velocity_ttl_ms(date: &str, today: &str) -> Result<(i64, usize)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: i64,
+        #[serde(rename = "maxEntries")]
+        max_entries: i64,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "velocityTtlMs", "date": date, "today": today,
+    }))?;
+    Ok((w.value, usize::try_from(w.max_entries).unwrap_or(0)))
+}
+
+/// `Verified.VelocityCache.isFresh` — may this cached entry still be served?
+pub fn velocity_cache_fresh(cached_at_ms: i64, now_ms: i64, ttl_ms: i64) -> Result<bool> {
+    let w: BoolWire = call_json(&serde_json::json!({
+        "op": "velocityCacheFresh",
+        "cachedAtMs": cached_at_ms, "nowMs": now_ms, "ttlMs": ttl_ms,
+    }))?;
+    Ok(w.value)
+}
+
+/// `Verified.Share.dateInShareWindow` — may a share-viewer see this date?
+///
+/// ⚠ ONLY for a session that HAS a window. A session with no share-viewer is not
+/// a viewer with an empty window; asking here about one would turn a missing
+/// window into an admitted date.
+pub fn date_in_share_window(date: &str, from: &str, to: &str) -> Result<bool> {
+    let w: BoolWire = call_json(&serde_json::json!({
+        "op": "dateInShareWindow", "date": date, "from": from, "to": to,
+    }))?;
+    Ok(w.value)
+}
+
+#[derive(Deserialize)]
+struct BoolWire {
+    value: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CoverageRow {
     pub min_lat: f64,

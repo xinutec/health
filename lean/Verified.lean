@@ -4,6 +4,7 @@ import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
 import Verified.Share
+import Verified.VelocityCache
 import Verified.Civil
 import Verified.Hsmm.Score
 import Verified.Hsmm.Spec

@@ -206,6 +206,28 @@ pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
     Ok(dt.with_timezone(&zone).hour())
 }
 
+/// The civil date at an instant, in a zone — `YYYY-MM-DD`.
+///
+/// The tzdata half of `isLiveDay` (`src/routes/velocity-cache.ts`), which the
+/// TypeScript gets from `Intl.DateTimeFormat("en-CA", { timeZone })`. The
+/// DECISION that follows — is this the day in progress, and how long may its
+/// result be reused — is `Verified.VelocityCache`; this only answers what day it
+/// is where the viewer is.
+///
+/// ⚠ An absent zone is UTC, mirroring the API's own fallback. That is the
+/// TypeScript's `tz ?? "UTC"` and not a safe default: at 23:30 in London the UTC
+/// date has already rolled over, so a caller that loses the viewer's zone
+/// freezes their evening an hour early rather than failing.
+pub fn local_date_at(ts_unix: i64, tz: Option<&str>) -> Result<String> {
+    let zone: Tz = tz
+        .unwrap_or("UTC")
+        .parse()
+        .with_context(|| format!("{tz:?} is not a known timezone"))?;
+    let dt = chrono::DateTime::from_timestamp(ts_unix, 0)
+        .with_context(|| format!("{ts_unix} is not a representable instant"))?;
+    Ok(dt.with_timezone(&zone).format("%Y-%m-%d").to_string())
+}
+
 /// The stay's minutes as `(dayIdx, minuteOfDay)` in the venue's local zone —
 /// every minute of `[start, end)`, or the single instant at `start` for a
 /// zero-length window.

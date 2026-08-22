@@ -4,7 +4,9 @@ import Verified.Civil
 import Verified.FitbitTz
 import Verified.Token
 import Verified.Weight
+import Verified.Share
 import Verified.Sync
+import Verified.VelocityCache
 
 /-!
 # The backend's C ABI entry point
@@ -256,6 +258,32 @@ def dispatch (j : Json) : Json :=
     | some n =>
       Json.mkObj [("value", Json.num (Verified.Token.expiryFromNow n (optInt? j "expiresInS")))]
     | none => err "expiryFromNow: nowMs required"
+  -- `/velocity`'s cache policy (#982). The map and the in-flight dedup stay in
+  -- the host; what crosses here is how long a result may be reused.
+  --
+  -- ⚠ `today` must be the VIEWER's local civil date, not UTC's. Lean has no zone
+  -- database, so this cannot check the caller got that right — see
+  -- `Verified.VelocityCache` for what a UTC date silently asks instead.
+  | some "velocityTtlMs" =>
+    match str? j "date", str? j "today" with
+    | some d, some t =>
+      Json.mkObj
+        [ ("value", Json.num (Verified.VelocityCache.ttlMsFor d t))
+        , ("maxEntries", Json.num Verified.VelocityCache.MAX_ENTRIES) ]
+    | _, _ => err "velocityTtlMs: date, today required"
+  | some "velocityCacheFresh" =>
+    match int? j "cachedAtMs", int? j "nowMs", int? j "ttlMs" with
+    | some c, some n, some t =>
+      Json.mkObj [("value", Json.bool (Verified.VelocityCache.isFresh c n t))]
+    | _, _, _ => err "velocityCacheFresh: cachedAtMs, nowMs, ttlMs required"
+  -- ⚠ Answers "is it in the window" only. A session with NO share-viewer must
+  -- not reach this: it is not a viewer with an empty window, and asking here
+  -- would turn a missing window into an admitted date.
+  | some "dateInShareWindow" =>
+    match str? j "date", str? j "from", str? j "to" with
+    | some d, some f, some t =>
+      Json.mkObj [("value", Json.bool (Verified.Share.dateInShareWindow d f t))]
+    | _, _, _ => err "dateInShareWindow: date, from, to required"
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]
