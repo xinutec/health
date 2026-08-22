@@ -4,10 +4,15 @@
 //! TypeScript `src/server.ts` owns every route; this is the axum skeleton the
 //! `/api` port lands on, plus the two endpoints that need no logic at all.
 //!
-//! ⚠ Pointing this at production is also #413's re-bless. `/velocity` answers
-//! from the OSM mirror through Lean rather than MariaDB's `ORDER BY
-//! ST_Distance`, which is deliberate and which MOVES SERVED LABELS. That diff
-//! is a decision, not a deploy step.
+//! ⚠ Pointing this at production is also #413's re-bless, and that is a
+//! DECISION rather than a deploy step. `/velocity` answers from the OSM mirror
+//! through Lean rather than MariaDB's `ORDER BY ST_Distance … LIMIT 50`.
+//!
+//! ⚠ Whether that changes served labels is UNMEASURED. #413 records 0 of 315
+//! timeline states differing for the oracle swap alone; step 4 separately
+//! predicts 9 queries where `LIMIT 50` displacement loses a named street, which
+//! is the part this source removes. Read the diff against those predictions —
+//! do not assume either that nothing moves or that everything does.
 //!
 //! # Nothing in this file decides anything
 //!

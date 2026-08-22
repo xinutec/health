@@ -1095,10 +1095,14 @@ async fn mirror_check(fixture: &str) -> Result<()> {
 /// answer (`reverseGeocode`, `nearbyLandmarks`, `transitStops` — see
 /// `rowset_answerer`'s catch-all).
 ///
-/// ⚠ Its timeline is NOT the timeline production serves and is not a re-bless
-/// candidate. The mirror source hands Lean every candidate in the box rather
-/// than MariaDB's `ORDER BY ST_Distance … LIMIT 50`, which is the point (#413)
-/// and means the two disagree by construction.
+/// ⚠ Its timeline is not a re-bless candidate — the corpus is what the re-bless
+/// compares. The mirror source hands Lean every candidate in the box rather than
+/// MariaDB's `ORDER BY ST_Distance … LIMIT 50`, which is the point (#413).
+///
+/// ⚠ HOW FAR IT DIVERGES FROM PRODUCTION IS UNMEASURED. #413 records 0 of 315
+/// timeline states differing for the oracle swap alone, so "they disagree by
+/// construction" — which this note used to say — is a stronger claim than
+/// anything measured.
 ///
 /// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
 /// /tmp, never into the repo: both health repos are public.
