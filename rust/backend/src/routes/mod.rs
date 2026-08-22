@@ -33,6 +33,7 @@ use crate::state::AppState;
 
 pub mod locations;
 pub mod me;
+pub mod share;
 pub mod tables;
 pub mod velocity;
 
@@ -41,18 +42,22 @@ pub fn router(state: AppState) -> Router {
     // BOTTOM-UP: the last `.layer` runs FIRST. So `require_session` is written
     // below `require_may_proceed` and runs before it.
     //
-    // ⚠ REVERSING THEM IS HARMLESS TODAY AND WILL NOT BE. Measured, not assumed:
-    // flipping the two changes no test, because this group holds one GET route
-    // and an anonymous GET is refused by `require_session` either way.
+    // ⚠ THE POST ROUTES HAVE LANDED, so this is live rather than latent.
+    // `require_may_proceed` reads the session out of the request extensions and
+    // `require_session` is what puts it there — run the wrong way round, a
+    // share viewer's POST is judged before their session exists, looks
+    // anonymous, is therefore NOT a share viewer, and is allowed. A read-only
+    // link would be able to rotate, retune or revoke its owner's share.
     //
-    // It bites the moment a POST route lands here. `require_may_proceed` reads
-    // the session out of the request extensions and `require_session` is what
-    // puts it there — run the wrong way round, a share viewer's POST is judged
-    // before their session exists, looks anonymous, is therefore NOT a share
-    // viewer, and is allowed. A read-only link would be able to write.
+    // ⚠ THE ORDER IS NO LONGER PROTECTED BY CONVENTION ALONE.
+    // `require_may_proceed` refuses outright when the session extension is
+    // absent, so mounting these the wrong way round breaks EVERY request with a
+    // 500 instead of quietly over-permitting one class of them.
     //
-    // `tests/velocity_route.rs` mirrors this stack with a write route so the
-    // invariant has a test before the route that needs it exists.
+    // That guard exists because the previous protection did not work: flipping
+    // these two on 2026-08-22 failed ZERO of the eleven tests that covered this,
+    // since each mirrored the stack instead of importing it.
+    // `tests/share_route.rs` now asserts it through THIS router.
     let api = Router::new()
         .route("/me", get(me::handler))
         .route("/velocity", get(velocity::handler))
@@ -76,6 +81,15 @@ pub fn router(state: AppState) -> Router {
         .route("/locations", get(locations::locations))
         .route("/location/latest", get(locations::latest))
         .route("/location/tail", get(locations::tail))
+        // ⚠ THE FIRST WRITE ROUTES HERE. The layer order below stops being
+        // theoretical the moment these exist — see the note on it.
+        .route(
+            "/share",
+            get(share::get)
+                .post(share::post)
+                .patch(share::patch)
+                .delete(share::delete),
+        )
         .layer(axum::middleware::from_fn(
             crate::auth::middleware::require_may_proceed,
         ))

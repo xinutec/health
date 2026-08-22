@@ -187,8 +187,19 @@ async fn a_malformed_date_or_an_unknown_zone_is_refused_rather_than_guessed() {
 /// not a share viewer, so it is ALLOWED, and `require_session` then attaches the
 /// session and runs the route. A read-only link would be able to write.
 ///
-/// So this mirrors the real stack rather than importing it, and the assertion
-/// below is what will go red if the production order is ever flipped.
+/// ⚠ THIS MIRRORS THE REAL STACK RATHER THAN IMPORTING IT, AND THAT MEANS IT
+/// DOES NOT PROTECT THE PRODUCTION ORDER. This comment used to claim it would
+/// "go red if the production order is ever flipped". Measured 2026-08-22:
+/// flipping the two layers in `routes::mod` failed ZERO of the eleven tests
+/// here and in `auth_middleware.rs`, because every one of them builds its own
+/// copy of the stack. A check that can pass for the wrong reason is worse than
+/// none, because it silences the question.
+///
+/// What protects the order now is `require_may_proceed` FAILING CLOSED on a
+/// missing session extension, which turns a misordering into an immediate 500
+/// on every request — caught by `share_route.rs`'s anonymous test, which uses
+/// the real router. What this file still tests is the RULE, which is worth
+/// keeping.
 fn api_stack_with_a_write_route(session: UserSession) -> axum::Router {
     axum::Router::new()
         .route("/api/settings", axum::routing::post(|| async { "ok" }))

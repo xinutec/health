@@ -401,6 +401,19 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- The public share URL for a token (#982).
+  | some "buildShareUrl" =>
+    match str? j "baseUrl", str? j "token" with
+    | some b, some t => Json.mkObj [("value", Json.str (Verified.Share.buildShareUrl b t))]
+    | _, _ => err "buildShareUrl: baseUrl, token required"
+  -- ⚠ CLAMPS. The mirror of `validateDays`, which REJECTS — two day-windows in
+  -- one API with opposite behaviour, and both are the TypeScript's. `null` here
+  -- means the value was not a finite number at all, NOT that it was out of
+  -- range; out of range is silently narrowed.
+  | some "clampShareDaysBack" =>
+    match Verified.Share.clampShareDaysBack (optInt? j "daysBack") with
+    | none => Json.mkObj [("value", Json.null)]
+    | some n => Json.mkObj [("value", Json.num n)]
   -- Whether a linked account is working (#982).
   --
   -- ⚠ `stored` absent means NO ROW, which is `not_linked`. A host that sent an

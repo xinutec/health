@@ -41,6 +41,23 @@ pub fn mint_id() -> Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// A share token: 32 random bytes as base64url — the TypeScript's
+/// `generateShareToken`.
+///
+/// ⚠ NOT [`mint_id`], which is the same 32 bytes as HEX. Both carry 256 bits,
+/// but a hex token is 64 characters and a base64url one is 43, and
+/// `share_tokens.token` is `VARCHAR(64)` — so hex would fit with nothing to
+/// spare and every link this issued would be visibly a different shape from
+/// every link production has issued.
+///
+/// ⚠ Errors rather than falling back. A share token that is not from the OS
+/// CSPRNG is a guessable link to someone's location history.
+pub fn mint_share_token() -> Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).context("reading the OS CSPRNG for a share token")?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
 /// `<value>.<base64url-hmac-sha256>` — the TypeScript's `signValue`.
 ///
 /// ⚠ base64url with NO PADDING. Node's `digest("base64url")` omits `=`, so

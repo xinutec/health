@@ -1215,3 +1215,37 @@ pub fn connection_status(stored: Option<&str>) -> Result<(String, bool)> {
     let w: Wire = call_json(&req)?;
     Ok((w.value, w.linked))
 }
+
+/// `Verified.Share.buildShareUrl` — the link a recipient is sent.
+pub fn build_share_url(base_url: &str, token: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(
+        &serde_json::json!({ "op": "buildShareUrl", "baseUrl": base_url, "token": token }),
+    )?;
+    Ok(w.value)
+}
+
+/// `Verified.Share.clampShareDaysBack`.
+///
+/// ⚠ CLAMPS, and is the mirror of [`validate_days`], which REJECTS. Two
+/// day-window parameters in one API with opposite behaviour, both faithful to
+/// the TypeScript: `?days=400` on a read is an ERROR, while `daysBack: 400` on
+/// a share is silently narrowed to 365.
+///
+/// `None` in or out means "not a finite number at all" — NOT "out of range".
+/// The caller decides what to do with that: create defaults, update rejects.
+pub fn clamp_share_days_back(days_back: Option<i64>) -> Result<Option<i64>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<i64>,
+    }
+    let mut req = serde_json::json!({ "op": "clampShareDaysBack" });
+    if let Some(d) = days_back {
+        req["daysBack"] = serde_json::json!(d);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(w.value)
+}

@@ -126,15 +126,38 @@ pub async fn require_session(
 
 /// 403 when a share viewer tries anything `Verified.Session.mayProceed` refuses.
 ///
-/// ⚠ Mount AFTER [`require_session`]. A request with no session has no
-/// `UserSession` extension, and this passes it through — because "there is no
-/// session" is 401's job, and answering 403 here would tell an anonymous caller
-/// that the path exists and is merely forbidden.
+/// ⚠ MOUNT AFTER [`require_session`], and this now FAILS CLOSED if you do not.
+///
+/// It used to pass an extension-less request through, on the reasoning that
+/// "there is no session" is 401's job. That reasoning is sound and the
+/// behaviour was still wrong, because it made the mounting order a silent
+/// correctness condition: run this BEFORE `require_session` and a share
+/// viewer's POST arrives with no extension yet, reads as not-a-share-viewer, is
+/// ALLOWED, and then `require_session` attaches the session and runs the route.
+/// A read-only link could write, and nothing anywhere would say so.
+///
+/// ⚠ That is not hypothetical laziness — it was MEASURED. Flipping the two
+/// layers in `routes::mod` on 2026-08-22 failed ZERO of the eleven tests that
+/// covered this, because the test that claimed to protect the order mirrored
+/// the stack rather than importing it and so only ever tested its own copy.
+///
+/// Refusing here costs nothing in correct operation: mounted properly,
+/// `require_session` has already answered 401 and this never sees a request
+/// without a session. Mounted wrongly, EVERY request 500s immediately instead
+/// of one class of request being quietly over-permitted.
 pub async fn require_may_proceed(req: Request, next: Next) -> Response {
-    let is_share_viewer = req
-        .extensions()
-        .get::<UserSession>()
-        .is_some_and(|s| s.share_viewer.is_some());
+    let Some(session) = req.extensions().get::<UserSession>() else {
+        tracing::error!(
+            path = %req.uri().path(),
+            "require_may_proceed ran with no session in the request extensions —              it is mounted BEFORE require_session, which would let a read-only              share link write"
+        );
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({ "error": "auth_misconfigured" })),
+        )
+            .into_response();
+    };
+    let is_share_viewer = session.share_viewer.is_some();
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
 

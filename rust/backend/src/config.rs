@@ -38,6 +38,13 @@ pub struct Config {
     /// source is spelled. Defaulting it to the production URL would make an
     /// unconfigured job quietly reach for the real Nextcloud.
     pub nextcloud_base_url: Option<String>,
+    /// Where the dashboard is served from, for building share URLs.
+    ///
+    /// ⚠ Has a DEFAULT rather than being an Option, matching `src/config.ts`.
+    /// `PUBLIC_BASE_URL` is UNSET on the serving pod (measured 2026-08-22), so
+    /// every share link production has ever issued came from this default. A
+    /// host without one would hand the user a link to nowhere.
+    pub public_base_url: String,
     /// The HMAC key behind every session cookie.
     ///
     /// ⚠ OPTIONAL HERE, REQUIRED BY THE SERVER. `sync` has no cookies and must
@@ -156,6 +163,7 @@ impl Config {
                 client_secret: String::new(),
             },
             nextcloud_base_url: None,
+            public_base_url: "https://health.xinutec.org".to_string(),
             session_secret: None,
         }
     }
@@ -185,6 +193,7 @@ impl Config {
                 client_secret: required("FITBIT_CLIENT_SECRET")?,
             },
             nextcloud_base_url: optional("NC_BASE_URL"),
+            public_base_url: with_default("PUBLIC_BASE_URL", "https://health.xinutec.org"),
             session_secret: optional("SESSION_SECRET"),
         })
     }

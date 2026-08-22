@@ -205,14 +205,35 @@ async fn a_share_viewer_reads_but_cannot_write() {
 }
 
 #[tokio::test]
-async fn the_owner_is_unrestricted_and_an_anonymous_request_is_not_this_layers_problem() {
+async fn the_owner_is_unrestricted() {
     backend::lean::init().expect("the Lean runtime must start");
     assert_eq!(
         status(Some(owner()), "POST", "/api/settings").await,
         StatusCode::OK
     );
-    // ⚠ No session: PASSES here. "There is no session" is 401's job, and
-    // answering 403 would tell an anonymous caller the path exists and is
-    // merely forbidden.
-    assert_eq!(status(None, "POST", "/api/settings").await, StatusCode::OK);
+}
+
+/// ⚠ A request with NO SESSION reaching this layer is a MOUNTING BUG, and is
+/// refused as one.
+///
+/// This test asserted the opposite until 2026-08-22: an extension-less request
+/// passed through, on the reasoning that "there is no session" is 401's job.
+/// The reasoning was right and the behaviour was still wrong, because it made
+/// the layer order a silent correctness condition — mounted before
+/// `require_session`, a share viewer's POST arrives with no extension, reads as
+/// not-a-share-viewer, and is ALLOWED.
+///
+/// ⚠ Measured, not assumed: flipping the two layers in `routes::mod` failed
+/// ZERO of the eleven tests that covered this area, because the test claiming to
+/// protect the order mirrored the stack instead of importing it. Failing closed
+/// is what makes the flip visible — it now breaks THIS test, loudly, on every
+/// request rather than on one class of them.
+#[tokio::test]
+async fn no_session_at_this_layer_is_a_mounting_bug_not_an_anonymous_user() {
+    backend::lean::init().expect("the Lean runtime must start");
+    assert_eq!(
+        status(None, "POST", "/api/settings").await,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "passing this through would make require_session's position optional,          and a read-only share link could write"
+    );
 }
