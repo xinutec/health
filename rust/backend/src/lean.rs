@@ -562,6 +562,73 @@ pub fn prev_window_bounded(
     Ok(r.value.map(|w| (w.start, w.end)))
 }
 
+/// One fetched bounding box of the local OSM mirror, for one feature bucket.
+///
+/// `fetched_at` is milliseconds, and `None` means a row written before fetch
+/// times were tracked — treated as FRESH, not stale. See
+/// `Verified.Geo.OsmCoverage`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoverageRow {
+    pub min_lat: f64,
+    pub max_lat: f64,
+    pub min_lon: f64,
+    pub max_lon: f64,
+    pub fetched_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct Covered {
+    covered: bool,
+}
+
+/// `Verified.Geo.OsmCoverage.decideCoverage` — may the mirror be read here?
+///
+/// `false` means nobody has fetched this area for this bucket, so a spatial
+/// query over the mirror would return nothing and be indistinguishable from an
+/// area with no features in it. The caller must DECLINE rather than answer.
+///
+/// ⚠ `coverage` is the rows for ONE feature bucket. Boxes are per-bucket, and
+/// mixing them would report a highway fetch as covering the landmarks.
+///
+/// ⚠ `now_ms` is passed IN. Lean has no clock in a pure function, and giving it
+/// one would make the staleness rule depend on when it was asked, which is what
+/// makes it untestable. The host owns the clock; Lean owns the decision.
+pub fn osm_covered(
+    lat: f64,
+    lon: f64,
+    radius_m: f64,
+    coverage: &[CoverageRow],
+    now_ms: i64,
+    has_local_data: bool,
+) -> Result<bool> {
+    let bits = |v: f64| serde_json::Value::String(v.to_bits().to_string());
+    let rows: Vec<serde_json::Value> = coverage
+        .iter()
+        .map(|c| {
+            serde_json::json!([
+                bits(c.min_lat),
+                bits(c.max_lat),
+                bits(c.min_lon),
+                bits(c.max_lon),
+                c.fetched_at
+            ])
+        })
+        .collect();
+    let req = serde_json::json!({
+        "mode": "osmcoverage",
+        "lat": bits(lat), "lon": bits(lon), "radiusM": bits(radius_m),
+        "coverage": rows, "nowMs": now_ms, "hasLocalData": has_local_data,
+    });
+    let out = serve(&req.to_string()).context("lean serve osmcoverage")?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).context("osmcoverage answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("osmcoverage: {e}");
+    }
+    let c: Covered = serde_json::from_value(v).context("osmcoverage answer has no `covered`")?;
+    Ok(c.covered)
+}
+
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line

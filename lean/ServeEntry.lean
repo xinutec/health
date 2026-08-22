@@ -1498,6 +1498,50 @@ private def batteryResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+
+/-! ## `osmcoverage` — can the local mirror answer here? (#982)
+
+`Verified.Geo.OsmCoverage.decideCoverage`. The gate a host must pass before
+reading `osm_points`/`osm_lines`: `covered` means a spatial query over the
+mirror is an ANSWER, anything else means nobody has fetched this area and the
+same query returns nothing while looking exactly like an area with no roads.
+
+  { "lat": bits, "lon": bits, "radiusM": bits,
+    "coverage": [[minLatBits, maxLatBits, minLonBits, maxLonBits, fetchedAtMs|null], …],
+    "nowMs": int,
+    "hasLocalData": bool }
+→ { "covered": true|false }
+
+⚠ `coverage` is the rows for ONE feature_type. Boxes are per-bucket and mixing
+them would report a highway fetch as covering the landmarks.
+
+⚠ `nowMs` crosses the wire rather than being read here. Lean has no clock in a
+pure function, and taking one would make the answer depend on when it was asked
+— which is exactly what makes the staleness rule untestable. The host owns the
+clock; this owns the decision. -/
+private def parseCoverageRow (j : Json) : Except String Verified.Geo.OsmCoverage.CoverageRow := do
+  let a ← j.getArr?
+  let fetchedAt ← match a[4]? with
+    | some v => if v.isNull then pure none else some <$> v.getInt?
+    | none => pure none
+  return { minLat := ← jBits (← nth a 0), maxLat := ← jBits (← nth a 1),
+           minLon := ← jBits (← nth a 2), maxLon := ← jBits (← nth a 3),
+           fetchedAt := fetchedAt }
+
+private def osmCoverageResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let lat ← jBits (← j.getObjVal? "lat")
+    let lon ← jBits (← j.getObjVal? "lon")
+    let radiusM ← jBits (← j.getObjVal? "radiusM")
+    let rows ← (← optArr j "coverage").mapM parseCoverageRow
+    let nowMs ← (← j.getObjVal? "nowMs").getInt?
+    let hasLocalData ← optBool j "hasLocalData" false
+    return Json.mkObj [("covered", Json.bool
+      (Verified.Geo.OsmCoverage.decideCoverage lat lon radiusM rows.toList nowMs hasLocalData))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -1523,6 +1567,7 @@ def dispatch (j : Json) : Json :=
   | .ok "focus" => Focus.focusResult j
   | .ok "battery" => batteryResult j
   | .ok "osmspatial" => osmSpatialResult j
+  | .ok "osmcoverage" => osmCoverageResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
