@@ -53,6 +53,12 @@ pub struct AppState {
     /// Per-device Owntracks proxy state: recent fixes, last pushed profile,
     /// manual-hold deadline.
     pub owntracks: Arc<crate::routes::owntracks::ProxyState>,
+    /// When this process started, for `/health?detail=1`'s uptime.
+    ///
+    /// ⚠ Process uptime, NOT pod age. They differ after a container restart
+    /// inside the same pod, and the one that explains "why did my session
+    /// vanish" is this one.
+    pub started: std::time::Instant,
     pub http: reqwest::Client,
 }
 
@@ -68,6 +74,7 @@ impl AppState {
             flows: Arc::new(crate::routes::nextcloud_connect::PendingFlows::new()),
             oauth_states: Arc::new(crate::location_cache::LocationCache::new()),
             owntracks: Arc::new(crate::routes::owntracks::ProxyState::new()),
+            started: std::time::Instant::now(),
         }
     }
 }

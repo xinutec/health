@@ -920,24 +920,46 @@ pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> R
     // treats as a distinct type and refuses to hand back as a signed integer —
     // the same trap `num` carries a branch for, met here through `query_scalar`
     // where there is no helper to fall back through.
-    let prev: Option<u64> = sqlx::query_scalar(
-        "SELECT end_of_day_place_id FROM presence_log WHERE user_id = ? AND date = ?",
-    )
-    .bind(user_id)
-    .bind(shift_day(date, -1)?)
-    .fetch_optional(pool)
-    .await
-    .context("reading presence_log for the day before")?
-    .flatten();
-    let next: Option<u64> = sqlx::query_scalar(
-        "SELECT dominant_place_id FROM presence_log WHERE user_id = ? AND date = ?",
-    )
-    .bind(user_id)
-    .bind(shift_day(date, 1)?)
-    .fetch_optional(pool)
-    .await
-    .context("reading presence_log for the day after")?
-    .flatten();
+    let prev: Option<u64> = {
+        // ⚠ TWO distinct absences, and both are real: no ROW for that date, and
+        // a row whose place id is NULL. `fetch_optional` answers the first and
+        // `try_get::<Option<u64>>` the second.
+        //
+        // ⚠ `u64`, NOT `i64`. `presence_log.*_place_id` is INT UNSIGNED, which
+        // sqlx treats as a distinct type and REFUSES to hand back as signed.
+        let row = sqlx::query(
+            "SELECT end_of_day_place_id FROM presence_log WHERE user_id = ? AND date = ?",
+        )
+        .bind(user_id)
+        .bind(shift_day(date, -1)?)
+        .fetch_optional(pool)
+        .await
+        .context("reading presence_log for the day before")?;
+        match row {
+            None => None,
+            Some(r) => r.try_get::<Option<u64>, _>("end_of_day_place_id")?,
+        }
+    };
+    let next: Option<u64> = {
+        // ⚠ TWO distinct absences, and both are real: no ROW for that date, and
+        // a row whose place id is NULL. `fetch_optional` answers the first and
+        // `try_get::<Option<u64>>` the second.
+        //
+        // ⚠ `u64`, NOT `i64`. `presence_log.*_place_id` is INT UNSIGNED, which
+        // sqlx treats as a distinct type and REFUSES to hand back as signed.
+        let row = sqlx::query(
+            "SELECT dominant_place_id FROM presence_log WHERE user_id = ? AND date = ?",
+        )
+        .bind(user_id)
+        .bind(shift_day(date, 1)?)
+        .fetch_optional(pool)
+        .await
+        .context("reading presence_log for the day after")?;
+        match row {
+            None => None,
+            Some(r) => r.try_get::<Option<u64>, _>("dominant_place_id")?,
+        }
+    };
 
     let (Some(prev), Some(next)) = (prev, next) else {
         return Ok(Value::Null);

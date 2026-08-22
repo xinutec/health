@@ -39,6 +39,7 @@ pub mod nextcloud_connect;
 pub mod oauth;
 pub mod owntracks;
 pub mod share;
+pub mod site;
 pub mod tables;
 pub mod velocity;
 
@@ -167,7 +168,42 @@ pub fn router(state: AppState) -> Router {
                 .route("/recovery/history", get(internal::recovery_history)),
         )
         .nest("/api", api)
+        // ⚠ Unauthenticated on purpose. `/health` is what an operator curls
+        // when the dashboard is broken, which is exactly when a login might be
+        // too; `/version` is what makes a stale client visible in the footer.
+        .route("/health", get(site::health))
+        .route("/version", get(site::version))
         .with_state(state)
+        // ⚠ The SPA's own routes are served the shell, so a deep link or a
+        // refresh on /settings loads the app instead of 404ing. Listed
+        // explicitly rather than catching everything: a typo'd .css or .js must
+        // still 404, or a missing asset silently becomes an HTML page and the
+        // browser reports a syntax error in what it thought was a script.
+        .route_service("/settings", index_html())
+        .route_service("/settings/{*rest}", index_html())
+        .route_service("/share/{token}", index_html())
+        // The built Angular app, with the landing page when no build is present.
+        .fallback_service(
+            tower_http::services::ServeDir::new(public_dir())
+                .fallback(axum::routing::get(site::fallback_page)),
+        )
+        // ⚠ Runs over EVERYTHING, including the API — see the note on why it
+        // only ever touches text/html.
+        .layer(axum::middleware::from_fn(site::html_must_revalidate))
+}
+
+/// Where the built frontend lives. `PUBLIC_DIR` overrides it so a dev run can
+/// point at a local build without moving files around.
+fn public_dir() -> String {
+    std::env::var("PUBLIC_DIR")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "./public".to_string())
+}
+
+/// The SPA shell, for the routes Angular owns.
+fn index_html() -> tower_http::services::ServeFile {
+    tower_http::services::ServeFile::new(format!("{}/index.html", public_dir()))
 }
 
 /// Liveness: the process is up. No database, on purpose — a liveness probe that

@@ -68,6 +68,7 @@ pub mod routes;
 pub mod row_json;
 pub mod rows_check;
 pub mod rowset_answerer;
+pub mod schema;
 pub mod state;
 pub mod sync_state;
 pub mod timezone;

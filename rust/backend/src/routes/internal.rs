@@ -124,9 +124,11 @@ async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>>
         let total_dwell: i64 = r.try_get("total_dwell_sec")?;
         let visits: i64 = r.try_get("visit_count")?;
         out.push(Place {
-            id: r
-                .try_get::<i64, _>("id")
-                .or_else(|_| r.try_get::<u64, _>("id").map(|v| v as i64))?,
+            // ⚠ UNSIGNED is a DISTINCT sqlx type — an unsigned column decoded
+            // as i64 is REJECTED by `Type::compatible` at runtime, not coerced.
+            // The try-then-fallback this replaced would have worked and hidden
+            // the fact that the first attempt always failed.
+            id: r.try_get::<u64, _>("id")? as i64,
             display_name: r.try_get("display_name")?,
             amenity_label: r.try_get("amenity_label")?,
             amenity_kind: r.try_get("amenity_kind")?,
@@ -139,7 +141,10 @@ async fn load_places(st: &AppState, user_id: &str) -> anyhow::Result<Vec<Place>>
                 0.0
             },
             unique_days: r.try_get("unique_days")?,
-            last_seen_ts: r.try_get("last_seen_ts")?,
+            // ⚠ Also UNSIGNED, and nullable — both halves matter.
+            last_seen_ts: r
+                .try_get::<Option<u64>, _>("last_seen_ts")?
+                .map(|v| v as i64),
         });
     }
     Ok(out)

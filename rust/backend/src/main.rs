@@ -307,6 +307,31 @@ async fn serve() -> Result<()> {
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
+    // ⚠ BEFORE serving. A pod that answers requests against a schema it has not
+    // finished applying returns errors that look like data problems.
+    backend::schema::migrate(&pool)
+        .await
+        .context("applying the schema")?;
+
+    // ⚠ A sweep, because the per-request path only deletes a session when its
+    // owner comes back with the cookie. Dormant accounts would otherwise
+    // accumulate rows forever, and the table would grow with people who left.
+    let sweep_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+        loop {
+            ticker.tick().await;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            match backend::auth::session::cleanup_expired(&sweep_pool, now_ms).await {
+                // Silent when there was nothing to do: a line every six hours
+                // saying "0" trains a reader to skip the line that says 400.
+                Ok(0) => {}
+                Ok(n) => tracing::info!(swept = n, "expired session(s) removed"),
+                Err(e) => tracing::error!(error = %format!("{e:#}"), "session sweep failed"),
+            }
+        }
+    });
+
     let app = routes::router(AppState::new(pool, cfg, http));
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
