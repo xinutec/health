@@ -3496,6 +3496,19 @@ no line in label result = null
 unknown line result = null
 same station result = null
 
+### railfill-refs.mts
+one candidate: [{"key":"A → B · L","start":100,"end":200,"fixes":3}]
+walk: []
+refined away from train: []
+refined into train: [{"key":"A → B","start":100,"end":200,"fixes":3}]
+no wayName: []
+already snapped: []
+inclusive window: [{"key":"A → B","start":100,"end":200,"fixes":3}]
+pooled: [{"key":"A → B","start":100,"end":200,"fixes":5}]
+two keys: [{"key":"B → C","start":300,"end":400,"fixes":2},{"key":"A → B","start":100,"end":200,"fixes":3}]
+no fixes in window: [{"key":"A → B","start":900,"end":950,"fixes":0}]
+empty day: []
+
 ### refine-candidates-refs.mts
 
 === modesForWay — one way at a time ===

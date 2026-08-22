@@ -675,6 +675,48 @@ pub fn osm_covered(
     Ok(c.covered)
 }
 
+/// One train leg the serving path should queue a route fill for.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct FillCandidate {
+    pub key: String,
+    #[serde(rename = "startTs")]
+    pub start_ts: i64,
+    #[serde(rename = "endTs")]
+    pub end_ts: i64,
+    /// `(lat, lon)` bit patterns, pooled across legs sharing the key. Left as
+    /// the wire spelling: the caller hands them to the corridor query, and
+    /// parsing them here would round-trip a float for nothing.
+    pub fixes: Vec<(String, String)>,
+}
+
+/// `Verified.Geo.RailRouteFill.unsnappedTrainRoutes` — which train legs of a
+/// computed day want a background route fill.
+///
+/// ⚠ `segments` and `points` are already in the wire form the mode reads:
+/// `[mode, refinedMode|null, startTs, endTs, wayName|null, hasSnappedPath]` and
+/// `[ts, latBits, lonBits]`. `hasSnappedPath` is a BOOLEAN — shipping the
+/// geometry to answer "is it drawn already" would put every snapped polyline of
+/// the day on the wire to be discarded.
+pub fn unsnapped_train_routes(
+    segments: &[serde_json::Value],
+    points: &[serde_json::Value],
+) -> Result<Vec<FillCandidate>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        candidates: Vec<FillCandidate>,
+    }
+    let req = serde_json::json!({
+        "mode": "railfill", "segments": segments, "points": points,
+    });
+    let out = serve(&req.to_string()).context("lean serve railfill")?;
+    let v: serde_json::Value = serde_json::from_str(&out).context("railfill answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("railfill: {e}");
+    }
+    let w: Wire = serde_json::from_value(v).context("railfill answer has no `candidates`")?;
+    Ok(w.candidates)
+}
+
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line

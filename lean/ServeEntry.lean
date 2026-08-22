@@ -1542,6 +1542,60 @@ private def osmCoverageResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## `railfill` — which train legs want a background route fill (#982, #363)
+
+`Verified.Geo.RailRouteFill.unsnappedTrainRoutes`. A train leg draws on rails
+only when its label has a `rail_route_cache` row, so a key first ridden today
+draws raw until the nightly job runs. This names the legs a worker should fill.
+
+  { "segments": [[mode, refinedMode|null, startTs, endTs, wayName|null, hasSnappedPath], …],
+    "points":   [[ts, latBits, lonBits], …] }
+→ { "candidates": [{ "key", "startTs", "endTs", "fixes": [[latBits, lonBits], …] }, …] }
+
+⚠ `hasSnappedPath` is a BOOLEAN, not the path. The scan only asks whether the
+leg is drawn already, and shipping the geometry to answer that would put every
+snapped polyline of the day on the wire to be discarded.
+
+⚠ The order out is the order the day was walked, and it is what the queue drains
+in. Sorting the reply would be a change to the fill order. -/
+private def parseFillSegment (j : Json) : Except String Verified.Geo.RailRouteFill.FillSegment := do
+  let a ← j.getArr?
+  return { mode := ← (← nth a 0).getStr?,
+           refinedMode := ← (match a[1]? with
+             | some v => if v.isNull then pure none else some <$> v.getStr?
+             | none => pure none),
+           startTs := ← (← nth a 2).getInt?,
+           endTs := ← (← nth a 3).getInt?,
+           wayName := ← (match a[4]? with
+             | some v => if v.isNull then pure none else some <$> v.getStr?
+             | none => pure none),
+           hasSnappedPath := ← (match a[5]? with
+             | some v => v.getBool?
+             | none => pure false) }
+
+private def parseFillFix (j : Json) : Except String Verified.Geo.RailRouteFill.Fix := do
+  let a ← j.getArr?
+  return { ts := ← (← nth a 0).getInt?,
+           lat := ← jBits (← nth a 1), lon := ← jBits (← nth a 2) }
+
+private def candidateJson (c : Verified.Geo.RailRouteFill.Candidate) : Json :=
+  Json.mkObj
+    [ ("key", Json.str c.key)
+    , ("startTs", Lean.toJson c.startTs)
+    , ("endTs", Lean.toJson c.endTs)
+    , ("fixes", Json.arr ((c.fixes.map
+        (fun (la, lo) => Json.arr #[fBits la, fBits lo])).toArray)) ]
+
+private def railFillResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let segs ← (← optArr j "segments").mapM parseFillSegment
+    let pts ← (← optArr j "points").mapM parseFillFix
+    let out := Verified.Geo.RailRouteFill.unsnappedTrainRoutes segs.toList pts.toList
+    return Json.mkObj [("candidates", Json.arr ((out.map candidateJson).toArray))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -1568,6 +1622,7 @@ def dispatch (j : Json) : Json :=
   | .ok "battery" => batteryResult j
   | .ok "osmspatial" => osmSpatialResult j
   | .ok "osmcoverage" => osmCoverageResult j
+  | .ok "railfill" => railFillResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
