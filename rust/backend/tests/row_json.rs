@@ -176,3 +176,52 @@ fn days_coercion_matches_number() {
     // Absent — and ONLY absent — is the default.
     assert_eq!(lean::validate_days(None).expect("absent"), Some(30));
 }
+
+/// How a JS number renders, against what V8 actually printed.
+///
+/// ⚠ Every expectation here is an output of `lean/experiments/rowshape-refs.mts`
+/// under Node. The rule matters because JavaScript has no integer/float
+/// distinction: a derived `Serialize` writes `120.0` where `JSON.stringify`
+/// writes `120`. That cost 8,790 bytes of difference across one day of GPS
+/// fixes on the first `/locations` parity run, and no test in this repo would
+/// have caught it — only the byte diff did.
+#[test]
+fn numbers_render_as_javascript_renders_them() {
+    use backend::row_json::{js_number_opt, js_number_value};
+    let cases: &[(f64, &str)] = &[
+        (120.0, "120"),
+        (17.0, "17"),
+        (100.0, "100"),
+        (0.0, "0"),
+        // ⚠ `JSON.stringify(-0)` is `0`, not `-0`.
+        (-0.0, "0"),
+        (1.0, "1"),
+        (-1.0, "-1"),
+        // Real coordinates, which must keep every digit.
+        (51.5696612, "51.5696612"),
+        (-0.2786201, "-0.2786201"),
+        (0.5, "0.5"),
+        (-0.5, "-0.5"),
+        (0.1, "0.1"),
+        (1.5, "1.5"),
+        (2.675, "2.675"),
+        (9_007_199_254_740_991.0, "9007199254740991"),
+    ];
+    for (v, want) in cases {
+        assert_eq!(
+            serde_json::to_string(&js_number_value(*v)).expect("serialise"),
+            *want,
+            "js_number_value({v})"
+        );
+    }
+    // ⚠ NaN and the infinities are `null` — JSON cannot say them, and
+    // `JSON.stringify` does not error either.
+    for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(js_number_value(v), serde_json::Value::Null, "{v}");
+    }
+    assert_eq!(js_number_opt(None), serde_json::Value::Null);
+    assert_eq!(
+        serde_json::to_string(&js_number_opt(Some(17.0))).expect("serialise"),
+        "17"
+    );
+}

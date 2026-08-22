@@ -75,3 +75,20 @@ for (const tz of ["UTC", "Europe/London", "Asia/Tokyo"]) {
 	);
 	console.log(`TZ=${tz.padEnd(13)} local midnight 2026-08-22 renders ${out}`);
 }
+
+// ⚠ A JS number has no integer/float distinction: `JSON.stringify` prints the
+// SHORTEST representation that round-trips, so an integral value loses its
+// decimal point entirely. Rust's serde_json prints `120.0` for the same f64,
+// which is a different response for the same data. This is why
+// `Verified.RowShape` refuses DOUBLE columns rather than guessing, and it is
+// the rule `row_json::js_number_value` has to reproduce for the GPS endpoints,
+// whose lat/lon/altitude/speed/accuracy are all JSON numbers.
+console.log("--- how JSON.stringify renders a number ---");
+for (const v of [
+	120, 17, 100, 0, -0, 1, -1,
+	51.5696612, -0.2786201, 0.5, -0.5,
+	1e20, 1e21, 1e-7, 123456789012345680000,
+	9007199254740991, 0.1, 1.5, 2.675,
+]) {
+	console.log(`${String(v).padEnd(24)} -> ${JSON.stringify(v)}`);
+}

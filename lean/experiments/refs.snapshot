@@ -1375,6 +1375,21 @@ pick sparse (both possible): null
 pick dense tight: "Metropolitan Line"
 pick single candidate: null
 
+### locationtail-refs.mts
+--- tailAfter(tss, since): the filter is STRICT ---
+tailAfter([1,2,3], 2): [3]
+tailAfter([1,2,3], 0): [1,2,3]
+tailAfter([1,2,3], 3): []
+tailAfter([], 0): []
+--- the cap keeps the NEWEST, not the oldest ---
+3000 points, since=0: length=2000 first=1001 last=3000
+10 points, since=4: length=6
+--- cache freshness: both TTLs, at the boundary ---
+at=1000 now=1000: fix=true tail=true agree=true
+at=1000 now=10999: fix=true tail=true agree=true
+at=1000 now=11000: fix=false tail=false agree=true
+at=1000 now=20000: fix=false tail=false agree=true
+
 ### modebio-refs.mts
 label stationary: stationary
 label walking: walking
@@ -4776,6 +4791,26 @@ if a host decoded bool: {"is_main_sleep":true}
 TZ=UTC           local midnight 2026-08-22 renders "2026-08-22T00:00:00.000Z"
 TZ=Europe/London local midnight 2026-08-22 renders "2026-08-21T23:00:00.000Z"
 TZ=Asia/Tokyo    local midnight 2026-08-22 renders "2026-08-21T15:00:00.000Z"
+--- how JSON.stringify renders a number ---
+120                      -> 120
+17                       -> 17
+100                      -> 100
+0                        -> 0
+0                        -> 0
+1                        -> 1
+-1                       -> -1
+51.5696612               -> 51.5696612
+-0.2786201               -> -0.2786201
+0.5                      -> 0.5
+-0.5                     -> -0.5
+100000000000000000000    -> 100000000000000000000
+1e+21                    -> 1e+21
+1e-7                     -> 1e-7
+123456789012345680000    -> 123456789012345680000
+9007199254740991         -> 9007199254740991
+0.1                      -> 0.1
+1.5                      -> 1.5
+2.675                    -> 2.675
 
 ### segments-refs.mts
 scoreWindow.stationary: [["stationary",30.649086792579197],["walking",0.004636346751094064],["cycling",0.004534455144287768],["driving",0.0015495242739136858],["train",3.187106149037157e-22],["plane",1.815217867109666e-88]]

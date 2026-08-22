@@ -27,6 +27,14 @@ pub struct AppState {
     /// requests — that is the whole point, and it is why the single-flight in
     /// there matters.
     pub velocity: Arc<crate::velocity_cache::VelocityCache>,
+    /// The freshest PhoneTrack fix per user, for ten seconds.
+    pub latest_fix:
+        Arc<crate::location_cache::LocationCache<Option<crate::location_cache::LatestFix>>>,
+    /// The raw tail buffer per user, for ten seconds. Held WHOLE and filtered
+    /// per request: `since` differs between callers, so caching the filtered
+    /// answer would key on it and defeat the point.
+    pub tail_points:
+        Arc<crate::location_cache::LocationCache<Vec<crate::location_cache::TailPoint>>>,
     /// One client, reused. Every outbound call is bounded — a hung Nextcloud or
     /// Fitbit must not tie up a pod, and a per-call client would also throw away
     /// the connection pool on every request.
@@ -40,6 +48,8 @@ impl AppState {
             cfg: Arc::new(cfg),
             http,
             velocity: Arc::new(crate::velocity_cache::VelocityCache::new()),
+            latest_fix: Arc::new(crate::location_cache::LocationCache::new()),
+            tail_points: Arc::new(crate::location_cache::LocationCache::new()),
         }
     }
 }

@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::error::AppResult;
 use crate::state::AppState;
 
+pub mod locations;
 pub mod tables;
 pub mod velocity;
 
@@ -68,6 +69,11 @@ pub fn router(state: AppState) -> Router {
         .route("/temperature", get(tables::temperature))
         .route("/devices", get(tables::devices))
         .route("/sync-state", get(tables::sync_state))
+        // ⚠ The live-map group. All three check the share window against TODAY
+        // rather than a requested date — see `routes::locations`.
+        .route("/locations", get(locations::locations))
+        .route("/location/latest", get(locations::latest))
+        .route("/location/tail", get(locations::tail))
         .layer(axum::middleware::from_fn(
             crate::auth::middleware::require_may_proceed,
         ))

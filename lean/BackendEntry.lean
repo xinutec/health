@@ -6,6 +6,7 @@ import Verified.Token
 import Verified.Weight
 import Verified.ApiWindow
 import Verified.RowShape
+import Verified.LocationTail
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -399,6 +400,31 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- The day BEFORE `date`. `/location/latest` and `/location/tail` fetch
+  -- yesterday as well as today so a fix just after midnight is not the only
+  -- point in the window.
+  | some "prevDay" =>
+    match str? j "date" with
+    | some d =>
+      match Verified.Civil.addDays d (-1) with
+      | none => err s!"prevDay: {d} is not YYYY-MM-DD"
+      | some pv => Json.mkObj [("value", Json.str pv)]
+    | none => err "prevDay: date required"
+  -- The live-map constants (#982).
+  | some "locationPolicy" =>
+    Json.mkObj
+      [ ("tailMaxPoints", Json.num Verified.LocationTail.TAIL_MAX_POINTS)
+      , ("latestFixTtlMs", Json.num Verified.LocationTail.LATEST_FIX_TTL_MS)
+      , ("tailTtlMs", Json.num Verified.LocationTail.TAIL_TTL_MS) ]
+  -- ⚠ The REFERENCE tail, for the host's drift test only. The serving path
+  -- filters inline — a tail buffer is thousands of points and shipping them all
+  -- across the FFI per poll would cost more than the fetch it saves.
+  | some "tailAfter" =>
+    match ints? j "tss", int? j "since" with
+    | some tss, some since =>
+      Json.mkObj
+        [ ("value", Json.arr ((Verified.LocationTail.tailAfter tss since).map (fun t => Json.num (Lean.JsonNumber.fromInt t))).toArray) ]
+    | _, _ => err "tailAfter: tss, since required"
   -- The wire shape of a `selectAll()` row (#982).
   --
   -- ⚠ Asked ONCE PER COLUMN of a result set, not per value: the shape is a

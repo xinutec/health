@@ -203,3 +203,48 @@ pub fn rows_to_json(rows: &[MySqlRow]) -> Result<Vec<Value>> {
     let enc = RowEncoder::from_row(first)?;
     rows.iter().map(|r| enc.encode(r)).collect()
 }
+
+/// One `f64`, rendered as `JSON.stringify` renders a JS number.
+///
+/// ⚠ JavaScript has NO integer/float distinction. `JSON.stringify(120)` is
+/// `120`, while `serde_json` prints `120.0` for the same `f64` — a different
+/// response for identical data. That is not hypothetical: the first
+/// `/locations` parity run against production differed by 8,790 bytes across
+/// 1,465 points for exactly this reason, and nothing else had caught it.
+///
+/// The rules, measured from V8 in `lean/experiments/rowshape-refs.mts`:
+///
+///   * an integral value prints with no decimal point (`120`, `-1`, `0`)
+///   * `-0` prints as `0`
+///   * a non-integral value prints its SHORTEST round-tripping form, which is
+///     also what `ryu` (and therefore `serde_json`) produces
+///   * `NaN` and the infinities print as `null` — JSON has no way to say them
+///
+/// ⚠ WHAT IS VERIFIED IS A RANGE. Integral values beyond 2^53 are handed to
+/// `serde_json`, whose exponent formatting is NOT known to match V8's (which
+/// switches to `1e+21` at that threshold and prints full digits below it). No
+/// value this API carries comes near that — latitude, longitude, altitude,
+/// speed, accuracy and battery are all far inside it — but a caller adding a
+/// column with genuinely huge numbers must re-measure rather than assume this
+/// covers them.
+pub fn js_number_value(v: f64) -> Value {
+    if !v.is_finite() {
+        // ⚠ `JSON.stringify(NaN)` is `null`, not `NaN` — which is not valid
+        // JSON — and not an error either.
+        return Value::Null;
+    }
+    // 2^53: above this an f64 cannot represent consecutive integers, and V8's
+    // shortest-round-trip digits stop agreeing with a plain integer conversion.
+    const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
+    if v.fract() == 0.0 && v.abs() <= MAX_EXACT_INT {
+        // `as i64` is exact here, and it also folds `-0.0` to `0` the way
+        // `JSON.stringify` does.
+        return Value::from(v as i64);
+    }
+    Value::from(v)
+}
+
+/// [`js_number_value`] for an optional number, so `None` stays `null`.
+pub fn js_number_opt(v: Option<f64>) -> Value {
+    v.map_or(Value::Null, js_number_value)
+}

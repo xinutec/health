@@ -102,6 +102,13 @@ async fn main() -> Result<()> {
             };
             velocity(user, date, tz).await
         }
+        "locations-check" => {
+            let [user, date] = flags else {
+                eprintln!("usage: backend locations-check <user> <date>");
+                std::process::exit(64);
+            };
+            locations_check(user, date).await
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -1220,5 +1227,72 @@ async fn day_live(
         eprintln!("  ...of which bestPlace asked before its timezone resolved: {early}");
     }
     println!("{}", r.out);
+    Ok(())
+}
+
+/// Render `/locations` for one day and print it, for diffing against the
+/// TypeScript (#982).
+///
+/// ⚠ What this actually tests is FLOATS AND ORDER, which no unit test here can
+/// reach. Each fix carries lat, lon, altitude, speed and accuracy as JSON
+/// numbers that cross V8 on one side and serde_json on the other —
+/// `Verified.RowShape` refuses DOUBLE columns for exactly that reason, so
+/// "these render identically" is a claim that has to be measured. And both
+/// implementations concatenate across devices before a STABLE sort by `ts`, so
+/// equal timestamps expose the device-walk order: a `HashMap` iteration in Rust
+/// against a JSON object's insertion order in TypeScript.
+///
+/// Pair with `scripts/locations-check-ts.mjs` and diff.
+async fn locations_check(user: &str, date: &str) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    // ⚠ The API path's default, NOT `None`-means-unconfigured. NC_BASE_URL is
+    // empty on the serving pod and the TypeScript defaults it, so a check that
+    // bailed here would be measuring a configuration this endpoint never sees.
+    let base = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| backend::classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
+
+    let next = lean::next_day(date)?;
+    let pt = backend::nextcloud::phonetrack::PhoneTrack::open(
+        reqwest::Client::new(),
+        &pool,
+        &base,
+        user,
+    )
+    .await?;
+    let fetched = pt.fetch_range(&pool, date, &next).await?;
+    // ⚠ Reported, not swallowed: a non-zero count means `points` is a SUBSET,
+    // so a diff against it would be comparing two different questions.
+    if fetched.failed_devices > 0 {
+        eprintln!(
+            "locations-check: {} device(s) FAILED — this is a subset of the day",
+            fetched.failed_devices
+        );
+    }
+    let out: Vec<serde_json::Value> = fetched
+        .points
+        .iter()
+        .map(|p| {
+            // ⚠ Through the JS number rule, exactly as the route does — a
+            // check that serialised these differently would be diffing its own
+            // rendering rather than the endpoint's.
+            use backend::row_json::{js_number_opt, js_number_value};
+            serde_json::json!({
+                "ts": p.ts,
+                "lat": js_number_value(p.lat),
+                "lon": js_number_value(p.lon),
+                "altitude": js_number_opt(p.altitude),
+                "speed": js_number_opt(p.speed),
+                "accuracy": js_number_opt(p.accuracy),
+                "battery": js_number_opt(p.battery),
+            })
+        })
+        .collect();
+    println!("locations\t{}", serde_json::to_string(&out)?);
+    pool.close().await;
     Ok(())
 }

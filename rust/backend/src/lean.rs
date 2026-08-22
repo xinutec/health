@@ -1151,3 +1151,49 @@ pub fn next_day(date: &str) -> Result<String> {
     let w: Wire = call_json(&serde_json::json!({ "op": "nextDay", "date": date }))?;
     Ok(w.value)
 }
+
+/// `Verified.LocationTail`'s constants.
+///
+/// ⚠ Restated here as consts rather than fetched per request: they are compile
+/// time constants in Lean too, and a host call per poll would cost more than the
+/// value is worth. `tests/location_tail.rs` asserts each against Lean, so a
+/// change there fails a test rather than silently disagreeing.
+pub const TAIL_MAX_POINTS: i64 = 2000;
+pub const LATEST_FIX_TTL_MS: i64 = 10_000;
+pub const TAIL_TTL_MS: i64 = 10_000;
+
+/// `Verified.LocationTail`'s constants, from Lean. Used by the test that pins
+/// the consts above.
+pub fn location_policy() -> Result<(i64, i64, i64)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        #[serde(rename = "tailMaxPoints")]
+        tail_max_points: i64,
+        #[serde(rename = "latestFixTtlMs")]
+        latest_fix_ttl_ms: i64,
+        #[serde(rename = "tailTtlMs")]
+        tail_ttl_ms: i64,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "locationPolicy" }))?;
+    Ok((w.tail_max_points, w.latest_fix_ttl_ms, w.tail_ttl_ms))
+}
+
+/// `Verified.LocationTail.tailAfter` — the REFERENCE tail, for the drift test.
+pub fn tail_after_ref(tss: &[i64], since: i64) -> Result<Vec<i64>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<i64>,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "tailAfter", "tss": tss, "since": since }))?;
+    Ok(w.value)
+}
+
+/// `Verified.Civil.addDays date (-1)`.
+pub fn prev_day(date: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "prevDay", "date": date }))?;
+    Ok(w.value)
+}
