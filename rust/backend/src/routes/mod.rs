@@ -32,6 +32,7 @@ use crate::error::AppResult;
 use crate::state::AppState;
 
 pub mod locations;
+pub mod logging;
 pub mod me;
 pub mod share;
 pub mod tables;
@@ -83,6 +84,11 @@ pub fn router(state: AppState) -> Router {
         .route("/location/tail", get(locations::tail))
         // ⚠ THE FIRST WRITE ROUTES HERE. The layer order below stops being
         // theoretical the moment these exist — see the note on it.
+        // ⚠ `/telemetry` is the ONE write a share recipient may make — it
+        // writes only to the log, and it is how anyone knows what a recipient
+        // saw. `Verified.Session.mayProceed` names it explicitly, by EXACT path.
+        .route("/telemetry", axum::routing::post(logging::telemetry))
+        .route("/client-log", axum::routing::post(logging::client_log))
         .route(
             "/share",
             get(share::get)

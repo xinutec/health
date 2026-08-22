@@ -1399,6 +1399,35 @@ at=1000 now=10999: fix=true tail=true agree=true
 at=1000 now=11000: fix=false tail=false agree=true
 at=1000 now=20000: fix=false tail=false agree=true
 
+### logline-refs.mts
+--- the tables, as V8 classifies every code point ---
+Cc|Cf|Zl|Zp: 23 ranges
+[[0,31],[127,159],[173,173],[1536,1541],[1564,1564],[1757,1757],[1807,1807],[2192,2193],[2274,2274],[6158,6158],[8203,8207],[8232,8238],[8288,8292],[8294,8303],[65279,65279],[65529,65531],[69821,69821],[69837,69837],[78896,78911],[113824,113827],[119155,119162],[917505,917505],[917536,917631]]
+\s: 10 ranges
+[[9,13],[32,32],[160,160],[5760,5760],[8192,8202],[8232,8233],[8239,8239],[8287,8287],[12288,12288],[65279,65279]]
+whitespace that is NOT control-like: [[32,32],[160,160],[5760,5760],[8192,8202],[8239,8239],[8287,8287],[12288,12288]]
+--- oneLine(raw, max), from the production function ---
+oneLine("Refresh", 160) = "Refresh" len=7
+oneLine("", 160) = "" len=0
+oneLine("a\nclient-event user=victim", 160) = "a client-event user=victim" len=26
+oneLine("a\rb", 160) = "a b" len=3
+oneLine("a\r\nb", 160) = "a b" len=3
+oneLine("a b", 160) = "a b" len=3
+oneLine("a b", 160) = "a b" len=3
+oneLine("a‮b", 160) = "a b" len=3
+oneLine("a​b", 160) = "a b" len=3
+oneLine("a﻿b", 160) = "a b" len=3
+oneLine("a   b", 160) = "a b" len=3
+oneLine("  a  b  ", 160) = "a b" len=3
+oneLine("\t\n\r a", 160) = "a" len=1
+oneLine("   ", 160) = "" len=0
+oneLine("a b", 160) = "a b" len=3
+oneLine("a　b", 160) = "a b" len=3
+oneLine("abcdef", 3) = "abc" len=3
+oneLine("abc", 10) = "abc" len=3
+oneLine("abcdef", 0) = "" len=0
+oneLine("𝄞𝄞𝄞", 2) = "𝄞𝄞" len=2
+
 ### modebio-refs.mts
 label stationary: stationary
 label walking: walking

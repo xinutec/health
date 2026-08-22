@@ -1249,3 +1249,18 @@ pub fn clamp_share_days_back(days_back: Option<i64>) -> Result<Option<i64>> {
     let w: Wire = call_json(&req)?;
     Ok(w.value)
 }
+
+/// `Verified.LogLine.oneLine` — flatten client text into one log field.
+///
+/// ⚠ THE SECURITY BOUNDARY of `/api/telemetry`, and called per label rather
+/// than reimplemented here. The rule depends on Unicode category tables derived
+/// from V8; a second copy in Rust would be a second thing to keep in step with
+/// them, for a path that handles at most 100 labels per request.
+pub fn one_line(raw: &str, max: i64) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "oneLine", "raw": raw, "max": max }))?;
+    Ok(w.value)
+}

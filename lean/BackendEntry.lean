@@ -8,6 +8,7 @@ import Verified.ApiWindow
 import Verified.RowShape
 import Verified.LocationTail
 import Verified.Connection
+import Verified.LogLine
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -401,6 +402,17 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- Flatten client text into one log field (#982).
+  --
+  -- ⚠ A SECURITY BOUNDARY, not formatting. `/api/telemetry` writes this into a
+  -- log line, so a newline in the input forges further lines attributed to
+  -- someone else. A host that skipped this call would make the log unusable as
+  -- evidence exactly when it matters.
+  | some "oneLine" =>
+    match str? j "raw", int? j "max" with
+    | some raw, some max =>
+      Json.mkObj [("value", Json.str (Verified.LogLine.oneLine raw max.toNat))]
+    | _, _ => err "oneLine: raw, max required"
   -- The public share URL for a token (#982).
   | some "buildShareUrl" =>
     match str? j "baseUrl", str? j "token" with
