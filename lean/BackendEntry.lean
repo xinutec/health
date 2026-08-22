@@ -7,6 +7,7 @@ import Verified.Weight
 import Verified.ApiWindow
 import Verified.RowShape
 import Verified.LocationTail
+import Verified.Connection
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -400,6 +401,16 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- Whether a linked account is working (#982).
+  --
+  -- ⚠ `stored` absent means NO ROW, which is `not_linked`. A host that sent an
+  -- empty string for a missing row would get `active` back — the fall-through —
+  -- and report a connection that does not exist as fine.
+  | some "connectionStatus" =>
+    let st := Verified.Connection.statusOf (str? j "stored")
+    Json.mkObj
+      [ ("value", Json.str (Verified.Connection.Status.toString st))
+      , ("linked", Json.bool (Verified.Connection.isLinked st)) ]
   -- The day BEFORE `date`. `/location/latest` and `/location/tail` fetch
   -- yesterday as well as today so a fix just after midnight is not the only
   -- point in the window.

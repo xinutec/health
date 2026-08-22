@@ -411,6 +411,15 @@ boarding + 3 dwells none at stop: total=0.69999999999999996 boarding=1.500000000
 2 dwells none at stop (under MANY): total=0.0000000000000000 boarding=0.0000000000000000 dwell=0.0000000000000000 pen=0.0000000000000000
 boundary: stop at exactly 35 m: total=2.2999999999999998 boarding=1.5000000000000000 dwell=0.80000000000000004 pen=0.0000000000000000
 
+### connection-refs.mts
+--- statusOf(row) ---
+status=undefined: not_linked  linked=false
+status="needs_reauth": needs_reauth  linked=true
+status="active": active  linked=true
+status="": active  linked=true
+status="revoked": active  linked=true
+status="NEEDS_REAUTH": active  linked=true
+
 ### consolidate-jitter-stays-refs.mts
 === consolidateJitterStays ===
 --- three co-located fragments, middle longest

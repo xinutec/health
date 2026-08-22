@@ -32,6 +32,7 @@ use crate::error::AppResult;
 use crate::state::AppState;
 
 pub mod locations;
+pub mod me;
 pub mod tables;
 pub mod velocity;
 
@@ -53,6 +54,7 @@ pub fn router(state: AppState) -> Router {
     // `tests/velocity_route.rs` mirrors this stack with a write route so the
     // invariant has a test before the route that needs it exists.
     let api = Router::new()
+        .route("/me", get(me::handler))
         .route("/velocity", get(velocity::handler))
         // The ten table reads. Every one of these is inside the authenticated
         // group; a share recipient reaches them too, and what they may see is

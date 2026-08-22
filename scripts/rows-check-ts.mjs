@@ -89,5 +89,18 @@ const hr = await conn.query(
 );
 console.log(`heartrate/intraday\t${JSON.stringify(hr)}`);
 
+// `/me`'s two status reads. Verbatim from `getConnectionStatus` in
+// `src/nextcloud/credentials.ts` and `src/fitbit/token-manager.ts`, which are
+// the same three lines over different tables.
+for (const [name, sql] of [
+	["me/nextcloud", "SELECT status FROM nc_credentials WHERE user_id = ?"],
+	["me/fitbit", "SELECT status FROM tokens WHERE user_id = ?"],
+]) {
+	const rows = await conn.query(sql, [user]);
+	const row = rows[0];
+	const status = !row ? "not_linked" : row.status === "needs_reauth" ? "needs_reauth" : "active";
+	console.log(`${name}\t${JSON.stringify({ status, linked: status !== "not_linked" })}`);
+}
+
 await conn.end();
 await pool.end();

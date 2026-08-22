@@ -6,6 +6,7 @@ import Verified.Weight
 import Verified.ApiWindow
 import Verified.RowShape
 import Verified.LocationTail
+import Verified.Connection
 import Verified.Session
 import Verified.Share
 import Verified.VelocityCache

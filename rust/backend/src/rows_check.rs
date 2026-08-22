@@ -173,6 +173,30 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
     .context("heartrate/intraday: query")?;
     failures += emit("heartrate/intraday", row_json::rows_to_json(&hr))?;
 
+    // ⚠ `/me`'s two status reads, which are `fetch_optional` and therefore
+    // answer `not_linked` by ABSENCE. Included here so the parity diff covers
+    // the one endpoint whose answer is computed from a missing row.
+    let statuses: [(&str, &str); 2] = [
+        (
+            "me/nextcloud",
+            "SELECT status FROM nc_credentials WHERE user_id = ?",
+        ),
+        ("me/fitbit", "SELECT status FROM tokens WHERE user_id = ?"),
+    ];
+    for (name, sql) in statuses {
+        let row: Option<Option<String>> = sqlx::query_scalar(sql)
+            .bind(user)
+            .fetch_optional(pool)
+            .await
+            .with_context(|| format!("{name}: query"))?;
+        let (status, linked) =
+            lean::connection_status(row.as_ref().map(|s| s.as_deref().unwrap_or("")))?;
+        println!(
+            "{name}\t{}",
+            serde_json::to_string(&serde_json::json!({ "status": status, "linked": linked }))?
+        );
+    }
+
     if failures > 0 {
         anyhow::bail!("{failures} endpoint(s) could not be rendered");
     }

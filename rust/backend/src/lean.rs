@@ -1197,3 +1197,21 @@ pub fn prev_day(date: &str) -> Result<String> {
     let w: Wire = call_json(&serde_json::json!({ "op": "prevDay", "date": date }))?;
     Ok(w.value)
 }
+
+/// `Verified.Connection.statusOf` — is a linked account working?
+///
+/// ⚠ `stored` is `None` for NO ROW. Passing an empty string instead would take
+/// the fall-through and report a connection that does not exist as `active`.
+pub fn connection_status(stored: Option<&str>) -> Result<(String, bool)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+        linked: bool,
+    }
+    let mut req = serde_json::json!({ "op": "connectionStatus" });
+    if let Some(s) = stored {
+        req["stored"] = serde_json::json!(s);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok((w.value, w.linked))
+}
