@@ -44,6 +44,25 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 # API, so `fs` is not optional here.
 axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie"] }
+# Session cookies (#982). Every one of these is ALREADY in the lockfile via
+# sqlx, so declaring them adds no resolution — the versions below are the ones
+# already resolved, and `hmac` 0.13 pairs with `sha2` 0.11 because both are on
+# `digest` 0.11. Pinning a `sha2` 0.10 here would silently fail to satisfy it.
+#
+# ⚠ These are the ONLY part of auth that is not in Lean, and that is the split
+# `lib.rs` describes: there is nothing to prove about an HMAC beyond that it was
+# asked for. The rules around them — the framing, the expiry boundary, what a
+# share viewer may do — are `Verified.Session`.
+hmac = "0.13"
+sha2 = "0.11"
+# Constant-time comparison. A signature check that returns early on the first
+# differing byte leaks where it differed, one request at a time.
+subtle = "2.6"
+base64 = "0.22"
+# The CSPRNG behind a session id. `getrandom` rather than `rand`: this wants the
+# OS entropy source and nothing else — no seeding, no distributions, no
+# generator to get wrong.
+getrandom = "0.4"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["fs", "trace"] }
 serde = { version = "1", features = ["derive"] }

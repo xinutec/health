@@ -42,3 +42,12 @@ show("same length, wrong bytes", verifyValue(SECRET, `abc.${flipped}`));
 // The shape of what `signValue` produces, so the framing is visible.
 show("signed shape (dots in output)", signValue(SECRET, "abc").split(".").length);
 show("signed value prefix", signValue(SECRET, "abc").startsWith("abc."));
+
+// ⚠ THE SIGNATURES THEMSELVES, so the Rust port has an oracle for its HMAC and
+// its base64url. Node's `digest("base64url")` is UNPADDED, and a port that pads
+// produces a well-formed signature that never matches. The secret below is a
+// fixed test string; nothing in production uses it.
+console.log("--- signatures under the fixed test secret ---");
+for (const v of ["abc", "", "a.b.c", "deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb"]) {
+	console.log(`sign(${JSON.stringify(v)}): ${JSON.stringify(signValue(SECRET, v))}`);
+}

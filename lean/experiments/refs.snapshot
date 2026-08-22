@@ -4800,6 +4800,11 @@ wrong secret: null
 same length, wrong bytes: null
 signed shape (dots in output): 2
 signed value prefix: true
+--- signatures under the fixed test secret ---
+sign("abc"): "abc.YjuLlBXrSg3AQ23dC-FViq8v9lRoeJ9ESI2tFifobOg"
+sign(""): ".Gwy8Vn-Udg7RoBWLlBnuCbCfqomk6ukwlgH4H6oC_aY"
+sign("a.b.c"): "a.b.c.rz4iZ2vhkfcX3itWuB-78c1muFA3QJViF28h2mU1bqs"
+sign("deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb"): "deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb.P6vgTzR2l-vaYntrhnpF0XZHtEunxWqISWkBAkCGVlA"
 
 ### share-refs.mts
 === buildShareUrl ===

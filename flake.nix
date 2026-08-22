@@ -75,7 +75,7 @@
           # unrelated file changed.
           cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
             src = ./rust;
-            hash = "sha256-IJ05bIKoE2lFKascqhfwkVD9rDp1Xpl4i1rfuJcX4ng=";
+            hash = "sha256-SrSqMa+lWep+VYmybTQKZj/A1TUiCG7ikmA2K7rHJTE=";
           };
           cargoRoot = "rust";
           nativeBuildInputs = [
