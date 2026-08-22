@@ -752,6 +752,39 @@ pub fn clip_inferred_future(
     Ok(w.states)
 }
 
+/// `Verified.Geo.Velocity.watchBatterySeries` — the watch trace for one day.
+///
+/// ⚠ `rows` are `[ts|null, level, deviceVersion|null]` with the instant ALREADY
+/// RESOLVED. `null` is a wall clock that did not resolve, and Lean drops it
+/// rather than defaulting — a reading at a guessed instant draws a step that
+/// never happened.
+///
+/// ⚠ ROW ORDER IS LOAD-BEARING. Two rows at the same instant keep the LATER one
+/// in this slice, so a caller that sorts the result set changes which level is
+/// drawn.
+pub fn watch_battery_series(
+    rows: &[serde_json::Value],
+    start_utc: i64,
+    end_utc: i64,
+) -> Result<Vec<(i64, i64)>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        series: Vec<(i64, i64)>,
+    }
+    let req = serde_json::json!({
+        "mode": "watchbattery", "rows": rows,
+        "startUtc": start_utc, "endUtc": end_utc,
+    });
+    let out = serve(&req.to_string()).context("lean serve watchbattery")?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).context("watchbattery answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("watchbattery: {e}");
+    }
+    let w: Wire = serde_json::from_value(v).context("watchbattery answer has no `series`")?;
+    Ok(w.series)
+}
+
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line

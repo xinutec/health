@@ -1499,6 +1499,44 @@ private def batteryResult (j : Json) : Json :=
   | .ok out => out
 
 
+/-! ## `watchbattery` — the watch trace for one day (#982)
+
+`Verified.Geo.Velocity.watchBatterySeries`. The `device_battery_log` history,
+shaped to sit on the same axis as the phone series.
+
+  { "rows": [[ts|null, level, deviceVersion|null], …],
+    "startUtc": int, "endUtc": int }
+→ { "series": [[ts, level], …] }
+
+⚠ `ts` is ALREADY RESOLVED, and `null` is a wall clock that did not. The column
+is a Fitbit wall clock with no offset, so turning it into an instant needs
+tzdata — the host's, not this. A `null` is dropped rather than defaulted: a
+reading at a guessed instant would draw a step that never happened.
+
+⚠ ORDER IS LOAD-BEARING. Two rows at the same instant keep the one that came
+later in this array, so a caller that reorders the result set changes which level
+is drawn. The SQL must not gain an `ORDER BY` that the shaping does not expect. -/
+private def watchBatteryResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let rows ← (← optArr j "rows").mapM (fun e => do
+      let a ← e.getArr?
+      let ts ← match a[0]? with
+        | some v => if v.isNull then pure none else some <$> v.getInt?
+        | none => pure none
+      let level ← (← nth a 1).getInt?
+      let dev ← match a[2]? with
+        | some v => if v.isNull then pure none else some <$> v.getStr?
+        | none => pure none
+      pure ({ ts, level, deviceVersion := dev } : Verified.Geo.Velocity.WatchRow))
+    let startUtc ← (← j.getObjVal? "startUtc").getInt?
+    let endUtc ← (← j.getObjVal? "endUtc").getInt?
+    let out := Verified.Geo.Velocity.watchBatterySeries rows.toList startUtc endUtc
+    return Json.mkObj [("series", Json.arr ((out.map
+      (fun (ts, lvl) => Json.arr #[Lean.toJson ts, Lean.toJson lvl])).toArray))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-! ## `osmcoverage` — can the local mirror answer here? (#982)
 
 `Verified.Geo.OsmCoverage.decideCoverage`. The gate a host must pass before
@@ -1669,6 +1707,7 @@ def dispatch (j : Json) : Json :=
   | .ok "osmcoverage" => osmCoverageResult j
   | .ok "railfill" => railFillResult j
   | .ok "clipinferred" => clipInferredResult j
+  | .ok "watchbattery" => watchBatteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the

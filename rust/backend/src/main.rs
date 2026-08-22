@@ -432,6 +432,56 @@ async fn check() -> Result<()> {
         len(&places) - zero_centroids
     );
 
+    // The watch-battery trace (#982). ⚠ Here for the DECODES, which fail only on
+    // real rows: `battery_level` is `TINYINT UNSIGNED` and `last_sync_time` is a
+    // `DATETIME` that sqlx will not hand back as text.
+    //
+    // ⚠ The assertion is that levels are NOT ALL ZERO, and that is the whole
+    // point of putting it here. The first version of the loader defaulted a
+    // failed decode to 0, which draws a watch reporting EMPTY at every sync — a
+    // well-formed chart, indistinguishable from a real flat battery, and a row
+    // count would have printed OK for it.
+    let home_tz = sync_state::get(&pool, &user, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let latest: Option<(Option<chrono::NaiveDateTime>,)> =
+        sqlx::query_as("SELECT MAX(last_sync_time) FROM device_battery_log WHERE user_id = ?")
+            .bind(&user)
+            .fetch_optional(&pool)
+            .await
+            .context("reading the newest device_battery_log row")?;
+    match latest.and_then(|(t,)| t) {
+        None => println!("watch_battery[{user}]: no rows — nothing to decode"),
+        Some(newest) => {
+            let date = newest.format("%Y-%m-%d").to_string();
+            let b = backend::timezone::date_bounds_utc(&date, Some(&home_tz))?;
+            let series = backend::fitbit::watch_battery::load(
+                &pool,
+                &user,
+                &home_tz,
+                b.start_utc,
+                b.end_utc,
+            )
+            .await?;
+            let levels: std::collections::BTreeSet<i64> = series.iter().map(|(_, l)| *l).collect();
+            println!(
+                "watch_battery[{user}]: {} sample(s) on its newest day, {} distinct level(s)",
+                series.len(),
+                levels.len()
+            );
+            // ⚠ An EMPTY series is not a failure: the newest row's own civil day
+            // in the home zone may hold only that one reading, and the collapse
+            // can leave it. What cannot happen on real data is every level
+            // reading zero.
+            if !series.is_empty() && levels == std::collections::BTreeSet::from([0]) {
+                anyhow::bail!(
+                    "every watch-battery level decoded to 0 — an integer that did not decode \
+                     reads as zero, and a watch that is empty at every sync is not a watch"
+                );
+            }
+        }
+    }
+
     // ⚠ THE SAME HAZARD ONE COLUMN OVER, and it was live: `hour_profile` is a
     // comma-separated per-mille list, the first port read it as JSON, and all
     // 117 profiles decoded to "absent" while this check printed OK — because

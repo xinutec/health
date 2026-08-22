@@ -6748,6 +6748,19 @@ split: 4 nodes
   edge 0: 51.520000000000003 -0.13000000000000000 -> 51.520000000000003 -0.12909999999999999 ids=0,1
   edge 1: 51.524500000000003 -0.13000000000000000 -> 51.524500000000003 -0.12909999999999999 ids=2,3
 
+### watchbattery-refs.mts
+empty: []
+one reading: [[100,90]]
+MobileTrack dropped: [[200,90]]
+null deviceVersion kept: [[100,90]]
+window is half-open: [[0,90],[86399,50]]
+sorted by time: [[100,90],[200,85],[300,80]]
+flat run collapses: [[100,90],[400,85]]
+same instant keeps the later row: [[100,70]]
+same instant, reversed input: [[100,90]]
+level returns: [[100,90],[200,85],[300,90]]
+all outside: []
+
 ### worldline-refs.mts
 parseRailWayName "A → B · Victoria": {"board":"A","alight":"B","line":"Victoria"}
 parseRailWayName "A → B": {"board":"A","alight":"B"}

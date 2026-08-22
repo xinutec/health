@@ -20,3 +20,4 @@ pub mod run;
 pub mod sync;
 pub mod tokens;
 pub mod tz_source;
+pub mod watch_battery;
