@@ -1264,3 +1264,113 @@ pub fn one_line(raw: &str, max: i64) -> Result<String> {
     let w: Wire = call_json(&serde_json::json!({ "op": "oneLine", "raw": raw, "max": max }))?;
     Ok(w.value)
 }
+
+/// `Verified.PhoneTrackPrefs.dateminDate` — which local day the map opens on.
+///
+/// ⚠ `hour` and `(y, m, d)` must ALREADY be local. Lean has no zone database.
+pub fn phonetrack_datemin(y: i64, m: i64, d: i64, hour: i64) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(
+        &serde_json::json!({ "op": "phonetrackDatemin", "y": y, "m": m, "d": d, "hour": hour }),
+    )?;
+    Ok(w.value)
+}
+
+/// `Verified.Login.validateReturnTo` — the open-redirect guard.
+///
+/// ⚠ Always answers a safe path, so callers redirect unconditionally. A host
+/// that "optimised away" this call for an input that looks fine would be
+/// deciding the security question itself.
+pub fn validate_return_to(return_to: Option<&str>) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let mut req = serde_json::json!({ "op": "validateReturnTo" });
+    if let Some(r) = return_to {
+        req["returnTo"] = serde_json::json!(r);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(w.value)
+}
+
+/// `Verified.Login.encodePending` — the pending-login cookie payload.
+pub fn encode_pending(expires_at: i64, nonce: &str, return_to: Option<&str>) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let mut req =
+        serde_json::json!({ "op": "encodePending", "expiresAt": expires_at, "nonce": nonce });
+    if let Some(r) = return_to {
+        req["returnTo"] = serde_json::json!(r);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(w.value)
+}
+
+/// A decoded pending login.
+pub struct Pending {
+    pub expires_at: i64,
+    pub nonce: String,
+    pub return_to: Option<String>,
+}
+
+/// `Verified.Login.decodePending`. `None` when the payload is malformed.
+pub fn decode_pending(raw: &str) -> Result<Option<Pending>> {
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(rename = "expiresAt")]
+        expires_at: i64,
+        nonce: String,
+        #[serde(rename = "returnTo")]
+        return_to: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<Inner>,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "decodePending", "raw": raw }))?;
+    Ok(w.value.map(|i| Pending {
+        expires_at: i.expires_at,
+        nonce: i.nonce,
+        return_to: i.return_to,
+    }))
+}
+
+/// `Verified.Login.acceptPending` — may this callback complete the login?
+///
+/// ⚠ `state` is `None` when Nextcloud DROPPED it, which is the normal case for
+/// a browser with no NC session. Sending an empty string is treated the same.
+pub fn accept_pending(
+    expires_at: i64,
+    nonce: &str,
+    state: Option<&str>,
+    now_ms: i64,
+) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: bool,
+    }
+    let mut req = serde_json::json!({
+        "op": "acceptPending", "expiresAt": expires_at, "nonce": nonce, "nowMs": now_ms
+    });
+    if let Some(s) = state {
+        req["state"] = serde_json::json!(s);
+    }
+    let w: Wire = call_json(&req)?;
+    Ok(w.value)
+}
+
+/// `Verified.Login.PENDING_TTL_MS`.
+pub fn pending_ttl_ms() -> Result<i64> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: i64,
+    }
+    let w: Wire = call_json(&serde_json::json!({ "op": "pendingTtlMs" }))?;
+    Ok(w.value)
+}

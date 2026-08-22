@@ -34,6 +34,8 @@ use crate::state::AppState;
 pub mod locations;
 pub mod logging;
 pub mod me;
+pub mod nextcloud_connect;
+pub mod oauth;
 pub mod share;
 pub mod tables;
 pub mod velocity;
@@ -90,6 +92,15 @@ pub fn router(state: AppState) -> Router {
         .route("/telemetry", axum::routing::post(logging::telemetry))
         .route("/client-log", axum::routing::post(logging::client_log))
         .route(
+            "/nextcloud/connect/init",
+            axum::routing::post(nextcloud_connect::init),
+        )
+        .route("/nextcloud/connect/status", get(nextcloud_connect::status))
+        .route(
+            "/phonetrack/sync-filter",
+            axum::routing::post(nextcloud_connect::sync_filter),
+        )
+        .route(
             "/share",
             get(share::get)
                 .post(share::post)
@@ -104,12 +115,33 @@ pub fn router(state: AppState) -> Router {
             crate::auth::middleware::require_session,
         ));
 
+    // ⚠ Linking Fitbit needs a session ALREADY — it attaches an account to a
+    // known user. `require_may_proceed` runs too, so a share recipient cannot
+    // link their own Fitbit to the owner's account.
+    let fitbit = Router::new()
+        .route("/fitbit/auth", get(oauth::fitbit_auth))
+        .route("/fitbit/callback", get(oauth::fitbit_callback))
+        .layer(axum::middleware::from_fn(
+            crate::auth::middleware::require_may_proceed,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::require_session,
+        ));
+
     Router::new()
         // ⚠ Liveness and readiness are OUTSIDE the authenticated group. A probe
         // that needs a session cannot report a pod whose session table is
         // broken, which is exactly when the answer matters.
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        // ⚠ Signing IN cannot require being signed in. These three are the only
+        // unauthenticated non-probe routes, and `/auth/callback` is where a
+        // session is minted.
+        .route("/login", get(oauth::login))
+        .route("/auth/callback", get(oauth::callback))
+        .route("/logout", axum::routing::post(oauth::logout))
+        .merge(fitbit)
         .nest("/api", api)
         .with_state(state)
 }

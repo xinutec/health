@@ -9,6 +9,8 @@ import Verified.RowShape
 import Verified.LocationTail
 import Verified.Connection
 import Verified.LogLine
+import Verified.PhoneTrackPrefs
+import Verified.Login
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -402,6 +404,51 @@ def dispatch (j : Json) : Json :=
       | none => err s!"nextDay: {d} is not YYYY-MM-DD"
       | some nx => Json.mkObj [("value", Json.str nx)]
     | none => err "nextDay: date required"
+  -- The post-login redirect target (#982).
+  --
+  -- ⚠ An OPEN-REDIRECT guard. Anything not clearly an internal path answers
+  -- "/", so the caller can redirect unconditionally rather than carrying a
+  -- branch someone might forget.
+  | some "validateReturnTo" =>
+    Json.mkObj [("value", Json.str (Verified.Login.validateReturnTo (str? j "returnTo")))]
+  -- The pending-login cookie's payload.
+  | some "encodePending" =>
+    match int? j "expiresAt", str? j "nonce" with
+    | some e, some n =>
+      Json.mkObj [("value", Json.str (Verified.Login.encodePending e n (str? j "returnTo")))]
+    | _, _ => err "encodePending: expiresAt, nonce required"
+  | some "decodePending" =>
+    match str? j "raw" with
+    | some raw =>
+      match Verified.Login.decodePending raw with
+      | none => Json.mkObj [("value", Json.null)]
+      | some (e, n, rt) =>
+        Json.mkObj
+          [ ("value", Json.mkObj
+              [ ("expiresAt", Json.num e)
+              , ("nonce", Json.str n)
+              , ("returnTo", match rt with | none => Json.null | some r => Json.str r) ]) ]
+    | none => err "decodePending: raw required"
+  -- ⚠ `state` absent means Nextcloud DROPPED it, which is normal for a
+  -- cookie-less browser and must still complete the login. Present-and-wrong is
+  -- a refusal.
+  | some "acceptPending" =>
+    match int? j "expiresAt", str? j "nonce", int? j "nowMs" with
+    | some e, some n, some now =>
+      Json.mkObj [("value", Json.bool (Verified.Login.acceptPending e n (str? j "state") now))]
+    | _, _, _ => err "acceptPending: expiresAt, nonce, nowMs required"
+  | some "pendingTtlMs" =>
+    Json.mkObj [("value", Json.num Verified.Login.PENDING_TTL_MS)]
+  -- The PhoneTrack filter's start date (#982).
+  --
+  -- ⚠ `hour` must be the LOCAL hour and `(y, m, d)` the LOCAL date. Lean has no
+  -- zone database, so the host resolves them; passing UTC parts would shift the
+  -- 06:00 boundary by the offset.
+  | some "phonetrackDatemin" =>
+    match int? j "y", int? j "m", int? j "d", int? j "hour" with
+    | some y, some m, some d, some h =>
+      Json.mkObj [("value", Json.str (Verified.PhoneTrackPrefs.dateminDate y m d h))]
+    | _, _, _, _ => err "phonetrackDatemin: y, m, d, hour required"
   -- Flatten client text into one log field (#982).
   --
   -- ⚠ A SECURITY BOUNDARY, not formatting. `/api/telemetry` writes this into a

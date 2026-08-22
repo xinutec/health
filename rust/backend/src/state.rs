@@ -38,6 +38,18 @@ pub struct AppState {
     /// One client, reused. Every outbound call is bounded — a hung Nextcloud or
     /// Fitbit must not tie up a pod, and a per-call client would also throw away
     /// the connection pool on every request.
+    /// In-flight Nextcloud Login Flow v2 handshakes, one per user.
+    ///
+    /// ⚠ Process-local and deliberately not persisted: a flow is meaningless
+    /// across a restart, since the task polling for it is gone. A stored
+    /// "pending" would be a lie nobody could clear.
+    pub flows: Arc<crate::routes::nextcloud_connect::PendingFlows>,
+    /// In-flight Fitbit OAuth handshakes: state token → (user, PKCE verifier).
+    ///
+    /// ⚠ Server-side, and single-use. The verifier must never reach the browser
+    /// — PKCE exists so that whoever redeems the code proves they started the
+    /// flow.
+    pub oauth_states: Arc<crate::location_cache::LocationCache<(String, String)>>,
     pub http: reqwest::Client,
 }
 
@@ -50,6 +62,8 @@ impl AppState {
             velocity: Arc::new(crate::velocity_cache::VelocityCache::new()),
             latest_fix: Arc::new(crate::location_cache::LocationCache::new()),
             tail_points: Arc::new(crate::location_cache::LocationCache::new()),
+            flows: Arc::new(crate::routes::nextcloud_connect::PendingFlows::new()),
+            oauth_states: Arc::new(crate::location_cache::LocationCache::new()),
         }
     }
 }

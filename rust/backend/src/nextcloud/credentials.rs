@@ -91,3 +91,29 @@ pub async fn mark_needs_reauth(pool: &MySqlPool, user_id: &str) -> Result<()> {
         .context("flagging nextcloud credentials needs_reauth")?;
     Ok(())
 }
+
+/// Store (or replace) a user's Nextcloud app password, marking them active.
+///
+/// ⚠ Upsert, and it must RESET `status` to `active`. A user relinking after a
+/// revocation would otherwise land a fresh, working credential in a row still
+/// flagged `needs_reauth`, and every later call would refuse it — a relink that
+/// visibly succeeds and changes nothing.
+pub async fn store(
+    pool: &MySqlPool,
+    user_id: &str,
+    login_name: &str,
+    app_password: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO nc_credentials (user_id, login_name, app_password, status) \
+         VALUES (?, ?, ?, 'active') \
+         ON DUPLICATE KEY UPDATE login_name = VALUES(login_name), \
+         app_password = VALUES(app_password), status = 'active'",
+    )
+    .bind(user_id)
+    .bind(login_name)
+    .bind(app_password)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

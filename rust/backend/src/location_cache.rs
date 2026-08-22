@@ -123,3 +123,24 @@ pub fn tail_after(points: &[TailPoint], since: f64) -> Vec<TailPoint> {
     let drop = kept.len().saturating_sub(max);
     kept[drop..].to_vec()
 }
+
+/// How long a started OAuth handshake may take to come back.
+///
+/// ⚠ Ten minutes, matching the pending-login cookie. A shorter window strands a
+/// user who stops to read the consent screen; a longer one keeps a redeemable
+/// PKCE verifier alive after the person has walked away.
+pub const OAUTH_STATE_TTL_MS: i64 = 10 * 60 * 1000;
+
+impl<T: Clone> LocationCache<T> {
+    /// Read and REMOVE an entry, if it is still fresh.
+    ///
+    /// ⚠ Single-use, which is the point for an OAuth state: a verifier that
+    /// could be redeemed twice is a replayable authorisation. An expired entry
+    /// is removed too, so a stale one cannot linger and be redeemed after a
+    /// clock correction.
+    pub fn take(&self, key: &str, now_ms: i64) -> Option<T> {
+        let mut entries = self.entries.lock().ok()?;
+        let e = entries.remove(key)?;
+        (e.at_ms <= now_ms && now_ms - e.at_ms < OAUTH_STATE_TTL_MS).then_some(e.value)
+    }
+}

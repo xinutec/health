@@ -98,6 +98,62 @@ impl NextcloudClient {
         Ok(if body.is_empty() { None } else { Some(body) })
     }
 
+    /// PUT a JSON body. Used by the PhoneTrack preference writes.
+    ///
+    /// ⚠ Shares `get`'s 401 handling on purpose: a revoked app password is
+    /// durable state, and discovering it on a write must record it just as
+    /// discovering it on a read does. Otherwise a user whose credential died
+    /// during a write keeps being told the write failed, with nothing saying
+    /// why or prompting a relink.
+    pub async fn put(
+        &self,
+        pool: &MySqlPool,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<Option<String>, NcError> {
+        let url = if path.starts_with("http") {
+            path.to_string()
+        } else {
+            format!("{}{}", self.base_url, path)
+        };
+
+        let res = self
+            .http
+            .put(&url)
+            .basic_auth(&self.creds.login_name, Some(&self.creds.app_password))
+            .header("OCS-APIRequest", "true")
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("PUT {path}"))?;
+
+        let status = res.status();
+        if status.as_u16() == 401 {
+            if let Err(e) = credentials::mark_needs_reauth(pool, &self.user_id).await {
+                tracing::warn!("could not flag {} needs_reauth: {e:#}", self.user_id);
+            }
+            return Err(NcError::ReauthRequired);
+        }
+
+        let body_text = res
+            .text()
+            .await
+            .with_context(|| format!("body of PUT {path}"))?;
+        if !status.is_success() {
+            return Err(NcError::Api {
+                method: "PUT",
+                path: path.to_string(),
+                status: status.as_u16(),
+                body: body_text,
+            });
+        }
+        Ok(if body_text.is_empty() {
+            None
+        } else {
+            Some(body_text)
+        })
+    }
+
     /// GET and deserialise, treating an empty body as absent.
     pub async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
