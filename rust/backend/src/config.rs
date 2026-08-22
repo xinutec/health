@@ -38,6 +38,19 @@ pub struct Config {
     /// source is spelled. Defaulting it to the production URL would make an
     /// unconfigured job quietly reach for the real Nextcloud.
     pub nextcloud_base_url: Option<String>,
+    /// The HMAC key behind every session cookie.
+    ///
+    /// ⚠ OPTIONAL HERE, REQUIRED BY THE SERVER. `sync` has no cookies and must
+    /// keep starting without one — a CronJob that refuses to run because the
+    /// web tier's secret is absent is an outage caused by an unrelated
+    /// dependency. `serve` demands it at startup instead, so the failure lands
+    /// on the process that actually needs it.
+    ///
+    /// ⚠ NO DEFAULT, ever. A defaulted signing key is a key everyone knows, and
+    /// the failure is silent: cookies verify, sessions work, and anyone can mint
+    /// one. The TypeScript enforces `min(16)` on it; that check moves here when
+    /// the server does.
+    pub session_secret: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +135,31 @@ fn optional(key: &str) -> Option<String> {
 
 impl Config {
     /// Read the environment. Fails with the name of the first missing variable.
+    /// A config with no environment behind it, for tests that need the SHAPE
+    /// rather than the values.
+    ///
+    /// ⚠ Every credential is empty and the database points nowhere. That is the
+    /// point: a test using this cannot accidentally reach a real service, and a
+    /// test that needs one has to say so by building its own.
+    #[doc(hidden)]
+    pub fn for_test() -> Self {
+        Config {
+            db: DbConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                user: String::new(),
+                password: String::new(),
+                database: "nowhere".into(),
+            },
+            fitbit: FitbitConfig {
+                client_id: String::new(),
+                client_secret: String::new(),
+            },
+            nextcloud_base_url: None,
+            session_secret: None,
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let port_raw = with_default("DB_PORT", "3306");
         // ⚠ PARSED, not `unwrap_or(3306)`. `mirror.rs` falls back to the
@@ -147,6 +185,7 @@ impl Config {
                 client_secret: required("FITBIT_CLIENT_SECRET")?,
             },
             nextcloud_base_url: optional("NC_BASE_URL"),
+            session_secret: optional("SESSION_SECRET"),
         })
     }
 }

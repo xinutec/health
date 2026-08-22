@@ -10,5 +10,6 @@
 //! records it: `generateShareToken` reads the CSPRNG and stays shell;
 //! `shareableDateRange` is a total function of its arguments and went to Lean.
 
+pub mod middleware;
 pub mod session;
 pub mod share;
