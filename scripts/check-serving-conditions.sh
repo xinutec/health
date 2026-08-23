@@ -116,18 +116,29 @@ ssh "root@$HOST" "kubectl -n $NS delete pod $POD --ignore-not-found --wait=true"
 ssh "root@$HOST" "kubectl -n $NS apply -f -" < /tmp/health-auth-conditions.json >/dev/null || {
   echo "could not create the pod"; exit 1; }
 
-echo "==> waiting for it to start"
-for _ in $(seq 1 60); do
+# ⚠ THE BUDGET IS FOR AN IMAGE PULL, not for a process start. The candidate is
+# usually a tag the node has never seen, and this image is over a gigabyte —
+# `ContainerCreating` for several minutes is normal. A 2-minute budget reported
+# `phase=Pending` as "the candidate does not start under production's
+# conditions", which is a check FAILING FOR THE WRONG REASON: not dangerous the
+# way a false pass is, but it teaches whoever sees it to distrust or skip the
+# check, which comes to the same thing.
+echo "==> waiting for it to start (an unpulled image takes minutes)"
+reason=""
+for _ in $(seq 1 240); do
   # `|| true`: the pod may not exist yet, and that is a reason to keep waiting.
   phase=$(ssh "root@$HOST" "kubectl -n $NS get pod $POD -o jsonpath='{.status.phase}'" 2>/dev/null || true)
   # ⚠ `if`, not `[ … ] && break`. Under `set -e` a false test returns 1 and
   # aborts the script — the loop would exit on its FIRST pass, before the pod
   # ever started, and report phase=Pending as a startup failure.
   if [ "$phase" = "Running" ] || [ "$phase" = "Failed" ]; then break; fi
-  sleep 2
+  sleep 5
 done
 if [ "$phase" != "Running" ]; then
-  bad "the candidate starts under production's conditions" "phase=$phase"
+  # ⚠ Say WHICH. A timeout while pulling and a container that will not start are
+  # different findings, and "phase=Pending" alone names neither.
+  reason=$(ssh "root@$HOST" "kubectl -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}'" 2>/dev/null || true)
+  bad "the candidate starts under production's conditions" "phase=$phase${reason:+ ($reason)}"
   ssh "root@$HOST" "kubectl -n $NS logs $POD --tail=20" 2>&1 | tail -20 || true
   exit 1
 fi
