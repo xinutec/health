@@ -1691,3 +1691,91 @@ pub fn owntracks_config(
 pub fn owntracks_history_max_age_sec() -> i64 {
     600
 }
+
+/// `Verified.Geo.Landmarks.shapeLandmarks` — the venues near a stay.
+///
+/// ⚠ This is what names a timeline entry. While this went unanswered, a served
+/// day lost venue names silently: the stay still rendered, as "stationary" with
+/// no place, which is why no test caught it (#1054).
+///
+/// ⚠ The scored rows arrive under `rows`, and their `distanceM` is an IEEE-754
+/// BIT PATTERN. Reading either wrongly yields an empty shaping — which claims
+/// "no venues here" rather than declining, and is worse than the gap it closes.
+pub fn shape_landmarks(
+    points: &serde_json::Value,
+    lines: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<serde_json::Map<String, serde_json::Value>>,
+    }
+
+    let feats = |v: &serde_json::Value, is_point: bool| -> Vec<serde_json::Value> {
+        v.get("rows")
+            .and_then(serde_json::Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get("name").and_then(serde_json::Value::as_str),
+                            // Already `[[k, v], …]` from the scored row.
+                            "tags": r.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                            "distBits": r
+                                .get("distanceM")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("0"),
+                            "encloses": r
+                                .get("encloses")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
+                            "isPoint": is_point,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "shapeLandmarks",
+        "points": feats(points, true),
+        "lines": feats(lines, false),
+    }))?;
+
+    let out: Vec<serde_json::Value> = w
+        .value
+        .into_iter()
+        .map(|m| {
+            let d = m
+                .get("distanceMBits")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(f64::from_bits)
+                .unwrap_or(f64::INFINITY);
+            let mut o = serde_json::Map::new();
+            o.insert("name".into(), m.get("name").cloned().unwrap_or_default());
+            o.insert("type".into(), m.get("type").cloned().unwrap_or_default());
+            o.insert(
+                "subtype".into(),
+                m.get("subtype").cloned().unwrap_or_default(),
+            );
+            o.insert("distanceM".into(), crate::row_json::js_number_value(d));
+            // ⚠ `enclosing` is ALWAYS present, including `false` — the recorded
+            // trace carries it that way. Only `openingHours` is conditional,
+            // matching the TypeScript's spread.
+            o.insert(
+                "enclosing".into(),
+                serde_json::Value::Bool(
+                    m.get("enclosing")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                ),
+            );
+            if let Some(h) = m.get("openingHours").and_then(serde_json::Value::as_str) {
+                o.insert("openingHours".into(), serde_json::Value::String(h.into()));
+            }
+            serde_json::Value::Object(o)
+        })
+        .collect();
+    Ok(serde_json::Value::Array(out))
+}

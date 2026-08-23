@@ -463,6 +463,59 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 )))
             }
 
+            // Venues near a stay — what names a timeline entry "Honest Burgers"
+            // rather than a bare "stationary".
+            //
+            // ⚠ BOTH TABLES, and either declining declines the whole answer.
+            // OSM carries venues as point POIs and buildings as way outlines,
+            // so answering from one is a coordinate whose shops, or whose
+            // buildings, are invisible — well-formed, and wrong.
+            //
+            // ⚠ The spatial answer is `{rows: [...]}`, NOT a bare array. The
+            // first version of this arm read it as an array, shaped nothing,
+            // and answered `[]` for every stay — which CLAIMS "no venues here"
+            // where declining claims nothing, and the served day came back with
+            // zero states. Reverted the same day; this is the second attempt.
+            "nearbyLandmarks" => {
+                let r = bits(default_radius_m::NEARBY_LANDMARKS);
+                let Some(point_rows) = self.source.point_rows(
+                    "landmark",
+                    flat,
+                    flon,
+                    default_radius_m::NEARBY_LANDMARKS,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let Some(line_rows) = self.source.line_rows(
+                    "landmark",
+                    flat,
+                    flon,
+                    default_radius_m::NEARBY_LANDMARKS,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let points = spatial("queryPoints", lat, lon, &r, point_rows)?;
+                let lines = spatial("queryLines", lat, lon, &r, line_rows)?;
+                let shaped = crate::lean::shape_landmarks(&points, &lines)?;
+                // ⚠ FOUR elements: `[lat, lon, RADIUS, answer]`. This table is
+                // keyed on the radius as well as the point, so the three-element
+                // form `nearbyWays` uses is a DIFFERENT row — the fold reads it
+                // as a malformed entry and produces NO STATES AT ALL. That cost
+                // two rounds of debugging: the arm answered, the key stopped
+                // being asked, and the day still came back empty.
+                //
+                // The radius comes from the KEY when the key carries one, so an
+                // ask at a non-default radius is answered at that radius rather
+                // than silently at 100 m.
+                let key_radius = p.get(2).map_or_else(|| r.clone(), |s| (*s).to_string());
+                Ok(Some((
+                    "nearbyLandmarks".into(),
+                    json!([lat, lon, key_radius, shaped]),
+                )))
+            }
+
             // ⚠ EVERYTHING ELSE IS DECLINED, and the reasons are NOT the same.
             // This comment used to justify `transitStops` alone, which read as
             // if the whole catch-all had been adjudicated; it had not, and that
@@ -474,26 +527,6 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // function rather than computed from rows, so there is nothing here
             // to compute it from. An empty answer would be a coordinate with no
             // transit stops near it, which is a claim; declining is not.
-            //
-            // `nearbyLandmarks` — unported, and the reason is SPECIFIC: the
-            // `osmspatial` scored-row ops return `{osmId, subtype, name,
-            // distanceM, encloses}` and NO TAG MAP. `shapeLandmarks` spawns one
-            // landmark per tag key (amenity/tourism/leisure/shop/place), so a
-            // single `subtype` string cannot feed it — the table is not a
-            // shaping gap, it is a gap in what the spatial op carries.
-            //
-            // ⚠ MEASURED COST, 2026-08-23: while this declines, a served day
-            // loses 2 of 8 venue names against production — "Honest Burgers",
-            // "Royal Free Hospital". The stay still renders, as "stationary"
-            // with no place, which is why nothing else caught it.
-            //
-            // ⚠ AN ARM WAS TRIED AND REVERTED THE SAME DAY. It read the spatial
-            // answer as an array when it is `{rows: [...]}`, so it shaped
-            // nothing and answered `[]` for every stay — an EMPTY answer, which
-            // claims "no venues here", where declining claims nothing. The day
-            // came back with zero states. `Verified/Geo/Landmarks.lean` is the
-            // correct shaping rule and is kept; what it still needs is a row
-            // source that carries tags.
             //
             // `reverseGeocode` — never answerable from rows at all. It is a
             // Nominatim call, permanently delegated to the captured trace, and

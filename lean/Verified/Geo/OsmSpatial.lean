@@ -335,6 +335,15 @@ structure LineRow where
   subtype : String
   name : Option String
   coords : Array (Float × Float)
+  /-- The feature's OSM tags.
+
+  ⚠ Defaulted to empty so every existing caller is unaffected, and carried at
+  all because `nearbyLandmarks` needs the FULL MAP rather than `subtype`: it
+  spawns one landmark per tag key, so a building tagged both `amenity=cafe` and
+  `tourism=attraction` is two candidates. While this field did not exist, that
+  table could not be answered and served days silently lost venue names
+  (#1054). -/
+  tags : Array (String × String) := #[]
   deriving Inhabited, BEq, Repr
 
 /-- Planar point-to-segment distance in degree space, x = lon and y = lat. -/

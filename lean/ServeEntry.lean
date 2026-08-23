@@ -1406,21 +1406,38 @@ private def parseLineRow (j : Json) : Except String Verified.Geo.OsmSpatial.Line
   let coords ← (← (← nth a 3).getArr?).mapM (fun c => do
     let p ← c.getArr?
     return ((← jBits (← nth p 0)), (← jBits (← nth p 1))))
+  -- ⚠ Index 4, and OPTIONAL: a caller that predates the field sends four
+  -- elements and gets an empty tag map rather than a parse error.
+  let tags ← match a[4]? with
+    | some v => if v.isNull then pure #[] else do
+        let ts ← v.getArr?
+        ts.mapM (fun kv => do
+          let p ← kv.getArr?
+          return ((← (← nth p 0).getStr?), (← (← nth p 1).getStr?)))
+    | none => pure #[]
   return { osmId := ← (← nth a 0).getInt?, subtype := ← (← nth a 1).getStr?,
            name := ← (match a[2]? with
              | some v => if v.isNull then pure none else some <$> v.getStr?
              | none => pure none),
-           coords := coords }
+           coords := coords, tags := tags }
+
+/-- ⚠ The tag map is EMITTED, not just carried. `nearbyLandmarks` spawns one
+landmark per tag key, so a consumer given only `subtype` cannot build it — which
+is exactly why that table went unanswered and served days lost venue names
+(#1054). -/
+private def tagsJson (tags : Array (String × String)) : Json :=
+  Json.arr (tags.map (fun (k, v) => Json.arr #[Json.str k, Json.str v]))
 
 private def scoredPointJson (s : Verified.Geo.OsmSpatial.ScoredPoint) : Json :=
   Json.mkObj [("osmId", Lean.toJson s.row.osmId), ("subtype", Json.str s.row.subtype),
     ("name", match s.row.name with | none => Json.null | some n => Json.str n),
-    ("distanceM", fBits s.distanceM)]
+    ("distanceM", fBits s.distanceM), ("tags", tagsJson s.row.tags)]
 
 private def scoredLineJson (s : Verified.Geo.OsmSpatial.Lines.ScoredLine) : Json :=
   Json.mkObj [("osmId", Lean.toJson s.row.osmId), ("subtype", Json.str s.row.subtype),
     ("name", match s.row.name with | none => Json.null | some n => Json.str n),
-    ("distanceM", fBits s.distanceM), ("encloses", Json.bool s.encloses)]
+    ("distanceM", fBits s.distanceM), ("encloses", Json.bool s.encloses),
+    ("tags", tagsJson s.row.tags)]
 
 private def stationJson (n : Verified.Geo.OsmSpatial.NearbyStation) : Json :=
   Json.mkObj [("name", Json.str n.name), ("subtype", Json.str n.subtype),

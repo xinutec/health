@@ -375,7 +375,14 @@ impl RowSource for MirrorSource {
         let rows = self
             .block(
                 sqlx::query(
-                    "SELECT osm_id, subtype, name, ST_AsText(geom) AS wkt FROM osm_lines \
+                    // ⚠ `tags_json` too. `nearbyLandmarks` needs the FULL tag
+                    // map — it spawns one landmark per tag key — and while this
+                    // column was absent from the line query that table could
+                    // not be answered at all, so served days lost venue names
+                    // (#1054). Buildings are ways, so the line side is exactly
+                    // where a venue's outline lives.
+                    "SELECT osm_id, subtype, name, tags_json, ST_AsText(geom) AS wkt \
+                     FROM osm_lines \
                      WHERE feature_type = ? AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) \
                      LIMIT ?",
                 )
@@ -404,7 +411,11 @@ impl RowSource for MirrorSource {
                 r.try_get::<i64, _>("osm_id").context("osm_lines.osm_id")?,
                 subtype_of(&r, "osm_lines")?,
                 name_of(&r, "osm_lines")?,
-                coords
+                coords,
+                // ⚠ Position 4, matching `parseLineRow`. Lean treats it as
+                // optional, so an older caller sending four elements still
+                // parses — but this one always sends it.
+                tags_of(&r)?
             ]));
         }
         Ok(Some(out))
@@ -502,9 +513,11 @@ fn name_of(r: &sqlx::mysql::MySqlRow, table: &str) -> Result<Value> {
 /// values are strings, and one that is not is a row this port should not be
 /// silently reshaping.
 fn tags_of(r: &sqlx::mysql::MySqlRow) -> Result<Value> {
+    // ⚠ Serves BOTH tables now. A venue is a point POI or a building outline,
+    // and `nearbyLandmarks` needs both sides.
     let raw: Option<String> = r
         .try_get("tags_json")
-        .context("osm_points.tags_json does not decode as text")?;
+        .context("tags_json does not decode as text")?;
     tags_pairs(raw.as_deref())
 }
 
