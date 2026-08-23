@@ -109,6 +109,20 @@ async fn main() -> Result<()> {
             };
             locations_check(user, date).await
         }
+        "mint-session" => {
+            let [user] = flags else {
+                eprintln!("usage: backend mint-session <user>");
+                std::process::exit(64);
+            };
+            mint_session(user).await
+        }
+        "drop-session" => {
+            let [cookie] = flags else {
+                eprintln!("usage: backend drop-session <cookie>");
+                std::process::exit(64);
+            };
+            drop_session(cookie).await
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -1319,5 +1333,50 @@ async fn locations_check(user: &str, date: &str) -> Result<()> {
         .collect();
     println!("locations\t{}", serde_json::to_string(&out)?);
     pool.close().await;
+    Ok(())
+}
+
+/// Mint a session and print its cookie value, for end-to-end verification.
+///
+/// ⚠ THIS CREATES REAL CREDENTIALS. It exists because the only honest way to
+/// compare the Rust backend against the TypeScript one is to send the SAME
+/// cookie to both — they share the sessions table, so a session minted here is
+/// accepted by either. Nothing else in the port can check an authenticated
+/// response body.
+///
+/// ⚠ Pair every call with `drop-session`. A session left behind is a working
+/// credential for the named user with the full TTL ahead of it, and nothing
+/// distinguishes it from one the user created by logging in.
+async fn mint_session(user: &str) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let secret = cfg
+        .session_secret
+        .as_deref()
+        .context("SESSION_SECRET is not set; a session cannot be signed")?;
+    let pool = db::connect(&cfg.db.url()).await?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let signed = backend::auth::session::create(&pool, secret, user, "smoke", now_ms).await?;
+    pool.close().await;
+    println!("{signed}");
+    eprintln!("⚠ minted a REAL session for {user} — run `backend drop-session` when done");
+    Ok(())
+}
+
+/// Destroy a session minted above.
+async fn drop_session(cookie: &str) -> Result<()> {
+    let cfg = Config::from_env().context("reading configuration")?;
+    let secret = cfg
+        .session_secret
+        .as_deref()
+        .context("SESSION_SECRET is not set")?;
+    let pool = db::connect(&cfg.db.url()).await?;
+    let gone = backend::auth::session::destroy(&pool, secret, cookie).await?;
+    pool.close().await;
+    // ⚠ Reported rather than assumed: a "destroyed" that removed no row means
+    // the credential is still live somewhere.
+    eprintln!("session removed: {gone}");
+    if !gone {
+        anyhow::bail!("no session row matched that cookie — it may still be valid");
+    }
     Ok(())
 }

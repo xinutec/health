@@ -47,13 +47,25 @@ for (const [today, days] of [
 
 console.log("--- sinceDateForSession: the share window CAPS the read ---");
 const owner = {};
-const viewer = { shareViewer: { from: "2026-08-11", to: "2026-08-17" } };
-// The production function reads the clock, so these are relative to today. What
-// matters is the COMPARISON, so both arms are printed for the same input.
+// ⚠ The share window is derived FROM TODAY so the printed relations are stable
+// forever. A fixed date like "2026-08-11" is not enough: `today - 30` creeps
+// forward and would cross it, flipping `cappedAtShareStart` weeks later — the
+// same clock dependency one layer down, just slower to bite.
+const shareFrom = sinceDateAt(new Date().toISOString().slice(0, 10), 10);
+const viewer = { shareViewer: { from: shareFrom, to: shareFrom } };
+// ⚠ NO ABSOLUTE DATES PRINTED HERE. The production function reads `new Date()`,
+// so printing what it returned pinned this snapshot to the day it was blessed —
+// and the gate went red at the next midnight, for no reason anyone had changed.
+// Found 2026-08-23, one day after this file was written.
+//
+// What the rule actually claims is a RELATION, and a relation is clock-free:
+// the viewer's floor is never earlier than the owner's, and once `days` reaches
+// back past the share's start it is exactly that start. Both hold on any day.
 for (const days of [1, 7, 30, 365]) {
 	const o = sinceDateForSession(owner, days);
 	const v = sinceDateForSession(viewer, days);
-	console.log(`days=${days}: owner=${o} viewer=${v} viewerIsLater=${v >= o}`);
+	const capped = v === shareFrom;
+	console.log(`days=${days}: viewerIsNotEarlier=${v >= o} cappedAtShareStart=${capped}`);
 }
 
 // ⚠ `daysParam` is `z.coerce.number().int().min(1).max(365).default(30)`, and

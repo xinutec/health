@@ -475,12 +475,25 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // to compute it from. An empty answer would be a coordinate with no
             // transit stops near it, which is a claim; declining is not.
             //
-            // `nearbyLandmarks` — NOT adjudicated, just unported. The rows are
-            // in the set, but the table wants `{name, type, subtype, distanceM,
-            // openingHours, enclosing}` and `osmspatial` has no landmark op:
-            // `shapeLandmarks` / `filterLandmarks` (`src/geo/osm.ts`) have no
-            // Lean twin, so only `distanceM` is derivable today. An arm here
-            // would have to invent the other five.
+            // `nearbyLandmarks` — unported, and the reason is SPECIFIC: the
+            // `osmspatial` scored-row ops return `{osmId, subtype, name,
+            // distanceM, encloses}` and NO TAG MAP. `shapeLandmarks` spawns one
+            // landmark per tag key (amenity/tourism/leisure/shop/place), so a
+            // single `subtype` string cannot feed it — the table is not a
+            // shaping gap, it is a gap in what the spatial op carries.
+            //
+            // ⚠ MEASURED COST, 2026-08-23: while this declines, a served day
+            // loses 2 of 8 venue names against production — "Honest Burgers",
+            // "Royal Free Hospital". The stay still renders, as "stationary"
+            // with no place, which is why nothing else caught it.
+            //
+            // ⚠ AN ARM WAS TRIED AND REVERTED THE SAME DAY. It read the spatial
+            // answer as an array when it is `{rows: [...]}`, so it shaped
+            // nothing and answered `[]` for every stay — an EMPTY answer, which
+            // claims "no venues here", where declining claims nothing. The day
+            // came back with zero states. `Verified/Geo/Landmarks.lean` is the
+            // correct shaping rule and is kept; what it still needs is a row
+            // source that carries tags.
             //
             // `reverseGeocode` — never answerable from rows at all. It is a
             // Nominatim call, permanently delegated to the captured trace, and

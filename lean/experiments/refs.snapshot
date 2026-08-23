@@ -147,10 +147,10 @@ sinceDate(2026-03-01, 60): "2025-12-31"
 sinceDate(2024-03-01, 1): "2024-02-29"
 sinceDate(2024-03-01, 2): "2024-02-28"
 --- sinceDateForSession: the share window CAPS the read ---
-days=1: owner=2026-08-21 viewer=2026-08-21 viewerIsLater=true
-days=7: owner=2026-08-15 viewer=2026-08-15 viewerIsLater=true
-days=30: owner=2026-07-23 viewer=2026-08-11 viewerIsLater=true
-days=365: owner=2025-08-22 viewer=2026-08-11 viewerIsLater=true
+days=1: viewerIsNotEarlier=true cappedAtShareStart=false
+days=7: viewerIsNotEarlier=true cappedAtShareStart=false
+days=30: viewerIsNotEarlier=true cappedAtShareStart=true
+days=365: viewerIsNotEarlier=true cappedAtShareStart=true
 --- daysParam: what does it do with each input? ---
 daysParam.parse(undefined): 30
 daysParam.parse("7"): 7

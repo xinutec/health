@@ -12,6 +12,7 @@ import Verified.PhoneTrackPrefs
 import Verified.Login
 import Verified.Recovery
 import Verified.Owntracks
+import Verified.Geo.Landmarks
 import Verified.Session
 import Verified.Share
 import Verified.VelocityCache
