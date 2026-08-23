@@ -463,8 +463,8 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 )))
             }
 
-            // Venues near a stay — what names a timeline entry "Honest Burgers"
-            // rather than a bare "stationary".
+            // Venues near a stay — what names a timeline entry after the place
+            // rather than leaving it a bare "stationary".
             //
             // ⚠ BOTH TABLES, and either declining declines the whole answer.
             // OSM carries venues as point POIs and buildings as way outlines,

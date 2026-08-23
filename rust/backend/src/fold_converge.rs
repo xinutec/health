@@ -67,6 +67,34 @@ pub trait Answerer {
     fn answer(&mut self, miss: &Miss) -> Result<Option<(String, Value)>>;
 }
 
+/// Print every key the walk asks about, so a naming that came out wrong can be
+/// read back as the questions that produced it.
+///
+/// Off unless `FOLD_TRACE_KEYS` is set. A count alone cannot distinguish "the
+/// stay was never asked about" from "it was asked and the answer named nothing"
+/// — those have different causes and this is what tells them apart.
+fn trace_key(round: u32, verdict: &str, m: &Miss) {
+    if std::env::var_os("FOLD_TRACE_KEYS").is_some() {
+        eprintln!("  r{round} {verdict} {}({})", m.what, m.key);
+    }
+}
+
+/// As `trace_key`, plus the answer itself when `FOLD_TRACE_KEYS=rows`.
+///
+/// ⚠ An answered key is not an informative answer. A table that supplies an
+/// EMPTY row reads as "answered" in every count here, and a naming that came
+/// out blank because nothing was near it looks identical to one that ranked its
+/// candidates and rejected them. The row is what separates those.
+fn trace_answer(round: u32, m: &Miss, row: &Value) {
+    if std::env::var_os("FOLD_TRACE_KEYS").as_deref() == Some(std::ffi::OsStr::new("rows")) {
+        let s = row.to_string();
+        let clipped: String = s.chars().take(600).collect();
+        eprintln!("  r{round} answered {}({}) = {clipped}", m.what, m.key);
+    } else {
+        trace_key(round, "answered", m);
+    }
+}
+
 /// Walk the fold to convergence.
 pub fn converge<A: Answerer>(
     cap: &Value,
@@ -122,8 +150,14 @@ pub fn converge<A: Answerer>(
         for m in fresh {
             asked.insert(m.clone());
             match answerer.answer(&m)? {
-                Some((table, row)) => tables.push(&table, row),
-                None => unanswerable.push(m),
+                Some((table, row)) => {
+                    trace_answer(round, &m, &row);
+                    tables.push(&table, row);
+                }
+                None => {
+                    trace_key(round, "declined", &m);
+                    unanswerable.push(m);
+                }
             }
         }
     }

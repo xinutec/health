@@ -969,7 +969,19 @@ async fn velocity(user: &str, date: &str, display_tz: Option<&str>) -> Result<()
 async fn mirror_check(fixture: &str) -> Result<()> {
     /// The tables a row source can answer. `nearbyWays` spells no radius in its
     /// key — the answerer uses the default.
-    const TABLES: [&str; 3] = ["nearbyWays", "nearbyStations", "linesAtPoint"];
+    ///
+    /// ⚠ `nearbyLandmarks` BELONGS HERE, and its absence is what let #1054 run.
+    /// This check reported 148/148 agreement on 2026-08-22 while the landmark
+    /// shaping was answering an EMPTY list for every stay in every day — the
+    /// one table that puts a venue name on a timeline was the one table not
+    /// compared. A check that omits the thing it is trusted to cover reads as
+    /// evidence and is not.
+    const TABLES: [&str; 4] = [
+        "nearbyWays",
+        "nearbyStations",
+        "linesAtPoint",
+        "nearbyLandmarks",
+    ];
 
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
     let parsed: serde_json::Value =

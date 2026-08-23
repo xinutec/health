@@ -3,7 +3,7 @@
 in `src/geo/osm.ts`)
 
 This turns OSM features near a stay into the candidate venues the picker ranks.
-It is what puts "Honest Burgers" or "Royal Free Hospital" on a timeline instead
+It is what puts a venue name — a restaurant, a hospital — on a timeline instead
 of a bare "stationary", so a gap here is not a missing optimisation — it is a
 place the person went, unnamed.
 
@@ -130,8 +130,8 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
   { name := some name, tags, distanceM := d, encloses, isPoint }
 
 -- One tag, one landmark.
-#guard (shapeLandmarks [feat "Honest Burgers" [("amenity", "restaurant")] 12] []).length == 1
-#guard ((shapeLandmarks [feat "Honest Burgers" [("amenity", "restaurant")] 12] []).head!).subtype
+#guard (shapeLandmarks [feat "The Invented Arms" [("amenity", "restaurant")] 12] []).length == 1
+#guard ((shapeLandmarks [feat "The Invented Arms" [("amenity", "restaurant")] 12] []).head!).subtype
        == "restaurant"
 
 -- ⚠ TWO tags, TWO landmarks — the picker resolves precedence, not this.

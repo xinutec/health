@@ -1759,7 +1759,16 @@ pub fn shape_landmarks(
                 "subtype".into(),
                 m.get("subtype").cloned().unwrap_or_default(),
             );
-            o.insert("distanceM".into(), crate::row_json::js_number_value(d));
+            // ⚠ A BIT-PATTERN STRING, not a JSON number. `DayEntry.parsePoi`
+            // reads this field with `jBits`, and the trace-fed path encodes it
+            // the same way (`fold_payload`'s `num_bits`). Emitting a number here
+            // fails the fold's decode outright with "String expected" — which
+            // is the loud failure, and only reachable once the shaping stopped
+            // returning an empty list for every stay (#1054).
+            o.insert(
+                "distanceM".into(),
+                serde_json::Value::String(crate::fold_payload::bits(d)),
+            );
             // ⚠ `enclosing` is ALWAYS present, including `false` — the recorded
             // trace carries it that way. Only `openingHours` is conditional,
             // matching the TypeScript's spread.

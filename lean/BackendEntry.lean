@@ -476,7 +476,7 @@ def dispatch (j : Json) : Json :=
           | some i => Json.num i) ]
   -- The venues near a stay (#982, and the gap that blocked the cutover).
   --
-  -- ⚠ This is what puts "Honest Burgers" on a timeline instead of a bare
+  -- ⚠ This is what puts a VENUE NAME on a timeline instead of a bare
   -- "stationary". While the host declined this table, four venue names per day
   -- silently vanished from the served answer — measured against production
   -- 2026-08-23 before the arm existed.
@@ -484,32 +484,43 @@ def dispatch (j : Json) : Json :=
   -- ⚠ Distances cross as IEEE-754 bit patterns: the enclosing-institution rule
   -- compares one against 80 m, and a re-rounded value moves that boundary.
   | some "shapeLandmarks" =>
-    let featuresOf (k : String) : List Verified.Geo.Landmarks.Feature :=
+    -- ⚠ A TAG PAIR IS A TWO-ELEMENT ARRAY, `["amenity", "restaurant"]`. That is
+    -- what `ServeEntry.tagsJson` writes, and reading it as a `{k, v}` OBJECT
+    -- parses every pair to nothing. A feature with no tags spawns no landmark,
+    -- so this op then answers `[]` for every stay — which CLAIMS "no venues
+    -- here" instead of failing. It did exactly that: measured 2026-08-23 on
+    -- 2026-05-22, all six `nearbyLandmarks` asks answered and all six empty,
+    -- costing two venue names on the day while every count read as answered
+    -- (#1054).
+    --
+    -- So a pair that does not parse is an ERROR, not an empty tag list. The two
+    -- spellings are both well-formed JSON and neither side can detect the other
+    -- by shape, which is precisely why this must not degrade quietly.
+    let pairOf (pair : Json) : Except String (String × String) := do
+      let kv ← pair.getArr?
+      match kv[0]? >>= (·.getStr?.toOption), kv[1]? >>= (·.getStr?.toOption) with
+      | some kk, some vv => pure (kk, vv)
+      | _, _ => throw "shapeLandmarks: a tag pair is not two strings"
+    let featuresOf (k : String) : Except String (List Verified.Geo.Landmarks.Feature) := do
       match j.getObjVal? k with
-      | .error _ => []
+      | .error _ => pure []
       | .ok v =>
-        match v.getArr? with
-        | .error _ => []
-        | .ok arr => arr.toList.filterMap fun e =>
-          match str? e "distBits" with
-          | none => none
-          | some db =>
-            let tags : List (String × String) :=
-              match e.getObjVal? "tags" with
-              | .error _ => []
-              | .ok tv =>
-                match tv.getArr? with
-                | .error _ => []
-                | .ok ta => ta.toList.filterMap fun pair =>
-                  match str? pair "k", str? pair "v" with
-                  | some kk, some vv => some (kk, vv)
-                  | _, _ => none
-            some { name := str? e "name"
+        let arr ← v.getArr?
+        (arr.toList.filterMap fun e => (str? e "distBits").map ((e, ·)))
+          |>.mapM fun (e, db) => do
+            let tags ← match e.getObjVal? "tags" with
+              | .error _ => pure []
+              | .ok tv => do (← tv.getArr?).toList.mapM pairOf
+            pure { name := str? e "name"
                  , tags
                  , distanceM := Float.ofBits db.toNat!.toUInt64
                  , encloses := (e.getObjVal? "encloses" >>= (·.getBool?)).toOption == some true
                  , isPoint := (e.getObjVal? "isPoint" >>= (·.getBool?)).toOption == some true }
-    let ls := Verified.Geo.Landmarks.shapeLandmarks (featuresOf "points") (featuresOf "lines")
+    match (do
+        pure (Verified.Geo.Landmarks.shapeLandmarks
+          (← featuresOf "points") (← featuresOf "lines"))) with
+    | .error e => err e
+    | .ok ls =>
     Json.mkObj
       [ ("value", Json.arr (ls.map fun l =>
           Json.mkObj
