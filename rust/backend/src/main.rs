@@ -305,12 +305,21 @@ async fn serve() -> Result<()> {
 
     let cfg = Config::from_env()?;
     let pool = db::connect(&cfg.db.url()).await?;
-    let port: u16 = std::env::var("PORT")
+    // ⚠ `AUTH_PORT`, which is what the manifest ALREADY SETS and what
+    // `src/config.ts` reads. This used to read `PORT`, which production does not
+    // set — so flipping the manifest to this binary would have bound 8081 while
+    // the Service and the readiness probe expected 3000, and the rollout would
+    // have stalled on a pod that looked healthy from inside (#982).
+    //
+    // One name, not two with a fallback: a second accepted spelling is how the
+    // two arms drift apart again, and the parity harness must run the same
+    // environment production does.
+    let port: u16 = std::env::var("AUTH_PORT")
         .ok()
         .filter(|s| !s.is_empty())
         .map(|s| {
             s.parse()
-                .with_context(|| format!("PORT is not a port number: {s:?}"))
+                .with_context(|| format!("AUTH_PORT is not a port number: {s:?}"))
         })
         .transpose()?
         .unwrap_or(8081);
