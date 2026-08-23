@@ -36,12 +36,22 @@ const KNOWN_DIVERGENT: [&str; 1] = ["2026-08-09-pippijn.json"];
 /// Keys the offline answerer cannot supply, beyond the blank-zone `bestPlace`
 /// asked before `tzAt` resolves.
 ///
-/// Measured 2026-08-21: 8 keys over 6 days — `reverseGeocode` at zoom 16 on
-/// five, one `nearbyLandmarks`, one `transitStops`. Each means the fold reached
+/// Measured 2026-08-23: 7 keys over 5 days — `reverseGeocode` on six (one at
+/// zoom 18, five at zoom 16) and one `transitStops`. Each means the fold reached
 /// a lookup the TypeScript run never made, so the recorded trace has no answer
 /// and the row set is not that lookup's source. Per #1054 the miss IS the
 /// finding, so this is a CEILING that must fall, not a budget.
-const UNANSWERED_MAX: usize = 8;
+///
+/// ⚠ Was 8 until 2026-08-23. The eighth was 06-09's `nearbyLandmarks`, which
+/// was never an un-asked lookup at all — the answerer had NO ARM for that table
+/// and fell through the catch-all, so it read as adjudicated when it was not
+/// (#1054). The arm exists now, so the ceiling drops with it.
+///
+/// What remains is the two tables that are declined ON PURPOSE:
+/// `reverseGeocode` is a Nominatim call whose keys are coordinates the pipeline
+/// DERIVES (#1076), and `transitStops` is injected rather than computed from
+/// rows. Neither falls without porting something.
+const UNANSWERED_MAX: usize = 7;
 
 /// The tables an unanswered key may belong to. Anything else is a new gap.
 const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
