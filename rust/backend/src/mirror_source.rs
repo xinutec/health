@@ -360,9 +360,15 @@ impl MirrorSource {
 
     /// Guard the backstop. See [`CANDIDATE_LIMIT`].
     fn check_limit(n: usize, table: &str, bucket: &str) -> Result<()> {
-        if n as i64 >= CANDIDATE_LIMIT {
+        Self::check_limit_at(n, table, bucket, CANDIDATE_LIMIT)
+    }
+
+    /// As [`check_limit`](Self::check_limit) with the cap stated, because the
+    /// batched read shares one cap across several buckets.
+    fn check_limit_at(n: usize, table: &str, bucket: &str, cap: i64) -> Result<()> {
+        if n as i64 >= cap {
             bail!(
-                "{table} returned {n} candidate {bucket} row(s), at the {CANDIDATE_LIMIT} backstop \
+                "{table} returned {n} candidate {bucket} row(s), at the {cap} backstop \
                  — the pre-filter box is not bounding what it should, and scoring a truncated \
                  candidate list would answer with a nearest feature that is not the nearest"
             );
@@ -490,6 +496,96 @@ impl RowSource for MirrorSource {
                 bits(plon),
                 tags_of(&r)?
             ]));
+        }
+        Ok(Some(out))
+    }
+
+    /// The four line buckets `nearbyWays` needs, in ONE query.
+    ///
+    /// ⚠ Coverage is still checked PER BUCKET. The batching is about round
+    /// trips, not about the gate: a coordinate the mirror cannot vouch for in
+    /// one bucket is still a decline for the whole answer, and folding the
+    /// buckets into one `IN` list would otherwise quietly answer for an area
+    /// that was never fetched.
+    ///
+    /// ⚠ `feature_type` is SELECTED BACK, not assumed from the query order.
+    /// MariaDB is free to return an `IN` list's rows in any order, and the
+    /// bucket becomes each way's `type` downstream — deriving it from position
+    /// would mislabel every way on some days and none on others.
+    ///
+    /// ⚠ Every requested bucket gets an entry even when it matched no rows. An
+    /// absent key and an empty one mean different things here — "no ways of this
+    /// kind nearby" is an answer, and the caller must not read it as a decline.
+    fn line_rows_multi(
+        &mut self,
+        buckets: &[&str],
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<crate::rowset_answerer::LinesByBucket>> {
+        for b in buckets {
+            if !self.covered(b, lat, lon, radius_m)? {
+                return Ok(None);
+            }
+        }
+        let poly = Self::mbr_box_wkt(lat, lon, radius_m);
+        let placeholders = std::iter::repeat_n("?", buckets.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT feature_type, osm_id, subtype, name, tags_json, ST_AsText(geom) AS wkt              FROM osm_lines              WHERE feature_type IN ({placeholders})                AND MBRIntersects(geom, ST_GeomFromText(?, 4326))              LIMIT ?"
+        );
+        // ⚠ `AssertSqlSafe`: audited — the only interpolation is the `?`
+        // placeholder run, whose length comes from `buckets.len()`. Every bucket
+        // NAME is bound.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for b in buckets {
+            q = q.bind(*b);
+        }
+        // ⚠ The candidate cap is now shared across four buckets where it used to
+        // be per bucket, so it is multiplied to keep the same headroom each had.
+        // Leaving it at the single-bucket value would silently truncate a dense
+        // coordinate — which reads as "fewer roads here", not as an error.
+        let cap = CANDIDATE_LIMIT * buckets.len() as i64;
+        let rows = self
+            .block(q.bind(&poly).bind(cap).fetch_all(&self.pool))
+            .context("reading osm_lines for the nearbyWays buckets")?;
+        Self::check_limit_at(rows.len(), "osm_lines", "nearbyWays buckets", cap)?;
+
+        let mut out: crate::rowset_answerer::LinesByBucket = buckets
+            .iter()
+            .map(|b| ((*b).to_string(), Vec::new()))
+            .collect();
+        for r in rows {
+            let bucket: String = r
+                .try_get("feature_type")
+                .context("osm_lines.feature_type")?;
+            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
+            let coords: Vec<Value> = parse_linestring_wkt(&wkt)
+                .into_iter()
+                .map(|(la, lo)| json!([bits(la), bits(lo)]))
+                .collect();
+            // A way with one vertex is not a line — same guard as `line_rows`.
+            if coords.len() < 2 {
+                continue;
+            }
+            let row = json!([
+                r.try_get::<i64, _>("osm_id").context("osm_lines.osm_id")?,
+                subtype_of(&r, "osm_lines")?,
+                name_of(&r, "osm_lines")?,
+                coords,
+                tags_of(&r)?
+            ]);
+            match out.iter_mut().find(|(b, _)| *b == bucket) {
+                Some((_, v)) => v.push(row),
+                // ⚠ Loud. A row whose `feature_type` is none of the four asked
+                // for means the WHERE clause and this grouping disagree, and
+                // dropping it silently would lose ways with no symptom.
+                None => bail!(
+                    "osm_lines returned feature_type {bucket:?}, which was not among the \
+                     buckets asked for — the query and the grouping disagree"
+                ),
+            }
         }
         Ok(Some(out))
     }

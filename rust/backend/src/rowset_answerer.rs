@@ -45,6 +45,15 @@ use crate::lean::{self, Miss};
 /// ⚠ `None` MEANS DECLINE, NOT EMPTY. An empty row list is a real answer — "no
 /// ways within the radius" — and returning one for an unfetched area is a claim
 /// about the world. `converge` already counts a decline; it cannot count a lie.
+/// Line rows grouped by the feature bucket they came from.
+///
+/// ⚠ Named rather than inlined because the pairing is the POINT: the bucket
+/// becomes each way's `type` downstream, so it has to travel WITH the rows it
+/// describes. A bare `Vec<Vec<Value>>` positional-by-request-order would compile
+/// and would mislabel ways the moment the database returned an `IN` list in
+/// another order.
+pub type LinesByBucket = Vec<(String, Vec<Value>)>;
+
 pub trait RowSource {
     /// Line rows of one feature bucket near a point.
     fn line_rows(
@@ -54,6 +63,45 @@ pub trait RowSource {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<Vec<Value>>>;
+    /// Line rows of SEVERAL buckets in one go, grouped by bucket.
+    ///
+    /// ⚠ Exists because `nearbyWays` asked five separate questions per
+    /// coordinate — four line buckets plus an aeroway POINT query — and a day
+    /// asks about ~90 coordinates. That was ~430 of a day's ~490 mirror queries
+    /// (#1071).
+    ///
+    /// ⚠ THE BUCKET IS RETURNED, NEVER INFERRED. `push_ways` writes it as the
+    /// `type` of every way it emits, so a batched read that lost track of which
+    /// row came from which bucket would produce a well-formed table with every
+    /// way labelled the same — right shape, wrong content, and nothing downstream
+    /// could tell.
+    ///
+    /// Returns `None` if ANY requested bucket cannot be vouched for: the caller
+    /// treats a partial answer as a decline, because "the aerodrome-free version
+    /// of this coordinate" is not a lesser answer, it is a wrong one.
+    /// The DEFAULT is the obvious composition, and every source but the mirror
+    /// keeps it. Overriding is an optimisation for a source with round trips to
+    /// save; a source that does not override still answers identically, which is
+    /// what stops the batched path and the looped one from drifting apart — and
+    /// what stops a test double from declining here by accident and making a
+    /// decline test pass for the wrong reason.
+    fn line_rows_multi(
+        &mut self,
+        buckets: &[&str],
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<Option<LinesByBucket>> {
+        let mut out = Vec::with_capacity(buckets.len());
+        for b in buckets {
+            let Some(rows) = self.line_rows(b, lat, lon, radius_m)? else {
+                return Ok(None);
+            };
+            out.push(((*b).to_string(), rows));
+        }
+        Ok(Some(out))
+    }
+
     /// Point rows of one feature bucket near a point.
     fn point_rows(
         &mut self,
@@ -492,15 +540,23 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 // answer. `nearbyWays` is one table built from five queries, so
                 // answering with four of them would report the aerodrome-free
                 // version of a coordinate as if it were complete.
-                for bucket in ["highway", "railway", "waterway", "aeroway"] {
-                    let Some(rows) =
-                        self.source
-                            .line_rows(bucket, flat, flon, default_radius_m::NEARBY_WAYS)?
-                    else {
-                        return Ok(None);
-                    };
+                // ⚠ ONE query for the four line buckets, not four (#1071). The
+                // bucket comes back as a column and is carried through to
+                // `push_ways`, which writes it as each way's `type` — inferring
+                // it here would label every way the same and still look
+                // well-formed.
+                let Some(by_bucket) = self.source.line_rows_multi(
+                    &["highway", "railway", "waterway", "aeroway"],
+                    flat,
+                    flon,
+                    default_radius_m::NEARBY_WAYS,
+                )?
+                else {
+                    return Ok(None);
+                };
+                for (bucket, rows) in by_bucket {
                     let v = spatial("queryLines", lat, lon, &r, rows)?;
-                    push_ways(&mut ways, bucket, &v);
+                    push_ways(&mut ways, &bucket, &v);
                 }
                 let Some(rows) =
                     self.source
