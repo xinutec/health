@@ -34,6 +34,23 @@ use backend::lean::Miss;
 use backend::rowset_answerer::{OsmAnswerer, RowSource};
 use serde_json::{Value, json};
 
+/// The three rail reads, declined. These doubles exist to exercise the SPATIAL
+/// decline paths; a rail read they cannot vouch for must decline for the same
+/// reason, not answer an empty list.
+macro_rules! declines_rail {
+    () => {
+        fn rail_line_names(&mut self) -> anyhow::Result<Option<Vec<String>>> {
+            Ok(None)
+        }
+        fn rail_ways_named(&mut self, _: &[String]) -> anyhow::Result<Option<Vec<Value>>> {
+            Ok(None)
+        }
+        fn rail_stations(&mut self) -> anyhow::Result<Option<Vec<Value>>> {
+            Ok(None)
+        }
+    };
+}
+
 /// The stay's coordinate, and a venue 20-odd metres from it. Invented.
 const LAT: f64 = 51.5;
 const LON: f64 = -0.1;
@@ -48,6 +65,7 @@ const VENUE_LON: f64 = -0.1;
 struct OneVenue;
 
 impl RowSource for OneVenue {
+    declines_rail!();
     fn line_rows(
         &mut self,
         _bucket: &str,
@@ -146,6 +164,7 @@ fn a_tagged_venue_in_range_becomes_a_landmark() {
 fn no_venues_in_range_is_an_empty_answer_not_a_decline() {
     struct Empty;
     impl RowSource for Empty {
+        declines_rail!();
         fn line_rows(
             &mut self,
             _b: &str,

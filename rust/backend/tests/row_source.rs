@@ -16,10 +16,28 @@ use backend::lean::Miss;
 use backend::rowset_answerer::{OsmAnswerer, RowSource};
 use serde_json::{Value, json};
 
+/// The three rail reads, declined. These doubles exist to exercise the SPATIAL
+/// decline paths; a rail read they cannot vouch for must decline for the same
+/// reason, not answer an empty list.
+macro_rules! declines_rail {
+    () => {
+        fn rail_line_names(&mut self) -> anyhow::Result<Option<Vec<String>>> {
+            Ok(None)
+        }
+        fn rail_ways_named(&mut self, _: &[String]) -> anyhow::Result<Option<Vec<Value>>> {
+            Ok(None)
+        }
+        fn rail_stations(&mut self) -> anyhow::Result<Option<Vec<Value>>> {
+            Ok(None)
+        }
+    };
+}
+
 /// Vouches for nothing, ever.
 struct NeverCovered;
 
 impl RowSource for NeverCovered {
+    declines_rail!();
     fn line_rows(
         &mut self,
         _bucket: &str,
@@ -51,6 +69,7 @@ impl RowSource for NeverCovered {
 struct LinesOnly;
 
 impl RowSource for LinesOnly {
+    declines_rail!();
     fn line_rows(
         &mut self,
         _bucket: &str,
@@ -75,6 +94,7 @@ impl RowSource for LinesOnly {
 struct PointsOnly;
 
 impl RowSource for PointsOnly {
+    declines_rail!();
     fn line_rows(
         &mut self,
         _bucket: &str,
@@ -99,6 +119,7 @@ impl RowSource for PointsOnly {
 struct CoveredButEmpty;
 
 impl RowSource for CoveredButEmpty {
+    declines_rail!();
     fn line_rows(
         &mut self,
         _bucket: &str,

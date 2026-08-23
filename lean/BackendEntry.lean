@@ -14,6 +14,7 @@ import Verified.Login
 import Verified.Recovery
 import Verified.Owntracks
 import Verified.Geo.Landmarks
+import Verified.Geo.LineStations
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
 import Verified.Session
@@ -474,6 +475,67 @@ def dispatch (j : Json) : Json :=
       , ("moveModeLocatorInterval", match interval with
           | none => Json.null
           | some i => Json.num i) ]
+  -- The two halves of `stationsOnLine`, split where the TypeScript splits it
+  -- (#1075). The SQL between them is the host's: resolve the substring match
+  -- against a cached name list HERE, fetch that geometry with an indexed
+  -- `name IN (…)` there, then filter by proximity back here.
+  --
+  -- ⚠ The split is not stylistic. A leading-wildcard `LIKE '%base%'` cannot use
+  -- the name index and scans every railway row; the TypeScript measured ~28 s
+  -- per call that way, and one leg fanning fifty of them serially is where its
+  -- 24-minute pathology came from. Handing the host an exact name list is what
+  -- keeps the query indexed.
+  | some "lineNamesMatching" =>
+    match str? j "line", j.getObjVal? "allNames" with
+    | some line, .ok v =>
+      match v.getArr? with
+      | .error e => err s!"lineNamesMatching: allNames: {e}"
+      | .ok arr =>
+        match arr.mapM (·.getStr?) with
+        | .error e => err s!"lineNamesMatching: a name is not a string: {e}"
+        | .ok names =>
+          Json.mkObj [("value", Json.arr
+            ((Verified.Geo.LineStations.lineNamesMatching line names).map Json.str))]
+    | _, _ => err "lineNamesMatching: needs line and allNames"
+  -- ⚠ ORDER IS PART OF THE ANSWER. Downstream journey resolution reads
+  -- positional relationships out of this list, so a set-equal-but-reordered
+  -- result is a DIFFERENT result — see the port's own note. The station array
+  -- must reach here in the order the host read it.
+  --
+  -- ⚠ Coordinates cross as IEEE-754 bit patterns. The proximity test compares a
+  -- computed distance against 300 m, and a re-rounded coordinate moves which
+  -- stations a line is held to serve.
+  | some "filterStationsByLineProximity" =>
+    let stationsOf : Except String (Array Verified.Geo.LineStations.StationCandidate) := do
+      let arr ← (← j.getObjVal? "stations").getArr?
+      arr.mapM fun e => do
+        let name ← (← e.getObjVal? "name").getStr?
+        let lat ← (← e.getObjVal? "latBits").getStr?
+        let lon ← (← e.getObjVal? "lonBits").getStr?
+        pure { name
+             , lat := Float.ofBits lat.toNat!.toUInt64
+             , lon := Float.ofBits lon.toNat!.toUInt64 }
+    let waysOf : Except String (Array Verified.Geo.LineStations.WayGeometry) := do
+      let arr ← (← j.getObjVal? "ways").getArr?
+      arr.mapM fun w => do
+        let cs ← w.getArr?
+        let coords ← cs.mapM fun c => do
+          let pair ← c.getArr?
+          match pair[0]? >>= (·.getStr?.toOption), pair[1]? >>= (·.getStr?.toOption) with
+          | some la, some lo =>
+            pure (Float.ofBits la.toNat!.toUInt64, Float.ofBits lo.toNat!.toUInt64)
+          | _, _ => throw "a way vertex is not two bit-pattern strings"
+        pure { coords }
+    match stationsOf, waysOf with
+    | .error e, _ => err s!"filterStationsByLineProximity: stations: {e}"
+    | _, .error e => err s!"filterStationsByLineProximity: ways: {e}"
+    | .ok stations, .ok ways =>
+      Json.mkObj [("value", Json.arr
+        ((Verified.Geo.LineStations.filterStationsByLineProximity stations ways).map fun st =>
+          Json.mkObj
+            [ ("name", Json.str st.name)
+            , ("latBits", Json.str (toString st.lat.toBits))
+            , ("lonBits", Json.str (toString st.lon.toBits)) ]))]
   -- The venues near a stay (#982, and the gap that blocked the cutover).
   --
   -- ⚠ This is what puts a VENUE NAME on a timeline instead of a bare

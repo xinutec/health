@@ -1692,6 +1692,61 @@ pub fn owntracks_history_max_age_sec() -> i64 {
     600
 }
 
+/// `Verified.Geo.LineStations.lineNamesMatching` — every mirror line name whose
+/// text contains this line's base token.
+///
+/// ⚠ The caller feeds the result straight into an indexed `name IN (…)`. Doing
+/// the same match in SQL as `LIKE '%base%'` cannot use the name index and scans
+/// every railway row; that is the whole reason this step is separate.
+pub fn line_names_matching(line: &str, all_names: &[String]) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<String>,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "lineNamesMatching",
+        "line": line,
+        "allNames": all_names,
+    }))?;
+    Ok(w.value)
+}
+
+/// `Verified.Geo.LineStations.filterStationsByLineProximity` — the stations a
+/// line's track passes within 300 m of.
+///
+/// ⚠ Coordinates cross as IEEE-754 BIT PATTERNS in both directions. The rule
+/// compares a computed distance against a 300 m threshold, and a re-rounded
+/// coordinate moves which stations a line is held to serve.
+///
+/// ⚠ ORDER IS PRESERVED and is part of the answer — downstream journey
+/// resolution reads positional relationships out of this list.
+pub fn filter_stations_by_line_proximity(
+    stations: &[serde_json::Value],
+    ways: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<serde_json::Map<String, serde_json::Value>>,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "filterStationsByLineProximity",
+        "stations": stations,
+        "ways": ways,
+    }))?;
+    // Back to the shape `fold_payload::stations_on_line` writes and
+    // `DayEntry.parseLineStation` reads: `[name, latBits, lonBits]`.
+    Ok(w.value
+        .into_iter()
+        .map(|m| {
+            serde_json::json!([
+                m.get("name").cloned().unwrap_or_default(),
+                m.get("latBits").cloned().unwrap_or_default(),
+                m.get("lonBits").cloned().unwrap_or_default(),
+            ])
+        })
+        .collect())
+}
+
 /// `Verified.Geo.Landmarks.shapeLandmarks` — the venues near a stay.
 ///
 /// ⚠ This is what names a timeline entry. While this went unanswered, a served

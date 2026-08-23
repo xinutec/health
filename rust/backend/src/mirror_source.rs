@@ -150,6 +150,20 @@ pub struct MirrorSource {
     /// local-data probe is two indexed queries and the same coordinate is asked
     /// for several tables.
     decided: HashMap<(String, u64, u64, u64), bool>,
+    /// Every distinct railway line name, read once. ~1k strings.
+    ///
+    /// ⚠ Cached for the same reason the TypeScript caches it, which is not
+    /// tidiness: without it each `stationsOnLine` is a `DISTINCT name` scan, and
+    /// a day asks about a dozen lines.
+    rail_names: Option<Vec<String>>,
+    /// Every railway station point, read once. ~1.2k rows.
+    ///
+    /// ⚠ Pre-fetched WHOLE rather than per-line bbox, which is the TypeScript's
+    /// measured choice: a London-wide MBR query against a million-row
+    /// `osm_points` takes ~30 s even when only ~100 stations match, because the
+    /// spatial index is poorly suited to a box tens of km on a side. One small
+    /// indexed read plus an in-memory filter per line is far cheaper.
+    rail_stations: Option<Vec<Value>>,
 }
 
 impl MirrorSource {
@@ -158,6 +172,8 @@ impl MirrorSource {
     /// a query reach it aborts the process rather than returning an error.
     pub fn new(pool: MySqlPool, handle: tokio::runtime::Handle, now_ms: i64) -> Self {
         Self {
+            rail_names: None,
+            rail_stations: None,
             pool,
             handle,
             now_ms,
@@ -476,6 +492,108 @@ impl RowSource for MirrorSource {
             ]));
         }
         Ok(Some(out))
+    }
+
+    /// ⚠ NOT gated on coverage, and that is the difference between this and
+    /// every other read here. Coverage boxes are spatial and this question has
+    /// no coordinate — a line is a name. The mirror either holds railway ways
+    /// or it does not, and `rail_ways_named` returning nothing is what says so.
+    fn rail_line_names(&mut self) -> Result<Option<Vec<String>>> {
+        if self.rail_names.is_none() {
+            let rows = self
+                .block(
+                    sqlx::query(
+                        "SELECT DISTINCT name FROM osm_lines \
+                         WHERE feature_type = 'railway' AND name IS NOT NULL",
+                    )
+                    .fetch_all(&self.pool),
+                )
+                .context("reading distinct railway line names")?;
+            let mut out = Vec::with_capacity(rows.len());
+            for r in rows {
+                if let Some(n) = r
+                    .try_get::<Option<String>, _>("name")
+                    .context("osm_lines.name")?
+                {
+                    out.push(n);
+                }
+            }
+            self.rail_names = Some(out);
+        }
+        Ok(self.rail_names.clone())
+    }
+
+    fn rail_ways_named(&mut self, names: &[String]) -> Result<Option<Vec<Value>>> {
+        if names.is_empty() {
+            return Ok(Some(vec![]));
+        }
+        // ⚠ An exact `name IN (…)` so the index serves it. The substring match
+        // already happened in Lean against the cached name list — doing it here
+        // as a leading-wildcard LIKE is the ~28 s scan this design avoids.
+        let placeholders = std::iter::repeat_n("?", names.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT ST_AsText(geom) AS wkt FROM osm_lines              WHERE feature_type = 'railway' AND name IN ({placeholders})"
+        );
+        // ⚠ `AssertSqlSafe` because sqlx 0.9 refuses a non-'static SQL string.
+        // Audited: the only interpolation is the `?` placeholder run, whose
+        // length comes from `names.len()`. Every NAME is bound, never inlined.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for n in names {
+            q = q.bind(n);
+        }
+        let rows = self
+            .block(q.fetch_all(&self.pool))
+            .context("reading railway way geometry")?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
+            out.push(Value::Array(
+                parse_linestring_wkt(&wkt)
+                    .into_iter()
+                    .map(|(la, lo)| json!([bits(la), bits(lo)]))
+                    .collect(),
+            ));
+        }
+        Ok(Some(out))
+    }
+
+    fn rail_stations(&mut self) -> Result<Option<Vec<Value>>> {
+        if self.rail_stations.is_none() {
+            // ⚠ NO ORDER BY, matching the TypeScript. Order is part of the
+            // answer, so it must be the same order — and the TypeScript takes
+            // whatever the server returns for this unordered read. Adding a sort
+            // here would be a defensible choice that produces a DIFFERENT
+            // answer, which is the one thing a port must not do.
+            let rows = self
+                .block(
+                    sqlx::query(
+                        "SELECT name, ST_Y(geom) AS lat, ST_X(geom) AS lon FROM osm_points \
+                         WHERE feature_type = 'railway' AND subtype = 'station'",
+                    )
+                    .fetch_all(&self.pool),
+                )
+                .context("reading railway stations")?;
+            let mut out = Vec::with_capacity(rows.len());
+            for r in rows {
+                let Some(name) = r
+                    .try_get::<Option<String>, _>("name")
+                    .context("osm_points.name")?
+                else {
+                    continue;
+                };
+                let lat: f64 = r.try_get("lat").context("osm_points ST_Y")?;
+                let lon: f64 = r.try_get("lon").context("osm_points ST_X")?;
+                out.push(json!({
+                    "name": name,
+                    "latBits": bits(lat),
+                    "lonBits": bits(lon),
+                }));
+            }
+            self.rail_stations = Some(out);
+        }
+        Ok(self.rail_stations.clone())
     }
 }
 

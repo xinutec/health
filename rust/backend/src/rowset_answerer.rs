@@ -62,6 +62,28 @@ pub trait RowSource {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<Vec<Value>>>;
+
+    /// Every distinct railway line name the source knows.
+    ///
+    /// ⚠ This is the whole reason `stationsOnLine` is TWO Lean calls with SQL
+    /// between them. The membership match a line needs is "every name
+    /// CONTAINING this line's base token" — London track shared by several
+    /// lines is tagged compound ("Circle, Hammersmith & City and Metropolitan
+    /// Lines"), so exact matching silently drops the shared sections. Doing
+    /// that as `LIKE '%base%'` cannot use the name index; resolving it against
+    /// this list instead keeps the geometry fetch an indexed `name IN (…)`.
+    fn rail_line_names(&mut self) -> Result<Option<Vec<String>>>;
+
+    /// The geometry of the named railway ways, as `[[latBits, lonBits], …]`.
+    fn rail_ways_named(&mut self, names: &[String]) -> Result<Option<Vec<Value>>>;
+
+    /// Every railway station point, as `{name, latBits, lonBits}`.
+    ///
+    /// ⚠ ORDER IS PART OF THE ANSWER — the proximity filter preserves input
+    /// order and downstream journey resolution reads positional relationships
+    /// out of the result. A source that returned these in a different order
+    /// would answer the same question differently.
+    fn rail_stations(&mut self) -> Result<Option<Vec<Value>>>;
 }
 
 /// Answers the fold's misses, whatever the rows come from.
@@ -89,6 +111,8 @@ pub type RowSetAnswerer<'a> = OsmAnswerer<RowSetSource<'a>>;
 pub struct RowSetSource<'a> {
     points: &'a [Value],
     lines: &'a [Value],
+    /// The rail-line set a fixture carries (`railLines`), when it has one.
+    rail: Option<&'a serde_json::Map<String, Value>>,
     /// Whether to drop rows that cannot be in range before shipping them.
     ///
     /// ⚠ Off only for `tests/rowset_prefilter.rs`, which exists to prove the
@@ -133,6 +157,7 @@ impl<'a> RowSetSource<'a> {
         let o = row_set.as_object().context("osmRowSet is not an object")?;
         Ok(Self {
             prefilter: true,
+            rail: o.get("railLines").and_then(Value::as_object),
             points: o
                 .get("points")
                 .and_then(Value::as_array)
@@ -304,6 +329,114 @@ impl RowSource for RowSetSource<'_> {
             self, bucket, lat, lon, radius_m,
         )))
     }
+
+    fn rail_line_names(&mut self) -> Result<Option<Vec<String>>> {
+        // ⚠ ABSENT is a DECLINE, not an empty list. A fixture captured before
+        // `railLines` existed cannot answer this, and an empty name list would
+        // answer "this line has no track" — a claim about the world.
+        let Some(rail) = self.rail else {
+            return Ok(None);
+        };
+        Ok(Some(
+            rail.get("allNames")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+        ))
+    }
+
+    fn rail_ways_named(&mut self, names: &[String]) -> Result<Option<Vec<Value>>> {
+        let Some(rail) = self.rail else {
+            return Ok(None);
+        };
+        let want: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        Ok(Some(
+            rail.get("ways")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|w| {
+                    w.get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|n| want.contains(n))
+                })
+                .map(|w| {
+                    Value::Array(
+                        w.get("coords")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|c| {
+                                let a = c.as_array()?;
+                                Some(json!([
+                                    bits(a.first()?.as_f64()?),
+                                    bits(a.get(1)?.as_f64()?)
+                                ]))
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ))
+    }
+
+    fn rail_stations(&mut self) -> Result<Option<Vec<Value>>> {
+        let Some(rail) = self.rail else {
+            return Ok(None);
+        };
+        Ok(Some(
+            rail.get("stations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|st| {
+                    Some(json!({
+                        "name": st.get("name")?.as_str()?,
+                        "latBits": bits(st.get("lat")?.as_f64()?),
+                        "lonBits": bits(st.get("lon")?.as_f64()?),
+                    }))
+                })
+                .collect(),
+        ))
+    }
+}
+
+impl<S: RowSource> OsmAnswerer<S> {
+    /// The stations a named rail line serves.
+    ///
+    /// Three steps, split exactly where the TypeScript splits them: match the
+    /// name (Lean), fetch that geometry (SQL), filter by proximity (Lean). The
+    /// middle step is the only reason this is not one call — see
+    /// [`RowSource::rail_line_names`].
+    ///
+    /// ⚠ A LINE THAT MATCHES NOTHING IS ANSWERED WITH AN EMPTY LIST, and that
+    /// is not the same lie an empty `nearbyLandmarks` told. The TypeScript
+    /// returns `[]` here for a name whose base token no way carries — a siding,
+    /// a junction curve — because "no way of this name" really is "no stations
+    /// on it". Declining would leave the fold asking forever for a line that
+    /// genuinely has none.
+    fn stations_on_line(&mut self, line: &str) -> Result<Option<(String, Value)>> {
+        let Some(all_names) = self.source.rail_line_names()? else {
+            return Ok(None);
+        };
+        let matched = crate::lean::line_names_matching(line, &all_names)?;
+        if matched.is_empty() {
+            return Ok(Some(("stationsOnLine".into(), json!([line, []]))));
+        }
+        let Some(ways) = self.source.rail_ways_named(&matched)? else {
+            return Ok(None);
+        };
+        if ways.is_empty() {
+            return Ok(Some(("stationsOnLine".into(), json!([line, []]))));
+        }
+        let Some(stations) = self.source.rail_stations()? else {
+            return Ok(None);
+        };
+        let served = crate::lean::filter_stations_by_line_proximity(&stations, &ways)?;
+        Ok(Some(("stationsOnLine".into(), json!([line, served]))))
+    }
 }
 
 /// One `osmspatial` call. Source-independent: the rows are already in the wire
@@ -329,9 +462,16 @@ fn key_parts(key: &str) -> Vec<&str> {
 
 impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
     fn answer(&mut self, miss: &Miss) -> Result<Option<(String, Value)>> {
+        // ⚠ BEFORE the coordinate-key guard. `stationsOnLine` is keyed by a bare
+        // LINE NAME, so it has no `|` and never survives `key_parts` — which is
+        // exactly how it went unanswered 13 times a day while every other table
+        // was wired (#1075).
+        if miss.what == "stationsOnLine" {
+            return self.stations_on_line(&miss.key);
+        }
         let p = key_parts(&miss.key);
         if p.len() < 2 {
-            // Not a coordinate key — `stationsOnLine` is keyed by line name.
+            // Not a coordinate key, and not a table with an arm.
             return Ok(None);
         }
         let (lat, lon) = (p[0], p[1]);
