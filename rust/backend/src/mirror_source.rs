@@ -117,18 +117,36 @@ pub const CANDIDATE_LIMIT: i64 = 20_000;
 
 /// SQL statements this source has issued, process-wide.
 ///
-/// ⚠ NOT A PERFORMANCE COUNTER SO MUCH AS A DENOMINATOR. The fold's wall clock
-/// is dominated by round trips, and a round trip costs ~50x more over
+/// ⚠ A DENOMINATOR, not a performance counter. A round trip costs far more over
 /// `scripts/prod-db.sh`'s SSH tunnel than inside the cluster (measured
-/// 2026-08-17: 54 s in-cluster vs 64 min tunnelled, same work). So a duration
-/// measured from the Mac says nothing about production UNLESS the query count is
-/// known — with it, the two can be compared; without it, any claim about
-/// in-cluster latency is a guess.
+/// 2026-08-17: 54 s in-cluster vs 64 min tunnelled, same work), so a duration
+/// measured from the Mac says nothing about production unless the query count is
+/// known.
+///
+/// ⚠ This used to say the fold's wall clock "is dominated by round trips". That
+/// is REFUTED (#1071, 2026-08-23): halving the queries — 489 to 273 on one day —
+/// moved fold time by 0-17%. The claim came from dividing fold by query count,
+/// which assumes what it appears to measure. [`take_db_nanos`] exists so the
+/// question is answered rather than inferred.
 static QUERIES: AtomicU64 = AtomicU64::new(0);
+
+/// Nanoseconds spent INSIDE [`MirrorSource::block`] — the database, and nothing
+/// else. Paired with [`QUERIES`] so a per-query cost can be stated rather than
+/// derived from the fold's total.
+static DB_NANOS: AtomicU64 = AtomicU64::new(0);
 
 /// Read the query count and reset it, so a count belongs to one request.
 pub fn take_queries() -> u64 {
     QUERIES.swap(0, Ordering::Relaxed)
+}
+
+/// Read the accumulated database time and reset it.
+///
+/// ⚠ Wall clock inside `block_on`, so it includes waiting for the connection
+/// pool as well as the query. That is the right boundary for "would fewer
+/// queries help": pool contention is a cost of issuing queries too.
+pub fn take_db_nanos() -> u64 {
+    DB_NANOS.swap(0, Ordering::Relaxed)
 }
 
 /// Rows from the live mirror. One per converge walk: the coverage decisions it
@@ -225,7 +243,10 @@ impl MirrorSource {
         // makes goes through this one boundary, so the count cannot drift from
         // the queries.
         QUERIES.fetch_add(1, Ordering::Relaxed);
-        Ok(self.handle.block_on(f)?)
+        let t0 = std::time::Instant::now();
+        let out = self.handle.block_on(f);
+        DB_NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        Ok(out?)
     }
 
     /// The coverage boxes for one bucket, read once.

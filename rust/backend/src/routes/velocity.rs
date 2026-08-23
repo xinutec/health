@@ -190,9 +190,17 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
     // ⚠ Reset first. The counter is process-wide, so a previous request's
     // queries would otherwise be charged to this one.
     mirror_source::take_queries();
+    mirror_source::take_db_nanos();
+    crate::rowset_answerer::take_lean_nanos();
     let folded =
         mirror_source::converge_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
+    // ⚠ The two halves of the fold, MEASURED. #1071 batched the queries on the
+    // assumption that round trips dominated and the wall clock barely moved; the
+    // per-query cost it reasoned from had been derived by dividing fold by
+    // query count, which assumes the answer. These say which half is which.
+    let db_ms = mirror_source::take_db_nanos() / 1_000_000;
+    let lean_ms = crate::rowset_answerer::take_lean_nanos() / 1_000_000;
     mark(&mut timing, "fold");
 
     // ⚠ A day that converged with UNANSWERABLE keys was built from DEFAULTS for
@@ -269,7 +277,7 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
         // ⚠ The fold's ROUND COUNT rides here too. It is the depth of the
         // dependency chain among the day's lookups, not a duration, and it is
         // what distinguishes a slow day from a deep one.
-        "timing": timing_with(&timing, folded.rounds, folded.answered, mirror_queries),
+        "timing": timing_with(&timing, folded.rounds, folded.answered, mirror_queries, db_ms, lean_ms),
     }))
 }
 
@@ -283,6 +291,8 @@ fn timing_with(
     rounds: u32,
     answered: usize,
     mirror_queries: u64,
+    db_ms: u64,
+    lean_ms: u64,
 ) -> Value {
     let mut out = t.clone();
     out.insert("rounds".into(), json!(rounds));
@@ -291,6 +301,13 @@ fn timing_with(
     // dominated by round trips over an SSH tunnel; with the count beside it the
     // two can be compared against an in-cluster run instead of guessed at.
     out.insert("mirrorQueries".into(), json!(mirror_queries));
+    // ⚠ The two halves of `fold`, so nobody has to divide it by the query count
+    // and call the result a per-query cost — which is what #1071 did, and it was
+    // wrong. `fold` minus these two is the fold's own work.
+    out.insert("foldDbMs".into(), json!(db_ms));
+    out.insert("foldLeanMs".into(), json!(lean_ms));
+    out.insert("foldDbMs".into(), json!(db_ms));
+    out.insert("foldLeanMs".into(), json!(lean_ms));
     Value::Object(out)
 }
 

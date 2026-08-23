@@ -489,13 +489,37 @@ impl<S: RowSource> OsmAnswerer<S> {
 
 /// One `osmspatial` call. Source-independent: the rows are already in the wire
 /// form, and every distance, ordering and cap below this point is Lean's.
+/// Nanoseconds spent in Lean scoring rows, the other half of the fold's cost.
+///
+/// ⚠ Exists because #1071 assumed the fold was database-bound, batched the
+/// queries on that assumption, and moved the wall clock by almost nothing. This
+/// and [`crate::mirror_source::take_db_nanos`] are what turn that question from
+/// an inference into a measurement.
+static LEAN_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Read the accumulated Lean scoring time and reset it.
+pub fn take_lean_nanos() -> u64 {
+    LEAN_NANOS.swap(0, std::sync::atomic::Ordering::Relaxed)
+}
+
 fn spatial(op: &str, lat: &str, lon: &str, radius: &str, rows: Vec<Value>) -> Result<Value> {
     let req = json!({
         "mode": "osmspatial", "op": op,
         "lat": lat, "lon": lon, "radiusM": radius,
         "rows": rows,
     });
-    let out = lean::serve(&serde_json::to_string(&req)?)?;
+    // ⚠ The SERIALISATION is inside the timer on purpose. A `nearbyWays` query
+    // ships thousands of coordinate pairs, and turning them into JSON is work
+    // the batching did not remove either — charging it to Lean rather than to
+    // nothing is what keeps the two halves adding up.
+    let t0 = std::time::Instant::now();
+    let body = serde_json::to_string(&req)?;
+    let out = lean::serve(&body);
+    LEAN_NANOS.fetch_add(
+        t0.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let out = out?;
     let v: Value = serde_json::from_str(&out).context("osmspatial answer is not JSON")?;
     if let Some(e) = v.get("error").and_then(Value::as_str) {
         bail!("osmspatial {op}: {e}");
