@@ -8,9 +8,20 @@ FROM nixos/nix:latest AS lean-build
 WORKDIR /src
 COPY flake.nix flake.lock ./
 COPY lean/ lean/
-# rust/ too: `.#day-shell` below builds BOTH halves in one derivation, because
-# day-shell's build.rs reads its link line out of the .rsp lake writes when it
-# links verified_cli. See the flake.
+# ⚠ `verified-cli` BEFORE `COPY rust/`, and that ordering is the whole point of
+# splitting this in two. Its `src = ./lean` (see the flake), so it does not
+# depend on the Rust tree at all — but while it sat under `COPY rust/` every
+# Rust commit invalidated the layer and rebuilt Lean from scratch. Measured
+# 2026-08-23 on run 32670483768: 225 s of an 1101 s stage, paid on nearly every
+# push, for a derivation whose inputs had not changed.
+#
+# Verified rather than assumed: `.#verified-cli` evaluates AND builds with only
+# `flake.nix`, `flake.lock` and `lean/` in the context.
+RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli
+# rust/ AFTER it: `.#day-shell` and `.#backend` take `src = ./.`, so they need
+# the Rust tree, and each rebuilds its own Lean statics because `build.rs` reads
+# its link line out of the `.rsp` lake wrote in this tree — which no other
+# derivation exports. That duplication is the remaining 800 s and is #1131.
 COPY rust/ rust/
 # Both binaries, and their closures copied ONCE as a union.
 #
@@ -19,8 +30,7 @@ COPY rust/ rust/
 # already in the destination descends into a read-only directory instead of
 # skipping it. `nix-store -qR` over both roots already returns each path once,
 # so asking the question once is both correct and cheaper.
-RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli && \
-    nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/ds .#day-shell && \
+RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/ds .#day-shell && \
     nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/be .#backend && \
     mkdir -p /export/nix/store /export/bin && \
     cp -a $(nix-store -qR /tmp/vc /tmp/ds /tmp/be) /export/nix/store/ && \
