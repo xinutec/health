@@ -31,8 +31,27 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
     // rolling deploy can put two pods here at once. Today there is one replica
     // and sync is a separate cron, so this is insurance rather than a fix — but
     // it is cheap and the failure it prevents is a half-applied schema.
+    // ⚠ ONE PINNED CONNECTION for the whole lock lifetime. `GET_LOCK` and
+    // `RELEASE_LOCK` are PER-CONNECTION in MariaDB, and running them as two
+    // pool queries can take the lock on connection A and release it on
+    // connection B — where the release is a silent no-op returning NULL, and A
+    // holds `health_migrate` for as long as it stays in the pool. That is
+    // FOREVER for a server process.
+    //
+    // Measured in production 2026-08-23: the Rust backend served fine, and the
+    // node pod behind it could not start — "could not acquire the migration
+    // lock within 30s" — because this process was still holding it. The
+    // rollback deadlocked (node would not start until Rust exited, Rust would
+    // not be terminated until node was ready) and needed manual intervention.
+    //
+    // `src/db/schema.ts` gets this right with `withConnection`; this did not.
+    let mut conn = pool
+        .acquire()
+        .await
+        .context("acquiring a connection for the migration lock")?;
+
     let got: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('health_migrate', 30)")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .context("acquiring the migration lock")?;
     if got != Some(1) {
@@ -43,10 +62,22 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
 
     // ⚠ Released even when a migration FAILED. Holding it would block every
     // later pod from trying, turning one bad statement into a stuck deployment.
-    let _: Option<i64> = sqlx::query_scalar("SELECT RELEASE_LOCK('health_migrate')")
-        .fetch_one(pool)
+    //
+    // ⚠ And a FAILED RELEASE IS LOUD. This used to be `.unwrap_or(None)`, which
+    // is how the defect above stayed invisible: the release ran on the wrong
+    // connection, returned NULL, and was discarded. A lock this process still
+    // holds is not a detail to swallow.
+    let released: Option<i64> = sqlx::query_scalar("SELECT RELEASE_LOCK('health_migrate')")
+        .fetch_one(&mut *conn)
         .await
-        .unwrap_or(None);
+        .context("releasing the migration lock")?;
+    if released != Some(1) {
+        anyhow::bail!(
+            "the migration lock was not released (RELEASE_LOCK returned {released:?}) — \
+             this process would hold it for the life of its pool and block every other \
+             migrator, which is what happened on 2026-08-23"
+        );
+    }
     result
 }
 
