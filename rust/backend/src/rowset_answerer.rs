@@ -502,6 +502,33 @@ pub fn take_lean_nanos() -> u64 {
     LEAN_NANOS.swap(0, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The venues near a point, shaped — `nearbyLandmarks` at the default radius.
+///
+/// ⚠ EXTRACTED so the serving answerer and `refresh-focus-places` (#982 Tier 2)
+/// share ONE implementation. The cron asks this question once per stay and once
+/// per cluster centroid, and a second copy of "query both buckets, run the
+/// spatial pass, shape the result" is exactly the shape that drifts while
+/// nothing compares the two (#1003).
+///
+/// `Ok(None)` means the MIRROR could not answer — no rows for a bucket — which
+/// is not the same as "no venues here" and must not be flattened into an empty
+/// list by the caller (#976, and the empty-landmarks day of #1054).
+pub fn nearby_landmarks(source: &mut dyn RowSource, lat: f64, lon: f64) -> Result<Option<Value>> {
+    let radius = crate::fold_payload::default_radius_m::NEARBY_LANDMARKS;
+    let r = crate::fold_payload::bits(radius);
+    let Some(point_rows) = source.point_rows("landmark", lat, lon, radius)? else {
+        return Ok(None);
+    };
+    let Some(line_rows) = source.line_rows("landmark", lat, lon, radius)? else {
+        return Ok(None);
+    };
+    let lat_s = crate::fold_payload::bits(lat);
+    let lon_s = crate::fold_payload::bits(lon);
+    let points = spatial("queryPoints", &lat_s, &lon_s, &r, point_rows)?;
+    let lines = spatial("queryLines", &lat_s, &lon_s, &r, line_rows)?;
+    Ok(Some(crate::lean::shape_landmarks(&points, &lines)?))
+}
+
 fn spatial(op: &str, lat: &str, lon: &str, radius: &str, rows: Vec<Value>) -> Result<Value> {
     let req = json!({
         "mode": "osmspatial", "op": op,
@@ -697,28 +724,13 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // where declining claims nothing, and the served day came back with
             // zero states. Reverted the same day; this is the second attempt.
             "nearbyLandmarks" => {
+                // ⚠ THE SAME `nearby_landmarks` the focus cron calls (#982).
+                // Two copies of "query both buckets, run the spatial pass,
+                // shape it" is what drifts while nothing compares them.
                 let r = bits(default_radius_m::NEARBY_LANDMARKS);
-                let Some(point_rows) = self.source.point_rows(
-                    "landmark",
-                    flat,
-                    flon,
-                    default_radius_m::NEARBY_LANDMARKS,
-                )?
-                else {
+                let Some(shaped) = nearby_landmarks(&mut self.source, flat, flon)? else {
                     return Ok(None);
                 };
-                let Some(line_rows) = self.source.line_rows(
-                    "landmark",
-                    flat,
-                    flon,
-                    default_radius_m::NEARBY_LANDMARKS,
-                )?
-                else {
-                    return Ok(None);
-                };
-                let points = spatial("queryPoints", lat, lon, &r, point_rows)?;
-                let lines = spatial("queryLines", lat, lon, &r, line_rows)?;
-                let shaped = crate::lean::shape_landmarks(&points, &lines)?;
                 // ⚠ FOUR elements: `[lat, lon, RADIUS, answer]`. This table is
                 // keyed on the radius as well as the point, so the three-element
                 // form `nearbyWays` uses is a DIFFERENT row — the fold reads it

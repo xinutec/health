@@ -255,13 +255,34 @@ in  { name = "health"
 
             Whole workspace, not `-p backend`: `day-shell`'s own tests
             (`mirror_port`, `mirror_async_guard`) were in the same position.
+
+            ⚠ THE TIMEOUT WAS 900s AND THAT WAS TOO TIGHT. Measured clean on
+            2026-08-24 with an idle machine: 524s. Under any concurrent load --
+            another build, a background ssh poll, a `kubectl top` loop -- it
+            crossed 900s and the row was KILLED. Two commits failed that way in
+            one afternoon.
+
+            ⚠ It does not report contention; it reports
+
+                12. rust workspace tests
+                    -> TIMED OUT after 900s
+
+            and the summary line says only `- rust workspace tests`, which reads
+            as a broken test. The first occurrence cost ~25 minutes hunting one
+            that did not exist -- the suite passed, alone, with zero failures.
+
+            Same shape as #1133, where a 1Gi memory limit sat below a >1113Mi
+            working set and the OOMKill read as a network failure: a bound set
+            below the real requirement, failing as something else.
+
+            1800s matches the six rows around it and is 3.4x the measured run.
         -}
         G.Check::{
         , name = "rust workspace tests"
         , argv =
             G.inDevShell
               [ "cargo", "test", "--manifest-path", "rust/Cargo.toml", "--workspace" ]
-        , timeout_s = 900
+        , timeout_s = 1800
         }
       , G.Check::{
         , name = "lint (biome, backend)"

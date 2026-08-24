@@ -653,6 +653,46 @@ def dispatch (j : Json) : Json :=
   -- centroid is a place, not an interval, so it has no window to be open
   -- during. The centroid gate asks only "is this a label-worthy venue here",
   -- which reads neither hours nor `openFraction`.
+  -- The venue-type prior, mined from every cluster's attributed stays (#982).
+  --
+  -- ⚠ A FULL RECOMPUTE, never incremental — the cron rebuilds the blob from
+  -- scratch on every run so that a re-mine after a gate change is reproducible.
+  --
+  -- ⚠ The output object's KEY ORDER is first-seen order, because
+  -- `Verified.Geo.VenuePrior.minePriors` accumulates into an insertion-ordered
+  -- list and the TypeScript accumulates into a JS object, which is the same
+  -- order for string keys. The blob lands in `venue_type_priors.priors_json` as
+  -- TEXT, so two arms that agree on the numbers but not the order still write
+  -- different rows and a byte comparison of the two would read as a mismatch.
+  | some "minePriors" =>
+    let stayOf (e : Json) : Except String Verified.Geo.VenuePrior.AttributedStay := do
+      let sub ← match str? e "subtype" with
+        | some s => pure s
+        | none => throw "minePriors: a stay has no subtype"
+      let dur ← match str? e "durationSecBits" with
+        | some s => pure (Float.ofBits s.toNat!.toUInt64)
+        | none => throw "minePriors: a stay has no durationSecBits"
+      let lh ← match int? e "localHour" with
+        | some i => pure i
+        | none => throw "minePriors: a stay has no localHour"
+      pure { subtype := sub, durationSec := dur, localHour := lh }
+    let statsJson (s : Verified.Geo.VenuePrior.VenueTypeStats) : Json :=
+      Json.mkObj
+        [ ("visits", Json.str (toString s.visits.toBits))
+        , ("dwell", Json.arr ((s.dwell.map (fun x => Json.str (toString x.toBits))).toArray))
+        , ("hours", Json.arr ((s.hours.map (fun x => Json.str (toString x.toBits))).toArray)) ]
+    let tableJson (t : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) : Json :=
+      Json.arr ((t.map fun (k, s) => Json.arr #[Json.str k, statsJson s]).toArray)
+    match (do
+        let stays ← (← (← j.getObjVal? "attributed").getArr?).toList.mapM stayOf
+        pure (Verified.Geo.VenuePrior.minePriors stays)) with
+    | .error e => err e
+    | .ok p =>
+      Json.mkObj
+        [ ("value", Json.mkObj
+            [ ("bySubtype", tableJson p.bySubtype)
+            , ("byCategory", tableJson p.byCategory)
+            , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits)) ]) ]
   | some "mineCluster" =>
     let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
       let need (k : String) : Except String String :=

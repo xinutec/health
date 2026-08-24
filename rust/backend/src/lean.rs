@@ -2020,3 +2020,98 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
             .collect::<Result<Vec<_>>>()?,
     })
 }
+
+/// Aggregate every cluster's attributed stays into the venue-type prior blob —
+/// `Verified.Geo.VenuePrior.minePriors`.
+///
+/// Returns the JSON that goes into `venue_type_priors.priors_json`, in the
+/// TypeScript's shape: `{bySubtype: {k: {visits, dwell[], hours[]}}, byCategory,
+/// totalVisits}`.
+///
+/// ⚠ A FULL RECOMPUTE, never incremental — a re-mine after a gate change has to
+/// be reproducible from the stays alone.
+///
+/// ⚠ KEY ORDER is first-seen order, carried deliberately. Lean accumulates into
+/// an insertion-ordered association list and the TypeScript into a JS object,
+/// which is the same order for string keys, so the two arms produce the same
+/// TEXT and not merely the same numbers.
+///
+/// ⚠ Counts cross as bit patterns but are written as JSON NUMBERS, because that
+/// is what the column holds and what `rankVenues` reads back. They are
+/// integer-valued, so V8 renders `1` where `serde_json` renders `1.0`: the
+/// values parse identically and nothing compares the two arms byte-for-byte,
+/// but do not "verify" this blob with a text diff against a TypeScript-written
+/// row — it would report a difference that is not one
+/// (`reference_jq_cannot_check_serialisation_parity`).
+pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(rename = "bySubtype")]
+        by_subtype: Vec<(String, WireStats)>,
+        #[serde(rename = "byCategory")]
+        by_category: Vec<(String, WireStats)>,
+        #[serde(rename = "totalVisitsBits")]
+        total_visits_bits: String,
+    }
+    #[derive(Deserialize)]
+    struct WireStats {
+        visits: String,
+        dwell: Vec<String>,
+        hours: Vec<String>,
+    }
+
+    let stays: Vec<serde_json::Value> = attributed
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "subtype": a.subtype,
+                "durationSecBits": crate::fold_payload::bits(a.duration_sec),
+                "localHour": a.local_hour,
+            })
+        })
+        .collect();
+
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "minePriors",
+        "attributed": stays,
+    }))?;
+
+    let bits = |s: &str| -> Result<f64> {
+        Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
+            format!("minePriors: {s:?} is not a bit pattern")
+        })?))
+    };
+    let nums = |xs: &[String]| -> Result<Vec<serde_json::Value>> {
+        xs.iter().map(|x| Ok(serde_json::json!(bits(x)?))).collect()
+    };
+    // ⚠ This relies on `serde_json`'s `preserve_order` feature, which
+    // `backend/Cargo.toml` enables for exactly this reason — the default `Map`
+    // is a `BTreeMap` and would SORT the keys, silently discarding the
+    // first-seen order the doc comment above promises. The blob would still
+    // hold the right numbers, so nothing would fail; it would just stop being
+    // the same text the TypeScript wrote.
+    let table = |t: &[(String, WireStats)]| -> Result<serde_json::Value> {
+        let mut m = serde_json::Map::new();
+        for (k, s) in t {
+            m.insert(
+                k.clone(),
+                serde_json::json!({
+                    "visits": bits(&s.visits)?,
+                    "dwell": nums(&s.dwell)?,
+                    "hours": nums(&s.hours)?,
+                }),
+            );
+        }
+        Ok(serde_json::Value::Object(m))
+    };
+
+    Ok(serde_json::json!({
+        "bySubtype": table(&w.value.by_subtype)?,
+        "byCategory": table(&w.value.by_category)?,
+        "totalVisits": bits(&w.value.total_visits_bits)?,
+    }))
+}
