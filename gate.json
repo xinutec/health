@@ -323,8 +323,7 @@
         "--no-warn-dirty",
         "--no-link",
         ".#verified-cli",
-        ".#day-shell",
-        ".#backend"
+        ".#health-bins"
       ],
       "cwd": ".",
       "env": {},

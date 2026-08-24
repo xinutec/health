@@ -381,8 +381,7 @@ in  { name = "health"
             , "--no-warn-dirty"
             , "--no-link"
             , ".#verified-cli"
-            , ".#day-shell"
-            , ".#backend"
+            , ".#health-bins"
             ]
         , timeout_s = 3600
         }

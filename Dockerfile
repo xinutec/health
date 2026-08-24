@@ -18,10 +18,20 @@ COPY lean/ lean/
 # Verified rather than assumed: `.#verified-cli` evaluates AND builds with only
 # `flake.nix`, `flake.lock` and `lean/` in the context.
 RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli
-# rust/ AFTER it: `.#day-shell` and `.#backend` take `src = ./.`, so they need
-# the Rust tree, and each rebuilds its own Lean statics because `build.rs` reads
-# its link line out of the `.rsp` lake wrote in this tree — which no other
-# derivation exports. That duplication is the remaining 800 s and is #1131.
+# rust/ AFTER it: `.#health-bins` takes `src = ./.`, so it needs the Rust tree,
+# and it rebuilds the Lean statics because both `build.rs` files read their link
+# line out of the `.rsp` lake wrote in this tree — which no other derivation
+# exports.
+#
+# ⚠ ONE derivation for BOTH binaries since 2026-08-25 (#1131). It was two, and
+# each ran its own `lake build` and its own `cargo build` in a separate sandbox,
+# so the image paid for the Lean statics twice and for the sqlx/tokio/axum
+# dependency compile twice.
+#
+# Ablated on the dev machine: 98 s + 182 s apart against 169 s together, so 40%
+# off this stage. ⚠ The "~800 s" this comment used to claim was #1131's estimate
+# from a CI timing, never a measured saving — expect the ratio to carry and the
+# seconds not to.
 COPY rust/ rust/
 # Both binaries, and their closures copied ONCE as a union.
 #
@@ -30,13 +40,12 @@ COPY rust/ rust/
 # already in the destination descends into a read-only directory instead of
 # skipping it. `nix-store -qR` over both roots already returns each path once,
 # so asking the question once is both correct and cheaper.
-RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/ds .#day-shell && \
-    nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/be .#backend && \
+RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/bins .#health-bins && \
     mkdir -p /export/nix/store /export/bin && \
-    cp -a $(nix-store -qR /tmp/vc /tmp/ds /tmp/be) /export/nix/store/ && \
+    cp -a $(nix-store -qR /tmp/vc /tmp/bins) /export/nix/store/ && \
     install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli && \
-    install -m755 /tmp/ds/bin/day-shell /export/bin/day-shell && \
-    install -m755 /tmp/be/bin/backend /export/bin/backend
+    install -m755 /tmp/bins/bin/day-shell /export/bin/day-shell && \
+    install -m755 /tmp/bins/bin/backend /export/bin/backend
 
 FROM node:24-alpine AS backend-build
 WORKDIR /app
