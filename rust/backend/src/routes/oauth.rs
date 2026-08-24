@@ -355,7 +355,14 @@ pub async fn fitbit_auth(
         (session.user_id.clone(), verifier),
     );
 
-    let fb = &st.cfg.fitbit;
+    // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
+    // them, so absence here means the process was started with a BATCH config.
+    let Some(fb) = st.cfg.fitbit.as_ref() else {
+        return oops(
+            &anyhow::anyhow!("the Fitbit credentials are absent"),
+            "starting the Fitbit OAuth flow with a batch config",
+        );
+    };
     let url = match reqwest::Url::parse_with_params(
         "https://www.fitbit.com/oauth2/authorize",
         &[
@@ -443,7 +450,13 @@ async fn finish_fitbit_link(
         scope: String,
     }
 
-    let fb = &st.cfg.fitbit;
+    // ⚠ The OAuth routes genuinely need these; `Config::from_env` requires
+    // them, so absence here means the process was started with a BATCH config.
+    let Some(fb) = st.cfg.fitbit.as_ref() else {
+        anyhow::bail!(
+            "the Fitbit credentials are absent — this process was started with a batch config"
+        );
+    };
     let basic = base64::engine::general_purpose::STANDARD
         .encode(format!("{}:{}", fb.client_id, fb.client_secret));
     let redirect = env_or(

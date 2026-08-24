@@ -74,8 +74,8 @@ fn the_config_layer_refuses_rather_than_defaults() {
     assert_eq!(c.db.port, 3307);
     assert_eq!(c.db.user, "syncer");
     assert_eq!(c.db.database, "healthdb");
-    assert_eq!(c.fitbit.client_id, "cid");
-    assert_eq!(c.fitbit.client_secret, "csecret");
+    assert_eq!(c.fitbit.as_ref().unwrap().client_id, "cid");
+    assert_eq!(c.fitbit.as_ref().unwrap().client_secret, "csecret");
     assert_eq!(
         c.nextcloud_base_url, None,
         "NC_BASE_URL is optional and unset here"
@@ -209,6 +209,40 @@ fn the_config_layer_refuses_rather_than_defaults() {
     assert!(
         Config::from_env().is_err(),
         "the full config must still require the Fitbit credentials"
+    );
+
+    // ---- a BATCH config drops Fitbit and keeps everything else strict -----
+    //
+    // ⚠ The rail/bus/decode CronJobs need the DAY PIPELINE, which needs an
+    // `AppState`, which holds a `Config`. Requiring the Fitbit credentials
+    // there would demand a secret those pods do not set for a code path that
+    // never reads it — the third instance of the same mistake in one day.
+    unsafe { clear_all() };
+    unsafe {
+        std::env::set_var("DB_USER", "syncer");
+        std::env::set_var("DB_PASSWORD", "s3cret");
+    }
+    let b = Config::from_env_batch().expect("a batch job must not need the Fitbit credentials");
+    assert!(b.fitbit.is_none(), "absent, not defaulted to empty strings");
+    assert_eq!(b.db.user, "syncer");
+    // ⚠ And it is NOT a lenient `from_env`: everything else is still required.
+    unsafe { std::env::remove_var("DB_PASSWORD") };
+    assert!(
+        Config::from_env_batch().is_err(),
+        "a batch config must still refuse a missing DB_PASSWORD — tolerating \
+         Fitbit's absence must not tolerate anything else"
+    );
+    // With the credentials present a batch config reads them, so a pod that
+    // has them behaves identically to the strict path.
+    unsafe {
+        std::env::set_var("DB_PASSWORD", "s3cret");
+        std::env::set_var("FITBIT_CLIENT_ID", "cid");
+        std::env::set_var("FITBIT_CLIENT_SECRET", "csecret");
+    }
+    assert_eq!(
+        Config::from_env_batch().unwrap().fitbit.unwrap().client_id,
+        "cid",
+        "a batch config still READS the credentials when they are set"
     );
 
     // ---- the FOCUS cron's env is DB_* + NC_*, and that must be enough ------

@@ -1641,6 +1641,73 @@ private def candidateJson (c : Verified.Geo.RailRouteFill.Candidate) : Json :=
     , ("fixes", Json.arr ((c.fixes.map
         (fun (la, lo) => Json.arr #[fBits la, fBits lo])).toArray)) ]
 
+/-! ## `railsnap` mode — the whole corridor snap, not just the shortest path
+
+⚠ THE PRODUCTION TypeScript DOES NOT USE THIS. `src/lean/lean-rail.ts` builds
+the rail graph itself and asks Lean only for `dijkstraC` (the `rail` mode
+above), so `buildRailGraph`, `nearestVertex` and `snapTrainSegment` have been
+ported and guarded (123 guards) while never running on the serving path — the
+orphaned-port position of #1003.
+
+This mode exists so `refresh-rail-routes` (#982 Tier 2) can hand over the RAW
+ways, stations and fix cloud and get the finished path back, instead of the
+Rust arm reimplementing the graph build. Rebuilding it shell-side would put
+`edgeWeight`, `bridgeGaps` and the vertex fusion in Rust — the half that
+drifts.
+
+`onLine` picks the fallback: `snapTrainSegmentOnLine` routes over ONLY the
+named line's ways with no fix cloud, which is what `computeRailRoute` reaches
+for when the corridor snap refuses. -/
+
+private def parseSnapPt (j : Json) : Except String Verified.Geo.WalkableRoute.Pt := do
+  let a ← j.getArr?
+  return { lat := ← jBits (← nth a 0), lon := ← jBits (← nth a 1) }
+
+private def parseRailWay (j : Json) : Except String Verified.Geo.RailSnap.RailWay := do
+  let coords ← (← (← j.getObjVal? "coords").getArr?).mapM parseSnapPt
+  return { name := (j.getObjVal? "name" >>= (·.getStr?)).toOption
+         , subtype := (j.getObjVal? "subtype" >>= (·.getStr?)).toOption
+         , coords := coords }
+
+private def parseOsmStation (j : Json) : Except String Verified.Geo.RailSnap.OsmStation := do
+  return { name := (j.getObjVal? "name" >>= (·.getStr?)).toOption
+         , subtype := (j.getObjVal? "subtype" >>= (·.getStr?)).toOption
+         , lat := ← jBits (← j.getObjVal? "latBits")
+         , lon := ← jBits (← j.getObjVal? "lonBits") }
+
+private def railSnapResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let segJ ← j.getObjVal? "segment"
+    let seg : Verified.Geo.RailSnap.TrainSegment :=
+      { startTs := ← jBits (← segJ.getObjVal? "startTsBits")
+      , endTs := ← jBits (← segJ.getObjVal? "endTsBits")
+      , wayName := ← (← segJ.getObjVal? "wayName").getStr? }
+    let lines ← (← optArr j "lines").mapM parseRailWay
+    let stations ← (← optArr j "stations").mapM parseOsmStation
+    let fixes ← (← optArr j "fixes").mapM parseSnapPt
+    let onLine := (j.getObjVal? "onLine" >>= (·.getBool?)).toOption == some true
+    -- ⚠ The two entry points are NOT interchangeable. `snapTrainSegment`
+    -- refuses below `minCloudFixes` (12) because a thin cloud cannot evidence a
+    -- corridor; `snapTrainSegmentOnLine` takes no cloud at all and leans on the
+    -- line name instead. Calling the second when the first refused is the
+    -- TypeScript's fallback order, and the caller picks it explicitly rather
+    -- than this mode guessing.
+    let res :=
+      if onLine then Verified.Geo.RailSnap.snapTrainSegmentOnLine seg lines stations
+      else Verified.Geo.RailSnap.snapTrainSegment seg lines stations fixes
+    return match res with
+      | none => Json.mkObj [("path", Json.null)]
+      | some r =>
+        Json.mkObj
+          [ ("board", Json.str r.board.name)
+          , ("alight", Json.str r.alight.name)
+          , ("line", match r.line with | none => Json.null | some l => Json.str l)
+          , ("path", Json.arr (r.path.map fun p =>
+              Json.arr #[fBits p.lat, fBits p.lon, fBits p.ts])) ]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 private def railFillResult (j : Json) : Json :=
   let parsed : Except String Json := do
     let segs ← (← optArr j "segments").mapM parseFillSegment
@@ -1722,6 +1789,7 @@ def dispatch (j : Json) : Json :=
   | .ok "battery" => batteryResult j
   | .ok "osmspatial" => osmSpatialResult j
   | .ok "osmcoverage" => osmCoverageResult j
+  | .ok "railsnap" => railSnapResult j
   | .ok "railfill" => railFillResult j
   | .ok "clipinferred" => clipInferredResult j
   | .ok "watchbattery" => watchBatteryResult j

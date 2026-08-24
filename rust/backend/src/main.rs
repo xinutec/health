@@ -346,14 +346,20 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
         .build()
         .context("building the HTTP client")?;
 
+    // ⚠ `sync` DOES call Fitbit, so a batch config here is a misconfiguration
+    // rather than something to work around.
+    let fb = cfg
+        .fitbit
+        .as_ref()
+        .context("sync needs FITBIT_CLIENT_ID and FITBIT_CLIENT_SECRET")?;
     let polygons = fitbit::tz_source::PolygonLookup::new();
     let lookup = |lat: f64, lon: f64| polygons.zone(lat, lon);
 
     fitbit::run::run(
         &pool,
         &http,
-        &cfg.fitbit.client_id,
-        &cfg.fitbit.client_secret,
+        &fb.client_id,
+        &fb.client_secret,
         cfg.nextcloud_base_url.as_deref(),
         &lookup,
         passes,
@@ -465,6 +471,10 @@ async fn serve() -> Result<()> {
 /// and the decode path works without putting anyone's data on a terminal.
 async fn check() -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
+    let fb = cfg.fitbit.clone().unwrap_or(backend::config::FitbitConfig {
+        client_id: "<absent: batch config>".into(),
+        client_secret: String::new(),
+    });
     println!(
         "config: db {}:{}/{} user={} fitbit_client={} nextcloud={}",
         cfg.db.host,
@@ -473,12 +483,12 @@ async fn check() -> Result<()> {
         cfg.db.user,
         // The client ID is not a secret (it ships in the OAuth redirect); the
         // SECRET is never printed, and its presence is reported as a boolean.
-        cfg.fitbit.client_id,
+        fb.client_id,
         cfg.nextcloud_base_url.as_deref().unwrap_or("<unset>")
     );
     println!(
         "config: fitbit client secret {}",
-        if cfg.fitbit.client_secret.is_empty() {
+        if fb.client_secret.is_empty() {
             "EMPTY"
         } else {
             "present"
