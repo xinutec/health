@@ -188,6 +188,22 @@ impl<'a> OsmAnswerer<RowSetSource<'a>> {
 }
 
 impl<S: RowSource> OsmAnswerer<S> {
+    /// The venues near a point — the free [`nearby_landmarks`] against this
+    /// answerer's own row source.
+    ///
+    /// ⚠ EXISTS BECAUSE `source` IS PRIVATE AND MUST STAY SO. The mirror may
+    /// only be touched from a blocking thread, and `with_mirror_answerer` is
+    /// the one place that guarantees it — handing out the source would let a
+    /// caller build a second `MirrorSource` on a runtime worker, which aborts
+    /// the process rather than returning an error. `refresh-focus-places`
+    /// (#982) asks this once per stay and once per cluster centroid from
+    /// inside that closure.
+    pub fn nearby_landmarks(&mut self, lat: f64, lon: f64) -> Result<Option<Value>> {
+        nearby_landmarks(&mut self.source, lat, lon)
+    }
+}
+
+impl<S: RowSource> OsmAnswerer<S> {
     /// Answer from any source. The row-set constructor is
     /// [`RowSetAnswerer::new`]; this is what a live mirror uses, and what
     /// `tests/row_source.rs` uses to reach the decline path a fixture's

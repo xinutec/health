@@ -155,6 +155,38 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
+        // `src/cli/refresh-focus-places.ts` — the weekly place miner.
+        //
+        //   backend refresh-focus-places                 all linked users, 180d
+        //   backend refresh-focus-places <user>          one user, 180d
+        //   backend refresh-focus-places <user> <days>   one user, explicit
+        "refresh-focus-places" => {
+            let (user, lookback): (Option<&str>, i64) = match flags {
+                [] => (None, FOCUS_DEFAULT_LOOKBACK_DAYS),
+                [u] => (Some(u.as_str()), FOCUS_DEFAULT_LOOKBACK_DAYS),
+                [u, n] => match n.parse::<i64>() {
+                    Ok(v) if v > 0 => (Some(u.as_str()), v),
+                    _ => {
+                        eprintln!("refresh-focus-places: invalid lookback {n:?}");
+                        std::process::exit(2);
+                    }
+                },
+                _ => {
+                    eprintln!("usage: backend refresh-focus-places [user] [lookback-days]");
+                    std::process::exit(64);
+                }
+            };
+            // ⚠ The FULL config, unlike `refresh-presence-log`: this one calls
+            // Nextcloud, so it needs the NC credentials and base URL as well as
+            // the database.
+            let cfg = backend::config::Config::from_env().context("reading configuration")?;
+            let pool = db::connect(&cfg.db.url())
+                .await
+                .context("connecting to the database")?;
+            let r = refresh_focus_places(&pool, &cfg, user, lookback).await;
+            pool.close().await;
+            r
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -1321,6 +1353,558 @@ async fn day_live(
     println!("{}", r.out);
     Ok(())
 }
+
+/// Rebuild `focus_places` and `venue_type_priors` from PhoneTrack history.
+///
+/// Tier 2 of #982 — the node cron is `src/cli/refresh-focus-places.ts`, which
+/// runs Sundays 04:00. The geometry (stays, clusters, splitting, hour profiles,
+/// identity) is `ServeEntry`'s `focus` mode; the amenity vote is
+/// `Verified.Geo.FocusMining.mineCluster`; everything here is the IO around
+/// them.
+///
+/// ⚠ NOT ported, deliberately: `--explain`, `--dry-run`'s census listings and
+/// `--emit-known-places`. They are ~400 of the TypeScript's 754 lines and are
+/// diagnostics for decisions the guards now pin.
+///
+/// ⚠ `radius_m` is written as the LITERAL 25, on both the INSERT and the
+/// UPDATE, because that is what the TypeScript writes and what all 128 prod
+/// rows carry. `clusterSpreadM` feeds a console report and nothing else — it is
+/// deliberately not ported, and writing a measured spread here would be a
+/// behaviour change four call sites can see.
+async fn refresh_focus_places(
+    pool: &sqlx::MySqlPool,
+    cfg: &backend::config::Config,
+    only_user: Option<&str>,
+    lookback_days: i64,
+) -> Result<()> {
+    backend::schema::migrate(pool).await?;
+
+    let users: Vec<String> = match only_user {
+        Some(u) => vec![u.to_string()],
+        None => sqlx::query_scalar("SELECT user_id FROM nc_tokens")
+            .fetch_all(pool)
+            .await
+            .context("listing users with Nextcloud linked")?,
+    };
+    if users.is_empty() {
+        eprintln!("refresh-focus-places: no users with Nextcloud linked");
+        return Ok(());
+    }
+
+    for user_id in &users {
+        if let Err(e) = refresh_focus_places_one(pool, cfg, user_id, lookback_days).await {
+            // ⚠ One user's failure must not strand the others, and must not
+            // read as success either. The TypeScript lets the whole process
+            // die here.
+            eprintln!("refresh-focus-places: [{user_id}] FAILED: {e:#}");
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+async fn refresh_focus_places_one(
+    pool: &sqlx::MySqlPool,
+    cfg: &backend::config::Config,
+    user_id: &str,
+    lookback_days: i64,
+) -> Result<()> {
+    use sqlx::Row as _;
+
+    // ── 1. the point history ────────────────────────────────────────────────
+    // ⚠ `Config::nextcloud_base_url` is None IN PRODUCTION (#1037) — the sync
+    // path types it nullable because "no PhoneTrack source" is a real state
+    // there. THIS cron does not share that: its TypeScript has its own schema
+    // with `.default("https://dash.xinutec.org")`, so it has always fetched
+    // against that host whether or not `NC_BASE_URL` was set.
+    //
+    // Reading the shared config here would make the Rust arm quietly unable to
+    // fetch anything in the exact deployment the node cron works in.
+    let nc_base_url = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| FOCUS_DEFAULT_NC_BASE_URL.to_string());
+    let ctx = backend::nextcloud::phonetrack::PhoneTrack::open(
+        reqwest::Client::new(),
+        pool,
+        &nc_base_url,
+        user_id,
+    )
+    .await
+    .with_context(|| format!("opening PhoneTrack for {user_id}"))?;
+
+    let day = |n: i64| -> String {
+        (chrono::Utc::now() - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut points: Vec<(i64, f64, f64, Option<f64>)> = Vec::new();
+    let mut failed_devices = 0usize;
+    let mut offset = lookback_days;
+    while offset > 0 {
+        let start = day(offset);
+        let end = day((offset - FOCUS_FETCH_CHUNK_DAYS).max(0));
+        let fetched = ctx
+            .fetch_range(pool, &start, &end)
+            .await
+            .with_context(|| format!("fetching PhoneTrack {start}..{end}"))?;
+        failed_devices += fetched.failed_devices;
+        for p in fetched.points {
+            // The TypeScript's dedup key, verbatim: chunk bounds are shared, so
+            // the same fix arrives twice.
+            let k = format!("{}/{:.6}/{:.6}", p.ts, p.lat, p.lon);
+            if seen.insert(k) {
+                points.push((p.ts, p.lat, p.lon, p.accuracy));
+            }
+        }
+        offset -= FOCUS_FETCH_CHUNK_DAYS;
+    }
+    points.sort_by_key(|p| p.0);
+
+    // ⚠ REFUSE TO WRITE ON A PARTIAL HISTORY (#1140). The write path below ends
+    // in `DELETE FROM focus_places`, and a device whose points call failed makes
+    // `points` a SUBSET — real places then match nothing, and get deleted. The
+    // TypeScript does not check this: it logs a per-device warning and carries
+    // on, so one flaky device on one Sunday silently drops rows and the run
+    // still reports success.
+    //
+    // Skipping a week is strictly better: the previous snapshot stands.
+    if failed_devices > 0 {
+        anyhow::bail!(
+            "[{user_id}] {failed_devices} PhoneTrack device(s) failed — refusing to rebuild \
+             focus_places from a partial history, the previous snapshot stands (#1140)"
+        );
+    }
+    if points.is_empty() {
+        eprintln!("[{user_id}] no PhoneTrack history in last {lookback_days}d, skipping");
+        return Ok(());
+    }
+    eprintln!("[{user_id}] {} points over {lookback_days}d", points.len());
+
+    // ── 2. sleep windows, for `sleepHoursFromFitbit` ────────────────────────
+    let sleep_rows = sqlx::query(
+        "SELECT start_time, end_time FROM sleep WHERE user_id = ? AND is_main_sleep = 1",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .context("reading sleep windows")?;
+    let sleep_windows: Vec<[i64; 2]> = sleep_rows
+        .iter()
+        .map(|r| {
+            let s: chrono::NaiveDateTime = r.try_get("start_time")?;
+            let e: chrono::NaiveDateTime = r.try_get("end_time")?;
+            Ok([s.and_utc().timestamp(), e.and_utc().timestamp()])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    eprintln!(
+        "[{user_id}] {} Fitbit sleep window(s) for mining",
+        sleep_windows.len()
+    );
+
+    // ── 3. the existing rows, for identity matching ─────────────────────────
+    let old_rows = sqlx::query(
+        "SELECT id, centroid_lat, centroid_lon, first_seen_ts FROM focus_places WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .context("reading focus_places")?;
+    let old: Vec<serde_json::Value> = old_rows
+        .iter()
+        .map(|r| {
+            let id: i64 = r.try_get("id")?;
+            let lat: f64 = r.try_get("centroid_lat")?;
+            let lon: f64 = r.try_get("centroid_lon")?;
+            let fs: i64 = r.try_get("first_seen_ts")?;
+            Ok(serde_json::json!([
+                id,
+                backend::fold_payload::bits(lat),
+                backend::fold_payload::bits(lon),
+                fs
+            ]))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // ── 4. the geometry, from Lean ──────────────────────────────────────────
+    // ⚠ `clusters` is EMPTY on purpose. `focus` mode takes already-built
+    // clusters only to exercise `splitCluster` against captured fixtures; the
+    // cron mines from points, and `detectFocusPlaces` builds its own.
+    let req = serde_json::json!({
+        "mode": "focus",
+        "points": points.iter().map(|(ts, lat, lon, acc)| serde_json::json!([
+            ts,
+            backend::fold_payload::bits(*lat),
+            backend::fold_payload::bits(*lon),
+            match acc { Some(a) => serde_json::json!(backend::fold_payload::bits(*a)),
+                        None => serde_json::Value::Null },
+        ])).collect::<Vec<_>>(),
+        "sleepWindows": sleep_windows,
+        "clusters": [],
+        "old": old,
+    });
+    let out = backend::lean::serve(&serde_json::to_string(&req)?)?;
+    let focus: serde_json::Value =
+        serde_json::from_str(&out).context("focus mode answer is not JSON")?;
+    if let Some(e) = focus.get("error") {
+        anyhow::bail!("focus mode: {e}");
+    }
+    // Floats cross from Lean as IEEE-754 bit patterns in decimal strings.
+    let bitsf = |v: &serde_json::Value| -> Option<f64> {
+        v.as_str()?.parse::<u64>().ok().map(f64::from_bits)
+    };
+    let mined = focus
+        .get("mined")
+        .and_then(|v| v.as_array())
+        .context("focus mode answer has no `mined`")?;
+    let names: std::collections::HashMap<i64, String> = focus
+        .get("names")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| {
+                    let p = p.as_array()?;
+                    Some((p.first()?.as_i64()?, p.get(1)?.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let assignments: Vec<Option<i64>> = focus
+        .pointer("/identity/assignments")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(serde_json::Value::as_i64).collect())
+        .unwrap_or_default();
+    let deleted: Vec<i64> = focus
+        .pointer("/identity/deleted")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
+        .unwrap_or_default();
+    // ⚠ One assignment per mined cluster, or the write below pairs a cluster
+    // with the wrong existing row and moves somebody else's `first_seen_ts`.
+    if assignments.len() != mined.len() {
+        anyhow::bail!(
+            "focus mode returned {} identity assignment(s) for {} cluster(s)",
+            assignments.len(),
+            mined.len()
+        );
+    }
+    let has_fitbit_sleep = !sleep_windows.is_empty();
+    eprintln!(
+        "[{user_id}] {} cluster(s), {} to delete",
+        mined.len(),
+        deleted.len()
+    );
+
+    // ── 5. the amenity vote, per cluster ────────────────────────────────────
+    // ⚠ TWO PHASES, and the split is forced by the mirror. `MirrorSource` may
+    // only be touched from a blocking thread — constructing it on a runtime
+    // worker and letting a query reach it ABORTS THE PROCESS — so every OSM
+    // lookup has to happen inside `with_mirror_answerer`'s closure, which is
+    // `FnOnce + Send + 'static` and cannot await.
+    //
+    // So: resolve the timezones first (pure CPU, no IO), hand a plain data
+    // structure across, and bring the labels back out.
+    let zones = backend::fitbit::tz_source::PolygonLookup::new();
+
+    struct PendingStay {
+        lat: f64,
+        lon: f64,
+        start_ts: i64,
+        end_ts: i64,
+        local_hour: i64,
+        duration_sec: i64,
+        samples: Vec<(u32, u32)>,
+    }
+    struct PendingCluster {
+        lat: f64,
+        lon: f64,
+        stays: Vec<PendingStay>,
+    }
+
+    let mut pending: Vec<PendingCluster> = Vec::with_capacity(mined.len());
+    for c in mined {
+        let clat = c.get("lat").and_then(bitsf).context("cluster has no lat")?;
+        let clon = c.get("lon").and_then(bitsf).context("cluster has no lon")?;
+        let empty = Vec::new();
+        let stays = c.get("stays").and_then(|v| v.as_array()).unwrap_or(&empty);
+        let mut ps = Vec::with_capacity(stays.len());
+        for s in stays {
+            let a = s.as_array().context("a stay is not an array")?;
+            let start = a
+                .first()
+                .and_then(serde_json::Value::as_i64)
+                .context("stay startTs")?;
+            let end = a
+                .get(1)
+                .and_then(serde_json::Value::as_i64)
+                .context("stay endTs")?;
+            let slat = a.get(2).and_then(bitsf).context("stay lat")?;
+            let slon = a.get(3).and_then(bitsf).context("stay lon")?;
+            let dur = a
+                .get(5)
+                .and_then(serde_json::Value::as_i64)
+                .context("stay durationSec")?;
+            // ⚠ A stay with no resolvable zone is SKIPPED, not defaulted to
+            // UTC. `localHour` and the opening-hours samples are both
+            // venue-local, and a wrong clock votes for the wrong venue rather
+            // than declining to vote.
+            let Some(tz) = zones.zone(slat, slon) else {
+                continue;
+            };
+            ps.push(PendingStay {
+                lat: slat,
+                lon: slon,
+                start_ts: start,
+                end_ts: end,
+                local_hour: i64::from(backend::timezone::local_hour_of((start + end) / 2, &tz)?),
+                duration_sec: dur,
+                samples: backend::timezone::local_stay_samples(start, end, &tz)?,
+            });
+        }
+        pending.push(PendingCluster {
+            lat: clat,
+            lon: clon,
+            stays: ps,
+        });
+    }
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let voted = backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
+        let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
+        for c in pending {
+            let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
+            for s in c.stays {
+                // ⚠ `None` means the MIRROR could not answer, which is NOT
+                // "no venues here". This stay then casts no vote, rather than
+                // a vote for nothing (#976, and the empty-landmarks day of
+                // #1054).
+                let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
+                    continue;
+                };
+                ms.push(backend::lean::MineStay {
+                    start_ts: s.start_ts,
+                    end_ts: s.end_ts,
+                    local_hour: s.local_hour,
+                    duration_sec: s.duration_sec,
+                    samples: s.samples,
+                    landmarks: shaped,
+                });
+            }
+            let centroid = ans
+                .nearby_landmarks(c.lat, c.lon)?
+                .unwrap_or_else(|| serde_json::json!([]));
+            out.push(backend::lean::mine_cluster(&ms, &centroid)?);
+        }
+        Ok(out)
+    })
+    .await?;
+
+    let mut attributed_all: Vec<backend::lean::AttributedStay> = Vec::new();
+    let mut labels: Vec<(Option<String>, Option<String>)> = Vec::with_capacity(voted.len());
+    let mut mine_ok = 0usize;
+    for m in voted {
+        if m.amenity_label.is_some() {
+            mine_ok += 1;
+        }
+        attributed_all.extend(m.attributed);
+        labels.push((m.amenity_label, m.amenity_kind));
+    }
+    // ⚠ One label per mined cluster, or the write below pairs a cluster with
+    // another cluster's venue.
+    if labels.len() != mined.len() {
+        anyhow::bail!(
+            "mined {} cluster(s) but got {} label(s)",
+            mined.len(),
+            labels.len()
+        );
+    }
+    eprintln!(
+        "[{user_id}] amenity mining: {mine_ok}/{} clusters labelled, {} attributed stay(s)",
+        mined.len(),
+        attributed_all.len()
+    );
+
+    // ── 6. the priors blob — a full recompute, never incremental ────────────
+    let priors = backend::lean::mine_priors(&attributed_all)?;
+    sqlx::query(
+        "INSERT INTO venue_type_priors (user_id, priors_json, mined_stays) VALUES (?, ?, ?) \
+         ON DUPLICATE KEY UPDATE priors_json = VALUES(priors_json), \
+                                 mined_stays = VALUES(mined_stays)",
+    )
+    .bind(user_id)
+    .bind(serde_json::to_string(&priors)?)
+    .bind(attributed_all.len() as i64)
+    .execute(pool)
+    .await
+    .context("writing venue_type_priors")?;
+
+    // ── 7. the write, in one transaction ────────────────────────────────────
+    // ⚠ The DELETE and the upserts must land together. A half-applied refresh
+    // leaves rows deleted whose replacements were never written, and the
+    // dashboard reads that as places the user stopped going to.
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the focus_places transaction")?;
+
+    if !deleted.is_empty() {
+        // ⚠ `QueryBuilder`, not `format!`: a interpolated SQL string trips the
+        // audit lint, and this is the one statement here with a
+        // variable-length parameter list.
+        let mut qb: sqlx::QueryBuilder<sqlx::MySql> =
+            sqlx::QueryBuilder::new("DELETE FROM focus_places WHERE id IN (");
+        let mut sep = qb.separated(", ");
+        for id in &deleted {
+            sep.push_bind(*id);
+        }
+        qb.push(")");
+        qb.build()
+            .execute(&mut *tx)
+            .await
+            .context("deleting stale focus_places")?;
+    }
+
+    let mut home_tz: Option<String> = None;
+    for (i, c) in mined.iter().enumerate() {
+        let id = c
+            .get("id")
+            .and_then(serde_json::Value::as_i64)
+            .context("cluster id")?;
+        let clat = c.get("lat").and_then(bitsf).context("cluster lat")?;
+        let clon = c.get("lon").and_then(bitsf).context("cluster lon")?;
+        let dwell = c
+            .get("dwell")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let unique_days = c
+            .get("uniqueDays")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let detected = c.get("label").and_then(|v| v.as_str()).unwrap_or("other");
+        let profile = c.get("profile").and_then(|v| v.as_str()).unwrap_or("");
+        // Fitbit-confirmed hours when there are any, else the local-clock
+        // 02:00–06:00 heuristic — the TypeScript's choice, on the same test.
+        let sleep_h: f64 = if has_fitbit_sleep {
+            c.get("sleepFitbitH").and_then(bitsf)
+        } else {
+            c.get("sleepH").and_then(bitsf)
+        }
+        .unwrap_or(0.0);
+        let empty = Vec::new();
+        let stays = c.get("stays").and_then(|v| v.as_array()).unwrap_or(&empty);
+        let visit_count = stays.len() as i64;
+        let mut ts: Vec<(i64, i64)> = stays
+            .iter()
+            .filter_map(|s| {
+                let a = s.as_array()?;
+                Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?))
+            })
+            .collect();
+        ts.sort_unstable();
+        let (first_seen, last_seen) = match (ts.first(), ts.last()) {
+            (Some(f), Some(l)) => (f.0, l.1),
+            _ => continue,
+        };
+        let display_name = names.get(&id);
+        let (amenity_label, amenity_kind) = &labels[i];
+
+        if let Some(old_id) = assignments[i] {
+            // ⚠ UPDATE preserves `id` and `first_seen_ts` — the original "first
+            // time we observed this place". Rewriting either would break the
+            // foreign-key references downstream consumers hold, and would make
+            // a re-mine look like a new place.
+            sqlx::query(
+                "UPDATE focus_places SET centroid_lat = ?, centroid_lon = ?, radius_m = ?, \
+                   total_dwell_sec = ?, visit_count = ?, unique_days = ?, last_seen_ts = ?, \
+                   detected_label = ?, display_name = ?, sleep_hours = ?, amenity_label = ?, \
+                   amenity_kind = ?, hour_profile = ?, refreshed_at = CURRENT_TIMESTAMP \
+                 WHERE id = ?",
+            )
+            .bind(clat)
+            .bind(clon)
+            .bind(FOCUS_RADIUS_M)
+            .bind(dwell)
+            .bind(visit_count)
+            .bind(unique_days)
+            .bind(last_seen)
+            .bind(detected)
+            .bind(display_name)
+            .bind(sleep_h.round() as i64)
+            .bind(amenity_label)
+            .bind(amenity_kind)
+            .bind(profile)
+            .bind(old_id)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("updating focus_place {old_id}"))?;
+        } else {
+            sqlx::query(
+                "INSERT INTO focus_places (user_id, centroid_lat, centroid_lon, radius_m, \
+                   total_dwell_sec, visit_count, unique_days, first_seen_ts, last_seen_ts, \
+                   detected_label, display_name, sleep_hours, amenity_label, amenity_kind, \
+                   hour_profile) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(user_id)
+            .bind(clat)
+            .bind(clon)
+            .bind(FOCUS_RADIUS_M)
+            .bind(dwell)
+            .bind(visit_count)
+            .bind(unique_days)
+            .bind(first_seen)
+            .bind(last_seen)
+            .bind(detected)
+            .bind(display_name)
+            .bind(sleep_h.round() as i64)
+            .bind(amenity_label)
+            .bind(amenity_kind)
+            .bind(profile)
+            .execute(&mut *tx)
+            .await
+            .context("inserting a focus_place")?;
+        }
+
+        // The residence zone, for read-time fallback. First Home wins, as in
+        // the TypeScript; if no cluster qualifies, the stored value is left
+        // alone rather than cleared.
+        if home_tz.is_none() && display_name.map(String::as_str) == Some("Home") {
+            home_tz = zones.zone(clat, clon);
+        }
+    }
+
+    if let Some(tz) = &home_tz {
+        // ⚠ Inside the transaction, so a half-failed refresh rolls the zone
+        // back with the rows it was derived from.
+        backend::sync_state::set_with(&mut *tx, user_id, "home_tz", tz)
+            .await
+            .context("writing home_tz")?;
+        eprintln!("[{user_id}] home_tz = {tz}");
+    }
+
+    tx.commit().await.context("committing focus_places")?;
+    eprintln!("[{user_id}] focus_places refreshed ({} rows)", mined.len());
+    Ok(())
+}
+
+/// ⚠ The LITERAL the TypeScript writes, and what all 128 prod rows carry. Four
+/// call sites read this column and one of them only notices values above 40 m,
+/// so writing a measured cluster spread here would be a behaviour change, not a
+/// refinement (#789).
+const FOCUS_RADIUS_M: i64 = 25;
+
+/// ⚠ The TypeScript focus cron's OWN default, not the sync path's. See the note
+/// at the `PhoneTrack::open` call: `NC_BASE_URL` is unset in production.
+const FOCUS_DEFAULT_NC_BASE_URL: &str = "https://dash.xinutec.org";
+/// The TypeScript's `FETCH_CHUNK_DAYS`. Shared chunk bounds are why the fetch
+/// above dedups.
+const FOCUS_FETCH_CHUNK_DAYS: i64 = 7;
+/// The TypeScript's `DEFAULT_LOOKBACK_DAYS`. ⚠ 180, not the 90 its own header
+/// comment claims — the cron passes no argument, so this is what production
+/// actually mines.
+const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 
 /// Rebuild `presence_log` from `decoded_days` over a bounded window.
 ///

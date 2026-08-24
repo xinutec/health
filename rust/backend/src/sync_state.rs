@@ -45,6 +45,20 @@ pub async fn get(pool: &MySqlPool, user_id: &str, key: &str) -> Result<Option<St
 /// Two sync runs overlapping is not supposed to happen, but the statement is
 /// the thing that makes it safe rather than a comment saying it does not.
 pub async fn set(pool: &MySqlPool, user_id: &str, key: &str, value: &str) -> Result<()> {
+    set_with(pool, user_id, key, value).await
+}
+
+/// The same upsert against ANY executor, so it can join a caller's transaction.
+///
+/// ⚠ EXISTS FOR `refresh-focus-places` (#982). It derives `home_tz` from the
+/// Home cluster and writes it alongside the `focus_places` rows; through the
+/// pool that write would land OUTSIDE the transaction, so a half-failed refresh
+/// would leave a residence zone derived from rows that were rolled back. The
+/// TypeScript passes its `conn` for exactly this reason.
+pub async fn set_with<'e, E>(exec: E, user_id: &str, key: &str, value: &str) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::MySql>,
+{
     sqlx::query(
         "INSERT INTO sync_state (user_id, key_name, value) VALUES (?, ?, ?) \
          ON DUPLICATE KEY UPDATE value = VALUES(value)",
@@ -52,7 +66,7 @@ pub async fn set(pool: &MySqlPool, user_id: &str, key: &str, value: &str) -> Res
     .bind(user_id)
     .bind(key)
     .bind(value)
-    .execute(pool)
+    .execute(exec)
     .await
     .with_context(|| format!("writing sync_state {key} for {user_id}"))?;
     Ok(())
