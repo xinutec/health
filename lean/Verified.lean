@@ -94,6 +94,7 @@ import Verified.Geo.EpisodeGeometry
 import Verified.Geo.SegmentPasses
 import Verified.Geo.CurrentPlace
 import Verified.Geo.FocusIdentity
+import Verified.Geo.FocusMining
 import Verified.Geo.SegmentMerge
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailRuns

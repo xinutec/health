@@ -18,6 +18,7 @@ import Verified.Geo.LineStations
 import Verified.PresenceLog
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
+import Verified.Geo.FocusMining
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -640,6 +641,77 @@ def dispatch (j : Json) : Json :=
   -- ⚠ `label` and `named` are DIFFERENT questions. A bare "Stay" gets a label
   -- (so the row renders) but is not `named` (so a picker can hide it): several
   -- Stays are indistinguishable to a person choosing one.
+  -- The focus cron's amenity vote for ONE cluster (#982 Tier 2).
+  --
+  -- ⚠ Landmarks arrive in `shapeLandmarks`' OUTPUT shape, so the shell hands
+  -- back what it already fetched rather than re-deriving it — including the raw
+  -- `openingHours` tag, which `toLandmark` resolves against this stay's
+  -- `samples`. Resolving hours shell-side would be a second implementation of
+  -- `Verified.Geo.OpeningHours` living in Rust.
+  --
+  -- ⚠ The CENTROID's landmarks are resolved with `hasStay := false`: the
+  -- centroid is a place, not an interval, so it has no window to be open
+  -- during. The centroid gate asks only "is this a label-worthy venue here",
+  -- which reads neither hours nor `openFraction`.
+  | some "mineCluster" =>
+    let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
+      let need (k : String) : Except String String :=
+        match str? e k with
+        | some s => pure s
+        | none => throw s!"mineCluster: a landmark has no {k}"
+      let nm ← need "name"
+      let ty ← need "type"
+      let sub ← need "subtype"
+      let db ← need "distanceMBits"
+      pure { name := nm, type := ty, subtype := sub
+           , distanceM := Float.ofBits db.toNat!.toUInt64
+           , openingHours := str? e "openingHours"
+           , enclosing := (e.getObjVal? "enclosing" >>= (·.getBool?)).toOption == some true }
+    let poisOf (v : Json) : Except String (List Verified.Geo.BestPlace.Poi) := do
+      (← v.getArr?).toList.mapM poiOf
+    let sampleOf (e : Json) : Except String (Nat × Nat) := do
+      let a ← e.getArr?
+      match a[0]?, a[1]? with
+      | some d, some m => pure ((← d.getNat?), (← m.getNat?))
+      | _, _ => throw "mineCluster: a sample is not [dayOfWeek, minuteOfDay]"
+    let bitsOf (k : String) : Except String Float :=
+      match str? j k with
+      | some s => pure (Float.ofBits s.toNat!.toUInt64)
+      | none => throw s!"mineCluster: no {k}"
+    let intOf (e : Json) (k : String) : Except String Int :=
+      match int? e k with
+      | some i => pure i
+      | none => throw s!"mineCluster: a stay has no {k}"
+    let stayOf (e : Json) : Except String Verified.Geo.FocusMining.MinedStay := do
+      let samples ← (← (← e.getObjVal? "samples").getArr?).toList.mapM sampleOf
+      let pois ← poisOf (← e.getObjVal? "landmarks")
+      let st ← intOf e "startTs"
+      let en ← intOf e "endTs"
+      let lh ← intOf e "localHour"
+      let dur ← intOf e "durationSec"
+      pure { shape := { startUnix := st, endUnix := en, localHour := lh }
+           , durationSec := dur
+           , landmarks := pois.map (Verified.Geo.BestPlace.toLandmark samples true) }
+    match (do
+        let stays ← (← (← j.getObjVal? "stays").getArr?).toList.mapM stayOf
+        let centroid ← poisOf (← j.getObjVal? "centroidLandmarks")
+        let minWeight ← bitsOf "minWeightBits"
+        let minFraction ← bitsOf "minFractionBits"
+        pure (Verified.Geo.FocusMining.mineCluster stays
+                (centroid.map (Verified.Geo.BestPlace.toLandmark [] false))
+                minWeight minFraction)) with
+    | .error e => err e
+    | .ok m =>
+      Json.mkObj
+        [ ("value", Json.mkObj
+            [ ("amenityLabel", optStr m.label)
+            , ("amenityKind", optStr m.kind)
+            , ("refusal", optStr (m.refusal.map (·.name)))
+            , ("attributed", Json.arr ((m.attributed.map fun a =>
+                Json.mkObj
+                  [ ("subtype", Json.str a.subtype)
+                  , ("durationSecBits", Json.str (toString a.durationSec.toBits))
+                  , ("localHour", Lean.toJson a.localHour) ]).toArray)) ]) ]
   | some "placeProjection" =>
     let dn := str? j "displayName"
     let al := str? j "amenityLabel"

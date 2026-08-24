@@ -1904,3 +1904,119 @@ pub fn shape_landmarks(
         .collect();
     Ok(serde_json::Value::Array(out))
 }
+
+/// One focus cluster's amenity vote — `Verified.Geo.FocusMining.mineCluster`.
+///
+/// The whole vote crosses in ONE call, deliberately. The three gates read each
+/// other's leavings (the near-field exemption is built by the same pass that
+/// builds the tally, and an exact tie keeps the first name seen), so splitting
+/// it into a call per gate would put those tie-breaks on this side of the FFI —
+/// which is the half that drifted while nothing compared it (#1003).
+///
+/// `landmarks` on each stay and on `centroid` are `shape_landmarks` OUTPUT,
+/// passed straight back: the raw `openingHours` tag rides along so Lean can
+/// resolve it against that stay's `samples`.
+pub struct MinedCluster {
+    pub amenity_label: Option<String>,
+    pub amenity_kind: Option<String>,
+    /// Which gate refused, when one did. `None` with no label means no stay
+    /// ever cast a vote — silence, not a refusal.
+    pub refusal: Option<String>,
+    pub attributed: Vec<AttributedStay>,
+}
+
+pub struct AttributedStay {
+    pub subtype: String,
+    pub duration_sec: f64,
+    pub local_hour: i64,
+}
+
+/// One stay's contribution: its window, its resolved local hour, and the
+/// venues near it.
+pub struct MineStay {
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub local_hour: i64,
+    pub duration_sec: i64,
+    /// `(dayOfWeek, minuteOfDay)` across the stay, from
+    /// `timezone::local_stay_samples`. Lean resolves opening hours over these.
+    pub samples: Vec<(u32, u32)>,
+    pub landmarks: serde_json::Value,
+}
+
+/// The cron's gate-1 constants. ⚠ Cross as bit patterns like every other float
+/// here: `minFraction` is compared with `<` against a computed ratio, and a
+/// re-rounded 0.5 moves that boundary.
+pub const MINE_MIN_WEIGHT_SEC: f64 = 60.0 * 30.0;
+pub const MINE_MIN_FRACTION: f64 = 0.5;
+
+pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<MinedCluster> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(rename = "amenityLabel")]
+        amenity_label: Option<String>,
+        #[serde(rename = "amenityKind")]
+        amenity_kind: Option<String>,
+        refusal: Option<String>,
+        attributed: Vec<WireStay>,
+    }
+    #[derive(Deserialize)]
+    struct WireStay {
+        subtype: String,
+        #[serde(rename = "durationSecBits")]
+        duration_sec_bits: String,
+        #[serde(rename = "localHour")]
+        local_hour: i64,
+    }
+
+    let stays_json: Vec<serde_json::Value> = stays
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "startTs": s.start_ts,
+                "endTs": s.end_ts,
+                "localHour": s.local_hour,
+                "durationSec": s.duration_sec,
+                "samples": s.samples.iter().map(|(d, m)| vec![*d, *m]).collect::<Vec<_>>(),
+                "landmarks": s.landmarks,
+            })
+        })
+        .collect();
+
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "mineCluster",
+        "stays": stays_json,
+        "centroidLandmarks": centroid,
+        "minWeightBits": crate::fold_payload::bits(MINE_MIN_WEIGHT_SEC),
+        "minFractionBits": crate::fold_payload::bits(MINE_MIN_FRACTION),
+    }))?;
+
+    Ok(MinedCluster {
+        amenity_label: w.value.amenity_label,
+        amenity_kind: w.value.amenity_kind,
+        refusal: w.value.refusal,
+        attributed: w
+            .value
+            .attributed
+            .into_iter()
+            .map(|a| {
+                Ok(AttributedStay {
+                    subtype: a.subtype,
+                    duration_sec: f64::from_bits(a.duration_sec_bits.parse::<u64>().with_context(
+                        || {
+                            format!(
+                                "mineCluster: {:?} is not a bit pattern",
+                                a.duration_sec_bits
+                            )
+                        },
+                    )?),
+                    local_hour: a.local_hour,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+    })
+}
