@@ -181,5 +181,43 @@ fn the_config_layer_refuses_rather_than_defaults() {
         Some("https://dash.example")
     );
 
+    // ---- a DB-only command must not require the Fitbit credentials ---------
+    //
+    // ⚠ The batch CronJobs set DB_* and nothing else. `refresh-presence-log`
+    // used `Config::from_env`, which requires FITBIT_CLIENT_ID, and died in
+    // production with "missing required env var FITBIT_CLIENT_ID" — AFTER
+    // `decode-day` had spent twelve minutes decoding seven days, because the
+    // config was read at the start of the step rather than the start of the job
+    // (#982 Tier 2, 2026-08-24).
+    //
+    // A command should ask for what it USES. This pins that `DbConfig::from_env`
+    // does, so the next DB-only subcommand cannot quietly reintroduce the
+    // requirement.
+    unsafe { clear_all() };
+    unsafe {
+        std::env::set_var("DB_USER", "syncer");
+        std::env::set_var("DB_PASSWORD", "s3cret");
+    }
+    let d = backend::config::DbConfig::from_env()
+        .expect("a database-only command must not need the Fitbit credentials");
+    assert_eq!(d.user, "syncer", "DB_USER");
+    assert_eq!(d.host, "health-db", "DB_HOST defaults");
+    assert_eq!(d.port, 3306, "DB_PORT defaults");
+    assert_eq!(d.database, "health", "DB_NAME defaults");
+    // And the full config, with the same environment, must still REFUSE — the
+    // point is that the two ask for different things, not that either is lax.
+    assert!(
+        Config::from_env().is_err(),
+        "the full config must still require the Fitbit credentials"
+    );
+
+    // ---- but a DB-only command still refuses a missing password ------------
+    unsafe { clear_all() };
+    unsafe { std::env::set_var("DB_USER", "syncer") };
+    assert!(
+        backend::config::DbConfig::from_env().is_err(),
+        "DB_PASSWORD is required, not defaulted to empty"
+    );
+
     unsafe { clear_all() };
 }

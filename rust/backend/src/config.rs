@@ -88,6 +88,32 @@ pub struct FitbitConfig {
 }
 
 impl DbConfig {
+    /// The database settings ALONE, for a command that touches nothing else.
+    ///
+    /// ⚠ Exists because `Config::from_env` requires `FITBIT_CLIENT_ID` and
+    /// `FITBIT_CLIENT_SECRET`, and the batch CronJobs do not set them — they
+    /// have no business with Fitbit. `refresh-presence-log` used the full
+    /// config and died in production with "missing required env var
+    /// FITBIT_CLIENT_ID" AFTER `decode-day` had done twelve minutes of work
+    /// (#982 Tier 2, 2026-08-24).
+    ///
+    /// ⚠ A command should ask for what it uses. Demanding a credential it never
+    /// touches turns an unrelated deployment detail into a runtime failure, and
+    /// does it at the END of the job rather than the start.
+    pub fn from_env() -> Result<Self> {
+        let port_raw = std::env::var("DB_PORT").unwrap_or_else(|_| "3306".into());
+        Ok(DbConfig {
+            host: std::env::var("DB_HOST").unwrap_or_else(|_| "health-db".into()),
+            port: port_raw
+                .parse()
+                .with_context(|| format!("DB_PORT is not a port number: {port_raw:?}"))?,
+            user: std::env::var("DB_USER").context("missing required env var DB_USER")?,
+            password: std::env::var("DB_PASSWORD")
+                .context("missing required env var DB_PASSWORD")?,
+            database: std::env::var("DB_NAME").unwrap_or_else(|_| "health".into()),
+        })
+    }
+
     /// A `mysql://` URL for sqlx.
     ///
     /// ⚠ Percent-encodes the password. A MariaDB password is an arbitrary byte

@@ -143,8 +143,12 @@ async fn main() -> Result<()> {
                     std::process::exit(64);
                 }
             };
-            let cfg = Config::from_env().context("reading configuration")?;
-            let pool = db::connect(&cfg.db.url())
+            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: this touches only
+            // the database, and the batch CronJobs do not set the Fitbit
+            // credentials the full config requires.
+            let dbcfg =
+                backend::config::DbConfig::from_env().context("reading database configuration")?;
+            let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
             let r = refresh_presence_log(&pool, lookback).await;
