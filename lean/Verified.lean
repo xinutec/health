@@ -12,6 +12,7 @@ import Verified.PhoneTrackPrefs
 import Verified.Login
 import Verified.Recovery
 import Verified.PresenceLog
+import Verified.HsmmSegments
 import Verified.Owntracks
 import Verified.Geo.Landmarks
 import Verified.Session
