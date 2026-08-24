@@ -1692,6 +1692,67 @@ pub fn owntracks_history_max_age_sec() -> i64 {
     600
 }
 
+/// `Verified.PresenceLog.computeRow` — one day's decoded segments rolled up.
+///
+/// ⚠ `None` is an ANSWER, not an error: a day that decoded nothing, or whose
+/// segments all round to under a minute, has no row rather than a row claiming
+/// 0% of nothing.
+///
+/// ⚠ The segments must arrive in the order the decoder emitted them. A tie on
+/// minutes keeps the place seen FIRST, because the TypeScript accumulates into a
+/// JS `Map` and iterates it in insertion order. Sorting on the way in would
+/// change which place a day is attributed to.
+pub struct PresenceRow {
+    pub dominant_place_id: Option<i64>,
+    pub dominant_fraction: f64,
+    pub end_of_day_place_id: Option<i64>,
+    pub end_of_day_ts: Option<i64>,
+    pub end_of_day_posterior: f64,
+}
+
+pub fn presence_row(segments: &serde_json::Value) -> Result<Option<PresenceRow>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Option<Inner>,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(rename = "dominantPlaceId")]
+        dominant_place_id: Option<i64>,
+        #[serde(rename = "dominantFractionBits")]
+        dominant_fraction_bits: String,
+        #[serde(rename = "endOfDayPlaceId")]
+        end_of_day_place_id: Option<i64>,
+        #[serde(rename = "endOfDayTs")]
+        end_of_day_ts: Option<i64>,
+        #[serde(rename = "endOfDayPosteriorBits")]
+        end_of_day_posterior_bits: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "presenceRow",
+        "segments": segments,
+    }))?;
+    // ⚠ Fractions cross as IEEE-754 BIT PATTERNS. `dominant_fraction` is a ratio
+    // of two integer minute counts and lands in a DECIMAL column; a re-rounded
+    // value would differ from the TypeScript's in the last place and the two
+    // arms' rows would not compare equal.
+    let bits = |s: &str| -> Result<f64> {
+        Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
+            format!("presenceRow: {s:?} is not a bit pattern")
+        })?))
+    };
+    Ok(match w.value {
+        None => None,
+        Some(v) => Some(PresenceRow {
+            dominant_place_id: v.dominant_place_id,
+            dominant_fraction: bits(&v.dominant_fraction_bits)?,
+            end_of_day_place_id: v.end_of_day_place_id,
+            end_of_day_ts: v.end_of_day_ts,
+            end_of_day_posterior: bits(&v.end_of_day_posterior_bits)?,
+        }),
+    })
+}
+
 /// `Verified.Geo.LineStations.lineNamesMatching` — every mirror line name whose
 /// text contains this line's base token.
 ///

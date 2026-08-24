@@ -15,6 +15,7 @@ import Verified.Recovery
 import Verified.Owntracks
 import Verified.Geo.Landmarks
 import Verified.Geo.LineStations
+import Verified.PresenceLog
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
 import Verified.Session
@@ -536,6 +537,46 @@ def dispatch (j : Json) : Json :=
             [ ("name", Json.str st.name)
             , ("latBits", Json.str (toString st.lat.toBits))
             , ("lonBits", Json.str (toString st.lon.toBits)) ]))]
+  -- One day's decoded segments rolled up into a `presence_log` row (#982,
+  -- Tier 2). The first CronJob's logic to move off node.
+  --
+  -- ⚠ ORDER IS PART OF THE ANSWER. A tie on minutes keeps the place seen FIRST,
+  -- because the TypeScript accumulates into a `Map` and JS iterates one in
+  -- insertion order. The segment array must arrive in the order the decoder
+  -- emitted it, and the host must not sort it on the way here.
+  | some "presenceRow" =>
+    let segsOf : Except String (List Verified.PresenceLog.Segment) := do
+      let arr ← (← j.getObjVal? "segments").getArr?
+      (arr.mapM fun (e : Json) => do
+        let startTs ← (← e.getObjVal? "startTs").getInt?
+        let endTs ← (← e.getObjVal? "endTs").getInt?
+        let mode ← (← e.getObjVal? "mode").getStr?
+        -- ⚠ ABSENT and NULL both mean "no mined place", and neither is an
+        -- error: `placeId` is null for every non-stationary segment, which is
+        -- most of them.
+        let placeId : Option Int := match e.getObjVal? "placeId" with
+          | .ok v => (v.getInt?).toOption
+          | .error _ => none
+        pure ({ startTs, endTs, mode, placeId } : Verified.PresenceLog.Segment)).map Array.toList
+    match segsOf with
+    | .error e => err s!"presenceRow: segments: {e}"
+    | .ok segs =>
+      match Verified.PresenceLog.computeRow segs with
+      -- ⚠ NO ROW is a legitimate answer, not a failure: a day that decoded
+      -- nothing, or whose segments all round to zero minutes, is omitted rather
+      -- than written as a row claiming 0% of nothing.
+      | none => Json.mkObj [("value", Json.null)]
+      | some r =>
+        Json.mkObj
+          [ ("value", Json.mkObj
+              [ ("dominantPlaceId", match r.dominantPlaceId with
+                  | none => Json.null | some i => Lean.toJson i)
+              , ("dominantFractionBits", Json.str (toString r.dominantFraction.toBits))
+              , ("endOfDayPlaceId", match r.endOfDayPlaceId with
+                  | none => Json.null | some i => Lean.toJson i)
+              , ("endOfDayTs", match r.endOfDayTs with
+                  | none => Json.null | some i => Lean.toJson i)
+              , ("endOfDayPosteriorBits", Json.str (toString r.endOfDayPosterior.toBits)) ]) ]
   -- The venues near a stay (#982, and the gap that blocked the cutover).
   --
   -- ⚠ This is what puts a VENUE NAME on a timeline instead of a bare

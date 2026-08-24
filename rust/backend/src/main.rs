@@ -123,6 +123,34 @@ async fn main() -> Result<()> {
             };
             drop_session(cookie).await
         }
+        // Tier 2 of #982: the first CronJob logic to move off node. Mirrors
+        // `src/cli/refresh-presence-log.ts`.
+        "refresh-presence-log" => {
+            // ⚠ The CronJob passes `90`; the TypeScript defaults to 30 when the
+            // argument is absent, and that default is part of the contract for
+            // anyone running it by hand.
+            let lookback: i64 = match flags {
+                [] => 30,
+                [n] => match n.parse::<i64>() {
+                    Ok(v) if v > 0 => v,
+                    _ => {
+                        eprintln!("refresh-presence-log: invalid lookback {n:?}");
+                        std::process::exit(2);
+                    }
+                },
+                _ => {
+                    eprintln!("usage: backend refresh-presence-log [lookback-days]");
+                    std::process::exit(64);
+                }
+            };
+            let cfg = Config::from_env().context("reading configuration")?;
+            let pool = db::connect(&cfg.db.url())
+                .await
+                .context("connecting to the database")?;
+            let r = refresh_presence_log(&pool, lookback).await;
+            pool.close().await;
+            r
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -1287,6 +1315,119 @@ async fn day_live(
         eprintln!("  ...of which bestPlace asked before its timezone resolved: {early}");
     }
     println!("{}", r.out);
+    Ok(())
+}
+
+/// Rebuild `presence_log` from `decoded_days` over a bounded window.
+///
+/// Tier 2 of #982 — the first CronJob logic to leave node. The rule is
+/// `Verified.PresenceLog.computeRow`; everything here is the IO around it.
+///
+/// ⚠ AN UPSERT, not the DELETE+INSERT its TypeScript header claims. The code
+/// there does `onDuplicateKeyUpdate` and always did; the comment is wrong and
+/// mirroring the comment instead of the code would drop rows outside the
+/// window on every run.
+///
+/// ⚠ Rows are processed in the order the query returns them, and each day's
+/// segments in the order they were stored. The rollup's tie-break keeps the
+/// place seen FIRST, so re-ordering either changes which place a day is
+/// attributed to.
+async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) -> Result<()> {
+    use sqlx::Row as _;
+
+    backend::schema::migrate(pool).await?;
+
+    // The TypeScript builds this from `Date.now()` and slices the ISO string, so
+    // the cutoff is a UTC civil date regardless of anyone's zone.
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(lookback))
+        .format("%Y-%m-%d")
+        .to_string();
+    eprintln!("refresh-presence-log: lookback={lookback}d (cutoff={cutoff})");
+
+    let days = sqlx::query("SELECT user_id, date, segments_json FROM decoded_days WHERE date >= ?")
+        .bind(&cutoff)
+        .fetch_all(pool)
+        .await
+        .context("reading decoded_days")?;
+    eprintln!(
+        "refresh-presence-log: {} decoded day(s) in window",
+        days.len()
+    );
+
+    let mut tz_by_user: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let (mut inserted, mut skipped) = (0u32, 0u32);
+
+    for row in days {
+        let user_id: String = row.try_get("user_id").context("decoded_days.user_id")?;
+        // ⚠ `date` is a DATE column; read it as a string the same way the rest
+        // of this binary does rather than through chrono, so the value written
+        // back is the value read.
+        let date: String = row
+            .try_get::<chrono::NaiveDate, _>("date")
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .context("decoded_days.date")?;
+        let segments_json: String = row
+            .try_get("segments_json")
+            .context("decoded_days.segments_json")?;
+
+        if !tz_by_user.contains_key(&user_id) {
+            let tz: Option<String> = sqlx::query_scalar(
+                "SELECT value FROM sync_state WHERE user_id = ? AND key_name = 'home_tz'",
+            )
+            .bind(&user_id)
+            .fetch_optional(pool)
+            .await
+            .context("reading home_tz")?
+            .flatten();
+            tz_by_user.insert(
+                user_id.clone(),
+                tz.unwrap_or_else(|| "Europe/London".into()),
+            );
+        }
+        let tz = &tz_by_user[&user_id];
+
+        // ⚠ Bad JSON is SKIPPED with a warning, not an abort — one corrupt day
+        // must not stop the other 89. The TypeScript does the same.
+        let Ok(segments) = serde_json::from_str::<serde_json::Value>(&segments_json) else {
+            eprintln!("refresh-presence-log: bad JSON for {user_id} {date}");
+            skipped += 1;
+            continue;
+        };
+
+        let Some(r) = backend::lean::presence_row(&segments)? else {
+            skipped += 1;
+            continue;
+        };
+
+        sqlx::query(
+            "INSERT INTO presence_log \
+               (user_id, date, tz, dominant_place_id, dominant_fraction, \
+                end_of_day_place_id, end_of_day_ts, end_of_day_posterior) \
+             VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?) \
+             ON DUPLICATE KEY UPDATE \
+               tz = VALUES(tz), \
+               dominant_place_id = VALUES(dominant_place_id), \
+               dominant_fraction = VALUES(dominant_fraction), \
+               end_of_day_place_id = VALUES(end_of_day_place_id), \
+               end_of_day_ts = VALUES(end_of_day_ts), \
+               end_of_day_posterior = VALUES(end_of_day_posterior)",
+        )
+        .bind(&user_id)
+        .bind(&date)
+        .bind(tz)
+        .bind(r.dominant_place_id)
+        .bind(r.dominant_fraction)
+        .bind(r.end_of_day_place_id)
+        .bind(r.end_of_day_ts)
+        .bind(r.end_of_day_posterior)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing presence_log for {user_id} {date}"))?;
+        inserted += 1;
+    }
+
+    eprintln!("refresh-presence-log: inserted {inserted}, skipped {skipped}");
     Ok(())
 }
 
