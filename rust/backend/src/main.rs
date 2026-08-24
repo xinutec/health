@@ -1510,8 +1510,22 @@ async fn refresh_focus_places_one(
     );
 
     // ── 3. the existing rows, for identity matching ─────────────────────────
+    // ⚠ TWO sqlx traps in one row, both of which fail on REAL rows only and
+    // neither of which a fixture would show:
+    //
+    //   * `centroid_lat`/`centroid_lon` are DECIMAL(9,6). sqlx cannot hand back
+    //     a MySQL DECIMAL at all without `rust_decimal`, so they are CAST to
+    //     CHAR and parsed — the same thing `classification_inputs` does, for
+    //     the same reason.
+    //   * `id` and `first_seen_ts` are INT UNSIGNED, which is a DISTINCT sqlx
+    //     type that decodes as none of the signed forms. Reading `id` as `i64`
+    //     failed in production on 2026-08-24 with "Rust type `i64` (as SQL type
+    //     `BIGINT`) is not compatible with SQL type `INT UNSIGNED`" — after the
+    //     job had already fetched 79,262 points.
     let old_rows = sqlx::query(
-        "SELECT id, centroid_lat, centroid_lon, first_seen_ts FROM focus_places WHERE user_id = ?",
+        "SELECT id, CAST(centroid_lat AS CHAR) AS centroid_lat, \
+         CAST(centroid_lon AS CHAR) AS centroid_lon, first_seen_ts \
+         FROM focus_places WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -1520,10 +1534,10 @@ async fn refresh_focus_places_one(
     let old: Vec<serde_json::Value> = old_rows
         .iter()
         .map(|r| {
-            let id: i64 = r.try_get("id")?;
-            let lat: f64 = r.try_get("centroid_lat")?;
-            let lon: f64 = r.try_get("centroid_lon")?;
-            let fs: i64 = r.try_get("first_seen_ts")?;
+            let id: u64 = r.try_get("id")?;
+            let lat: f64 = r.try_get::<String, _>("centroid_lat")?.parse()?;
+            let lon: f64 = r.try_get::<String, _>("centroid_lon")?.parse()?;
+            let fs: u64 = r.try_get("first_seen_ts")?;
             Ok(serde_json::json!([
                 id,
                 backend::fold_payload::bits(lat),
