@@ -176,14 +176,24 @@ async fn main() -> Result<()> {
                     std::process::exit(64);
                 }
             };
-            // ⚠ The FULL config, unlike `refresh-presence-log`: this one calls
-            // Nextcloud, so it needs the NC credentials and base URL as well as
-            // the database.
-            let cfg = backend::config::Config::from_env().context("reading configuration")?;
-            let pool = db::connect(&cfg.db.url())
+            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`. The full config
+            // demands FITBIT_CLIENT_ID and this pod does not set it — the focus
+            // CronJob's env is DB_* plus NC_CLIENT_ID/NC_CLIENT_SECRET and
+            // nothing else. Using the full config here failed in production on
+            // 2026-08-24 with "missing required env var FITBIT_CLIENT_ID",
+            // which is the SECOND time that has happened (see the note on
+            // `DbConfig::from_env`); the first cost twelve minutes of
+            // decode-day's work.
+            //
+            // The only thing this needs beyond the database is the Nextcloud
+            // base URL, and that is one `std::env::var` — the NC credentials
+            // are read from the database by `nextcloud::credentials`.
+            let dbcfg =
+                backend::config::DbConfig::from_env().context("reading database configuration")?;
+            let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
-            let r = refresh_focus_places(&pool, &cfg, user, lookback).await;
+            let r = refresh_focus_places(&pool, user, lookback).await;
             pool.close().await;
             r
         }
@@ -1373,7 +1383,6 @@ async fn day_live(
 /// behaviour change four call sites can see.
 async fn refresh_focus_places(
     pool: &sqlx::MySqlPool,
-    cfg: &backend::config::Config,
     only_user: Option<&str>,
     lookback_days: i64,
 ) -> Result<()> {
@@ -1392,7 +1401,7 @@ async fn refresh_focus_places(
     }
 
     for user_id in &users {
-        if let Err(e) = refresh_focus_places_one(pool, cfg, user_id, lookback_days).await {
+        if let Err(e) = refresh_focus_places_one(pool, user_id, lookback_days).await {
             // ⚠ One user's failure must not strand the others, and must not
             // read as success either. The TypeScript lets the whole process
             // die here.
@@ -1405,7 +1414,6 @@ async fn refresh_focus_places(
 
 async fn refresh_focus_places_one(
     pool: &sqlx::MySqlPool,
-    cfg: &backend::config::Config,
     user_id: &str,
     lookback_days: i64,
 ) -> Result<()> {
@@ -1420,10 +1428,7 @@ async fn refresh_focus_places_one(
     //
     // Reading the shared config here would make the Rust arm quietly unable to
     // fetch anything in the exact deployment the node cron works in.
-    let nc_base_url = cfg
-        .nextcloud_base_url
-        .clone()
-        .unwrap_or_else(|| FOCUS_DEFAULT_NC_BASE_URL.to_string());
+    let nc_base_url = backend::config::focus_nc_base_url();
     let ctx = backend::nextcloud::phonetrack::PhoneTrack::open(
         reqwest::Client::new(),
         pool,
@@ -1895,9 +1900,6 @@ async fn refresh_focus_places_one(
 /// refinement (#789).
 const FOCUS_RADIUS_M: i64 = 25;
 
-/// ⚠ The TypeScript focus cron's OWN default, not the sync path's. See the note
-/// at the `PhoneTrack::open` call: `NC_BASE_URL` is unset in production.
-const FOCUS_DEFAULT_NC_BASE_URL: &str = "https://dash.xinutec.org";
 /// The TypeScript's `FETCH_CHUNK_DAYS`. Shared chunk bounds are why the fetch
 /// above dedups.
 const FOCUS_FETCH_CHUNK_DAYS: i64 = 7;

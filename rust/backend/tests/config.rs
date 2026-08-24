@@ -211,6 +211,53 @@ fn the_config_layer_refuses_rather_than_defaults() {
         "the full config must still require the Fitbit credentials"
     );
 
+    // ---- the FOCUS cron's env is DB_* + NC_*, and that must be enough ------
+    //
+    // ⚠ THIS IS THE SECOND TIME. `refresh-presence-log` died on
+    // FITBIT_CLIENT_ID (above); on 2026-08-24 `refresh-focus-places` did the
+    // same thing in production, because it was written to call
+    // `Config::from_env` on the reasoning that it "needs Nextcloud too". It
+    // does not: the NC credentials come from the DATABASE, and the only extra
+    // it wants is a base URL.
+    //
+    // The test above could not catch that — it pins the config LAYER, not which
+    // config a subcommand reaches for. This pins the focus cron's actual
+    // requirement: its pod sets DB_* and NC_CLIENT_ID/NC_CLIENT_SECRET, no
+    // FITBIT_* and no NC_BASE_URL, and everything the command reads at startup
+    // must resolve under exactly that.
+    unsafe { clear_all() };
+    unsafe {
+        std::env::set_var("DB_USER", "syncer");
+        std::env::set_var("DB_PASSWORD", "s3cret");
+        std::env::set_var("NC_CLIENT_ID", "ncid");
+        std::env::set_var("NC_CLIENT_SECRET", "ncsecret");
+    }
+    backend::config::DbConfig::from_env()
+        .expect("the focus cron's env must satisfy the config it actually uses");
+    // ⚠ NC_BASE_URL is UNSET in production (#1037). The focus cron must still
+    // reach the real Nextcloud, because its TypeScript defaults rather than
+    // nullifying. A `None` here would mean fetching nothing and reporting
+    // success.
+    assert_eq!(
+        backend::config::focus_nc_base_url(),
+        backend::config::FOCUS_DEFAULT_NC_BASE_URL,
+        "with NC_BASE_URL unset the focus cron must fall back to its own default"
+    );
+    unsafe { std::env::set_var("NC_BASE_URL", "https://nc.example") };
+    assert_eq!(
+        backend::config::focus_nc_base_url(),
+        "https://nc.example",
+        "an explicit NC_BASE_URL still wins"
+    );
+    // An EMPTY value is the same silence as absent — a k8s env var set from a
+    // missing secret key arrives as "".
+    unsafe { std::env::set_var("NC_BASE_URL", "") };
+    assert_eq!(
+        backend::config::focus_nc_base_url(),
+        backend::config::FOCUS_DEFAULT_NC_BASE_URL,
+        "an empty NC_BASE_URL is absence, not a value"
+    );
+
     // ---- but a DB-only command still refuses a missing password ------------
     unsafe { clear_all() };
     unsafe { std::env::set_var("DB_USER", "syncer") };
