@@ -1643,11 +1643,45 @@ async fn refresh_focus_places_one(
     }
 
     let mut pending: Vec<PendingCluster> = Vec::with_capacity(mined.len());
+    let mut residential = 0usize;
     for c in mined {
         let clat = c.get("lat").and_then(bitsf).context("cluster has no lat")?;
         let clon = c.get("lon").and_then(bitsf).context("cluster has no lon")?;
         let empty = Vec::new();
         let stays = c.get("stays").and_then(|v| v.as_array()).unwrap_or(&empty);
+
+        // ⚠ GATE 0, THE RESIDENCE GATE. A cluster the user SLEEPS at is not
+        // mined at all — `amenity_label` stays null and the runtime falls
+        // through to the residential-address lookup. Populating it would be
+        // dead data an older code path could mis-pick up.
+        //
+        // ⚠ Absent from this port until 2026-08-24, and the omission was NOT
+        // visible as a shortfall: it made the Rust arm label 88 of 128 clusters
+        // where production labels 82. Every one of the six extra was a place
+        // with 6-36 sleep hours — hotels, a guest house, a clinic. So the miss
+        // wrote WHERE HE SLEPT AND WHAT KIND OF PLACE IT WAS into a column the
+        // TypeScript deliberately leaves empty, and it read as better coverage.
+        //
+        // ⚠ The skip is BEFORE the per-stay loop in the TypeScript, so these
+        // stays train NO prior either — that is the 95-vs-77 attributed-stay
+        // gap, not a separate bug. An empty `stays` list here reproduces both:
+        // `mineCluster` casts no vote and attributes nothing.
+        let cluster_sleep_h = if has_fitbit_sleep {
+            c.get("sleepFitbitH").and_then(bitsf)
+        } else {
+            c.get("sleepH").and_then(bitsf)
+        }
+        .unwrap_or(0.0);
+        if cluster_sleep_h >= RESIDENCE_SLEEP_THRESHOLD_H {
+            residential += 1;
+            pending.push(PendingCluster {
+                lat: clat,
+                lon: clon,
+                stays: Vec::new(),
+            });
+            continue;
+        }
+
         let mut ps = Vec::with_capacity(stays.len());
         for s in stays {
             let a = s.as_array().context("a stay is not an array")?;
@@ -1740,7 +1774,8 @@ async fn refresh_focus_places_one(
         );
     }
     eprintln!(
-        "[{user_id}] amenity mining: {mine_ok}/{} clusters labelled, {} attributed stay(s)",
+        "[{user_id}] amenity mining: {mine_ok}/{} clusters labelled, {} attributed stay(s), \
+         {residential} skipped as residential",
         mined.len(),
         attributed_all.len()
     );
@@ -1914,6 +1949,9 @@ async fn refresh_focus_places_one(
 /// refinement (#789).
 const FOCUS_RADIUS_M: i64 = 25;
 
+/// Fitbit-confirmed sleep hours at or above which a cluster is a RESIDENCE and
+/// is not mined for a venue name at all. See the gate-0 note at its use.
+const RESIDENCE_SLEEP_THRESHOLD_H: f64 = 5.0;
 /// The TypeScript's `FETCH_CHUNK_DAYS`. Shared chunk bounds are why the fetch
 /// above dedups.
 const FOCUS_FETCH_CHUNK_DAYS: i64 = 7;
