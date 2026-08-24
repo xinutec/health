@@ -9,12 +9,25 @@
 
 use backend::lean::{MineStay, mine_cluster};
 
+/// One landmark in the shape `lean::shape_landmarks` ACTUALLY RETURNS.
+///
+/// ⚠ THE DISTANCE FIELD IS `distanceM`, AND IT IS A BIT-PATTERN STRING. The
+/// Lean `shapeLandmarks` export names it `distanceMBits`; the Rust wrapper
+/// remaps it to `distanceM` because `DayEntry.parsePoi` and the trace-fed fold
+/// read that name. This helper said `distanceMBits` until 2026-08-24 and every
+/// test here passed — against a shape the producer never emits. Production
+/// then refused every landmark with "a landmark has no distanceMBits", after
+/// the cluster half had already answered correctly.
+///
+/// ⚠ So: build fixtures from what the PRODUCER emits, not from what the
+/// consumer's parser happens to accept. A test that invents its own wire
+/// format tests its own copy of the wiring, and this one did.
 fn lm(name: &str, ty: &str, subtype: &str, dist: f64) -> serde_json::Value {
     serde_json::json!({
         "name": name,
         "type": ty,
         "subtype": subtype,
-        "distanceMBits": backend::fold_payload::bits(dist),
+        "distanceM": backend::fold_payload::bits(dist),
         "enclosing": false,
     })
 }

@@ -702,7 +702,13 @@ def dispatch (j : Json) : Json :=
       let nm ← need "name"
       let ty ← need "type"
       let sub ← need "subtype"
-      let db ← need "distanceMBits"
+      -- ⚠ THE FIELD IS `distanceM`, AND IT IS A BIT-PATTERN STRING. The Rust
+      -- `shape_landmarks` wrapper REMAPS `shapeLandmarks`' own `distanceMBits`
+      -- onto this name, because `DayEntry.parsePoi` and the trace-fed fold both
+      -- read it as `distanceM` with `jBits`. Reading `distanceMBits` here found
+      -- nothing and refused every landmark — measured against production on
+      -- 2026-08-24, after the cluster half had already answered correctly.
+      let db ← need "distanceM"
       pure { name := nm, type := ty, subtype := sub
            , distanceM := Float.ofBits db.toNat!.toUInt64
            , openingHours := str? e "openingHours"
