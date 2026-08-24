@@ -178,7 +178,8 @@
         "--no-warn-dirty",
         "--command",
         "cargo",
-        "test",
+        "nextest",
+        "run",
         "--manifest-path",
         "rust/Cargo.toml",
         "--workspace"
@@ -187,6 +188,24 @@
       "env": {},
       "name": "rust workspace tests",
       "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "cargo",
+        "test",
+        "--doc",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--workspace"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "rust doctests",
+      "timeout_s": 600
     },
     {
       "argv": [

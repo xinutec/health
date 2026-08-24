@@ -28,6 +28,16 @@
             pkgs.rustc
             pkgs.rustfmt
             pkgs.clippy
+            # `rust workspace tests` was the single largest row in the commit
+            # gate — 524 s measured on an idle machine, a third to a half of the
+            # whole run. nextest runs each test in its own process and schedules
+            # across binaries, which this suite (~50 test files) suits.
+            #
+            # ⚠ nextest does NOT run doctests, so the gate keeps a separate
+            # `cargo test --doc` row. There are zero doctests today, which is
+            # exactly why the row matters: without it, the first doctest anyone
+            # writes would silently never run.
+            pkgs.cargo-nextest
           ];
         };
       });

@@ -281,8 +281,40 @@ in  { name = "health"
         , name = "rust workspace tests"
         , argv =
             G.inDevShell
-              [ "cargo", "test", "--manifest-path", "rust/Cargo.toml", "--workspace" ]
+              [ "cargo"
+              , "nextest"
+              , "run"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "--workspace"
+              ]
         , timeout_s = 1800
+        }
+      , {-  ⚠ SEPARATE, because `cargo nextest` DOES NOT RUN DOCTESTS and the row
+            above is nextest now.
+
+            There are ZERO doctests in this workspace today, which is exactly why
+            this row exists rather than being skipped as pointless: without it,
+            the first doctest anyone writes would silently never run, and a check
+            that stops running while still reporting green is the failure this
+            gate is for.
+
+            It costs a couple of seconds against nextest's saving (524 s -> 276 s
+            measured 2026-08-25, 221 tests both ways — identical coverage, so the
+            switch loses nothing but doctests, and this row takes those back).
+        -}
+        G.Check::{
+        , name = "rust doctests"
+        , argv =
+            G.inDevShell
+              [ "cargo"
+              , "test"
+              , "--doc"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "--workspace"
+              ]
+        , timeout_s = 600
         }
       , G.Check::{
         , name = "lint (biome, backend)"
