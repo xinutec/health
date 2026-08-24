@@ -147,6 +147,33 @@ def VENUE_TYPES : List String := ["amenity", "tourism", "shop"]
     subtypes name areas, not visitable venues. -/
 def PRIOR_TYPES : List String := ["amenity", "tourism", "shop", "leisure"]
 
+/-- Maximum distance at which a landmark counts as "the place the user is at"
+    for the `focus_places` amenity vote. Beyond it the venue is something the
+    stay is NEAR, not AT, and must not name the place. 50 m is a typical urban
+    building footprint, and `LODGING_MAX_DIST_M` is deliberately the same. -/
+def VENUE_VOTE_MAX_DIST_M : Float := 50
+
+/--
+The amenity vote's gate: a landmark may name a cluster only if it is a real
+venue type AND close enough to be the place the stay is actually at.
+
+A park (`leisure`) the stay merely sits near, a pedestrian way, or a café 80 m
+off all fail — they name an AREA, not a venue, and the cluster is better left
+with no `amenity_label` (the runtime then resolves a neutral area/address)
+than labelled with a place the user was never inside.
+
+⚠ Takes the two fields rather than a `Landmark`, because it is asked of BOTH
+landmark shapes: `rankVenues`' input (`VenuePrior.Landmark`) and the shaped
+output of `nearbyLandmarks` (`Landmarks.Landmark`). In the TypeScript those
+are one type, so a version taking either would have to pick one and leave the
+other call site to convert.
+
+⚠ Absent from Lean entirely until 2026-08-24 (\#1003): it is a mining-only
+gate, and no live comparison reaches the mining path.
+-/
+def isLabelWorthyVenue (type : String) (distanceM : Float) : Bool :=
+  VENUE_TYPES.contains type && decide (distanceM ≤ VENUE_VOTE_MAX_DIST_M)
+
 /-- Premises-less street furniture — objects nobody can be "at" for a
     10-minute-plus stay. The ONLY binary rule here; anything with premises is
     weighted via the mined prior instead. -/
@@ -690,6 +717,22 @@ private def priors : VenuePriors := minePriors attributed
 #guard (attributeStayVenue [LM "Park" "leisure" "park" 5]).isNone
 #guard (attributeStayVenue [LM "Post Box" "amenity" "post_box" 5]).isNone
 #guard (attributeStayVenue []).isNone
+
+/-! ### `isLabelWorthyVenue` -/
+
+#guard isLabelWorthyVenue "amenity" 10
+#guard isLabelWorthyVenue "tourism" 10
+#guard isLabelWorthyVenue "shop" 10
+-- ⚠ `leisure` is a PRIOR type but not a VOTE type: a park names an area, and
+-- the two lists differ by exactly this entry.
+#guard !isLabelWorthyVenue "leisure" 10
+#guard !isLabelWorthyVenue "place" 1
+#guard !isLabelWorthyVenue "highway" 1
+-- Inclusive at 50 m, and the metre past it fails.
+#guard isLabelWorthyVenue "amenity" 50
+#guard !isLabelWorthyVenue "amenity" 51
+-- The café 80 m off from the module note.
+#guard !isLabelWorthyVenue "amenity" 80
 
 /-! ### `stayResponsibilities` -/
 

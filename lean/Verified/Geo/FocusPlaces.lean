@@ -441,8 +441,22 @@ def assignDisplayNames (clusters : List Cluster) : List (Int × String) := Id.ru
 The dominant amenity name from a weighted vote (typically dwell seconds), or
 `none` when the evidence is sparse or contested — the caller then falls back
 to per-visit OSM lookup.
+
+`weightExempt` names venues some stay saw from inside the near field
+(`VenuePrior.NEAR_FIELD_DECISIVE_M`). Such a name skips the DWELL floor and
+only the dwell floor: one fix sitting on the venue establishes "you have been
+in here" as well as ten would, so a short first visit is not a reason to
+withhold the label. The MAJORITY floor still applies — being inside a venue
+says nothing about which of two contested names is right.
+
+⚠ Absent here from the port on 2026-07-24 until 2026-08-24 while the
+TypeScript grew it on 2026-08-15 (`c506a7b`). Nothing caught it: this is the
+one focus-mining export no live comparison reaches (`ServeEntry.lean`), so its
+only check was the guards below — and a guard cannot fail for a parameter that
+does not exist yet (#1003).
 -/
-def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction : Float) : Option String := Id.run do
+def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction : Float)
+    (weightExempt : List String := []) : Option String := Id.run do
   if votes.isEmpty then return none
   let mut total : Float := 0
   let mut winner := ""
@@ -452,7 +466,7 @@ def pickWinningAmenity (votes : List (String × Float)) (minWeight minFraction :
     if decide (w > winnerWeight) then
       winnerWeight := w
       winner := name
-  if decide (total < minWeight) then return none
+  if decide (total < minWeight) && !(weightExempt.contains winner) then return none
   if decide (winnerWeight / total < minFraction) then return none
   return some winner
 
@@ -756,6 +770,17 @@ private def workC : Cluster := mkCluster 2 51.53 (-0.13) (workdays 25 51.53 (-0.
 #guard pickWinningAmenity [("Cafe A", 300), ("Cafe B", 700)] 100 0.5 == some "Cafe B"
 -- An exact tie keeps the first-seen name (strict `>` in the argmax).
 #guard pickWinningAmenity [("A", 500), ("B", 500)] 100 0.5 == some "A"
+-- The near-field exemption (#1003): the winner was seen from inside the venue,
+-- so the dwell floor does not withhold its name.
+#guard pickWinningAmenity [("Cafe A", 90)] 100 0.5 ["Cafe A"] == some "Cafe A"
+-- The exemption is keyed on the WINNER, not on membership: exempting a name
+-- that lost buys nothing, and must not rescue the vote.
+#guard (pickWinningAmenity [("Cafe A", 30), ("Cafe B", 60)] 100 0.5 ["Cafe A"]).isNone
+-- ⚠ It skips the dwell floor ONLY. A contested vote stays none however close
+-- the fix was — standing inside one of two candidates does not settle which.
+#guard (pickWinningAmenity [("Cafe A", 52), ("Cafe B", 48)] 100 0.6 ["Cafe A"]).isNone
+-- With no exemption list the behaviour is exactly what it was before it existed.
+#guard (pickWinningAmenity [("Cafe A", 90)] 100 0.5 []).isNone
 
 /-! ### `splitCluster` -/
 
