@@ -2443,14 +2443,10 @@ async fn decode_day(user: Option<&str>, dates: &[String], days: Option<i64>) -> 
             .await?
             .unwrap_or_else(|| "Europe/London".into());
         let targets: Vec<String> = if dates.is_empty() {
-            let n = days.unwrap_or(DECODE_DEFAULT_DAYS);
-            (0..n)
-                .map(|o| {
-                    (chrono::Utc::now() - chrono::Duration::days(o))
-                        .format("%Y-%m-%d")
-                        .to_string()
-                })
-                .collect()
+            backend::classification_inputs::decode_window(
+                chrono::Utc::now(),
+                days.unwrap_or(DECODE_DEFAULT_DAYS),
+            )
         } else {
             dates.to_vec()
         };

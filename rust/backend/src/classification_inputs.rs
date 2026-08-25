@@ -1003,6 +1003,24 @@ pub fn shift_day(date: &str, days: i64) -> Result<String> {
         .to_string())
 }
 
+/// The default decode window: `n` days ending YESTERDAY, most recent first.
+///
+/// ⚠ STARTS AT YESTERDAY, never today, and `src/cli/decode-day.ts` loops
+/// `d = 1; d <= days` for the same reason. At the cron's 06:00 today is a
+/// six-hour stub, and `save_decode` stamps whatever it writes with the current
+/// `CLASSIFIER_VERSION` — so a stub row does not read as stale to a consumer,
+/// it reads as a decoded day that happens to be nearly empty. Starting at 0
+/// also drops the oldest day of the requested window, silently.
+pub fn decode_window(now: chrono::DateTime<chrono::Utc>, days: i64) -> Vec<String> {
+    (1..=days)
+        .map(|o| {
+            (now - chrono::Duration::days(o))
+                .format("%Y-%m-%d")
+                .to_string()
+        })
+        .collect()
+}
+
 /// The PhoneTrack half of the day's inputs: three fix windows and the battery
 /// tail. The last input, and the only one that is not SQL.
 ///
