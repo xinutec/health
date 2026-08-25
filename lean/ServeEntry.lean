@@ -656,8 +656,94 @@ private def parseStationNode (j : Json) : Except String Verified.Hsmm.TrainCandi
   let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
   return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon", name, edgeIds.toList⟩
 
+/-! ## Building the observation tensor here, instead of receiving it
+
+⚠ THE TENSOR IS 1440 ROWS AND IT DOES NOT NEED TO CROSS THE WIRE. Shipping it is
+what #411 measures at 33-40 MiB per day. Everything it is built FROM is small:
+the day's fixes, three biometric streams, and two per-minute lookup tables the
+shell must resolve because they are not pure — the local hour/day-of-week (a
+timezone) and the road/rail distances (an OSM query).
+
+So `assemblesegments` accepts EITHER form:
+
+    "obs"          a pre-built array of rows   — what the TS shadow path sends
+    "observation"  the raw materials           — what `decode-day` sends
+
+⚠ The two are not interchangeable by accident: `head::capture`'s `obs` is the DAY
+TENANT's object and has nothing to do with this. decode-day sent it for a week
+and every run failed with `array expected`, because a compile cannot tell two
+tensors apart when they share a field name.
+-/
+
+private def parseGpsPoint (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?, lat := ← jFloatField j "lat"
+         , lon := ← jFloatField j "lon", speedKmh := ← jFloatField j "speedKmh" }
+
+private def parseHrPoint (j : Json) : Except String Verified.Hsmm.Observation.HrPoint := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?, bpm := ← jFloatField j "bpm" }
+
+private def parseStepPoint (j : Json) : Except String Verified.Hsmm.Observation.StepPoint := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?, steps := ← jFloatField j "steps" }
+
+private def parseSleepRec (j : Json) : Except String Verified.Hsmm.Observation.SleepRec := do
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+         , endTs := ← (← j.getObjVal? "endTs").getInt? }
+
+/-- Build the tensor from raw materials.
+
+⚠ `localCtx` AND `proximity` ARE LOOKUP TABLES, NOT FUNCTIONS, because JSON has
+no functions. `localCtx` is 1440 `[hourLocal, dayOfWeek]` pairs indexed by minute;
+`proximity` is a list of `[minuteTs, roadDistM|null, railDistM|null]` for the
+minutes that HAD fixes — sparse on purpose, since a minute with no fix has no
+position to be near anything.
+
+⚠ A MINUTE MISSING FROM `proximity` IS `(none, none)`, which is "not known to be
+near either", NOT "far from both". The decoder treats a null as no evidence; a
+large number would be evidence AGAINST rail. -/
+private def parseObservationInput (v : Json)
+    : Except String (Array Verified.Hsmm.Observation.ObsRow) := do
+  let startUtc ← (← v.getObjVal? "startUtc").getInt?
+  let points ← (← (← v.getObjVal? "points").getArr?).mapM parseGpsPoint
+  let hr ← (← (← v.getObjVal? "hr").getArr?).mapM parseHrPoint
+  let steps ← (← (← v.getObjVal? "steps").getArr?).mapM parseStepPoint
+  let sleep ← (← (← v.getObjVal? "sleep").getArr?).mapM parseSleepRec
+  let imputeCadence ← (← v.getObjVal? "imputeCadence").getBool?
+  -- The local-time table: 1440 [hour, dayOfWeek] pairs.
+  let ctxArr ← (← (← v.getObjVal? "localCtx").getArr?).mapM (fun e => do
+    let a ← e.getArr?
+    let some h := a[0]? | throw "localCtx: a row is not [hour, dayOfWeek]"
+    let some d := a[1]? | throw "localCtx: a row is not [hour, dayOfWeek]"
+    pure ((← h.getNat?), (← d.getNat?)))
+  if ctxArr.size != Verified.Hsmm.Observation.MINUTES_PER_DAY then
+    throw s!"localCtx has {ctxArr.size} rows, not {Verified.Hsmm.Observation.MINUTES_PER_DAY}"
+  -- The proximity table, sparse and keyed by top-of-minute ts.
+  let proxPairs ← (← (← v.getObjVal? "proximity").getArr?).mapM (fun e => do
+    let a ← e.getArr?
+    let some tsJ := a[0]? | throw "proximity: a row is not [ts, road, rail]"
+    let road : Option Float := match a[1]? with
+      | some x => if x.isNull then none else (jFloat x).toOption
+      | none => none
+    let rail : Option Float := match a[2]? with
+      | some x => if x.isNull then none else (jFloat x).toOption
+      | none => none
+    pure ((← tsJ.getInt?), road, rail))
+  let proxMap : Std.HashMap Int (Option Float × Option Float) :=
+    proxPairs.foldl (fun m (t, r, l) => m.insert t (r, l)) {}
+  return Verified.Hsmm.Observation.buildObservationTensor startUtc
+    points.toList hr.toList steps.toList sleep.toList
+    (fun m => ctxArr[m]!)
+    (fun ts => proxMap.getD ts (none, none))
+    imputeCadence
+
 private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.ModelContext × Nat) := do
-  let obs ← (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
+  -- ⚠ `observation` WINS when both are present, and that is not arbitrary: the
+  -- raw form is the one that cannot be stale, because it is what the tensor
+  -- would be built from anyway.
+  let obs ← match j.getObjVal? "observation" with
+    | .ok v => if v.isNull then
+                 (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
+               else parseObservationInput v
+    | .error _ => (← (← j.getObjVal? "obs").getArr?).mapM parseObsRow
   let edges ← (← (← j.getObjVal? "edges").getArr?).mapM parseEdge
   let places ← (← (← j.getObjVal? "places").getArr?).mapM parsePlace
   let model := Verified.Hsmm.RouteModel.buildRouteGraphModel edges
