@@ -197,6 +197,24 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
+        // `src/cli/refresh-rail-routes.ts` — the nightly rail corridor miner.
+        "refresh-rail-routes" => {
+            let window: i64 = match flags {
+                [] => RAIL_DEFAULT_WINDOW_DAYS,
+                [n] => match n.parse::<i64>() {
+                    Ok(v) if v > 0 => v,
+                    _ => {
+                        eprintln!("refresh-rail-routes: invalid window {n:?}");
+                        std::process::exit(2);
+                    }
+                },
+                _ => {
+                    eprintln!("usage: backend refresh-rail-routes [window-days]");
+                    std::process::exit(64);
+                }
+            };
+            refresh_rail_routes(window).await
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -1969,6 +1987,340 @@ const FOCUS_FETCH_CHUNK_DAYS: i64 = 7;
 /// comment claims — the cron passes no argument, so this is what production
 /// actually mines.
 const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
+
+/// Pool each rail route's historic GPS corridor and snap it, filling
+/// `rail_route_cache`.
+///
+/// Tier 2 of #982 — the node cron is `src/cli/refresh-rail-routes.ts`, nightly
+/// at 05:00. Two passes, as there: walk the window pooling every train leg's
+/// fixes per route key, then snap each pooled cloud once.
+///
+/// ⚠ THE SNAP IS ENTIRELY LEAN. `Verified.Geo.RailSnap` holds `buildRailGraph`,
+/// `edgeWeight`, `bridgeGaps`, `shortestPath` and `nearestVertex` (123 guards),
+/// and the `railsnap` serve mode hands it the RAW ways. The TypeScript builds
+/// the graph shell-side and asks Lean only for `dijkstraC`; rebuilding it in
+/// Rust would put the vertex fusion and the corridor weighting back on this
+/// side of the boundary, which is the half that drifts (#1003).
+async fn refresh_rail_routes(window_days: i64) -> Result<()> {
+    // ⚠ `from_env_batch`, NOT `from_env`: this pod sets DB_* and NC_* and no
+    // FITBIT_*, and the day pipeline never touches Fitbit. The strict config
+    // here is what failed `refresh-presence-log` and `refresh-focus-places` in
+    // production, both times AFTER the job had done real work.
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+    let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
+
+    let users: Vec<String> = sqlx::query_scalar("SELECT user_id FROM nc_tokens")
+        .fetch_all(&pool)
+        .await
+        .context("listing users with Nextcloud linked")?;
+    if users.is_empty() {
+        eprintln!("refresh-rail-routes: no users with Nextcloud linked");
+        pool.close().await;
+        return Ok(());
+    }
+
+    /// One route's pooled evidence: every train leg's fixes on that key, plus a
+    /// representative window. The stored geometry carries no timestamps, so any
+    /// instance's window will do for the interpolation.
+    struct RouteAcc {
+        fixes: Vec<(f64, f64)>,
+        start_ts: f64,
+        end_ts: f64,
+    }
+    // ⚠ INSERTION-ORDERED. A `HashMap` here would make the upsert order — and
+    // so the log — vary run to run for no reason, and this job's output is read
+    // by eye when a route looks wrong.
+    let mut by_route: std::collections::BTreeMap<String, RouteAcc> =
+        std::collections::BTreeMap::new();
+
+    for user_id in &users {
+        let tz = backend::sync_state::get(&pool, user_id, "home_tz")
+            .await
+            .context("reading home_tz")?
+            .unwrap_or_else(|| "Europe/London".into());
+        eprintln!("[{user_id}] scanning {window_days}-day window (tz={tz})");
+
+        for offset in 0..=window_days {
+            let date = (chrono::Utc::now() - chrono::Duration::days(offset))
+                .format("%Y-%m-%d")
+                .to_string();
+            // ⚠ A day that will not compute is SKIPPED with a warning, not an
+            // abort — one bad day must not cost the other twenty. The
+            // TypeScript does the same, and the pooled corridor degrades
+            // gracefully because it is a union over many days.
+            let result =
+                match backend::routes::velocity::compute(&st, user_id, &date, Some(&tz)).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[{user_id} {date}] velocity failed: {e:#}");
+                        continue;
+                    }
+                };
+            let empty = Vec::new();
+            let segments = result
+                .get("segments")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or(&empty);
+            let points = result
+                .get("points")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or(&empty);
+
+            for seg in segments {
+                // `refinedMode ?? mode`, the TypeScript's precedence.
+                let mode = seg
+                    .get("refinedMode")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| seg.get("mode").and_then(serde_json::Value::as_str))
+                    .unwrap_or("");
+                if mode != "train" {
+                    continue;
+                }
+                let Some(way_name) = seg.get("wayName").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let (Some(s), Some(e)) = (
+                    seg.get("startTs").and_then(serde_json::Value::as_f64),
+                    seg.get("endTs").and_then(serde_json::Value::as_f64),
+                ) else {
+                    continue;
+                };
+                let in_win: Vec<(f64, f64)> = points
+                    .iter()
+                    .filter(|p| {
+                        p.get("ts")
+                            .and_then(serde_json::Value::as_f64)
+                            .is_some_and(|t| t >= s && t <= e)
+                    })
+                    .filter_map(|p| Some((p.get("lat")?.as_f64()?, p.get("lon")?.as_f64()?)))
+                    .collect();
+                if in_win.is_empty() {
+                    continue;
+                }
+                by_route
+                    .entry(way_name.to_string())
+                    .and_modify(|a| a.fixes.extend_from_slice(&in_win))
+                    .or_insert(RouteAcc {
+                        fixes: in_win,
+                        start_ts: s,
+                        end_ts: e,
+                    });
+            }
+        }
+    }
+    eprintln!(
+        "refresh-rail-routes: {} route key(s) pooled",
+        by_route.len()
+    );
+
+    let mut routes: Vec<(String, serde_json::Value)> = Vec::new();
+    for (key, acc) in &by_route {
+        match rail_route_geometry(&pool, key, acc.start_ts, acc.end_ts, &acc.fixes).await? {
+            Some(geom) if geom.len() >= 2 => {
+                eprintln!(
+                    "  resolved route → {} pts ({} historic fixes)",
+                    geom.len(),
+                    acc.fixes.len()
+                );
+                routes.push((key.clone(), serde_json::Value::Array(geom)));
+            }
+            _ => eprintln!(
+                "  route left un-snapped ({} historic fixes — thin or disconnected)",
+                acc.fixes.len()
+            ),
+        }
+    }
+
+    eprintln!(
+        "Computed {} route geometries; upserting into rail_route_cache",
+        routes.len()
+    );
+    if !routes.is_empty() {
+        // ⚠ UPSERT, never a wipe-and-rebuild. A DELETE-all here silently dropped
+        // every route key not ridden inside the scan window, so browsing an
+        // older day drew its rides raw forever — and it would also discard the
+        // serving path's miss-driven fills for routes that never recur.
+        let mut tx = pool.begin().await.context("opening the rail transaction")?;
+        for (key, geom) in &routes {
+            sqlx::query(
+                "INSERT INTO rail_route_cache (route_key, geometry_json) VALUES (?, ?) \
+                 ON DUPLICATE KEY UPDATE geometry_json = VALUES(geometry_json), \
+                                         computed_at = CURRENT_TIMESTAMP",
+            )
+            .bind(key)
+            .bind(serde_json::to_string(geom)?)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("upserting rail route {key}"))?;
+        }
+        tx.commit().await.context("committing rail_route_cache")?;
+    }
+    eprintln!("rail_route_cache upserted: {} routes", routes.len());
+    pool.close().await;
+    Ok(())
+}
+
+/// The corridor around a pooled fix cloud, snapped — `computeRailRoute`'s twin.
+///
+/// Corridor-weighted snap first; if that refuses (thin cloud, ambiguous
+/// corridor) and the key names a line, route between the two stations over ONLY
+/// that line's ways. `None` means LEAVE IT RAW — never a guessed path.
+///
+/// ⚠ The line-restricted retry passes the SAME way list. Lean's
+/// `snapTrainSegmentOnLine` does the filtering itself with `wayOnLine`, so
+/// nothing is asked of this caller beyond the full list — which is why the
+/// fallback needs no second query and no station lookup here.
+async fn rail_route_geometry(
+    pool: &sqlx::MySqlPool,
+    key: &str,
+    start_ts: f64,
+    end_ts: f64,
+    fixes: &[(f64, f64)],
+) -> Result<Option<Vec<serde_json::Value>>> {
+    use sqlx::Row as _;
+
+    if fixes.is_empty() {
+        return Ok(None);
+    }
+    // The bbox the corridor is scanned over, padded like `corridorBox`.
+    let (mut min_lat, mut max_lat) = (f64::INFINITY, f64::NEG_INFINITY);
+    let (mut min_lon, mut max_lon) = (f64::INFINITY, f64::NEG_INFINITY);
+    for (la, lo) in fixes {
+        min_lat = min_lat.min(*la);
+        max_lat = max_lat.max(*la);
+        min_lon = min_lon.min(*lo);
+        max_lon = max_lon.max(*lo);
+    }
+    // ⚠ A METRES margin converted to degrees, with the longitude term corrected
+    // for latitude — NOT a fixed degree pad. A constant 0.01 deg would be ~1.1 km
+    // north-south everywhere but only ~700 m east-west in London and ~1.1 km at
+    // the equator, so the corridor would silently narrow the further north the
+    // ride was. This mirrors `corridorBox`.
+    let d_lat = RAIL_CORRIDOR_MARGIN_M / 111_320.0;
+    let mid_lat = (min_lat + max_lat) / 2.0;
+    let d_lon =
+        RAIL_CORRIDOR_MARGIN_M / (111_320.0 * (mid_lat * std::f64::consts::PI / 180.0).cos());
+    let (min_lat, max_lat) = (min_lat - d_lat, max_lat + d_lat);
+    let (min_lon, max_lon) = (min_lon - d_lon, max_lon + d_lon);
+    let poly = format!(
+        "POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},{max_lon} {max_lat},\
+         {min_lon} {max_lat},{min_lon} {min_lat}))"
+    );
+
+    // ⚠ `feature_type = 'railway'`, the mirror's BUCKET. `subtype` carries the
+    // OSM value (rail, subway, station, …); filtering on subtype here would
+    // drop the ways `isRailSubtype` is meant to judge.
+    let line_rows = sqlx::query(
+        "SELECT name, subtype, ST_AsText(geom) AS wkt FROM osm_lines \
+         WHERE feature_type = 'railway' \
+           AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT ?",
+    )
+    .bind(&poly)
+    .bind(RAIL_CORRIDOR_LINE_LIMIT)
+    .fetch_all(pool)
+    .await
+    .context("querying the rail corridor")?;
+
+    let mut lines: Vec<serde_json::Value> = Vec::with_capacity(line_rows.len());
+    for r in &line_rows {
+        let wkt: String = r.try_get("wkt")?;
+        let coords = parse_linestring_wkt(&wkt);
+        if coords.len() < 2 {
+            continue;
+        }
+        lines.push(serde_json::json!({
+            "name": r.try_get::<Option<String>, _>("name")?,
+            "subtype": r.try_get::<Option<String>, _>("subtype")?,
+            "coords": coords,
+        }));
+    }
+
+    let station_rows = sqlx::query(
+        "SELECT name, subtype, ST_AsText(geom) AS wkt FROM osm_points \
+         WHERE feature_type = 'railway' \
+           AND subtype IN ('station','halt','stop','subway_entrance','tram_stop') \
+           AND MBRIntersects(geom, ST_GeomFromText(?, 4326))",
+    )
+    .bind(&poly)
+    .fetch_all(pool)
+    .await
+    .context("querying rail stations")?;
+
+    let mut stations: Vec<serde_json::Value> = Vec::with_capacity(station_rows.len());
+    for r in &station_rows {
+        let wkt: String = r.try_get("wkt")?;
+        let Some((lat, lon)) = parse_point_wkt(&wkt) else {
+            continue;
+        };
+        stations.push(serde_json::json!({
+            "name": r.try_get::<Option<String>, _>("name")?,
+            "subtype": r.try_get::<Option<String>, _>("subtype")?,
+            "latBits": backend::fold_payload::bits(lat),
+            "lonBits": backend::fold_payload::bits(lon),
+        }));
+    }
+
+    for on_line in [false, true] {
+        if let Some(path) =
+            backend::lean::rail_snap(key, start_ts, end_ts, &lines, &stations, fixes, on_line)?
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// `LINESTRING(lon lat, …)` → `[[latBits, lonBits], …]`.
+///
+/// ⚠ WKT IS `lon lat`, THE OTHER WAY ROUND. Getting it backwards puts every
+/// rail way in the wrong hemisphere, where the graph builds fine and the snap
+/// simply never finds a route — a silent empty answer rather than an error.
+fn parse_linestring_wkt(wkt: &str) -> Vec<serde_json::Value> {
+    let Some(inner) = wkt
+        .trim()
+        .strip_prefix("LINESTRING(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .filter_map(|pair| {
+            let mut it = pair.split_whitespace();
+            let lon: f64 = it.next()?.parse().ok()?;
+            let lat: f64 = it.next()?.parse().ok()?;
+            Some(serde_json::json!([
+                backend::fold_payload::bits(lat),
+                backend::fold_payload::bits(lon)
+            ]))
+        })
+        .collect()
+}
+
+/// `POINT(lon lat)` → `(lat, lon)`. Same axis-order warning as above.
+fn parse_point_wkt(wkt: &str) -> Option<(f64, f64)> {
+    let inner = wkt
+        .trim()
+        .strip_prefix("POINT(")
+        .and_then(|s| s.strip_suffix(')'))?;
+    let mut it = inner.split_whitespace();
+    let lon: f64 = it.next()?.parse().ok()?;
+    let lat: f64 = it.next()?.parse().ok()?;
+    Some((lat, lon))
+}
+
+/// Margin (m) around a train run's fixes when reading its rail corridor — wide
+/// enough that the line and BOTH stations fall inside the box even where the
+/// fixes scatter off the track. The TypeScript's `RAIL_CORRIDOR_MARGIN_M`.
+const RAIL_CORRIDOR_MARGIN_M: f64 = 1500.0;
+/// The TypeScript's `LIMIT 12000`.
+const RAIL_CORRIDOR_LINE_LIMIT: i64 = 12000;
+/// The TypeScript's `DEFAULT_WINDOW_DAYS`.
+const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
 
 /// Rebuild `presence_log` from `decoded_days` over a bounded window.
 ///

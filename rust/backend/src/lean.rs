@@ -2115,3 +2115,68 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
         "totalVisits": bits(&w.value.total_visits_bits)?,
     }))
 }
+
+/// One train leg snapped onto its rail corridor — the `railsnap` serve mode
+/// over `Verified.Geo.RailSnap`.
+///
+/// ⚠ THE WHOLE SNAP CROSSES, not just the shortest path. `RailSnap.lean` holds
+/// `buildRailGraph`, `edgeWeight`, `bridgeGaps`, `nearestVertex` and the vertex
+/// fusion (123 guards); the production TypeScript builds the graph itself and
+/// asks Lean only for `dijkstraC`. Handing over raw ways keeps all of that on
+/// the Lean side rather than growing a second implementation here (#1003).
+///
+/// `on_line` selects the fallback: `snapTrainSegmentOnLine` routes over ONLY the
+/// named line's ways with no fix cloud, which is what `computeRailRoute` reaches
+/// for when the corridor snap refuses. The two are NOT interchangeable — the
+/// corridor form declines below 12 fixes because a thin cloud cannot evidence a
+/// corridor, and the line form leans on the label instead.
+///
+/// `Ok(None)` means LEAVE IT RAW. Never a guessed path.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_snap(
+    way_name: &str,
+    start_ts: f64,
+    end_ts: f64,
+    lines: &[serde_json::Value],
+    stations: &[serde_json::Value],
+    fixes: &[(f64, f64)],
+    on_line: bool,
+) -> Result<Option<Vec<serde_json::Value>>> {
+    let req = serde_json::json!({
+        "mode": "railsnap",
+        "segment": {
+            "startTsBits": crate::fold_payload::bits(start_ts),
+            "endTsBits": crate::fold_payload::bits(end_ts),
+            "wayName": way_name,
+        },
+        "lines": lines,
+        "stations": stations,
+        "fixes": fixes.iter().map(|(la, lo)| serde_json::json!([
+            crate::fold_payload::bits(*la), crate::fold_payload::bits(*lo)
+        ])).collect::<Vec<_>>(),
+        "onLine": on_line,
+    });
+    let out = serve(&serde_json::to_string(&req)?)?;
+    let v: serde_json::Value = serde_json::from_str(&out).context("railsnap answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("railsnap: {e}");
+    }
+    // ⚠ `path: null` is the REFUSAL and is a normal answer — a leg whose
+    // stations do not resolve, or whose cloud is too thin. Distinct from an
+    // `error`, which is a malformed request.
+    let Some(path) = v.get("path").and_then(|p| p.as_array()) else {
+        return Ok(None);
+    };
+    // Emitted as `[latBits, lonBits, tsBits]`; the cache stores `{lat, lon}`.
+    let geom = path
+        .iter()
+        .filter_map(|p| {
+            let a = p.as_array()?;
+            let f = |i: usize| -> Option<f64> {
+                Some(f64::from_bits(a.get(i)?.as_str()?.parse::<u64>().ok()?))
+            };
+            Some(serde_json::json!({ "lat": f(0)?, "lon": f(1)? }))
+        })
+        .collect::<Vec<_>>();
+    Ok(if geom.is_empty() { None } else { Some(geom) })
+}
