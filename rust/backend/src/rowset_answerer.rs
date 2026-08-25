@@ -201,6 +201,13 @@ impl<S: RowSource> OsmAnswerer<S> {
     pub fn nearby_landmarks(&mut self, lat: f64, lon: f64) -> Result<Option<Value>> {
         nearby_landmarks(&mut self.source, lat, lon)
     }
+
+    /// The ways near a point — the free [`nearby_ways`] against this answerer's
+    /// own row source. Same reason as above: `source` is private and must stay
+    /// so, because the mirror may only be touched from a blocking thread.
+    pub fn nearby_ways(&mut self, lat: f64, lon: f64) -> Result<Option<Vec<Value>>> {
+        nearby_ways(&mut self.source, lat, lon)
+    }
 }
 
 impl<S: RowSource> OsmAnswerer<S> {
@@ -545,6 +552,50 @@ pub fn nearby_landmarks(source: &mut dyn RowSource, lat: f64, lon: f64) -> Resul
     Ok(Some(crate::lean::shape_landmarks(&points, &lines)?))
 }
 
+/// The ways near a point — the five-query `nearbyWays` fan-out, shaped.
+///
+/// ⚠ EXTRACTED for the same reason as [`nearby_landmarks`]: `decode-day` (#982
+/// Tier 2) needs the rail-vs-road distance for every minute that had a fix, and
+/// a second copy of "four line buckets plus the aeroway points, flattened with
+/// the bucket as `type`" is exactly what drifts while nothing compares the two
+/// (#1003).
+///
+/// ⚠ ANY bucket the source cannot vouch for declines the WHOLE answer.
+/// `nearbyWays` is one table built from five queries, and answering with four
+/// would report the aerodrome-free version of a coordinate as if it were
+/// complete. `Ok(None)` is "the mirror could not answer", NOT "nothing here".
+pub fn nearby_ways(source: &mut dyn RowSource, lat: f64, lon: f64) -> Result<Option<Vec<Value>>> {
+    let radius = default_radius_m::NEARBY_WAYS;
+    let r = bits(radius);
+    let lat_s = bits(lat);
+    let lon_s = bits(lon);
+    let mut ways = Vec::new();
+    // ⚠ ONE query for the four line buckets, not four (#1071) — and the bucket
+    // comes BACK as a column. Inferring it here would label every way the same
+    // and still look well-formed.
+    let Some(by_bucket) = source.line_rows_multi(
+        &["highway", "railway", "waterway", "aeroway"],
+        lat,
+        lon,
+        radius,
+    )?
+    else {
+        return Ok(None);
+    };
+    for (bucket, rows) in by_bucket {
+        let v = spatial("queryLines", &lat_s, &lon_s, &r, rows)?;
+        push_ways(&mut ways, &bucket, &v);
+    }
+    // OSM tags airports as nodes as well as ways; dropping this loses aerodrome
+    // markers and terminals, and the result would still look complete.
+    let Some(rows) = source.point_rows("aeroway", lat, lon, radius)? else {
+        return Ok(None);
+    };
+    let v = spatial("queryPoints", &lat_s, &lon_s, &r, rows)?;
+    push_ways(&mut ways, "aeroway", &v);
+    Ok(Some(ways))
+}
+
 fn spatial(op: &str, lat: &str, lon: &str, radius: &str, rows: Vec<Value>) -> Result<Value> {
     let req = json!({
         "mode": "osmspatial", "op": op,
@@ -600,39 +651,19 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // as `type`. Dropping the point query loses aerodrome markers and
             // terminals, which OSM tags as nodes rather than ways — and the
             // result would still be a well-formed, slightly emptier answer.
+            // ⚠ THE SERVING PATH AND `decode-day` SHARE ONE IMPLEMENTATION — see
+            // the free `nearby_ways`. It was inlined here until 2026-08-25; the
+            // cron needs the same five-query fan-out per fix-bearing minute, and
+            // a second copy is what drifts while nothing compares the two.
+            //
+            // ⚠ THE KEY PARTS ARE REUSED VERBATIM. `lat`/`lon` go back into the
+            // table as the bit-pattern strings the fold spelled them with, NOT
+            // re-encoded from the parsed floats — a float round-trip through
+            // text has already disagreed with V8 by an ULP once in this port.
             "nearbyWays" => {
-                let r = bits(default_radius_m::NEARBY_WAYS);
-                let mut ways = Vec::new();
-                // ⚠ ANY bucket the source cannot vouch for declines the WHOLE
-                // answer. `nearbyWays` is one table built from five queries, so
-                // answering with four of them would report the aerodrome-free
-                // version of a coordinate as if it were complete.
-                // ⚠ ONE query for the four line buckets, not four (#1071). The
-                // bucket comes back as a column and is carried through to
-                // `push_ways`, which writes it as each way's `type` — inferring
-                // it here would label every way the same and still look
-                // well-formed.
-                let Some(by_bucket) = self.source.line_rows_multi(
-                    &["highway", "railway", "waterway", "aeroway"],
-                    flat,
-                    flon,
-                    default_radius_m::NEARBY_WAYS,
-                )?
-                else {
+                let Some(ways) = nearby_ways(&mut self.source, flat, flon)? else {
                     return Ok(None);
                 };
-                for (bucket, rows) in by_bucket {
-                    let v = spatial("queryLines", lat, lon, &r, rows)?;
-                    push_ways(&mut ways, &bucket, &v);
-                }
-                let Some(rows) =
-                    self.source
-                        .point_rows("aeroway", flat, flon, default_radius_m::NEARBY_WAYS)?
-                else {
-                    return Ok(None);
-                };
-                let v = spatial("queryPoints", lat, lon, &r, rows)?;
-                push_ways(&mut ways, "aeroway", &v);
                 Ok(Some((
                     "nearbyWays".into(),
                     json!([lat, lon, Value::Array(ways)]),
