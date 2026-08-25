@@ -2254,3 +2254,294 @@ pub fn build_wire_graph(
     }))?;
     Ok((w.edges, w.nodes))
 }
+
+// ---------------------------------------------------------------------------
+// The two Overpass mirrors (#982 Tier 2).
+//
+// ⚠ EVERY DECISION BELOW IS LEAN'S. These wrappers move bytes and nothing else:
+// the region, the tiles, the query text, which relations survive, and whether
+// the run may write are all decided in `Verified.Geo.Osm*`. Adding a `if
+// routes.is_empty()` here would be re-deciding in Rust something that has a
+// guard in Lean.
+
+/// One tile of the mirror's grid, as Lean computed it.
+#[derive(Debug, Clone)]
+pub struct MirrorTile {
+    pub min_lat: f64,
+    pub max_lat: f64,
+    pub min_lon: f64,
+    pub max_lon: f64,
+}
+
+/// The mirror's plan: where the user lives, and the tiles to ask about.
+#[derive(Debug, Clone)]
+pub struct MirrorPlan {
+    pub bbox: MirrorTile,
+    pub tiles: Vec<MirrorTile>,
+    /// How many metropolitan regions the focus places fell into. Reported so a
+    /// run says which of them it chose to mirror.
+    pub region_count: i64,
+    pub place_count: i64,
+}
+
+/// ⚠ THE TILE KEY IS 4 DECIMAL PLACES OF THE SOUTH-WEST CORNER, matching
+/// `tileKey` in `refresh-bus-routes.ts`. It is stored on every row the tile
+/// produced and is what lets a partial run replace only the tiles that
+/// answered — so a change of precision here orphans every existing row.
+pub fn tile_key(t: &MirrorTile) -> String {
+    format!("{:.4},{:.4}", t.min_lat, t.min_lon)
+}
+
+fn tile_from(v: &serde_json::Value) -> Result<MirrorTile> {
+    let g = |k: &str| -> Result<f64> {
+        let s = v
+            .get(k)
+            .and_then(|x| x.as_str())
+            .with_context(|| format!("a tile has no {k}"))?;
+        Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
+            format!("a tile's {k} is {s:?}, not a bit pattern")
+        })?))
+    };
+    Ok(MirrorTile {
+        min_lat: g("minLat")?,
+        max_lat: g("maxLat")?,
+        min_lon: g("minLon")?,
+        max_lon: g("maxLon")?,
+    })
+}
+
+/// Cluster the recent focus places, take the home metro, and tile it.
+///
+/// `None` when there are no places to bound — "nothing to mirror", which the
+/// crons treat as a clean exit rather than an error.
+pub fn mirror_region(
+    points: &[(f64, f64)],
+    max_gap_km: f64,
+    max_cell_deg: f64,
+    margin_m: f64,
+) -> Result<Option<MirrorPlan>> {
+    let pts: Vec<Vec<String>> = points
+        .iter()
+        .map(|(lat, lon)| vec![lat.to_bits().to_string(), lon.to_bits().to_string()])
+        .collect();
+    let v: serde_json::Value = call_json(&serde_json::json!({
+        "op": "mirrorRegion",
+        "points": pts,
+        "maxGapKmBits": max_gap_km.to_bits().to_string(),
+        "maxCellDegBits": max_cell_deg.to_bits().to_string(),
+        "marginMBits": margin_m.to_bits().to_string(),
+    }))?;
+    let val = v.get("value").context("mirrorRegion returned no value")?;
+    if val.is_null() {
+        return Ok(None);
+    }
+    let tiles = val
+        .get("tiles")
+        .and_then(|t| t.as_array())
+        .context("mirrorRegion returned no tiles")?
+        .iter()
+        .map(tile_from)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some(MirrorPlan {
+        bbox: tile_from(val.get("bbox").context("mirrorRegion returned no bbox")?)?,
+        tiles,
+        region_count: val.get("regionCount").and_then(|x| x.as_i64()).unwrap_or(0),
+        place_count: val.get("placeCount").and_then(|x| x.as_i64()).unwrap_or(0),
+    }))
+}
+
+/// The Overpass QL for one tile. `mode` is `"rail"` or `"bus"`.
+///
+/// ⚠ THE COORDINATES ARE RENDERED HERE because Lean has no shortest-round-trip
+/// float renderer to match `${bbox.minLat}` with. That is safe for a query
+/// string Overpass parses and would NOT be safe for `stops_json`, which is
+/// compared row for row.
+pub fn overpass_query(mode: &str, t: &MirrorTile) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: String,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "overpassQuery",
+        "mode": mode,
+        "minLat": t.min_lat.to_string(),
+        "minLon": t.min_lon.to_string(),
+        "maxLat": t.max_lat.to_string(),
+        "maxLon": t.max_lon.to_string(),
+    }))?;
+    Ok(w.value)
+}
+
+/// A stop, as Lean resolved it. `seq` is the position in the route direction.
+#[derive(Debug, Clone, Serialize)]
+pub struct RouteStop {
+    // ⚠ FIELD ORDER IS THE SERIALISED ORDER and it must stay `name, lat, lon,
+    // seq`: `stops_json` is compared against the TypeScript arm's, and
+    // `JSON.stringify` follows the object literal. `serde` follows declaration
+    // order, so this declaration IS the wire format.
+    pub name: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+    pub seq: i64,
+}
+
+/// One extracted relation. The rail and bus arms differ in which of `line_ref` /
+/// `route_ref` may be absent; see the Lean modules.
+#[derive(Debug, Clone)]
+pub struct ExtractedRoute {
+    pub osm_relation_id: i64,
+    /// Rail only: subway | train | light_rail | tram.
+    pub route_type: Option<String>,
+    /// `ref` — required for bus, optional for rail.
+    pub route_ref: Option<String>,
+    pub route_name: Option<String>,
+    pub stops: Vec<RouteStop>,
+}
+
+/// Parse one tile's Overpass response and keep the relations worth mirroring.
+///
+/// ⚠ THE RAW BODY GOES TO LEAN. Narrowing it here first would mean parsing 5 MB
+/// twice and keeping a second definition of what an Overpass element is.
+pub fn extract_routes(mode: &str, body: &str) -> Result<Vec<ExtractedRoute>> {
+    let elements = crate::overpass::elements(body)?;
+    let v: serde_json::Value = call_json(&serde_json::json!({
+        "op": "extractRoutes",
+        "mode": mode,
+        "elements": elements,
+    }))?;
+    let arr = v
+        .get("value")
+        .and_then(|x| x.as_array())
+        .context("extractRoutes returned no array")?;
+    arr.iter()
+        .map(|r| {
+            let stops = r
+                .get("stops")
+                .and_then(|s| s.as_array())
+                .context("a route has no stops")?
+                .iter()
+                .map(|s| {
+                    let f = |k: &str| -> Result<f64> {
+                        let t = s
+                            .get(k)
+                            .and_then(|x| x.as_str())
+                            .with_context(|| format!("a stop has no {k}"))?;
+                        Ok(f64::from_bits(t.parse::<u64>().with_context(|| {
+                            format!("a stop's {k} is {t:?}, not a bit pattern")
+                        })?))
+                    };
+                    Ok(RouteStop {
+                        name: s.get("name").and_then(|x| x.as_str()).map(str::to_string),
+                        lat: f("lat")?,
+                        lon: f("lon")?,
+                        seq: s.get("seq").and_then(|x| x.as_i64()).unwrap_or(0),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(ExtractedRoute {
+                osm_relation_id: r
+                    .get("osmRelationId")
+                    .and_then(|x| x.as_i64())
+                    .context("a route has no osmRelationId")?,
+                route_type: r
+                    .get("routeType")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string),
+                route_ref: r
+                    .get("routeRef")
+                    .or_else(|| r.get("lineRef"))
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string),
+                route_name: r
+                    .get("routeName")
+                    .or_else(|| r.get("lineName"))
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string),
+                stops,
+            })
+        })
+        .collect()
+}
+
+/// May this run write, and if not, why not.
+#[derive(Debug, Clone)]
+pub struct RebuildVerdict {
+    pub may_write: bool,
+    /// Bus only: whether the run is authoritative for the whole bbox.
+    pub full_rebuild: bool,
+    pub refusal: Option<String>,
+}
+
+/// ⚠ THE TWO ARMS ANSWER DIFFERENTLY AND NEITHER IS RIGHT — #1134. Ported as
+/// they stand so the parity diff against the TypeScript still works.
+pub fn may_rebuild(
+    mode: &str,
+    found: usize,
+    tile_failures: usize,
+    tiles_total: usize,
+    existing: i64,
+) -> Result<RebuildVerdict> {
+    let v: serde_json::Value = call_json(&serde_json::json!({
+        "op": "mayRebuild",
+        "mode": mode,
+        "found": found,
+        "tileFailures": tile_failures,
+        "tilesTotal": tiles_total,
+        "existing": existing,
+    }))?;
+    let val = v.get("value").context("mayRebuild returned no value")?;
+    Ok(RebuildVerdict {
+        may_write: val
+            .get("mayWrite")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        full_rebuild: val
+            .get("fullRebuild")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        refusal: val
+            .get("refusal")
+            .and_then(|x| x.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// The circuit breaker's state, opaque to Rust — Lean owns its shape.
+#[derive(Debug, Clone)]
+pub struct BreakerState {
+    inner: serde_json::Value,
+    pub open: bool,
+}
+
+impl BreakerState {
+    pub fn new() -> Self {
+        BreakerState {
+            inner: serde_json::json!({ "failures": [], "openUntilMs": 0 }),
+            open: false,
+        }
+    }
+}
+
+impl Default for BreakerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Step the breaker. `event` is `"failure"`, `"success"`, or `"check"`.
+pub fn breaker_step(st: &BreakerState, event: &str, now_ms: u64) -> Result<BreakerState> {
+    let v: serde_json::Value = call_json(&serde_json::json!({
+        "op": "breaker",
+        "event": event,
+        "nowMs": now_ms,
+        "state": st.inner,
+    }))?;
+    let val = v.get("value").context("breaker returned no value")?;
+    Ok(BreakerState {
+        inner: val
+            .get("state")
+            .cloned()
+            .context("breaker returned no state")?,
+        open: val.get("open").and_then(|x| x.as_bool()).unwrap_or(false),
+    })
+}

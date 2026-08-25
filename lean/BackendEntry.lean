@@ -18,6 +18,11 @@ import Verified.Geo.LineStations
 import Verified.PresenceLog
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
+import Verified.Geo.OsmRegions
+import Verified.Geo.OsmRouteMembers
+import Verified.Geo.OsmRailStops
+import Verified.Geo.OsmBusRoutes
+import Verified.Geo.OverpassBreaker
 import Verified.Geo.FocusMining
 import Verified.Hsmm.RouteGraph
 import Verified.Session
@@ -1052,6 +1057,166 @@ def dispatch (j : Json) : Json :=
     | some [y, m, d, h, mi, s, ms] =>
       Json.mkObj [("value", Json.str (Verified.RowShape.formatDateTimeIso y m d h mi s ms))]
     | _ => err "formatIso: parts must be [y,m,d] or [y,m,d,h,mi,s,ms]"
+  -- The two Overpass mirrors' whole judgement (#982 Tier 2). The shell does
+  -- HTTP and SQL; every decision below — which region, which tiles, which
+  -- relations, and whether the run may write at all — is Lean's.
+  --
+  -- ⚠ THE RAW OVERPASS RESPONSE COMES IN HERE, not a pre-parsed shape. A tile is
+  -- ~5 MB and parsing it in Rust to hand Lean a narrowed structure would mean
+  -- two parses and a second definition of what an element is. `Verified.Geo.Osm*`
+  -- stays pure over its own types, and this is the only place that knows what
+  -- Overpass JSON looks like — the same split as every other op here.
+  | some "mirrorRegion" =>
+    -- Focus-place coordinates in, the home metro's tiles out. `points` are
+    -- [latBits, lonBits] pairs; the cutoff that made them "recent" is the
+    -- shell's, because it is a clock read.
+    let jb (v : Json) : Except String Float :=
+      match v.getStr? with
+      | .ok s => pure (Float.ofBits s.toNat!.toUInt64)
+      | .error _ => throw "mirrorRegion: a float is not a bit-pattern string"
+    let fb (x : Float) : Json := Json.str (toString x.toBits)
+    let ptOf (e : Json) : Except String Verified.Geo.OsmRegions.Pt := do
+      let a ← e.getArr?
+      match a[0]? , a[1]? with
+      | some la, some lo => pure { lat := ← jb la, lon := ← jb lo }
+      | _, _ => throw "mirrorRegion: a point is not [latBits, lonBits]"
+    let run : Except String Json := do
+      let pts ← (← (← j.getObjVal? "points").getArr?).mapM ptOf
+      let gapKm ← jb (← j.getObjVal? "maxGapKmBits")
+      let cellDeg ← jb (← j.getObjVal? "maxCellDegBits")
+      let marginM ← jb (← j.getObjVal? "marginMBits")
+      match Verified.Geo.OsmRegions.homeRegionBbox pts gapKm marginM with
+      | none => pure (Json.mkObj [("value", Json.null)])
+      | some b =>
+        let tiles := Verified.Geo.OsmRegions.tileBbox b cellDeg
+        let boxJson := fun (x : Verified.Geo.OsmRegions.Bbox) =>
+          Json.mkObj [("minLat", fb x.minLat), ("maxLat", fb x.maxLat),
+                      ("minLon", fb x.minLon), ("maxLon", fb x.maxLon)]
+        pure (Json.mkObj
+          [("value", Json.mkObj
+            [ ("bbox", boxJson b)
+            , ("regionCount", Json.num (Verified.Geo.OsmRegions.clusterIntoRegionIndices pts gapKm).size)
+            , ("placeCount", Json.num pts.size)
+            , ("tiles", Json.arr (tiles.map boxJson)) ])])
+    match run with | .ok v => v | .error e => err e
+  -- One tile's Overpass response, parsed and filtered. `mode` picks the arm;
+  -- the two arms disagree about `ref` and about which tile's copy wins, and
+  -- both disagreements are deliberate (see the module notes).
+  | some "extractRoutes" =>
+    let tagOf (e : Json) (k : String) : Option String :=
+      match e.getObjVal? "tags" with | .ok t => str? t k | _ => none
+    let natOf (e : Json) (k : String) : Option Nat :=
+      match e.getObjVal? k with
+      | .ok v => match v.getNat? with | .ok n => some n | _ => none
+      | _ => none
+    let fltOf (e : Json) (k : String) : Option Float :=
+      match e.getObjVal? k with
+      | .ok v => match v.getNum? with | .ok n => some n.toFloat | _ => none
+      | _ => none
+    let membersOf (e : Json) : Array Verified.Geo.OsmRouteMembers.Member :=
+      match e.getObjVal? "members" with
+      | .ok (.arr a) => a.map (fun m =>
+          { type := str? m "type", ref := natOf m "ref", role := str? m "role" })
+      | _ => #[]
+    let fb (x : Float) : Json := Json.str (toString x.toBits)
+    let stopJson := fun (s : Verified.Geo.OsmRouteMembers.RouteStop) =>
+      -- ⚠ FIELD ORDER IS name, lat, lon, seq — `stops_json` is compared row for
+      -- row against the TypeScript arm's, and `JSON.stringify` follows the
+      -- object literal's order. The shell renders the floats; it must keep this
+      -- order when it does.
+      Json.mkObj [("name", optStr s.name), ("lat", fb s.lat), ("lon", fb s.lon),
+                  ("seq", Json.num s.seq)]
+    let run : Except String Json := do
+      let els ← (← j.getObjVal? "elements").getArr?
+      let nodeOf (e : Json) : Option (Nat × Verified.Geo.OsmRouteMembers.ResolvedNode) :=
+        if str? e "type" == some "node" then
+          match natOf e "id", fltOf e "lat", fltOf e "lon" with
+          | some id, some lat, some lon =>
+            some (id, { lat := lat, lon := lon, name := tagOf e "name" })
+          | _, _, _ => none
+        else none
+      let nodes := els.filterMap nodeOf
+      let rels := els.filter (fun e => str? e "type" == some "relation")
+      match str? j "mode" with
+      | some "rail" =>
+        let raw : Array Verified.Geo.OsmRailStops.RawRelation := rels.map (fun e =>
+          { osmRelationId := (natOf e "id").getD 0, relType := tagOf e "type"
+          , route := tagOf e "route", ref := tagOf e "ref", name := tagOf e "name"
+          , members := membersOf e })
+        pure (Json.mkObj [("value", Json.arr
+          ((Verified.Geo.OsmRailStops.extractRailStopRelations raw nodes).map (fun r =>
+            Json.mkObj
+              [ ("osmRelationId", Json.num r.osmRelationId)
+              , ("routeType", Json.str r.routeType)
+              , ("lineRef", optStr r.lineRef)
+              , ("lineName", optStr r.lineName)
+              , ("stops", Json.arr (r.stops.map stopJson)) ])))])
+      | some "bus" =>
+        let raw : Array Verified.Geo.OsmBusRoutes.RawRelation := rels.map (fun e =>
+          { osmRelationId := (natOf e "id").getD 0, relType := tagOf e "type"
+          , route := tagOf e "route", ref := tagOf e "ref", name := tagOf e "name"
+          , members := membersOf e })
+        pure (Json.mkObj [("value", Json.arr
+          ((Verified.Geo.OsmBusRoutes.extractBusRoutes raw nodes).map (fun r =>
+            Json.mkObj
+              [ ("osmRelationId", Json.num r.osmRelationId)
+              , ("routeRef", Json.str r.routeRef)
+              , ("routeName", optStr r.routeName)
+              , ("stops", Json.arr (r.stops.map stopJson)) ])))])
+      | _ => throw "extractRoutes: mode must be \"rail\" or \"bus\""
+    match run with | .ok v => v | .error e => err e
+  -- The Overpass QL for one tile. Coordinates arrive already rendered — see
+  -- `buildRailStopsOverpassQuery`.
+  | some "overpassQuery" =>
+    match str? j "mode", str? j "minLat", str? j "minLon", str? j "maxLat", str? j "maxLon" with
+    | some "rail", some a, some b, some c, some d =>
+      Json.mkObj [("value", Json.str (Verified.Geo.OsmRailStops.buildRailStopsOverpassQuery a b c d))]
+    | some "bus", some a, some b, some c, some d =>
+      Json.mkObj [("value", Json.str (Verified.Geo.OsmBusRoutes.buildBusRouteOverpassQuery a b c d))]
+    | _, _, _, _, _ => err "overpassQuery: mode and four rendered coordinates required"
+  -- ⚠ MAY THIS RUN WRITE? The two arms answer differently and neither answer is
+  -- right — #1134 owns the decision, and both rules are ported as they stand so
+  -- the parity diff still works. See `Verified.Geo.OsmBusRoutes`.
+  | some "mayRebuild" =>
+    match str? j "mode", int? j "found", int? j "tileFailures", int? j "tilesTotal", int? j "existing" with
+    | some "rail", some found, some fails, _, _ =>
+      Json.mkObj [("value", Json.mkObj
+        [("mayWrite", Json.bool (Verified.Geo.OsmRailStops.mayRebuild found.toNat fails.toNat)),
+         ("refusal", Json.null)])]
+    | some "bus", _, some fails, some total, some existing =>
+      match Verified.Geo.OsmBusRoutes.rebuildRefusal existing.toNat fails.toNat total.toNat with
+      | none => Json.mkObj [("value", Json.mkObj
+          [("mayWrite", Json.bool true),
+           ("fullRebuild", Json.bool (Verified.Geo.OsmBusRoutes.isFullRebuild fails.toNat)),
+           ("refusal", Json.null)])]
+      | some why => Json.mkObj [("value", Json.mkObj
+          [("mayWrite", Json.bool false), ("fullRebuild", Json.bool false),
+           ("refusal", Json.str why)])]
+    | _, _, _, _, _ => err "mayRebuild: mode and the counts it needs are required"
+  -- The circuit breaker, one step at a time. The clock is the shell's; the
+  -- decision is not.
+  | some "breaker" =>
+    let stOf : Except String Verified.Geo.OverpassBreaker.State := do
+      let s ← j.getObjVal? "state"
+      let fs ← (← (← s.getObjVal? "failures").getArr?).mapM (fun v =>
+        match v.getNat? with | .ok n => pure n | .error _ => throw "breaker: a failure stamp is not a Nat")
+      match (← s.getObjVal? "openUntilMs").getNat? with
+      | .ok o => pure { failures := fs, openUntilMs := o }
+      | .error _ => throw "breaker: openUntilMs is not a Nat"
+    let run : Except String Json := do
+      let st ← stOf
+      let now ← match (← j.getObjVal? "nowMs").getNat? with
+        | .ok n => pure n | .error _ => throw "breaker: nowMs is not a Nat"
+      let next := match str? j "event" with
+        | some "failure" => Verified.Geo.OverpassBreaker.recordFailure st now
+        | some "success" => Verified.Geo.OverpassBreaker.recordSuccess st now
+        | _ => st
+      pure (Json.mkObj [("value", Json.mkObj
+        [ ("open", Json.bool (Verified.Geo.OverpassBreaker.isOpen next now))
+        , ("state", Json.mkObj
+            [ ("failures", Json.arr (next.failures.map (fun t => Json.num (t : Nat))))
+            , ("openUntilMs", Json.num next.openUntilMs) ]) ])])
+    match run with | .ok v => v | .error e => err e
   | some other => err s!"unknown op: {other}"
 
 @[export health_backend_call]
