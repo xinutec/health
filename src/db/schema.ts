@@ -747,6 +747,18 @@ const MIGRATIONS: readonly string[] = [
 	// which is authoritative for everything.
 	`ALTER TABLE bus_route_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL`,
 	`ALTER TABLE bus_route_cache ADD INDEX IF NOT EXISTS idx_bus_route_tile (tile_key)`,
+
+	// rail_stops_cache gets the SAME tile ownership bus has had, 2026-08-25.
+	// Without it the rail mirror DELETEs the whole table and rewrites what it
+	// found, so a partial run drops every relation living only in a tile that
+	// failed — measured that day at 10 of 18 tiles, 441 relations found against
+	// 268 cached. The count going UP is what makes it invisible: the summary
+	// reads like a healthy refresh that found more data (#1134, #1153).
+	//
+	// NULL on rows written before this column existed — replaced by the first
+	// fully-successful run, which is authoritative for everything.
+	`ALTER TABLE rail_stops_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL`,
+	`ALTER TABLE rail_stops_cache ADD INDEX IF NOT EXISTS idx_rail_stops_tile (tile_key)`,
 ];
 
 export async function migrate(conn: mariadb.Connection): Promise<void> {

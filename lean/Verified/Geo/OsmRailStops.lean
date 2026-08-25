@@ -105,20 +105,21 @@ def extractRailStopRelations (rels : Array RawRelation) (nodes : Array (Nat × R
 
 /-- Does a run have enough evidence to replace the cache?
 
-⚠ THIS RULE IS LOUD IN ONE CASE AND SILENTLY LOSSY IN ANOTHER — see #1134 and
-the module note in {@link Verified.Geo.OsmBusRoutes}. It trips when zero
+⚠ THIS RULE ONLY HAS TO CARRY THE ALL-FAILED CASE NOW. It trips when zero
 relations came back with any failure, which is why the 2026-08-24 outage made
 the rail job exit 1 while the bus job reported success.
 
-⚠ BUT IT SAYS NOTHING ABOUT A PARTIAL RUN, and rail has no `tile_key`: the whole
-table is rebuilt each run, so 6 of production's 18 tiles succeeding means the
-other 12 tiles' relations are DELETED and not rewritten. The mirror shrinks and
-this returns `true`. The comment this replaced called that "fine"; it is only
-fine for the tiles that answered.
+⚠ IT SAYS NOTHING ABOUT A PARTIAL RUN, and until 2026-08-25 that was a defect:
+`rail_stops_cache` had no `tile_key`, so the whole table was rebuilt each run
+and 10 of production's 18 tiles succeeding meant the other 8 tiles' relations
+were DELETED and not rewritten. Measured that day at 441 relations found against
+268 cached — the count went UP, so the loss was invisible.
 
-Ported faithfully anyway — the parity diff against the TypeScript is the
-instrument that finds defects like this, and changing the rule mid-port removes
-it. The fix is #1134's to choose. -/
+The writer now owns rows per tile, as the bus arm always has, so a partial run
+replaces only what it refreshed and this rule no longer needs to catch it. The
+port kept the defect until its parity against the TypeScript was established,
+and changed the shape afterwards — that order is what made the diff usable as an
+instrument. -/
 def mayRebuild (relationCount tileFailures : Nat) : Bool :=
   relationCount > 0 || tileFailures == 0
 

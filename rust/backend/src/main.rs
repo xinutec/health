@@ -3153,11 +3153,17 @@ fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
 
 /// Tier 2 of #982 — the node cron is `src/cli/refresh-rail-stops.ts`.
 ///
-/// ⚠ THE WHOLE TABLE IS REBUILT TRANSACTIONALLY and `rail_stops_cache` has no
-/// `tile_key`, so a partial run DELETES the tiles that did not answer. That is
-/// a live defect (#1134) ported as it stands: the parity diff against the
-/// TypeScript arm is the instrument that finds defects of this class, and
-/// changing the rule during the port removes it.
+/// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED — rail now carries the
+/// `tile_key` bus has had all along, added 2026-08-25 once the port's parity was
+/// established. Before it, this DELETEd the whole table and rewrote what it
+/// found, so a run at 10-of-18 coverage dropped every relation living only in
+/// the 8 tiles that failed. The measured shape is why it was invisible: 441
+/// relations found against 268 cached, so the count went UP and the summary read
+/// like a healthy refresh that found more data (#1134, #1153).
+///
+/// ⚠ THE REFUSAL RULE IS UNCHANGED and is still the rail one — zero relations
+/// with any failure. It no longer has to carry the partial case, because tile
+/// ownership does.
 async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
@@ -3197,37 +3203,89 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
             .await
             .unwrap_or(-1);
         eprintln!(
-            "DRY RUN — rail_stops_cache holds {existing} relation(s) and would be rebuilt with {}",
+            "DRY RUN — rail_stops_cache holds {existing} relation(s); this run would {} with {} relation(s)",
+            if verdict.full_rebuild {
+                "rebuild it in full".to_string()
+            } else {
+                format!(
+                    "replace {} of {} tiles",
+                    h.succeeded.len(),
+                    plan.tiles.len()
+                )
+            },
             h.routes.len()
         );
         pool.close().await;
         return Ok(());
     }
 
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(-1);
     let mut tx = pool
         .begin()
         .await
         .context("opening the rebuild transaction")?;
-    sqlx::query("DELETE FROM rail_stops_cache")
-        .execute(&mut *tx)
-        .await
-        .context("clearing rail_stops_cache")?;
-    for (_, r) in h.routes.values() {
+    if verdict.full_rebuild {
+        // A complete run is authoritative for the whole bbox: anything absent is
+        // absent from OSM. This is also what retires the `tile_key IS NULL` rows
+        // written before the column existed.
+        sqlx::query("DELETE FROM rail_stops_cache")
+            .execute(&mut *tx)
+            .await
+            .context("clearing rail_stops_cache")?;
+    } else {
+        // A partial run is authoritative ONLY for the tiles that answered. Every
+        // other tile keeps what it had, so the mirror cannot shrink because
+        // Overpass 502'd somewhere.
+        for key in &h.succeeded {
+            sqlx::query("DELETE FROM rail_stops_cache WHERE tile_key = ?")
+                .bind(key)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| format!("clearing tile {key}"))?;
+        }
+    }
+    for (tile, r) in h.routes.values() {
+        // ⚠ UPSERT, not a plain insert: a relation can survive the delete above
+        // under a FAILED tile's key and still be re-fetched from one that
+        // answered.
         sqlx::query(
-            "INSERT INTO rail_stops_cache (osm_relation_id, route_type, line_ref, line_name, stops_json) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO rail_stops_cache (osm_relation_id, route_type, line_ref, line_name, stops_json, tile_key) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE route_type = VALUES(route_type), line_ref = VALUES(line_ref), \
+               line_name = VALUES(line_name), stops_json = VALUES(stops_json), \
+               tile_key = VALUES(tile_key), computed_at = CURRENT_TIMESTAMP",
         )
         .bind(r.osm_relation_id)
         .bind(r.route_type.as_deref().unwrap_or(""))
         .bind(r.route_ref.as_deref())
         .bind(r.route_name.as_deref())
         .bind(serde_json::to_string(&r.stops)?)
+        .bind(tile)
         .execute(&mut *tx)
         .await
         .with_context(|| format!("writing relation {}", r.osm_relation_id))?;
     }
     tx.commit().await.context("committing the rebuild")?;
-    eprintln!("rail_stops_cache rebuilt: {} relations", h.routes.len());
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(existing);
+    if verdict.full_rebuild {
+        eprintln!(
+            "rail_stops_cache rebuilt in full: {} relations",
+            h.routes.len()
+        );
+    } else {
+        eprintln!(
+            "rail_stops_cache merged: {}/{} tiles replaced, {} kept their existing rows — {existing} -> {after} relations",
+            h.succeeded.len(),
+            plan.tiles.len(),
+            h.failures
+        );
+    }
     pool.close().await;
     Ok(())
 }

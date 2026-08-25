@@ -110,8 +110,11 @@ fn a_query_names_the_tile_and_the_right_route_types() {
     assert!(rail.contains("node(r)") && bus.contains("node(r)"));
 }
 
-/// ⚠ #1134 LIVES HERE. Both rules are ported as they stand, defects included,
-/// because the parity diff is the instrument that finds defects of this class.
+/// ⚠ #1134 LIVES HERE, and the two arms now differ ONLY in their refusal rule.
+/// Both carry a `tile_key`, so both replace only the tiles that answered and
+/// neither can shrink because Overpass failed somewhere. What is left is the
+/// question #1134 actually asks: a run covering a fraction of its area still
+/// exits 0.
 #[test]
 fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     setup();
@@ -143,14 +146,25 @@ fn the_two_arms_refuse_differently_and_that_is_deliberate() {
 
     // Rail: the discriminator is zero-found-with-any-failure.
     assert!(!lean::may_rebuild("rail", 0, 3, 18, 259).unwrap().may_write);
-    // ⚠ Rail proceeds on a PARTIAL run and has no tile_key, so it will delete
-    // the tiles that did not answer. Pinned because it is a live defect, not
-    // because it is right.
+
+    // ⚠ RAIL REPORTS `full_rebuild` TOO, since it gained a `tile_key`. Omitting
+    // it from the Lean op made the field default to false in the shell, which
+    // would have meant rail could only ever do per-tile deletes — and a per-tile
+    // delete cannot reach the `tile_key IS NULL` rows written before the column
+    // existed, so a stale relation would never be retired.
     assert!(
-        lean::may_rebuild("rail", 12, 12, 18, 259)
+        lean::may_rebuild("rail", 441, 0, 18, 268)
             .unwrap()
-            .may_write
+            .full_rebuild
     );
+
+    // ⚠ A PARTIAL RAIL RUN IS NOW SAFE, where it used to delete the tiles that
+    // did not answer. This is the 2026-08-25 dry run's exact shape: 10 of 18
+    // tiles, 441 relations found against 268 cached — the case where the count
+    // going UP hid the loss.
+    let v = lean::may_rebuild("rail", 441, 8, 18, 268).unwrap();
+    assert!(v.may_write && !v.full_rebuild);
+
     // Rail: a genuinely empty region with no failures is not an error.
     assert!(lean::may_rebuild("rail", 0, 0, 18, 259).unwrap().may_write);
 }

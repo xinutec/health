@@ -1180,8 +1180,14 @@ def dispatch (j : Json) : Json :=
   | some "mayRebuild" =>
     match str? j "mode", int? j "found", int? j "tileFailures", int? j "tilesTotal", int? j "existing" with
     | some "rail", some found, some fails, _, _ =>
+      -- ⚠ `fullRebuild` IS RETURNED FOR RAIL TOO, since 2026-08-25. Rail now
+      -- carries a `tile_key` like bus, so it has the same two write modes — and
+      -- omitting this made the field default to false in the shell, which would
+      -- have meant rail NEVER retired a stale row: a per-tile delete cannot
+      -- reach the `tile_key IS NULL` rows written before the column existed.
       Json.mkObj [("value", Json.mkObj
         [("mayWrite", Json.bool (Verified.Geo.OsmRailStops.mayRebuild found.toNat fails.toNat)),
+         ("fullRebuild", Json.bool (Verified.Geo.OsmBusRoutes.isFullRebuild fails.toNat)),
          ("refusal", Json.null)])]
     | some "bus", _, some fails, some total, some existing =>
       match Verified.Geo.OsmBusRoutes.rebuildRefusal existing.toNat fails.toNat total.toNat with

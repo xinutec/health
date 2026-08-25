@@ -89,7 +89,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 67] = [
+    let migrations: [&str; 69] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -511,6 +511,15 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
   )"#,
         r#"ALTER TABLE bus_route_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
         r#"ALTER TABLE bus_route_cache ADD INDEX IF NOT EXISTS idx_bus_route_tile (tile_key)"#,
+        // ⚠ RAIL GETS THE SAME TILE OWNERSHIP BUS HAS HAD, 2026-08-25. Without
+        // it the rail mirror DELETEs the whole table and rewrites what it
+        // found, so a partial run drops every relation living only in a tile
+        // that failed — measured that day at 10 of 18 tiles, 441 relations
+        // found against 268 cached. The count going UP is what makes it
+        // invisible: the summary reads like a healthy refresh that found MORE
+        // data (#1134, #1153).
+        r#"ALTER TABLE rail_stops_cache ADD COLUMN IF NOT EXISTS tile_key VARCHAR(32) NULL"#,
+        r#"ALTER TABLE rail_stops_cache ADD INDEX IF NOT EXISTS idx_rail_stops_tile (tile_key)"#,
     ];
 
     sqlx::query(

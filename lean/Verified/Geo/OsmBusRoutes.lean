@@ -39,12 +39,12 @@ directions and both failures are live:
   read `994 -> 994 routes`, which is exactly what a healthy run prints when OSM
   did not change. That is #1134.
 
-* **Rail is LOUD but LOSSY.** Its guard trips whenever zero relations came back
-  with any failure, so the same outage made the rail job exit 1 while the bus job
-  looked fine — the odd one out was the QUIET one, not the healthy one. But rail
-  has no `tile_key`: it DELETEs the whole table and rewrites what it found, so a
-  run where most tiles failed and a few succeeded shrinks the mirror silently.
-  Only the all-failed case is loud.
+* **Rail is LOUD, and WAS lossy until 2026-08-25.** Its guard trips whenever zero
+  relations came back with any failure, so the same outage made the rail job exit
+  1 while the bus job looked fine — the odd one out was the QUIET one, not the
+  healthy one. It also had no `tile_key`, so it DELETEd the whole table and
+  rewrote what it found, shrinking the mirror whenever most tiles failed. It now
+  carries one, so that half is fixed and only the reporting question remains.
 
 ⚠ A COUNT-BASED FLOOR CANNOT FIX EITHER, and that is measured rather than
 supposed (2026-08-14, #255): a run fetching 796 of 995 routes but losing the
@@ -59,11 +59,14 @@ safety argument is that its output can be diffed against the TypeScript arm's �
 which is how every defect this week was found. Changing the rule during the port
 would remove the instrument.
 
-What the port does add is the COVERAGE NUMBER in the summary line, which is
-reporting and not behaviour, so the diff still holds. #1134 prefers exiting
-non-zero below a coverage fraction; that is now a one-line change to
-`rebuildRefusal` and `mayRebuild` with guards already around them, in one place
-each, instead of a change to two CLI scripts.
+What the port adds is the COVERAGE NUMBER in the summary line — reporting, not
+behaviour. #1134 prefers exiting non-zero below a coverage fraction; that is a
+one-line change to `rebuildRefusal` and `mayRebuild`, each with guards already
+around it, instead of a change to two CLI scripts.
+
+⚠ Rail's missing `tile_key` WAS the other half of this and is now done (schema,
+2026-08-25) — after parity was established, not during. Both arms are lossless;
+what #1134 still owns is whether a low-coverage run should exit 0.
 -/
 
 namespace Verified.Geo.OsmBusRoutes
