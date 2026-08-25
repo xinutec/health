@@ -1,3 +1,6 @@
+import Verified.Hsmm.Observation
+import Verified.JsNum
+
 /-!
 # Is this fix on the track, or on a road?
 
@@ -27,6 +30,8 @@ questions.
 -/
 
 namespace Verified.Hsmm.RailRoadProximity
+
+open Verified.Hsmm.Observation (GpsPoint median bucketIndex)
 
 /-- Rail-only OSM way subtypes. ⚠ No `tram` — see the module note. -/
 def RAIL_ONLY_SUBTYPES : List String := ["rail", "subway", "light_rail", "narrow_gauge"]
@@ -82,6 +87,70 @@ def railRoadDistFromWays (ways : List NearbyWay) : Proximity := Id.run do
     else if w.type == "highway" && DRIVABLE_HIGHWAY_SUBTYPES.contains w.subtype then
       minRoad := some (match minRoad with | none => d | some m => min m d)
   return { railDistM := minRail, roadDistM := minRoad }
+
+
+/-! ## Which minutes to ask about, and how few times to ask -/
+
+/-- One minute that had fixes: the top-of-minute timestamp and the MEDIAN of the
+fixes in it.
+
+⚠ THE MEDIAN, NOT THE MEAN, and it is taken per-coordinate — matching the
+observation tensor's own aggregation, so the location this asks about is the
+location the tensor will report. A mean would drag the query point toward a
+single wild fix, and the answer would be "near a road" for a minute spent on a
+platform.
+
+⚠ The bucket is the LOCAL-DAY minute index, so a fix outside `[startUtc, endUtc)`
+is dropped rather than clamped into the first or last minute. -/
+structure MinuteFix where
+  minuteTs : Int
+  lat : Float
+  lon : Float
+  deriving Repr, Inhabited, BEq
+
+/-- Bucket a day's fixes into local-day minutes and take each minute's median
+position. Minutes with no fixes are absent, not zero. -/
+def minuteMedians (startUtc endUtc : Int) (points : List GpsPoint) : Array MinuteFix :=
+  Id.run do
+    let mut acc : Array (Nat × Array GpsPoint) := #[]
+    -- Insertion-ordered by FIRST appearance of each minute, which is ascending
+    -- for the sorted input the loader supplies and stable for any other.
+    for p in points do
+      match bucketIndex startUtc endUtc p.ts with
+      | none => pure ()
+      | some m =>
+        match acc.findIdx? (fun q => q.1 == m) with
+        | some k => acc := acc.set! k (m, acc[k]!.2.push p)
+        | none => acc := acc.push (m, #[p])
+    return acc.map (fun (m, ps) =>
+      { minuteTs := startUtc + Int.ofNat m * 60
+      , lat := median (ps.toList.map GpsPoint.lat)
+      , lon := median (ps.toList.map GpsPoint.lon) })
+
+/-- The coarse cache key, ~11 m. Two minute-medians this close share one
+`nearbyWays` lookup.
+
+⚠ THIS IS WHAT MAKES THE COST BEARABLE. A stationary day is hundreds of minutes
+at one place; without it that is hundreds of identical OSM queries. Four decimal
+places is ~11 m, which is far below any distance this module distinguishes. -/
+def coordKey (lat lon : Float) : String :=
+  let f := fun (x : Float) => (Verified.JsNum.toFixed x 4).getD (toString x)
+  s!"{f lat},{f lon}"
+
+/-- The DISTINCT locations a day must be asked about, in first-seen order.
+
+The shell runs one `nearbyWays` per entry and feeds each answer back through
+{@link railRoadDistFromWays}; every minute sharing a key shares that answer. -/
+def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
+  Id.run do
+    let mut seen : Array String := #[]
+    let mut out : Array MinuteFix := #[]
+    for m in ms do
+      let k := coordKey m.lat m.lon
+      if !seen.contains k then
+        seen := seen.push k
+        out := out.push m
+    return out
 
 /-! ## Guards -/
 
@@ -139,5 +208,43 @@ private def NAN_WAY : NearbyWay :=
 
 -- Zero is a real distance: a fix ON the way.
 #guard (railRoadDistFromWays [W "highway" "primary" 0]).roadDistM == some 0
+
+
+-- ⚠ MINUTE BUCKETING. A fix before the day starts or at/after it ends is
+-- DROPPED, not clamped — clamping would put a 23:59 fix from yesterday into
+-- minute 0 and give the day a phantom starting location.
+private def P (ts : Int) (lat lon : Float) : GpsPoint :=
+  { ts := ts, lat := lat, lon := lon, speedKmh := 0 }
+private def T0 : Int := 1000000
+private def T1 : Int := T0 + 1440 * 60
+
+#guard (minuteMedians T0 T1 []).isEmpty
+#guard (minuteMedians T0 T1 [P (T0 - 1) 51.5 (-0.1)]).isEmpty
+#guard (minuteMedians T0 T1 [P T1 51.5 (-0.1)]).isEmpty
+#guard (minuteMedians T0 T1 [P T0 51.5 (-0.1)]).size == 1
+#guard (minuteMedians T0 T1 [P T0 51.5 (-0.1)])[0]!.minuteTs == T0
+
+-- Fixes inside one minute collapse to ONE entry at the top of that minute.
+#guard (minuteMedians T0 T1 [P (T0 + 5) 51.0 0, P (T0 + 30) 53.0 0, P (T0 + 59) 52.0 0]).size == 1
+#guard (minuteMedians T0 T1 [P (T0 + 5) 51.0 0, P (T0 + 30) 53.0 0, P (T0 + 59) 52.0 0])[0]!
+        == { minuteTs := T0, lat := 52.0, lon := 0.0 }
+
+-- ⚠ MEDIAN, NOT MEAN: one wild fix must not drag the query point. The mean of
+-- 51/52/99 is 67.3; the median is 52.
+#guard (minuteMedians T0 T1 [P (T0+1) 51.0 0, P (T0+2) 52.0 0, P (T0+3) 99.0 0])[0]!.lat == 52.0
+
+-- Separate minutes stay separate, at their own top-of-minute stamps.
+#guard (minuteMedians T0 T1 [P T0 51.0 0, P (T0 + 60) 52.0 0]).size == 2
+#guard (minuteMedians T0 T1 [P T0 51.0 0, P (T0 + 60) 52.0 0])[1]!.minuteTs == T0 + 60
+
+-- ⚠ THE CACHE KEY IS THE WHOLE COST ARGUMENT. Two positions ~1 m apart share a
+-- lookup; a stationary day collapses to one query.
+#guard coordKey 51.512345 (-0.123456) == coordKey 51.512349 (-0.123451)
+#guard coordKey 51.5123 (-0.1234) != coordKey 51.5124 (-0.1234)
+#guard (distinctQueryPoints (minuteMedians T0 T1
+          [P T0 51.512345 (-0.1), P (T0+60) 51.512349 (-0.1), P (T0+120) 51.9 (-0.1)])).size == 2
+-- First-seen order, so the shell's query order is stable run to run.
+#guard (distinctQueryPoints #[{ minuteTs := 2, lat := 51.9, lon := 0 },
+                              { minuteTs := 1, lat := 51.5, lon := 0 }])[0]!.lat == 51.9
 
 end Verified.Hsmm.RailRoadProximity
