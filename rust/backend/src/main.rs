@@ -2036,6 +2036,8 @@ async fn refresh_rail_routes(window_days: i64) -> Result<()> {
     // by eye when a route looks wrong.
     let mut by_route: std::collections::BTreeMap<String, RouteAcc> =
         std::collections::BTreeMap::new();
+    // ⚠ Counted so an EMPTY result can be told apart from a BROKEN one.
+    let (mut days_attempted, mut days_failed) = (0u32, 0u32);
 
     for user_id in &users {
         let tz = backend::sync_state::get(&pool, user_id, "home_tz")
@@ -2052,11 +2054,13 @@ async fn refresh_rail_routes(window_days: i64) -> Result<()> {
             // abort — one bad day must not cost the other twenty. The
             // TypeScript does the same, and the pooled corridor degrades
             // gracefully because it is a union over many days.
+            days_attempted += 1;
             let result =
                 match backend::routes::velocity::compute(&st, user_id, &date, Some(&tz)).await {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("[{user_id} {date}] velocity failed: {e:#}");
+                        days_failed += 1;
                         continue;
                     }
                 };
@@ -2113,9 +2117,35 @@ async fn refresh_rail_routes(window_days: i64) -> Result<()> {
         }
     }
     eprintln!(
-        "refresh-rail-routes: {} route key(s) pooled",
+        "refresh-rail-routes: {} route key(s) pooled from {days_attempted} day(s), {days_failed} failed",
         by_route.len()
     );
+
+    // ⚠ REFUSE rather than report success on nothing. Zero routes is a
+    // LEGITIMATE answer — three weeks without a train ride — but it is
+    // indistinguishable from every day having failed, and the two need opposite
+    // responses. That is #1134's shape (`refresh-bus-routes` reports success
+    // after refreshing 2 of 18 tiles), and THIS subcommand reproduced it on its
+    // first run: 2026-08-25, all 22 days died with "Read-only file system"
+    // (#1106 — the batch pods lack the `/tmp` emptyDir the Deployment has), it
+    // pooled 0 routes, upserted 0, and exited SUCCEEDED.
+    //
+    // The discriminator is the FAILURE count, never the route count.
+    if days_failed > 0 && days_failed == days_attempted {
+        pool.close().await;
+        anyhow::bail!(
+            "every one of the {days_attempted} day(s) scanned failed to compute — refusing to \
+             report a successful refresh over no evidence (#1134)"
+        );
+    }
+    // A majority failing is not fatal — the corridor is a union over many days —
+    // but it must be LOUD: a thin corridor snaps to a WORSE path, not to none.
+    if days_failed * 2 > days_attempted {
+        eprintln!(
+            "⚠ refresh-rail-routes: {days_failed} of {days_attempted} days failed — the pooled \
+             corridor is thinner than it should be and any route snapped from it is suspect"
+        );
+    }
 
     let mut routes: Vec<(String, serde_json::Value)> = Vec::new();
     for (key, acc) in &by_route {
