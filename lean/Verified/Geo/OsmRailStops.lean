@@ -111,10 +111,10 @@ relations came back with any failure, which is why the 2026-08-24 outage made
 the rail job exit 1 while the bus job reported success.
 
 ⚠ BUT IT SAYS NOTHING ABOUT A PARTIAL RUN, and rail has no `tile_key`: the whole
-table is rebuilt each run, so 53 of 153 tiles succeeding means the other 100
-tiles' relations are DELETED and not rewritten. The mirror shrinks and this
-returns `true`. The comment this replaced called that "fine"; it is only fine
-for the tiles that answered.
+table is rebuilt each run, so 6 of production's 18 tiles succeeding means the
+other 12 tiles' relations are DELETED and not rewritten. The mirror shrinks and
+this returns `true`. The comment this replaced called that "fine"; it is only
+fine for the tiles that answered.
 
 Ported faithfully anyway — the parity diff against the TypeScript is the
 instrument that finds defects like this, and changing the rule mid-port removes

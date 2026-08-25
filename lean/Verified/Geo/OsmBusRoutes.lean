@@ -190,14 +190,22 @@ private def B : BusRoute := { routeRef := "38", routeName := some "from B", osmR
 -- ⚠ THE REFUSAL. All three conditions are load-bearing and each has its own
 -- guard, because a threshold here was measured on production and found to be
 -- uncorrelated with the harm it was meant to prevent (#255).
-#guard (rebuildRefusal 995 153 153).isSome        -- every tile failed, cache full
-#guard (rebuildRefusal 995 152 153).isNone        -- one answered: replace just it
-#guard (rebuildRefusal 0 153 153).isNone          -- nothing to protect
-#guard (rebuildRefusal 995 0 153).isNone          -- a clean run
+-- ⚠ 18 IS PRODUCTION'S TILE COUNT, measured 2026-08-25 against the real
+-- `focus_places`: 65 recent places, 4 metropolitan regions, home region 51
+-- places, an 18-tile bbox. Guards written against an invented number read as
+-- production and are not.
+#guard (rebuildRefusal 995 18 18).isSome          -- every tile failed, cache full
+#guard (rebuildRefusal 995 17 18).isNone          -- one answered: replace just it
+#guard (rebuildRefusal 0 18 18).isNone            -- nothing to protect
+#guard (rebuildRefusal 995 0 18).isNone           -- a clean run
 #guard (rebuildRefusal 995 0 0).isNone            -- no tiles at all
+-- ⚠ THE 2026-08-24 05:30 RUN, EXACTLY: 2 of 18 tiles answered against a cache of
+-- 994, and this returns "proceed". That is #1134, pinned as behaviour rather
+-- than described in a comment — the run exited 0 and printed `994 -> 994`.
+#guard (rebuildRefusal 994 16 18).isNone
 -- ⚠ A COUNT IS NOT A CONDITION HERE: 796 of 995 routes fetched is not a refusal,
 -- however alarming the drop looks, because tile ownership already made it safe.
-#guard (rebuildRefusal 995 1 153).isNone
+#guard (rebuildRefusal 995 1 18).isNone
 
 #guard isFullRebuild 0 == true
 #guard isFullRebuild 1 == false

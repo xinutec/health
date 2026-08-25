@@ -115,15 +115,19 @@ fn a_query_names_the_tile_and_the_right_route_types() {
 #[test]
 fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     setup();
+    // ⚠ 18 tiles and ~995 routes are PRODUCTION's numbers, measured 2026-08-25
+    // against the real `focus_places` — 65 recent places, 4 regions, a 51-place
+    // home region tiling to 18. An invented tile count here would read as
+    // production and would not be.
 
     // Bus: every tile failed against a populated cache — refuse.
-    let v = lean::may_rebuild("bus", 0, 153, 153, 995).unwrap();
+    let v = lean::may_rebuild("bus", 0, 18, 18, 995).unwrap();
     assert!(!v.may_write);
     assert!(v.refusal.unwrap().contains("Every tile failed"));
 
     // Bus: ONE tile answered — proceed, because tile ownership makes it
     // lossless. This is the shape #1134 reports as a defect: 2 of 18 exits 0.
-    let v = lean::may_rebuild("bus", 12, 152, 153, 995).unwrap();
+    let v = lean::may_rebuild("bus", 12, 17, 18, 995).unwrap();
     assert!(v.may_write);
     assert!(
         !v.full_rebuild,
@@ -131,24 +135,24 @@ fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     );
 
     // Bus: a clean run may replace everything.
-    let v = lean::may_rebuild("bus", 995, 0, 153, 995).unwrap();
+    let v = lean::may_rebuild("bus", 995, 0, 18, 995).unwrap();
     assert!(v.may_write && v.full_rebuild);
 
     // Bus: nothing to protect, so an all-failed first run still proceeds.
-    assert!(lean::may_rebuild("bus", 0, 153, 153, 0).unwrap().may_write);
+    assert!(lean::may_rebuild("bus", 0, 18, 18, 0).unwrap().may_write);
 
     // Rail: the discriminator is zero-found-with-any-failure.
-    assert!(!lean::may_rebuild("rail", 0, 3, 153, 259).unwrap().may_write);
+    assert!(!lean::may_rebuild("rail", 0, 3, 18, 259).unwrap().may_write);
     // ⚠ Rail proceeds on a PARTIAL run and has no tile_key, so it will delete
     // the tiles that did not answer. Pinned because it is a live defect, not
     // because it is right.
     assert!(
-        lean::may_rebuild("rail", 12, 100, 153, 259)
+        lean::may_rebuild("rail", 12, 12, 18, 259)
             .unwrap()
             .may_write
     );
     // Rail: a genuinely empty region with no failures is not an error.
-    assert!(lean::may_rebuild("rail", 0, 0, 153, 259).unwrap().may_write);
+    assert!(lean::may_rebuild("rail", 0, 0, 18, 259).unwrap().may_write);
 }
 
 #[test]

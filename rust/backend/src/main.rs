@@ -236,6 +236,22 @@ async fn main() -> Result<()> {
             };
             decode_day(user, &dates, days).await
         }
+        // `src/cli/refresh-rail-stops.ts` — the nightly rail-relation mirror.
+        "refresh-rail-stops" => {
+            if !flags.is_empty() {
+                eprintln!("usage: backend refresh-rail-stops");
+                std::process::exit(64);
+            }
+            refresh_rail_stops().await
+        }
+        // `src/cli/refresh-bus-routes.ts` — the nightly bus-route mirror.
+        "refresh-bus-routes" => {
+            if !flags.is_empty() {
+                eprintln!("usage: backend refresh-bus-routes");
+                std::process::exit(64);
+            }
+            refresh_bus_routes().await
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -2922,5 +2938,369 @@ async fn drop_session(cookie: &str) -> Result<()> {
     if !gone {
         anyhow::bail!("no session row matched that cookie — it may still be valid");
     }
+    Ok(())
+}
+
+/// Only mirror around focus places seen this recently — drops stale travel
+/// history so the mirror tracks where the user lives NOW.
+const MIRROR_RECENT_DAYS: i64 = 120;
+/// Two focus places are the same metropolitan region within this. Comfortably
+/// larger than a city's diameter, far smaller than the gap between cities.
+const MIRROR_REGION_GAP_KM: f64 = 80.0;
+/// ≈ 3.5 km. Proven size: a single whole-bbox `relation[route=bus]` over greater
+/// London matches ~700 routes and pulls every member node of each, which timed
+/// out on first run (#255).
+const MIRROR_TILE_DEG: f64 = 0.05;
+/// The margin `bboxFromFixes` adds around the home region.
+const MIRROR_MARGIN_M: f64 = 1500.0;
+
+/// The recent focus places' coordinates — the input to the region clustering.
+///
+/// ⚠ `centroid_lat`/`centroid_lon` ARE DECIMAL, so they must be cast to CHAR and
+/// parsed. Read as `f64` directly, sqlx fails; paired with a defaulting decode
+/// this is the bug that made 117 places decode to centroid 0.0 while the check
+/// printed OK.
+async fn mirror_focus_points(pool: &sqlx::MySqlPool) -> Result<Vec<(f64, f64)>> {
+    let cutoff = chrono::Utc::now().timestamp() - MIRROR_RECENT_DAYS * 86_400;
+    let rows = sqlx::query(
+        "SELECT CAST(centroid_lat AS CHAR) AS lat, CAST(centroid_lon AS CHAR) AS lon \
+         FROM focus_places WHERE last_seen_ts >= ?",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await
+    .context("reading recent focus places")?;
+    rows.iter()
+        .map(|r| {
+            use sqlx::Row;
+            let lat: String = r.try_get("lat").context("focus_places.centroid_lat")?;
+            let lon: String = r.try_get("lon").context("focus_places.centroid_lon")?;
+            Ok((
+                lat.parse::<f64>()
+                    .with_context(|| format!("centroid_lat {lat:?} is not a number"))?,
+                lon.parse::<f64>()
+                    .with_context(|| format!("centroid_lon {lon:?} is not a number"))?,
+            ))
+        })
+        .collect()
+}
+
+/// What one pass over the tiles produced.
+struct MirrorHarvest {
+    /// Relation id → (tile key, route). Insertion-ordered so a run's log and its
+    /// writes read the same way twice.
+    routes: std::collections::BTreeMap<i64, (String, backend::lean::ExtractedRoute)>,
+    /// The tile keys that ANSWERED. Each is authoritative for its own rows.
+    succeeded: Vec<String>,
+    failures: usize,
+}
+
+/// Fetch every tile and extract what Lean keeps.
+///
+/// ⚠ THE DEDUP RULE DIFFERS BY ARM AND IS LEAN'S, NOT THIS FUNCTION'S: buses
+/// keep the FIRST tile's copy, rail the LAST. `node(r)` returns a relation's full
+/// stop list from any tile it touches, so both copies are complete — but they
+/// are different, and unifying them here would be changing behaviour in the
+/// shell.
+async fn mirror_fetch(
+    client: &reqwest::Client,
+    mode: &str,
+    tiles: &[backend::lean::MirrorTile],
+) -> Result<MirrorHarvest> {
+    use backend::lean;
+    let mut routes: std::collections::BTreeMap<i64, (String, lean::ExtractedRoute)> =
+        std::collections::BTreeMap::new();
+    let mut succeeded: Vec<String> = Vec::new();
+    let mut failures = 0usize;
+    let mut breaker = lean::BreakerState::new();
+
+    for (i, tile) in tiles.iter().enumerate() {
+        let key = lean::tile_key(tile);
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        // ⚠ Fail fast while the breaker is open — the whole point is not to eat
+        // the timeout on calls that will not succeed. It still counts as a tile
+        // failure, exactly as `OverpassBreakerOpenError` does in the TypeScript.
+        breaker = lean::breaker_step(&breaker, "check", now_ms)?;
+        if breaker.open {
+            eprintln!(
+                "  tile {}/{}: circuit breaker is open — skipped",
+                i + 1,
+                tiles.len()
+            );
+            failures += 1;
+            continue;
+        }
+
+        let query = lean::overpass_query(mode, tile)?;
+        match backend::overpass::fetch_once(client, &query, backend::overpass::MIRROR_TIMEOUT_MS)
+            .await
+        {
+            backend::overpass::Outcome::Ok(body) => {
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                breaker = lean::breaker_step(&breaker, "success", now_ms)?;
+                let found = lean::extract_routes(mode, &body)?;
+                let n = found.len();
+                for r in found {
+                    match mode {
+                        // Buses: first tile to yield a relation owns it.
+                        "bus" => {
+                            routes
+                                .entry(r.osm_relation_id)
+                                .or_insert_with(|| (key.clone(), r));
+                        }
+                        // Rail: a bare `set` — the last tile wins.
+                        _ => {
+                            routes.insert(r.osm_relation_id, (key.clone(), r));
+                        }
+                    }
+                }
+                succeeded.push(key);
+                eprintln!(
+                    "  tile {}/{}: {n} relations ({} unique so far)",
+                    i + 1,
+                    tiles.len(),
+                    routes.len()
+                );
+            }
+            backend::overpass::Outcome::Permanent { status } => {
+                // ⚠ NOT counted against the breaker: a permanent 4xx means the
+                // query is wrong, and tripping the breaker on it would fail-fast
+                // the tiles that would have worked.
+                eprintln!(
+                    "  tile {}/{}: Overpass {status} — skipped",
+                    i + 1,
+                    tiles.len()
+                );
+                failures += 1;
+            }
+            backend::overpass::Outcome::AllFailed { last } => {
+                let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                breaker = lean::breaker_step(&breaker, "failure", now_ms)?;
+                eprintln!("  tile {}/{}: {last} — skipped", i + 1, tiles.len());
+                failures += 1;
+            }
+        }
+    }
+    Ok(MirrorHarvest {
+        routes,
+        succeeded,
+        failures,
+    })
+}
+
+/// Plan the mirror: recent focus places → home metro → tiles.
+///
+/// `None` means there is nothing to mirror, which is a clean exit.
+async fn mirror_plan(pool: &sqlx::MySqlPool) -> Result<Option<backend::lean::MirrorPlan>> {
+    let points = mirror_focus_points(pool).await?;
+    if points.is_empty() {
+        eprintln!("No recent focus places — nothing to mirror.");
+        return Ok(None);
+    }
+    let plan = backend::lean::mirror_region(
+        &points,
+        MIRROR_REGION_GAP_KM,
+        MIRROR_TILE_DEG,
+        MIRROR_MARGIN_M,
+    )?;
+    let Some(plan) = plan else {
+        eprintln!("No recent focus places — nothing to mirror.");
+        return Ok(None);
+    };
+    eprintln!(
+        "Recent focus places: {} in {} region(s); mirroring the home region",
+        plan.place_count, plan.region_count
+    );
+    eprintln!(
+        "Mirroring across {} tiles of bbox {:.3},{:.3}→{:.3},{:.3}",
+        plan.tiles.len(),
+        plan.bbox.min_lat,
+        plan.bbox.min_lon,
+        plan.bbox.max_lat,
+        plan.bbox.max_lon
+    );
+    Ok(Some(plan))
+}
+
+/// ⚠ COVERAGE IS REPORTED BECAUSE A COUNT CANNOT SUBSTITUTE FOR IT. #1134's
+/// measured finding is that a route count is uncorrelated with the harm — a run
+/// fetching 796 of 995 routes while losing the ones the rider uses passed a
+/// count floor. What fraction of the AREA was refreshed is the quantity that is
+/// not, and printing it is reporting, not behaviour, so the parity diff against
+/// the TypeScript arm still holds.
+fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
+    let pct = if total == 0 {
+        0.0
+    } else {
+        100.0 * succeeded as f64 / total as f64
+    };
+    format!("coverage {succeeded}/{total} tiles ({pct:.0}% of the area)")
+}
+
+/// Tier 2 of #982 — the node cron is `src/cli/refresh-rail-stops.ts`.
+///
+/// ⚠ THE WHOLE TABLE IS REBUILT TRANSACTIONALLY and `rail_stops_cache` has no
+/// `tile_key`, so a partial run DELETES the tiles that did not answer. That is
+/// a live defect (#1134) ported as it stands: the parity diff against the
+/// TypeScript arm is the instrument that finds defects of this class, and
+/// changing the rule during the port removes it.
+async fn refresh_rail_stops() -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+
+    let Some(plan) = mirror_plan(&pool).await? else {
+        pool.close().await;
+        return Ok(());
+    };
+
+    let client = reqwest::Client::new();
+    let h = mirror_fetch(&client, "rail", &plan.tiles).await?;
+    let verdict =
+        backend::lean::may_rebuild("rail", h.routes.len(), h.failures, plan.tiles.len(), 0)?;
+    eprintln!(
+        "refresh-rail-stops: {} relations, {}",
+        h.routes.len(),
+        mirror_coverage_line(h.succeeded.len(), plan.tiles.len())
+    );
+    if !verdict.may_write {
+        pool.close().await;
+        anyhow::bail!(
+            "all {} tiles failed — leaving rail_stops_cache untouched",
+            plan.tiles.len()
+        );
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the rebuild transaction")?;
+    sqlx::query("DELETE FROM rail_stops_cache")
+        .execute(&mut *tx)
+        .await
+        .context("clearing rail_stops_cache")?;
+    for (_, r) in h.routes.values() {
+        sqlx::query(
+            "INSERT INTO rail_stops_cache (osm_relation_id, route_type, line_ref, line_name, stops_json) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(r.osm_relation_id)
+        .bind(r.route_type.as_deref().unwrap_or(""))
+        .bind(r.route_ref.as_deref())
+        .bind(r.route_name.as_deref())
+        .bind(serde_json::to_string(&r.stops)?)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("writing relation {}", r.osm_relation_id))?;
+    }
+    tx.commit().await.context("committing the rebuild")?;
+    eprintln!("rail_stops_cache rebuilt: {} relations", h.routes.len());
+    pool.close().await;
+    Ok(())
+}
+
+/// Tier 2 of #982 — the node cron is `src/cli/refresh-bus-routes.ts`.
+///
+/// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
+/// lossless, and it is why the refusal can be as narrow as "every tile failed".
+/// It is also why a 2-of-18 run exits 0 — see #1134.
+async fn refresh_bus_routes() -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+
+    let Some(plan) = mirror_plan(&pool).await? else {
+        pool.close().await;
+        return Ok(());
+    };
+
+    let client = reqwest::Client::new();
+    let h = mirror_fetch(&client, "bus", &plan.tiles).await?;
+
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bus_route_cache")
+        .fetch_one(&pool)
+        .await
+        .context("counting bus_route_cache")?;
+    let verdict = backend::lean::may_rebuild(
+        "bus",
+        h.routes.len(),
+        h.failures,
+        plan.tiles.len(),
+        existing,
+    )?;
+    eprintln!(
+        "refresh-bus-routes: {} routes, {}",
+        h.routes.len(),
+        mirror_coverage_line(h.succeeded.len(), plan.tiles.len())
+    );
+    if !verdict.may_write {
+        pool.close().await;
+        anyhow::bail!(
+            "{} — leaving bus_route_cache untouched",
+            verdict.refusal.unwrap_or_else(|| "refused".into())
+        );
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the rebuild transaction")?;
+    if verdict.full_rebuild {
+        // A complete run is authoritative for the whole bbox: anything absent is
+        // absent from OSM. This also retires rows written before `tile_key`
+        // existed.
+        sqlx::query("DELETE FROM bus_route_cache")
+            .execute(&mut *tx)
+            .await
+            .context("clearing bus_route_cache")?;
+    } else {
+        for key in &h.succeeded {
+            sqlx::query("DELETE FROM bus_route_cache WHERE tile_key = ?")
+                .bind(key)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| format!("clearing tile {key}"))?;
+        }
+    }
+    for (tile, r) in h.routes.values() {
+        // ⚠ UPSERT, not a plain insert: a route can survive the delete above
+        // under a FAILED tile's key and still be re-fetched from one that
+        // answered.
+        sqlx::query(
+            "INSERT INTO bus_route_cache (osm_relation_id, route_ref, route_name, stops_json, tile_key) \
+             VALUES (?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE route_ref = VALUES(route_ref), route_name = VALUES(route_name), \
+               stops_json = VALUES(stops_json), tile_key = VALUES(tile_key), computed_at = CURRENT_TIMESTAMP",
+        )
+        .bind(r.osm_relation_id)
+        .bind(r.route_ref.as_deref().unwrap_or(""))
+        .bind(r.route_name.as_deref())
+        .bind(serde_json::to_string(&r.stops)?)
+        .bind(tile)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("writing route {}", r.osm_relation_id))?;
+    }
+    tx.commit().await.context("committing the rebuild")?;
+
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bus_route_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(existing);
+    if verdict.full_rebuild {
+        eprintln!("bus_route_cache rebuilt in full: {} routes", h.routes.len());
+    } else {
+        eprintln!(
+            "bus_route_cache merged: {}/{} tiles replaced, {} kept their existing rows — {existing} -> {after} routes",
+            h.succeeded.len(),
+            plan.tiles.len(),
+            h.failures
+        );
+    }
+    pool.close().await;
     Ok(())
 }
