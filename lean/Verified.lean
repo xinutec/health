@@ -19,6 +19,7 @@ import Verified.Session
 import Verified.Share
 import Verified.VelocityCache
 import Verified.Civil
+import Verified.Hsmm.RailRoadProximity
 import Verified.Hsmm.Score
 import Verified.Hsmm.Spec
 import Verified.Hsmm.Oracle
