@@ -991,7 +991,11 @@ pub async fn empty_day_bracket(pool: &MySqlPool, user_id: &str, date: &str) -> R
 }
 
 /// `date` shifted by whole days, as `YYYY-MM-DD`. Mirrors `shiftDay`.
-fn shift_day(date: &str, days: i64) -> Result<String> {
+/// ⚠ `pub` because `decode-day` needs the SAME day arithmetic for its
+/// continuity seed. Subtracting 86400 from a timestamp instead lands on the
+/// same civil date across a DST boundary, and the chain would seed itself from
+/// today.
+pub fn shift_day(date: &str, days: i64) -> Result<String> {
     let d = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .with_context(|| format!("{date:?} is not a YYYY-MM-DD date"))?;
     Ok((d + chrono::Duration::days(days))

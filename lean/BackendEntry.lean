@@ -19,6 +19,7 @@ import Verified.PresenceLog
 import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
 import Verified.Geo.FocusMining
+import Verified.Hsmm.RouteGraph
 import Verified.Session
 import Verified.Share
 import Verified.Sync
@@ -693,6 +694,70 @@ def dispatch (j : Json) : Json :=
             [ ("bySubtype", tableJson p.bySubtype)
             , ("byCategory", tableJson p.byCategory)
             , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits)) ]) ]
+  -- Raw OSM rows → the `{edges, nodes}` the assemble modes consume (#982).
+  --
+  -- ⚠ The shell parses WKT and reads tag JSON — format concerns — and decides
+  -- NOTHING. `isUnderground`, `parseLineMemberships`, the 5-dp `nodeKey` that
+  -- fuses two ways meeting at a junction into ONE node, and the 150 m station
+  -- merge are all below.
+  | some "buildWireGraph" =>
+    -- ⚠ Floats cross as IEEE-754 bit patterns in decimal strings, as everywhere
+    -- else here. A coordinate re-rounded on the wire moves a node's 5-dp key,
+    -- which is its IDENTITY — two ways that met at a junction would stop fusing.
+    let jb (v : Json) : Except String Float :=
+      match v.getStr? with
+      | .ok s => pure (Float.ofBits s.toNat!.toUInt64)
+      | .error _ => throw "buildWireGraph: a float is not a bit-pattern string"
+    let fb (x : Float) : Json := Json.str (toString x.toBits)
+    let latLonOf (e : Json) : Except String Verified.Hsmm.RouteGraph.LatLon := do
+      let a ← e.getArr?
+      match a[0]? , a[1]? with
+      | some la, some lo => pure ⟨← jb la, ← jb lo⟩
+      | _, _ => throw "buildWireGraph: a coordinate is not [latBits, lonBits]"
+    let tagsOf (e : Json) : Except String (List (String × String)) :=
+      match e.getObjVal? "tags" with
+      | .error _ => pure []
+      | .ok tv => do
+        (← tv.getArr?).toList.mapM fun pair => do
+          let kv ← pair.getArr?
+          match kv[0]? >>= (·.getStr?.toOption), kv[1]? >>= (·.getStr?.toOption) with
+          | some k, some v => pure (k, v)
+          | _, _ => throw "buildWireGraph: a tag pair is not two strings"
+    let wayOf (e : Json) : Except String Verified.Hsmm.RouteGraph.RawWay := do
+      let geom ← (← (← e.getObjVal? "geometry").getArr?).toList.mapM latLonOf
+      pure { id := ← (← e.getObjVal? "id").getStr?
+           , geometry := geom
+           , name := str? e "name"
+           , subtype := str? e "subtype"
+           , tags := ← tagsOf e }
+    let stopOf (e : Json) : Except String Verified.Hsmm.RouteGraph.RawStop := do
+      pure { lat := ← jb (← e.getObjVal? "latBits")
+           , lon := ← jb (← e.getObjVal? "lonBits")
+           , name := str? e "name"
+           , tags := ← tagsOf e }
+    match (do
+        let ways ← (← (← j.getObjVal? "ways").getArr?).toList.mapM wayOf
+        let stops ← (← (← j.getObjVal? "stops").getArr?).toList.mapM stopOf
+        pure (Verified.Hsmm.RouteGraph.buildWireGraph ways stops)) with
+    | .error e => err e
+    | .ok (edges, nodes) =>
+      Json.mkObj
+        [ ("edges", Json.arr (edges.map fun e =>
+            Json.mkObj
+              [ ("id", Json.str e.id)
+              , ("geometry", Json.arr ((e.geometry.map fun p =>
+                  Json.mkObj [("lat", fb p.lat), ("lon", fb p.lon)]).toArray))
+              , ("lineMemberships", Json.arr ((e.lineMemberships.map Json.str).toArray))
+              , ("underground", Json.bool e.underground)
+              , ("startNode", Json.str e.startNode)
+              , ("endNode", Json.str e.endNode) ]))
+        , ("nodes", Json.arr (nodes.map fun n =>
+            Json.mkObj
+              [ ("id", Json.str n.id)
+              , ("lat", fb n.lat), ("lon", fb n.lon)
+              , ("stationName", match n.stationName with
+                  | none => Json.null | some s => Json.str s)
+              , ("edgeIds", Json.arr ((n.edgeIds.map Json.str).toArray)) ])) ]
   | some "mineCluster" =>
     let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
       let need (k : String) : Except String String :=

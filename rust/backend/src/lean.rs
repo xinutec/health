@@ -2180,3 +2180,77 @@ pub fn rail_snap(
         .collect::<Vec<_>>();
     Ok(if geom.is_empty() { None } else { Some(geom) })
 }
+
+/// One day's HSMM decode, model and all, returned as SEGMENTS — the
+/// `assemblesegments` serve mode.
+///
+/// ⚠ THE MODEL IS BUILT IN LEAN, not marshalled to it. `parseAssemble` takes
+/// raw `edges`/`nodes`/`obs`/`places` and calls `buildRouteGraphModel` and
+/// `buildCoverage` itself, so nothing here constructs a route graph.
+///
+/// ⚠ That is the whole point of this mode and of #411: the production
+/// TypeScript uses the `hsmm` mode instead and ships the QUANTISED TENSORS —
+/// 33-40 MiB per day to decode 1440 minutes, measured over the 11 decode
+/// fixtures. The reply either way is ~1440 integers. Porting decode-day onto
+/// this path deletes that payload rather than reimplementing it.
+///
+/// ⚠ `assembledecode` HAS NEVER BEEN THE SERVING PATH. `Verified.Hsmm.Assemble`
+/// has 14 guards and no production day behind it, so the first real comparison
+/// against the `hsmm` arm is this port's actual cost — not the wiring.
+///
+/// ⚠ NOT the `assembledecode` mode, which returns state INDICES with no state
+/// table — enough to measure a decode, not enough to persist one. The grouping
+/// into segments happens in Lean so the state table never crosses and no
+/// consumer can reimplement `groupStates` against it.
+///
+/// `Ok(None)` is the DEGENERATE case Lean reports explicitly (no viable path),
+/// which is distinct from an error and must not be flattened into one — a day
+/// with no decodable path is a real answer, a malformed request is not.
+pub fn assemble_segments(input: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+    let mut req = input.clone();
+    req.as_object_mut()
+        .context("assemblesegments input is not an object")?
+        .insert("mode".into(), serde_json::json!("assemblesegments"));
+    let out = serve(&serde_json::to_string(&req)?)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&out).context("assemblesegments answer is not JSON")?;
+    if let Some(e) = v.get("error") {
+        anyhow::bail!("assemblesegments: {e}");
+    }
+    if v.get("degenerate").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(None);
+    }
+    let segs = v
+        .get("segments")
+        .context("assemblesegments answer has no `segments`")?;
+    Ok(Some(segs.clone()))
+}
+
+/// Raw OSM rows → the `{edges, nodes}` the assemble modes consume, via
+/// `Verified.Hsmm.RouteGraph.buildWireGraph`.
+///
+/// ⚠ EVERY DECISION IS LEAN'S. `isUnderground`, `parseLineMemberships`, the
+/// 5-dp `nodeKey` that fuses junctions, and the 150 m station merge all happen
+/// there. This side supplies rows with the WKT parsed — a format concern — and
+/// nothing else.
+///
+/// ⚠ The TypeScript's `RouteGraph` additionally carries a cell index and
+/// per-edge `lengthM`. Those are NOT sent: `buildRouteGraphModel` rebuilds them
+/// on the far side, so shipping them would be shipping a second copy of an
+/// index the receiver constructs anyway.
+pub fn build_wire_graph(
+    ways: &[serde_json::Value],
+    stops: &[serde_json::Value],
+) -> Result<(serde_json::Value, serde_json::Value)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        edges: serde_json::Value,
+        nodes: serde_json::Value,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "buildWireGraph",
+        "ways": ways,
+        "stops": stops,
+    }))?;
+    Ok((w.edges, w.nodes))
+}

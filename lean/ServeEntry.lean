@@ -880,6 +880,70 @@ private def assembleDecodeResult (j : Json) : Json :=
           ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
           ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
+/-! ## `assemblesegments` — assemble, decode, and return SEGMENTS
+
+⚠ `assembledecode` above returns a path of STATE INDICES and nothing else, which
+is enough to measure a decode and not enough to persist one: the caller has no
+way to map an index to `{mode, placeId, lineName}` because `parseAssemble` builds
+`c.states` internally and never emits it.
+
+The fix is NOT to emit the state table. That table is an internal representation,
+and shipping it would invite every consumer to reimplement the run-grouping — the
+`groupStates` logic — against it. So the grouping happens HERE, once, and what
+crosses the wire is what `decoded_days` stores.
+
+⚠ This is also `Verified.HsmmSegments.groupStates`' FIRST entry point. It was
+ported on 2026-08-24 and reachable from no mode and no op until now — the #1003
+orphan pattern, one day old.
+
+⚠ The timestamps come from `c.obs`, NOT from a caller-supplied array: the path
+indexes the observation tensor, so any other source could silently disagree in
+length or order and `groupStates` would return `none` (or worse, agree by
+accident on a shifted window). -/
+private def assembleSegmentsResult (j : Json) : Json :=
+  match parseAssemble j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok (c, maxD) =>
+    match buildPData c maxD with
+    | .error e => Json.mkObj [("error", Json.str e)]
+    | .ok pd =>
+      match pDecodeFast pd ckptStride with
+      | none => Json.mkObj [("degenerate", Json.bool true)]
+      | some r =>
+        -- Index → the state the model actually holds. An out-of-range index is
+        -- an ERROR, not a skipped minute: it would shorten the path and shift
+        -- every later segment boundary.
+        let states : Except String (Array Verified.HsmmSegments.State) :=
+          r.path.foldlM (fun acc i => do
+            match c.states[i]? with
+            | none => throw s!"decoded state index {i} is outside the {c.states.size}-state space"
+            | some s => pure (acc.push
+                { mode := Verified.Hsmm.StateSpace.modeName s.mode
+                , placeId := s.placeId
+                , lineName := s.lineName })) #[]
+        match states with
+        | .error e => Json.mkObj [("error", Json.str e)]
+        | .ok sts =>
+          match Verified.HsmmSegments.groupStates sts (c.obs.map (·.ts)) with
+          | none =>
+            -- `groupStates` returns none ONLY on a length mismatch, which means
+            -- the path and the observation tensor disagree — a wiring fault, not
+            -- a quiet day.
+            Json.mkObj [("error", Json.str
+              s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
+          | some segs =>
+            Json.mkObj [
+              ("segments", Json.arr (segs.map fun s =>
+                Json.mkObj
+                  [ ("startTs", Lean.toJson s.startTs)
+                  , ("endTs", Lean.toJson s.endTs)
+                  , ("mode", Json.str s.mode)
+                  , ("placeId", match s.placeId with
+                      | none => Json.null | some p => Lean.toJson p)
+                  , ("lineName", match s.lineName with
+                      | none => Json.null | some l => Json.str l) ])),
+              ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense
     `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
 private def assembleResult (j : Json) : Json :=
@@ -1778,6 +1842,7 @@ def dispatch (j : Json) : Json :=
   | .ok "hsmm" => hsmmResult j
   | .ok "assemble" => assembleResult j
   | .ok "assembledecode" => assembleDecodeResult j
+  | .ok "assemblesegments" => assembleSegmentsResult j
   | .ok "coverage" => coverageResult j
   | .ok "kalman" => kalmanResult j
   | .ok "gpsquality" => gpsQualityResult j

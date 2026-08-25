@@ -215,6 +215,27 @@ async fn main() -> Result<()> {
             };
             refresh_rail_routes(window).await
         }
+        // `src/cli/decode-day.ts` — the nightly HSMM decoder.
+        //
+        //   backend decode-day                       all users, last 14 days
+        //   backend decode-day <user>                one user, last 14 days
+        //   backend decode-day <user> <days>         one user, explicit window
+        //   backend decode-day <user> --date <ymd>   one user, one day
+        "decode-day" => {
+            let (user, dates, days): (Option<&str>, Vec<String>, Option<i64>) = match flags {
+                [] => (None, Vec::new(), None),
+                [u] => (Some(u.as_str()), Vec::new(), None),
+                [u, d] if d.parse::<i64>().is_ok() => {
+                    (Some(u.as_str()), Vec::new(), d.parse::<i64>().ok())
+                }
+                [u, d] => (Some(u.as_str()), vec![d.clone()], None),
+                _ => {
+                    eprintln!("usage: backend decode-day [user] [days|YYYY-MM-DD]");
+                    std::process::exit(64);
+                }
+            };
+            decode_day(user, &dates, days).await
+        }
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -2351,6 +2372,337 @@ const RAIL_CORRIDOR_MARGIN_M: f64 = 1500.0;
 const RAIL_CORRIDOR_LINE_LIMIT: i64 = 12000;
 /// The TypeScript's `DEFAULT_WINDOW_DAYS`.
 const RAIL_DEFAULT_WINDOW_DAYS: i64 = 21;
+
+/// Persist a day's HSMM decode, overwriting any existing row.
+///
+/// ⚠ `classifier_version` is RECORDED, not just written: `loadDecode` returns
+/// null on a version mismatch so consumers re-decode rather than serve stale
+/// segments. Writing the wrong number here does not fail — it makes every
+/// reader silently discard the row and recompute, which looks like a slow
+/// cache rather than a bug.
+async fn save_decode(
+    pool: &sqlx::MySqlPool,
+    user_id: &str,
+    date: &str,
+    segments: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO decoded_days (user_id, date, classifier_version, segments_json) \
+         VALUES (?, ?, ?, ?) \
+         ON DUPLICATE KEY UPDATE classifier_version = VALUES(classifier_version), \
+                                 segments_json = VALUES(segments_json)",
+    )
+    .bind(user_id)
+    .bind(date)
+    .bind(CLASSIFIER_VERSION)
+    .bind(serde_json::to_string(segments)?)
+    .execute(pool)
+    .await
+    .with_context(|| format!("writing decoded_days for {user_id} {date}"))?;
+    Ok(())
+}
+
+/// ⚠ MUST TRACK `src/hmm/persist.ts`'s `CLASSIFIER_VERSION`. Bumped when the
+/// classifier output for a typical day would meaningfully change; a mismatch
+/// makes every consumer treat the row as stale and re-decode.
+const CLASSIFIER_VERSION: i32 = 7;
+
+/// Decode a day's HSMM and persist it to `decoded_days`.
+///
+/// Tier 2 of #982 — the node cron is `src/cli/decode-day.ts`, daily at 06:00.
+///
+/// ⚠ THE WHOLE MODEL IS BUILT AND DECODED IN LEAN. `assemblesegments` takes raw
+/// `edges`/`nodes`/`obs`/`places`, builds the route-graph model, the coverage
+/// map and the trellis, decodes, and groups the path into segments. Nothing
+/// here constructs a model, and the 33-40 MiB quantised payload the TypeScript
+/// ships per day (#411) never exists.
+///
+/// ⚠ NOT ported, deliberately: `runLeanShadow`, `runWalkShadow` and ten
+/// `logLean*Ledger` calls — about 40% of `decodeAndPersist`. They exist to A/B
+/// the TypeScript arm against Lean. With one arm they measure nothing, and
+/// keeping them would mean keeping the arm they measure.
+async fn decode_day(user: Option<&str>, dates: &[String], days: Option<i64>) -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+    let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
+
+    let users: Vec<String> = match user {
+        Some(u) => vec![u.to_string()],
+        None => sqlx::query_scalar("SELECT user_id FROM nc_tokens")
+            .fetch_all(&pool)
+            .await
+            .context("listing users")?,
+    };
+
+    let (mut attempted, mut failed, mut written) = (0u32, 0u32, 0u32);
+    for user_id in &users {
+        let tz = backend::sync_state::get(&pool, user_id, "home_tz")
+            .await?
+            .unwrap_or_else(|| "Europe/London".into());
+        let targets: Vec<String> = if dates.is_empty() {
+            let n = days.unwrap_or(DECODE_DEFAULT_DAYS);
+            (0..n)
+                .map(|o| {
+                    (chrono::Utc::now() - chrono::Duration::days(o))
+                        .format("%Y-%m-%d")
+                        .to_string()
+                })
+                .collect()
+        } else {
+            dates.to_vec()
+        };
+
+        for date in &targets {
+            attempted += 1;
+            match decode_one(&st, &pool, user_id, date, &tz).await {
+                Ok(n) => {
+                    eprintln!("[{user_id} {date}] {n} segments");
+                    written += 1;
+                }
+                Err(e) => {
+                    // ⚠ One bad day must not strand the rest — the cron decodes
+                    // a window and a single unparseable day is not a reason to
+                    // leave the other thirteen stale. The refusal below is what
+                    // makes that safe.
+                    eprintln!("[{user_id} {date}] decode failed: {e:#}");
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    eprintln!("decode-day: {written} written, {failed} failed of {attempted} day(s)");
+    // ⚠ REFUSE rather than report success on nothing. Same rule as
+    // `refresh-rail-routes`, and for the same reason: a batch job's success must
+    // be predicated on evidence having been gathered, never on the absence of an
+    // error. Every day failing is a broken run; a day with no data is not.
+    if failed > 0 && failed == attempted {
+        pool.close().await;
+        anyhow::bail!(
+            "every one of the {attempted} day(s) failed to decode — refusing to report a \
+             successful run over no evidence (#1134)"
+        );
+    }
+    pool.close().await;
+    Ok(())
+}
+
+/// One day: gather, decode in Lean, persist.
+async fn decode_one(
+    st: &backend::state::AppState,
+    pool: &sqlx::MySqlPool,
+    user_id: &str,
+    date: &str,
+    tz: &str,
+) -> Result<usize> {
+    use sqlx::Row as _;
+    let bounds = backend::timezone::date_bounds_utc(date, Some(tz))?;
+    let inputs = backend::classification_inputs::load(
+        pool,
+        &st.http,
+        &backend::config::focus_nc_base_url(),
+        &backend::classification_inputs::DayIdentity {
+            user_id,
+            date,
+            display_tz: tz,
+        },
+        bounds,
+        Some(tz),
+    )
+    .await?;
+    // `head::capture` owns the observation tensor; nothing here rebuilds it.
+    let cap = backend::head::capture(&inputs, date, user_id)?;
+    let obs = cap.get("obs").context("capture has no obs")?.clone();
+
+    // ── the route graph, from the mirror ────────────────────────────────────
+    let (ways, stops) = route_graph_rows(pool, &obs).await?;
+    let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
+
+    // ⚠ Continuity seeds from the PRIOR day's presence_log row. Absent is a
+    // legitimate chain start, not an error — the decoder consumes whatever
+    // context it is given and the loader owns the null case.
+    // ⚠ Continuity seeds from the PRIOR day's presence_log row. TWO absences,
+    // and they are different: no ROW at all is a chain start, and a row whose
+    // place id is NULL is a day that ended nowhere known. `fetch_optional`
+    // answers the first, `try_get::<Option<u64>>` the second.
+    //
+    // ⚠ `u64`, NOT `i64` — `presence_log.*_place_id` is INT UNSIGNED, which
+    // sqlx treats as a distinct type and refuses to hand back as signed. It
+    // fails at RUNTIME on real rows; dev-lint's DL-SQLX-ROW-TYPES caught it
+    // here before it shipped.
+    let prev = backend::classification_inputs::shift_day(date, -1)?;
+    let continuity: Option<u64> = {
+        let row = sqlx::query(
+            "SELECT end_of_day_place_id FROM presence_log WHERE user_id = ? AND date = ?",
+        )
+        .bind(user_id)
+        .bind(&prev)
+        .fetch_optional(pool)
+        .await
+        .context("reading the prior day's presence_log")?;
+        match row {
+            None => None,
+            Some(r) => r.try_get::<Option<u64>, _>("end_of_day_place_id")?,
+        }
+    };
+
+    let req = serde_json::json!({
+        "obs": obs,
+        "edges": edges,
+        "nodes": nodes,
+        "places": inputs.get("knownPlaces").cloned().unwrap_or(serde_json::json!([])),
+        "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
+        "continuity": match continuity {
+            Some(p) => serde_json::json!({ "priorPlaceId": p }),
+            None => serde_json::Value::Null,
+        },
+        "date": date,
+        "tz": tz,
+    });
+
+    // ⚠ `None` is DEGENERATE — Lean found no viable path. That is a real answer
+    // about the day, not a fault, and it must not be written as zero segments:
+    // an empty row would read as "decoded, nothing happened".
+    let Some(segments) = backend::lean::assemble_segments(&req)? else {
+        anyhow::bail!("the decode is degenerate — no viable path");
+    };
+    let n = segments.as_array().map_or(0, Vec::len);
+    save_decode(pool, user_id, date, &segments).await?;
+    Ok(n)
+}
+
+/// The rail/road ways and station points covering a day's fixes.
+///
+/// ⚠ The bbox comes from the day's OWN observations, not a fixed region: a day
+/// spent outside the home metro would otherwise get a graph that does not
+/// contain it, and the decode would silently have no rail to match against.
+async fn route_graph_rows(
+    pool: &sqlx::MySqlPool,
+    obs: &serde_json::Value,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
+    use sqlx::Row as _;
+
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    if let Some(rows) = obs.get("rawFixes").and_then(serde_json::Value::as_array) {
+        for r in rows {
+            if let (Some(la), Some(lo)) = (
+                r.get("lat").and_then(serde_json::Value::as_f64),
+                r.get("lon").and_then(serde_json::Value::as_f64),
+            ) {
+                pts.push((la, lo));
+            }
+        }
+    }
+    if pts.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let (mut mnla, mut mxla, mut mnlo, mut mxlo) = (
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for (la, lo) in &pts {
+        mnla = mnla.min(*la);
+        mxla = mxla.max(*la);
+        mnlo = mnlo.min(*lo);
+        mxlo = mxlo.max(*lo);
+    }
+    let d_lat = ROUTE_GRAPH_MARGIN_M / 111_320.0;
+    let mid = (mnla + mxla) / 2.0;
+    let d_lon = ROUTE_GRAPH_MARGIN_M / (111_320.0 * (mid * std::f64::consts::PI / 180.0).cos());
+    let poly = format!(
+        "POLYGON(({} {},{} {},{} {},{} {},{} {}))",
+        mnlo - d_lon,
+        mnla - d_lat,
+        mxlo + d_lon,
+        mnla - d_lat,
+        mxlo + d_lon,
+        mxla + d_lat,
+        mnlo - d_lon,
+        mxla + d_lat,
+        mnlo - d_lon,
+        mnla - d_lat
+    );
+
+    let line_rows = sqlx::query(
+        "SELECT osm_type, osm_id, name, subtype, tags_json, ST_AsText(geom) AS wkt \
+         FROM osm_lines WHERE feature_type = 'railway' \
+           AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) LIMIT ?",
+    )
+    .bind(&poly)
+    .bind(RAIL_CORRIDOR_LINE_LIMIT)
+    .fetch_all(pool)
+    .await
+    .context("querying route-graph ways")?;
+
+    let mut ways = Vec::with_capacity(line_rows.len());
+    for r in &line_rows {
+        let wkt: String = r.try_get("wkt")?;
+        let geom = parse_linestring_wkt(&wkt);
+        if geom.len() < 2 {
+            continue;
+        }
+        let ty: String = r.try_get("osm_type")?;
+        let id: i64 = r.try_get("osm_id")?;
+        ways.push(serde_json::json!({
+            "id": format!("{ty}:{id}"),
+            "geometry": geom,
+            "name": r.try_get::<Option<String>, _>("name")?,
+            "subtype": r.try_get::<Option<String>, _>("subtype")?,
+            "tags": tag_pairs(r.try_get::<Option<String>, _>("tags_json")?.as_deref()),
+        }));
+    }
+
+    let pt_rows = sqlx::query(
+        "SELECT name, tags_json, ST_AsText(geom) AS wkt FROM osm_points \
+         WHERE feature_type = 'railway' \
+           AND MBRIntersects(geom, ST_GeomFromText(?, 4326))",
+    )
+    .bind(&poly)
+    .fetch_all(pool)
+    .await
+    .context("querying route-graph stops")?;
+
+    let mut stops = Vec::with_capacity(pt_rows.len());
+    for r in &pt_rows {
+        let wkt: String = r.try_get("wkt")?;
+        let Some((lat, lon)) = parse_point_wkt(&wkt) else {
+            continue;
+        };
+        stops.push(serde_json::json!({
+            "latBits": backend::fold_payload::bits(lat),
+            "lonBits": backend::fold_payload::bits(lon),
+            "name": r.try_get::<Option<String>, _>("name")?,
+            "tags": tag_pairs(r.try_get::<Option<String>, _>("tags_json")?.as_deref()),
+        }));
+    }
+    Ok((ways, stops))
+}
+
+/// `tags_json` → `[[k, v], …]`.
+///
+/// ⚠ PAIRS, not an object. `BackendEntry` reads them as two-element arrays, and
+/// the object spelling parses to nothing — which made `nearbyLandmarks` answer
+/// `[]` for every stay while every count read as answered (#1054).
+fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
+    let Some(v) = raw.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()) else {
+        return Vec::new();
+    };
+    v.as_object().map_or_else(Vec::new, |m| {
+        m.iter()
+            .filter_map(|(k, val)| val.as_str().map(|s| serde_json::json!([k, s])))
+            .collect()
+    })
+}
+
+/// Margin (m) around a day's fixes when reading its route graph.
+const ROUTE_GRAPH_MARGIN_M: f64 = 1500.0;
+/// The TypeScript's `--days N` default for the warm-cache cron.
+const DECODE_DEFAULT_DAYS: i64 = 14;
 
 /// Rebuild `presence_log` from `decoded_days` over a bounded window.
 ///

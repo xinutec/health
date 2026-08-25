@@ -1,4 +1,5 @@
 import Std.Data.HashMap
+import Verified.JsNum
 /-!
 # Route-graph primitives (implementation-first port of `route-graph.ts`)
 
@@ -267,5 +268,176 @@ private def track : List LatLon := [⟨51.52, -0.13⟩, ⟨51.53, -0.13⟩, ⟨5
 -- No leg, no length. Not reachable through `buildRouteGraph` (see the docstring).
 #guard geometryLengthM [⟨51.52, -0.13⟩] == 0
 #guard geometryLengthM [] == 0
+
+/-! ## Assembling the wire graph from raw OSM rows
+
+⚠ This is `route-graph.ts`'s `buildRouteGraph`, narrowed to what actually
+crosses to `parseAssemble`: `{id, geometry, lineMemberships, underground,
+startNode, endNode}` per edge and `{id, lat, lon, stationName, edgeIds}` per
+node. The TypeScript's `RouteGraph` additionally carries a cell index, per-edge
+`lengthM` and endpoint copies — all of which Lean REBUILDS in
+`buildRouteGraphModel`, so shipping them would be shipping a second copy of an
+index the receiver constructs anyway.
+
+The shell supplies rows with the WKT already parsed (a format concern) and
+nothing else: `isUnderground`, `parseLineMemberships`, the node keying and the
+station merge all happen here. -/
+
+/-- One OSM way as the shell hands it over. -/
+structure RawWay where
+  id : String
+  geometry : List LatLon
+  name : Option String
+  subtype : Option String
+  tags : List (String × String)
+  deriving Inhabited
+
+/-- One OSM point that might be a station. -/
+structure RawStop where
+  lat : Float
+  lon : Float
+  name : Option String
+  tags : List (String × String)
+  deriving Inhabited
+
+/-- ⚠ FIVE DECIMAL PLACES, and the identity of a node is this string. `toFixed(5)`
+is ~1.1 m of latitude: two way endpoints that meet at a junction agree to 5 dp
+and fuse into one node; a sixth place would split junctions that are the same
+place, and a fourth would fuse ones that are not. -/
+def nodeKey (lat lon : Float) : String :=
+  -- ⚠ `toFixed` is `Option` because JS `toFixed` is undefined past 1e21. A
+  -- coordinate can never reach that, and a silent "" here would fuse every such
+  -- node into one, so the fallback is the raw value rather than empty.
+  let f := fun (x : Float) => (Verified.JsNum.toFixed x 5).getD (toString x)
+  s!"{f lat},{f lon}"
+
+/-- A POI within this distance of a way endpoint IS that station. Tube station
+POIs sit at the street entrance, 50-150 m from the platform-aligned endpoint of
+the underground way — the hall, escalators and gates are that far above the
+platform. 150 m is the upper end at which every London Tube POI attaches; the
+candidate generator applies a wider 250 m and lets the scorer weigh it softly. -/
+def STATION_MERGE_RADIUS_M : Float := 150
+
+private def stopTag (tags : List (String × String)) (k : String) : Option String :=
+  (tags.find? (fun p => p.1 == k)).map (·.2)
+
+/-- Does this POI name a rail/transit stop at all? -/
+def isStationStop (tags : List (String × String)) : Bool :=
+  let is (k v : String) := stopTag tags k == some v
+  is "railway" "station" || is "railway" "stop" || is "railway" "halt"
+    || is "public_transport" "station" || is "public_transport" "stop_position"
+    || is "subway" "yes" || is "amenity" "tram_stop" || is "highway" "bus_stop"
+
+structure WireEdge where
+  id : String
+  geometry : List LatLon
+  lineMemberships : List String
+  underground : Bool
+  startNode : String
+  endNode : String
+  deriving Inhabited
+
+structure WireNode where
+  id : String
+  lat : Float
+  lon : Float
+  stationName : Option String
+  edgeIds : List String
+  deriving Inhabited
+
+/--
+Build the edge and node arrays `parseAssemble` consumes.
+
+⚠ A way with fewer than two vertices is DROPPED, matching the TypeScript. It has
+no endpoints to key on, so it could not join the graph regardless.
+
+⚠ Node order follows FIRST APPEARANCE of each key across the ways, because the
+receiver reads `nodes` as an ordered array (`StationChain` documents four things
+downstream that depend on it). A map iteration or a sort would reorder it while
+looking like a tidy-up.
+-/
+def buildWireGraph (ways : List RawWay) (stops : List RawStop) :
+    Array WireEdge × Array WireNode := Id.run do
+  let mut edges : Array WireEdge := #[]
+  -- (key, lat, lon, edgeIds) in first-appearance order.
+  let mut nodes : Array (String × Float × Float × Array String) := #[]
+  let mut idx : Std.HashMap String Nat := {}
+  for w in ways do
+    match w.geometry, w.geometry.getLast? with
+    | first :: _, some last =>
+      if w.geometry.length < 2 then continue
+      let sk := nodeKey first.lat first.lon
+      let ek := nodeKey last.lat last.lon
+      edges := edges.push
+        { id := w.id, geometry := w.geometry
+        , lineMemberships := parseLineMemberships w.name
+        , underground := isUnderground w.tags w.subtype
+        , startNode := sk, endNode := ek }
+      for (k, p) in [(sk, first), (ek, last)] do
+        match idx[k]? with
+        | some i =>
+          let (kk, la, lo, ids) := nodes[i]!
+          if !ids.contains w.id then nodes := nodes.set! i (kk, la, lo, ids.push w.id)
+        | none =>
+          idx := idx.insert k nodes.size
+          nodes := nodes.push (k, p.lat, p.lon, #[w.id])
+    | _, _ => pure ()
+  -- Station annotation: nearest node endpoint within the merge radius wins.
+  let mut named : Std.HashMap String String := {}
+  for s in stops do
+    if !isStationStop s.tags then continue
+    let mut best : Option (String × Float) := none
+    for (k, la, lo, _) in nodes do
+      let d := haversineMeters s.lat s.lon la lo
+      if decide (d ≤ STATION_MERGE_RADIUS_M) then
+        match best with
+        | some (_, bd) => if decide (d < bd) then best := some (k, d)
+        | none => best := some (k, d)
+    match best, s.name with
+    | some (k, _), some nm => named := named.insert k nm
+    | _, _ => pure ()
+  let outNodes := nodes.map fun (k, la, lo, ids) =>
+    ({ id := k, lat := la, lon := lo, stationName := named[k]?, edgeIds := ids.toList } : WireNode)
+  return (edges, outNodes)
+
+/-! ### `buildWireGraph` -/
+
+private def W (id : String) (pts : List (Float × Float)) (nm : Option String) : RawWay :=
+  { id := id, geometry := pts.map (fun (a, b) => ⟨a, b⟩), name := nm
+  , subtype := some "subway", tags := [] }
+
+private def twoWays : List RawWay :=
+  [ W "way:1" [(51.50000, -0.10000), (51.51000, -0.09000)] (some "Jubilee Line")
+  , W "way:2" [(51.51000, -0.09000), (51.52000, -0.08000)] (some "Jubilee Line") ]
+
+-- Two ways meeting at one point share ONE node, so the graph is connected.
+#guard (buildWireGraph twoWays []).2.size == 3
+#guard (buildWireGraph twoWays []).1.size == 2
+-- ⚠ The shared endpoint carries BOTH edge ids. A node that listed one would
+-- disconnect the graph while still looking like a node.
+#guard ((buildWireGraph twoWays []).2.find? (fun n => n.edgeIds.length == 2)).isSome
+-- Node identity is the 5-dp key, so the junction fuses rather than duplicating.
+#guard nodeKey 51.5 (-0.1) == "51.50000,-0.10000"
+#guard nodeKey 51.500001 (-0.1) == nodeKey 51.5 (-0.1)
+-- ⚠ A sixth place would NOT fuse them; this is the boundary the identity rests on.
+#guard nodeKey 51.50001 (-0.1) != nodeKey 51.5 (-0.1)
+-- Line memberships come from the name, in Lean, not from the caller.
+#guard ((buildWireGraph twoWays []).1[0]!).lineMemberships == ["Jubilee Line"]
+-- A way with one vertex has no endpoints and is dropped.
+#guard (buildWireGraph [W "way:x" [(51.5, -0.1)] none] []).1.size == 0
+-- A stop within 150 m names the node; one beyond it does not.
+#guard ((buildWireGraph twoWays
+    [{ lat := 51.50050, lon := -0.10000, name := some "Somewhere"
+     , tags := [("railway", "station")] }]).2.find?
+      (fun n => n.stationName == some "Somewhere")).isSome
+#guard ((buildWireGraph twoWays
+    [{ lat := 51.60000, lon := -0.10000, name := some "Far"
+     , tags := [("railway", "station")] }]).2.find?
+      (fun n => n.stationName.isSome)).isNone
+-- ⚠ A POI that is not a stop never names a node, however close it sits.
+#guard ((buildWireGraph twoWays
+    [{ lat := 51.50000, lon := -0.10000, name := some "A Cafe"
+     , tags := [("amenity", "cafe")] }]).2.find?
+      (fun n => n.stationName.isSome)).isNone
 
 end Verified.Hsmm.RouteGraph
