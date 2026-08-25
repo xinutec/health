@@ -26,11 +26,13 @@ pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 /// one — but matching the arm being replaced is the reason it is written this
 /// way.
 ///
-/// ⚠ A FAILING MIRROR LEAVES NO RECORD UNLESS IT FAILS LAST. `Outcome::AllFailed`
-/// carries only the LAST error, exactly as `overpassFetch` keeps only `lastErr`,
-/// which is why #1153's log named kumi and read as a one-endpoint outage when
-/// both endpoints were down. Preserved for parity; the caller should log the
-/// tile, not just this string.
+/// ⚠ EVERY MIRROR'S FAILURE IS CARRIED, NOT JUST THE LAST — this is a deliberate
+/// DEPARTURE from `overpassFetch`, which keeps only `lastErr`. That is why
+/// #1153's log named `kumi.systems` on every line and read as a one-endpoint
+/// outage while BOTH endpoints were down: the first mirror's failure was
+/// overwritten before anything printed it. Reproduced here once (2026-08-25
+/// dry run, 6 of 18 tiles) and then fixed. The behaviour is unchanged — only
+/// the diagnosis is.
 ///
 /// ⚠ `overpass.osm.ch` IS NOT A SUBSTITUTE and is deliberately absent: it
 /// answers 200 with zero elements for anything outside Switzerland, which is
@@ -57,7 +59,10 @@ pub enum Outcome {
     /// the breaker's business.
     Permanent { status: u16 },
     /// Every mirror failed. The caller records this against the breaker.
-    AllFailed { last: String },
+    ///
+    /// ⚠ ONE ENTRY PER MIRROR, in the order tried. A single string here is what
+    /// made a two-endpoint outage unreadable.
+    AllFailed { errors: Vec<String> },
 }
 
 /// POST one query to each mirror in turn until one answers.
@@ -67,7 +72,7 @@ pub enum Outcome {
 /// state in a `static`. The caller's loop is where `recordFailure` and
 /// `recordSuccess` belong.
 pub async fn fetch_once(client: &reqwest::Client, query: &str, timeout_ms: u64) -> Outcome {
-    let mut last = String::from("no mirror was tried");
+    let mut errors: Vec<String> = Vec::new();
     for url in OVERPASS_URLS {
         let res = client
             .post(url)
@@ -82,7 +87,7 @@ pub async fn fetch_once(client: &reqwest::Client, query: &str, timeout_ms: u64) 
                 Ok(body) => return Outcome::Ok(body),
                 // A 2xx whose body could not be read is a transport failure, not
                 // a permanent one — try the other mirror.
-                Err(e) => last = format!("{url}: reading the body failed: {e}"),
+                Err(e) => errors.push(format!("{url}: reading the body failed: {e}")),
             },
             Ok(r) => {
                 let status = r.status().as_u16();
@@ -92,12 +97,12 @@ pub async fn fetch_once(client: &reqwest::Client, query: &str, timeout_ms: u64) 
                 if status != 429 && status < 500 {
                     return Outcome::Permanent { status };
                 }
-                last = format!("{url} returned {status}");
+                errors.push(format!("{url} returned {status}"));
             }
-            Err(e) => last = format!("{url}: {e}"),
+            Err(e) => errors.push(format!("{url}: {e}")),
         }
     }
-    Outcome::AllFailed { last }
+    Outcome::AllFailed { errors }
 }
 
 /// Parse an Overpass response body into its `elements` array.

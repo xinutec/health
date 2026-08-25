@@ -237,21 +237,26 @@ async fn main() -> Result<()> {
             decode_day(user, &dates, days).await
         }
         // `src/cli/refresh-rail-stops.ts` — the nightly rail-relation mirror.
-        "refresh-rail-stops" => {
-            if !flags.is_empty() {
-                eprintln!("usage: backend refresh-rail-stops");
+        //
+        //   backend refresh-rail-stops              mirror and rebuild the cache
+        //   backend refresh-rail-stops --dry-run    fetch and report, write nothing
+        "refresh-rail-stops" => match flags {
+            [] => refresh_rail_stops(false).await,
+            [f] if f == "--dry-run" => refresh_rail_stops(true).await,
+            _ => {
+                eprintln!("usage: backend refresh-rail-stops [--dry-run]");
                 std::process::exit(64);
             }
-            refresh_rail_stops().await
-        }
+        },
         // `src/cli/refresh-bus-routes.ts` — the nightly bus-route mirror.
-        "refresh-bus-routes" => {
-            if !flags.is_empty() {
-                eprintln!("usage: backend refresh-bus-routes");
+        "refresh-bus-routes" => match flags {
+            [] => refresh_bus_routes(false).await,
+            [f] if f == "--dry-run" => refresh_bus_routes(true).await,
+            _ => {
+                eprintln!("usage: backend refresh-bus-routes [--dry-run]");
                 std::process::exit(64);
             }
-            refresh_bus_routes().await
-        }
+        },
         "rows-check" => {
             let [user, since, date] = flags else {
                 eprintln!("usage: backend rows-check <user> <since-date> <date>");
@@ -3073,10 +3078,19 @@ async fn mirror_fetch(
                 );
                 failures += 1;
             }
-            backend::overpass::Outcome::AllFailed { last } => {
+            backend::overpass::Outcome::AllFailed { errors } => {
                 let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
                 breaker = lean::breaker_step(&breaker, "failure", now_ms)?;
-                eprintln!("  tile {}/{}: {last} — skipped", i + 1, tiles.len());
+                // ⚠ EVERY mirror is named. The 2026-08-25 dry run printed only
+                // `kumi.systems` on all six failed tiles, which reads as one
+                // endpoint being down while both were — #1153's misreading,
+                // reproduced here before it was fixed.
+                eprintln!(
+                    "  tile {}/{}: {} — skipped",
+                    i + 1,
+                    tiles.len(),
+                    errors.join("; ")
+                );
                 failures += 1;
             }
         }
@@ -3144,7 +3158,7 @@ fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
 /// a live defect (#1134) ported as it stands: the parity diff against the
 /// TypeScript arm is the instrument that finds defects of this class, and
 /// changing the rule during the port removes it.
-async fn refresh_rail_stops() -> Result<()> {
+async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -3171,6 +3185,23 @@ async fn refresh_rail_stops() -> Result<()> {
             "all {} tiles failed — leaving rail_stops_cache untouched",
             plan.tiles.len()
         );
+    }
+
+    // ⚠ THE DRY RUN STOPS HERE, AFTER the refusal and BEFORE the transaction — so
+    // it exercises the fetch, the extraction and the decision, which is
+    // everything a real run decides. Placing it earlier would make it a test of
+    // the argument parser.
+    if dry_run {
+        let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(-1);
+        eprintln!(
+            "DRY RUN — rail_stops_cache holds {existing} relation(s) and would be rebuilt with {}",
+            h.routes.len()
+        );
+        pool.close().await;
+        return Ok(());
     }
 
     let mut tx = pool
@@ -3206,7 +3237,7 @@ async fn refresh_rail_stops() -> Result<()> {
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
 /// lossless, and it is why the refusal can be as narrow as "every tile failed".
 /// It is also why a 2-of-18 run exits 0 — see #1134.
-async fn refresh_bus_routes() -> Result<()> {
+async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -3243,6 +3274,25 @@ async fn refresh_bus_routes() -> Result<()> {
             "{} — leaving bus_route_cache untouched",
             verdict.refusal.unwrap_or_else(|| "refused".into())
         );
+    }
+
+    // ⚠ Same placement as the rail arm: after the refusal, before the write.
+    if dry_run {
+        eprintln!(
+            "DRY RUN — bus_route_cache holds {existing} route(s); this run would {} with {} route(s)",
+            if verdict.full_rebuild {
+                "rebuild it in full".to_string()
+            } else {
+                format!(
+                    "replace {} of {} tiles",
+                    h.succeeded.len(),
+                    plan.tiles.len()
+                )
+            },
+            h.routes.len()
+        );
+        pool.close().await;
+        return Ok(());
     }
 
     let mut tx = pool
