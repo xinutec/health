@@ -40,41 +40,26 @@ jobs:
       # toolchain download comes from cache.nixos.org (flake-pinned; a couple of
       # minutes).
       - uses: cachix/install-nix-action@v31
-      - run: pnpm install --frozen-lockfile
+      # ⚠ FRONTEND ONLY. The root install existed for the TypeScript backend,
+      # which #975 deleted; nothing at the repo root builds or runs now.
       - run: pnpm install --frozen-lockfile --dir frontend
-      # The eight rows of gate.json that a single-repo runner can run, listed
+      # The rows of gate.json that a single-repo runner can run, listed
       # rather than chained. NOT `pnpm run verify`: that script runs the gate
       # itself now, and the gate reaches `../dev-lint` — a private sibling
       # repository this checkout does not have. Naming them individually also
-      # buys here what the table bought locally: a red run says which of the
-      # eight broke, instead of one name for all of them.
+      # buys here what the table bought locally: a red run says which one
+      # broke, instead of one name for all of them.
       #
       # Missing on purpose, because a runner cannot do them: the artifact-judged
       # `ng build` and the phone-width layout harness (both go through
       # `dev-lint#ng-build`), the shared dev-lint rules, and the gate.json /
       # gate.dhall lockfile check. The 03:00 fleet sweep runs the whole table.
-      - run: pnpm run typecheck
       - run: pnpm run typecheck:frontend
-      - run: pnpm run check:schema-types
-      - run: pnpm run lint
       - run: pnpm run lint:frontend
-      # `dist/` before `pnpm test`: tests/golden-bless-flags.test.ts drives the
-      # BUILT golden-check CLI, because the bug it guards is in that CLI's own
-      # control flow (one process.exit per bless block) and nothing importable
-      # can reach it. `typecheck` above is `tsc --noEmit`, so without this step
-      # dist/ does not exist here and the spawn fails with a bare exit 1.
-      - run: pnpm run build
-      # ⚠ `lean-check` BEFORE `pnpm test`, and the order is load-bearing (#975).
-      # It runs `lake build`, which is what produces
-      # `lean/.lake/build/bin/verified_cli` — and since the TypeScript day
-      # cascade was deleted, the fold is the ONLY arm, so any test that drives a
-      # day now spawns that binary. Run afterwards, as it used to be, every such
-      # test fails with ENOENT on a path that has not been built yet.
-      #
-      # It cost nothing before because `LEAN_DAY` unset meant the TS arm ran and
-      # the binary was never needed here.
+      # `lake build`, which is also what produces
+      # `lean/.lake/build/bin/verified_cli` — the binary every day-driving check
+      # spawns now that the fold is the only arm.
       - run: pnpm run lean-check
-      - run: pnpm test
       - run: pnpm run test:frontend
 
   image:

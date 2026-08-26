@@ -48,42 +48,16 @@ let G = ../dev-lint/gate/schema.dhall
 
 in  { name = "health"
     , checks =
-      [ {-  Unconditional, and separate: two projects, two lockfiles.
-            `--frozen-lockfile` is pnpm's ci mode — install exactly what the
-            lockfile says, or fail.
-        -}
-        G.Check::{
-        , name = "backend deps match the lockfile"
-        , argv = G.inDevShell [ "pnpm", "install", "--frozen-lockfile" ]
-        , timeout_s = 900
-        }
-      , G.Check::{
+      [ G.Check::{
         , name = "frontend deps match the lockfile"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "install", "--frozen-lockfile" ]
-        , timeout_s = 900
-        }
-      , {-  `tsc --noEmit` over src and over the test tsconfig: the tests are
-            typechecked too, because a test that no longer compiles is a test
-            that stopped testing.
-        -}
-        G.Check::{
-        , name = "typecheck (backend)"
-        , argv = G.inDevShell [ "pnpm", "run", "typecheck" ]
         , timeout_s = 900
         }
       , G.Check::{
         , name = "typecheck (frontend app + e2e)"
         , argv = G.inDevShell [ "pnpm", "run", "typecheck:frontend" ]
         , timeout_s = 900
-        }
-      , {-  The DB schema and the TypeScript that reads it are generated from one
-            source; this fails when the committed types have drifted from it.
-        -}
-        G.Check::{
-        , name = "generated schema types are current"
-        , argv = G.inDevShell [ "pnpm", "run", "check:schema-types" ]
-        , timeout_s = 600
         }
       , {-  The frontend restates the backend's string unions — it has no
             compile-time link to them. This fails when a copy has drifted, so
@@ -103,58 +77,6 @@ in  { name = "health"
             [ "cargo", "test", "--manifest-path", "rust/Cargo.toml"
             , "-p", "backend", "--test", "frontend_unions"
             ]
-        , timeout_s = 600
-        }
-      , {-  The `*-refs.mts` generators, held to a committed snapshot.
-
-            A Lean port that is SERVED is protected from TS drift by the day gate
-            — which exists because `feefb75` moved a constant in `velocity.ts`
-            and the fold never got it. A port that is written but UNREACHABLE has
-            no such protection: the day gate compares arms, and an orphan is in
-            neither. 31 covered TS exports are in that state today (#1003).
-
-            What those orphans have instead is a `#guard` pinned to a constant
-            copied by hand from a run of the sibling refs file. Those refs import
-            the production TypeScript, so they are real parity evidence — but
-            nothing re-ran them, so if the TS moved the guard still passed. This
-            row is what re-runs them. All 69 generators, ~30 s, no database, no
-            network, and none of them reads the gitignored corpus, so it passes
-            on a clean checkout.
-
-            ⚠ GREEN DOES NOT MEAN NO TS DRIFTED, and the row is worth having
-            anyway. It holds what the generators PRINT; it cannot check that any
-            `#guard` agrees with them, because no machine-readable link from a
-            guard to a ref value exists. Measured by ablation rather than
-            asserted: every numeric constant in `src/geo/segments.ts` is caught,
-            36 perturbations for 36 catches, at a tuning-sized edit as well as a
-            gross one — one module of the 77 the refs import. The rest are
-            unmeasured. See the header of `refs-snapshot.mts`, including the one
-            unexplained reading recorded there.
-        -}
-        G.Check::{
-        , name = "the reference generators still agree with their snapshot"
-        , argv = G.inDevShell [ "pnpm", "run", "check:refs-snapshot" ]
-        , timeout_s = 600
-        }
-      , {-  The check above pins the pass NAMES. It cannot pin a pass's BODY,
-            and that is the gap this closes: `feefb75` added
-            MINED_LABEL_MIN_DAYS to velocity.ts with no Lean counterpart, the
-            name list still matched, and the day gate went RED on 6 of 35 days
-            with nothing to say so until the next deploy — `deploy.sh` is the
-            only place the full gate runs. THIRD silent TS/Lean drift (#417,
-            #425, this), all three found by accident.
-
-            ONE day, ~9 s, so this is a tripwire and not the gate: the 35-day
-            corpus still owns the verdict in deploy.sh. Skips cleanly when the
-            gitignored corpus is absent, which is why it can sit in a table
-            that must also pass on a clean checkout.
-
-            Verified RED as well as green — a TS-only change to the mined-label
-            gate fails it. #943.
-        -}
-        G.Check::{
-        , name = "Lean fold matches the TS day (one-day smoke)"
-        , argv = G.inDevShell [ "scripts/day-gate-smoke.sh" ]
         , timeout_s = 600
         }
       , {-  The house `cargo fmt --all --check` row, which ten sibling repos have
@@ -327,19 +249,9 @@ in  { name = "health"
         , timeout_s = 600
         }
       , G.Check::{
-        , name = "lint (biome, backend)"
-        , argv = G.inDevShell [ "pnpm", "run", "lint" ]
-        , timeout_s = 600
-        }
-      , G.Check::{
         , name = "lint (eslint, frontend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint:frontend" ]
         , timeout_s = 900
-        }
-      , G.Check::{
-        , name = "tests (vitest)"
-        , argv = G.inDevShell [ "pnpm", "test" ]
-        , timeout_s = 1800
         }
       , G.Check::{
         , name = "frontend unit tests"

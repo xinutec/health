@@ -47,17 +47,6 @@ RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp
     install -m755 /tmp/bins/bin/day-shell /export/bin/day-shell && \
     install -m755 /tmp/bins/bin/backend /export/bin/backend
 
-FROM node:24-alpine AS backend-build
-WORKDIR /app
-# pnpm-workspace.yaml carries the overrides; without it `pnpm import` re-resolves
-# and a constrained package can land below its declared floor. pnpm is taken
-# unpinned — the host gets its copy from the flake, and a second version here
-# would be two numbers held level by hand.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-COPY src/ src/
-RUN pnpm exec tsc
-
 FROM node:24-alpine AS frontend-build
 WORKDIR /app
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
@@ -71,26 +60,23 @@ RUN pnpm exec ng build --configuration production
 
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# --prod is pnpm's --omit=dev.
-RUN npm install -g pnpm && pnpm install --frozen-lockfile --prod
-COPY --from=backend-build /app/dist dist/
+# ⚠ NO `pnpm install` AND NO `dist/`. The TypeScript backend is gone (#975), so
+# the runtime payload is the Rust binary and the frontend's static build. The
+# base image is still node's only because the frontend build stage above uses
+# it; nothing in the running container executes node.
 COPY --from=frontend-build /app/dist/frontend/browser public/
-# The verified decoder + its /nix/store runtime closure. LEAN_CLI is the
-# switch decode-day.js checks to run the Lean shadow after each decode.
+# The verified decoder + its /nix/store runtime closure.
 COPY --from=lean-build /export/nix/store /nix/store/
 COPY --from=lean-build /export/bin/verified_cli lean/verified_cli
 ENV LEAN_CLI=/app/lean/verified_cli
-# The day tenant's own binary, and a SEPARATE variable on purpose: LEAN_CLI is
-# read by lean-core, lean-hsmm and compare-match as well, and day-shell serves
-# the `day` mode only. See `cliPath()` in src/lean/lean-day.ts.
+# The day tenant's own binary, and a SEPARATE variable on purpose: `day-shell`
+# serves the `day` mode only, where `verified_cli` answers every mode.
 COPY --from=lean-build /export/bin/day-shell lean/day-shell
 ENV LEAN_DAY_HOST=/app/lean/day-shell
-# The Rust+Lean HTTP server (#982). Shipped ALONGSIDE `dist/server.js` rather
-# than replacing it: which one runs is the k8s `command`, so a rollback is a
-# manifest change and a restart rather than an image rebuild. That matters
-# because the image is the slow half — CI builds it on every push to main, and
-# a bad cutover should not have to wait for one.
+# The Rust+Lean HTTP server (#982) — now the ONLY server. It shipped alongside
+# `dist/server.js` through the cutover so a rollback was a manifest change
+# rather than an image rebuild; every cron and the Deployment have run on it
+# since 2026-08-26, so the second copy is gone with the rest of the TypeScript.
 COPY --from=lean-build /export/bin/backend bin/backend
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale
 # client/deploy is visible at a glance. Injected by .github/workflows/docker.yml.
@@ -100,4 +86,7 @@ ENV GIT_SHA=$GIT_SHA
 # k8s workloads (auth Deployment + the cron Jobs). Files above are
 # world-readable, so it can run them.
 USER node
-CMD ["node", "dist/server.js"]
+# ⚠ THE MANIFESTS SET `command` EXPLICITLY, so this is a default nothing in the
+# cluster reads. It still has to name a file that exists, or a `docker run` of
+# this image fails on something the k8s workloads never exercise.
+CMD ["bin/backend", "serve"]

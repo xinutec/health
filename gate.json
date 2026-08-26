@@ -10,39 +10,9 @@
         "install",
         "--frozen-lockfile"
       ],
-      "cwd": ".",
-      "env": {},
-      "name": "backend deps match the lockfile",
-      "timeout_s": 900
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "pnpm",
-        "install",
-        "--frozen-lockfile"
-      ],
       "cwd": "frontend",
       "env": {},
       "name": "frontend deps match the lockfile",
-      "timeout_s": 900
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "pnpm",
-        "run",
-        "typecheck"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "typecheck (backend)",
       "timeout_s": 900
     },
     {
@@ -66,21 +36,6 @@
         "develop",
         "--no-warn-dirty",
         "--command",
-        "pnpm",
-        "run",
-        "check:schema-types"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "generated schema types are current",
-      "timeout_s": 600
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
         "cargo",
         "test",
         "--manifest-path",
@@ -93,34 +48,6 @@
       "cwd": ".",
       "env": {},
       "name": "frontend union copies match the backend",
-      "timeout_s": 600
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "pnpm",
-        "run",
-        "check:refs-snapshot"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "the reference generators still agree with their snapshot",
-      "timeout_s": 600
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "scripts/day-gate-smoke.sh"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "Lean fold matches the TS day (one-day smoke)",
       "timeout_s": 600
     },
     {
@@ -220,41 +147,12 @@
         "--command",
         "pnpm",
         "run",
-        "lint"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "lint (biome, backend)",
-      "timeout_s": 600
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "pnpm",
-        "run",
         "lint:frontend"
       ],
       "cwd": ".",
       "env": {},
       "name": "lint (eslint, frontend)",
       "timeout_s": 900
-    },
-    {
-      "argv": [
-        "nix",
-        "develop",
-        "--no-warn-dirty",
-        "--command",
-        "pnpm",
-        "test"
-      ],
-      "cwd": ".",
-      "env": {},
-      "name": "tests (vitest)",
-      "timeout_s": 1800
     },
     {
       "argv": [
