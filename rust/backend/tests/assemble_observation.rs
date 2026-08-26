@@ -177,3 +177,215 @@ fn an_unreadable_proximity_distance_is_refused_by_name() {
         "the error must name what could not be read, got: {err}"
     );
 }
+
+/// ⚠ THE STATION CHAIN RUNS INSIDE `assemblesegments`, and the alternative was
+/// not "a second call" but "a second call carrying the 1440-row tensor" — the
+/// `stationchain` mode takes `obs`, so wiring it from the shell would put back
+/// on the wire exactly the payload #411 exists to delete.
+///
+/// ⚠ AND THE FIELDS ARE ABSENT, NOT NULL, WHERE THE RESOLVER DID NOT REACH.
+/// The TypeScript ASSIGNS `boardStation`/`alightStation` only at the indices
+/// `resolveStationsServed` returned, and `JSON.stringify` omits an `undefined`.
+/// `segments_json` is compared as TEXT — a `jq` diff parses both sides and calls
+/// them equal — so a null where node writes nothing is a real divergence that
+/// the obvious comparison cannot see.
+#[test]
+fn an_unresolved_segment_carries_no_station_keys_at_all() {
+    setup();
+    let segs = lean::assemble_segments(&request(observation(serde_json::json!([]))))
+        .expect("assemblesegments")
+        .expect("a viable path");
+    let arr = segs.as_array().expect("segments is an array");
+    assert!(!arr.is_empty());
+    // No edges and no nodes, so nothing can resolve — and every segment must
+    // therefore be missing the KEY, not carrying a null.
+    for s in arr {
+        let o = s.as_object().unwrap();
+        assert!(
+            !o.contains_key("boardStation") && !o.contains_key("alightStation"),
+            "an unresolved segment must carry no station keys: {s}"
+        );
+        // The five fields that are always there.
+        for k in ["startTs", "endTs", "mode", "placeId", "lineName"] {
+            assert!(o.contains_key(k), "{k} is missing from {s}");
+        }
+    }
+}
+
+/// ⚠ `railStopRelations` ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the
+/// mirror was never consulted, so every candidate's `servedPen` is 0; empty means
+/// it was consulted and had nothing. Both must decode — this pins that neither is
+/// an error, which is what a shell that cannot reach the mirror depends on.
+#[test]
+fn the_two_empty_relation_forms_are_both_accepted() {
+    setup();
+    for rels in [serde_json::Value::Null, serde_json::json!([])] {
+        let mut r = request(observation(serde_json::json!([])));
+        r["railStopRelations"] = rels.clone();
+        lean::assemble_segments(&r)
+            .unwrap_or_else(|e| panic!("railStopRelations {rels} must decode: {e}"))
+            .expect("a viable path");
+    }
+    // And a relation of the shape `classification_inputs::rail_stops_cache`
+    // writes — column names checked against `parseRelation`, not assumed.
+    let mut r = request(observation(serde_json::json!([])));
+    r["railStopRelations"] = serde_json::json!([{
+        "osmRelationId": 12345,
+        "routeType": "subway",
+        "lineRef": "Central",
+        "lineName": "Central Line",
+        "stops": [{ "name": "Bank", "lat": "0", "lon": "0", "seq": 0 }],
+    }]);
+    lean::assemble_segments(&r)
+        .expect("the cached relation shape must be accepted")
+        .expect("a viable path");
+}
+
+/// The five-station synthetic line the Lean guards use
+/// (`lean/experiments/station-chain-refs.mts`), renamed onto a line the state
+/// space actually has — `Test Line` is not in `KNOWN_LINES`, so a decode could
+/// never emit it.
+mod line {
+    pub const LONS: [f64; 5] = [
+        0.0,
+        0.021_645_543_464_882_695,
+        0.043_291_086_929_765_39,
+        0.064_936_630_394_648_09,
+        0.086_582_173_859_530_78,
+    ];
+    pub const KEYS: [&str; 5] = [
+        "51.50000,0.00000",
+        "51.50000,0.02165",
+        "51.50000,0.04329",
+        "51.50000,0.06494",
+        "51.50000,0.08658",
+    ];
+    pub const NAMES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
+    pub const NAME: &str = "Central Line";
+}
+
+fn ride_request(relations: serde_json::Value) -> serde_json::Value {
+    let b = backend::fold_payload::bits;
+    let edges: Vec<_> = (0..4)
+        .map(|i| {
+            serde_json::json!({
+                "id": format!("way:{}", 1000 + i),
+                "geometry": [
+                    { "lat": b(51.5), "lon": b(line::LONS[i]) },
+                    { "lat": b(51.5), "lon": b(line::LONS[i + 1]) },
+                ],
+                "lineMemberships": [line::NAME],
+                "underground": true,
+                "startNode": line::KEYS[i], "endNode": line::KEYS[i + 1],
+            })
+        })
+        .collect();
+    let nodes: Vec<_> = (0..5)
+        .map(|i| {
+            let mut ids = Vec::new();
+            if i > 0 {
+                ids.push(format!("way:{}", 999 + i));
+            }
+            if i < 4 {
+                ids.push(format!("way:{}", 1000 + i));
+            }
+            serde_json::json!({
+                "id": line::KEYS[i], "lat": b(51.5), "lon": b(line::LONS[i]),
+                "stationName": line::NAMES[i], "edgeIds": ids,
+            })
+        })
+        .collect();
+    // An eight-minute run west to east at 45 km/h, hugging the rail and well
+    // clear of any road — the evidence the decoder needs to call it a train.
+    const RIDE_MIN: i64 = 8;
+    let points: Vec<_> = (0..=RIDE_MIN)
+        .map(|m| {
+            #[allow(clippy::cast_precision_loss)]
+            let frac = m as f64 / RIDE_MIN as f64;
+            serde_json::json!({
+                "ts": T0 + m * 60 + 30, "lat": 51.5,
+                "lon": line::LONS[0] + frac * (line::LONS[4] - line::LONS[0]),
+                "speedKmh": 45.0,
+            })
+        })
+        .collect();
+    let proximity: Vec<_> = (0..=RIDE_MIN)
+        .map(|m| serde_json::json!([T0 + m * 60, b(400.0), b(3.0)]))
+        .collect();
+
+    serde_json::json!({
+        "observation": {
+            "startUtc": T0, "points": points, "hr": [], "steps": [], "sleep": [],
+            "localCtx": local_ctx(), "proximity": proximity, "imputeCadence": false,
+        },
+        "edges": edges, "nodes": nodes, "places": [], "placeNearLine": [],
+        "continuity": null,
+        "railStopRelations": relations,
+        "flags": { "reacquireRobust": true, "segEvidence": true, "chainContext": true },
+    })
+}
+
+/// ⚠ THE POSITIVE CASE, WITHOUT WHICH THE ABSENT-KEY TEST ABOVE IS VACUOUS. A
+/// day where nothing resolves would pass that test with the whole chain deleted.
+/// This one decodes an actual train leg and asserts the two stations by name, so
+/// removing the wiring fails here first.
+///
+/// ⚠ IT DEPENDS ON THE DECODER CHOOSING `train`, which is a model outcome rather
+/// than a wire contract. If a model change breaks this, read it as "the ride no
+/// longer decodes as a train" before reading it as a station-chain fault.
+#[test]
+fn a_decoded_train_leg_carries_its_board_and_alight_stations() {
+    setup();
+    let segs = lean::assemble_segments(&ride_request(serde_json::json!([{
+        "osmRelationId": 1, "routeType": "subway",
+        "lineRef": "Central", "lineName": line::NAME,
+        "stops": line::NAMES.iter().map(|n| serde_json::json!({ "name": n })).collect::<Vec<_>>(),
+    }])))
+    .expect("assemblesegments")
+    .expect("a viable path");
+    let arr = segs.as_array().unwrap();
+
+    let train = arr
+        .iter()
+        .find(|s| s["mode"] == "train")
+        .unwrap_or_else(|| panic!("the ride must decode as a train: {segs}"));
+    assert_eq!(train["lineName"], line::NAME);
+    assert_eq!(
+        train["boardStation"], "Alpha",
+        "boarded at the west end: {train}"
+    );
+    assert_eq!(
+        train["alightStation"], "Echo",
+        "alighted at the east end: {train}"
+    );
+
+    // ⚠ AND ONLY THE TRAIN LEG. A stationary segment is not a leg the chain can
+    // resolve, so it carries no key — not a null.
+    for s in arr.iter().filter(|s| s["mode"] != "train") {
+        let o = s.as_object().unwrap();
+        assert!(
+            !o.contains_key("boardStation") && !o.contains_key("alightStation"),
+            "a non-train segment must carry no station keys: {s}"
+        );
+    }
+}
+
+/// ⚠ NO RELATIONS IS NOT NO CHAIN. Absent `railStopRelations` means every
+/// candidate's `servedPen` is 0 — the resolver still runs and still names the
+/// stations from the graph. This pins that the mirror being unreachable degrades
+/// the answer rather than removing it.
+#[test]
+fn the_chain_still_resolves_without_the_relation_cache() {
+    setup();
+    let segs = lean::assemble_segments(&ride_request(serde_json::Value::Null))
+        .expect("assemblesegments")
+        .expect("a viable path");
+    let train = segs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["mode"] == "train")
+        .expect("the ride must still decode as a train");
+    assert_eq!(train["boardStation"], "Alpha");
+    assert_eq!(train["alightStation"], "Echo");
+}

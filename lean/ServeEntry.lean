@@ -656,6 +656,31 @@ private def parseObsRow (j : Json) : Except String Verified.Hsmm.Observation.Obs
     reacquireAgeMin := ← jOptInt j "reacquireAgeMin"
     prevGpsFix := ← parseOptFix j "prevGpsFix", nextGpsFix := ← parseOptFix j "nextGpsFix" }
 
+/-- `none` → `null`, `some s` → the string. -/
+private def optStrJson : Option String → Json
+  | none => Json.null
+  | some s => Json.str s
+
+/-- A station node for the chained-triple resolver. Same five fields as
+`parseStationNode`'s, and a DIFFERENT record — the coverage builder and the
+station chain each have their own. Kept here beside the other wire parsers
+rather than inside `namespace StationChain`, because `assemblesegments` runs the
+chain itself and needs this several hundred lines earlier. -/
+private def parseChainNode (j : Json) : Except String Verified.Hsmm.StationChain.ChainNode := do
+  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
+    | .ok s => some s | .error _ => none
+  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
+  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon",
+    name, edgeIds.toList⟩
+
+/-- One cached rail relation: which line, and the stops it serves. Only the stop
+NAMES are read — the coordinates in `stops_json` answer a different question. -/
+private def parseRelation (j : Json) :
+    Except String Verified.Hsmm.ServedStations.RailStopRelation := do
+  let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun t => do
+    pure (⟨← optStr t "name"⟩ : Verified.Hsmm.ServedStations.RailStop)
+  return ⟨← optStr j "lineRef", ← optStr j "lineName", stops⟩
+
 private def parseEdge (j : Json) : Except String Verified.Hsmm.RouteModel.RouteEdge := do
   let geom ← (← (← j.getObjVal? "geometry").getArr?).mapM fun p => do
     pure (⟨← jFloatField p "lat", ← jFloatField p "lon"⟩ : Verified.Hsmm.RouteGraph.LatLon)
@@ -1073,17 +1098,68 @@ private def assembleSegmentsResult (j : Json) : Json :=
             Json.mkObj [("error", Json.str
               s!"path has {sts.size} states but the observation tensor has {c.obs.size} rows")]
           | some segs =>
-            Json.mkObj [
-              ("segments", Json.arr (segs.map fun s =>
-                Json.mkObj
+            -- ⚠ THE STATION CHAIN RUNS HERE, and that is the point. `stationchain`
+            -- exists as its own mode and takes `obs` — the 1440-row observation
+            -- tensor — so calling it from the shell would put back on the wire
+            -- exactly the payload #411 exists to delete. This function already
+            -- HOLDS the tensor it built.
+            --
+            -- ⚠ The graph is built from `c.model`, NOT by re-running
+            -- `mkChainGraph`. `buildRouteGraphModel` has already run on these
+            -- edges, and `edgesNearIdx` reads `model.edges` in BUILDER ORDER —
+            -- reusing the same object is not an optimisation, it is the only way
+            -- to be certain the order is the one the model was built with.
+            let chained : Except String (Array Json) := do
+              let nodes ← (← optArr j "nodes").mapM parseChainNode
+              -- ⚠ ABSENT AND `[]` ARE DIFFERENT REQUESTS. Absent means the mirror
+              -- was never consulted, so every candidate's `servedPen` is 0; empty
+              -- means it was consulted and had nothing. Flattening them would let
+              -- a shell that cannot reach the mirror pass for one that found it
+              -- bare.
+              let rels ← match j.getObjVal? "railStopRelations" with
+                | .ok v => if v.isNull then pure none
+                           else pure (some (← (← v.getArr?).mapM parseRelation))
+                | .error _ => pure none
+              let g : Verified.Hsmm.StationChain.ChainGraph :=
+                { model := c.model
+                , nodes := nodes
+                , nodeById := nodes.foldl (fun m n => m.insert n.id n) {}
+                , edgeById := c.model.edges.foldl (fun m e => m.insert e.id e) {} }
+              let chainSegs : Array Verified.Hsmm.StationChain.ChainSeg :=
+                segs.map (fun s =>
+                  { mode := s.mode, lineName := s.lineName
+                  , startTs := s.startTs, endTs := s.endTs })
+              let byIdx : Std.HashMap Nat Verified.Hsmm.StationChain.ResolvedStations :=
+                (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels).foldl
+                  (fun m (i, res) => m.insert i res) {}
+              pure (segs.mapIdx (fun i s =>
+                let base : List (String × Json) :=
                   [ ("startTs", Lean.toJson s.startTs)
                   , ("endTs", Lean.toJson s.endTs)
                   , ("mode", Json.str s.mode)
                   , ("placeId", match s.placeId with
                       | none => Json.null | some p => Lean.toJson p)
                   , ("lineName", match s.lineName with
-                      | none => Json.null | some l => Json.str l) ])),
-              ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
+                      | none => Json.null | some l => Json.str l) ]
+                -- ⚠ ABSENT, NOT NULL, ON A SEGMENT THE RESOLVER DID NOT REACH.
+                -- The TypeScript ASSIGNS these two fields only at the indices
+                -- `resolveStationsServed` returned, and `JSON.stringify` omits an
+                -- `undefined`. A resolved segment whose side could not be
+                -- separated carries an explicit null — "wrong is worse than
+                -- missing" — and an unresolved one carries no key at all. The two
+                -- read the same to a consumer and differ byte for byte in
+                -- `segments_json`, which is what the parity diff compares.
+                Json.mkObj (match byIdx.get? i with
+                  | none => base
+                  | some res => base ++
+                      [ ("boardStation", optStrJson res.board)
+                      , ("alightStation", optStrJson res.alight) ])))
+            match chained with
+            | .error e => Json.mkObj [("error", Json.str e)]
+            | .ok rows =>
+              Json.mkObj [
+                ("segments", Json.arr rows),
+                ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
 /-- Assemble the model from parsed inputs and emit the quantised tensors: dense
     `emit`/`entry`/`init`, and `trans`/`dur` at the requested probe indices. -/
@@ -1524,33 +1600,11 @@ namespace StationChain
 
 open Verified.Hsmm.StationChain
 
-private def scOptStr (j : Json) (k : String) : Except String (Option String) :=
-  match j.getObjVal? k with
-  | .error _ => pure none
-  | .ok v => if v.isNull then pure none else some <$> v.getStr?
-
-private def parseChainNode (j : Json) : Except String ChainNode := do
-  let name : Option String := match (j.getObjVal? "stationName" >>= (·.getStr?)) with
-    | .ok s => some s | .error _ => none
-  let edgeIds ← (← (← j.getObjVal? "edgeIds").getArr?).mapM (·.getStr?)
-  return ⟨← (← j.getObjVal? "id").getStr?, ← jFloatField j "lat", ← jFloatField j "lon",
-    name, edgeIds.toList⟩
-
 private def parseChainSeg (j : Json) : Except String ChainSeg := do
   return { mode := ← (← j.getObjVal? "mode").getStr?
-           lineName := ← scOptStr j "lineName"
+           lineName := ← optStr j "lineName"
            startTs := ← (← j.getObjVal? "startTs").getInt?
            endTs := ← (← j.getObjVal? "endTs").getInt? }
-
-private def parseRelation (j : Json) :
-    Except String Verified.Hsmm.ServedStations.RailStopRelation := do
-  let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun s => do
-    pure (⟨← scOptStr s "name"⟩ : Verified.Hsmm.ServedStations.RailStop)
-  return ⟨← scOptStr j "lineRef", ← scOptStr j "lineName", stops⟩
-
-private def optJson : Option String → Json
-  | none => Json.null
-  | some s => Json.str s
 
 /-- `relations` ABSENT and `relations: []` are different requests, and the
     difference is not cosmetic: absent means the mirror was never consulted, so
@@ -1569,7 +1623,7 @@ def stationChainResult (j : Json) : Json :=
       | .error _ => pure none
     let rows := resolveStationChain (mkChainGraph edges nodes) segs obs rels
     return Json.mkObj [("resolved", Json.arr (rows.map (fun r =>
-      Json.arr #[Lean.toJson r.1, optJson r.2.board, optJson r.2.alight])))]
+      Json.arr #[Lean.toJson r.1, optStrJson r.2.board, optStrJson r.2.alight])))]
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
