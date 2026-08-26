@@ -248,3 +248,63 @@ pub fn js_number_value(v: f64) -> Value {
 pub fn js_number_opt(v: Option<f64>) -> Value {
     v.map_or(Value::Null, js_number_value)
 }
+
+/// The decoded segments in the field order node writes them in.
+///
+/// ⚠ `Lean.Json.mkObj` SORTS ITS KEYS. The order `assembleSegmentsResult` spells
+/// — `startTs, endTs, mode, placeId, lineName, boardStation, alightStation` —
+/// does not survive; what comes back is alphabetical, measured 2026-08-26 rather
+/// than assumed. Node's is insertion order, from the object literal in
+/// `groupStatesIntoSegments` plus the two station fields assigned after it.
+///
+/// ⚠ `decoded_days.segments_json` IS TEXT, and the only real check on this port
+/// is a diff against node's row. Left alone, every row would differ on key order
+/// for every day, and the diff could not tell "the decode changed" from "the
+/// keys moved". `jq` cannot rescue it either: it parses numbers to doubles
+/// (`25.0 == 25`) and cannot see an absent key against an explicit null — and
+/// both distinctions are live on this row.
+///
+/// ⚠ ORDER IS A FORMAT CONCERN AND NOTHING ELSE IS DECIDED HERE. `stops_json` is
+/// rebuilt shell-side for exactly this reason (#1189). What the fields ARE stays
+/// in Lean; an unknown key would be a Lean change this has not been told about,
+/// so it is carried through rather than dropped.
+pub fn render_segments(segments: &Value) -> Result<Value> {
+    // ⚠ ABSENT AND NULL ARE BOTH REAL AND THEY ARE DIFFERENT. `boardStation` is
+    // ABSENT on a segment the chain never reached and NULL on a resolved side it
+    // could not separate — "wrong is worse than missing". Inserting a null for
+    // the absent case would erase the distinction node's rows carry.
+    const ORDER: [&str; 7] = [
+        "startTs",
+        "endTs",
+        "mode",
+        "placeId",
+        "lineName",
+        "boardStation",
+        "alightStation",
+    ];
+    let rows = segments
+        .as_array()
+        .context("assemblesegments did not return an array")?;
+    let out = rows
+        .iter()
+        .map(|s| {
+            let o = s.as_object().context("a segment is not an object")?;
+            let mut m = Map::with_capacity(o.len());
+            for k in ORDER {
+                if let Some(v) = o.get(k) {
+                    m.insert(k.into(), v.clone());
+                }
+            }
+            // Anything Lean grew that this list has not been told about, in its
+            // own order, after the known fields. Silently dropping it would make
+            // a new field look like a decode that stopped producing it.
+            for (k, v) in o {
+                if !ORDER.contains(&k.as_str()) {
+                    m.insert(k.clone(), v.clone());
+                }
+            }
+            Ok(Value::Object(m))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Value::Array(out))
+}

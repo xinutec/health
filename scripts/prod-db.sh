@@ -131,9 +131,15 @@ fi
 # HSMM decode loop) — without these the upstream resets the
 # connection after a few minutes of silence and the MariaDB pool
 # fails on the next query.
+# ⚠ >&2 ON THE TUNNEL, because kubectl's "Forwarding from ..." and one
+# "Handling connection" per query go to ITS stdout, which is this script's
+# stdout, which is the command's. The header above has always promised a clean
+# stdout and did not deliver: a 2026-08-26 `decode-day --dry-run | diff` picked
+# up three kubectl lines mixed into the JSON, and a run whose output is piped
+# somewhere less forgiving would have carried them silently.
 ssh -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
 	-L "$LOCAL_PORT:127.0.0.1:$LOCAL_PORT" "$HEALTH_HOST" \
-	"kubectl -n $NS port-forward svc/health-db $LOCAL_PORT:3306" &
+	"kubectl -n $NS port-forward svc/health-db $LOCAL_PORT:3306" >&2 &
 TUNNEL_PID=$!
 
 # Readiness has to test the FAR end. A bare connect proves only that the

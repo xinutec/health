@@ -217,24 +217,38 @@ async fn main() -> Result<()> {
         }
         // `src/cli/decode-day.ts` — the nightly HSMM decoder.
         //
-        //   backend decode-day                       all users, last 14 days
-        //   backend decode-day <user>                one user, last 14 days
-        //   backend decode-day <user> <days>         one user, explicit window
-        //   backend decode-day <user> --date <ymd>   one user, one day
+        //   backend decode-day                     all users, last 14 days
+        //   backend decode-day <user>              one user, last 14 days
+        //   backend decode-day <user> <days>       one user, explicit window
+        //   backend decode-day <user> <YYYY-MM-DD> one user, one day
+        //   … plus --dry-run anywhere              decode and print, write nothing
+        //
+        // ⚠ THE DATE IS POSITIONAL, not `--date <ymd>`, which is what this
+        // comment claimed until 2026-08-26 — a numeric second argument is a day
+        // COUNT and anything else is a date. Nothing enforced the label, so it
+        // was wrong in the one place somebody would read before typing.
+        //
+        // ⚠ `--dry-run` DECODES AND PRINTS, writing nothing. `decoded_days` is
+        // keyed `(user_id, date)` and the write is an OVERWRITE, so a run made to
+        // check the port would destroy the node row it is being checked against.
+        // The two Overpass mirrors grew the same flag for the same reason.
         "decode-day" => {
-            let (user, dates, days): (Option<&str>, Vec<String>, Option<i64>) = match flags {
-                [] => (None, Vec::new(), None),
-                [u] => (Some(u.as_str()), Vec::new(), None),
-                [u, d] if d.parse::<i64>().is_ok() => {
-                    (Some(u.as_str()), Vec::new(), d.parse::<i64>().ok())
-                }
-                [u, d] => (Some(u.as_str()), vec![d.clone()], None),
-                _ => {
-                    eprintln!("usage: backend decode-day [user] [days|YYYY-MM-DD]");
-                    std::process::exit(64);
-                }
-            };
-            decode_day(user, &dates, days).await
+            let dry_run = flags.iter().any(|f| f == "--dry-run");
+            let rest: Vec<&String> = flags.iter().filter(|f| *f != "--dry-run").collect();
+            let (user, dates, days): (Option<&str>, Vec<String>, Option<i64>) =
+                match rest.as_slice() {
+                    [] => (None, Vec::new(), None),
+                    [u] => (Some(u.as_str()), Vec::new(), None),
+                    [u, d] if d.parse::<i64>().is_ok() => {
+                        (Some(u.as_str()), Vec::new(), d.parse::<i64>().ok())
+                    }
+                    [u, d] => (Some(u.as_str()), vec![(*d).clone()], None),
+                    _ => {
+                        eprintln!("usage: backend decode-day [user] [days|YYYY-MM-DD] [--dry-run]");
+                        std::process::exit(64);
+                    }
+                };
+            decode_day(user, &dates, days, dry_run).await
         }
         // `src/cli/refresh-rail-stops.ts` — the nightly rail-relation mirror.
         //
@@ -2442,7 +2456,12 @@ const CLASSIFIER_VERSION: i32 = 7;
 /// `logLean*Ledger` calls — about 40% of `decodeAndPersist`. They exist to A/B
 /// the TypeScript arm against Lean. With one arm they measure nothing, and
 /// keeping them would mean keeping the arm they measure.
-async fn decode_day(user: Option<&str>, dates: &[String], days: Option<i64>) -> Result<()> {
+async fn decode_day(
+    user: Option<&str>,
+    dates: &[String],
+    days: Option<i64>,
+    dry_run: bool,
+) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -2474,9 +2493,14 @@ async fn decode_day(user: Option<&str>, dates: &[String], days: Option<i64>) -> 
 
         for date in &targets {
             attempted += 1;
-            match decode_one(&st, &pool, user_id, date, &tz).await {
+            match decode_one(&st, &pool, user_id, date, &tz, dry_run).await {
                 Ok(n) => {
-                    eprintln!("[{user_id} {date}] {n} segments");
+                    // ⚠ `decode_one` ALREADY PRINTED the dry-run line, including
+                    // the fact that nothing was written. Printing "{n} segments"
+                    // again here said it twice and said it wrong the second time.
+                    if !dry_run {
+                        eprintln!("[{user_id} {date}] {n} segments");
+                    }
                     written += 1;
                 }
                 Err(e) => {
@@ -2491,7 +2515,18 @@ async fn decode_day(user: Option<&str>, dates: &[String], days: Option<i64>) -> 
         }
     }
 
-    eprintln!("decode-day: {written} written, {failed} failed of {attempted} day(s)");
+    // ⚠ A DRY RUN WROTE NOTHING AND MUST NOT SAY "written". The 2026-08-25 dry
+    // run reported `1 written, 0 failed` while writing nothing at all — a label
+    // that contradicts the flag it was given is worse than no label, because it
+    // is the line somebody greps to find out whether the row was replaced.
+    eprintln!(
+        "decode-day: {written} {}, {failed} failed of {attempted} day(s)",
+        if dry_run {
+            "decoded (DRY RUN, nothing written)"
+        } else {
+            "written"
+        }
+    );
     // ⚠ REFUSE rather than report success on nothing. Same rule as
     // `refresh-rail-routes`, and for the same reason: a batch job's success must
     // be predicated on evidence having been gathered, never on the absence of an
@@ -2514,6 +2549,7 @@ async fn decode_one(
     user_id: &str,
     date: &str,
     tz: &str,
+    dry_run: bool,
 ) -> Result<usize> {
     let bounds = backend::timezone::date_bounds_utc(date, Some(tz))?;
     let inputs = backend::classification_inputs::load(
@@ -2612,7 +2648,20 @@ async fn decode_one(
     let Some(segments) = backend::lean::assemble_segments(&req)? else {
         anyhow::bail!("the decode is degenerate — no viable path");
     };
+    let segments = backend::row_json::render_segments(&segments)?;
     let n = segments.as_array().map_or(0, Vec::len);
+    if dry_run {
+        // ⚠ ONE SEGMENT PER LINE, in exactly the form `segments_json` would hold
+        // — same field order, same encodings, same absent-versus-null. That is
+        // the point: it makes the parity check `diff` against
+        // `scripts/dump-decoded-segments.mjs`, which prints node's row the same
+        // way, instead of a structural comparison nothing can quite trust.
+        for seg in segments.as_array().unwrap_or(&Vec::new()) {
+            println!("{}", serde_json::to_string(seg)?);
+        }
+        eprintln!("[{user_id} {date}] DRY RUN — {n} segments, nothing written");
+        return Ok(n);
+    }
     save_decode(pool, user_id, date, &segments).await?;
     Ok(n)
 }
