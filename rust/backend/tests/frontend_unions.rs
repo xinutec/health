@@ -37,10 +37,9 @@ fn read(rel: &str) -> String {
 /// ⚠ REFUSES AN EMPTY RESULT. Zero members is what a moved anchor produces, and
 /// an empty set compares equal to nothing useful.
 fn literals(src: &str, anchor: &str, terminator: char, what: &str) -> BTreeSet<String> {
-    let start = src
-        .find(anchor)
-        .unwrap_or_else(|| panic!("{what}: anchor {anchor:?} not found — did it move or get renamed?"))
-        + anchor.len();
+    let start = src.find(anchor).unwrap_or_else(|| {
+        panic!("{what}: anchor {anchor:?} not found — did it move or get renamed?")
+    }) + anchor.len();
     let rest = &src[start..];
     let end = rest
         .find(terminator)
@@ -85,7 +84,8 @@ fn the_frontend_day_state_modes_are_the_backends() {
         "frontend DayStateMode",
     );
     assert_eq!(
-        backend, frontend,
+        backend,
+        frontend,
         "the frontend's DayStateMode and Verified.Geo.WireVocab.DAY_STATE_MODES disagree.\n\
          backend only: {:?}\nfrontend only: {:?}",
         backend.difference(&frontend).collect::<Vec<_>>(),
@@ -106,7 +106,8 @@ fn the_frontend_episode_kinds_are_the_backends() {
         "frontend EpisodeGeometry.kind",
     );
     assert_eq!(
-        backend, frontend,
+        backend,
+        frontend,
         "the frontend's EpisodeGeometry.kind and Verified.Geo.WireVocab.EPISODE_KINDS disagree.\n\
          backend only: {:?}\nfrontend only: {:?}",
         backend.difference(&frontend).collect::<Vec<_>>(),

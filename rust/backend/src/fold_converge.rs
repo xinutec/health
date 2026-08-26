@@ -54,6 +54,13 @@ pub struct Converged {
     pub unanswerable: Vec<Miss>,
     /// The final round's response.
     pub out: String,
+    /// ⚠ THE REQUEST THE FOLD ACTUALLY RECEIVED on the final round, tables and
+    /// all — not the one the first round was built from. Handed back because
+    /// the only way to check that a SECOND host answers the same day identically
+    /// is to give it the same bytes, and rebuilding them outside this loop means
+    /// rebuilding the convergence too. The TypeScript's `DAY_REQ_DUMP` dumped
+    /// exactly this and nothing in Rust could until now (#975).
+    pub request: Value,
 }
 
 /// Supplies the answer to one unanswered key, already in the wire form the
@@ -133,6 +140,7 @@ pub fn converge<A: Answerer>(
                 answered: asked.len() - unanswerable.len(),
                 unanswerable,
                 out,
+                request: req,
             });
         }
 

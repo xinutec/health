@@ -58,24 +58,31 @@ if [[ ! -x "$BIN" ]]; then
 	exit 1
 fi
 
-# The equivalence. `DAY_REQ_DUMP` writes the request the fold actually receives;
-# the day gate exits 2 when there is no corpus to build one from, which is the
-# same contract `day-gate-smoke.sh` reads.
+# The equivalence. The request comes from `examples/dump_day_request`, which
+# converges the golden day in RUST and prints the bytes the fold's last round
+# received. It exits 2 when there is no corpus, the same contract this script
+# already read from the old day gate.
+#
+# ⚠ IT USED TO BE `DAY_REQ_DUMP=… pnpm run day-gate`, i.e. `src/cli/compare-day.ts`.
+# Deleting the TypeScript backend (#975) would have taken this check with it —
+# not loudly, but by turning it into a permanent SKIP, which reads as a pass.
 DAY="${RUST_HOST_CHECK_DATE:-2026-05-14}"
+USER_STEM="${RUST_HOST_CHECK_USER:-pippijn}"
 REQ_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rust-host-check.XXXXXX")"
 trap 'rm -rf "$REQ_DIR"' EXIT
 
+REQ="$REQ_DIR/$DAY.json"
 set +e
-DAY_REQ_DUMP="$REQ_DIR" pnpm run day-gate "$DAY" >"$REQ_DIR/gate.log" 2>&1
+cargo run --quiet --manifest-path rust/Cargo.toml --example dump_day_request \
+	-- "$DAY-$USER_STEM" >"$REQ" 2>"$REQ_DIR/gate.log"
 rc=$?
 set -e
 if (( rc == 2 )); then
-	echo "rust-host-check: SKIPPED the equivalence — no corpus (gate exit 2)"
+	echo "rust-host-check: SKIPPED the equivalence — no corpus (dump exit 2)"
 	echo "  (build and clippy still ran; the full check needs tests/golden/)"
 	exit 0
 fi
 
-REQ="$REQ_DIR/$DAY.json"
 if [[ ! -s "$REQ" ]]; then
 	cat "$REQ_DIR/gate.log" >&2
 	echo "rust-host-check: the gate ran but dumped no request for $DAY." >&2

@@ -2,9 +2,13 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # Build the Lean verified core — every #guard parity check runs inside
-# `lake build`, so a trellis/spec divergence fails the build — then run
-# the TS↔Lean decode parity harness (42 seeded problems, day scale
-# included, exact path + score agreement required).
+# `lake build`, so a trellis/spec divergence fails the build.
+#
+# ⚠ THE TS↔LEAN PARITY HARNESS IS GONE (#975), and it is not coming back. It ran
+# 42 seeded problems through `node lean/experiments/compare.mjs` and required
+# exact path + score agreement — a real check while there were two arms. With
+# one arm it compares Lean to itself. The `#guard`s keep their frozen reference
+# values, which is the trade this repository accepted with the cost stated.
 #
 # Part of `pnpm run verify`.
 
@@ -14,6 +18,3 @@ cd "$SCRIPT_DIR/.."
 echo "==> lake build (verified core + #guard checks)"
 (cd lean && lake build)
 
-echo "==> TS↔Lean parity harness"
-pnpm run build >/dev/null
-node lean/experiments/compare.mjs
