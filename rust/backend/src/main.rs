@@ -2570,7 +2570,7 @@ async fn decode_one(
     let obs = cap.get("obs").context("capture has no obs")?.clone();
 
     // ── the route graph, from the mirror ────────────────────────────────────
-    let (ways, stops) = route_graph_rows(pool, &obs).await?;
+    let (ways, stops) = route_graph_rows(pool, user_id, &obs).await?;
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
     // ⚠ THE GRAPH'S SIZE IS EVIDENCE, not chatter. `emitLeg` is a MARGIN test —
     // a side names a station only when every alternative naming a different one
@@ -2927,6 +2927,41 @@ fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// The corridor polygon around a set of points, with `ROUTE_GRAPH_MARGIN_M`
+/// added. ⚠ ONE FORMULA for both the way box and the station box — the #1190
+/// experiment varies them independently, and two copies of the latitude
+/// correction would make that comparison meaningless.
+fn bbox_poly(pts: &[(f64, f64)]) -> String {
+    let (mut mnla, mut mxla, mut mnlo, mut mxlo) = (
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for (la, lo) in pts {
+        mnla = mnla.min(*la);
+        mxla = mxla.max(*la);
+        mnlo = mnlo.min(*lo);
+        mxlo = mxlo.max(*lo);
+    }
+    let d_lat = ROUTE_GRAPH_MARGIN_M / 111_320.0;
+    let mid = (mnla + mxla) / 2.0;
+    let d_lon = ROUTE_GRAPH_MARGIN_M / (111_320.0 * (mid * std::f64::consts::PI / 180.0).cos());
+    format!(
+        "POLYGON(({} {},{} {},{} {},{} {},{} {}))",
+        mnlo - d_lon,
+        mnla - d_lat,
+        mxlo + d_lon,
+        mnla - d_lat,
+        mxlo + d_lon,
+        mxla + d_lat,
+        mnlo - d_lon,
+        mxla + d_lat,
+        mnlo - d_lon,
+        mnla - d_lat
+    )
+}
+
 /// The rail/road ways and station points covering a day's fixes.
 ///
 /// ⚠ The bbox comes from the day's OWN observations, not a fixed region: a day
@@ -2934,10 +2969,14 @@ fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
 /// contain it, and the decode would silently have no rail to match against.
 async fn route_graph_rows(
     pool: &sqlx::MySqlPool,
+    user_id: &str,
     obs: &serde_json::Value,
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
     use sqlx::Row as _;
 
+    // ⚠ THE TRACK IS BOXED BY THE DAY. A day spent outside the home metro would
+    // otherwise get a graph that does not contain it, and the decode would
+    // silently have no rail to match against.
     let mut pts: Vec<(f64, f64)> = Vec::new();
     if let Some(rows) = obs.get("rawFixes").and_then(serde_json::Value::as_array) {
         for r in rows {
@@ -2952,34 +2991,7 @@ async fn route_graph_rows(
     if pts.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    let (mut mnla, mut mxla, mut mnlo, mut mxlo) = (
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for (la, lo) in &pts {
-        mnla = mnla.min(*la);
-        mxla = mxla.max(*la);
-        mnlo = mnlo.min(*lo);
-        mxlo = mxlo.max(*lo);
-    }
-    let d_lat = ROUTE_GRAPH_MARGIN_M / 111_320.0;
-    let mid = (mnla + mxla) / 2.0;
-    let d_lon = ROUTE_GRAPH_MARGIN_M / (111_320.0 * (mid * std::f64::consts::PI / 180.0).cos());
-    let poly = format!(
-        "POLYGON(({} {},{} {},{} {},{} {},{} {}))",
-        mnlo - d_lon,
-        mnla - d_lat,
-        mxlo + d_lon,
-        mnla - d_lat,
-        mxlo + d_lon,
-        mxla + d_lat,
-        mnlo - d_lon,
-        mxla + d_lat,
-        mnlo - d_lon,
-        mnla - d_lat
-    );
+    let poly = bbox_poly(&pts);
 
     let line_rows = sqlx::query(
         "SELECT osm_type, osm_id, name, subtype, tags_json, ST_AsText(geom) AS wkt \
@@ -3010,12 +3022,63 @@ async fn route_graph_rows(
         }));
     }
 
+    // ⚠ THE STATIONS ARE **NOT** BOXED BY THE DAY, and that is the whole of
+    // #1190. `emitLeg` names a station only when every alternative naming a
+    // DIFFERENT one trails by `MARGIN_NATS` — so the candidate pool is a
+    // threshold, and cutting it to the day's own extent lowers the bar. A leg
+    // then resolves because of where the phone happened to be, not because of
+    // where the train went, and the same ride resolves differently on two days.
+    //
+    // ⚠ MEASURED, not reasoned, 2026-08-26 — and three explanations died first.
+    // Four arms against node's row for the same day, changing only the boxes:
+    //
+    //     day ways,      day stops        3706 / 694     17 of 18
+    //     WHOLE lines,   day stops        4885 / 694     17 of 18
+    //     lifetime ways, lifetime stops  38559 / 9474    18 of 18
+    //     day ways,      LIFETIME stops   3706 / 9474    18 of 18   ← this
+    //
+    // A clean 2x2: the station pool decides it and the track is irrelevant.
+    // Loading every line end to end — 32% more way rows — moved nothing.
+    //
+    // ⚠ AND IT IS THE CHEAP ONE. Node's arm boxes both by the lifetime places,
+    // which is 38 559 way rows carrying geometry; this is 3706 of those plus
+    // station POINTS, which carry none. `RAIL_CORRIDOR_LINE_LIMIT` is 12 000 and
+    // sized for the day box — under the lifetime box it truncates with no
+    // `ORDER BY`, and the measured cost of that was a Metropolitan ride decoded
+    // as a short Jubilee ride with no stations at all.
+    let stops_poly = {
+        let rows = sqlx::query(
+            // ⚠ `CAST(… AS CHAR)`: `centroid_lat/lon` are DECIMAL, which sqlx
+            // refuses to hand back as f64 — and it fails on REAL ROWS ONLY.
+            "SELECT CAST(centroid_lat AS CHAR) AS la, CAST(centroid_lon AS CHAR) AS lo \
+             FROM focus_places WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .context("reading focus_places for the station box")?;
+        let mut p: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let la: String = r.try_get("la")?;
+            let lo: String = r.try_get("lo")?;
+            p.push((la.parse()?, lo.parse()?));
+        }
+        // ⚠ A USER WITH NO FOCUS PLACES FALLS BACK TO THE DAY BOX rather than
+        // to an empty one. `bbox_poly` on nothing is a box of infinities, which
+        // MariaDB would reject or answer strangely; the day box is at least the
+        // stations the ride passed.
+        if p.is_empty() {
+            poly.clone()
+        } else {
+            bbox_poly(&p)
+        }
+    };
     let pt_rows = sqlx::query(
         "SELECT name, tags_json, ST_AsText(geom) AS wkt FROM osm_points \
          WHERE feature_type = 'railway' \
            AND MBRIntersects(geom, ST_GeomFromText(?, 4326))",
     )
-    .bind(&poly)
+    .bind(&stops_poly)
     .fetch_all(pool)
     .await
     .context("querying route-graph stops")?;
