@@ -2572,6 +2572,19 @@ async fn decode_one(
     // ── the route graph, from the mirror ────────────────────────────────────
     let (ways, stops) = route_graph_rows(pool, &obs).await?;
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
+    // ⚠ THE GRAPH'S SIZE IS EVIDENCE, not chatter. `emitLeg` is a MARGIN test —
+    // a side names a station only when every alternative naming a different one
+    // trails by `MARGIN_NATS` — so the number of competing stations in range
+    // decides whether a leg resolves at all. Two arms that box different regions
+    // resolve differently with identical scoring, which is #1190, and this line
+    // is what makes that visible in a run rather than inferable from a diff.
+    println!(
+        "graph {date}: {} ways, {} stops -> {} edges, {} nodes",
+        ways.len(),
+        stops.len(),
+        edges.as_array().map_or(0, Vec::len),
+        nodes.as_array().map_or(0, Vec::len)
+    );
 
     // ── the observation tensor's raw materials ──────────────────────────────
     // ⚠ THE TENSOR IS NOT BUILT HERE AND MUST NOT BE. Lean builds it from these
