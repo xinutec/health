@@ -1003,6 +1003,45 @@ pub fn shift_day(date: &str, days: i64) -> Result<String> {
         .to_string())
 }
 
+/// The decoder's `places`, from the `knownPlaces` rows.
+///
+/// ⚠ A RENAME, AND IT IS THE SECOND ONE OF THESE THAT SHIPPED BROKEN. The DB
+/// rows name columns and the decode wire names concepts, so `centroidLat` →
+/// `lat`, `totalDwellSec` → `dwell`, `displayName` → `name`. Sending the rows
+/// straight through is refused with `property not found: lat`, which is what
+/// `decode-day` would have done on its first successful run past the
+/// observation tensor. `lean/experiments/compare-assemble-*.mts` have done this
+/// mapping since the port began; only the Rust arm never did.
+///
+/// ⚠ `name` IS OPTIONAL AND `lat`/`lon`/`dwell` ARE NOT. A place with no display
+/// name is an unmined place, which is ordinary; a place with no centroid is a
+/// row this code has misread.
+pub fn decode_places(known: Option<&Value>) -> Result<Value> {
+    let rows = known
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let out = rows
+        .iter()
+        .map(|r| {
+            let f = |k: &str| -> Result<f64> {
+                r.get(k)
+                    .and_then(Value::as_f64)
+                    .with_context(|| format!("a knownPlaces row has no numeric {k}"))
+            };
+            Ok(json!({
+                "id": r.get("id").and_then(Value::as_i64)
+                    .context("a knownPlaces row has no id")?,
+                "name": r.get("displayName").cloned().unwrap_or(Value::Null),
+                "lat": f("centroidLat")?,
+                "lon": f("centroidLon")?,
+                "hourProfile": r.get("hourProfile").cloned().unwrap_or(Value::Null),
+                "dwell": f("totalDwellSec")?,
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Value::Array(out))
+}
+
 /// The default decode window: `n` days ending YESTERDAY, most recent first.
 ///
 /// ⚠ STARTS AT YESTERDAY, never today, and `src/cli/decode-day.ts` loops

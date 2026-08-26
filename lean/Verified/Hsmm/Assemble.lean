@@ -77,6 +77,19 @@ structure ModelContext where
   stepPref : Array Float
   selfLoop : Float
 
+/-- The longest segment the HSMM will consider, in minutes.
+
+⚠ A MODEL PARAMETER, NOT A TUNING KNOB, and it belongs here because it is the
+`maxD` of the `O(T·S·maxD)` trellis every arm must agree on. The TypeScript twin
+is `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, which goes with the rest
+of the TS arms (#975); after that this is the only copy, which is why the shell
+now omits `maxD` and lets the request default to it rather than spelling 240 in
+Rust.
+
+Four hours: long enough for a workday stay to be one segment, short enough that
+the duration axis stays affordable at S ≈ 160. -/
+def DEFAULT_MAX_DURATION : Nat := 240
+
 /-- Assemble the resolved context from parsed inputs (mirrors `buildHsmmModel`'s
     map construction). `places` carry coords/profiles/dwell; the visit weight is
     dwell-normalised (`1/nPlaces` when total dwell is 0). -/

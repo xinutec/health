@@ -34,6 +34,13 @@ fn request(observation: serde_json::Value) -> serde_json::Value {
     })
 }
 
+/// The same request with no `maxD` at all — what `decode-day` sends.
+fn request_default_max_d(observation: serde_json::Value) -> serde_json::Value {
+    let mut r = request(observation);
+    r.as_object_mut().unwrap().remove("maxD");
+    r
+}
+
 fn observation(proximity: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "startUtc": T0,
@@ -115,5 +122,58 @@ fn the_day_tenant_obs_object_is_refused() {
     assert!(
         err.contains("array expected"),
         "the day tenant's obs OBJECT must not be mistaken for a tensor, got: {err}"
+    );
+}
+
+/// ⚠ `maxD` IS THE MODEL'S, NOT THE CALLER'S. It is the depth of the
+/// `O(T·S·maxD)` trellis every arm has to agree on, so an absent one takes
+/// `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` rather than a number the shell
+/// spelled — the shell has no basis for an opinion about it, and a second copy in
+/// Rust is a second thing to drift. This pins the default against the TypeScript
+/// twin, `DEFAULT_MAX_DURATION` in `src/hmm/hsmm-viterbi.ts`, while that twin
+/// still exists to compare with (#975).
+#[test]
+fn an_absent_max_d_is_the_models_own_240() {
+    setup();
+    let obs = || observation(serde_json::json!([[T0, 12.5, null]]));
+    let dflt = lean::assemble_segments(&request_default_max_d(obs())).expect("assemblesegments");
+    let mut explicit = request(obs());
+    explicit["maxD"] = serde_json::json!(240);
+    assert_eq!(
+        dflt,
+        lean::assemble_segments(&explicit).expect("assemblesegments"),
+        "omitting maxD must decode exactly as 240 does"
+    );
+    // And it is genuinely the default rather than a value ignored: a different
+    // depth is a different decode, so the equality above is not vacuous.
+    let mut short = request(obs());
+    short["maxD"] = serde_json::json!(2);
+    assert_ne!(
+        dflt,
+        lean::assemble_segments(&short).expect("assemblesegments"),
+        "maxD must still be honoured when it is sent"
+    );
+}
+
+/// ⚠ A PROXIMITY VALUE THE DECODER CANNOT READ IS A REFUSAL, NOT A NULL. This is
+/// the worst failure available on this path: swallowed, the day decodes, every
+/// segment looks plausible, and the decoder simply never learned that any fix
+/// was on a railway — and it would take a ground-truth audit to notice. It is
+/// also what makes the bit-pattern test in `minute_proximity.rs` an actual test:
+/// with the bits support removed the table parses to nothing, and without this
+/// refusal that removal is invisible.
+#[test]
+fn an_unreadable_proximity_distance_is_refused_by_name() {
+    setup();
+    let err = lean::assemble_segments(&request(observation(serde_json::json!([[
+        T0,
+        "not-a-number",
+        null
+    ]]))))
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("not a float bit pattern"),
+        "the error must name what could not be read, got: {err}"
     );
 }

@@ -573,7 +573,56 @@ coverage map, continuity, and the C4 flags. Output is the dense quantised
 Output: { T, S, maxD, emit[t][s], entry[t][s], init[s], trans[t][a][b], dur[s][d-1][e] }
 (all quantised ints, `null` = -∞). -/
 
-private def jFloat (j : Json) : Except String Float := do return (← j.getNum?).toFloat
+/-- A Float from either encoding on this wire: a JSON number, or the decimal of
+its IEEE-754 bit pattern as a string.
+
+⚠ **BOTH, BECAUSE THE TWO PRODUCERS DISAGREE AND FIVE FIELDS PROVED IT.** The
+TypeScript arms send numbers, because that is what `JSON.stringify` makes of a
+JS float. Every Lean-to-Lean hop sends bit patterns (`fBits`), because a
+coordinate re-rounded on the wire moves a node's 5-dp key, which is its
+IDENTITY. Reading only one of the two is how `buildWireGraph`'s `edges`/`nodes`
+came out of one Lean entry point and were refused with `number expected` by the
+next — a shape defect entirely inside this repository, between two files that
+are both here.
+
+⚠ IT IS NOT A LENIENT PARSE. A string that is not a bit pattern is still an
+error, by name: silently reading an unparseable distance as "no evidence" would
+let a day decode, look plausible, and never learn that any fix was on a
+railway. -/
+private def jFloat (j : Json) : Except String Float :=
+  match j.getStr? with
+  | .ok _ => jBits j
+  | .error _ => do return (← j.getNum?).toFloat
+
+/-! ⚠ **A COORDINATE ON THIS WIRE IS A DECIMAL, AND IT HAS TO SURVIVE EXACTLY.**
+Most floats in this file cross as IEEE-754 bit patterns (`fBits`/`jBits`), but
+`observation.points` does not: the tensor's fixes are plain JSON numbers, because
+that is what the TypeScript arm sends and what `decode-day` now sends too.
+
+That is only safe because two things hold together — the emitter writes the
+SHORTEST decimal that round-trips (`serde_json` uses Ryū; V8's `JSON.stringify`
+is the same rule), and `Json.parse` reads it back to the same bits. The first is
+somebody else's library; the second is checked here, so a toolchain bump that
+made the parser merely close would fail loudly rather than shift every fix by an
+invisible amount.
+
+Measured 2026-08-26 before relying on it, rather than assumed. -/
+private def parsesTo (s : String) (x : Float) : Bool :=
+  match Json.parse s >>= (·.getNum?) with
+  | .ok n => n.toFloat.toBits == x.toBits
+  | .error _ => false
+
+#guard parsesTo "51.5" 51.5
+#guard parsesTo "-0.1278" (-0.1278)
+-- 17 significant digits: the widest a round-tripping double ever needs.
+#guard parsesTo "51.500100000000014" (Float.ofBits 4632444812033547622)
+#guard parsesTo "-0.12345678901234567" (Float.ofBits 13816932456701818462)
+#guard parsesTo "51.512345678901234" (Float.ofBits 4632446535459639385)
+#guard parsesTo "123.45678901234568" (Float.ofBits 4638387916139875481)
+-- ⚠ AND EXPONENT NOTATION, which is what an emitter writes for a small speed.
+-- A parser that rejected it would fail loudly; one that read it as 0 would not.
+#guard parsesTo "1e-7" 0.0000001
+#guard parsesTo "-1.5e-9" (-0.0000000015)
 private def jFloatField (j : Json) (k : String) : Except String Float := do jFloat (← j.getObjVal? k)
 private def jOptFloat (j : Json) (k : String) : Except String (Option Float) :=
   match j.getObjVal? k with
@@ -720,12 +769,13 @@ private def parseObservationInput (v : Json)
   let proxPairs ← (← (← v.getObjVal? "proximity").getArr?).mapM (fun e => do
     let a ← e.getArr?
     let some tsJ := a[0]? | throw "proximity: a row is not [ts, road, rail]"
-    let road : Option Float := match a[1]? with
-      | some x => if x.isNull then none else (jFloat x).toOption
-      | none => none
-    let rail : Option Float := match a[2]? with
-      | some x => if x.isNull then none else (jFloat x).toOption
-      | none => none
+    -- ⚠ EITHER ENCODING, WHICH IS `jFloat`'S JOB — `proximitytable` writes bit
+    -- patterns and the TS shadow path writes numbers. Absent or null is "not
+    -- known to be near either"; anything else is an ERROR rather than a null.
+    let dist : Json → Except String (Option Float) := fun x =>
+      if x.isNull then pure none else some <$> jFloat x
+    let road ← match a[1]? with | some x => dist x | none => pure none
+    let rail ← match a[2]? with | some x => dist x | none => pure none
     pure ((← tsJ.getInt?), road, rail))
   let proxMap : Std.HashMap Int (Option Float × Option Float) :=
     proxPairs.foldl (fun m (t, r, l) => m.insert t (r, l)) {}
@@ -772,7 +822,12 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
         pure (Std.HashSet.ofList (← (← v.getArr?).mapM (·.getStr?)).toList)
     | .error _ => pure {}
   let flags ← j.getObjVal? "flags"
-  let maxD ← (← j.getObjVal? "maxD").getNat?
+  -- ⚠ ABSENT `maxD` IS THE MODEL'S OWN, not a caller's guess. It is the trellis
+  -- depth every arm has to agree on, so the number lives in
+  -- `Verified.Hsmm.Assemble` and a shell that has no opinion says nothing.
+  let maxD ← match j.getObjVal? "maxD" with
+    | .ok v => if v.isNull then pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION else v.getNat?
+    | .error _ => pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION
   return (Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
@@ -1913,6 +1968,150 @@ private def clipInferredResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## Per-minute rail/road proximity (`proximityqueries` / `proximitytable`)
+
+The two halves of `computeMinuteProximity`, split at the one place it is not
+pure: the OSM lookup. The shell asks WHICH locations to query, runs
+`nearby_ways` on each, and hands the answers back to be joined.
+
+⚠ THE SPLIT IS TWO MODES AND NOT ONE BECAUSE THE MIDDLE IS I/O — not because
+the shell is trusted with any of the decision. Bucketing into minutes, the
+median that picks each minute's query point, the ~11 m key that decides how few
+queries a day needs, which subtypes count as rail or road, and which minute gets
+which answer are all in {@link Verified.Hsmm.RailRoadProximity}. The shell
+transports coordinates and OSM rows.
+
+⚠ THE SPEED FIELD IS NOT SENT. `minuteMedians` buckets and takes medians of
+lat/lon only, so a `pts` row is `[ts, latBits, lonBits]` and `speedKmh` is
+filled with 0. Shipping it would invite a later reader to think it mattered.
+-/
+
+/-- `[ts, latBits, lonBits]` → a `GpsPoint` with `speedKmh` 0; see the note. -/
+private def parseProxPt (j : Json) : Except String Verified.Hsmm.Observation.GpsPoint := do
+  match (← j.getArr?)[0]?, (← j.getArr?)[1]?, (← j.getArr?)[2]? with
+  | some ts, some la, some lo =>
+    return { ts := ← ts.getInt?, lat := ← jBits la, lon := ← jBits lo, speedKmh := 0 }
+  | _, _, _ => throw "proximity point must be [ts, latBits, lonBits]"
+
+private def minuteJson (m : Verified.Hsmm.RailRoadProximity.MinuteFix) : Json :=
+  Json.arr #[Lean.toJson m.minuteTs, fBits m.lat, fBits m.lon]
+
+private def parseMinuteFix (j : Json) : Except String Verified.Hsmm.RailRoadProximity.MinuteFix := do
+  match (← j.getArr?)[0]?, (← j.getArr?)[1]?, (← j.getArr?)[2]? with
+  | some ts, some la, some lo =>
+    return { minuteTs := ← ts.getInt?, lat := ← jBits la, lon := ← jBits lo }
+  | _, _, _ => throw "minute must be [minuteTs, latBits, lonBits]"
+
+/-- `{ startUtc, endUtc, pts }` → `{ minutes, queries }`.
+
+`minutes` is every local-day minute that had a fix, at its median position;
+`queries` is the distinct subset the shell must actually ask OSM about. The
+shell keeps `minutes` untouched and sends it back to `proximitytable`. -/
+private def proximityQueriesResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let startUtc ← (← j.getObjVal? "startUtc").getInt?
+    let endUtc ← (← j.getObjVal? "endUtc").getInt?
+    let pts ← (← optArr j "pts").mapM parseProxPt
+    let ms := Verified.Hsmm.RailRoadProximity.minuteMedians startUtc endUtc pts.toList
+    let qs := Verified.Hsmm.RailRoadProximity.distinctQueryPoints ms
+    return Json.mkObj
+      [ ("minutes", Json.arr (ms.map minuteJson))
+      , ("queries", Json.arr (qs.map (fun q => Json.arr #[fBits q.lat, fBits q.lon]))) ]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+/-- `{ minutes, answers }` → `{ proximity, unanswered }`.
+
+`proximity` is the sparse `[minuteTs, roadBits|null, railBits|null]` table
+`assemblesegments` takes as its `observation.proximity`. The shell passes it
+through without reading it.
+
+⚠ `answers` OMITS A QUERY THAT FAILED rather than sending it empty — see
+`WayAnswer`. `unanswered` counts the minutes left uncovered, which is the only
+number that can tell a failed mirror from an empty neighbourhood (#976).
+
+⚠ THE ROW IS ROAD THEN RAIL. `Proximity` names rail first and the wire does
+not; `parseObservationInput` reads `[ts, road, rail]`, and swapping them would
+put every fix on a road. -/
+private def proximityTableResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let ms ← (← optArr j "minutes").mapM parseMinuteFix
+    let answers ← (← optArr j "answers").mapM (fun a => do
+      let ways ← (← optArr a "ways").mapM (fun w => do
+        let d ← match w.getObjVal? "distanceM" with
+          | .ok v => if v.isNull then pure none else some <$> jBits v
+          | .error _ => pure none
+        pure ({ type := ← (← w.getObjVal? "type").getStr?
+              , subtype := ← (← w.getObjVal? "subtype").getStr?
+              , distanceM := d } : Verified.Hsmm.RailRoadProximity.NearbyWay))
+      pure ({ lat := ← jBits (← a.getObjVal? "lat")
+            , lon := ← jBits (← a.getObjVal? "lon")
+            , ways := ways.toList } : Verified.Hsmm.RailRoadProximity.WayAnswer))
+    let (rows, unanswered) := Verified.Hsmm.RailRoadProximity.proximityTable ms answers
+    let optB : Option Float → Json := fun | none => Json.null | some v => fBits v
+    return Json.mkObj
+      [ ("proximity", Json.arr (rows.map (fun (ts, p) =>
+          Json.arr #[Lean.toJson ts, optB p.roadDistM, optB p.railDistM])))
+      , ("unanswered", Lean.toJson unanswered) ]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+/-! ## The decoder's place/line hard constraint (`knownlines` / `placenearline`)
+
+Split the same way the proximity pair is, and for the same reason: the middle is
+an OSM query. The shell asks WHICH lines exist, resolves each one's stations, and
+hands them back to be measured.
+
+⚠ THE LINE LIST IS LEAN'S. `KNOWN_LINES` is the served state space; a shell with
+its own copy would decode against a different set of train states than the model
+was built for, and nothing would report a mismatch.
+-/
+
+/-- `{}` → `{ value: [line, …] }`. See `Verified.Hsmm.Assemble.KNOWN_LINES`. -/
+private def knownLinesResult (_ : Json) : Json :=
+  Json.mkObj [("value", Json.arr
+    (Verified.Hsmm.Assemble.KNOWN_LINES.map Json.str).toArray)]
+
+/-- `{ places, lines }` → `{ value: ["placeId|lineName", …] }`.
+
+`places` are `[id, latBits, lonBits]`; `lines` are `[name, [[latBits, lonBits], …]]`.
+
+⚠ ABSENT IS NOT NEUTRAL HERE. `parseAssemble` reads `placeNearLine` as optional
+and an empty set removes every hard zero rather than adding them — so a shell
+that skips this call gets a decoder that permits boardings the TypeScript
+forbids, silently. See the module note. -/
+private def parseNearPlace (e : Json) : Except String Verified.Hsmm.PlaceNearLine.Place := do
+  let a ← e.getArr?
+  match a[0]?, a[1]?, a[2]? with
+  | some id, some la, some lo =>
+    return { id := ← id.getInt?, lat := ← jBits la, lon := ← jBits lo }
+  | _, _, _ => throw "place must be [id, latBits, lonBits]"
+
+private def parseStation (e : Json) : Except String Verified.Hsmm.PlaceNearLine.Station := do
+  let a ← e.getArr?
+  match a[0]?, a[1]? with
+  | some la, some lo => return { lat := ← jBits la, lon := ← jBits lo }
+  | _, _ => throw "station must be [latBits, lonBits]"
+
+private def parseLineStations (e : Json)
+    : Except String (String × Array Verified.Hsmm.PlaceNearLine.Station) := do
+  let a ← e.getArr?
+  match a[0]?, a[1]? with
+  | some nm, some sts => return ((← nm.getStr?), ← (← sts.getArr?).mapM parseStation)
+  | _, _ => throw "line must be [name, stations]"
+
+private def placeNearLineResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let places ← (← optArr j "places").mapM parseNearPlace
+    let lines ← (← optArr j "lines").mapM parseLineStations
+    return Json.mkObj [("value", Json.arr
+      ((Verified.Hsmm.PlaceNearLine.buildPlaceNearLine places lines).map Json.str))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -1929,6 +2128,10 @@ def dispatch (j : Json) : Json :=
   | .ok "assemble" => assembleResult j
   | .ok "assembledecode" => assembleDecodeResult j
   | .ok "assemblesegments" => assembleSegmentsResult j
+  | .ok "proximityqueries" => proximityQueriesResult j
+  | .ok "proximitytable" => proximityTableResult j
+  | .ok "knownlines" => knownLinesResult j
+  | .ok "placenearline" => placeNearLineResult j
   | .ok "coverage" => coverageResult j
   | .ok "kalman" => kalmanResult j
   | .ok "gpsquality" => gpsQualityResult j

@@ -152,6 +152,52 @@ def distinctQueryPoints (ms : Array MinuteFix) : Array MinuteFix :=
         out := out.push m
     return out
 
+/-- One answered query: the location the shell asked about, and the ways it
+found there.
+
+⚠ A QUERY THAT FAILED IS SIMPLY ABSENT from `answers`. It is NOT sent as an
+empty list: `[]` is "nothing within 300 m", which is evidence, and a failure is
+no evidence at all (#976 — a failed mirror query must not read as an empty
+answer). {@link proximityTable} counts the minutes left unanswered so the shell
+can say which it had. -/
+structure WayAnswer where
+  lat : Float
+  lon : Float
+  ways : List NearbyWay
+  deriving Repr, Inhabited
+
+/-- Join the day's minute-medians to the shell's `nearbyWays` answers, by the
+~11 m cache key, and return the sparse per-minute table plus the number of
+minutes no answer covered.
+
+⚠ THE JOIN IS HERE AND NOT IN THE SHELL. The key that decides which minutes
+share an answer is {@link coordKey}, and a second copy of it beside the OSM
+call would be a second chance to disagree about how many queries a day needs.
+
+⚠ A MINUTE WITH NOTHING IN RANGE IS OMITTED, not written as `(none, none)`.
+That is the same value the consumer reads for an absent minute
+(`buildObservationTensor` defaults to `(none, none)`), so omitting it is exactly
+equivalent and keeps the table sparse. Absent means "not known to be near
+either" — never "far from both", which would be evidence AGAINST rail. -/
+def proximityTable (ms : Array MinuteFix) (answers : Array WayAnswer)
+    : Array (Int × Proximity) × Nat := Id.run do
+  let mut byKey : Array (String × Proximity) := #[]
+  for a in answers do
+    let k := coordKey a.lat a.lon
+    if (byKey.findIdx? (fun q => q.1 == k)).isNone then
+      byKey := byKey.push (k, railRoadDistFromWays a.ways)
+  let mut rows : Array (Int × Proximity) := #[]
+  let mut unanswered : Nat := 0
+  for m in ms do
+    match byKey.findIdx? (fun q => q.1 == coordKey m.lat m.lon) with
+    | none => unanswered := unanswered + 1
+    | some i =>
+      let p := byKey[i]!.2
+      -- Omit a minute that carries no distance at all: see the note above.
+      if p.railDistM.isSome || p.roadDistM.isSome then
+        rows := rows.push (m.minuteTs, p)
+  return (rows, unanswered)
+
 /-! ## Guards -/
 
 private def W (t s : String) (d : Float) : NearbyWay :=
@@ -246,5 +292,52 @@ private def T1 : Int := T0 + 1440 * 60
 -- First-seen order, so the shell's query order is stable run to run.
 #guard (distinctQueryPoints #[{ minuteTs := 2, lat := 51.9, lon := 0 },
                               { minuteTs := 1, lat := 51.5, lon := 0 }])[0]!.lat == 51.9
+
+
+-- ⚠ THE JOIN. One answer serves every minute whose median rounds to the same
+-- ~11 m key, which is the whole reason a stationary day costs one query.
+private def A (lat lon : Float) (ws : List NearbyWay) : WayAnswer :=
+  { lat := lat, lon := lon, ways := ws }
+private def M (ts : Int) (lat lon : Float) : MinuteFix :=
+  { minuteTs := ts, lat := lat, lon := lon }
+
+#guard (proximityTable #[M 60 51.512345 (-0.1), M 120 51.512349 (-0.1)]
+          #[A 51.512345 (-0.1) [W "highway" "primary" 30]])
+        == (#[(60, { railDistM := none, roadDistM := some 30 }),
+              (120, { railDistM := none, roadDistM := some 30 })], 0)
+
+-- ⚠ A MINUTE NO ANSWER COVERS IS COUNTED, NOT INVENTED. It leaves no row, so
+-- the decoder reads it as "not known to be near either" — and the shell can
+-- still say how much of the day that was.
+#guard (proximityTable #[M 60 51.5 0, M 120 52.9 0]
+          #[A 51.5 0 [W "railway" "rail" 12]])
+        == (#[(60, { railDistM := some 12, roadDistM := none })], 1)
+#guard (proximityTable #[M 60 51.5 0] #[]) == ((#[] : Array (Int × Proximity)), 1)
+
+-- ⚠ ANSWERED-BUT-EMPTY IS A ROW-LESS MINUTE THAT IS NOT UNANSWERED. Both read
+-- as no evidence downstream; only this count tells the shell which it was.
+#guard (proximityTable #[M 60 51.5 0] #[A 51.5 0 []])
+        == ((#[] : Array (Int × Proximity)), 0)
+-- Ways that are neither rail nor road are the same case.
+#guard (proximityTable #[M 60 51.5 0] #[A 51.5 0 [W "highway" "footway" 3]])
+        == ((#[] : Array (Int × Proximity)), 0)
+
+-- Rows come out in MINUTE order, not answer order, so the table reads as a day.
+#guard ((proximityTable #[M 180 51.9 0, M 60 51.5 0]
+          #[A 51.5 0 [W "railway" "rail" 1], A 51.9 0 [W "railway" "rail" 2]]).1.map (·.1))
+        == #[180, 60]
+
+-- A duplicate answer for one key does not change the value: the FIRST wins,
+-- matching the TypeScript's `coordCache`, which never overwrites a hit.
+#guard (proximityTable #[M 60 51.5 0]
+          #[A 51.5 0 [W "railway" "rail" 10], A 51.5 0 [W "railway" "rail" 99]])
+        == (#[(60, { railDistM := some 10, roadDistM := none })], 0)
+
+-- End to end on a day: bucket, dedupe, ask twice, join back to three minutes.
+#guard (let ms := minuteMedians T0 T1
+          [P T0 51.512345 (-0.1), P (T0+60) 51.512349 (-0.1), P (T0+120) 51.9 (-0.1)]
+        let qs := distinctQueryPoints ms
+        let answers := qs.map (fun q => A q.lat q.lon [W "highway" "primary" 40])
+        (proximityTable ms answers).1.size == 3 && qs.size == 2)
 
 end Verified.Hsmm.RailRoadProximity

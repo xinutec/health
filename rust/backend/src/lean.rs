@@ -2226,6 +2226,276 @@ pub fn assemble_segments(input: &serde_json::Value) -> Result<Option<serde_json:
     Ok(Some(segs.clone()))
 }
 
+// ---------------------------------------------------------------------------
+// The decoder's place/line hard constraint (#982).
+
+/// `Verified.Hsmm.Assemble.KNOWN_LINES` — the train lines the served state space
+/// is built from.
+///
+/// ⚠ ASKED RATHER THAN SPELLED. A Rust copy of this list would let the shell
+/// resolve stations for a different set of lines than the model has states for,
+/// and nothing would report the mismatch: the extra pairs would simply never
+/// match a state, and the missing ones would silently drop a hard zero.
+pub fn known_lines() -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<String>,
+    }
+    let raw = serve(&serde_json::json!({ "mode": "knownlines" }).to_string())?;
+    let w: Wire = decode_serve(&raw, "knownlines")?;
+    Ok(w.value)
+}
+
+/// `Verified.Hsmm.PlaceNearLine.buildPlaceNearLine` — the `"{placeId}|{lineName}"`
+/// keys the transition matrix hard-zeroes against.
+///
+/// `lines` pairs a line name with its stations as `[latBits, lonBits]`; the
+/// mirror answers those, and the 400 m rule is Lean's.
+///
+/// ⚠ AN EMPTY RESULT IS NOT A NEUTRAL ONE. `parseAssemble` reads `placeNearLine`
+/// as optional, and an absent set removes every hard zero rather than adding
+/// them — a decode that skips this permits boardings the TypeScript forbids and
+/// still produces a plausible timeline.
+pub fn place_near_line(
+    places: &[(i64, f64, f64)],
+    lines: &[(String, Vec<(f64, f64)>)],
+) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Vec<String>,
+    }
+    let b = crate::fold_payload::bits;
+    let places: Vec<serde_json::Value> = places
+        .iter()
+        .map(|(id, lat, lon)| serde_json::json!([id, b(*lat), b(*lon)]))
+        .collect();
+    let lines: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|(name, stations)| {
+            serde_json::json!([
+                name,
+                stations
+                    .iter()
+                    .map(|(lat, lon)| serde_json::json!([b(*lat), b(*lon)]))
+                    .collect::<Vec<_>>()
+            ])
+        })
+        .collect();
+    let raw = serve(
+        &serde_json::json!({ "mode": "placenearline", "places": places, "lines": lines })
+            .to_string(),
+    )?;
+    let w: Wire = decode_serve(&raw, "placenearline")?;
+    Ok(w.value)
+}
+
+/// One fix as the HSMM sees it, on the wire as `[ts, latBits, lonBits, speedBits]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpsFix {
+    pub ts: i64,
+    pub lat: f64,
+    pub lon: f64,
+    pub speed_kmh: f64,
+}
+
+/// `Verified.Hsmm.GpsOutliers.dropGpsOutliers` — the physically-impossible fixes
+/// removed before anything looks at the day.
+///
+/// ⚠ THIS RUNS BEFORE BOTH HALVES OF THE DECODE, and that is the whole reason it
+/// needed a caller. The TypeScript cleans once in `buildHsmmModel` and again at
+/// the proximity call site, so the tensor and the rail/road distances describe
+/// the same fixes; a shell that cleaned only one of them would ask OSM about a
+/// jump the decoder never sees.
+///
+/// ⚠ The `gpsoutliers` mode had been reachable from NO Rust caller — a #1003
+/// orphan sitting one function away from the path that needed it.
+pub fn drop_gps_outliers(points: &[GpsFix]) -> Result<Vec<GpsFix>> {
+    #[derive(Deserialize)]
+    struct Wire {
+        pts: Vec<(i64, String, String, String)>,
+    }
+    let pts: Vec<serde_json::Value> = points
+        .iter()
+        .map(|p| {
+            serde_json::json!([
+                p.ts,
+                crate::fold_payload::bits(p.lat),
+                crate::fold_payload::bits(p.lon),
+                crate::fold_payload::bits(p.speed_kmh)
+            ])
+        })
+        .collect();
+    let raw = serve(&serde_json::json!({ "mode": "gpsoutliers", "pts": pts }).to_string())?;
+    let w: Wire = decode_serve(&raw, "gpsoutliers")?;
+    Ok(w.pts
+        .into_iter()
+        .map(|(ts, lat, lon, speed)| GpsFix {
+            ts,
+            lat: f64::from_bits(lat.parse().unwrap_or(0)),
+            lon: f64::from_bits(lon.parse().unwrap_or(0)),
+            speed_kmh: f64::from_bits(speed.parse().unwrap_or(0)),
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Per-minute rail/road proximity (#982, #238).
+//
+// ⚠ TWO CALLS BECAUSE THE MIDDLE IS AN OSM LOOKUP, not because anything is
+// decided here. Which minutes exist, where each one is asked about, how few
+// distinct queries a day needs, which subtypes count as rail or road, and which
+// minute gets which answer are all `Verified.Hsmm.RailRoadProximity`. This side
+// runs `nearby_ways` and carries bytes.
+
+/// One location the shell must ask OSM about.
+///
+/// ⚠ THE BIT PATTERNS ARE THE IDENTITY. Lean joins minutes to answers on
+/// `coordKey`, which is computed from the Float — so the strings go back
+/// VERBATIM and the two sides key on the same value by construction. Parsing is
+/// only ever to ask the question.
+#[derive(Debug, Clone)]
+pub struct ProximityQuery {
+    lat_bits: String,
+    lon_bits: String,
+}
+
+impl ProximityQuery {
+    pub fn lat(&self) -> f64 {
+        f64::from_bits(self.lat_bits.parse().unwrap_or(0))
+    }
+    pub fn lon(&self) -> f64 {
+        f64::from_bits(self.lon_bits.parse().unwrap_or(0))
+    }
+}
+
+/// The minutes of a day that had a fix, and the distinct locations they reduce
+/// to. `minutes` is OPAQUE — hand it back to [`proximity_table`] untouched.
+#[derive(Debug, Clone)]
+pub struct ProximityPlan {
+    pub minutes: serde_json::Value,
+    pub queries: Vec<ProximityQuery>,
+}
+
+/// `Verified.Hsmm.RailRoadProximity.minuteMedians` + `distinctQueryPoints`.
+///
+/// `points` are `(ts, lat, lon)`; the speed a `GpsPoint` also carries plays no
+/// part in bucketing or in the median, so it is not sent.
+pub fn proximity_queries(
+    start_utc: i64,
+    end_utc: i64,
+    points: &[(i64, f64, f64)],
+) -> Result<ProximityPlan> {
+    #[derive(Deserialize)]
+    struct Wire {
+        minutes: serde_json::Value,
+        queries: Vec<Vec<String>>,
+    }
+    let pts: Vec<serde_json::Value> = points
+        .iter()
+        .map(|(ts, lat, lon)| {
+            serde_json::json!([
+                ts,
+                crate::fold_payload::bits(*lat),
+                crate::fold_payload::bits(*lon)
+            ])
+        })
+        .collect();
+    let raw = serve(
+        &serde_json::json!({
+            "mode": "proximityqueries",
+            "startUtc": start_utc,
+            "endUtc": end_utc,
+            "pts": pts,
+        })
+        .to_string(),
+    )?;
+    let w: Wire = decode_serve(&raw, "proximityqueries")?;
+    let queries = w
+        .queries
+        .into_iter()
+        .map(|q| match q.as_slice() {
+            [lat, lon] => Ok(ProximityQuery {
+                lat_bits: lat.clone(),
+                lon_bits: lon.clone(),
+            }),
+            _ => Err(anyhow!("proximityqueries: a query is not [lat, lon]")),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ProximityPlan {
+        minutes: w.minutes,
+        queries,
+    })
+}
+
+/// One answered query: the location, spelled exactly as [`ProximityQuery`] gave
+/// it, and the `nearbyWays` rows found there.
+///
+/// ⚠ A QUERY THE MIRROR DECLINED HAS NO `ProximityAnswer` AT ALL. Sending it
+/// with an empty `ways` would say "nothing within 300 m", which is evidence;
+/// leaving it out says nothing, which is the truth (#976).
+#[derive(Debug, Clone)]
+pub struct ProximityAnswer {
+    query: ProximityQuery,
+    ways: Vec<serde_json::Value>,
+}
+
+impl ProximityAnswer {
+    pub fn new(query: &ProximityQuery, ways: Vec<serde_json::Value>) -> Self {
+        Self {
+            query: query.clone(),
+            ways,
+        }
+    }
+}
+
+/// The sparse `[minuteTs, road, rail]` table `assemblesegments` reads as
+/// `observation.proximity`, plus the number of fix-bearing minutes no answer
+/// covered.
+///
+/// ⚠ THE TABLE IS OPAQUE HERE ON PURPOSE. It goes into the assemble request
+/// unread; a `Vec<(i64, f64, f64)>` on this side would be a second decode of
+/// numbers that only Lean compares.
+pub fn proximity_table(
+    minutes: &serde_json::Value,
+    answers: &[ProximityAnswer],
+) -> Result<(serde_json::Value, usize)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        proximity: serde_json::Value,
+        unanswered: usize,
+    }
+    let answers: Vec<serde_json::Value> = answers
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "lat": a.query.lat_bits,
+                "lon": a.query.lon_bits,
+                "ways": a.ways,
+            })
+        })
+        .collect();
+    let raw = serve(
+        &serde_json::json!({
+            "mode": "proximitytable",
+            "minutes": minutes,
+            "answers": answers,
+        })
+        .to_string(),
+    )?;
+    let w: Wire = decode_serve(&raw, "proximitytable")?;
+    Ok((w.proximity, w.unanswered))
+}
+
+/// A `serve` reply, with Lean's `{"error": …}` surfaced as one.
+fn decode_serve<T: for<'de> Deserialize<'de>>(raw: &str, what: &str) -> Result<T> {
+    let v: serde_json::Value =
+        serde_json::from_str(raw).with_context(|| format!("{what} answer is not JSON"))?;
+    if let Some(e) = v.get("error").and_then(serde_json::Value::as_str) {
+        anyhow::bail!("{what}: {e}");
+    }
+    serde_json::from_value(v).with_context(|| format!("decoding {what}: {raw}"))
+}
+
 /// Raw OSM rows → the `{edges, nodes}` the assemble modes consume, via
 /// `Verified.Hsmm.RouteGraph.buildWireGraph`.
 ///

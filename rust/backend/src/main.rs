@@ -2515,7 +2515,6 @@ async fn decode_one(
     date: &str,
     tz: &str,
 ) -> Result<usize> {
-    use sqlx::Row as _;
     let bounds = backend::timezone::date_bounds_utc(date, Some(tz))?;
     let inputs = backend::classification_inputs::load(
         pool,
@@ -2538,43 +2537,70 @@ async fn decode_one(
     let (ways, stops) = route_graph_rows(pool, &obs).await?;
     let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops)?;
 
-    // ⚠ Continuity seeds from the PRIOR day's presence_log row. Absent is a
-    // legitimate chain start, not an error — the decoder consumes whatever
-    // context it is given and the loader owns the null case.
-    // ⚠ Continuity seeds from the PRIOR day's presence_log row. TWO absences,
-    // and they are different: no ROW at all is a chain start, and a row whose
-    // place id is NULL is a day that ended nowhere known. `fetch_optional`
-    // answers the first, `try_get::<Option<u64>>` the second.
+    // ── the observation tensor's raw materials ──────────────────────────────
+    // ⚠ THE TENSOR IS NOT BUILT HERE AND MUST NOT BE. Lean builds it from these
+    // (#411): shipping 1440 assembled rows instead is the 33-40 MiB per day the
+    // port exists to delete. What crosses is the day's fixes and two lookup
+    // tables that are not pure — a timezone and an OSM query.
     //
-    // ⚠ `u64`, NOT `i64` — `presence_log.*_place_id` is INT UNSIGNED, which
-    // sqlx treats as a distinct type and refuses to hand back as signed. It
-    // fails at RUNTIME on real rows; dev-lint's DL-SQLX-ROW-TYPES caught it
-    // here before it shipped.
-    let prev = backend::classification_inputs::shift_day(date, -1)?;
-    let continuity: Option<u64> = {
-        let row = sqlx::query(
-            "SELECT end_of_day_place_id FROM presence_log WHERE user_id = ? AND date = ?",
-        )
-        .bind(user_id)
-        .bind(&prev)
-        .fetch_optional(pool)
-        .await
-        .context("reading the prior day's presence_log")?;
-        match row {
-            None => None,
-            Some(r) => r.try_get::<Option<u64>, _>("end_of_day_place_id")?,
-        }
-    };
+    // ⚠ OUTLIERS ARE DROPPED ONCE, HERE, and the same cleaned list feeds both the
+    // tensor and the proximity lookups. The TypeScript cleans in two places
+    // (`buildHsmmModel` and the `computeMinuteProximity` call) and the two agree
+    // only because they clean the same input; doing it once is the same result
+    // with one fewer way to disagree.
+    let cleaned = backend::lean::drop_gps_outliers(&gps_fixes(&obs)?)?;
+    // ⚠ THE DECODER'S PLACES ARE NOT `focus_places` ROWS. `knownPlaces` names
+    // the columns (`centroidLat`, `totalDwellSec`, `displayName`); the decode
+    // wire names the concepts (`lat`, `dwell`, `name`). Sending the row shape is
+    // refused by name — see `decode_places`, which is the second field-shape
+    // defect this path shipped and the reason there is a test for the request.
+    let places = backend::classification_inputs::decode_places(inputs.get("knownPlaces"))?;
+    let osm = day_osm(pool, bounds.start_utc, bounds.end_utc, &cleaned, &places).await?;
+    println!("osm {date}: {}", osm.note);
+
+    // ⚠ THE CHAIN SEED, AND IT IS FOUR FIELDS RATHER THAN ONE. Sending only
+    // `priorPlaceId` is refused with `property not found: hoursSince` — the
+    // third field-shape defect on this request, and the third found by probing
+    // the parser instead of reading the struct.
+    let continuity = load_continuity(pool, user_id, date, &places).await?;
 
     let req = serde_json::json!({
-        "obs": obs,
+        "observation": {
+            "startUtc": bounds.start_utc,
+            "points": cleaned.iter().map(|p| serde_json::json!({
+                "ts": p.ts, "lat": p.lat, "lon": p.lon, "speedKmh": p.speed_kmh
+            })).collect::<Vec<_>>(),
+            "hr": obs.get("hr").cloned().unwrap_or(serde_json::json!([])),
+            "steps": obs.get("steps").cloned().unwrap_or(serde_json::json!([])),
+            "sleep": obs.get("sleep").cloned().unwrap_or(serde_json::json!([])),
+            "localCtx": backend::timezone::local_ctx_table(bounds.start_utc, tz)?,
+            "proximity": osm.proximity,
+            "imputeCadence": flag("USE_CADENCE_IMPUTATION"),
+        },
         "edges": edges,
         "nodes": nodes,
-        "places": inputs.get("knownPlaces").cloned().unwrap_or(serde_json::json!([])),
+        "places": places,
+        // ⚠ ABSENT IS NOT NEUTRAL. `parseAssemble` treats a missing
+        // `placeNearLine` as the EMPTY SET, which removes every place→line hard
+        // zero instead of adding them — so the decode runs, looks plausible, and
+        // permits boardings the TypeScript forbids. It was missing entirely
+        // until 2026-08-26.
+        "placeNearLine": osm.place_near_line,
         "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
-        "continuity": match continuity {
-            Some(p) => serde_json::json!({ "priorPlaceId": p }),
-            None => serde_json::Value::Null,
+        "continuity": continuity,
+        // ⚠ THE THREE C4 FLAGS, READ FROM THE ENV AS THE TypeScript READS THEM.
+        // All three are `1` in `decodeFlags` and have been since C4 landed, so a
+        // Rust-side `true` would decode production correctly and diverge the
+        // moment anyone replays a day with `scripts/prod-db.sh` — which mirrors
+        // the pod env precisely so that cannot happen.
+        //
+        // ⚠ `maxD` IS DELIBERATELY ABSENT: it is the model's own trellis depth,
+        // and `Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION` is where it lives.
+        // Spelling 240 here would be a second copy that nothing compares.
+        "flags": {
+            "reacquireRobust": flag("USE_REACQUIRE_ROBUST_SPEED"),
+            "segEvidence": flag("USE_SEGMENT_EVIDENCE"),
+            "chainContext": flag("USE_CHAIN_CONTEXT"),
         },
         "date": date,
         "tz": tz,
@@ -2589,6 +2615,254 @@ async fn decode_one(
     let n = segments.as_array().map_or(0, Vec::len);
     save_decode(pool, user_id, date, &segments).await?;
     Ok(n)
+}
+
+/// The prior day's end-of-day seed, shaped as `parseContinuity` reads it — or
+/// `null`, which is a legitimate chain start rather than a fault.
+///
+/// ⚠ FOUR FIELDS, NOT ONE. `priorPlaceId` alone is refused with `property not
+/// found: hoursSince`, and this path sent exactly that until 2026-08-26.
+/// `priorPlaceCoord` is a `[lat, lon]` PAIR on the wire even though the
+/// TypeScript's own type is an object — `lean/experiments/compare-assemble-*.mts`
+/// convert it the same way.
+///
+/// ⚠ THREE ABSENCES, AND THEY ARE DIFFERENT. No ROW at all is a chain start; a
+/// row whose `end_of_day_place_id` is NULL is a day that ended nowhere known;
+/// a row with no `end_of_day_ts` cannot say how stale the seed is. The
+/// TypeScript returns null for all three and so does this — but they are read
+/// separately so a future reader can tell them apart if that ever matters.
+///
+/// ⚠ `u64`, NOT `i64` — `presence_log.*_place_id` is INT UNSIGNED, which sqlx
+/// treats as a distinct type and refuses to hand back as signed. It fails at
+/// RUNTIME on real rows only.
+///
+/// ⚠ `end_of_day_posterior` is `FLOAT`, so it reads as `f32`. Asking for `f64`
+/// fails on real rows the same way, and the widening is exact — the node driver
+/// hands the TypeScript the same widened value.
+///
+/// ⚠ `UNIX_TIMESTAMP`, MIRRORING THE `FROM_UNIXTIME` THE WRITE USES. Reading the
+/// `TIMESTAMP` as a naive local datetime would make the staleness of the seed
+/// depend on the session timezone, and `refresh-presence-log` a few hundred
+/// lines down writes it through `FROM_UNIXTIME(?)`. Symmetry is the check.
+///
+/// ⚠ THE COORD COMES FROM THE PLACES ALREADY IN HAND, not a second query. The
+/// TypeScript re-reads `focus_places` unfiltered; taking it from the list the
+/// decoder was just given means the seed's coordinate is the same one the
+/// trellis has a state for. A prior place that is no longer a focus place
+/// yields a null coord, which is the documented un-gated case.
+async fn load_continuity(
+    pool: &sqlx::MySqlPool,
+    user_id: &str,
+    date: &str,
+    places: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    use sqlx::Row as _;
+    let prev = backend::classification_inputs::shift_day(date, -1)?;
+    let Some(row) = sqlx::query(
+        "SELECT end_of_day_place_id, \
+                CAST(UNIX_TIMESTAMP(end_of_day_ts) AS SIGNED) AS end_of_day_unix, \
+                end_of_day_posterior \
+         FROM presence_log WHERE user_id = ? AND date = ?",
+    )
+    .bind(user_id)
+    .bind(&prev)
+    .fetch_optional(pool)
+    .await
+    .context("reading the prior day's presence_log")?
+    else {
+        return Ok(serde_json::Value::Null);
+    };
+    let Some(place_id) = row.try_get::<Option<u64>, _>("end_of_day_place_id")? else {
+        return Ok(serde_json::Value::Null);
+    };
+    let Some(last_fix) = row.try_get::<Option<i64>, _>("end_of_day_unix")? else {
+        return Ok(serde_json::Value::Null);
+    };
+    let posterior = f64::from(row.try_get::<f32, _>("end_of_day_posterior")?);
+
+    // ⚠ UTC MIDNIGHT OF THE DECODED DATE, not local midnight and not the day's
+    // own `startUtc`. The TypeScript measures from `new Date(`${date}T00:00:00Z`)`,
+    // so in London the two differ by an hour for half the year — and the
+    // difference lands straight in the continuity factor's time decay.
+    let today_start = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .with_context(|| format!("{date:?} is not a YYYY-MM-DD date"))?
+        .and_hms_opt(0, 0, 0)
+        .context("midnight is representable")?
+        .and_utc()
+        .timestamp();
+    let hours_since = (((today_start - last_fix) as f64) / 3600.0).max(0.0);
+
+    let coord = places
+        .as_array()
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .find(|p| p.get("id").and_then(serde_json::Value::as_u64) == Some(place_id))
+        .and_then(|p| Some(serde_json::json!([p.get("lat")?, p.get("lon")?])))
+        .unwrap_or(serde_json::Value::Null);
+
+    Ok(serde_json::json!({
+        "priorPlaceId": place_id,
+        "priorPlaceCoord": coord,
+        "hoursSince": hours_since,
+        "priorPosterior": posterior,
+    }))
+}
+
+/// A decode feature flag, with the TypeScript's own semantics: set and exactly
+/// `"1"` is on, anything else — including unset — is off.
+///
+/// ⚠ NOT DEFAULTED TO `true`. Production sets all three (`decodeFlags` in
+/// `kubes/dhall/apps/health.dhall`) and has since C4, so defaulting on would be
+/// right in the cluster and wrong everywhere else — and `scripts/prod-db.sh`
+/// mirrors the pod env precisely so that a Mac replay decodes the same day the
+/// cron wrote. A parity tool that does not mirror the env is not a parity tool.
+fn flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| v == "1")
+}
+
+/// `head::capture`'s `obs.points` as fixes.
+///
+/// ⚠ THESE ARE THE VELOCITY PIPELINE'S POINTS, not the raw ones. `rawFixes` is
+/// what the route-graph bbox is built from — a wider set on purpose, since the
+/// graph must contain the day even where the pipeline dropped fixes.
+fn gps_fixes(obs: &serde_json::Value) -> Result<Vec<backend::lean::GpsFix>> {
+    let rows = obs
+        .get("points")
+        .and_then(serde_json::Value::as_array)
+        .context("capture's obs has no points")?;
+    let f = |r: &serde_json::Value, k: &str| -> Result<f64> {
+        r.get(k)
+            .and_then(serde_json::Value::as_f64)
+            .with_context(|| format!("a fix has no numeric {k}"))
+    };
+    rows.iter()
+        .map(|r| {
+            Ok(backend::lean::GpsFix {
+                ts: r
+                    .get("ts")
+                    .and_then(serde_json::Value::as_i64)
+                    .context("a fix has no ts")?,
+                lat: f(r, "lat")?,
+                lon: f(r, "lon")?,
+                speed_kmh: f(r, "speedKmh")?,
+            })
+        })
+        .collect()
+}
+
+/// Everything the decode needs from OSM, gathered in ONE trip to the mirror.
+///
+/// ⚠ THE TWO HALVES TRAVEL TOGETHER BECAUSE THE MIRROR IS BLOCKING-THREAD ONLY.
+/// `with_mirror_answerer` is the only door and its closure cannot await, so a
+/// second call would be a second `MirrorSource`, a second connection, and a
+/// second chance to construct one on a runtime worker — which aborts the
+/// process rather than returning an error. They are unrelated questions asked
+/// through one door, not one question.
+struct DayOsm {
+    /// The sparse `[minuteTs, road, rail]` table, opaque — it goes into the
+    /// assemble request unread.
+    proximity: serde_json::Value,
+    /// `"{placeId}|{lineName}"` keys the transition matrix hard-zeroes against.
+    place_near_line: Vec<String>,
+    /// What the mirror could and could not answer, for the run's log line.
+    note: String,
+}
+
+async fn day_osm(
+    pool: &sqlx::MySqlPool,
+    start_utc: i64,
+    end_utc: i64,
+    points: &[backend::lean::GpsFix],
+    places: &serde_json::Value,
+) -> Result<DayOsm> {
+    let pts: Vec<(i64, f64, f64)> = points.iter().map(|p| (p.ts, p.lat, p.lon)).collect();
+    let plan = backend::lean::proximity_queries(start_utc, end_utc, &pts)?;
+    let minute_count = plan.minutes.as_array().map_or(0, Vec::len);
+    let asked = plan.queries.len();
+
+    // ⚠ THE LINE LIST IS LEAN'S — see `lean::known_lines`.
+    let lines = backend::lean::known_lines()?;
+    let place_coords: Vec<(i64, f64, f64)> = places
+        .as_array()
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p.get("id")?.as_i64()?,
+                p.get("lat")?.as_f64()?,
+                p.get("lon")?.as_f64()?,
+            ))
+        })
+        .collect();
+
+    let queries = plan.queries.clone();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let want_lines = lines.clone();
+    let (answers, stations) =
+        backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
+            let mut out = Vec::with_capacity(queries.len());
+            for q in &queries {
+                // ⚠ `None` is "the mirror could not vouch for this coordinate",
+                // NOT "nothing here". Sending it back as an empty way list would
+                // tell the decoder there is no railway within 300 m, which is
+                // evidence against rail rather than the absence of evidence
+                // (#976).
+                let Some(ways) = ans.nearby_ways(q.lat(), q.lon())? else {
+                    continue;
+                };
+                out.push(backend::lean::ProximityAnswer::new(q, ways));
+            }
+            let mut sts: Vec<(String, Vec<(f64, f64)>)> = Vec::with_capacity(want_lines.len());
+            for line in &want_lines {
+                // ⚠ Same distinction, opposite consequence: a declined line is
+                // SKIPPED, so no place gains a pair for it. An empty list is a
+                // line no way carries and is a real answer.
+                let Some(rows) = ans.stations_serving(line)? else {
+                    continue;
+                };
+                sts.push((line.clone(), station_coords(&rows)));
+            }
+            Ok((out, sts))
+        })
+        .await?;
+
+    let (proximity, unanswered) = backend::lean::proximity_table(&plan.minutes, &answers)?;
+    let place_near_line = backend::lean::place_near_line(&place_coords, &stations)?;
+    let covered = minute_count - unanswered;
+    let station_total: usize = stations.iter().map(|(_, s)| s.len()).sum();
+    // ⚠ THE LINE REPORTS WHAT WAS ASKED AS WELL AS WHAT CAME BACK. `2/18
+    // queries` and `18/18 queries` produce tables that look equally healthy, and
+    // only the ratio says a day was decoded against a mirror that mostly
+    // declined (#976, and the shape #1134 reports for the Overpass crons).
+    Ok(DayOsm {
+        note: format!(
+            "proximity {covered}/{minute_count} minutes from {}/{asked} queries; \
+             place-line {} of {} lines, {station_total} stations, {} pairs",
+            answers.len(),
+            stations.len(),
+            lines.len(),
+            place_near_line.len()
+        ),
+        proximity,
+        place_near_line,
+    })
+}
+
+/// `[name, latBits, lonBits]` triples → coordinates.
+///
+/// ⚠ THE BIT PATTERNS ARE PARSED ONLY TO ASK. They go straight back out as bit
+/// patterns on the `placenearline` request, so the coordinate Lean measures from
+/// is the one the mirror answered with, to the last digit.
+fn station_coords(rows: &[serde_json::Value]) -> Vec<(f64, f64)> {
+    rows.iter()
+        .filter_map(|r| {
+            let a = r.as_array()?;
+            let bits = |i: usize| -> Option<f64> {
+                Some(f64::from_bits(a.get(i)?.as_str()?.parse().ok()?))
+            };
+            Some((bits(1)?, bits(2)?))
+        })
+        .collect()
 }
 
 /// The rail/road ways and station points covering a day's fixes.

@@ -208,6 +208,30 @@ impl<S: RowSource> OsmAnswerer<S> {
     pub fn nearby_ways(&mut self, lat: f64, lon: f64) -> Result<Option<Vec<Value>>> {
         nearby_ways(&mut self.source, lat, lon)
     }
+
+    /// The stations serving a line, as `[name, latBits, lonBits]` triples.
+    ///
+    /// ⚠ THE SAME ANSWER THE FOLD GETS, from the same code — `decode-day` needs
+    /// it to build the decoder's place/line hard constraint (#982), and a second
+    /// walk of `rail_line_names` → `rail_ways_named` → the proximity filter is
+    /// what drifts while nothing compares the two (#1003).
+    ///
+    /// ⚠ `Ok(None)` is "the mirror could not answer". `Ok(Some(vec![]))` is a
+    /// line no way carries — a siding, a junction curve — which really does have
+    /// no stations. Flattening the first into the second would say a real line
+    /// has no stations, and every place would stop being near it.
+    pub fn stations_serving(&mut self, line: &str) -> Result<Option<Vec<Value>>> {
+        let Some((_, answer)) = self.stations_on_line(line)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            answer
+                .get(1)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        ))
+    }
 }
 
 impl<S: RowSource> OsmAnswerer<S> {
