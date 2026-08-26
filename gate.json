@@ -81,9 +81,14 @@
         "develop",
         "--no-warn-dirty",
         "--command",
-        "pnpm",
-        "run",
-        "check:frontend-unions"
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "-p",
+        "backend",
+        "--test",
+        "frontend_unions"
       ],
       "cwd": ".",
       "env": {},

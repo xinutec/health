@@ -89,10 +89,20 @@ in  { name = "health"
             compile-time link to them. This fails when a copy has drifted, so
             adding a mode or an episode kind server-side cannot silently leave
             the UI rendering it as a default.
+
+            ⚠ IT USED TO COMPARE AGAINST `src/sleep/day-state.ts`, which held the
+            only closed `DayStateMode` anywhere. #975 deletes that, so the
+            backend side is now `Verified.Geo.WireVocab` — where the lists are
+            tied by `#guard` to the closed types that DO exist, rather than being
+            a list nobody enforces. Rust rather than node, so checking the
+            backend stops needing a TypeScript runtime.
         -}
         G.Check::{
         , name = "frontend union copies match the backend"
-        , argv = G.inDevShell [ "pnpm", "run", "check:frontend-unions" ]
+        , argv = G.inDevShell
+            [ "cargo", "test", "--manifest-path", "rust/Cargo.toml"
+            , "-p", "backend", "--test", "frontend_unions"
+            ]
         , timeout_s = 600
         }
       , {-  The `*-refs.mts` generators, held to a committed snapshot.

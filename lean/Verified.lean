@@ -93,6 +93,7 @@ import Verified.Geo.DisplayGate
 import Verified.Geo.RailSnap
 import Verified.JsNum
 import Verified.Geo.EpisodeGeometry
+import Verified.Geo.WireVocab
 import Verified.Geo.SegmentPasses
 import Verified.Geo.CurrentPlace
 import Verified.Geo.FocusIdentity
