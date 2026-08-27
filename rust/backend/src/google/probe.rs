@@ -68,6 +68,10 @@ const DAILY_TYPES: &[&str] = &[
     "daily-oxygen-saturation",
     "daily-respiratory-rate",
     "daily-sleep-temperature-derivations",
+    // ⚠ MEASURED NOT ONE-PER-DAY, 2026-08-27: it ran past 500,000 points and
+    // hit the page bound, where the five above land at ~1,200. Kept because the
+    // bound is now reported out loud, and a type that does not fit the
+    // assumption is worth seeing say so rather than being quietly dropped.
     "daily-heart-rate-zones",
 ];
 
@@ -181,6 +185,7 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     let mut newest: Option<String> = None;
     let mut oldest: Option<String> = None;
 
+    let mut hit_bound = true;
     for _ in 0..DEPTH_MAX_PAGES {
         let mut url =
             format!("{BASE}/users/me/dataTypes/{ty}/dataPoints?pageSize={DEPTH_PAGE_SIZE}");
@@ -204,8 +209,14 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
             Err(e) => return format!("{ty:36} page {total} did not parse: {e}"),
         };
         let points = match page.get("dataPoints").and_then(|p| p.as_array()) {
-            None => break,
-            Some(ps) if ps.is_empty() => break,
+            None => {
+                hit_bound = false;
+                break;
+            }
+            Some(ps) if ps.is_empty() => {
+                hit_bound = false;
+                break;
+            }
             Some(ps) => ps.clone(),
         };
         for pt in &points {
@@ -219,15 +230,31 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
         }
         match page.get("nextPageToken").and_then(|t| t.as_str()) {
             Some(t) if !t.is_empty() => page_token = Some(t.to_string()),
-            _ => break,
+            _ => {
+                hit_bound = false;
+                break;
+            }
         }
     }
 
-    format!(
-        "{ty:36} {total:6} points   {} → {}",
-        oldest.unwrap_or_else(|| "[no date found]".into()),
-        newest.unwrap_or_else(|| "[no date found]".into())
-    )
+    // ⚠ SAY SO WHEN THE WALK WAS CUT SHORT. A bounded scan that prints its
+    // partial total beside a date reads as a complete series — `daily-heart-rate-zones`
+    // reported "500000 points 0657-09-14 → 2026-08-27" on the first run, which
+    // is not a finding about the data but a finding about this loop. A silent
+    // cap is the failure this whole instrument exists to avoid.
+    let note = if hit_bound {
+        format!(
+            "  ⚠ STOPPED AT THE {DEPTH_MAX_PAGES}-PAGE BOUND — partial, and the \
+             oldest date below is only the oldest SEEN. Not a one-per-day type."
+        )
+    } else {
+        String::new()
+    };
+    let dates = match (&oldest, &newest) {
+        (Some(o), Some(n)) => format!("{o} → {n}"),
+        _ => "[no date found in any point]".to_string(),
+    };
+    format!("{ty:36} {total:6} points   {dates}{note}")
 }
 
 /// One line of readout for one candidate type.
