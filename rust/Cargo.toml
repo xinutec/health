@@ -36,3 +36,36 @@ resolver = "2"
 # because they are single-crate; this is the only workspace with members.
 [workspace.package]
 edition = "2024"
+
+# ⚠ DEPENDENCIES ONLY, and it is a measured number, not a habit.
+#
+# The gate's largest row is `day_corpus`, and 250 of its ~252 s were the
+# unoptimised build rather than the work. One golden day, same code, same
+# machine, 2026-08-27:
+#
+#     phase              debug     release
+#     serde_json parse  2656 ms     261 ms   10.2x
+#     converge          3231 ms     915 ms    3.5x
+#     ONE Lean fold      131 ms     143 ms    1.0x   <- precompiled, unaffected
+#
+# The fixtures are 44-86 MB of JSON each and there are 42 of them, so the whole
+# corpus is parsed four times over by four tests. That is what `opt-level = 3`
+# on the dependency graph buys.
+#
+# ⚠ `package."*"` EXCLUDES THE WORKSPACE'S OWN CRATES on purpose. Our code stays
+# at opt-level 0 so a backtrace still names a frame and a debugger still steps —
+# the cost is in serde_json, not in us. Compile time moves once, then caches.
+[profile.dev.package."*"]
+opt-level = 3
+
+# ⚠ OUR CRATES TOO, and only because `package."*"` alone was NOT enough:
+# 6.1 s -> 4.0 s, where the profile accounts for ~4.8 s of it. A generic
+# instantiates in the CALLING crate, so `serde_json::from_str::<Value>` is
+# codegen'd into `backend` and compiles at whatever level `backend` uses. The
+# dependency being optimised does not help when the hot code is a monomorphised
+# copy living here.
+#
+# opt-level 1 keeps line tables, names and stepping; it is not the debug cliff
+# that 2 and 3 are.
+[profile.dev]
+opt-level = 1
