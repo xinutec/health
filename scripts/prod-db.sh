@@ -27,6 +27,43 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 	exit 2
 }
 
+# ⚠ REFUSE `node dist/…` AGAINST PRODUCTION.
+#
+# `dist/` is compiled output of `src/`, which was deleted on 2026-08-26 (#975).
+# It is gitignored, so a clean checkout has none of it — but on a machine that
+# predates the deletion it is still lying there, and it still runs. Twenty
+# scripts invoke `node dist/cli/*.js`, fourteen of them wired into
+# `package.json`.
+#
+# Two of the reachable ones WRITE: `refresh-presence-log.js` and
+# `refresh-focus-places.js` both contain INSERT/UPDATE/DELETE, and
+# `scripts/ab-validate.sh` pipes the first through this script. So on this one
+# machine, a wired command would have run the DELETED TypeScript against the
+# production database — including whatever bugs it had when it was retired
+# (see #1140 for one that deletes real focus places).
+#
+# Refusing here rather than in twenty callers because this is the single
+# chokepoint every prod-touching path goes through. A loud refusal beats a
+# silent wrong execution; a clean checkout already fails with "Cannot find
+# module", and this makes THIS machine behave the same way.
+for arg in "$@"; do
+	case "$arg" in
+	dist/* | */dist/*)
+		cat >&2 <<-EOF
+			prod-db.sh: refusing to run "$arg" against production.
+
+			dist/ is build output of src/, deleted 2026-08-26 (#975). What is
+			left on this machine is the retired TypeScript backend, and running
+			it here would write to the production database with code that is no
+			longer the implementation.
+
+			The Rust equivalents are bin/backend subcommands. See #1225.
+		EOF
+		exit 2
+		;;
+	esac
+done
+
 HEALTH_HOST=root@isis.xinutec.org
 NS=health
 LOCAL_PORT=13306
