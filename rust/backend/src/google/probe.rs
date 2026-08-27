@@ -372,12 +372,24 @@ async fn rollup_one(
     http: &reqwest::Client,
     token: &str,
     ty: &str,
-    today: &str,
-    start: &str,
+    start: (i32, u32, u32),
+    end: (i32, u32, u32),
 ) -> String {
     let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints:dailyRollUp");
+    // ⚠ `start`/`end`, each a CivilDateTime — NOT `startTime`/`endTime` holding
+    // ISO strings. The first version used the latter and ALL NINE types answered
+    //
+    //     400 Unknown name "startTime" at 'range': Cannot find field.
+    //
+    // including `floors` and `total-calories`, which had NAMED dailyRollUp
+    // themselves. That uniformity is what identified a malformed request rather
+    // than nine absent series — the controls earning their place.
+    //
+    // `time` is optional and defaults to midnight, which is the alignment a
+    // one-day window wants, so it is omitted rather than spelled out.
+    let civil = |(y, m, d): (i32, u32, u32)| serde_json::json!({ "date": { "year": y, "month": m, "day": d } });
     let body = serde_json::json!({
-        "range": { "startTime": format!("{start}T00:00:00Z"), "endTime": format!("{today}T00:00:00Z") },
+        "range": { "start": civil(start), "end": civil(end) },
         "pageSize": 100
     });
     let res = match http.post(&url).bearer_auth(token).json(&body).send().await {
@@ -468,15 +480,18 @@ pub async fn run() -> Result<()> {
 
     // The window is passed in rather than computed here so the two bounds cannot
     // drift apart between calls.
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let start = (chrono::Utc::now() - chrono::Duration::days(14))
-        .format("%Y-%m-%d")
-        .to_string();
+    use chrono::Datelike as _;
+    let end_d = chrono::Utc::now().date_naive();
+    let start_d = end_d - chrono::Duration::days(14);
+    let ymd = |d: chrono::NaiveDate| (d.year(), d.month(), d.day());
     println!();
-    println!("== dailyRollUp over {start} → {today} (14d, the reference's cap) ==");
+    println!("== dailyRollUp over {start_d} → {end_d} (14d, the reference's cap) ==");
     println!("⚠ these are the types `list` reported as empty, plus the two that refused `list`");
     for ty in ROLLUP_SUSPECTS {
-        println!("{}", rollup_one(&http, &token, ty, &today, &start).await);
+        println!(
+            "{}",
+            rollup_one(&http, &token, ty, ymd(start_d), ymd(end_d)).await
+        );
     }
 
     println!();
