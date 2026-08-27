@@ -285,6 +285,7 @@ async fn main() -> Result<()> {
             r
         }
         "google-probe" => backend::google::probe::run().await,
+        "coverage" => coverage().await,
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -305,17 +306,107 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe or velocity"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe, coverage or velocity"
             );
             std::process::exit(64);
         }
     }
+}
+
+/// What span of history does each biometric table actually hold? (#260)
+///
+/// # Why this exists
+///
+/// The Google Health migration needs to know which rows have a Google source
+/// and which do not. `backend google-probe` measured the far side: the watch
+/// series there begin 2023-04-16. This measures THIS side, so the two can be
+/// compared instead of one being assumed from the other.
+///
+/// ⚠ FIVE GOOGLE STREAMS AGREEING ON ONE DATE IS NOT CORROBORATION. It is one
+/// observation of one system, and it could as easily be an artefact of how the
+/// probe asks as a fact about the data. A backfill sized from it alone would be
+/// sized from a single unchecked number.
+///
+/// ⚠ `CAST(... AS CHAR)`, always. A bare `MIN(date)` decodes as a temporal type
+/// and MariaDB's DATE/DATETIME mapping fails on real rows in ways an empty
+/// table never shows — the same trap that has bitten DECIMAL and BIGINT
+/// UNSIGNED here before. A string crosses cleanly and this is a readout, not
+/// arithmetic.
+///
+/// Read-only: every statement is a SELECT over a fixed table list compiled in.
+async fn coverage() -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    // ⚠ ONE STATIC QUERY, NOT A LOOP OVER A TABLE LIST.
+    //
+    // Two reasons, and the first is enforced: the crate refuses a dynamically
+    // built SQL string (`dynamic SQL strings should be audited for possible
+    // injections`), so a `format!`-ed table name will not compile. The second
+    // is that the prod tunnel is latency-bound — eleven round trips over it
+    // cost far more than eleven arms of one.
+    // ⚠ THE LITERAL IS INLINE, not a `const` bound above.
+    //
+    // Two guards want this and they want slightly different things. The crate
+    // refuses a dynamically built SQL string, so a `format!`-ed table name will
+    // not compile; dev-lint's DL-SQLX-SCHEMA-TRUTH then refuses even a `const`
+    // held in a variable, because schema checking reads the argument at the
+    // call site. Inline satisfies both, and one static query is also one round
+    // trip — the prod tunnel is latency-bound, so eleven separate reads over it
+    // would cost far more than eleven arms of this.
+    let rows = sqlx::query(
+        "\
+         SELECT 'body' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM body \
+         UNION ALL SELECT 'breathing_rate' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM breathing_rate \
+         UNION ALL SELECT 'daily_activity' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM daily_activity \
+         UNION ALL SELECT 'heart_rate_zones' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM heart_rate_zones \
+         UNION ALL SELECT 'hrv_daily' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM hrv_daily \
+         UNION ALL SELECT 'skin_temperature' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM skin_temperature \
+         UNION ALL SELECT 'sleep' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM sleep \
+         UNION ALL SELECT 'spo2_daily' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \
+          CAST(MAX(date) AS CHAR) AS hi FROM spo2_daily \
+         UNION ALL SELECT 'heart_rate_intraday' AS t, COUNT(*) AS n, CAST(MIN(ts) AS CHAR) AS lo, \
+          CAST(MAX(ts) AS CHAR) AS hi FROM heart_rate_intraday \
+         UNION ALL SELECT 'hrv_intraday' AS t, COUNT(*) AS n, CAST(MIN(ts) AS CHAR) AS lo, \
+          CAST(MAX(ts) AS CHAR) AS hi FROM hrv_intraday \
+         UNION ALL SELECT 'steps_intraday' AS t, COUNT(*) AS n, CAST(MIN(ts) AS CHAR) AS lo, \
+          CAST(MAX(ts) AS CHAR) AS hi FROM steps_intraday \
+         ",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("reading table coverage")?;
+
+    println!("{:<22} {:>10}  earliest → latest", "table", "rows");
+    for row in rows {
+        use sqlx::Row as _;
+        let t: String = row.try_get("t").unwrap_or_else(|_| "?".into());
+        let n: i64 = row.try_get("n").unwrap_or(-1);
+        let lo: Option<String> = row.try_get("lo").unwrap_or(None);
+        let hi: Option<String> = row.try_get("hi").unwrap_or(None);
+        match (lo, hi) {
+            // ⚠ An empty table is said out loud. A blank span beside a zero
+            // count reads as a failed query.
+            (None, _) | (_, None) => println!("{t:<22} {n:>10}  (empty)"),
+            (Some(lo), Some(hi)) => println!("{t:<22} {n:>10}  {lo} → {hi}"),
+        }
+    }
+    Ok(())
 }
 
 /// Print the day's DB inputs as JSON, for diffing against the TypeScript.
