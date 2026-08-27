@@ -166,12 +166,58 @@ $DEV pnpm run verify
 # cron actually runs on, and the only input that reaches the long-span
 # classification branches — and finally the captured conflated café/residence
 # cluster through `splitCluster`. 8 s for 35 cases.
+# ⚠ FOUR OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975, 06346bd,
+# 2026-08-26): `golden`, `golden` with tenants ON, `day-gate` and `golden-hsmm`.
+# All four ran `dist/cli/golden-check.js` or `compare-day.js`, and `src/` is gone,
+# so their `pnpm` scripts were removed from package.json with it. They are not
+# skipped and not waived — the coverage is GONE, and #1048 is where that is held.
+#
+# They are removed from the run rather than left to fail, because the only way
+# past a failure here is DEPLOY_SKIP_GOLDEN, which would ALSO skip the five gates
+# that still work. But their loss is announced at the start and again at the end,
+# on the same argument as the skip banner below: a deploy is judged by its last
+# line, and a check that goes quiet is worse than one that goes red.
+dead_gates_banner() {
+	cat >&2 <<-BANNER
+
+	================================================================
+	  ⚠  FOUR GATES NO LONGER EXIST — coverage lost, not skipped
+	================================================================
+	    golden corpus             golden with tenants ON
+	    day gate                  golden-hsmm
+	================================================================
+	  deleted with the TS backend, #975 (06346bd, 2026-08-26)
+	  held at health #1048 — do not treat this deploy as gated by them
+	================================================================
+
+	BANNER
+}
+
+# The other half of the same lesson: a gate whose script vanishes must say so by
+# name, not die inside `pnpm` with an exit code and no subject. Everything below
+# is checked to exist before any of it runs, so the NEXT deletion of a producer
+# is caught here instead of at whichever call site happens to be first.
+require_pnpm_scripts() {
+	local missing=()
+	for s in "$@"; do
+		$DEV node -e "process.exit(require('./package.json').scripts['$s']?0:1)" \
+			|| missing+=("$s")
+	done
+	if (( ${#missing[@]} )); then
+		echo "==> [2/7] ABORT: package.json has no script named: ${missing[*]}" >&2
+		echo "    A gate's script was deleted without its call site. See #1048 for" >&2
+		echo "    the last time this happened (#975 took four of them)." >&2
+		exit 1
+	fi
+}
+
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [2/7] golden corpus + walk-geometry ratchet + decoder scoreboard + Lean day/focus parity"
-	$DEV pnpm run golden
+	echo "==> [2/7] walk-geometry ratchet + decoder scoreboard + Lean focus parity"
+	dead_gates_banner
+	DEAD_GATES=1
+	require_pnpm_scripts walk-gate score-decoder focus-gate compare-gps-outliers compare-match
 	$DEV pnpm run walk-gate
 	$DEV pnpm run score-decoder
-	$DEV pnpm run day-gate
 	$DEV pnpm run focus-gate
 	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
 	# by a gate. Everything above runs with all seven flags `off`, so a broken
@@ -215,9 +261,11 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	# by construction, so at the default this gate FAILED on a swallowed bridge
 	# call roughly at random depending on machine load — a nondeterministic gate,
 	# measuring the host rather than the code.
-	echo "==> [2/7] golden corpus again, with ALL SEVEN Lean tenants ON"
-	$DEV LEAN_KALMAN=on LEAN_GPSQUALITY=on LEAN_BIOLABELS=on LEAN_HSMM=on LEAN_RAIL=on \
-		LEAN_MATCH=on LEAN_PASSES=on LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden
+	# ⚠ DEAD (#975) — the command this reasoning justified is gone:
+	#     LEAN_KALMAN=on … LEAN_STATIONCHAIN=shadow pnpm run golden
+	# The argument above is kept because it is the record of WHAT was being
+	# bought — the only place the verified Lean core was executed by a gate —
+	# and whatever replaces it in #1048 has to buy the same thing.
 
 	# The station-chain tenant (#711), on the one gate that can REACH it. The
 	# run above waives it for the same #233 reason it waives hsmm and rail — the
@@ -229,7 +277,8 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	# `tests/golden/decoded_days` corpus, exactly as `pnpm run golden` above
 	# does. `shadow` not `on`: this tenant writes (its output is persisted to
 	# `decoded_days`), so serving it is a decision, not a gate setting.
-	$DEV LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
+	# ⚠ DEAD (#975) — was:
+	#     LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
 
 	# The HSMM outlier filter's ONLY evidence (#695). `Verified.Hsmm.GpsOutliers`
 	# has no tenant, no ledger and no gate — unlike `GpsQuality`, whose
@@ -295,14 +344,15 @@ else
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  DEPLOYING WITH NINE GATES SKIPPED
+	  ⚠  DEPLOYING WITH FIVE GATES SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    golden corpus              day gate
-	    walk-geometry ratchet      focus gate
-	    decoder scoreboard         golden with tenants ON
-	    golden-hsmm                compare-gps-outliers
-	    compare-match
+	    walk-geometry ratchet      compare-gps-outliers
+	    decoder scoreboard         compare-match
+	    focus gate
+	================================================================
+	  (four more — golden, golden tenants-ON, day gate, golden-hsmm —
+	   do not run either way: deleted with the TS backend, #975/#1048)
 	================================================================
 
 	BANNER
@@ -376,6 +426,14 @@ echo "==> [7/7] rollout on isis"
 ssh root@isis.xinutec.org \
 	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
 
+if [[ -n "${DEAD_GATES:-}" ]]; then
+	cat >&2 <<-BANNER
+
+	⚠ FOUR GATES DID NOT RUN AND NO LONGER EXIST — #975 deleted them with the
+	   TypeScript backend: the golden corpus (both passes), the day gate and
+	   golden-hsmm. This deploy was NOT checked against them. Held at #1048.
+	BANNER
+fi
 if [[ -n "${SKIPPED_GOLDEN:-}" ]]; then
 	# Again at the END. The banner above is thousands of lines back by now, and a
 	# deploy is judged by its last line.
