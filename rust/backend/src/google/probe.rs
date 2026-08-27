@@ -127,13 +127,50 @@ async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
         Err(e) => return format!("{ty:24} TRANSPORT ERROR  {e}"),
     };
     let status = res.status().as_u16();
-    let body = res.text().await.unwrap_or_default();
+    // ⚠ A BODY THAT FAILED TO READ IS NOT AN EMPTY BODY. Defaulting to "" here
+    // would render a mid-transfer failure as "HTTP 200, 0 points — type exists,
+    // no data": a confident, wrong answer to the exact question this probe was
+    // built to settle.
+    let body = match res.text().await {
+        Ok(b) => b,
+        Err(e) => return format!("{ty:24} HTTP {status} but the body failed to read: {e}"),
+    };
 
     if status != 200 {
-        // The first line of Google's error, which names the reason without the
-        // envelope. Truncated: an HTML error page is not a diagnosis.
-        let reason: String = body.chars().take(160).collect();
-        return format!("{ty:24} HTTP {status}  {}", reason.replace('\n', " "));
+        // ⚠ PRINT THE WHOLE `details` ARRAY, not a prefix of the envelope.
+        //
+        // A 403 here answers "which scope is missing", and that string IS the
+        // next action — it is what the re-consent has to ask for. The first
+        // version truncated at 120 chars, which spent the budget on the
+        // envelope ("Required OAuth scope(s) are missing") and cut the part
+        // that names them, leaving a readout that says something is wrong
+        // without saying what to do.
+        //
+        // ⚠ EVERY BRANCH IS NAMED, none defaults to silence. A non-JSON body
+        // is a real case here — Google answers some errors with an HTML page —
+        // but "the body did not parse" and "the body parsed and carried no
+        // details" are different diagnoses, and a readout that renders both as
+        // an empty string sends the reader to the wrong problem.
+        let detail = match serde_json::from_str::<serde_json::Value>(&body) {
+            Err(e) => {
+                let head: String = body.chars().take(160).collect();
+                format!("[body is not JSON: {e}] {head}")
+            }
+            Ok(v) => match v.get("error") {
+                None => format!("[JSON with no `error` field] {v}"),
+                Some(err) => {
+                    let msg = match err.get("message").and_then(|m| m.as_str()) {
+                        Some(m) => m.to_string(),
+                        None => "[no `message` field]".to_string(),
+                    };
+                    match err.get("details") {
+                        Some(d) => format!("{msg} | details: {d}"),
+                        None => format!("{msg} | [no `details` field]"),
+                    }
+                }
+            },
+        };
+        return format!("{ty:24} HTTP {status}  {}", detail.replace('\n', " "));
     }
 
     let parsed: serde_json::Value = match serde_json::from_str(&body) {
@@ -186,9 +223,13 @@ pub async fn run() -> Result<()> {
     {
         Ok(r) => {
             let status = r.status().as_u16();
-            let body = r.text().await.unwrap_or_default();
-            let head: String = body.chars().take(2000).collect();
-            println!("HTTP {status}\n{head}\n");
+            match r.text().await {
+                Ok(body) => {
+                    let head: String = body.chars().take(2000).collect();
+                    println!("HTTP {status}\n{head}\n");
+                }
+                Err(e) => println!("HTTP {status} but the body failed to read: {e}\n"),
+            }
         }
         Err(e) => println!("transport error: {e}\n"),
     }
