@@ -168,3 +168,119 @@ pub async fn fetch_all_weight(http: &reqwest::Client, access_token: &str) -> Res
     }
     Ok(out)
 }
+
+/// A civil day and one aggregated number for it.
+///
+/// ⚠ The rollup carries `civilStartTime`/`civilEndTime`, not a `date`. The day
+/// is the START — an `end` of the following midnight is the exclusive bound, so
+/// keying on it would file every value one day late.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DailyValue {
+    /// `YYYY-MM-DD`, from `civilStartTime`.
+    pub date: String,
+    /// The type's own summed field, as a JSON number — `steps.countSum`,
+    /// `distance.millimetersSum`, `totalCalories.kcalSum`. Kept as `f64`
+    /// because the units differ per type and the caller knows which it asked
+    /// for; narrowing here would need a table this layer has no reason to hold.
+    pub value: f64,
+}
+
+/// The per-type ceiling on `windowSizeDays * pageSize`.
+///
+/// ⚠ NOT A PAGE SIZE. Google bounds the DURATION a page implies, so a pageSize
+/// of 100 with the default one-day window asks for 100 days and is refused —
+/// reported as `INVALID_ROLLUP_QUERY_DURATION` against `range`, which is
+/// blameless. Measured 2026-08-27: 90 for steps/distance/floors/altitude,
+/// 14 for active-minutes and total-calories.
+///
+/// 14 is every type's floor, so one width is always legal. A caller wanting a
+/// longer span asks for more windows, not a bigger page.
+const ROLLUP_MAX_DAYS: i64 = 14;
+
+/// One rollup point mapped to a civil day and its summed value, or `None`.
+///
+/// Split out of the fetch so the part that can file data on the WRONG DAY is
+/// testable without the live API.
+pub fn day_of_rollup_point(pt: &serde_json::Value, sum_field: &str) -> Option<DailyValue> {
+    let date = pt.get("civilStartTime")?.get("date")?;
+    let y = date.get("year")?.as_i64()?;
+    let m = date.get("month")?.as_i64()?;
+    let d = date.get("day")?.as_i64()?;
+    // ⚠ An absent sum is DROPPED, never defaulted. Zero steps is a real reading;
+    // a missing one is not, and writing 0 turns a gap into a claim.
+    let value = pt.pointer(sum_field)?.as_f64()?;
+    Some(DailyValue {
+        date: format!("{y:04}-{m:02}-{d:02}"),
+        value,
+    })
+}
+
+/// Read `[start, end)` of one rollup type, in legal-width chunks.
+///
+/// ⚠ HALF-OPEN, matching the API: "the inclusive start" and "the exclusive
+/// end". A caller passing the same date twice gets nothing, not one day.
+pub async fn fetch_daily_rollup(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+    sum_field: &str,
+) -> Result<Vec<DailyValue>> {
+    use chrono::Datelike as _;
+
+    if start >= end {
+        return Ok(Vec::new());
+    }
+    let civil = |d: chrono::NaiveDate| serde_json::json!({ "date": { "year": d.year(), "month": d.month(), "day": d.day() } });
+
+    let mut out = Vec::new();
+    let mut chunk_start = start;
+    while chunk_start < end {
+        let chunk_end = std::cmp::min(chunk_start + chrono::Duration::days(ROLLUP_MAX_DAYS), end);
+        let span = (chunk_end - chunk_start).num_days();
+        let body = serde_json::json!({
+            "range": { "start": civil(chunk_start), "end": civil(chunk_end) },
+            // One page per chunk: the chunk is already sized to the cap.
+            "pageSize": span,
+        });
+
+        let url = format!("{BASE}/users/me/dataTypes/{data_type}/dataPoints:dailyRollUp");
+        let res = http
+            .post(&url)
+            .bearer_auth(access_token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("POST dailyRollUp {data_type}"))?;
+        let status = res.status();
+        let text = res
+            .text()
+            .await
+            .with_context(|| format!("body of the {data_type} rollup"))?;
+        if !status.is_success() {
+            return Err(anyhow!(
+                "{data_type} rollup {} over {chunk_start}..{chunk_end}: {}",
+                status.as_u16(),
+                text.chars().take(400).collect::<String>()
+            ));
+        }
+
+        let page: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("decoding the {data_type} rollup"))?;
+        // ⚠ `rollupDataPoints`, NOT `dataPoints` — a different key from `list`,
+        // and reading the wrong one reports every type as empty.
+        for pt in page
+            .get("rollupDataPoints")
+            .and_then(|p| p.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+        {
+            if let Some(v) = day_of_rollup_point(pt, sum_field) {
+                out.push(v);
+            }
+        }
+        chunk_start = chunk_end;
+    }
+    Ok(out)
+}
