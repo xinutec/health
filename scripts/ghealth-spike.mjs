@@ -20,12 +20,54 @@ import http from "node:http";
 
 const CLIENT_ID = process.env.GH_CLIENT_ID;
 const CLIENT_SECRET = process.env.GH_CLIENT_SECRET; // optional (PKCE public client)
-const SCOPE = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly";
+// ⚠ ALL THREE, IN ONE CONSENT. Measured 2026-08-27 (#260): with only the first,
+// eight data types answer 403 `MISSING_OAUTH_SCOPE` — steps, sleep, distance,
+// altitude, active-minutes, active-zone-minutes, active-energy-burned and
+// time-in-heart-rate-zone. Seven of the eight want one scope.
+//
+// The consent is one-off and the token does not carry scopes it was not granted,
+// so a list that is short here costs a SECOND trip through the consent screen.
+//
+// ⚠ The names come from the v4 reference, not from the shape of the first one.
+// Google's 403 reports them as `activity_and_fitness_readonly`; the scope URL
+// spells it `activity_and_fitness.readonly` — a dot, not an underscore, before
+// `readonly`. Guessing that from the error string alone gets an invalid_scope.
+const SCOPES = [
+	"https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+	"https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+	"https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+];
+const SCOPE = SCOPES.join(" ");
 const PORT = 8765;
 const REDIRECT = `http://127.0.0.1:${PORT}/`;
 
 if (!CLIENT_ID) {
 	console.error("Set GH_CLIENT_ID.");
+	process.exit(2);
+}
+
+// ⚠ REFUSE BEFORE THE CONSENT, NOT AFTER IT.
+//
+// The header says the secret is optional because PKCE works with a public
+// client. THIS client is confidential. Measured 2026-08-27: without it the run
+// prints a URL, the consent is approved, the redirect is caught — and only then
+// does the token endpoint answer
+//
+//     400 {"error":"invalid_request","error_description":"client_secret is missing."}
+//
+// by which point a real consent has been spent for nothing. The cost is only a
+// re-approval, but the failure lands after the one step a human had to do, which
+// is the worst place to put it.
+//
+// GH_REFRESH_TOKEN is the exception: that path never reaches the code exchange.
+if (!CLIENT_SECRET && !process.env.GH_REFRESH_TOKEN) {
+	console.error(
+		"Set GH_CLIENT_SECRET. This client is confidential — without it the consent\n" +
+			"screen is shown, approved, and THEN the token exchange fails, wasting the\n" +
+			"approval. Refusing now instead.\n\n" +
+			"  export GH_CLIENT_SECRET=$(ssh root@isis kubectl get secret health-google \\\n" +
+			"    -n health -o jsonpath='{.data.GH_CLIENT_SECRET}' | base64 -d)",
+	);
 	process.exit(2);
 }
 
@@ -98,9 +140,24 @@ async function getAccessToken() {
 
 const accessToken = await getAccessToken();
 
-const url = "https://health.googleapis.com/v4/users/me/dataTypes/weight/dataPoints?pageSize=50";
-const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
-const body = await res.text();
-console.log(`\nGET ${url}\n-> HTTP ${res.status}\n`);
-console.log(body.slice(0, 6000));
-process.exit(res.ok ? 0 : 1);
+// ⚠ PROBE A NEWLY GRANTED SCOPE, not `weight`. Weight worked before this change
+// and would answer 200 whether or not the new scopes were granted — a check that
+// passes for the wrong reason. `sleep` is behind `sleep.readonly`, so a 200 here
+// means the consent actually widened; a 403 means it did not, whatever the
+// consent screen appeared to say.
+const checks = [
+	["sleep", "sleep.readonly"],
+	["steps", "activity_and_fitness.readonly"],
+	["weight", "health_metrics_and_measurements.readonly (the control)"],
+];
+let bad = 0;
+for (const [type, why] of checks) {
+	const url = `https://health.googleapis.com/v4/users/me/dataTypes/${type}/dataPoints?pageSize=1`;
+	const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
+	const ok = res.ok;
+	if (!ok) bad++;
+	console.log(`${ok ? "OK  " : "FAIL"} ${type.padEnd(8)} HTTP ${res.status}   (${why})`);
+	if (!ok) console.log(`      ${(await res.text()).slice(0, 300)}`);
+}
+console.log(bad === 0 ? "\nAll three scopes are live." : `\n${bad} still refused — the consent did not widen.`);
+process.exit(bad === 0 ? 0 : 1);

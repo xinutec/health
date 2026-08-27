@@ -336,6 +336,94 @@ async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     }
 }
 
+/// Types whose `list` answered 200 with nothing, or refused `list` outright.
+///
+/// ⚠ "200 and empty" and "400, wrong method" are DIFFERENT SYMPTOMS THAT MAY
+/// SHARE A CAUSE. `floors` and `total-calories` say plainly that `list` is not
+/// their action; `steps` and `sleep` accept `list` and return nothing. If the
+/// rollup form has data for the second group too, then an interval type answers
+/// `list` with silence rather than a refusal — and every "no data" conclusion
+/// drawn from `list` alone was wrong.
+const ROLLUP_SUSPECTS: &[&str] = &[
+    "steps",
+    "sleep",
+    "distance",
+    "altitude",
+    "active-minutes",
+    "oxygen-saturation",
+    "core-body-temperature",
+    // The two that named `dailyRollup` themselves — the controls. If these come
+    // back empty too, the request shape is wrong and nothing else here is
+    // readable.
+    "floors",
+    "total-calories",
+];
+
+/// One `dailyRollUp` over a recent window.
+///
+/// ⚠ 14 DAYS, NOT MORE. The reference caps the range at 14 days for
+/// `heart-rate`, `active-minutes`, `total-calories` and
+/// `calories-in-heart-rate-zone`. One width for every type keeps a refusal
+/// meaning "no data" rather than "your window was too wide for this one".
+///
+/// ⚠ Midnight-aligned. The range must align with the aggregation window, and
+/// `windowSizeDays` defaults to 1.
+async fn rollup_one(
+    http: &reqwest::Client,
+    token: &str,
+    ty: &str,
+    today: &str,
+    start: &str,
+) -> String {
+    let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints:dailyRollUp");
+    let body = serde_json::json!({
+        "range": { "startTime": format!("{start}T00:00:00Z"), "endTime": format!("{today}T00:00:00Z") },
+        "pageSize": 100
+    });
+    let res = match http.post(&url).bearer_auth(token).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => return format!("{ty:24} TRANSPORT ERROR  {e}"),
+    };
+    let status = res.status().as_u16();
+    let text = match res.text().await {
+        Ok(t) => t,
+        Err(e) => return format!("{ty:24} HTTP {status} but the body failed to read: {e}"),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            let head: String = text.chars().take(160).collect();
+            return format!("{ty:24} HTTP {status}, body is not JSON: {e} — {head}");
+        }
+    };
+    if status != 200 {
+        let msg = match parsed
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            Some(m) => m.to_string(),
+            None => "[no error.message]".to_string(),
+        };
+        return format!("{ty:24} HTTP {status}  {msg}");
+    }
+    // ⚠ `rollupDataPoints`, NOT `dataPoints`. A different key from `list`, and
+    // reading the wrong one would report every type as empty.
+    match parsed.get("rollupDataPoints").and_then(|p| p.as_array()) {
+        None => format!("{ty:24} HTTP 200, NO rollupDataPoints field — empty over the window"),
+        Some(ps) if ps.is_empty() => format!("{ty:24} HTTP 200, 0 points over the window"),
+        Some(ps) => {
+            let mut fields = BTreeSet::new();
+            shape(&ps[0], "", &mut fields);
+            format!(
+                "{ty:24} HTTP 200, {} point(s)  fields: {}",
+                ps.len(),
+                fields.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        }
+    }
+}
+
 /// Probe Google Health for every stream the Fitbit sync currently owns.
 ///
 /// Prints a readout and returns. ⚠ Deliberately does NOT fail on a 404 — a
@@ -376,6 +464,19 @@ pub async fn run() -> Result<()> {
     println!("⚠ the list is ordered NEWEST FIRST, so these fields come from the most recent point");
     for ty in CANDIDATES {
         println!("{}", probe_one(&http, &token, ty).await);
+    }
+
+    // The window is passed in rather than computed here so the two bounds cannot
+    // drift apart between calls.
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let start = (chrono::Utc::now() - chrono::Duration::days(14))
+        .format("%Y-%m-%d")
+        .to_string();
+    println!();
+    println!("== dailyRollUp over {start} → {today} (14d, the reference's cap) ==");
+    println!("⚠ these are the types `list` reported as empty, plus the two that refused `list`");
+    for ty in ROLLUP_SUSPECTS {
+        println!("{}", rollup_one(&http, &token, ty, &today, &start).await);
     }
 
     println!();
