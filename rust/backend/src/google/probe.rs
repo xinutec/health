@@ -401,7 +401,19 @@ async fn rollup_one(
     let civil = |(y, m, d): (i32, u32, u32)| serde_json::json!({ "date": { "year": y, "month": m, "day": d } });
     let body = serde_json::json!({
         "range": { "start": civil(start), "end": civil(end) },
-        "pageSize": 100
+        // ⚠ `pageSize` IS BOUNDED BY THE DURATION IT IMPLIES, not by response size.
+        //
+        //     "The duration covered by window_size_days * page_size must not
+        //      exceed 90 days for steps."
+        //
+        // With `windowSizeDays` defaulting to 1, a pageSize of 100 asks for 100
+        // days and is refused — as `INVALID_ROLLUP_QUERY_DURATION` on the RANGE
+        // field, which is misleading: the range was 14 days and blameless.
+        //
+        // The cap is per type: 90 for steps/distance/floors, 14 for
+        // active-minutes and total-calories. 14 satisfies every one of them, and
+        // matches the window above so one page covers it exactly.
+        "pageSize": 14
     });
     let res = match http.post(&url).bearer_auth(token).json(&body).send().await {
         Ok(r) => r,
