@@ -284,6 +284,7 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
+        "google-probe" => backend::google::probe::run().await,
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -304,13 +305,13 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check or velocity"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe or velocity"
             );
             std::process::exit(64);
         }
