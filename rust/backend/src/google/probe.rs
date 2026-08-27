@@ -257,6 +257,35 @@ async fn depth_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     format!("{ty:36} {total:6} points   {dates}{note}")
 }
 
+/// Google's error, with its `details` — the half that says what to DO.
+///
+/// ⚠ SHARED ON PURPOSE. This started inside the `list` probe; the rollup probe
+/// grew its own copy that kept only `message`, and on the first live run every
+/// rollup line read `Invalid argument in request` with the `details` that name
+/// the offending field thrown away. One truncation, fixed once, reintroduced by
+/// duplication a few hours later. Every caller uses this.
+fn error_detail(body: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(body) {
+        Err(e) => {
+            let head: String = body.chars().take(160).collect();
+            format!("[body is not JSON: {e}] {head}")
+        }
+        Ok(v) => match v.get("error") {
+            None => format!("[JSON with no `error` field] {v}"),
+            Some(err) => {
+                let msg = match err.get("message").and_then(|m| m.as_str()) {
+                    Some(m) => m.to_string(),
+                    None => "[no `message` field]".to_string(),
+                };
+                match err.get("details") {
+                    Some(d) => format!("{msg} | details: {d}"),
+                    None => format!("{msg} | [no `details` field]"),
+                }
+            }
+        },
+    }
+}
+
 /// One line of readout for one candidate type.
 async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
     let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints?pageSize=1");
@@ -289,25 +318,7 @@ async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
         // but "the body did not parse" and "the body parsed and carried no
         // details" are different diagnoses, and a readout that renders both as
         // an empty string sends the reader to the wrong problem.
-        let detail = match serde_json::from_str::<serde_json::Value>(&body) {
-            Err(e) => {
-                let head: String = body.chars().take(160).collect();
-                format!("[body is not JSON: {e}] {head}")
-            }
-            Ok(v) => match v.get("error") {
-                None => format!("[JSON with no `error` field] {v}"),
-                Some(err) => {
-                    let msg = match err.get("message").and_then(|m| m.as_str()) {
-                        Some(m) => m.to_string(),
-                        None => "[no `message` field]".to_string(),
-                    };
-                    match err.get("details") {
-                        Some(d) => format!("{msg} | details: {d}"),
-                        None => format!("{msg} | [no `details` field]"),
-                    }
-                }
-            },
-        };
+        let detail = error_detail(&body);
         return format!("{ty:24} HTTP {status}  {}", detail.replace('\n', " "));
     }
 
@@ -409,15 +420,10 @@ async fn rollup_one(
         }
     };
     if status != 200 {
-        let msg = match parsed
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-        {
-            Some(m) => m.to_string(),
-            None => "[no error.message]".to_string(),
-        };
-        return format!("{ty:24} HTTP {status}  {msg}");
+        return format!(
+            "{ty:24} HTTP {status}  {}",
+            error_detail(&text).replace('\n', " ")
+        );
     }
     // ⚠ `rollupDataPoints`, NOT `dataPoints`. A different key from `list`, and
     // reading the wrong one would report every type as empty.
