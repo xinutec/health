@@ -41,3 +41,30 @@ fn an_empty_array_is_not_silence() {
     let v = serde_json::json!({ "stages": [] });
     assert_eq!(shape_of(&v), vec!["stages[] (empty)".to_string()]);
 }
+
+/// A date is found by SHAPE, wherever the type happens to nest it — each type
+/// uses its own key, so a path table would be a list of guesses.
+#[test]
+fn finds_a_date_under_any_key() {
+    use backend::google::probe::date_of;
+    let v = serde_json::json!({
+        "dailyRestingHeartRate": { "beatsPerMinute": 52, "date": {"year": 2022, "month": 4, "day": 8} }
+    });
+    assert_eq!(date_of(&v), Some("2022-04-08".to_string()));
+}
+
+/// ⚠ Zero-padded. `2022-4-8` sorts before `2022-12-01` as a string and would
+/// misreport which end of the series is the oldest.
+#[test]
+fn a_date_is_zero_padded() {
+    use backend::google::probe::date_of;
+    let v = serde_json::json!({ "x": { "date": {"year": 2022, "month": 12, "day": 1} } });
+    assert_eq!(date_of(&v), Some("2022-12-01".to_string()));
+}
+
+/// No date is None, not a fabricated one.
+#[test]
+fn no_date_is_none() {
+    use backend::google::probe::date_of;
+    assert_eq!(date_of(&serde_json::json!({"a": {"b": 1}})), None);
+}
