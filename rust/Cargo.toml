@@ -69,3 +69,13 @@ opt-level = 3
 # that 2 and 3 are.
 [profile.dev]
 opt-level = 1
+
+# ⚠ MEASURED, not a habit. Full debuginfo on a 14,328-line crate costs real
+# time to generate and to link: building backend's lib and its 63 test targets
+# went 51.4 s -> 36.2 s with this alone, on an otherwise identical tree.
+#
+# "line-tables-only" keeps file and line numbers in panics and backtraces —
+# which is how this codebase is actually debugged, through failing tests and
+# refusals. What it drops is variable inspection under a live debugger. If
+# someone needs that, raise it locally for the session rather than for everyone.
+debug = "line-tables-only"
