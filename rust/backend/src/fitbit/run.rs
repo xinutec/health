@@ -293,6 +293,15 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google spo2_daily failed: {e:#}"),
         }
     }
+    // ⚠ NOT GATED ON THE ROSTER, and deliberately so. `daily_activity` is the
+    // one table whose COLUMNS need different owners — Fitbit is the only source
+    // there has ever been for `minutes_sedentary` and `active_score`, so
+    // flipping the owner would switch those off while they still work. The
+    // writer gates itself on a DATE instead, and the two never overlap.
+    match crate::google::sync::sync_daily_activity(pool, http, &token, &user_id).await {
+        Ok(n) => tracing::info!("[{user_id}] google daily_activity: {n} day(s)"),
+        Err(e) => tracing::error!("[{user_id}] google daily_activity failed: {e:#}"),
+    }
 }
 
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {

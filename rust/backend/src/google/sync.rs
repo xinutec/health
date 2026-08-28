@@ -393,3 +393,150 @@ pub async fn sync_spo2_daily(
     );
     Ok(written)
 }
+
+/// The date Google takes over `daily_activity`.
+///
+/// ⚠ **THIS IS WHAT KEEPS TWO WRITERS OFF ONE TABLE.** `daily_activity` is the
+/// one stream whose COLUMNS need different owners: Google serves steps,
+/// distance and calories; Fitbit is the only source there has ever been for
+/// `minutes_sedentary` and `active_score`. The roster's one-owner-per-stream
+/// rule cannot express that, and flipping the owner would stop Fitbit writing
+/// the columns Google cannot serve — while it still works.
+///
+/// A date resolves it without a second ownership model. Fitbit writes every
+/// column up to the shutdown; Google writes from it. Their ranges do not
+/// overlap, so neither can clobber the other, and the Fitbit-only columns keep
+/// their history instead of being nulled.
+pub const DAILY_ACTIVITY_CUTOVER: &str = "2026-09-01";
+
+/// One day's activity, from four Google types.
+#[derive(Default, Clone, Copy)]
+struct Activity {
+    steps: Option<f64>,
+    distance_km: Option<f64>,
+    calories_total: Option<f64>,
+    calories_active: Option<f64>,
+    resting_hr: Option<f64>,
+}
+
+/// `daily_activity`, from the cutover forward only.
+///
+/// # Why not the history too
+///
+/// Measured 2026-08-28: Google's step counts are SYSTEMATICALLY LOWER — 570 of
+/// 642 differing days, median 6 fewer, p90 517, p99 3346. Rewriting 1229 days of
+/// existing history with them would change four years of a record Pippijn has
+/// already read. Decided: keep Fitbit's history, write only from the cutover.
+///
+/// ```text
+///   distance_km      1193/1226 agree
+///   calories_total    968/1246 agree
+///   steps             587/1229 agree   ⚠ google lower on 570
+///   calories_active   111 days of 1246 ⚠ Google barely has it
+/// ```
+///
+/// ⚠ `minutes_sedentary` and `active_score` have NO Google source and are not
+/// written here. They stop when Fitbit does; nothing this writer can do changes
+/// that, and pretending otherwise by deriving them would be invention.
+pub async fn sync_daily_activity(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let start = chrono::NaiveDate::parse_from_str(DAILY_ACTIVITY_CUTOVER, "%Y-%m-%d")
+        .context("parsing the daily_activity cutover")?;
+    let end = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+    if start >= end {
+        tracing::info!(
+            "[{user_id}] google daily_activity: before the {DAILY_ACTIVITY_CUTOVER} cutover, nothing to write"
+        );
+        return Ok(0);
+    }
+
+    let mut by_day: BTreeMap<String, Activity> = BTreeMap::new();
+
+    // ⚠ `scale` is applied here for the same reason google-compare needs it:
+    // `millimetersSum` against a kilometre column is a factor of a million.
+    for (ty, pointer, scale, which) in [
+        ("steps", "/steps/countSum", 1.0, 0u8),
+        ("distance", "/distance/millimetersSum", 1e-6, 1),
+        ("total-calories", "/totalCalories/kcalSum", 1.0, 2),
+        (
+            "active-energy-burned",
+            "/activeEnergyBurned/kcalSum",
+            1.0,
+            3,
+        ),
+    ] {
+        for d in super::health::fetch_daily_rollup(http, access_token, ty, start, end, pointer)
+            .await
+            .with_context(|| format!("rolling up {ty}"))?
+        {
+            let e = by_day.entry(d.date).or_default();
+            let v = d.value * scale;
+            match which {
+                0 => e.steps = Some(v),
+                1 => e.distance_km = Some(v),
+                2 => e.calories_total = Some(v),
+                _ => e.calories_active = Some(v),
+            }
+        }
+    }
+
+    for d in fetch_daily_series(
+        http,
+        access_token,
+        "daily-resting-heart-rate",
+        "/dailyRestingHeartRate/beatsPerMinute",
+    )
+    .await
+    .context("fetching daily-resting-heart-rate")?
+    {
+        // ⚠ The list walk has no date window, so it returns the whole history —
+        // filtered to the cutover here rather than by the API.
+        if d.date.as_str() >= DAILY_ACTIVITY_CUTOVER {
+            by_day.entry(d.date).or_default().resting_hr = Some(d.value);
+        }
+    }
+
+    let mut written = 0usize;
+    for (date, a) in &by_day {
+        // ⚠ `COALESCE(VALUES(col), col)`, NOT `VALUES(col)`. Google has
+        // calories_active for 9% of days; a plain assignment would write NULL
+        // over a real Fitbit value on the other 91% — a migration that DELETES
+        // data while reporting rows written.
+        sqlx::query(
+            "INSERT INTO daily_activity \
+             (user_id, date, steps, distance_km, calories_total, calories_active, \
+             resting_heart_rate) VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE steps=COALESCE(VALUES(steps), steps), \
+             distance_km=COALESCE(VALUES(distance_km), distance_km), \
+             calories_total=COALESCE(VALUES(calories_total), calories_total), \
+             calories_active=COALESCE(VALUES(calories_active), calories_active), \
+             resting_heart_rate=COALESCE(VALUES(resting_heart_rate), resting_heart_rate)",
+        )
+        .bind(user_id)
+        .bind(date)
+        .bind(a.steps)
+        .bind(a.distance_km)
+        .bind(a.calories_total)
+        .bind(a.calories_active)
+        .bind(a.resting_hr)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing daily_activity for {date}"))?;
+        written += 1;
+    }
+
+    tracing::info!(
+        "[{user_id}] google daily_activity: {written} day(s) from {DAILY_ACTIVITY_CUTOVER}, \
+         {} with steps, {} with active calories",
+        by_day.values().filter(|a| a.steps.is_some()).count(),
+        by_day
+            .values()
+            .filter(|a| a.calories_active.is_some())
+            .count()
+    );
+    Ok(written)
+}

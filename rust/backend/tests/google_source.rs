@@ -122,3 +122,27 @@ fn the_intraday_siblings_did_not_move_with_their_daily_streams() {
         );
     }
 }
+
+/// ⚠ `daily_activity` STAYS ON FITBIT while a Google writer also exists — the
+/// one deliberate exception to the roster's model, because its columns need
+/// different owners. `minutes_sedentary` and `active_score` have no Google
+/// source at all, so flipping the owner would stop them while Fitbit still
+/// works. The two writers are separated by a DATE, not by the roster.
+#[test]
+fn daily_activity_stays_on_fitbit_despite_having_a_google_writer() {
+    let s = STREAMS
+        .iter()
+        .find(|s| s.name == "daily_activity")
+        .expect("daily_activity is in the roster");
+    assert_eq!(s.owner, Owner::Fitbit);
+    assert!(fitbit_still_owns("daily_activity"));
+}
+
+/// ⚠ AND THE CUTOVER MUST NOT PREDATE THE FITBIT SHUTDOWN. The whole safety of
+/// two writers on one table rests on their date ranges not overlapping; a
+/// cutover earlier than the shutdown puts both on the same days, where the last
+/// job to run wins and step counts flip with scheduling.
+#[test]
+fn the_cutover_is_not_before_the_fitbit_shutdown() {
+    assert!(backend::google::sync::DAILY_ACTIVITY_CUTOVER >= "2026-09-01");
+}

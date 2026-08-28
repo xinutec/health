@@ -95,8 +95,12 @@ pub const STREAMS: &[Stream] = &[
     Stream {
         name: "daily_activity",
         owner: Owner::Fitbit,
-        why: "google has steps/distance/active-minutes/total-calories via dailyRollUp — client not written yet. \
-              ⚠ floors and elevation are absent from BOTH; the device never recorded them",
+        why: "⚠ THE ONE TABLE WHOSE COLUMNS NEED DIFFERENT OWNERS, so this stays Fitbit and \
+              google::sync::sync_daily_activity gates itself on a DATE instead. Fitbit is the only \
+              source there has ever been for minutes_sedentary and active_score; flipping would stop \
+              them while they still work. Measured: distance 1193/1226, calories_total 968/1246, \
+              steps 587/1229 with google LOWER on 570 (history NOT rewritten, by decision), \
+              calories_active 111 days of 1246. floors and elevation_m are 0 rows in BOTH",
     },
     Stream {
         name: "sleep",
