@@ -275,6 +275,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google breathing_rate failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("hrv_daily") {
+        match crate::google::sync::sync_hrv_daily(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google hrv_daily: {n} day(s)"),
+            Err(e) => tracing::error!("[{user_id}] google hrv_daily failed: {e:#}"),
+        }
+    }
 }
 
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
@@ -369,10 +375,15 @@ async fn forward_pass(
         sync::daily::sync_spo2_daily(client, pool, access, user_id, start, end).await
     })
     .await?;
-    try_stream(user_id, "HRV", async {
-        sync::hrv::sync_hrv(client, pool, access, user_id, start, end).await
-    })
-    .await?;
+    // ⚠ THE DAILY PAIR ONLY. `hrv_intraday` below is a SEPARATE stream with its
+    // own roster entry, still owned by Fitbit — gating both here on one name
+    // would switch off a stream Google has no writer for.
+    if crate::google::source::fitbit_still_owns("hrv_daily") {
+        try_stream(user_id, "HRV", async {
+            sync::hrv::sync_hrv(client, pool, access, user_id, start, end).await
+        })
+        .await?;
+    }
     try_stream(user_id, "HRV intraday", async {
         sync::hrv::sync_hrv_intraday(client, pool, access, user_id, &dates).await
     })
@@ -536,9 +547,12 @@ async fn backfill_pass(
     // pass: Fitbit's feed would overwrite the Google Health values (#260).
     let range_streams = [
         range_stream(user_id, "hrv", move |s: String, e: String| {
-            Box::pin(
-                async move { sync::hrv::sync_hrv(client, pool, access, user_id, &s, &e).await },
-            )
+            Box::pin(async move {
+                if !crate::google::source::fitbit_still_owns("hrv_daily") {
+                    return Ok(0);
+                }
+                sync::hrv::sync_hrv(client, pool, access, user_id, &s, &e).await
+            })
         }),
         // ⚠ The BACKFILL walk needs the same gate as the forward pass. Gating
         // one and not the other leaves a stream that stops arriving but keeps

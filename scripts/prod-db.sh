@@ -97,6 +97,36 @@ NC_CLIENT_SECRET=$(get NC_CLIENT_SECRET)
 # rest; never echoed.
 FITBIT_CLIENT_ID=$(get FITBIT_CLIENT_ID)
 FITBIT_CLIENT_SECRET=$(get FITBIT_CLIENT_SECRET)
+# Google Health credentials, for `backend google-probe` and `google-compare`
+# (#260).
+#
+# ⚠ NOT FROM THE POD DUMP ABOVE. Every other credential here comes off a running
+# `health-auth` pod, and the Google ones are not on it — they are wired onto the
+# `health-sync` CronJob, whose pods are transient and have all Completed by the
+# time anyone looks. Reading them the same way returns empty, and because
+# `GoogleCreds::from_env` needs all three, the failure surfaces as
+# "must all be set" — which reads as "prod is not configured for Google" when
+# in fact prod is fine and the lookup was pointed at the wrong workload.
+#
+# So this reads the Secret the CronJob references. The name is resolved FROM the
+# CronJob rather than hardcoded, so a rename cannot leave this silently reading
+# nothing.
+#
+# ⚠ Optional, and deliberately so: every other caller of this script only
+# touches the database, and refusing to open a DB tunnel because an unrelated
+# credential is missing would break all of them.
+GH_SECRET=$(ssh "$HEALTH_HOST" "kubectl -n $NS get cronjob health-sync \
+  -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[?(@.name==\"GH_REFRESH_TOKEN\")].valueFrom.secretKeyRef.name}'" 2>/dev/null || true)
+if [ -n "$GH_SECRET" ]; then
+	# One round-trip for all three, decoded locally. Captured into shell vars,
+	# never echoed — same handling as DB_PASSWORD above.
+	GHDUMP=$(ssh "$HEALTH_HOST" "kubectl -n $NS get secret $GH_SECRET \
+	  -o go-template='{{range \$k, \$v := .data}}{{\$k}}={{\$v}}{{\"\\n\"}}{{end}}'" 2>/dev/null || true)
+	ghget() { printf '%s\n' "$GHDUMP" | grep "^$1=" | head -1 | cut -d= -f2- | base64 -d 2>/dev/null || true; }
+	GH_CLIENT_ID=$(ghget GH_CLIENT_ID)
+	GH_CLIENT_SECRET=$(ghget GH_CLIENT_SECRET)
+	GH_REFRESH_TOKEN=$(ghget GH_REFRESH_TOKEN)
+fi
 # Feature flags that gate which classification pipeline runs. Without
 # these the Mac falls back to defaults — silently testing the legacy
 # cascade while production runs the factor scorer, and goldens drift
@@ -117,6 +147,12 @@ USE_REACQUIRE_ROBUST_SPEED=$(get USE_REACQUIRE_ROBUST_SPEED)
 }
 export DB_USER DB_PASSWORD DB_NAME NC_CLIENT_ID NC_CLIENT_SECRET
 export FITBIT_CLIENT_ID FITBIT_CLIENT_SECRET
+# Only when prod has them: `GoogleCreds::from_env` treats an empty string as
+# present, so exporting a blank would turn "not configured" into a 401 at the
+# token endpoint — a much worse error to read than a missing-variable refusal.
+[ -n "$GH_CLIENT_ID" ] && export GH_CLIENT_ID || true
+[ -n "$GH_CLIENT_SECRET" ] && export GH_CLIENT_SECRET || true
+[ -n "$GH_REFRESH_TOKEN" ] && export GH_REFRESH_TOKEN || true
 export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
 # Only export feature flags when prod actually sets them — exporting
 # an empty string is not the same as unset (the code reads === "1").

@@ -50,8 +50,10 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "hrv_daily",
-        owner: Owner::Fitbit,
-        why: "google has daily-heart-rate-variability, 1196 points against our 1196 — client not written yet",
+        owner: Owner::Google,
+        why: "BOTH columns measured against daily-heart-rate-variability: daily_rmssd 1195/1195 and \
+              deep_rmssd 1196/1196, EXACT. ⚠ Two pointers on ONE type — the deep figure is a field \
+              of the daily type, not a per-stage sibling (that sibling is HTTP 400, unsupported)",
     },
     Stream {
         name: "spo2_daily",
@@ -137,7 +139,7 @@ pub fn at_risk() -> Vec<&'static Stream> {
 /// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
 /// agrees with it by construction and proves nothing; this is written by hand
 /// and the test compares them.
-pub const HAS_WRITER: &[&str] = &["body", "breathing_rate"];
+pub const HAS_WRITER: &[&str] = &["body", "breathing_rate", "hrv_daily"];
 
 /// True when `google::sync` (or `google::body`) writes this stream.
 pub fn has_writer(name: &str) -> bool {

@@ -451,6 +451,19 @@ async fn google_compare() -> Result<()> {
             tol: 0.05,
             unit: "ms",
         },
+        // ⚠ THE SECOND COLUMN OF THE SAME TABLE, under the same type. #260 had
+        // `hrv_daily` written up as "1195/1195 exact, single source" and cleared
+        // to flip — a verdict produced by comparing ONE of its two value
+        // columns. `deep_rmssd` was never compared, and a flip on that reading
+        // would have frozen it at whatever Fitbit last wrote.
+        Pair {
+            google: "daily-heart-rate-variability",
+            pointer: "/dailyHeartRateVariability/deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds",
+            table: "hrv_daily",
+            column: "deep_rmssd",
+            tol: 0.05,
+            unit: "ms",
+        },
     ];
 
     for p in PAIRS {
@@ -496,6 +509,10 @@ async fn read_daily_column(
         }
         ("hrv_daily", "daily_rmssd") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("hrv_daily", "deep_rmssd") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(deep_rmssd AS CHAR) v FROM hrv_daily WHERE deep_rmssd IS NOT NULL")
                 .fetch_all(pool).await
         }
         _ => anyhow::bail!("no query wired for {table}.{column}"),

@@ -90,6 +90,12 @@ const CANDIDATES: &[&str] = &[
     "sleep",
     // fitbit::sync::hrv — samples, and the nightly figure.
     "heart-rate-variability",
+    // ⚠ CARRIES BOTH `hrv_daily` COLUMNS, in this one type: the daily average
+    // AND `deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds`. HRV has
+    // NO per-stage sibling type — `heart-rate-variability-sleep-summary` was
+    // guessed from `respiratory-rate-sleep-summary` and measured 2026-08-28 as
+    // HTTP 400 `INVALID_PARENT_DATA_TYPE_COLLECTION`, "not supported". Written
+    // down so the analogy is not drawn a second time; the deep figure is here.
     "daily-heart-rate-variability",
     // fitbit::sync::daily — SpO2, breathing rate, temperature.
     "oxygen-saturation",
