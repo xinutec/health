@@ -13,8 +13,8 @@ fn reports_key_paths_and_no_values() {
     assert_eq!(
         got,
         vec![
-            "weight.sampleTime.physicalTime".to_string(),
-            "weight.weightGrams".to_string()
+            "weight.sampleTime.physicalTime: string".to_string(),
+            "weight.weightGrams: number".to_string()
         ]
     );
     let joined = got.join(" ");
@@ -28,8 +28,46 @@ fn array_reports_its_elements_shape() {
     let v = serde_json::json!({ "stages": [ { "stage": "REM", "minutes": 42 } ] });
     assert_eq!(
         shape_of(&v),
-        vec!["stages[].minutes".to_string(), "stages[].stage".to_string()]
+        vec![
+            "stages[].minutes: number".to_string(),
+            "stages[].stage: string".to_string()
+        ]
     );
+}
+
+/// ⚠ **THE TYPE IS THE POINT, AND A QUOTED NUMBER MUST SAY `string`.**
+///
+/// A path alone cannot tell `62` from `"62"`, and `as_f64()` drops the second
+/// exactly like an absent field — which is how 1258 real
+/// `dailyRestingHeartRate.beatsPerMinute` points reported as `google 0 days`,
+/// i.e. as "Google does not carry resting heart rate".
+///
+/// ⚠ The two fields here differ in type inside ONE object, which is the shape
+/// the live API actually returns: `date.year` is a number while
+/// `beatsPerMinute` beside it is a string. A per-stream assumption cannot
+/// express that.
+#[test]
+fn a_quoted_number_reports_as_a_string_not_a_number() {
+    let v = serde_json::json!({
+        "dailyRestingHeartRate": { "beatsPerMinute": "62", "date": { "year": 2026 } }
+    });
+    assert_eq!(
+        shape_of(&v),
+        vec![
+            "dailyRestingHeartRate.beatsPerMinute: string".to_string(),
+            "dailyRestingHeartRate.date.year: number".to_string()
+        ]
+    );
+}
+
+/// ⚠ Naming the type must NOT start naming the value — the readout still goes
+/// to a pod log.
+#[test]
+fn the_type_annotation_leaks_no_reading() {
+    let v = serde_json::json!({ "hr": { "bpm": 62, "note": "resting" } });
+    let joined = shape_of(&v).join(" ");
+    assert!(!joined.contains("62"), "a value leaked: {joined}");
+    assert!(!joined.contains("resting"), "a value leaked: {joined}");
 }
 
 /// ⚠ An empty array must be DISTINGUISHABLE from an absent field. "the type

@@ -208,7 +208,11 @@ pub fn day_of_rollup_point(pt: &serde_json::Value, sum_field: &str) -> Option<Da
     let d = date.get("day")?.as_i64()?;
     // ⚠ An absent sum is DROPPED, never defaulted. Zero steps is a real reading;
     // a missing one is not, and writing 0 turns a gap into a claim.
-    let value = pt.pointer(sum_field)?.as_f64()?;
+    //
+    // ⚠ `numeric`, not `as_f64` — the rollup sums are the source for most of
+    // `daily_activity`, and a quoted one would drop the whole stream exactly as
+    // it did for resting heart rate.
+    let value = numeric(pt.pointer(sum_field)?)?;
     Some(DailyValue {
         date: format!("{y:04}-{m:02}-{d:02}"),
         value,
@@ -374,6 +378,27 @@ pub async fn fetch_daily_series(
 /// ⚠ The date lives under the TYPE's own key — `dailyRespiratoryRate.date`,
 /// `dailyOxygenSaturation.date` — so it is found by SHAPE (an object carrying
 /// year/month/day) rather than by a path table of guesses.
+/// A JSON number, whether or not Google quoted it.
+///
+/// ⚠ **A QUOTED NUMBER IS NOT AN ABSENT ONE.** `as_f64()` returns `None` on a
+/// string, so a field Google serialises as `"62"` is dropped exactly like a
+/// missing one — and a whole stream of them reports as zero days, which reads as
+/// "Google does not carry this". Measured 2026-08-28:
+/// `dailyRestingHeartRate.beatsPerMinute` is a STRING, and 1258 real points were
+/// being discarded silently while `google-compare` printed `google 0 days`.
+///
+/// ⚠ This is NOT a permissive fallback. A string that does not parse still
+/// yields `None`, because a value we cannot read is not a value we may guess.
+/// The types differ per FIELD, not per stream, so this cannot be decided once at
+/// the call site.
+pub fn numeric(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
 pub fn day_of_list_point(pt: &serde_json::Value, value_pointer: &str) -> Option<DailyValue> {
     fn find_ymd(v: &serde_json::Value) -> Option<(i64, i64, i64)> {
         match v {
@@ -391,7 +416,7 @@ pub fn day_of_list_point(pt: &serde_json::Value, value_pointer: &str) -> Option<
     }
     let (y, m, d) = find_ymd(pt)?;
     // ⚠ Absent is dropped, never defaulted — a missing reading is not a zero one.
-    let value = pt.pointer(value_pointer)?.as_f64()?;
+    let value = numeric(pt.pointer(value_pointer)?)?;
     Some(DailyValue {
         date: format!("{y:04}-{m:02}-{d:02}"),
         value,

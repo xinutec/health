@@ -63,3 +63,28 @@ fn the_sum_field_is_per_type() {
         Some(4321.0)
     );
 }
+
+/// ⚠ Google quotes some numeric fields and not others, per FIELD rather than per
+/// stream. `dailyRestingHeartRate.beatsPerMinute` is a string; 1258 points were
+/// silently dropped by `as_f64()` and the stream reported as zero days, which
+/// reads as "Google does not carry resting heart rate".
+#[test]
+fn a_quoted_number_is_read_not_dropped() {
+    use backend::google::health::numeric;
+    assert_eq!(numeric(&serde_json::json!("62")), Some(62.0));
+    assert_eq!(numeric(&serde_json::json!("62.5")), Some(62.5));
+    assert_eq!(numeric(&serde_json::json!(62)), Some(62.0));
+    assert_eq!(numeric(&serde_json::json!(62.5)), Some(62.5));
+}
+
+/// ⚠ AND THE CONVERSE, or this is a permissive fallback rather than a fix. A
+/// value we cannot read is not a value we may guess.
+#[test]
+fn a_non_numeric_value_is_still_dropped() {
+    use backend::google::health::numeric;
+    assert_eq!(numeric(&serde_json::json!("not a number")), None);
+    assert_eq!(numeric(&serde_json::json!("")), None);
+    assert_eq!(numeric(&serde_json::json!(null)), None);
+    assert_eq!(numeric(&serde_json::json!({"a": 1})), None);
+    assert_eq!(numeric(&serde_json::json!([1])), None);
+}

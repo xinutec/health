@@ -286,6 +286,7 @@ async fn main() -> Result<()> {
         }
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
+        "column-fill" => column_fill().await,
         "google-compare" => google_compare().await,
         "mirror-check" => {
             let [fixture] = flags else {
@@ -536,6 +537,19 @@ async fn google_compare() -> Result<()> {
             tol: 0.005,
             unit: "°C",
         },
+        // daily_activity, one column of twelve. ⚠ THE OTHER NINE THAT NEED A
+        // SOURCE CANNOT BE COMPARED HERE YET: they are `dailyRollUp` types and
+        // this tool only walks `list`. Measured 2026-08-28 — `floors` and
+        // `elevation_m` are 0 of 1246 rows and need no source at all.
+        Pair {
+            google: "daily-resting-heart-rate",
+            pointer: "/dailyRestingHeartRate/beatsPerMinute",
+            minus: None,
+            table: "daily_activity",
+            column: "resting_heart_rate",
+            tol: 0.5,
+            unit: "bpm",
+        },
     ];
 
     for p in PAIRS {
@@ -594,6 +608,10 @@ async fn read_daily_column(
         }
         ("hrv_daily", "daily_rmssd") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("daily_activity", "resting_heart_rate") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(resting_heart_rate AS CHAR) v FROM daily_activity WHERE resting_heart_rate IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("skin_temperature", "relative_deviation") => {
@@ -753,6 +771,71 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
 /// arithmetic.
 ///
 /// Read-only: every statement is a SELECT over a fixed table list compiled in.
+/// Which columns of `daily_activity` actually hold data? (#260)
+///
+/// ⚠ A COLUMN THAT IS EMPTY NEEDS NO SOURCE, and a column that is nearly empty
+/// needs a decision rather than a mapping. `daily_activity` has TWELVE value
+/// columns and the migration has to answer for every one of them; without this,
+/// "map all twelve" and "map the eight that carry data" look like the same job,
+/// and the four empties would be mapped to whatever Google field had a
+/// plausible name.
+///
+/// One query, one row, one COUNT per column — `COUNT(col)` skips NULLs, which is
+/// exactly the question. ⚠ Not `COUNT(*)`: that counts rows and would report
+/// every column as full.
+async fn column_fill() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    let r = sqlx::query(
+        "SELECT COUNT(*) AS rows_total, COUNT(steps) AS steps, \
+         COUNT(calories_total) AS calories_total, COUNT(calories_active) AS calories_active, \
+         COUNT(distance_km) AS distance_km, COUNT(floors) AS floors, \
+         COUNT(elevation_m) AS elevation_m, COUNT(minutes_sedentary) AS minutes_sedentary, \
+         COUNT(minutes_lightly_active) AS minutes_lightly_active, \
+         COUNT(minutes_fairly_active) AS minutes_fairly_active, \
+         COUNT(minutes_very_active) AS minutes_very_active, \
+         COUNT(active_score) AS active_score, COUNT(resting_heart_rate) AS resting_heart_rate, \
+         CAST(MIN(date) AS CHAR) AS lo, CAST(MAX(date) AS CHAR) AS hi FROM daily_activity",
+    )
+    .fetch_one(&pool)
+    .await
+    .context("counting daily_activity columns")?;
+
+    let total: i64 = r.try_get("rows_total").context("rows_total")?;
+    let lo: String = r.try_get("lo").context("lo")?;
+    let hi: String = r.try_get("hi").context("hi")?;
+    println!("daily_activity: {total} rows, {lo} → {hi}");
+    for c in [
+        "steps",
+        "calories_total",
+        "calories_active",
+        "distance_km",
+        "floors",
+        "elevation_m",
+        "minutes_sedentary",
+        "minutes_lightly_active",
+        "minutes_fairly_active",
+        "minutes_very_active",
+        "active_score",
+        "resting_heart_rate",
+    ] {
+        let n: i64 = r.try_get(c).with_context(|| format!("column {c}"))?;
+        let note = if n == 0 {
+            "  ← EMPTY, needs no source"
+        } else if n * 10 < total * 9 {
+            "  ← partial"
+        } else {
+            ""
+        };
+        println!("  {c:<24} {n:>6} / {total}{note}");
+    }
+    Ok(())
+}
+
 async fn coverage() -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())

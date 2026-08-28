@@ -125,6 +125,21 @@ pub fn shape_of(v: &serde_json::Value) -> Vec<String> {
 ///
 /// Nested objects recurse; arrays report their element's shape from the first
 /// element only. Values never appear.
+/// The TYPE of a scalar, never its value — `number`, `string`, `bool`, `null`.
+///
+/// ⚠ A string that holds digits reports as `string`, which is the entire point:
+/// that is the difference between a field being read and being dropped.
+pub fn json_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Null => "null",
+        serde_json::Value::Object(_) => "object",
+        serde_json::Value::Array(_) => "array",
+    }
+}
+
 pub(crate) fn shape(v: &serde_json::Value, prefix: &str, out: &mut BTreeSet<String>) {
     match v {
         serde_json::Value::Object(m) => {
@@ -138,8 +153,16 @@ pub(crate) fn shape(v: &serde_json::Value, prefix: &str, out: &mut BTreeSet<Stri
                     serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
                         shape(sub, &path, out)
                     }
+                    // ⚠ THE TYPE, NOT THE VALUE. A path alone cannot tell a
+                    // number from a QUOTED number, and `as_f64()` returns None
+                    // on a string — so a type-confused field is read as an
+                    // absent one and the whole stream reports as empty. That is
+                    // how `daily-resting-heart-rate` looked like "Google has no
+                    // RHR" while carrying 1258 points. Naming the type keeps
+                    // this readout free of readings, which is the rule that
+                    // lets it run in a pod log.
                     _ => {
-                        out.insert(path);
+                        out.insert(format!("{path}: {}", json_kind(sub)));
                     }
                 }
             }
@@ -151,7 +174,7 @@ pub(crate) fn shape(v: &serde_json::Value, prefix: &str, out: &mut BTreeSet<Stri
             }
         },
         _ => {
-            out.insert(prefix.to_string());
+            out.insert(format!("{prefix}: {}", json_kind(v)));
         }
     }
 }
