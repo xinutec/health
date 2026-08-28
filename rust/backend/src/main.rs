@@ -323,6 +323,20 @@ async fn main() -> Result<()> {
 struct Pair {
     google: &'static str,
     pointer: &'static str,
+    /// Subtract this pointer's value from `pointer`, day by day, before
+    /// comparing.
+    ///
+    /// ⚠ EXISTS BECAUSE A STREAM CAN BE PRESENT WITHOUT BEING A FIELD. Fitbit's
+    /// `skin_temperature.relative_deviation` is a deviation from a personal
+    /// baseline; Google publishes the nightly temperature and the baseline as
+    /// separate absolutes and has no field for the difference. Comparing
+    /// against any single field reports 1194 of 1194 days differing, which
+    /// reads as "Google does not have this" when Google has both halves of it.
+    ///
+    /// A day is compared only when BOTH pointers have it — a difference needs
+    /// two operands, and defaulting the missing one to zero would silently turn
+    /// an absolute into a deviation.
+    minus: Option<&'static str>,
     table: &'static str,
     column: &'static str,
     tol: f64,
@@ -395,6 +409,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "daily-respiratory-rate",
             pointer: "/dailyRespiratoryRate/breathsPerMinute",
+            minus: None,
             table: "breathing_rate",
             column: "full_sleep_rate",
             tol: 0.05,
@@ -406,6 +421,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "respiratory-rate-sleep-summary",
             pointer: "/respiratoryRateSleepSummary/fullSleepStats/breathsPerMinute",
+            minus: None,
             table: "breathing_rate",
             column: "full_sleep_rate",
             tol: 0.05,
@@ -414,6 +430,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "respiratory-rate-sleep-summary",
             pointer: "/respiratoryRateSleepSummary/deepSleepStats/breathsPerMinute",
+            minus: None,
             table: "breathing_rate",
             column: "deep_sleep_rate",
             tol: 0.05,
@@ -422,6 +439,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "respiratory-rate-sleep-summary",
             pointer: "/respiratoryRateSleepSummary/lightSleepStats/breathsPerMinute",
+            minus: None,
             table: "breathing_rate",
             column: "light_sleep_rate",
             tol: 0.05,
@@ -430,6 +448,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "respiratory-rate-sleep-summary",
             pointer: "/respiratoryRateSleepSummary/remSleepStats/breathsPerMinute",
+            minus: None,
             table: "breathing_rate",
             column: "rem_sleep_rate",
             tol: 0.05,
@@ -438,6 +457,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "daily-oxygen-saturation",
             pointer: "/dailyOxygenSaturation/averagePercentage",
+            minus: None,
             table: "spo2_daily",
             column: "avg_value",
             tol: 0.05,
@@ -446,6 +466,7 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "daily-heart-rate-variability",
             pointer: "/dailyHeartRateVariability/averageHeartRateVariabilityMilliseconds",
+            minus: None,
             table: "hrv_daily",
             column: "daily_rmssd",
             tol: 0.05,
@@ -459,16 +480,80 @@ async fn google_compare() -> Result<()> {
         Pair {
             google: "daily-heart-rate-variability",
             pointer: "/dailyHeartRateVariability/deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds",
+            minus: None,
             table: "hrv_daily",
             column: "deep_rmssd",
             tol: 0.05,
             unit: "ms",
         },
+        // skin_temperature.relative_deviation holds Fitbit's `nightlyRelative`.
+        // ⚠ ALL THREE of Google's fields are compared against it because NONE is
+        // obviously the same statistic: `relativeNightlyStddev30dCelsius` reads
+        // as a figure in units of a 30-day stddev rather than a °C deviation,
+        // and the other two are absolutes. Two of these are therefore controls
+        // that SHOULD disagree — if all three disagree, the answer is probably
+        // `nightly - baseline`, a computed comparison this tool cannot express.
+        // Picking one on the strength of its name is how breathing_rate nearly
+        // moved onto the wrong statistic.
+        Pair {
+            google: "daily-sleep-temperature-derivations",
+            pointer: "/dailySleepTemperatureDerivations/relativeNightlyStddev30dCelsius",
+            minus: None,
+            table: "skin_temperature",
+            column: "relative_deviation",
+            tol: 0.005,
+            unit: "°C",
+        },
+        Pair {
+            google: "daily-sleep-temperature-derivations",
+            pointer: "/dailySleepTemperatureDerivations/nightlyTemperatureCelsius",
+            minus: None,
+            table: "skin_temperature",
+            column: "relative_deviation",
+            tol: 0.005,
+            unit: "°C",
+        },
+        Pair {
+            google: "daily-sleep-temperature-derivations",
+            pointer: "/dailySleepTemperatureDerivations/baselineTemperatureCelsius",
+            minus: None,
+            table: "skin_temperature",
+            column: "relative_deviation",
+            tol: 0.005,
+            unit: "°C",
+        },
+        // The hypothesis the three above are the controls for: a DEVIATION, not
+        // a field. The three single-field candidates each differ on 1192-1194 of
+        // 1194 days, and `relativeNightlyStddev30dCelsius` covers EXACTLY our
+        // 1194 nights while disagreeing on nearly all of them — the right nights
+        // carrying a different statistic.
+        Pair {
+            google: "daily-sleep-temperature-derivations",
+            pointer: "/dailySleepTemperatureDerivations/nightlyTemperatureCelsius",
+            minus: Some("/dailySleepTemperatureDerivations/baselineTemperatureCelsius"),
+            table: "skin_temperature",
+            column: "relative_deviation",
+            tol: 0.005,
+            unit: "°C",
+        },
     ];
 
     for p in PAIRS {
-        let theirs =
+        let mut theirs =
             backend::google::health::fetch_daily_series(&http, &token, p.google, p.pointer).await?;
+        if let Some(sub) = p.minus {
+            let base =
+                backend::google::health::fetch_daily_series(&http, &token, p.google, sub).await?;
+            let by_day: std::collections::BTreeMap<&str, f64> =
+                base.iter().map(|d| (d.date.as_str(), d.value)).collect();
+            // ⚠ A day missing from either side is DROPPED, not defaulted. Zero
+            // is a legal temperature difference, so a defaulted operand would
+            // enter the comparison as a real measurement.
+            theirs.retain(|d| by_day.contains_key(d.date.as_str()));
+            for d in &mut theirs {
+                d.value -= by_day[d.date.as_str()];
+            }
+        }
         let ours = read_daily_column(&pool, p.table, p.column).await?;
         report_pair(p, &theirs, &ours);
     }
@@ -509,6 +594,10 @@ async fn read_daily_column(
         }
         ("hrv_daily", "daily_rmssd") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("skin_temperature", "relative_deviation") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(relative_deviation AS CHAR) v FROM skin_temperature WHERE relative_deviation IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("hrv_daily", "deep_rmssd") => {
@@ -583,9 +672,56 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
         "{google}{pointer} vs {table}.{column}"
     );
     println!("  google {:>5} days   ours {:>5} days", g.len(), o.len());
+    // ⚠ THE COARSER SIDE SETS THE FLOOR ON AGREEMENT. If our stored values are
+    // quantised to 0.1 and Google reports full precision, the two can never
+    // agree closer than half a step no matter how right the mapping is — and
+    // the residual looks exactly like a wrong statistic. Printing the step
+    // separates "the mapping is wrong" from "the old source was rounder".
+    let step = |vs: &mut dyn Iterator<Item = f64>| -> Option<f64> {
+        let vals: Vec<f64> = vs.collect();
+        [1.0f64, 0.5, 0.1, 0.05, 0.01, 0.001]
+            .into_iter()
+            .find(|k| vals.iter().all(|v| ((v / k).round() * k - v).abs() < 1e-9))
+    };
+    // ⚠ Reported per side, NOT only when both are known. A computed pointer
+    // (a difference of two full-precision values) lands on no clean step, so a
+    // both-known condition stays silent for exactly the comparison whose
+    // residual most needs explaining.
+    let fmt = |x: Option<f64>| x.map_or("none".to_string(), |v| format!("{v}"));
+    let (gs, os) = (
+        step(&mut g.values().copied()),
+        step(&mut o.values().copied()),
+    );
+    if gs != os {
+        println!(
+            "  ⚠ granularity: google {}, ours {} {unit} — half of the coarser step is the floor on agreement",
+            fmt(gs),
+            fmt(os)
+        );
+    }
     println!("  agree within {tol} {unit}: {agree}");
     if differ > 0 {
         println!("  ⚠ DIFFER: {differ}   worst {worst:.3} {unit} on {worst_day}");
+        // ⚠ A WORST CASE ALONE CANNOT SIZE A DISAGREEMENT. "worst 0.050" is one
+        // reading whether it is a single outlier or every day, and those are
+        // opposite verdicts: a lone spike is a bad day, a flat 0.05 across the
+        // corpus is a units or precision mismatch. The quantiles separate them.
+        let mut deltas: Vec<f64> = g
+            .iter()
+            .filter_map(|(d, gv)| o.get(d).map(|ov| (gv - ov).abs()))
+            .collect();
+        // ⚠ `total_cmp`, not `partial_cmp().unwrap()`. These deltas come from
+        // two live sources; asserting no NaN is a claim about data neither of
+        // them promises, and the cost of being wrong is a panic in a diagnostic.
+        deltas.sort_by(f64::total_cmp);
+        let at = |q: f64| deltas[((deltas.len() - 1) as f64 * q) as usize];
+        println!(
+            "    spread over all {} shared days: p50 {:.3}  p90 {:.3}  p99 {:.3} {unit}",
+            deltas.len(),
+            at(0.50),
+            at(0.90),
+            at(0.99)
+        );
     }
     if only_google > 0 {
         println!("  only in google: {only_google}  (data the migration would GAIN)");
