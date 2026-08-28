@@ -286,6 +286,7 @@ async fn main() -> Result<()> {
         }
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
+        "google-compare" => google_compare().await,
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -306,17 +307,193 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
         other => {
             eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe, coverage or velocity"
+                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe, coverage, google-compare or velocity"
             );
             std::process::exit(64);
         }
     }
+}
+
+/// Does Google agree with Fitbit, day by day? (#260)
+///
+/// # Why this must run NOW
+///
+/// The Fitbit Web API is decommissioned in September. Until then BOTH sources
+/// answer, and that overlap is the only period in which the Google numbers can
+/// be checked against the ones we already trust. Afterwards a discrepancy is
+/// permanent and invisible — there is nothing left to compare against.
+///
+/// ⚠ READ-ONLY. It writes nothing. A cutover that has not been diffed first is
+/// a guess, and this is the instrument that makes it not one.
+///
+/// ⚠ THREE STREAMS ONLY, and deliberately. These are the ones where the
+/// QUANTITY is unambiguous — breaths per minute against breaths per minute.
+/// `skin_temperature.relative_deviation` against Google's
+/// `nightlyTemperatureCelsius` is a deviation against an absolute, and
+/// `daily_activity.resting_heart_rate` may be computed over a different window;
+/// comparing those without establishing the semantics first would produce a
+/// disagreement that means nothing. Add them when someone has checked.
+async fn google_compare() -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+
+    // (google type, value pointer, our table, our column, tolerance, unit)
+    //
+    // ⚠ THE TOLERANCE IS NOT A FUDGE FACTOR. Both sides store a float the
+    // devices reported; an exact-equality test would fail on the last decimal
+    // place and say nothing about whether the migration is safe. These are
+    // tight enough that a real disagreement — a different window, a different
+    // statistic — cannot hide inside one.
+    struct Pair {
+        google: &'static str,
+        pointer: &'static str,
+        table: &'static str,
+        column: &'static str,
+        tol: f64,
+        unit: &'static str,
+    }
+    const PAIRS: &[Pair] = &[
+        Pair {
+            google: "daily-respiratory-rate",
+            pointer: "/dailyRespiratoryRate/breathsPerMinute",
+            table: "breathing_rate",
+            column: "full_sleep_rate",
+            tol: 0.05,
+            unit: "breaths/min",
+        },
+        Pair {
+            google: "daily-oxygen-saturation",
+            pointer: "/dailyOxygenSaturation/averagePercentage",
+            table: "spo2_daily",
+            column: "avg_value",
+            tol: 0.05,
+            unit: "%",
+        },
+        Pair {
+            google: "daily-heart-rate-variability",
+            pointer: "/dailyHeartRateVariability/averageHeartRateVariabilityMilliseconds",
+            table: "hrv_daily",
+            column: "daily_rmssd",
+            tol: 0.05,
+            unit: "ms",
+        },
+    ];
+
+    for p in PAIRS {
+        let theirs =
+            backend::google::health::fetch_daily_series(&http, &token, p.google, p.pointer).await?;
+        let ours = read_daily_column(&pool, p.table, p.column).await?;
+        report_pair(p.google, p.table, p.unit, p.tol, &theirs, &ours);
+    }
+    Ok(())
+}
+
+/// Our side of one comparison, as `(date, value)`.
+///
+/// ⚠ One literal per table, not a `format!`. The crate refuses a dynamically
+/// built SQL string and dev-lint refuses even a `const` in a variable — schema
+/// checking reads the argument at the call site.
+async fn read_daily_column(
+    pool: &sqlx::MySqlPool,
+    table: &str,
+    column: &str,
+) -> Result<Vec<(String, f64)>> {
+    use sqlx::Row as _;
+    let rows = match (table, column) {
+        ("breathing_rate", "full_sleep_rate") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, full_sleep_rate v FROM breathing_rate WHERE full_sleep_rate IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("spo2_daily", "avg_value") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, avg_value v FROM spo2_daily WHERE avg_value IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("hrv_daily", "daily_rmssd") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, daily_rmssd v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        _ => anyhow::bail!("no query wired for {table}.{column}"),
+    }
+    .with_context(|| format!("reading {table}.{column}"))?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let d: String = r.try_get("d").context("date column")?;
+        // ⚠ f64 via try_get, not f32: MariaDB FLOAT vs DOUBLE decodes differently
+        // and the wrong one fails on REAL rows only.
+        let v: f64 = match r.try_get::<f64, _>("v") {
+            Ok(v) => v,
+            Err(_) => r.try_get::<f32, _>("v").context("value column")? as f64,
+        };
+        out.push((d, v));
+    }
+    Ok(out)
+}
+
+/// Print one stream's agreement, and say which side each gap is on.
+///
+/// ⚠ "Only in Google" and "only in ours" are DIFFERENT FINDINGS and are never
+/// merged into one count: the first is data we would gain, the second is data
+/// the migration would LOSE. A single "mismatch" number hides the direction,
+/// which is the half that decides whether a cutover is safe.
+fn report_pair(
+    google: &str,
+    table: &str,
+    unit: &str,
+    tol: f64,
+    theirs: &[backend::google::health::DailyValue],
+    ours: &[(String, f64)],
+) {
+    use std::collections::HashMap;
+    let g: HashMap<&str, f64> = theirs.iter().map(|d| (d.date.as_str(), d.value)).collect();
+    let o: HashMap<&str, f64> = ours.iter().map(|(d, v)| (d.as_str(), *v)).collect();
+
+    let (mut agree, mut differ, mut worst, mut worst_day) = (0usize, 0usize, 0.0f64, String::new());
+    for (d, gv) in &g {
+        if let Some(ov) = o.get(d) {
+            let delta = (gv - ov).abs();
+            if delta <= tol {
+                agree += 1;
+            } else {
+                differ += 1;
+                if delta > worst {
+                    worst = delta;
+                    worst_day = (*d).to_string();
+                }
+            }
+        }
+    }
+    let only_google = g.keys().filter(|d| !o.contains_key(*d)).count();
+    let only_ours = o.keys().filter(|d| !g.contains_key(*d)).count();
+
+    println!("{google} vs {table}");
+    println!("  google {:>5} days   ours {:>5} days", g.len(), o.len());
+    println!("  agree within {tol} {unit}: {agree}");
+    if differ > 0 {
+        println!("  ⚠ DIFFER: {differ}   worst {worst:.3} {unit} on {worst_day}");
+    }
+    if only_google > 0 {
+        println!("  only in google: {only_google}  (data the migration would GAIN)");
+    }
+    if only_ours > 0 {
+        println!("  ⚠ only in ours: {only_ours}  (data the migration would LOSE)");
+    }
+    println!();
 }
 
 /// What span of history does each biometric table actually hold? (#260)

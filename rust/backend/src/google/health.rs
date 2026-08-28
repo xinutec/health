@@ -284,3 +284,116 @@ pub async fn fetch_daily_rollup(
     }
     Ok(out)
 }
+
+/// Every point of a one-per-day type, as `(civil date, value)`.
+///
+/// ⚠ USES `list`, NOT `dailyRollUp`. The daily aggregates ARE sample types
+/// here — `daily-respiratory-rate` and friends answer `list` and REFUSE
+/// `dailyRollUp` ("the following actions are supported: list, reconcile"). The
+/// two shapes are not interchangeable and picking the wrong one returns 400 or,
+/// worse, 200 and nothing.
+///
+/// ⚠ The list is ordered NEWEST FIRST with no ascending sort, so this walks
+/// every page to see the whole series. That is a few pages for a daily
+/// aggregate and must never be pointed at an intraday type.
+pub async fn fetch_daily_series(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    value_pointer: &str,
+) -> Result<Vec<DailyValue>> {
+    let mut out = Vec::new();
+    let mut page_token: Option<String> = None;
+    let mut pages = 0u32;
+
+    loop {
+        let mut url =
+            reqwest::Url::parse(&format!("{BASE}/users/me/dataTypes/{data_type}/dataPoints"))
+                .with_context(|| format!("building the {data_type} URL"))?;
+        url.query_pairs_mut().append_pair("pageSize", "1000");
+        if let Some(t) = &page_token {
+            url.query_pairs_mut().append_pair("pageToken", t);
+        }
+
+        let res = http
+            .get(url)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .with_context(|| format!("GET {data_type}"))?;
+        let status = res.status();
+        let body = res
+            .text()
+            .await
+            .with_context(|| format!("body of a {data_type} page"))?;
+        if !status.is_success() {
+            return Err(anyhow!(
+                "{data_type} {}: {}",
+                status.as_u16(),
+                body.chars().take(400).collect::<String>()
+            ));
+        }
+        let page: serde_json::Value =
+            serde_json::from_str(&body).with_context(|| format!("decoding a {data_type} page"))?;
+
+        for pt in page
+            .get("dataPoints")
+            .and_then(|p| p.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+        {
+            if let Some(v) = day_of_list_point(pt, value_pointer) {
+                out.push(v);
+            }
+        }
+
+        pages += 1;
+        match page.get("nextPageToken").and_then(|t| t.as_str()) {
+            Some(t) if !t.is_empty() => {
+                // ⚠ Same guards as the weight walk: a token that never changes
+                // is a server-side loop, not more data.
+                if Some(t) == page_token.as_deref() {
+                    return Err(anyhow!("{data_type} paging repeated its page token"));
+                }
+                if pages >= MAX_PAGES {
+                    return Err(anyhow!(
+                        "{data_type} paging exceeded {MAX_PAGES} pages ({} points so far)",
+                        out.len()
+                    ));
+                }
+                page_token = Some(t.to_string());
+            }
+            _ => break,
+        }
+    }
+    Ok(out)
+}
+
+/// One `list` point mapped to its civil day and a value at `value_pointer`.
+///
+/// ⚠ The date lives under the TYPE's own key — `dailyRespiratoryRate.date`,
+/// `dailyOxygenSaturation.date` — so it is found by SHAPE (an object carrying
+/// year/month/day) rather than by a path table of guesses.
+pub fn day_of_list_point(pt: &serde_json::Value, value_pointer: &str) -> Option<DailyValue> {
+    fn find_ymd(v: &serde_json::Value) -> Option<(i64, i64, i64)> {
+        match v {
+            serde_json::Value::Object(m) => {
+                if let (Some(y), Some(mo), Some(d)) = (m.get("year"), m.get("month"), m.get("day"))
+                    && let (Some(y), Some(mo), Some(d)) = (y.as_i64(), mo.as_i64(), d.as_i64())
+                {
+                    return Some((y, mo, d));
+                }
+                m.values().find_map(find_ymd)
+            }
+            serde_json::Value::Array(a) => a.iter().find_map(find_ymd),
+            _ => None,
+        }
+    }
+    let (y, m, d) = find_ymd(pt)?;
+    // ⚠ Absent is dropped, never defaulted — a missing reading is not a zero one.
+    let value = pt.pointer(value_pointer)?.as_f64()?;
+    Some(DailyValue {
+        date: format!("{y:04}-{m:02}-{d:02}"),
+        value,
+    })
+}
