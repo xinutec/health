@@ -99,11 +99,17 @@ pub async fn sync_breathing_rate(
 
     let mut written = 0usize;
     for (date, br) in &by_day {
-        // ⚠ A row with NO full rate is skipped. Fitbit's writer treats a null
-        // full rate as "the row is useless" and this keeps that: writing a day
-        // whose only content is a stage rate would create a row the readers
-        // have never had to handle.
-        let Some(full) = br.full else { continue };
+        // ⚠ A day with only STAGE rates still writes, and that is a reversal.
+        //
+        // This originally skipped any day with no full rate, reasoning that a
+        // stage-only row was a shape the readers had never had to handle. That
+        // was decided when the three stage columns held ZERO rows — when a
+        // stage-only day could not exist. Google supplies them, 10 such days
+        // exist, and the skip was silently discarding all ten every run.
+        //
+        // Both readers (`routes::tables`, `rows_check`) are `SELECT *` and every
+        // column is nullable, so a half-filled row costs nothing. Matches
+        // [`sync_hrv_daily`], which writes on either column.
         sqlx::query(
             "INSERT INTO breathing_rate (user_id, date, full_sleep_rate, deep_sleep_rate, \
              light_sleep_rate, rem_sleep_rate) VALUES (?, ?, ?, ?, ?, ?) \
@@ -113,7 +119,7 @@ pub async fn sync_breathing_rate(
         )
         .bind(user_id)
         .bind(date)
-        .bind(full)
+        .bind(br.full)
         .bind(br.deep)
         .bind(br.light)
         .bind(br.rem)
@@ -124,7 +130,9 @@ pub async fn sync_breathing_rate(
     }
 
     tracing::info!(
-        "[{user_id}] google breathing_rate: {written} day(s), {} with a deep-sleep rate",
+        "[{user_id}] google breathing_rate: {written} day(s), {} with a full rate, {} with a \
+         deep-sleep rate",
+        by_day.values().filter(|b| b.full.is_some()).count(),
         by_day.values().filter(|b| b.deep.is_some()).count()
     );
     Ok(written)
