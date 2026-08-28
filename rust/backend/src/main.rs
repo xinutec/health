@@ -320,6 +320,15 @@ async fn main() -> Result<()> {
     }
 }
 
+struct Pair {
+    google: &'static str,
+    pointer: &'static str,
+    table: &'static str,
+    column: &'static str,
+    tol: f64,
+    unit: &'static str,
+}
+
 /// Does Google agree with Fitbit, day by day? (#260)
 ///
 /// # Why this must run NOW
@@ -359,20 +368,46 @@ async fn google_compare() -> Result<()> {
     // place and say nothing about whether the migration is safe. These are
     // tight enough that a real disagreement — a different window, a different
     // statistic — cannot hide inside one.
-    struct Pair {
-        google: &'static str,
-        pointer: &'static str,
-        table: &'static str,
-        column: &'static str,
-        tol: f64,
-        unit: &'static str,
-    }
     const PAIRS: &[Pair] = &[
+        // ⚠ `respiratory-rate-sleep-summary`, NOT `daily-respiratory-rate`.
+        //
+        // `breathing_rate` has FOUR value columns and `daily-respiratory-rate`
+        // supplies ONE number. Comparing only `full_sleep_rate` against it said
+        // "1186/1186 agree" and would have licensed a writer that fills one
+        // column and leaves deep/light/rem NULL — three quarters of the table
+        // dropped, with a green comparison behind it.
+        //
+        // ⚠ A COLUMN NOT COMPARED IS A COLUMN NOT MIGRATED. Match the table's
+        // shape, not the first Google type whose name resembles it.
         Pair {
-            google: "daily-respiratory-rate",
-            pointer: "/dailyRespiratoryRate/breathsPerMinute",
+            google: "respiratory-rate-sleep-summary",
+            pointer: "/respiratoryRateSleepSummary/fullSleepStats/breathsPerMinute",
             table: "breathing_rate",
             column: "full_sleep_rate",
+            tol: 0.05,
+            unit: "breaths/min",
+        },
+        Pair {
+            google: "respiratory-rate-sleep-summary",
+            pointer: "/respiratoryRateSleepSummary/deepSleepStats/breathsPerMinute",
+            table: "breathing_rate",
+            column: "deep_sleep_rate",
+            tol: 0.05,
+            unit: "breaths/min",
+        },
+        Pair {
+            google: "respiratory-rate-sleep-summary",
+            pointer: "/respiratoryRateSleepSummary/lightSleepStats/breathsPerMinute",
+            table: "breathing_rate",
+            column: "light_sleep_rate",
+            tol: 0.05,
+            unit: "breaths/min",
+        },
+        Pair {
+            google: "respiratory-rate-sleep-summary",
+            pointer: "/respiratoryRateSleepSummary/remSleepStats/breathsPerMinute",
+            table: "breathing_rate",
+            column: "rem_sleep_rate",
             tol: 0.05,
             unit: "breaths/min",
         },
@@ -398,7 +433,7 @@ async fn google_compare() -> Result<()> {
         let theirs =
             backend::google::health::fetch_daily_series(&http, &token, p.google, p.pointer).await?;
         let ours = read_daily_column(&pool, p.table, p.column).await?;
-        report_pair(p.google, p.table, p.unit, p.tol, &theirs, &ours);
+        report_pair(p, &theirs, &ours);
     }
     Ok(())
 }
@@ -417,6 +452,18 @@ async fn read_daily_column(
     let rows = match (table, column) {
         ("breathing_rate", "full_sleep_rate") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(full_sleep_rate AS CHAR) v FROM breathing_rate WHERE full_sleep_rate IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("breathing_rate", "deep_sleep_rate") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(deep_sleep_rate AS CHAR) v FROM breathing_rate WHERE deep_sleep_rate IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("breathing_rate", "light_sleep_rate") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(light_sleep_rate AS CHAR) v FROM breathing_rate WHERE light_sleep_rate IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("breathing_rate", "rem_sleep_rate") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(rem_sleep_rate AS CHAR) v FROM breathing_rate WHERE rem_sleep_rate IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("spo2_daily", "avg_value") => {
@@ -462,14 +509,9 @@ async fn read_daily_column(
 /// merged into one count: the first is data we would gain, the second is data
 /// the migration would LOSE. A single "mismatch" number hides the direction,
 /// which is the half that decides whether a cutover is safe.
-fn report_pair(
-    google: &str,
-    table: &str,
-    unit: &str,
-    tol: f64,
-    theirs: &[backend::google::health::DailyValue],
-    ours: &[(String, f64)],
-) {
+fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &[(String, f64)]) {
+    let (google, pointer, table, column, unit, tol) =
+        (p.google, p.pointer, p.table, p.column, p.unit, p.tol);
     use std::collections::HashMap;
     let g: HashMap<&str, f64> = theirs.iter().map(|d| (d.date.as_str(), d.value)).collect();
     let o: HashMap<&str, f64> = ours.iter().map(|(d, v)| (d.as_str(), *v)).collect();
@@ -492,7 +534,11 @@ fn report_pair(
     let only_google = g.keys().filter(|d| !o.contains_key(*d)).count();
     let only_ours = o.keys().filter(|d| !g.contains_key(*d)).count();
 
-    println!("{google} vs {table}");
+    println!(
+        "{google}/{} vs {table}.{}",
+        pointer.rsplit('/').next().unwrap_or(pointer),
+        column
+    );
     println!("  google {:>5} days   ours {:>5} days", g.len(), o.len());
     println!("  agree within {tol} {unit}: {agree}");
     if differ > 0 {
