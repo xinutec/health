@@ -46,28 +46,91 @@ struct Distance {
 ///
 /// Absent now means NULL, which is what the column is for, plus a warning naming
 /// the fields — the honest answer the TypeScript reaches silently.
+/// ⚠ A NUMBER MAY ARRIVE QUOTED, and it costs the whole day when it does.
+///
+/// 2026-08-28, four consecutive production runs:
+///
+/// ```text
+///   activity sync failed: parsing activity response:
+///   invalid type: string "-62", expected i64 at line 9 column 29
+///   ... string "-47" ... string "-37" ... string "-27"
+/// ```
+///
+/// A different value each run, climbing toward zero over 45 minutes — a live
+/// daily counter Fitbit had started sending as a STRING. `daily_activity`
+/// stopped syncing entirely for over an hour, and the failure named a type
+/// rather than a field, so it did not say which.
+///
+/// ⚠ SAME SHAPE AS THE `floors` INCIDENT ABOVE: one field the parser disliked,
+/// the whole day discarded. There it was absence, here it is quoting. The
+/// lesson generalises — this API's numbers are not reliably numbers, so the
+/// parser accepts either spelling and the VALUE is unchanged. That is tolerance
+/// at the edge, not a fallback: nothing is defaulted, and a genuinely
+/// unparseable value still refuses.
+fn opt_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    use serde::Deserialize as _;
+    match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom(format!("{n} is not an i64"))),
+        Some(serde_json::Value::String(s)) => s
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|e| serde::de::Error::custom(format!("{s:?} is not an i64: {e}"))),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected a number or a numeric string, got {other}"
+        ))),
+    }
+}
+
+/// The `f64` twin of [`opt_i64`]. Same reason, same refusal on nonsense.
+fn opt_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    use serde::Deserialize as _;
+    match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom(format!("{n} is not an f64"))),
+        Some(serde_json::Value::String(s)) => s
+            .trim()
+            .parse::<f64>()
+            .map(Some)
+            .map_err(|e| serde::de::Error::custom(format!("{s:?} is not an f64: {e}"))),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected a number or a numeric string, got {other}"
+        ))),
+    }
+}
+
 #[derive(Deserialize)]
 struct Summary {
+    #[serde(default, deserialize_with = "opt_i64")]
     steps: Option<i64>,
-    #[serde(rename = "caloriesOut")]
+    #[serde(rename = "caloriesOut", default, deserialize_with = "opt_f64")]
     calories_out: Option<f64>,
-    #[serde(rename = "activityCalories")]
+    #[serde(rename = "activityCalories", default, deserialize_with = "opt_f64")]
     activity_calories: Option<f64>,
     #[serde(default)]
     distances: Option<Vec<Distance>>,
+    #[serde(default, deserialize_with = "opt_i64")]
     floors: Option<i64>,
+    #[serde(default, deserialize_with = "opt_f64")]
     elevation: Option<f64>,
-    #[serde(rename = "sedentaryMinutes")]
+    #[serde(rename = "sedentaryMinutes", default, deserialize_with = "opt_i64")]
     sedentary_minutes: Option<i64>,
-    #[serde(rename = "lightlyActiveMinutes")]
+    #[serde(rename = "lightlyActiveMinutes", default, deserialize_with = "opt_i64")]
     lightly_active_minutes: Option<i64>,
-    #[serde(rename = "fairlyActiveMinutes")]
+    #[serde(rename = "fairlyActiveMinutes", default, deserialize_with = "opt_i64")]
     fairly_active_minutes: Option<i64>,
-    #[serde(rename = "veryActiveMinutes")]
+    #[serde(rename = "veryActiveMinutes", default, deserialize_with = "opt_i64")]
     very_active_minutes: Option<i64>,
-    #[serde(rename = "restingHeartRate")]
+    #[serde(rename = "restingHeartRate", default, deserialize_with = "opt_i64")]
     resting_heart_rate: Option<i64>,
-    #[serde(rename = "activeScore")]
+    #[serde(rename = "activeScore", default, deserialize_with = "opt_i64")]
     active_score: Option<i64>,
 }
 

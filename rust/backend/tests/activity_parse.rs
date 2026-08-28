@@ -131,3 +131,27 @@ fn a_body_without_a_summary_refuses() {
         assert!(parse_activity_summary(body).is_err(), "must refuse: {body}");
     }
 }
+
+/// ⚠ A QUOTED NUMBER MUST NOT COST THE DAY. Four consecutive production runs on
+/// 2026-08-28 died with `invalid type: string "-62", expected i64`, a different
+/// value each time, and `daily_activity` stopped syncing for over an hour.
+#[test]
+fn a_quoted_integer_parses_as_the_number() {
+    let body = r#"{"activities":[],"summary":{
+        "steps":9134,"floors":"-27","sedentaryMinutes":"612","caloriesOut":2210
+    }}"#;
+    let got = backend::fitbit::sync::activity::parse_activity_summary(body)
+        .expect("a quoted integer is still a number");
+    assert_eq!(got.steps, Some(9134));
+    assert_eq!(got.floors, Some(-27), "negative and quoted");
+    assert_eq!(got.minutes_sedentary, Some(612));
+}
+
+/// ⚠ Tolerance at the edge is not a fallback: a value that is genuinely not a
+/// number still REFUSES, rather than becoming None and reading as "Fitbit did
+/// not report it".
+#[test]
+fn a_non_numeric_string_still_refuses() {
+    let body = r#"{"activities":[],"summary":{"steps":"not a number"}}"#;
+    assert!(backend::fitbit::sync::activity::parse_activity_summary(body).is_err());
+}
