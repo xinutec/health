@@ -287,6 +287,7 @@ async fn main() -> Result<()> {
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
         "column-fill" => column_fill().await,
+        "freshness" => freshness().await,
         "google-compare" => google_compare().await,
         "mirror-check" => {
             let [fixture] = flags else {
@@ -986,6 +987,86 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
 /// arithmetic.
 ///
 /// Read-only: every statement is a SELECT over a fixed table list compiled in.
+/// Report any stream that has stopped arriving, and FAIL if one has.
+///
+/// # Why this is an outcome check and not an error check
+///
+/// On 2026-08-28 `daily_activity` stopped for over an hour because Fitbit began
+/// quoting an integer. `health-sync` exited 0 on every run; the only trace was
+/// one ERROR line in a pod log that nothing read. It surfaced because I happened
+/// to be watching a deploy for an unrelated reason.
+///
+/// ⚠ Watching for a known error string would not have caught it, and would not
+/// catch the NEXT one either — a stream that writes nothing without erroring
+/// looks identical from the outside. This asks the only question that
+/// generalises: did rows actually arrive?
+///
+/// ⚠ **THIS WILL FIRE BY DESIGN IN SEPTEMBER** for every stream still owned by
+/// Fitbit — the Web API is decommissioned and they stop. That is a true alarm,
+/// not a false one: it is the migration's remaining scope going quiet, and it
+/// should be read as "these streams are now gone" rather than muted (#260).
+async fn freshness() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    // ⚠ `DATEDIFF` in SQL rather than parsing dates here, so the comparison is
+    // against the DATABASE's today. A local clock in another zone would shift
+    // every lag by a day.
+    //
+    // ⚠ The intraday tables store a LOCAL WALL CLOCK, not an instant (see
+    // fitbit::sync::hrv) — which is why every bound here is in days, where a
+    // sub-day offset cannot change the verdict.
+    let rows = sqlx::query(
+        "SELECT 'body' AS t, DATEDIFF(CURDATE(), MAX(date)) AS lag FROM body \
+         UNION ALL SELECT 'breathing_rate', DATEDIFF(CURDATE(), MAX(date)) FROM breathing_rate \
+         UNION ALL SELECT 'hrv_daily', DATEDIFF(CURDATE(), MAX(date)) FROM hrv_daily \
+         UNION ALL SELECT 'skin_temperature', DATEDIFF(CURDATE(), MAX(date)) FROM skin_temperature \
+         UNION ALL SELECT 'spo2_daily', DATEDIFF(CURDATE(), MAX(date)) FROM spo2_daily \
+         UNION ALL SELECT 'daily_activity', DATEDIFF(CURDATE(), MAX(date)) FROM daily_activity \
+         UNION ALL SELECT 'sleep', DATEDIFF(CURDATE(), MAX(date)) FROM sleep \
+         UNION ALL SELECT 'heart_rate_zones', DATEDIFF(CURDATE(), MAX(date)) FROM heart_rate_zones \
+         UNION ALL SELECT 'heart_rate_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM heart_rate_intraday \
+         UNION ALL SELECT 'hrv_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM hrv_intraday \
+         UNION ALL SELECT 'steps_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM steps_intraday",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("reading stream freshness")?;
+
+    let mut stale = Vec::new();
+    let mut checked = 0usize;
+    for row in &rows {
+        let t: String = row.try_get("t").context("table name")?;
+        let lag: Option<i64> = row.try_get("lag").unwrap_or(None);
+        checked += 1;
+        match backend::freshness::stale_reason(&t, lag) {
+            Some(why) => {
+                println!("  ⚠ {why}");
+                stale.push(t);
+            }
+            None => println!(
+                "{t:<22}  ok: {} days behind",
+                lag.map_or_else(|| "?".into(), |d| d.to_string())
+            ),
+        }
+    }
+
+    if stale.is_empty() {
+        println!("\nall {checked} streams fresh");
+        return Ok(());
+    }
+    // ⚠ NON-ZERO, and the names in the message. A check that reports a problem
+    // by printing and exiting 0 is the failure it is meant to detect.
+    anyhow::bail!(
+        "{} stream(s) not arriving: {}",
+        stale.len(),
+        stale.join(", ")
+    )
+}
+
 /// Which columns of `daily_activity` actually hold data? (#260)
 ///
 /// ⚠ A COLUMN THAT IS EMPTY NEEDS NO SOURCE, and a column that is nearly empty
