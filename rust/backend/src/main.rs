@@ -379,6 +379,30 @@ async fn google_compare() -> Result<()> {
         //
         // ⚠ A COLUMN NOT COMPARED IS A COLUMN NOT MIGRATED. Match the table's
         // shape, not the first Google type whose name resembles it.
+        // ⚠ BOTH TYPES FEED THIS ONE TABLE. Measured 2026-08-28:
+        //
+        //   full_sleep_rate vs daily-respiratory-rate        1186/1186 EXACT
+        //   full_sleep_rate vs summary fullSleepStats        61 differ, 2.6 worst
+        //
+        // They are DIFFERENT STATISTICS and ours is the first. "Compare every
+        // column" correctly caught that one column was not the table — but
+        // moving the WHOLE table to the sleep summary, which is what that first
+        // suggested, would have broken the column that already agreed exactly.
+        //
+        // ⚠ The three stage columns hold ZERO rows here and Google has 1,197
+        // days of each, so this table GAINS three columns on migration rather
+        // than risking them.
+        Pair {
+            google: "daily-respiratory-rate",
+            pointer: "/dailyRespiratoryRate/breathsPerMinute",
+            table: "breathing_rate",
+            column: "full_sleep_rate",
+            tol: 0.05,
+            unit: "breaths/min",
+        },
+        // Kept as a CONTRAST, not a candidate: its 61 disagreements are the
+        // evidence that the two statistics differ, and deleting it would leave
+        // the next reader to rediscover that by mapping the wrong one.
         Pair {
             google: "respiratory-rate-sleep-summary",
             pointer: "/respiratoryRateSleepSummary/fullSleepStats/breathsPerMinute",
@@ -535,9 +559,11 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
     let only_ours = o.keys().filter(|d| !g.contains_key(*d)).count();
 
     println!(
-        "{google}/{} vs {table}.{}",
-        pointer.rsplit('/').next().unwrap_or(pointer),
-        column
+        // ⚠ THE LAST PATH SEGMENT IS NOT A LABEL. All four breathing_rate
+        // pointers end in `breathsPerMinute`, so printing only that made four
+        // different comparisons look identical — a pointer typo would have been
+        // invisible in the readout.
+        "{google}{pointer} vs {table}.{column}"
     );
     println!("  google {:>5} days   ours {:>5} days", g.len(), o.len());
     println!("  agree within {tol} {unit}: {agree}");
