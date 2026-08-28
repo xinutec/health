@@ -416,15 +416,15 @@ async fn read_daily_column(
     use sqlx::Row as _;
     let rows = match (table, column) {
         ("breathing_rate", "full_sleep_rate") => {
-            sqlx::query("SELECT CAST(date AS CHAR) d, full_sleep_rate v FROM breathing_rate WHERE full_sleep_rate IS NOT NULL")
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(full_sleep_rate AS CHAR) v FROM breathing_rate WHERE full_sleep_rate IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("spo2_daily", "avg_value") => {
-            sqlx::query("SELECT CAST(date AS CHAR) d, avg_value v FROM spo2_daily WHERE avg_value IS NOT NULL")
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(avg_value AS CHAR) v FROM spo2_daily WHERE avg_value IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("hrv_daily", "daily_rmssd") => {
-            sqlx::query("SELECT CAST(date AS CHAR) d, daily_rmssd v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
                 .fetch_all(pool).await
         }
         _ => anyhow::bail!("no query wired for {table}.{column}"),
@@ -434,12 +434,23 @@ async fn read_daily_column(
     let mut out = Vec::new();
     for r in rows {
         let d: String = r.try_get("d").context("date column")?;
-        // ⚠ f64 via try_get, not f32: MariaDB FLOAT vs DOUBLE decodes differently
-        // and the wrong one fails on REAL rows only.
-        let v: f64 = match r.try_get::<f64, _>("v") {
-            Ok(v) => v,
-            Err(_) => r.try_get::<f32, _>("v").context("value column")? as f64,
-        };
+        // ⚠ `CAST(... AS CHAR)` ON THE VALUE TOO, not only on the date.
+        //
+        // These columns are DECIMAL, and sqlx decodes DECIMAL into neither f32
+        // nor f64 — a live run answered
+        //
+        //     Rust type `f32` (as SQL type `FLOAT`) is not compatible with
+        //     SQL type `DECIMAL`
+        //
+        // and an f64/f32 fallback does not help, because the fault is the SQL
+        // type rather than its width. ⚠ THIS FAILS ON REAL ROWS ONLY: an empty
+        // table decodes fine and the check passes, so a test against a fixture
+        // would never have caught it. A string crosses cleanly from every
+        // numeric type and this is a readout, not arithmetic.
+        let raw: String = r.try_get("v").context("value column")?;
+        let v: f64 = raw
+            .parse()
+            .with_context(|| format!("{table}.{column} value {raw:?} is not a number"))?;
         out.push((d, v));
     }
     Ok(out)
