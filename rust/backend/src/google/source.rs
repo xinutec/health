@@ -57,8 +57,11 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "spo2_daily",
-        owner: Owner::Fitbit,
-        why: "google has daily-oxygen-saturation, 1176 against our 1175 — client not written yet",
+        owner: Owner::Google,
+        why: "ALL THREE columns: averagePercentage/lowerBound/upperBound, 1162 of 1174 days each, \
+              p50 p90 p99 all 0.000. ⚠ The 12 exceptions are CONSECUTIVE (2024-04-15..26) — an \
+              episode, not the different-statistic mismatch this was once blocked on. \
+              lowerBound/upperBound measured as real extremes, NOT a mean±stddev interval",
     },
     Stream {
         name: "breathing_rate",
@@ -142,7 +145,13 @@ pub fn at_risk() -> Vec<&'static Stream> {
 /// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
 /// agrees with it by construction and proves nothing; this is written by hand
 /// and the test compares them.
-pub const HAS_WRITER: &[&str] = &["body", "breathing_rate", "hrv_daily", "skin_temperature"];
+pub const HAS_WRITER: &[&str] = &[
+    "body",
+    "breathing_rate",
+    "hrv_daily",
+    "skin_temperature",
+    "spo2_daily",
+];
 
 /// True when `google::sync` (or `google::body`) writes this stream.
 pub fn has_writer(name: &str) -> bool {

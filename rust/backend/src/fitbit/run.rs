@@ -287,6 +287,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google skin_temperature failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("spo2_daily") {
+        match crate::google::sync::sync_spo2_daily(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google spo2_daily: {n} day(s)"),
+            Err(e) => tracing::error!("[{user_id}] google spo2_daily failed: {e:#}"),
+        }
+    }
 }
 
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
@@ -377,10 +383,12 @@ async fn forward_pass(
         sync::steps::sync_steps_intraday(client, pool, access, user_id, &dates, tz_for).await
     })
     .await?;
-    try_stream(user_id, "SpO2", async {
-        sync::daily::sync_spo2_daily(client, pool, access, user_id, start, end).await
-    })
-    .await?;
+    if crate::google::source::fitbit_still_owns("spo2_daily") {
+        try_stream(user_id, "SpO2", async {
+            sync::daily::sync_spo2_daily(client, pool, access, user_id, start, end).await
+        })
+        .await?;
+    }
     // ⚠ THE DAILY PAIR ONLY. `hrv_intraday` below is a SEPARATE stream with its
     // own roster entry, still owned by Fitbit — gating both here on one name
     // would switch off a stream Google has no writer for.
@@ -582,6 +590,9 @@ async fn backfill_pass(
         }),
         range_stream(user_id, "spo2", move |s: String, e: String| {
             Box::pin(async move {
+                if !crate::google::source::fitbit_still_owns("spo2_daily") {
+                    return Ok(0);
+                }
                 sync::daily::sync_spo2_daily(client, pool, access, user_id, &s, &e).await
             })
         }),

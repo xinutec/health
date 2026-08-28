@@ -550,6 +550,41 @@ async fn google_compare() -> Result<()> {
             tol: 0.5,
             unit: "bpm",
         },
+        // spo2_daily has THREE value columns, not one. ⚠ `lowerBound`/`upperBound`
+        // are NOT self-evidently min/max: `standardDeviationPercentage` sits
+        // beside them in the same point, which is what a CONFIDENCE INTERVAL
+        // looks like — mean ± k·σ, a different statistic from an observed
+        // extreme. The third pair below tests exactly that, so the naming is
+        // never what decides it.
+        Pair {
+            google: "daily-oxygen-saturation",
+            pointer: "/dailyOxygenSaturation/lowerBoundPercentage",
+            minus: None,
+            table: "spo2_daily",
+            column: "min_value",
+            tol: 0.05,
+            unit: "%",
+        },
+        Pair {
+            google: "daily-oxygen-saturation",
+            pointer: "/dailyOxygenSaturation/upperBoundPercentage",
+            minus: None,
+            table: "spo2_daily",
+            column: "max_value",
+            tol: 0.05,
+            unit: "%",
+        },
+        // The CI hypothesis, as a control on the two above: if lowerBound is
+        // mean − σ then THIS agrees with min_value and the pair above does not.
+        Pair {
+            google: "daily-oxygen-saturation",
+            pointer: "/dailyOxygenSaturation/averagePercentage",
+            minus: Some("/dailyOxygenSaturation/standardDeviationPercentage"),
+            table: "spo2_daily",
+            column: "min_value",
+            tol: 0.05,
+            unit: "%",
+        },
     ];
 
     for p in PAIRS {
@@ -608,6 +643,14 @@ async fn read_daily_column(
         }
         ("hrv_daily", "daily_rmssd") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("spo2_daily", "min_value") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(min_value AS CHAR) v FROM spo2_daily WHERE min_value IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("spo2_daily", "max_value") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(max_value AS CHAR) v FROM spo2_daily WHERE max_value IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("daily_activity", "resting_heart_rate") => {
@@ -739,6 +782,29 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
             at(0.50),
             at(0.90),
             at(0.99)
+        );
+        // ⚠ WHICH days, not just how many. Twelve scattered disagreements and
+        // one bad fortnight are the same count and opposite diagnoses: the first
+        // is a statistic that does not match, the second is an episode with a
+        // cause you can go and find. Sorted, and capped so a wholesale mismatch
+        // cannot flood the readout — the cap is REPORTED, because a silent
+        // truncation would read as "that is all of them".
+        let mut days: Vec<&str> = g
+            .iter()
+            .filter(|(d, gv)| o.get(*d).is_some_and(|ov| (*gv - ov).abs() > tol))
+            .map(|(d, _)| *d)
+            .collect();
+        days.sort_unstable();
+        const SHOW: usize = 20;
+        let shown = days.len().min(SHOW);
+        println!(
+            "    differing days: {}{}",
+            days[..shown].join(" "),
+            if days.len() > SHOW {
+                format!(" … and {} more", days.len() - SHOW)
+            } else {
+                String::new()
+            }
         );
     }
     if only_google > 0 {

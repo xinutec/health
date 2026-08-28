@@ -310,3 +310,86 @@ pub async fn sync_skin_temperature(
     );
     Ok(written)
 }
+
+/// One day's oxygen saturation, any of which may be absent.
+#[derive(Default, Clone, Copy)]
+struct Spo2 {
+    avg: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
+/// `spo2_daily`, all THREE columns, from one Google type.
+///
+/// # Why this was written up as blocked, and why that was wrong
+///
+/// #260 recorded spo2 as BLOCKED: 12 days differ by up to 4.4 percentage points,
+/// with a mechanism — `WRITE_OXYGEN_SATURATION` is the one denied Health Connect
+/// grant, so Google's SpO2 was presumed to arrive by another path as a different
+/// daily statistic.
+///
+/// ⚠ **THE DAY PATTERN REFUTES THAT.** A different statistic disagrees
+/// EVERYWHERE; this one agrees on 1162 of 1174 shared days with p50, p90 AND p99
+/// all 0.000, and the twelve exceptions are CONSECUTIVE — 2024-04-15 to
+/// 2024-04-26. That is an episode with a cause, not a mismatch of definitions.
+/// A count alone could not tell those apart, which is why `google-compare` now
+/// prints WHICH days differ.
+///
+/// ⚠ `lowerBound`/`upperBound` were NOT taken on their names. They sit beside
+/// `standardDeviationPercentage`, which is what a confidence interval looks
+/// like, so the hypothesis was measured: `average - stddev` against `min_value`
+/// agrees on 13 of 1161 days at p50 1.700. Refuted — they are real extremes.
+pub async fn sync_spo2_daily(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    const TYPE: &str = "daily-oxygen-saturation";
+    let mut by_day: BTreeMap<String, Spo2> = BTreeMap::new();
+
+    for (pointer, which) in [
+        ("/dailyOxygenSaturation/averagePercentage", 0u8),
+        ("/dailyOxygenSaturation/lowerBoundPercentage", 1),
+        ("/dailyOxygenSaturation/upperBoundPercentage", 2),
+    ] {
+        for d in fetch_daily_series(http, access_token, TYPE, pointer)
+            .await
+            .with_context(|| format!("fetching {pointer}"))?
+        {
+            let e = by_day.entry(d.date).or_default();
+            match which {
+                0 => e.avg = Some(d.value),
+                1 => e.min = Some(d.value),
+                _ => e.max = Some(d.value),
+            }
+        }
+    }
+
+    let mut written = 0usize;
+    for (date, s) in &by_day {
+        // ⚠ Any column present writes the row; all three are nullable and the
+        // readers take them as such. Same rule as the other writers here.
+        sqlx::query(
+            "INSERT INTO spo2_daily (user_id, date, avg_value, min_value, max_value) \
+             VALUES (?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE avg_value=VALUES(avg_value), min_value=VALUES(min_value), \
+             max_value=VALUES(max_value)",
+        )
+        .bind(user_id)
+        .bind(date)
+        .bind(s.avg)
+        .bind(s.min)
+        .bind(s.max)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing spo2_daily for {date}"))?;
+        written += 1;
+    }
+
+    tracing::info!(
+        "[{user_id}] google spo2_daily: {written} day(s), {} with a range",
+        by_day.values().filter(|s| s.min.is_some()).count()
+    );
+    Ok(written)
+}
