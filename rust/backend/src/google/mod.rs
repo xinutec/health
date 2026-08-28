@@ -18,3 +18,4 @@ pub mod health;
 pub mod oauth;
 pub mod probe;
 pub mod source;
+pub mod sync;

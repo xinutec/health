@@ -60,8 +60,9 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "breathing_rate",
-        owner: Owner::Fitbit,
-        why: "google has daily-respiratory-rate, 1186 against our 1186 — client not written yet",
+        owner: Owner::Google,
+        why: "full_sleep_rate 1186/1186 EXACT against daily-respiratory-rate; the three stage \
+              columns GAIN 1197 days each, having held 0 rows since Fitbit never returned them",
     },
     Stream {
         name: "skin_temperature",
@@ -124,4 +125,21 @@ pub fn at_risk() -> Vec<&'static Stream> {
         .iter()
         .filter(|s| s.owner != Owner::Google)
         .collect()
+}
+
+/// The streams something in `google::sync` actually writes.
+///
+/// ⚠ **THIS EXISTS BECAUSE `Owner::Google` MAKES `fitbit::run` SKIP A STREAM.**
+/// Flipping an owner without a writer does not fall back — it stops the stream
+/// dead, silently, and looks like a one-line config change. The test pairing
+/// this with `STREAMS` is what makes the two inseparable.
+///
+/// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
+/// agrees with it by construction and proves nothing; this is written by hand
+/// and the test compares them.
+pub const HAS_WRITER: &[&str] = &["body", "breathing_rate"];
+
+/// True when `google::sync` (or `google::body`) writes this stream.
+pub fn has_writer(name: &str) -> bool {
+    HAS_WRITER.contains(&name)
 }

@@ -97,6 +97,7 @@ pub async fn run(
     tracing::info!("Found {} user(s) with Fitbit tokens", users.len());
 
     google_weight(pool, http).await;
+    google_streams(pool, http).await;
 
     // ⚠ ONE client and ONE token store for the whole run, not one per user. The
     // Fitbit budget is charged against the APPLICATION, so a per-user client
@@ -244,6 +245,38 @@ async fn sync_one_user(
 /// Google is not set up. It is logged at DEBUG rather than WARN so it does not
 /// cry wolf, which does mean a credential that goes missing looks like a host
 /// that never had one.
+/// The streams `google::source` says Google owns, beyond weight.
+///
+/// ⚠ FAILS SOFT, like `google_weight`. Google being unreachable must not take
+/// down the Fitbit streams that still run in the same job — those are the ones
+/// with a September deadline, and losing a night of them to an unrelated outage
+/// is the worse trade.
+///
+/// ⚠ The user is the one Google is configured for, not every Fitbit user.
+/// `GH_USER_ID` names it, and there is exactly one.
+async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
+    let (Some(creds), Ok(user_id)) = (
+        crate::google::oauth::GoogleCreds::from_env(),
+        std::env::var("GH_USER_ID"),
+    ) else {
+        tracing::debug!("google streams: not configured, skipping");
+        return;
+    };
+    let token = match crate::google::oauth::access_token(http, &creds).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("google streams: no access token: {e:#}");
+            return;
+        }
+    };
+    if !crate::google::source::fitbit_still_owns("breathing_rate") {
+        match crate::google::sync::sync_breathing_rate(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google breathing_rate: {n} day(s)"),
+            Err(e) => tracing::error!("[{user_id}] google breathing_rate failed: {e:#}"),
+        }
+    }
+}
+
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
     let (Some(creds), Some(user_id)) = (
         crate::google::oauth::GoogleCreds::from_env(),
@@ -344,10 +377,16 @@ async fn forward_pass(
         sync::hrv::sync_hrv_intraday(client, pool, access, user_id, &dates).await
     })
     .await?;
-    try_stream(user_id, "breathing", async {
-        sync::daily::sync_breathing_rate(client, pool, access, user_id, start, end).await
-    })
-    .await?;
+    // ⚠ THE ROSTER DECIDES, not this call site. `google::source` owns the
+    // question of which API serves each stream; asking it here is what keeps
+    // "where does breathing rate come from?" answerable from one list instead
+    // of by finding every branch (#260).
+    if crate::google::source::fitbit_still_owns("breathing_rate") {
+        try_stream(user_id, "breathing", async {
+            sync::daily::sync_breathing_rate(client, pool, access, user_id, start, end).await
+        })
+        .await?;
+    }
     try_stream(user_id, "temperature", async {
         sync::daily::sync_temperature(client, pool, access, user_id, start, end).await
     })
@@ -501,8 +540,15 @@ async fn backfill_pass(
                 async move { sync::hrv::sync_hrv(client, pool, access, user_id, &s, &e).await },
             )
         }),
+        // ⚠ The BACKFILL walk needs the same gate as the forward pass. Gating
+        // one and not the other leaves a stream that stops arriving but keeps
+        // being back-filled, which reads as an intermittent fault rather than a
+        // source change.
         range_stream(user_id, "breathing", move |s: String, e: String| {
             Box::pin(async move {
+                if !crate::google::source::fitbit_still_owns("breathing_rate") {
+                    return Ok(0);
+                }
                 sync::daily::sync_breathing_rate(client, pool, access, user_id, &s, &e).await
             })
         }),

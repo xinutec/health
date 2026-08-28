@@ -62,3 +62,33 @@ fn at_risk_is_everything_google_does_not_own() {
     assert!(risky.iter().any(|s| s.name == "steps_intraday"));
     assert!(!risky.iter().any(|s| s.name == "body"));
 }
+
+/// ⚠ THE FLIP AND THE WRITER ARE INSEPARABLE. `Owner::Google` makes
+/// `fitbit::run` skip a stream; if nothing in `google::sync` writes it, the
+/// stream stops dead — silently, from what reads as a one-line config change.
+#[test]
+fn every_google_owned_stream_has_a_writer() {
+    use backend::google::source::has_writer;
+    for s in STREAMS.iter().filter(|s| s.owner == Owner::Google) {
+        assert!(
+            has_writer(s.name),
+            "{} is owned by Google but nothing writes it — flipping it stops the stream",
+            s.name
+        );
+    }
+}
+
+/// And the converse: a writer with no Google-owned stream is dead code that
+/// will be read as coverage.
+#[test]
+fn no_writer_without_an_owned_stream() {
+    use backend::google::source::HAS_WRITER;
+    for w in HAS_WRITER {
+        assert!(
+            STREAMS
+                .iter()
+                .any(|s| s.name == *w && s.owner == Owner::Google),
+            "{w} has a writer but is not owned by Google"
+        );
+    }
+}
