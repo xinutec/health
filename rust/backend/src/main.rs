@@ -321,8 +321,26 @@ async fn main() -> Result<()> {
     }
 }
 
+/// How a type is fetched. ⚠ NOT cosmetic — the aggregates REFUSE `list`
+/// ("List is not supported for data type total-calories"), and `list` on
+/// `steps` returns per-interval samples rather than a civil-day sum. Getting
+/// this wrong reports a populated stream as empty.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Source {
+    List,
+    Rollup,
+}
+
 struct Pair {
     google: &'static str,
+    source: Source,
+    /// Multiply Google's value by this before comparing.
+    ///
+    /// ⚠ THE UNITS ARE NOT THE SAME ON BOTH SIDES. `distance.millimetersSum` is
+    /// millimetres and `daily_activity.distance_km` is kilometres — a factor of
+    /// a million. Left at 1.0 that comparison reports every day as differing by
+    /// the entire reading, which looks exactly like a wrong mapping.
+    scale: f64,
     pointer: &'static str,
     /// Subtract this pointer's value from `pointer`, day by day, before
     /// comparing.
@@ -409,6 +427,8 @@ async fn google_compare() -> Result<()> {
         // than risking them.
         Pair {
             google: "daily-respiratory-rate",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyRespiratoryRate/breathsPerMinute",
             minus: None,
             table: "breathing_rate",
@@ -421,6 +441,8 @@ async fn google_compare() -> Result<()> {
         // the next reader to rediscover that by mapping the wrong one.
         Pair {
             google: "respiratory-rate-sleep-summary",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/respiratoryRateSleepSummary/fullSleepStats/breathsPerMinute",
             minus: None,
             table: "breathing_rate",
@@ -430,6 +452,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "respiratory-rate-sleep-summary",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/respiratoryRateSleepSummary/deepSleepStats/breathsPerMinute",
             minus: None,
             table: "breathing_rate",
@@ -439,6 +463,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "respiratory-rate-sleep-summary",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/respiratoryRateSleepSummary/lightSleepStats/breathsPerMinute",
             minus: None,
             table: "breathing_rate",
@@ -448,6 +474,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "respiratory-rate-sleep-summary",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/respiratoryRateSleepSummary/remSleepStats/breathsPerMinute",
             minus: None,
             table: "breathing_rate",
@@ -457,6 +485,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "daily-oxygen-saturation",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyOxygenSaturation/averagePercentage",
             minus: None,
             table: "spo2_daily",
@@ -466,6 +496,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "daily-heart-rate-variability",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyHeartRateVariability/averageHeartRateVariabilityMilliseconds",
             minus: None,
             table: "hrv_daily",
@@ -480,6 +512,8 @@ async fn google_compare() -> Result<()> {
         // would have frozen it at whatever Fitbit last wrote.
         Pair {
             google: "daily-heart-rate-variability",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyHeartRateVariability/deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds",
             minus: None,
             table: "hrv_daily",
@@ -498,6 +532,8 @@ async fn google_compare() -> Result<()> {
         // moved onto the wrong statistic.
         Pair {
             google: "daily-sleep-temperature-derivations",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailySleepTemperatureDerivations/relativeNightlyStddev30dCelsius",
             minus: None,
             table: "skin_temperature",
@@ -507,6 +543,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "daily-sleep-temperature-derivations",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailySleepTemperatureDerivations/nightlyTemperatureCelsius",
             minus: None,
             table: "skin_temperature",
@@ -516,6 +554,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "daily-sleep-temperature-derivations",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailySleepTemperatureDerivations/baselineTemperatureCelsius",
             minus: None,
             table: "skin_temperature",
@@ -530,6 +570,8 @@ async fn google_compare() -> Result<()> {
         // carrying a different statistic.
         Pair {
             google: "daily-sleep-temperature-derivations",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailySleepTemperatureDerivations/nightlyTemperatureCelsius",
             minus: Some("/dailySleepTemperatureDerivations/baselineTemperatureCelsius"),
             table: "skin_temperature",
@@ -543,6 +585,8 @@ async fn google_compare() -> Result<()> {
         // `elevation_m` are 0 of 1246 rows and need no source at all.
         Pair {
             google: "daily-resting-heart-rate",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyRestingHeartRate/beatsPerMinute",
             minus: None,
             table: "daily_activity",
@@ -558,6 +602,8 @@ async fn google_compare() -> Result<()> {
         // never what decides it.
         Pair {
             google: "daily-oxygen-saturation",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyOxygenSaturation/lowerBoundPercentage",
             minus: None,
             table: "spo2_daily",
@@ -567,6 +613,8 @@ async fn google_compare() -> Result<()> {
         },
         Pair {
             google: "daily-oxygen-saturation",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyOxygenSaturation/upperBoundPercentage",
             minus: None,
             table: "spo2_daily",
@@ -578,6 +626,8 @@ async fn google_compare() -> Result<()> {
         // mean − σ then THIS agrees with min_value and the pair above does not.
         Pair {
             google: "daily-oxygen-saturation",
+            source: Source::List,
+            scale: 1.0,
             pointer: "/dailyOxygenSaturation/averagePercentage",
             minus: Some("/dailyOxygenSaturation/standardDeviationPercentage"),
             table: "spo2_daily",
@@ -585,11 +635,80 @@ async fn google_compare() -> Result<()> {
             tol: 0.05,
             unit: "%",
         },
+        // daily_activity's rollup columns. ⚠ These REFUSE `list`; the aggregate
+        // types only answer `rollup`/`dailyRollup`, which is why nine of the ten
+        // columns could not be measured until now.
+        Pair {
+            google: "steps",
+            source: Source::Rollup,
+            scale: 1.0,
+            pointer: "/steps/countSum",
+            minus: None,
+            table: "daily_activity",
+            column: "steps",
+            tol: 0.5,
+            unit: "steps",
+        },
+        Pair {
+            google: "distance",
+            source: Source::Rollup,
+            // millimetres → kilometres.
+            scale: 1e-6,
+            pointer: "/distance/millimetersSum",
+            minus: None,
+            table: "daily_activity",
+            column: "distance_km",
+            tol: 0.01,
+            unit: "km",
+        },
+        Pair {
+            google: "total-calories",
+            source: Source::Rollup,
+            scale: 1.0,
+            pointer: "/totalCalories/kcalSum",
+            minus: None,
+            table: "daily_activity",
+            column: "calories_total",
+            tol: 0.5,
+            unit: "kcal",
+        },
+        Pair {
+            google: "active-energy-burned",
+            source: Source::Rollup,
+            scale: 1.0,
+            pointer: "/activeEnergyBurned/kcalSum",
+            minus: None,
+            table: "daily_activity",
+            column: "calories_active",
+            tol: 0.5,
+            unit: "kcal",
+        },
     ];
 
+    // The rollup window. ⚠ Bounded by our own data, not by the API: a rollup is
+    // chunked at 14 days per request, so asking for four years is ~100 round
+    // trips. This covers the corpus and is stated rather than guessed.
+    let end_d = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+    let start_d = chrono::NaiveDate::from_ymd_opt(2023, 4, 1).expect("a literal date");
+
     for p in PAIRS {
-        let mut theirs =
-            backend::google::health::fetch_daily_series(&http, &token, p.google, p.pointer).await?;
+        let mut theirs = match p.source {
+            Source::List => {
+                backend::google::health::fetch_daily_series(&http, &token, p.google, p.pointer)
+                    .await?
+            }
+            Source::Rollup => {
+                backend::google::health::fetch_daily_rollup(
+                    &http, &token, p.google, start_d, end_d, p.pointer,
+                )
+                .await?
+            }
+        };
+        if p.scale != 1.0 {
+            for d in &mut theirs {
+                d.value *= p.scale;
+            }
+        }
         if let Some(sub) = p.minus {
             let base =
                 backend::google::health::fetch_daily_series(&http, &token, p.google, sub).await?;
@@ -643,6 +762,22 @@ async fn read_daily_column(
         }
         ("hrv_daily", "daily_rmssd") => {
             sqlx::query("SELECT CAST(date AS CHAR) d, CAST(daily_rmssd AS CHAR) v FROM hrv_daily WHERE daily_rmssd IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("daily_activity", "steps") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(steps AS CHAR) v FROM daily_activity WHERE steps IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("daily_activity", "distance_km") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(distance_km AS CHAR) v FROM daily_activity WHERE distance_km IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("daily_activity", "calories_total") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(calories_total AS CHAR) v FROM daily_activity WHERE calories_total IS NOT NULL")
+                .fetch_all(pool).await
+        }
+        ("daily_activity", "calories_active") => {
+            sqlx::query("SELECT CAST(date AS CHAR) d, CAST(calories_active AS CHAR) v FROM daily_activity WHERE calories_active IS NOT NULL")
                 .fetch_all(pool).await
         }
         ("spo2_daily", "min_value") => {
@@ -789,6 +924,20 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
         // cause you can go and find. Sorted, and capped so a wholesale mismatch
         // cannot flood the readout — the cap is REPORTED, because a silent
         // truncation would read as "that is all of them".
+        // ⚠ WHICH SIDE IS HIGHER. `|delta|` cannot distinguish "Google counts
+        // more" from "Google counts less", and for a migration those are
+        // completely different decisions: a consistent excess is a second
+        // source being counted, a consistent shortfall is data we would lose.
+        // A symmetric split is neither — it is noise or a boundary.
+        let higher = g
+            .iter()
+            .filter(|(d, gv)| o.get(*d).is_some_and(|ov| *gv - ov > tol))
+            .count();
+        let lower = g
+            .iter()
+            .filter(|(d, gv)| o.get(*d).is_some_and(|ov| ov - *gv > tol))
+            .count();
+        println!("    direction: google higher on {higher}, lower on {lower}");
         let mut days: Vec<&str> = g
             .iter()
             .filter(|(d, gv)| o.get(*d).is_some_and(|ov| (*gv - ov).abs() > tol))
