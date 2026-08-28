@@ -68,8 +68,11 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "skin_temperature",
-        owner: Owner::Fitbit,
-        why: "google has daily-sleep-temperature-derivations, 1197 against our 1193 — client not written yet",
+        owner: Owner::Google,
+        why: "COMPUTED, not a field: nightlyTemperatureCelsius MINUS baselineTemperatureCelsius, \
+              1194/1194 nights, worst 0.050 °C. ⚠ The field whose NAME matches \
+              (relativeNightlyStddev30dCelsius) is the WORST of three candidates at p50 0.599. \
+              The 0.050 residual is our own 0.1 °C quantisation, so this gains precision",
     },
     Stream {
         name: "heart_rate_intraday",
@@ -139,7 +142,7 @@ pub fn at_risk() -> Vec<&'static Stream> {
 /// ⚠ Not derived from `STREAMS`. A list generated from the thing it checks
 /// agrees with it by construction and proves nothing; this is written by hand
 /// and the test compares them.
-pub const HAS_WRITER: &[&str] = &["body", "breathing_rate", "hrv_daily"];
+pub const HAS_WRITER: &[&str] = &["body", "breathing_rate", "hrv_daily", "skin_temperature"];
 
 /// True when `google::sync` (or `google::body`) writes this stream.
 pub fn has_writer(name: &str) -> bool {

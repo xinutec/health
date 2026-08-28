@@ -281,6 +281,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google hrv_daily failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("skin_temperature") {
+        match crate::google::sync::sync_skin_temperature(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google skin_temperature: {n} night(s)"),
+            Err(e) => tracing::error!("[{user_id}] google skin_temperature failed: {e:#}"),
+        }
+    }
 }
 
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
@@ -398,10 +404,18 @@ async fn forward_pass(
         })
         .await?;
     }
-    try_stream(user_id, "temperature", async {
-        sync::daily::sync_temperature(client, pool, access, user_id, start, end).await
-    })
-    .await
+    // ⚠ A WRAPPING `if`, NOT AN EARLY RETURN. Temperature is the last stream in
+    // this pass today, so `return Ok(())` would read as equivalent — and would
+    // silently skip whatever stream is appended after it once this one is
+    // Google's. The gate must bound the call it guards, not the rest of the
+    // function.
+    if crate::google::source::fitbit_still_owns("skin_temperature") {
+        try_stream(user_id, "temperature", async {
+            sync::daily::sync_temperature(client, pool, access, user_id, start, end).await
+        })
+        .await?;
+    }
+    Ok(())
 }
 
 /// Whether `date` has any stored heart-rate row.
@@ -573,6 +587,9 @@ async fn backfill_pass(
         }),
         range_stream(user_id, "temperature", move |s: String, e: String| {
             Box::pin(async move {
+                if !crate::google::source::fitbit_still_owns("skin_temperature") {
+                    return Ok(0);
+                }
                 sync::daily::sync_temperature(client, pool, access, user_id, &s, &e).await
             })
         }),

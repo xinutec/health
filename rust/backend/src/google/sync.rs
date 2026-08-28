@@ -224,3 +224,89 @@ pub async fn sync_hrv_daily(
     );
     Ok(written)
 }
+
+/// `skin_temperature`, computed from TWO Google fields.
+///
+/// # There is no field for this
+///
+/// Fitbit's `nightlyRelative` is a deviation from a personal baseline. Google
+/// publishes the nightly temperature and the baseline as separate ABSOLUTES and
+/// nothing in between, so the value we store has to be computed. Measured
+/// 2026-08-28 against the live account:
+///
+/// ```text
+///   nightlyTemperatureCelsius - baselineTemperatureCelsius   1194/1194, worst 0.050
+///   relativeNightlyStddev30dCelsius                          1192 of 1194 differ, p50 0.599
+///   nightlyTemperatureCelsius                                1194 differ, p50 33.612
+///   baselineTemperatureCelsius                               1194 differ, p50 33.601
+/// ```
+///
+/// ⚠ THE FIELD WHOSE NAME MATCHES IS THE WORST MAPPING OF THE THREE.
+/// `relativeNightlyStddev30dCelsius` reads like the right answer and is a
+/// different statistic; taking it on the strength of its name would have moved
+/// the column onto something else entirely, and taking its disagreement at face
+/// value would have read as "Google does not carry skin temperature".
+///
+/// ⚠ The 0.050 residual is OURS. `relative_deviation` is `DECIMAL(4,2)` holding
+/// values quantised to 0.1 °C, and half a step is 0.05 — the whole of it. The
+/// mapping is exact to the limit of what the column can store, so this GAINS
+/// precision rather than losing it.
+pub async fn sync_skin_temperature(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    const TYPE: &str = "daily-sleep-temperature-derivations";
+
+    let nightly = fetch_daily_series(
+        http,
+        access_token,
+        TYPE,
+        "/dailySleepTemperatureDerivations/nightlyTemperatureCelsius",
+    )
+    .await
+    .context("fetching nightlyTemperatureCelsius")?;
+
+    let baseline: BTreeMap<String, f64> = fetch_daily_series(
+        http,
+        access_token,
+        TYPE,
+        "/dailySleepTemperatureDerivations/baselineTemperatureCelsius",
+    )
+    .await
+    .context("fetching baselineTemperatureCelsius")?
+    .into_iter()
+    .map(|d| (d.date, d.value))
+    .collect();
+
+    let mut written = 0usize;
+    let mut unpaired = 0usize;
+    for n in &nightly {
+        // ⚠ BOTH HALVES OR NOTHING. A difference needs two operands, and
+        // defaulting the absent baseline to zero would store a ~33 °C absolute
+        // in a column of ±2 °C deviations — a value the readers would plot
+        // without complaint. Google had 4 nights of nightly beyond our range and
+        // the counts are reported, so a systematic gap cannot pass as silence.
+        let Some(base) = baseline.get(&n.date) else {
+            unpaired += 1;
+            continue;
+        };
+        sqlx::query(
+            "INSERT INTO skin_temperature (user_id, date, relative_deviation) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE relative_deviation=VALUES(relative_deviation)",
+        )
+        .bind(user_id)
+        .bind(&n.date)
+        .bind(n.value - base)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing skin_temperature for {}", n.date))?;
+        written += 1;
+    }
+
+    tracing::info!(
+        "[{user_id}] google skin_temperature: {written} night(s), {unpaired} without a baseline"
+    );
+    Ok(written)
+}

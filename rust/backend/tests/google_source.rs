@@ -92,3 +92,33 @@ fn no_writer_without_an_owned_stream() {
         );
     }
 }
+
+/// ⚠ A COMPUTED STREAM IS STILL ONE STREAM. `skin_temperature` is written from
+/// two Google fields subtracted, which is a different shape from every other
+/// writer — and exactly the kind of special case that gets flipped in the
+/// roster while the writer is still a TODO.
+#[test]
+fn skin_temperature_is_google_owned_and_written() {
+    use backend::google::source::has_writer;
+    let s = STREAMS
+        .iter()
+        .find(|s| s.name == "skin_temperature")
+        .expect("skin_temperature is in the roster");
+    assert_eq!(s.owner, Owner::Google);
+    assert!(has_writer("skin_temperature"));
+}
+
+/// ⚠ THE DAILY AND INTRADAY STREAMS OF ONE SENSOR ARE SEPARATE ENTRIES, and
+/// only the daily ones have Google writers. `hrv_daily` moved while
+/// `hrv_intraday` cannot: Google's `heart-rate-variability` carries only RMSSD,
+/// and our table also has `coverage`, `hf` and `lf`. Gating both on a shared
+/// prefix would strand three columns with no source.
+#[test]
+fn the_intraday_siblings_did_not_move_with_their_daily_streams() {
+    for name in ["hrv_intraday", "heart_rate_intraday"] {
+        assert!(
+            fitbit_still_owns(name),
+            "{name} has no Google writer — flipping it would strand its columns"
+        );
+    }
+}
