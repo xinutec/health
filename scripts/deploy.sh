@@ -166,25 +166,40 @@ $DEV pnpm run verify
 # cron actually runs on, and the only input that reaches the long-span
 # classification branches — and finally the captured conflated café/residence
 # cluster through `splitCluster`. 8 s for 35 cases.
-# ⚠ FOUR OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975, 06346bd,
-# 2026-08-26): `golden`, `golden` with tenants ON, `day-gate` and `golden-hsmm`.
-# All four ran `dist/cli/golden-check.js` or `compare-day.js`, and `src/` is gone,
-# so their `pnpm` scripts were removed from package.json with it. They are not
-# skipped and not waived — the coverage is GONE, and #1048 is where that is held.
+# ⚠ EIGHT OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975, 06346bd,
+# 2026-08-26), not the four this banner claimed until 2026-08-29. The first four
+# — `golden`, `golden` with tenants ON, `day-gate`, `golden-hsmm` — lost their
+# package.json scripts with `src/` and were noticed. The other four were not:
+# `walk-gate`, `score-decoder`, `focus-gate` and `compare-match` kept their
+# entries and kept being invoked here.
 #
-# They are removed from the run rather than left to fail, because the only way
-# past a failure here is DEPLOY_SKIP_GOLDEN, which would ALSO skip the five gates
-# that still work. But their loss is announced at the start and again at the end,
-# on the same argument as the skip banner below: a deploy is judged by its last
-# line, and a check that goes quiet is worse than one that goes red.
+# ⚠ AND THEY DID NOT FAIL AT `node dist/`, WHICH IS WHY IT WENT UNSEEN FOR THREE
+# DAYS. Each begins `pnpm run build >/dev/null`, and `package.json` has had no
+# `build` script since 06346bd. So they died one line EARLIER than anyone was
+# looking, printing `==> building` and nothing else. Measured 2026-08-29:
+# `walk-gate.sh` exits 1 with that as its entire output.
+#
+# The consequence was not a silent pass. `set -euo pipefail` means step 2
+# ABORTED at the first of them — so this block has been unable to complete since
+# 06346bd, and `compare-gps-outliers`, the one gate that still works, sat behind
+# three corpses and never ran. The only way past was DEPLOY_SKIP_GOLDEN, which
+# skips that one too.
+#
+# They are removed from the run rather than left to fail, and their loss is
+# announced at the start and again at the end, on the same argument as the skip
+# banner below: a deploy is judged by its last line, and a check that goes quiet
+# is worse than one that goes red. The coverage is GONE, not waived — #1048 is
+# where that is held.
 dead_gates_banner() {
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  FOUR GATES NO LONGER EXIST — coverage lost, not skipped
+	  ⚠  EIGHT GATES NO LONGER EXIST — coverage lost, not skipped
 	================================================================
 	    golden corpus             golden with tenants ON
 	    day gate                  golden-hsmm
+	    walk-geometry ratchet     decoder scoreboard
+	    focus gate                compare-match
 	================================================================
 	  deleted with the TS backend, #975 (06346bd, 2026-08-26)
 	  held at health #1048 — do not treat this deploy as gated by them
@@ -206,153 +221,45 @@ require_pnpm_scripts() {
 	if (( ${#missing[@]} )); then
 		echo "==> [2/7] ABORT: package.json has no script named: ${missing[*]}" >&2
 		echo "    A gate's script was deleted without its call site. See #1048 for" >&2
-		echo "    the last time this happened (#975 took four of them)." >&2
+		echo "    the last time this happened (#975 took EIGHT of them, and this" >&2
+		echo "    guard missed four because it checks that a package.json ENTRY" >&2
+		echo "    exists, not that the script it names can RUN)." >&2
 		exit 1
 	fi
 }
 
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [2/7] walk-geometry ratchet + decoder scoreboard + Lean focus parity"
+	echo "==> [2/7] Lean GPS-outlier parity — the one replay gate that still runs"
 	dead_gates_banner
 	DEAD_GATES=1
-	require_pnpm_scripts walk-gate score-decoder focus-gate compare-gps-outliers compare-match
-	$DEV pnpm run walk-gate
-	$DEV pnpm run score-decoder
-	$DEV pnpm run focus-gate
-	# Second pass, tenants ON: the ONLY place the verified Lean core is executed
-	# by a gate. Everything above runs with all seven flags `off`, so a broken
-	# bridge, a divergence, or a tenant that never ran could all ship — the arm
-	# simply is not consulted (#392).
+	require_pnpm_scripts compare-gps-outliers
+	# `Verified.Geo.GpsOutliers` serves production and nothing else stands behind
+	# it: the module runs daily and prints a verdict, so leaving its comparator
+	# hand-run would repeat #9's hazard in miniature — a check that exists, is
+	# never run, and quietly stops being true.
 	#
-	# `on` rather than `shadow` deliberately. `shadow` runs both arms and serves
-	# TS, so the 32/32 fixture diff would still be measuring TS and only the
-	# ledger would speak. Under `on` the corpus diff is ALSO a statement about
-	# Lean's output: 32/32 means serving the verified core reproduces every
-	# blessed day byte-for-byte.
+	# 11 fixtures, ~2 s. It replays the gitignored `decoded_days` corpus, which is
+	# why it belongs here rather than in gate.dhall.
 	#
-	# Not a substitute for the `compare-*.mts` referees and not substituted BY
-	# them: those feed raw fixes, which is exactly how #393's 17° bearing case
-	# hid from `compare-kalman` while the pipeline exercised it every day. This
-	# runs the real serving path on real days.
-	#
-	# hsmm, rail and stationchain are staged too even though the corpus cannot
-	# reach them — `gateLedgers` prints their waiver each run, and turns it into
-	# a STALE WAIVER report the moment the corpus does reach one.
-	#
-	# ALL SEVEN tenants run `on` here as of #403 — `match` and `passes` included,
-	# which they were not until the ceiling existed to hold their standing debt.
-	#
-	# The two were excluded because both serve or shadow in production while
-	# carrying UNEXPLAINED divergences, so staging them failed the run on a
-	# pre-existing condition, and the only lever to hand was widening the
-	# accepted-delta manifests — recording "we checked this and it is fine" about
-	# legs nobody had checked. `tests/golden/lean-delta-baseline.json` is the
-	# honest third option: a one-way ceiling of un-adjudicated fingerprints that
-	# may shrink and never grow. It carries one entry today (a `simplify` DP
-	# near-tie at n=72); `match` is clean on this corpus modulo its signed
-	# manifest. That does NOT retire the instruction below — a ceiling entry is
-	# debt, an accepted delta is a judgement, and the two must not merge.
-	#
-	# Do not close a gap here by widening the accepted-delta manifests.
-	#
-	# LEAN_CALL_TIMEOUT_MS is raised for the same reason the cron raises it: the
-	# walk matcher is a real computation, and on the heaviest legs the 5 s
-	# request-path default expires and falls back to TS. That fallback is silent
-	# by construction, so at the default this gate FAILED on a swallowed bridge
-	# call roughly at random depending on machine load — a nondeterministic gate,
-	# measuring the host rather than the code.
-	# ⚠ DEAD (#975) — the command this reasoning justified is gone:
-	#     LEAN_KALMAN=on … LEAN_STATIONCHAIN=shadow pnpm run golden
-	# The argument above is kept because it is the record of WHAT was being
-	# bought — the only place the verified Lean core was executed by a gate —
-	# and whatever replaces it in #1048 has to buy the same thing.
-
-	# The station-chain tenant (#711), on the one gate that can REACH it. The
-	# run above waives it for the same #233 reason it waives hsmm and rail — the
-	# corpus replays cached decodes, so `segmentsFromStates` never runs and the
-	# resolver with it. `golden-hsmm` decodes the eleven fixtures for real, and
-	# gates the ledger with no waiver available at all.
-	#
-	# It is a deploy gate rather than a CI one because it needs the gitignored
-	# `tests/golden/decoded_days` corpus, exactly as `pnpm run golden` above
-	# does. `shadow` not `on`: this tenant writes (its output is persisted to
-	# `decoded_days`), so serving it is a decision, not a gate setting.
-	# ⚠ DEAD (#975) — was:
-	#     LEAN_STATIONCHAIN=shadow LEAN_CALL_TIMEOUT_MS=30000 pnpm run golden-hsmm
-
-	# The HSMM outlier filter's ONLY evidence (#695). `Verified.Hsmm.GpsOutliers`
-	# has no tenant, no ledger and no gate — unlike `GpsQuality`, whose
-	# comparator can stay a hand-run referee because `LEAN_GPSQUALITY` serves it
-	# daily and prints a verdict. So this comparator is the whole of what stands
-	# behind that module, and leaving it hand-run would repeat #9's hazard in
-	# miniature: a check that exists, is never run, and quietly stops being true.
-	#
-	# Cheap enough that there is no argument against it — 11 fixtures, ~2 s
-	# total, against the ~12 min the matcher gate below costs. It replays the
-	# gitignored `decoded_days` corpus, which is why it belongs here rather than
-	# in gate.dhall, exactly like the three around it.
+	# ⚠ IT IS ALSO THE ONLY ONE LEFT, and it survives for a reason worth naming:
+	# it runs `pnpm exec tsx lean/experiments/compare-gps-outliers.mts` against
+	# the LEAN build. Every gate deleted from this block ran `node dist/cli/*.js`
+	# against the TypeScript backend, and there is no TypeScript backend.
 	$DEV pnpm run compare-gps-outliers
-
-	# The MATCHER FLIP GATE (#9). Until now `compare-match` appeared in
-	# package.json and nowhere else — not here, not gate.dhall, not any script
-	# that runs unattended. So a three-arm bit-exact comparison existed and
-	# nothing failed when it stopped being true, which is the hazard
-	# ledger-verdict.ts was written for one layer down (#387): printing evidence
-	# is not enforcing it.
-	#
-	# It asserts three conditions the run above cannot:
-	#   COVERAGE    legs were actually matched (a run that matched nothing
-	#               reports a clean sweep of nothing);
-	#   NO FALLBACK quant↔Lean bit-exact on every leg, so serving Lean IS serving
-	#               the verified twin and nothing silently diverges from it;
-	#   AGREEMENT   every float↔quant divergence is in the signed-off manifest,
-	#               adjudicated on all THREE axes a leg can move in — line,
-	#               vertex, and timestamp (#401).
-	#
-	# It also reports manifest COVERAGE: entries whose leg no longer appears are
-	# named as RESOLVED / RE-FINGERPRINTED / NOT COVERED rather than vanishing
-	# silently (#662). None of those fail the run; they are how a re-keying
-	# announces itself as one act instead of as N new findings.
-	#
-	# A deploy gate rather than a CI one for the same reason as the two above: it
-	# replays the gitignored `tests/golden/days` corpus. It is the SLOWEST of the
-	# three (~12 min, 208 legs each through three matchers), which is the price of
-	# the only check that compares the served arm against the verified one on
-	# real days.
-	#
-	# This gate going red does NOT mean production is wrong — LEAN_MATCH is
-	# `shadow`, so the TS matcher is what serves. It means the manifest no longer
-	# describes the corpus, and the fix is to adjudicate the leg it names, never
-	# to widen the manifest to match.
-	#
-	# ⚠ "Adjudicate it" is not the only honest answer, and reading it as the only
-	# one is what makes the manifest grow. As of 2026-08-16 this gate reads the
-	# same one-way delta CEILING the tenant ledgers use
-	# (`tests/golden/lean-delta-baseline.json`, key `match`), so a leg nobody has
-	# adjudicated yet can stand as DEBT — reported on its own line, printed apart
-	# from the accepted ones, and named in the green verdict, which then says
-	# "NOT the same as clean". That is the third option this file introduces
-	# seventy lines above for exactly this situation; it is not a way to make a
-	# red go away, because the ceiling may only ever shrink and recording new
-	# debt means hand-editing that file into a reviewable diff.
-	$DEV LEAN_CALL_TIMEOUT_MS=30000 pnpm run compare-match --gate
 else
-	# ⚠ EVERY gate this block contains, by name. The old message said "golden +
-	# walk-gate + score-decoder" and skipped six more without mentioning them —
-	# including the day gate, which is the only thing that asks whether the Lean
-	# port still matches what it ports.
+	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
+	# once said "golden + walk-gate + score-decoder" while skipping six more, and
+	# then named five while four of those could no longer run at all.
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  DEPLOYING WITH FIVE GATES SKIPPED
+	  ⚠  DEPLOYING WITH THE LAST REPLAY GATE SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    walk-geometry ratchet      compare-gps-outliers
-	    decoder scoreboard         compare-match
-	    focus gate
+	    compare-gps-outliers  (Lean GPS-outlier parity)
 	================================================================
-	  (four more — golden, golden tenants-ON, day gate, golden-hsmm —
-	   do not run either way: deleted with the TS backend, #975/#1048)
+	  the other eight do not run either way — deleted with the TS
+	  backend, #975/#1048
 	================================================================
 
 	BANNER

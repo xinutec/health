@@ -9,13 +9,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # running pod. Then runs the given command and tears the tunnel down.
 #
 # Usage:
-#   scripts/prod-db.sh node dist/cli/analyze-day.js 2026-05-15 pippijn Europe/London
-#   scripts/prod-db.sh node dist/cli/golden-check.js
-#   scripts/prod-db.sh node /tmp/some-diagnostic.mjs
+#   scripts/prod-db.sh bin/backend coverage
+#   scripts/prod-db.sh bin/backend freshness
+#   scripts/prod-db.sh bin/backend zones-census
 #
 # The command runs locally against 127.0.0.1:13306 -(ssh)-
-# svc/health-db:3306. Build the project yourself first if the command
-# needs dist/. TZ is pinned to UTC so a local run matches prod (the
+# svc/health-db:3306. Build the binary yourself first (`cargo build --bin
+# backend`). TZ is pinned to UTC so a local run matches prod (the
 # classification pipeline is not timezone-pure).
 #
 # Wrapper chatter goes to stderr, so the command's stdout stays clean.
@@ -30,10 +30,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # ⚠ REFUSE `node dist/…` AGAINST PRODUCTION.
 #
 # `dist/` is compiled output of `src/`, which was deleted on 2026-08-26 (#975).
-# It is gitignored, so a clean checkout has none of it — but on a machine that
-# predates the deletion it is still lying there, and it still runs. Twenty
-# scripts invoke `node dist/cli/*.js`, fourteen of them wired into
-# `package.json`.
+# It was gitignored, so a clean checkout never had it — but machines predating
+# the deletion kept a copy that still ran. The 67 scripts that invoked it, and
+# the 6 MB tree itself, are gone as of 2026-08-29 (#1225). THIS GUARD STAYS: it
+# costs nothing, and it is what would catch the next `dist/` reappearing on
+# somebody's machine.
 #
 # Two of the reachable ones WRITE: `refresh-presence-log.js` and
 # `refresh-focus-places.js` both contain INSERT/UPDATE/DELETE, and

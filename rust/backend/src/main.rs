@@ -1,15 +1,16 @@
 //! The backend entrypoint.
 //!
-//! Three subcommands:
+//! `backend <subcommand>` — run it with none for the list. The three that carry
+//! production:
 //!
 //!   check  — read the config, open the pool, and prove both against the real
 //!            database. READ-ONLY, so it is safe to point at production.
-//!   sync   — the port of `dist/sync.js`: Fitbit ingestion, forward then
-//!            backward, for every linked user. `--forward-only` runs the
-//!            forward pass alone and touches NO backfill state, which is the
-//!            form that is safe to run beside the live cron.
-//!   serve  — the HTTP skeleton. NOT production's server; `src/server.ts` still
-//!            owns every real route.
+//!   sync   — Fitbit + Google ingestion, forward then backward, for every linked
+//!            user. `--forward-only` runs the forward pass alone and touches NO
+//!            backfill state, which is the form that is safe to run beside the
+//!            live cron.
+//!   serve  — the HTTP server. THE server: `health-auth` runs this and nothing
+//!            else does.
 //!
 //! ⚠ `sync` NO LONGER EXITS 2. It did, and the reason it did still holds: a
 //! `sync` returning 0 having done nothing shows as a healthy scheduled run while
@@ -17,9 +18,18 @@
 //! stub — the run fails loudly when it cannot read its users or reach Lean, and
 //! reports a spent rate budget as the ordinary ending it is.
 //!
-//! ⚠ IT IS NOT WIRED INTO THE CRONJOB. `health-sync` still runs `dist/sync.js`.
-//! Nothing switches over until this has been run by hand against production and
-//! its writes compared with the TypeScript's.
+//! ⚠ AND IT IS NOT ENOUGH ON ITS OWN, which is the lesson of #1231: on
+//! 2026-08-28 `daily_activity` stopped for over an hour while every run exited
+//! 0, because a run that reads its users and reaches Lean can still write no
+//! rows. `backend freshness` asks the outcome question instead, on its own
+//! schedule.
+//!
+//! ⚠ THIS HEADER USED TO SAY the opposite of all of the above — "NOT
+//! production's server", "`health-sync` still runs `dist/sync.js`", "nothing
+//! switches over until…". Every cron and the Deployment have run this binary
+//! since 2026-08-26, and the TypeScript it deferred to was deleted the same day
+//! (#975). Corrected 2026-08-29; the claim survived three days past the thing it
+//! described.
 
 use anyhow::{Context, Result};
 use backend::fold_converge::Answerer;
@@ -1402,20 +1412,13 @@ async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> 
 
 /// Run one Fitbit ingestion pass over every linked user.
 ///
-/// # ⚠ NOT YET AT PARITY WITH `dist/sync.js` — one thing is missing
+/// # It does NOT migrate the schema
 ///
 /// Named here rather than left to be discovered from a diff, because it is a
-/// silent absence: the run would look healthy and simply not do it.
-///
-///   * **`migrate()`**, below.
-///
-/// The Google Health weight sync USED to be the other entry and now runs — see
-/// [`backend::google`]. It is still inert without `GH_*` and `GH_USER_ID`.
-///
-/// # It does NOT migrate the schema, and the TypeScript's `sync.ts` does
-///
-/// `dist/sync.js` calls `migrate()` on startup, so whichever of the sync cron
-/// and the server started first brought the schema up. This does not, because
+/// silent absence: the run would look healthy and simply not do it. The
+/// TypeScript this was once measured against called `migrate()` on startup, so
+/// whichever of the sync cron and the server started first brought the schema
+/// up. This does not, because
 /// two processes racing to apply migrations is a worse failure than a missing
 /// one, and `health-auth` already migrates on every start. ⚠ That means this
 /// binary must not be the FIRST thing to run against a fresh database.
@@ -3688,7 +3691,7 @@ async fn decode_one(
         // ⚠ ONE SEGMENT PER LINE, in exactly the form `segments_json` would hold
         // — same field order, same encodings, same absent-versus-null. That is
         // the point: it makes the parity check `diff` against
-        // `scripts/dump-decoded-segments.mjs`, which prints node's row the same
+        // the deleted `scripts/dump-decoded-segments.mjs`, which printed node's row the same
         // way, instead of a structural comparison nothing can quite trust.
         for seg in segments.as_array().unwrap_or(&Vec::new()) {
             println!("{}", serde_json::to_string(seg)?);
@@ -4266,7 +4269,8 @@ async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) -> Result<(
 /// equal timestamps expose the device-walk order: a `HashMap` iteration in Rust
 /// against a JSON object's insertion order in TypeScript.
 ///
-/// Pair with `scripts/locations-check-ts.mjs` and diff.
+/// Its TypeScript twin (`scripts/locations-check-ts.mjs`) is deleted with the
+/// rest of the `dist/` callers (#1225); this is the only arm now.
 async fn locations_check(user: &str, date: &str) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
