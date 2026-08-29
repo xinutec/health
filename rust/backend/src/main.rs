@@ -4424,6 +4424,33 @@ struct MirrorHarvest {
     failures: usize,
 }
 
+/// How long to wait between tiles, so the mirror stops rate-limiting itself.
+///
+/// ⚠ THE 429s WERE OURS, NOT THE ENDPOINT'S FAULT (#1153). The mirror issues 18
+/// back-to-back queries of ~5 MB each with no pacing; the first few answer in
+/// ~1.5 s and then `overpass-api.de` starts refusing. `OVERPASS_CONCURRENCY = 2`
+/// cannot help — these are already sequential, and the limit being hit is a
+/// RATE, not a concurrency.
+///
+/// The number comes from the endpoint's own statement of its terms rather than
+/// from taste. Measured 2026-08-29:
+///
+///     GET https://overpass-api.de/api/status
+///       Rate limit: 2
+///       2 slots available now.
+///
+/// Two slots, and a slot is held for the query's duration plus a cooldown that
+/// scales with its cost. A sequential walk uses one slot at a time, so the
+/// budget is spent over TIME, and 5 s is a pace a two-slot allowance can sustain
+/// while adding 90 s to an 18-tile run — against a 90-minute deadline.
+///
+/// ⚠ NOT a fix for `kumi.systems`, which is a different failure and still dead:
+/// its `/api/status` answers, and a real query returns 500 in 0.23 s. A status
+/// endpoint replying is not an interpreter working, and reading the first as the
+/// second is what made this look like one outage
+/// ([[feedback_a_degenerate_example_cannot_show_a_convention]]).
+const TILE_PACE_MS: u64 = 5_000;
+
 /// Fetch every tile and extract what Lean keeps.
 ///
 /// ⚠ THE DEDUP RULE DIFFERS BY ARM AND IS LEAN'S, NOT THIS FUNCTION'S: buses
@@ -4444,6 +4471,12 @@ async fn mirror_fetch(
     let mut breaker = lean::BreakerState::new();
 
     for (i, tile) in tiles.iter().enumerate() {
+        // ⚠ BEFORE the tile, and not after — a trailing sleep would pay the cost
+        // on the last tile for no benefit. Skipped on the first, which is never
+        // the one that gets refused.
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(TILE_PACE_MS)).await;
+        }
         let key = lean::tile_key(tile);
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
         // ⚠ Fail fast while the breaker is open — the whole point is not to eat
