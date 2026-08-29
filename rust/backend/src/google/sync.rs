@@ -409,6 +409,44 @@ pub async fn sync_spo2_daily(
 /// their history instead of being nulled.
 pub const DAILY_ACTIVITY_CUTOVER: &str = "2026-09-01";
 
+/// Which days the Google writer owns as of `today`, or `None` before the cutover.
+///
+/// ⚠ EXTRACTED SO THE BOUNDARY CAN BE DRIVEN. Until 2026-09-01 this returns
+/// `None` on every run, so the branch that actually writes had never executed —
+/// and the only test on the cutover asserted the CONSTANT was not earlier than
+/// the shutdown, which is a fact about a string. A guard that has only ever been
+/// observed refusing is a guard nobody has tested
+/// ([[feedback_verify_conditions_not_only_behaviour]]).
+///
+/// ⚠ HALF-OPEN `[start, end)`, because `fetch_daily_rollup` is: "the inclusive
+/// start and the exclusive end". So `end` is TOMORROW, and the off-by-one that
+/// matters is at the cutover day itself — on 2026-08-31 `end` is 2026-09-01,
+/// which equals `start`, and an empty window is correctly refused. The writer
+/// opens on 2026-09-01 and not a day either side.
+pub fn cutover_window(
+    today: chrono::NaiveDate,
+) -> Result<Option<(chrono::NaiveDate, chrono::NaiveDate)>> {
+    let start = chrono::NaiveDate::parse_from_str(DAILY_ACTIVITY_CUTOVER, "%Y-%m-%d")
+        .context("parsing the daily_activity cutover")?;
+    let end = today + chrono::Duration::days(1);
+    Ok((start < end).then_some((start, end)))
+}
+
+/// Is this day the Google writer's to write?
+///
+/// ⚠ A LEXICOGRAPHIC COMPARE ON DATE STRINGS, and it is sound rather than lucky:
+/// both parse boundaries in `google::health` build the date with
+/// `format!("{y:04}-{m:02}-{d:02}")`, so every date reaching here is zero-padded
+/// `YYYY-MM-DD`, where byte order and calendar order agree. An unpadded
+/// `2026-9-1` would sort BEFORE `2026-09-01` and be silently dropped — which is
+/// why the test pins the producer's padding and not just this function.
+///
+/// Used for the `list` walk only. The four rollup types are windowed by the API
+/// through [`cutover_window`], so they need no second filter.
+pub fn owned_by_google(date: &str) -> bool {
+    date >= DAILY_ACTIVITY_CUTOVER
+}
+
 /// One day's activity, from four Google types.
 #[derive(Default, Clone, Copy)]
 struct Activity {
@@ -444,15 +482,12 @@ pub async fn sync_daily_activity(
     access_token: &str,
     user_id: &str,
 ) -> Result<usize> {
-    let start = chrono::NaiveDate::parse_from_str(DAILY_ACTIVITY_CUTOVER, "%Y-%m-%d")
-        .context("parsing the daily_activity cutover")?;
-    let end = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
-    if start >= end {
+    let Some((start, end)) = cutover_window(chrono::Utc::now().date_naive())? else {
         tracing::info!(
             "[{user_id}] google daily_activity: before the {DAILY_ACTIVITY_CUTOVER} cutover, nothing to write"
         );
         return Ok(0);
-    }
+    };
 
     let mut by_day: BTreeMap<String, Activity> = BTreeMap::new();
 
@@ -495,7 +530,7 @@ pub async fn sync_daily_activity(
     {
         // ⚠ The list walk has no date window, so it returns the whole history —
         // filtered to the cutover here rather than by the API.
-        if d.date.as_str() >= DAILY_ACTIVITY_CUTOVER {
+        if owned_by_google(&d.date) {
             by_day.entry(d.date).or_default().resting_hr = Some(d.value);
         }
     }

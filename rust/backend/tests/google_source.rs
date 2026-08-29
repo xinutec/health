@@ -146,3 +146,86 @@ fn daily_activity_stays_on_fitbit_despite_having_a_google_writer() {
 fn the_cutover_is_not_before_the_fitbit_shutdown() {
     assert!(backend::google::sync::DAILY_ACTIVITY_CUTOVER >= "2026-09-01");
 }
+
+/// ⚠ THE ASSERTION ABOVE IS ABOUT A STRING, NOT ABOUT BEHAVIOUR. It cannot fail
+/// on the day the writer is supposed to start, because it does not run the
+/// writer's decision. Until 2026-09-01 `sync_daily_activity` logs "before the
+/// cutover, nothing to write" on every run, so the branch that WRITES has never
+/// executed in production or in a test — the guard has only ever been observed
+/// refusing. These drive it.
+mod the_cutover_opens_exactly_once {
+    use backend::google::sync::cutover_window;
+    use chrono::NaiveDate;
+
+    fn on(y: i32, m: u32, d: u32) -> Option<(NaiveDate, NaiveDate)> {
+        cutover_window(NaiveDate::from_ymd_opt(y, m, d).expect("a real date"))
+            .expect("the cutover constant parses")
+    }
+
+    /// The day before. `end` is TOMORROW — 2026-09-01 — which EQUALS `start`,
+    /// and a half-open window of zero width must be refused rather than fetched.
+    /// This is the ordering that can fail; a test only on 09-02 would pass with
+    /// the comparison written either way.
+    #[test]
+    fn closed_on_the_day_before() {
+        assert_eq!(on(2026, 8, 31), None);
+    }
+
+    /// ⚠ THE DAY IT MUST START. If this is `None` the migration silently does
+    /// nothing on the day it was scheduled for, and `daily_activity` keeps
+    /// whatever Fitbit last left — which looks identical to a healthy table
+    /// until someone reads the dates.
+    #[test]
+    fn open_on_the_cutover_day_itself() {
+        let (start, end) = on(2026, 9, 1).expect("the writer owns 2026-09-01");
+        assert_eq!(start, NaiveDate::from_ymd_opt(2026, 9, 1).unwrap());
+        assert_eq!(end, NaiveDate::from_ymd_opt(2026, 9, 2).unwrap());
+    }
+
+    /// And it does not narrow to a trailing window later: every day since the
+    /// cutover stays in range, which is what makes a run that was skipped —
+    /// a failed Job, a suspended cron — recoverable by the next one.
+    #[test]
+    fn still_reaches_back_to_the_cutover_months_later() {
+        let (start, end) = on(2026, 12, 25).expect("the writer owns 2026-12-25");
+        assert_eq!(start, NaiveDate::from_ymd_opt(2026, 9, 1).unwrap());
+        assert_eq!(end, NaiveDate::from_ymd_opt(2026, 12, 26).unwrap());
+    }
+}
+
+/// The `list` walk has no date window, so its days are filtered by a
+/// LEXICOGRAPHIC compare against the cutover string. That is sound only while
+/// every date reaching it is zero-padded, so this pins the PRODUCER as well as
+/// the predicate — the failure it guards against is silent: `2026-9-1` sorts
+/// before `2026-09-01` and the day is dropped with no error anywhere.
+mod the_string_filter_is_sound_because_the_producer_pads {
+    use backend::google::health::day_of_list_point;
+    use backend::google::sync::owned_by_google;
+
+    #[test]
+    fn the_cutover_day_is_ours_and_the_day_before_is_not() {
+        assert!(owned_by_google("2026-09-01"));
+        assert!(owned_by_google("2026-09-02"));
+        assert!(!owned_by_google("2026-08-31"));
+        assert!(!owned_by_google("2023-04-15"));
+    }
+
+    /// ⚠ SINGLE-DIGIT MONTH AND DAY, which is exactly where padding decides the
+    /// answer. September the 1st parsed out of the API's integer fields must
+    /// come back as `2026-09-01`, not `2026-9-1` — the second sorts below the
+    /// cutover and would drop the migration's first day without a trace.
+    #[test]
+    fn a_single_digit_date_comes_back_padded_and_passes_the_filter() {
+        let pt = serde_json::json!({
+            "civilStartTime": { "date": { "year": 2026, "month": 9, "day": 1 } },
+            "dailyRestingHeartRate": { "beatsPerMinute": 58 },
+        });
+        let day = day_of_list_point(&pt, "/dailyRestingHeartRate/beatsPerMinute")
+            .expect("a resting-heart-rate point parses");
+        assert_eq!(day.date, "2026-09-01");
+        assert!(
+            owned_by_google(&day.date),
+            "the migration's first day must survive the filter"
+        );
+    }
+}
