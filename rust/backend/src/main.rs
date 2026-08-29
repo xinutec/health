@@ -298,6 +298,7 @@ async fn main() -> Result<()> {
         "coverage" => coverage().await,
         "column-fill" => column_fill().await,
         "zones-census" => zones_census().await,
+        "focus-audit" => focus_audit().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,
         "mirror-check" => {
@@ -320,7 +321,7 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|focus-audit|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
@@ -1078,6 +1079,138 @@ async fn freshness() -> Result<()> {
         stale.len(),
         stale.join(", ")
     )
+}
+
+/// Has `refresh_focus_places` ever deleted real places? (#1140)
+///
+/// The bug: a swallowed per-device PhoneTrack failure made `points` a SUBSET,
+/// so real places matched nothing and the run's `DELETE FROM focus_places`
+/// removed them. The Rust arm refuses on `failed_devices > 0` and is what the
+/// cron runs, so the mechanism is closed — but whether it ever FIRED was never
+/// measured, and #1140 asks for that before treating it as theoretical.
+///
+/// ⚠ A RUN THAT LOST ROWS IS INVISIBLE AFTERWARDS. The next good run puts the
+/// places back, so the table looks correct. What it cannot put back is the `id`:
+/// `AUTO_INCREMENT` never reuses a value, so every row ever deleted leaves a
+/// permanent hole in the sequence.
+///
+/// ⚠ THE ids ARE MEANINGFUL ACROSS RUNS, which is what makes this work at all. A
+/// matched place is UPDATEd IN PLACE and keeps its id — deliberately, so a
+/// re-mine does not look like a new place. Only unmatched places are DELETEd. So
+/// a hole is a place that once existed and was never matched again.
+///
+///     rows                       what is there now
+///     max(id) - min(id) + 1      how many ids were handed out over that span
+///     the difference             ids issued to rows that no longer exist
+///
+/// ⚠ THE DIFFERENCE IS NOT ALL DAMAGE, and reading it as damage would be the
+/// error this whole task is about. A place the user genuinely stopped visiting
+/// is deleted correctly and leaves the same hole. What the number bounds is the
+/// TOTAL deletions ever; a figure near zero would refute the concern outright,
+/// and a large one says "look at the shape", not "rows were lost".
+async fn focus_audit() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    let r = sqlx::query(
+        // ⚠ `CAST(... AS SIGNED)`. `id` is `INT UNSIGNED` and sqlx refuses it as
+        // `i64` on a REAL ROW ONLY — the query compiles and the schema check
+        // passes ([[reference_sqlx_mysql_type_traps]]).
+        "SELECT COUNT(*) AS rows_now, CAST(MIN(id) AS SIGNED) AS lo, CAST(MAX(id) AS SIGNED) AS hi, \
+         COUNT(DISTINCT user_id) AS users, \
+         CAST(MIN(FROM_UNIXTIME(first_seen_ts)) AS CHAR) AS oldest_seen, \
+         CAST(MAX(refreshed_at) AS CHAR) AS last_refresh FROM focus_places",
+    )
+    .fetch_one(&pool)
+    .await
+    .context("counting focus_places")?;
+
+    let rows_now: i64 = r.try_get("rows_now").context("rows_now")?;
+    if rows_now == 0 {
+        println!("focus_places is empty");
+        pool.close().await;
+        return Ok(());
+    }
+    let lo: i64 = r.try_get("lo").context("lo")?;
+    let hi: i64 = r.try_get("hi").context("hi")?;
+    let users: i64 = r.try_get("users").context("users")?;
+    let oldest: Option<String> = r.try_get("oldest_seen").unwrap_or(None);
+    let refreshed: Option<String> = r.try_get("last_refresh").unwrap_or(None);
+    let span = hi - lo + 1;
+    println!("focus_places: {rows_now} row(s) for {users} user(s), ids {lo}..{hi} (span {span})");
+    println!(
+        "  oldest first_seen {}   last refreshed {}",
+        oldest.as_deref().unwrap_or("?"),
+        refreshed.as_deref().unwrap_or("?")
+    );
+    println!(
+        "  ids issued to rows that are gone: {} — an UPPER BOUND on deletions ever, \
+         not a count of losses",
+        span - rows_now
+    );
+
+    // ⚠ THE SHAPE, NOT THE TOTAL. A place deleted because the user stopped going
+    // there leaves one hole wherever it was. A #1140 event deletes MANY AT ONCE
+    // and the next run re-inserts them together, so it leaves a RUN of
+    // consecutive missing ids followed by a block of consecutive new ones. The
+    // gaps are what tell those apart, and only the largest ones are worth eyes.
+    let ids = sqlx::query("SELECT CAST(id AS SIGNED) AS id FROM focus_places ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .context("reading focus_places ids")?;
+    let ids: Vec<i64> = ids
+        .iter()
+        .map(|r| r.try_get::<i64, _>("id").unwrap_or(-1))
+        .collect();
+    let mut gaps: Vec<(i64, i64)> = Vec::new();
+    for w in ids.windows(2) {
+        let missing = w[1] - w[0] - 1;
+        if missing > 0 {
+            gaps.push((missing, w[0] + 1));
+        }
+    }
+    gaps.sort_by_key(|g| std::cmp::Reverse(g.0));
+    println!("\n{} gap(s) in the id sequence; largest first:", gaps.len());
+    for (n, from) in gaps.iter().take(10) {
+        println!("  {n:>4} consecutive id(s) missing from {from}");
+    }
+    if gaps.len() > 10 {
+        println!("  … {} more, all smaller", gaps.len() - 10);
+    }
+
+    // ⚠ THIS CANNOT DATE ANYTHING, AND SAYING SO IS THE POINT. The column is
+    // `DEFAULT CURRENT_TIMESTAMP` with no `ON UPDATE`, which reads like an
+    // insert time — but the writer sets `refreshed_at = CURRENT_TIMESTAMP`
+    // EXPLICITLY in its `UPDATE`, so every surviving row carries the LAST RUN's
+    // timestamp. It is printed anyway so nobody re-derives that: a single cohort
+    // here is the expected output and means only "the last run touched
+    // everything", never "everything was created that day". I read it the wrong
+    // way round first.
+    let cohorts = sqlx::query(
+        "SELECT CAST(DATE(refreshed_at) AS CHAR) AS day, COUNT(*) AS n, \
+         CAST(MIN(id) AS SIGNED) AS lo, CAST(MAX(id) AS SIGNED) AS hi \
+         FROM focus_places GROUP BY DATE(refreshed_at) ORDER BY day",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("reading focus_places cohorts")?;
+    println!("\nrefreshed_at (LAST refresh, not creation — one cohort is normal):");
+    for row in &cohorts {
+        let day: Option<String> = row.try_get("day").unwrap_or(None);
+        let n: i64 = row.try_get("n").unwrap_or(-1);
+        let lo: i64 = row.try_get("lo").unwrap_or(-1);
+        let hi: i64 = row.try_get("hi").unwrap_or(-1);
+        println!(
+            "  {}  {n:>4} row(s)  ids {lo}..{hi}",
+            day.as_deref().unwrap_or("?")
+        );
+    }
+
+    pool.close().await;
+    Ok(())
 }
 
 /// What shape is `heart_rate_zones` actually in? (#1223)
