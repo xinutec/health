@@ -58,3 +58,43 @@ fn every_bound_records_why() {
         assert!(f.max_lag_days > 0, "{} has a nonsense bound", f.table);
     }
 }
+
+/// ⚠ A ROW CAN ARRIVE WITHOUT ITS DATA, and from the 2026-09-01 cutover
+/// `daily_activity` is the table where that becomes possible. Fitbit writes
+/// seven columns and Google writes five; if Google fails, Fitbit still creates
+/// the row, `MAX(date)` is today, and the table-level check passes over a day
+/// with no step count in it.
+///
+/// This is a blind spot the partition CREATED — before it, Fitbit filled every
+/// column, so a Google failure was invisible and harmless. Now it is invisible
+/// and lossy, which is the same shape as the outage that opened #1231 and the
+/// reason the column is watched by name.
+mod a_migrated_column_is_watched_separately_from_its_table {
+    use backend::freshness::{FRESHNESS, stale_reason};
+
+    #[test]
+    fn the_column_has_its_own_bound() {
+        assert!(
+            FRESHNESS.iter().any(|f| f.table == "daily_activity.steps"),
+            "the column Google took over must be budgeted, or nobody watches it"
+        );
+    }
+
+    /// The point of the separate entry: the TABLE can be perfectly fresh while
+    /// the COLUMN is days behind, and only the second reading is a problem.
+    #[test]
+    fn a_fresh_table_does_not_excuse_a_stale_column() {
+        assert!(stale_reason("daily_activity", Some(0)).is_none());
+        let why = stale_reason("daily_activity.steps", Some(4))
+            .expect("steps 4 days behind must be stale even when the table is current");
+        assert!(why.contains("daily_activity.steps"), "{why}");
+    }
+
+    /// ⚠ NULL means no row has EVER carried a step count, which is the shape of
+    /// a cutover that switched Fitbit off and never switched Google on.
+    #[test]
+    fn never_populated_is_stale_not_skipped() {
+        let why = stale_reason("daily_activity.steps", None).expect("must be stale");
+        assert!(why.contains("EMPTY"), "{why}");
+    }
+}

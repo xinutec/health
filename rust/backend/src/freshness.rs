@@ -59,6 +59,11 @@ pub const FRESHNESS: &[Freshness] = &[
         why: "daily; same-day when measured. ⚠ THE ONE THIS EXISTS FOR — it died silently for an hour on 2026-08-28 while health-sync exited 0 every run",
     },
     Freshness {
+        table: "daily_activity.steps",
+        max_lag_days: 3,
+        why: "⚠ A COLUMN, NOT A TABLE, and the only one here. From the 2026-09-01 cutover Fitbit stops writing steps and Google starts, so a Google failure leaves a row that Fitbit still created from its own seven columns — the DATE arrives, the STEPS do not, and the table-level check above passes on a day with no step count in it",
+    },
+    Freshness {
         table: "sleep",
         max_lag_days: 4,
         why: "nightly, one night behind when measured; a missed night is normal",

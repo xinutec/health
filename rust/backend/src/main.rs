@@ -1027,6 +1027,8 @@ async fn freshness() -> Result<()> {
          UNION ALL SELECT 'skin_temperature', DATEDIFF(CURDATE(), MAX(date)) FROM skin_temperature \
          UNION ALL SELECT 'spo2_daily', DATEDIFF(CURDATE(), MAX(date)) FROM spo2_daily \
          UNION ALL SELECT 'daily_activity', DATEDIFF(CURDATE(), MAX(date)) FROM daily_activity \
+         UNION ALL SELECT 'daily_activity.steps', \
+          DATEDIFF(CURDATE(), MAX(CASE WHEN steps IS NOT NULL THEN date END)) FROM daily_activity \
          UNION ALL SELECT 'sleep', DATEDIFF(CURDATE(), MAX(date)) FROM sleep \
          UNION ALL SELECT 'heart_rate_zones', DATEDIFF(CURDATE(), MAX(date)) FROM heart_rate_zones \
          UNION ALL SELECT 'heart_rate_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM heart_rate_intraday \
