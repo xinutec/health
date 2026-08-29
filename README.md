@@ -35,12 +35,20 @@ log (see `docs/proposals/README.md`).
 
 | Command | What it does |
 |---|---|
-| `pnpm run verify` | The commit gate: the fourteen checks in `gate.json` (rendered from `gate.dhall`) — typecheck and lint on both halves, schema-type drift, vitest, the frontend unit tests, the Lean verified core, the Angular build and the phone-width layout harness, and dev-lint. Runs them all and names every one that failed. The pre-commit hook runs the same table, and so does `deploy.sh`. |
-| `pnpm test` | Just the backend test suite. |
-| `pnpm run analyze YYYY-MM-DD` | Run the day-analysis CLI. Needs DB + Nextcloud env — easiest via `scripts/prod-db.sh` (below). |
-| `pnpm run golden` | Golden-day regression check — runs the classification pipeline against a curated set of real days and diffs the day-state timeline against blessed baselines. Run around large classification changes; `pnpm run golden --bless` updates baselines. The corpus under `tests/golden/` is local-only (gitignored). |
-| `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh node dist/cli/analyze-day.js 2026-05-15 pippijn Europe/London`. |
-| `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → golden + walk gates → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
+| `pnpm run verify` | The commit gate: every row in `gate.json` (rendered from `gate.dhall`) — Rust fmt/clippy/tests/doctests, the frontend's typecheck, lint, unit tests, build and phone-width layout harness, the union copies, the Lean verified core and decode parity, the verified CLI packaging, dev-lint, and the table against its own Dhall. Runs them all and names every one that failed. The pre-commit hook runs the same table, and so does `deploy.sh`. ⚠ The row COUNT is not restated here on purpose — it is counted in `gate.json`, and the number in this sentence was wrong (fourteen, against sixteen) for long enough to be quoted. |
+| `cargo nextest run` | The backend test suite, from `rust/`. (`pnpm test` is gone with the TypeScript backend.) |
+| `bin/backend <sub>` | The CLI. Run it with no subcommand for the list — `check`, `sync`, `serve`, `coverage`, `freshness`, `zones-census`, `decode-day`, the `compare-*` pairs, and the rest. |
+| `pnpm run compare-gps-outliers` | The one replay gate left. Runs `lean/experiments/compare-gps-outliers.mts` against the Lean build over the gitignored `decoded_days` corpus. |
+| `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
+| `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → the GPS-outlier gate → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
+
+⚠ **`pnpm run golden`, `walk-gate`, `score-decoder`, `focus-gate`, `day-gate`,
+`golden-hsmm` and `compare-match` ARE GONE.** All eight replay gates ran
+`node dist/cli/*.js` against the TypeScript backend, deleted 2026-08-26 (#975);
+the scripts themselves went on 2026-08-29 (#1225). That coverage is LOST, not
+waived — health #1048 holds what replaces it. Do not read `pnpm run verify` as
+covering it: `verify` is the static gate, and the replay gates were the ones that
+replayed real days.
 
 ## Deployment
 
@@ -53,7 +61,7 @@ rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn`
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:
 
 ```
-pnpm run verify && pnpm run golden && pnpm run walk-gate   # in this repo
+pnpm run verify && pnpm run compare-gps-outliers   # in this repo
 git add -A && git commit -F msg.txt
 git push origin main
 gh run watch --exit-status <run-id>

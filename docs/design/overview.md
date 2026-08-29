@@ -167,46 +167,65 @@ Beyond the unit suite, a set of replay gates guards behaviour on **real
 captured days** (fixtures gitignored — see
 `privacy-in-tests-and-commits.md`). The ones below are the shape of it, NOT
 the list: **count the commands in `scripts/deploy.sh` step 2 rather than
-quoting a number from here.** That block ran seven commands on 2026-08-14 and
-has grown twice in a month, and every attempt to summarise it has undercounted
-— this section said "three", and #749 spent days reporting `golden` alone as
-the distance to a rollout. They run under `set -e`, so **a red gate behind a red
-gate is never reached**, and one of them (`day-gate`) was found HANGING rather
-than failing, which stalls the deploy with no output at all:
+quoting a number from here.** Every attempt to summarise it has been wrong in
+BOTH directions: this section once said "three" when it ran seven, and the
+script's own banner said four gates had died when eight had. They run under `set -e`, so **a red gate behind a red
+gate is never reached** — which stopped being a caution and became the actual
+history: from 2026-08-26 to 2026-08-29 step 2 aborted on its first gate and the
+one working gate behind it never ran at all.
 
-- `gate.json` (from `gate.dhall`) — typecheck (src + tests), biome, vitest,
-  the Lean verified core, frontend build + e2e. Run by the pre-commit hook,
-  and by `pnpm run verify`.
-- `scripts/golden.sh` — replays the golden day corpus
-  (`tests/golden/days/`) byte-identically, then applies four gates on
-  top of the snapshot diff. Two are ratcheted FLOORS over confirmed
-  testimony, which can only grow (`floor-gate.ts`): the truth ratchet
-  (`truth-baseline.json` — the ground-truth rows the pipeline
-  satisfies) and the journey ratchet. Two are physical invariants,
-  which trend toward zero: the rail invariants are hard-zero already,
-  while the kinematic one and the rail-triple one still carry standing
-  per-day counts (`feasibility-baseline.json`,
-  `rail-triple-baseline.json`) that can only shrink. The distinction
-  is deliberate — testimony is evidence and gets revised, physical
-  impossibility is not. The same feasibility check also runs on every
-  *served* day inside `computeVelocityFromInputs`, logging
-  `INFEASIBLE` lines — physically-impossible output is a counted
-  defect on ordinary days, not just blessed ones.
-- `scripts/walk-gate.sh` — the walk-geometry referee
-  (`score-walk-match`) against the per-metric ratchet floor in
-  `tests/golden/walk-baseline.json` (tracked in git, moved only by an
-  explicit re-bless).
-- `scripts/score-decoder.sh` — the real `decodeHsmm` against ground truth,
-  ratcheted per day in `tests/golden/decoder-scoreboard.json`.
-- `scripts/day-gate.sh` — the ONLY check that asks whether the Lean port has
-  drifted from the TS it ports. Absolute bar, no baseline to bless into: every
-  day must be IDENTICAL or SHELL ONLY.
-- `scripts/focus-gate.sh` — the same question at the other end of the pipeline,
-  for the weekly focus-place miner, which no day replay reaches.
-- `golden` a second time with the Lean tenants turned up, and
-  `scripts/golden-hsmm.sh` — the only places the verified core is actually
-  EXECUTED by a gate. Everything above runs with the tenants off, so a broken
-  bridge could otherwise ship unconsulted.
+- `gate.json` (from `gate.dhall`) — Rust fmt/clippy/tests/doctests, the
+  frontend's typecheck, lint, unit tests, build and layout harness, the Lean
+  verified core and decode parity, and dev-lint. Run by the pre-commit hook and
+  by `pnpm run verify`. ⚠ Count the rows in `gate.json`; the number was wrong in
+  the README for long enough to be quoted.
+- `scripts/compare-gps-outliers.sh` — the ONE replay gate that still runs, and
+  the only one that never depended on `dist/`: it drives
+  `lean/experiments/compare-gps-outliers.mts` against the Lean build.
+
+⚠ **THE EIGHT REPLAY GATES BELOW NO LONGER EXIST.** Every one ran
+`node dist/cli/*.js` against the TypeScript backend, deleted 2026-08-26 (#975);
+their scripts went on 2026-08-29 (#1225). They are recorded here as LOST
+COVERAGE and as the specification for what replaces them (health #1048) — not as
+things to run. Only `pnpm run compare-gps-outliers` survives, because it runs
+against the Lean build rather than `dist/`.
+
+⚠ And they did not fail where anyone was looking: each began
+`pnpm run build >/dev/null`, and there has been no `build` script since 06346bd,
+so they died a line before reaching `dist/` and printed `==> building` and
+nothing else. `deploy.sh`'s step 2 therefore aborted at the first of them and had
+not completed since that commit.
+
+- `golden.sh` — replayed the golden day corpus (`tests/golden/days/`)
+  byte-identically, then applied four gates on top of the snapshot diff. Two were
+  ratcheted FLOORS over confirmed testimony, which can only grow: the truth
+  ratchet (`truth-baseline.json`) and the journey ratchet. Two were physical
+  invariants, which trend toward zero — the rail invariants hard-zero already,
+  the kinematic and rail-triple ones carrying standing per-day counts
+  (`feasibility-baseline.json`, `rail-triple-baseline.json`) that could only
+  shrink. **The distinction is the part worth keeping: testimony is evidence and
+  gets revised; physical impossibility is not.** The same feasibility check still
+  runs on every *served* day inside the velocity fold, logging `INFEASIBLE` — so
+  that half of it is alive.
+- `walk-gate.sh` — the walk-geometry referee (`score-walk-match`) against the
+  per-metric ratchet floor in `tests/golden/walk-baseline.json` (still tracked in
+  git, moved only by an explicit re-bless).
+- `score-decoder.sh` — the real `decodeHsmm` against ground truth, ratcheted per
+  day in `tests/golden/decoder-scoreboard.json`.
+- `day-gate.sh` — the ONLY check that asked whether the Lean port had drifted
+  from the TS it ports. Absolute bar, no baseline. ⚠ **This one cannot come back
+  in the same form: there is no TS arm left to compare against, so porting it
+  would make it compare Lean with itself. #1048 records that; #943's per-pass
+  witnesses are the Lean-native replacement.**
+- `focus-gate.sh` — the same question at the other end of the pipeline, for the
+  weekly focus-place miner, which no day replay reaches.
+- `golden` a second time with the Lean tenants turned up, and `golden-hsmm.sh` —
+  the only places the verified core was actually EXECUTED by a gate. ⚠ That
+  concern is now moot from the other direction: with every tenant `solo` there is
+  no second arm, so the verified core is not "consulted" by a gate — it IS the
+  implementation, and `pnpm run verify`'s "Lean verified core + decode parity"
+  row is what exercises it.
+- `compare-match.sh` — the three-arm bit-exact matcher comparison (#9).
 
   **Not ALL of them, and the count moves — read `deploy.sh` rather than a number
   here.** As of 2026-08-15 it sets seven `on` (`LEAN_KALMAN`, `LEAN_GPSQUALITY`,
