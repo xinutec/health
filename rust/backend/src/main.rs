@@ -287,6 +287,7 @@ async fn main() -> Result<()> {
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
         "column-fill" => column_fill().await,
+        "zones-census" => zones_census().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,
         "mirror-check" => {
@@ -309,7 +310,7 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
@@ -1065,6 +1066,140 @@ async fn freshness() -> Result<()> {
         stale.len(),
         stale.join(", ")
     )
+}
+
+/// What shape is `heart_rate_zones` actually in? (#1223)
+///
+/// ⚠ THE ROW COUNT ALONE CANNOT TELL JUNK FROM DUPLICATION. `backend coverage`
+/// read 24,332 rows starting 2010-01-01, where every other biometric table
+/// starts 2023-04-01 — but 24,332 over ~1,250 real days is ~19 rows a day and
+/// Fitbit reports four or five zones, so the surplus is either dates the watch
+/// never saw or a zone axis nobody expected. Those need opposite repairs, and
+/// deleting before knowing which would be a guess.
+///
+/// The primary key is `(user_id, date, zone_name)`, so rows ARE distinct
+/// triples: `rows / (days x zones x users)` is 1 when the table is exactly what
+/// its key says, and anything else names which axis grew.
+///
+/// Three queries rather than one union, because they have different shapes and
+/// the tunnel cost of two extra round trips is far below the cost of reading a
+/// column that means something different per arm. ⚠ Each literal is INLINE at
+/// its call site: the crate refuses a dynamically built SQL string and
+/// dev-lint's DL-SQLX-SCHEMA-TRUTH refuses even a `const` held in a variable.
+async fn zones_census() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    let sum = sqlx::query(
+        "SELECT COUNT(*) AS rows_total, COUNT(DISTINCT date) AS days, \
+         COUNT(DISTINCT zone_name) AS zones, COUNT(DISTINCT user_id) AS users, \
+         CAST(MIN(date) AS CHAR) AS lo, CAST(MAX(date) AS CHAR) AS hi \
+         FROM heart_rate_zones",
+    )
+    .fetch_one(&pool)
+    .await
+    .context("counting heart_rate_zones")?;
+
+    let total: i64 = sum.try_get("rows_total").context("rows_total")?;
+    let days: i64 = sum.try_get("days").context("days")?;
+    let zones: i64 = sum.try_get("zones").context("zones")?;
+    let users: i64 = sum.try_get("users").context("users")?;
+    let lo: Option<String> = sum.try_get("lo").unwrap_or(None);
+    let hi: Option<String> = sum.try_get("hi").unwrap_or(None);
+    let span = match (&lo, &hi) {
+        (Some(lo), Some(hi)) => format!("{lo} → {hi}"),
+        _ => "(empty)".to_string(),
+    };
+    println!(
+        "heart_rate_zones: {total} rows, {days} distinct dates, {zones} zone names, {users} user(s), {span}"
+    );
+    // ⚠ SAY THE PRODUCT OUT LOUD. "19 rows a day" is the number that made this
+    // look wrong, and it is only wrong against an expected zone count — naming
+    // the identity is what turns the surprise into an axis.
+    let expect = days.saturating_mul(zones).saturating_mul(users);
+    if expect > 0 {
+        println!("  dates x zones x users = {expect}, table holds {total}");
+    }
+
+    let by_zone = sqlx::query(
+        "SELECT zone_name, COUNT(*) AS n, COUNT(DISTINCT date) AS days \
+         FROM heart_rate_zones GROUP BY zone_name ORDER BY n DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("counting heart_rate_zones by zone")?;
+    println!("\nby zone name:");
+    for row in &by_zone {
+        let z: String = row.try_get("zone_name").context("zone_name")?;
+        let n: i64 = row.try_get("n").context("n")?;
+        let d: i64 = row.try_get("days").context("days")?;
+        println!("  {z:<24} {n:>7} rows over {d} dates");
+    }
+
+    // ⚠ THE OLDEST DATES, not a sample. A sentinel date is at one end by
+    // construction, and the question is whether 2010-01-01 is one row or a
+    // decade of them — which `LIMIT 20` from the oldest end answers and a
+    // random sample cannot.
+    // ⚠ `CAST(SUM(...) AS CHAR)`, NOT the bare SUM. `SUM` over INT widens to
+    // DECIMAL in MariaDB, which sqlx decodes as neither i64 nor f64
+    // ([[reference_sqlx_mysql_type_traps]]) — and the first cut of this read it
+    // bare, printed `?` for every row, and left the one number that decides
+    // junk-versus-real unreadable. A cast on SOME columns is not a cast.
+    let oldest = sqlx::query(
+        "SELECT CAST(date AS CHAR) AS d, COUNT(*) AS n, \
+         CAST(SUM(COALESCE(minutes, 0)) AS CHAR) AS total_minutes \
+         FROM heart_rate_zones GROUP BY date ORDER BY date LIMIT 20",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("reading the oldest heart_rate_zones dates")?;
+    println!("\n20 oldest dates:");
+    for row in &oldest {
+        let d: String = row.try_get("d").context("d")?;
+        let n: i64 = row.try_get("n").context("n")?;
+        let tm: String = row.try_get("total_minutes").context("total_minutes")?;
+        println!("  {d}  {n} rows, {tm} zone-minutes");
+    }
+
+    // ⚠ WHERE THE REAL DATA STARTS — and NOT by asking for zero minutes, which
+    // was the obvious guess and is wrong. A date with no heart-rate data comes
+    // back from Fitbit as `Out of Range = 1440`: the whole day, counted as
+    // below the first zone. So every date in the table sums to a full day and
+    // "zero minutes" selects nothing. Measured, not assumed — the first cut
+    // asked the zero question and got 0 dates back, which reads as "it is all
+    // real" and is the opposite of the truth.
+    //
+    // The discriminator is minutes OUTSIDE `Out of Range`. A day the watch
+    // actually recorded puts some minutes in Fat Burn, Cardio or Peak; a
+    // synthesised day cannot.
+    let bound = sqlx::query(
+        "SELECT (SELECT COUNT(*) FROM (SELECT date FROM heart_rate_zones \
+           GROUP BY date HAVING SUM(COALESCE(minutes, 0)) = 0) z) AS zero_days, \
+         (SELECT COUNT(*) FROM (SELECT date FROM heart_rate_zones GROUP BY date \
+           HAVING SUM(CASE WHEN zone_name = 'Out of Range' THEN 0 \
+             ELSE COALESCE(minutes, 0) END) = 0) z) AS flat_days, \
+         (SELECT CAST(MIN(date) AS CHAR) FROM (SELECT date FROM heart_rate_zones \
+           GROUP BY date HAVING SUM(CASE WHEN zone_name = 'Out of Range' THEN 0 \
+             ELSE COALESCE(minutes, 0) END) > 0) z) AS first_active",
+    )
+    .fetch_one(&pool)
+    .await
+    .context("finding the first active heart_rate_zones date")?;
+    let zero_days: i64 = bound.try_get("zero_days").context("zero_days")?;
+    let flat_days: i64 = bound.try_get("flat_days").context("flat_days")?;
+    let first_active: Option<String> = bound.try_get("first_active").unwrap_or(None);
+    println!("\n{zero_days} dates sum to zero minutes across all four zones");
+    println!("{flat_days} dates hold NOTHING outside `Out of Range` — no heart rate was recorded");
+    println!(
+        "first date with minutes in Fat Burn / Cardio / Peak: {}",
+        first_active.as_deref().unwrap_or("none")
+    );
+
+    pool.close().await;
+    Ok(())
 }
 
 /// Which columns of `daily_activity` actually hold data? (#260)
