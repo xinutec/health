@@ -20,6 +20,7 @@ import Verified.Geo.CurrentPlace
 import Verified.Geo.VenuePrior
 import Verified.Geo.OsmRegions
 import Verified.Geo.OsmRouteMembers
+import Verified.Geo.OsmMirrorRefresh
 import Verified.Geo.OsmRailStops
 import Verified.Geo.OsmBusRoutes
 import Verified.Geo.OverpassBreaker
@@ -1174,30 +1175,59 @@ def dispatch (j : Json) : Json :=
     | some "bus", some a, some b, some c, some d =>
       Json.mkObj [("value", Json.str (Verified.Geo.OsmBusRoutes.buildBusRouteOverpassQuery a b c d))]
     | _, _, _, _, _ => err "overpassQuery: mode and four rendered coordinates required"
-  -- ⚠ MAY THIS RUN WRITE? The two arms answer differently and neither answer is
-  -- right — #1134 owns the decision, and both rules are ported as they stand so
-  -- the parity diff still works. See `Verified.Geo.OsmBusRoutes`.
+  -- ⚠ MAY THIS RUN WRITE? #1134's decision is MADE: a run that refreshed less
+  -- than half its tiles is refused, on BOTH arms, by one shared rule
+  -- (`Verified.Geo.OsmMirrorRefresh`). The two arms' own rules stay underneath
+  -- it — they answer a different and narrower question — but neither can call a
+  -- 2-of-18 run a success any more.
+  --
+  -- ⚠ COVERAGE IS CHECKED FIRST, so its sentence is the one the job dies with.
+  -- Bus's own rule would otherwise report "every tile failed" for an 18/18
+  -- outage and say nothing at all for 2/18, which is the defect.
   | some "mayRebuild" =>
+    -- ⚠ COVERAGE FIRST, ON BOTH ARMS (#1134). Bus's own rule reports "every tile
+    -- failed" for an 18/18 outage and says NOTHING for 2/18 — which is the whole
+    -- of #1134 — and rail's passes any run that found a single relation. Neither
+    -- reads the fraction of the AREA refreshed, so each arm asks that first and
+    -- its sentence is the one the job dies with.
+    --
+    -- ⚠ Rail now REQUIRES `tilesTotal`. It matched `_` before, and the shell has
+    -- always sent it; a rail run that somehow omitted it must fail the match
+    -- loudly rather than skip the coverage check.
     match str? j "mode", int? j "found", int? j "tileFailures", int? j "tilesTotal", int? j "existing" with
-    | some "rail", some found, some fails, _, _ =>
+    | some "rail", some found, some fails, some total, some existing =>
+      match Verified.Geo.OsmMirrorRefresh.coverageRefusal existing.toNat fails.toNat total.toNat with
+      | some why => Json.mkObj [("value", Json.mkObj
+          [("mayWrite", Json.bool false), ("fullRebuild", Json.bool false),
+           ("refusal", Json.str why)])]
       -- ⚠ `fullRebuild` IS RETURNED FOR RAIL TOO, since 2026-08-25. Rail now
       -- carries a `tile_key` like bus, so it has the same two write modes — and
       -- omitting this made the field default to false in the shell, which would
       -- have meant rail NEVER retired a stale row: a per-tile delete cannot
       -- reach the `tile_key IS NULL` rows written before the column existed.
-      Json.mkObj [("value", Json.mkObj
-        [("mayWrite", Json.bool (Verified.Geo.OsmRailStops.mayRebuild found.toNat fails.toNat)),
-         ("fullRebuild", Json.bool (Verified.Geo.OsmBusRoutes.isFullRebuild fails.toNat)),
-         ("refusal", Json.null)])]
-    | some "bus", _, some fails, some total, some existing =>
-      match Verified.Geo.OsmBusRoutes.rebuildRefusal existing.toNat fails.toNat total.toNat with
       | none => Json.mkObj [("value", Json.mkObj
-          [("mayWrite", Json.bool true),
+          [("mayWrite", Json.bool (Verified.Geo.OsmRailStops.mayRebuild found.toNat fails.toNat)),
            ("fullRebuild", Json.bool (Verified.Geo.OsmBusRoutes.isFullRebuild fails.toNat)),
            ("refusal", Json.null)])]
+    | some "bus", _, some fails, some total, some existing =>
+      -- ⚠ THE ARM'S OWN RULE FIRST, so the MOST SPECIFIC true sentence wins. For
+      -- an 18/18 outage bus can say "Every tile failed (18/18) and the cache
+      -- holds 995 route(s)", which names the cache it is protecting; the
+      -- coverage rule would only say "0% of the area". Coverage catches what
+      -- that rule cannot see — every partial run between 1 and 8 tiles.
+      match Verified.Geo.OsmBusRoutes.rebuildRefusal existing.toNat fails.toNat total.toNat with
       | some why => Json.mkObj [("value", Json.mkObj
           [("mayWrite", Json.bool false), ("fullRebuild", Json.bool false),
            ("refusal", Json.str why)])]
+      | none =>
+        match Verified.Geo.OsmMirrorRefresh.coverageRefusal existing.toNat fails.toNat total.toNat with
+        | none => Json.mkObj [("value", Json.mkObj
+            [("mayWrite", Json.bool true),
+             ("fullRebuild", Json.bool (Verified.Geo.OsmBusRoutes.isFullRebuild fails.toNat)),
+             ("refusal", Json.null)])]
+        | some why => Json.mkObj [("value", Json.mkObj
+            [("mayWrite", Json.bool false), ("fullRebuild", Json.bool false),
+             ("refusal", Json.str why)])]
     | _, _, _, _, _ => err "mayRebuild: mode and the counts it needs are required"
   -- The circuit breaker, one step at a time. The clock is the shell's; the
   -- decision is not.

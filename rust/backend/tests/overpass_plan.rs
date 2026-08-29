@@ -110,11 +110,12 @@ fn a_query_names_the_tile_and_the_right_route_types() {
     assert!(rail.contains("node(r)") && bus.contains("node(r)"));
 }
 
-/// ⚠ #1134 LIVES HERE, and the two arms now differ ONLY in their refusal rule.
-/// Both carry a `tile_key`, so both replace only the tiles that answered and
-/// neither can shrink because Overpass failed somewhere. What is left is the
-/// question #1134 actually asks: a run covering a fraction of its area still
-/// exits 0.
+/// ⚠ #1134 IS DECIDED (2026-08-29) and this pins the ARMS' OWN rules, which
+/// still run underneath the shared coverage floor in
+/// `Verified.Geo.OsmMirrorRefresh`. Each arm is asked first, so the most
+/// specific true sentence wins — bus can name the cache it is protecting where
+/// coverage can only report a percentage. See `tests/mirror_coverage.rs` for the
+/// floor itself.
 #[test]
 fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     setup();
@@ -128,21 +129,33 @@ fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     assert!(!v.may_write);
     assert!(v.refusal.unwrap().contains("Every tile failed"));
 
-    // Bus: ONE tile answered — proceed, because tile ownership makes it
-    // lossless. This is the shape #1134 reports as a defect: 2 of 18 exits 0.
+    // Bus: ONE tile answered against a POPULATED cache — refused since
+    // 2026-08-29. This assertion used to read `assert!(v.may_write)` and was
+    // labelled "the shape #1134 reports as a defect: 2 of 18 exits 0". #1134 is
+    // decided: lossless is not the same as reported, and a cache left 17/18
+    // stale by a run that exits 0 is the defect itself.
     let v = lean::may_rebuild("bus", 12, 17, 18, 995).unwrap();
-    assert!(v.may_write);
     assert!(
-        !v.full_rebuild,
-        "a partial run is not authoritative for the bbox"
+        !v.may_write,
+        "1 of 18 against a populated cache is not a refresh"
     );
+    assert!(v.refusal.unwrap().contains("1/18"));
 
     // Bus: a clean run may replace everything.
     let v = lean::may_rebuild("bus", 995, 0, 18, 995).unwrap();
     assert!(v.may_write && v.full_rebuild);
 
     // Bus: nothing to protect, so an all-failed first run still proceeds.
+    //
+    // ⚠ THIS IS WHAT CAUGHT THE COVERAGE RULE'S FIRST DRAFT. It refused on the
+    // fraction alone, which would have left an EMPTY cache empty for ever: the
+    // harm named is a cache left mostly STALE, and with nothing in it there is
+    // nothing to be stale. The rule is exempt at `existing = 0`.
     assert!(lean::may_rebuild("bus", 0, 18, 18, 0).unwrap().may_write);
+    assert!(
+        lean::may_rebuild("bus", 12, 17, 18, 0).unwrap().may_write,
+        "a first run populating a ninth of the area beats staying empty"
+    );
 
     // Rail: the discriminator is zero-found-with-any-failure.
     assert!(!lean::may_rebuild("rail", 0, 3, 18, 259).unwrap().may_write);

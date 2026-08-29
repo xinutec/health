@@ -2742,8 +2742,18 @@ pub struct RebuildVerdict {
     pub refusal: Option<String>,
 }
 
-/// ⚠ THE TWO ARMS ANSWER DIFFERENTLY AND NEITHER IS RIGHT — #1134. Ported as
-/// they stand so the parity diff against the TypeScript still works.
+/// ⚠ COVERAGE IS CHECKED FIRST, ON BOTH ARMS (#1134, decided 2026-08-29). A run
+/// that refreshed less than half its tiles is refused whatever the arm's own
+/// rule says — bus's reports "every tile failed" for an 18/18 outage and says
+/// NOTHING for 2/18, and rail's passes any run that found one relation. Neither
+/// reads the fraction of the AREA refreshed. The arms' own rules still run
+/// underneath, answering their narrower questions.
+///
+/// Refusing is cheap because it cannot lose data: both caches carry a
+/// `tile_key`, so a partial run replaces only the tiles that answered. What a
+/// low-coverage run costs is a cache that is mostly stale while its summary line
+/// reads like success — and a failed CronJob is named by `fleet_health.py`
+/// within the hour, where a quiet success is named by nothing.
 pub fn may_rebuild(
     mode: &str,
     found: usize,

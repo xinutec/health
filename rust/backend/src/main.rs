@@ -4662,9 +4662,16 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     );
     if !verdict.may_write {
         pool.close().await;
+        // ⚠ SAY LEAN'S SENTENCE, not a guessed one. This used to hardcode "all N
+        // tiles failed", which was the only refusal rail could produce — and
+        // since #1134 it can also refuse for COVERAGE, where "all tiles failed"
+        // would be flatly untrue and send the reader looking for an outage that
+        // did not happen. The bus arm already did this; the two now agree.
         anyhow::bail!(
-            "all {} tiles failed — leaving rail_stops_cache untouched",
-            plan.tiles.len()
+            "{} — leaving rail_stops_cache untouched",
+            verdict
+                .refusal
+                .unwrap_or_else(|| format!("all {} tiles failed", plan.tiles.len()))
         );
     }
 

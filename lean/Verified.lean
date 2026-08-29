@@ -100,6 +100,7 @@ import Verified.Geo.FocusIdentity
 import Verified.Geo.FocusMining
 import Verified.Geo.OsmRegions
 import Verified.Geo.OsmRouteMembers
+import Verified.Geo.OsmMirrorRefresh
 import Verified.Geo.OsmRailStops
 import Verified.Geo.OsmBusRoutes
 import Verified.Geo.OverpassBreaker
