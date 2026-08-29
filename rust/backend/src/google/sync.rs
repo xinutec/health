@@ -432,6 +432,22 @@ pub fn cutover_window(
     Ok((start < end).then_some((start, end)))
 }
 
+/// The `daily_activity` columns the Google writer owns from the cutover.
+///
+/// ⚠ THIS LIST IS HALF OF A CONTRACT. `fitbit::sync::activity::FITBIT_ONLY_COLUMNS`
+/// is the other half, and a test holds them disjoint and exhaustive. If a column
+/// leaves this list without joining that one it is written by NOBODY and goes
+/// silently NULL from the cutover; if it is in both, both writers keep assigning
+/// it and the last job to run wins — which is exactly the overlap the cutover
+/// exists to prevent.
+pub const GOOGLE_OWNED_COLUMNS: &[&str] = &[
+    "steps",
+    "distance_km",
+    "calories_total",
+    "calories_active",
+    "resting_heart_rate",
+];
+
 /// Is this day the Google writer's to write?
 ///
 /// ⚠ A LEXICOGRAPHIC COMPARE ON DATE STRINGS, and it is sound rather than lucky:

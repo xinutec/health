@@ -242,6 +242,24 @@ pub fn parse_activity_summary(body: &str) -> Result<ActivityRow> {
     })
 }
 
+/// The `daily_activity` columns Fitbit keeps writing past the cutover.
+///
+/// ⚠ THE OTHER HALF OF THE CONTRACT with
+/// [`crate::google::sync::GOOGLE_OWNED_COLUMNS`]. These are the columns Google
+/// has NO source for — which is the whole reason `daily_activity` stayed
+/// `Owner::Fitbit` while five of its columns migrated. `minutes_sedentary` and
+/// `active_score` in particular stop when Fitbit does, and deriving them would
+/// be invention.
+pub const FITBIT_ONLY_COLUMNS: &[&str] = &[
+    "floors",
+    "elevation_m",
+    "minutes_sedentary",
+    "minutes_lightly_active",
+    "minutes_fairly_active",
+    "minutes_very_active",
+    "active_score",
+];
+
 /// `/1/user/-/activities/date/{date}.json`, one call per day.
 pub async fn sync_activity(
     client: &FitbitClient,
@@ -274,37 +292,82 @@ pub async fn sync_activity(
             );
         }
 
-        sqlx::query(
-            "INSERT INTO daily_activity (user_id, date, steps, calories_total, calories_active, \
-             distance_km, floors, elevation_m, minutes_sedentary, minutes_lightly_active, \
-             minutes_fairly_active, minutes_very_active, active_score, resting_heart_rate) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON DUPLICATE KEY UPDATE steps=VALUES(steps), \
-             calories_total=VALUES(calories_total), calories_active=VALUES(calories_active), \
-             distance_km=VALUES(distance_km), floors=VALUES(floors), \
-             elevation_m=VALUES(elevation_m), minutes_sedentary=VALUES(minutes_sedentary), \
-             minutes_lightly_active=VALUES(minutes_lightly_active), \
-             minutes_fairly_active=VALUES(minutes_fairly_active), \
-             minutes_very_active=VALUES(minutes_very_active), \
-             active_score=VALUES(active_score), resting_heart_rate=VALUES(resting_heart_rate)",
-        )
-        .bind(user_id)
-        .bind(date)
-        .bind(s.steps)
-        .bind(s.calories_total)
-        .bind(s.calories_active)
-        .bind(s.distance_km)
-        .bind(s.floors)
-        .bind(s.elevation_m)
-        .bind(s.minutes_sedentary)
-        .bind(s.minutes_lightly_active)
-        .bind(s.minutes_fairly_active)
-        .bind(s.minutes_very_active)
-        .bind(s.active_score)
-        .bind(s.resting_heart_rate)
-        .execute(pool)
-        .await
-        .context("writing daily_activity")?;
+        // ⚠ TWO STATEMENTS, CHOSEN BY DATE — this is what makes the cutover
+        // real. Before it, Fitbit owns every column and assigns every one,
+        // NULLs included: an absent field must null the column, which is why
+        // this arm cannot be replaced by a COALESCE of the other.
+        //
+        // From the cutover, Fitbit writes ONLY the columns Google has no source
+        // for. Both writers run in the same 15-minute job — `google_streams` at
+        // run.rs:101, this at run.rs:199 — so before this split the second one
+        // simply overwrote the first, every run, for every day past the
+        // cutover. Nothing errored and no row was lost, which is what made it
+        // dangerous: the migration would have read as verified for weeks while
+        // its write path had never once survived to the table.
+        //
+        // Ordering-independent by construction. The post-cutover arm never
+        // names a Google column in its UPDATE, so it cannot clobber whatever
+        // ran first, and `sync_daily_activity`'s own
+        // `COALESCE(VALUES(col), col)` already refuses to null what it has no
+        // value for.
+        if crate::google::sync::owned_by_google(date) {
+            sqlx::query(
+                "INSERT INTO daily_activity (user_id, date, floors, elevation_m, \
+                 minutes_sedentary, minutes_lightly_active, minutes_fairly_active, \
+                 minutes_very_active, active_score) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE floors=VALUES(floors), \
+                 elevation_m=VALUES(elevation_m), minutes_sedentary=VALUES(minutes_sedentary), \
+                 minutes_lightly_active=VALUES(minutes_lightly_active), \
+                 minutes_fairly_active=VALUES(minutes_fairly_active), \
+                 minutes_very_active=VALUES(minutes_very_active), \
+                 active_score=VALUES(active_score)",
+            )
+            .bind(user_id)
+            .bind(date)
+            .bind(s.floors)
+            .bind(s.elevation_m)
+            .bind(s.minutes_sedentary)
+            .bind(s.minutes_lightly_active)
+            .bind(s.minutes_fairly_active)
+            .bind(s.minutes_very_active)
+            .bind(s.active_score)
+            .execute(pool)
+            .await
+            .context("writing daily_activity (Fitbit-only columns, past the cutover)")?;
+        } else {
+            sqlx::query(
+                "INSERT INTO daily_activity (user_id, date, steps, calories_total, calories_active, \
+                 distance_km, floors, elevation_m, minutes_sedentary, minutes_lightly_active, \
+                 minutes_fairly_active, minutes_very_active, active_score, resting_heart_rate) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE steps=VALUES(steps), \
+                 calories_total=VALUES(calories_total), calories_active=VALUES(calories_active), \
+                 distance_km=VALUES(distance_km), floors=VALUES(floors), \
+                 elevation_m=VALUES(elevation_m), minutes_sedentary=VALUES(minutes_sedentary), \
+                 minutes_lightly_active=VALUES(minutes_lightly_active), \
+                 minutes_fairly_active=VALUES(minutes_fairly_active), \
+                 minutes_very_active=VALUES(minutes_very_active), \
+                 active_score=VALUES(active_score), resting_heart_rate=VALUES(resting_heart_rate)",
+            )
+            .bind(user_id)
+            .bind(date)
+            .bind(s.steps)
+            .bind(s.calories_total)
+            .bind(s.calories_active)
+            .bind(s.distance_km)
+            .bind(s.floors)
+            .bind(s.elevation_m)
+            .bind(s.minutes_sedentary)
+            .bind(s.minutes_lightly_active)
+            .bind(s.minutes_fairly_active)
+            .bind(s.minutes_very_active)
+            .bind(s.active_score)
+            .bind(s.resting_heart_rate)
+            .execute(pool)
+            .await
+            .context("writing daily_activity")?;
+        }
         synced += 1;
 
         if client.rate.remaining() <= ACTIVITY_BUDGET_FLOOR {

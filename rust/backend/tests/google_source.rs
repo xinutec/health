@@ -229,3 +229,76 @@ mod the_string_filter_is_sound_because_the_producer_pads {
         );
     }
 }
+
+/// ⚠ THE TWO WRITERS MUST PARTITION THE TABLE, and before 2026-08-29 they did
+/// not: `google_streams` (run.rs:101) wrote five columns and
+/// `sync::activity::sync_activity` (run.rs:199) then assigned all twelve, in the
+/// same job, seconds later. Nothing errored and no row was lost — Fitbit's
+/// numbers are real — so the migration would have read as verified for weeks
+/// while its write path never once survived to the table.
+///
+/// A partition has exactly two ways to break and both are silent, which is why
+/// they are pinned here rather than left to the SQL:
+///
+///   * a column in NEITHER list is written by nobody past the cutover, and goes
+///     NULL for ever without an error;
+///   * a column in BOTH is assigned by both writers again, and the last job to
+///     run wins — the overlap the cutover exists to prevent.
+mod the_two_writers_partition_daily_activity {
+    use backend::fitbit::sync::activity::FITBIT_ONLY_COLUMNS;
+    use backend::google::sync::GOOGLE_OWNED_COLUMNS;
+
+    /// Every data column of `daily_activity` — the schema's, minus the
+    /// `(user_id, date)` key. Written out so a column ADDED to the table and to
+    /// neither writer fails here rather than being discovered as a NULL.
+    const EVERY_DATA_COLUMN: &[&str] = &[
+        "steps",
+        "calories_total",
+        "calories_active",
+        "distance_km",
+        "floors",
+        "elevation_m",
+        "minutes_sedentary",
+        "minutes_lightly_active",
+        "minutes_fairly_active",
+        "minutes_very_active",
+        "active_score",
+        "resting_heart_rate",
+    ];
+
+    #[test]
+    fn no_column_is_claimed_by_both() {
+        let both: Vec<_> = GOOGLE_OWNED_COLUMNS
+            .iter()
+            .filter(|c| FITBIT_ONLY_COLUMNS.contains(c))
+            .collect();
+        assert!(
+            both.is_empty(),
+            "these columns are assigned by BOTH writers, so the last job to run wins: {both:?}"
+        );
+    }
+
+    #[test]
+    fn no_column_is_left_to_nobody() {
+        let orphaned: Vec<_> = EVERY_DATA_COLUMN
+            .iter()
+            .filter(|c| !GOOGLE_OWNED_COLUMNS.contains(c) && !FITBIT_ONLY_COLUMNS.contains(c))
+            .collect();
+        assert!(
+            orphaned.is_empty(),
+            "no writer owns these past the cutover — they go NULL silently: {orphaned:?}"
+        );
+    }
+
+    /// And neither list names a column the table does not have, which is how a
+    /// RENAME turns into a writer that quietly stops writing.
+    #[test]
+    fn neither_writer_claims_a_column_that_does_not_exist() {
+        for c in GOOGLE_OWNED_COLUMNS.iter().chain(FITBIT_ONLY_COLUMNS) {
+            assert!(
+                EVERY_DATA_COLUMN.contains(c),
+                "{c} is claimed by a writer but is not a column of daily_activity"
+            );
+        }
+    }
+}
