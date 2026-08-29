@@ -4444,6 +4444,24 @@ struct MirrorHarvest {
 /// budget is spent over TIME, and 5 s is a pace a two-slot allowance can sustain
 /// while adding 90 s to an 18-tile run — against a 90-minute deadline.
 ///
+/// ⚠⚠ THIS DOES NOT FIX THE NIGHTLY CRON, AND THE COMMIT THAT ADDED IT SAID IT
+/// DID. The 56% -> 83% coverage gain behind this constant was measured from the
+/// MAC. `scripts/prod-db.sh` tunnels the DATABASE; the Overpass calls go out
+/// over the Mac's own network, so a dry run there never exercises the path the
+/// CronJob uses. Measured properly on 2026-08-29, from the pod's host:
+///
+///     isis -> 162.55.144.139:443   Connection refused, 0.013 s (forced IPv4 too)
+///     amun -> overpass-api.de      200 in 0.11 s
+///     mac  -> overpass-api.de      200 in 0.25 s
+///
+/// A RST rather than a timeout, with no local rule naming the address and
+/// general egress healthy (github 200 in 0.08 s). `overpass-api.de` is refusing
+/// isis (188.165.200.180) at the far end. Rate limiting was never the cron's
+/// problem — see health #1153, which now records the real one.
+///
+/// The pacing stays because it is correct behaviour toward a two-slot endpoint
+/// and it is what got the Mac from 56% to 83%. It is not a fix for the cron.
+///
 /// ⚠ NOT a fix for `kumi.systems`, which is a different failure and still dead:
 /// its `/api/status` answers, and a real query returns 500 in 0.23 s. A status
 /// endpoint replying is not an interpreter working, and reading the first as the
