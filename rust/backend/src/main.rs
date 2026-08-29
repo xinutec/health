@@ -299,6 +299,7 @@ async fn main() -> Result<()> {
         "column-fill" => column_fill().await,
         "zones-census" => zones_census().await,
         "focus-audit" => focus_audit().await,
+        "tz-census" => tz_census().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,
         "mirror-check" => {
@@ -321,7 +322,7 @@ async fn main() -> Result<()> {
         }
         "" => {
             eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|focus-audit|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
+                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|focus-audit|tz-census|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
             );
             std::process::exit(64);
         }
@@ -1079,6 +1080,108 @@ async fn freshness() -> Result<()> {
         stale.len(),
         stale.join(", ")
     )
+}
+
+/// Which timezones are actually stored, and could GPS inference have changed
+/// them? (#1037)
+///
+/// `NC_BASE_URL` is unset for health, so `build_tz_source`'s
+/// `if let Some(base) = nextcloud_base_url` is false on every run and the
+/// forward sync's zone comes from `profile.timezone` alone. The GPS half —
+/// nearest fix within 6 h, polygon lookup, the memo — has never executed in
+/// production, in either arm.
+///
+/// ⚠ THE ROWS CANNOT CONFIRM THE BUG AND #1037 SAYS SO: with a fix inside the
+/// window the polygon returns the same zone for someone at home, so both paths
+/// agree and the column cannot tell them apart. What the rows CAN bound is
+/// whether turning it on could matter — a record that only ever held one zone
+/// has no travel days in it for the inference to have got right.
+async fn tz_census() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+
+    // ⚠ One static query, inline: the crate refuses a dynamically built SQL
+    // string and dev-lint refuses even a `const` in a variable.
+    //
+    // ⚠ NO `ORDER BY`, AND THE SORT IS IN RUST. dev-lint's DL-SQLX-SCHEMA-TRUTH
+    // resolves every identifier in the statement against the query's tables, and
+    // `ORDER BY t, n DESC` names two ALIASES — reported as "column `t` exists in
+    // none of this query's table(s)". `coverage()` above has no ORDER BY, which
+    // is why it never hit this. Repeating the aliases in each UNION arm does not
+    // help; removing the clause does.
+    let rows = sqlx::query(
+        "SELECT 'steps_intraday' AS t, tz, COUNT(*) AS n, \
+          CAST(MIN(DATE(ts)) AS CHAR) AS lo, CAST(MAX(DATE(ts)) AS CHAR) AS hi \
+          FROM steps_intraday GROUP BY tz \
+         UNION ALL SELECT 'heart_rate_intraday' AS t, tz, COUNT(*) AS n, \
+          CAST(MIN(DATE(ts)) AS CHAR) AS lo, CAST(MAX(DATE(ts)) AS CHAR) AS hi \
+          FROM heart_rate_intraday GROUP BY tz \
+         UNION ALL SELECT 'sleep' AS t, tz, COUNT(*) AS n, \
+          CAST(MIN(date) AS CHAR) AS lo, CAST(MAX(date) AS CHAR) AS hi \
+          FROM sleep GROUP BY tz",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("reading stored timezones")?;
+
+    // Named rather than a tuple: five fields of which three are `Option<String>`
+    // is exactly what `clippy::type_complexity` is for, and the names are the
+    // difference between reading this and counting positions.
+    struct TzRow {
+        table: String,
+        tz: Option<String>,
+        rows: i64,
+        lo: Option<String>,
+        hi: Option<String>,
+    }
+    let mut out: Vec<TzRow> = rows
+        .iter()
+        .map(|row| TzRow {
+            table: row.try_get("t").unwrap_or_else(|_| "?".to_string()),
+            tz: row.try_get("tz").unwrap_or(None),
+            rows: row.try_get("n").unwrap_or(-1),
+            lo: row.try_get("lo").unwrap_or(None),
+            hi: row.try_get("hi").unwrap_or(None),
+        })
+        .collect();
+    // The sort the SQL used to do; see the note on the missing ORDER BY above.
+    out.sort_by(|a, b| a.table.cmp(&b.table).then(b.rows.cmp(&a.rows)));
+
+    println!("{:<22} {:<28} {:>10}  span", "table", "tz", "rows");
+    let mut distinct: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for r in &out {
+        if let Some(z) = &r.tz {
+            distinct.insert(z.clone());
+        }
+        println!(
+            "{:<22} {:<28} {:>10}  {} → {}",
+            r.table,
+            r.tz.as_deref().unwrap_or("(NULL)"),
+            r.rows,
+            r.lo.as_deref().unwrap_or("?"),
+            r.hi.as_deref().unwrap_or("?")
+        );
+    }
+    println!(
+        "\n{} distinct non-NULL zone(s) across all three: {}",
+        distinct.len(),
+        distinct.iter().cloned().collect::<Vec<_>>().join(", ")
+    );
+    // ⚠ A SINGLE ZONE DOES NOT PROVE THE INFERENCE IS POINTLESS, only that it has
+    // had nothing to correct in what is stored. A travel day recorded with the
+    // HOME zone because the GPS half never ran looks exactly like a day at home.
+    if distinct.len() <= 1 {
+        println!(
+            "  ⚠ one zone only — so enabling GPS inference (#1037) would change nothing \
+             ALREADY WRITTEN, and this cannot say what it would do to a future travel day."
+        );
+    }
+
+    pool.close().await;
+    Ok(())
 }
 
 /// Has `refresh_focus_places` ever deleted real places? (#1140)
