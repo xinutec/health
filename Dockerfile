@@ -68,11 +68,16 @@ COPY --from=frontend-build /app/dist/frontend/browser public/
 # The verified decoder + its /nix/store runtime closure.
 COPY --from=lean-build /export/nix/store /nix/store/
 COPY --from=lean-build /export/bin/verified_cli lean/verified_cli
-ENV LEAN_CLI=/app/lean/verified_cli
-# The day tenant's own binary, and a SEPARATE variable on purpose: `day-shell`
-# serves the `day` mode only, where `verified_cli` answers every mode.
+# The day tenant's own binary: `day-shell` serves the `day` mode only, where
+# `verified_cli` answers every mode.
 COPY --from=lean-build /export/bin/day-shell lean/day-shell
-ENV LEAN_DAY_HOST=/app/lean/day-shell
+# ⚠ NOTHING IN THE RUNNING CONTAINER SPAWNS EITHER BINARY. They were reached
+# through `ENV LEAN_CLI` / `ENV LEAN_DAY_HOST`, deleted with the rest of the
+# dead `LEAN_*` flags (#1213) — no Rust or Lean source reads a `LEAN_*`
+# variable. The Lean the server actually runs is STATICALLY LINKED into
+# `bin/backend` by `rust/backend/build.rs`, which parses lake's own
+# `verified_cli.rsp` for the link line. These two are kept as a hand-run
+# oracle, not as a serving path.
 # The Rust+Lean HTTP server (#982) — now the ONLY server. It shipped alongside
 # `dist/server.js` through the cutover so a rollback was a manifest change
 # rather than an image rebuild; every cron and the Deployment have run on it
