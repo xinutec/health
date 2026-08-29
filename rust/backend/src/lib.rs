@@ -75,3 +75,117 @@ pub mod state;
 pub mod sync_state;
 pub mod timezone;
 pub mod velocity_cache;
+
+/// Every subcommand `backend`'s `main` dispatches, with its arguments and one line of what
+/// it does.
+///
+/// ⚠ THE LIST IS THE DOCUMENTATION AND IT IS TESTED. `usage_lists_every_subcommand`
+/// compares this against the match arms in `main.rs`'s source, so adding a
+/// subcommand without a line here fails the gate. Before that test the printed
+/// list had 19 of 29 — a hand-maintained list rots, and this one had.
+pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
+    (
+        "check",
+        "",
+        "read the config and prove it against the real database; READ-ONLY",
+    ),
+    ("serve", "", "the HTTP server — health-auth runs this"),
+    (
+        "sync",
+        "[--forward-only]",
+        "Fitbit + Google ingestion for every linked user",
+    ),
+    (
+        "freshness",
+        "",
+        "has each stream actually arrived? exits non-zero naming the stale ones",
+    ),
+    ("coverage", "", "rows and date span per biometric table"),
+    (
+        "column-fill",
+        "",
+        "which daily_activity columns hold data (#260)",
+    ),
+    ("zones-census", "", "the shape of heart_rate_zones (#1223)"),
+    (
+        "focus-audit",
+        "",
+        "id gaps in focus_places — were places mass-deleted? (#1140)",
+    ),
+    (
+        "tz-census",
+        "",
+        "which timezones are stored, and could inference change them? (#1037)",
+    ),
+    (
+        "google-probe",
+        "",
+        "field NAMES and leaf types from Google Health; never values",
+    ),
+    (
+        "google-compare",
+        "",
+        "Google against the stored rows, per stream",
+    ),
+    (
+        "rows-check",
+        "<user> <since> <date>",
+        "compare stored rows against a date",
+    ),
+    (
+        "inputs",
+        "<user> <date> [tz]",
+        "the classification inputs for one day",
+    ),
+    (
+        "velocity",
+        "<user> <date> [tz]",
+        "recompute the velocity fold",
+    ),
+    ("head", "<fixture.json>", "the pipeline head over a fixture"),
+    ("day", "<fixture.json>", "the day fold over a fixture"),
+    (
+        "day-live",
+        "<user> <date> [tz]",
+        "the day fold against live data",
+    ),
+    (
+        "day-mirror",
+        "<user> <date> [tz]",
+        "the day fold against the OSM mirror",
+    ),
+    (
+        "mirror-check",
+        "<fixture.json>",
+        "the OSM mirror against a fixture",
+    ),
+    (
+        "locations-check",
+        "<user> <date>",
+        "the locations answer for one day",
+    ),
+    (
+        "decode-day",
+        "[user] [days|date] [--dry-run]",
+        "the HSMM decode; the nightly cron",
+    ),
+    ("refresh-presence-log", "[days]", "rebuild presence_log"),
+    (
+        "refresh-focus-places",
+        "[user] [days]",
+        "re-mine focus_places from PhoneTrack",
+    ),
+    ("refresh-rail-routes", "[days]", "fill the rail route cache"),
+    (
+        "refresh-rail-stops",
+        "[--dry-run]",
+        "mirror rail relations from Overpass",
+    ),
+    (
+        "refresh-bus-routes",
+        "[--dry-run]",
+        "mirror bus routes from Overpass",
+    ),
+    ("mint-session", "<user>", "issue a session cookie"),
+    ("drop-session", "<cookie>", "revoke a session cookie"),
+];

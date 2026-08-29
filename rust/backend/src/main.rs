@@ -321,9 +321,15 @@ async fn main() -> Result<()> {
             day_live(user, date, tz, sub == "day-mirror").await
         }
         "" => {
-            eprintln!(
-                "usage: backend <check|serve|sync [--forward-only]|inputs <user> <date>|head <fixture.json>|day <fixture.json>|day-live <user> <date>|day-mirror <user> <date>|mirror-check <fixture.json>|google-probe|coverage|column-fill|zones-census|focus-audit|tz-census|freshness|google-compare|rows-check <user> <since-date> <date>|velocity <user> <date>>"
-            );
+            // ⚠ EVERY DISPATCHED SUBCOMMAND, and `usage_lists_every_subcommand`
+            // fails if one is added without a line here. The list had drifted to
+            // 19 of 29 before that test existed — including four this file added
+            // in one day — and the README points a reader at this output, so an
+            // incomplete list is a wrong answer rather than a thin one.
+            eprintln!("usage: backend <subcommand> [args]\n");
+            for (name, args, what) in backend::SUBCOMMANDS {
+                eprintln!("  {name:<22}{args:<26}{what}");
+            }
             std::process::exit(64);
         }
         other => {
