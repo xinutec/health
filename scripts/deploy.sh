@@ -1,6 +1,14 @@
-#!/usr/bin/env nix-shell
-#!nix-shell -i bash -p git gh
+#!/usr/bin/env bash
 # Deploy the health-sync app end-to-end.
+#
+# ⚠ NO nix-shell SHEBANG. It was `#!nix-shell -i bash -p git gh`, pinning both to
+# the default channel because a non-channel `gh` was said to 401 against the
+# macOS keyring. Re-measured 2026-08-29 (health #950) and the premise does not
+# reproduce: the home-manager `gh` 2.93.0 and a `nix-shell -p gh` 2.89.0 both
+# read the same keyring entry and both report `✓ Logged in ... (keyring)`.
+# git, gh and git-crypt have been in home-manager's `home.packages` since
+# 2026-06-28, so the shebang was buying 1.79 s of nix-shell startup per run
+# against 0.01 s for bash, plus a git one minor version behind the one on PATH.
 #
 # Node is sourced per-command from the flake devShell (`nix develop`,
 # rev-pinned via flake.lock — same single source of truth as every other
@@ -36,8 +44,8 @@
 #   scripts/deploy.sh -m "commit message"
 #   scripts/deploy.sh -F /path/to/message.txt
 #
-# The shebang pulls in git / gh via nix-shell so you can run the script
-# directly on macOS; node comes per-command from the flake devShell (below).
+# git / gh / git-crypt come from home-manager's `home.packages`; node comes
+# per-command from the flake devShell (below).
 
 set -euo pipefail
 
