@@ -1157,6 +1157,83 @@ private def RIDEHEAD : Env :=
 -- clears `MIN_REMAINING_RIDE_S`.
 #guard fires MIX "vehicleEdgeShed" #[wk 0 2400, tr 2400 4200 (some "S → T")]
 
+/-- A drive decelerating into its arrival, then a residual parked at the kerb.
+
+⚠ LIFTED from `StaySplit`'s `ArrivalGuards`. The tail is the load-bearing half
+and is easy to get wrong: every residual fix must sit inside
+`ARRIVAL_STAY_RADIUS_M` of the stay centroid, drift under
+`ARRIVAL_TAIL_MAX_NET_M` NET, and read below `ARRIVAL_TAIL_STATIONARY_KMH`
+median — a residual that merely SLOWS is a walk-in from the kerb and the pass
+correctly refuses it. -/
+private def arrivalTrack : Array Shed.PointF :=
+  #[fxm 500 (-2000) 40, fxm 700 (-1000) 38, fxm 900 (-200) 30,
+    fxm 1000 0 25, fxm 1100 600 22, fxm 1200 1200 21,
+    fxm 1300 1210 1, fxm 1400 1215 0.5, fxm 1500 1212 0.4, fxm 1600 1214 0.3,
+    fxm 1700 1213 0.2, fxm 1800 1215 0.3, fxm 1900 1212 0.1]
+
+private def ARRIVAL : Env := { NO_LOOKUPS with points := arrivalTrack }
+
+-- A "walk" that is really the drive still arriving, then parking: the drive
+-- absorbs its decelerating tail and the residual folds into the stay.
+#guard fires ARRIVAL "vehicleArrival" #[dr 500 1000, wk 1000 1600, st 1600 2200]
+
+-- The SAME track answers the pedestrian mirror, and that is the point rather
+-- than a saving: `vehicleArrival` reads the head as a vehicle still moving and
+-- `stayArrivalClaim` reads the tail as a walker already standing, so one track
+-- with a fast head and a parked tail is the shape BOTH gates want. Here the
+-- trailing still run is 400 s over a 14 m spread, and 200 s of walk is left
+-- behind — clearing FOOT_ARRIVAL_MIN_DWELL_S, SPREAD_MAX_M and
+-- MIN_WALK_REMAINDER_S respectively.
+#guard fires ARRIVAL "stayArrivalClaim" #[wk 1000 1600, st 1600 2200]
+
+/-- One train leg holding a ride, a walk out of the station, then a standstill —
+the 06-18 shape, lifted from `Interchange`'s own guards.
+
+⚠ THE STANDSTILL IS LOAD-BEARING, not padding. A burst within
+`BURST_EDGE_GUARD_S` of a leg edge is discarded, so the tail burst is only
+visible because the leg runs on past it; end the leg at the walk and the pass
+correctly finds nothing. ⚠ And the braking fix inside the burst's first minute
+is deliberate: resumption is tested from the burst's END, and a ~28 km/h fix
+fifteen seconds in would read as the ride resuming if it were tested from the
+start. -/
+private def tailTrimTrack : Array Shed.PointF := Id.run do
+  let mut pts : Array Shed.PointF := #[]
+  let mut m : Float := 0
+  let mut ts : Int := 0
+  while ts < 420 do
+    pts := pts.push (fxm ts m 64); m := m + 250; ts := ts + 14
+  pts := pts.push (fxm ts m 28); m := m + 110; ts := ts + 14
+  while ts < 600 do
+    pts := pts.push (fxm ts m 5); m := m + 20; ts := ts + 14
+  while ts ≤ 900 do
+    pts := pts.push (fxm ts m 0.3); m := m + 1; ts := ts + 14
+  return pts
+
+/-- Three walking minutes at the alight, clear of both leg edges. -/
+private def tailTrimSteps : Array StepPoint :=
+  (Array.range 3).map fun k => { ts := 420 + 60 * Int.ofNat k, steps := 93 }
+
+private def TAILTRIM : Env :=
+  { NO_LOOKUPS with points := tailTrimTrack, steps := tailTrimSteps }
+
+-- A train leg drawn past the moment the rider got off: the tail is trimmed and
+-- re-emitted as a walk.
+#guard fires TAILTRIM "rideTailTrim" #[tr 0 900 (some "A → B")]
+
+/-- A "stationary" segment with a walker's speed on it. `st` leaves `avgSpeed`
+at zero, and `STATIONARY_WALK_MIN_AVG_SPEED_KMH` is the gate that rejects a
+genuine stop, so a witness for `walkThrough` cannot use it. -/
+private def stw (a b : Int) : Seg :=
+  { startTs := a, endTs := b, mode := "stationary", avgSpeed := 4
+    linearity := 0.2, pointCount := 50 }
+
+-- Fifteen minutes labelled stationary that MIX walks straight through: 100 spm
+-- against `STATIONARY_WALK_PEAK_CADENCE`, and 66 m/min of real translation so
+-- `looksLikeStay` cannot claim it. One segment on purpose — at i = 0
+-- `bracketedBySamePlace` is false, which is the branch that lets a lone
+-- walk-through be seen at all.
+#guard fires MIX "walkThrough" #[stw 0 900]
+
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 above shows they act. Each needs a fixture shaped to its own gate, and they fall
 into three groups:
@@ -1165,23 +1242,27 @@ into three groups:
   synthetic lookups do not carry — `interchangeSplit` in particular needs
   endpoint line sets that are DISJOINT, which one uniform `linesAtPoint` cannot
   produce.
-* `vehicleArrival`, `vehicleEdgeShed`, `rideHeadClaim`, `walkThrough` want a
-  cadence-and-pace profile at a segment boundary this track does not have: a
-  step burst coinciding with real translation, or its absence.
+⚠ The middle group is CLOSED as of 2026-08-30 — `vehicleArrival`,
+  `vehicleEdgeShed`, `rideHeadClaim`, `walkThrough`, `stayArrivalClaim` and
+  `rideTailTrim` all have witnesses now, each ablation-checked by replacing its
+  pass with the identity. Two of them needed no new track at all (MIX already
+  crosses 4 km/h → 45 km/h, which is the boundary `vehicleEdgeShed` and
+  `walkThrough` want); the rest were LIFTED from the guards of the module that
+  owns the pass rather than designed here, which is what made them cheap and is
+  the method to reuse on the seven below.
 * `busEvidence`, `busRoutes` want mid-leg dwells — a stop pattern, not a
   constant-speed line.
 
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
-  #["railRuns", "undergroundRail", "vehicleArrival",
-    "stayArrivalClaim", "rideTailTrim",
-    "interchangeSplit", "busEvidence", "busRoutes", "walkThrough", "roadMatch", "walkMatch"]
+  #["railRuns", "undergroundRail",
+    "interchangeSplit", "busEvidence", "busRoutes", "roadMatch", "walkMatch"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 30
+#guard witnessed.size == 34
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
