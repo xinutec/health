@@ -13,6 +13,28 @@
 //! The oracle is `expected.tsArm.capture.statesOut` — the timeline the
 //! TypeScript cascade produced from the same inputs.
 //!
+//! # ⚠ WHERE THIS TEST BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
+//!
+//! It starts at `fixture.inputs`. **Nothing that PRODUCES an input is exercised
+//! here** — `classification_inputs::load` and every DB query, cache load,
+//! PhoneTrack window and biometrics join inside it are upstream of the fixture
+//! and are not reached by this file or any other in the corpus.
+//!
+//! That boundary is invisible from the pass line, and it has already misled
+//! once: a change to `classification_inputs::load` on 2026-08-30 was reported
+//! green by 339 tests that never executed it (#1273). A change to what the fold
+//! is FED must land on the replay path above, or be covered by something else
+//! that is named — a loader is the most dangerous place for this, because it
+//! moves the answer while every assertion here still holds.
+//!
+//! # ⚠ THE CORPUS IS CLOSED, and not by policy
+//!
+//! Every day here carries a frozen `tsArm`, and one CANNOT be created any more:
+//! `compare-day --freeze` went with the TS cascade (#975). So a day arriving
+//! without an oracle fails and can never be made to pass. That is option 2 of
+//! #1063 in force — arrived at by deletion rather than chosen — and it means
+//! the corpus can lose days but cannot gain them.
+//!
 //! # Why this test is local-only, and how it says so
 //!
 //! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
@@ -109,7 +131,11 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
 
         let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut") else {
             failures.push(format!(
-                "{name}: no frozen tsArm timeline to compare against"
+                "{name}: no frozen tsArm timeline — and one CANNOT be created. \
+                 `compare-day --freeze` went with the TS cascade (#975), so a day \
+                 arriving without an oracle can never gain one and cannot join this \
+                 corpus. Every day here carries one; seeing this means a new day was \
+                 added or a capture dropped an existing arm. See #1063."
             ));
             continue;
         };

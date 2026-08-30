@@ -57,7 +57,10 @@ fn the_head_reproduces_the_typescript_segments_on_every_golden_day() {
         let Some(want) = fixture.pointer("/expected/tsArm/capture/segsRaw") else {
             // NO ORACLE is a red verdict elsewhere; here it is a fixture the
             // head cannot be judged against, and saying so beats counting it.
-            failures.push(format!("{name}: no frozen tsArm to compare against"));
+            failures.push(format!(
+                "{name}: no frozen tsArm segsRaw — and one CANNOT be created. \
+                 `compare-day --freeze` went with the TS cascade (#975). See #1063."
+            ));
             continue;
         };
         let inputs = fixture.get("inputs").unwrap_or_else(|| {
@@ -157,7 +160,10 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
         let fixture: Value =
             serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {name}: {e}"));
         let Some(want) = fixture.pointer("/expected/tsArm/capture") else {
-            failures.push(format!("{name}: no frozen tsArm to compare against"));
+            failures.push(format!(
+                "{name}: no frozen tsArm capture — and one CANNOT be created. \
+                 `compare-day --freeze` went with the TS cascade (#975). See #1063."
+            ));
             continue;
         };
         let inputs = fixture.get("inputs").expect("a fixture has inputs");
