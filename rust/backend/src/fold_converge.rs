@@ -114,14 +114,37 @@ pub fn converge<A: Answerer>(
     let mut unanswerable: Vec<Miss> = Vec::new();
 
     for round in 1..=MAX_ROUNDS {
+        // ⚠ SPLITTING THE RESIDUAL, which #1071 requires before anyone acts on
+        // it. Two guesses at this number have already been wrong. `FOLD_SPLIT=1`
+        // prints build / serialise / wrap / serve per round, so the next change
+        // is made against a measurement instead of a third guess.
+        let t_build = std::time::Instant::now();
         let req = build_day_request(cap, inputs, trace, &tables)
             .with_context(|| format!("building the request for round {round}"))?;
-        let body = serde_json::to_string(&req).context("serialising the request")?;
-        // The fold takes `{"mode": "day", …}`; the request object IS the rest.
-        let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
+        let build_ms = t_build.elapsed().as_millis();
 
+        let t_ser = std::time::Instant::now();
+        let body = serde_json::to_string(&req).context("serialising the request")?;
+        let ser_ms = t_ser.elapsed().as_millis();
+
+        // The fold takes `{"mode": "day", …}`; the request object IS the rest.
+        let t_wrap = std::time::Instant::now();
+        let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
+        let wrap_ms = t_wrap.elapsed().as_millis();
+
+        let t_serve = std::time::Instant::now();
         let (out, misses) =
             lean::serve_capturing_misses(&wrapped).with_context(|| format!("round {round}"))?;
+        let serve_ms = t_serve.elapsed().as_millis();
+
+        if std::env::var_os("FOLD_SPLIT").is_some() {
+            eprintln!(
+                "  r{round} build {build_ms}ms · serialise {ser_ms}ms · wrap {wrap_ms}ms \
+                 · serve {serve_ms}ms · body {} KiB · tables {} key(s)",
+                wrapped.len() / 1024,
+                tables.len(),
+            );
+        }
 
         // ⚠ Only keys we have NOT already answered count as progress. One that
         // reappears was answered into somewhere the fold does not read.
