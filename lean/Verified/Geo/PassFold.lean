@@ -1234,14 +1234,41 @@ private def stw (a b : Int) : Seg :=
 -- walk-through be seen at all.
 #guard fires MIX "walkThrough" #[stw 0 900]
 
+/-- A road-vehicle leg at a bus's average pace. ⚠ `dr` declares 45 km/h and the
+matcher reads `seg.avgSpeed`, not the trace — `busSpeedPlausibility` is a sigmoid
+about `BUS_SPEED_MID_KMH = 38`, so 45 scores 0.24 against a 0.6 floor and a `dr`
+leg over this same geometry is REFUSED for being too fast to be a bus. That is
+the pass working; the leg has to claim a bus's speed because that is the field
+the decision is made on. -/
+private def bus (a b : Int) : Seg :=
+  { startTs := a, endTs := b, mode := "driving", refinedMode := some "driving"
+    avgSpeed := 25, maxSpeed := 30, pointCount := 50 }
+
+-- MIX's bus route is not decoration: its three stops sit at 3300 m, 22000 m and
+-- 40800 m, exactly where the track's fast stretch starts, halves and ends. So a
+-- leg over 3000-6000 boards at S, alights at T and passes M in between — both
+-- ends inside BUS_STOP_ANCHOR_M and the one intermediate stop covered.
+#guard fires MIX "busRoutes" #[bus 3000 6000]
+
+-- An unnamed train leg over the fast stretch, boarding near S and alighting
+-- near T. ⚠ MIX's `railStops` is EMPTY, and this fires anyway: the stopping
+-- pattern disambiguates BETWEEN candidate lines, so a run with one candidate
+-- needs none. The roster below used to claim this pass wanted data the
+-- synthetic lookups do not carry; it wanted only the stations and lines they
+-- already had.
+#guard fires MIX "railRuns" #[tr 3000 6000 none]
+
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 above shows they act. Each needs a fixture shaped to its own gate, and they fall
 into three groups:
 
-* `railRuns`, `undergroundRail`, `interchangeSplit` want line and stop data the
-  synthetic lookups do not carry — `interchangeSplit` in particular needs
-  endpoint line sets that are DISJOINT, which one uniform `linesAtPoint` cannot
-  produce.
+* `undergroundRail` and `interchangeSplit` want line and stop data the synthetic
+  lookups do not carry — `interchangeSplit` in particular needs endpoint line
+  sets that are DISJOINT, which one uniform `linesAtPoint` cannot produce.
+  ⚠ `railRuns` was in this group and did NOT belong: it fires on MIX with
+  `railStops` EMPTY, because the stopping pattern disambiguates between
+  candidate lines rather than being required to find a run. Try the pass against
+  the existing fixtures before believing a note that says it needs more.
 ⚠ The middle group is CLOSED as of 2026-08-30 — `vehicleArrival`,
   `vehicleEdgeShed`, `rideHeadClaim`, `walkThrough`, `stayArrivalClaim` and
   `rideTailTrim` all have witnesses now, each ablation-checked by replacing its
@@ -1250,19 +1277,22 @@ into three groups:
   `walkThrough` want); the rest were LIFTED from the guards of the module that
   owns the pass rather than designed here, which is what made them cheap and is
   the method to reuse on the seven below.
-* `busEvidence`, `busRoutes` want mid-leg dwells — a stop pattern, not a
-  constant-speed line.
+* `busEvidence` wants mid-leg dwells — a stop pattern, not a constant-speed
+  line. ⚠ `busRoutes` was grouped with it and did not belong either: it anchors
+  ENDPOINTS to stops and needs no dwell at all. What it did need was a leg
+  declaring a bus's `avgSpeed`, since the speed sigmoid reads the segment field
+  and refuses `dr`'s 45 km/h outright.
 
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
-  #["railRuns", "undergroundRail",
-    "interchangeSplit", "busEvidence", "busRoutes", "roadMatch", "walkMatch"]
+  #["undergroundRail",
+    "interchangeSplit", "busEvidence", "roadMatch", "walkMatch"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 34
+#guard witnessed.size == 36
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
