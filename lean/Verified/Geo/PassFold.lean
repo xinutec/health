@@ -1386,55 +1386,88 @@ private def BUSEV : Env :=
 
 #guard fires BUSEV "busEvidence" #[bus 300 1200]
 
-/-- Wired passes with no witness day here: the fold reaches them, and nothing
-above shows they act. Each needs a fixture shaped to its own gate, and they fall
-into three groups:
+/-- A walk swallowing a tube ride: good fixes at street level either side, and a
+GPS-dark run between them.
 
-* `undergroundRail` is the last one open. It wants GPS-dark raw fixes
-  (`accuracy ≥ COARSE_ACCURACY_M`) spanning `MIN_RUN_DURATION_S`, plus FOUR
-  lookups agreeing — stations, lines, ways and served stations — so that
-  `reconstructUndergroundJourney` can name a line. That is more moving parts
-  than any of the twelve closed.
-  ⚠ `railRuns` was in this group and did NOT belong: it fires on MIX with
-  `railStops` EMPTY, because the stopping pattern disambiguates between
-  candidate lines rather than being required to find a run. Try the pass against
-  the existing fixtures before believing a note that says it needs more.
-⚠ The middle group is CLOSED as of 2026-08-30 — `vehicleArrival`,
-  `vehicleEdgeShed`, `rideHeadClaim`, `walkThrough`, `stayArrivalClaim` and
-  `rideTailTrim` all have witnesses now, each ablation-checked by replacing its
-  pass with the identity. Two of them needed no new track at all (MIX already
-  crosses 4 km/h → 45 km/h, which is the boundary `vehicleEdgeShed` and
-  `walkThrough` want); the rest were LIFTED from the guards of the module that
-  owns the pass rather than designed here, which is what made them cheap and is
-  the method to reuse on the seven below.
-* ⚠ `busEvidence` and `interchangeSplit` were here and are CLOSED.
-  `busEvidence` did want mid-leg dwells, and got `Bus`'s own fixture — a
-  standstill before the leg so `detectBoardingWait` has something to look
-  backward at, then two dwells inside it. `interchangeSplit` wanted the DISJOINT
-  endpoint line sets named below, and a `linesAtPoint` that answers by LATITUDE
-  produces them, exactly as `byLat` does for `displayTz`. Its geometry is sized
-  from the pass's own timing model rather than guessed.
-* ⚠ `roadMatch` and `walkMatch` were listed here and needed something else
-  entirely: their shells are FUNCTION leaves on `Env`, defaulting to no ways and
-  `none`, so no arrangement of fixes could witness them and no track was the
-  missing piece. They are witnessed now against a RAGGED track — 32 m either
-  side of a straight way — because `matchImprovesDisplay` needs the raw line
-  farther than `NEEDS_MATCH_M` from the road, the match closer, and the stray
-  under `MATCH_MAX_STRAY_M` at once. MIX can never witness them: its track is
-  already straight, so nothing improves on it. ⚠ `busRoutes` was grouped with it and did not belong either: it anchors
-  ENDPOINTS to stops and needs no dwell at all. What it did need was a leg
-  declaring a bus's `avgSpeed`, since the speed sigmoid reads the segment field
-  and refuses `dr`'s 45 km/h outright.
+⚠ THE ACCURACY FIELD IS THE WHOLE SIGNAL. `isUndergroundSignal` is
+`accuracy ≥ COARSE_ACCURACY_M = 100` with NO upper bound — it marks the dark
+WINDOW — while `isCoarse` caps at 800 because only those can be snapped to a
+station. 200 here is both, which is what a witness needs: the run has to be
+detected AND reconstructed. The dark span is 1800 s against a
+`MIN_RUN_DURATION_S` of 180.
 
-Named rather than counted, so the residue is the work rather than a number. -/
+⚠ The ends are 3000 m apart, over `MIN_JOURNEY_M` = 800, and the two stations
+must differ by NAME — a run that boards and alights at one station is refused. -/
+private def tubeTrack : Array Verified.Geo.UndergroundRun.CoarseFix :=
+  #[⟨0, lat0, lon0, some 10⟩, ⟨300, lat0 + 200 * mlat, lon0, some 10⟩] ++
+  ((Array.range 7).map fun k =>
+    ⟨600 + 300 * Int.ofNat k, lat0 + (400 + 300 * Float.ofNat k) * mlat, lon0, some 200⟩) ++
+  #[⟨2700, lat0 + 2800 * mlat, lon0, some 10⟩, ⟨3000, lat0 + 3000 * mlat, lon0, some 10⟩]
+
+private def TUBE : Env :=
+  { NO_LOOKUPS with
+    rawFixes := tubeTrack
+    points := tubeTrack.map fun f => { ts := f.ts, lat := f.lat, lon := f.lon, speedKmh := 30 }
+    -- ⚠ `pickBestStation` is asked to PREFER "subway", the only caller in the
+    -- repo that expresses a preference, so the stations must carry that subtype.
+    nearbyStations := fun lat _ _ =>
+      #[{ name := if lat < lat0 + 1500 * mlat then "Board" else "Alight"
+          subtype := "subway", distanceM := 40, lat := some lat, lon := some lon0 }]
+    -- One line at both ends and under every coarse fix: the candidate must serve
+    -- both ends AND be hugged by at least one dark fix.
+    linesAtPoint := fun _ _ _ => #["Metropolitan Line"] }
+
+-- A tube ride mined out of the walk that swallowed it.
+#guard fires TUBE "undergroundRail" #[wk 0 3000]
+
+/-- Wired passes with no witness day here — **EMPTY as of 2026-08-30**, and it
+must be kept that way: `witnessed` is its complement, and the two lists partition
+the wired set, so a pass added without a witness cannot slip in as covered.
+
+⚠ **A NON-EMPTY ENTRY IS A DEBT, NOT A CATEGORY.** When this list held thirteen
+they were grouped by what each pass was believed to need, and FOUR OF THE FIVE
+GROUPINGS WERE WRONG — each in a different way, and none of it visible by
+reading:
+
+* `railRuns` was filed as needing stop relations. It fires with `railStops`
+  EMPTY: the stopping pattern disambiguates BETWEEN candidate lines rather than
+  being needed to find a run.
+* `busRoutes` was filed as needing mid-leg dwells. It anchors ENDPOINTS and needs
+  none. What it wanted was a leg declaring a bus's `avgSpeed`, because the speed
+  sigmoid reads the SEGMENT field rather than the trace and refuses `dr`'s
+  45 km/h for being too fast to be a bus.
+* `roadMatch` and `walkMatch` were filed as needing OSM data. The missing piece
+  was never a track: their shells are FUNCTION leaves on `Env` defaulting to
+  empty, so no arrangement of fixes could witness them — and a matcher stub alone
+  does not do it either, because `matchImprovesDisplay` wants the raw line
+  off-road, the match closer AND the stray bounded at once. MIX can never satisfy
+  that; its track is already straight, so nothing improves on it.
+* `interchangeSplit`'s stated blocker WAS real — one uniform `linesAtPoint`
+  cannot produce disjoint endpoint line sets — but the conclusion that it was
+  unreachable was not: a lookup answering by LATITUDE produces them, which is
+  what `byLat` already does for `displayTz`.
+
+Only `busEvidence`'s stated reason survived contact, and even there the
+undocumented half was that the standstill must sit BEFORE the leg, since
+`detectBoardingWait` looks backward from `startTs`.
+
+**So the method, if this list ever grows again:** run the pass against the
+existing fixtures FIRST — that alone closed two of the thirteen — then lift the
+fixture from the guards of the module that owns the pass, which had already
+solved every part that is invisible until wrong. Design one from scratch last.
+
+⚠ Two of the witnesses pin less than they look like they do. `roadMatch` and
+`walkMatch` are answered by an injected shell, so their guards show that the fold
+REACHES the pass and writes what the shell returned; the solvers live outside
+Lean and are not under test. -/
 def unwitnessed : Array String :=
-  #["undergroundRail"]
+  #[]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 40
+#guard witnessed.size == 41
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
