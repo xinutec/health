@@ -102,6 +102,20 @@ fn trace_answer(round: u32, m: &Miss, row: &Value) {
     }
 }
 
+/// The largest members of a JSON object by serialised size, biggest first.
+///
+/// ⚠ Sizes by re-serialising each value, which is not what the wire cost is to
+/// the byte — it is the SHARE that matters here, and the share is what decided
+/// #1071: three transport caches are 84% of a fold request.
+fn biggest_keys(obj: &serde_json::Map<String, Value>, prefix: &str) {
+    let mut sized: Vec<(&String, usize)> =
+        obj.iter().map(|(k, v)| (k, v.to_string().len())).collect();
+    sized.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    for (k, n) in sized.iter().take(12) {
+        eprintln!("{prefix}.{k}: {} KiB", n / 1024);
+    }
+}
+
 /// Walk the fold to convergence.
 pub fn converge<A: Answerer>(
     cap: &Value,
@@ -136,6 +150,20 @@ pub fn converge<A: Answerer>(
         let (out, misses) =
             lean::serve_capturing_misses(&wrapped).with_context(|| format!("round {round}"))?;
         let serve_ms = t_serve.elapsed().as_millis();
+
+        // ⚠ WHERE THE BYTES ARE, on round 1 only — the invariant is what repeats,
+        // so its composition decides whether the fix is to PRUNE the payload or
+        // to stop re-sending it. Round 1 because that is the round with no
+        // answers in it, so what it shows is purely the invariant.
+        if round == 1
+            && std::env::var_os("FOLD_SPLIT").is_some()
+            && let Some(obj) = req.as_object()
+        {
+            biggest_keys(obj, "     env");
+            if let Some(env) = obj.get("env").and_then(|e| e.as_object()) {
+                biggest_keys(env, "       env.env");
+            }
+        }
 
         if std::env::var_os("FOLD_SPLIT").is_some() {
             eprintln!(
