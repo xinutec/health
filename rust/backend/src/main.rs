@@ -1709,12 +1709,14 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
 
 /// Serve the HTTP surface.
 ///
-/// ⚠ NOT PRODUCTION'S SERVER. `src/server.ts` owns every real route; this binds
-/// the skeleton so the config → pool → axum stack is exercised by something
-/// other than a unit test. `PORT` defaults to 8081 rather than the TypeScript
-/// server's port: the two must be able to run side by side on one host during
-/// the port, and defaulting to the same number would make the first accidental
-/// double-start look like a crash.
+/// ⚠ THIS IS PRODUCTION'S SERVER. It answers `health.xinutec.org`, and there is
+/// no TypeScript server left beside it — `src/server.ts` went with the TS arm
+/// (#975). This doc said the opposite until 2026-08-30, when the live page was
+/// measured being served by this binary.
+///
+/// It binds `AUTH_PORT`, which is what the manifest sets; see the note in the
+/// body. The 8081 default is a local-run convenience and is not what production
+/// uses.
 async fn serve() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(

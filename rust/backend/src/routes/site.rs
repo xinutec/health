@@ -1,8 +1,8 @@
 //! Everything the browser needs that is not the API (#982).
 //!
 //! The built Angular app, the two unauthenticated status endpoints, and the
-//! SPA fallback. No decisions here — this is the last of the TypeScript's
-//! `server.ts` and it is entirely plumbing.
+//! SPA fallback. No decisions here — it is entirely plumbing, and it is the
+//! part of the old TypeScript server that had nothing to port but itself.
 
 use axum::Json;
 use axum::extract::State;

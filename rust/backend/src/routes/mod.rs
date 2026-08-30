@@ -1,18 +1,18 @@
 //! The HTTP surface.
 //!
-//! ⚠ THIS IS NOT SERVING PRODUCTION AND MUST NOT BE POINTED AT IT YET. The
-//! TypeScript `src/server.ts` owns every route; this is the axum skeleton the
-//! `/api` port lands on, plus the two endpoints that need no logic at all.
+//! ⚠ THIS IS PRODUCTION. It serves `health.xinutec.org` — the SPA shell, the
+//! static build and every `/api` route — and there is no TypeScript server
+//! left to fall back to. This header said the opposite until 2026-08-30, when
+//! the page was measured being served by this router; `src/server.ts` went with
+//! the TS arm (#975). Treat a change here as a change to the live site.
 //!
-//! ⚠ Pointing this at production is also #413's re-bless, and that is a
-//! DECISION rather than a deploy step. `/velocity` answers from the OSM mirror
-//! through Lean rather than MariaDB's `ORDER BY ST_Distance … LIMIT 50`.
-//!
-//! ⚠ Whether that changes served labels is UNMEASURED. #413 records 0 of 315
-//! timeline states differing for the oracle swap alone; step 4 separately
-//! predicts 9 queries where `LIMIT 50` displacement loses a named street, which
-//! is the part this source removes. Read the diff against those predictions —
-//! do not assume either that nothing moves or that everything does.
+//! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
+//! `ORDER BY ST_Distance … LIMIT 50`. #413's re-bless was the decision to let
+//! it, and it is taken: #413 recorded 0 of 315 timeline states differing for
+//! the oracle swap alone, with 9 queries separately predicted where `LIMIT 50`
+//! displacement loses a named street. That prediction has never been read back
+//! against the served output — so it is an open measurement, not a warning
+//! against deploying something already deployed.
 //!
 //! # Nothing in this file decides anything
 //!
@@ -190,6 +190,22 @@ pub fn router(state: AppState) -> Router {
         // ⚠ Runs over EVERYTHING, including the API — see the note on why it
         // only ever touches text/html.
         .layer(axum::middleware::from_fn(site::html_must_revalidate))
+        // ⚠ OUTERMOST ON THE RESPONSE, which is why it is last: axum applies
+        // layers bottom-up, so this one sees the finished body of every route,
+        // API and static asset alike.
+        //
+        // It is not a tuning knob. Measured in production 2026-08-30,
+        // `/api/heartrate/intraday` for one half-finished day was 2,556,228
+        // bytes with `encodedBodySize == decodedBodySize` — nothing was
+        // negotiating an encoding because the feature was not compiled in. That
+        // response is 18,656 rows each repeating `user_id` and `tz` in full, so
+        // it is mostly a constant and compresses to a fraction.
+        //
+        // ⚠ Compression is CONTENT-NEGOTIATED: a client that sends no
+        // `Accept-Encoding` still gets the identity body, so this cannot break
+        // a caller — it can only fail to help one. That is also why it is safe
+        // over `ServeDir`, which serves no pre-compressed variants here.
+        .layer(tower_http::compression::CompressionLayer::new())
 }
 
 /// Where the built frontend lives. `PUBLIC_DIR` overrides it so a dev run can

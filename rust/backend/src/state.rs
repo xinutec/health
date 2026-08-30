@@ -1,8 +1,8 @@
 //! Shared application state.
 //!
-//! Deliberately thin, and it should stay that way. `src/server.ts` keeps a
-//! velocity cache and the Lean tenant mode overrides in module-level mutables;
-//! neither belongs here:
+//! Deliberately thin, and it should stay that way. The TypeScript server this
+//! replaced kept a velocity cache and the Lean tenant mode overrides in
+//! module-level mutables; neither belongs here:
 //!
 //!   * the tenant overrides (`setVerifiedCoreOverride`) exist ONLY to drive the
 //!     TS↔Lean A/B, so they are scaffolding that is retired with the TS arm

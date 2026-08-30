@@ -1,8 +1,9 @@
 //! The application error type, with an axum `IntoResponse` so handlers can `?`.
 //!
-//! Shapes match `src/server.ts`'s error handling and the sibling repos' — the
-//! frontend already reads these statuses, and the port must not quietly change
-//! what a client sees.
+//! These status shapes are INHERITED and are not free to change: the frontend
+//! already branches on them, so an edit here is a client-visible API change
+//! even though nothing in this file mentions a client. They came from the
+//! TypeScript server the port replaced and match the sibling repos'.
 //!
 //! ⚠ `Other` is the only variant whose text is NOT shown. Everything else names
 //! something the caller can act on; an unexpected failure names nothing useful
@@ -60,8 +61,9 @@ impl IntoResponse for AppError {
             AppError::NcReauthRequired => (StatusCode::CONFLICT, self.to_string()),
             AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             AppError::Other(e) => {
-                // Logged whole, answered generically. `src/server.ts` does the
-                // same and for the same reason.
+                // Logged whole, answered generically: the log is ours and the
+                // response is the caller's, and an unexpected failure names
+                // nothing a caller can act on.
                 tracing::error!("unhandled: {e:#}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,

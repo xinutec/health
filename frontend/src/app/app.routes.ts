@@ -17,8 +17,10 @@ import { SettingsComponent } from "./components/settings/settings.component";
  * component — every visual difference is driven by `shareWindow`
  * coming back from /api/me and by what the server gates server-side.
  *
- * The server (Hono) has matching SPA-fallback rules at /share/:token
- * and /settings so the SPA shell is served on a direct hit.
+ * The server (axum, rust/backend/src/routes/mod.rs) has matching SPA-fallback
+ * rules at /share/:token and /settings so the SPA shell is served on a direct
+ * hit. They are listed explicitly there rather than catching everything, so a
+ * typo'd asset still 404s instead of silently becoming an HTML page.
  */
 export const routes: Routes = [
 	{ path: "", pathMatch: "full", component: DashboardComponent },
