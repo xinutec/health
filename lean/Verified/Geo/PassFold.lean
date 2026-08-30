@@ -1321,13 +1321,80 @@ private def WALKMATCH : Env :=
 
 #guard fires WALKMATCH "walkMatch" #[wk 3000 4200]
 
+/-- A 30-minute "one-line" ride that is really two, with the change at 5.5 km.
+
+⚠ THE ENDPOINT LINE SETS MUST BE DISJOINT, which is what MIX cannot do: its
+`linesAtPoint` answers `#["Metropolitan"]` everywhere, so board and alight always
+share a line and `spliceInterchanges` returns early. Here the lookup answers by
+LATITUDE, which is the same trick `byLat` uses for `displayTz`.
+
+⚠ The geometry is sized from the pass's own timing model rather than picked:
+`expectedTs = legStart + BOARD_WAIT_S + (rideM / AVG_INTERSTATION_M) * PER_STOP_S`,
+so a 5500 m ride to the change predicts `180 + 5 * 120 = 780`, and the burst at
+720 sits 60 s off it against a `MAX_TIMING_SLOP_S` of 360. The change is also
+5500 m from BOTH endpoints, clearing `ENDPOINT_EXCLUSION_M`. -/
+private def interchangeTrack : Array Shed.PointF :=
+  (Array.range 31).map fun k =>
+    { ts := 60 * Int.ofNat k
+      lat := lat0 + (11000 * Float.ofNat k / 30) * mlat
+      lon := lon0
+      speedKmh := 40 }
+
+/-- Three walking minutes at the change, clear of both leg edges. -/
+private def interchangeStepsFx : Array StepPoint :=
+  (Array.range 3).map fun k => { ts := 720 + 60 * Int.ofNat k, steps := 93 }
+
+private def CHANGE : Verified.Geo.RailJourney.LineStation :=
+  ⟨"Change", lat0 + 5500 * mlat, lon0⟩
+
+private def INTERCHANGE : Env :=
+  { NO_LOOKUPS with
+    points := interchangeTrack
+    steps := interchangeStepsFx
+    -- Disjoint by latitude: the south half is Metropolitan, the north Jubilee.
+    linesAtPoint := fun lat _ _ =>
+      if lat < lat0 + 5500 * mlat then #["Metropolitan"] else #["Jubilee"]
+    -- …and both stop at the change, which is what makes the pair splice-able.
+    stationsOnLine := fun _ => #[CHANGE] }
+
+#guard fires INTERCHANGE "interchangeSplit" #[tr 0 1800 (some "A → B · Metropolitan Line")]
+
+/-- A standstill at the stop, then a ride at ~40 km/h with two dwells in it —
+`Bus`'s own `AnnotateGuards` fixture, in this module's coordinates.
+
+⚠ THE DWELLS ARE THE WHOLE POINT and are why MIX cannot witness this pass: the
+scorer reads a BOARDING WAIT before the leg and mid-leg STOPS inside it, and
+MIX's track moves at a constant pace from end to end. The standstill before
+`startTs` is not padding either — `detectBoardingWait` looks BACKWARD from the
+leg start, so a leg that begins at the first moving fix has no wait to find. -/
+private def busEvidenceTrack : Array Shed.PointF := Id.run do
+  let mut out : Array Shed.PointF := #[]
+  for i in [0:10] do
+    out := out.push (fxm (Int.ofNat (30 * i)) 0 0)
+  let mut m : Float := 0
+  for i in [0:31] do
+    let t : Int := 300 + Int.ofNat (30 * i)
+    let dwelling := (decide (t ≥ 480) && decide (t ≤ 540)) || (decide (t ≥ 780) && decide (t ≤ 840))
+    if !dwelling then m := m + 334
+    out := out.push (fxm t m (if dwelling then 0 else 40))
+  return out
+
+private def BUSEV : Env :=
+  { NO_LOOKUPS with
+    points := busEvidenceTrack
+    transitStops := fun _ _ _ => #[{ subtype := "bus_stop", distanceM := 10 }] }
+
+#guard fires BUSEV "busEvidence" #[bus 300 1200]
+
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 above shows they act. Each needs a fixture shaped to its own gate, and they fall
 into three groups:
 
-* `undergroundRail` and `interchangeSplit` want line and stop data the synthetic
-  lookups do not carry — `interchangeSplit` in particular needs endpoint line
-  sets that are DISJOINT, which one uniform `linesAtPoint` cannot produce.
+* `undergroundRail` is the last one open. It wants GPS-dark raw fixes
+  (`accuracy ≥ COARSE_ACCURACY_M`) spanning `MIN_RUN_DURATION_S`, plus FOUR
+  lookups agreeing — stations, lines, ways and served stations — so that
+  `reconstructUndergroundJourney` can name a line. That is more moving parts
+  than any of the twelve closed.
   ⚠ `railRuns` was in this group and did NOT belong: it fires on MIX with
   `railStops` EMPTY, because the stopping pattern disambiguates between
   candidate lines rather than being required to find a run. Try the pass against
@@ -1340,8 +1407,13 @@ into three groups:
   `walkThrough` want); the rest were LIFTED from the guards of the module that
   owns the pass rather than designed here, which is what made them cheap and is
   the method to reuse on the seven below.
-* `busEvidence` wants mid-leg dwells — a stop pattern, not a constant-speed
-  line.
+* ⚠ `busEvidence` and `interchangeSplit` were here and are CLOSED.
+  `busEvidence` did want mid-leg dwells, and got `Bus`'s own fixture — a
+  standstill before the leg so `detectBoardingWait` has something to look
+  backward at, then two dwells inside it. `interchangeSplit` wanted the DISJOINT
+  endpoint line sets named below, and a `linesAtPoint` that answers by LATITUDE
+  produces them, exactly as `byLat` does for `displayTz`. Its geometry is sized
+  from the pass's own timing model rather than guessed.
 * ⚠ `roadMatch` and `walkMatch` were listed here and needed something else
   entirely: their shells are FUNCTION leaves on `Env`, defaulting to no ways and
   `none`, so no arrangement of fixes could witness them and no track was the
@@ -1356,13 +1428,13 @@ into three groups:
 
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
-  #["undergroundRail", "interchangeSplit", "busEvidence"]
+  #["undergroundRail"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 38
+#guard witnessed.size == 40
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
