@@ -1124,6 +1124,18 @@ async fn phonetrack_windows(
                 f.failed_devices
             );
         }
+        // ⚠ Same class as above and said the same way: a capped window means the
+        // points are a subset, so a gap in them is not evidence of stillness.
+        // Reaching this at all means one device produced over 10 000 fixes
+        // inside a single second, which the splitter could not narrow further
+        // (#1032).
+        if f.capped_windows > 0 {
+            tracing::warn!(
+                "phonetrack: {} window(s) hit the point cap and could not be split for [{a}, {b}] \
+                 — these fixes are a SUBSET of the window",
+                f.capped_windows
+            );
+        }
         fetched.push(f.points);
     }
     let after_day = fetched.pop().expect("four windows fetched");

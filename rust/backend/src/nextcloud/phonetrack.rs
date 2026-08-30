@@ -47,6 +47,26 @@ pub struct RawTrackPoint {
     pub battery: Option<f64>,
 }
 
+/// Halve an inclusive window of whole seconds, or `None` when it is already one
+/// second wide.
+///
+/// ⚠ **THE TWO HALVES COVER THE INPUT EXACTLY — no gap and no overlap.** Both
+/// bounds are inclusive (`Verified.Sync.chunkRange` documents its touching chunk
+/// endpoints as a deliberate duplicate, which is what fixes the convention), so
+/// the split has to be `[a, mid]` and `[mid + 1, b]`. Splitting at `mid` on both
+/// sides would re-fetch whatever sits exactly on the boundary, and moving the
+/// low end instead would drop it.
+///
+/// ⚠ **`hi` is strictly narrower than the input**, which is what makes the
+/// caller's loop terminate rather than split a two-second window forever.
+pub fn split_window(a: i64, b: i64) -> Option<((i64, i64), (i64, i64))> {
+    if b <= a {
+        return None;
+    }
+    let mid = a + (b - a) / 2;
+    Some(((a, mid), (mid + 1, b)))
+}
+
 /// The result of a range fetch: the points, and how much of the walk failed.
 #[derive(Debug, Default)]
 pub struct TrackFetch {
@@ -59,6 +79,14 @@ pub struct TrackFetch {
     /// `points` is a SUBSET of the day, and every consumer that reads absence as
     /// evidence is now reading it wrongly.
     pub failed_devices: usize,
+    /// Windows that came back at the cap and could NOT be split any further
+    /// because they were already one second wide (#1032).
+    ///
+    /// ⚠ THE ONLY REMAINING WAY TO LOSE POINTS HERE, and it is now counted
+    /// instead of invisible. Splitting resolves every ordinary case; this is
+    /// over 10 000 fixes inside a single second from one device, which is not a
+    /// capture rate but a fault. Non-zero means `points` is a subset.
+    pub capped_windows: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,17 +247,15 @@ impl PhoneTrack {
                 continue;
             };
             for device in devices.values() {
-                let path = format!(
-                    "/index.php/apps/phonetrack/session/{}/device/{}/points\
-                     ?minTimestamp={min_ts}&maxTimestamp={max_ts}&maxPoints={MAX_POINTS}",
-                    session.id, device.id
-                );
-                match self.client.get(pool, &path).await.and_then(|b| match b {
-                    None => Ok(Vec::new()),
-                    Some(b) => parse_points(&b).map_err(NcError::Other),
-                }) {
+                match self
+                    .fetch_device_window(pool, session.id, device.id, min_ts, max_ts)
+                    .await
+                {
                     // An empty body is an empty device-day, not a failure.
-                    Ok(points) => out.points.extend(points),
+                    Ok((points, capped)) => {
+                        out.points.extend(points);
+                        out.capped_windows += capped;
+                    }
                     // ⚠ A revoked app password is NOT a per-device problem and
                     // must not be swallowed device by device: every remaining
                     // call would fail the same way, and the durable answer the
@@ -250,6 +276,82 @@ impl PhoneTrack {
 
         out.points.sort_by_key(|p| p.ts);
         Ok(out)
+    }
+
+    /// One device's points for `[min_ts, max_ts]`, SPLITTING when the response
+    /// comes back at the cap (#1032).
+    ///
+    /// ⚠ **PhoneTrack truncates at `maxPoints` and says nothing.** A full
+    /// response is shaped exactly like a device that happened to record that
+    /// many, so the tail is lost in silence. This reads the SYMPTOM — a
+    /// response of exactly the cap — rather than predicting a capture rate, and
+    /// so it is right whether or not any device is fast enough today. The
+    /// arithmetic that motivated it: a 7-day chunk at one fix per minute is
+    /// 10 080 points from a single device, against a 10 000 cap.
+    ///
+    /// ⚠ **THE HALVES DO NOT OVERLAP, unlike the chunking above.** The bounds
+    /// are inclusive at both ends — `Verified.Sync.chunkRange` documents its
+    /// touching endpoints as a deliberate duplicate — so `[a, mid]` and
+    /// `[mid + 1, b]` cover `[a, b]` exactly, with no gap and no repeated fix.
+    ///
+    /// ⚠ **Iterative, not recursive**, because an async fn that calls itself
+    /// needs boxing; the stack here is the recursion made visible. It
+    /// terminates: every split strictly narrows a window of whole seconds, and
+    /// a window one second wide is not split again.
+    ///
+    /// The returned count is windows that were AT the cap and one second wide,
+    /// which is the only case that still loses points — over 10 000 fixes in a
+    /// single second from one device, which is a fault rather than a rate.
+    async fn fetch_device_window(
+        &self,
+        pool: &MySqlPool,
+        session_id: i64,
+        device_id: i64,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Result<(Vec<RawTrackPoint>, usize), NcError> {
+        let mut todo = vec![(min_ts, max_ts)];
+        let mut points = Vec::new();
+        let mut capped = 0usize;
+
+        while let Some((a, b)) = todo.pop() {
+            let path = format!(
+                "/index.php/apps/phonetrack/session/{session_id}/device/{device_id}/points\
+                 ?minTimestamp={a}&maxTimestamp={b}&maxPoints={MAX_POINTS}"
+            );
+            let got = match self.client.get(pool, &path).await? {
+                None => Vec::new(),
+                Some(body) => parse_points(&body).map_err(NcError::Other)?,
+            };
+
+            if (got.len() as i64) < MAX_POINTS {
+                points.extend(got);
+                continue;
+            }
+
+            // At the cap. The response may be complete-and-exactly-full or
+            // truncated, and nothing distinguishes them — so split and ask
+            // again rather than guess which.
+            if let Some((lo, hi)) = split_window(a, b) {
+                let mid = lo.1;
+                todo.push(hi);
+                todo.push(lo);
+                tracing::debug!(
+                    "phonetrack: session {session_id}/device {device_id} \
+                     hit the {MAX_POINTS} cap over [{a}, {b}] — splitting at {mid}"
+                );
+            } else {
+                capped += 1;
+                points.extend(got);
+                tracing::warn!(
+                    "phonetrack: session {session_id}/device {device_id} returned \
+                     {MAX_POINTS} points for the single second {a} — cannot split \
+                     further, so this window is TRUNCATED and its points are a subset"
+                );
+            }
+        }
+
+        Ok((points, capped))
     }
 
     /// Fetch a span wider than one request, in chunks Lean sizes.
@@ -276,6 +378,7 @@ impl PhoneTrack {
             let mut chunk = self.fetch_range(pool, &from, &to).await?;
             out.points.append(&mut chunk.points);
             out.failed_devices += chunk.failed_devices;
+            out.capped_windows += chunk.capped_windows;
         }
         // Re-sorted across chunks: each chunk is ordered, the concatenation is
         // not, and `ForwardTzSource` binary-searches this.
