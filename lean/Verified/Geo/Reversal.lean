@@ -1,6 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.StaySplit
 import Verified.Hsmm.FloatScore
+import Verified.JsNum
 
 /-!
 # Reversal detection — a ride that doubles back is two rides
@@ -115,7 +116,8 @@ open Verified.Geo.SegmentMerge (Seg effectiveMode)
 -- `Arrival`, `VehicleLeg`, `RideHead`, `Stays`, `Walks`) sit at the ROOT. Reused
 -- rather than redeclared because the pass fold has to thread ONE fix type through
 -- every pass; a second `PointF` would make the fold's shape a conversion.
-open Shed (PointF jsRound)
+open Shed (PointF)
+open Verified.JsNum (jsRound)
 open Verified.Hsmm.FloatScore (haversineMeters)
 
 private def pi : Float := 3.141592653589793

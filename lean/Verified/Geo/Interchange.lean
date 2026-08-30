@@ -1,5 +1,6 @@
 import Verified.Geo.SegmentMerge
 import Verified.Hsmm.FloatScore
+import Verified.JsNum
 /-!
 # Interchange decomposition kernels (port of the pure exports of `src/geo/interchange-split.ts`)
 
@@ -168,11 +169,7 @@ private def effectiveMode (s : Seg) : String := s.refinedMode.getD s.mode
 private def samplesInWindow (points : Array Fix) (startTs endTs : Int) : Array Fix :=
   points.filter (fun p => decide (p.ts ≥ startTs) && decide (p.ts ≤ endTs))
 
-/-- `Math.round` — halves go UP, towards +∞. The slop is a sum of absolute
-    values, so the negative half of the rule is unreachable here. -/
-private def jsRoundInt (x : Float) : Int := (Float.floor (x + 0.5)).toInt64.toInt
-/-- `Math.round` keeping a Float, for the rebuilt kinematics. -/
-private def jsRoundF (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound jsRoundInt)
 
 /-- `[...new Set(xs)]` — first occurrence wins, insertion order preserved. -/
 private def dedup (xs : List String) : List String :=
@@ -333,7 +330,7 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
       let avg : Float := if speeds.isEmpty then 0 else (speeds.foldl (· + ·) 0) / Float.ofNat speeds.size
       let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
       let lin : Float := if path > 0 then min (net / path) 1.0 else 0
-      let walk := { seg with startTs := alightTs, mode := "walking", refinedMode := none, wayName := none, pointCount := Int.ofNat tail.size, avgSpeed := jsRoundF (avg * 10) / 10, maxSpeed := jsRoundF (mx * 10) / 10, linearity := jsRoundF (lin * 100) / 100, refinedReason := some walkWhy }
+      let walk := { seg with startTs := alightTs, mode := "walking", refinedMode := none, wayName := none, pointCount := Int.ofNat tail.size, avgSpeed := jsRound (avg * 10) / 10, maxSpeed := jsRound (mx * 10) / 10, linearity := jsRound (lin * 100) / 100, refinedReason := some walkWhy }
       return (out.push ride).push walk
 
 /-! ## Parity with Node/V8 (`lean/experiments/interchange-refs.mts`) -/

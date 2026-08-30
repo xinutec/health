@@ -1,6 +1,7 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.RailAbsorbers
 import Verified.Geo.RailSnap
+import Verified.JsNum
 /-!
 # Rail reconciliation (port of the pure passes in `src/geo/passes/rail-reconcile.ts`)
 
@@ -46,8 +47,7 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 abbrev Mode := String
 
-/-- `Math.round` — halves go UP, towards +∞. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-- The pipeline's segment record. This pass reads and rewrites a subset of
 it; it names the whole thing so that `Verified.Geo.PassFold` can hand the same

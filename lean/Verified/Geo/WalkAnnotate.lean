@@ -4,6 +4,7 @@ import Verified.Geo.WalkSmooth
 import Verified.Geo.DisplayGate
 import Verified.Geo.EpisodeGeometry
 import Verified.Geo.BiometricWindows
+import Verified.JsNum
 /-!
 # The walk-annotation pass (port of `annotateWalkMatches`, `pedestrian-match-annotate.ts`)
 
@@ -176,10 +177,7 @@ def pathLenM (pts : Array TPt) : Float := Id.run do
     total := total + metersBetween pts[i - 1]!.lat pts[i - 1]!.lon pts[i]!.lat pts[i]!.lon
   return total
 
-/-- `Math.round` — halves go UP, towards +∞. Exposed because the disc radius
-is its only caller and a haversine output never lands exactly on a half, so the
-tie rule is pinnable only directly. -/
-def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-! ## Per-leg preparation -/
 

@@ -74,8 +74,23 @@ pub struct Session {
     /// `#[serde(default)]` into an empty map: "no devices yet" and "devices
     /// omitted from this response" would otherwise both read as zero devices,
     /// and only one of them is a fact about the account.
+    ///
+    /// ⚠ **`BTreeMap`, and the ORDER IS THE POINT (#1073).** The range fetch
+    /// concatenates points device by device and then sorts by timestamp with a
+    /// STABLE sort, so points sharing a timestamp keep whatever order this walk
+    /// produced. Rust randomises `HashMap` iteration per process, which made
+    /// that order differ between two runs of the same binary on the same day.
+    /// Measured 2026-08-22: 2026-08-20 has 95 duplicated timestamps out of 1465
+    /// points, so the ties are real — they simply did not cross a device
+    /// boundary that day.
+    ///
+    /// The original task asked for INSERTION order, to match the TypeScript's
+    /// `Object.values(session.devices)`. There is no TypeScript to match any
+    /// more (#975), and the requirement it was standing in for was only ever
+    /// determinism — so this sorts by device key instead of taking a dependency
+    /// on `indexmap` to reproduce a dead runtime's iteration order.
     #[serde(default)]
-    devices: Option<std::collections::HashMap<String, WireDevice>>,
+    devices: Option<std::collections::BTreeMap<String, WireDevice>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,7 +109,9 @@ struct WirePoint {
 /// Only the values matter here — the token is the caller's own secret and
 /// nothing downstream keys on it.
 pub fn parse_sessions(body: &str) -> anyhow::Result<Vec<Session>> {
-    let map: std::collections::HashMap<String, Session> =
+    // ⚠ `BTreeMap` for the same reason as `Session::devices` — this map's values
+    // become `self.sessions`, which the range fetch walks in order (#1073).
+    let map: std::collections::BTreeMap<String, Session> =
         serde_json::from_str(body).context("decoding the phonetrack sessions listing")?;
     Ok(map.into_values().collect())
 }

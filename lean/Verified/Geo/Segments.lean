@@ -272,9 +272,7 @@ structure TrackSegment where
   refinedKinds : Array String := #[]
   deriving Inhabited, BEq, Repr
 
-/-- `Math.round`: half away from zero upward. Every value it sees here is
-non-negative (speeds, confidences, durations), so `floor (x + 0.5)` is exact. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-- The TS module's OWN `median` — ascending sort, mean of the middle pair when
 even, `0` when empty. A private copy in the TS, so a private copy here. -/

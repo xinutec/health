@@ -1,6 +1,7 @@
 import Verified.Geo.WalkEscape
 import Std.Data.HashMap
 import Std.Data.HashSet
+import Verified.JsNum
 
 /-!
 # Continuous MAP walk reconstruction (port of `src/geo/walk-smooth-map.ts`)
@@ -43,8 +44,7 @@ private def negInf : Float := -1.0 / 0.0
 
 /-- JS `x || 1`: zero and NaN are falsy. -/
 private def orOne (x : Float) : Float := if x == 0 || x.isNaN then 1 else x
-/-- `Math.round`. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 private def hyp (x y : Float) : Float := Float.sqrt (x * x + y * y)
 

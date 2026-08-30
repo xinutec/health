@@ -43,8 +43,7 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 abbrev Mode := String
 
-/-- `Math.round` — halves go UP, towards +∞. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-- Per-segment HR, sleep and step aggregates — what `enrichSegmentWithBiometrics`
 (`Verified.Geo.BiometricWindows`) computes and the `biomEnrich` pass attaches.

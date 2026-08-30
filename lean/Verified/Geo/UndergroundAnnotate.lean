@@ -4,6 +4,7 @@ import Verified.Geo.Factors
 import Verified.Geo.RefineMode
 import Verified.Geo.StaySplit
 import Verified.Geo.SegmentUtil
+import Verified.JsNum
 /-!
 # Underground run annotation (port of `annotateUndergroundRuns`,
 `src/geo/underground-rail.ts`)
@@ -67,9 +68,7 @@ def MIN_SIDE_DURATION_S : Int := 60
 /-- Separator marking a wayName that is already an annotated rail triple. -/
 def RAIL_ARROW : String := "→"
 
-/-- `Math.round` — halves go UP, towards +∞. Every value rounded here is
-non-negative (a distance-derived speed, or a midpoint of two timestamps). -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-- `?? Infinity` for an absent distance: it loses every comparison. -/
 private def posInf : Float := 1.0 / 0.0

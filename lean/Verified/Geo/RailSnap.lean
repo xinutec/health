@@ -48,8 +48,7 @@ private def posInf : Float := 1.0 / 0.0
 /-- `Math.floor` into an `Int`, the JS grid-cell index. -/
 private def floorInt (x : Float) : Int := (Float.floor x).toInt64.toInt
 
-/-- `Math.round`: halves go UP, towards +∞. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-! ## Constants (verbatim) -/
 

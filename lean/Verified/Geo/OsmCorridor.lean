@@ -1,4 +1,5 @@
 import Verified.Geo.WalkableRoute
+import Verified.JsNum
 
 /-!
 # Corridor road-geometry fetch (port of `src/geo/osm-corridor.ts`)
@@ -85,9 +86,7 @@ def MAX_SAMPLES : Nat := 48
 
 /-! ## Local arithmetic -/
 
-/-- `Math.round` — halves go UP, towards +∞, unlike `Float.round`'s
-away-from-zero. Only ever applied here to a non-negative radius. -/
-def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-! ## Resampling -/
 

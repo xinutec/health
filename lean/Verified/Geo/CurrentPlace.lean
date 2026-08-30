@@ -1,4 +1,5 @@
 import Verified.Hsmm.FloatScore
+import Verified.JsNum
 /-!
 # "Which focus place is the user in right now" (port of `src/geo/current-place.ts`)
 
@@ -34,9 +35,7 @@ def STAY_DISPLAY_NAME : String := "Stay"
 /-- Presence radius around a focus-place centroid. Matches the long-stay gate. -/
 def PRESENCE_RADIUS_M : Float := 100
 
-/-- `Math.round` — halves go UP, towards +∞. Distances here are non-negative,
-so this coincides with round-half-away-from-zero. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 structure FocusPlaceForPresence where
   id : Int

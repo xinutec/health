@@ -1,5 +1,6 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.Worldline
+import Verified.JsNum
 /-!
 # Stay-split evidence scorer (port of the pure leaf of `src/geo/stay-split.ts`)
 
@@ -127,8 +128,7 @@ def MIN_REMAINING_RIDE_S : Int := 120
 /-- `refinedMode ?? mode` — the TS `segMode`. -/
 def segMode (s : Seg) : String := s.refinedMode.getD s.mode
 
-/-- `Math.round` — halves go UP. Every value rounded here is non-negative. -/
-def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 
 /-- The TS `median`: ascending sort, mean of the middle pair when even. -/
 def median (values : Array Float) : Float :=
@@ -519,7 +519,8 @@ namespace Handoff
 
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF median jsRound segMode sortedIn)
+open Shed (PointF median segMode sortedIn)
+open Verified.JsNum (jsRound)
 
 /-- Per-step net-progress speed marking the tail as travelling, not walking —
 above the 12 km/h walking ceiling so a real walk's GPS noise cannot reach it. -/
@@ -772,7 +773,8 @@ namespace Arrival
 
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF median jsRound segMode sortedIn)
+open Shed (PointF median segMode sortedIn)
+open Verified.JsNum (jsRound)
 open Handoff (HANDOFF_VEHICLE_MODES)
 
 /-- Per-step net-progress speed marking the head as travelling. -/
@@ -1056,7 +1058,8 @@ namespace VehicleLeg
 
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF jsRound segMode sortedIn walkRemainder)
+open Shed (PointF segMode sortedIn walkRemainder)
+open Verified.JsNum (jsRound)
 
 /-- A walk shorter than this is not searched at all. -/
 def VEHICLE_LEG_MIN_SEGMENT_S : Int := 5 * 60
@@ -1410,7 +1413,8 @@ open Verified.Geo.SegmentMerge (Seg)
 open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm PEDESTRIAN_STEP_MAX_KMH
   PEDESTRIAN_MIN_RUN_NET_M PEDESTRIAN_MIN_RUN_S PEDESTRIAN_MIN_CADENCE_SPM)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF median jsRound segMode sortedIn walkRemainder)
+open Shed (PointF median segMode sortedIn walkRemainder)
+open Verified.JsNum (jsRound)
 
 /-- Per-step pace marking a stay-tail fix as the ride moving. -/
 def RIDE_HEAD_STEP_KMH : Float := 15
@@ -1794,7 +1798,8 @@ namespace FootArrival
 
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF segMode sortedIn walkRemainder median jsRound)
+open Shed (PointF segMode sortedIn walkRemainder median)
+open Verified.JsNum (jsRound)
 open RideHead (MARCH_STILL_KMH stepKmh)
 
 /-- Noise floor on the trailing still run, NOT the discriminator: the run is
@@ -2000,7 +2005,8 @@ namespace Stays
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Geo.Worldline (FeasibilityStepPoint)
 open Verified.Hsmm.FloatScore (haversineMeters)
-open Shed (PointF median jsRound sortedIn)
+open Shed (PointF median sortedIn)
+open Verified.JsNum (jsRound)
 open Verified.Geo.StaySplit (scoreSplitEvidence SPLIT_THRESHOLD_NATS)
 
 /-- An HR sample as this pass reads it. -/

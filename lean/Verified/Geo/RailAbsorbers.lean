@@ -8,6 +8,7 @@ import Verified.Geo.Worldline
 -- fresh summary, and the summary rule is shared with the other two passes that
 -- move boundaries (#424).
 import Verified.Geo.SegmentUtil
+import Verified.JsNum
 /-!
 # Rail absorbers (port of `src/geo/passes/rail-absorbers.ts`)
 
@@ -417,8 +418,7 @@ which is `Math.round` exactly; the two differ only at negative halves, and a
 haversine distance is never negative.
 -/
 
-/-- `Math.round` — halves go UP, towards +∞. -/
-private def jsRound (x : Float) : Float := Float.floor (x + 0.5)
+open Verified.JsNum (jsRound)
 private def metres (x : Float) : String := toString (jsRound x).toInt64.toInt
 
 /-- Great-circle metres. Deliberately NOT `Verified.Hsmm.FloatScore`'s: that one
