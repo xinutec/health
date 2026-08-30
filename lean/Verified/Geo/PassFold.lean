@@ -808,9 +808,11 @@ A pass with no witness is named in `unwitnessed` rather than left to be inferred
 from a count, and the two lists must partition the wired set — so a pass added
 without a witness cannot slip in as covered.
 
-Re-measured with the witnesses in place, the same eleven mutations leave TWO
-silent: `rideHeadClaim` and `vehicleEdgeShed`, which are the two `unwitnessed`
-entries a mutation could reach.
+Re-measured with the witnesses in place, the same eleven mutations left TWO
+silent: `rideHeadClaim` and `vehicleEdgeShed`, which were the two `unwitnessed`
+entries a mutation could reach. **Both are CLOSED as of 2026-08-30** — each has a
+witness below and each was ablation-checked by replacing its pass with the
+identity, which fails its guard. No mutation of the wired set is silent now.
 
 The second tranche was measured the same way: twelve mutations, eight fire, and
 these FOUR were silent — recorded because a witness proves a pass acts, not that
@@ -837,11 +839,13 @@ either way, so the guard cannot ask whether it acted, only what it produced.
   EVERY stay carrying the id, which is what the surviving-near-stay guard is
   for.
 
-Of the six step and fix projections, five are pinned; `Env.feasSteps` is not,
-and cannot be until `vehicleEdgeShed` and `rideHeadClaim` have witnesses, since
-they are its only consumers. Same root as their `unwitnessed` entries rather
-than a separate gap. Note the two projections have IDENTICAL bodies, so a probe
-aimed at one by its text alone hits the other — anchor on the signature. -/
+All six step and fix projections are pinned as of 2026-08-30. `Env.feasSteps`
+was the last, and it could not be pinned until `vehicleEdgeShed` and
+`rideHeadClaim` had witnesses, since they are its only consumers — closing those
+two closed this as a side effect rather than as separate work. Re-measured:
+emptying `feasSteps` now fails BOTH of those guards. Note the two projections
+have IDENTICAL bodies, so a probe aimed at one by its text alone hits the other —
+anchor on the signature. -/
 
 section Witnesses
 
@@ -1112,6 +1116,47 @@ private def byLat : Env :=
 #guard (displayTz byLat #[{ startTs := 0, endTs := 6000, mode := "walking" }])[0]!.displayTz
   == some "south"
 
+/-- A fix at `metresNorth` of the origin. The boundary passes read TRANSLATION
+and PACE out of the track, so a witness for one needs both stated per fix rather
+than inferred from the segment. -/
+private def fxm (ts : Int) (metresNorth speedKmh : Float) : Shed.PointF :=
+  { ts, lat := lat0 + metresNorth * mlat, lon := lon0, speedKmh }
+
+/-- Four sparse dwell fixes, a 300 s march, a standing wait, then the ride.
+
+⚠ LIFTED VERBATIM from `StaySplit`'s `RideHeadGuards`, and deliberately not
+designed here: those 24 guards already solved the two parts that are invisible
+until they are wrong — the dwell median is TIME-WEIGHTED, so four dwell fixes
+against ten tail fixes would otherwise sit 200 m into the march and
+`MARCH_START_MAX_FROM_DWELL_M` would refuse the carve; and the standing WAIT at
+3500-3600 is what makes the march a march rather than the ride's first metres.
+`lat0`/`mlat` are the same constants there, so the coordinates carry over. -/
+private def rideHeadTrack : Array Shed.PointF :=
+  #[fxm 0 0 0, fxm 1000 5 0, fxm 2000 3 0, fxm 3000 4 0,
+    fxm 3100 10 3.6, fxm 3200 110 3.6, fxm 3300 210 3.6, fxm 3400 310 3.6,
+    fxm 3500 315 0.2, fxm 3600 318 0.1,
+    fxm 3700 1000 25, fxm 3800 2000 30, fxm 3900 3000 32, fxm 4000 4000 34]
+
+/-- Cadence over the march only. The pass needs the wearer STEPPING through the
+run; steps everywhere would not distinguish the march from the dwell. -/
+private def marchSteps : Array StepPoint :=
+  (Array.range 5).map fun k => { ts := 3100 + 60 * Int.ofNat k, steps := 80 }
+
+private def RIDEHEAD : Env :=
+  { NO_LOOKUPS with points := rideHeadTrack, steps := marchSteps }
+
+-- A stay that ran on over the boarding: the ride's head is carved back out of
+-- it. This is one of the two the module header calls the only unwitnessed
+-- entries a MUTATION CAN REACH, and with `vehicleEdgeShed` below it is why
+-- `Env.feasSteps` could not be pinned — they are its only consumers.
+#guard fires RIDEHEAD "rideHeadClaim" #[st 0 4000, tr 4000 6000 none]
+
+-- A train leg laid across the track's 4 km/h -> 45 km/h boundary at ts 3000, so
+-- its HEAD is the walk to the platform: 540 s of pedestrian pace, ~590 m net, at
+-- MIX's 100 spm, handed back to the walk before it. The remaining 1200 s of ride
+-- clears `MIN_REMAINING_RIDE_S`.
+#guard fires MIX "vehicleEdgeShed" #[wk 0 2400, tr 2400 4200 (some "S → T")]
+
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 above shows they act. Each needs a fixture shaped to its own gate, and they fall
 into three groups:
@@ -1128,7 +1173,7 @@ into three groups:
 
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
-  #["railRuns", "undergroundRail", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
+  #["railRuns", "undergroundRail", "vehicleArrival",
     "stayArrivalClaim", "rideTailTrim",
     "interchangeSplit", "busEvidence", "busRoutes", "walkThrough", "roadMatch", "walkMatch"]
 
@@ -1136,7 +1181,7 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 28
+#guard witnessed.size == 30
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
