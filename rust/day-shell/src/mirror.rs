@@ -203,6 +203,21 @@ fn pool() -> Option<&'static MySqlPool> {
         Some(
             MySqlPoolOptions::new()
                 .max_connections(1)
+                // ⚠ EXPLICIT, because sqlx's default is 30 s and this module
+                // asks the mirror ~275 times for one day (measured 2026-05-22).
+                // A configured-but-DOWN mirror would therefore hold a single
+                // day's fold for over two hours before drawing the raw chords
+                // it is supposed to fall back to — the same disease as the DNS
+                // default this file already refuses above, at a different layer.
+                // Found because `tests/mirror_query_failure.rs` took 30.0 s.
+                //
+                // ⚠ The floor is a legitimate SLOW QUERY, not a slow connect,
+                // because `max_connections(1)` means acquiring waits for the
+                // in-flight query to finish. In-cluster the fold's whole DB half
+                // is ~4 s across 275 queries (~15 ms each), so 5 s is a couple
+                // of hundred times the typical query and cannot fire on a
+                // healthy mirror under its own load.
+                .acquire_timeout(std::time::Duration::from_secs(5))
                 .connect_lazy_with(o),
         )
     })
