@@ -1258,6 +1258,69 @@ private def bus (a b : Int) : Seg :=
 -- already had.
 #guard fires MIX "railRuns" #[tr 3000 6000 none]
 
+/-- Metres per degree of longitude at `lat0`. The zigzag below is east-west, so
+it needs the longitude scale rather than `mlat`. -/
+private def mlon : Float := 1 / (111320 * 0.62241594)
+
+/-- A road running due north, and a track that zigzags 32 m either side of it.
+
+⚠ THE ZIGZAG IS THE WITNESS, not decoration. `matchImprovesDisplay` asks three
+things at once — the raw line must be FARTHER than `NEEDS_MATCH_M` = 25 m from
+the ways, the matched line must be CLOSER than the raw one, and the matched line
+must stay within `MATCH_MAX_STRAY_M` = 40 m of the fixes. 32 m clears the first
+and third with room, and snapping to the road answers the second. MIX cannot
+witness this pass at any segment: its track is already a straight line, so
+nothing can improve on it and the gate refuses every match. -/
+private def raggedRoad : Array Shed.PointF :=
+  (Array.range 41).map fun k =>
+    { ts := 3000 + 30 * Int.ofNat k
+      lat := lat0 + (100 * Float.ofNat k) * mlat
+      lon := lon0 + (if k % 2 == 0 then 32 else -32) * mlon
+      speedKmh := 30 }
+
+private def straightWay : Verified.Geo.OsmCorridor.Way :=
+  { osmId := 1, name := some "North Road", subtype := some "residential"
+    coords := #[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩] }
+
+/-- The shell answered: the leg's own fixes pulled onto the road's centreline.
+
+⚠ `roadEnv`'s two leaves are FUNCTIONS defaulting to no ways and `none`, so the
+pass is a documented no-op on a bare env and no arrangement of fixes alone can
+witness it. What this pins is that the fold reaches the pass and writes what its
+shell answered — the solver itself lives outside Lean. -/
+private def ROADMATCH : Env :=
+  { NO_LOOKUPS with
+    points := raggedRoad
+    roadEnv :=
+      { drivableRoads := fun _ _ _ => #[straightWay]
+        matcher := fun pts _ => some (pts.map fun q => { q with lon := lon0 }) } }
+
+#guard fires ROADMATCH "roadMatch" #[dr 3000 4200]
+
+/-- The same ragged track as `PedFix`, which is the series the walk matcher
+reads — `displayFixes` is a DIFFERENT series from `points` and defaults empty, so
+a walk witness has to supply it explicitly. -/
+private def raggedPed : Array Verified.Geo.WalkAnnotate.PedFix :=
+  raggedRoad.map fun p => { ts := p.ts, lat := p.lat, lon := p.lon, accuracy := some 8 }
+
+/-- The pedestrian shell answered on the same geometry, for the same reason as
+`ROADMATCH`: seven of `walkEnv`'s leaves are functions and all default to
+empty/`none`, so the pass is a no-op on a bare env. Only the two OSM reads and
+the matcher need answering; the four solver leaves keep their defaults. -/
+private def WALKMATCH : Env :=
+  { NO_LOOKUPS with
+    points := raggedRoad
+    displayFixes := raggedPed
+    walkEnv :=
+      { NO_LOOKUPS.walkEnv with
+        walkableRoads := fun _ _ _ =>
+          #[#[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩]]
+        matcher := fun pts _ _ =>
+          let snapped := pts.map fun q => { q with lon := lon0 }
+          some { path := snapped, coarsePath := snapped } } }
+
+#guard fires WALKMATCH "walkMatch" #[wk 3000 4200]
+
 /-- Wired passes with no witness day here: the fold reaches them, and nothing
 above shows they act. Each needs a fixture shaped to its own gate, and they fall
 into three groups:
@@ -1278,21 +1341,28 @@ into three groups:
   owns the pass rather than designed here, which is what made them cheap and is
   the method to reuse on the seven below.
 * `busEvidence` wants mid-leg dwells — a stop pattern, not a constant-speed
-  line. ⚠ `busRoutes` was grouped with it and did not belong either: it anchors
+  line.
+* ⚠ `roadMatch` and `walkMatch` were listed here and needed something else
+  entirely: their shells are FUNCTION leaves on `Env`, defaulting to no ways and
+  `none`, so no arrangement of fixes could witness them and no track was the
+  missing piece. They are witnessed now against a RAGGED track — 32 m either
+  side of a straight way — because `matchImprovesDisplay` needs the raw line
+  farther than `NEEDS_MATCH_M` from the road, the match closer, and the stray
+  under `MATCH_MAX_STRAY_M` at once. MIX can never witness them: its track is
+  already straight, so nothing improves on it. ⚠ `busRoutes` was grouped with it and did not belong either: it anchors
   ENDPOINTS to stops and needs no dwell at all. What it did need was a leg
   declaring a bus's `avgSpeed`, since the speed sigmoid reads the segment field
   and refuses `dr`'s 45 km/h outright.
 
 Named rather than counted, so the residue is the work rather than a number. -/
 def unwitnessed : Array String :=
-  #["undergroundRail",
-    "interchangeSplit", "busEvidence", "roadMatch", "walkMatch"]
+  #["undergroundRail", "interchangeSplit", "busEvidence"]
 
 /-- Wired passes with a witness above. -/
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 36
+#guard witnessed.size == 38
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
