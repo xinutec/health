@@ -12,8 +12,14 @@ overlap with an existing Lean core before porting.
 
 ## Measured state — run the tool, do not trust the list below
 
-    nix develop . --command node scripts/lean-port-coverage.mjs [--all]
-    pnpm run day-gate            # parity, per golden day
+    nix develop . --command node scripts/lean-reachability.mjs [--all]
+
+⚠ Both commands this line used to give are GONE, and neither is coming back.
+`lean-port-coverage.mjs` cross-referenced Lean against TS exports and was
+deleted once `src/` was (#975, #1003); `day-gate` compared the Lean fold against
+the TS cascade and died the same way (#1048). Reachability above is the
+surviving measure, and it answers a weaker question — see the note at the foot
+of that script.
 
 **This rule covers the DAY GATE too, and that had to be learned twice.** A
 sentence here used to quote "SHELL ONLY on every golden day (35/35)". It was
@@ -263,7 +269,7 @@ gate reports a call count instead of an absence.
   persisted, and `served-stations` (76) is reached only through it. That is the
   largest single unported module on the served path, and it was invisible in
   every coverage number until the exclusion was removed
-  (`scripts/lean-port-coverage.mjs`): the measured gap went from
+  (`scripts/lean-port-coverage.mjs`, since deleted — #1003): the measured gap went from
   `59 · 11 · 4 of 74` to `59 · 11 · 5 of 75` with nothing written.
   The lesson is the one this file already states about the Tier list and now
   states about itself: **membership here is a trace result, not prose.** This

@@ -2,8 +2,9 @@
 // Which Lean defs can actually be REACHED from a binary — as opposed to written,
 // #guard-proven, and orphaned.
 //
-// WHY THIS EXISTS. `lean-port-coverage.mjs` measures AUTHORSHIP: does a Lean def
-// implementing this TS export exist anywhere under `lean/Verified`. That is the
+// WHY THIS EXISTS. `lean-port-coverage.mjs` (DELETED 2026-08-31, #1003) measured
+// AUTHORSHIP: did a Lean def implementing this TS export exist anywhere under
+// `lean/Verified`. That is the
 // right question for "how much is written" and the wrong one for "how much TS can
 // we delete", and on 2026-08-17 the two were quoted as if they were the same
 // number. They are not: `Geo.Segments.classifySegments` and
@@ -33,9 +34,10 @@
 // serving additionally needs a verb, a tenant in `src/lean/`, and a flag, none of
 // which are visible from here.
 //
-// `lean-port-coverage.mjs` imports `reachableNames()` from here rather than
-// rebuilding the graph, so the EXCLUDE list and the rename-claim resolution stay
-// in ONE place. A first cut of this cross-reference lived in a throwaway probe
+// `lean-port-coverage.mjs` imported `reachableNames()` from here rather than
+// rebuilding the graph, so the EXCLUDE list and the rename-claim resolution
+// stayed in ONE place. That consumer is gone; the export stays because the
+// reasoning below is still why this file owns the graph. A first cut of this cross-reference lived in a throwaway probe
 // that skipped both, and it reported `buildQGraph` as an orphaned port on two
 // counts that were each wrong: `Main` calls `buildQGraphFast` (the executable
 // refinement — the spec is meant to have no caller), and its TS side is in
@@ -190,11 +192,11 @@ console.log(`  lines in unreachable defs    : ${dead.reduce((a, d) => a + d.loc,
 // module: `splitReversingLegs` is REACHABLE (PassFold calls it) while `reversesAt`
 // beside it is not.
 //
-// The trustworthy, actionable number is the cross-reference in
-// lean-port-coverage.mjs: TS exports counted as ported whose every twin is dead.
-// Fixtures cannot appear there — they match no TS export name.
+// There used to be a more trustworthy number here — the cross-reference in
+// lean-port-coverage.mjs, TS exports counted as ported whose every twin is
+// dead. It cannot be computed any more; see the note at the foot of this file.
 console.log("⚠ The count above INCLUDES #guard fixtures; it is context, not port debt.");
-console.log("  For the actionable list, see lean-port-coverage.mjs (REACHABLE vs WRITTEN).\n");
+console.log("  It is also reachability from LEAN dispatch, which is one hop short of a caller.\n");
 
 if (!CLAIMS_ONLY) {
 	const mods = [...byMod.entries()].sort((a, b) => b[1].length - a[1].length);
@@ -209,14 +211,29 @@ if (!CLAIMS_ONLY) {
 	console.log("");
 }
 
-// The list of TS exports whose twins are all dead is NOT printed here, and that
-// is deliberate. It needs the TS-export scan, the EXCLUDE list and the
-// declared-rename resolution, all of which live in lean-port-coverage.mjs. An
-// earlier version printed its own version from doc-comment claims alone and
-// reported "(none)" — while the real answer was 35 — because the orphans are
-// matched by NAME, not by a claim. A reassuring number computed from the wrong
-// half of the inputs is worse than no number.
-console.log("Orphaned PORTS (a covered TS export whose every twin is unreachable):");
-console.log("  nix develop . --command node scripts/lean-port-coverage.mjs --all");
-console.log("  ...which imports reachableNames() from here and cross-references the TS side.");
+// ⚠ THE TS CROSS-REFERENCE IS GONE, AND SO IS THE QUESTION IT ANSWERED.
+// `lean-port-coverage.mjs` matched Lean defs against TS exports under `src/geo`
+// and `src/hmm`. Both went with the TypeScript backend (#975), so it scanned a
+// directory that no longer exists and died with ENOENT rather than reporting
+// anything — while these lines went on telling a reader to run it. It is
+// deleted rather than left to crash (#1003).
+//
+// With no second side, "a covered TS export whose every twin is dead" has no
+// referent: every Lean def is an orphan by that wording. Reachability, above,
+// is what remains, and it is a WEAKER measure in a specific way worth knowing.
+//
+// ⚠ THIS TOOL MEASURES REACHABILITY FROM LEAN'S DISPATCH TABLES. A `ServeEntry`
+// mode counts as reached the moment `dispatch` names it — even if no Rust
+// caller ever sends that mode. `gpsoutliers` passed this test while being dead
+// for exactly that reason. The missing hop is the shell's call sites, and it is
+// invisible from here.
+//
+// What DOES close the hop, for a mode being added: one witness that `dispatch`
+// still routes to it (`the_mode_table_answers_in_process` in
+// rust/backend/tests/lean_serve.rs) PLUS a caller that exercises it for real
+// (rust/backend/tests/walk_gate.rs). Neither alone suffices — the first passes
+// while nothing calls the mode, the second passes if the arm is renamed and the
+// caller renamed with it.
+console.log("Orphaned PORTS: not measurable here — the TS side it cross-referenced went with #975.");
+console.log("  Reachability above is from LEAN dispatch; a mode with no Rust caller still reads as live.");
 }
