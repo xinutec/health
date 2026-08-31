@@ -32,18 +32,23 @@
 //! `episodesOut` will see that gap again and should not re-derive the wrong
 //! conclusion from it.
 //!
-//! # What is dark, and it is one axis of four
+//! # All four axes are live
 //!
-//! `routeCorr` is the only walk metric scored by NAME rather than geometry, and
-//! its ground-truth parser went with the TypeScript (#1290). Every walk sends
-//! empty `acceptedNames`, so 45 floor entries across the corpus come back on
-//! the gate's `unmeasured` channel — surfaced loudly, and NOT scored 0.
+//! `routeCorr` was dark on 45 floor entries until 2026-08-31 — it is the only
+//! walk metric scored by NAME rather than geometry, and its narrative parser
+//! went with the TypeScript (#975). The parser is Lean now
+//! (`Verified.Eval.GroundTruth`, #1290) and those 45 entries MEASURE, and agree
+//! with the floor.
 //!
-//! ⚠ THE FLOOR MUST NOT BE RE-BLESSED WHILE THAT IS TRUE. Writing today's
-//! `routeCorr: null` into the file would turn a missing parser into a missing
-//! measurement, permanently and silently. The other three gated axes — stall,
-//! off-path building crossing, and the step budget — plus the speed ceiling are
-//! live now.
+//! ⚠ THAT AGREEMENT IS AN END-TO-END ORACLE, and it is worth more than the
+//! metric. The chain is: Lean parses the narrative, Rust resolves the anchored
+//! civil times through the tz database, Lean scores the drawn line against the
+//! accepted names — and the answer lands on a column a human blessed from the
+//! OTHER implementation. Every link had to be right for `unmeasured` to reach
+//! zero, and no link is checked anywhere else.
+//!
+//! So: stall, off-path building crossing, step budget, the speed ceiling, and
+//! route-correctness are all gating.
 //!
 //! # Cost
 //!
@@ -141,14 +146,95 @@ fn steps_rows(inputs: &Value) -> Value {
     )
 }
 
+/// The day's enforceable named-walk windows, as `(startTs, endTs, wayName)`.
+///
+/// This is what makes `routeCorr` measurable — the only walk metric scored by
+/// NAME rather than geometry. The narrative parser is Lean
+/// (`Verified.Eval.GroundTruth`, #1290); this resolves its output and applies
+/// the filter the deleted `loadNamedWalkWindows` applied.
+///
+/// ⚠ THREE FILTERS, AND THE THIRD IS THE ONE THAT MATTERS. A row must be a
+/// WALKING truth, must NAME a way, and must be ENFORCEABLE — a definite verdict
+/// backed by `corroborated`/`user`/`derived` provenance. An `inferred` row is
+/// read back from the pipeline's own output, so letting it through would make
+/// the pipeline's guess the standard it is judged against.
+///
+/// ⚠ THE ZONE IS THE FIXTURE'S, not a default. Two of the 31 narratives declare
+/// their own with a `Times:` line and the parser honours it; passing the wrong
+/// zone here would shift every window by hours and silently score the wrong
+/// legs.
+///
+/// ⚠ A DELIBERATE DIVERGENCE, RECORDED. The original resolved these through
+/// `fitbitTsToUnix`, which went with the TypeScript (#975). This uses the
+/// repo's own tested resolver, which picks the LATER instant for an ambiguous
+/// wall clock and steps back through a spring-forward gap. The two agree except
+/// on the two instants a year where a DST transition lands inside a narrated
+/// walk; no golden day does, but that is a fact about this corpus, not a proof.
+fn named_walk_windows(date: &str, tz: &str) -> Vec<(i64, i64, String)> {
+    let path = format!(
+        "{}/../../tests/golden/ground-truth/{date}.md",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let Ok(md) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let req = json!({ "mode": "groundtruth", "markdown": md, "date": date, "tz": tz });
+    let Ok(reply) = backend::lean::serve(&req.to_string()) else {
+        return Vec::new();
+    };
+    let Ok(r) = serde_json::from_str::<Value>(&reply) else {
+        return Vec::new();
+    };
+    let zone = r["tz"].as_str().unwrap_or(tz);
+    let mut out = Vec::new();
+    for row in r["rows"].as_array().map_or(&[][..], Vec::as_slice) {
+        if row["enforceable"].as_bool() != Some(true) {
+            continue;
+        }
+        let truth = &row["truth"];
+        if truth["mode"].as_str() != Some("walking") {
+            continue;
+        }
+        let Some(way) = truth["wayName"].as_str() else {
+            continue;
+        };
+        let stamp = |d: Option<&str>, h: &Value, m: &Value| -> Option<i64> {
+            backend::timezone::wall_clock_to_unix(
+                &format!("{} {:02}:{:02}:00", d?, h.as_u64()?, m.as_u64()?),
+                zone,
+            )
+        };
+        let (Some(a), Some(b)) = (
+            stamp(row["startDay"].as_str(), &row["startHh"], &row["startMm"]),
+            stamp(row["endDay"].as_str(), &row["endHh"], &row["endMm"]),
+        ) else {
+            continue;
+        };
+        out.push((a, b, way.to_string()));
+    }
+    out
+}
+
+/// Names of every enforceable window overlapping the leg — `w.end > start &&
+/// w.start < end`, the original's half-open overlap.
+fn accepted_names(windows: &[(i64, i64, String)], start: i64, end: i64) -> Vec<String> {
+    let mut names: Vec<String> = windows
+        .iter()
+        .filter(|(a, b, _)| *b > start && *a < end)
+        .map(|(_, _, n)| n.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// The walking legs of a fold reply, with the line the map would draw.
 ///
-/// ⚠ `acceptedNames` is EMPTY on every walk, so `routeCorr` comes back
-/// unmeasured. The names live in the day's ground-truth narrative and its
-/// parser went with the TypeScript (#1290). The gate reports that on its
-/// `unmeasured` channel, loudly, instead of scoring the axis 0 — and the floor
-/// must not be re-blessed until it is back, or the null becomes permanent.
-fn walking_legs(out: &Value, request: &Value) -> Vec<Value> {
+/// `acceptedNames` comes from the day's ground-truth narrative via
+/// `named_walk_windows` above. An empty list is not a failure — it means the
+/// narrative named no street over this leg, and `routeCorr` is then honestly
+/// unmeasured rather than scored 0.
+fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) -> Vec<Value> {
     let Some(eps) = out.get("episodes").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -172,7 +258,7 @@ fn walking_legs(out: &Value, request: &Value) -> Vec<Value> {
                 "endTs": end,
                 "drawn": drawn,
                 "raw": raw_in_window(request, start, end),
-                "acceptedNames": [],
+                "acceptedNames": accepted_names(windows, start, end),
             }))
         })
         .collect()
@@ -250,7 +336,12 @@ fn every_golden_day_measures_its_walks() {
             }
         };
         let out: Value = serde_json::from_str(&r.out).expect("the fold reply parses");
-        let legs = walking_legs(&out, &r.request);
+        let tz = fx
+            .pointer("/meta/tz")
+            .and_then(Value::as_str)
+            .unwrap_or("Europe/London");
+        let windows = named_walk_windows(date, tz);
+        let legs = walking_legs(&out, &r.request, &windows);
         let trace = inputs.get("osmTrace").cloned().unwrap_or_else(|| json!({}));
 
         days_req.push(json!({
@@ -452,9 +543,12 @@ fn every_golden_day_measures_its_walks() {
         "walks regressed against their floor: {}",
         r["regressed"]
     );
+    // ⚠ `unmeasured` IS EXPECTED TO BE ZERO NOW, and it is not asserted at
+    // zero on purpose: a narrative that stops naming a street is a fact about
+    // the corpus, not a defect, and it must surface rather than fail. A jump
+    // back toward 45 means the parser or the tz resolution broke.
     eprintln!(
-        "⚠ `routeCorr` is dark on {} floor entries until #1290 lands its parser; \
-         the floor must not be re-blessed before then.",
+        "{} floor entries unmeasured (was 45 before the narrative parser landed, #1290)",
         n("unmeasured")
     );
 }
