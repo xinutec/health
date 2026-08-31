@@ -2269,19 +2269,30 @@ private def oBits : Option Float → Json
   | some v => fBits v
   | none => Json.null
 
-private def jOptBits (j : Json) : Except String (Option Float) :=
-  if j.isNull then pure none else some <$> jBits j
+/-- A floor entry.
 
+⚠ THE WIRE IS ASYMMETRIC ON PURPOSE, and this is the readable half.
+`jFloatField`/`jOptFloat` accept EITHER a bit pattern or a plain JSON number,
+because two different producers feed this side: `walk-baseline.json` holds
+plain decimals a human blessed, and the fold's own episodes arrive as bits.
+Both have to work without the host converting either one.
+
+The WRITTEN half is bits only — see `entryJson`. `Lean.toJson` on a `Float`
+emits six decimal places, which is coarser than the agreement this port exists
+to demonstrate.
+
+An ABSENT column reads as `none`, which is right: a floor that never recorded
+an axis has not measured it. -/
 private def parseEntry (j : Json) : Except String WalkEntry := do
   return {
     startTs := ← (← j.getObjVal? "startTs").getInt?
-    p90M := ← jOptBits (← j.getObjVal? "p90M")
-    stallM := ← jBits (← j.getObjVal? "stallM")
-    speedKmh := ← jBits (← j.getObjVal? "speedKmh")
-    routeCorr := ← jOptBits (← j.getObjVal? "routeCorr")
-    offPathM := ← jOptBits (← j.getObjVal? "offPathM")
-    lenM := ← jBits (← j.getObjVal? "lenM")
-    budgetM := ← jOptBits (← j.getObjVal? "budgetM") }
+    p90M := ← jOptFloat j "p90M"
+    stallM := ← jFloatField j "stallM"
+    speedKmh := ← jFloatField j "speedKmh"
+    routeCorr := ← jOptFloat j "routeCorr"
+    offPathM := ← jOptFloat j "offPathM"
+    lenM := ← jFloatField j "lenM"
+    budgetM := ← jOptFloat j "budgetM" }
 
 private def parseBaselineDay (j : Json) : Except String (String × Array WalkEntry) := do
   return ((← (← j.getObjVal? "date").getStr?), ← (← optArr j "walks").mapM parseEntry)
