@@ -100,12 +100,18 @@ fn ring_to_pairs(ring: &Value) -> Value {
 }
 
 /// The raw fixes the fold was given, as `[latBits, lonBits]` inside the leg's
-/// window. `obs.rawFixes` rows are `[ts, latBits, lonBits, accBits]`, and the
+/// window.
+///
+/// ⚠ `env.rawFixes`, NOT `obs.rawFixes`. The observation block is what
+/// `head::capture` builds; the DAY REQUEST nests the fold's inputs under `env`,
+/// and pointing at the wrong one yields an empty slice rather than an error —
+/// which is how corridor stall read 0.0 on all 238 walks while the gate stayed
+/// green. Rows are `[ts, latBits, lonBits, accBits]`, and the
 /// bit strings ride through untouched — the Lean side reads either encoding, so
 /// nothing is re-rounded on the way in.
 fn raw_in_window(request: &Value, start: i64, end: i64) -> Value {
     let rows = request
-        .pointer("/obs/rawFixes")
+        .pointer("/env/rawFixes")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or(&[]);
@@ -265,6 +271,33 @@ fn every_golden_day_measures_its_walks() {
         failures.join("\n")
     );
 
+    // ⚠ THE CORRIDOR-STALL INPUT, ASSERTED SEPARATELY. `raw_in_window` reads a
+    // JSON pointer, and a pointer at the wrong key yields an EMPTY SLICE rather
+    // than an error. `maxCorridorStall` then returns 0 — a legitimate value it
+    // cannot distinguish from a real one, for a line with no corridor to
+    // compare against.
+    //
+    // That happened. The pointer said `/obs/rawFixes` where the day request
+    // nests its inputs under `env`, so stall read 0.0 on all 238 walks. The
+    // GATE DID NOT CATCH IT: `STALL_EPS_M` is 15 m and every floor stall on
+    // this corpus is at or under 15, so the whole metric collapsed to zero
+    // INSIDE its own tolerance and the verdict stayed green. A dead axis and a
+    // clean one are indistinguishable from the verdict, so the FEED is checked.
+    let fed: usize = days_req
+        .iter()
+        .flat_map(|d| d["walks"].as_array().map_or(&[][..], Vec::as_slice))
+        .filter(|w| w["raw"].as_array().is_some_and(|a| a.len() >= 2))
+        .count();
+    let total_walks: usize = days_req
+        .iter()
+        .map(|d| d["walks"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert!(
+        fed * 2 > total_walks,
+        "only {fed} of {total_walks} walks carry raw GPS — corridor stall is measured against \
+         nothing and reads 0 for every one of them"
+    );
+
     let req = json!({ "mode": "walkgate", "baseline": baseline_req, "days": days_req });
     let reply = backend::lean::serve(&req.to_string()).expect("the referee must answer");
     let r: Value = serde_json::from_str(&reply).expect("the referee reply parses");
@@ -329,6 +362,49 @@ fn every_golden_day_measures_its_walks() {
         compared > 0,
         "no current walk paired with any floor entry — the comparison was vacuous"
     );
+
+    // The referee as an ADJUDICATION tool, not only a gate. The deleted CLI
+    // printed a per-walk table and several open tasks are arguments about one
+    // named leg (#1056, #638, #385); without this they can only be reasoned
+    // about from the floor file, which records what was blessed rather than
+    // what the pipeline draws today.
+    //
+    // Metrics only — never a coordinate (#860).
+    if std::env::var("WALK_GATE_DUMP").is_ok() {
+        for d in r["current"].as_array().map_or(&[][..], Vec::as_slice) {
+            let date = d["date"].as_str().unwrap_or("");
+            let floor = baseline.get(date).and_then(Value::as_array);
+            for w in d["walks"].as_array().map_or(&[][..], Vec::as_slice) {
+                let ts = w["startTs"].as_i64().unwrap_or(0);
+                let g = |k: &str| bits_of(&w[k]).map_or("null".into(), |v| format!("{v:.1}"));
+                let b = floor.and_then(|f| {
+                    f.iter()
+                        .find(|b| (b["startTs"].as_i64().unwrap_or(0) - ts).abs() <= 120)
+                });
+                let bf = |k: &str| {
+                    b.and_then(|b| b[k].as_f64())
+                        .map_or("null".into(), |v| format!("{v:.1}"))
+                };
+                eprintln!(
+                    "{date} ts={ts}  len {:>7} (floor {:>7})  offPath {:>6} ({:>6})  \
+                     stall {:>6} ({:>6})  p90 {:>6} ({:>6})  speed {:>5} ({:>5})  \
+                     budget {:>7} ({:>7})",
+                    g("lenM"),
+                    bf("lenM"),
+                    g("offPathM"),
+                    bf("offPathM"),
+                    g("stallM"),
+                    bf("stallM"),
+                    g("p90M"),
+                    bf("p90M"),
+                    g("speedKmh"),
+                    bf("speedKmh"),
+                    g("budgetM"),
+                    bf("budgetM"),
+                );
+            }
+        }
+    }
 
     let n = |k: &str| r[k].as_array().map_or(0, Vec::len);
     eprintln!(
