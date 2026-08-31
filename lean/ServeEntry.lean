@@ -2166,6 +2166,197 @@ private def placeNearLineResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## Walk-gate mode (`verified_cli walkgate`) — a REFEREE, not a serving path
+
+`Verified.Eval.WalkMetrics` and `Verified.Eval.WalkGate` over a corpus in one
+call: measure every drawn walk, compare each against its blessed floor, and
+return BOTH the current metrics (ready to re-bless) and the verdict. This is
+#1048's Group B — the oracle is `tests/golden/walk-baseline.json`, a FILE, so
+replacing the code under it loses nothing, unlike the parity gates whose oracle
+was the TypeScript itself.
+
+⚠ It sits in the mode table beside `coverage` and `gpsoutliers`, which nothing
+serves either. A separate entry point was the alternative, and #982 exists
+precisely because handlers that lived beside `main` could not be linked at all.
+
+⚠ COORDINATES CROSS AS PLAIN JSON NUMBERS, NOT ON THE 1e-7 GRID `match` uses.
+That mode quantises because its matcher is integer-exact by design. The referee
+is not, and the floor was blessed from raw doubles, so quantising here would
+move every metric away from the very file it is compared against. It is safe
+for the reason `parsesTo` measures above: both ends write the shortest decimal
+that round-trips.
+
+⚠ METRICS COME BACK AS BIT PATTERNS. `Lean.toJson` on a `Float` emits six
+decimal places, and this port has to demonstrate agreement with a baseline
+recorded to seventeen significant digits — six would hide exactly the
+divergence the harness exists to find.
+
+    { "mode": "walkgate",
+      "baseline": [ { "date": "2026-05-15", "walks": [ <entry>, … ] }, … ],
+      "days":     [ { "date": "2026-05-15",
+                      "ways":      [ { "name": "…"|null, "coords": [[lat,lon], …] }, … ],
+                      "buildings": [ [[lat,lon], …], … ],
+                      "steps":     [ [ts, steps], … ],
+                      "walks":     [ { "startTs": n, "endTs": n,
+                                       "drawn": [[lat,lon], …],
+                                       "raw":   [[lat,lon], …],
+                                       "acceptedNames": ["…", …] }, … ] }, … ] }
+
+    <entry> = { "startTs": n, "p90M": bits|null, "stallM": bits,
+                "speedKmh": bits, "routeCorr": bits|null, "offPathM": bits|null,
+                "lenM": bits, "budgetM": bits|null }
+
+Output: `{ "current": [ … ], "passes": bool, "regressed": […], "improved": […],
+"unmatched": […], "added": […], "unmeasured": […] }` — `current` in the request
+order, everything else in the gate's own sorted-by-date order. -/
+
+namespace WalkGate
+
+open Verified.Eval.WalkMetrics
+open Verified.Eval.WalkGate
+
+private def parseLL (j : Json) : Except String LatLon := do
+  let a ← j.getArr?
+  return ⟨← jFloat (← nth a 0), ← jFloat (← nth a 1)⟩
+
+private def parsePts (j : Json) : Except String (Array LatLon) := do
+  (← j.getArr?).mapM parseLL
+
+private def parseWay (j : Json) : Except String Way := do
+  let coords ← (← optArr j "coords").mapM fun c => do
+    let a ← c.getArr?
+    return ((← jFloat (← nth a 0)), (← jFloat (← nth a 1)))
+  return { name := ← optStr j "name", coords }
+
+private def parseStep (j : Json) : Except String PedStep := do
+  let a ← j.getArr?
+  return ⟨← jFloat (← nth a 0), ← jFloat (← nth a 1)⟩
+
+/-- One drawn walk and the two tracks it is judged against. `raw` is the
+pipeline's cleaned GPS for the leg — a fold INPUT, which is why the harness can
+supply it and a frozen fixture cannot. -/
+private structure WalkIn where
+  startTs : Int
+  endTs : Int
+  drawn : Array LatLon
+  raw : Array LatLon
+  acceptedNames : Array String
+
+private def parseWalkIn (j : Json) : Except String WalkIn := do
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    drawn := ← (← optArr j "drawn").mapM parseLL
+    raw := ← (← optArr j "raw").mapM parseLL
+    acceptedNames := ← (← optArr j "acceptedNames").mapM (·.getStr?) }
+
+private structure DayIn where
+  date : String
+  ways : RoadGeometry
+  buildings : Array Ring
+  steps : Array PedStep
+  walks : Array WalkIn
+
+private def parseDayIn (j : Json) : Except String DayIn := do
+  return {
+    date := ← (← j.getObjVal? "date").getStr?
+    ways := { ways := ← (← optArr j "ways").mapM parseWay }
+    buildings := ← (← optArr j "buildings").mapM parsePts
+    steps := ← (← optArr j "steps").mapM parseStep
+    walks := ← (← optArr j "walks").mapM parseWalkIn }
+
+private def oBits : Option Float → Json
+  | some v => fBits v
+  | none => Json.null
+
+private def jOptBits (j : Json) : Except String (Option Float) :=
+  if j.isNull then pure none else some <$> jBits j
+
+private def parseEntry (j : Json) : Except String WalkEntry := do
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    p90M := ← jOptBits (← j.getObjVal? "p90M")
+    stallM := ← jBits (← j.getObjVal? "stallM")
+    speedKmh := ← jBits (← j.getObjVal? "speedKmh")
+    routeCorr := ← jOptBits (← j.getObjVal? "routeCorr")
+    offPathM := ← jOptBits (← j.getObjVal? "offPathM")
+    lenM := ← jBits (← j.getObjVal? "lenM")
+    budgetM := ← jOptBits (← j.getObjVal? "budgetM") }
+
+private def parseBaselineDay (j : Json) : Except String (String × Array WalkEntry) := do
+  return ((← (← j.getObjVal? "date").getStr?), ← (← optArr j "walks").mapM parseEntry)
+
+/-- Measure one drawn walk into exactly the shape the floor records.
+
+⚠ EVERY `none` HERE IS A DIFFERENT QUESTION GOING UNANSWERED, and not one of
+them is a zero: no building footprints in the day → `offPathM` unmeasured; no
+ground-truth-confirmed street over the leg → `routeCorr` unmeasured; no step
+rows → no budget. The gate treats an unmeasured axis and a perfect score
+completely differently, so collapsing any of these would be a silent pass.
+
+⚠ `scoreWalk` is given NO steps on purpose. Its own pedometer term uses a
+different stride and a different window from the budget the gate acts on; the
+budget comes from `stepBudgetM` below, separately. Handing steps to both would
+put two incompatible pedometer readings in one row. -/
+private def measure (d : DayIn) (w : WalkIn) : WalkEntry :=
+  let sc := scoreWalk w.drawn (Float.ofInt w.startTs) (Float.ofInt w.endTs) #[] (some d.ways)
+  let span := (Float.ofInt w.endTs) - (Float.ofInt w.startTs)
+  { startTs := w.startTs
+    p90M := sc.offWalkableP90M
+    stallM := maxCorridorStall w.raw w.drawn
+    speedKmh := if span > 0 then (sc.drawnLengthM / span) * 3.6 else 0
+    routeCorr := onNamedWayFraction w.drawn w.acceptedNames d.ways
+    offPathM := if d.buildings.isEmpty then none
+                else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
+    lenM := sc.drawnLengthM
+    budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs) }
+
+private def entryJson (e : WalkEntry) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson e.startTs), ("p90M", oBits e.p90M),
+    ("stallM", fBits e.stallM), ("speedKmh", fBits e.speedKmh),
+    ("routeCorr", oBits e.routeCorr), ("offPathM", oBits e.offPathM),
+    ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM)]
+
+private def metricName : Metric → String
+  | .stall => "stall" | .speed => "speed" | .route => "route"
+  | .offPath => "offPath" | .budget => "budget"
+
+private def deltaJson (d : Delta) : Json :=
+  Json.mkObj [("date", Json.str d.date), ("startTs", Lean.toJson d.startTs),
+    ("metric", Json.str (metricName d.metric)),
+    ("base", fBits d.base), ("now", fBits d.now)]
+
+private def atJson (a : At) : Json :=
+  Json.mkObj [("date", Json.str a.date), ("startTs", Lean.toJson a.startTs)]
+
+private def metricAtJson (m : MetricAt) : Json :=
+  Json.mkObj [("date", Json.str m.date), ("startTs", Lean.toJson m.startTs),
+    ("metric", Json.str (metricName m.metric))]
+
+private def parseReq (j : Json)
+    : Except String (WalkBaseline × Array DayIn) := do
+  return (← (← optArr j "baseline").mapM parseBaselineDay,
+          ← (← optArr j "days").mapM parseDayIn)
+
+def walkGateResult (j : Json) : Json :=
+  match parseReq j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok (baseline, days) =>
+    let current : WalkBaseline := days.map fun d => (d.date, d.walks.map (measure d))
+    let r := gateWalks baseline current
+    Json.mkObj [
+      ("current", Json.arr (current.map fun (date, ws) =>
+        Json.mkObj [("date", Json.str date), ("walks", Json.arr (ws.map entryJson))])),
+      ("passes", Json.bool (passes r)),
+      ("regressed", Json.arr (r.regressed.map deltaJson)),
+      ("improved", Json.arr (r.improved.map deltaJson)),
+      ("unmatched", Json.arr (r.unmatched.map atJson)),
+      ("added", Json.arr (r.added.map atJson)),
+      ("unmeasured", Json.arr (r.unmeasured.map metricAtJson))]
+
+end WalkGate
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2202,6 +2393,9 @@ def dispatch (j : Json) : Json :=
   | .ok "clipinferred" => clipInferredResult j
   | .ok "watchbattery" => watchBatteryResult j
   | .ok "stationchain" => StationChain.stationChainResult j
+  -- The walk referee (#1048 Group B). Nothing serves it; it is here rather
+  -- than beside `main` because that is the only place a host can link.
+  | .ok "walkgate" => WalkGate.walkGateResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.

@@ -77,6 +77,20 @@ fn the_mode_table_answers_in_process() {
     .expect("battery must answer");
     assert_eq!(stale, r#"{"series":[[100,80],[200,60]]}"#);
 
+    // ⚠ The walk referee (#1048 Group B) is WIRED. Its arithmetic is witnessed
+    // in `Verified.Eval.WalkMetrics` against doubles the deleted TypeScript
+    // printed; what those witnesses cannot see is whether `dispatch` still
+    // routes to it. An empty corpus is the cheapest question that distinguishes
+    // "reached the handler" from "fell through" — a missing arm answers
+    // `unknown mode walkgate` here, which is exactly how the OTHER gates were
+    // found to be dead only after three days (#975).
+    let walkgate = lean::serve(r#"{"mode":"walkgate"}"#).expect("walkgate must answer");
+    assert_eq!(
+        walkgate,
+        r#"{"added":[],"current":[],"improved":[],"passes":true,"regressed":[],"unmatched":[],"unmeasured":[]}"#,
+        "the body `verified_cli serve` returns for an empty corpus, without its envelope"
+    );
+
     // The dispatch still refuses what it does not know, rather than falling
     // through to something.
     let unknown = lean::serve(r#"{"id":1,"mode":"nope"}"#).expect("must answer");
