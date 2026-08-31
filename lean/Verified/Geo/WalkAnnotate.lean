@@ -93,9 +93,20 @@ structure MatchOut where
   coarsePath : Array MPt
   deriving Inhabited, BEq, Repr
 
-/-- The environment switches, as configuration. Defaults are production's:
-`WALK_MATCH_DISABLE` unset, `WALK_RECON ≠ "0"`, `WALK_REFINE_DISABLE ≠ "1"`,
-`WALK_BUILDING_ESCAPE ≠ "0"`. -/
+/-- The walk corrector's switches, as configuration. Defaults are what
+production draws.
+
+⚠ THESE ARE NOT ENVIRONMENT VARIABLES, however they are named. Nothing reads an
+env var into this structure: `PassFold.Env.walkFlags` takes its default, no day
+request carries a field for it, and there is no reader in the Rust shell. The
+names are the TypeScript's, kept because the `#guard`s below flip these fields
+to pin what each one changes — which is a real use, and the only one.
+
+This docstring used to describe them as environment switches, and a pod manifest
+believed it: `WALK_BUILDING_ESCAPE = "1"` shipped for two months with a comment
+calling `"0"` the emergency off-switch. Setting it would have changed nothing.
+The manifest entry was deleted 2026-08-31 rather than wired, because a switch
+that has never been exercised is not safety (#1268). -/
 structure Flags where
   matchDisable : Bool := false
   recon : Bool := true
