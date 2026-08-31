@@ -2375,6 +2375,78 @@ def walkGateResult (j : Json) : Json :=
 
 end WalkGate
 
+/-! ## Ground-truth mode (`verified_cli groundtruth`) — a REFEREE input
+
+`Verified.Eval.GroundTruth.parseGroundTruth` over one narrative. #1290: the
+audit tables are the only non-self-referential truth signal in the corpus, and
+two consumers were blocked without them — `routeCorr` in the walk referee, and
+`score-decoder`, whose oracle IS the narrative.
+
+⚠ THE REPLY CARRIES CIVIL TIME, NOT UNIX. Resolving a wall clock in a named zone
+needs the tz database, which is data and IO; the Lean side stops at the anchored
+`(day, hh, mm)` and the shell resolves it with
+`rust/backend/src/timezone.rs::wall_clock_to_unix`. That split is the whole
+reason this mode exists rather than a `parseGroundTruth` that returns seconds.
+
+  { "mode": "groundtruth", "markdown": "…", "date": "YYYY-MM-DD", "tz": "…" }
+
+Output: `{ "tz": …, "rows": [ { "window", "startDay", "startHh", "startMm",
+"endDay", "endHh", "endMm", "status", "provenance", "enforceable", "truthText",
+"truth": {…}|null } ] }`. -/
+
+namespace GroundTruth
+
+open Verified.Eval.GroundTruth
+
+private def statusStr : Status → String
+  | .correct => "correct" | .wrong => "wrong"
+  | .«partial» => "partial" | .unclear => "unclear"
+
+private def provStr : Provenance → String
+  | .corroborated => "corroborated" | .user => "user" | .derived => "derived"
+  | .inferred => "inferred" | .unspecified => "unspecified"
+
+private def modeStr : Mode → String
+  | .sleeping => "sleeping" | .stationary => "stationary" | .walking => "walking"
+  | .cycling => "cycling" | .driving => "driving" | .bus => "bus"
+  | .train => "train" | .plane => "plane"
+
+private def truthJson : Option Truth → Json
+  | none => Json.null
+  | some t => Json.mkObj [
+      ("mode", Json.str (modeStr t.mode)),
+      ("place", optStrJson t.place), ("wayName", optStrJson t.wayName),
+      ("placeQualifier", optStrJson t.placeQualifier),
+      ("from", optStrJson t.trainFrom), ("to", optStrJson t.trainTo),
+      ("lineName", optStrJson t.lineName)]
+
+private def rowJson (r : Row) : Json :=
+  Json.mkObj [
+    ("window", Json.str r.windowText),
+    ("startDay", Json.str r.startDay), ("startHh", Lean.toJson r.startHh),
+    ("startMm", Lean.toJson r.startMm),
+    ("endDay", Json.str r.endDay), ("endHh", Lean.toJson r.endHh),
+    ("endMm", Lean.toJson r.endMm),
+    ("status", Json.str (statusStr r.status)),
+    ("provenance", Json.str (provStr r.provenance)),
+    ("enforceable", Json.bool (isEnforceable r)),
+    ("truthText", Json.str r.truthText),
+    ("truth", truthJson r.truth)]
+
+def groundTruthResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let md ← (← j.getObjVal? "markdown").getStr?
+    let date ← (← j.getObjVal? "date").getStr?
+    let tz ← (← j.getObjVal? "tz").getStr?
+    let day := parseGroundTruth md date tz
+    return Json.mkObj [("tz", Json.str day.tz),
+                       ("rows", Json.arr (day.rows.map rowJson))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end GroundTruth
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2414,6 +2486,8 @@ def dispatch (j : Json) : Json :=
   -- The walk referee (#1048 Group B). Nothing serves it; it is here rather
   -- than beside `main` because that is the only place a host can link.
   | .ok "walkgate" => WalkGate.walkGateResult j
+  -- The narrative parser (#1290). Reply is CIVIL time; the shell resolves it.
+  | .ok "groundtruth" => GroundTruth.groundTruthResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.
