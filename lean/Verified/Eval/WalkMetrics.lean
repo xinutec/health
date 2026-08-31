@@ -167,6 +167,46 @@ def pedometerDistanceM (steps : Array PedStep) (from_ to : Float)
     if hi > lo then n := n + s.steps * ((hi - lo) / 60)
   return n * strideM
 
+
+/-! ## Step budget
+
+⚠ TWO windowing rules and TWO strides live a few lines apart in the original,
+and the referee uses the SECOND of each. `pedometerDistanceM` above distributes
+per-minute rows by time OVERLAP at a 0.72 m stride; `stepsInWindow` here sums
+WHOLE rows whose timestamp falls in an INCLUSIVE window, and the budget
+multiplies by 0.75. They are not interchangeable, and a port that tidied them
+into one would move every `budgetM` in the blessed baseline. -/
+
+/-- The reconstruction profile's stride. ⚠ 0.75 — NOT `scoreWalk`'s 0.72. -/
+def STEP_STRIDE_M : Float := 0.75
+
+/-- Steps whose row timestamp lies in `[startTs, endTs]` — inclusive at both
+ends, whole rows, no overlap distribution.
+
+⚠ `none` means NO STEP DATA, and it is NOT the same as `some 0`. A window that
+contains no steps but sits within a day of some step row returns `some 0` —
+the pedometer positively saying the leg covered no counted steps, which is the
+strongest phantom evidence the referee has. Only a window with no rows at all,
+or none within 86400 s, declines to answer. Collapsing the two would turn the
+loudest signal into silence. -/
+def stepsInWindow (rows : Array PedStep) (startTs endTs : Float) : Option Float := Id.run do
+  if rows.isEmpty then return none
+  let mut total := 0.0
+  let mut anyOverlap := false
+  for r in rows do
+    if r.ts ≥ startTs && r.ts ≤ endTs then
+      total := total + r.steps
+      anyOverlap := true
+  if anyOverlap || rows.any (fun r => Float.abs (r.ts - startTs) < 86400) then
+    return some total
+  return none
+
+/-- The leg's pedometer displacement budget (m), with NO slack. The gate
+applies the reconstruction's slack itself, in `WalkGate.excess`, so that the
+recorded floor and the tolerance stay separable. -/
+def stepBudgetM (rows : Array PedStep) (startTs endTs : Float) : Option Float :=
+  (stepsInWindow rows startTs endTs).map (· * STEP_STRIDE_M)
+
 /-! ## The drawn-path score -/
 
 /-- The witnesses that need only the drawn line, the window and the network. -/
@@ -730,6 +770,27 @@ private def twoPassInvented : Array LatLon :=
 -- metric declining to answer, and the gate treats the two differently.
 #guard (onNamedWayFraction line #[] ways).isNone
 #guard (onNamedWayFraction line #["Barn Rise"] { ways := #[] }).isNone
+
+
+/-! ### Step budget
+
+⚠ The last two are the pair that matters. An empty window NEAR the data is
+`some 0` — the pedometer says this leg walked nothing — while a window far from
+any row is `none`, no data. The gate acts hard on the first and not at all on
+the second. -/
+
+private def stepRows : Array PedStep := #[⟨1000, 100⟩, ⟨1060, 120⟩, ⟨1120, 90⟩]
+
+#guard match stepBudgetM stepRows 1000 1120 with
+       | some v => approx v 232.50000000000000 | none => false
+-- Inclusive at BOTH ends: a zero-width window on a row's timestamp still
+-- collects that whole row.
+#guard match stepBudgetM stepRows 1060 1060 with
+       | some v => approx v 90.000000000000000 | none => false
+#guard match stepBudgetM stepRows 5000 5060 with
+       | some v => approx v 0 | none => false
+#guard (stepsInWindow #[] 1000 1120).isNone
+#guard (stepsInWindow stepRows 9000000 9000060).isNone
 
 end Witnesses
 
