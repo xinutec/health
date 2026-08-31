@@ -52,11 +52,13 @@ in  { name = "health"
         , name = "frontend deps match the lockfile"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "install", "--frozen-lockfile" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "typecheck (frontend app + e2e)"
         , argv = G.inDevShell [ "pnpm", "run", "typecheck:frontend" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , {-  The frontend restates the backend's string unions — it has no
@@ -251,12 +253,13 @@ in  { name = "health"
       , G.Check::{
         , name = "lint (eslint, frontend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint:frontend" ]
+        , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "frontend unit tests"
         , argv = G.inDevShell [ "pnpm", "run", "test:frontend" ]
-        , env = G.oneAngularWorker
+        , env = G.nonInteractive # G.oneAngularWorker
         , timeout_s = 1800
         }
       , {-  `lake build` — every `#guard` parity check runs inside it, so a
@@ -267,6 +270,7 @@ in  { name = "health"
         G.Check::{
         , name = "Lean verified core + decode parity"
         , argv = G.inDevShell [ "pnpm", "run", "lean-check" ]
+        , env = G.nonInteractive
         , timeout_s = 3600
         }
       , G.Check::{
@@ -274,6 +278,7 @@ in  { name = "health"
         , cwd = "frontend"
         , argv =
             G.ngBuild "../../" [ "dist/frontend/browser" ] [ "pnpm", "run", "build" ]
+        , env = G.nonInteractive
         , timeout_s = 1800
         }
       , {-  The L2 phone-width layout harness: serves the dist the row above
@@ -283,6 +288,7 @@ in  { name = "health"
         , name = "frontend ui-check (phone-width layout harness)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
+        , env = G.nonInteractive
         , timeout_s = 1800
         }
       , {-  Not `G.devLint`, because of the baseline — see the header. Pinned the

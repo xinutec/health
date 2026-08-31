@@ -11,7 +11,9 @@
         "--frozen-lockfile"
       ],
       "cwd": "frontend",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "frontend deps match the lockfile",
       "timeout_s": 900
     },
@@ -26,7 +28,9 @@
         "typecheck:frontend"
       ],
       "cwd": ".",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "typecheck (frontend app + e2e)",
       "timeout_s": 900
     },
@@ -150,7 +154,9 @@
         "lint:frontend"
       ],
       "cwd": ".",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "lint (eslint, frontend)",
       "timeout_s": 900
     },
@@ -166,6 +172,7 @@
       ],
       "cwd": ".",
       "env": {
+        "CI": "true",
         "NG_BUILD_MAX_WORKERS": "1"
       },
       "name": "frontend unit tests",
@@ -182,7 +189,9 @@
         "lean-check"
       ],
       "cwd": ".",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "Lean verified core + decode parity",
       "timeout_s": 3600
     },
@@ -204,7 +213,9 @@
         "build"
       ],
       "cwd": "frontend",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "frontend build",
       "timeout_s": 1800
     },
@@ -219,7 +230,9 @@
         "ui-check"
       ],
       "cwd": "frontend",
-      "env": {},
+      "env": {
+        "CI": "true"
+      },
       "name": "frontend ui-check (phone-width layout harness)",
       "timeout_s": 1800
     },
