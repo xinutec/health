@@ -298,7 +298,23 @@ fn every_golden_day_measures_its_walks() {
          nothing and reads 0 for every one of them"
     );
 
-    let req = json!({ "mode": "walkgate", "baseline": baseline_req, "days": days_req });
+    // ⚠ `p90M` IS NOT REQUESTED ON A GATING RUN. It is 83% of the referee's
+    // cost — it samples each line every 5 m and scans ~24k walkable ways per
+    // sample — and the ratchet does not act on it (`Metric` has no `p90` case).
+    // Asked for only when dumping, which is when a human is reading the column
+    // or refreshing the floor.
+    //
+    // ⚠ An indexed nearest-way search was tried first and REFUTED: exact, and
+    // 3.3x SLOWER (314s -> 1052s), because a bounding-box bound only bites once
+    // `best` is small and nothing orders the ways by proximity (#1291). Not
+    // computing the metric beats computing it faster.
+    let want_p90 = std::env::var("WALK_GATE_DUMP").is_ok();
+    let req = json!({
+        "mode": "walkgate",
+        "baseline": baseline_req,
+        "days": days_req,
+        "wantP90": want_p90,
+    });
     let reply = backend::lean::serve(&req.to_string()).expect("the referee must answer");
     let r: Value = serde_json::from_str(&reply).expect("the referee reply parses");
     assert!(

@@ -2309,8 +2309,9 @@ completely differently, so collapsing any of these would be a silent pass.
 different stride and a different window from the budget the gate acts on; the
 budget comes from `stepBudgetM` below, separately. Handing steps to both would
 put two incompatible pedometer readings in one row. -/
-private def measure (d : DayIn) (w : WalkIn) : WalkEntry :=
+private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
   let sc := scoreWalk w.drawn (Float.ofInt w.startTs) (Float.ofInt w.endTs) #[] (some d.ways)
+              0.72 35 wantP90
   let span := (Float.ofInt w.endTs) - (Float.ofInt w.startTs)
   { startTs := w.startTs
     p90M := sc.offWalkableP90M
@@ -2351,10 +2352,16 @@ private def parseReq (j : Json)
           ← (← optArr j "days").mapM parseDayIn)
 
 def walkGateResult (j : Json) : Json :=
+  -- ⚠ OFF BY DEFAULT, and that is the point. `p90M` is 83% of this mode's cost
+  -- and the ratchet does not act on it — `Metric` has no `p90` case. A caller
+  -- that is GATING does not need it; one that is REFRESHING THE FLOOR does, and
+  -- asks. An absent `p90M` is therefore "not asked this run", not a lost
+  -- measurement, and nothing downstream reads it as one.
+  let wantP90 := (j.getObjVal? "wantP90" >>= (·.getBool?)).toOption.getD false
   match parseReq j with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok (baseline, days) =>
-    let current : WalkBaseline := days.map fun d => (d.date, d.walks.map (measure d))
+    let current : WalkBaseline := days.map fun d => (d.date, d.walks.map (measure d wantP90))
     let r := gateWalks baseline current
     Json.mkObj [
       ("current", Json.arr (current.map fun (date, ws) =>

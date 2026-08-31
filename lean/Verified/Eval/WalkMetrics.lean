@@ -256,7 +256,8 @@ def offWalkableQuantile (drawn : Array LatLon) (walkable : RoadGeometry)
 which is where a deep building cut shows. -/
 def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
     (steps : Array PedStep := #[]) (walkable : Option RoadGeometry := none)
-    (strideM : Float := 0.72) (opennessRadiusM : Float := 35) : WalkScore := Id.run do
+    (strideM : Float := 0.72) (opennessRadiusM : Float := 35)
+    (wantP90 : Bool := true) : WalkScore := Id.run do
   let drawnLengthM := pathLength drawn
   let straight := if drawn.size ≥ 2 then metersBetween drawn[0]! drawn[drawn.size-1]! else 0
   let tortuosity := if straight > 1 then drawnLengthM / straight else 1
@@ -276,7 +277,17 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
       let near := (drawn.map (fun p => distToNearestWay p w)).filter (· ≤ opennessRadiusM)
       offWalkableMeanM := if near.isEmpty then none
                           else some ((near.foldl (· + ·) 0) / near.size.toFloat)
-      offWalkableP90M := offWalkableQuantile drawn w 0.9
+      -- ⚠ `wantP90` EXISTS FOR COST, AND ONLY THE QUANTILE IS OPTIONAL.
+      -- `offWalkableQuantile` samples the line every 5 m and asks
+      -- `distToNearestWay` for each sample, which scans every walkable way —
+      -- ~24k on a London day. It is 83% of the whole referee's runtime, and it
+      -- is the ONE metric the ratchet does not act on (`Metric` has no `p90`
+      -- case; see `WalkEntry.p90M`). The mean above is per-VERTEX, ~23 calls,
+      -- and stays.
+      --
+      -- Defaults to TRUE so every existing caller and every V8-pinned guard
+      -- below is unaffected; only the gating harness turns it off.
+      offWalkableP90M := if wantP90 then offWalkableQuantile drawn w 0.9 else none
   | none => pure ()
   return { tortuosity, drawnLengthM, pedometerM := ped, stepDistanceError,
            offWalkableMeanM, offWalkableP90M }
