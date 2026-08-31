@@ -3,6 +3,16 @@
 How the system handles timestamps across data sources with differing
 timezone semantics. Two data sources, three distinct timezone concepts.
 
+⚠ **THIS DOCUMENT IS THE MODEL. Its `src/**.ts` paths are HISTORICAL** — they
+name the TypeScript backend, deleted whole in #975. The prose is kept as the
+record of why each decision was taken; **"Where these things live now" at the
+foot maps every one of those names to the Rust or Lean symbol that does the work
+today.** Read that section before following any path above it (#919).
+
+The model itself did not change with the port, and it is the one thing here to
+carry away: **PhoneTrack stores true UTC; Fitbit returns wall-clock strings in
+whatever zone the watch was in at recording time.**
+
 ## Data sources
 
 ### PhoneTrack (Nextcloud)
@@ -504,116 +514,37 @@ Integration:
    that *does* convert these timestamps to instants knows to read the
    row's tz, not the browser's.
 
-## Implementation phases
+## Where these things live now
 
-**Phase 1 + 2 — schema, sync, and read path (single deploy).**
-Combined to avoid an intermediate state where new rows have tz but
-reads ignore it. Steps, in implementation order:
+⚠ **THE FILE REFERENCES IN THE PROSE ABOVE ARE HISTORICAL.** Every `src/**.ts`
+path in this document names the TypeScript backend, which was deleted whole
+(#975). They are left as written because the prose around them is a record of
+why each decision was taken, and rewriting the paths inline would make a
+year-old argument read as current instruction. This section is the map from
+those names to the code that does the work today, BY SYMBOL — a symbol survives
+a move, a line number does not (#919, #1205).
 
-1. **Migration v23**: add `tz VARCHAR(64) NULL` to `steps_intraday`,
-   `heart_rate_intraday`, `sleep_stages`. MariaDB instant-add → <1s
-   even on populated tables.
-2. **Kysely types**: add `tz: string | null` to the three table
-   interfaces in `src/db/tables.ts`. Required before any code that
-   reads or writes the column can compile.
-3. **Dependency**: `tz-lookup` added to `package.json`.
-4. **Extract sync-state helpers**: move `getSyncState` and
-   `setSyncState` from `src/sync.ts:39-55` to a new shared module
-   `src/db/sync-state.ts`. Both helpers gain an **optional
-   `conn?: mariadb.Connection` parameter**: when supplied, use
-   `conn.query(...)` so the call participates in the caller's
-   transaction; when omitted, use `db()` (pool) for backwards
-   compatibility. Existing `sync.ts` callers omit the arg. The new
-   `refresh-focus-places.ts` `home_tz` write passes `conn` so it
-   commits/rolls-back with the surrounding focus_places transaction.
-5. **New module `src/geo/fitbit-tz.ts`**: implements `TzSource`,
-   `buildForwardTzSource`, `NULL_TZ_SOURCE`, and the binary-search +
-   lat/lon-keyed memo cache.
-6. **Update row-shape parsers and INSERTs**:
-   - `steps.ts`: extend existing `parseStepsDataset` to 4-tuple.
-   - `heartrate.ts`: lift the inline `dataset.map(...)` at `:66`
-     into a new `parseHRDataset` pure helper; same 4-tuple shape.
-   - `sleep.ts`: lift the inline stage-row construction at `:65-73`
-     into a new `parseSleepStages` pure helper; same 4-tuple shape.
-   All three INSERT statements include `tz` column with
-   `ON DUPLICATE KEY UPDATE tz = COALESCE(tz, VALUES(tz))`.
-7. **Sync orchestration**: forward sync in `sync.ts` fetches
-   PhoneTrack fixes (reusing the weekly chunking from
-   `refresh-focus-places.ts:80-90`) and `/1/user/-/profile.json`,
-   builds a `TzSource`, passes it to **`syncSleep`,
-   `syncHeartRateIntraday`, and `syncStepsIntraday`** (the three
-   intraday-or-wall-clock functions). Backward backfill leaves the
-   `TzSource` parameter at default (`NULL_TZ_SOURCE`).
-8. **`refresh-focus-places.ts`**: when `assignDisplayNames` returns a
-   `Home` cluster, write `tzLookup(centroid)` to `sync_state.home_tz`.
-   Write happens inside the existing transaction (`:111-144`),
-   **passing `conn` to `setSyncState`** so it participates in the
-   transaction. A half-failed run won't update `home_tz` to a value
-   derived from clusters that didn't get persisted. Skipped entirely
-   when `result.clusters.length === 0` (already inside the
-   `if (result.clusters.length > 0)` guard).
-9. **Read path**: `loadBiometrics` in `velocity.ts` selects
-   `tz` per row. For the per-minute HR aggregate (the `DATE_FORMAT`
-   group-by), use
-   `MAX(tz) AS tz` — mixed-tz buckets are impossible by
-   construction (the GROUP BY is on the wall-clock string
-   `DATE_FORMAT(ts, '%Y-%m-%d %H:%i')`, and a tz change moves the
-   wall-clock discontinuously, so a single bucket can never contain
-   timestamps recorded under two different tzs). Load `home_tz` from
-   `sync_state` once per request. COALESCE chain applied per row when
-   calling `fitbitTsToUnix`.
-10. **Delete the misleading test** at `tests/timezone.test.ts:27-61`
-    (the "PhoneTrack stores LOCAL time" comment is wrong; see
-    verification note in the PhoneTrack section above).
-11. **Tests** (per the plan below).
+| the document says | today |
+| --- | --- |
+| `src/geo/timezone.ts` — `dateBoundsUtc`, `fitbitTsToUnix` | `rust/backend/src/timezone.rs` — `date_bounds_utc`, `wall_clock_to_unix`, `wall_clock_to_utc_string`, `local_date_at`, `local_hour_of` |
+| `src/geo/fitbit-tz.ts` — the proposed `TzSource` | `rust/backend/src/fitbit/tz_source.rs` — `ForwardTzSource`, `nearest_fix`, `PolygonLookup`; the DECISION itself is `lean/Verified/FitbitTz.lean` (`decideTz`, `nearestFix`, `FIX_SEARCH_WINDOW_S`) |
+| `src/fitbit/sync/{steps,heartrate,sleep}.ts` | `rust/backend/src/fitbit/sync/{steps,heartrate,sleep}.rs` |
+| `src/sync.ts` — orchestration | `rust/backend/src/fitbit/{mod,run}.rs` |
+| `src/cli/backfill-fitbit-tz.ts` — the one-shot CLI | `rust/backend/src/fitbit/backfill_runner.rs` — `run_intraday_backfill`, `run_range_backfill` |
+| `src/db/{schema,tables}.ts` | `rust/backend/src/schema.rs` |
+| `src/routes/api.ts` | `rust/backend/src/routes/tables.rs` |
+| `src/geo/focus-places.ts` — `assignDisplayNames` | `lean/Verified/Geo/FocusPlaces.lean` — `assignDisplayNames` |
+| `src/geo/velocity.ts` — `loadBiometrics` | `rust/backend/src/classification_inputs.rs` (the day's reader) |
 
-### Deploy sequence (the "existing user" scenario)
+⚠ **THE IMPLEMENTATION PLAN THAT STOOD HERE IS GONE, and it is not history worth
+keeping.** It was ~90 lines of numbered steps — migrations to add, Kysely types
+to edit, a test to delete at `tests/timezone.test.ts:27-61` — every one of them
+an INSTRUCTION against a file that no longer exists. They could not be carried
+out and they made this document read as a stale line-number sweep for a year.
+The work they described was done; the schema, the sync path and the read path
+all carry `tz` today.
 
-This user has ~120 days of `tz=NULL` Fitbit rows already in the DB.
-Immediately after the Phase 1+2 deploy:
-
-- New rows being synced get `tz` populated (forward sync path).
-- Historical rows still have `tz=NULL`.
-- `home_tz` is not yet written to `sync_state` until
-  `refresh-focus-places` runs.
-
-If a velocity query lands in that window, the COALESCE chain falls
-through to the requestTz fallback → the original bug returns for
-historical data.
-
-Mitigation: as **the immediate post-deploy step**, run
-`refresh-focus-places` manually for the user. That populates
-`home_tz`. From then on, historical queries get the home_tz fallback
-(correct for the user's locally-recorded data), and Phase 3 progresses
-in the background to fill in per-row tz from PhoneTrack history.
-
-Document this as part of the rollout runbook, not just the design.
-
-**Phase 3 — historical backfill CLI (separate, deploy-independent).**
-Run after Phase 1+2 is live and proven. Failures are isolated from
-sync correctness.
-
-## Glossary of file references
-
-- `src/geo/timezone.ts` — `fitbitTsToUnix`, `dateBoundsUtc`,
-  `isValidTimezone`, `tzFormatterCache`.
-- `src/geo/velocity.ts` — `loadBiometrics` (the per-row reader).
-- `src/geo/biometrics.ts` — `cadenceForSegment`,
-  `correctModeFromCadence` (the consumers whose behaviour broke).
-- `src/db/schema.ts` — current migrations through v22.
-- `src/db/tables.ts` — Kysely types.
-- `src/fitbit/sync/{steps,heartrate,sleep}.ts` — INSERT statements
-  to update.
-- `src/sync.ts` — orchestration; gains the profile-fetch step.
-- `src/cli/refresh-focus-places.ts` — pattern for the backfill CLI
-  and the home_tz write site. `assignDisplayNames` is consumed in the
-  cluster-insert loop; the home_tz write fits in the same loop.
-- `src/nextcloud/phonetrack.ts` — `fetchTrackPointsRange` for the
-  per-sync GPS-fix fetch.
-- `src/geo/focus-places.ts` — `assignDisplayNames(clusters):
-  Map<number, string>` (the cluster id → name map).
-- `src/sync.ts:39-55` — private `getSyncState` / `setSyncState`
-  helpers to extract to a shared module.
-- `src/routes/api.ts:125-137` — `/api/heartrate/intraday` that
-  passes the row through `selectAll()`; will surface the new `tz`
-  column to the frontend (display continues to work).
+What survives above is the MODEL, and the model is why this file exists: **
+PhoneTrack stores true UTC; Fitbit returns wall-clock strings in whatever zone
+the watch was in at recording time.** The port did not change that, and nothing
+in the deleted plan was needed to state it.
