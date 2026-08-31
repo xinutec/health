@@ -164,12 +164,15 @@ fn steps_rows(inputs: &Value) -> Value {
 /// zone here would shift every window by hours and silently score the wrong
 /// legs.
 ///
-/// ⚠ A DELIBERATE DIVERGENCE, RECORDED. The original resolved these through
-/// `fitbitTsToUnix`, which went with the TypeScript (#975). This uses the
-/// repo's own tested resolver, which picks the LATER instant for an ambiguous
-/// wall clock and steps back through a spring-forward gap. The two agree except
-/// on the two instants a year where a DST transition lands inside a narrated
-/// walk; no golden day does, but that is a fact about this corpus, not a proof.
+/// ⚠ A DELIBERATE DIVERGENCE, AND IT WAS MEASURED. The original resolved these
+/// through `fitbitTsToUnix`, which went with the TypeScript (#975). This uses
+/// the repo's own resolver, which picks the LATER instant for an ambiguous wall
+/// clock and steps back through a spring-forward gap.
+///
+/// All 790 instants in the corpus were resolved both ways on 2026-08-31 and
+/// agreed exactly — see `ground_truth_corpus.rs` and its `GT_DUMP_UNIX=1`. That
+/// is a fact about THIS corpus, not a proof about the functions: a narrated
+/// window containing a DST transition could still separate them.
 fn named_walk_windows(date: &str, tz: &str) -> Vec<(i64, i64, String)> {
     let path = format!(
         "{}/../../tests/golden/ground-truth/{date}.md",

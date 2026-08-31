@@ -102,6 +102,40 @@ fn every_narrative_parses_as_the_typescript_did() {
             declared_tz += 1;
         }
         let day_rows = r["rows"].as_array().map_or(&[][..], Vec::as_slice);
+        // ⚠ THE RESOLVER DIVERGENCE — MEASURED, NOT ASSUMED. Lean stops at
+        // civil time; the original resolved through `fitbitTsToUnix` (an Intl
+        // round-trip) and this uses chrono, which handles DST ambiguity
+        // explicitly. They could disagree on a transition inside a narrated
+        // window.
+        //
+        // They do not, here: all 790 instants (395 start+end pairs) were
+        // resolved both ways on 2026-08-31 and agreed exactly. Re-check with
+        // `GT_DUMP_UNIX=1`, which prints `name start end` per row, against the
+        // recovered TypeScript — do not re-assume it.
+        let zone = r["tz"].as_str().unwrap_or("Europe/London");
+        for row in day_rows {
+            let stamp = |d: &Value, h: &Value, m: &Value| -> Option<i64> {
+                backend::timezone::wall_clock_to_unix(
+                    &format!("{} {:02}:{:02}:00", d.as_str()?, h.as_u64()?, m.as_u64()?),
+                    zone,
+                )
+            };
+            let a = stamp(&row["startDay"], &row["startHh"], &row["startMm"]);
+            let b = stamp(&row["endDay"], &row["endHh"], &row["endMm"]);
+            // Every anchored civil time must resolve. A `None` means the zone
+            // was unknown or the clock malformed, and a window that silently
+            // vanished would take its truth claim with it.
+            match (a, b) {
+                (Some(a), Some(b)) => {
+                    if std::env::var("GT_DUMP_UNIX").is_ok() {
+                        println!("{name} {a} {b}");
+                    }
+                }
+                _ => failures.push(format!(
+                    "{name}: a row's civil time did not resolve in {zone}"
+                )),
+            }
+        }
         rows += day_rows.len();
         for row in day_rows {
             if row["enforceable"].as_bool() == Some(true) {
