@@ -2447,6 +2447,73 @@ def groundTruthResult (j : Json) : Json :=
 
 end GroundTruth
 
+/-! ## Journeys mode (`verified_cli journeys`)
+
+`Verified.Eval.Journeys.groundTruthJourneys` over RESOLVED audit rows — the
+ground-truth side of the `score-decoder` scoreboard (#1048). Rows arrive with
+unix `startTs`/`endTs` because the zone resolution is the shell's (see the
+`groundtruth` mode above).
+
+  { "mode": "journeys",
+    "rows": [ { "startTs": n, "endTs": n, "status": "correct|wrong|partial|unclear",
+                "truth": { "mode": "...", "lineName": s|null,
+                           "from": s|null, "to": s|null } | null } ] }
+
+Output: `{ "journeys": [ { "startTs", "endTs",
+  "legs": [ { "startTs", "endTs", "mode", "line", "board", "alight" } ] } ] }`. -/
+
+namespace Journeys
+
+open Verified.Eval.GroundTruth
+open Verified.Eval.Journeys
+
+private def parseStatus : String → Status
+  | "correct" => .correct | "wrong" => .wrong
+  | "partial" => .«partial» | _ => .unclear
+
+private def parseMode : String → Option Mode
+  | "sleeping" => some .sleeping | "stationary" => some .stationary
+  | "walking" => some .walking | "cycling" => some .cycling
+  | "driving" => some .driving | "bus" => some .bus
+  | "train" => some .train | "plane" => some .plane
+  | _ => none
+
+private def parseJRow (j : Json) : Except String JRow := do
+  let truth : Option Truth :=
+    match j.getObjVal? "truth" with
+    | .ok t =>
+      if t.isNull then none
+      else match (t.getObjVal? "mode" >>= (·.getStr?)) with
+        | .ok ms => (parseMode ms).map fun m =>
+            { mode := m,
+              lineName := (t.getObjVal? "lineName" >>= (·.getStr?)).toOption,
+              trainFrom := (t.getObjVal? "from" >>= (·.getStr?)).toOption,
+              trainTo := (t.getObjVal? "to" >>= (·.getStr?)).toOption }
+        | .error _ => none
+    | .error _ => none
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    status := parseStatus ((j.getObjVal? "status" >>= (·.getStr?)).toOption.getD "unclear")
+    truth }
+
+private def legJson (l : Leg) : Json :=
+  Json.mkObj [("startTs", Lean.toJson l.startTs), ("endTs", Lean.toJson l.endTs),
+    ("mode", Json.str l.mode), ("line", optStrJson l.line),
+    ("board", optStrJson l.board), ("alight", optStrJson l.alight)]
+
+def journeysResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let rows ← (← optArr j "rows").mapM parseJRow
+    return Json.mkObj [("journeys", Json.arr ((groundTruthJourneys rows).map fun jr =>
+      Json.mkObj [("startTs", Lean.toJson jr.startTs), ("endTs", Lean.toJson jr.endTs),
+                  ("legs", Json.arr (jr.legs.map legJson))]))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end Journeys
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2488,6 +2555,9 @@ def dispatch (j : Json) : Json :=
   | .ok "walkgate" => WalkGate.walkGateResult j
   -- The narrative parser (#1290). Reply is CIVIL time; the shell resolves it.
   | .ok "groundtruth" => GroundTruth.groundTruthResult j
+  -- The ground-truth side of the decoder scoreboard (#1048). Rows arrive
+  -- RESOLVED; the zone conversion is the shell's.
+  | .ok "journeys" => Journeys.journeysResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.

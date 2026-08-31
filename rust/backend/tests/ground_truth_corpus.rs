@@ -64,6 +64,14 @@ const TS_ROWS: usize = 395;
 const TS_ENFORCEABLE: usize = 349;
 const TS_UNPARSEABLE: usize = 5;
 const TS_DECLARED_TZ: usize = 2;
+/// `groundTruthJourneys` over the same corpus, same source, same day.
+const TS_JOURNEYS: usize = 92;
+const TS_LEGS: usize = 228;
+/// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. 228 legs could be reached with the
+/// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
+/// to `stationary`, changes what a leg IS without changing how many there are.
+const TS_LEG_MODES: [(&str, usize); 4] =
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 143)];
 
 #[test]
 fn every_narrative_parses_as_the_typescript_did() {
@@ -82,6 +90,9 @@ fn every_narrative_parses_as_the_typescript_did() {
     names.sort();
 
     let (mut rows, mut enforceable, mut unparseable, mut declared_tz) = (0, 0, 0, 0);
+    let (mut journeys, mut legs) = (0usize, 0usize);
+    let mut leg_modes: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     let mut failures: Vec<String> = Vec::new();
 
     for name in &names {
@@ -113,6 +124,7 @@ fn every_narrative_parses_as_the_typescript_did() {
         // `GT_DUMP_UNIX=1`, which prints `name start end` per row, against the
         // recovered TypeScript — do not re-assume it.
         let zone = r["tz"].as_str().unwrap_or("Europe/London");
+        let mut resolved: Vec<Value> = Vec::new();
         for row in day_rows {
             let stamp = |d: &Value, h: &Value, m: &Value| -> Option<i64> {
                 backend::timezone::wall_clock_to_unix(
@@ -130,10 +142,35 @@ fn every_narrative_parses_as_the_typescript_did() {
                     if std::env::var("GT_DUMP_UNIX").is_ok() {
                         println!("{name} {a} {b}");
                     }
+                    resolved.push(json!({
+                        "startTs": a, "endTs": b,
+                        "status": row["status"], "truth": row["truth"],
+                    }));
                 }
                 _ => failures.push(format!(
                     "{name}: a row's civil time did not resolve in {zone}"
                 )),
+            }
+        }
+
+        // The ground-truth side of the decoder scoreboard (#1048). Rows go back
+        // to Lean RESOLVED — the zone conversion above is the only part of this
+        // chain that is not logic.
+        let jreq = json!({ "mode": "journeys", "rows": resolved });
+        let jreply = backend::lean::serve(&jreq.to_string())
+            .unwrap_or_else(|e| panic!("{name}: journeys must answer: {e:#}"));
+        let jr: Value = serde_json::from_str(&jreply).expect("the journeys reply parses");
+        if let Some(e) = jr.get("error") {
+            failures.push(format!("{name}: journeys refused: {e}"));
+        } else {
+            for j in jr["journeys"].as_array().map_or(&[][..], Vec::as_slice) {
+                journeys += 1;
+                for leg in j["legs"].as_array().map_or(&[][..], Vec::as_slice) {
+                    legs += 1;
+                    if let Some(m) = leg["mode"].as_str() {
+                        *leg_modes.entry(m.to_string()).or_insert(0usize) += 1;
+                    }
+                }
             }
         }
         rows += day_rows.len();
@@ -167,9 +204,20 @@ fn every_narrative_parses_as_the_typescript_did() {
     assert_eq!(enforceable, TS_ENFORCEABLE, "enforceable-row count moved");
     assert_eq!(unparseable, TS_UNPARSEABLE, "unparseable-cell count moved");
     assert_eq!(declared_tz, TS_DECLARED_TZ, "declared-zone count moved");
+    assert_eq!(journeys, TS_JOURNEYS, "journey count moved");
+    assert_eq!(legs, TS_LEGS, "leg count moved");
+    assert_eq!(
+        leg_modes,
+        TS_LEG_MODES
+            .iter()
+            .map(|(m, n)| ((*m).to_string(), *n))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        "the leg-mode histogram moved"
+    );
     eprintln!(
         "ground truth: {} files, {rows} rows, {enforceable} enforceable, \
-         {unparseable} unparseable, {declared_tz} declaring their own zone",
+         {unparseable} unparseable, {declared_tz} declaring their own zone; \
+         {journeys} journeys, {legs} legs",
         names.len()
     );
 }
