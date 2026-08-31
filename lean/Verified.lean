@@ -138,3 +138,4 @@ import Verified.Geo.EnrichFold
 import Verified.Geo.PreFold
 import Verified.Geo.PassFold
 import Verified.Eval.WalkGate
+import Verified.Eval.WalkMetrics
