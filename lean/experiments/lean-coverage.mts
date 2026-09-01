@@ -54,7 +54,7 @@
  * Run: TMPDIR=/tmp npx tsx lean/experiments/lean-coverage.mts
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const LEAN = path.join(import.meta.dirname, "..");
@@ -232,11 +232,97 @@ const GATES: [string, string[]][] = [
 	["compare-gps-outliers", ["Verified.Hsmm.GpsOutliers"]],
 ];
 
+/**
+ * ⚠ A GATE ROW IS A CLAIM THAT A COMPARATOR EXISTS, AND NOTHING USED TO CHECK IT.
+ *
+ * {@link GATES} credits modules by the NAME of the gate that compares them. The
+ * rows were added carefully — the `stationchain` and `gps-outliers` comments
+ * above record the discipline of listing a row only once its comparator landed —
+ * but nothing ever REMOVED a row when a comparator died. On 2026-08-26 the
+ * TypeScript backend was deleted (#975) and with it every arm these gates ran
+ * against; this file went on crediting them, and reported 120 of 173 modules as
+ * live-compared by harnesses that cannot start.
+ *
+ * That is the exact failure this file's own header warns about — "a coverage
+ * tool that grants or withholds credit STRUCTURALLY, by a copied list, is
+ * asserting, not measuring" — realised on the list doing the warning. #672,
+ * #674 and #942 were the first three instances; this is the fourth and by far
+ * the largest.
+ *
+ * So each row now names the ENTRY POINT that must exist and be runnable, and a
+ * dead row credits nothing. Its modules fall through to the residue, where the
+ * existing tiering judges them on their guards and theorems like any other
+ * unattended port — which is what they now are.
+ */
+const GATE_ENTRY: Record<string, string[] | null> = {
+	"day-gate": ["scripts/day-gate.sh", "lean/experiments/compare-day.mts"],
+	"focus-gate": ["scripts/focus-gate.sh", "lean/experiments/compare-focus.mts"],
+	"compare-match / LEAN_MATCH": ["lean/experiments/compare-match.mts"],
+	"LEAN_HSMM / compare-assemble": ["lean/experiments/compare-assemble.mts"],
+	// ⚠ `null` is WAIVED, and it must credit NOTHING — #233 decided there is no
+	// rail comparator, so its modules are unattended by choice rather than by
+	// accident. This row printed 0 for a year only because `compare-match`
+	// claimed both roots first (LazyDijkstra imports Rail.Dijkstra). The moment
+	// that gate was correctly marked dead, a `[]` here would have credited 3
+	// modules to a gate that has never existed — the same over-credit this
+	// change removes, reintroduced one line below the comment describing it.
+	"LEAN_RAIL (waived)": null,
+	"LEAN_STATIONCHAIN / compare-stationchain": ["lean/experiments/compare-stationchain.mts"],
+	"kalman / gpsquality / biolabels": ["lean/experiments/compare-kalman.mts"],
+	"compare-gps-outliers": ["lean/experiments/compare-gps-outliers.mts"],
+};
+
+const REPO = path.join(LEAN, "..");
+
+/**
+ * Can this harness actually run?
+ *
+ * ⚠ EXISTENCE IS NOT ENOUGH, and that distinction is the whole point here. Four
+ * of these `.mts` files are still on disk and every one of them imports
+ * `../../src/`, deleted with the TypeScript. A file check would have credited
+ * them and reproduced the bug in a new place.
+ *
+ * So: the entry point must exist AND every relative import it names must
+ * resolve. One level deep, which is enough — the arms all reach the deleted tree
+ * directly. `.js` specifiers map to `.ts`/`.mts` the way the TS toolchain
+ * resolves them.
+ */
+const harnessRunnable = (rel: string): boolean => {
+	const abs = path.join(REPO, rel);
+	if (!existsSync(abs)) return false;
+	if (!/\.m?ts$/.test(rel)) return true; // a shell entry point: existence is all we can cheaply say
+	const src = readFileSync(abs, "utf8");
+	const specs = [...src.matchAll(/from\s+"(\.[^"]+)"/g)].map((m) => m[1]);
+	return specs.every((spec) => {
+		const base = path.resolve(path.dirname(abs), spec.replace(/\.js$/, ""));
+		return [".ts", ".mts", ".js", ".mjs", ""].some((ext) => existsSync(base + ext));
+	});
+};
+
 const claimed = new Set<string>();
+const deadGates: [string, number][] = [];
 for (const [label, roots] of GATES) {
+	const entries = GATE_ENTRY[label];
 	const fresh = [...closure(roots)].filter((m) => !claimed.has(m));
+	if (entries === null) {
+		// Waived: no comparator by decision. Credits nothing, and is not a loss.
+		console.log(`${label.padEnd(38)} ${"—".padStart(3)}   waived, credits nothing`);
+		continue;
+	}
+	if (!(entries ?? []).some(harnessRunnable)) {
+		deadGates.push([label, fresh.length]);
+		console.log(`${label.padEnd(38)} ${"—".padStart(3)}   ⚠ COMPARATOR GONE, credits nothing`);
+		continue;
+	}
 	for (const m of fresh) claimed.add(m);
 	console.log(`${label.padEnd(38)} ${String(fresh.length).padStart(3)}`);
+}
+if (deadGates.length > 0) {
+	const n = deadGates.reduce((a, [, c]) => a + c, 0);
+	console.log(
+		`\n⚠ ${deadGates.length} gate(s) name a comparator that cannot run; ` +
+			`${n} module(s) fall to the residue below rather than counting as compared.`,
+	);
 }
 
 /**
