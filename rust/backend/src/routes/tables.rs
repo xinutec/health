@@ -77,17 +77,26 @@ pub fn js_number(s: &str) -> f64 {
     if t.is_empty() {
         return 0.0;
     }
+    // ⚠ Every NaN below IS the contract, not a sentinel this function chose.
+    // `js_number` reimplements JavaScript's `Number()`, whose "not a number"
+    // answer is NaN; returning `Option<f64>` would make this stop mirroring the
+    // oracle in `lean/experiments/apiwindow-refs.mts` that the doc above pins it
+    // to, and the callers already read NaN as the rejection.
     if let Some(rest) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        // dev-lint: allow-nan-sentinel
         return u64::from_str_radix(rest, 16).map_or(f64::NAN, |v| v as f64);
     }
     if let Some(rest) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+        // dev-lint: allow-nan-sentinel
         return u64::from_str_radix(rest, 8).map_or(f64::NAN, |v| v as f64);
     }
     if let Some(rest) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+        // dev-lint: allow-nan-sentinel
         return u64::from_str_radix(rest, 2).map_or(f64::NAN, |v| v as f64);
     }
     match t.parse::<f64>() {
         Ok(v) if v.is_finite() => v,
+        // dev-lint: allow-nan-sentinel
         _ => f64::NAN,
     }
 }

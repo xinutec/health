@@ -383,6 +383,11 @@ impl<'a> RowSetSource<'a> {
                     .and_then(Value::as_object)
                     .map(|t| t.iter().map(|(k, v)| json!([k, v])).collect())
                     .unwrap_or_default();
+                // A point with no lat/lon encodes as the NaN bit pattern, which
+                // is what the TypeScript side sends for the same row; `bits`
+                // transports it exactly. Not an absence the type could carry —
+                // the array is positional and the peer expects a number here.
+                // dev-lint: allow-nan-sentinel
                 json!([
                     r.get("osmId").cloned().unwrap_or(Value::Null),
                     r.get("subtype")

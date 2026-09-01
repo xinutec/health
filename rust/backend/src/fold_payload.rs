@@ -532,6 +532,10 @@ pub fn encode_caches(
 fn key_nums(k: &str) -> Vec<f64> {
     k.split('|')
         .filter(|s| !s.is_empty())
+        // The NaN is the PARITY, not a sentinel — see the note above: it is what
+        // `Number("x")` yields on the other side, and it survives as a bit
+        // pattern. An Option here would diverge from the oracle this mirrors.
+        // dev-lint: allow-nan-sentinel
         .map(|s| s.parse::<f64>().unwrap_or(f64::NAN))
         .collect()
 }
