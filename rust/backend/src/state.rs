@@ -4,9 +4,11 @@
 //! replaced kept a velocity cache and the Lean tenant mode overrides in
 //! module-level mutables; neither belongs here:
 //!
-//!   * the tenant overrides (`setVerifiedCoreOverride`) exist ONLY to drive the
-//!     TS↔Lean A/B, so they are scaffolding that is retired with the TS arm
-//!     (#975), not state to carry across.
+//!   * the tenant overrides (`setVerifiedCoreOverride`) existed ONLY to drive
+//!     the TS↔Lean A/B, so they were scaffolding to retire with the TS arm
+//!     (#975) rather than state to carry across. ⚠ THAT RETIREMENT HAPPENED
+//!     (2026-08-26) and this sentence stayed in the future tense until
+//!     2026-09-01; the symbol survives nowhere but in this comment.
 //!   * the velocity cache DID need a home, and this is it (#982). It is
 //!     process-local on purpose: a deploy restarts the pod and that is the
 //!     invalidation, which is why there is no version tag and no clear hook.

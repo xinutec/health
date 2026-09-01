@@ -262,13 +262,28 @@ in  { name = "health"
         , env = G.nonInteractive # G.oneAngularWorker
         , timeout_s = 1800
         }
-      , {-  `lake build` — every `#guard` parity check runs inside it, so a
-            trellis/spec divergence fails the build — then the TS↔Lean decode
-            parity harness: 42 seeded problems, day scale included, exact path
-            and score agreement required.
+      , {-  `lake build` — every `#guard` runs inside it, so a trellis/spec
+            divergence fails the build.
+
+            ⚠ THE NAME SAID "+ decode parity" UNTIL 2026-09-01 AND THIS COMMENT
+            PROMISED "the TS↔Lean decode parity harness: 42 seeded problems, day
+            scale included, exact path and score agreement required". That
+            harness compared against the TypeScript ARM, which retired with the
+            TypeScript backend (#975, 2026-08-26). `scripts/lean-check.sh` has
+            run `lake build` and nothing else since. The row was not silently
+            green — the `#guard`s are real and they fail the build — but it
+            claimed a second, cross-implementation check that no longer existed,
+            which is the more flattering half of the claim.
+
+            The cross-implementation checking now lives where it can actually
+            run: the corpus harnesses in `rust/backend/tests/` gate against
+            floors and ceilings blessed from the TypeScript before it went
+            (`walk_gate`, `truth_corpus`, `journey_corpus`,
+            `feasibility_corpus`). Those replay gitignored corpora, so they are
+            in `deploy.sh` rather than here.
         -}
         G.Check::{
-        , name = "Lean verified core + decode parity"
+        , name = "Lean verified core (#guards)"
         , argv = G.inDevShell [ "pnpm", "run", "lean-check" ]
         , env = G.nonInteractive
         , timeout_s = 3600
@@ -311,7 +326,7 @@ in  { name = "health"
         }
       , {-  A green gate has to mean the packages this repo PUBLISHES still build.
 
-            ⚠ NOT covered by `Lean verified core + decode parity` above, which
+            ⚠ NOT covered by `Lean verified core (#guards)` above, which
             runs `pnpm run lean-check` in the dev shell. `packages.verified-cli`
             is the derivation the production image's lean-build stage consumes,
             and its own comment says `lake build` runs every #guard spec check,

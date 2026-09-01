@@ -9,27 +9,25 @@
 //! a rule about what a day means or when a segment is a walk, that rule belongs
 //! in Lean and its presence here is the bug.
 //!
-//! # Why it exists NOW, ahead of the algorithm port
+//! # ⚠ THE PLAN THIS HEADER USED TO DESCRIBE HAS COMPLETED
 //!
-//! #982 is blocked by #975 — porting the SERVER before the per-tenant A/B
-//! retires would mean the Rust service calling into TS logic on its way out.
-//! That argument is about the algorithm surface. It does not cover config, a
-//! pool, or a cursor table, none of which have a TypeScript algorithm behind
-//! them to strand.
+//! Until 2026-09-01 the next two sections were written in the future tense —
+//! "#982 is blocked by #975", "the `/api` routes come after the tenants retire,
+//! not before", and an open question about whether the new ingestion would be
+//! Rust or TypeScript. All three resolved and the text did not move, so a
+//! reader was told the tenants were still live and this crate did not serve.
 //!
-//! The reason to build them ahead of the rest is #260: Fitbit's Web API is
-//! decommissioned in September 2026, and the call on 2026-08-25 is "skeleton
-//! exists → write the new ingestion in Rust; skeleton does not → do it in
-//! TypeScript and book the rework". This crate is what makes that a real
-//! choice. ⚠ It is NOT a decision that the ingestion goes in Rust — the
-//! deadline outranks the architecture there, and that call is Pippijn's.
+//! What actually happened:
 //!
-//! # The order things arrive in
+//!   * the TS↔Lean per-tenant A/B retired with the TypeScript backend (#975,
+//!     2026-08-26). `state.rs` still names `setVerifiedCoreOverride`; that
+//!     symbol exists nowhere but in prose.
+//!   * this crate serves `/api` — see `routes/`, which answers `/api/me`,
+//!     `/api/locations` and the biometric tables. `dist/server.js` is gone.
+//!   * the ingestion IS Rust, and the Fitbit→Google cutover it was written for
+//!     landed and was verified in prod on 2026-09-01 (#260).
 //!
-//! `sync` first, because it is the entrypoint with the fewest dependencies on
-//! the parts #975 is still moving: it reads and writes its own tables and talks
-//! to two HTTP APIs. The HTTP server (`dist/server.js`), its auth surface and
-//! the `/api` routes come after the tenants retire, not before.
+//! The paragraph below is kept because the RULE it states outlived the plan.
 //!
 //! # The Lean/Rust line, drawn by example
 //!
