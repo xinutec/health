@@ -189,9 +189,14 @@ $DEV pnpm run verify
 #
 # The consequence was not a silent pass. `set -euo pipefail` means step 2
 # ABORTED at the first of them — so this block has been unable to complete since
-# 06346bd, and `compare-gps-outliers`, the one gate that still works, sat behind
-# three corpses and never ran. The only way past was DEPLOY_SKIP_GOLDEN, which
-# skips that one too.
+# 06346bd.
+#
+# ⚠ AND IT STAYED UNABLE AFTER THE 2026-08-29 REPAIR. That pass removed the eight
+# and kept `compare-gps-outliers`, calling it "the one gate that still works";
+# measured 2026-09-01, it exits 1 on a deleted `src/` import. Believing it was a
+# survivor took checking that its script EXISTED and that it did not share the
+# others\' `pnpm run build` failure — neither of which is running it. Three
+# harnesses that do run replaced it (#1301).
 #
 # They are removed from the run rather than left to fail, and their loss is
 # announced at the start and again at the end, on the same argument as the skip
@@ -202,15 +207,15 @@ dead_gates_banner() {
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  EIGHT GATES NO LONGER EXIST — coverage lost, not skipped
+	  ⚠  FIVE GATES NO LONGER EXIST — coverage lost, not skipped
 	================================================================
-	    golden corpus             golden with tenants ON
-	    day gate                  golden-hsmm
-	    walk-geometry ratchet     decoder scoreboard
+	    golden with tenants ON    golden-hsmm
+	    day gate                  decoder scoreboard
 	    focus gate                compare-match
 	================================================================
 	  deleted with the TS backend, #975 (06346bd, 2026-08-26)
 	  held at health #1048 — do not treat this deploy as gated by them
+	  THREE came back 2026-08-31/09-01 and run in step 2 below.
 	================================================================
 
 	BANNER
@@ -237,23 +242,36 @@ require_pnpm_scripts() {
 }
 
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [2/7] Lean GPS-outlier parity — the one replay gate that still runs"
+	echo "==> [2/7] corpus replay gates — walk geometry, the truth floor, the journey floor"
 	dead_gates_banner
 	DEAD_GATES=1
-	require_pnpm_scripts compare-gps-outliers
-	# `Verified.Geo.GpsOutliers` serves production and nothing else stands behind
-	# it: the module runs daily and prints a verdict, so leaving its comparator
-	# hand-run would repeat #9's hazard in miniature — a check that exists, is
-	# never run, and quietly stops being true.
+	# ⚠ `compare-gps-outliers` USED TO BE THIS STEP, described as "the one replay
+	# gate that still runs". IT DID NOT RUN. Measured 2026-09-01: it exits 1 with
+	# ERR_MODULE_NOT_FOUND on `src/hmm/gps-outliers.js`, deleted at 06346bd — so
+	# under `set -euo pipefail` this block has been unable to complete since
+	# 2026-08-26, and the 2026-08-29 repair that removed eight corpses around it
+	# did not change that.
 	#
-	# 11 fixtures, ~2 s. It replays the gitignored `decoded_days` corpus, which is
-	# why it belongs here rather than in gate.dhall.
+	# ⚠ AND IT FAILED FOR THE REASON `require_pnpm_scripts` ALREADY NAMES in its
+	# own abort message: that guard checks a package.json ENTRY EXISTS, not that
+	# what it names can RUN. The 08-29 pass checked the `pnpm run build` failure
+	# mode the other eight shared and stopped one layer short of the import. The
+	# script is deleted now (#1301) rather than left as a name that lies.
 	#
-	# ⚠ IT IS ALSO THE ONLY ONE LEFT, and it survives for a reason worth naming:
-	# it runs `pnpm exec tsx lean/experiments/compare-gps-outliers.mts` against
-	# the LEAN build. Every gate deleted from this block ran `node dist/cli/*.js`
-	# against the TypeScript backend, and there is no TypeScript backend.
-	$DEV pnpm run compare-gps-outliers
+	# What replaces it is three harnesses that DO run, in Rust against Lean, with
+	# no TypeScript arm to lose. They replay the gitignored corpora — which is
+	# why they belong here and not in gate.dhall — and each gates a committed
+	# floor a human blessed from the TypeScript before it went:
+	#
+	#   walk_gate        238 walks over 42 days vs walk-baseline.json
+	#   truth_corpus     312 confirmed ground-truth rows vs truth-baseline.json
+	#   journey_corpus    80 of 92 journeys vs journey-baseline.json
+	#
+	# ~7 minutes, of which walk_gate is ~5. They announce a SKIP rather than
+	# passing quietly when the corpus is absent, so a machine without it cannot
+	# read as gated.
+	$DEV cargo test --manifest-path rust/Cargo.toml -p backend --release \
+		--test walk_gate --test truth_corpus --test journey_corpus -- --nocapture
 else
 	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
 	# once said "golden + walk-gate + score-decoder" while skipping six more, and
@@ -261,12 +279,12 @@ else
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  DEPLOYING WITH THE LAST REPLAY GATE SKIPPED
+	  ⚠  DEPLOYING WITH THE REPLAY GATES SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    compare-gps-outliers  (Lean GPS-outlier parity)
+	    walk_gate  truth_corpus  journey_corpus
 	================================================================
-	  the other eight do not run either way — deleted with the TS
+	  the other five do not run either way — deleted with the TS
 	  backend, #975/#1048
 	================================================================
 

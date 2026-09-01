@@ -12,33 +12,9 @@ importers:
 
   .:
     dependencies:
-      '@hono/node-server':
-        specifier: ^1.19.17
-        version: 1.19.17(hono@4.13.2)
-      hono:
-        specifier: ^4.13.2
-        version: 4.13.2
-      kysely:
-        specifier: ^0.29.0
-        version: 0.29.0
-      kysely-mariadb:
-        specifier: ^0.1.2
-        version: 0.1.2(kysely@0.29.0)(mariadb@3.5.2)
       mariadb:
         specifier: ^3.4.0
         version: 3.5.2
-      stream-chain:
-        specifier: ^3.6.2
-        version: 3.6.2
-      stream-json:
-        specifier: ^2.1.0
-        version: 2.1.0
-      tz-lookup:
-        specifier: ^6.1.25
-        version: 6.1.25
-      zod:
-        specifier: ^3.24.0
-        version: 3.25.76
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.4.15
@@ -270,12 +246,6 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
-
-  '@hono/node-server@1.19.17':
-    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
-    engines: {node: '>=18.14.1'}
-    peerDependencies:
-      hono: ^4
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -527,29 +497,12 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  hono@4.13.2:
-    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
-    engines: {node: '>=16.9.0'}
-
   iconv-lite@0.7.2:
     resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
     engines: {node: '>=0.10.0'}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
-
-  kysely-mariadb@0.1.2:
-    resolution: {integrity: sha512-qGDO3nc/MEcwESQbtcRt8NzYf7WT2V8F/YatfG+0W0b+gZNH80C79KWkYdvQX7s2eM0M+dCucDk+fo8gok3cYg==}
-    peerDependencies:
-      kysely: '>= 0.24.0 <1'
-      mariadb: ^3.4.5
-    peerDependenciesMeta:
-      mariadb:
-        optional: true
-
-  kysely@0.29.0:
-    resolution: {integrity: sha512-LrQfPUeTW7MXbMvT62moEMnpMTuj9TO3lqjCeLKjM975PJ4Alrl/43f2tlDX7xOsNptKgH4LSNGwIbXwEkLg4g==}
-    engines: {node: '>=22.0.0'}
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -611,12 +564,6 @@ packages:
   std-env@3.10.0:
     resolution: {integrity: sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==}
 
-  stream-chain@3.6.2:
-    resolution: {integrity: sha512-MRUXdH/Fcv2I95WSkPthvpxGsuKeBpr50UXcP5Z3ncWafYxrWelMTVI3G7vJFABCs1ipoTPCN3J13ZcLpymrtA==}
-
-  stream-json@2.1.0:
-    resolution: {integrity: sha512-9gV/ywtebMn3DdKnNKYCb9iESvgR1dHbucNV+bRGvdvy+jV4c9FFgYKmENhpKv58jSwvs90Wk80RhfKk1KxHPg==}
-
   strip-literal@3.1.0:
     resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
 
@@ -651,9 +598,6 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
-
-  tz-lookup@6.1.25:
-    resolution: {integrity: sha512-fFewT9o1uDzsW1QnUU1ValqaihFnwiUiiHr1S79/fxOzKXYYvX+EHeRnpvQJ9B3Qg67wPXT6QF2Esc4pFOrvLg==}
 
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
@@ -735,9 +679,6 @@ packages:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
     hasBin: true
-
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
 
@@ -853,10 +794,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
-
-  '@hono/node-server@1.19.17(hono@4.13.2)':
-    dependencies:
-      hono: 4.13.2
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
@@ -1060,21 +997,11 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  hono@4.13.2: {}
-
   iconv-lite@0.7.2:
     dependencies:
       safer-buffer: 2.1.2
 
   js-tokens@9.0.1: {}
-
-  kysely-mariadb@0.1.2(kysely@0.29.0)(mariadb@3.5.2):
-    dependencies:
-      kysely: 0.29.0
-    optionalDependencies:
-      mariadb: 3.5.2
-
-  kysely@0.29.0: {}
 
   loupe@3.2.1: {}
 
@@ -1151,12 +1078,6 @@ snapshots:
 
   std-env@3.10.0: {}
 
-  stream-chain@3.6.2: {}
-
-  stream-json@2.1.0:
-    dependencies:
-      stream-chain: 3.6.2
-
   strip-literal@3.1.0:
     dependencies:
       js-tokens: 9.0.1
@@ -1183,8 +1104,6 @@ snapshots:
       fsevents: 2.3.3
 
   typescript@5.9.3: {}
-
-  tz-lookup@6.1.25: {}
 
   undici-types@6.21.0: {}
 
@@ -1267,5 +1186,3 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
-
-  zod@3.25.76: {}

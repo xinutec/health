@@ -8,6 +8,15 @@
 // `backend rows-check`, so the two can be diffed directly. Neither output is
 // evidence on its own — the DIFF is the check.
 //
+// ⚠ `src/routes/api.ts` IS GONE (06346bd, #975), so this is now a FROZEN CAPTURE
+// of what it did rather than a second reading of it: the queries below are
+// inlined here and cannot be re-checked against the implementation they mirror.
+// That still makes it the only executable witness of the TypeScript's row
+// rendering, which is why it survives — but a disagreement with `backend
+// rows-check` no longer says which side moved. It is NOT dead, and #1301 listed
+// it as dead by mistake; its only import is `mariadb`, and it reaches a real
+// connection attempt.
+//
 // ⚠ Both driver options below are copied from `src/db/pool.ts` deliberately:
 // without `bigIntAsNumber: false` a 64-bit sleep log id silently rounds, and
 // without the `toJSON` patch `JSON.stringify` throws on the bigint that

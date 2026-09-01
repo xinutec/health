@@ -9,26 +9,12 @@
   "scripts": {
     "test:frontend": "cd frontend && pnpm test",
     "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.e2e.json",
-    "check:refs-snapshot": "tsx lean/experiments/refs-snapshot.mts --check",
-    "refs-snapshot": "tsx lean/experiments/refs-snapshot.mts",
     "lint:frontend": "cd frontend && pnpm run lint",
     "verify": "nix run ../dev-lint#gate -- . gate.json",
-    "lean-check": "scripts/lean-check.sh",
-    "compare-kalman": "scripts/compare-kalman.sh",
-    "compare-gpsquality": "scripts/compare-gpsquality.sh",
-    "compare-head": "scripts/compare-head.sh",
-    "compare-gps-outliers": "scripts/compare-gps-outliers.sh"
+    "lean-check": "scripts/lean-check.sh"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.17",
-    "hono": "^4.13.2",
-    "kysely": "^0.29.0",
-    "kysely-mariadb": "^0.1.2",
-    "mariadb": "^3.4.0",
-    "stream-chain": "^3.6.2",
-    "stream-json": "^2.1.0",
-    "tz-lookup": "^6.1.25",
-    "zod": "^3.24.0"
+    "mariadb": "^3.4.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",

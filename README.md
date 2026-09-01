@@ -38,9 +38,9 @@ log (see `docs/proposals/README.md`).
 | `pnpm run verify` | The commit gate: every row in `gate.json` (rendered from `gate.dhall`) — Rust fmt/clippy/tests/doctests, the frontend's typecheck, lint, unit tests, build and phone-width layout harness, the union copies, the Lean verified core and decode parity, the verified CLI packaging, dev-lint, and the table against its own Dhall. Runs them all and names every one that failed. The pre-commit hook runs the same table, and so does `deploy.sh`. ⚠ The row COUNT is not restated here on purpose — it is counted in `gate.json`, and the number in this sentence was wrong (fourteen, against sixteen) for long enough to be quoted. |
 | `cargo nextest run` | The backend test suite, from `rust/`. (`pnpm test` is gone with the TypeScript backend.) |
 | `bin/backend <sub>` | The CLI. Run it with no subcommand for the list — `check`, `sync`, `serve`, `coverage`, `freshness`, `zones-census`, `decode-day`, the `compare-*` pairs, and the rest. |
-| `pnpm run compare-gps-outliers` | The one replay gate left. Runs `lean/experiments/compare-gps-outliers.mts` against the Lean build over the gitignored `decoded_days` corpus. |
+| `cargo test -p backend --release --test walk_gate --test truth_corpus --test journey_corpus` | The three replay gates, from `rust/`. They replay the gitignored `tests/golden/` corpora against committed floors a human blessed from the TypeScript: 238 walks, 312 confirmed ground-truth rows, 80 of 92 journeys. Each ANNOUNCES A SKIP when the corpus is absent rather than passing quietly. ⚠ `pnpm run compare-gps-outliers` used to be listed here as "the one replay gate left"; it had not run since 2026-08-26 (#1301). |
 | `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
-| `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → the GPS-outlier gate → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
+| `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → the three replay gates → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
 
 ⚠ **`pnpm run golden`, `walk-gate`, `score-decoder`, `focus-gate`, `day-gate`,
 `golden-hsmm` and `compare-match` ARE GONE.** All eight replay gates ran
@@ -61,7 +61,7 @@ rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn`
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:
 
 ```
-pnpm run verify && pnpm run compare-gps-outliers   # in this repo
+pnpm run verify   # in this repo; deploy.sh also runs the three replay gates
 git add -A && git commit -F msg.txt
 git push origin main
 gh run watch --exit-status <run-id>

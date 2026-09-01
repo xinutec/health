@@ -179,16 +179,22 @@ one working gate behind it never ran at all.
   verified core and decode parity, and dev-lint. Run by the pre-commit hook and
   by `pnpm run verify`. ⚠ Count the rows in `gate.json`; the number was wrong in
   the README for long enough to be quoted.
-- `scripts/compare-gps-outliers.sh` — the ONE replay gate that still runs, and
-  the only one that never depended on `dist/`: it drives
-  `lean/experiments/compare-gps-outliers.mts` against the Lean build.
+- `rust/backend/tests/{walk_gate,truth_corpus,journey_corpus}.rs` — the three
+  replay gates, restored 2026-08-31 and 2026-09-01. Rust replays the gitignored
+  corpora and Lean judges; each gates a committed floor blessed from the
+  TypeScript before it went, and each announces a SKIP when the corpus is
+  absent rather than passing quietly.
 
-⚠ **THE EIGHT REPLAY GATES BELOW NO LONGER EXIST.** Every one ran
+⚠ **THE FIVE REPLAY GATES BELOW NO LONGER EXIST.** Every one ran
 `node dist/cli/*.js` against the TypeScript backend, deleted 2026-08-26 (#975);
 their scripts went on 2026-08-29 (#1225). They are recorded here as LOST
 COVERAGE and as the specification for what replaces them (health #1048) — not as
-things to run. Only `pnpm run compare-gps-outliers` survives, because it runs
-against the Lean build rather than `dist/`.
+things to run.
+
+⚠ **AND `compare-gps-outliers` WAS LISTED HERE AS A SURVIVOR UNTIL 2026-09-01,
+when it had not run since 2026-08-26.** It exits 1 on a deleted `src/` import —
+one layer past the `pnpm run build` failure the 08-29 pass checked for. A
+"survivor" identified by anything short of RUNNING it is a guess (#1301).
 
 ⚠ And they did not fail where anyone was looking: each began
 `pnpm run build >/dev/null`, and there has been no `build` script since 06346bd,

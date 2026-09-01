@@ -3,7 +3,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # How far can a last-bit `cos` disagreement move the Kalman filter's output?
 #
-# `compare-kalman.sh` reports a per-day tally like `lon 4/924 (≤19ulp)` and
+# `compare-kalman.sh` (DELETED 2026-09-01, #1301 — its TS arm went at 06346bd)
+# reported a per-day tally like `lon 4/924 (≤19ulp)` and
 # judges its exit code on row counts, `lat` exactness, and the NUMBER of
 # divergent `lon` rows — never on ULP magnitude. This is the tool that says why
 # magnitude is not gateable, and the tool to reach for when a reading looks
@@ -24,7 +25,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # coordinate — the fixtures are real tracks.
 #
 # Needs the local golden day fixtures (gitignored, real coordinates), like
-# compare-kalman.sh. Not part of `pnpm run verify`.
+# the deleted compare-kalman.sh. Not part of `pnpm run verify`.
 #
 # Sample count: PROBE_SAMPLES=1000 ./scripts/probe-kalman-ulp.sh 2026-07-14
 

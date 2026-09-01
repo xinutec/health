@@ -178,9 +178,11 @@ Two consequences for the rest of the port:
 
 `Verified.Geo.GpsQuality` — the incoherent-run pre-filter one call ABOVE the
 Kalman filter — went in next and cost almost nothing: the bit transport already
-existed, so it was a verb, a tenant, and a referee. `pnpm run compare-gpsquality`
-reports **32/32 days agreeing exactly on the keep-set**, and golden under
-`LEAN_GPSQUALITY=on` is 32/32 byte-identical with zero divergence warnings.
+existed, so it was a verb, a tenant, and a referee. `compare-gpsquality`
+reported **32/32 days agreeing exactly on the keep-set**, and golden under
+`LEAN_GPSQUALITY=on` was 32/32 byte-identical with zero divergence warnings.
+⚠ Past tense: both commands are gone (the TS arm at 06346bd, the script at
+#1301), so these are a RECORD and cannot be re-run as written.
 
 The contrast with Kalman is the lesson, and it should steer which modules get
 served next. This filter is **drop-only**: every fix it emits is a *copy of an
