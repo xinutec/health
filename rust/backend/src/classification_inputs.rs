@@ -578,11 +578,19 @@ pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<
 
 /// `CLASSIFIER_VERSION` from `src/hmm/persist.ts`.
 ///
-/// ⚠ BUMPED IN TWO PLACES OR IN NEITHER. A decode written by the TypeScript
-/// cron and read by this loader has to agree on the number, and there is no
-/// shared header to put it in — the TS constant is the original. `decoded_days`
-/// reading empty for a day the cron decoded is the symptom of these drifting.
-const CLASSIFIER_VERSION: i32 = 7;
+/// ⚠ THE ONE DECLARATION. Bumped when the classifier output for a typical day
+/// would meaningfully change; a mismatch makes every consumer treat the row as
+/// stale and re-decode, so `decoded_days` reading empty for a day the cron
+/// decoded is the symptom of a disagreement.
+///
+/// ⚠ IT WAS DECLARED TWICE UNTIL 2026-09-01, here and in `main.rs`, both saying
+/// they had to track `src/hmm/persist.ts` — the TypeScript original, which was
+/// the writer this loader had to agree with. That file was deleted with the TS
+/// backend (#975), so the reason for two copies went with it while both copies
+/// and both "keep these in sync" comments stayed. Nothing forced them to agree
+/// and nothing would have reported it if they stopped: the symptom is a silent
+/// re-decode, not an error.
+pub const CLASSIFIER_VERSION: i32 = 7;
 
 /// The main-sleep windows bracketing this day: today's morning sleep and the
 /// night beginning this evening.

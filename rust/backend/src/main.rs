@@ -2026,9 +2026,11 @@ async fn check() -> Result<()> {
     .context("choosing a check date from decoded_days")?;
     let Some(check_date) = check_date else {
         anyhow::bail!(
-            "{user} has no decoded_days row at the current classifier version — either the \
-             decode cron has not run, or CLASSIFIER_VERSION has drifted between the TypeScript \
-             that writes and the Rust that reads"
+            "{user} has no decoded_days row at the current classifier version — the decode \
+             cron has not run for this user. ⚠ This message named a TypeScript writer \
+             drifting from a Rust reader until 2026-09-01; there is no TypeScript writer \
+             (#975) and CLASSIFIER_VERSION now has a single declaration, so a drift between \
+             two copies is no longer one of the things this can mean"
         );
     };
 
@@ -3705,10 +3707,10 @@ async fn save_decode(
     Ok(())
 }
 
-/// ⚠ MUST TRACK `src/hmm/persist.ts`'s `CLASSIFIER_VERSION`. Bumped when the
-/// classifier output for a typical day would meaningfully change; a mismatch
-/// makes every consumer treat the row as stale and re-decode.
-const CLASSIFIER_VERSION: i32 = 7;
+/// ⚠ ONE DECLARATION, in `classification_inputs`. This was a second copy until
+/// 2026-09-01, kept in step by a comment pointing at a TypeScript file that no
+/// longer exists.
+use crate::classification_inputs::CLASSIFIER_VERSION;
 
 /// Decode a day's HSMM and persist it to `decoded_days`.
 ///
