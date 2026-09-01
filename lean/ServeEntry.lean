@@ -2757,6 +2757,149 @@ def journeyShapeResult (j : Json) : Json :=
 
 end JourneyShape
 
+/-! ## Feasibility mode (`verified_cli feasibility`)
+
+`Verified.Eval.Feasibility` — the worldline invariants (#1048). A
+model-independent assertion on the DRAWN timeline: some outputs are impossible
+regardless of how the cascade produced them.
+
+⚠ EVERY INPUT IS OPTIONAL AND THE ABSENCE OF ONE SILENCES ITS INVARIANT, on
+purpose. No `points` and the kinematic checks do not run; no `steps` and the
+pedestrian twin does not; no `stationsOnLine` and the triple check does not.
+That is the zero-false-positive rule applied to missing DATA rather than to
+thresholds — a day whose fixture never recorded a line's stations must not have
+its labels called impossible.
+
+  { "mode": "feasibility",
+    "legs": [ { "startTs": n, "endTs": n, "mode": s, "wayName": s|null } ],
+    "points": [ { "ts": n, "lat": f, "lon": f } ],
+    "steps": [ { "ts": n, "steps": f } ],
+    "lineStations": [ { "line": s, "stations": [s] } ] }
+
+Output: `{ "violations": [ { "kind", "startTs", "endTs", "detail" } ] }`. -/
+
+namespace Feasibility
+
+open Verified.Eval.Feasibility
+
+private def parseLeg (j : Json) : Except String Leg := do
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+           endTs := ← (← j.getObjVal? "endTs").getInt?
+           mode := ← (← j.getObjVal? "mode").getStr?
+           wayName := (j.getObjVal? "wayName" >>= (·.getStr?)).toOption }
+
+private def parseFix (j : Json) : Except String Fix := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?
+           lat := ← jFloatField j "lat"
+           lon := ← jFloatField j "lon" }
+
+private def parseStep (j : Json) : Except String StepPoint := do
+  return { ts := ← (← j.getObjVal? "ts").getInt?
+           steps := ← jFloatField j "steps" }
+
+private def parseMembership (j : Json) : Except String (String × Array String) := do
+  let line ← (← j.getObjVal? "line").getStr?
+  let stations ← (← (← j.getObjVal? "stations").getArr?).mapM (·.getStr?)
+  return (line, stations)
+
+def feasibilityResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let legs ← (← optArr j "legs").mapM parseLeg
+    let points ← (← optArr j "points").mapM parseFix
+    let steps ← (← optArr j "steps").mapM parseStep
+    let lineStations ← (← optArr j "lineStations").mapM parseMembership
+    let vs := checkWorldlineFeasibility legs points steps lineStations
+    return Json.mkObj [("violations", Json.arr (vs.map fun v =>
+      Json.mkObj [("kind", Json.str v.kind.toString),
+                  ("startTs", Lean.toJson v.startTs), ("endTs", Lean.toJson v.endTs),
+                  ("detail", Json.str v.detail)]))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end Feasibility
+
+/-! ## Ceiling-gate modes (`ceilinggate`, `ceilingbless`)
+
+`Verified.Eval.CeilingGate` — the count-shaped sibling of `floorgate`, for the
+two standing-defect baselines (#1048).
+
+⚠ `measured` AND `attempted` ARE BOTH REQUIRED and they are not the same list.
+`measured` is the days that produced a count; `attempted` is every day the run
+set out to cover. Without the second, a day whose ceiling is ZERO is in neither
+baseline and so is named nowhere — which is where a new defect hides best, since
+it cannot regress a ceiling it is no longer measured against.
+
+  { "mode": "ceilinggate",
+    "committed": [ { "date": s, "count": n } ],
+    "current":   [ { "date": s, "count": n } ],
+    "measured": [s], "attempted": [s] }
+
+Output: `{ "regressed": [{ "date", "was", "now" }], "improvedDays": n,
+"unmeasured": [s] }`.
+
+  { "mode": "ceilingbless", "committed": … | null, "current": …, "measured": [s] }
+
+Output: `{ "ceiling": [ { "date", "count" } ] }` — the MINIMUM per day, so
+blessing a run that fixed some days cannot raise the ceiling on the others. A
+`null` committed is the bootstrap case. -/
+
+namespace CeilingGate
+
+open Verified.Eval.CeilingGate
+
+private def parseCeiling (j : Json) (key : String) : Except String Ceiling := do
+  let arr ← match j.getObjVal? key with
+    | .error _ => pure #[]
+    | .ok v => if v.isNull then pure #[] else v.getArr?
+  arr.mapM fun e => do
+    let date ← (← e.getObjVal? "date").getStr?
+    let count ← (← e.getObjVal? "count").getNat?
+    return (date, count)
+
+private def parseDates (j : Json) (key : String) : Except String (Array String) := do
+  let arr ← match j.getObjVal? key with
+    | .error _ => pure #[]
+    | .ok v => v.getArr?
+  arr.mapM (·.getStr?)
+
+private def ceilingJson (c : Ceiling) : Json :=
+  Json.arr (c.map fun (d, n) =>
+    Json.mkObj [("date", Json.str d), ("count", Lean.toJson n)])
+
+def ceilingGateResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let committed ← parseCeiling j "committed"
+    let current ← parseCeiling j "current"
+    let measured ← parseDates j "measured"
+    let attempted ← parseDates j "attempted"
+    let r := gateCeiling committed current measured attempted
+    return Json.mkObj [
+      ("regressed", Json.arr (r.regressed.map fun x =>
+        Json.mkObj [("date", Json.str x.date), ("was", Lean.toJson x.was),
+                    ("now", Lean.toJson x.now)])),
+      ("improvedDays", Lean.toJson r.improvedDays),
+      ("unmeasured", Json.arr (r.unmeasured.map Json.str))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+def ceilingBlessResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    -- ⚠ `null` and ABSENT both mean bootstrap; an empty ARRAY does not. A
+    -- committed baseline of `[]` is a real ceiling of zero everywhere.
+    let committed : Option Ceiling ← match j.getObjVal? "committed" with
+      | .error _ => pure none
+      | .ok v => if v.isNull then pure none else some <$> parseCeiling j "committed"
+    let current ← parseCeiling j "current"
+    let measured ← parseDates j "measured"
+    return Json.mkObj [("ceiling", ceilingJson (ratchetDownCounts committed current measured))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end CeilingGate
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2804,6 +2947,9 @@ def dispatch (j : Json) : Json :=
   | .ok "truthcheck" => TruthCheck.truthCheckResult j
   | .ok "floorgate" => FloorGate.floorGateResult j
   | .ok "journeyshape" => JourneyShape.journeyShapeResult j
+  | .ok "feasibility" => Feasibility.feasibilityResult j
+  | .ok "ceilinggate" => CeilingGate.ceilingGateResult j
+  | .ok "ceilingbless" => CeilingGate.ceilingBlessResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.
