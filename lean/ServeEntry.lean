@@ -2514,6 +2514,165 @@ def journeysResult (j : Json) : Json :=
 
 end Journeys
 
+/-! ## Truth-check mode (`verified_cli truthcheck`)
+
+`Verified.Eval.TruthCheck.classifyDay` — the provenance-aware truth report
+(#1052). Rows arrive RESOLVED (unix seconds), as in `journeys` above, because
+the zone resolution is the shell's; `states` are the drawn timeline legs.
+
+This is the corpus's only NON-SELF-REFERENTIAL gate: every other check compares
+the pipeline against itself or against previously blessed pipeline output. Here
+a human wrote down what actually happened and the pipeline is graded against it.
+
+  { "mode": "truthcheck",
+    "rows": [ { "startTs": n, "endTs": n, "status": "correct|wrong|partial|unclear",
+                "provenance": "corroborated|user|derived|inferred|unspecified",
+                "truth": { "mode", "place", "wayName", "placeQualifier",
+                           "from", "to", "lineName" } | null } ],
+    "states": [ { "startTs": n, "endTs": n, "mode": s,
+                  "place": s|null, "wayName": s|null } ] }
+
+Output: `{ "verdicts": [s], "verified": n, "regressed": n, "knownError": n,
+"cleared": n, "unverified": n, "hasRegression": b, "covering": [n] }`.
+`covering` is the index of the state that answered each row, or `-1` — the
+diagnosis a regressed row cannot give on its own. The `verdicts` array is
+positional — one entry per input row, in order — so the caller can attribute a
+regression to the row that caused it without a second lookup. -/
+
+namespace TruthCheck
+
+open Verified.Eval.GroundTruth
+open Verified.Eval.TruthCheck
+
+private def parseStatus : String -> Status
+  | "correct" => .correct | "wrong" => .wrong
+  | "partial" => .«partial» | _ => .unclear
+
+private def parseProv : String -> Provenance
+  | "corroborated" => .corroborated | "user" => .user | "derived" => .derived
+  | "inferred" => .inferred | _ => .unspecified
+
+private def parseMode : String -> Option Mode
+  | "sleeping" => some .sleeping | "stationary" => some .stationary
+  | "walking" => some .walking | "cycling" => some .cycling
+  | "driving" => some .driving | "bus" => some .bus
+  | "train" => some .train | "plane" => some .plane
+  | _ => none
+
+private def optStr (j : Json) (k : String) : Option String :=
+  (j.getObjVal? k >>= (·.getStr?)).toOption
+
+private def parseTruth (j : Json) : Option Truth :=
+  match j.getObjVal? "truth" with
+  | .error _ => none
+  | .ok t =>
+    if t.isNull then none
+    else match (t.getObjVal? "mode" >>= (·.getStr?)) with
+      | .error _ => none
+      | .ok ms => (parseMode ms).map fun m =>
+          { mode := m, place := optStr t "place", wayName := optStr t "wayName",
+            placeQualifier := optStr t "placeQualifier",
+            trainFrom := optStr t "from", trainTo := optStr t "to",
+            lineName := optStr t "lineName" }
+
+private def parseTRow (j : Json) : Except String TRow := do
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    status := parseStatus ((optStr j "status").getD "unclear")
+    provenance := parseProv ((optStr j "provenance").getD "unspecified")
+    truth := parseTruth j }
+
+private def parseState (j : Json) : Except String StateWindow := do
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    mode := ← (← j.getObjVal? "mode").getStr?
+    place := optStr j "place"
+    wayName := optStr j "wayName" }
+
+def truthCheckResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let rows ← (← optArr j "rows").mapM parseTRow
+    let states ← (← optArr j "states").mapM parseState
+    let r := classifyDay rows states
+    return Json.mkObj [
+      ("verdicts", Json.arr (r.verdicts.map (Json.str ·.toString))),
+      ("verified", Lean.toJson r.verified), ("regressed", Lean.toJson r.regressed),
+      ("knownError", Lean.toJson r.knownError), ("cleared", Lean.toJson r.cleared),
+      ("unverified", Lean.toJson r.unverified),
+      ("hasRegression", Json.bool r.hasRegression),
+      ("covering", Json.arr (r.covering.map Lean.toJson))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end TruthCheck
+
+/-! ## Floor-gate mode (`verified_cli floorgate`)
+
+`Verified.Eval.FloorGate` — the one-way ratchet shared by the truth floor and
+the journey floor (#1052).
+
+⚠ THE FLOORS ARRIVE AS ARRAYS, NOT OBJECTS. A JSON object keyed by date is what
+the baseline FILES hold, but the wire here takes `[{ "date", "keys" }]` like
+every other mode, so the shell owns the map/array conversion and this side never
+depends on key order.
+
+`described` is OPTIONAL. Given, the reply also carries the ratcheted `floor` and
+the `dropped` keys the narrative no longer describes; omitted, only the gate
+runs. Dropping a key is the one way a red gate goes green without a fix, so it
+is never computed silently as a side effect of gating.
+
+  { "mode": "floorgate",
+    "baseline": [ { "date": s, "keys": [n] } ],
+    "current":  [ { "date": s, "keys": [n] } ],
+    "described":[ { "date": s, "keys": [n] } ]   // optional
+  }
+
+Output: `{ "regressed": [{ "date", "startTs" }], "improved": [...],
+"floor": [{ "date", "keys" }] | null, "dropped": [...] | null }`. -/
+
+namespace FloorGate
+
+open Verified.Eval.FloorGate
+
+private def parseFloor (j : Json) (key : String) : Except String Floor := do
+  let arr ← match j.getObjVal? key with
+    | .error _ => pure #[]
+    | .ok v => v.getArr?
+  arr.mapM fun e => do
+    let date ← (← e.getObjVal? "date").getStr?
+    let keys ← (← (← e.getObjVal? "keys").getArr?).mapM (·.getInt?)
+    return (date, keys)
+
+private def keyJson (k : Key) : Json :=
+  Json.mkObj [("date", Json.str k.date), ("startTs", Lean.toJson k.startTs)]
+
+private def floorJson (f : Floor) : Json :=
+  Json.arr (f.map fun (d, ks) =>
+    Json.mkObj [("date", Json.str d), ("keys", Json.arr (ks.map Lean.toJson))])
+
+def floorGateResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let baseline ← parseFloor j "baseline"
+    let current ← parseFloor j "current"
+    let g := gateFloor baseline current
+    let base := [("regressed", Json.arr (g.regressed.map keyJson)),
+                 ("improved", Json.arr (g.improved.map keyJson))]
+    match j.getObjVal? "described" with
+    | .error _ => return Json.mkObj (base ++ [("floor", Json.null), ("dropped", Json.null)])
+    | .ok _ =>
+      let described ← parseFloor j "described"
+      let r := ratchetUpFloor baseline current described
+      return Json.mkObj (base ++ [("floor", floorJson r.floor),
+                                  ("dropped", Json.arr (r.dropped.map keyJson))])
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end FloorGate
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2558,6 +2717,8 @@ def dispatch (j : Json) : Json :=
   -- The ground-truth side of the decoder scoreboard (#1048). Rows arrive
   -- RESOLVED; the zone conversion is the shell's.
   | .ok "journeys" => Journeys.journeysResult j
+  | .ok "truthcheck" => TruthCheck.truthCheckResult j
+  | .ok "floorgate" => FloorGate.floorGateResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.
