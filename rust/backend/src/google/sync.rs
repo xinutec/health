@@ -492,6 +492,87 @@ struct Activity {
 /// ⚠ `minutes_sedentary` and `active_score` have NO Google source and are not
 /// written here. They stop when Fitbit does; nothing this writer can do changes
 /// that, and pretending otherwise by deriving them would be invention.
+/// `heart_rate_intraday` from Google's `heart-rate` list type.
+///
+/// # Why this is a `list` walk and not a rollup
+///
+/// `heart-rate` carries one point per SAMPLE, not per day, so `dailyRollUp`
+/// would collapse exactly the resolution this table exists for. The paging is
+/// `fetch_all_points`, shared with the daily writers.
+///
+/// # ⚠ THE WALL CLOCK IS THE KEY, AND GOOGLE GIVES IT DIRECTLY
+///
+/// `ts` is LOCAL civil time — the Fitbit path had to repair a `Z` the API
+/// stamps on non-UTC timestamps (#340) and then derive `ts_utc` from a
+/// per-second zone lookup. Google publishes all three parts separately:
+/// `civilTime` (the wall clock), `physicalTime` (the instant) and `utcOffset`.
+/// So this writer needs no repair and no tz table — it reads what the other
+/// path had to reconstruct.
+///
+/// ⚠ `tz` STAYS NULL HERE. Google gives an OFFSET, not a zone name, and
+/// `+01:00` does not identify `Europe/London`. Writing an offset into a column
+/// every other reader treats as an IANA name would be worse than leaving it
+/// unset, and the `ON DUPLICATE KEY` below preserves whatever the backfill CLI
+/// established rather than overwriting it.
+pub async fn sync_heart_rate_intraday(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let points = crate::google::health::fetch_all_points(http, access_token, "heart-rate")
+        .await
+        .context("fetching heart-rate")?;
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    for pt in &points {
+        let Some(hr) = pt.get("heartRate") else {
+            skipped += 1;
+            continue;
+        };
+        // ⚠ `beatsPerMinute` is a STRING on this type. `as_f64` returns None on
+        // one, which is how 1258 resting-heart-rate points were once discarded
+        // silently — `numeric` reads either form and still refuses a
+        // non-numeric string.
+        let Some(bpm) = hr
+            .get("beatsPerMinute")
+            .and_then(crate::google::health::numeric)
+        else {
+            skipped += 1;
+            continue;
+        };
+        let Some(ts) = crate::google::health::civil_datetime(hr.pointer("/sampleTime/civilTime"))
+        else {
+            skipped += 1;
+            continue;
+        };
+        let ts_utc = hr
+            .pointer("/sampleTime/physicalTime")
+            .and_then(|v| v.as_str())
+            .and_then(crate::google::health::rfc3339_to_utc_datetime);
+
+        sqlx::query(
+            "INSERT INTO heart_rate_intraday (user_id, ts, bpm, ts_utc) VALUES (?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE bpm=VALUES(bpm), ts_utc=COALESCE(ts_utc, VALUES(ts_utc))",
+        )
+        .bind(user_id)
+        .bind(&ts)
+        .bind(bpm.round() as i64)
+        .bind(&ts_utc)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing heart_rate_intraday at {ts}"))?;
+        written += 1;
+    }
+
+    tracing::info!(
+        "[{user_id}] google heart_rate_intraday: {written} sample(s) from {} point(s), {skipped} unreadable",
+        points.len()
+    );
+    Ok(written)
+}
+
 pub async fn sync_daily_activity(
     pool: &MySqlPool,
     http: &reqwest::Client,

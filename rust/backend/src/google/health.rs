@@ -306,6 +306,29 @@ pub async fn fetch_daily_series(
     data_type: &str,
     value_pointer: &str,
 ) -> Result<Vec<DailyValue>> {
+    Ok(fetch_all_points(http, access_token, data_type)
+        .await?
+        .iter()
+        .filter_map(|pt| day_of_list_point(pt, value_pointer))
+        .collect())
+}
+
+/// Every `list` point of a data type, paged, as raw JSON.
+///
+/// The paging is identical for every `list` type; only what you do with a point
+/// differs. {@link fetch_daily_series} is the one-value-per-day reading of this;
+/// the intraday and sleep writers need the whole point, because a sleep record
+/// carries stages and awakenings and a heart-rate point carries a timestamp to
+/// the second.
+///
+/// ⚠ `list` IS NEWEST FIRST and there is no ascending sort, so a caller that
+/// wants chronological order must sort. Nothing here does it, because the
+/// writers key on a primary key and do not care.
+pub async fn fetch_all_points(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+) -> Result<Vec<serde_json::Value>> {
     let mut out = Vec::new();
     let mut page_token: Option<String> = None;
     let mut pages = 0u32;
@@ -346,9 +369,7 @@ pub async fn fetch_daily_series(
             .map(|v| v.as_slice())
             .unwrap_or_default()
         {
-            if let Some(v) = day_of_list_point(pt, value_pointer) {
-                out.push(v);
-            }
+            out.push(pt.clone());
         }
 
         pages += 1;
@@ -378,6 +399,36 @@ pub async fn fetch_daily_series(
 /// ⚠ The date lives under the TYPE's own key — `dailyRespiratoryRate.date`,
 /// `dailyOxygenSaturation.date` — so it is found by SHAPE (an object carrying
 /// year/month/day) rather than by a path table of guesses.
+/// A Google `civilTime` object as a MariaDB `DATETIME` string.
+///
+/// ⚠ `seconds` is OPTIONAL — the heart-rate samples carry it, the daily types
+/// do not, and a missing one means zero rather than an unreadable point.
+pub fn civil_datetime(v: Option<&serde_json::Value>) -> Option<String> {
+    let v = v?;
+    let d = v.get("date")?;
+    let t = v.get("time")?;
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        d.get("year")?.as_i64()?,
+        d.get("month")?.as_i64()?,
+        d.get("day")?.as_i64()?,
+        t.get("hours").and_then(|x| x.as_i64()).unwrap_or(0),
+        t.get("minutes").and_then(|x| x.as_i64()).unwrap_or(0),
+        t.get("seconds").and_then(|x| x.as_i64()).unwrap_or(0),
+    ))
+}
+
+/// An RFC-3339 instant as a UTC `DATETIME` string.
+///
+/// ⚠ Parsed, not string-sliced. Google's `physicalTime` is a true instant and
+/// may carry any offset; taking the first 19 characters would store a local
+/// clock in the UTC column on any point that is not already `Z`.
+pub fn rfc3339_to_utc_datetime(s: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
 /// A JSON number, whether or not Google quoted it.
 ///
 /// ⚠ **A QUOTED NUMBER IS NOT AN ABSENT ONE.** `as_f64()` returns `None` on a
