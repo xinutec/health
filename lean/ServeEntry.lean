@@ -2673,6 +2673,90 @@ def floorGateResult (j : Json) : Json :=
 
 end FloorGate
 
+/-! ## Journey-shape mode (`verified_cli journeyshape`)
+
+`Verified.Eval.JourneyShape` — the journey referee (#1048). Builds the PIPELINE
+side of the comparison from the drawn state legs and grades each ground-truth
+journey against it.
+
+⚠ THE STATES ARRIVE RAW, and the journey building happens HERE. Handing over
+pre-built pipeline journeys would put `statesToJourneys` — the merge tolerance,
+the pause split, which modes count as legs — on the shell's side of the line,
+where it is not checked by anything. The shell passes what the fold produced.
+
+`gt` is what the `journeys` mode returned, fed straight back.
+
+  { "mode": "journeyshape",
+    "gt": [ { "startTs": n, "endTs": n,
+              "legs": [ { "startTs": n, "endTs": n, "mode": s } ] } ],
+    "states": [ { "startTs": n, "endTs": n, "mode": s } ] }
+
+Output: `{ "pipelineJourneys": [ { "startTs", "endTs", "legs": [s] } ],
+"results": [ { "startTs", "endTs", "expectedShape", "actualShape", "matched",
+"uncoveredS", "slackS", "matchStartTs", "matchEndTs",
+"clippedLegs": [ { "mode", "overlapS", "durationS" } ] } ] }`.
+
+`pipelineJourneys` comes back because a coverage failure cannot be read without
+it: `bestOverlap` grades ONE journey, so a trip the pipeline split in two is
+scored on the larger half with the other half counted as uncovered — a failure
+that exists only in the comparison. More than one touching the window is the
+tell, and the caller can only see that if it is told. -/
+
+namespace JourneyShape
+
+open Verified.Eval.Journeys
+open Verified.Eval.JourneyShape
+
+private def parseLeg (j : Json) : Except String Leg := do
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+           endTs := ← (← j.getObjVal? "endTs").getInt?
+           mode := ← (← j.getObjVal? "mode").getStr?
+           line := none, board := none, alight := none }
+
+private def parseJourney (j : Json) : Except String Journey := do
+  return { startTs := ← (← j.getObjVal? "startTs").getInt?
+           endTs := ← (← j.getObjVal? "endTs").getInt?
+           legs := ← (← optArr j "legs").mapM parseLeg }
+
+private def parseState (j : Json) : Except String (Int × Int × String) := do
+  return (← (← j.getObjVal? "startTs").getInt?,
+          ← (← j.getObjVal? "endTs").getInt?,
+          ← (← j.getObjVal? "mode").getStr?)
+
+private def shapeJson (a : Array String) : Json := Json.arr (a.map Json.str)
+
+private def optIntJson : Option Int → Json
+  | none => Json.null
+  | some i => Lean.toJson i
+
+private def resultJson (r : Result) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson r.startTs), ("endTs", Lean.toJson r.endTs),
+    ("expectedShape", shapeJson r.expectedShape),
+    ("actualShape", match r.actualShape with | none => Json.null | some a => shapeJson a),
+    ("matched", Json.bool r.matched),
+    ("uncoveredS", Lean.toJson r.uncoveredS), ("slackS", Lean.toJson r.slackS),
+    ("matchStartTs", optIntJson r.matchStartTs), ("matchEndTs", optIntJson r.matchEndTs),
+    ("clippedLegs", Json.arr (r.clippedLegs.map fun l =>
+      Json.mkObj [("mode", Json.str l.mode), ("overlapS", Lean.toJson l.overlapS),
+                  ("durationS", Lean.toJson l.durationS)]))]
+
+def journeyShapeResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let gt ← (← optArr j "gt").mapM parseJourney
+    let states ← (← optArr j "states").mapM parseState
+    let pipeline := statesToJourneys states
+    return Json.mkObj [
+      ("pipelineJourneys", Json.arr (pipeline.map fun p =>
+        Json.mkObj [("startTs", Lean.toJson p.startTs), ("endTs", Lean.toJson p.endTs),
+                    ("legs", Json.arr (p.legs.map (Json.str ·.mode)))])),
+      ("results", Json.arr ((journeyShapeResults gt pipeline).map resultJson))]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end JourneyShape
+
 /-- The mode table: one request object in, one result object out.
 
 ⚠ Lifted out of `serveLoop` so it is not reachable only from a read-eval loop
@@ -2719,6 +2803,7 @@ def dispatch (j : Json) : Json :=
   | .ok "journeys" => Journeys.journeysResult j
   | .ok "truthcheck" => TruthCheck.truthCheckResult j
   | .ok "floorgate" => FloorGate.floorGateResult j
+  | .ok "journeyshape" => JourneyShape.journeyShapeResult j
   -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
   -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
   -- response wire plus the algorithm rather than those plus the decode.
