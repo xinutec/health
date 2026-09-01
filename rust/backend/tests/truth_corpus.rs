@@ -77,31 +77,28 @@ const BASELINE: &str = concat!(
 /// leaves nothing independent to check the change against. This gate is what
 /// makes those fixes measurable; it has to land first.
 ///
-/// ⚠ BOTH DIAGNOSES WERE RE-MEASURED ON 2026-09-01 with `TRUTH_DEBUG=1`, not
-/// restated from the ticket — which asked for exactly that, since it had been
-/// four months and nothing could observe the failure in between. They hold
-/// unchanged, to the second:
+/// ⚠ THIS LIST HELD TWO ROWS UNTIL 2026-09-01, AND THE FIRST ONE WAS NOT A
+/// PIPELINE DEFECT AT ALL. `@11:09Z` was carried here on the ticket's diagnosis
+/// — "the walk overruns by nine seconds because `vehicleSplit` ends on a fix
+/// above `ACCURACY_CEILING_M`". Replaying the day with the fold trace refuted
+/// it twice over: the fix at 11:11:09Z is an ordinary walking-pace one (53 m in
+/// 75 s, then 1023 m in the next 35), and the points this pass receives are
+/// `[ts, lat, lon, speedKmh]` — there is no accuracy field in them to test.
 ///
-///   * `@11:09Z` — the row is a train (Jubilee, a named board and alight); the
-///     state covering its midpoint is a WALK ending at 1781608269, which is
-///     11:11:09Z. The midpoint is 11:11:00Z. The walk overruns into the train
-///     by NINE SECONDS because `vehicleSplit` ends it at its last fix rather
-///     than its last trustworthy one — that fix has 100 m accuracy, above
-///     `ACCURACY_CEILING_M = 80`.
-///   * `@11:13Z` — mode and bounds are right and only the way NAME differs.
-///     That is #445, and it is a naming question, not a truth question.
-const KNOWN_UNHELD: [(&str, i64, &str); 2] = [
-    (
-        "2026-06-16",
-        1_781_608_140,
-        "walk overruns the train by 9s — vehicleSplit ends on an untrustworthy fix (#1052)",
-    ),
-    (
-        "2026-06-16",
-        1_781_608_380,
-        "right mode and bounds, wrong way name (#445)",
-    ),
-];
+/// The narrative row claimed the ride ran 11:09–11:13; the fixes put him at
+/// walking pace until 11:11:09. Pippijn re-cut it to start 11:11 on 2026-09-01
+/// ("moving them a bit isn't damage"), the floor key moved with it, and the row
+/// verifies. ⚠ THE JUSTIFICATION IS THE FIXES, NOT THE PIPELINE — re-cutting a
+/// row to whatever the pipeline drew would make this corpus self-referential,
+/// which is the one property that makes it worth having.
+///
+/// What remains is `@11:13Z`: mode and bounds right, way NAME wrong. That is
+/// #445, and it is a naming question rather than a truth question.
+const KNOWN_UNHELD: [(&str, i64, &str); 1] = [(
+    "2026-06-16",
+    1_781_608_380,
+    "right mode and bounds, wrong way name (#445)",
+)];
 
 /// A day's rows, resolved to unix seconds, ready for `truthcheck`.
 struct Resolved {
@@ -448,6 +445,35 @@ fn every_confirmed_row_still_holds() {
     // announce that both exempted rows HOLD AGAIN on a run that never opened
     // their day — the same silence-reads-as-a-verdict bug the floor gate above
     // is careful about, reproduced inside the guard written to watch it.
+    // ⚠ THE BLESS PATH, and it is deliberately NOT a way to make a red gate
+    // green. `ratchetUpFloor` takes a union, so a row that stopped holding stays
+    // in the floor and keeps failing; the only key that can LEAVE is one the
+    // narrative no longer DESCRIBES, and every such drop is printed above by
+    // name. So blessing after a genuine re-audit works and blessing to escape a
+    // regression does not — which is why this writes the floor LEAN computed
+    // rather than "the keys that happened to pass this run".
+    //
+    // Safe on a partial run by construction: a date absent from `described` was
+    // not measured, and its committed floor passes through untouched.
+    if std::env::var("TRUTH_BLESS").is_ok() {
+        let mut out = serde_json::Map::new();
+        for entry in g["floor"].as_array().map_or(empty, Vec::as_slice) {
+            let Some(date) = entry["date"].as_str() else {
+                continue;
+            };
+            out.insert(date.to_string(), entry["keys"].clone());
+        }
+        // Dates the gate never saw are not in the ratchet's output at all.
+        for (date, keys) in &baseline {
+            out.entry(date.clone()).or_insert_with(|| json!(keys));
+        }
+        let text = serde_json::to_string_pretty(&Value::Object(out)).expect("the floor serialises");
+        std::fs::write(BASELINE, format!("{}\n", text.replace("  ", "\t")))
+            .expect("the floor is writable");
+        eprintln!("truth: floor re-blessed to {BASELINE}");
+        return;
+    }
+
     let repaid: Vec<&(&str, i64, &str)> = KNOWN_UNHELD
         .iter()
         .filter(|(d, _, _)| reported.contains(*d))
