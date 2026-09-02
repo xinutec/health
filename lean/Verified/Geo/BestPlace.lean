@@ -49,9 +49,12 @@ MEASURED, not assumed, and the answer is uncomfortable enough to write down:
 * the **no-stay** arm runs on 5 of 33 days — 13 questions in total, all through
   `DayChain`'s sleep-place attribution (2026-04-29, 04-30, 05-14, 05-25, 06-15);
 * the **stay** arm — the venue-plausibility ranking, and with it the mined
-  priors and every opening-hours path — runs on NO day. Its only caller in the
-  chained region is `consolidateJitterStays`, and no golden day contains the
-  jitter-demoted run that pass needs.
+  priors and every opening-hours path — runs on ONE day: 2026-08-09, whose
+  jitter-demoted run reaches it through `consolidateJitterStays`. That single
+  execution adjudicated the corpus's last divergence (near-field-first answered
+  Morr where the TS oracle said KFC, and Morr was confirmed right, #1054).
+  This section previously said "NO day" — written before 08-09's run was
+  recognised as exercising this arm.
 
 So `rankVenues`, `shapeScore` and `parseOpeningHours` are IMPORTED by the gate
 and executed by nothing in it. The `#guard`s below are their only executable

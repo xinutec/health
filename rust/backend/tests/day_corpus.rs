@@ -46,13 +46,21 @@ use backend::fold_converge::converge;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Map, Value};
 
-/// Days whose timeline the Lean fold and the TypeScript cascade already build
-/// differently, tracked on #1054.
+/// Days whose timeline the Lean fold and the TypeScript cascade build
+/// differently — each with its divergence ADJUDICATED, not merely observed.
 ///
-/// ⚠ THIS LIST MAY ONLY SHRINK. It is not a tolerance: each entry is a day the
-/// two arms disagree about, found by the day gate before this test existed, and
-/// listing it here keeps the other 41 checkable instead of one red day hiding
-/// them all. #1054 also forbids re-capturing these to make the miss go away.
+/// ⚠ THIS LIST MAY ONLY SHRINK. Listing a day keeps the other 41 checkable
+/// instead of one red day hiding them all; re-capturing a day to make a miss
+/// go away is forbidden (#1054).
+///
+/// 2026-08-09 is a day the ORACLE is wrong about, adjudicated 2026-09-02:
+/// state 5's venue. Both arms tag, plan and consolidate the same jitter run
+/// (the TS's own segsOut says "consolidated 3 GPS-jitter stay fragments");
+/// at the merged centre the recorded rows put Morr at 1.59 m and KFC at
+/// 2.39 m, both near-field, and Lean's near-field-first rule answers Morr
+/// where the TS answered KFC. Pippijn confirmed the stay WAS Morr. The frozen
+/// oracle cannot be edited (it is the TS's real output), so the day stays
+/// here — as a recorded improvement, not an open question.
 const KNOWN_DIVERGENT: [&str; 1] = ["2026-08-09-pippijn.json"];
 
 /// Keys the offline answerer cannot supply, beyond the blank-zone `bestPlace`
