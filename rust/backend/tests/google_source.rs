@@ -58,9 +58,12 @@ fn every_stream_records_its_evidence() {
 #[test]
 fn at_risk_is_everything_google_does_not_own() {
     let risky = at_risk();
-    assert!(risky.iter().any(|s| s.name == "sleep"));
-    assert!(risky.iter().any(|s| s.name == "steps_intraday"));
+    // Every once-at-risk stream flipped on 2026-09-02; what September still
+    // costs is daily_activity's two Fitbit-only columns (minutes_sedentary,
+    // active_score), which no flip can save — the roster keeps that visible.
+    assert!(risky.iter().any(|s| s.name == "daily_activity"));
     assert!(!risky.iter().any(|s| s.name == "body"));
+    assert!(!risky.iter().any(|s| s.name == "steps_intraday"));
 }
 
 /// ⚠ THE FLIP AND THE WRITER ARE INSEPARABLE. `Owner::Google` makes
@@ -108,24 +111,12 @@ fn skin_temperature_is_google_owned_and_written() {
     assert!(has_writer("skin_temperature"));
 }
 
-/// ⚠ THE DAILY AND INTRADAY STREAMS OF ONE SENSOR ARE SEPARATE ENTRIES that
-/// move one by one, each on its own measurement. `hrv_daily` moved while
-/// `hrv_intraday` has not: Google's `heart-rate-variability` carries only
-/// RMSSD, and our table also has `coverage`, `hf` and `lf`. Gating both on a
-/// shared prefix would strand three columns with no source.
-///
-/// `heart_rate_intraday` WAS in this list until 2026-09-02, when it moved on
-/// its own evidence (259,082/259,082 shared seconds identical over 7 days) —
-/// which is exactly the point: the sibling stays put not because intraday
-/// streams stay put, but because ITS columns still lack a source.
-#[test]
-fn the_intraday_siblings_did_not_move_with_their_daily_streams() {
-    let name = "hrv_intraday";
-    assert!(
-        fitbit_still_owns(name),
-        "{name} has no Google writer — flipping it would strand its columns"
-    );
-}
+// `the_intraday_siblings_did_not_move_with_their_daily_streams` lived here
+// until 2026-09-02: it pinned hrv_intraday (and before it heart_rate_intraday)
+// to Fitbit while they had no Google writer. Both then moved the way the test
+// demanded — on their own per-stream measurement, writer first — and the
+// generic pairing tests below (`every_google_owner_has_a_writer` and its
+// converse) now assert the invariant it existed for.
 
 /// ⚠ `daily_activity` STAYS ON FITBIT while a Google writer also exists — the
 /// one deliberate exception to the roster's model, because its columns need

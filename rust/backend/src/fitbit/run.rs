@@ -299,6 +299,30 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google heart_rate_intraday failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("sleep") {
+        match crate::google::sync::sync_sleep(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google sleep: {n} session(s)"),
+            Err(e) => tracing::error!("[{user_id}] google sleep failed: {e:#}"),
+        }
+    }
+    if !crate::google::source::fitbit_still_owns("hrv_intraday") {
+        match crate::google::sync::sync_hrv_intraday(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google hrv_intraday: {n} sample(s)"),
+            Err(e) => tracing::error!("[{user_id}] google hrv_intraday failed: {e:#}"),
+        }
+    }
+    if !crate::google::source::fitbit_still_owns("heart_rate_zones") {
+        match crate::google::sync::sync_heart_rate_zones(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google heart_rate_zones: {n} row(s)"),
+            Err(e) => tracing::error!("[{user_id}] google heart_rate_zones failed: {e:#}"),
+        }
+    }
+    if !crate::google::source::fitbit_still_owns("steps_intraday") {
+        match crate::google::sync::sync_steps_intraday(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google steps_intraday: {n} minute(s)"),
+            Err(e) => tracing::error!("[{user_id}] google steps_intraday failed: {e:#}"),
+        }
+    }
     // ⚠ NOT GATED ON THE ROSTER, and deliberately so. `daily_activity` is the
     // one table whose COLUMNS need different owners — Fitbit is the only source
     // there has ever been for `minutes_sedentary` and `active_score`, so
@@ -376,14 +400,18 @@ async fn forward_pass(
         sync::activity::sync_activity(client, pool, access, user_id, &dates).await
     })
     .await?;
-    try_stream(user_id, "sleep", async {
-        sync::sleep::sync_sleep(client, pool, access, user_id, start, end, tz_for).await
-    })
-    .await?;
-    try_stream(user_id, "HR zones", async {
-        sync::heartrate::sync_heart_rate_zones(client, pool, access, user_id, start, end).await
-    })
-    .await?;
+    if crate::google::source::fitbit_still_owns("sleep") {
+        try_stream(user_id, "sleep", async {
+            sync::sleep::sync_sleep(client, pool, access, user_id, start, end, tz_for).await
+        })
+        .await?;
+    }
+    if crate::google::source::fitbit_still_owns("heart_rate_zones") {
+        try_stream(user_id, "HR zones", async {
+            sync::heartrate::sync_heart_rate_zones(client, pool, access, user_id, start, end).await
+        })
+        .await?;
+    }
     // ⚠ WEIGHT IS ABSENT ON PURPOSE. Fitbit's weight feed is forward-filled and
     // froze in Apr 2026 — the real values come from the Google Health API now
     // (#260). Re-adding `sync_body` here would clobber them nightly with
@@ -396,10 +424,12 @@ async fn forward_pass(
         })
         .await?;
     }
-    try_stream(user_id, "steps intraday", async {
-        sync::steps::sync_steps_intraday(client, pool, access, user_id, &dates, tz_for).await
-    })
-    .await?;
+    if crate::google::source::fitbit_still_owns("steps_intraday") {
+        try_stream(user_id, "steps intraday", async {
+            sync::steps::sync_steps_intraday(client, pool, access, user_id, &dates, tz_for).await
+        })
+        .await?;
+    }
     if crate::google::source::fitbit_still_owns("spo2_daily") {
         try_stream(user_id, "SpO2", async {
             sync::daily::sync_spo2_daily(client, pool, access, user_id, start, end).await
@@ -415,10 +445,12 @@ async fn forward_pass(
         })
         .await?;
     }
-    try_stream(user_id, "HRV intraday", async {
-        sync::hrv::sync_hrv_intraday(client, pool, access, user_id, &dates).await
-    })
-    .await?;
+    if crate::google::source::fitbit_still_owns("hrv_intraday") {
+        try_stream(user_id, "HRV intraday", async {
+            sync::hrv::sync_hrv_intraday(client, pool, access, user_id, &dates).await
+        })
+        .await?;
+    }
     // ⚠ THE ROSTER DECIDES, not this call site. `google::source` owns the
     // question of which API serves each stream; asking it here is what keeps
     // "where does breathing rate come from?" answerable from one list instead

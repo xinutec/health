@@ -7,7 +7,8 @@
 use serde_json::json;
 
 use backend::google::health::{
-    civil_datetime, numeric, rfc3339_to_utc_datetime, utc_datetime_to_rfc3339,
+    civil_datetime, numeric, parse_sleep_point, rfc3339_to_utc_datetime, utc_datetime_to_rfc3339,
+    wall_clock_from_physical,
 };
 
 #[test]
@@ -93,4 +94,99 @@ fn a_stored_utc_datetime_round_trips_into_a_filter_bound() {
     );
     assert_eq!(utc_datetime_to_rfc3339("2026-09-01T06:05:09Z"), None);
     assert_eq!(utc_datetime_to_rfc3339("not a time"), None);
+}
+
+/// A synthetic sleep point exercising every trap at once: QUOTED minutes, a
+/// non-UTC offset (the wall clock must MOVE), the STAGES vocabulary (AWAKE is
+/// Fitbit's `wake`), the end-date convention, and the id in the `name` path.
+#[test]
+fn a_sleep_point_parses_into_the_row_the_table_wants() {
+    let pt = json!({
+        "name": "users/123/dataTypes/sleep/dataPoints/7000000000000000001",
+        "sleep": {
+            "type": "STAGES",
+            "metadata": {"mainSleep": true, "processed": true, "stagesStatus": "SUCCEEDED"},
+            "interval": {
+                "startTime": "2026-01-01T22:30:00Z", "startUtcOffset": "3600s",
+                "endTime": "2026-01-02T05:30:00Z", "endUtcOffset": "3600s"
+            },
+            "stages": [
+                {"startTime": "2026-01-01T22:30:00Z", "startUtcOffset": "3600s",
+                 "endTime": "2026-01-01T23:00:00Z", "endUtcOffset": "3600s", "type": "LIGHT"},
+                {"startTime": "2026-01-01T23:00:00Z", "startUtcOffset": "3600s",
+                 "endTime": "2026-01-01T23:10:00Z", "endUtcOffset": "3600s", "type": "AWAKE"}
+            ],
+            "summary": {
+                "minutesAsleep": "390", "minutesAwake": "30",
+                "minutesInSleepPeriod": "420", "minutesToFallAsleep": "5",
+                "minutesAfterWakeUp": "2",
+                "stagesSummary": [
+                    {"type": "DEEP", "minutes": "80", "count": "4"},
+                    {"type": "AWAKE", "minutes": "30", "count": "6"}
+                ]
+            }
+        }
+    });
+    let s = parse_sleep_point(&pt).expect("parses");
+    assert_eq!(s.log_id, 7_000_000_000_000_000_001);
+    // +01:00 moves the wall clock; the date is the civil END date.
+    assert_eq!(s.start_time, "2026-01-01 23:30:00");
+    assert_eq!(s.end_time, "2026-01-02 06:30:00");
+    assert_eq!(s.date, "2026-01-02");
+    assert_eq!(s.start_time_utc, "2026-01-01 22:30:00");
+    assert_eq!(s.duration_ms, 7 * 3600 * 1000);
+    // 390/420, as an integer percent.
+    assert_eq!(s.efficiency, 93);
+    assert_eq!((s.minutes_asleep, s.minutes_awake), (390, 30));
+    // stagesSummary: AWAKE lands in minutes_wake for a STAGES session.
+    assert_eq!(s.minutes_deep, Some(80));
+    assert_eq!(s.minutes_wake, Some(30));
+    assert_eq!(s.minutes_light, None);
+    assert!(s.is_main_sleep);
+    // The stage series: wall-clock keys, seconds from the interval, mapped level.
+    assert_eq!(s.stages.len(), 2);
+    assert_eq!(s.stages[0].ts, "2026-01-01 23:30:00");
+    assert_eq!(s.stages[0].duration_seconds, 1800);
+    assert_eq!(s.stages[0].stage, "light");
+    assert_eq!(s.stages[1].stage, "wake", "STAGES AWAKE is Fitbit's `wake`");
+}
+
+/// A CLASSIC session keeps Fitbit's classic vocabulary — `awake` stays `awake`.
+#[test]
+fn a_classic_sleep_keeps_awake_unmapped() {
+    let pt = json!({
+        "name": "users/123/dataTypes/sleep/dataPoints/42",
+        "sleep": {
+            "type": "CLASSIC",
+            "metadata": {"mainSleep": false},
+            "interval": {
+                "startTime": "2026-01-01T14:00:00Z", "startUtcOffset": "0s",
+                "endTime": "2026-01-01T15:00:00Z", "endUtcOffset": "0s"
+            },
+            "stages": [
+                {"startTime": "2026-01-01T14:00:00Z", "startUtcOffset": "0s",
+                 "endTime": "2026-01-01T14:10:00Z", "endUtcOffset": "0s", "type": "AWAKE"}
+            ],
+            "summary": {"minutesAsleep": "50", "minutesAwake": "10",
+                         "minutesInSleepPeriod": "60"}
+        }
+    });
+    let s = parse_sleep_point(&pt).expect("parses");
+    assert_eq!(s.stages[0].stage, "awake");
+    assert!(!s.is_main_sleep);
+    assert_eq!(s.efficiency, 83);
+}
+
+/// A negative offset moves the wall clock BACK — the splice this function
+/// exists to prevent would have kept UTC.
+#[test]
+fn a_negative_offset_moves_the_wall_clock_back() {
+    assert_eq!(
+        wall_clock_from_physical("2026-01-01T03:00:00Z", "-18000s").as_deref(),
+        Some("2025-12-31 22:00:00")
+    );
+    assert_eq!(
+        wall_clock_from_physical("2026-01-01T03:00:00Z", "nonsense"),
+        None
+    );
 }

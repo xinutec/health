@@ -707,3 +707,538 @@ pub async fn sync_daily_activity(
     );
     Ok(written)
 }
+
+/// `sleep` + `sleep_stages` from Google's `sleep` session type.
+///
+/// # ⚠ The fetch MUST be filtered — and not for volume this time
+///
+/// A sleep list is small, but `probe_one`'s pageSize=1 request returns 200 with
+/// NO dataPoints for session types (measured 2026-09-02, the request shape that
+/// twice produced "Google does not carry this"). This walk uses the filtered
+/// path with a real page size, the shape a consumer sends. The high-water mark
+/// is `MAX(end_time_utc)` less a day, so a session Fitbit revised at the
+/// boundary is re-read rather than trusted; an empty table starts 7 days back
+/// (#260: history stays Fitbit's).
+///
+/// # Identity
+///
+/// The dataPoint `name` ends in an 18-19-digit id, which this writer parses as
+/// `log_id` — Fitbit-logId-SIZED, equality UNVERIFIED, and nothing depends on
+/// it: the `(user_id, start_time, is_main_sleep)` unique key routes a night
+/// written by both sources into ONE row (the upsert preserves the stored
+/// log_id, exactly like the Fitbit writer's canonical-id lookup), and the
+/// stages join on whatever log_id that row actually holds.
+///
+/// ⚠ `tz` STAYS NULL, like the heart-rate writer: Google gives an offset, not a
+/// zone name.
+pub async fn sync_sleep(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let high: Option<String> = sqlx::query_scalar(
+        "SELECT CAST(MAX(end_time_utc) AS CHAR) FROM sleep \
+         WHERE user_id = ? AND end_time_utc IS NOT NULL",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .context("reading the sleep high-water mark")?;
+
+    let since = match &high {
+        Some(ts) => {
+            let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                .with_context(|| format!("unreadable sleep high-water mark {ts:?}"))?;
+            (parsed - chrono::Duration::days(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+        }
+        None => (chrono::Utc::now() - chrono::Duration::days(7))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    };
+    let filter = format!("sleep.interval.end_time >= \"{since}\"");
+    let points = crate::google::health::fetch_points_filtered(http, access_token, "sleep", &filter)
+        .await
+        .context("fetching sleep sessions")?;
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    for pt in &points {
+        let Some(s) = crate::google::health::parse_sleep_point(pt) else {
+            skipped += 1;
+            continue;
+        };
+        sqlx::query(
+            // The same column policy as the Fitbit writer: figures overwrite
+            // (Google revises a recent night exactly as Fitbit did), tz and the
+            // UTC columns COALESCE-preserve.
+            "INSERT INTO sleep (user_id, log_id, date, start_time, end_time, duration_ms, \
+             efficiency, minutes_asleep, minutes_awake, minutes_deep, minutes_light, \
+             minutes_rem, minutes_wake, is_main_sleep, tz, start_time_utc, end_time_utc) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?) \
+             ON DUPLICATE KEY UPDATE end_time=VALUES(end_time), \
+             duration_ms=VALUES(duration_ms), efficiency=VALUES(efficiency), \
+             minutes_asleep=VALUES(minutes_asleep), minutes_awake=VALUES(minutes_awake), \
+             minutes_deep=VALUES(minutes_deep), minutes_light=VALUES(minutes_light), \
+             minutes_rem=VALUES(minutes_rem), minutes_wake=VALUES(minutes_wake), \
+             start_time_utc=COALESCE(start_time_utc, VALUES(start_time_utc)), \
+             end_time_utc=COALESCE(end_time_utc, VALUES(end_time_utc))",
+        )
+        .bind(user_id)
+        .bind(s.log_id)
+        .bind(&s.date)
+        .bind(&s.start_time)
+        .bind(&s.end_time)
+        .bind(s.duration_ms)
+        .bind(s.efficiency)
+        .bind(s.minutes_asleep)
+        .bind(s.minutes_awake)
+        .bind(s.minutes_deep)
+        .bind(s.minutes_light)
+        .bind(s.minutes_rem)
+        .bind(s.minutes_wake)
+        .bind(s.is_main_sleep)
+        .bind(&s.start_time_utc)
+        .bind(&s.end_time_utc)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing sleep for {}", s.date))?;
+
+        if s.stages.is_empty() {
+            written += 1;
+            continue;
+        }
+
+        // The stages join on whatever `sleep.log_id` CURRENTLY holds — the
+        // upsert above may have merged into a Fitbit-written row keeping its
+        // id. Same transaction discipline as the Fitbit writer: the DELETE and
+        // the INSERTs commit together or not at all.
+        let mut tx = pool.begin().await.context("opening sleep stages tx")?;
+        let canonical: Option<i64> = sqlx::query_scalar(
+            "SELECT log_id FROM sleep WHERE user_id = ? AND start_time = ? AND is_main_sleep = ? \
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .bind(&s.start_time)
+        .bind(s.is_main_sleep)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("reading canonical sleep log_id")?;
+        let sleep_log_id = canonical.unwrap_or(s.log_id);
+
+        sqlx::query("DELETE FROM sleep_stages WHERE user_id = ? AND sleep_log_id = ?")
+            .bind(user_id)
+            .bind(sleep_log_id)
+            .execute(&mut *tx)
+            .await
+            .context("clearing sleep_stages")?;
+        for st in &s.stages {
+            sqlx::query(
+                "INSERT INTO sleep_stages (user_id, sleep_log_id, ts, stage, duration_seconds, \
+                 tz, ts_utc) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            )
+            .bind(user_id)
+            .bind(sleep_log_id)
+            .bind(&st.ts)
+            .bind(&st.stage)
+            .bind(st.duration_seconds)
+            .bind(&st.ts_utc)
+            .execute(&mut *tx)
+            .await
+            .context("writing sleep_stages")?;
+        }
+        tx.commit().await.context("committing sleep stages")?;
+        written += 1;
+    }
+
+    tracing::info!(
+        "[{user_id}] google sleep: {written} session(s) from {} point(s), {skipped} unreadable",
+        points.len()
+    );
+    Ok(written)
+}
+
+/// `hrv_intraday.rmssd` from Google's `heart-rate-variability` sample type.
+///
+/// ⚠ `coverage`/`hf`/`lf` are NOT written and the upsert does not touch them:
+/// Google has no source for them, they are stored-and-never-read (#260), and
+/// they NULL forward on new rows rather than freezing at a last Fitbit value.
+///
+/// The table keys on the WALL clock and has no ts_utc column, so the sample's
+/// served `civilTime` is the key (same `civil_datetime` as heart-rate). The
+/// filter still bounds by PHYSICAL time — the only documented sample filter —
+/// with a day of slack past the high-water mark so no offset gap can hide a
+/// sample; the upsert makes the overlap free.
+pub async fn sync_hrv_intraday(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let high: Option<String> =
+        sqlx::query_scalar("SELECT CAST(MAX(ts) AS CHAR) FROM hrv_intraday WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .context("reading the hrv_intraday high-water mark")?;
+    let since = match &high {
+        Some(ts) => {
+            let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                .with_context(|| format!("unreadable hrv high-water mark {ts:?}"))?;
+            (parsed - chrono::Duration::days(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+        }
+        None => (chrono::Utc::now() - chrono::Duration::days(7))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    };
+    let filter = format!("heart_rate_variability.sample_time.physical_time >= \"{since}\"");
+    let points = crate::google::health::fetch_points_filtered(
+        http,
+        access_token,
+        "heart-rate-variability",
+        &filter,
+    )
+    .await
+    .context("fetching heart-rate-variability")?;
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    for pt in &points {
+        let Some(hrv) = pt.get("heartRateVariability") else {
+            skipped += 1;
+            continue;
+        };
+        let Some(rmssd) = hrv
+            .get("rootMeanSquareOfSuccessiveDifferencesMilliseconds")
+            .and_then(crate::google::health::numeric)
+        else {
+            skipped += 1;
+            continue;
+        };
+        let Some(ts) = crate::google::health::civil_datetime(hrv.pointer("/sampleTime/civilTime"))
+        else {
+            skipped += 1;
+            continue;
+        };
+        sqlx::query(
+            "INSERT INTO hrv_intraday (user_id, ts, rmssd) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE rmssd=VALUES(rmssd)",
+        )
+        .bind(user_id)
+        .bind(&ts)
+        .bind(rmssd)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing hrv_intraday at {ts}"))?;
+        written += 1;
+    }
+    tracing::info!(
+        "[{user_id}] google hrv_intraday: {written} sample(s) from {} point(s), {skipped} unreadable",
+        points.len()
+    );
+    Ok(written)
+}
+
+/// Fitbit's display name for a Google `heartRateZoneType`, or `None` for a
+/// vocabulary this mapping has never seen — which the caller COUNTS rather
+/// than writes, so a new enum value cannot invent a fifth zone row.
+///
+/// ⚠ GOOGLE RENAMED THE ZONES, and the first guess here was Fitbit's own enum
+/// spellings (OUT_OF_RANGE/FAT_BURN/CARDIO) — measured 2026-09-02, the live
+/// vocabulary is LIGHT/MODERATE/VIGOROUS/PEAK. The mapping is by intensity
+/// order and VERIFIED BY BOUNDS: each zone's min/max bpm must equal the stored
+/// Fitbit row's, and `google-compare-zones` checks exactly that per day.
+pub fn zone_display_name(zone_type: &str) -> Option<&'static str> {
+    Some(match zone_type {
+        "LIGHT" => "Out of Range",
+        "MODERATE" => "Fat Burn",
+        "VIGOROUS" => "Cardio",
+        "PEAK" => "Peak",
+        _ => return None,
+    })
+}
+
+/// `heart_rate_zones` from TWO Google types: `daily-heart-rate-zones` gives
+/// each day's zone BOUNDS (min/max bpm, QUOTED numbers), and
+/// `time-in-heart-rate-zone` gives the intervals whose per-day sums are the
+/// MINUTES. (#260, #1223)
+///
+/// ⚠ `calories` is NOT written and the upsert does not touch it — no Google
+/// source; NULL forward.
+///
+/// The minutes sum keys on the interval's civil START date, matching how the
+/// bounds type dates itself.
+pub async fn sync_heart_rate_zones(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let high: Option<String> = sqlx::query_scalar(
+        "SELECT CAST(MAX(date) AS CHAR) FROM heart_rate_zones WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .context("reading the heart_rate_zones high-water mark")?;
+    // Two days of slack: Fitbit revises a recent day, and the daily type dates
+    // in civil time while the interval filter runs on physical time.
+    let since_date = match &high {
+        Some(d) => {
+            let parsed = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                .with_context(|| format!("unreadable zones high-water mark {d:?}"))?;
+            parsed - chrono::Duration::days(2)
+        }
+        None => (chrono::Utc::now() - chrono::Duration::days(7)).date_naive(),
+    };
+
+    let bounds_filter = format!("daily_heart_rate_zones.date >= \"{since_date}\"");
+    let bounds = crate::google::health::fetch_points_filtered(
+        http,
+        access_token,
+        "daily-heart-rate-zones",
+        &bounds_filter,
+    )
+    .await
+    .context("fetching daily-heart-rate-zones")?;
+
+    let minutes_filter = format!(
+        "time_in_heart_rate_zone.interval.start_time >= \"{}T00:00:00Z\"",
+        since_date - chrono::Duration::days(1)
+    );
+    let intervals = crate::google::health::fetch_points_filtered(
+        http,
+        access_token,
+        "time-in-heart-rate-zone",
+        &minutes_filter,
+    )
+    .await
+    .context("fetching time-in-heart-rate-zone")?;
+
+    // (date, zone display name) -> summed seconds, keyed on the CIVIL start.
+    let mut secs: BTreeMap<(String, String), i64> = BTreeMap::new();
+    let mut unknown_zone = 0usize;
+    for pt in &intervals {
+        let Some(t) = pt.get("timeInHeartRateZone") else {
+            continue;
+        };
+        let (Some(zt), Some(sp), Some(so), Some(ep)) = (
+            t.get("heartRateZoneType").and_then(|v| v.as_str()),
+            t.pointer("/interval/startTime").and_then(|v| v.as_str()),
+            t.pointer("/interval/startUtcOffset")
+                .and_then(|v| v.as_str()),
+            t.pointer("/interval/endTime").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        let Some(zone) = zone_display_name(zt) else {
+            unknown_zone += 1;
+            continue;
+        };
+        let (Some(civil_start), Ok(s), Ok(e)) = (
+            crate::google::health::wall_clock_from_physical(sp, so),
+            chrono::DateTime::parse_from_rfc3339(sp),
+            chrono::DateTime::parse_from_rfc3339(ep),
+        ) else {
+            continue;
+        };
+        *secs
+            .entry((civil_start[..10].to_string(), zone.to_string()))
+            .or_default() += (e - s).num_seconds();
+    }
+
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    for pt in &bounds {
+        let Some(d) = pt.get("dailyHeartRateZones") else {
+            skipped += 1;
+            continue;
+        };
+        let Some(date) = d.get("date").and_then(|v| {
+            Some(format!(
+                "{:04}-{:02}-{:02}",
+                v.get("year")?.as_i64()?,
+                v.get("month")?.as_i64()?,
+                v.get("day")?.as_i64()?
+            ))
+        }) else {
+            skipped += 1;
+            continue;
+        };
+        for z in d
+            .get("heartRateZones")
+            .and_then(|v| v.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+        {
+            let (Some(zt), Some(min), Some(max)) = (
+                z.get("heartRateZoneType").and_then(|v| v.as_str()),
+                z.get("minBeatsPerMinute")
+                    .and_then(crate::google::health::numeric),
+                z.get("maxBeatsPerMinute")
+                    .and_then(crate::google::health::numeric),
+            ) else {
+                skipped += 1;
+                continue;
+            };
+            let Some(zone) = zone_display_name(zt) else {
+                unknown_zone += 1;
+                continue;
+            };
+            let minutes = secs
+                .get(&(date.clone(), zone.to_string()))
+                .map(|s| (*s + 30) / 60)
+                .unwrap_or(0);
+            sqlx::query(
+                "INSERT INTO heart_rate_zones (user_id, date, zone_name, minutes, min_bpm, max_bpm) \
+                 VALUES (?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE minutes=VALUES(minutes), min_bpm=VALUES(min_bpm), \
+                 max_bpm=VALUES(max_bpm)",
+            )
+            .bind(user_id)
+            .bind(&date)
+            .bind(zone)
+            .bind(minutes)
+            .bind(min.round() as i64)
+            .bind(max.round() as i64)
+            .execute(pool)
+            .await
+            .with_context(|| format!("writing heart_rate_zones for {date}/{zone}"))?;
+            written += 1;
+        }
+    }
+    tracing::info!(
+        "[{user_id}] google heart_rate_zones: {written} row(s), {skipped} unreadable, \
+         {unknown_zone} unknown zone type(s)",
+    );
+    Ok(written)
+}
+
+/// `steps_intraday` from Google's `steps` interval type, WATCH-FIRST per
+/// minute. (#260)
+///
+/// # The merge rule, measured not assumed
+///
+/// Fitbit's stored series is a per-window arbitration across devices that
+/// nothing documents. Candidates against 7 days of stored rows (2026-09-02):
+///
+/// ```text
+///   per-minute MAX over FITBIT/*   REFUTED  901/1297 identical, overcounts
+///   watch-first, phone fallback    1282/1297 identical, sums within 0.5%
+/// ```
+///
+/// The 15 misses are minutes inside device-transition windows, where Fitbit
+/// sometimes takes the phone even though the watch has a (smaller) sample.
+/// Accepted: functionally the same series, and the fallback GAINS the
+/// phone-only minutes a watchless window used to lose.
+///
+/// ⚠ HEALTH_CONNECT sources are EXCLUDED: they are echoes of the same steps
+/// re-imported through the phone, sub-minute-aligned, and counting them
+/// double-counts. A `dataSource.device.displayName` of "MobileTrack" (or no
+/// device at all) is the phone; any other named device is the watch.
+///
+/// ⚠ Zero-count minutes are not written — the stored series has never held
+/// zero rows, and a `(user_id, ts)` row saying 0 would read as measured
+/// stillness where the convention is absence.
+pub async fn sync_steps_intraday(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let high: Option<String> =
+        sqlx::query_scalar("SELECT CAST(MAX(ts) AS CHAR) FROM steps_intraday WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .context("reading the steps_intraday high-water mark")?;
+    let since = match &high {
+        Some(ts) => {
+            let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                .with_context(|| format!("unreadable steps high-water mark {ts:?}"))?;
+            (parsed - chrono::Duration::days(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+        }
+        None => (chrono::Utc::now() - chrono::Duration::days(7))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    };
+    let filter = format!("steps.interval.start_time >= \"{since}\"");
+    let points = crate::google::health::fetch_points_filtered(http, access_token, "steps", &filter)
+        .await
+        .context("fetching step intervals")?;
+
+    let mut watch: BTreeMap<String, i64> = BTreeMap::new();
+    let mut phone: BTreeMap<String, i64> = BTreeMap::new();
+    let mut skipped = 0usize;
+    for pt in &points {
+        let platform = pt
+            .pointer("/dataSource/platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        if platform != "FITBIT" {
+            continue;
+        }
+        let is_phone = pt
+            .pointer("/dataSource/device/displayName")
+            .and_then(|v| v.as_str())
+            .is_none_or(|d| d == "MobileTrack");
+        let Some(st) = pt.get("steps") else {
+            skipped += 1;
+            continue;
+        };
+        let (Some(count), Some(sp), Some(so)) = (
+            st.get("count").and_then(crate::google::health::numeric),
+            st.pointer("/interval/startTime").and_then(|v| v.as_str()),
+            st.pointer("/interval/startUtcOffset")
+                .and_then(|v| v.as_str()),
+        ) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(cs) = crate::google::health::wall_clock_from_physical(sp, so) else {
+            skipped += 1;
+            continue;
+        };
+        let minute = format!("{}:00", &cs[..16]);
+        let c = count.round() as i64;
+        let m = if is_phone { &mut phone } else { &mut watch };
+        // Two same-source intervals in one minute keep the larger — a re-served
+        // correction, not an addition.
+        m.entry(minute)
+            .and_modify(|v| *v = (*v).max(c))
+            .or_insert(c);
+    }
+    let mut merged = watch;
+    for (m, c) in phone {
+        merged.entry(m).or_insert(c);
+    }
+
+    let mut written = 0usize;
+    for (ts, steps) in &merged {
+        if *steps <= 0 {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO steps_intraday (user_id, ts, steps) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE steps=VALUES(steps)",
+        )
+        .bind(user_id)
+        .bind(ts)
+        .bind(steps)
+        .execute(pool)
+        .await
+        .with_context(|| format!("writing steps_intraday at {ts}"))?;
+        written += 1;
+    }
+    tracing::info!(
+        "[{user_id}] google steps_intraday: {written} minute(s) from {} point(s), {skipped} unreadable",
+        points.len()
+    );
+    Ok(written)
+}

@@ -317,7 +317,12 @@ fn error_detail(body: &str) -> String {
 
 /// One line of readout for one candidate type.
 async fn probe_one(http: &reqwest::Client, token: &str, ty: &str) -> String {
-    let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints?pageSize=1");
+    // ⚠ NOT pageSize=1. Session and interval types (sleep, steps) answer the
+    // degenerate page with 200 AND NO dataPoints FIELD — indistinguishable from
+    // "no data", and read as exactly that twice (#260, 2026-09-02: sleep lost
+    // its owner and minute-steps was declared an accepted loss). Probe with the
+    // request shape a real consumer sends.
+    let url = format!("{BASE}/users/me/dataTypes/{ty}/dataPoints?pageSize=25");
     let res = match http.get(&url).bearer_auth(token).send().await {
         Ok(r) => r,
         Err(e) => return format!("{ty:24} TRANSPORT ERROR  {e}"),

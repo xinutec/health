@@ -87,13 +87,19 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "hrv_intraday",
-        owner: Owner::Fitbit,
-        why: "google has heart-rate-variability as RMSSD samples — client not written yet",
+        owner: Owner::Google,
+        why: "google-compare-hrv over 7 days (2026-09-02): 848/848 shared civil timestamps \
+              within our 0.001 ms step, worst |delta| 0.000. rmssd ONLY: coverage/hf/lf have \
+              no Google source, are stored-and-never-read, and NULL forward by decision (#260)",
     },
     Stream {
         name: "heart_rate_zones",
-        owner: Owner::Fitbit,
-        why: "google has daily-heart-rate-zones — client not written yet; see #1223, our table also holds junk dates",
+        owner: Owner::Google,
+        why: "google-compare-zones over 7 days (2026-09-02): 32/32 (date,zone) rows shared, \
+              bounds 32/32 EXACT, minutes 29/32 within 1 (the 3 are the in-progress day, where \
+              ours still holds Fitbit's whole-day filler). ⚠ Google RENAMED the zones — \
+              LIGHT/MODERATE/VIGOROUS/PEAK, mapped by intensity order and verified by bounds. \
+              `calories` has no source and NULLs forward (#260); junk dates are #1223",
     },
     Stream {
         name: "daily_activity",
@@ -107,17 +113,23 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "sleep",
-        owner: Owner::Fitbit,
-        why: "google DOES serve full sleep sessions — probe 2026-09-01: interval.*, \
-              metadata.mainSleep, stages[], shortAwakenings[], summary minutes* (the earlier \
-              'list returns 200 with NO dataPoints' was measured before data arrived and is \
-              REFUTED). Client not written yet; #260 orders it after heart_rate_intraday",
+        owner: Owner::Google,
+        why: "google-compare-sleep over 7 days (2026-09-02): start/end/duration/deep/rem/main \
+              EXACT on all shared nights; asleep/awake/light/efficiency differ ~25 min/night \
+              because Google's summary matches ITS OWN stage series where Fitbit's does not \
+              even match Fitbit's — accepted as the better statistic, discontinuity noted in \
+              #260. ⚠ The earlier 'list returns 200 with NO dataPoints' was probe_one's \
+              pageSize=1, a request shape session types answer EMPTY; pageSize=25 serves \
+              full sessions",
     },
     Stream {
         name: "steps_intraday",
-        owner: Owner::HealthConnect,
-        why: "google's `list` on steps is empty; dailyRollUp gives one countSum per DAY, which cannot \
-              feed a per-minute series. Health Connect has the minutes",
+        owner: Owner::Google,
+        why: "the 'list on steps is empty' verdict was probe_one's pageSize=1 (a request session \
+              and interval types answer EMPTY); a real page serves per-interval counts, 60s-aligned \
+              from the watch. Writer is WATCH-FIRST per minute, phone fallback — measured \
+              2026-09-02: 1282/1297 stored minutes identical, sums within 0.5%, the 15 misses all \
+              in device-transition windows. GAINS phone-only minutes a watchless window lost",
     },
 ];
 
@@ -158,9 +170,13 @@ pub const HAS_WRITER: &[&str] = &[
     "body",
     "breathing_rate",
     "heart_rate_intraday",
+    "heart_rate_zones",
     "hrv_daily",
+    "hrv_intraday",
     "skin_temperature",
+    "sleep",
     "spo2_daily",
+    "steps_intraday",
 ];
 
 /// True when `google::sync` (or `google::body`) writes this stream.

@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 use crate::lean::Weigh;
 
@@ -482,6 +483,187 @@ pub fn utc_datetime_to_rfc3339(s: &str) -> Option<String> {
     chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
         .ok()
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+/// A physical instant plus its protobuf-Duration offset (`"3600s"`) as the
+/// LOCAL wall-clock `DATETIME` string.
+///
+/// # Why this exists at all
+///
+/// Sleep sessions and step intervals carry NO civil fields — unlike the sample
+/// types, whose `sampleTime.civilTime` is served ready-made. The wall clock the
+/// tables key on has to be derived, and physical + utcOffset is the derivation
+/// Google itself intends (the offset is served beside every timestamp).
+///
+/// ⚠ Both halves parsed, neither spliced: an offset like `"-3600s"` must move
+/// the clock BACK, and a truncation-based reading would quietly keep UTC.
+pub fn wall_clock_from_physical(physical: &str, offset: &str) -> Option<String> {
+    let secs: i64 = offset.strip_suffix('s')?.parse().ok()?;
+    chrono::DateTime::parse_from_rfc3339(physical)
+        .ok()
+        .map(|dt| {
+            (dt.naive_utc() + chrono::Duration::seconds(secs))
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+}
+
+/// One stage entry of a parsed sleep session.
+pub struct GoogleSleepStage {
+    /// Local wall clock, the `sleep_stages.ts` key.
+    pub ts: String,
+    /// The physical instant, for `ts_utc`.
+    pub ts_utc: String,
+    /// Fitbit's level vocabulary — `deep`/`light`/`rem`/`wake` for a STAGES
+    /// session — so the rows land beside the Fitbit-written ones unchanged.
+    pub stage: String,
+    pub duration_seconds: i64,
+}
+
+/// One Google sleep session, in the shape the `sleep` table wants.
+pub struct GoogleSleepSession {
+    /// Parsed from the dataPoint `name`'s last path segment. It is
+    /// Fitbit-logId-SIZED (18-19 digits) but equality with Fitbit's ids is
+    /// UNVERIFIED — nothing may depend on it. The `(user_id, start_time,
+    /// is_main_sleep)` unique key is what merges a night written by both.
+    pub log_id: i64,
+    /// The civil date the sleep ENDED — Fitbit's `dateOfSleep` convention.
+    pub date: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub start_time_utc: String,
+    pub end_time_utc: String,
+    pub duration_ms: i64,
+    /// Derived: `minutesAsleep / minutesInSleepPeriod`, rounded to a percent.
+    /// Whether that IS Fitbit's statistic is the comparison's question, not an
+    /// assumption of this parser.
+    pub efficiency: i64,
+    pub minutes_asleep: i64,
+    pub minutes_awake: i64,
+    pub minutes_deep: Option<i64>,
+    pub minutes_light: Option<i64>,
+    pub minutes_rem: Option<i64>,
+    pub minutes_wake: Option<i64>,
+    pub is_main_sleep: bool,
+    pub stages: Vec<GoogleSleepStage>,
+}
+
+/// Google's stage vocabulary as Fitbit's level strings.
+///
+/// ⚠ CONDITIONAL ON THE SESSION TYPE. For a `STAGES` session `AWAKE` is
+/// Fitbit's `wake`; a `CLASSIC` session's levels (`ASLEEP`/`RESTLESS`/`AWAKE`)
+/// lowercase as themselves, where `awake` is correct. Collapsing the two would
+/// write `wake` rows into a classic night that Fitbit spelled `awake`.
+fn stage_level(session_type: &str, google_type: &str) -> String {
+    if session_type == "STAGES" && google_type == "AWAKE" {
+        return "wake".to_string();
+    }
+    google_type.to_ascii_lowercase()
+}
+
+/// A `sleep` dataPoint as the row set to write, or `None` with the reason
+/// counted by the caller.
+///
+/// ⚠ Every summary minute is a QUOTED number — `numeric`, never `as_i64`.
+pub fn parse_sleep_point(pt: &serde_json::Value) -> Option<GoogleSleepSession> {
+    let sl = pt.get("sleep")?;
+    let log_id: i64 = pt
+        .get("name")
+        .and_then(|v| v.as_str())
+        .and_then(|n| n.rsplit('/').next())
+        .and_then(|id| id.parse().ok())?;
+    let iv = sl.get("interval")?;
+    let (start_p, start_off) = (
+        iv.get("startTime")?.as_str()?,
+        iv.get("startUtcOffset")?.as_str()?,
+    );
+    let (end_p, end_off) = (
+        iv.get("endTime")?.as_str()?,
+        iv.get("endUtcOffset")?.as_str()?,
+    );
+    let start_time = wall_clock_from_physical(start_p, start_off)?;
+    let end_time = wall_clock_from_physical(end_p, end_off)?;
+    let start_time_utc = rfc3339_to_utc_datetime(start_p)?;
+    let end_time_utc = rfc3339_to_utc_datetime(end_p)?;
+    let duration_ms = (chrono::DateTime::parse_from_rfc3339(end_p).ok()?
+        - chrono::DateTime::parse_from_rfc3339(start_p).ok()?)
+    .num_milliseconds();
+
+    let summary = sl.get("summary")?;
+    let mins = |k: &str| summary.get(k).and_then(numeric).map(|v| v.round() as i64);
+    let minutes_asleep = mins("minutesAsleep")?;
+    let minutes_awake = mins("minutesAwake")?;
+    let in_period = mins("minutesInSleepPeriod")?;
+    // Integer percent, like Fitbit stores. A zero-length period cannot divide;
+    // 0 is the honest readout for a record that slept no minutes of none.
+    let efficiency = if in_period > 0 {
+        ((minutes_asleep as f64 / in_period as f64) * 100.0).round() as i64
+    } else {
+        0
+    };
+
+    let session_type = sl.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let mut by_stage: BTreeMap<String, i64> = BTreeMap::new();
+    for e in summary
+        .get("stagesSummary")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or_default()
+    {
+        if let (Some(t), Some(m)) = (
+            e.get("type").and_then(|v| v.as_str()),
+            e.get("minutes").and_then(numeric),
+        ) {
+            by_stage.insert(stage_level(session_type, t), m.round() as i64);
+        }
+    }
+
+    let stages = sl
+        .get("stages")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| {
+            let (sp, so) = (
+                e.get("startTime")?.as_str()?,
+                e.get("startUtcOffset")?.as_str()?,
+            );
+            let ep = e.get("endTime")?.as_str()?;
+            let dur = (chrono::DateTime::parse_from_rfc3339(ep).ok()?
+                - chrono::DateTime::parse_from_rfc3339(sp).ok()?)
+            .num_seconds();
+            Some(GoogleSleepStage {
+                ts: wall_clock_from_physical(sp, so)?,
+                ts_utc: rfc3339_to_utc_datetime(sp)?,
+                stage: stage_level(session_type, e.get("type")?.as_str()?),
+                duration_seconds: dur,
+            })
+        })
+        .collect();
+
+    Some(GoogleSleepSession {
+        log_id,
+        // The END's civil date — `end_time` is `YYYY-MM-DD HH:MM:SS`.
+        date: end_time[..10].to_string(),
+        start_time,
+        end_time,
+        start_time_utc,
+        end_time_utc,
+        duration_ms,
+        efficiency,
+        minutes_asleep,
+        minutes_awake,
+        minutes_deep: by_stage.get("deep").copied(),
+        minutes_light: by_stage.get("light").copied(),
+        minutes_rem: by_stage.get("rem").copied(),
+        minutes_wake: by_stage.get("wake").copied(),
+        is_main_sleep: sl
+            .pointer("/metadata/mainSleep")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        stages,
+    })
 }
 
 /// A JSON number, whether or not Google quoted it.

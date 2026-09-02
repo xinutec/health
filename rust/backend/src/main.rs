@@ -302,6 +302,58 @@ async fn main() -> Result<()> {
         "tz-census" => tz_census().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,
+        "google-compare-hrv" => {
+            let days = match flags {
+                [] => 7,
+                [d] => d
+                    .parse()
+                    .with_context(|| format!("days {d:?} is not a number"))?,
+                _ => {
+                    eprintln!("usage: backend google-compare-hrv [days]");
+                    std::process::exit(64);
+                }
+            };
+            google_compare_hrv(days).await
+        }
+        "google-compare-zones" => {
+            let days = match flags {
+                [] => 7,
+                [d] => d
+                    .parse()
+                    .with_context(|| format!("days {d:?} is not a number"))?,
+                _ => {
+                    eprintln!("usage: backend google-compare-zones [days]");
+                    std::process::exit(64);
+                }
+            };
+            google_compare_zones(days).await
+        }
+        "google-compare-steps" => {
+            let days = match flags {
+                [] => 7,
+                [d] => d
+                    .parse()
+                    .with_context(|| format!("days {d:?} is not a number"))?,
+                _ => {
+                    eprintln!("usage: backend google-compare-steps [days]");
+                    std::process::exit(64);
+                }
+            };
+            google_compare_steps(days).await
+        }
+        "google-compare-sleep" => {
+            let days = match flags {
+                [] => 7,
+                [d] => d
+                    .parse()
+                    .with_context(|| format!("days {d:?} is not a number"))?,
+                _ => {
+                    eprintln!("usage: backend google-compare-sleep [days]");
+                    std::process::exit(64);
+                }
+            };
+            google_compare_sleep(days).await
+        }
         "google-compare-intraday" => {
             let days = match flags {
                 [] => 7,
@@ -1181,6 +1233,729 @@ async fn google_compare_intraday(days: i64) -> Result<()> {
     let only_google = gm.keys().filter(|t| !om.contains_key(*t)).count();
     let only_ours = om.keys().filter(|t| !gm.contains_key(*t)).count();
     println!("  minutes only in google: {only_google}  (GAIN)   only in ours: {only_ours}  (LOSE)");
+    Ok(())
+}
+
+/// Google's sleep sessions against `sleep` + `sleep_stages`, per column. (#260)
+///
+/// Joined on `start_time_utc` — the one field both sources state as an instant.
+/// Every column is compared by name so a single wrong mapping cannot hide
+/// inside a night-level "agrees"; the stage series is compared as per-stage
+/// totals and entry counts per night.
+///
+/// ⚠ READ-ONLY. It writes nothing.
+async fn google_compare_sleep(days: i64) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+
+    let start = chrono::Utc::now() - chrono::Duration::days(days);
+    let filter = format!(
+        "sleep.interval.end_time >= \"{}\"",
+        start.format("%Y-%m-%dT%H:%M:%SZ")
+    );
+    let points = backend::google::health::fetch_points_filtered(&http, &token, "sleep", &filter)
+        .await
+        .context("fetching sleep sessions")?;
+    let mut unreadable = 0usize;
+    let mut google: BTreeMap<String, backend::google::health::GoogleSleepSession> = BTreeMap::new();
+    for pt in &points {
+        match backend::google::health::parse_sleep_point(pt) {
+            Some(s) => {
+                google.insert(s.start_time_utc.clone(), s);
+            }
+            None => unreadable += 1,
+        }
+    }
+
+    use sqlx::Row as _;
+    let start_s = start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let rows = sqlx::query(
+        "SELECT CAST(log_id AS CHAR) log_id, CAST(date AS CHAR) d, \
+         CAST(start_time AS CHAR) st, CAST(end_time AS CHAR) et, \
+         CAST(start_time_utc AS CHAR) stu, CAST(duration_ms AS CHAR) dur, \
+         CAST(efficiency AS CHAR) eff, CAST(minutes_asleep AS CHAR) ma, \
+         CAST(minutes_awake AS CHAR) mw, CAST(minutes_deep AS CHAR) md, \
+         CAST(minutes_light AS CHAR) ml, CAST(minutes_rem AS CHAR) mr, \
+         CAST(minutes_wake AS CHAR) mk, CAST(is_main_sleep AS CHAR) main \
+         FROM sleep WHERE end_time_utc >= ?",
+    )
+    .bind(&start_s)
+    .fetch_all(&pool)
+    .await
+    .context("reading sleep rows")?;
+
+    struct OurNight {
+        log_id: String,
+        cols: BTreeMap<&'static str, Option<String>>,
+    }
+    let mut ours: BTreeMap<String, OurNight> = BTreeMap::new();
+    for r in &rows {
+        let stu: Option<String> = r.try_get("stu").ok();
+        let Some(stu) = stu else { continue };
+        let mut cols: BTreeMap<&'static str, Option<String>> = BTreeMap::new();
+        for k in [
+            "d", "st", "et", "dur", "eff", "ma", "mw", "md", "ml", "mr", "mk", "main",
+        ] {
+            cols.insert(k, r.try_get::<Option<String>, _>(k).ok().flatten());
+        }
+        ours.insert(
+            stu,
+            OurNight {
+                log_id: r
+                    .try_get::<Option<String>, _>("log_id")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                cols,
+            },
+        );
+    }
+
+    println!(
+        "sleep sessions vs sleep table — last {days} day(s): google {} ({unreadable} unreadable), ours {}",
+        google.len(),
+        ours.len()
+    );
+    let only_g = google.keys().filter(|k| !ours.contains_key(*k)).count();
+    let only_o = ours.keys().filter(|k| !google.contains_key(*k)).count();
+    println!(
+        "  shared start instants: {}   only google: {only_g} (GAIN)   only ours: {only_o} (LOSE)",
+        google.keys().filter(|k| ours.contains_key(*k)).count()
+    );
+
+    // Per-column agreement over the shared nights. Booleans cross as "1"/"0".
+    let mut agree: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut differ: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (stu, g) in &google {
+        let Some(o) = ours.get(stu) else { continue };
+        let gcols: [(&str, Option<String>); 12] = [
+            ("d", Some(g.date.clone())),
+            ("st", Some(g.start_time.clone())),
+            ("et", Some(g.end_time.clone())),
+            ("dur", Some(g.duration_ms.to_string())),
+            ("eff", Some(g.efficiency.to_string())),
+            ("ma", Some(g.minutes_asleep.to_string())),
+            ("mw", Some(g.minutes_awake.to_string())),
+            ("md", g.minutes_deep.map(|v| v.to_string())),
+            ("ml", g.minutes_light.map(|v| v.to_string())),
+            ("mr", g.minutes_rem.map(|v| v.to_string())),
+            ("mk", g.minutes_wake.map(|v| v.to_string())),
+            (
+                "main",
+                Some(if g.is_main_sleep { "1" } else { "0" }.to_string()),
+            ),
+        ];
+        for (k, gv) in gcols {
+            let ov = o.cols.get(k).cloned().flatten();
+            if gv == ov {
+                *agree.entry(k).or_default() += 1;
+            } else {
+                differ.entry(k).or_default().push(format!(
+                    "{stu}: google {} vs ours {}",
+                    gv.as_deref().unwrap_or("NULL"),
+                    ov.as_deref().unwrap_or("NULL")
+                ));
+            }
+        }
+    }
+    for k in [
+        "d", "st", "et", "dur", "eff", "ma", "mw", "md", "ml", "mr", "mk", "main",
+    ] {
+        let a = agree.get(k).copied().unwrap_or(0);
+        match differ.get(k) {
+            None => println!("  {k:>4}: {a} agree"),
+            Some(d) => {
+                println!("  {k:>4}: {a} agree, ⚠ {} DIFFER", d.len());
+                for line in d.iter().take(4) {
+                    println!("        {line}");
+                }
+                if d.len() > 4 {
+                    println!("        … and {} more", d.len() - 4);
+                }
+            }
+        }
+    }
+
+    // Stage series, per shared night: entry count and per-stage second totals,
+    // ours read via the stored row's log_id (the join the frontend uses).
+    let mut nights_same = 0usize;
+    let mut nights_differ = 0usize;
+    for (stu, g) in &google {
+        let Some(o) = ours.get(stu) else { continue };
+        // No user_id clause: log ids are globally unique, and guessing the
+        // user from the env here could silently compare against nothing.
+        let srows = sqlx::query(
+            "SELECT stage, CAST(SUM(duration_seconds) AS CHAR) s, COUNT(*) n \
+             FROM sleep_stages WHERE sleep_log_id = ? GROUP BY stage",
+        )
+        .bind(&o.log_id)
+        .fetch_all(&pool)
+        .await
+        .context("reading sleep_stages totals")?;
+        let mut theirs: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+        for st in &g.stages {
+            let e = theirs.entry(st.stage.clone()).or_default();
+            e.0 += st.duration_seconds;
+            e.1 += 1;
+        }
+        let mut mine: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+        for r in &srows {
+            let stage: String = r.try_get("stage").context("stage")?;
+            let s: String = r.try_get("s").context("sum")?;
+            let n: i64 = r.try_get("n").context("count")?;
+            mine.insert(stage, (s.parse().unwrap_or(-1), n));
+        }
+        if theirs == mine {
+            nights_same += 1;
+        } else {
+            nights_differ += 1;
+            println!("  ⚠ stages differ on {stu}: google {theirs:?} vs ours {mine:?}");
+        }
+    }
+    println!("  stage series: {nights_same} night(s) identical, {nights_differ} differ");
+    Ok(())
+}
+
+/// Google's HRV samples against `hrv_intraday.rmssd`, joined on the CIVIL
+/// timestamp — the table has no ts_utc column. (#260)
+///
+/// ⚠ READ-ONLY.
+async fn google_compare_hrv(days: i64) -> Result<()> {
+    use std::collections::BTreeMap;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let start = chrono::Utc::now() - chrono::Duration::days(days);
+    let filter = format!(
+        "heart_rate_variability.sample_time.physical_time >= \"{}\"",
+        start.format("%Y-%m-%dT%H:%M:%SZ")
+    );
+    let points = backend::google::health::fetch_points_filtered(
+        &http,
+        &token,
+        "heart-rate-variability",
+        &filter,
+    )
+    .await?;
+    let mut g: BTreeMap<String, f64> = BTreeMap::new();
+    let mut unreadable = 0usize;
+    for pt in &points {
+        let v = pt
+            .pointer("/heartRateVariability/rootMeanSquareOfSuccessiveDifferencesMilliseconds")
+            .and_then(backend::google::health::numeric);
+        let ts = backend::google::health::civil_datetime(
+            pt.pointer("/heartRateVariability/sampleTime/civilTime"),
+        );
+        let (Some(v), Some(ts)) = (v, ts) else {
+            unreadable += 1;
+            continue;
+        };
+        g.insert(ts, v);
+    }
+    use sqlx::Row as _;
+    // A day of slack on the wall-clock read: the fetch bound was physical.
+    let start_s = (start - chrono::Duration::days(1))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let rows = sqlx::query(
+        "SELECT CAST(ts AS CHAR) t, CAST(rmssd AS CHAR) v FROM hrv_intraday WHERE ts >= ?",
+    )
+    .bind(&start_s)
+    .fetch_all(&pool)
+    .await
+    .context("reading hrv_intraday")?;
+    let mut o: BTreeMap<String, f64> = BTreeMap::new();
+    for r in rows {
+        let t: String = r.try_get("t").context("ts")?;
+        let raw: String = r.try_get("v").context("rmssd")?;
+        o.insert(t, raw.parse().context("rmssd not a number")?);
+    }
+    println!(
+        "heart-rate-variability/rmssd vs hrv_intraday.rmssd — last {days} day(s): google {} ({unreadable} unreadable), ours {}",
+        g.len(),
+        o.len()
+    );
+    let shared: Vec<(&String, f64, f64)> = g
+        .iter()
+        .filter_map(|(t, gv)| o.get(t).map(|ov| (t, *gv, *ov)))
+        .collect();
+    let only_g = g.keys().filter(|t| !o.contains_key(*t)).count();
+    let only_o = o.keys().filter(|t| !g.contains_key(*t)).count();
+    println!(
+        "  shared civil ts: {}   only google: {only_g} (GAIN)   only ours: {only_o} (LOSE)",
+        shared.len()
+    );
+    if !shared.is_empty() {
+        let identical = shared
+            .iter()
+            .filter(|(_, gv, ov)| (gv - ov).abs() < 0.0005)
+            .count();
+        let mut deltas: Vec<f64> = shared.iter().map(|(_, gv, ov)| (gv - ov).abs()).collect();
+        deltas.sort_by(f64::total_cmp);
+        let at = |q: f64| deltas[((deltas.len() - 1) as f64 * q) as usize];
+        println!(
+            "  within our 0.001 step: {identical}/{}   |Δms| p50 {:.3}  p90 {:.3}  p99 {:.3}  worst {:.3}",
+            shared.len(),
+            at(0.50),
+            at(0.90),
+            at(0.99),
+            deltas.last().copied().unwrap_or(0.0)
+        );
+    }
+    Ok(())
+}
+
+/// Google's zone bounds + zone-interval sums against `heart_rate_zones`. (#260)
+///
+/// Prints every DISTINCT `heartRateZoneType` seen, so the enum→display-name
+/// mapping is verified against the live vocabulary rather than assumed.
+///
+/// ⚠ READ-ONLY.
+async fn google_compare_zones(days: i64) -> Result<()> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let since = (chrono::Utc::now() - chrono::Duration::days(days)).date_naive();
+
+    let bounds = backend::google::health::fetch_points_filtered(
+        &http,
+        &token,
+        "daily-heart-rate-zones",
+        &format!("daily_heart_rate_zones.date >= \"{since}\""),
+    )
+    .await?;
+    let intervals = backend::google::health::fetch_points_filtered(
+        &http,
+        &token,
+        "time-in-heart-rate-zone",
+        &format!(
+            "time_in_heart_rate_zone.interval.start_time >= \"{}T00:00:00Z\"",
+            since - chrono::Duration::days(1)
+        ),
+    )
+    .await?;
+
+    let mut vocab: BTreeSet<String> = BTreeSet::new();
+    // google side: (date, display zone) -> (min, max, minutes)
+    let mut g: BTreeMap<(String, String), (i64, i64, i64)> = BTreeMap::new();
+    let mut secs: BTreeMap<(String, String), i64> = BTreeMap::new();
+    for pt in &intervals {
+        let Some(t) = pt.get("timeInHeartRateZone") else {
+            continue;
+        };
+        let (Some(zt), Some(sp), Some(so), Some(ep)) = (
+            t.get("heartRateZoneType").and_then(|v| v.as_str()),
+            t.pointer("/interval/startTime").and_then(|v| v.as_str()),
+            t.pointer("/interval/startUtcOffset")
+                .and_then(|v| v.as_str()),
+            t.pointer("/interval/endTime").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        vocab.insert(zt.to_string());
+        let Some(zone) = backend::google::sync::zone_display_name(zt) else {
+            continue;
+        };
+        let (Some(cs), Ok(s), Ok(e)) = (
+            backend::google::health::wall_clock_from_physical(sp, so),
+            chrono::DateTime::parse_from_rfc3339(sp),
+            chrono::DateTime::parse_from_rfc3339(ep),
+        ) else {
+            continue;
+        };
+        *secs
+            .entry((cs[..10].to_string(), zone.to_string()))
+            .or_default() += (e - s).num_seconds();
+    }
+    for pt in &bounds {
+        let Some(d) = pt.get("dailyHeartRateZones") else {
+            continue;
+        };
+        let Some(date) = d.get("date").and_then(|v| {
+            Some(format!(
+                "{:04}-{:02}-{:02}",
+                v.get("year")?.as_i64()?,
+                v.get("month")?.as_i64()?,
+                v.get("day")?.as_i64()?
+            ))
+        }) else {
+            continue;
+        };
+        for z in d
+            .get("heartRateZones")
+            .and_then(|v| v.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+        {
+            let (Some(zt), Some(min), Some(max)) = (
+                z.get("heartRateZoneType").and_then(|v| v.as_str()),
+                z.get("minBeatsPerMinute")
+                    .and_then(backend::google::health::numeric),
+                z.get("maxBeatsPerMinute")
+                    .and_then(backend::google::health::numeric),
+            ) else {
+                continue;
+            };
+            vocab.insert(zt.to_string());
+            let Some(zone) = backend::google::sync::zone_display_name(zt) else {
+                continue;
+            };
+            let minutes = secs
+                .get(&(date.clone(), zone.to_string()))
+                .map(|s| (*s + 30) / 60)
+                .unwrap_or(0);
+            g.insert(
+                (date.clone(), zone.to_string()),
+                (min.round() as i64, max.round() as i64, minutes),
+            );
+        }
+    }
+
+    use sqlx::Row as _;
+    let rows = sqlx::query(
+        "SELECT CAST(date AS CHAR) d, zone_name, CAST(minutes AS CHAR) m,          CAST(min_bpm AS CHAR) mn, CAST(max_bpm AS CHAR) mx, CAST(calories AS CHAR) c          FROM heart_rate_zones WHERE date >= ?",
+    )
+    .bind(since.to_string())
+    .fetch_all(&pool)
+    .await
+    .context("reading heart_rate_zones")?;
+    // Our side of one (date, zone) row: min_bpm, max_bpm, minutes.
+    type ZoneRow = (Option<i64>, Option<i64>, Option<i64>);
+    let mut o: BTreeMap<(String, String), ZoneRow> = BTreeMap::new();
+    let mut ours_calories = 0usize;
+    for r in &rows {
+        let d: String = r.try_get("d").context("date")?;
+        let z: String = r.try_get("zone_name").context("zone")?;
+        let num = |k: &str| -> Option<i64> {
+            r.try_get::<Option<String>, _>(k)
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse().ok())
+        };
+        if r.try_get::<Option<String>, _>("c").ok().flatten().is_some() {
+            ours_calories += 1;
+        }
+        o.insert((d, z), (num("mn"), num("mx"), num("m")));
+    }
+
+    println!(
+        "daily-heart-rate-zones + time-in-heart-rate-zone vs heart_rate_zones — last {days} day(s)"
+    );
+    println!("  google zone vocabulary seen: {vocab:?}");
+    println!(
+        "  google {} (date,zone) rows   ours {}   (ours with calories: {ours_calories})",
+        g.len(),
+        o.len()
+    );
+    let shared: Vec<_> = g.iter().filter(|(k, _)| o.contains_key(*k)).collect();
+    let only_g = g.keys().filter(|k| !o.contains_key(*k)).count();
+    let only_o = o.keys().filter(|k| !g.contains_key(*k)).count();
+    println!(
+        "  shared: {}   only google: {only_g} (GAIN)   only ours: {only_o} (LOSE)",
+        shared.len()
+    );
+    let (mut bounds_ok, mut bounds_bad, mut min_ok, mut min_bad) = (0usize, 0usize, 0usize, 0usize);
+    let mut worst_min: Option<(i64, String)> = None;
+    for (k, (gmin, gmax, gm)) in &shared {
+        let (omin, omax, om) = &o[*k];
+        if Some(*gmin) == *omin && Some(*gmax) == *omax {
+            bounds_ok += 1;
+        } else {
+            bounds_bad += 1;
+        }
+        match om {
+            Some(om) => {
+                let d = (gm - om).abs();
+                if d <= 1 {
+                    min_ok += 1;
+                } else {
+                    min_bad += 1;
+                    if worst_min.as_ref().is_none_or(|(w, _)| d > *w) {
+                        worst_min = Some((d, format!("{}/{} google {gm} ours {om}", k.0, k.1)));
+                    }
+                }
+            }
+            None => min_bad += 1,
+        }
+    }
+    println!("  bounds (min/max bpm): {bounds_ok} agree, {bounds_bad} differ");
+    println!("  minutes (±1): {min_ok} agree, {min_bad} differ");
+    if let Some((d, w)) = worst_min {
+        println!("    worst minutes gap {d} on {w}");
+    }
+    Ok(())
+}
+
+/// Google's step intervals against `steps_intraday`. (#260)
+///
+/// ⚠ THE INSTRUMENT FOR TWO OPEN QUESTIONS, before any writer exists:
+/// interval WIDTH (our rows are per-minute), and DOUBLE-COUNTING (the probe saw
+/// a watch device AND a phone package as dataSources). Reports per-source
+/// interval-width histograms and per-day sums per source against ours.
+///
+/// ⚠ READ-ONLY.
+async fn google_compare_steps(days: i64) -> Result<()> {
+    use std::collections::BTreeMap;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let start = chrono::Utc::now() - chrono::Duration::days(days);
+    let filter = format!(
+        "steps.interval.start_time >= \"{}\"",
+        start.format("%Y-%m-%dT%H:%M:%SZ")
+    );
+    let points =
+        backend::google::health::fetch_points_filtered(&http, &token, "steps", &filter).await?;
+
+    // source label -> (interval-width seconds -> count, civil day -> steps sum,
+    //                  minute-aligned count, total intervals)
+    struct Src {
+        widths: BTreeMap<i64, usize>,
+        day_sum: BTreeMap<String, i64>,
+        minute_aligned: usize,
+        n: usize,
+    }
+    let mut sources: BTreeMap<String, Src> = BTreeMap::new();
+    let mut unreadable = 0usize;
+    for pt in &points {
+        let label = format!(
+            "{}/{}",
+            pt.pointer("/dataSource/platform")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?"),
+            pt.pointer("/dataSource/application/packageName")
+                .and_then(|v| v.as_str())
+                .or_else(|| pt
+                    .pointer("/dataSource/device/displayName")
+                    .and_then(|v| v.as_str()))
+                .unwrap_or("?")
+        );
+        let Some(st) = pt.get("steps") else {
+            unreadable += 1;
+            continue;
+        };
+        let (Some(count), Some(sp), Some(so), Some(ep)) = (
+            st.get("count").and_then(backend::google::health::numeric),
+            st.pointer("/interval/startTime").and_then(|v| v.as_str()),
+            st.pointer("/interval/startUtcOffset")
+                .and_then(|v| v.as_str()),
+            st.pointer("/interval/endTime").and_then(|v| v.as_str()),
+        ) else {
+            unreadable += 1;
+            continue;
+        };
+        let (Some(cs), Ok(s), Ok(e)) = (
+            backend::google::health::wall_clock_from_physical(sp, so),
+            chrono::DateTime::parse_from_rfc3339(sp),
+            chrono::DateTime::parse_from_rfc3339(ep),
+        ) else {
+            unreadable += 1;
+            continue;
+        };
+        let src = sources.entry(label).or_insert_with(|| Src {
+            widths: BTreeMap::new(),
+            day_sum: BTreeMap::new(),
+            minute_aligned: 0,
+            n: 0,
+        });
+        let width = (e - s).num_seconds();
+        *src.widths.entry(width).or_default() += 1;
+        *src.day_sum.entry(cs[..10].to_string()).or_default() += count.round() as i64;
+        if width == 60 && cs.ends_with(":00") {
+            src.minute_aligned += 1;
+        }
+        src.n += 1;
+    }
+
+    use sqlx::Row as _;
+    let start_s = (start - chrono::Duration::days(1))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let rows = sqlx::query(
+        "SELECT CAST(ts AS CHAR) t, CAST(steps AS CHAR) v FROM steps_intraday WHERE ts >= ?",
+    )
+    .bind(&start_s)
+    .fetch_all(&pool)
+    .await
+    .context("reading steps_intraday")?;
+    let mut ours_day: BTreeMap<String, i64> = BTreeMap::new();
+    let mut ours_n = 0usize;
+    for r in rows {
+        let t: String = r.try_get("t").context("ts")?;
+        let raw: String = r.try_get("v").context("steps")?;
+        *ours_day.entry(t[..10].to_string()).or_default() +=
+            raw.parse::<i64>().context("steps not a number")?;
+        ours_n += 1;
+    }
+
+    println!(
+        "steps intervals vs steps_intraday — last {days} day(s): {} google point(s) ({unreadable} unreadable), {} of ours",
+        points.len(),
+        ours_n
+    );
+
+    // ⚠ THE CANDIDATE WRITE RULE, measured before any writer exists. v1 was
+    // per-minute MAX across the FITBIT/* sources — REFUTED 2026-09-02, it
+    // overcounts (60,732 vs ours 57,480 on shared minutes; worst minute
+    // google 82 vs ours 2). v2 is WATCH-FIRST: the device series where the
+    // device has the minute, the phone (MobileTrack) only where it does not —
+    // which is the shape of the daily deltas (ours ≈ Inspire on worn days to
+    // ±dozens, phone filling 08-26's watchless window). HEALTH_CONNECT points
+    // stay excluded as echoes with sub-minute widths.
+    {
+        let mut watch: BTreeMap<String, i64> = BTreeMap::new();
+        let mut phone: BTreeMap<String, i64> = BTreeMap::new();
+        for pt in &points {
+            let platform = pt
+                .pointer("/dataSource/platform")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            if platform != "FITBIT" {
+                continue;
+            }
+            let is_phone = pt
+                .pointer("/dataSource/device/displayName")
+                .and_then(|v| v.as_str())
+                .is_none_or(|d| d == "MobileTrack");
+            let Some(st) = pt.get("steps") else { continue };
+            let (Some(count), Some(sp), Some(so)) = (
+                st.get("count").and_then(backend::google::health::numeric),
+                st.pointer("/interval/startTime").and_then(|v| v.as_str()),
+                st.pointer("/interval/startUtcOffset")
+                    .and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            let Some(cs) = backend::google::health::wall_clock_from_physical(sp, so) else {
+                continue;
+            };
+            let minute = cs[..16].to_string();
+            let c = count.round() as i64;
+            let m = if is_phone { &mut phone } else { &mut watch };
+            m.entry(minute)
+                .and_modify(|v| *v = (*v).max(c))
+                .or_insert(c);
+        }
+        let mut cand: BTreeMap<String, i64> = watch.clone();
+        for (m, c) in &phone {
+            cand.entry(m.clone()).or_insert(*c);
+        }
+        // Ours per minute, over the same wall-clock span the candidate covers.
+        let mut ours_min: BTreeMap<String, i64> = BTreeMap::new();
+        let rows = sqlx::query(
+            "SELECT CAST(ts AS CHAR) t, CAST(steps AS CHAR) v FROM steps_intraday WHERE ts >= ?",
+        )
+        .bind(&start_s)
+        .fetch_all(&pool)
+        .await
+        .context("re-reading steps_intraday")?;
+        for r in rows {
+            let t: String = r.try_get("t").context("ts")?;
+            let raw: String = r.try_get("v").context("steps")?;
+            ours_min.insert(t[..16].to_string(), raw.parse().context("steps")?);
+        }
+        let span_start = cand.keys().next().cloned();
+        let in_span = |k: &String| span_start.as_ref().is_none_or(|s| k >= s);
+        let shared: Vec<(&String, i64, i64)> = cand
+            .iter()
+            .filter_map(|(m, c)| ours_min.get(m).map(|o| (m, *c, *o)))
+            .collect();
+        let identical = shared.iter().filter(|(_, c, o)| c == o).count();
+        let only_c = cand.keys().filter(|m| !ours_min.contains_key(*m)).count();
+        let only_o = ours_min
+            .keys()
+            .filter(|m| in_span(m) && !cand.contains_key(*m))
+            .count();
+        println!(
+            "  CANDIDATE watch-first over FITBIT/*: {} minute(s), shared {}, identical {}/{}",
+            cand.len(),
+            shared.len(),
+            identical,
+            shared.len()
+        );
+        println!(
+            "    only candidate: {only_c} (would GAIN)   only ours in span: {only_o} (would LOSE)"
+        );
+        let mut worst: Option<(i64, String)> = None;
+        let mut sum_c = 0i64;
+        let mut sum_o = 0i64;
+        for (m, c, o) in &shared {
+            sum_c += c;
+            sum_o += o;
+            let d = (c - o).abs();
+            if worst.as_ref().is_none_or(|(w, _)| d > *w) {
+                worst = Some((d, format!("{m} google {c} ours {o}")));
+            }
+        }
+        println!("    shared-minute sums: candidate {sum_c} vs ours {sum_o}");
+        if let Some((d, w)) = worst
+            && d > 0
+        {
+            println!("    worst minute gap {d} at {w}");
+        }
+    }
+    for (label, src) in &sources {
+        println!(
+            "  source {label}: {} interval(s), {} exactly minute-aligned",
+            src.n, src.minute_aligned
+        );
+        let mut widths: Vec<_> = src.widths.iter().collect();
+        widths.sort_by(|a, b| b.1.cmp(a.1));
+        let top: Vec<String> = widths
+            .iter()
+            .take(5)
+            .map(|(w, n)| format!("{w}s×{n}"))
+            .collect();
+        println!(
+            "    widths: {}{}",
+            top.join("  "),
+            if widths.len() > 5 { "  …" } else { "" }
+        );
+        for (day, sum) in &src.day_sum {
+            let o = ours_day.get(day);
+            println!(
+                "    {day}: google {sum}   ours {}   Δ {}",
+                o.map_or("—".to_string(), |v| v.to_string()),
+                o.map_or("—".to_string(), |v| (sum - v).to_string())
+            );
+        }
+    }
     Ok(())
 }
 

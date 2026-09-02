@@ -131,6 +131,26 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "Google heart-rate samples against heart_rate_intraday (#260)",
     ),
     (
+        "google-compare-sleep",
+        "[days]",
+        "Google sleep sessions against sleep + sleep_stages (#260)",
+    ),
+    (
+        "google-compare-hrv",
+        "[days]",
+        "Google HRV samples against hrv_intraday.rmssd (#260)",
+    ),
+    (
+        "google-compare-zones",
+        "[days]",
+        "Google zone bounds + interval sums against heart_rate_zones (#260)",
+    ),
+    (
+        "google-compare-steps",
+        "[days]",
+        "Google step intervals against steps_intraday: width + sources (#260)",
+    ),
+    (
         "rows-check",
         "<user> <since> <date>",
         "compare stored rows against a date",
