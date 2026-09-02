@@ -302,6 +302,19 @@ async fn main() -> Result<()> {
         "tz-census" => tz_census().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,
+        "google-compare-intraday" => {
+            let days = match flags {
+                [] => 7,
+                [d] => d
+                    .parse()
+                    .with_context(|| format!("days {d:?} is not a number"))?,
+                _ => {
+                    eprintln!("usage: backend google-compare-intraday [days]");
+                    std::process::exit(64);
+                }
+            };
+            google_compare_intraday(days).await
+        }
         "mirror-check" => {
             let [fixture] = flags else {
                 eprintln!("usage: backend mirror-check <fixture.json>");
@@ -983,6 +996,192 @@ fn report_pair(p: &Pair, theirs: &[backend::google::health::DailyValue], ours: &
         println!("  ⚠ only in ours: {only_ours}  (data the migration would LOSE)");
     }
     println!();
+}
+
+/// Google's intraday heart-rate against `heart_rate_intraday`, per second AND
+/// per minute. (#260)
+///
+/// The per-sample counterpart to {@link google_compare}: `PAIRS` is day-keyed
+/// by construction and cannot express this stream, so it gets its own readout —
+/// how many samples exist on each side, how many timestamps are shared, and the
+/// p50/p90/p99 of |Δbpm| over the shared ones.
+///
+/// # ⚠ TWO JOINS, because the clocks differ before the values do
+///
+/// Fitbit stores a sample every ~5-15 s, Google every ~2-3 s, and neither
+/// promises alignment — so an exact-second join can come back nearly empty on
+/// two streams that measure the SAME heart perfectly. That would read as "the
+/// data disagrees" when the truth is "the clocks tick differently". The
+/// minute-mean join answers the question the flip actually needs — same signal?
+/// — and the second join reports how much literal overlap exists.
+///
+/// # ⚠ JOINED ON `ts_utc`, NEVER `ts`
+///
+/// `ts` is a wall clock, and the Fitbit rows' `tz` is NULL on the days the
+/// backfill CLI never reached — a wall-clock join would silently compare
+/// different instants across a DST boundary. Rows without `ts_utc` cannot be
+/// joined at all and are counted out loud instead of vanishing from the
+/// denominator.
+///
+/// ⚠ READ-ONLY, like `google-compare`. It writes nothing.
+async fn google_compare_intraday(days: i64) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+
+    let end = chrono::Utc::now();
+    let start = end - chrono::Duration::days(days);
+    let filter = format!(
+        "heart_rate.sample_time.physical_time >= \"{}\" AND heart_rate.sample_time.physical_time < \"{}\"",
+        start.format("%Y-%m-%dT%H:%M:%SZ"),
+        end.format("%Y-%m-%dT%H:%M:%SZ"),
+    );
+    let points =
+        backend::google::health::fetch_points_filtered(&http, &token, "heart-rate", &filter)
+            .await
+            .context("fetching filtered heart-rate")?;
+
+    // Google's side, keyed by UTC second. A duplicate second keeps the LAST
+    // point and is counted — the writer's `ON DUPLICATE KEY` does the same, so
+    // the comparison sees what a sync would have stored.
+    let mut g: BTreeMap<String, f64> = BTreeMap::new();
+    let (mut unreadable, mut dup_seconds) = (0usize, 0usize);
+    for pt in &points {
+        let bpm = pt
+            .pointer("/heartRate/beatsPerMinute")
+            .and_then(backend::google::health::numeric);
+        let ts = pt
+            .pointer("/heartRate/sampleTime/physicalTime")
+            .and_then(|v| v.as_str())
+            .and_then(backend::google::health::rfc3339_to_utc_datetime);
+        let (Some(bpm), Some(ts)) = (bpm, ts) else {
+            unreadable += 1;
+            continue;
+        };
+        if g.insert(ts, bpm).is_some() {
+            dup_seconds += 1;
+        }
+    }
+
+    // Our side of the same window.
+    use sqlx::Row as _;
+    let start_s = start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let end_s = end.format("%Y-%m-%d %H:%M:%S").to_string();
+    let rows = sqlx::query(
+        "SELECT CAST(ts_utc AS CHAR) t, CAST(bpm AS CHAR) v FROM heart_rate_intraday \
+         WHERE ts_utc >= ? AND ts_utc < ?",
+    )
+    .bind(&start_s)
+    .bind(&end_s)
+    .fetch_all(&pool)
+    .await
+    .context("reading heart_rate_intraday")?;
+    let mut o: BTreeMap<String, f64> = BTreeMap::new();
+    for r in rows {
+        let t: String = r.try_get("t").context("ts_utc column")?;
+        let raw: String = r.try_get("v").context("bpm column")?;
+        let v: f64 = raw
+            .parse()
+            .with_context(|| format!("bpm value {raw:?} is not a number"))?;
+        o.insert(t, v);
+    }
+    // ⚠ Counted on the WALL clock, because a row with no ts_utc has nothing
+    // else — approximate at the window's edges and exact in its interior, and a
+    // count is all this is.
+    let no_utc: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM heart_rate_intraday \
+         WHERE ts_utc IS NULL AND ts >= ? AND ts < ?",
+    )
+    .bind(&start_s)
+    .bind(&end_s)
+    .fetch_one(&pool)
+    .await
+    .context("counting NULL-ts_utc rows")?;
+
+    println!(
+        "heart-rate/heartRate/beatsPerMinute vs heart_rate_intraday.bpm — last {days} day(s), {start_s}Z..{end_s}Z"
+    );
+    println!(
+        "  google {:>7} samples  ({unreadable} unreadable, {dup_seconds} duplicate seconds)",
+        g.len()
+    );
+    print!("  ours   {:>7} samples", o.len());
+    if no_utc > 0 {
+        print!("  ⚠ +{no_utc} in-window rows with NULL ts_utc — unjoinable");
+    }
+    println!();
+
+    let spread = |label: &str, g: &BTreeMap<String, f64>, o: &BTreeMap<String, f64>| {
+        let shared: Vec<(&String, f64, f64)> = g
+            .iter()
+            .filter_map(|(t, gv)| o.get(t).map(|ov| (t, *gv, *ov)))
+            .collect();
+        println!(
+            "  [{label}] shared: {} of google {}, ours {}",
+            shared.len(),
+            g.len(),
+            o.len()
+        );
+        if shared.is_empty() {
+            return;
+        }
+        let identical = shared.iter().filter(|(_, gv, ov)| gv == ov).count();
+        let mut deltas: Vec<f64> = shared.iter().map(|(_, gv, ov)| (gv - ov).abs()).collect();
+        deltas.sort_by(f64::total_cmp);
+        let at = |q: f64| deltas[((deltas.len() - 1) as f64 * q) as usize];
+        let (worst_t, worst_g, worst_o) = shared
+            .iter()
+            .max_by(|a, b| (a.1 - a.2).abs().total_cmp(&(b.1 - b.2).abs()))
+            .map(|(t, gv, ov)| ((*t).clone(), *gv, *ov))
+            .expect("shared is non-empty");
+        println!(
+            "    identical: {identical}/{}   |Δbpm| p50 {:.2}  p90 {:.2}  p99 {:.2}  worst {:.2} at {worst_t}Z (google {worst_g:.1}, ours {worst_o:.1})",
+            shared.len(),
+            at(0.50),
+            at(0.90),
+            at(0.99),
+            (worst_g - worst_o).abs(),
+        );
+        let higher = shared.iter().filter(|(_, gv, ov)| gv > ov).count();
+        let lower = shared.iter().filter(|(_, gv, ov)| gv < ov).count();
+        println!("    direction: google higher on {higher}, lower on {lower}");
+    };
+
+    spread("exact second", &g, &o);
+
+    // Minute means. The key is the DATETIME string cut at the minute, which is
+    // safe exactly because the strings are fixed-width `YYYY-MM-DD HH:MM:SS`.
+    let by_minute = |m: &BTreeMap<String, f64>| -> BTreeMap<String, f64> {
+        let mut acc: BTreeMap<String, (f64, u32)> = BTreeMap::new();
+        for (t, v) in m {
+            let e = acc.entry(t[..16].to_string()).or_insert((0.0, 0));
+            e.0 += v;
+            e.1 += 1;
+        }
+        acc.into_iter()
+            .map(|(t, (sum, n))| (t, sum / f64::from(n)))
+            .collect()
+    };
+    spread("minute mean", &by_minute(&g), &by_minute(&o));
+
+    // ⚠ The same direction split as report_pair, on coverage rather than value:
+    // minutes only one side has. "Only google" is what the flip would GAIN,
+    // "only ours" is what it would LOSE.
+    let (gm, om) = (by_minute(&g), by_minute(&o));
+    let only_google = gm.keys().filter(|t| !om.contains_key(*t)).count();
+    let only_ours = om.keys().filter(|t| !gm.contains_key(*t)).count();
+    println!("  minutes only in google: {only_google}  (GAIN)   only in ours: {only_ours}  (LOSE)");
+    Ok(())
 }
 
 /// What span of history does each biometric table actually hold? (#260)

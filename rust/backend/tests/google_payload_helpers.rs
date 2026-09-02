@@ -6,7 +6,9 @@
 
 use serde_json::json;
 
-use backend::google::health::{civil_datetime, numeric, rfc3339_to_utc_datetime};
+use backend::google::health::{
+    civil_datetime, numeric, rfc3339_to_utc_datetime, utc_datetime_to_rfc3339,
+};
 
 #[test]
 fn civil_time_becomes_a_datetime_and_seconds_are_optional() {
@@ -70,4 +72,25 @@ fn a_quoted_number_reads_and_a_non_numeric_string_still_does_not() {
     // ⚠ NOT a permissive fallback: a value we cannot read is not one we guess.
     assert_eq!(numeric(&json!("n/a")), None);
     assert_eq!(numeric(&json!(null)), None);
+}
+
+/// The high-water mark crosses from `MAX(ts_utc)` back into a `filter` bound.
+/// A splice instead of a parse would happily emit a filter from a mangled
+/// readout; the round trip below is the property the sync path leans on.
+#[test]
+fn a_stored_utc_datetime_round_trips_into_a_filter_bound() {
+    assert_eq!(
+        utc_datetime_to_rfc3339("2026-09-01 06:05:09").as_deref(),
+        Some("2026-09-01T06:05:09Z")
+    );
+    assert_eq!(
+        utc_datetime_to_rfc3339("2026-09-01 06:05:09")
+            .as_deref()
+            .and_then(rfc3339_to_utc_datetime)
+            .as_deref(),
+        Some("2026-09-01 06:05:09"),
+        "the two converters must be inverses on the stored format"
+    );
+    assert_eq!(utc_datetime_to_rfc3339("2026-09-01T06:05:09Z"), None);
+    assert_eq!(utc_datetime_to_rfc3339("not a time"), None);
 }

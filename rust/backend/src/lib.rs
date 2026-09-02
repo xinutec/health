@@ -126,6 +126,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "Google against the stored rows, per stream",
     ),
     (
+        "google-compare-intraday",
+        "[days]",
+        "Google heart-rate samples against heart_rate_intraday (#260)",
+    ),
+    (
         "rows-check",
         "<user> <since> <date>",
         "compare stored rows against a date",

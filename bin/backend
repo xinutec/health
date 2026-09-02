@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/_devshell.sh"
+# The container's CLI name, honoured in a checkout (#1309). The image installs
+# the Lean-linked release binary at bin/backend (Dockerfile) and every container
+# command calls it by that name; locally the binary lives under a per-machine
+# cargo target dir, so this cannot be a path in a doc. `cargo run` resolves the
+# target dir itself and rebuilds when stale — the shim can never exec a binary
+# older than the tree.
+exec cargo run --release --quiet \
+  --manifest-path "$(dirname "${BASH_SOURCE[0]}")/../rust/Cargo.toml" \
+  -p backend -- "$@"

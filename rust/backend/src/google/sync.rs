@@ -494,11 +494,20 @@ struct Activity {
 /// that, and pretending otherwise by deriving them would be invention.
 /// `heart_rate_intraday` from Google's `heart-rate` list type.
 ///
-/// # Why this is a `list` walk and not a rollup
+/// # Why this is a FILTERED `list` walk and not a rollup or a full walk
 ///
 /// `heart-rate` carries one point per SAMPLE, not per day, so `dailyRollUp`
-/// would collapse exactly the resolution this table exists for. The paging is
-/// `fetch_all_points`, shared with the daily writers.
+/// would collapse exactly the resolution this table exists for. And the
+/// unbounded walk cannot work either — first written that way, it would have
+/// hit `MAX_PAGES` years short of the oldest point on every single run,
+/// because the list is newest-first at ~34,000 points a day. The fetch is
+/// bounded to everything after the stored high-water mark, less an hour of
+/// overlap so a partially-delivered boundary is re-read rather than trusted
+/// (the `ON DUPLICATE KEY` makes the overlap free).
+///
+/// ⚠ A TABLE WITH NO `ts_utc` YET starts 7 days back, not at all of history:
+/// #260's decision is that Fitbit's history stays and Google writes only from
+/// the cutover forward.
 ///
 /// # ⚠ THE WALL CLOCK IS THE KEY, AND GOOGLE GIVES IT DIRECTLY
 ///
@@ -520,9 +529,35 @@ pub async fn sync_heart_rate_intraday(
     access_token: &str,
     user_id: &str,
 ) -> Result<usize> {
-    let points = crate::google::health::fetch_all_points(http, access_token, "heart-rate")
-        .await
-        .context("fetching heart-rate")?;
+    // The high-water mark. CAST AS CHAR for the same reason read_daily_column
+    // casts: crossing as a string sidesteps the DECIMAL/DATETIME decode traps
+    // that only fire on real rows.
+    let high: Option<String> = sqlx::query_scalar(
+        "SELECT CAST(MAX(ts_utc) AS CHAR) FROM heart_rate_intraday \
+         WHERE user_id = ? AND ts_utc IS NOT NULL",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .context("reading the heart_rate_intraday high-water mark")?;
+
+    let since = match &high {
+        Some(ts) => {
+            let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                .with_context(|| format!("unreadable high-water mark {ts:?}"))?;
+            (parsed - chrono::Duration::hours(1))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+        }
+        None => (chrono::Utc::now() - chrono::Duration::days(7))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+    };
+    let filter = format!("heart_rate.sample_time.physical_time >= \"{since}\"");
+    let points =
+        crate::google::health::fetch_points_filtered(http, access_token, "heart-rate", &filter)
+            .await
+            .context("fetching heart-rate")?;
 
     let mut written = 0usize;
     let mut skipped = 0usize;

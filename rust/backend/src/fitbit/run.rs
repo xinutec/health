@@ -293,6 +293,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google spo2_daily failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("heart_rate_intraday") {
+        match crate::google::sync::sync_heart_rate_intraday(pool, http, &token, &user_id).await {
+            Ok(n) => tracing::info!("[{user_id}] google heart_rate_intraday: {n} sample(s)"),
+            Err(e) => tracing::error!("[{user_id}] google heart_rate_intraday failed: {e:#}"),
+        }
+    }
     // ⚠ NOT GATED ON THE ROSTER, and deliberately so. `daily_activity` is the
     // one table whose COLUMNS need different owners — Fitbit is the only source
     // there has ever been for `minutes_sedentary` and `active_score`, so
@@ -383,11 +389,13 @@ async fn forward_pass(
     // (#260). Re-adding `sync_body` here would clobber them nightly with
     // Fitbit's stale carry-forward. `sync::body` exists for the Google path and
     // for a historical re-read, not for this pass.
-    try_stream(user_id, "HR intraday", async {
-        sync::heartrate::sync_heart_rate_intraday(client, pool, access, user_id, &dates, tz_for)
-            .await
-    })
-    .await?;
+    if crate::google::source::fitbit_still_owns("heart_rate_intraday") {
+        try_stream(user_id, "HR intraday", async {
+            sync::heartrate::sync_heart_rate_intraday(client, pool, access, user_id, &dates, tz_for)
+                .await
+        })
+        .await?;
+    }
     try_stream(user_id, "steps intraday", async {
         sync::steps::sync_steps_intraday(client, pool, access, user_id, &dates, tz_for).await
     })
@@ -470,6 +478,13 @@ async fn backfill_pass(
     // captures. A failure in either does NOT fail the day: the return value
     // that drives the streak is heart rate's alone, because that is the stream
     // whose emptiness means history has run out.
+    // ⚠ NOT gated on the roster, unlike the forward pass, and deliberately so
+    // for three reasons at once: this walk is the CURSOR DRIVER the sleep and
+    // activity ride-alongs depend on; it touches only historical days, which
+    // Google's writer (high-water mark forward) never will; and the two sources
+    // were measured bit-identical (google-compare-intraday, 2026-09-02), so
+    // even an overlap writes the same value. Gating it here would silently
+    // stall the other two streams' backfill.
     let hr = DayStream {
         name: "hr_intraday".to_string(),
         max_empty_days: DEFAULT_MAX_EMPTY_DAYS,

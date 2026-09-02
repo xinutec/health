@@ -329,6 +329,40 @@ pub async fn fetch_all_points(
     access_token: &str,
     data_type: &str,
 ) -> Result<Vec<serde_json::Value>> {
+    fetch_points(http, access_token, data_type, None).await
+}
+
+/// {@link fetch_all_points}, bounded by an AIP-160 `filter` expression.
+///
+/// # ⚠ AN INTRADAY TYPE CANNOT BE WALKED WITHOUT ONE
+///
+/// `heart-rate` carries ~34,000 points a day and the list is newest-first with
+/// no ascending sort, so the unbounded walk hits `MAX_PAGES` years short of the
+/// oldest point — it cannot ever finish, only fail. The filter is how the API
+/// bounds a walk by time. The fields are the PROTO names, snake_case, NOT the
+/// camelCase the JSON payload spells them with:
+///
+///   heart_rate.sample_time.physical_time >= "2026-08-25T00:00:00Z"
+///     AND heart_rate.sample_time.physical_time < "2026-09-01T00:00:00Z"
+///
+/// Only `>=` and `<` are documented, and the field family follows the type's
+/// shape: `sample_time` for sample types, `interval.start_time` for interval
+/// types, `interval.end_time` for sleep sessions.
+pub async fn fetch_points_filtered(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    filter: &str,
+) -> Result<Vec<serde_json::Value>> {
+    fetch_points(http, access_token, data_type, Some(filter)).await
+}
+
+async fn fetch_points(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    filter: Option<&str>,
+) -> Result<Vec<serde_json::Value>> {
     let mut out = Vec::new();
     let mut page_token: Option<String> = None;
     let mut pages = 0u32;
@@ -337,7 +371,16 @@ pub async fn fetch_all_points(
         let mut url =
             reqwest::Url::parse(&format!("{BASE}/users/me/dataTypes/{data_type}/dataPoints"))
                 .with_context(|| format!("building the {data_type} URL"))?;
-        url.query_pairs_mut().append_pair("pageSize", "1000");
+        // ⚠ 10,000 — the documented maximum — WHEN FILTERED, because filtered
+        // means intraday and 1,000 per page turns one week of heart-rate into
+        // 24 round trips. Unfiltered stays at 1,000: that path is the daily
+        // aggregates, one page either way, and it is the page size every prod
+        // comparison to date ran under.
+        url.query_pairs_mut()
+            .append_pair("pageSize", if filter.is_some() { "10000" } else { "1000" });
+        if let Some(f) = filter {
+            url.query_pairs_mut().append_pair("filter", f);
+        }
         if let Some(t) = &page_token {
             url.query_pairs_mut().append_pair("pageToken", t);
         }
@@ -427,6 +470,18 @@ pub fn rfc3339_to_utc_datetime(s: &str) -> Option<String> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// A UTC `DATETIME` string as the RFC-3339 instant a `filter` expression wants.
+///
+/// The inverse of {@link rfc3339_to_utc_datetime}, for turning a stored
+/// high-water mark (`MAX(ts_utc)`) back into a `physical_time >= "…"` bound.
+/// Parsed, not string-spliced, so a malformed readout is a `None` rather than a
+/// filter the API rejects at run time.
+pub fn utc_datetime_to_rfc3339(s: &str) -> Option<String> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
 /// A JSON number, whether or not Google quoted it.

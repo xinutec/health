@@ -79,8 +79,11 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "heart_rate_intraday",
-        owner: Owner::Fitbit,
-        why: "google has heart-rate as intraday samples with physicalTime — client not written yet",
+        owner: Owner::Google,
+        why: "google-compare-intraday over 7 days (2026-09-02): 259,082 of 259,082 shared seconds \
+              IDENTICAL, |Δbpm| p99 0.00 — google's heart-rate IS the Fitbit stream re-served, \
+              sample for sample. The instrument is not blind: it reported 10 rows and 1 minute \
+              only-in-ours at the window edge",
     },
     Stream {
         name: "hrv_intraday",
@@ -104,9 +107,11 @@ pub const STREAMS: &[Stream] = &[
     },
     Stream {
         name: "sleep",
-        owner: Owner::HealthConnect,
-        why: "google's `list` is the supported action for sleep and returns 200 with NO dataPoints. \
-              Health Connect has it (00:21-10:08, 9h47m, written by com.fitbit.FitbitMobile)",
+        owner: Owner::Fitbit,
+        why: "google DOES serve full sleep sessions — probe 2026-09-01: interval.*, \
+              metadata.mainSleep, stages[], shortAwakenings[], summary minutes* (the earlier \
+              'list returns 200 with NO dataPoints' was measured before data arrived and is \
+              REFUTED). Client not written yet; #260 orders it after heart_rate_intraday",
     },
     Stream {
         name: "steps_intraday",
@@ -152,6 +157,7 @@ pub fn at_risk() -> Vec<&'static Stream> {
 pub const HAS_WRITER: &[&str] = &[
     "body",
     "breathing_rate",
+    "heart_rate_intraday",
     "hrv_daily",
     "skin_temperature",
     "spo2_daily",

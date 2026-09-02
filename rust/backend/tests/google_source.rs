@@ -108,19 +108,23 @@ fn skin_temperature_is_google_owned_and_written() {
     assert!(has_writer("skin_temperature"));
 }
 
-/// ⚠ THE DAILY AND INTRADAY STREAMS OF ONE SENSOR ARE SEPARATE ENTRIES, and
-/// only the daily ones have Google writers. `hrv_daily` moved while
-/// `hrv_intraday` cannot: Google's `heart-rate-variability` carries only RMSSD,
-/// and our table also has `coverage`, `hf` and `lf`. Gating both on a shared
-/// prefix would strand three columns with no source.
+/// ⚠ THE DAILY AND INTRADAY STREAMS OF ONE SENSOR ARE SEPARATE ENTRIES that
+/// move one by one, each on its own measurement. `hrv_daily` moved while
+/// `hrv_intraday` has not: Google's `heart-rate-variability` carries only
+/// RMSSD, and our table also has `coverage`, `hf` and `lf`. Gating both on a
+/// shared prefix would strand three columns with no source.
+///
+/// `heart_rate_intraday` WAS in this list until 2026-09-02, when it moved on
+/// its own evidence (259,082/259,082 shared seconds identical over 7 days) —
+/// which is exactly the point: the sibling stays put not because intraday
+/// streams stay put, but because ITS columns still lack a source.
 #[test]
 fn the_intraday_siblings_did_not_move_with_their_daily_streams() {
-    for name in ["hrv_intraday", "heart_rate_intraday"] {
-        assert!(
-            fitbit_still_owns(name),
-            "{name} has no Google writer — flipping it would strand its columns"
-        );
-    }
+    let name = "hrv_intraday";
+    assert!(
+        fitbit_still_owns(name),
+        "{name} has no Google writer — flipping it would strand its columns"
+    );
 }
 
 /// ⚠ `daily_activity` STAYS ON FITBIT while a Google writer also exists — the
