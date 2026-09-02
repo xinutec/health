@@ -34,8 +34,8 @@ export const SOURCE_LABEL: Record<PointKind, string> = {
  * leg with no cached route draws the Kalman-FILTERED points instead (the
  * uncached-overground branch of `episode-geometry.ts`), and calling those raw
  * overstates them: the filter can sit tens of metres off the fix it came from,
- * which is what made a fix Nextcloud drew at 51.566181,-0.278725 appear at
- * 51.566050,-0.279866 here — 80 m away (#266).
+ * which is what made a fix appear here 80 m away from where Nextcloud drew the
+ * same instant (#266).
  *
  * The backend cannot currently be asked which it was, since both branches ship
  * `kind: "raw"`, so the mode is what separates them — and it only separates the

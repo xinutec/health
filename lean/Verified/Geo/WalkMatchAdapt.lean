@@ -109,8 +109,8 @@ On literals, so these fail on a rule change rather than on a data change. The
 values are the ones `quant-twin.ts`'s `quantPt` produces for the same inputs. -/
 
 -- London, and the sign that makes the rounding rule matter.
-#guard (toQ 51.5661113948718 (-0.2784117025641026)).la == 515661114
-#guard (toQ 51.5661113948718 (-0.2784117025641026)).lo == -2784117
+#guard (toQ 51.5661113948718 (-0.1784117025641026)).la == 515661114
+#guard (toQ 51.5661113948718 (-0.1784117025641026)).lo == -1784117
 
 -- Ties go toward +∞, NOT away from zero. `toFixed` would give -1 for the second.
 #guard (toQ 0.00000005 0).la == 1

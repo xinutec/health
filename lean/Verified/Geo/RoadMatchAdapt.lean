@@ -80,8 +80,8 @@ On literals, so these fail on a rule change rather than on a data change. -/
 #guard (waysToQ #[{ osmId := 42, subtype := some "primary", coords := #[⟨51.5, -0.1⟩, ⟨51.6, -0.2⟩] }])[0]!.coords.size == 2
 
 -- Same grid as the walk arm, on the London sign that makes the rule matter.
-#guard (waysToQ #[{ osmId := 1, coords := #[⟨51.5661113948718, -0.2784117025641026⟩] }])[0]!.coords[0]!.lo
-  == -2784117
+#guard (waysToQ #[{ osmId := 1, coords := #[⟨51.5661113948718, -0.1784117025641026⟩] }])[0]!.coords[0]!.lo
+  == -1784117
 
 -- No ways is nothing to match against, and the matcher says so rather than
 -- inventing a line. This is the answer the shell gave.

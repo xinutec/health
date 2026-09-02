@@ -48,7 +48,10 @@ def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option G
         let e := (worst - MAX_PLAUSIBLE_SPEED_KMH) / SPEED_PENALTY_SIGMA_KMH
         0.0 - 0.5 * (e * e)
 
--- Parity with the real `buildGeometricFeasibility` (Node/V8). Home = (51.55,-0.28).
+-- Parity with the real `buildGeometricFeasibility` (Node/V8). Home is the
+-- SYNTHETIC anchor (51.55, 2.22) — every lon in this file is shifted +2.5 from
+-- the capture (#859); distances depend only on the lats and delta-lon, so the
+-- expected values held.
 -- NOTE: this factor's value flows through `haversineMeters` (sin/cos/atan2/sqrt),
 -- where Lean's libm and V8's can differ by ≤1 ULP on some inputs — so the penalty
 -- is checked ULP-close (`approx`), not bit-equal. Exact-zero branches stay `==`.
@@ -56,15 +59,15 @@ def geometricFeasibility (s : State) (obsTs : Float) (prevFix nextFix : Option G
 private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 private def fx (ts lat lon : Float) : GpsFix := ⟨ts, lat, lon⟩
 private def stt (m : Mode) (pid : Option Int) : State := ⟨m, pid, none⟩
-private def home : Option (Float × Float) := some (51.55, -0.28)
+private def home : Option (Float × Float) := some (51.55, 2.22)
 
-#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 (-0.11))) none home)
+#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) none home)
   (-31.7255987889194)
-#guard geometricFeasibility (stt .stationary (some 5)) 5000 (some (fx 1000 51.5501 (-0.2801))) none home == 0
-#guard geometricFeasibility (stt .walking none) 1180 (some (fx 1000 51.53 (-0.11))) none home == 0
-#guard geometricFeasibility (stt .stationary (some 9)) 1180 (some (fx 1000 51.53 (-0.11))) none none == 0
-#guard geometricFeasibility (stt .stationary (some 5)) 1000 (some (fx 1000 51.53 (-0.11))) none home == 0
-#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 (-0.11))) (some (fx 1300 51.60 (-0.30))) home)
+#guard geometricFeasibility (stt .stationary (some 5)) 5000 (some (fx 1000 51.5501 2.2199)) none home == 0
+#guard geometricFeasibility (stt .walking none) 1180 (some (fx 1000 51.53 2.39)) none home == 0
+#guard geometricFeasibility (stt .stationary (some 9)) 1180 (some (fx 1000 51.53 2.39)) none none == 0
+#guard geometricFeasibility (stt .stationary (some 5)) 1000 (some (fx 1000 51.53 2.39)) none home == 0
+#guard approx (geometricFeasibility (stt .stationary (some 5)) 1180 (some (fx 1000 51.53 2.39)) (some (fx 1300 51.60 2.20)) home)
   (-31.7255987889194)
 
 end Verified.Hsmm.Geometric

@@ -86,7 +86,7 @@ for (const tz of ["UTC", "Europe/London", "Asia/Tokyo"]) {
 console.log("--- how JSON.stringify renders a number ---");
 for (const v of [
 	120, 17, 100, 0, -0, 1, -1,
-	51.5696612, -0.2786201, 0.5, -0.5,
+	51.5096612, -0.1786201, 0.5, -0.5,
 	1e20, 1e21, 1e-7, 123456789012345680000,
 	9007199254740991, 0.1, 1.5, 2.675,
 ]) {

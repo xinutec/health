@@ -84,10 +84,15 @@ for (const f of readdirSync(CAP).sort()) {
 
   const inputs = { homeTz: "UTC", knownPlaces: places, venuePriors: null,
                    hsmmDecode, busRouteCache, railRouteCache, railStopsCache };
-  // A real recorded trace, truncated. The keys are "lat|lon[|radius]" decimals;
-  // they are NOT shifted, because the key IS the question and a shifted key
-  // would test a different lookup than the one recorded. They are dropped to
-  // the first few entries per section instead, and the ANSWERS are scrubbed.
+  // A real recorded trace, truncated. ⚠ The keys are "lat|lon[|radius]"
+  // decimals and MUST be shifted like every other coordinate — this file once
+  // claimed a shifted key "would test a different lookup", and that was wrong:
+  // the encoder is key-agnostic, so folding the key string and its bit-encoded
+  // twin IDENTICALLY preserves exactly what the test checks. Unshifted keys
+  // were the last real coordinates at HEAD (#859; fixed by transforming the
+  // committed fixture in place — this generator cannot run since #975, so if
+  // it ever runs again, apply the same fold to the keys, the tzAt/bestPlace
+  // blocks, and the lat/lon fields inside every answer object).
   const take = (o, n) => Object.fromEntries(Object.entries(o ?? {}).slice(0, n));
   const scrubName = (x, j) => (x == null ? x : `name-${j}`);
   const tr = fx.inputs.osmTrace ?? {};

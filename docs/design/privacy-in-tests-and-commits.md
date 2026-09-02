@@ -39,10 +39,13 @@ their personal feedback memory:
 
 ## What's allowed
 
-- **Public landmark coordinates** as test inputs. (51.5635, -0.2795)
-  is the published coordinate of Wembley Park station; using it
-  as a constant in test data doesn't reveal anything about any
-  specific person.
+- **Public landmark coordinates** as test inputs — when the landmark
+  is NOT in the user's neighbourhood. (51.5309, -0.1233) is the
+  published coordinate of Kings Cross; using it as a constant in test
+  data doesn't reveal anything about any specific person. ⚠ This
+  example used to be the user's LOCAL station: "it's a public
+  landmark" does not survive picking the landmark by walking distance
+  from home. Pick landmarks a tourist would pick.
 - **Station and road names as test data** when they're widely-used
   public landmarks AND the test does not tie them to "the user's"
   routine. `stationA = "Kings Cross"; stationB = "Wembley Park";`
@@ -98,6 +101,29 @@ narrative about "the user."
 - Inline test fixtures inside `*.test.ts` files — fine with public
   landmark coords as test data, but the surrounding test comments
   must describe an abstract scenario, not the user's actual journey.
+
+## Migrating real coordinates already in the tree (#859)
+
+The method, applied 2026-09-02 and to be reused if the pattern ever returns:
+
+- **Shift, per FILE, every coordinate in any file that carries one inside the
+  home box** — a fixture pairing a home point with a far point must move as one
+  or its geometry silently changes meaning. Whole-file, not per-match.
+- **Preserve what the test is FOR.** A pure-longitude shift keeps every
+  distance/bearing/containment (they depend on the two latitudes and Δlon
+  only); a quantization test keeps its SIGN and digit shape; a formatting test
+  keeps its digit count. The expected values are then re-derived by RUNNING —
+  `lake build`'s `#guard`s and `cargo test` are the oracle, never a hand-edit
+  to something plausible.
+- **The fold-env fixture folds coordinates into [0,2)** with the generator's
+  own `(x % 1) + 1`, applied to the trace KEYS and their bit-encoded twins
+  consistently on both sides — see `fold-env-ts.mjs` for the corrected claim.
+- **A measurement RECORD is cut, never doctored** — shifting coordinates inside
+  recorded evidence falsifies it; git history keeps the record.
+- **Public OSM fixtures keep their real coordinates**: the OSM ids identify the
+  object regardless, so moving the numbers is theatre, and doctoring a real
+  Overpass capture breaks the fixture's honesty. Replacing such a tile with a
+  synthetic one is #860's kind of work, not a renumbering.
 
 ## Retrospective on commits before this doc landed
 

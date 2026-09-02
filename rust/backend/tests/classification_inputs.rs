@@ -164,7 +164,7 @@ fn a_fractional_double_keeps_its_fraction() {
     // `radius_m` is fractional for most places.
     assert_eq!(js_num(25.5).to_string(), "25.5");
     assert_eq!(js_num(0.059).to_string(), "0.059");
-    assert_eq!(js_num(-0.278999).to_string(), "-0.278999");
+    assert_eq!(js_num(-0.178999).to_string(), "-0.178999");
 }
 
 #[test]
