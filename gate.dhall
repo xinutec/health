@@ -221,6 +221,47 @@ in  { name = "health"
               , "--manifest-path"
               , "rust/Cargo.toml"
               , "--workspace"
+              , "-E"
+              , "not (binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
+              ]
+        , timeout_s = 1800
+        }
+      , {-  The six corpus replays, split out of the row above and run at
+            `--release` — the profile deploy.sh step 2 already runs the same
+            binaries at, so no NEW trade is taken here; the trade (release drops
+            debug-asserts and overflow checks on these paths) is the one the
+            deploy gates accepted the day they existed.
+
+            Split because they are EXECUTION-bound, not compile-bound: 42-day
+            replays through the Kalman/fold/trellis paths. Measured 2026-09-02
+            in release: walk_gate 432 s, hsmm_decode_corpus 331 s, day_corpus
+            76 s, journey_corpus 69 s, truth_corpus 66 s, head_corpus 28 s —
+            and the debug multiple on walk_gate alone was dominating the whole
+            gate the day after #1048 landed the five new replay gates into the
+            row above.
+
+            The complement in the debug row keeps everything else — including
+            `decoder_scoreboard` and `fold_env`, which are sub-second and so
+            keep debug-assert coverage for free. The two filtersets were
+            verified disjoint and exhaustive against `cargo nextest list` on
+            2026-09-02: 8 tests here, 350 there, 358 total both ways.
+
+            Same ordering constraint as everything cargo here: after the host
+            row, which writes the `.rsp` link line day-shell's build.rs reads.
+        -}
+        G.Check::{
+        , name = "corpus replay gates (release)"
+        , argv =
+            G.inDevShell
+              [ "cargo"
+              , "nextest"
+              , "run"
+              , "--release"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "--workspace"
+              , "-E"
+              , "binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
               ]
         , timeout_s = 1800
         }

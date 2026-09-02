@@ -118,11 +118,34 @@
         "run",
         "--manifest-path",
         "rust/Cargo.toml",
-        "--workspace"
+        "--workspace",
+        "-E",
+        "not (binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
       ],
       "cwd": ".",
       "env": {},
       "name": "rust workspace tests",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "cargo",
+        "nextest",
+        "run",
+        "--release",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--workspace",
+        "-E",
+        "binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "corpus replay gates (release)",
       "timeout_s": 1800
     },
     {
