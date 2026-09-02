@@ -829,6 +829,76 @@ def dispatch (j : Json) : Json :=
                   [ ("subtype", Json.str a.subtype)
                   , ("durationSecBits", Json.str (toString a.durationSec.toBits))
                   , ("localHour", Lean.toJson a.localHour) ]).toArray)) ]) ]
+  -- The SOFT twin of `minePriors` (#343 P0). Same stay wire as `mineCluster`;
+  -- responsibilities come from `stayResponsibilities` — evidence independent
+  -- of the shape prior being trained — and the reply carries the honesty
+  -- numbers the measurement loop demands: effective sample size, how many
+  -- stays teach at all, and the mean `other` mass.
+  | some "minePriorsSoft" =>
+    let poiOf (e : Json) : Except String Verified.Geo.BestPlace.Poi := do
+      let need (k : String) : Except String String :=
+        match str? e k with
+        | some s => pure s
+        | none => throw s!"minePriorsSoft: a landmark has no {k}"
+      let nm ← need "name"
+      let ty ← need "type"
+      let sub ← need "subtype"
+      -- `distanceM` is a bit-pattern string, remapped by the Rust wrapper —
+      -- same wire as `mineCluster` above, same trap.
+      let db ← need "distanceM"
+      pure { name := nm, type := ty, subtype := sub
+           , distanceM := Float.ofBits db.toNat!.toUInt64
+           , openingHours := str? e "openingHours"
+           , enclosing := (e.getObjVal? "enclosing" >>= (·.getBool?)).toOption == some true }
+    let sampleOf (e : Json) : Except String (Nat × Nat) := do
+      let a ← e.getArr?
+      match a[0]?, a[1]? with
+      | some d, some m => pure ((← d.getNat?), (← m.getNat?))
+      | _, _ => throw "minePriorsSoft: a sample is not [dayOfWeek, minuteOfDay]"
+    let intOf (e : Json) (k : String) : Except String Int :=
+      match int? e k with
+      | some i => pure i
+      | none => throw s!"minePriorsSoft: a stay has no {k}"
+    let stayOf (e : Json) : Except String Verified.Geo.FocusMining.MinedStay := do
+      let samples ← (← (← e.getObjVal? "samples").getArr?).toList.mapM sampleOf
+      let pois ← (← (← e.getObjVal? "landmarks").getArr?).toList.mapM poiOf
+      let st ← intOf e "startTs"
+      let en ← intOf e "endTs"
+      let lh ← intOf e "localHour"
+      let dur ← intOf e "durationSec"
+      pure { shape := { startUnix := st, endUnix := en, localHour := lh }
+           , durationSec := dur
+           , landmarks := pois.map (Verified.Geo.BestPlace.toLandmark samples true) }
+    let statsJson (s : Verified.Geo.VenuePrior.VenueTypeStats) : Json :=
+      Json.mkObj
+        [ ("visits", Json.str (toString s.visits.toBits))
+        , ("dwell", Json.arr ((s.dwell.map (fun x => Json.str (toString x.toBits))).toArray))
+        , ("hours", Json.arr ((s.hours.map (fun x => Json.str (toString x.toBits))).toArray)) ]
+    let tableJson (t : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) : Json :=
+      Json.arr ((t.map fun (k, s) => Json.arr #[Json.str k, statsJson s]).toArray)
+    match (do
+        (← (← j.getObjVal? "stays").getArr?).toList.mapM stayOf) with
+    | .error e => err e
+    | .ok stays =>
+      let soft : List Verified.Geo.VenuePrior.SoftAttributedStay := stays.map fun s =>
+        { responsibilities := Verified.Geo.VenuePrior.stayResponsibilities s.landmarks (some s.shape)
+        , durationSec := Float.ofInt s.durationSec
+        , localHour := s.shape.localHour }
+      let p := Verified.Geo.VenuePrior.minePriorsSoft soft
+      let ess := Verified.Geo.VenuePrior.effectiveSampleSize (soft.map (·.responsibilities))
+      let teaching := soft.filter (fun s => !s.responsibilities.candidates.isEmpty)
+      let otherSum := teaching.foldl (fun a s => a + s.responsibilities.other) 0.0
+      let meanOther := if teaching.isEmpty then 0.0 else otherSum / Float.ofNat teaching.length
+      Json.mkObj
+        [ ("value", Json.mkObj
+            [ ("priors", Json.mkObj
+                [ ("bySubtype", tableJson p.bySubtype)
+                , ("byCategory", tableJson p.byCategory)
+                , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits)) ])
+            , ("essBits", Json.str (toString ess.toBits))
+            , ("staysTotal", Lean.toJson stays.length)
+            , ("staysTeaching", Lean.toJson teaching.length)
+            , ("meanOtherBits", Json.str (toString meanOther.toBits)) ]) ]
   | some "placeProjection" =>
     let dn := str? j "displayName"
     let al := str? j "amenityLabel"

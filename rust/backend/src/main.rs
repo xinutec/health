@@ -170,8 +170,38 @@ async fn main() -> Result<()> {
         //   backend refresh-focus-places                 all linked users, 180d
         //   backend refresh-focus-places <user>          one user, 180d
         //   backend refresh-focus-places <user> <days>   one user, explicit
+        //
+        // #343 P0 measurement flags (single user only — the files are per-user):
+        //   --hard-out <file>   also write the hard-gate priors blob to a file
+        //   --soft-out <file>   also mine the SOFT blob (`stayResponsibilities`
+        //                       → `minePriorsSoft`) to a file, printing the
+        //                       effective sample size beside the hard count
+        //   --dry               mine but skip the venue_type_priors and
+        //                       focus_places writes
         "refresh-focus-places" => {
-            let (user, lookback): (Option<&str>, i64) = match flags {
+            let mut soft_out: Option<String> = None;
+            let mut hard_out: Option<String> = None;
+            let mut dry = false;
+            let mut pos: Vec<&String> = Vec::new();
+            let mut it = flags.iter();
+            while let Some(f) = it.next() {
+                match f.as_str() {
+                    "--soft-out" | "--hard-out" => {
+                        let Some(path) = it.next() else {
+                            eprintln!("refresh-focus-places: {f} needs a path");
+                            std::process::exit(2);
+                        };
+                        if f == "--soft-out" {
+                            soft_out = Some(path.clone());
+                        } else {
+                            hard_out = Some(path.clone());
+                        }
+                    }
+                    "--dry" => dry = true,
+                    _ => pos.push(f),
+                }
+            }
+            let (user, lookback): (Option<&str>, i64) = match pos.as_slice() {
                 [] => (None, FOCUS_DEFAULT_LOOKBACK_DAYS),
                 [u] => (Some(u.as_str()), FOCUS_DEFAULT_LOOKBACK_DAYS),
                 [u, n] => match n.parse::<i64>() {
@@ -182,10 +212,24 @@ async fn main() -> Result<()> {
                     }
                 },
                 _ => {
-                    eprintln!("usage: backend refresh-focus-places [user] [lookback-days]");
+                    eprintln!(
+                        "usage: backend refresh-focus-places [user] [lookback-days] \
+                         [--hard-out <file>] [--soft-out <file>] [--dry]"
+                    );
                     std::process::exit(64);
                 }
             };
+            let sinks = MineSinks {
+                soft_out,
+                hard_out,
+                dry,
+            };
+            if sinks.active() && user.is_none() {
+                eprintln!(
+                    "refresh-focus-places: --hard-out/--soft-out/--dry need an explicit user"
+                );
+                std::process::exit(2);
+            }
             // ⚠ `DbConfig::from_env`, NOT `Config::from_env`. The full config
             // demands FITBIT_CLIENT_ID and this pod does not set it — the focus
             // CronJob's env is DB_* plus NC_CLIENT_ID/NC_CLIENT_SECRET and
@@ -203,7 +247,7 @@ async fn main() -> Result<()> {
             let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
-            let r = refresh_focus_places(&pool, user, lookback).await;
+            let r = refresh_focus_places(&pool, user, lookback, &sinks).await;
             pool.close().await;
             r
         }
@@ -3709,10 +3753,27 @@ async fn day_live(
 /// rows carry. `clusterSpreadM` feeds a console report and nothing else — it is
 /// deliberately not ported, and writing a measured spread here would be a
 /// behaviour change four call sites can see.
+/// The #343 P0 measurement sinks: extra outputs riding the prod mining path,
+/// so the A/B population can never drift from what the cron actually mines
+/// (the July harness mined 528 stays where prod mines 306 — this is why the
+/// loop is not a separate harness).
+struct MineSinks {
+    soft_out: Option<String>,
+    hard_out: Option<String>,
+    dry: bool,
+}
+
+impl MineSinks {
+    fn active(&self) -> bool {
+        self.soft_out.is_some() || self.hard_out.is_some() || self.dry
+    }
+}
+
 async fn refresh_focus_places(
     pool: &sqlx::MySqlPool,
     only_user: Option<&str>,
     lookback_days: i64,
+    sinks: &MineSinks,
 ) -> Result<()> {
     backend::schema::migrate(pool).await?;
 
@@ -3729,7 +3790,7 @@ async fn refresh_focus_places(
     }
 
     for user_id in &users {
-        if let Err(e) = refresh_focus_places_one(pool, user_id, lookback_days).await {
+        if let Err(e) = refresh_focus_places_one(pool, user_id, lookback_days, sinks).await {
             // ⚠ One user's failure must not strand the others, and must not
             // read as success either. The TypeScript lets the whole process
             // die here.
@@ -3744,6 +3805,7 @@ async fn refresh_focus_places_one(
     pool: &sqlx::MySqlPool,
     user_id: &str,
     lookback_days: i64,
+    sinks: &MineSinks,
 ) -> Result<()> {
     use sqlx::Row as _;
 
@@ -4052,35 +4114,41 @@ async fn refresh_focus_places_one(
     }
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let voted = backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
-        let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
-        for c in pending {
-            let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
-            for s in c.stays {
-                // ⚠ `None` means the MIRROR could not answer, which is NOT
-                // "no venues here". This stay then casts no vote, rather than
-                // a vote for nothing (#976, and the empty-landmarks day of
-                // #1054).
-                let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
-                    continue;
-                };
-                ms.push(backend::lean::MineStay {
-                    start_ts: s.start_ts,
-                    end_ts: s.end_ts,
-                    local_hour: s.local_hour,
-                    duration_sec: s.duration_sec,
-                    samples: s.samples,
-                    landmarks: shaped,
-                });
+    let (voted, flat_stays) =
+        backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
+            let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
+            // #343 P0: the soft-mining population is BY CONSTRUCTION the stays the
+            // hard miner sees — collected inside the same loop, after the residence
+            // skip (empty `stays`) and the mirror-could-not-answer skip.
+            let mut flat: Vec<backend::lean::MineStay> = Vec::new();
+            for c in pending {
+                let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
+                for s in c.stays {
+                    // ⚠ `None` means the MIRROR could not answer, which is NOT
+                    // "no venues here". This stay then casts no vote, rather than
+                    // a vote for nothing (#976, and the empty-landmarks day of
+                    // #1054).
+                    let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
+                        continue;
+                    };
+                    ms.push(backend::lean::MineStay {
+                        start_ts: s.start_ts,
+                        end_ts: s.end_ts,
+                        local_hour: s.local_hour,
+                        duration_sec: s.duration_sec,
+                        samples: s.samples,
+                        landmarks: shaped,
+                    });
+                }
+                let centroid = ans
+                    .nearby_landmarks(c.lat, c.lon)?
+                    .unwrap_or_else(|| serde_json::json!([]));
+                flat.extend(ms.iter().cloned());
+                out.push(backend::lean::mine_cluster(&ms, &centroid)?);
             }
-            let centroid = ans
-                .nearby_landmarks(c.lat, c.lon)?
-                .unwrap_or_else(|| serde_json::json!([]));
-            out.push(backend::lean::mine_cluster(&ms, &centroid)?);
-        }
-        Ok(out)
-    })
-    .await?;
+            Ok((out, flat))
+        })
+        .await?;
 
     let mut attributed_all: Vec<backend::lean::AttributedStay> = Vec::new();
     let mut labels: Vec<(Option<String>, Option<String>)> = Vec::with_capacity(voted.len());
@@ -4110,6 +4178,35 @@ async fn refresh_focus_places_one(
 
     // ── 6. the priors blob — a full recompute, never incremental ────────────
     let priors = backend::lean::mine_priors(&attributed_all)?;
+
+    // ── #343 P0 sinks, before any write ─────────────────────────────────────
+    if let Some(path) = &sinks.hard_out {
+        std::fs::write(path, serde_json::to_string_pretty(&priors)?)
+            .with_context(|| format!("writing {path}"))?;
+        eprintln!(
+            "[{user_id}] hard priors -> {path} ({} attributed stay(s))",
+            attributed_all.len()
+        );
+    }
+    if let Some(path) = &sinks.soft_out {
+        let (blob, rep) = backend::lean::mine_priors_soft(&flat_stays)?;
+        eprintln!(
+            "[{user_id}] soft priors -> {path}: ess {:.1} vs hard {} · {}/{} stay(s) teaching · \
+             mean other {:.3}",
+            rep.ess,
+            attributed_all.len(),
+            rep.stays_teaching,
+            rep.stays_total,
+            rep.mean_other
+        );
+        std::fs::write(path, serde_json::to_string_pretty(&blob)?)
+            .with_context(|| format!("writing {path}"))?;
+    }
+    if sinks.dry {
+        eprintln!("[{user_id}] --dry: NOT writing venue_type_priors or focus_places");
+        return Ok(());
+    }
+
     sqlx::query(
         "INSERT INTO venue_type_priors (user_id, priors_json, mined_stays) VALUES (?, ?, ?) \
          ON DUPLICATE KEY UPDATE priors_json = VALUES(priors_json), \

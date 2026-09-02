@@ -1933,6 +1933,7 @@ pub struct AttributedStay {
 
 /// One stay's contribution: its window, its resolved local hour, and the
 /// venues near it.
+#[derive(Clone)]
 pub struct MineStay {
     pub start_ts: i64,
     pub end_ts: i64,
@@ -2043,25 +2044,65 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
 /// but do not "verify" this blob with a text diff against a TypeScript-written
 /// row — it would report a difference that is not one
 /// (`reference_jq_cannot_check_serialisation_parity`).
+#[derive(Deserialize)]
+struct WirePriorsBlob {
+    #[serde(rename = "bySubtype")]
+    by_subtype: Vec<(String, WirePriorStats)>,
+    #[serde(rename = "byCategory")]
+    by_category: Vec<(String, WirePriorStats)>,
+    #[serde(rename = "totalVisitsBits")]
+    total_visits_bits: String,
+}
+
+#[derive(Deserialize)]
+struct WirePriorStats {
+    visits: String,
+    dwell: Vec<String>,
+    hours: Vec<String>,
+}
+
+/// Bit-pattern wire blob → the JSON-numbers blob `venue_type_priors` holds.
+///
+/// ⚠ Relies on `serde_json`'s `preserve_order` feature, which
+/// `backend/Cargo.toml` enables for exactly this reason — the default `Map`
+/// is a `BTreeMap` and would SORT the keys, silently discarding the
+/// first-seen order the `mine_priors` doc comment promises. The blob would
+/// still hold the right numbers, so nothing would fail; it would just stop
+/// being the same text the TypeScript wrote.
+fn wire_priors_to_json(w: &WirePriorsBlob) -> Result<serde_json::Value> {
+    let bits = |s: &str| -> Result<f64> {
+        Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
+            format!("priors blob: {s:?} is not a bit pattern")
+        })?))
+    };
+    let nums = |xs: &[String]| -> Result<Vec<serde_json::Value>> {
+        xs.iter().map(|x| Ok(serde_json::json!(bits(x)?))).collect()
+    };
+    let table = |t: &[(String, WirePriorStats)]| -> Result<serde_json::Value> {
+        let mut m = serde_json::Map::new();
+        for (k, s) in t {
+            m.insert(
+                k.clone(),
+                serde_json::json!({
+                    "visits": bits(&s.visits)?,
+                    "dwell": nums(&s.dwell)?,
+                    "hours": nums(&s.hours)?,
+                }),
+            );
+        }
+        Ok(serde_json::Value::Object(m))
+    };
+    Ok(serde_json::json!({
+        "bySubtype": table(&w.by_subtype)?,
+        "byCategory": table(&w.by_category)?,
+        "totalVisits": bits(&w.total_visits_bits)?,
+    }))
+}
+
 pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
     #[derive(Deserialize)]
     struct Wire {
-        value: Inner,
-    }
-    #[derive(Deserialize)]
-    struct Inner {
-        #[serde(rename = "bySubtype")]
-        by_subtype: Vec<(String, WireStats)>,
-        #[serde(rename = "byCategory")]
-        by_category: Vec<(String, WireStats)>,
-        #[serde(rename = "totalVisitsBits")]
-        total_visits_bits: String,
-    }
-    #[derive(Deserialize)]
-    struct WireStats {
-        visits: String,
-        dwell: Vec<String>,
-        hours: Vec<String>,
+        value: WirePriorsBlob,
     }
 
     let stays: Vec<serde_json::Value> = attributed
@@ -2080,40 +2121,79 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
         "attributed": stays,
     }))?;
 
+    wire_priors_to_json(&w.value)
+}
+
+/// What `mine_priors_soft` reports beside the blob — the P0 honesty numbers
+/// (docs/proposals/2026-07-soft-venue-attribution.md): if the effective sample
+/// size does not grow far past the hard count, soft attribution is the wrong
+/// lever and the phases after P0 must not be built.
+pub struct SoftMineReport {
+    /// Σ responsibilities over every candidate of every stay — whole visits'
+    /// worth of evidence, excluding `other` mass.
+    pub ess: f64,
+    pub stays_total: u64,
+    /// Stays with at least one candidate venue (the rest teach nothing).
+    pub stays_teaching: u64,
+    /// Mean `other` mass over teaching stays — sanity vs the referee's
+    /// measured ~0.083 truth-not-in-candidates base rate.
+    pub mean_other: f64,
+}
+
+/// The SOFT twin of `mine_priors` — `Verified.Geo.VenuePrior.minePriorsSoft`
+/// over `stayResponsibilities` (#343 P0). Takes the same per-stay wire as
+/// `mine_cluster`, so the mining population is BY CONSTRUCTION the one the
+/// prod cron mines: collect the stays inside the same loop, or the July
+/// harness bug (528 stays where prod mines 306) comes back.
+pub fn mine_priors_soft(stays: &[MineStay]) -> Result<(serde_json::Value, SoftMineReport)> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        priors: WirePriorsBlob,
+        #[serde(rename = "essBits")]
+        ess_bits: String,
+        #[serde(rename = "staysTotal")]
+        stays_total: u64,
+        #[serde(rename = "staysTeaching")]
+        stays_teaching: u64,
+        #[serde(rename = "meanOtherBits")]
+        mean_other_bits: String,
+    }
+
+    let stays_json: Vec<serde_json::Value> = stays
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "startTs": s.start_ts,
+                "endTs": s.end_ts,
+                "localHour": s.local_hour,
+                "durationSec": s.duration_sec,
+                "samples": s.samples.iter().map(|(d, m)| vec![*d, *m]).collect::<Vec<_>>(),
+                "landmarks": s.landmarks,
+            })
+        })
+        .collect();
+
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "minePriorsSoft",
+        "stays": stays_json,
+    }))?;
+
     let bits = |s: &str| -> Result<f64> {
         Ok(f64::from_bits(s.parse::<u64>().with_context(|| {
-            format!("minePriors: {s:?} is not a bit pattern")
+            format!("minePriorsSoft: {s:?} is not a bit pattern")
         })?))
     };
-    let nums = |xs: &[String]| -> Result<Vec<serde_json::Value>> {
-        xs.iter().map(|x| Ok(serde_json::json!(bits(x)?))).collect()
+    let report = SoftMineReport {
+        ess: bits(&w.value.ess_bits)?,
+        stays_total: w.value.stays_total,
+        stays_teaching: w.value.stays_teaching,
+        mean_other: bits(&w.value.mean_other_bits)?,
     };
-    // ⚠ This relies on `serde_json`'s `preserve_order` feature, which
-    // `backend/Cargo.toml` enables for exactly this reason — the default `Map`
-    // is a `BTreeMap` and would SORT the keys, silently discarding the
-    // first-seen order the doc comment above promises. The blob would still
-    // hold the right numbers, so nothing would fail; it would just stop being
-    // the same text the TypeScript wrote.
-    let table = |t: &[(String, WireStats)]| -> Result<serde_json::Value> {
-        let mut m = serde_json::Map::new();
-        for (k, s) in t {
-            m.insert(
-                k.clone(),
-                serde_json::json!({
-                    "visits": bits(&s.visits)?,
-                    "dwell": nums(&s.dwell)?,
-                    "hours": nums(&s.hours)?,
-                }),
-            );
-        }
-        Ok(serde_json::Value::Object(m))
-    };
-
-    Ok(serde_json::json!({
-        "bySubtype": table(&w.value.by_subtype)?,
-        "byCategory": table(&w.value.by_category)?,
-        "totalVisits": bits(&w.value.total_visits_bits)?,
-    }))
+    Ok((wire_priors_to_json(&w.value.priors)?, report))
 }
 
 /// One train leg snapped onto its rail corridor — the `railsnap` serve mode
