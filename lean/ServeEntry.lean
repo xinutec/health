@@ -2478,7 +2478,7 @@ private def parseMode : String → Option Mode
   | "train" => some .train | "plane" => some .plane
   | _ => none
 
-private def parseJRow (j : Json) : Except String JRow := do
+def parseJRow (j : Json) : Except String JRow := do
   let truth : Option Truth :=
     match j.getObjVal? "truth" with
     | .ok t =>
@@ -2513,6 +2513,77 @@ def journeysResult (j : Json) : Json :=
   | .ok out => out
 
 end Journeys
+
+/-! ## Decoder-scoreboard mode (`verified_cli decoderscore`) — #1048
+
+Input: the `journeys`-mode rows EXTENDED with `provenance`, plus the decoded
+day's segments:
+
+  { "mode": "decoderscore",
+    "rows": [ { "startTs", "endTs", "status", "provenance",
+                "truth": { "mode", "lineName", "from", "to" } | null } ],
+    "segs": [ { "startTs", "endTs", "mode", "lineName", "board", "alight" } ] }
+
+Output: the ten scoreboard counts, spelled as the blessed
+`decoder-scoreboard.json` spells them. -/
+
+namespace DecoderScore
+
+open Verified.Eval.GroundTruth
+open Verified.Eval.Journeys
+open Verified.Eval.DecoderScore
+
+private def parseProvenance : String → Provenance
+  | "corroborated" => .corroborated | "user" => .user
+  | "derived" => .derived | "inferred" => .inferred
+  | _ => .unspecified
+
+private def parseSeg (j : Json) : Except String Verified.Eval.DecoderScore.Seg := do
+  return {
+    startTs := ← (← j.getObjVal? "startTs").getInt?
+    endTs := ← (← j.getObjVal? "endTs").getInt?
+    mode := ← (← j.getObjVal? "mode").getStr?
+    lineName := (j.getObjVal? "lineName" >>= (·.getStr?)).toOption
+    board := (j.getObjVal? "board" >>= (·.getStr?)).toOption
+    alight := (j.getObjVal? "alight" >>= (·.getStr?)).toOption }
+
+def decoderScoreResult (j : Json) : Json :=
+  let parsed : Except String Json := do
+    let rowsJ ← optArr j "rows"
+    let rows ← rowsJ.mapM Journeys.parseJRow
+    let segs ← (← optArr j "segs").mapM parseSeg
+    -- The contradicting spans need provenance, which JRow does not carry:
+    -- re-read it beside each row.
+    let mut contradicting : Array ContradictingSpan := #[]
+    for (rj, row) in rowsJ.zip rows do
+      let prov := parseProvenance ((rj.getObjVal? "provenance" >>= (·.getStr?)).toOption.getD "unspecified")
+      match row.truth with
+      | some t =>
+        if contradicts row.status prov t.mode then
+          contradicting := contradicting.push ⟨row.startTs, row.endTs⟩
+      | none => pure ()
+    let minutes := segmentsToMinutes segs
+    let gtJ := groundTruthJourneys rows
+    let decJ := decoderJourneys minutes
+    let jc := scoreJourneyCounts gtJ decJ minutes
+    let st := scoreStations gtJ decJ
+    let phantoms := countPhantomRides contradicting decJ
+    return Json.mkObj [
+      ("journeysExpected", Lean.toJson jc.journeysExpected),
+      ("journeysMatched", Lean.toJson jc.journeysMatched),
+      ("legModeScorable", Lean.toJson jc.legModeScorable),
+      ("legModeMatching", Lean.toJson jc.legModeMatching),
+      ("legLineScorable", Lean.toJson jc.legLineScorable),
+      ("legLineMatching", Lean.toJson jc.legLineMatching),
+      ("stationsAsserted", Lean.toJson st.stationsAsserted),
+      ("stationsMatching", Lean.toJson st.stationsMatching),
+      ("stationsMissing", Lean.toJson st.stationsMissing),
+      ("phantomRides", Lean.toJson phantoms)]
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok out => out
+
+end DecoderScore
 
 /-! ## Truth-check mode (`verified_cli truthcheck`)
 
@@ -2947,6 +3018,7 @@ def dispatch (j : Json) : Json :=
   | .ok "truthcheck" => TruthCheck.truthCheckResult j
   | .ok "floorgate" => FloorGate.floorGateResult j
   | .ok "journeyshape" => JourneyShape.journeyShapeResult j
+  | .ok "decoderscore" => DecoderScore.decoderScoreResult j
   | .ok "feasibility" => Feasibility.feasibilityResult j
   | .ok "ceilinggate" => CeilingGate.ceilingGateResult j
   | .ok "ceilingbless" => CeilingGate.ceilingBlessResult j

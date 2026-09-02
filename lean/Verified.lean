@@ -141,6 +141,7 @@ import Verified.Eval.WalkGate
 import Verified.Eval.WalkMetrics
 import Verified.Eval.GroundTruth
 import Verified.Eval.Journeys
+import Verified.Eval.DecoderScore
 import Verified.Eval.TruthCheck
 import Verified.Eval.FloorGate
 import Verified.Eval.JourneyShape

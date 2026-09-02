@@ -230,6 +230,10 @@ const GATES: [string, string[]][] = [
 	// `gpsoutliers` verb and `compare-gps-outliers.mts` landed together, so this
 	// row moved when the module became COMPARED, not when it became reachable.
 	["compare-gps-outliers", ["Verified.Hsmm.GpsOutliers"]],
+	// #1048. The scoreboard reader: 11 blessed days x 10 counts rescored from
+	// the frozen decodes on every deploy (step 2/7). Listed when the harness
+	// and its parity run landed together, same condition as the rows above.
+	["decoder_scoreboard (rust)", ["Verified.Eval.DecoderScore"]],
 ];
 
 /**
@@ -255,6 +259,7 @@ const GATES: [string, string[]][] = [
  * unattended port — which is what they now are.
  */
 const GATE_ENTRY: Record<string, string[] | null> = {
+	"decoder_scoreboard (rust)": ["rust/backend/tests/decoder_scoreboard.rs"],
 	"day-gate": ["scripts/day-gate.sh", "lean/experiments/compare-day.mts"],
 	"focus-gate": ["scripts/focus-gate.sh", "lean/experiments/compare-focus.mts"],
 	"compare-match / LEAN_MATCH": ["lean/experiments/compare-match.mts"],

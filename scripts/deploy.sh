@@ -263,15 +263,19 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	# why they belong here and not in gate.dhall — and each gates a committed
 	# floor a human blessed from the TypeScript before it went:
 	#
-	#   walk_gate        238 walks over 42 days vs walk-baseline.json
-	#   truth_corpus     312 confirmed ground-truth rows vs truth-baseline.json
-	#   journey_corpus    80 of 92 journeys vs journey-baseline.json
+	#   walk_gate           238 walks over 42 days vs walk-baseline.json
+	#   truth_corpus        312 confirmed ground-truth rows vs truth-baseline.json
+	#   journey_corpus       80 of 92 journeys vs journey-baseline.json
+	#   decoder_scoreboard  11 days x 10 counts vs decoder-scoreboard.json
+	#                       (scores the FROZEN decodes; the re-decode half is
+	#                       still #1048's open item)
 	#
 	# ~7 minutes, of which walk_gate is ~5. They announce a SKIP rather than
 	# passing quietly when the corpus is absent, so a machine without it cannot
 	# read as gated.
 	$DEV cargo test --manifest-path rust/Cargo.toml -p backend --release \
-		--test walk_gate --test truth_corpus --test journey_corpus -- --nocapture
+		--test walk_gate --test truth_corpus --test journey_corpus \
+		--test decoder_scoreboard -- --nocapture
 else
 	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
 	# once said "golden + walk-gate + score-decoder" while skipping six more, and
@@ -282,7 +286,7 @@ else
 	  ⚠  DEPLOYING WITH THE REPLAY GATES SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    walk_gate  truth_corpus  journey_corpus
+	    walk_gate  truth_corpus  journey_corpus  decoder_scoreboard
 	================================================================
 	  the other five do not run either way — deleted with the TS
 	  backend, #975/#1048
