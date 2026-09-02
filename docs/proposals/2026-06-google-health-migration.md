@@ -106,10 +106,21 @@ curl -sS -G http://127.0.0.1:8765/ --data-urlencode 'code=<CODE>'
 Then update the stored token so the next run starts from a live one:
 `kubectl -n health create secret generic health-google --from-env-file=<file> --dry-run=client -o yaml | kubectl apply -f -`
 
-## Remaining (before Sep 2026)
+## Done (2026-09-02) — nothing remains before the shutdown
 
-Migrate the other metrics onto the same v4 `dataPoints` model + a proper Google
-OAuth token-manager in the app, then retire the Fitbit Web API:
-heart rate (incl. intraday), sleep, steps/activity, HRV, SpO2, respiratory
-rate, temperature. Each is `users/me/dataTypes/{type}/dataPoints` under the
-matching `googlehealth.*.readonly` scope.
+Every stream with any Google source is ported, flipped and verified writing in
+production (commits 1f9e498, 43599dc, 379dbb2; the roster with each stream's
+measurement is `rust/backend/src/google/source.rs::STREAMS`, which is the
+maintained account — not this proposal). The daily streams moved 2026-08-28..09-01;
+heart-rate intraday, sleep, heart-rate zones, HRV intraday and minute-steps
+moved 2026-09-02, each behind its own `google-compare-*` measurement.
+
+What September still costs, in total: `daily_activity.minutes_sedentary` and
+`.active_score` (Fitbit-only, no source anywhere — kept visible by the roster's
+at_risk test), plus four stored-and-never-read columns that NULL forward
+(`hrv_intraday.{coverage,hf,lf}`, `heart_rate_zones.calories`).
+
+⚠ Two streams were nearly lost to one instrument error: `probe_one`'s
+`pageSize=1`, which session/interval types answer with 200 and no dataPoints
+field. Both "no data" verdicts (sleep, minute-steps) were that probe artifact,
+not facts about the account.
