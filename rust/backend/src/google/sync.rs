@@ -532,9 +532,14 @@ pub async fn sync_heart_rate_intraday(
     // The high-water mark. CAST AS CHAR for the same reason read_daily_column
     // casts: crossing as a string sidesteps the DECIMAL/DATETIME decode traps
     // that only fire on real rows.
+    //
+    // ⚠ NO `ts_utc IS NOT NULL` — `MAX` skips NULLs by definition, and the
+    // redundant predicate DEFEATS MariaDB's MIN/MAX optimization: measured
+    // 2026-09-02 (#1322), with it the plan is a `range` over all 28.4M index
+    // entries at 14-16s per sync; without it, `Select tables optimized away`,
+    // one seek. Same answer, verified against prod.
     let high: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(MAX(ts_utc) AS CHAR) FROM heart_rate_intraday \
-         WHERE user_id = ? AND ts_utc IS NOT NULL",
+        "SELECT CAST(MAX(ts_utc) AS CHAR) FROM heart_rate_intraday WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_one(pool)
@@ -737,14 +742,14 @@ pub async fn sync_sleep(
     access_token: &str,
     user_id: &str,
 ) -> Result<usize> {
-    let high: Option<String> = sqlx::query_scalar(
-        "SELECT CAST(MAX(end_time_utc) AS CHAR) FROM sleep \
-         WHERE user_id = ? AND end_time_utc IS NOT NULL",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .context("reading the sleep high-water mark")?;
+    // ⚠ NO `IS NOT NULL` — same MIN/MAX-optimization defeat as the heart-rate
+    // writer above (#1322); `MAX` skips NULLs anyway.
+    let high: Option<String> =
+        sqlx::query_scalar("SELECT CAST(MAX(end_time_utc) AS CHAR) FROM sleep WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .context("reading the sleep high-water mark")?;
 
     let since = match &high {
         Some(ts) => {
