@@ -217,7 +217,10 @@ const GATES: [string, string[]][] = [
 	],
 	["focus-gate", ["Verified.Geo.FocusPlaces", "Verified.Geo.FocusIdentity"]],
 	["compare-match / LEAN_MATCH", ["Verified.Geo.Match"]],
-	["LEAN_HSMM / compare-assemble", HSMM_ROOTS],
+	// #1048: the dead compare-assemble comparator is REPLACED by the Rust
+	// re-decode harness — 11 blessed days decoded from raw materials on every
+	// deploy, so the HSMM roots are compared again, by a gate that runs.
+	["hsmm_decode_corpus (rust)", HSMM_ROOTS],
 	["LEAN_RAIL (waived)", RAIL_ROOTS],
 	// #672. The `stationchain` verb, driven by `compare-stationchain.sh` over the
 	// decoded-day corpus. Listed only once that comparator existed: the verb
@@ -263,7 +266,7 @@ const GATE_ENTRY: Record<string, string[] | null> = {
 	"day-gate": ["scripts/day-gate.sh", "lean/experiments/compare-day.mts"],
 	"focus-gate": ["scripts/focus-gate.sh", "lean/experiments/compare-focus.mts"],
 	"compare-match / LEAN_MATCH": ["lean/experiments/compare-match.mts"],
-	"LEAN_HSMM / compare-assemble": ["lean/experiments/compare-assemble.mts"],
+	"hsmm_decode_corpus (rust)": ["rust/backend/tests/hsmm_decode_corpus.rs"],
 	// ⚠ `null` is WAIVED, and it must credit NOTHING — #233 decided there is no
 	// rail comparator, so its modules are unattended by choice rather than by
 	// accident. This row printed 0 for a year only because `compare-match`
