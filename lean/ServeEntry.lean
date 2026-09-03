@@ -2257,11 +2257,39 @@ private structure DayIn where
   steps : Array PedStep
   walks : Array WalkIn
 
-private def parseDayIn (j : Json) : Except String DayIn := do
+/-- Resolve a day's geometry: either INLINE arrays, or indices into the
+request-level tables.
+
+⚠ The tables exist because 91% of this request was duplication — measured
+2026-09-03 over the 42-day corpus: 713,183 way items but 59,606 distinct, so
+each way crossed the wire ~12 times, and the request was 145 MiB (a 3.9 GB
+`serde_json::Value` on the caller's side and ~2.9 GB of `Json` here). Indices
+change nothing the referee computes; they change what has to be held in
+memory at once, which is what made a gate run and a parallel build starve
+each other.
+
+⚠ INLINE STILL WORKS, and is not deprecated: a caller grading one day has
+nothing to dedupe. An index that points past the end is an ERROR, never a
+silently-dropped way — a short ways list would quietly move every metric on
+that day. -/
+private def resolveIdx {α : Type} (what : String) (table : Array α) (j : Json)
+    (inlineKey idxKey : String) (parseOne : Json → Except String α)
+    : Except String (Array α) := do
+  match j.getObjVal? idxKey with
+  | .error _ => (← optArr j inlineKey).mapM parseOne
+  | .ok idxJson =>
+    (← idxJson.getArr?).mapM fun e => do
+      let i ← e.getNat?
+      match table[i]? with
+      | some v => pure v
+      | none => throw s!"walkgate: {what} index {i} is outside the table of {table.size}"
+
+private def parseDayIn (wayTable : Array Way) (buildingTable : Array Ring)
+    (j : Json) : Except String DayIn := do
   return {
     date := ← (← j.getObjVal? "date").getStr?
-    ways := { ways := ← (← optArr j "ways").mapM parseWay }
-    buildings := ← (← optArr j "buildings").mapM parsePts
+    ways := { ways := ← resolveIdx "way" wayTable j "ways" "wayIdx" parseWay }
+    buildings := ← resolveIdx "building" buildingTable j "buildings" "buildingIdx" parsePts
     steps := ← (← optArr j "steps").mapM parseStep
     walks := ← (← optArr j "walks").mapM parseWalkIn }
 
@@ -2348,8 +2376,10 @@ private def metricAtJson (m : MetricAt) : Json :=
 
 private def parseReq (j : Json)
     : Except String (WalkBaseline × Array DayIn) := do
+  let wayTable ← (← optArr j "wayTable").mapM parseWay
+  let buildingTable ← (← optArr j "buildingTable").mapM parsePts
   return (← (← optArr j "baseline").mapM parseBaselineDay,
-          ← (← optArr j "days").mapM parseDayIn)
+          ← (← optArr j "days").mapM (parseDayIn wayTable buildingTable))
 
 def walkGateResult (j : Json) : Json :=
   -- ⚠ OFF BY DEFAULT, and that is the point. `p90M` is 83% of this mode's cost

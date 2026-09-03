@@ -90,6 +90,26 @@ fn flatten_section(trace: &Value, key: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Add `v` to `table` if its serialised form is new, and return its index.
+///
+/// Keyed on the serialised bytes rather than on an id: the trace's items carry
+/// no stable identifier here, and byte-equality is the only sharing that cannot
+/// fuse two geometries the referee would score differently.
+fn intern(
+    table: &mut Vec<Value>,
+    index: &mut std::collections::HashMap<String, usize>,
+    v: Value,
+) -> usize {
+    let key = v.to_string();
+    if let Some(&i) = index.get(&key) {
+        return i;
+    }
+    let i = table.len();
+    index.insert(key, i);
+    table.push(v);
+    i
+}
+
 /// A building ring as the referee wants it. The trace stores `{lat, lon}`
 /// objects and the wire takes `[lat, lon]` pairs; converting is this file's job,
 /// not Lean's.
@@ -309,6 +329,11 @@ fn every_golden_day_measures_its_walks() {
     assert!(!names.is_empty(), "the corpus directory is empty");
 
     let mut days_req: Vec<Value> = Vec::new();
+    let (mut way_table, mut building_table): (Vec<Value>, Vec<Value>) = (Vec::new(), Vec::new());
+    let (mut way_index, mut building_index) = (
+        std::collections::HashMap::<String, usize>::new(),
+        std::collections::HashMap::<String, usize>::new(),
+    );
     let mut baseline_req: Vec<Value> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
@@ -347,11 +372,29 @@ fn every_golden_day_measures_its_walks() {
         let legs = walking_legs(&out, &r.request, &windows);
         let trace = inputs.get("osmTrace").cloned().unwrap_or_else(|| json!({}));
 
+        // ⚠ WAYS AND BUILDINGS ARE SENT ONCE, NOT PER DAY. Measured 2026-09-03
+        // over this corpus: 713,183 way items but 59,606 distinct, 132,502
+        // buildings but 15,175 distinct — 91% of a 145 MiB request was the same
+        // geometry re-sent, because 42 bboxes over one city overlap heavily.
+        // That cost 3.9 GB here plus ~2.9 GB in Lean, and a run that size
+        // starves anything building beside it (#1367).
+        //
+        // Dedupe is by the SERIALISED FORM, so two ways are shared only when
+        // they are byte-identical — a coordinate differing in its last decimal
+        // stays a separate entry rather than being silently fused.
+        let day_ways: Vec<usize> = flatten_section(&trace, "walkableRoads")
+            .into_iter()
+            .map(|w| intern(&mut way_table, &mut way_index, w))
+            .collect();
+        let day_buildings: Vec<usize> = flatten_section(&trace, "buildingsNear")
+            .iter()
+            .map(ring_to_pairs)
+            .map(|b| intern(&mut building_table, &mut building_index, b))
+            .collect();
         days_req.push(json!({
             "date": date,
-            "ways": flatten_section(&trace, "walkableRoads"),
-            "buildings": flatten_section(&trace, "buildingsNear")
-                .iter().map(ring_to_pairs).collect::<Vec<_>>(),
+            "wayIdx": day_ways,
+            "buildingIdx": day_buildings,
             "steps": steps_rows(inputs),
             "walks": legs,
         }));
@@ -403,10 +446,17 @@ fn every_golden_day_measures_its_walks() {
     // `best` is small and nothing orders the ways by proximity (#1291). Not
     // computing the metric beats computing it faster.
     let want_p90 = std::env::var("WALK_GATE_DUMP").is_ok();
+    eprintln!(
+        "walk referee: {} way(s) and {} building(s) sent once, deduped from the days",
+        way_table.len(),
+        building_table.len()
+    );
     let req = json!({
         "mode": "walkgate",
         "baseline": baseline_req,
         "days": days_req,
+        "wayTable": way_table,
+        "buildingTable": building_table,
         "wantP90": want_p90,
     });
     let reply = backend::lean::serve(&req.to_string()).expect("the referee must answer");
