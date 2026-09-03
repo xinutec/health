@@ -100,7 +100,13 @@ const KNOWN_DIVERGENT: [&str; 0] = [];
 /// the TS run never asked — one each on 05-11, 06-18 and 07-17. Same class as
 /// the seven, same reason they cannot fall without #1076. This also explains
 /// the 06-18 member the July #394 footprint could not.
-const UNANSWERED_MAX: usize = 10;
+///
+/// ⚠ 16 since 2026-09-03 (later, the #344 override deletion): stays the mined
+/// label used to stamp now go through the venue resolver, whose read carries
+/// different flags — so six more `reverseGeocode` keys on the days the
+/// override used to stamp (05-11, 05-22, 06-15, 06-18 among them; the run
+/// names all sixteen). Same declined-on-purpose table, same #1076 dependency.
+const UNANSWERED_MAX: usize = 16;
 
 /// The tables an unanswered key may belong to. Anything else is a new gap.
 const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];

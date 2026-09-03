@@ -209,26 +209,24 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
           (reads.place placeLat placeLon true false)
       else
         let isResidential := wp.sleepHours ≥ RESIDENCE_SLEEP_THRESHOLD_H
-        -- 4. A mined amenity label, but only off a residential cluster: a
-        -- residential address beats a co-located cafe, because the cluster's
-        -- sleep hours dwarf its awake hours.
-        let tooFew := wp.cand.uniqueDays < MINED_LABEL_MIN_DAYS
-        match (if isResidential || tooFew then none else wp.amenityLabel) with
-        | some label =>
+        -- 4. RETIRED 2026-09-03 (#344): the mined amenity label no longer
+        -- short-circuits the venue resolver. Measured before removal, via the
+        -- priors referee + this exact ablation: ZERO truth verdicts move and
+        -- the elected venue changes on NO corpus stay — the override's labels
+        -- differed from the resolver's only in FORMAT (bare vs suffixed),
+        -- settled the same day by the bare-label policy in `BestPlace.named`.
+        -- ⚠ `venueless` below still reads the FIELD (`amenityLabel.isNone`),
+        -- exactly as before — see the trap note above.
+        -- 5a. Named at the SNAPPED centroid. `venueless` sends an
+        -- amenity-less cluster to the address rather than to whatever
+        -- low-confidence venue happens to be near.
+        let venueless := wp.amenityLabel.isNone
+        match reads.place placeLat placeLon (isResidential || venueless) true with
+        | none => seg
+        | some p =>
           withCity
-            { seg with place := some label, focusPlaceId := some wp.cand.id }
-            (reads.place placeLat placeLon false false)
-        | none =>
-          -- 5a. Named at the SNAPPED centroid. `venueless` sends an
-          -- amenity-less cluster to the address rather than to whatever
-          -- low-confidence venue happens to be near.
-          let venueless := wp.amenityLabel.isNone
-          match reads.place placeLat placeLon (isResidential || venueless) true with
-          | none => seg
-          | some p =>
-            withCity
-              { seg with place := some p.label, focusPlaceId := some wp.cand.id }
-              (some p)
+            { seg with place := some p.label, focusPlaceId := some wp.cand.id }
+            (some p)
     | none =>
       -- 5b. Somewhere new. The day's own centroid, and the overnight check
       -- decides whether an address beats a venue.
@@ -359,13 +357,16 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 -- with `preferResidential=true`.
 #guard (run spy [home]).place == some "Home"
 #guard (run spy [home]).focusPlaceId == some 1
--- 4. A non-residential cluster with a mined label takes the label.
-#guard (run spy [cafe]).place == some "Loft Coffee Company"
+-- 4 (RETIRED 2026-09-03, #344): the mined label no longer short-circuits the
+-- resolver — a labelled, non-residential cluster asks the resolver like
+-- everything else. What SURVIVES the retirement and stays pinned here: a
+-- cluster that carries an amenityLabel is NOT `venueless`, so it asks with
+-- `preferResidential=false` — while the venueless guard below asks with
+-- `true`. Folding that field-read into some new gate verdict is the
+-- plausible-looking change that diverges (see the trap note in the cascade).
+#guard (run spy [cafe]).place == some "51.52|-0.13|false|true"
 #guard (run spy [cafe]).focusPlaceId == some 2
--- ... but only once the cluster has been seen on MINED_LABEL_MIN_DAYS distinct
--- days. One visit is not a majority vote, so the label is dropped and the
--- address answers instead. The pair straddles the bar, pinning 2 and the `<`.
-#guard (run spy [cafe2day]).place == some "Loft Coffee Company"
+#guard (run spy [cafe2day]).place == some "51.52|-0.13|false|true"
 #guard (run spy [cafe1day]).place == some "51.52|-0.13|false|true"
 -- And note WHICH question the one-day cluster asks: `preferResidential=false`.
 -- A cluster that fails the day bar still carries an `amenityLabel`, so it is

@@ -235,9 +235,10 @@ def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
 
 /-! ## `placeLabel` -/
 
-/-- `` `${name}${type ? ` (${type})` : ""}` `` -/
-private def named (name type : String) : String :=
-  if type == "" then name else s!"{name} ({type})"
+/-- The bare venue name. Until 2026-09-03 this was `` `${name} (${type})` ``
+(the TS's format); Pippijn picked bare names for the timeline (#344), and the
+type still rides beside the label in the data for anything that needs it. -/
+private def named (name _type : String) : String := name
 
 /-- Everything before the first comma of `display_name`.
 
@@ -254,7 +255,7 @@ def placeLabel (r : Result) : String :=
   else if truthy a.tourism then named (a.tourism.getD "") r.type
   else if truthy a.leisure then named (a.leisure.getD "") r.type
   else if truthy a.shop then named (a.shop.getD "") r.type
-  else if truthy a.building && r.type != "" then s!"{a.building.getD ""} ({r.type})"
+  else if truthy a.building && r.type != "" then a.building.getD ""
   else if truthy a.houseNumber && truthy a.road then s!"{a.road.getD ""} {a.houseNumber.getD ""}"
   else if truthy a.pedestrian then named (a.pedestrian.getD "") r.type
   else if r.type != "" && truthy a.road then s!"{r.type} on {a.road.getD ""}"
@@ -385,14 +386,14 @@ private def poi (n t s : String) (d : Float) : Poi :=
 /-! ### `placeLabel` — every branch, in order -/
 
 #guard placeLabel (res "cafe" "amenity" { A with amenity := some "Olivomare" })
-  == "Olivomare (cafe)"
+  == "Olivomare"  -- was "Olivomare (cafe)" pre-bare-labels
 -- An empty `type` drops the parenthetical rather than printing "()".
 #guard placeLabel (res "" "amenity" { A with amenity := some "Olivomare" }) == "Olivomare"
-#guard placeLabel (res "hotel" "tourism" { A with tourism := some "The Zetter" }) == "The Zetter (hotel)"
-#guard placeLabel (res "park" "leisure" { A with leisure := some "Regent's Park" }) == "Regent's Park (park)"
-#guard placeLabel (res "supermarket" "shop" { A with shop := some "Lidl" }) == "Lidl (supermarket)"
+#guard placeLabel (res "hotel" "tourism" { A with tourism := some "The Zetter" }) == "The Zetter"
+#guard placeLabel (res "park" "leisure" { A with leisure := some "Regent's Park" }) == "Regent's Park"
+#guard placeLabel (res "supermarket" "shop" { A with shop := some "Lidl" }) == "Lidl"
 -- Building needs a type; without one it falls THROUGH to the address.
-#guard placeLabel (res "office" "building" { A with building := some "Kings Place" }) == "Kings Place (office)"
+#guard placeLabel (res "office" "building" { A with building := some "Kings Place" }) == "Kings Place"
 private def buildingNoType : Address :=
   { A with building := some "Kings Place", houseNumber := some "90", road := some "York Way" }
 #guard placeLabel (res "" "building" buildingNoType) == "York Way 90"
@@ -400,7 +401,7 @@ private def buildingNoType : Address :=
 #guard placeLabel (res "house" "building" { A with houseNumber := some "161", road := some "Elm Street" })
   == "Elm Street 161"
 #guard placeLabel (res "square" "place" { A with pedestrian := some "Granary Square" })
-  == "Granary Square (square)"
+  == "Granary Square"
 #guard placeLabel (res "residential" "highway" { A with road := some "Caledonian Road" })
   == "residential on Caledonian Road"
 #guard placeLabel (res "suburb" "place" { A with neighbourhood := some "Barnsbury" })
@@ -471,7 +472,7 @@ private def hospital : Poi :=
   { name := "Hospital U", type := "amenity", subtype := "hospital", distanceM := 40, enclosing := true }
 private def enclosingReads : Reads :=
   { landmarks := [hospital, poi "Costa" "amenity" "cafe" 5], geocode := geo (some detailedAddr) none }
-#guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "Hospital U (hospital)"
+#guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "Hospital U"
 
 -- No landmarks and no geocode names nothing at all.
 private def emptyReads : Reads := { landmarks := [], geocode := geo none none }
@@ -481,13 +482,13 @@ private def emptyReads : Reads := { landmarks := [], geocode := geo none none }
 -- must WIN the ranking to be returned, and unopposed it does.
 private def costaOnly : Reads :=
   { landmarks := [], geocode := geo (some (res "cafe" "amenity" { A with amenity := some "Costa" })) none }
-#guard (bestPlace costaOnly (some stay) none false).map placeLabel == some "Costa (cafe)"
+#guard (bestPlace costaOnly (some stay) none false).map placeLabel == some "Costa"
 
 -- A landmark beats a non-venue geocode and inherits its address.
 private def streetGeocode : Result := res "house" "building" { A with road := some "Lower Belgrave Street" }
 private def landmarkVsStreet : Reads :=
   { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], geocode := geo (some streetGeocode) none }
-#guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare (restaurant)"
+#guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare"
 
 -- Nothing nearby, a residential geocode: the address is the honest label.
 private def downing : Result :=
@@ -499,7 +500,7 @@ private def addressOnly : Reads := { landmarks := [], geocode := geo (some downi
 -- names a square.
 private def square : Result := res "square" "place" { A with pedestrian := some "Granary Square" }
 private def areaSquare : Reads := { landmarks := [], geocode := geo none (some square) }
-#guard (bestPlace areaSquare none none false).map placeLabel == some "Granary Square (square)"
+#guard (bestPlace areaSquare none none false).map placeLabel == some "Granary Square"
 
 -- …and when the area names nothing either, `detailed ?? area` still answers.
 private def areaNothing : Reads := { landmarks := [], geocode := geo none (some (res "" "boundary" A)) }
@@ -514,8 +515,8 @@ private def nearerCafe : Poi := { name := "Beach Cafe", type := "amenity", subty
 private def residential : Result :=
   res "house" "building" { A with houseNumber := some "12", road := some "Marine Parade" }
 private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], geocode := geo (some residential) none }
-#guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View (guest_house)"
-#guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe (cafe)"
+#guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View"
+#guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe"
 
 /-! ### Hours resolution -/
 
