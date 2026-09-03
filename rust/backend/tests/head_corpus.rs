@@ -176,6 +176,32 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
             }
         };
 
+        // #394 oracle transition (2026-09-03, see day_corpus's header): the
+        // capture oracle is the last BLESSED Lean output, not the TS's. This
+        // writes ONLY the fields this test compares — `statesOut` belongs to
+        // DAY_BLESS, and the other recordings in the node (tzAt, bestPlace,
+        // episodesOut, segsPre/In/Out) keep their TS provenance untouched.
+        // Run the bless ALONE (`--test head_corpus`), not beside the sibling
+        // test that reads the same files.
+        if std::env::var("HEAD_BLESS").is_ok() {
+            let mut fx2 = fixture.clone();
+            let cap = fx2
+                .pointer_mut("/expected/tsArm/capture")
+                .expect("the capture node exists — we just read it");
+            for f in ["segsRaw", "modeStats", "tail", "obs"] {
+                if let Some(v) = got.get(f) {
+                    cap[f] = v.clone();
+                }
+            }
+            std::fs::write(format!("{GOLDEN}/{name}"), fx2.to_string())
+                .unwrap_or_else(|e| panic!("blessing {name}: {e}"));
+            eprintln!(
+                "  BLESSED  {name}: capture.{{segsRaw,modeStats,tail,obs}} from the Lean arm"
+            );
+            agreed += 1;
+            continue;
+        }
+
         let before = failures.len();
         for f in EXACT {
             let g = got.get(f).map(Value::to_string).unwrap_or_default();

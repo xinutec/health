@@ -35,6 +35,16 @@
 //! #1063 in force — arrived at by deletion rather than chosen — and it means
 //! the corpus can lose days but cannot gain them.
 //!
+//! # ⚠ THE ORACLE'S MEANING CHANGED on 2026-09-03 (#394, Pippijn's call)
+//!
+//! `statesOut` is no longer "what the TypeScript produced" but "the last
+//! BLESSED output of the Lean arm". The port-fidelity era ended when the #394
+//! bearing fix shipped: the fix makes timelines the deleted TS is wrong about,
+//! so holding its output as the oracle would freeze the bug in. `DAY_BLESS=1`
+//! re-blesses — it OVERWRITES each fixture's `statesOut` with the current
+//! replay and prints what it touched. Bless deliberately, on a clean tree,
+//! and read the diff of the inner golden repo before committing it.
+//!
 //! # Why this test is local-only, and how it says so
 //!
 //! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
@@ -58,10 +68,13 @@ use serde_json::{Map, Value};
 /// (the TS's own segsOut says "consolidated 3 GPS-jitter stay fragments");
 /// at the merged centre the recorded rows put Morr at 1.59 m and KFC at
 /// 2.39 m, both near-field, and Lean's near-field-first rule answers Morr
-/// where the TS answered KFC. Pippijn confirmed the stay WAS Morr. The frozen
-/// oracle cannot be edited (it is the TS's real output), so the day stays
-/// here — as a recorded improvement, not an open question.
-const KNOWN_DIVERGENT: [&str; 1] = ["2026-08-09-pippijn.json"];
+/// where the TS answered KFC. Pippijn confirmed the stay WAS Morr.
+///
+/// RETIRED 2026-09-03: the oracle stopped being the TS's output (see the
+/// header), so the 08-09 bless wrote Morr into `statesOut` and the entry
+/// would have tripped the stale-entry check below. The adjudication lives in
+/// #1054; the list stays for the next genuinely divergent day.
+const KNOWN_DIVERGENT: [&str; 0] = [];
 
 /// Keys the offline answerer cannot supply, beyond the blank-zone `bestPlace`
 /// asked before `tzAt` resolves.
@@ -81,7 +94,13 @@ const KNOWN_DIVERGENT: [&str; 1] = ["2026-08-09-pippijn.json"];
 /// `reverseGeocode` is a Nominatim call whose keys are coordinates the pipeline
 /// DERIVES (#1076), and `transitStops` is injected rather than computed from
 /// rows. Neither falls without porting something.
-const UNANSWERED_MAX: usize = 7;
+///
+/// ⚠ 10 since 2026-09-03: the #394 bearing fix moves two stay boundaries
+/// (05-11, 07-17), and the shifted stays derive three `reverseGeocode` keys
+/// the TS run never asked — one each on 05-11, 06-18 and 07-17. Same class as
+/// the seven, same reason they cannot fall without #1076. This also explains
+/// the 06-18 member the July #394 footprint could not.
+const UNANSWERED_MAX: usize = 10;
 
 /// The tables an unanswered key may belong to. Anything else is a new gap.
 const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
@@ -137,7 +156,7 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
         let inputs = &fx["inputs"];
         let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
 
-        let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut") else {
+        let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut").cloned() else {
             failures.push(format!(
                 "{name}: no frozen tsArm timeline — and one CANNOT be created. \
                  `compare-day --freeze` went with the TS cascade (#975), so a day \
@@ -190,14 +209,24 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
 
         let out: Value = serde_json::from_str(&r.out).expect("the fold answers JSON");
         let got = out.get("states").cloned().unwrap_or(Value::Null);
-        let same = drop_nulls(&got) == drop_nulls(want);
+        let same = drop_nulls(&got) == drop_nulls(&want);
+        if !same && std::env::var("DAY_BLESS").is_ok() {
+            let mut fx2 = fx.clone();
+            *fx2.pointer_mut("/expected/tsArm/capture/statesOut")
+                .expect("the oracle node exists — we just read it") = got.clone();
+            std::fs::write(format!("{GOLDEN}/{name}"), fx2.to_string())
+                .unwrap_or_else(|e| panic!("blessing {name}: {e}"));
+            eprintln!("  BLESSED  {name}: statesOut rewritten from the Lean arm");
+            agreed += 1;
+            continue;
+        }
         match (same, KNOWN_DIVERGENT.contains(&name.as_str())) {
             (true, false) => agreed += 1,
             (false, true) => {
-                divergent.push(format!("{name}: {}", first_state_difference(&got, want)))
+                divergent.push(format!("{name}: {}", first_state_difference(&got, &want)))
             }
             (false, false) => {
-                failures.push(format!("{name}: {}", first_state_difference(&got, want)));
+                failures.push(format!("{name}: {}", first_state_difference(&got, &want)));
             }
             // ⚠ A day that AGREES while listed as divergent is not a pass. It
             // means the divergence is gone and the list is now a lie, and a

@@ -437,6 +437,49 @@ fn every_golden_day_measures_its_walks() {
     );
 
     // ⚠ THE VERDICT ALONE CANNOT DISTINGUISH "agrees with the floor" from
+    // #394 oracle transition (2026-09-03, see day_corpus's header): WALK_BLESS
+    // rewrites walk-baseline.json from the measured set — every date this run
+    // measured replaces its floor rows wholesale, in the floor's own shape
+    // (JSON numbers, not the wire's bit patterns; `routeCorr` may be null).
+    // 236 of 238 rows are identical either way; the point is the two walks a
+    // shifted stay boundary re-keys. Bless deliberately, read the diff.
+    if std::env::var("WALK_BLESS").is_ok() {
+        let mut out: std::collections::BTreeMap<String, Value> = baseline
+            .as_object()
+            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        let keys = [
+            "budgetM",
+            "lenM",
+            "offPathM",
+            "p90M",
+            "routeCorr",
+            "speedKmh",
+            "stallM",
+        ];
+        for d in r["current"].as_array().map_or(&[][..], Vec::as_slice) {
+            let date = d["date"].as_str().unwrap_or("");
+            let rows: Vec<Value> = d["walks"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice)
+                .iter()
+                .map(|w| {
+                    let mut row = serde_json::Map::new();
+                    row.insert("startTs".into(), w["startTs"].clone());
+                    for k in keys {
+                        row.insert(k.into(), bits_of(&w[k]).map_or(Value::Null, |v| json!(v)));
+                    }
+                    Value::Object(row)
+                })
+                .collect();
+            out.insert(date.to_string(), Value::Array(rows));
+        }
+        let text = serde_json::to_string_pretty(&out).expect("the floor serialises");
+        std::fs::write(BASELINE, text + "\n").expect("writing the walk floor");
+        eprintln!("  BLESSED  walk-baseline.json rewritten from the measured set");
+        return;
+    }
+
     // "never compared anything". Both read as zero regressions. So count, on
     // the raw numbers, how many paired walks actually MOVED — a run where the
     // gate is silent AND nothing moved is agreement; silent while everything

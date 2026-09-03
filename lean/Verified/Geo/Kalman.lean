@@ -213,9 +213,17 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
           let vLatMs := stateLat.v * R_EARTH * (pi / 180)
           let vLonMs := stateLon.v * R_EARTH * Float.cos (stateLat.x * (pi / 180)) * (pi / 180)
           let speedKmh := Float.sqrt (vLatMs ^ 2 + vLonMs ^ 2) * 3.6
-          let bearing := mod360 (Float.atan2 vLonMs vLatMs * 180 / pi + 360)
+          let emittedKmh := roundHalfUp (speedKmh * 10) / 10
+          -- #394: a row published as stopped publishes no fabricated heading —
+          -- matches the init/reset path. At a standstill `atan2` over ~0/~0
+          -- velocities returned covariance noise, and `headingChangeRate` fed
+          -- it one-sidedly into the WALKING score (9.17x on the jitter
+          -- fixture), ending stays ~5 min early at Wagamama (05-11) and UCH
+          -- (07-17). Shipped 2026-09-03 with the oracle re-bless.
+          let bearing := if emittedKmh == 0 then 0.0
+            else mod360 (Float.atan2 vLonMs vLatMs * 180 / pi + 360)
           result := result.push ⟨p.ts, stateLat.x, stateLon.x,
-            roundHalfUp (speedKmh * 10) / 10, roundHalfUp bearing⟩
+            emittedKmh, roundHalfUp bearing⟩
   return result
 
 /-- Speed → transport-mode class (`classifyMode`). -/
