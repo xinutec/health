@@ -154,6 +154,14 @@ fn to_wire(map: &BTreeMap<String, Vec<i64>>) -> Vec<Value> {
         .collect()
 }
 
+/// #343 P0: the injected-priors arm, parsed once per call site.
+fn injected_priors() -> Option<Value> {
+    let path = std::env::var("VENUE_PRIORS_FILE").ok()?;
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
+    Some(serde_json::from_str(&text).unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}")))
+}
+
 #[test]
 fn every_confirmed_row_still_holds() {
     if !Path::new(GOLDEN).is_dir() || !Path::new(NARRATIVES).is_dir() {
@@ -189,11 +197,21 @@ fn every_confirmed_row_still_holds() {
     let mut reported: BTreeSet<String> = BTreeSet::new();
     let (mut tally_v, mut tally_r, mut tally_k, mut tally_c, mut tally_u) = (0, 0, 0, 0, 0);
     let mut failures: Vec<String> = Vec::new();
+    let mut ab_rows: BTreeMap<String, Vec<Value>> = BTreeMap::new();
 
     for name in &names {
         let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
             .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        let fx: Value = serde_json::from_str(&text).expect("a fixture parses");
+        let mut fx: Value = serde_json::from_str(&text).expect("a fixture parses");
+        // #343 P0: the priors A/B. `VENUE_PRIORS_FILE` replaces the fixture's
+        // CAPTURED `venuePriors` blob for this replay only — the file comes
+        // from `refresh-focus-places --hard-out/--soft-out`, so the arm and
+        // the baseline mine the same population. Injection makes this run
+        // REPORT-ONLY (see the end of the test): a floor graded on injected
+        // priors would enforce against an arm nobody blessed.
+        if let Some(blob) = injected_priors() {
+            fx["inputs"]["venuePriors"] = blob;
+        }
         let inputs = &fx["inputs"];
         let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
         let tz = fx
@@ -253,6 +271,16 @@ fn every_confirmed_row_still_holds() {
             "{name}: the verdict list must be positional"
         );
         reported.insert(date.to_string());
+        if std::env::var("VENUE_AB_OUT").is_ok() {
+            ab_rows.insert(
+                date.to_string(),
+                verdicts
+                    .iter()
+                    .zip(&narrative.starts)
+                    .map(|(v, ts)| json!([ts, v.as_str().unwrap_or("?")]))
+                    .collect::<Vec<_>>(),
+            );
+        }
         // ⚠ WHY THIS DIAGNOSTIC EXISTS: a regressed row names what BROKE and
         // never what the pipeline said instead, so attributing one meant a hand
         // dig every time. `covering` comes back from the same lookup that
@@ -361,6 +389,22 @@ fn every_confirmed_row_still_holds() {
          {tally_r} regressed  ({tally_u} unverified) over {} day(s)",
         reported.len()
     );
+    if let Ok(out) = std::env::var("VENUE_AB_OUT") {
+        std::fs::write(
+            &out,
+            serde_json::to_string_pretty(&ab_rows).expect("the A/B rows serialise"),
+        )
+        .expect("writing VENUE_AB_OUT");
+        eprintln!("truth: per-row verdicts -> {out}");
+    }
+    if injected_priors().is_some() {
+        eprintln!(
+            "truth: ⚠ REPORT ONLY — venuePriors were INJECTED from \
+             $VENUE_PRIORS_FILE; the floor is not enforced against an arm \
+             nobody blessed. Diff the VENUE_AB_OUT files of two arms instead."
+        );
+        return;
+    }
     eprintln!(
         "truth: {held} confirmed row(s) held against a floor of {}",
         measured_baseline.values().map(Vec::len).sum::<usize>()
