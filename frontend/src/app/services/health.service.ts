@@ -224,16 +224,33 @@ export interface UserInfo {
   userId: string;
   displayName: string;
   fitbitLinked: boolean;
-  /** Per-connection status object. Old clients see only the
-   *  top-level booleans; new clients use this richer view to render
-   *  the reauth banner. */
-  connections?: {
+  /** ⚠ LEGACY, and NOT the same question as `connections.nextcloud.status`.
+   *  A revoked credential is `needs_reauth` AND linked, so this stays true for
+   *  an account that cannot fetch anything — see `routes/me.rs`, which keeps
+   *  the boolean deliberately for older SPA builds. Declared here because the
+   *  server sends it; the wire join reported its absence (DL-WIRE-ROUTE-DRIFT)
+   *  once `/api/me` gained a response type. */
+  nextcloudLinked: boolean;
+  /** Per-connection status object — the richer view the reauth banner reads.
+   *
+   *  ⚠ NOT optional. `routes/me.rs` serializes it unconditionally, and the wire
+   *  join said so (DL-WIRE-ROUTE-DRIFT: "optionality disagrees with the wire").
+   *  It was declared optional for a "server older than this client" case that
+   *  cannot arise — the SPA and the backend ship from this repo together. */
+  connections: {
     nextcloud: { status: "active" | "needs_reauth" | "not_linked" };
     fitbit: { status: "active" | "not_linked" };
   };
-  /** Present iff this request was authenticated via share token.
-   *  The recipient SPA uses [from, to] to clamp day navigation. */
-  shareWindow?: { from: string; to: string } | null;
+  /** The recipient's bounds, or `null` for the owner. The SPA clamps its
+   *  day arrows to [from, to].
+   *
+   *  ⚠ ALWAYS PRESENT, and `null` is the owner's answer rather than an absent
+   *  key — `routes/me.rs` serializes `Option<ShareWindow>` WITHOUT
+   *  `skip_serializing_if`, deliberately, so a missing key would mean "an older
+   *  server" instead of "not a share view". The wire join caught the `?`
+   *  (DL-WIRE-ROUTE-DRIFT: "optionality disagrees with the wire"). Readers use
+   *  `?.` on the VALUE, which is unaffected. */
+  shareWindow: { from: string; to: string } | null;
 }
 
 export interface HrvDay {
@@ -311,15 +328,14 @@ export class HealthService {
       if (res.ok) {
         const info = await HealthService.body<UserInfo>(res);
         this.user.set(info);
-        // Seed connection-state from /api/me so the banner can render
-        // on app-load without waiting for the first 409 from a data
-        // endpoint. Falls back to legacy boolean when the new field
-        // isn't present (server older than this client).
-        if (info.connections?.nextcloud) {
-          this.connection.setNextcloudStatus(info.connections.nextcloud.status);
-        } else {
-          this.connection.setNextcloudStatus("active"); // optimistic on legacy backends
-        }
+        // Seed connection-state from /api/me so the banner can render on
+        // app-load without waiting for the first 409 from a data endpoint.
+        //
+        // ⚠ The legacy fallback that used to sit here — optimistically
+        // "active" when `connections` was absent — was DEAD: the handler always
+        // sends the field. It also failed open, showing a healthy banner for an
+        // account that may need reauth, which is the wrong direction to guess in.
+        this.connection.setNextcloudStatus(info.connections.nextcloud.status);
         return true;
       }
     } catch {

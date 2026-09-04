@@ -20,33 +20,73 @@
 //! leave a recipient clicking into days that answer empty with no explanation.
 
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::auth::session::UserSession;
+use crate::error::AppError;
 use crate::lean;
 use crate::state::AppState;
 
+/// One connection's state, as the SPA's reauth banner reads it.
+///
+/// `status` is `Verified.connectionStatus`'s own vocabulary — `active`,
+/// `needs_reauth`, `not_linked` — and is deliberately a `String` rather than an
+/// enum: the value crosses from Lean, and narrowing it here would move the
+/// decision about what statuses EXIST out of the module that decides it.
+#[derive(Serialize)]
+pub struct ConnectionState {
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct Connections {
+    pub nextcloud: ConnectionState,
+    pub fitbit: ConnectionState,
+}
+
+/// The bounds a share recipient may navigate within. See the header.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareWindow {
+    pub from: String,
+    pub to: String,
+}
+
+/// `GET /me`'s answer.
+///
+/// ⚠ FIELD ORDER IS WIRE ORDER — `preserve_order` is on and this matched the
+/// TypeScript's object literal when it was a `json!`. serde emits struct fields
+/// in declaration order, so reordering them here is a wire change.
+///
+/// ⚠ `shareWindow` is `Option` WITHOUT `skip_serializing_if`: the owner's
+/// answer carries an explicit `null`, which is what the SPA distinguishes from
+/// a share view. Omitting the key would read as "an older server" instead.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeResponse {
+    pub user_id: String,
+    pub display_name: String,
+    pub fitbit_linked: bool,
+    pub nextcloud_linked: bool,
+    pub connections: Connections,
+    pub share_window: Option<ShareWindow>,
+}
+
+/// ⚠ THE ERROR BODY IS `AppError`'s, not this module's. It used to build its own
+/// `json!({"error": "internal"})`, which meant the handler had no wire type even
+/// once its SUCCESS answer had one — the rule asks whether a handler builds JSON
+/// by hand at all, and an error envelope the SPA reads is part of the contract.
+/// `AppError::Other` logs the detail and answers generically, which is what the
+/// hand-rolled arm was doing.
 pub async fn handler(
     State(st): State<AppState>,
     Extension(session): Extension<UserSession>,
-) -> Response {
-    match run(&st, &session).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "/me failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "internal" })),
-            )
-                .into_response()
-        }
-    }
+) -> Result<Json<MeResponse>, AppError> {
+    run(&st, &session).await
 }
 
-async fn run(st: &AppState, session: &UserSession) -> anyhow::Result<Response> {
+async fn run(st: &AppState, session: &UserSession) -> Result<Json<MeResponse>, AppError> {
     // ⚠ `fetch_optional`, and NO row is the `not_linked` answer. Both reads are
     // deliberately cheap — `/api/me` is on the SPA's critical path and neither
     // status makes a round trip to the provider.
@@ -70,23 +110,20 @@ async fn run(st: &AppState, session: &UserSession) -> anyhow::Result<Response> {
     let (fb_status, fb_linked) =
         lean::connection_status(fb.as_ref().map(|s| s.as_deref().unwrap_or("")))?;
 
-    let share_window = match &session.share_viewer {
-        None => Value::Null,
-        Some((from, to)) => json!({ "from": from, "to": to }),
-    };
+    let share_window = session.share_viewer.as_ref().map(|(from, to)| ShareWindow {
+        from: from.clone(),
+        to: to.clone(),
+    });
 
-    // ⚠ Key order is the wire order — `preserve_order` is on, and this matches
-    // the TypeScript's object literal.
-    Ok(Json(json!({
-        "userId": session.user_id,
-        "displayName": session.display_name,
-        "fitbitLinked": fb_linked,
-        "nextcloudLinked": nc_linked,
-        "connections": {
-            "nextcloud": { "status": nc_status },
-            "fitbit": { "status": fb_status },
+    Ok(Json(MeResponse {
+        user_id: session.user_id.clone(),
+        display_name: session.display_name.clone(),
+        fitbit_linked: fb_linked,
+        nextcloud_linked: nc_linked,
+        connections: Connections {
+            nextcloud: ConnectionState { status: nc_status },
+            fitbit: ConnectionState { status: fb_status },
         },
-        "shareWindow": share_window,
+        share_window,
     }))
-    .into_response())
 }

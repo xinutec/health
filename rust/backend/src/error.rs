@@ -12,7 +12,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -51,6 +51,17 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
+/// Every error answer's body, and the ONLY shape a caller sees on a failure.
+///
+/// A struct rather than a `json!` because a handler that hand-builds JSON has no
+/// wire type at all — rustc checks nothing and the TypeScript side is a guess
+/// (DL-WIRE-UNTYPED-RESPONSE). One type here covers every route that returns
+/// `AppError`, which is the reason to put it here rather than per handler.
+#[derive(Serialize)]
+pub struct ErrorBody {
+    pub error: String,
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
@@ -71,7 +82,7 @@ impl IntoResponse for AppError {
                 )
             }
         };
-        (status, Json(json!({ "error": message }))).into_response()
+        (status, Json(ErrorBody { error: message })).into_response()
     }
 }
 
