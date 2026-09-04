@@ -114,3 +114,49 @@ fn the_ranking_reports_the_term_that_decided_it() {
         near - far
     );
 }
+
+/// The `bestplace` mode — the WHOLE chain, not just the ranking.
+///
+/// ⚠ THIS EXISTS BECAUSE THE MODE DID NOT HAVE A CALLER. I added `bestplace`
+/// beside `rankvenues` and warned in this very header about #1003's
+/// mode-nothing-exercises debt, then shipped one. What it pins is the chain's
+/// two DECISIVE gates, which the ranking alone cannot show: an enclosing
+/// landmark short-circuits everything, and without one the label comes from the
+/// ranked winner rather than the geocode.
+#[test]
+fn the_chain_reports_a_label_and_an_enclosure_wins_outright() {
+    lean::init().expect("the Lean runtime must start");
+
+    let ask = |enclosing_far: bool| {
+        let req = json!({
+            "mode": "bestplace",
+            "landmarks": [
+                {"name": "Near", "type": "amenity", "subtype": "cafe", "distanceM": 5.0},
+                {"name": "Far", "type": "amenity", "subtype": "hospital",
+                 "distanceM": 90.0, "enclosing": enclosing_far},
+            ],
+            // No geocode at all: the chain must answer from the landmarks, and a
+            // `null` here is what an uncaptured reverse-geocode looks like.
+            "geocode": {"18": Value::Null, "16": Value::Null},
+            "samples": [],
+            "stay": Value::Null,
+            "priors": Value::Null,
+            "preferResidential": false,
+        });
+        let reply = lean::serve(&req.to_string()).expect("the mode answers");
+        let v: Value = serde_json::from_str(&reply).expect("the reply parses");
+        v["label"].as_str().map(str::to_string)
+    };
+
+    assert_eq!(
+        ask(false).as_deref(),
+        Some("Near"),
+        "with nothing enclosing, the nearest candidate names the stay"
+    );
+    assert_eq!(
+        ask(true).as_deref(),
+        Some("Far"),
+        "an ENCLOSING landmark outranks a nearer one — it is the chain's first \
+         gate, and the ranking below it never runs"
+    );
+}
