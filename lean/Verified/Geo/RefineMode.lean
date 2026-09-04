@@ -84,7 +84,23 @@ docstring and the TS comment claimed for a long time. It is the INSERTION order
 of `dedupNearestWays`, i.e. roughly "nearest at the FIRST sample". #445 measured
 the alternatives against golden and this accident beats both: insertion order
 leaves 5 standing regressed truth rows over 3 days, global-nearest 14 over 11,
-coverage-ranked 17 over 15. Do not "fix" it to sort by distance. -/
+coverage-ranked 17 over 15. Do not "fix" it to sort by distance.
+
+⚠ NOR BY LETTING THE BORROW WIN, which is the narrower arm and is also refuted.
+Leaving `hw` alone — so the mode branch, the reason and every driving-speed
+decision are untouched — and only preferring the nearest NAMED way for the name
+at walking pace costs eleven confirmed rows: 313 verified against a floor of 314
+becomes 303, and 3 standing regressed rows over 2 days become 13 over 13. So
+global-nearest's damage was never the reordering; it was the NAME half all
+along.
+
+The measured case is 2026-06-16 @11:13Z, where `Queen's Walk` sits in the
+deduped set as a named footway at 1.22 m and loses to `Park Place`, a
+residential at 9.60 m that merely came from sample 0. It is a real defect; this
+is not the fix for it, and neither is re-deriving arc length by nearest-way over
+`walkMatchedPath` — that line is SNAPPED onto the network, so the distances it
+would be judged by are ~0 for every way near it. See #445 for the arm that is
+left: have the matcher report the way identity it already chose. -/
 private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float) : NearbyWay :=
   if speedKmh > 30 then
     match highways.find? (fun h => !(PEDESTRIAN_HIGHWAY_SUBTYPES.contains h.subtype)) with

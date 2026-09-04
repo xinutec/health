@@ -10,8 +10,10 @@
 //! so the chain closes and the day can be replayed from the fixture alone
 //! (#982).
 //!
-//! The oracle is `expected.tsArm.capture.statesOut` — the timeline the
-//! TypeScript cascade produced from the same inputs.
+//! The oracle is `expected.tsArm.capture.statesOut`. ⚠ THE KEY IS NAMED FOR AN
+//! ARM THAT NO LONGER EXISTS: since 2026-09-03 it holds the last BLESSED LEAN
+//! output, not what the TypeScript cascade produced. See the banner below —
+//! this line said the TypeScript until 2026-09-04 and contradicted it.
 //!
 //! # ⚠ WHERE THIS TEST BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
 //!
