@@ -1241,6 +1241,116 @@ values: every output row is a copy of an input row, so the response is a pure
 selection and the only thing the two arms can disagree about is WHICH fixes
 survive. `cos` reaches only the threshold comparisons, never the output. -/
 
+/-! ## `rankvenues` — the venue ranking, candidate by candidate (#1405, #325)
+
+`Verified.Geo.VenuePrior.rankVenues` decides which OSM venue names a stay, and
+until now nothing could see INSIDE it. #325 built this probe and reverted it to
+avoid landing a mode with no caller; #1405 is why it is back, with a test that
+drives it: a hand-computed model of `shapeScore` disagreed with what the fold
+actually served, and a model that disagrees with the artefact is worth nothing.
+
+⚠ FLOATS CROSS AS PLAIN NUMBERS HERE, not as `fBits`. This is a probe read by a
+human and by a test that writes literals, not a Lean-to-Lean parity hop — the
+bit-pattern spelling exists so two implementations can compare doubles exactly,
+and there is only one implementation of this.
+
+  { "landmarks": [{name, type, subtype, distanceM,
+                   openFraction?, enclosing?, reverseGeocoded?}],
+    "stay":   {startUnix, endUnix, localHour} | null,
+    "priors": {bySubtype: [[name, {visits, dwell:[…], hours:[…]}]],
+               byCategory: [[…]], totalVisits} | null }
+
+Output: every candidate in RANKED order with its score broken out, so the term
+that decided a stay is readable rather than inferred.
+
+  { "ranked": [{name, subtype, distanceM, total,
+                distance, venue, shape|null, hours|null,
+                nearField, enclosing}] }
+-/
+
+private def num (j : Json) : Except String Float := do
+  match j.getNum? with
+  | .ok n => return n.toFloat
+  | .error e => throw e
+
+private def optNum (j : Json) (k : String) : Except String (Option Float) :=
+  match j.getObjVal? k with
+  | .error _ => .ok none
+  | .ok v => if v.isNull then .ok none else do return some (← num v)
+
+private def optBool (j : Json) (k : String) : Bool :=
+  match j.getObjVal? k with
+  | .ok (.bool b) => b
+  | _ => false
+
+private def parseLandmark (j : Json) : Except String Verified.Geo.VenuePrior.Landmark := do
+  return {
+    name := ← (← j.getObjVal? "name").getStr?
+    type := ← (← j.getObjVal? "type").getStr?
+    subtype := ← (← j.getObjVal? "subtype").getStr?
+    distanceM := ← num (← j.getObjVal? "distanceM")
+    openFraction := ← optNum j "openFraction"
+    enclosing := optBool j "enclosing"
+    reverseGeocoded := optBool j "reverseGeocoded"
+  }
+
+private def parseVenueStatsPlain (j : Json)
+    : Except String Verified.Geo.VenuePrior.VenueTypeStats := do
+  return {
+    visits := ← num (← j.getObjVal? "visits")
+    dwell := (← (← optArr j "dwell").mapM num).toList
+    hours := (← (← optArr j "hours").mapM num).toList
+  }
+
+private def parsePriorsPlain (j : Json)
+    : Except String (Option Verified.Geo.VenuePrior.VenuePriors) := do
+  match j.getObjVal? "priors" with
+  | .error _ => return none
+  | .ok v =>
+    if v.isNull then return none else do
+      let pair : Json → Except String (String × Verified.Geo.VenuePrior.VenueTypeStats) :=
+        fun e => do
+          let a ← e.getArr?
+          return (← (← nth a 0).getStr?, ← parseVenueStatsPlain (← nth a 1))
+      return some {
+        bySubtype := (← (← optArr v "bySubtype").mapM pair).toList
+        byCategory := (← (← optArr v "byCategory").mapM pair).toList
+        totalVisits := ← num (← v.getObjVal? "totalVisits")
+      }
+
+private def rankVenuesResult (j : Json) : Json :=
+  let parsed : Except String (List Verified.Geo.VenuePrior.VenueCandidateScore) := do
+    let lms ← (← (← j.getObjVal? "landmarks").getArr?).mapM parseLandmark
+    let stay : Option Verified.Geo.VenuePrior.StayShape ← match j.getObjVal? "stay" with
+      | .error _ => pure none
+      | .ok v =>
+        if v.isNull then pure none else do
+          let st : Verified.Geo.VenuePrior.StayShape := {
+            startUnix := ← (← v.getObjVal? "startUnix").getInt?
+            endUnix := ← (← v.getObjVal? "endUnix").getInt?
+            localHour := ← (← v.getObjVal? "localHour").getInt?
+          }
+          pure (some st)
+    let priors ← parsePriorsPlain j
+    return Verified.Geo.VenuePrior.rankVenues lms.toList stay priors
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok ranked =>
+    let optF : Option Float → Json := fun o =>
+      match o with | none => Json.null | some v => Lean.toJson v
+    Json.mkObj [("ranked", Json.arr ((ranked.map fun c =>
+      Json.mkObj [
+        ("name", Json.str c.landmark.name),
+        ("subtype", Json.str c.landmark.subtype),
+        ("distanceM", Lean.toJson c.landmark.distanceM),
+        ("total", Lean.toJson c.total),
+        ("distance", Lean.toJson c.parts.distance),
+        ("venue", Lean.toJson c.parts.venue),
+        ("shape", optF c.parts.shape),
+        ("hours", optF c.parts.hours),
+        ("nearField", Json.bool c.nearField),
+        ("enclosing", Json.bool c.landmark.enclosing)]).toArray))]
+
 private def gpsQualityResult (j : Json) : Json :=
   let parsed : Except String (Array Verified.Geo.Kalman.GpsPoint) := do
     let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseKalmanPt
@@ -3023,6 +3133,7 @@ def dispatch (j : Json) : Json :=
   | .ok "placenearline" => placeNearLineResult j
   | .ok "coverage" => coverageResult j
   | .ok "kalman" => kalmanResult j
+  | .ok "rankvenues" => rankVenuesResult j
   | .ok "gpsquality" => gpsQualityResult j
   | .ok "gpsoutliers" => gpsOutliersResult j
   | .ok "biolabels" => bioLabelsResult j
@@ -3170,6 +3281,7 @@ def cliMain (args : List String) : IO UInt32 := do
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
+  if args.contains "rankvenues" then return ← runOne rankVenuesResult input
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
   if args.contains "gpsoutliers" then return ← runOne gpsOutliersResult input
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
