@@ -52,11 +52,12 @@
 //! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
 //! place names and biometrics. It ANNOUNCES A SKIP rather than passing quietly.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use backend::fold_converge::converge;
 use backend::rowset_answerer::RowSetAnswerer;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Days whose timeline the Lean fold and the TypeScript cascade build
 /// differently — each with its divergence ADJUDICATED, not merely observed.
@@ -151,6 +152,21 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
     names.sort();
     assert!(!names.is_empty(), "the corpus directory is empty");
 
+    // #343: the priors A/B, the same wire `truth_corpus` uses. Unset — the gate
+    // path — this is None and nothing below changes.
+    //
+    // ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
+    // gives: the oracle was blessed from an arm nobody re-blessed under these
+    // priors, so a mismatch here is the MEASUREMENT, not a regression. What it
+    // answers is the half the truth floor structurally cannot — the footprint on
+    // stays no narrative row grades.
+    let injected: Option<Value> = std::env::var("VENUE_PRIORS_FILE").ok().map(|path| {
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"))
+    });
+    let mut places: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+
     let mut failures: Vec<String> = Vec::new();
     let mut agreed = 0usize;
     let mut deepest = 0u32;
@@ -160,7 +176,10 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
     for name in &names {
         let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
             .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        let fx: Value = serde_json::from_str(&text).expect("a fixture parses");
+        let mut fx: Value = serde_json::from_str(&text).expect("a fixture parses");
+        if let Some(blob) = &injected {
+            fx["inputs"]["venuePriors"] = blob.clone();
+        }
         let inputs = &fx["inputs"];
         let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
 
@@ -217,6 +236,31 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
 
         let out: Value = serde_json::from_str(&r.out).expect("the fold answers JSON");
         let got = out.get("states").cloned().unwrap_or(Value::Null);
+
+        // #343: every stay's place, POSITIONALLY — the truth referee learned the
+        // hard way that a ts-keyed diff lies, because 06-22 carries two rows with
+        // the same `startTs`.
+        if injected.is_some() || std::env::var("VENUE_PLACES_OUT").is_ok() {
+            let rows: Vec<Value> = got
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter(|st| st.get("mode").and_then(Value::as_str) == Some("stationary"))
+                .map(|st| {
+                    json!({
+                        "startTs": st.get("startTs").cloned().unwrap_or(Value::Null),
+                        "endTs": st.get("endTs").cloned().unwrap_or(Value::Null),
+                        "place": st.get("place").cloned().unwrap_or(Value::Null),
+                    })
+                })
+                .collect();
+            places.insert(name.clone(), rows);
+        }
+        if injected.is_some() {
+            agreed += 1;
+            continue;
+        }
         let same = drop_nulls(&got) == drop_nulls(&want);
         if !same && std::env::var("DAY_BLESS").is_ok() {
             let mut fx2 = fx.clone();
@@ -243,6 +287,22 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
                 "{name} is listed as divergent on #1054 but now agrees — delete the entry"
             )),
         }
+    }
+
+    if let Ok(out) = std::env::var("VENUE_PLACES_OUT") {
+        std::fs::write(
+            &out,
+            serde_json::to_string_pretty(&places).expect("the place dump serialises"),
+        )
+        .expect("writing VENUE_PLACES_OUT");
+        eprintln!("day: {} day(s) of stay places -> {out}", places.len());
+    }
+    if injected.is_some() {
+        eprintln!(
+            "day: REPORT-ONLY — replayed under $VENUE_PRIORS_FILE, so the oracle is not \
+             enforced against an arm nobody blessed. Diff two arms' $VENUE_PLACES_OUT files."
+        );
+        return;
     }
 
     for d in &divergent {
