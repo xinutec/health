@@ -35,11 +35,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use sqlx::Row;
 use sqlx::mysql::MySqlRow;
 
 use crate::auth::session::UserSession;
+use crate::error::ErrorBody;
 use crate::state::AppState;
 use crate::{lean, row_json};
 
@@ -75,19 +77,60 @@ fn days_back_of(body: Option<&Body>) -> Option<i64> {
 /// ⚠ `createdAt` is `Date.toISOString()`, which is the same string
 /// `JSON.stringify` produces for a Date — so this reuses the row renderer's
 /// formatter rather than inventing a second one.
-fn share_json(st: &AppState, row: &MySqlRow) -> anyhow::Result<Value> {
+/// `GET`/`POST`/`PATCH /share`'s answer, in both of its shapes.
+///
+/// ⚠ ONE STRUCT FOR A TAGGED PAIR, and the tag is `active`. With no link the
+/// other keys are ABSENT, not null — the settings page renders the create
+/// button off `active: false` alone — so every optional carries
+/// `skip_serializing_if`.
+///
+/// ⚠ `last_accessed_at` is `Option<Option<_>>` and that is not a typo. The
+/// OUTER absence means "there is no link"; `Some(None)` means "a link nobody
+/// has opened yet" and must serialize as an explicit `null`. Collapsing the two
+/// would make an unopened link indistinguishable from no link at all.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareStatus {
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days_back: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_accessed_at: Option<Option<String>>,
+}
+
+impl ShareStatus {
+    /// "You have no share link" — an ANSWER with a 200, not a 404.
+    fn inactive() -> Self {
+        Self {
+            active: false,
+            token: None,
+            url: None,
+            days_back: None,
+            created_at: None,
+            last_accessed_at: None,
+        }
+    }
+}
+
+fn share_json(st: &AppState, row: &MySqlRow) -> anyhow::Result<ShareStatus> {
     let token: String = row.try_get("token")?;
     let days_back: i64 = row.try_get("days_back")?;
     let created: chrono::NaiveDateTime = row.try_get_unchecked("created_at")?;
     let last: Option<chrono::NaiveDateTime> = row.try_get_unchecked("last_accessed_at")?;
-    Ok(json!({
-        "active": true,
-        "token": token,
-        "url": lean::build_share_url(&st.cfg.public_base_url, &token)?,
-        "daysBack": days_back,
-        "createdAt": row_json::format_date_time_iso(created),
-        "lastAccessedAt": last.map_or(Value::Null, |d| Value::from(row_json::format_date_time_iso(d))),
-    }))
+    Ok(ShareStatus {
+        active: true,
+        url: Some(lean::build_share_url(&st.cfg.public_base_url, &token)?),
+        token: Some(token),
+        days_back: Some(days_back),
+        created_at: Some(row_json::format_date_time_iso(created)),
+        last_accessed_at: Some(last.map(row_json::format_date_time_iso)),
+    })
 }
 
 async fn fetch(st: &AppState, user_id: &str) -> anyhow::Result<Option<MySqlRow>> {
@@ -101,7 +144,9 @@ fn oops(e: &anyhow::Error) -> Response {
     tracing::error!(error = %e, "share route failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "internal" })),
+        Json(ErrorBody {
+            error: "internal".to_string(),
+        }),
     )
         .into_response()
 }
@@ -115,7 +160,7 @@ pub async fn get(
         Err(e) => oops(&e),
         // ⚠ `{active: false}` and a 200, not a 404. "You have no share link" is
         // an answer, and the settings page renders it as the create button.
-        Ok(None) => Json(json!({ "active": false })).into_response(),
+        Ok(None) => Json(ShareStatus::inactive()).into_response(),
         Ok(Some(row)) => match share_json(&st, &row) {
             Ok(v) => Json(v).into_response(),
             Err(e) => oops(&e),
@@ -184,7 +229,9 @@ pub async fn patch(
         Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "daysBack must be a number in [1, 365]" })),
+                Json(ErrorBody {
+                    error: "daysBack must be a number in [1, 365]".to_string(),
+                }),
             )
                 .into_response();
         }
@@ -207,7 +254,9 @@ pub async fn patch(
         // exist is a mistake worth reporting, not an invitation to open access.
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "no_active_share" })),
+            Json(ErrorBody {
+                error: "no_active_share".to_string(),
+            }),
         )
             .into_response(),
         Ok(Some(row)) => match share_json(&st, &row) {

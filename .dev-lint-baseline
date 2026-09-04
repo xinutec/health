@@ -3,5 +3,4 @@
 1	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/locations.rs
 1	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/logging.rs
 1	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/nextcloud_connect.rs
-2	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/share.rs
 2	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/tables.rs
