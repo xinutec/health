@@ -99,8 +99,18 @@ deduped set as a named footway at 1.22 m and loses to `Park Place`, a
 residential at 9.60 m that merely came from sample 0. It is a real defect; this
 is not the fix for it, and neither is re-deriving arc length by nearest-way over
 `walkMatchedPath` — that line is SNAPPED onto the network, so the distances it
-would be judged by are ~0 for every way near it. See #445 for the arm that is
-left: have the matcher report the way identity it already chose. -/
+would be judged by are ~0 for every way near it.
+
+⚠ AND THE MATCHER'S OWN IDENTITY REPORT IS REFUTED TOO (2026-09-04). The arm
+this docstring used to point at was built — `QMatchResult.wayUm`, the route's
+arc length per way name — and measured over the 45 enforceable named-walk
+truth windows: naming by route-dominance broke 12 fixing 2 (13/1 with the
+per-edge pavement borrow), and even a pure absence-veto over this cascade's
+pick broke 3 fixing 1, because the route can MISS the true way (the Euston
+Underpass legs match onto the surface streets, so "zero metres on the route"
+cannot separate a phantom pick from a blind route). What survived is in
+`WalkAnnotate.drawMatcher`: the report names a leg only when THIS cascade
+named it nothing. The full ledger is on #445. -/
 private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float) : NearbyWay :=
   if speedKmh > 30 then
     match highways.find? (fun h => !(PEDESTRIAN_HIGHWAY_SUBTYPES.contains h.subtype)) with

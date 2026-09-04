@@ -1737,6 +1737,16 @@ structure QMatchProfile where
   simplifyTolUm : Nat
   buildingCrossFactor : Nat
   buildingSupportUm : Nat
+  /-- #445: when attributing the chosen route's arc length per way name
+  (`QMatchResult.wayUm`), an edge on an UNNAMED way is charged to the nearest
+  NAMED way within this distance — 0 disables. OSM models a street's pavement
+  and its carriageway as separate ways and the pavement is almost always
+  unnamed, so without this the street a walk rides loses its own metres to
+  the `none` bucket and any named square on the route outweighs it. Measured
+  2026-09-04: raw argmax broke 12 of 45 enforceable named-walk truths
+  exactly that way. Same rationale and bar as `RefineMode`'s
+  `WALK_NAME_BORROW_MAX_M` (30 m), applied per EDGE rather than per leg. -/
+  nameBorrowUm : Nat := 0
 
 def WALK_QPROFILE : QMatchProfile :=
   { minFixes := 3, radiusUm := 20000000, maxCandidatesPerFix := 6
@@ -1746,7 +1756,8 @@ def WALK_QPROFILE : QMatchProfile :=
     maxRoadlessNum := 2, maxRoadlessDen := 5
     corridorNearUm := 25000000, corridorFarUm := 80000000, corridorMaxPenalty := 40
     wayContinuityNats := 0, spurReturnUm := 25000000, spurMaxSpanVerts := 4
-    simplifyTolUm := 5000000, buildingCrossFactor := 25, buildingSupportUm := 15000000 }
+    simplifyTolUm := 5000000, buildingCrossFactor := 25, buildingSupportUm := 15000000
+    nameBorrowUm := 30000000 }
 
 /-- `ROAD_PROFILE` (`road-match.ts`) in the pinned representation — the
 original road tuning, of which `WALK_QPROFILE` is a delta.
@@ -1777,11 +1788,20 @@ structure QObs where
 structure QMatchResult where
   path : Array QPt
   routeDetail : Array QPt
+  /-- Arc length attributed per way NAME along the chosen route, in `qDist`
+  units — the matcher REPORTING the identity it resolved, so naming never has
+  to re-derive "which way" by nearest-neighbour over a line that is snapped
+  onto the network and equidistant from everything near it (#445). `none`
+  collects the unnamed ways; edges the graph cannot attribute (gap bridges)
+  are charged to nothing. -/
+  wayUm : Array (Option String × Nat) := #[]
   deriving Inhabited, BEq
 
 structure QWalkMatchResult where
   path : Array QPt
   coarsePath : Array QPt
+  /-- `QMatchResult.wayUm`, passed through untouched. -/
+  wayUm : Array (Option String × Nat) := #[]
   deriving Inhabited
 
 /-- Time-interpolate a route's vertices onto `out` by cumulative arc
@@ -1897,13 +1917,81 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   if decoded.isNone then return none
   let chosen : Array Nat := (decoded.getD []).toArray
 
-  -- Assemble the interpolated route detail.
+  -- Assemble the interpolated route detail, attributing each route edge to the
+  -- way it runs along as it goes (#445). Interior edges are graph edges and are
+  -- looked up by their endpoint coordinates (`vertices` is deduped on exactly
+  -- that pair, so the key is exact, not a tolerance). The FIRST and LAST edge
+  -- of a hop touch a candidate FOOT — a projection that is on a segment but is
+  -- not a graph vertex — so they miss the map and are charged to the segment
+  -- that candidate projected onto, which `QCand.si` has known all along. The
+  -- same-segment fast path (`#[footA, footB]`, no graph vertex at all) lands in
+  -- that fallback too. A middle edge that misses is a gap bridge and is
+  -- deliberately charged to nothing.
+  let mut edgeName : Std.HashMap (Int × Int × Int × Int) (Option String) := ∅
+  for s in graph.segments do
+    let u := graph.vertices.getD s.u default
+    let v := graph.vertices.getD s.v default
+    edgeName := edgeName.insert (u.la, u.lo, v.la, v.lo) s.name
+    edgeName := edgeName.insert (v.la, v.lo, u.la, u.lo) s.name
+  let addUm := fun (acc : Array (Option String × Nat)) (n : Option String) (d : Nat) =>
+    match acc.findIdx? (fun p => p.1 == n) with
+    | some i => acc.set! i (n, (acc.getD i default).2 + d)
+    | none => acc.push (n, d)
+  -- The per-edge borrow (`P.nameBorrowUm` — see the profile field): the
+  -- nearest NAMED segment within the bar of the edge's midpoint. The 3×3 cell
+  -- block, because `segIdx`'s cells are sized for `radiusUm` (20 m walk) and
+  -- the borrow bar is 30 m — a single-cell read can miss a named carriageway
+  -- in the next cell. Nearest wins; a tie keeps the lower index, the same
+  -- determinism `qCandidatesForFixFast`'s sort uses.
+  let borrowName := fun (pt qt : QPt) => Id.run do
+    let mid : QPt := { la := (pt.la + qt.la) / 2, lo := (pt.lo + qt.lo) / 2, ts := 0 }
+    let cy := mid.la.fdiv segIdx.cellLa
+    let cx := mid.lo.fdiv segIdx.cellLo
+    let mut best : Option (Nat × Nat) := none
+    for dy in [0:3] do
+      for dx in [0:3] do
+        let bucket := segIdx.grid.getD (cellKeyN (cy + (dy : Int) - 1) (cx + (dx : Int) - 1)) #[]
+        for si in bucket do
+          let sSeg := graph.segments.getD si default
+          match sSeg.name with
+          | some nm =>
+            if nm == "" then continue
+            let a := graph.vertices.getD sSeg.u default
+            let b := graph.vertices.getD sSeg.v default
+            if latGapUm mid a b > P.nameBorrowUm then continue
+            let d := (qProject mid a b).dist
+            if d ≤ P.nameBorrowUm then
+              match best with
+              | none => best := some (si, d)
+              | some (bsi, bd) =>
+                if d < bd || (d == bd && si < bsi) then best := some (si, d)
+          | none => continue
+    return best.bind fun (si, _) => (graph.segments.getD si default).name
+  let mut wayUm : Array (Option String × Nat) := #[]
   let first := (obs.getD 0 default).cands.getD (chosen.getD 0 0) default
   let mut out : Array QPt := #[{ la := first.la, lo := first.lo, ts := (obs.getD 0 default).fix.ts }]
   for t in [1:nObs] do
     match ((routeOf.getD (t - 1) #[]).getD (chosen.getD t 0) #[]).getD (chosen.getD (t - 1) 0) none with
     | none => return none
     | some (_, verts) =>
+      let segName := fun (cand : QCand) => (graph.segments.getD cand.si default).name
+      let sa := segName ((obs.getD (t - 1) default).cands.getD (chosen.getD (t - 1) 0) default)
+      let sb := segName ((obs.getD t default).cands.getD (chosen.getD t 0) default)
+      for k in [1:verts.size] do
+        let p := verts.getD (k - 1) default
+        let q := verts.getD k default
+        let attributed : Option (Option String) :=
+          match edgeName.get? (p.la, p.lo, q.la, q.lo) with
+          | some n => some n
+          | none =>
+            if k == 1 then some sa
+            else if k == verts.size - 1 then some sb
+            else none
+        match attributed with
+        | some n =>
+          let n := if n.isNone && P.nameBorrowUm > 0 then borrowName p q else n
+          wayUm := addUm wayUm n (qDist p q)
+        | none => pure ()
       out := qAppendInterpolated out verts (obs.getD (t - 1) default).fix.ts (obs.getD t default).fix.ts
 
   let simplified := ((qSimplify (fun i => out.getD i default) out.size P.simplifyTolUm).map
@@ -1914,7 +2002,7 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
   let rawLen := qPathLength fixes
   if qPathLength cleanedArr * P.maxLenDen > rawLen * P.maxLenNum + P.maxLenSlackUm * P.maxLenDen then
     return none
-  return some { path := cleanedArr, routeDetail := out }
+  return some { path := cleanedArr, routeDetail := out, wayUm }
 
 /-- `matchWalkSegment`'s twin (walk profile, trim + despike + splice). -/
 def qMatchWalkSegment (fixes : Array QPt) (ways : Array QWay)
@@ -1928,7 +2016,7 @@ def qMatchWalkSegment (fixes : Array QPt) (ways : Array QWay)
       (fun i => trimmed.getD i default) trimmed.size).toArray
     let path := (qSplice (fun i => r.routeDetail.getD i default) r.routeDetail.size
       1500000 WALK_QPROFILE.simplifyTolUm (fun i => cleaned.getD i default) cleaned.size).toArray
-    return some { path, coarsePath := cleaned }
+    return some { path, coarsePath := cleaned, wayUm := r.wayUm }
 
 /-- `matchRoadSegment`'s twin. Unlike the walk wrapper this adds nothing to
 the trajectory match — no trim, no despike, no route-detail splice — so the
@@ -1985,7 +2073,7 @@ theorem qMatchWalkSegment_eq (fixes : Array QPt) (ways : Array QWay)
           (fun i => trimmed.getD i default) trimmed.size).toArray
         let path := (qSplice (fun i => r.routeDetail.getD i default) r.routeDetail.size
           1500000 WALK_QPROFILE.simplifyTolUm (fun i => cleaned.getD i default) cleaned.size).toArray
-        ({ path, coarsePath := cleaned } : QWalkMatchResult)) := by
+        ({ path, coarsePath := cleaned, wayUm := r.wayUm } : QWalkMatchResult)) := by
   unfold qMatchWalkSegment
   cases qMatchTrajectory fixes ways buildings WALK_QPROFILE <;> rfl
 

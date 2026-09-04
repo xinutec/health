@@ -41,10 +41,11 @@ Wire format, little-endian throughout:
       u32        number of points
       per point: f64 lat, f64 lon
 
-`Ways` and `Array Ring` are both `Array (Array Pt)`, so one decoder serves
-`walkableRoads` and `buildingsNear` both. `drivableRoads` returns `Array Way`,
-which carries `osmId`/`name`/`subtype` as well, so it gets a SECOND format
-rather than being smuggled through this one:
+`Array Ring` is `Array (Array Pt)` and `buildingsNear` answers in this
+format. `walkableRoads` and `drivableRoads` return `Array Way`, which carries
+`osmId`/`name`/`subtype` as well (`walkableRoads` since #445 — the matcher
+reports the way identity it chose, so the names must survive the boundary),
+and use a SECOND format rather than being smuggled through this one:
 
     u32          number of ways
     per way:
@@ -203,8 +204,13 @@ in the shape the TS wrote them in. -/
 @[extern "health_osm_drivable_roads"]
 opaque drivableRoadsRaw : Float → Float → Float → ByteArray
 
-def walkableRoads (lat lon : Float) (radiusM : Int) : Polylines :=
-  decodePolylines (walkableRoadsRaw lat lon radiusM)
+/-- Since #445 this answers in the WAY format, names and all: the capture
+always carried `name`/`osmId`/`subtype` for walkable ways, and the pedestrian
+matcher now reports the way identity it chose, which needs the names to
+exist on its side of the boundary. An empty answer is the same four zero
+bytes in both formats, so the stub linkage is unchanged. -/
+def walkableRoads (lat lon : Float) (radiusM : Int) : Array Way :=
+  decodeWays (walkableRoadsRaw lat lon radiusM)
 
 def buildingsNear (lat lon : Float) (radiusM : Int) : Polylines :=
   decodePolylines (buildingsNearRaw lat lon radiusM)

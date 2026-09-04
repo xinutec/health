@@ -99,9 +99,11 @@ fn quantise_r(v: f64) -> i64 {
     (v * 1e6).round() as i64
 }
 
-/// One drivable way. `walkableRoads` drops everything but the geometry because
-/// `Ways` has nowhere to put it; the road matcher's way-switch penalty reads
-/// `name`, and the corridor fetch unions by `osmId`, so this one keeps them.
+/// One way, drivable or walkable. `walkableRoads` used to drop everything but
+/// the geometry because the Lean side's `Ways` had nowhere to put it; since
+/// #445 the pedestrian matcher reports the way identity it chose, so the walk
+/// side carries the full record too. The road matcher's way-switch penalty
+/// reads `name`, and the corridor fetch unions by `osmId`.
 struct Way {
     osm_id: i64,
     name: Option<String>,
@@ -122,7 +124,7 @@ struct RawKey {
 
 #[derive(Default)]
 struct Trace {
-    walkable: HashMap<Key, Vec<Line>>,
+    walkable: HashMap<Key, Vec<Way>>,
     buildings: HashMap<Key, Vec<Line>>,
     drivable: HashMap<Key, Vec<Way>>,
     keys: Vec<RawKey>,
@@ -222,28 +224,14 @@ fn parse_pair(v: &serde_json::Value) -> Option<(f64, f64)> {
     Some((v.get("lat")?.as_f64()?, v.get("lon")?.as_f64()?))
 }
 
-/// `walkableRoads` values are `{coords, name, osmId, subtype}` and only `coords`
-/// survives: the Lean side wants `Ways = Array (Array Pt)`, plain geometry. The
-/// dropped fields are real, and are why `drivableRoads` — which needs `osmId`,
-/// `name` and `subtype` — is NOT served through this format.
-fn parse_ways(v: &serde_json::Value) -> Vec<Line> {
-    v.as_array()
-        .map(|ws| {
-            ws.iter()
-                .filter_map(|w| {
-                    w.get("coords")?
-                        .as_array()
-                        .map(|c| c.iter().filter_map(parse_pair).collect())
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// `drivableRoads` values are `{osmId, name, subtype, coords}` and ALL of it
-/// survives — see [`Way`]. A missing `name`/`subtype` stays missing: the road
-/// matcher charges for changing way, so an unnamed way and a way named `""` are
-/// different inputs.
+/// `walkableRoads` and `drivableRoads` values are `{osmId, name, subtype,
+/// coords}` and ALL of it survives — see [`Way`]. A missing `name`/`subtype`
+/// stays missing: the road matcher charges for changing way, and the walk
+/// naming report treats an unnamed way as unable to name a leg, so an unnamed
+/// way and a way named `""` are different inputs. A record missing `osmId` or
+/// `coords` is DROPPED by the `?`s — which is why `load_fixture` compares the
+/// parsed count against the raw array length and refuses on a mismatch,
+/// rather than letting a shape change silently thin the map.
 fn parse_way_records(v: &serde_json::Value) -> Vec<Way> {
     v.as_array()
         .map(|ws| {
@@ -330,7 +318,7 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     let root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
     let mut t = Trace {
-        walkable: section(&root, "walkableRoads", parse_ways),
+        walkable: section(&root, "walkableRoads", parse_way_records),
         buildings: section(&root, "buildingsNear", parse_rings),
         drivable: section(&root, "drivableRoads", parse_way_records),
         keys: Vec::new(),
@@ -350,27 +338,56 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     // believes every one of them is nowhere. This is the shape that hid the
     // `{lat, lon}` vs `[lat, lon]` mismatch in `parse_pair` — so the load
     // refuses rather than serving it.
+    for (key, lines) in &t.buildings {
+        if let Some(i) = lines.iter().position(|l| l.is_empty()) {
+            return Err(format!(
+                "{path}: buildingsNear key {key:?} decoded polyline {i} of {} to ZERO vertices — \
+                 the coordinate shape is not what the parser expects",
+                lines.len()
+            ));
+        }
+    }
     for (label, sec) in [
         ("walkableRoads", &t.walkable),
-        ("buildingsNear", &t.buildings),
+        ("drivableRoads", &t.drivable),
     ] {
-        for (key, lines) in sec {
-            if let Some(i) = lines.iter().position(|l| l.is_empty()) {
+        for (key, ways) in sec {
+            if let Some(i) = ways.iter().position(|w| w.coords.is_empty()) {
                 return Err(format!(
-                    "{path}: {label} key {key:?} decoded polyline {i} of {} to ZERO vertices — \
+                    "{path}: {label} key {key:?} decoded way {i} of {} to ZERO vertices — \
                      the coordinate shape is not what the parser expects",
-                    lines.len()
+                    ways.len()
                 ));
             }
         }
     }
-    for (key, ways) in &t.drivable {
-        if let Some(i) = ways.iter().position(|w| w.coords.is_empty()) {
-            return Err(format!(
-                "{path}: drivableRoads key {key:?} decoded way {i} of {} to ZERO vertices — \
-                 the coordinate shape is not what the parser expects",
-                ways.len()
-            ));
+    // A record `parse_way_records` cannot shape (say, a missing `osmId`) is
+    // DROPPED, not zeroed — invisible to the guard above. Catch it as a count
+    // mismatch against the raw JSON, the same "refuse rather than serve a
+    // thinned map" stance the zero-vertex guard takes.
+    for (label, sec) in [
+        ("walkableRoads", &t.walkable),
+        ("drivableRoads", &t.drivable),
+    ] {
+        if let Some(o) = root
+            .get("inputs")
+            .and_then(|i| i.get("osmTrace"))
+            .and_then(|tr| tr.get(label))
+            .and_then(|s| s.as_object())
+        {
+            for (k, v) in o {
+                // An unparseable KEY was already skipped by `section` — that
+                // is the pre-existing contract, not this guard's business.
+                let Some(key) = parse_key(k) else { continue };
+                let raw = v.as_array().map(|a| a.len()).unwrap_or(0);
+                let parsed = sec.get(&key).map(|w| w.len()).unwrap_or(0);
+                if parsed != raw {
+                    return Err(format!(
+                        "{path}: {label} key {k} has {raw} raw way(s) but {parsed} parsed — \
+                         a record shape the parser drops"
+                    ));
+                }
+            }
         }
     }
     let _ = TRACE.set(t);
@@ -411,7 +428,11 @@ pub fn verify_against_mirror(path: &str) -> Result<(), String> {
     for k in &t.keys {
         match k.section.as_str() {
             "walkableRoads" => {
-                let want = t.walkable.get(&k.key).cloned().unwrap_or_default();
+                let want: Vec<Line> = t
+                    .walkable
+                    .get(&k.key)
+                    .map(|ws| ws.iter().map(|w| w.coords.clone()).collect())
+                    .unwrap_or_default();
                 let got: Vec<Line> = crate::mirror::walkable_roads(k.lat, k.lon, k.radius)
                     .into_iter()
                     .map(|w| w.coords)
@@ -554,28 +575,18 @@ fn hand_over(b: &[u8]) -> *mut c_void {
     unsafe { health_shell_mk_bytes(b.as_ptr(), b.len()) }
 }
 
-fn section_name(which: bool) -> &'static str {
-    if which {
-        "walkableRoads"
-    } else {
-        "buildingsNear"
-    }
+/// Geometry digest of ways, for the same `OSM_LOG` comparison [`geom_hash`]
+/// serves — the walkable section now carries full way records (#445) but the
+/// digest stays a GEOMETRY digest, comparable across arms and formats.
+fn geom_hash_ways(ways: &[Way]) -> String {
+    let lines: Vec<Line> = ways.iter().map(|w| w.coords.clone()).collect();
+    geom_hash(&lines)
 }
 
-fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
+fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let key = (quantise(lat), quantise(lon), quantise_r(radius));
-    let found = TRACE.get().and_then(|t| {
-        if which {
-            t.walkable.get(&key)
-        } else {
-            t.buildings.get(&key)
-        }
-    });
-    let (hits, misses) = if which {
-        (&WALKABLE_HITS, &WALKABLE_MISSES)
-    } else {
-        (&BUILDINGS_HITS, &BUILDINGS_MISSES)
-    };
+    let found = TRACE.get().and_then(|t| t.buildings.get(&key));
+    let (hits, misses) = (&BUILDINGS_HITS, &BUILDINGS_MISSES);
     match found {
         Some(lines) => {
             hits.fetch_add(1, Ordering::Relaxed);
@@ -589,8 +600,7 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // reaching for different roads.
             if std::env::var_os("OSM_LOG").is_some() {
                 eprintln!(
-                    "osm: HIT  {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
-                    section_name(which),
+                    "osm: HIT  buildingsNear lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
                     lines.len(),
                     geom_hash(lines)
                 );
@@ -606,8 +616,7 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // by design and naming them is noise that buries the real ones.
             if TRACE.get().is_some() {
                 eprintln!(
-                    "osm: MISS {} lat={lat:.17} lon={lon:.17} r={radius} bits={:016x}/{:016x}",
-                    section_name(which),
+                    "osm: MISS buildingsNear lat={lat:.17} lon={lon:.17} r={radius} bits={:016x}/{:016x}",
                     lat.to_bits(),
                     lon.to_bits()
                 );
@@ -620,19 +629,11 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // and correctly: a walk over an area the mirror does not cover is
             // exactly the case that must not read as "there are no roads here".
             if crate::mirror::configured() {
-                let lines: Vec<Line> = if which {
-                    crate::mirror::walkable_roads(lat, lon, radius)
-                        .into_iter()
-                        .map(|w| w.coords)
-                        .collect()
-                } else {
-                    crate::mirror::buildings_near(lat, lon, radius)
-                };
+                let lines: Vec<Line> = crate::mirror::buildings_near(lat, lon, radius);
                 MIRROR_READS.fetch_add(1, Ordering::Relaxed);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
-                        "osm: MIRROR {} lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
-                        section_name(which),
+                        "osm: MIRROR buildingsNear lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
                         lines.len(),
                         geom_hash(&lines)
                     );
@@ -640,6 +641,60 @@ fn lookup(which: bool, lat: f64, lon: f64, radius: f64) -> *mut c_void {
                 return answer(&lines);
             }
             answer(&[])
+        }
+    }
+}
+
+/// The walkable twin of [`lookup_ways`], since #445 moved `walkableRoads` to
+/// the WAY format: the pedestrian matcher reports the way identity it chose,
+/// so the names must reach it. Same fixture-then-mirror order, its own
+/// counters.
+fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
+    let key = (quantise(lat), quantise(lon), quantise_r(radius));
+    match TRACE.get().and_then(|t| t.walkable.get(&key)) {
+        Some(ways) => {
+            WALKABLE_HITS.fetch_add(1, Ordering::Relaxed);
+            if std::env::var_os("OSM_LOG").is_some() {
+                eprintln!(
+                    "osm: HIT  walkableRoads lat={lat:.17} lon={lon:.17} r={radius} -> {} way(s) {}",
+                    ways.len(),
+                    geom_hash_ways(ways)
+                );
+            }
+            hand_over(&encode_ways(ways))
+        }
+        None => {
+            WALKABLE_MISSES.fetch_add(1, Ordering::Relaxed);
+            if TRACE.get().is_some() {
+                eprintln!(
+                    "osm: MISS walkableRoads lat={lat:.17} lon={lon:.17} r={radius} \
+                     bits={:016x}/{:016x}",
+                    lat.to_bits(),
+                    lon.to_bits()
+                );
+            }
+            if crate::mirror::configured() {
+                let ways: Vec<Way> = crate::mirror::walkable_roads(lat, lon, radius)
+                    .into_iter()
+                    .map(|w| Way {
+                        osm_id: w.osm_id,
+                        name: w.name,
+                        subtype: w.subtype,
+                        coords: w.coords,
+                    })
+                    .collect();
+                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                if std::env::var_os("OSM_LOG").is_some() {
+                    eprintln!(
+                        "osm: MIRROR walkableRoads lat={lat:.17} lon={lon:.17} r={radius} \
+                         -> {} way(s) {}",
+                        ways.len(),
+                        geom_hash_ways(&ways)
+                    );
+                }
+                return hand_over(&encode_ways(&ways));
+            }
+            hand_over(&encode_ways(&[]))
         }
     }
 }
@@ -718,7 +773,7 @@ pub unsafe extern "C" fn health_osm_walkable_roads(
         health_shell_dec(radius_m);
         v
     };
-    lookup(true, lat, lon, r as f64)
+    lookup_walkable(lat, lon, r as f64)
 }
 
 /// As [`health_osm_walkable_roads`].
@@ -737,7 +792,7 @@ pub unsafe extern "C" fn health_osm_buildings_near(
         health_shell_dec(radius_m);
         v
     };
-    lookup(false, lat, lon, r as f64)
+    lookup(lat, lon, r as f64)
 }
 
 /// The road mirror read. ⚠ Its radius is an UNBOXED `double`, not a boxed

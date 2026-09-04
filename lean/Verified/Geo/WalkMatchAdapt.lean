@@ -48,15 +48,16 @@ rather than bit-identical to it (#395 / #403)". Judge a change here with
 `compare-match --gate`, and do NOT quiet a divergence by widening the
 accepted-delta manifest — `deploy.sh:139`.
 
-# Ways carry no names here, and that is correct for WALK
+# Ways DO carry names here since #445 — and they still decide nothing
 
-`QWay` has a `name`, used for the way-switch penalty. `Ways` is
-`Array (Array Pt)` and has none to give. That is not a lossy shortcut:
-`WALK_QPROFILE.wayContinuityNats = 0`, so the walk profile charges nothing for a
-way change, and `Match.lean` says outright that the field is the ROAD turn prior
-which "no walk guard exercises". `pedestrian-match.ts` never reads a name either.
-The ROAD matcher does need them, which is why `RoadMatchAnnotate.Env` takes
-`Array Way` with `osmId`/`name`/`subtype` and this one does not.
+`QWay` has a `name`. For the walk profile it cannot move the LINE:
+`WALK_QPROFILE.wayContinuityNats = 0`, so the way-switch penalty it feeds is
+zero nats — `switchPenScaled` multiplies through to 0 and the trellis scores
+are bit-identical with or without the names. What the names now feed is the
+matcher's IDENTITY REPORT (`QMatchResult.wayUm`): #445 measured that naming a
+walk by re-deriving "which way" from the drawn line is unanswerable (the line
+is snapped onto the network, every nearby way is ~0 m from it), so the matcher
+reports the way each stretch of its route ran along, and naming reads that.
 -/
 
 namespace Verified.Geo.WalkMatchAdapt
@@ -90,18 +91,20 @@ on too. -/
 def fromQ (q : QPt) : Verified.Geo.PathPt :=
   { lat := intToFloat q.la / SCALE, lon := intToFloat q.lo / SCALE, ts := intToFloat q.ts }
 
-def waysToQ (ways : Ways) : Array QWay :=
-  ways.map fun w => { coords := w.map fun p => toQ p.lat p.lon, name := none }
+def waysToQ (ways : Array Verified.Geo.OsmCorridor.Way) : Array QWay :=
+  ways.map fun w => { coords := w.coords.map fun p => toQ p.lat p.lon, name := w.name }
 
 def ringsToQ (rings : Array Ring) : Array (Array QPt) :=
   rings.map fun r => r.map fun p => toQ p.lat p.lon
 
-/-- `WalkAnnotate.Env.matcher`, backed by `qMatchWalkSegment`. -/
-def matcher (fixes : Array Verified.Geo.PathPt) (ways : Ways) (buildings : Array Ring) :
-    Option MatchOut :=
+/-- `WalkAnnotate.Env.matcher`, backed by `qMatchWalkSegment`. `wayUm` crosses
+untouched — integer units in, integer units out; only relative weight is read. -/
+def matcher (fixes : Array Verified.Geo.PathPt) (ways : Array Verified.Geo.OsmCorridor.Way)
+    (buildings : Array Ring) : Option MatchOut :=
   match Verified.Geo.qMatchWalkSegment (fixes.map pathPtToQ) (waysToQ ways) (ringsToQ buildings) with
   | none => none
-  | some r => some { path := r.path.map fromQ, coarsePath := r.coarsePath.map fromQ }
+  | some r => some { path := r.path.map fromQ, coarsePath := r.coarsePath.map fromQ,
+                     wayUm := r.wayUm }
 
 /-! ## Specs
 
@@ -127,9 +130,12 @@ values are the ones `quant-twin.ts`'s `quantPt` produces for the same inputs. -/
 -- The round trip is the identity on anything already on the grid.
 #guard fromQ (toQ 51.5 (-0.1)) == ({ lat := 51.5, lon := -0.1, ts := 0 } : Verified.Geo.PathPt)
 
--- Names are dropped, deliberately — see the header.
-#guard (waysToQ #[#[⟨51.5, -0.1⟩]])[0]!.name == none
-#guard (waysToQ #[#[⟨51.5, -0.1⟩, ⟨51.6, -0.2⟩]])[0]!.coords.size == 2
+-- Names survive since #445 — the identity report needs them. An unnamed way
+-- stays unnamed rather than becoming "".
+#guard (waysToQ #[{ osmId := 0, coords := #[⟨51.5, -0.1⟩] }])[0]!.name == none
+#guard (waysToQ #[{ osmId := 0, name := some "Queen's Walk",
+                    coords := #[⟨51.5, -0.1⟩, ⟨51.6, -0.2⟩] }])[0]!.name == some "Queen's Walk"
+#guard (waysToQ #[{ osmId := 0, coords := #[⟨51.5, -0.1⟩, ⟨51.6, -0.2⟩] }])[0]!.coords.size == 2
 
 -- No ways means nothing to match against, and the matcher says so rather than
 -- inventing a line. This is the answer the shells gave, and the one the host

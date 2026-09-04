@@ -1,4 +1,5 @@
 import Verified.Geo.SegmentMerge
+import Verified.Geo.OsmCorridor
 import Verified.Geo.WalkAnchors
 import Verified.Geo.WalkSmooth
 import Verified.Geo.DisplayGate
@@ -64,6 +65,7 @@ UNPROVEN; pinned against Node/V8 (`lean/experiments/walk-annotate-refs.mts`).
 namespace Verified.Geo.WalkAnnotate
 
 open Verified.Geo.WalkableRoute (Pt Ways)
+open Verified.Geo.OsmCorridor (Way)
 open Verified.Geo.WalkEscape (Ring TPt)
 open Verified.Geo.WalkSmooth (WalkFix WalkEvidence countSharpTurns)
 open Verified.Geo.DisplayGate (MPt matchImprovesDisplay spliceMatchedWithDivergentRuns)
@@ -91,6 +93,10 @@ every downstream threshold was tuned against. -/
 structure MatchOut where
   path : Array MPt
   coarsePath : Array MPt
+  /-- Arc length per way NAME along the route the Viterbi chose, in the
+  matcher's own integer units — the identity report #445 asked for. Relative
+  weight is all naming reads, so the unit never converts. -/
+  wayUm : Array (Option String × Nat) := #[]
   deriving Inhabited, BEq, Repr
 
 /-- The walk corrector's switches, as configuration. Defaults are what
@@ -123,12 +129,19 @@ inductive Draw where
 
 /-- The shell: the two OSM reads and the five solver leaves. -/
 structure Env where
-  /-- `osm.walkableRoads(lat, lon, radiusM)`. -/
-  walkableRoads : Float → Float → Int → Ways
+  /-- `osm.walkableRoads(lat, lon, radiusM)`. Full way records since #445:
+  the capture always carried `name`/`osmId`/`subtype` and only the old `Ways`
+  type dropped them. The solver leaves still consume plain geometry — the
+  pass projects — but the MATCHER receives the names, so it can report the
+  way identity it chose and naming need not re-derive it. -/
+  walkableRoads : Float → Float → Int → Array Way
   /-- `osm.buildingsNear(lat, lon, radiusM)`. -/
   buildingsNear : Float → Float → Int → Array Ring
-  /-- `matchWalkSegment(fixes, { ways, buildings })`. -/
-  matcher : Array MPt → Ways → Array Ring → Option MatchOut
+  /-- `matchWalkSegment(fixes, { ways, buildings })`. Takes the full way
+  records (see `walkableRoads`); the walk profile's way-switch penalty is
+  0 nats so the names decide NOTHING about the line — they only ride along
+  so `MatchOut.wayUm` can report where the route ran. -/
+  matcher : Array MPt → Array Way → Array Ring → Option MatchOut
   /-- `reconstructWalk(fixes, { ways, buildings }, undefined, evidence)`. -/
   reconstruct : Array WalkFix → Ways → Array Ring → WalkEvidence → Option (Array TPt)
   /-- `refineMatchedPath(walkFixes, base)`. -/
@@ -284,18 +297,47 @@ private def drawRecon (env : Env) (ways : Ways) (buildings : Array Ring)
   | some recon => if recon.size ≥ 2 then (recon, true) else (held.map PedFix.pathPt, false)
   | none => (held.map PedFix.pathPt, false)
 
+/-- The dominant NAMED way of an identity report (`MatchOut.wayUm`) — the way
+the matcher's route ran along for the greatest arc length. ⚠ This is a helper
+for the one surviving use in `drawMatcher` (naming a leg the cascade left
+unnamed); as the general naming rule it is REFUTED — the ledger is in
+`drawMatcher` and on #445. Unnamed ways cannot name a leg; a tie keeps the
+first, which is route traversal order and deterministic. `none` means the
+route touched no named way, and the caller keeps whatever name it had. -/
+def matchWayName (wayUm : Array (Option String × Nat)) : Option String :=
+  (wayUm.foldl (init := (none : Option (String × Nat))) fun best p =>
+    match p with
+    | (some n, um) =>
+      match best with
+      | none => some (n, um)
+      | some (_, bu) => if um > bu then some (n, um) else best
+    | (none, _) => best).map (·.1)
+
+#guard matchWayName #[] == none
+-- A route entirely on unnamed ways names nothing, whatever its length.
+#guard matchWayName #[(none, 900)] == none
+-- The longest NAMED run wins, not the longest run.
+#guard matchWayName #[(some "Park Place", 100), (none, 900), (some "Queen's Walk", 400)]
+  == some "Queen's Walk"
+-- A tie keeps the first — route traversal order, deterministic.
+#guard matchWayName #[(some "A", 100), (some "B", 100)] == some "A"
+
 /-- One leg's drawn line under the matcher arm: the display gate, the
 local-divergence splice salvage, the de-boxing refinement, and the
 robust-reconstruction swap. Returns the line, whether a match (or a splice) was
-used, and whether the reconstruction replaced it. -/
-private def drawMatcher (env : Env) (flags : Flags) (ways : Ways) (buildings : Array Ring)
-    (clean held : Array PedFix) (ev : WalkEvidence) : Array TPt × Bool × Bool := Id.run do
+used, whether the reconstruction replaced it, and — only for a leg whose
+cascade name is `none` — the way name the matcher's own route endorses (#445;
+see the ledger comment at the `matchName` binding). -/
+private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (buildings : Array Ring)
+    (clean held : Array PedFix) (ev : WalkEvidence) (cascadeName : Option String) :
+    Array TPt × Bool × Bool × Option String := Id.run do
+  let geom : Ways := ways.map Way.coords
   let fixes := clean.map PedFix.pathPt
   let result := env.matcher fixes ways buildings
   -- Decision parity (#369): the gate, the salvage and the refinement's
   -- engagement test all consume `coarsePath`, never the finer display line.
   let decision := result.map fun r =>
-    matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) ways
+    matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) geom
       WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M
   let mut useMatch := match decision with
     | some d => d.use
@@ -326,19 +368,41 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Ways) (buildings : A
     else
       drawn := held.map PedFix.pathPt
   | none => drawn := held.map PedFix.pathPt
+  -- #445: the identity report names a leg ONLY when the cascade named it
+  -- nothing. Every stronger use was measured 2026-09-04 over the 45
+  -- enforceable named-walk truth windows and REFUTED: route-dominant naming
+  -- outright broke 12 (raw) / 13 (with the per-edge pavement borrow) while
+  -- fixing 2 and 1 — the route rides squares, forecourts and underpasses the
+  -- narrative does not name the walk after; and even as a pure VETO
+  -- (override only a cascade name carrying ZERO metres of the route) it
+  -- broke 3 while fixing 1, because a zero can also mean the ROUTE missed
+  -- the true way — the Euston Underpass legs match onto the surface streets,
+  -- so absence-of-metres cannot distinguish a phantom cascade name from a
+  -- blind route. What survived: on legs the cascade left UNNAMED, adopting
+  -- the route's dominant borrowed name broke nothing. The stray bar is the
+  -- display gate's own parallel-way guard: a match that does not track the
+  -- fixes describes some other street's pavement. A splice keeps raw
+  -- geometry over divergent runs, so a spliced route describes nothing.
+  let matchName :=
+    match result, decision with
+    | some r, some d =>
+      if spliced.isNone && cascadeName.isNone && d.strayM ≤ WALK_MATCH_MAX_STRAY_M then
+        matchWayName r.wayUm
+      else none
+    | _, _ => none
   -- The swap: a large FRACTION shorter AND a wide ABSOLUTE margin shorter. On
   -- an ordinary leg the reconstruction is ~the same length and nothing changes.
   if flags.recon then
-    match env.reconstruct (held.map PedFix.walkFix) ways buildings ev with
+    match env.reconstruct (held.map PedFix.walkFix) geom buildings ev with
     | some recon =>
       if recon.size ≥ 2 then
         let drawnLen := pathLenM drawn
         let reconLen := pathLenM recon
         if reconLen ≤ drawnLen * RECON_SWAP_MAX_LEN_FRACTION
             && drawnLen - reconLen ≥ RECON_SWAP_MIN_ABS_DROP_M then
-          return (recon, useMatch, true)
+          return (recon, useMatch, true, none)
     | none => pure ()
-  return (drawn, useMatch, false)
+  return (drawn, useMatch, false, matchName)
 
 /--
 Attach `walkMatchedPath` / `walkSmoothedPath` to every walking leg the evidence
@@ -378,27 +442,35 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           let held := hold clean
           let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs
           let ev := evidenceFor segments si stepsWalked
-          let (drawn0, useMatch, smoothed0) := match draw with
+          let (drawn0, useMatch, smoothed0, matchName) := match draw with
             | .recon =>
-              let (d, s) := drawRecon env ways buildings held ev
-              (d, false, s)
-            | .matcher => drawMatcher env flags ways buildings clean held ev
+              let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
+              (d, false, s, none)
+            | .matcher => drawMatcher env flags ways buildings clean held ev seg.wayName
           let mut drawn := drawn0
           let mut corrected := false
           if flags.buildingEscape && !buildings.isEmpty then
             let budget := stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
-            let fixed := env.correct drawn ways buildings budget
+            let fixed := env.correct drawn (ways.map Way.coords) buildings budget
             corrected := changed drawn fixed
             if corrected then drawn := fixed
             -- The passage snap runs LAST, on the final line, so it cannot
             -- perturb the gate's or the corrector's accept/reject decisions.
-            let snapped := env.snapPassages drawn ways buildings
+            let snapped := env.snapPassages drawn (ways.map Way.coords) buildings
             if changed drawn snapped then
               drawn := snapped
               corrected := true
           if smoothed0 then out := out.push { seg with walkSmoothedPath := some drawn }
-          else if useMatch || corrected then out := out.push { seg with walkMatchedPath := some drawn }
-          else out := out.push seg
+          else if useMatch || corrected then
+            -- #445: when the full match ships, its own route names the leg —
+            -- the corrector only escapes buildings locally and does not change
+            -- which ways the route ran along. A leg whose route touched no
+            -- named way keeps the cascade's name.
+            out := out.push
+              { seg with
+                  walkMatchedPath := some drawn
+                  wayName := matchName.orElse (fun _ => seg.wayName) }
+          else out := out.push { seg with wayName := matchName.orElse (fun _ => seg.wayName) }
     | _, _, _ => out := out.push seg
   return out
 
@@ -550,7 +622,11 @@ the refinement on the despiked fixes AND on the base line. -/
 private def mkEnv (ways : Ways) (key : Float × Float × Int)
     (cleanIn heldIn : Array PedFix) (m : Option MatchOut) (rec : Option (Array TPt))
     (refBase : Array Pt) (ref : Option (Array TPt)) : Env :=
-  { walkableRoads := fun la lo r => if (la, lo, r) == key then ways else #[]
+  -- The stub wraps its plain geometry into anonymous `Way` records: these
+  -- fixtures pin ORCHESTRATION, and no guard here exercises the #445 naming
+  -- report (`matchWayName` has its own guards on literals).
+  { walkableRoads := fun la lo r =>
+      if (la, lo, r) == key then ways.map (fun w => { osmId := 0, coords := w }) else #[]
     buildingsNear := fun _ _ _ => #[]
     matcher := fun fx _ _ => if fx == cleanIn.map PedFix.pathPt then m else none
     reconstruct := fun fx _ _ ev =>

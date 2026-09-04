@@ -1314,7 +1314,7 @@ private def WALKMATCH : Env :=
     walkEnv :=
       { NO_LOOKUPS.walkEnv with
         walkableRoads := fun _ _ _ =>
-          #[#[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩]]
+          #[{ osmId := 0, coords := #[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩] }]
         matcher := fun pts _ _ =>
           let snapped := pts.map fun q => { q with lon := lon0 }
           some { path := snapped, coarsePath := snapped } } }
