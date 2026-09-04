@@ -227,6 +227,29 @@ pub fn rows_to_json(rows: &[MySqlRow]) -> Result<Vec<Value>> {
 /// speed, accuracy and battery are all far inside it — but a caller adding a
 /// column with genuinely huge numbers must re-measure rather than assume this
 /// covers them.
+/// An `f64` that serializes the way `JSON.stringify` renders a JS number.
+///
+/// ⚠ USE THIS IN EVERY RESPONSE STRUCT THAT CARRIES A FLOAT. A plain `f64` field
+/// does NOT agree with the encoder these routes used before they were typed:
+/// serde prints `120.0` and `-0.0` where V8 prints `120` and `0`. That is not a
+/// cosmetic difference — the first `/locations` parity run against production
+/// differed by 8,790 bytes across 1,465 points for exactly this reason, and
+/// nothing else had caught it (see the header of `js_number_value`).
+///
+/// So typing a route that carries coordinates with plain `f64` would REINTRODUCE
+/// the divergence this module exists to prevent, which is why #1404 split its
+/// remaining routes by whether they carry floats.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JsNumber(pub f64);
+
+impl serde::Serialize for JsNumber {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Delegating to the Value keeps ONE definition of the rules. An
+        // independent impl here would be a second copy to drift from.
+        js_number_value(self.0).serialize(s)
+    }
+}
+
 pub fn js_number_value(v: f64) -> Value {
     if !v.is_finite() {
         // ⚠ `JSON.stringify(NaN)` is `null`, not `NaN` — which is not valid

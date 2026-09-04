@@ -1,4 +1,3 @@
 # dev-lint baseline — known violations grandfathered in. Counts may only
 # decrease. Regenerate: dev-lint --write-baseline <file> <paths>
-1	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/locations.rs
 2	DL-WIRE-UNTYPED-RESPONSE	rust/backend/src/routes/tables.rs

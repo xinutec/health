@@ -34,10 +34,11 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::auth::session::UserSession;
+use crate::error::ErrorBody;
 use crate::location_cache::{LatestFix, TailPoint};
 use crate::nextcloud::credentials::NcError;
 use crate::nextcloud::phonetrack::PhoneTrack;
@@ -77,7 +78,11 @@ pub struct TailParams {
 
 /// The shared refusal shape. `None` for the not-linked body means the caller
 /// supplies it, since `/locations` answers `[]` and `/location/latest` `null`.
-fn nc_error_response(e: &NcError, not_linked: Value, message: &'static str) -> Response {
+/// ⚠ `not_linked` is GENERIC so callers can hand over a typed empty body rather
+/// than `json!([])`. A hand-built literal at the CALL SITE lives in the
+/// handler's own body, which is where DL-WIRE-UNTYPED-RESPONSE looks — so the
+/// helper being typed is not enough on its own.
+fn nc_error_response<T: Serialize>(e: &NcError, not_linked: T, message: &'static str) -> Response {
     match e {
         NcError::NotLinked => Json(not_linked).into_response(),
         NcError::ReauthRequired => (
@@ -156,12 +161,25 @@ fn fix_json(fix: Option<&LatestFix>) -> Value {
 
 /// One tail point. ⚠ Three keys only — the TypeScript projects the tail down to
 /// `{lat, lon, ts}` and drops the rest.
-fn tail_json(p: &TailPoint) -> Value {
-    json!({
-        "lat": row_json::js_number_value(p.lat),
-        "lon": row_json::js_number_value(p.lon),
-        "ts": p.ts,
-    })
+/// One point of `/location/tail`.
+///
+/// ⚠ `JsNumber`, NOT `f64`. This route's floats are coordinates, and a plain
+/// `f64` field prints `120.0` where the encoder this replaced printed `120` —
+/// the divergence `row_json` exists to prevent. `js_number_wire.rs` pins that
+/// the two agree.
+#[derive(Serialize)]
+pub struct TailPointOut {
+    pub lat: row_json::JsNumber,
+    pub lon: row_json::JsNumber,
+    pub ts: i64,
+}
+
+fn tail_json(p: &TailPoint) -> TailPointOut {
+    TailPointOut {
+        lat: row_json::JsNumber(p.lat),
+        lon: row_json::JsNumber(p.lon),
+        ts: p.ts,
+    }
 }
 
 /// `GET /locations?date=` — one day of fixes.
@@ -332,7 +350,7 @@ pub async fn tail(
                     if !matches!(e, NcError::NotLinked) {
                         tracing::error!(user = %session.user_id, error = %e, "/location/tail failed");
                     }
-                    return nc_error_response(&e, json!([]), "tail fetch failed");
+                    return nc_error_response(&e, Vec::<TailPointOut>::new(), "tail fetch failed");
                 }
             }
         }
@@ -340,9 +358,9 @@ pub async fn tail(
 
     let Some(since) = since else {
         // NaN: every comparison is false, so the tail is empty.
-        return Json(Vec::<Value>::new()).into_response();
+        return Json(Vec::<TailPointOut>::new()).into_response();
     };
-    let out: Vec<Value> = location_cache::tail_after(&buffered, since)
+    let out: Vec<TailPointOut> = location_cache::tail_after(&buffered, since)
         .iter()
         .map(tail_json)
         .collect();
@@ -353,7 +371,9 @@ fn internal(e: &anyhow::Error) -> Response {
     tracing::error!(error = %e, "location route failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "internal" })),
+        Json(ErrorBody {
+            error: "internal".to_string(),
+        }),
     )
         .into_response()
 }
