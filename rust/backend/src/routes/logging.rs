@@ -32,9 +32,10 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::auth::session::UserSession;
+use crate::error::ErrorBody;
 use crate::lean;
 use crate::state::AppState;
 
@@ -114,14 +115,18 @@ pub async fn telemetry(
     let Some(Json(body)) = body else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "invalid json" })),
+            Json(ErrorBody {
+                error: "invalid json".to_string(),
+            }),
         )
             .into_response();
     };
     let Some(events) = body.as_array() else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "expected array" })),
+            Json(ErrorBody {
+                error: "expected array".to_string(),
+            }),
         )
             .into_response();
     };
@@ -162,7 +167,9 @@ pub async fn client_log(
     let Some(Json(body)) = body else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "invalid json" })),
+            Json(ErrorBody {
+                error: "invalid json".to_string(),
+            }),
         )
             .into_response();
     };
@@ -173,7 +180,9 @@ pub async fn client_log(
     if !body.is_object() && !body.is_array() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "expected object" })),
+            Json(ErrorBody {
+                error: "expected object".to_string(),
+            }),
         )
             .into_response();
     }

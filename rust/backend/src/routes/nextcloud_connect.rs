@@ -28,10 +28,11 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::session::UserSession;
+use crate::error::ErrorBody;
 use crate::nextcloud::credentials::NcError;
 use crate::state::AppState;
 use crate::{lean, timezone};
@@ -272,36 +273,56 @@ pub async fn sync_filter(
     if tz.parse::<chrono_tz::Tz>().is_err() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "tz is not a known IANA timezone" })),
+            Json(ErrorBody {
+                error: "tz is not a known IANA timezone".to_string(),
+            }),
         )
             .into_response();
     }
 
     match sync_filter_run(&st, &session.user_id, tz).await {
-        Ok(datemin) => Json(json!({ "ok": true, "datemin": datemin })).into_response(),
+        Ok(datemin) => Json(SyncFilterResponse { ok: true, datemin }).into_response(),
         Err(e) => match e.downcast_ref::<NcError>() {
             // ⚠ 412, not 409: "you never linked an account" is a precondition
             // the user can satisfy, and the SPA shows the connect prompt.
             Some(NcError::NotLinked) => (
                 StatusCode::PRECONDITION_FAILED,
-                Json(json!({ "error": "nextcloud_not_linked" })),
+                Json(ErrorBody {
+                    error: "nextcloud_not_linked".to_string(),
+                }),
             )
                 .into_response(),
             Some(NcError::ReauthRequired) => (
                 StatusCode::CONFLICT,
-                Json(json!({ "error": "nextcloud_reauth_required" })),
+                Json(ErrorBody {
+                    error: "nextcloud_reauth_required".to_string(),
+                }),
             )
                 .into_response(),
             _ => {
                 tracing::error!(error = %format!("{e:#}"), user = %session.user_id, "sync-filter failed");
                 (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": "phonetrack sync-filter failed" })),
+                    Json(ErrorBody {
+                        error: "phonetrack sync-filter failed".to_string(),
+                    }),
                 )
                     .into_response()
             }
         },
     }
+}
+
+/// `POST /phonetrack/sync-filter`'s answer.
+///
+/// ⚠ `datemin` is an `i64` epoch second, and that is why this needed no special
+/// number handling: integers are exact in both serde and `JSON.stringify`. A
+/// FLOAT column would not be — see `row_json::js_number_value`, and #1404 for
+/// the routes that carry them.
+#[derive(Serialize)]
+pub struct SyncFilterResponse {
+    pub ok: bool,
+    pub datemin: i64,
 }
 
 async fn sync_filter_run(st: &AppState, user_id: &str, tz: &str) -> anyhow::Result<i64> {
