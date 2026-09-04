@@ -15,6 +15,34 @@
 //!
 //! Floats cross as PLAIN NUMBERS here, not `fBits`. This is read by a human and
 //! by the literals below, not a Lean-to-Lean parity hop.
+//!
+//! # ⚠ THIS PROBE DOES NOT YET REPRODUCE THE FOLD. Do not settle a naming
+//! # question with it.
+//!
+//! Measured on #1405 the same day it landed. Fed the fold's OWN landmark bucket,
+//! the captured stay window and the same priors blob, `bestplace` agrees with the
+//! fold on one arm and disagrees on two:
+//!
+//!     blob                              probe            fold
+//!     fixture                           Pizza Union      Pizza Union
+//!     fixture + prod fast_food.visits   Pizza Union      Honest Burgers
+//!     prod                              foodilic         Honest Burgers
+//!
+//! So an input this probe does not model still differs from what `StayEnrich`
+//! passes. Candidates: the coordinate step 5a names at (the MINED CLUSTER
+//! centroid `wp.cand.centroidLat/Lon`, NOT the stay's), `preferResidential` as
+//! `isResidential || venueless` computes it, or `samples`.
+//!
+//! What IS trustworthy for that question is the fold itself:
+//!
+//!     cargo run --release --example dump_day_request -- <day> > req.json
+//!     # rewrite req.env.venuePriors, then
+//!     lean/.lake/build/bin/verified_cli day < req.json
+//!
+//! whose output carries `segsSplit`/`segsEnriched`/`segsMid`/`segs`/`states`, so
+//! the stage a label changes at is readable. Fix this probe against the three
+//! rows above or delete it — a probe that disagrees with the artefact is the
+//! failure #1405 is a monument to.
 
 use backend::lean;
 use serde_json::{Value, json};

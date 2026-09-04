@@ -1318,6 +1318,104 @@ private def parsePriorsPlain (j : Json)
         totalVisits := ← num (← v.getObjVal? "totalVisits")
       }
 
+/-! ## `bestplace` — the WHOLE naming chain, not just the ranking (#1405)
+
+`rankvenues` reads the ranker. This reads what `BestPlace.resolve` finally
+ANSWERS, which is a different question: the ranker's winner passes through an
+enclosing check, a Nominatim specific-venue branch, a lodging override and a
+residential-address branch before it becomes a label.
+
+⚠ THIS IS THE ONLY WAY TO TELL "the ranker chose X" FROM "the fold serves X".
+#1405 needed exactly that: the ranker's winner and the served label disagree,
+and without this mode there is no way to say which side of `resolve` the
+disagreement is on.
+
+  { "landmarks": [{name, type, subtype, distanceM, openingHours?, enclosing?}],
+    "geocode": {"18": <result>|null, "16": <result>|null},
+    "samples": [[weekday, minuteOfDay], …],
+    "stay": {startUnix, endUnix, localHour} | null,
+    "priors": <as rankvenues> | null,
+    "preferResidential": bool }
+
+  <result> = {displayName, type, category, address:{amenity?, tourism?, shop?,
+              leisure?, building?, houseNumber?, road?, pedestrian?,
+              neighbourhood?, suburb?, stateDistrict?, city?, town?, village?,
+              municipality?}}
+
+Output: `{ "label": str, "city": str|null }`, or `{"label": null}` when the
+chain resolves nothing.
+-/
+
+private def optStr (j : Json) (k : String) : Option String :=
+  match j.getObjVal? k with
+  | .ok (.str v) => some v
+  | _ => none
+
+private def parseAddress (j : Json) : Verified.Geo.Enrich.Address :=
+  { amenity := optStr j "amenity", tourism := optStr j "tourism"
+    leisure := optStr j "leisure", shop := optStr j "shop"
+    building := optStr j "building", houseNumber := optStr j "houseNumber"
+    road := optStr j "road", pedestrian := optStr j "pedestrian"
+    neighbourhood := optStr j "neighbourhood", suburb := optStr j "suburb"
+    stateDistrict := optStr j "stateDistrict", city := optStr j "city"
+    town := optStr j "town", village := optStr j "village"
+    municipality := optStr j "municipality" }
+
+private def parseGeoResult (j : Json) : Verified.Geo.BestPlace.Result :=
+  { displayName := Option.getD (optStr j "displayName") ""
+    type := Option.getD (optStr j "type") ""
+    category := Option.getD (optStr j "category") ""
+    address := match j.getObjVal? "address" with
+               | .ok a => parseAddress a
+               | .error _ => {} }
+
+private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
+  return {
+    name := ← (← j.getObjVal? "name").getStr?
+    type := ← (← j.getObjVal? "type").getStr?
+    subtype := ← (← j.getObjVal? "subtype").getStr?
+    distanceM := ← num (← j.getObjVal? "distanceM")
+    openingHours := optStr j "openingHours"
+    enclosing := optBool j "enclosing"
+  }
+
+private def bestPlaceResult (j : Json) : Json :=
+  let parsed : Except String (Option Verified.Geo.SegmentMerge.ResolvedPlace) := do
+    let pois ← (← (← j.getObjVal? "landmarks").getArr?).mapM parsePoi
+    -- The geocode is a TABLE keyed by zoom, so the chain's two asks (18 then,
+    -- only on one branch, 16) are answered from data rather than recomputed.
+    let geo := fun (zoom : Int) =>
+      match j.getObjVal? "geocode" with
+      | .error _ => none
+      | .ok g => match g.getObjVal? (toString zoom) with
+                 | .error _ => none
+                 | .ok v => if v.isNull then none else some (parseGeoResult v)
+    let samples ← (← optArr j "samples").mapM (fun e => do
+      let a ← e.getArr?
+      let w ← (← nth a 0).getNat?
+      let m ← (← nth a 1).getNat?
+      return ((w, m) : Nat × Nat))
+    let stay : Option Verified.Geo.VenuePrior.StayShape ← match j.getObjVal? "stay" with
+      | .error _ => pure none
+      | .ok v =>
+        if v.isNull then pure none else do
+          let st : Verified.Geo.VenuePrior.StayShape := {
+            startUnix := ← (← v.getObjVal? "startUnix").getInt?
+            endUnix := ← (← v.getObjVal? "endUnix").getInt?
+            localHour := ← (← v.getObjVal? "localHour").getInt?
+          }
+          pure (some st)
+    let priors ← parsePriorsPlain j
+    return Verified.Geo.BestPlace.resolve
+      { landmarks := pois.toList, geocode := geo, samples := samples.toList }
+      stay priors (optBool j "preferResidential")
+  match parsed with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok none => Json.mkObj [("label", Json.null)]
+  | .ok (some r) =>
+    Json.mkObj [("label", Json.str r.label),
+                ("city", match r.city with | none => Json.null | some c => Json.str c)]
+
 private def rankVenuesResult (j : Json) : Json :=
   let parsed : Except String (List Verified.Geo.VenuePrior.VenueCandidateScore) := do
     let lms ← (← (← j.getObjVal? "landmarks").getArr?).mapM parseLandmark
@@ -3134,6 +3232,7 @@ def dispatch (j : Json) : Json :=
   | .ok "coverage" => coverageResult j
   | .ok "kalman" => kalmanResult j
   | .ok "rankvenues" => rankVenuesResult j
+  | .ok "bestplace" => bestPlaceResult j
   | .ok "gpsquality" => gpsQualityResult j
   | .ok "gpsoutliers" => gpsOutliersResult j
   | .ok "biolabels" => bioLabelsResult j
@@ -3282,6 +3381,7 @@ def cliMain (args : List String) : IO UInt32 := do
   if args.contains "coverage" then return ← runOne coverageResult input
   if args.contains "kalman" then return ← runOne kalmanResult input
   if args.contains "rankvenues" then return ← runOne rankVenuesResult input
+  if args.contains "bestplace" then return ← runOne bestPlaceResult input
   if args.contains "gpsquality" then return ← runOne gpsQualityResult input
   if args.contains "gpsoutliers" then return ← runOne gpsOutliersResult input
   if args.contains "biolabels" then return ← runOne bioLabelsResult input
