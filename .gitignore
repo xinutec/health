@@ -64,9 +64,17 @@ lean/.lake/
 # the detail with `scripts/prod-db.sh pnpm exec tsx lean/experiments/osm-rowset-parity.mts`.
 lean/experiments/osm-rowset-parity.json
 
-# rust/ builds into the shared cargo target dir (see mac notes), but a plain
-# `cargo build` outside the dev shell would write here.
+# Where the Rust workspace's artefacts land. Since #1421 (2026-09-05) there is no
+# shared cargo target dir on this machine any more — each repository builds into
+# its own — so this is the normal case rather than the outside-the-dev-shell one
+# the previous comment described.
 /rust/target/
+
+# The clippy row runs from the repository ROOT and reaches the workspace with
+# `--manifest-path rust/Cargo.toml`, so its own target dir (relative, per
+# `G.clippyTarget`) resolves against the root and not against `rust/`. Verified
+# by asking cargo, 2026-09-05: `/Volumes/Backup/code/health/target/clippy`.
+/target/
 
 # `nix build` drops a `result` symlink into the repo root. Untracked and, until
 # now, not ignored — and `scripts/deploy.sh` runs `git add -A` after its gates,

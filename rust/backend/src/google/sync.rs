@@ -416,7 +416,7 @@ pub const DAILY_ACTIVITY_CUTOVER: &str = "2026-09-01";
 /// and the only test on the cutover asserted the CONSTANT was not earlier than
 /// the shutdown, which is a fact about a string. A guard that has only ever been
 /// observed refusing is a guard nobody has tested
-/// ([[feedback_verify_conditions_not_only_behaviour]]).
+/// (\[\[feedback_verify_conditions_not_only_behaviour\]\]).
 ///
 /// ⚠ HALF-OPEN `[start, end)`, because `fetch_daily_rollup` is: "the inclusive
 /// start and the exclusive end". So `end` is TOMORROW, and the off-by-one that

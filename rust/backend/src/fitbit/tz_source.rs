@@ -108,7 +108,7 @@ pub fn nearest_fix(times: &[i64], target: i64) -> Option<usize> {
 /// A `TzSource` built from GPS fixes and the account's profile zone.
 ///
 /// Forward sync builds one of these; the backward backfill uses
-/// [`super::null_tz`] instead, so its rows go in with `tz=NULL` for the backfill
+/// [`super::sync::null_tz`] instead, so its rows go in with `tz=NULL` for the backfill
 /// CLI to fill in later.
 pub struct ForwardTzSource<'a> {
     /// Sorted ascending, once at construction, so each row costs a search.

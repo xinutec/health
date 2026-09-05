@@ -102,7 +102,7 @@
       ],
       "cwd": ".",
       "env": {
-        "CARGO_TARGET_DIR": "/Users/pippijn/.cache/cargo/clippy-target"
+        "CARGO_TARGET_DIR": "target/clippy"
       },
       "name": "clippy",
       "timeout_s": 1800
@@ -165,6 +165,24 @@
       "env": {},
       "name": "rust doctests",
       "timeout_s": 600
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "cargo",
+        "doc",
+        "--no-deps",
+        "--workspace"
+      ],
+      "cwd": "rust",
+      "env": {
+        "RUSTDOCFLAGS": "-D rustdoc::broken_intra_doc_links"
+      },
+      "name": "rustdoc resolves every intra-doc link",
+      "timeout_s": 900
     },
     {
       "argv": [

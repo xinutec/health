@@ -291,6 +291,15 @@ in  { name = "health"
               ]
         , timeout_s = 600
         }
+      , {-  ⚠ `cwd = "rust"`, where every other cargo row here passes
+            `--manifest-path rust/Cargo.toml` from the root. `G.cargoDoc` is a
+            whole row rather than an argv, so adapting it means moving the
+            working directory rather than adding a flag. Nix resolves the flake
+            from the enclosing git root, so `nix develop` still finds this
+            repository's shell from a subdirectory — verified by running it,
+            2026-09-05, not read off the documentation.
+        -}
+        G.cargoDoc with cwd = "rust"
       , G.Check::{
         , name = "lint (eslint, frontend)"
         , argv = G.inDevShell [ "pnpm", "run", "lint:frontend" ]
