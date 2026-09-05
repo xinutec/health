@@ -53,6 +53,5 @@ hsmm	dead	No caller anywhere, argv included.
 # All three were traced ONLY by `lean_serve`, the hop-1 probe. Every check we
 # had called them green; that is the gap #1003 describes, measured.
 
-focus	dead	HAS a production caller -- the focus-places cron, main.rs:3945 -- and no test. Same shape as railsnap: live in prod, unexercised by every gate. Wanted here is a TEST.
 biolabels	dead	No caller at all. #1003 listed it "test/example only"; measured, its only caller is the routing probe.
 stationchain	dead	No caller at all. #1003 listed it "test/example only"; measured, its only caller is the routing probe.

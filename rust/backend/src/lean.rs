@@ -2290,6 +2290,104 @@ pub fn mine_priors_soft(stays: &[MineStay]) -> Result<(serde_json::Value, SoftMi
     Ok((wire_priors_to_json(&w.value.priors)?, report))
 }
 
+/// The `focus` mode's answer, decoded.
+///
+/// ⚠ `mined` stays `Value`. The caller reads a dozen optional fields off each
+/// cluster (`sleepFitbitH`, `sleepH`, the stay tuples); a struct here would be a
+/// second schema to hold in step with Lean's, for no checking the caller does
+/// not already do per field.
+pub struct FocusPlaces {
+    /// One mined cluster per entry, exactly as Lean emitted it.
+    pub mined: Vec<serde_json::Value>,
+    /// Cluster id -> display name.
+    pub names: std::collections::HashMap<i64, String>,
+    /// One per mined cluster, IN ORDER: the existing row it continues, if any.
+    pub assignments: Vec<Option<i64>>,
+    /// Existing rows this mining says are gone.
+    pub deleted: Vec<i64>,
+}
+
+/// Mine focus places from a point history — the `focus` serve mode.
+///
+/// ⚠ `clusters` is EMPTY on purpose. `focus` mode takes already-built clusters
+/// only to exercise `splitCluster` against captured fixtures; the cron mines
+/// from points, and `detectFocusPlaces` builds its own.
+///
+/// ⚠ EXTRACTED FROM `main.rs` SO IT CAN BE TESTED (#1424). It sat inline in
+/// `refresh_focus_places_one`, a DB-backed `async fn` in the BINARY crate,
+/// which put it out of reach of every integration test — #1003's two-hop check
+/// measured exactly that: dispatched, live in production, executed by nothing
+/// any gate can see. Nothing about the request or the decode changed in the
+/// move.
+pub fn focus_places(
+    points: &[(i64, f64, f64, Option<f64>)],
+    sleep_windows: &[[i64; 2]],
+    old: &[serde_json::Value],
+) -> Result<FocusPlaces> {
+    let req = serde_json::json!({
+        "mode": "focus",
+        "points": points.iter().map(|(ts, lat, lon, acc)| serde_json::json!([
+            ts,
+            crate::fold_payload::bits(*lat),
+            crate::fold_payload::bits(*lon),
+            match acc { Some(a) => serde_json::json!(crate::fold_payload::bits(*a)),
+                        None => serde_json::Value::Null },
+        ])).collect::<Vec<_>>(),
+        "sleepWindows": sleep_windows,
+        "clusters": [],
+        "old": old,
+    });
+    let out = serve(&serde_json::to_string(&req)?)?;
+    let focus: serde_json::Value =
+        serde_json::from_str(&out).context("focus mode answer is not JSON")?;
+    if let Some(e) = focus.get("error") {
+        anyhow::bail!("focus mode: {e}");
+    }
+    let mined: Vec<serde_json::Value> = focus
+        .get("mined")
+        .and_then(|v| v.as_array())
+        .context("focus mode answer has no `mined`")?
+        .clone();
+    let names: std::collections::HashMap<i64, String> = focus
+        .get("names")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| {
+                    let p = p.as_array()?;
+                    Some((p.first()?.as_i64()?, p.get(1)?.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let assignments: Vec<Option<i64>> = focus
+        .pointer("/identity/assignments")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(serde_json::Value::as_i64).collect())
+        .unwrap_or_default();
+    let deleted: Vec<i64> = focus
+        .pointer("/identity/deleted")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
+        .unwrap_or_default();
+    // ⚠ One assignment per mined cluster, or the caller pairs a cluster with the
+    // wrong existing row and moves somebody else's `first_seen_ts`. Checked here
+    // rather than at the call site because it is a property of THIS reply.
+    if assignments.len() != mined.len() {
+        anyhow::bail!(
+            "focus mode returned {} identity assignment(s) for {} cluster(s)",
+            assignments.len(),
+            mined.len()
+        );
+    }
+    Ok(FocusPlaces {
+        mined,
+        names,
+        assignments,
+        deleted,
+    })
+}
+
 /// One train leg snapped onto its rail corridor — the `railsnap` serve mode
 /// over `Verified.Geo.RailSnap`.
 ///

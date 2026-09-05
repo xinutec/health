@@ -3938,67 +3938,19 @@ async fn refresh_focus_places_one(
         .collect::<Result<Vec<_>>>()?;
 
     // ── 4. the geometry, from Lean ──────────────────────────────────────────
-    // ⚠ `clusters` is EMPTY on purpose. `focus` mode takes already-built
-    // clusters only to exercise `splitCluster` against captured fixtures; the
-    // cron mines from points, and `detectFocusPlaces` builds its own.
-    let req = serde_json::json!({
-        "mode": "focus",
-        "points": points.iter().map(|(ts, lat, lon, acc)| serde_json::json!([
-            ts,
-            backend::fold_payload::bits(*lat),
-            backend::fold_payload::bits(*lon),
-            match acc { Some(a) => serde_json::json!(backend::fold_payload::bits(*a)),
-                        None => serde_json::Value::Null },
-        ])).collect::<Vec<_>>(),
-        "sleepWindows": sleep_windows,
-        "clusters": [],
-        "old": old,
-    });
-    let out = backend::lean::serve(&serde_json::to_string(&req)?)?;
-    let focus: serde_json::Value =
-        serde_json::from_str(&out).context("focus mode answer is not JSON")?;
-    if let Some(e) = focus.get("error") {
-        anyhow::bail!("focus mode: {e}");
-    }
+    // The request build, the decode and the one-assignment-per-cluster
+    // invariant are `lean::focus_places`, moved there so a test can reach them
+    // (#1424) — this function is DB-backed and lives in the binary crate, which
+    // put the whole of `focus` out of reach of every gate.
+    let focus = backend::lean::focus_places(&points, &sleep_windows, &old)?;
+    let mined = &focus.mined;
+    let names = &focus.names;
+    let assignments = &focus.assignments;
+    let deleted = &focus.deleted;
     // Floats cross from Lean as IEEE-754 bit patterns in decimal strings.
     let bitsf = |v: &serde_json::Value| -> Option<f64> {
         v.as_str()?.parse::<u64>().ok().map(f64::from_bits)
     };
-    let mined = focus
-        .get("mined")
-        .and_then(|v| v.as_array())
-        .context("focus mode answer has no `mined`")?;
-    let names: std::collections::HashMap<i64, String> = focus
-        .get("names")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|p| {
-                    let p = p.as_array()?;
-                    Some((p.first()?.as_i64()?, p.get(1)?.as_str()?.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let assignments: Vec<Option<i64>> = focus
-        .pointer("/identity/assignments")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().map(serde_json::Value::as_i64).collect())
-        .unwrap_or_default();
-    let deleted: Vec<i64> = focus
-        .pointer("/identity/deleted")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
-        .unwrap_or_default();
-    // ⚠ One assignment per mined cluster, or the write below pairs a cluster
-    // with the wrong existing row and moves somebody else's `first_seen_ts`.
-    if assignments.len() != mined.len() {
-        anyhow::bail!(
-            "focus mode returned {} identity assignment(s) for {} cluster(s)",
-            assignments.len(),
-            mined.len()
-        );
-    }
     let has_fitbit_sleep = !sleep_windows.is_empty();
     eprintln!(
         "[{user_id}] {} cluster(s), {} to delete",
@@ -4235,7 +4187,7 @@ async fn refresh_focus_places_one(
         let mut qb: sqlx::QueryBuilder<sqlx::MySql> =
             sqlx::QueryBuilder::new("DELETE FROM focus_places WHERE id IN (");
         let mut sep = qb.separated(", ");
-        for id in &deleted {
+        for id in deleted {
             sep.push_bind(*id);
         }
         qb.push(")");
