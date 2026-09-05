@@ -109,6 +109,17 @@
     },
     {
       "argv": [
+        "rm",
+        "-f",
+        "rust/target/mode-trace.txt"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "reset the mode trace",
+      "timeout_s": 60
+    },
+    {
+      "argv": [
         "nix",
         "develop",
         "--no-warn-dirty",
@@ -123,7 +134,9 @@
         "not (binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
       ],
       "cwd": ".",
-      "env": {},
+      "env": {
+        "HEALTH_MODE_TRACE": "1"
+      },
       "name": "rust workspace tests",
       "timeout_s": 1800
     },
@@ -144,9 +157,32 @@
         "binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
       ],
       "cwd": ".",
-      "env": {},
+      "env": {
+        "HEALTH_MODE_TRACE": "1"
+      },
       "name": "corpus replay gates (release)",
       "timeout_s": 1800
+    },
+    {
+      "argv": [
+        "nix",
+        "develop",
+        "--no-warn-dirty",
+        "--command",
+        "cargo",
+        "run",
+        "--release",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "-p",
+        "backend",
+        "--example",
+        "mode_reachability"
+      ],
+      "cwd": ".",
+      "env": {},
+      "name": "every dispatched Lean mode is executed by something",
+      "timeout_s": 600
     },
     {
       "argv": [

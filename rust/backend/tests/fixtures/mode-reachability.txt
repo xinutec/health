@@ -1,0 +1,59 @@
+# Lean `ServeEntry` modes allowed to have no caller (#1003).
+#
+#     mode<TAB>kind<TAB>reason
+#
+# Checked by `cargo run --example mode_reachability`, which reads the dispatch
+# arms out of `lean/ServeEntry.lean` and the run's execution trace, and holds
+# THIS FILE EXACT in both directions: a mode here that has gained a caller
+# fails, and a mode here that the table no longer dispatches fails. So it
+# cannot rot quietly, which is the only reason a list like this is safe to
+# have at all.
+#
+# `ablation`  Exists to be subtracted from a real mode, to separate what the
+#             verified core costs from what the crossing costs. A caller is a
+#             DEFECT here: it means something in the tree is treating an empty
+#             reply as an answer.
+#
+# `bless`     Runs only under a bless env var, which a gate must never set --
+#             blessing rewrites the oracle the gate judges against. A caller in
+#             a gate run is a DEFECT for that reason, not for the ablation one.
+#
+# `dead`      Has no caller and should have one. Grandfathered, and it
+#             RATCHETS DOWN in the same discipline as `.dev-lint-baseline`:
+#             giving one of these a caller means deleting its line, and the
+#             check will insist on it. Nothing may be ADDED here without the
+#             reason saying why the mode cannot be exercised yet — the check
+#             cannot tell a new orphan from an old one, and that part is a
+#             review question.
+#
+# ⚠ `lean_serve` is NOT a caller for this purpose. It is the hop-1 probe: it
+# asks modes a question purely to show `dispatch` still routes to them. See
+# `PROBES` in the checker.
+
+# ── by design: a caller here is a defect ──────────────────────────────────────
+
+noop	ablation	#405's floor: accept the request, do nothing, reply empty. `real - noop` is what consulting Lean costs at all.
+echo	ablation	The response half of the same floor -- ships the input rows back so a real-sized reply crosses with no work behind it.
+gqdecode	ablation	Layer 3 for gpsquality: runs its parse and stops, so `real - gqdecode` is the filter plus its encode.
+daydecode	ablation	Layer 3 for the day mode (#433), the counterpart of gqdecode.
+dayresp	ablation	Layer 2 for the day mode (#433): the chain with no row encoding.
+ceilingbless	bless	feasibility_corpus:278 reaches it only under FEASIBILITY_BLESS. A gate run that got here would be rewriting the ceiling it is judged against.
+
+# ── dead: these want a caller, and this list ratchets DOWN ────────────────────
+
+railsnap	dead	HAS a production caller -- lean::rail_snap, main.rs:4696 -- that no test exercises, so the arm is live in prod and unexercised by every gate. Different from the rest of this section: wanted here is a TEST, not a caller.
+assemble	dead	No caller. Verified.Hsmm.Assemble is dispatched and has never decoded a production day (#1003's own standing note).
+assembledecode	dead	No caller through dispatch. cliMain reaches assembleDecodeResult straight from argv, which does not route through the table, so the ARM is dead while the handler is not.
+coverage	dead	No caller through dispatch. Same argv shape as assembledecode. The backend's own `coverage` CLI subcommand (lib.rs:101) is an unrelated name.
+geo	dead	No caller through dispatch; cliMain reaches geoMain from argv.
+match	dead	No caller through dispatch; cliMain reaches matchMain from argv.
+rail	dead	No caller through dispatch; cliMain reaches railMain from argv. The `rail` in main.rs:5972 is a mirror TABLE name, not this mode.
+hsmm	dead	No caller anywhere, argv included.
+
+# ── found by this check on its first run, 2026-09-05 ──────────────────────────
+# All three were traced ONLY by `lean_serve`, the hop-1 probe. Every check we
+# had called them green; that is the gap #1003 describes, measured.
+
+focus	dead	HAS a production caller -- the focus-places cron, main.rs:3945 -- and no test. Same shape as railsnap: live in prod, unexercised by every gate. Wanted here is a TEST.
+biolabels	dead	No caller at all. #1003 listed it "test/example only"; measured, its only caller is the routing probe.
+stationchain	dead	No caller at all. #1003 listed it "test/example only"; measured, its only caller is the routing probe.

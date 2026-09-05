@@ -174,6 +174,22 @@ in  { name = "health"
         , env = G.clippyTarget
         , timeout_s = 1800
         }
+      , {-  #1003's two-hop mode check needs a clean slate, and it accumulates
+            ACROSS the two test rows below rather than within one: `cargo
+            nextest` runs test-per-process, so a record shared in memory would
+            never be read back, and the file is the union of every test process
+            in the run.
+
+            Immediately before the test rows rather than at the top of the
+            table: everything above is frontend or formatting and asks Lean
+            nothing, and the two rows below are between them the whole Rust
+            suite.
+        -}
+        G.Check::{
+        , name = "reset the mode trace"
+        , argv = [ "rm", "-f", "rust/target/mode-trace.txt" ]
+        , timeout_s = 60
+        }
       , {-  The Rust workspace's own tests, which NOTHING ran until #982.
 
             A compile error or a lint in `rust/backend` was already a red row —
@@ -213,6 +229,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "rust workspace tests"
+        , env = toMap { HEALTH_MODE_TRACE = "1" }
         , argv =
             G.inDevShell
               [ "cargo"
@@ -251,6 +268,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "corpus replay gates (release)"
+        , env = toMap { HEALTH_MODE_TRACE = "1" }
         , argv =
             G.inDevShell
               [ "cargo"
@@ -264,6 +282,43 @@ in  { name = "health"
               , "binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
               ]
         , timeout_s = 1800
+        }
+      , {-  The second hop of #1003. A mode can be dispatched and executed by
+            NOTHING, and every check we had passed anyway: `lean_serve` proves
+            `dispatch` still routes to a mode by asking it a question, so it is
+            green while nobody calls it, and a caller-side gate like `walk_gate`
+            proves the other half and stays green if an arm and its one caller
+            are renamed together.
+
+            This reads the table's own arms for hop 1 and the run's trace for
+            hop 2, and holds its exception list exact in BOTH directions — an
+            excused mode that gains a caller fails, and an excuse naming a mode
+            the table no longer dispatches fails — so the list cannot rot
+            quietly. It found three modes on its first run, `focus`, `biolabels`
+            and `stationchain`, whose only caller was the routing probe.
+
+            ⚠ AFTER BOTH TEST ROWS, and that ordering is load-bearing rather
+            than presentational: this row judges their trace. It exits 2 rather
+            than 0 when the trace is missing, so running it out of order says so
+            instead of passing on an empty file.
+
+            `--release` reuses what the corpus row above has already built.
+        -}
+        G.Check::{
+        , name = "every dispatched Lean mode is executed by something"
+        , argv =
+            G.inDevShell
+              [ "cargo"
+              , "run"
+              , "--release"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "-p"
+              , "backend"
+              , "--example"
+              , "mode_reachability"
+              ]
+        , timeout_s = 600
         }
       , {-  ⚠ SEPARATE, because `cargo nextest` DOES NOT RUN DOCTESTS and the row
             above is nextest now.

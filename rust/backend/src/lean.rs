@@ -19,6 +19,7 @@
 //! the work. That holds only while the exported functions stay pure and cheap;
 //! anything here that grew a real workload would need revisiting.
 
+use std::collections::BTreeSet;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
@@ -925,6 +926,98 @@ pub fn watch_battery_series(
     Ok(w.series)
 }
 
+/// Where a traced run records the modes it asked for.
+///
+/// Fixed at COMPILE time from this crate's own directory rather than read from
+/// the environment. `cargo` gives every test process the package root as its
+/// working directory while the gate rows that switch tracing on run from the
+/// repository root, so a relative path would split one run's trace across two
+/// files; an absolute path written into the gate table would be this machine's
+/// path and would collide between worktrees.
+const MODE_TRACE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../target/mode-trace.txt");
+
+/// Whether this process records the modes it asks for. Read once.
+static MODE_TRACE: OnceLock<bool> = OnceLock::new();
+
+/// The modes this process has already recorded.
+///
+/// Per process and not per run: `cargo nextest` runs test-per-process, so the
+/// file is the union of many of these. Recording only the FIRST time a mode is
+/// seen keeps the cost to one set lookup per call — `serve` is called in the
+/// fold's inner loop — and keeps the file to at most one line per mode per
+/// process rather than one per call.
+static MODE_SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+/// The mode of a request, without paying for a full parse in the common case.
+///
+/// ⚠ THE WINDOW IS NOT ENOUGH ON ITS OWN. `serde_json::Map` is a `BTreeMap`
+/// unless `preserve_order` is on, so a request built by inserting into a map
+/// carries its keys SORTED — `mode` lands after `lookups` and whatever else,
+/// which in a fold request is megabytes in. The scan is the fast path for the
+/// hand-written requests, which put `mode` first; the parse is what makes the
+/// answer right for the rest.
+fn mode_of(request: &str) -> Option<String> {
+    let mut n = request.len().min(8192);
+    while n > 0 && !request.is_char_boundary(n) {
+        n -= 1;
+    }
+    if let Some(mode) = mode_after_key(&request[..n]) {
+        return Some(mode);
+    }
+    let v: serde_json::Value = serde_json::from_str(request).ok()?;
+    v.get("mode")?.as_str().map(str::to_owned)
+}
+
+/// `"mode"` followed by a colon and a string literal, or nothing.
+///
+/// A mode name is `[a-z]+` in every arm of the table, so there are no escapes
+/// to unpick here — a quote ends it.
+fn mode_after_key(head: &str) -> Option<String> {
+    let after = &head[head.find("\"mode\"")? + 6..];
+    let after = after.trim_start().strip_prefix(':')?.trim_start();
+    let body = after.strip_prefix('"')?;
+    Some(body[..body.find('"')?].to_owned())
+}
+
+/// Record that something asked for this mode, if this run is tracing.
+///
+/// This is the second hop of #1003's reachability question. The first — does
+/// `dispatch` still route to the mode — is answered by reading the table's own
+/// arms; it passes while nothing calls the mode. This one is answered by
+/// EXECUTION, which is why it lives at the single point every caller funnels
+/// through rather than in a grep: several callers build the mode from a
+/// parameter, so a scan of the source cannot see who asks for what.
+///
+/// ⚠ ONLY THE `ServeEntry` TABLE. `day-shell` links `DayEntry`, a different
+/// entry point with its own arms, and nothing here sees those.
+fn record_mode(request: &str) {
+    if !*MODE_TRACE.get_or_init(|| std::env::var_os("HEALTH_MODE_TRACE").is_some()) {
+        return;
+    }
+    let Some(mode) = mode_of(request) else { return };
+    let mut seen = MODE_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if !seen.insert(mode.clone()) {
+        return;
+    }
+    drop(seen);
+    let who = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "?".to_owned());
+    // ⚠ ONE `write_all` of one short line, onto a descriptor opened for append.
+    // Every test process in the run writes to this file concurrently; an append
+    // of well under a pipe buffer is atomic, where the two writes `writeln!`
+    // can emit are not.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(MODE_TRACE_PATH)
+    {
+        use std::io::Write;
+        let _ = f.write_all(format!("{mode}\t{who}\n").as_bytes());
+    }
+}
+
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line
@@ -933,6 +1026,7 @@ pub fn watch_battery_series(
 /// intent. That is what makes the subprocess a usable oracle for this path.
 pub fn serve(request: &str) -> Result<String> {
     init()?;
+    record_mode(request);
     let c = CString::new(request).context("request contains a NUL byte")?;
     // SAFETY: `init` has succeeded, the pointer is valid for the call, and the
     // result is copied out before it is freed — see the note in `shim.c` about
