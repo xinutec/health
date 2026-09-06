@@ -57,13 +57,6 @@ tests/fixtures/roadmatch/
 # Lean build artifacts (lean/ verified core)
 lean/.lake/
 
-# Parity dump from lean/experiments/osm-rowset-parity.mts: one entry per
-# differing kernel query, ~240 KB. Derived and mirror-dependent — the OSM
-# mirror moves under it, so a committed copy would silently go stale while
-# looking authoritative. The durable numbers live in the proposal; regenerate
-# the detail with `scripts/prod-db.sh pnpm exec tsx lean/experiments/osm-rowset-parity.mts`.
-lean/experiments/osm-rowset-parity.json
-
 # Where the Rust workspace's artefacts land. Since #1421 (2026-09-05) there is no
 # shared cargo target dir on this machine any more — each repository builds into
 # its own — so this is the normal case rather than the outside-the-dev-shell one
