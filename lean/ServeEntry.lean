@@ -537,19 +537,6 @@ private def railResult (j : Json) : Json :=
 private def railMain (input : String) : IO UInt32 :=
   runOne railResult input
 
-/-- One HSMM decode as a pure result (`serve`-mode handler). The one-shot
-`main` path keeps its own timing-instrumented copy. -/
-private def hsmmResult (j : Json) : Json :=
-  match parseModel j with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok m =>
-    match pDecodeFast m ckptStride with
-    | none => Json.mkObj [("degenerate", Json.bool true)]
-    | some r =>
-      Json.mkObj [
-        ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
-        ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
-
 /-! ## Assemble mode (`verified_cli assemble`)
 
 Build the HSMM model FROM PARSED INPUTS in Lean — the `buildHsmmModel` twin
@@ -559,7 +546,7 @@ structured day (past the tz / WKT / `toFixed` boundary the shell owns): the
 observation tensor, the parsed route edges, the focus places, the train-generator
 coverage map, continuity, and the C4 flags. Output is the dense quantised
 `emit`/`entry`/`init`/`trans`/`dur` tensors, compared cell-for-cell against TS
-`quantizeModel` by `lean/experiments/compare-assemble.mjs`.
+`quantizeModel` by a comparison harness deleted with the TypeScript backend.
 
   { "maxD": n,
     "obs": [{ts, gps:{lat,lon,speedKmh}|null, hr, cadence, hourLocal, dayOfWeekLocal,
@@ -3221,7 +3208,6 @@ def dispatch (j : Json) : Json :=
   | .ok "geo" => geoResult j
   | .ok "match" => matchResult j
   | .ok "rail" => railResult j
-  | .ok "hsmm" => hsmmResult j
   | .ok "assemble" => assembleResult j
   | .ok "assembledecode" => assembleDecodeResult j
   | .ok "assemblesegments" => assembleSegmentsResult j

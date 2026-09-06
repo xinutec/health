@@ -216,6 +216,24 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   problems (run `pnpm run build` first, then
   `nix develop -c node lean/experiments/compare.mjs` from the repo root).
 
+⚠ **THE `*-refs.mts` HARNESSES ARE GONE, and the `#guard` values they produced
+cannot be regenerated.** 104 of them imported `src/`, deleted with the
+TypeScript backend (#975), so every one failed at `ERR_MODULE_NOT_FOUND` — an
+oracle that cannot run is worse than an absent one, because its presence reads
+as a way to re-derive. Removed 2026-09-06.
+
+Lean comments still name them, and that is deliberate: those citations are
+PROVENANCE — where a number came from — not links. The same reading #1278
+reached across 41 memories citing deleted paths: a path describing an origin
+costs a reader one redirect, only a claim that something still EXISTS goes
+false. What is false now, and worth knowing before touching those values: they
+are transcribed history. Re-blessing a `#guard` against a reimplementation is
+not corroboration.
+
+Seven harnesses survive because they never imported `src/`: `compare.mjs`,
+`quant-probe.mjs`, `connection-refs.mts`, `focus-mutation-sweep.mts`,
+`locationtail-refs.mts`, `osm-lines-refs.mts`, `tofixed-refs.mts`.
+
 ## Conventions
 
 - **Sorry-free.** A theorem is stated only when its proof is complete;
