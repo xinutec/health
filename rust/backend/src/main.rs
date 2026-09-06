@@ -5922,8 +5922,25 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
 
     let client = reqwest::Client::new();
     let h = mirror_fetch(&client, "rail", &plan.tiles).await?;
-    let verdict =
-        backend::lean::may_rebuild("rail", h.routes.len(), h.failures, plan.tiles.len(), 0)?;
+    // ⚠ `existing` MUST be the real row count. It was a literal `0` here, and
+    // `coverageRefusal` returns `none` when `existing == 0` — deliberately, so
+    // an all-failed FIRST run against a cold cache still proceeds. Passing 0
+    // unconditionally made this arm permanently look like that first run, so
+    // #1134's coverage floor could never fire on it: measured 2026-09-06,
+    // rail-stops merged at 8/18 tiles (44%, under the 50% floor) and the
+    // CronJob reported success. Bus has always counted its rows; the two now
+    // agree.
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rail_stops_cache")
+        .fetch_one(&pool)
+        .await
+        .context("counting rail_stops_cache")?;
+    let verdict = backend::lean::may_rebuild(
+        "rail",
+        h.routes.len(),
+        h.failures,
+        plan.tiles.len(),
+        existing,
+    )?;
     eprintln!(
         "refresh-rail-stops: {} relations, {}",
         h.routes.len(),
