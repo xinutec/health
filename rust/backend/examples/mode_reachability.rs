@@ -153,12 +153,18 @@ fn exercised(trace: &str) -> BTreeMap<String, BTreeSet<String>> {
 /// repair this task wants, and the only thing left to do is delete the line.
 /// Both are red, because both mean this file is now wrong; a reader of the
 /// failure should not have to work out which they are looking at.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Kind {
     /// Exists to be subtracted from a real mode. A caller here is a defect.
     Ablation,
     /// Reached only under a bless env var a gate must not set. Caller = defect.
     Bless,
+    /// Deliberately kept reachable with no caller expected. `cliMain` reaches
+    /// the handler straight from argv, which does NOT route through this table,
+    /// so the arm is the only way a linked HOST can call it — deleting it would
+    /// recreate the linkability problem the ServeEntry split exists to solve.
+    /// Not debt, and it does not ratchet.
+    Spare,
     /// Has no caller and should have one. Grandfathered; ratchets down.
     Dead,
 }
@@ -182,6 +188,7 @@ fn baseline(src: &str, path: &std::path::Path) -> BTreeMap<String, (Kind, String
         let kind = match kind {
             "ablation" => Kind::Ablation,
             "bless" => Kind::Bless,
+            "spare" => Kind::Spare,
             "dead" => Kind::Dead,
             other => panic!(
                 "{}:{}: kind must be `ablation`, `bless` or `dead`, got {other:?}",
@@ -256,6 +263,7 @@ fn main() {
                 // leaving the reader to infer it from the mode name.
                 Kind::Ablation => "AN ABLATION MODE WITH A CALLER, which is a defect",
                 Kind::Bless => "A BLESS MODE REACHED BY A GATE RUN, which rewrites an oracle",
+                Kind::Spare => "a spare gained a caller — good, but the line must go",
                 Kind::Dead => "repaired, so the excuse must go",
             };
             stale.push(format!("{mode} — {verdict} (called by {})", who.join(", ")));
@@ -276,11 +284,12 @@ fn main() {
         .iter()
         .filter(|m| exercised.contains_key(*m))
         .count();
-    let dead_count = baseline.values().filter(|(k, _)| *k == Kind::Dead).count();
+    let count_of = |k: Kind| baseline.values().filter(|(b, _)| *b == k).count();
+    let (dead_count, spare) = (count_of(Kind::Dead), count_of(Kind::Spare));
     println!(
-        "{} modes dispatched · {called} executed · {} by design · {dead_count} dead",
+        "{} modes dispatched · {called} executed · {} by design · {spare} spare · {dead_count} dead",
         dispatched.len(),
-        baseline.len() - dead_count
+        baseline.len() - dead_count - spare
     );
 
     let mut red = false;

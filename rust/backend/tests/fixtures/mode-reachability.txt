@@ -18,6 +18,13 @@
 #             blessing rewrites the oracle the gate judges against. A caller in
 #             a gate run is a DEFECT for that reason, not for the ablation one.
 #
+# `spare`     Deliberately kept reachable with no caller expected. `cliMain`
+#             reaches the handler straight from argv, which does NOT route
+#             through the table, so the ARM is the only way a linked HOST can
+#             call it. Deleting it would recreate the linkability problem the
+#             ServeEntry split exists to solve. NOT DEBT, and it does not
+#             ratchet -- do not read these as a backlog.
+#
 # `dead`      Has no caller and should have one. Grandfathered, and it
 #             RATCHETS DOWN in the same discipline as `.dev-lint-baseline`:
 #             giving one of these a caller means deleting its line, and the
@@ -39,17 +46,16 @@ daydecode	ablation	Layer 3 for the day mode (#433), the counterpart of gqdecode.
 dayresp	ablation	Layer 2 for the day mode (#433): the chain with no row encoding.
 ceilingbless	bless	feasibility_corpus:278 reaches it only under FEASIBILITY_BLESS. A gate run that got here would be rewriting the ceiling it is judged against.
 
-# ── dead: these want a caller, and this list ratchets DOWN ────────────────────
+# ── spare: deliberately host-reachable, no caller expected. NOT a backlog ─────
 
-assemble	dead	No caller. Verified.Hsmm.Assemble is dispatched and has never decoded a production day (#1003's own standing note).
-assembledecode	dead	No caller through dispatch. cliMain reaches assembleDecodeResult straight from argv, which does not route through the table, so the ARM is dead while the handler is not.
-coverage	dead	No caller through dispatch. Same argv shape as assembledecode. The backend's own `coverage` CLI subcommand (lib.rs:101) is an unrelated name.
-geo	dead	No caller through dispatch; cliMain reaches geoMain from argv.
-match	dead	No caller through dispatch; cliMain reaches matchMain from argv.
-rail	dead	No caller through dispatch; cliMain reaches railMain from argv. The `rail` in main.rs:5972 is a mirror TABLE name, not this mode.
+assemble	spare	No caller. Verified.Hsmm.Assemble is dispatched and has never decoded a production day (#1003's own standing note).
+assembledecode	spare	No caller through dispatch. cliMain reaches assembleDecodeResult straight from argv, which does not route through the table, so the ARM is dead while the handler is not.
+coverage	spare	No caller through dispatch. Same argv shape as assembledecode. The backend's own `coverage` CLI subcommand (lib.rs:101) is an unrelated name.
+geo	spare	No caller through dispatch; cliMain reaches geoMain from argv.
+match	spare	No caller through dispatch; cliMain reaches matchMain from argv.
+rail	spare	No caller through dispatch; cliMain reaches railMain from argv. The `rail` in main.rs:5972 is a mirror TABLE name, not this mode.
 
 # ── found by this check on its first run, 2026-09-05 ──────────────────────────
 # All three were traced ONLY by `lean_serve`, the hop-1 probe. Every check we
 # had called them green; that is the gap #1003 describes, measured.
 
-stationchain	dead	No caller at all. #1003 listed it "test/example only"; measured, its only caller is the routing probe.
