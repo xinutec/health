@@ -779,11 +779,21 @@ pub async fn sync_sleep(
             // The same column policy as the Fitbit writer: figures overwrite
             // (Google revises a recent night exactly as Fitbit did), tz and the
             // UTC columns COALESCE-preserve.
+            //
+            // ⚠ `date` and `is_main_sleep` overwrite for a reason. Google writes
+            // a session while it is still in progress — end_time inside the
+            // START day, and no `metadata/mainSleep` yet — then revises it once
+            // the night is scored. Leaving either out of this list froze the
+            // provisional answer: measured 2026-09-08, the nights of 2 and 7 Sep
+            // sat at the start day's `date` with `is_main_sleep = 0` while
+            // Google reported the end day and 1, agreeing on every other column.
+            // A night the dashboard cannot see, because it selects on both.
             "INSERT INTO sleep (user_id, log_id, date, start_time, end_time, duration_ms, \
              efficiency, minutes_asleep, minutes_awake, minutes_deep, minutes_light, \
              minutes_rem, minutes_wake, is_main_sleep, tz, start_time_utc, end_time_utc) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?) \
-             ON DUPLICATE KEY UPDATE end_time=VALUES(end_time), \
+             ON DUPLICATE KEY UPDATE date=VALUES(date), end_time=VALUES(end_time), \
+             is_main_sleep=VALUES(is_main_sleep), \
              duration_ms=VALUES(duration_ms), efficiency=VALUES(efficiency), \
              minutes_asleep=VALUES(minutes_asleep), minutes_awake=VALUES(minutes_awake), \
              minutes_deep=VALUES(minutes_deep), minutes_light=VALUES(minutes_light), \
@@ -822,12 +832,13 @@ pub async fn sync_sleep(
         // the INSERTs commit together or not at all.
         let mut tx = pool.begin().await.context("opening sleep stages tx")?;
         let canonical: Option<i64> = sqlx::query_scalar(
-            "SELECT log_id FROM sleep WHERE user_id = ? AND start_time = ? AND is_main_sleep = ? \
-             LIMIT 1",
+            // Keyed on the start instant alone: `is_main_sleep` is revisable
+            // now, so including it would miss the row it is meant to find the
+            // moment Google scores the night.
+            "SELECT log_id FROM sleep WHERE user_id = ? AND start_time = ? LIMIT 1",
         )
         .bind(user_id)
         .bind(&s.start_time)
-        .bind(s.is_main_sleep)
         .fetch_optional(&mut *tx)
         .await
         .context("reading canonical sleep log_id")?;

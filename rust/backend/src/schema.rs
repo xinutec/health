@@ -89,7 +89,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 69] = [
+    let migrations: [&str; 73] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -361,6 +361,36 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    ) dup ON dup.user_id = s.user_id AND dup.start_time = s.start_time AND dup.is_main_sleep = s.is_main_sleep
    WHERE s.log_id <> dup.keep_id"#,
         r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start_main (user_id, start_time, is_main_sleep)"#,
+        // ⚠ `is_main_sleep` had no business in an IDENTITY key. Google writes a
+        // session while it is still in progress, with no `metadata/mainSleep`
+        // yet, which the parser reads as `false`; when the night is scored and
+        // the flag becomes true, the revision no longer matches the row it is
+        // revising, so it can only ever INSERT a contradictory twin. Nothing in
+        // the system could repair the first row. One person cannot begin two
+        // sleeps at the same instant, so the start instant IS the identity.
+        //
+        // Verified before narrowing (2026-09-08, prod): 1266 sleep rows, ZERO
+        // start instants carrying more than one row — so the collapse below is a
+        // guard for other databases, not a change to anything here.
+        r#"DELETE ss FROM sleep_stages ss
+   JOIN sleep s ON ss.user_id = s.user_id AND ss.sleep_log_id = s.log_id
+   JOIN (
+     SELECT user_id, start_time, MIN(log_id) AS keep_id
+     FROM sleep
+     GROUP BY user_id, start_time
+     HAVING COUNT(*) > 1
+   ) dup ON dup.user_id = s.user_id AND dup.start_time = s.start_time
+   WHERE s.log_id <> dup.keep_id"#,
+        r#"DELETE s FROM sleep s
+   JOIN (
+     SELECT user_id, start_time, MIN(log_id) AS keep_id
+     FROM sleep
+     GROUP BY user_id, start_time
+     HAVING COUNT(*) > 1
+   ) dup ON dup.user_id = s.user_id AND dup.start_time = s.start_time
+   WHERE s.log_id <> dup.keep_id"#,
+        r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start (user_id, start_time)"#,
+        r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
         r#"CREATE TABLE IF NOT EXISTS nc_credentials (
     user_id VARCHAR(64) NOT NULL PRIMARY KEY,
     login_name VARCHAR(255) NOT NULL,

@@ -527,7 +527,13 @@ pub struct GoogleSleepSession {
     /// UNVERIFIED — nothing may depend on it. The `(user_id, start_time,
     /// is_main_sleep)` unique key is what merges a night written by both.
     pub log_id: i64,
-    /// The civil date the sleep ENDED — Fitbit's `dateOfSleep` convention.
+    /// The civil date the sleep ENDED.
+    ///
+    /// ⚠ NOT always what Fitbit's `dateOfSleep` carries, though this parser was
+    /// written believing it was. Measured 2026-09-08: 8 Fitbit-written rows date
+    /// a night to the day it STARTED (e.g. 27 Aug 21:06 -> 28 Aug 08:59, dated
+    /// 2026-08-27). So the two writers can disagree about one night, and since
+    /// `date` overwrites on duplicate, the last writer decides.
     pub date: String,
     pub start_time: String,
     pub end_time: String,

@@ -221,7 +221,8 @@ pub async fn sync_sleep(
              efficiency, minutes_asleep, minutes_awake, minutes_deep, minutes_light, \
              minutes_rem, minutes_wake, is_main_sleep, tz, start_time_utc, end_time_utc) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON DUPLICATE KEY UPDATE start_time=VALUES(start_time), end_time=VALUES(end_time), \
+             ON DUPLICATE KEY UPDATE date=VALUES(date), start_time=VALUES(start_time), \
+             end_time=VALUES(end_time), \
              duration_ms=VALUES(duration_ms), efficiency=VALUES(efficiency), \
              minutes_asleep=VALUES(minutes_asleep), minutes_awake=VALUES(minutes_awake), \
              minutes_deep=VALUES(minutes_deep), minutes_light=VALUES(minutes_light), \
