@@ -129,12 +129,32 @@ pub async fn html_must_revalidate(
     res
 }
 
-/// The landing page shown when no Angular build is present.
+/// The landing page shown when no Angular build is present — **at the root
+/// only**.
 ///
 /// ⚠ A fallback for a broken image, not a feature. It says which build state
 /// the pod is in rather than showing a blank page, which is the difference
 /// between "the deploy is wrong" and "the app is broken".
-pub async fn fallback_page() -> Response {
+///
+/// ⚠ **EVERY OTHER PATH IS A 404, and answering 200 here was a silent
+/// production bug (#1489).** `ServeDir`'s fallback is reached for any file it
+/// cannot find, so `GET /media/nope.woff2` answered **200 text/html** — the
+/// explanation page, handed to a browser that asked for a font. It renders
+/// broken icons and reports nothing, on both sides: a 200 is not an error to
+/// the client and not a log line on the server. Measured 2026-09-08 across
+/// every host in `nixos-config/frontdoor.json`.
+///
+/// `routes/mod.rs` already lists the SPA's routes by hand for exactly this
+/// reason — *"a typo'd .css or .js must still 404"* — and that decision was
+/// correct; what defeated it was the thing it fell through to.
+///
+/// ⚠ **THE ROOT MUST STAY 200.** `tests/compression.rs` uses this body as the
+/// largest the router produces without a database and asserts 200 on `/`, and a
+/// build-less deployment still has to account for itself to whoever opens it.
+pub async fn fallback_page(uri: axum::http::Uri) -> Response {
+    if uri.path() != "/" {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
