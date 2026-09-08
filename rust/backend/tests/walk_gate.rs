@@ -50,6 +50,32 @@
 //! So: stall, off-path building crossing, step budget, the speed ceiling, and
 //! route-correctness are all gating.
 //!
+//! # ⚠ THIS GATE DOES NOT RUN THE WALK MATCHER, AND THAT IS STAGED (#1418)
+//!
+//! The fold's walk pass reads its roads through day-shell's `walkableRoads`
+//! callback, which answers from a loaded trace and EMPTY otherwise — and on
+//! empty `annotateWalkMatches` bails per leg, so the RAW drawing survives
+//! looking exactly like a leg the matcher considered and left alone.
+//!
+//! `WALK_TRACE=none|walkable|buildings|drivable|all` chooses what the trace
+//! answers, per day; `WALK_DAYS=<dates>` restricts the corpus. **`none` is the
+//! default and is today's behaviour.** Measured 2026-09-08 over four days, one
+//! section at a time:
+//!
+//! ```text
+//!   arm         moved/30   regressed  improved
+//!   none               0           0         0    <- reproduces the blessed floor
+//!   walkable          21           9        17
+//!   buildings          0           0         0    <- never ASKED without ways
+//!   drivable           0           0         0
+//!   all               28          11        22
+//! ```
+//!
+//! So the drift is `walkableRoads`, and the floor corresponds to the raw
+//! drawing. Turning it on for real means re-baselining 204 of 238 corpus walks
+//! and grading 68 regressions that are pre-existing production behaviour — that
+//! is #1418's remaining work, not this file's.
+//!
 //! # Cost
 //!
 //! ~314 s for the corpus, measured, of which the fold replay is ~1.3 s/day and
@@ -292,6 +318,69 @@ fn bits_of(v: &Value) -> Option<f64> {
     Some(f64::from_bits(v.as_str()?.parse::<u64>().ok()?))
 }
 
+/// Which trace sections this run answers from. See `WALK_TRACE`.
+struct Arm {
+    label: &'static str,
+    walkable: bool,
+    buildings: bool,
+    drivable: bool,
+}
+
+impl Arm {
+    /// ⚠ **THE DEFAULT IS `none`, WHICH IS TODAY'S BEHAVIOUR, AND IT IS STAGED
+    /// RATHER THAN CHOSEN.** `all` is where this is going: the matcher runs in
+    /// production (measured — `day-mirror` names 8 of 8 walking states on
+    /// 2026-06-16, `day-live` with no OSM source names 0 of 7), so a gate that
+    /// never loads a trace grades a pass the serving path does not execute.
+    ///
+    /// It is not flipped yet because `walk-baseline.json` was blessed from the
+    /// RAW drawing — the `none` arm reproduces it exactly, which is how that was
+    /// established — and turning the matcher on moves 204 of 238 corpus walks,
+    /// 68 of them REGRESSING on truth-anchored axes. Those 68 are pre-existing
+    /// production behaviour nobody has ever graded, and blessing them away in
+    /// the commit that first makes them visible is the one thing not to do.
+    ///
+    /// Flipping the default is #1418's remaining work, and it needs the 68
+    /// graded and ticketed first.
+    fn from_env() -> Self {
+        match std::env::var("WALK_TRACE").as_deref().unwrap_or("none") {
+            "none" => Arm {
+                label: "none",
+                walkable: false,
+                buildings: false,
+                drivable: false,
+            },
+            "walkable" => Arm {
+                label: "walkable",
+                walkable: true,
+                buildings: false,
+                drivable: false,
+            },
+            "buildings" => Arm {
+                label: "buildings",
+                walkable: false,
+                buildings: true,
+                drivable: false,
+            },
+            "drivable" => Arm {
+                label: "drivable",
+                walkable: false,
+                buildings: false,
+                drivable: true,
+            },
+            "all" => Arm {
+                label: "all",
+                walkable: true,
+                buildings: true,
+                drivable: true,
+            },
+            other => {
+                panic!("WALK_TRACE={other:?} is not one of none|walkable|buildings|drivable|all")
+            }
+        }
+    }
+}
+
 #[test]
 fn every_golden_day_measures_its_walks() {
     if !Path::new(GOLDEN).is_dir() {
@@ -322,6 +411,28 @@ fn every_golden_day_measures_its_walks() {
         .filter(|n| n.ends_with(".json"))
         .collect();
     names.sort();
+
+    // ⚠ A SUBSET RUN IS NOT A GATING RUN, and it says so rather than passing
+    // quietly: the floor comparison below is only a verdict over the days it
+    // actually replayed. `WALK_DAYS=2026-06-16,2026-04-29` restricts it, which
+    // is what makes a four-arm ablation affordable — the full corpus is 806 s
+    // an arm. Mirrors `TRUTH_DAYS` in truth_corpus.
+    if let Ok(only) = std::env::var("WALK_DAYS") {
+        let want: Vec<&str> = only
+            .split(',')
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .collect();
+        names.retain(|n| want.iter().any(|d| n.starts_with(d)));
+        assert!(
+            !names.is_empty(),
+            "WALK_DAYS={only:?} matched no fixture — a typo here reads as a clean run over nothing"
+        );
+        eprintln!(
+            "walk_gate: WALK_DAYS restricts this run to {} day(s) — NOT a gating verdict",
+            names.len()
+        );
+    }
     // One day at a time while iterating: the full corpus is ~5 minutes.
     if let Ok(only) = std::env::var("WALK_GATE_DAYS") {
         names.retain(|n| only.split(',').any(|d| n.starts_with(d)));
@@ -336,6 +447,22 @@ fn every_golden_day_measures_its_walks() {
     );
     let mut baseline_req: Vec<Value> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
+    let (mut osm_asked, mut osm_missed) = (0u64, 0u64);
+    let mut no_walk_capture: Vec<String> = Vec::new();
+
+    // ⚠ AN ATTRIBUTION CONTROL, NOT A KNOB TO LEAVE TURNED. `load_trace` feeds
+    // THREE sections and turning all three on at once moved 204 of 238 walks
+    // (#1418) — which says the trace did it, and nothing about WHICH part.
+    // `WALK_TRACE=none|walkable|buildings|drivable|all` runs one arm; `none`
+    // is the control that must reproduce the blessed floor exactly, because if
+    // it does not, the drift is this harness rather than the roads.
+    let arm = Arm::from_env();
+    if arm.label != "none" {
+        eprintln!(
+            "walk_gate: TRACE ARM {} — not the gating default",
+            arm.label
+        );
+    }
 
     for name in &names {
         let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
@@ -356,6 +483,47 @@ fn every_golden_day_measures_its_walks() {
             }
         };
         let mut answerer = RowSetAnswerer::new(rows).expect("the row set opens");
+
+        // ⚠ WITHOUT THIS THE FOLD DRAWS EVERY WALK RAW, and the gate below then
+        // measures the walk pass by never running it (#1418). The matcher's
+        // roads arrive through day-shell's `walkableRoads` callback, which
+        // answers from a loaded trace and EMPTY otherwise — and on empty,
+        // `annotateWalkMatches` bails per leg and the raw drawing survives. It
+        // is loaded per day, which is why that trace is no longer write-once.
+        //
+        // ⚠ A CAPTURE WITH NO WALKABLE SECTIONS IS A DIFFERENT THING FROM A
+        // BROKEN ONE, and the difference is read off the fixture rather than off
+        // the loader's error text. 2026-08-12 has neither section (pre-existing,
+        // recorded on #1418): that day CANNOT exercise the matcher, and saying so
+        // out loud is the point — silently letting it draw raw is the very
+        // failure this change exists to end. A fixture that HAS the sections and
+        // still will not load is a real failure and stays one.
+        // ⚠ NON-EMPTY, not merely PRESENT. 2026-08-12 carries all three section
+        // keys as empty objects, so a presence check calls it capturable and the
+        // load then refuses it — which cost a 9-minute run to find out.
+        let section_keys = |k: &str| {
+            inputs
+                .pointer(&format!("/osmTrace/{k}"))
+                .and_then(Value::as_object)
+                .map_or(0, serde_json::Map::len)
+        };
+        let has_sections = section_keys("walkableRoads") + section_keys("buildingsNear") > 0;
+        if has_sections {
+            let r = backend::osm_host::load_trace_sections(
+                &format!("{GOLDEN}/{name}"),
+                arm.walkable,
+                arm.buildings,
+                arm.drivable,
+            );
+            if let Err(e) = r {
+                failures.push(format!("{name}: osm trace: {e}"));
+                continue;
+            }
+        } else {
+            // Leave NO trace loaded rather than the previous day's roads.
+            no_walk_capture.push(name.clone());
+        }
+
         let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
             Ok(r) => r,
             Err(e) => {
@@ -363,6 +531,13 @@ fn every_golden_day_measures_its_walks() {
                 continue;
             }
         };
+        // ⚠ ASKED-AND-HIT, not "a trace loaded". A fixture whose keys the fold
+        // never spells answers nothing and is indistinguishable from no fixture
+        // at all — which is the exact failure this whole change is undoing.
+        let c = backend::osm_host::take_counts();
+        osm_asked += c.asked();
+        osm_missed += c.misses();
+
         let out: Value = serde_json::from_str(&r.out).expect("the fold reply parses");
         let tz = fx
             .pointer("/meta/tz")
@@ -407,6 +582,56 @@ fn every_golden_day_measures_its_walks() {
         "the replay did not reach the referee:\n{}",
         failures.join("\n")
     );
+
+    // ⚠ THE WALK PASS'S INPUT, ASSERTED THE SAME WAY AND FOR THE SAME REASON.
+    // An unanswered `walkableRoads` lookup is not an error: the callback returns
+    // an empty way list, the matcher declines the leg, and the raw drawing
+    // survives looking exactly like a leg the matcher considered and left alone.
+    // So a silently trace-less run is a green run over a pass that never
+    // executed — which is what #1418 measured, and it stayed invisible for as
+    // long as nothing asserted the fold had ASKED and been ANSWERED.
+    // ⚠ NAMED, NOT JUST COUNTED. A day that cannot run the matcher is a day
+    // this gate does not cover, and a coverage hole nobody can see reads as
+    // coverage.
+    if !no_walk_capture.is_empty() {
+        eprintln!(
+            "walk_gate: {} of {} day(s) carry no walkable capture and drew every leg RAW: {}",
+            no_walk_capture.len(),
+            names.len(),
+            no_walk_capture.join(", ")
+        );
+    }
+    assert!(
+        no_walk_capture.len() * 10 < names.len(),
+        "{} of {} days have no walkable capture — the matcher is running on too \
+         little of the corpus for this gate to mean what it says",
+        no_walk_capture.len(),
+        names.len()
+    );
+
+    //
+    // ⚠ GATING RUNS ONLY. An ablation arm withholds sections ON PURPOSE, so its
+    // lookups miss by design and these two would fire before the referee is
+    // ever reached — which is exactly what happened the first time the arms were
+    // run, and it made every control look like a failure of the harness.
+    if arm.walkable {
+        assert!(
+            osm_asked > 0,
+            "the fold never asked for a road or a building — the walk matcher did \
+             not run, and every metric below is measuring the raw drawing"
+        );
+        assert!(
+            osm_missed * 4 < osm_asked,
+            "{osm_missed} of {osm_asked} OSM lookups went unanswered by the fixtures \
+             — the fold is spelling keys these captures do not carry, so the legs it \
+             could not match kept their raw drawing"
+        );
+    } else if arm.label != "none" {
+        eprintln!(
+            "walk_gate: arm {} — {osm_asked} lookup(s), {osm_missed} unanswered",
+            arm.label
+        );
+    }
 
     // ⚠ THE CORRIDOR-STALL INPUT, ASSERTED SEPARATELY. `raw_in_window` reads a
     // JSON pointer, and a pointer at the wrong key yields an EMPTY SLICE rather

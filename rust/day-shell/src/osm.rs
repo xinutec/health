@@ -38,8 +38,8 @@
 
 use std::collections::HashMap;
 use std::os::raw::c_void;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 // `unsafe extern` and not plain `extern`: edition 2024 makes the block itself
 // carry the word, because what is unchecked here is the DECLARATION — that these
@@ -130,7 +130,20 @@ struct Trace {
     keys: Vec<RawKey>,
 }
 
-static TRACE: OnceLock<Trace> = OnceLock::new();
+/// The loaded trace, REPLACEABLE — see [`load_fixture`].
+///
+/// ⚠ This was a `OnceLock` until 2026-09-08, and that made every backend
+/// corpus gate blind to the walk pass (#1418): one fixture per process
+/// lifetime is fine for the CLI, which replays one day, and impossible for a
+/// harness replaying forty-two. An `Arc` is cloned out under a short read lock
+/// rather than held across the lookup, so a callback never keeps the lock while
+/// it encodes an answer.
+static TRACE: RwLock<Option<Arc<Trace>>> = RwLock::new(None);
+
+/// The trace as of this instant, or `None` if none is loaded.
+fn trace() -> Option<Arc<Trace>> {
+    TRACE.read().expect("trace lock poisoned").clone()
+}
 
 static WALKABLE_HITS: AtomicU64 = AtomicU64::new(0);
 static WALKABLE_MISSES: AtomicU64 = AtomicU64::new(0);
@@ -174,7 +187,7 @@ impl Counts {
 
 /// Whether a captured trace was loaded — see the miss reporting in `main`.
 pub fn have_trace() -> bool {
-    TRACE.get().is_some()
+    trace().is_some()
 }
 
 pub fn take_counts() -> Counts {
@@ -312,15 +325,57 @@ fn section<T>(
         .unwrap_or_default()
 }
 
-/// Load a captured day. Call before the fold runs; later calls are ignored.
+/// Load a captured day, REPLACING whatever was loaded before. Call before the
+/// fold runs.
+///
+/// ⚠ **It clears first, so a failed load leaves NO trace rather than the
+/// previous day's.** A harness walking the corpus loads forty-two of these in
+/// one process; if a bad fixture left the last day's map in place, the next
+/// day would be scored against another day's roads and every lookup would
+/// still report a HIT. Answering empty is the honest failure — it is what an
+/// unloaded process already does, and the miss counters say so out loud.
 pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
+    load_fixture_sections(path, true, true, true)
+}
+
+/// [`load_fixture`], with sections SELECTIVELY WITHHELD — for attributing a
+/// change to one of the three rather than to "the trace".
+///
+/// ⚠ A withheld section is not the same as an absent one, and the difference is
+/// the whole point: withholding leaves the callback answering empty, which is
+/// exactly what a harness with no trace at all sees. That is what makes the
+/// arms comparable — every arm runs the same code, and only the answer changes.
+///
+/// ⚠ The all-empty REFUSAL is skipped when a mask asked for the emptiness. A
+/// deliberate control arm answering nothing is a measurement, not a corrupt
+/// fixture, and the guard exists to catch the latter.
+pub fn load_fixture_sections(
+    path: &str,
+    want_walkable: bool,
+    want_buildings: bool,
+    want_drivable: bool,
+) -> Result<(usize, usize), String> {
+    *TRACE.write().expect("trace lock poisoned") = None;
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    let masked = !(want_walkable && want_buildings && want_drivable);
     let mut t = Trace {
-        walkable: section(&root, "walkableRoads", parse_way_records),
-        buildings: section(&root, "buildingsNear", parse_rings),
-        drivable: section(&root, "drivableRoads", parse_way_records),
+        walkable: if want_walkable {
+            section(&root, "walkableRoads", parse_way_records)
+        } else {
+            HashMap::new()
+        },
+        buildings: if want_buildings {
+            section(&root, "buildingsNear", parse_rings)
+        } else {
+            HashMap::new()
+        },
+        drivable: if want_drivable {
+            section(&root, "drivableRoads", parse_way_records)
+        } else {
+            HashMap::new()
+        },
         keys: Vec::new(),
     };
     t.keys = raw_keys(&root);
@@ -328,7 +383,7 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     // An empty trace would answer every lookup with a miss, which reads like a
     // disagreeing fold rather than a fixture without the sections. Say so here,
     // where the cause is still visible.
-    if n == (0, 0) {
+    if n == (0, 0) && !masked {
         return Err(format!(
             "{path}: no walkableRoads or buildingsNear sections — nothing to answer with"
         ));
@@ -365,10 +420,18 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
     // DROPPED, not zeroed — invisible to the guard above. Catch it as a count
     // mismatch against the raw JSON, the same "refuse rather than serve a
     // thinned map" stance the zero-vertex guard takes.
-    for (label, sec) in [
-        ("walkableRoads", &t.walkable),
-        ("drivableRoads", &t.drivable),
+    for (label, sec, wanted) in [
+        ("walkableRoads", &t.walkable, want_walkable),
+        ("drivableRoads", &t.drivable, want_drivable),
     ] {
+        // ⚠ A WITHHELD SECTION PARSES TO NOTHING BY REQUEST, and this guard
+        // cannot tell that from a record shape the parser drops — it compares
+        // the RAW json count against the parsed map either way. Skipping it for
+        // a section the caller declined keeps it doing its real job on every
+        // section the caller asked for.
+        if !wanted {
+            continue;
+        }
         if let Some(o) = root
             .get("inputs")
             .and_then(|i| i.get("osmTrace"))
@@ -390,7 +453,7 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
             }
         }
     }
-    let _ = TRACE.set(t);
+    *TRACE.write().expect("trace lock poisoned") = Some(Arc::new(t));
     Ok(n)
 }
 
@@ -410,7 +473,7 @@ pub fn load_fixture(path: &str) -> Result<(usize, usize), String> {
 /// handful of moved vertices on one way is the world.
 pub fn verify_against_mirror(path: &str) -> Result<(), String> {
     load_fixture(path)?;
-    let t = TRACE.get().ok_or("no trace")?;
+    let t = trace().ok_or("no trace")?;
     let mut checked = 0usize;
     let mut mismatched = 0usize;
 
@@ -585,7 +648,8 @@ fn geom_hash_ways(ways: &[Way]) -> String {
 
 fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let key = (quantise(lat), quantise(lon), quantise_r(radius));
-    let found = TRACE.get().and_then(|t| t.buildings.get(&key));
+    let loaded = trace();
+    let found = loaded.as_ref().and_then(|t| t.buildings.get(&key));
     let (hits, misses) = (&BUILDINGS_HITS, &BUILDINGS_MISSES);
     match found {
         Some(lines) => {
@@ -614,7 +678,7 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             //
             // Only when a trace IS loaded. With no `--osm`, every lookup misses
             // by design and naming them is noise that buries the real ones.
-            if TRACE.get().is_some() {
+            if loaded.is_some() {
                 eprintln!(
                     "osm: MISS buildingsNear lat={lat:.17} lon={lon:.17} r={radius} bits={:016x}/{:016x}",
                     lat.to_bits(),
@@ -651,7 +715,8 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
 /// counters.
 fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let key = (quantise(lat), quantise(lon), quantise_r(radius));
-    match TRACE.get().and_then(|t| t.walkable.get(&key)) {
+    let loaded = trace();
+    match loaded.as_ref().and_then(|t| t.walkable.get(&key)) {
         Some(ways) => {
             WALKABLE_HITS.fetch_add(1, Ordering::Relaxed);
             if std::env::var_os("OSM_LOG").is_some() {
@@ -665,7 +730,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
         }
         None => {
             WALKABLE_MISSES.fetch_add(1, Ordering::Relaxed);
-            if TRACE.get().is_some() {
+            if loaded.is_some() {
                 eprintln!(
                     "osm: MISS walkableRoads lat={lat:.17} lon={lon:.17} r={radius} \
                      bits={:016x}/{:016x}",
@@ -704,7 +769,8 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
 /// second wire format exists for exactly that reason.
 fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let key = (quantise(lat), quantise(lon), quantise_r(radius));
-    match TRACE.get().and_then(|t| t.drivable.get(&key)) {
+    let loaded = trace();
+    match loaded.as_ref().and_then(|t| t.drivable.get(&key)) {
         Some(ways) => {
             DRIVABLE_HITS.fetch_add(1, Ordering::Relaxed);
             if std::env::var_os("OSM_LOG").is_some() {
@@ -717,7 +783,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
         }
         None => {
             DRIVABLE_MISSES.fetch_add(1, Ordering::Relaxed);
-            if TRACE.get().is_some() {
+            if loaded.is_some() {
                 eprintln!(
                     "osm: MISS drivableRoads lat={lat:.17} lon={lon:.17} r={radius} \
                      bits={:016x}/{:016x}",

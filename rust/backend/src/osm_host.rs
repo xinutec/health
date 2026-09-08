@@ -39,3 +39,41 @@ static BUILDINGS: unsafe extern "C" fn(f64, f64, *mut c_void) -> *mut c_void =
 #[used]
 static DRIVABLE: extern "C" fn(f64, f64, f64) -> *mut c_void =
     day_shell::osm::health_osm_drivable_roads;
+
+/// Load a golden fixture's captured OSM trace so the fold's walk pass can
+/// actually run in THIS process.
+///
+/// ⚠ **Without a trace the three callbacks above answer empty, and empty is not
+/// a neutral answer**: `annotateWalkMatches` bails on `ways.isEmpty` and the leg
+/// keeps its raw drawing, so a harness that never loads one measures the walk
+/// pass by not running it. That was true of every backend corpus gate until
+/// 2026-09-08 (#1418) — they were green across a change that renamed 104 of 239
+/// corpus walking rows.
+///
+/// Loading REPLACES: call it per day, and read the miss counters afterwards to
+/// find out whether the fixture actually answered what the fold asked for.
+pub fn load_trace(fixture_path: &str) -> Result<(usize, usize), String> {
+    day_shell::osm::load_fixture(fixture_path)
+}
+
+/// [`load_trace`] with sections withheld, for attributing a measured change to
+/// ONE of the three rather than to "the trace". A withheld section answers
+/// empty — the same thing a trace-less process sees — so every arm runs
+/// identical code and only the answer differs.
+pub fn load_trace_sections(
+    fixture_path: &str,
+    walkable: bool,
+    buildings: bool,
+    drivable: bool,
+) -> Result<(usize, usize), String> {
+    day_shell::osm::load_fixture_sections(fixture_path, walkable, buildings, drivable)
+}
+
+/// Hit/miss counts for the three callbacks since the last call, and RESET.
+///
+/// ⚠ A gate that loads a trace should assert on these rather than trusting the
+/// load: a fixture whose keys the fold never spells answers zero questions and
+/// looks exactly like no fixture at all.
+pub fn take_counts() -> day_shell::osm::Counts {
+    day_shell::osm::take_counts()
+}
