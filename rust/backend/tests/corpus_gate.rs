@@ -69,8 +69,9 @@ fn run(shard: usize, of: usize) {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
         return;
     }
-    let all = corpus::day_names(GOLDEN, std::env::var("CORPUS_DAYS").ok());
+    let all = corpus::day_names(GOLDEN);
     assert!(!all.is_empty(), "the corpus directory is empty");
+    let all = corpus::restrict(all, std::env::var("CORPUS_DAYS").ok());
 
     // ⚠ A BLESS IS SINGLE-SHARD. `truth` rewrites one floor FILE, so two shards
     // blessing at once race on it and a floor written from half the corpus reads

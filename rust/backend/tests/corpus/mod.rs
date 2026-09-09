@@ -54,9 +54,12 @@ pub struct Replay {
     pub unanswerable: Vec<backend::lean::Miss>,
 }
 
-/// Every golden day, sorted. `filter` is a comma-separated date prefix list
-/// from the environment, or empty for all of them.
-pub fn day_names(golden: &str, filter: Option<String>) -> Vec<String> {
+/// Every golden day, sorted.
+///
+/// ⚠ It does NOT apply `CORPUS_DAYS` — `restrict` does, separately, so that an
+/// empty corpus and a mistyped filter cannot produce the same message. They are
+/// different faults and the first version of this conflated them.
+pub fn day_names(golden: &str) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(golden)
         .expect("the corpus directory is readable")
         .filter_map(Result::ok)
@@ -64,10 +67,41 @@ pub fn day_names(golden: &str, filter: Option<String>) -> Vec<String> {
         .filter(|n| n.ends_with(".json"))
         .collect();
     names.sort();
-    if let Some(only) = filter {
-        names.retain(|n| only.split(',').any(|d| n.starts_with(d.trim())));
-    }
     names
+}
+
+/// Narrow the corpus to a comma-separated list of date prefixes.
+///
+/// ⚠ **A SUBSET RUN IS NOT A GATING RUN, and it says so rather than passing
+/// quietly**: every floor comparison downstream is a verdict over the days that
+/// actually replayed. This is what makes a four-arm ablation affordable — the
+/// full corpus is ~390 s a run.
+///
+/// ⚠ **A TYPO MUST NOT RETAIN SILENTLY.** `CORPUS_DAYS=2026-13-01` matches no
+/// fixture, and a clean run over nothing reads exactly like a clean run over
+/// everything. Carried over from `WALK_DAYS`, which asserted this; the first
+/// version of `corpus_gate` dropped the assertion and left the empty result to
+/// be reported as "the corpus directory is empty", naming the wrong cause.
+pub fn restrict(names: Vec<String>, filter: Option<String>) -> Vec<String> {
+    let Some(only) = filter else { return names };
+    let want: Vec<&str> = only
+        .split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .collect();
+    let kept: Vec<String> = names
+        .into_iter()
+        .filter(|n| want.iter().any(|d| n.starts_with(d)))
+        .collect();
+    assert!(
+        !kept.is_empty(),
+        "CORPUS_DAYS={only:?} matched no fixture — a typo here reads as a clean run over nothing"
+    );
+    eprintln!(
+        "corpus: CORPUS_DAYS restricts this run to {} day(s) — NOT a gating verdict",
+        kept.len()
+    );
+    kept
 }
 
 /// The `shard`-th of `of` slices, by index modulo — so each shard draws days
