@@ -51,8 +51,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use backend::fold_converge::converge;
-use backend::rowset_answerer::RowSetAnswerer;
+mod corpus;
 use serde_json::{Value, json};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
@@ -200,20 +199,27 @@ fn every_confirmed_row_still_holds() {
     let mut ab_rows: BTreeMap<String, Vec<Value>> = BTreeMap::new();
 
     for name in &names {
-        let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        let mut fx: Value = serde_json::from_str(&text).expect("a fixture parses");
-        // #343 P0: the priors A/B. `VENUE_PRIORS_FILE` replaces the fixture's
-        // CAPTURED `venuePriors` blob for this replay only — the file comes
-        // from `refresh-focus-places --hard-out/--soft-out`, so the arm and
-        // the baseline mine the same population. Injection makes this run
+        // ⚠ ONE REPLAY, SHARED (#1359), and the arm is stated HERE, not inside
+        // it. #343 P0: `VENUE_PRIORS_FILE` replaces the fixture's CAPTURED
+        // `venuePriors` for this replay only — the file comes from
+        // `refresh-focus-places --hard-out/--soft-out`, so the arm and the
+        // baseline mine the same population. Injection makes this run
         // REPORT-ONLY (see the end of the test): a floor graded on injected
         // priors would enforce against an arm nobody blessed.
-        if let Some(blob) = injected_priors() {
-            fx["inputs"]["venuePriors"] = blob;
-        }
-        let inputs = &fx["inputs"];
-        let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
+        //
+        // ⚠ journey_corpus NEVER injects, so the shared replay must not decide
+        // this for its callers — it would either feed that harness priors it
+        // did not ask for, or quietly stop this being an A/B. Neither fails.
+        let priors = injected_priors();
+        let rep = match corpus::replay(GOLDEN, name, priors.as_ref()) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(e);
+                continue;
+            }
+        };
+        let fx = &rep.fx;
+        let date = &name[..10];
         let tz = fx
             .pointer("/meta/tz")
             .and_then(Value::as_str)
@@ -226,52 +232,7 @@ fn every_confirmed_row_still_holds() {
             continue;
         }
 
-        let Some(rowset) = inputs.get("osmRowSet") else {
-            failures.push(format!("{name}: no osmRowSet to answer from"));
-            continue;
-        };
-        let cap = match backend::head::capture(inputs, date, user) {
-            Ok(c) => c,
-            Err(e) => {
-                failures.push(format!("{name}: head: {e:#}"));
-                continue;
-            }
-        };
-        let mut answerer = RowSetAnswerer::new(rowset).expect("the row set opens");
-
-        // ⚠ **THIS HARNESS HAS ALWAYS REPLAYED WITH THE WALK PASS DISABLED**
-        // (#1418). The matcher reads its roads through day-shell's
-        // `walkableRoads` callback, which answers EMPTY unless a trace is
-        // loaded — and on empty `annotateWalkMatches` bails per leg, so the raw
-        // drawing survives looking exactly like a leg the matcher considered
-        // and left alone. Production runs the matcher; this gate never has.
-        //
-        // ⚠ **OFF BY DEFAULT, and that is not timidity.** walk_gate could flip
-        // (d7bcd2e) because its floor is a per-metric RATCHET, re-blessable
-        // from the matcher arm with no argument needed for the numbers. THIS
-        // oracle is `expected/tsArm/capture/statesOut`, which day_corpus's own
-        // header calls "the last re-bless" rather than what the TypeScript
-        // produced — so its provenance is PER-FIXTURE and has to be
-        // established, not assumed. `CORPUS_TRACE=1` measures the delta first.
-        if std::env::var("CORPUS_TRACE").is_ok()
-            && inputs
-                .pointer("/osmTrace/walkableRoads")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|o| !o.is_empty())
-            && let Err(e) = backend::osm_host::load_trace(&format!("{GOLDEN}/{name}"))
-        {
-            failures.push(format!("{name}: osm trace: {e}"));
-            continue;
-        }
-
-        let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
-            Ok(r) => r,
-            Err(e) => {
-                failures.push(format!("{name}: converge: {e:#}"));
-                continue;
-            }
-        };
-        let out: Value = serde_json::from_str(&r.out).expect("the fold reply parses");
+        let out = &rep.out;
         let states = out["states"].as_array().cloned().unwrap_or_default();
         // ⚠ NON-VACUITY. `states` is read by key, and a key that moved yields an
         // EMPTY slice rather than an error — every row would then regress at

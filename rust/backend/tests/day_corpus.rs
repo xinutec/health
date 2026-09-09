@@ -55,8 +55,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use backend::fold_converge::converge;
-use backend::rowset_answerer::RowSetAnswerer;
+mod corpus;
 use serde_json::{Map, Value, json};
 
 /// Days whose timeline the Lean fold and the TypeScript cascade build
@@ -174,14 +173,20 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
     let mut divergent: Vec<String> = Vec::new();
 
     for name in &names {
-        let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        let mut fx: Value = serde_json::from_str(&text).expect("a fixture parses");
-        if let Some(blob) = &injected {
-            fx["inputs"]["venuePriors"] = blob.clone();
-        }
-        let inputs = &fx["inputs"];
-        let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
+        // ⚠ ONE REPLAY, SHARED (#1359). `injected` is THIS harness's arm and is
+        // passed explicitly: truth_corpus injects the same blob, journey_corpus
+        // never injects, and a shared replay that guessed would either feed
+        // journey_corpus priors it did not ask for or quietly stop #343's A/B
+        // being an A/B — neither of which fails.
+        let rep = match corpus::replay(GOLDEN, name, injected.as_ref()) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(e);
+                continue;
+            }
+        };
+        let fx = &rep.fx;
+        let r = &rep;
 
         let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut").cloned() else {
             failures.push(format!(
@@ -192,52 +197,6 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
                  added or a capture dropped an existing arm. See #1063."
             ));
             continue;
-        };
-        let Some(rows) = inputs.get("osmRowSet") else {
-            failures.push(format!("{name}: no osmRowSet to answer from"));
-            continue;
-        };
-
-        let cap = match backend::head::capture(inputs, date, user) {
-            Ok(c) => c,
-            Err(e) => {
-                failures.push(format!("{name}: head: {e:#}"));
-                continue;
-            }
-        };
-        let mut answerer = RowSetAnswerer::new(rows).expect("the row set opens");
-
-        // ⚠ **THIS HARNESS HAS ALWAYS REPLAYED WITH THE WALK PASS DISABLED**
-        // (#1418). The matcher reads its roads through day-shell's
-        // `walkableRoads` callback, which answers EMPTY unless a trace is
-        // loaded — and on empty `annotateWalkMatches` bails per leg, so the raw
-        // drawing survives looking exactly like a leg the matcher considered
-        // and left alone. Production runs the matcher; this gate never has.
-        //
-        // ⚠ **OFF BY DEFAULT, and that is not timidity.** walk_gate could flip
-        // (d7bcd2e) because its floor is a per-metric RATCHET, re-blessable
-        // from the matcher arm with no argument needed for the numbers. THIS
-        // oracle is `expected/tsArm/capture/statesOut`, which day_corpus's own
-        // header calls "the last re-bless" rather than what the TypeScript
-        // produced — so its provenance is PER-FIXTURE and has to be
-        // established, not assumed. `CORPUS_TRACE=1` measures the delta first.
-        if std::env::var("CORPUS_TRACE").is_ok()
-            && inputs
-                .pointer("/osmTrace/walkableRoads")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|o| !o.is_empty())
-            && let Err(e) = backend::osm_host::load_trace(&format!("{GOLDEN}/{name}"))
-        {
-            failures.push(format!("{name}: osm trace: {e}"));
-            continue;
-        }
-
-        let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
-            Ok(r) => r,
-            Err(e) => {
-                failures.push(format!("{name}: converge: {e:#}"));
-                continue;
-            }
         };
         deepest = deepest.max(r.rounds);
 
@@ -260,7 +219,7 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
             }
         }
 
-        let out: Value = serde_json::from_str(&r.out).expect("the fold answers JSON");
+        let out: &Value = &rep.out;
         let got = out.get("states").cloned().unwrap_or(Value::Null);
 
         // #343: every stay's place, POSITIONALLY — the truth referee learned the

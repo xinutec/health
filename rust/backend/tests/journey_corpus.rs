@@ -55,9 +55,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use backend::fold_converge::converge;
-use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
+
+mod corpus;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 const NARRATIVES: &str = concat!(
@@ -159,66 +159,29 @@ fn every_reconstructed_journey_still_reconstructs() {
     let (mut total, mut matched_n) = (0usize, 0usize);
 
     for name in &names {
-        let text = std::fs::read_to_string(format!("{GOLDEN}/{name}"))
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        let fx: Value = serde_json::from_str(&text).expect("a fixture parses");
-        let inputs = &fx["inputs"];
         let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
-        let tz = fx
+        let _ = user;
+
+        // ⚠ ONE REPLAY, SHARED (#1359) — see `corpus::replay`. `None` is this
+        // harness's arm and is not an omission: day_corpus and truth_corpus
+        // inject `VENUE_PRIORS_FILE` for #343's A/B and THIS ONE NEVER HAS, so
+        // a shared replay must not guess the arm on anybody's behalf.
+        let rep = match corpus::replay(GOLDEN, name, None) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(e);
+                continue;
+            }
+        };
+        let tz = rep
+            .fx
             .pointer("/meta/tz")
             .and_then(Value::as_str)
             .unwrap_or("Europe/London");
-
         let Some(gt) = ground_truth_journeys(date, tz) else {
             continue; // no narrative for this day
         };
-
-        let Some(rowset) = inputs.get("osmRowSet") else {
-            failures.push(format!("{name}: no osmRowSet to answer from"));
-            continue;
-        };
-        let cap = match backend::head::capture(inputs, date, user) {
-            Ok(c) => c,
-            Err(e) => {
-                failures.push(format!("{name}: head: {e:#}"));
-                continue;
-            }
-        };
-        let mut answerer = RowSetAnswerer::new(rowset).expect("the row set opens");
-
-        // ⚠ **THIS HARNESS HAS ALWAYS REPLAYED WITH THE WALK PASS DISABLED**
-        // (#1418). The matcher reads its roads through day-shell's
-        // `walkableRoads` callback, which answers EMPTY unless a trace is
-        // loaded — and on empty `annotateWalkMatches` bails per leg, so the raw
-        // drawing survives looking exactly like a leg the matcher considered
-        // and left alone. Production runs the matcher; this gate never has.
-        //
-        // ⚠ **OFF BY DEFAULT, and that is not timidity.** walk_gate could flip
-        // (d7bcd2e) because its floor is a per-metric RATCHET, re-blessable
-        // from the matcher arm with no argument needed for the numbers. THIS
-        // oracle is `expected/tsArm/capture/statesOut`, which day_corpus's own
-        // header calls "the last re-bless" rather than what the TypeScript
-        // produced — so its provenance is PER-FIXTURE and has to be
-        // established, not assumed. `CORPUS_TRACE=1` measures the delta first.
-        if std::env::var("CORPUS_TRACE").is_ok()
-            && inputs
-                .pointer("/osmTrace/walkableRoads")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|o| !o.is_empty())
-            && let Err(e) = backend::osm_host::load_trace(&format!("{GOLDEN}/{name}"))
-        {
-            failures.push(format!("{name}: osm trace: {e}"));
-            continue;
-        }
-
-        let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
-            Ok(r) => r,
-            Err(e) => {
-                failures.push(format!("{name}: converge: {e:#}"));
-                continue;
-            }
-        };
-        let out: Value = serde_json::from_str(&r.out).expect("the fold reply parses");
+        let out = &rep.out;
         // ⚠ ONLY the three fields the referee is allowed to see. Passing whole
         // states would let a place name reach a comparison that must not use one.
         let states: Vec<Value> = out["states"]
