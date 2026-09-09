@@ -78,12 +78,29 @@
 //!
 //! # Cost
 //!
-//! ~314 s for the corpus, measured, of which the fold replay is ~1.3 s/day and
-//! the referee ~6.2 s/day. The referee's share is the off-walkable p90, which
-//! scans every walkable way per sample exactly as the TypeScript did. A spatial
-//! index would cut it (`Verified.Geo.WalkSmooth.mkWalkGrid` already exists) but
-//! that changes the metric's code path, and it is not being changed in the same
-//! commit that establishes it agrees with the floor. Held on #1291.
+//! **Measured 2026-09-09, and the shape changed when the matcher was turned on
+//! (#1418).** Unsharded, the corpus was ~242 s with the matcher OFF and ~547 s
+//! with it ON — so the matcher is ~305 s of it, running in the FOLD. Fitting
+//! three corpus sizes gives **~38 s fixed + ~12.1 s per day**.
+//!
+//! Sharded in two, the `corpus replay gates` row went **639.7 s -> 376.5 s**
+//! (shards at 326.6 s and 376.5 s; they contend, so each is slower than it would
+//! be alone — the earlier single-shard model predicted 292 s and was 30% out).
+//!
+//! ⚠ **THE MATCHER'S ~305 s IS HIDDEN, NOT REMOVED.** Sharding spends cores that
+//! were idle. `annotateWalkMatches`/`drawMatcher` is still the cost, it is
+//! unprofiled, and it MULTIPLIES when day_corpus/truth_corpus/journey_corpus
+//! start loading a trace too (#1418's remaining half) — they are in this same
+//! row.
+//!
+//! ⚠ **Two levers have been named wrongly from the shape of the code.** #1291's
+//! `mkWalkGrid` targets the referee's off-walkable p90, which is 83% of the
+//! REFEREE's cost but is NOT REQUESTED on a gating run (`want_p90` is
+//! `WALK_GATE_DUMP`). #1359 shares one replay across harnesses, which cuts total
+//! CPU and not this row's critical path. Profile before proposing a third.
+//!
+//! Remaining headroom from sharding alone is ~138 s: `hsmm_decode_corpus` runs
+//! 238.6 s in this row and floors it.
 //!
 //! # Why this is local-only
 //!
@@ -382,7 +399,38 @@ impl Arm {
 }
 
 #[test]
-fn every_golden_day_measures_its_walks() {
+fn every_golden_day_measures_its_walks_shard_a() {
+    run_shard(0, 2);
+}
+
+#[test]
+fn every_golden_day_measures_its_walks_shard_b() {
+    run_shard(1, 2);
+}
+
+/// ⚠ **TWO SHARDS, AND THE REASON IS IDLE CORES RATHER THAN CPU.** This row runs
+/// six corpus binaries in parallel under nextest, so its wall-clock is the
+/// SLOWEST SINGLE TEST — and once the walk matcher started running (#1418) this
+/// one took 547 s while the other five finished by 284 s, leaving most of the
+/// machine idle for four minutes. nextest gives each TEST its own process, so
+/// splitting the corpus splits the critical path.
+///
+/// Measured 2026-09-09 before choosing the count — 11 days 175 s / 2.041 GB,
+/// 22 days 298 s / 2.161 GB, 42 days 547 s. That is **~38 s fixed + ~12.1 s per
+/// day**, and memory is almost ENTIRELY FIXED (~1.9 GB floor; the interned way
+/// tables barely grow because it is the same city every day).
+///
+/// ⚠ **SO MORE SHARDS IS NOT BETTER, AND TWO IS THE ANSWER.** Each shard costs
+/// another 38 s of CPU and another ~1.9 GB of resident memory. Four shards would
+/// reach 171 s each — but `hsmm_decode_corpus` runs ~284 s in this same row and
+/// becomes the critical path, so shards three and four spend 4 GB to save eight
+/// seconds. Two shards take the row from 640 s to ~292 s at ~4.2 GB, under the
+/// 6.8 GB this referee has already survived once (#1367).
+///
+/// Days are dealt out by INDEX MODULO, not split into halves: per-day cost
+/// varies with how many walks a day holds, and interleaving balances that
+/// without anyone maintaining a partition.
+fn run_shard(shard: usize, of: usize) {
     if !Path::new(GOLDEN).is_dir() {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
         return;
@@ -433,9 +481,38 @@ fn every_golden_day_measures_its_walks() {
             names.len()
         );
     }
-    // One day at a time while iterating: the full corpus is ~5 minutes.
-    if let Ok(only) = std::env::var("WALK_GATE_DAYS") {
-        names.retain(|n| only.split(',').any(|d| n.starts_with(d)));
+    // ⚠ `WALK_GATE_DAYS` WAS DELETED HERE (2026-09-09) — it did the same job as
+    // `WALK_DAYS` above, nothing in the repo referenced it, and it retained
+    // silently: a typo left a clean run over nothing, which is the failure
+    // `WALK_DAYS` asserts against. Two env vars for one concept is #1280's
+    // shape, and a reader greps whichever matches their guess.
+
+    // ⚠ **BLESSING IS SINGLE-SHARD.** The floor is written WHOLE, so two sharded
+    // processes would each write their own half over the other's — and the
+    // survivor would look like a complete floor. When `WALK_BLESS` is set,
+    // shard 0 measures every day and the others stand down.
+    let blessing = std::env::var("WALK_BLESS").is_ok();
+    if blessing {
+        if shard != 0 {
+            eprintln!("walk_gate: WALK_BLESS is single-shard — shard {shard} stands down");
+            return;
+        }
+        eprintln!(
+            "walk_gate: WALK_BLESS — shard 0 measures ALL {} day(s)",
+            names.len()
+        );
+    } else if of > 1 {
+        let before = names.len();
+        names = names
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| i % of == shard)
+            .map(|(_, n)| n)
+            .collect();
+        eprintln!(
+            "walk_gate: shard {shard} of {of} — {} of {before} day(s)",
+            names.len()
+        );
     }
     assert!(!names.is_empty(), "the corpus directory is empty");
 
