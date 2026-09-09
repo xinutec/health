@@ -343,7 +343,7 @@ impl Arm {
     /// Flipping the default is #1418's remaining work, and it needs the 68
     /// graded and ticketed first.
     fn from_env() -> Self {
-        match std::env::var("WALK_TRACE").as_deref().unwrap_or("none") {
+        match std::env::var("WALK_TRACE").as_deref().unwrap_or("all") {
             "none" => Arm {
                 label: "none",
                 walkable: false,
@@ -457,7 +457,7 @@ fn every_golden_day_measures_its_walks() {
     // is the control that must reproduce the blessed floor exactly, because if
     // it does not, the drift is this harness rather than the roads.
     let arm = Arm::from_env();
-    if arm.label != "none" {
+    if arm.label != "all" {
         eprintln!(
             "walk_gate: TRACE ARM {} — not the gating default",
             arm.label
@@ -626,7 +626,7 @@ fn every_golden_day_measures_its_walks() {
              — the fold is spelling keys these captures do not carry, so the legs it \
              could not match kept their raw drawing"
         );
-    } else if arm.label != "none" {
+    } else if arm.label != "all" {
         eprintln!(
             "walk_gate: arm {} — {osm_asked} lookup(s), {osm_missed} unanswered",
             arm.label
@@ -859,7 +859,7 @@ fn every_golden_day_measures_its_walks() {
     // than a fault — asserting here would abort before the regressions can be
     // read, which is exactly what blocked #1418's grading twice. The arm dumps
     // the referee's whole reply instead, and the caller grades it.
-    if arm.label == "none" {
+    if arm.label == "all" {
         assert_eq!(
             moved, 0,
             "{moved} of {compared} paired walks moved more than 0.5 m against the blessed floor — \
