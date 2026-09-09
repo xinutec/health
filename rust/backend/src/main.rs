@@ -385,6 +385,20 @@ async fn main() -> Result<()> {
             };
             google_compare_steps(days).await
         }
+        "google-backfill-sleep" => {
+            let (days, write) = match flags {
+                [d] => (d, false),
+                [d, w] if w == "--write" => (d, true),
+                _ => {
+                    eprintln!("usage: backend google-backfill-sleep <days> [--write]");
+                    std::process::exit(64);
+                }
+            };
+            let days = days
+                .parse()
+                .with_context(|| format!("days {days:?} is not a number"))?;
+            google_backfill_sleep(days, write).await
+        }
         "google-compare-sleep" => {
             let days = match flags {
                 [] => 7,
@@ -1288,6 +1302,60 @@ async fn google_compare_intraday(days: i64) -> Result<()> {
 /// totals and entry counts per night.
 ///
 /// ⚠ READ-ONLY. It writes nothing.
+/// Re-fetch a WIDE sleep window through the routine writer (#1491).
+///
+/// ⚠ **THE ROUTINE SYNC CANNOT REACH A HISTORICAL ROW.** Its window is
+/// `MAX(end_time_utc)` less a day, so a row that is wrong for any reason stays
+/// wrong on every schedule — measured 2026-09-08, the night of 2-3 Sep. This is
+/// how such a row gets repaired BY THE PIPELINE rather than by hand, which
+/// matters because a hand-edited row leaves the writer unproven against it.
+///
+/// ⚠ **DRY RUN UNLESS `--write`.** The writer UPSERTS and its figures
+/// overwrite, so a wide window rewrites every night inside it. That is the
+/// intent, and it is still not something to do by typing a number slightly
+/// wrong. `google-compare-sleep <days>` shows the diff first and never writes.
+async fn google_backfill_sleep(days: i64, write: bool) -> Result<()> {
+    anyhow::ensure!(days > 0, "a backfill window must be at least a day");
+    let user_id = std::env::var("GH_USER_ID")
+        .context("GH_USER_ID names the Google-configured user and must be set")?;
+    let since = (chrono::Utc::now() - chrono::Duration::days(days)).format("%Y-%m-%d %H:%MZ");
+
+    if !write {
+        println!(
+            "DRY RUN — would re-fetch sleep sessions ending on or after {since} \
+             ({days} day(s)) for {user_id} and upsert every one through the routine writer.\n\
+             \n\
+             The writer's figures OVERWRITE, so this rewrites every night in the window.\n\
+             See the diff first:  backend google-compare-sleep {days}\n\
+             Then apply:          backend google-backfill-sleep {days} --write"
+        );
+        return Ok(());
+    }
+
+    // ⚠ READ AFTER THE DRY-RUN BRANCH ON PURPOSE: previewing a plan must not
+    // require credentials for a database the preview never opens.
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+
+    // ⚠ THE ROUTINE WRITER, not a copy of it. A backfill that wrote through its
+    // own INSERT would repair the rows and prove nothing about the path that
+    // produces them daily.
+    let n = backend::google::sync::sync_sleep(&pool, &http, &token, &user_id, Some(days))
+        .await
+        .context("backfilling sleep")?;
+    println!("backfilled {n} sleep session(s) ending on or after {since} for {user_id}");
+    Ok(())
+}
+
 async fn google_compare_sleep(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
 

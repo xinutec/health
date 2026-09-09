@@ -725,6 +725,19 @@ pub async fn sync_daily_activity(
 /// boundary is re-read rather than trusted; an empty table starts 7 days back
 /// (#260: history stays Fitbit's).
 ///
+/// # ⚠ `backfill_days` exists because that window CANNOT REACH BACK
+///
+/// `None` is the routine sync and derives the window as above. It is one day
+/// wide, so **any historical row that is wrong, for any reason, is permanently
+/// out of reach of the pipeline that would correct it** — measured 2026-09-08
+/// (#1491): the night of 7-8 Sep repaired itself the moment the writer was
+/// fixed, because it sat inside the window; the night of 2-3 Sep did not, and
+/// never would, on any schedule.
+///
+/// `Some(days)` re-fetches a wider window THROUGH THIS WRITER, which is the
+/// point. The alternative used on 2026-09-08 was editing the row by hand: that
+/// fixes the row and leaves the writer unproven against it.
+///
 /// # Identity
 ///
 /// The dataPoint `name` ends in an 18-19-digit id, which this writer parses as
@@ -741,25 +754,41 @@ pub async fn sync_sleep(
     http: &reqwest::Client,
     access_token: &str,
     user_id: &str,
+    backfill_days: Option<i64>,
 ) -> Result<usize> {
-    // ⚠ NO `IS NOT NULL` — same MIN/MAX-optimization defeat as the heart-rate
-    // writer above (#1322); `MAX` skips NULLs anyway.
-    let high: Option<String> =
-        sqlx::query_scalar("SELECT CAST(MAX(end_time_utc) AS CHAR) FROM sleep WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_one(pool)
-            .await
-            .context("reading the sleep high-water mark")?;
+    if let Some(days) = backfill_days {
+        anyhow::ensure!(
+            days > 0,
+            "a backfill window must be at least a day, got {days}"
+        );
+    }
+    // A backfill states its own window and never reads the high-water mark —
+    // the mark is precisely what it exists to reach past (#1491).
+    let high: Option<String> = match backfill_days {
+        Some(_) => None,
+        // ⚠ NO `IS NOT NULL` — same MIN/MAX-optimization defeat as the
+        // heart-rate writer above (#1322); `MAX` skips NULLs anyway.
+        None => sqlx::query_scalar(
+            "SELECT CAST(MAX(end_time_utc) AS CHAR) FROM sleep WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .context("reading the sleep high-water mark")?,
+    };
 
-    let since = match &high {
-        Some(ts) => {
+    let since = match (backfill_days, &high) {
+        (Some(days), _) => (chrono::Utc::now() - chrono::Duration::days(days))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        (None, Some(ts)) => {
             let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
                 .with_context(|| format!("unreadable sleep high-water mark {ts:?}"))?;
             (parsed - chrono::Duration::days(1))
                 .format("%Y-%m-%dT%H:%M:%SZ")
                 .to_string()
         }
-        None => (chrono::Utc::now() - chrono::Duration::days(7))
+        (None, None) => (chrono::Utc::now() - chrono::Duration::days(7))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string(),
     };

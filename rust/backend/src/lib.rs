@@ -131,6 +131,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "Google heart-rate samples against heart_rate_intraday (#260)",
     ),
     (
+        "google-backfill-sleep",
+        "<days> [--write]",
+        "re-fetch a wide sleep window through the routine writer (#1491)",
+    ),
+    (
         "google-compare-sleep",
         "[days]",
         "Google sleep sessions against sleep + sleep_stages (#260)",
