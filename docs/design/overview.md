@@ -179,7 +179,7 @@ one working gate behind it never ran at all.
   verified core and decode parity, and dev-lint. Run by the pre-commit hook and
   by `pnpm run verify`. ⚠ Count the rows in `gate.json`; the number was wrong in
   the README for long enough to be quoted.
-- `rust/backend/tests/{walk_gate,truth_corpus,journey_corpus}.rs` — the three
+- `rust/backend/tests/corpus_gate.rs` with `tests/corpus/{walk,truth,journey,day}.rs` — the
   replay gates, restored 2026-08-31 and 2026-09-01. Rust replays the gitignored
   corpora and Lean judges; each gates a committed floor blessed from the
   TypeScript before it went, and each announces a SKIP when the corpus is

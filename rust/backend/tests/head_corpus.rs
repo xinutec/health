@@ -176,7 +176,7 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
             }
         };
 
-        // #394 oracle transition (2026-09-03, see day_corpus's header): the
+        // #394 oracle transition (2026-09-03, see `corpus/day.rs`'s header): the
         // capture oracle is the last BLESSED Lean output, not the TS's. This
         // writes ONLY the fields this test compares — `statesOut` belongs to
         // DAY_BLESS, and the other recordings in the node (tzAt, bestPlace,

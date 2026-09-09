@@ -3258,7 +3258,7 @@ fn head(fixture: &str) -> Result<()> {
 /// against the fixture's own OSM row set.
 ///
 /// The oracle is `expected.velocity` in the same file. This prints the timeline
-/// rather than judging it — `tests/day_corpus.rs` is what compares.
+/// rather than judging it — `tests/corpus/day.rs` is what compares.
 fn day(fixture: &str) -> Result<()> {
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
     let parsed: serde_json::Value =

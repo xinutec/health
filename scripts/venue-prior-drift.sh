@@ -57,12 +57,12 @@ echo "==> mining ${DAYS}d of priors from prod (--dry: nothing is written)" >&2
 echo "==> baseline: the corpus against its OWN captured priors" >&2
 (cd "$ROOT" && VENUE_AB_OUT="$WORK/before.json" \
 	cargo test --manifest-path rust/Cargo.toml -p backend --release \
-	--test truth_corpus -- --nocapture) >&2
+	--test corpus_gate -- --nocapture) >&2
 
 echo "==> arm: the same corpus against the FRESH blob" >&2
 (cd "$ROOT" && VENUE_PRIORS_FILE="$WORK/fresh.json" VENUE_AB_OUT="$WORK/after.json" \
 	cargo test --manifest-path rust/Cargo.toml -p backend --release \
-	--test truth_corpus -- --nocapture) >&2
+	--test corpus_gate -- --nocapture) >&2
 
 node - "$WORK/before.json" "$WORK/after.json" "$DAYS" <<'NODEEOF'
 // ⚠ node, not python3: /usr/bin/python3 is an Xcode shim that dies inside the

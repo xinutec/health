@@ -231,7 +231,7 @@ if (!CLAIMS_ONLY) {
 // What DOES close the hop, for a mode being added: one witness that `dispatch`
 // still routes to it (`the_mode_table_answers_in_process` in
 // rust/backend/tests/lean_serve.rs) PLUS a caller that exercises it for real
-// (rust/backend/tests/walk_gate.rs). Neither alone suffices — the first passes
+// (rust/backend/tests/corpus/walk.rs). Neither alone suffices — the first passes
 // while nothing calls the mode, the second passes if the arm is renamed and the
 // caller renamed with it.
 console.log("Orphaned PORTS: not measurable here — the TS side it cross-referenced went with #975.");

@@ -263,19 +263,25 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	# why they belong here and not in gate.dhall — and each gates a committed
 	# floor a human blessed from the TypeScript before it went:
 	#
-	#   walk_gate           238 walks over 42 days vs walk-baseline.json
-	#   truth_corpus        312 confirmed ground-truth rows vs truth-baseline.json
-	#   journey_corpus       80 of 92 journeys vs journey-baseline.json
+	#   corpus_gate         ONE replay of each of 42 days, graded four ways:
+	#                         walks     238 walks vs walk-baseline.json
+	#                         truth     312 confirmed rows vs truth-baseline.json
+	#                         journeys  80 of 92 vs journey-baseline.json
+	#                         day       every state vs each fixture's statesOut
 	#   decoder_scoreboard  11 days x 10 counts vs decoder-scoreboard.json
 	#                       (scores the FROZEN decodes)
 	#   hsmm_decode_corpus  11 days RE-DECODED from raw materials vs each
 	#                       fixture's blessed segments — the decoder gate itself
 	#
-	# ~11 minutes: walk_gate ~5, the re-decode ~4. They announce a SKIP rather
-	# than passing quietly when the corpus is absent, so a machine without it
-	# cannot read as gated.
+	# ⚠ `corpus_gate` REPLACED FOUR TEST BINARIES on 2026-09-09 (#1359), and it
+	# ADDS the `day` grader, which this list never ran. They each replayed the
+	# same day from the same fixture and graded it differently; now one replay
+	# feeds all four, sharded two ways by day.
+	#
+	# They announce a SKIP rather than passing quietly when the corpus is
+	# absent, so a machine without it cannot read as gated.
 	$DEV cargo test --manifest-path rust/Cargo.toml -p backend --release \
-		--test walk_gate --test truth_corpus --test journey_corpus \
+		--test corpus_gate \
 		--test decoder_scoreboard --test hsmm_decode_corpus -- --nocapture
 else
 	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
@@ -287,7 +293,7 @@ else
 	  ⚠  DEPLOYING WITH THE REPLAY GATES SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    walk_gate  truth_corpus  journey_corpus  decoder_scoreboard  hsmm_decode_corpus
+	    corpus_gate  decoder_scoreboard  hsmm_decode_corpus
 	================================================================
 	  the other five do not run either way — deleted with the TS
 	  backend, #975/#1048

@@ -1,9 +1,9 @@
 //! Judge a replayed day's walk NAMES against the ground-truth narrative (#445).
 //!
 //! ⚠ WHY THIS EXISTS: no gate can see the pipeline's `wayName` under served
-//! ways. `truth_corpus` reads `wayName` but replays with the OSM externs
+//! ways. the `truth` grader reads `wayName` but replays with the OSM externs
 //! answering EMPTY (nothing loads a trace into the backend test process), so
-//! the walk pass bails before the matcher on every leg. `walk_gate` replays
+//! the walk pass bails before the matcher on every leg. `corpus_gate` replays
 //! WITH ways but scores `routeCorr` from the drawn GEOMETRY
 //! (`onNamedWayFraction`), never reading the pipeline's `wayName`. Both were
 //! green across a change that renames walks — measured 2026-09-04, not
@@ -25,7 +25,7 @@
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-/// `walk_gate::named_walk_windows`, duplicated deliberately: an example cannot
+/// `corpus::walk::named_walk_windows`, duplicated deliberately: an example cannot
 /// import from a test file, and lifting the fn into the library would put
 /// referee plumbing on the production path.
 fn named_walk_windows(date: &str, tz: &str) -> Result<Vec<(i64, i64, String)>> {

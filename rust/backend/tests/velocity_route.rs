@@ -1,6 +1,6 @@
 //! `/velocity`'s gate: who reaches it, and what it refuses before computing (#982).
 //!
-//! ⚠ NO DATABASE, so this cannot test a computed day — that is `day_corpus.rs`
+//! ⚠ NO DATABASE, so this cannot test a computed day — that is `corpus/day.rs`
 //! offline and `backend day-mirror` against production. What it covers is
 //! everything the route decides BEFORE any work happens, which is where a
 //! mistake is both cheap to make and invisible:

@@ -6,7 +6,7 @@
 //! check we had passed anyway. `lean_serve.rs` asks whether `dispatch` still
 //! routes to a mode — it does that by asking the mode a question, so it passes
 //! while no production or test code anywhere calls it. A caller-side test like
-//! `walk_gate.rs` asks the other half, and passes if the arm and its one caller
+//! `corpus/walk.rs` asks the other half, and passes if the arm and its one caller
 //! are renamed together. Neither sees a mode that is wired and dead, which is
 //! how `gpsoutliers` sat dispatched with nothing executing it.
 //!

@@ -239,7 +239,7 @@ in  { name = "health"
               , "rust/Cargo.toml"
               , "--workspace"
               , "-E"
-              , "not (binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
+              , "not (binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
               ]
         , timeout_s = 1800
         }
@@ -250,18 +250,24 @@ in  { name = "health"
             deploy gates accepted the day they existed.
 
             Split because they are EXECUTION-bound, not compile-bound: 42-day
-            replays through the Kalman/fold/trellis paths. Measured 2026-09-02
-            in release: walk_gate 432 s, hsmm_decode_corpus 331 s, day_corpus
-            76 s, journey_corpus 69 s, truth_corpus 66 s, head_corpus 28 s —
-            and the debug multiple on walk_gate alone was dominating the whole
-            gate the day after #1048 landed the five new replay gates into the
-            row above.
+            replays through the Kalman/fold/trellis paths. The debug multiple on
+            the walk referee alone was dominating the whole gate the day after
+            #1048 landed the five new replay gates into the row above.
+
+            ⚠ `corpus_gate` REPLACED FOUR BINARIES on 2026-09-09 (#1359).
+            `walk_gate`, `day_corpus`, `truth_corpus` and `journey_corpus` each
+            rebuilt the SAME day from the SAME fixture and then graded it
+            differently, so the corpus was replayed four times over; they are
+            four graders behind one replay now, sharded two ways by day. That is
+            also what made the walk matcher affordable in the other three
+            (#1418) — it was never the matcher that was too dear, it was paying
+            for it once per harness.
 
             The complement in the debug row keeps everything else — including
             `decoder_scoreboard` and `fold_env`, which are sub-second and so
-            keep debug-assert coverage for free. The two filtersets were
-            verified disjoint and exhaustive against `cargo nextest list` on
-            2026-09-02: 8 tests here, 350 there, 358 total both ways.
+            keep debug-assert coverage for free. The two filtersets are disjoint
+            and exhaustive by construction: this row names its binaries and the
+            row above is its exact negation.
 
             Same ordering constraint as everything cargo here: after the host
             row, which writes the `.rsp` link line day-shell's build.rs reads.
@@ -279,14 +285,14 @@ in  { name = "health"
               , "rust/Cargo.toml"
               , "--workspace"
               , "-E"
-              , "binary(=walk_gate) | binary(=truth_corpus) | binary(=journey_corpus) | binary(=day_corpus) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
+              , "binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
               ]
         , timeout_s = 1800
         }
       , {-  The second hop of #1003. A mode can be dispatched and executed by
             NOTHING, and every check we had passed anyway: `lean_serve` proves
             `dispatch` still routes to a mode by asking it a question, so it is
-            green while nobody calls it, and a caller-side gate like `walk_gate`
+            green while nobody calls it, and a caller-side gate like `corpus_gate`
             proves the other half and stays green if an arm and its one caller
             are renamed together.
 
@@ -383,9 +389,8 @@ in  { name = "health"
             The cross-implementation checking now lives where it can actually
             run: the corpus harnesses in `rust/backend/tests/` gate against
             floors and ceilings blessed from the TypeScript before it went
-            (`walk_gate`, `truth_corpus`, `journey_corpus`,
-            `feasibility_corpus`). Those replay gitignored corpora, so they are
-            in `deploy.sh` rather than here.
+            (`corpus_gate`, `feasibility_corpus`). Those replay gitignored
+            corpora, so they are in `deploy.sh` rather than here.
         -}
         G.Check::{
         , name = "Lean verified core (#guards)"

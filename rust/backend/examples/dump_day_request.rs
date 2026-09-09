@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     // check would pass — on a day whose fold never got its answers.
     //
     // ⚠ BUT THREE TABLES ARE DECLINED ON PURPOSE and must not count: the same
-    // list `tests/day_corpus.rs` holds, and for the same reason — `reverseGeocode`
+    // list `tests/corpus/day.rs` holds, and for the same reason — `reverseGeocode`
     // is a Nominatim call over coordinates the pipeline DERIVES (#1076),
     // `transitStops` is injected rather than computed from rows, and
     // `nearbyLandmarks` declines where the row set cannot vouch for a coordinate.

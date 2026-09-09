@@ -16,7 +16,7 @@
 //! self-consistency.
 //!
 //! ⚠ `tests/golden/days` is gitignored — the fixtures carry real coordinates and
-//! place names. Like `day_corpus`, this ANNOUNCES A SKIP rather than passing
+//! place names. Like `corpus_gate`, this ANNOUNCES A SKIP rather than passing
 //! quietly when the corpus is absent.
 
 use backend::fold_converge::Answerer;

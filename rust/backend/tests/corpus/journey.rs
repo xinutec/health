@@ -8,7 +8,7 @@
 //! The story-correctness of the drawn timeline: does the day read as the right
 //! SEQUENCE OF TRIPS? `tests/golden/journey-baseline.json` records the
 //! ground-truth journeys the pipeline reconstructs, and had no reader from #975
-//! until now — the third of seven baselines to get one back (#1048).
+//! until #1048 — the third of seven baselines to get one back.
 //!
 //! ⚠ MOST JOURNEYS DO NOT MATCH, AND THAT IS THE DESIGN. The floor is the
 //! current non-zero set of working ones, so the standing failures are a floor
@@ -44,7 +44,13 @@
 //!
 //! `statesToJourneys`, `modeShape`, `bestOverlap` and the end-clip are
 //! `Verified.Eval.JourneyShape`; the ratchet is `Verified.Eval.FloorGate`,
-//! already built for the truth floor. This file replays, resolves and prints.
+//! already built for the truth floor. This module replays, resolves and prints.
+//!
+//! ⚠ **SHARDING IS SOUND HERE** (#1359) and it is not obvious: the floor gate
+//! is fed `measured_baseline`, the floor filtered to the days this run actually
+//! reported, and it ANNOUNCES the rest as unchecked (#408). A shard that grades
+//! half the corpus therefore ratchets half the floor and says so, and between
+//! the shards every floor key is checked exactly once.
 //!
 //! # Local-only
 //!
@@ -53,13 +59,11 @@
 //! passing quietly, and prints modes and times, never a place.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use serde_json::{Value, json};
 
-mod corpus;
+use super::Replay;
 
-const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 const NARRATIVES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/golden/ground-truth"
@@ -123,68 +127,60 @@ fn shape(v: &Value) -> String {
     )
 }
 
-#[test]
-fn every_reconstructed_journey_still_reconstructs() {
-    if !Path::new(GOLDEN).is_dir() || !Path::new(NARRATIVES).is_dir() {
-        eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
-        return;
+pub struct Journey {
+    baseline: BTreeMap<String, Vec<i64>>,
+    matched_now: BTreeMap<String, Vec<i64>>,
+    described: BTreeMap<String, Vec<i64>>,
+    reported: BTreeSet<String>,
+    failures: Vec<String>,
+    total: usize,
+    matched_n: usize,
+    dump: Option<String>,
+    dumped: Vec<String>,
+}
+
+impl Journey {
+    /// `None` when there are no narratives to grade against — announced by the
+    /// caller, never a quiet pass.
+    pub fn new() -> Option<Self> {
+        if !std::path::Path::new(NARRATIVES).is_dir() {
+            return None;
+        }
+        let baseline: BTreeMap<String, Vec<i64>> = serde_json::from_str(
+            &std::fs::read_to_string(BASELINE)
+                .expect("the journey floor is tracked and must be readable"),
+        )
+        .expect("the journey floor parses");
+        Some(Self {
+            baseline,
+            matched_now: BTreeMap::new(),
+            described: BTreeMap::new(),
+            reported: BTreeSet::new(),
+            failures: Vec::new(),
+            total: 0,
+            matched_n: 0,
+            // A one-shot dump for checking this port against the recovered
+            // TypeScript: the same `(gt, states)` pairs both sides see. Off by
+            // default; it carries no places, but it is a corpus artefact and
+            // belongs outside the tree.
+            dump: std::env::var("JOURNEY_DUMP").ok(),
+            dumped: Vec::new(),
+        })
     }
-    let baseline: BTreeMap<String, Vec<i64>> = serde_json::from_str(
-        &std::fs::read_to_string(BASELINE)
-            .expect("the journey floor is tracked and must be readable"),
-    )
-    .expect("the journey floor parses");
 
-    let mut names: Vec<String> = std::fs::read_dir(GOLDEN)
-        .expect("the corpus directory is readable")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".json"))
-        .collect();
-    names.sort();
-    if let Ok(only) = std::env::var("JOURNEY_DAYS") {
-        names.retain(|n| only.split(',').any(|d| n.starts_with(d)));
-    }
-    assert!(!names.is_empty(), "the corpus directory is empty");
-    // A one-shot dump for checking this port against the recovered TypeScript:
-    // the same `(gt, states)` pairs both sides see. Off by default; it carries
-    // no places, but it is a corpus artefact and belongs outside the tree.
-    let dump = std::env::var("JOURNEY_DUMP").ok();
-    let mut dumped: Vec<String> = Vec::new();
-
-    let mut matched_now: BTreeMap<String, Vec<i64>> = BTreeMap::new();
-    let mut described: BTreeMap<String, Vec<i64>> = BTreeMap::new();
-    let mut reported: BTreeSet<String> = BTreeSet::new();
-    let mut failures: Vec<String> = Vec::new();
-    let (mut total, mut matched_n) = (0usize, 0usize);
-
-    for name in &names {
-        let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
-        let _ = user;
-
-        // ⚠ ONE REPLAY, SHARED (#1359) — see `corpus::replay`. `None` is this
-        // harness's arm and is not an omission: day_corpus and truth_corpus
-        // inject `VENUE_PRIORS_FILE` for #343's A/B and THIS ONE NEVER HAS, so
-        // a shared replay must not guess the arm on anybody's behalf.
-        let rep = match corpus::replay(GOLDEN, name, None) {
-            Ok(r) => r,
-            Err(e) => {
-                failures.push(e);
-                continue;
-            }
-        };
+    pub fn grade(&mut self, name: &str, rep: &Replay) {
+        let date = &name[..10];
         let tz = rep
             .fx
             .pointer("/meta/tz")
             .and_then(Value::as_str)
             .unwrap_or("Europe/London");
         let Some(gt) = ground_truth_journeys(date, tz) else {
-            continue; // no narrative for this day
+            return; // no narrative for this day
         };
-        let out = &rep.out;
         // ⚠ ONLY the three fields the referee is allowed to see. Passing whole
         // states would let a place name reach a comparison that must not use one.
-        let states: Vec<Value> = out["states"]
+        let states: Vec<Value> = rep.out["states"]
             .as_array()
             .map_or(&[][..], Vec::as_slice)
             .iter()
@@ -193,17 +189,18 @@ fn every_reconstructed_journey_still_reconstructs() {
         // ⚠ NON-VACUITY: a moved key yields an EMPTY slice, not an error, and
         // every journey would then read as unreconstructed at once.
         if states.is_empty() {
-            failures.push(format!("{name}: the fold produced no states to grade"));
-            continue;
+            self.failures
+                .push(format!("{name}: the fold produced no states to grade"));
+            return;
         }
         // A day the narrative describes no journeys for measures nothing here.
         if gt.is_empty() {
-            continue;
+            return;
         }
 
-        if let Some(path) = &dump {
-            dumped.push(json!({ "date": date, "gt": gt, "states": states }).to_string());
-            let _ = path; // written once below
+        if self.dump.is_some() {
+            self.dumped
+                .push(json!({ "date": date, "gt": gt, "states": states }).to_string());
         }
 
         let req = json!({ "mode": "journeyshape", "gt": gt, "states": states });
@@ -218,21 +215,19 @@ fn every_reconstructed_journey_still_reconstructs() {
             gt.len(),
             "{name}: one result per ground-truth journey"
         );
-        reported.insert(date.to_string());
-        let (m, d) = (
-            matched_now.entry(date.to_string()).or_default(),
-            described.entry(date.to_string()).or_default(),
-        );
+        self.reported.insert(date.to_string());
+        let m = self.matched_now.entry(date.to_string()).or_default();
+        let d = self.described.entry(date.to_string()).or_default();
         let pipeline = jr["pipelineJourneys"]
             .as_array()
             .map_or(&[][..], Vec::as_slice);
         for res in results {
-            total += 1;
+            self.total += 1;
             let start = res["startTs"].as_i64().unwrap_or(0);
             d.push(start);
             if res["matched"].as_bool() == Some(true) {
                 m.push(start);
-                matched_n += 1;
+                self.matched_n += 1;
             } else if std::env::var("JOURNEY_DEBUG").is_ok() {
                 let (s, e) = (start, res["endTs"].as_i64().unwrap_or(0));
                 let touching: Vec<String> = pipeline
@@ -263,103 +258,122 @@ fn every_reconstructed_journey_still_reconstructs() {
             }
         }
     }
-    assert!(
-        failures.is_empty(),
-        "the replay did not reach the referee:\n{}",
-        failures.join("\n")
-    );
-    if let Some(path) = &dump {
-        std::fs::write(path, dumped.join("\n")).expect("the dump is writable");
-        eprintln!("journeys: dumped {} day(s) to {path}", dumped.len());
-    }
-    assert!(
-        matched_n > 0,
-        "no journey reconstructed on any day — the gate would pass vacuously"
-    );
 
-    // Both sides lose the unmeasured days, or their floors read as lost (#408).
-    let unmeasured: Vec<&String> = baseline.keys().filter(|d| !reported.contains(*d)).collect();
-    let measured_baseline: BTreeMap<String, Vec<i64>> = baseline
-        .iter()
-        .filter(|(d, _)| reported.contains(*d))
-        .map(|(d, k)| (d.clone(), k.clone()))
-        .collect();
-
-    let req = json!({
-        "mode": "floorgate",
-        "baseline": to_wire(&measured_baseline),
-        "current": to_wire(&matched_now),
-        "described": to_wire(&described),
-    });
-    let reply = backend::lean::serve(&req.to_string())
-        .unwrap_or_else(|e| panic!("the floor gate must answer: {e:#}"));
-    let g: Value = serde_json::from_str(&reply).expect("the gate reply parses");
-    assert!(g.get("error").is_none(), "the floor gate refused: {g}");
-
-    let hm = |ts: i64| {
-        let s = ts.rem_euclid(86_400);
-        format!("{:02}:{:02}Z", s / 3600, (s % 3600) / 60)
-    };
-    let empty: &[Value] = &[];
-    let regressed = g["regressed"].as_array().map_or(empty, Vec::as_slice);
-    let improved = g["improved"].as_array().map_or(empty, Vec::as_slice);
-    let dropped = g["dropped"].as_array().map_or(empty, Vec::as_slice);
-
-    eprintln!(
-        "journeys: {matched_n}/{total} reconstructed over {} day(s), against a floor of {}",
-        reported.len(),
-        measured_baseline.values().map(Vec::len).sum::<usize>()
-    );
-    if !unmeasured.is_empty() {
-        eprintln!(
-            "journeys: {} day(s) not measured this run, floor unchecked: {}",
-            unmeasured.len(),
-            unmeasured
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    if !improved.is_empty() {
-        eprintln!(
-            "journeys: {} newly reconstructed — re-bless to ratchet the floor up:",
-            improved.len()
-        );
-        for im in improved {
-            eprintln!(
-                "      ✓ {} @{}",
-                im["date"].as_str().unwrap_or("?"),
-                hm(im["startTs"].as_i64().unwrap_or(0))
-            );
+    /// The floor gate over everything this shard graded. Returns the failures
+    /// rather than asserting, so the runner can name WHICH grader failed.
+    pub fn finish(self) -> Vec<String> {
+        let mut out = self.failures;
+        if !out.is_empty() {
+            return out
+                .drain(..)
+                .map(|f| format!("journeys: the replay did not reach the referee: {f}"))
+                .collect();
         }
-    }
-    // ⚠ A drop is the only way a red gate goes green without a fix. Never silent.
-    if !dropped.is_empty() {
-        eprintln!(
-            "journeys: {} floor key(s) the narrative no longer describes:",
-            dropped.len()
-        );
-        for d in dropped {
-            eprintln!(
-                "      – {} @{}",
-                d["date"].as_str().unwrap_or("?"),
-                hm(d["startTs"].as_i64().unwrap_or(0))
-            );
+        if let Some(path) = &self.dump {
+            std::fs::write(path, self.dumped.join("\n")).expect("the dump is writable");
+            eprintln!("journeys: dumped {} day(s) to {path}", self.dumped.len());
         }
-    }
-    assert!(
-        regressed.is_empty(),
-        "journeys: FAIL — {} previously-reconstructed journey(s) regressed:\n{}",
-        regressed.len(),
-        regressed
+        if self.matched_n == 0 {
+            out.push(
+                "journeys: no journey reconstructed on any day — the gate would pass vacuously"
+                    .to_string(),
+            );
+            return out;
+        }
+
+        // Both sides lose the unmeasured days, or their floors read as lost (#408).
+        let unmeasured: Vec<&String> = self
+            .baseline
+            .keys()
+            .filter(|d| !self.reported.contains(*d))
+            .collect();
+        let measured_baseline: BTreeMap<String, Vec<i64>> = self
+            .baseline
             .iter()
-            .map(|r| format!(
-                "      ✗ {} @{}",
-                r["date"].as_str().unwrap_or("?"),
-                hm(r["startTs"].as_i64().unwrap_or(0))
-            ))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+            .filter(|(d, _)| self.reported.contains(*d))
+            .map(|(d, k)| (d.clone(), k.clone()))
+            .collect();
+
+        let req = json!({
+            "mode": "floorgate",
+            "baseline": to_wire(&measured_baseline),
+            "current": to_wire(&self.matched_now),
+            "described": to_wire(&self.described),
+        });
+        let reply = backend::lean::serve(&req.to_string())
+            .unwrap_or_else(|e| panic!("the floor gate must answer: {e:#}"));
+        let g: Value = serde_json::from_str(&reply).expect("the gate reply parses");
+        assert!(g.get("error").is_none(), "the floor gate refused: {g}");
+
+        let hm = |ts: i64| {
+            let s = ts.rem_euclid(86_400);
+            format!("{:02}:{:02}Z", s / 3600, (s % 3600) / 60)
+        };
+        let empty: &[Value] = &[];
+        let regressed = g["regressed"].as_array().map_or(empty, Vec::as_slice);
+        let improved = g["improved"].as_array().map_or(empty, Vec::as_slice);
+        let dropped = g["dropped"].as_array().map_or(empty, Vec::as_slice);
+
+        eprintln!(
+            "journeys: {}/{} reconstructed over {} day(s), against a floor of {}",
+            self.matched_n,
+            self.total,
+            self.reported.len(),
+            measured_baseline.values().map(Vec::len).sum::<usize>()
+        );
+        if !unmeasured.is_empty() {
+            eprintln!(
+                "journeys: {} day(s) not measured by this shard, floor unchecked here: {}",
+                unmeasured.len(),
+                unmeasured
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if !improved.is_empty() {
+            eprintln!(
+                "journeys: {} newly reconstructed — re-bless to ratchet the floor up:",
+                improved.len()
+            );
+            for im in improved {
+                eprintln!(
+                    "      ✓ {} @{}",
+                    im["date"].as_str().unwrap_or("?"),
+                    hm(im["startTs"].as_i64().unwrap_or(0))
+                );
+            }
+        }
+        // ⚠ A drop is the only way a red gate goes green without a fix. Never silent.
+        if !dropped.is_empty() {
+            eprintln!(
+                "journeys: {} floor key(s) the narrative no longer describes:",
+                dropped.len()
+            );
+            for d in dropped {
+                eprintln!(
+                    "      – {} @{}",
+                    d["date"].as_str().unwrap_or("?"),
+                    hm(d["startTs"].as_i64().unwrap_or(0))
+                );
+            }
+        }
+        if !regressed.is_empty() {
+            out.push(format!(
+                "journeys: FAIL — {} previously-reconstructed journey(s) regressed:\n{}",
+                regressed.len(),
+                regressed
+                    .iter()
+                    .map(|r| format!(
+                        "      ✗ {} @{}",
+                        r["date"].as_str().unwrap_or("?"),
+                        hm(r["startTs"].as_i64().unwrap_or(0))
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        out
+    }
 }

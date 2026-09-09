@@ -1,4 +1,4 @@
-//! A WHOLE DAY with no Node and no database, against the TypeScript's timeline.
+//! A WHOLE DAY with no Node and no database, against the last blessed timeline.
 //!
 //! ```text
 //!   fixture.inputs → head::capture → build_day_request → converge → states
@@ -12,10 +12,9 @@
 //!
 //! The oracle is `expected.tsArm.capture.statesOut`. ⚠ THE KEY IS NAMED FOR AN
 //! ARM THAT NO LONGER EXISTS: since 2026-09-03 it holds the last BLESSED LEAN
-//! output, not what the TypeScript cascade produced. See the banner below —
-//! this line said the TypeScript until 2026-09-04 and contradicted it.
+//! output, not what the TypeScript cascade produced.
 //!
-//! # ⚠ WHERE THIS TEST BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
+//! # ⚠ WHERE THIS GRADER BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
 //!
 //! It starts at `fixture.inputs`. **Nothing that PRODUCES an input is exercised
 //! here** — `classification_inputs::load` and every DB query, cache load,
@@ -47,16 +46,22 @@
 //! replay and prints what it touched. Bless deliberately, on a clean tree,
 //! and read the diff of the inner golden repo before committing it.
 //!
-//! # Why this test is local-only, and how it says so
+//! ⚠ Blessing is per-FIXTURE here, not to a shared floor file, so it is the one
+//! bless in the corpus that is safe to run sharded: each shard rewrites only
+//! its own days and they cannot race. It is still only COMPLETE if both shards
+//! run.
+//!
+//! # Why this grader is local-only
 //!
 //! `tests/golden/days` is gitignored: the fixtures carry real coordinates,
-//! place names and biometrics. It ANNOUNCES A SKIP rather than passing quietly.
+//! place names and biometrics. The runner ANNOUNCES A SKIP rather than passing
+//! quietly.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
-mod corpus;
 use serde_json::{Map, Value, json};
+
+use super::Replay;
 
 /// Days whose timeline the Lean fold and the TypeScript cascade build
 /// differently — each with its divergence ADJUDICATED, not merely observed.
@@ -65,55 +70,63 @@ use serde_json::{Map, Value, json};
 /// instead of one red day hiding them all; re-capturing a day to make a miss
 /// go away is forbidden (#1054).
 ///
-/// 2026-08-09 is a day the ORACLE is wrong about, adjudicated 2026-09-02:
-/// state 5's venue. Both arms tag, plan and consolidate the same jitter run
-/// (the TS's own segsOut says "consolidated 3 GPS-jitter stay fragments");
-/// at the merged centre the recorded rows put Morr at 1.59 m and KFC at
-/// 2.39 m, both near-field, and Lean's near-field-first rule answers Morr
-/// where the TS answered KFC. Pippijn confirmed the stay WAS Morr.
-///
 /// RETIRED 2026-09-03: the oracle stopped being the TS's output (see the
 /// header), so the 08-09 bless wrote Morr into `statesOut` and the entry
 /// would have tripped the stale-entry check below. The adjudication lives in
 /// #1054; the list stays for the next genuinely divergent day.
 const KNOWN_DIVERGENT: [&str; 0] = [];
 
-/// Keys the offline answerer cannot supply, beyond the blank-zone `bestPlace`
-/// asked before `tzAt` resolves.
-///
-/// Measured 2026-08-23: 7 keys over 5 days — `reverseGeocode` on six (one at
-/// zoom 18, five at zoom 16) and one `transitStops`. Each means the fold reached
-/// a lookup the TypeScript run never made, so the recorded trace has no answer
-/// and the row set is not that lookup's source. Per #1054 the miss IS the
-/// finding, so this is a CEILING that must fall, not a budget.
-///
-/// ⚠ Was 8 until 2026-08-23. The eighth was 06-09's `nearbyLandmarks`, which
-/// was never an un-asked lookup at all — the answerer had NO ARM for that table
-/// and fell through the catch-all, so it read as adjudicated when it was not
-/// (#1054). The arm exists now, so the ceiling drops with it.
-///
-/// What remains is the two tables that are declined ON PURPOSE:
-/// `reverseGeocode` is a Nominatim call whose keys are coordinates the pipeline
-/// DERIVES (#1076), and `transitStops` is injected rather than computed from
-/// rows. Neither falls without porting something.
-///
-/// ⚠ 10 since 2026-09-03: the #394 bearing fix moves two stay boundaries
-/// (05-11, 07-17), and the shifted stays derive three `reverseGeocode` keys
-/// the TS run never asked — one each on 05-11, 06-18 and 07-17. Same class as
-/// the seven, same reason they cannot fall without #1076. This also explains
-/// the 06-18 member the July #394 footprint could not.
-///
-/// ⚠ 16 since 2026-09-03 (later, the #344 override deletion): stays the mined
-/// label used to stamp now go through the venue resolver, whose read carries
-/// different flags — so six more `reverseGeocode` keys on the days the
-/// override used to stamp (05-11, 05-22, 06-15, 06-18 among them; the run
-/// names all sixteen). Same declined-on-purpose table, same #1076 dependency.
-const UNANSWERED_MAX: usize = 16;
-
 /// The tables an unanswered key may belong to. Anything else is a new gap.
 const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
 
-const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
+/// Keys the offline answerer cannot supply, BY DAY, beyond the blank-zone
+/// `bestPlace` asked before `tzAt` resolves.
+///
+/// Each means the fold reached a lookup the TypeScript run never made, so the
+/// recorded trace has no answer and the row set is not that lookup's source.
+/// Per #1054 the miss IS the finding, so this is a CEILING that must fall, not
+/// a budget.
+///
+/// What it holds is the two tables declined ON PURPOSE: `reverseGeocode` is a
+/// Nominatim call whose keys are coordinates the pipeline DERIVES (#1076), and
+/// `transitStops` is injected rather than computed from rows. Neither falls
+/// without porting something.
+///
+/// ⚠ **PER DAY, NOT A TOTAL, AND THAT IS WHAT MAKES IT SHARDABLE** (#1359).
+/// The ceiling was one corpus-wide number (16, measured 2026-09-03) until the
+/// graders moved behind a sharded runner. A shard cannot check a corpus-wide
+/// total — asserting `≤ 16` on each half passes at 32 — and pasting the bound
+/// onto a smaller denominator is exactly the failure mode that silences the
+/// question. Keyed by day it shards exactly, and it also says WHICH day grew,
+/// which the total never did.
+///
+/// ⚠ Re-blessed 2026-09-09 together with the matcher flip (#1418): the matched
+/// geometry moves stay boundaries, and a moved boundary DERIVES a different
+/// `reverseGeocode` key. Blessing this while the gate ran the other arm is the
+/// mistake that made day_corpus red in its own configuration (backed out at
+/// `c226cb9`) — the flip and this table move together or not at all.
+/// `DAY_UNANSWERED_OUT=<path>` prints the table this run measured.
+const UNANSWERED_BY_DAY: [(&str, usize); 12] = [
+    ("2026-05-11", 2),
+    ("2026-05-22", 1),
+    ("2026-05-25", 1),
+    ("2026-06-09", 2),
+    ("2026-06-12", 1),
+    ("2026-06-15", 1),
+    ("2026-06-18", 2),
+    ("2026-06-24", 2),
+    ("2026-07-10", 1),
+    ("2026-07-17", 1),
+    ("2026-08-06", 1),
+    ("2026-08-08", 1),
+];
+
+fn ceiling_for(date: &str) -> usize {
+    UNANSWERED_BY_DAY
+        .iter()
+        .find(|(d, _)| *d == date)
+        .map_or(0, |(_, n)| *n)
+}
 
 /// `null` and absent are the SAME state here, and comparing without this would
 /// report every state as differing.
@@ -136,69 +149,56 @@ fn drop_nulls(v: &Value) -> Value {
     }
 }
 
-#[test]
-fn every_golden_day_replays_to_the_typescript_timeline() {
-    if !Path::new(GOLDEN).is_dir() {
-        eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
-        return;
+pub struct Day {
+    golden: &'static str,
+    /// ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
+    /// gives: the oracle was blessed from an arm nobody re-blessed under these
+    /// priors, so a mismatch is the MEASUREMENT, not a regression. What it
+    /// answers is the half the truth floor structurally cannot — the footprint
+    /// on stays no narrative row grades.
+    report_only: bool,
+    places: BTreeMap<String, Vec<Value>>,
+    measured: BTreeMap<String, usize>,
+    failures: Vec<String>,
+    unanswered: Vec<String>,
+    divergent: Vec<String>,
+    agreed: usize,
+    graded: usize,
+    deepest: u32,
+}
+
+impl Day {
+    pub fn new(golden: &'static str, report_only: bool) -> Self {
+        Self {
+            golden,
+            report_only,
+            places: BTreeMap::new(),
+            measured: BTreeMap::new(),
+            failures: Vec::new(),
+            unanswered: Vec::new(),
+            divergent: Vec::new(),
+            agreed: 0,
+            graded: 0,
+            deepest: 0,
+        }
     }
-    let mut names: Vec<String> = std::fs::read_dir(GOLDEN)
-        .expect("golden dir readable")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".json"))
-        .collect();
-    names.sort();
-    assert!(!names.is_empty(), "the corpus directory is empty");
 
-    // #343: the priors A/B, the same wire `truth_corpus` uses. Unset — the gate
-    // path — this is None and nothing below changes.
-    //
-    // ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
-    // gives: the oracle was blessed from an arm nobody re-blessed under these
-    // priors, so a mismatch here is the MEASUREMENT, not a regression. What it
-    // answers is the half the truth floor structurally cannot — the footprint on
-    // stays no narrative row grades.
-    let injected: Option<Value> = std::env::var("VENUE_PRIORS_FILE").ok().map(|path| {
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
-        serde_json::from_str(&text).unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"))
-    });
-    let mut places: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-
-    let mut failures: Vec<String> = Vec::new();
-    let mut agreed = 0usize;
-    let mut deepest = 0u32;
-    let mut unanswered: Vec<String> = Vec::new();
-    let mut divergent: Vec<String> = Vec::new();
-
-    for name in &names {
-        // ⚠ ONE REPLAY, SHARED (#1359). `injected` is THIS harness's arm and is
-        // passed explicitly: truth_corpus injects the same blob, journey_corpus
-        // never injects, and a shared replay that guessed would either feed
-        // journey_corpus priors it did not ask for or quietly stop #343's A/B
-        // being an A/B — neither of which fails.
-        let rep = match corpus::replay(GOLDEN, name, injected.as_ref()) {
-            Ok(r) => r,
-            Err(e) => {
-                failures.push(e);
-                continue;
-            }
-        };
+    pub fn grade(&mut self, name: &str, rep: &Replay) {
+        let date = &name[..10];
+        self.graded += 1;
         let fx = &rep.fx;
-        let r = &rep;
 
         let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut").cloned() else {
-            failures.push(format!(
+            self.failures.push(format!(
                 "{name}: no frozen tsArm timeline — and one CANNOT be created. \
                  `compare-day --freeze` went with the TS cascade (#975), so a day \
                  arriving without an oracle can never gain one and cannot join this \
                  corpus. Every day here carries one; seeing this means a new day was \
                  added or a capture dropped an existing arm. See #1063."
             ));
-            continue;
+            return;
         };
-        deepest = deepest.max(r.rounds);
+        self.deepest = self.deepest.max(rep.rounds);
 
         // ⚠ THE ONLY ACCEPTED RESIDUE. The fold asks `bestPlace` once before
         // `tzAt` has resolved the stay's zone and again after; the blank-zone
@@ -208,24 +208,36 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
         // Europe/Amsterdam. ANYTHING ELSE unanswered means the timeline below
         // was built from a default for a question the day really asked, and
         // matching `statesOut` anyway would be luck rather than agreement.
-        for m in &r.unanswerable {
+        let mut n = 0usize;
+        for m in &rep.unanswerable {
             if m.what == "bestPlace" && m.key.ends_with('|') {
                 continue;
             }
             if UNANSWERED_KINDS.contains(&m.what.as_str()) {
-                unanswered.push(format!("{name}: {}({})", m.what, m.key));
+                n += 1;
+                self.unanswered
+                    .push(format!("{name}: {}({})", m.what, m.key));
             } else {
-                failures.push(format!("{name}: unanswered {}({})", m.what, m.key));
+                self.failures
+                    .push(format!("{name}: unanswered {}({})", m.what, m.key));
             }
         }
+        self.measured.insert(date.to_string(), n);
+        let ceiling = ceiling_for(date);
+        if n > ceiling {
+            self.failures.push(format!(
+                "{name}: {n} key(s) unanswered, up from the {ceiling} measured for this day — \
+                 each is a lookup the recorded trace never answered, so the day was built from \
+                 a default for it (#1076)"
+            ));
+        }
 
-        let out: &Value = &rep.out;
-        let got = out.get("states").cloned().unwrap_or(Value::Null);
+        let got = rep.out.get("states").cloned().unwrap_or(Value::Null);
 
         // #343: every stay's place, POSITIONALLY — the truth referee learned the
         // hard way that a ts-keyed diff lies, because 06-22 carries two rows with
         // the same `startTs`.
-        if injected.is_some() || std::env::var("VENUE_PLACES_OUT").is_ok() {
+        if self.report_only || std::env::var("VENUE_PLACES_OUT").is_ok() {
             let rows: Vec<Value> = got
                 .as_array()
                 .map(Vec::as_slice)
@@ -240,87 +252,108 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
                     })
                 })
                 .collect();
-            places.insert(name.clone(), rows);
+            self.places.insert(name.to_string(), rows);
         }
-        if injected.is_some() {
-            agreed += 1;
-            continue;
+        if self.report_only {
+            self.agreed += 1;
+            return;
         }
         let same = drop_nulls(&got) == drop_nulls(&want);
         if !same && std::env::var("DAY_BLESS").is_ok() {
             let mut fx2 = fx.clone();
             *fx2.pointer_mut("/expected/tsArm/capture/statesOut")
                 .expect("the oracle node exists — we just read it") = got.clone();
-            std::fs::write(format!("{GOLDEN}/{name}"), fx2.to_string())
+            std::fs::write(format!("{}/{name}", self.golden), fx2.to_string())
                 .unwrap_or_else(|e| panic!("blessing {name}: {e}"));
             eprintln!("  BLESSED  {name}: statesOut rewritten from the Lean arm");
-            agreed += 1;
-            continue;
+            self.agreed += 1;
+            return;
         }
-        match (same, KNOWN_DIVERGENT.contains(&name.as_str())) {
-            (true, false) => agreed += 1,
-            (false, true) => {
-                divergent.push(format!("{name}: {}", first_state_difference(&got, &want)))
-            }
-            (false, false) => {
-                failures.push(format!("{name}: {}", first_state_difference(&got, &want)));
-            }
+        match (same, KNOWN_DIVERGENT.contains(&name)) {
+            (true, false) => self.agreed += 1,
+            (false, true) => self
+                .divergent
+                .push(format!("{name}: {}", first_state_difference(&got, &want))),
+            (false, false) => self
+                .failures
+                .push(format!("{name}: {}", first_state_difference(&got, &want))),
             // ⚠ A day that AGREES while listed as divergent is not a pass. It
             // means the divergence is gone and the list is now a lie, and a
             // stale entry here would hide the next real one.
-            (true, true) => failures.push(format!(
+            (true, true) => self.failures.push(format!(
                 "{name} is listed as divergent on #1054 but now agrees — delete the entry"
             )),
         }
     }
 
-    if let Ok(out) = std::env::var("VENUE_PLACES_OUT") {
-        std::fs::write(
-            &out,
-            serde_json::to_string_pretty(&places).expect("the place dump serialises"),
-        )
-        .expect("writing VENUE_PLACES_OUT");
-        eprintln!("day: {} day(s) of stay places -> {out}", places.len());
-    }
-    if injected.is_some() {
-        eprintln!(
-            "day: REPORT-ONLY — replayed under $VENUE_PRIORS_FILE, so the oracle is not \
-             enforced against an arm nobody blessed. Diff two arms' $VENUE_PLACES_OUT files."
-        );
-        return;
-    }
+    pub fn finish(self) -> Vec<String> {
+        if let Ok(out) = std::env::var("VENUE_PLACES_OUT") {
+            std::fs::write(
+                &out,
+                serde_json::to_string_pretty(&self.places).expect("the place dump serialises"),
+            )
+            .expect("writing VENUE_PLACES_OUT");
+            eprintln!("day: {} day(s) of stay places -> {out}", self.places.len());
+        }
+        // The table this run measured, for re-blessing `UNANSWERED_BY_DAY`.
+        // Appends: the two shards each write their own half.
+        if let Ok(out) = std::env::var("DAY_UNANSWERED_OUT") {
+            let lines: String = self
+                .measured
+                .iter()
+                .filter(|(_, n)| **n > 0)
+                .map(|(d, n)| format!("    (\"{d}\", {n}),\n"))
+                .collect();
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&out)
+                .expect("DAY_UNANSWERED_OUT is writable");
+            f.write_all(lines.as_bytes()).expect("writing the table");
+        }
+        if self.report_only {
+            eprintln!(
+                "day: REPORT-ONLY — replayed under $VENUE_PRIORS_FILE, so the oracle is not \
+                 enforced against an arm nobody blessed. Diff two arms' $VENUE_PLACES_OUT files."
+            );
+            return Vec::new();
+        }
 
-    for d in &divergent {
-        eprintln!("  #1054     {d}");
+        for d in &self.divergent {
+            eprintln!("  #1054     {d}");
+        }
+        for u in &self.unanswered {
+            eprintln!("  unanswered {u}");
+        }
+        let mut out = Vec::new();
+        if !self.failures.is_empty() {
+            out.push(format!(
+                "day: {}/{} days replay to the blessed timeline (deepest walk {} rounds).\n{}",
+                self.agreed,
+                self.graded,
+                self.deepest,
+                self.failures.join("\n")
+            ));
+            return out;
+        }
+        if self.agreed + self.divergent.len() != self.graded {
+            out.push(
+                "day: some day neither agreed nor diverged, which means it was skipped".to_string(),
+            );
+            return out;
+        }
+        eprintln!(
+            "day: {}/{} days replay to the blessed timeline; {} known-divergent (#1054); \
+             {} key(s) unanswered; deepest walk {} rounds",
+            self.agreed,
+            self.graded,
+            self.divergent.len(),
+            self.unanswered.len(),
+            self.deepest
+        );
+        out
     }
-    for u in &unanswered {
-        eprintln!("  unanswered {u}");
-    }
-    assert!(
-        failures.is_empty(),
-        "{agreed}/{} days replay to the TypeScript timeline (deepest walk {deepest} rounds).\n{}",
-        names.len(),
-        failures.join("\n")
-    );
-    assert!(
-        unanswered.len() <= UNANSWERED_MAX,
-        "{} key(s) unanswered, up from the {UNANSWERED_MAX} measured — each is a lookup the \
-         TypeScript never made, so the day was built from a default for it:\n{}",
-        unanswered.len(),
-        unanswered.join("\n")
-    );
-    assert_eq!(
-        agreed + divergent.len(),
-        names.len(),
-        "some day neither agreed nor diverged, which means it was skipped"
-    );
-    eprintln!(
-        "{agreed}/{} days replay to the TypeScript timeline; {} known-divergent (#1054); \
-         {} key(s) unanswered; deepest walk {deepest} rounds",
-        names.len(),
-        divergent.len(),
-        unanswered.len()
-    );
 }
 
 /// The first state that differs, and which of its fields.
