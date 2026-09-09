@@ -206,6 +206,32 @@ fn every_golden_day_replays_to_the_typescript_timeline() {
             }
         };
         let mut answerer = RowSetAnswerer::new(rows).expect("the row set opens");
+
+        // ⚠ **THIS HARNESS HAS ALWAYS REPLAYED WITH THE WALK PASS DISABLED**
+        // (#1418). The matcher reads its roads through day-shell's
+        // `walkableRoads` callback, which answers EMPTY unless a trace is
+        // loaded — and on empty `annotateWalkMatches` bails per leg, so the raw
+        // drawing survives looking exactly like a leg the matcher considered
+        // and left alone. Production runs the matcher; this gate never has.
+        //
+        // ⚠ **OFF BY DEFAULT, and that is not timidity.** walk_gate could flip
+        // (d7bcd2e) because its floor is a per-metric RATCHET, re-blessable
+        // from the matcher arm with no argument needed for the numbers. THIS
+        // oracle is `expected/tsArm/capture/statesOut`, which day_corpus's own
+        // header calls "the last re-bless" rather than what the TypeScript
+        // produced — so its provenance is PER-FIXTURE and has to be
+        // established, not assumed. `CORPUS_TRACE=1` measures the delta first.
+        if std::env::var("CORPUS_TRACE").is_ok()
+            && inputs
+                .pointer("/osmTrace/walkableRoads")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|o| !o.is_empty())
+            && let Err(e) = backend::osm_host::load_trace(&format!("{GOLDEN}/{name}"))
+        {
+            failures.push(format!("{name}: osm trace: {e}"));
+            continue;
+        }
+
         let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
             Ok(r) => r,
             Err(e) => {
