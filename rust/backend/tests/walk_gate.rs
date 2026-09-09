@@ -853,17 +853,40 @@ fn every_golden_day_measures_its_walks() {
     // 2026-08-31 by nudging every drawn line 22 m north: `moved` stayed 0,
     // because a rigid translation preserves length, while the gate caught 6 of
     // 7 walks. The two see different things and both are load-bearing.
-    assert_eq!(
-        moved, 0,
-        "{moved} of {compared} paired walks moved more than 0.5 m against the blessed floor — \
-         either the geometry changed or this harness stopped feeding the referee what the \
-         floor was blessed from"
-    );
-    assert!(
-        r["passes"].as_bool().unwrap_or(false),
-        "walks regressed against their floor: {}",
-        r["regressed"]
-    );
+    //
+    // ⚠ BOTH ARE GATING-ARM ASSERTIONS. On any arm that answers `walkableRoads`
+    // the matcher redraws the leg, so geometry MOVING is the measurement rather
+    // than a fault — asserting here would abort before the regressions can be
+    // read, which is exactly what blocked #1418's grading twice. The arm dumps
+    // the referee's whole reply instead, and the caller grades it.
+    if arm.label == "none" {
+        assert_eq!(
+            moved, 0,
+            "{moved} of {compared} paired walks moved more than 0.5 m against the blessed floor — \
+             either the geometry changed or this harness stopped feeding the referee what the \
+             floor was blessed from"
+        );
+        assert!(
+            r["passes"].as_bool().unwrap_or(false),
+            "walks regressed against their floor: {}",
+            r["regressed"]
+        );
+    } else {
+        let out = format!(
+            "{}/../target/walk-arm-{}.json",
+            env!("CARGO_MANIFEST_DIR"),
+            arm.label
+        );
+        std::fs::write(
+            &out,
+            serde_json::to_vec_pretty(&r).expect("the reply serialises"),
+        )
+        .unwrap_or_else(|e| panic!("writing {out}: {e}"));
+        eprintln!(
+            "walk_gate: arm {} — {moved} of {compared} moved; reply written to {out}",
+            arm.label
+        );
+    }
     // ⚠ `unmeasured` IS EXPECTED TO BE ZERO NOW, and it is not asserted at
     // zero on purpose: a narrative that stops naming a street is a fact about
     // the corpus, not a defect, and it must surface rather than fail. A jump
