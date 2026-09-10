@@ -190,7 +190,7 @@ macro_rules! days_back_handler {
                     tracing::error!(error = %e, endpoint = stringify!($name), "days-back read failed");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": "internal" })),
+                        Json(crate::error::ErrorBody { error: "internal".to_string() }),
                     )
                         .into_response()
                 }
@@ -274,7 +274,7 @@ macro_rules! whole_table_handler {
                     tracing::error!(error = %e, endpoint = stringify!($name), "whole-table read failed");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": "internal" })),
+                        Json(crate::error::ErrorBody { error: "internal".to_string() }),
                     )
                         .into_response()
                 }
@@ -309,7 +309,9 @@ pub async fn sleep_stages(
             tracing::error!(error = %e, "sleep stages read failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "internal" })),
+                Json(crate::error::ErrorBody {
+                    error: "internal".to_string(),
+                }),
             )
                 .into_response()
         }
@@ -362,7 +364,9 @@ pub async fn heartrate_intraday(
             tracing::error!(error = %e, "intraday heart rate read failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "internal" })),
+                Json(crate::error::ErrorBody {
+                    error: "internal".to_string(),
+                }),
             )
                 .into_response()
         }
