@@ -31,11 +31,24 @@ written by THIS build.
 here — `build` is exactly `ng build` — and matches the rest of the fleet.
 
 **dev-lint keeps its baseline**, and this is the only repository with one. It
-grandfathers DL-KYSELY-DRIVER-TYPE's 56 pre-existing findings in `db/tables.ts`:
-DATE/DATETIME columns typed `string`, DECIMAL typed `number`, none of which is
-what the mariadb pool actually returns. Counts only ratchet down, so new code is
-held to the honest types. Correcting a column makes tsc surface every read that
-relied on the wrong one — that is the remediation, not a side effect.
+grandfathers TWO DL-WIRE-UNTYPED-RESPONSE findings in
+`rust/backend/src/routes/tables.rs`: a served route the frontend calls whose
+handler builds its response with `json!`, so the response has NO Rust type —
+rustc checks a `Value` and tsc checks a hand-written interface, and
+DL-WIRE-MIRROR-DRIFT cannot help because it compares PAIRS and there is no Rust
+half. Counts only ratchet down, so new routes are held to a typed response.
+
+⚠ **THIS PARAGRAPH DESCRIBED A DEAD STATE UNTIL 2026-09-10.** It said the
+baseline grandfathered DL-KYSELY-DRIVER-TYPE's 56 findings in `db/tables.ts` —
+a different rule, a different count, and a file that went with the TypeScript
+backend (#975). Read `.dev-lint-baseline` rather than this prose if they ever
+disagree again; the file is three lines and it is the thing dev-lint actually
+loads.
+
+⚠ The remaining two are #1404's, and its verdict is that they must NOT be typed
+with a struct — that would duplicate `RowEncoder`. So the count stops at two
+until that design question is answered, and a zero here is not the goal.
+
 Regenerate after fixing a batch:
 
     nix run ../dev-lint -- --write-baseline .dev-lint-baseline .
