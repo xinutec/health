@@ -166,6 +166,20 @@ def WALK_NEEDS_MATCH_M : Float := 18
 /-- …and the match must stay within this (p85) of the fixes. Generous by
 design: a walker's GPS genuinely sits 10-30 m off the pavement. -/
 def WALK_MATCH_MAX_STRAY_M : Float := 40
+/-- A match is REFUSED when it stalls beyond this AND draws more than the
+pedometer justifies (#1497). Neither half alone: see the conjunction note in
+`matchImprovesDisplay`.
+
+⚠ **BOTH FIGURES ARE READ OFF THE BLESSED FLOOR, and they are corpus-fitted —
+say so rather than implying they are derived.** Over 235 walks carrying both
+`lenM` and `budgetM`, stall runs to p98 = 138.7 m and the next value is
+384.7 m, so 200 sits in an empty band. 1.5 separates the highest in-budget
+high-stall walk (1.10x) from the two detours (2.91x, 3.08x). The conjunction
+selects exactly those two and nothing else; a future day outside this
+distribution is what would move them. -/
+def WALK_MATCH_MAX_STALL_M : Float := 200
+/-- …and the drawn line must exceed the step budget by this factor. -/
+def WALK_MATCH_MAX_BUDGET_RATIO : Float := 1.5
 /-- The reconstruction replaces the drawn line only when it is at most this
 fraction of its length… -/
 def RECON_SWAP_MAX_LEN_FRACTION : Float := 0.75
@@ -336,16 +350,29 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   let result := env.matcher fixes ways buildings
   -- Decision parity (#369): the gate, the salvage and the refinement's
   -- engagement test all consume `coarsePath`, never the finer display line.
+  -- #1497: the detour veto needs the pedometer as its independent witness.
+  -- Same budget the corrector and the ratchet use — steps x stride x slack.
+  let stepBudget := ev.stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
   let decision := result.map fun r =>
     matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) geom
       WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M
+      -- The FINER display line: what the veto is judging is what gets drawn.
+      (r.path.map PathPt.pt)
+      stepBudget WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO
   let mut useMatch := match decision with
     | some d => d.use
     | none => false
   -- Salvage-worthy only when the raw fallback is DRASTICALLY off-network and
   -- the match is clean: a systematic parallel-way snap still rejects wholesale.
   let mut spliced : Option (Array MPt) := none
-  if !useMatch then
+  -- ⚠ THE SALVAGE ARM MUST HONOUR THE DETOUR VETO (#1497), and it did not:
+  -- the veto set `use := false` and this block turned it straight back on,
+  -- because the raw line IS badly off-network — which is exactly the shape of
+  -- the legs the veto exists to refuse. Measured: 07-12 @1783863056 kept its
+  -- 690.6 m stall with the veto live and firing. A splice of a detoured match
+  -- is a detour; rejecting the whole and re-admitting a piece is not a
+  -- different judgement.
+  if !useMatch && !(decision.map (·.detour) |>.getD false) then
     match result, decision with
     | some r, some d =>
       if d.rawOffRoadM > WALK_NEEDS_MATCH_M * 2 && d.matchedOffRoadM ≤ WALK_NEEDS_MATCH_M / 2 then
@@ -979,7 +1006,7 @@ private def envFF : Env :=
         if b == F_SPLICED.map PathPt.pt then some F_STRAIGHT else none }
 
 #guard (matchImprovesDisplay ((F_CLEAN.map PedFix.pathPt).map PathPt.pt) (F_FINE.map PathPt.pt) MERIDIAN
-  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).matchedOffRoadM == 41.57808528608979
+  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M (F_FINE.map PathPt.pt) none WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO).matchedOffRoadM == 41.57808528608979
 #guard spliceMatchedWithDivergentRuns (F_CLEAN.map PedFix.pathPt) F_FINE WALK_MATCH_MAX_STRAY_M
   == some F_FINE_SPLICED
 #guard countSharpTurns (F_SPLICED.map PathPt.pt) == 2
@@ -1003,7 +1030,7 @@ private def envOne : Env :=
     (some { path := F_LINE, coarsePath := F_LINE }) none (F_LINE.map PathPt.pt) none
 
 #guard (matchImprovesDisplay ((ONEOFF.map PedFix.pathPt).map PathPt.pt) (F_LINE.map PathPt.pt) MERIDIAN
-  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).use
+  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M (F_LINE.map PathPt.pt) none WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO).use
 #guard (spliceMatchedWithDivergentRuns (ONEOFF.map PedFix.pathPt) F_LINE
   WALK_MATCH_MAX_STRAY_M).isSome
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1330] ONEOFF anySpeed envOne)
@@ -1049,7 +1076,7 @@ private def envCross : Env :=
 -- The gate refuses on STRAY alone (64.3 m), the match is clean, and the raw
 -- excursion is 30.1 m — under `2 × 18`, so the salvage stays out.
 #guard (matchImprovesDisplay ((CROSSOVER.map PedFix.pathPt).map PathPt.pt) (F_LINE.map PathPt.pt)
-  PARALLEL WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).rawOffRoadM == 30.143384243249393
+  PARALLEL WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M (F_LINE.map PathPt.pt) none WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO).rawOffRoadM == 30.143384243249393
 #guard (spliceMatchedWithDivergentRuns (CROSSOVER.map PedFix.pathPt) F_LINE
   WALK_MATCH_MAX_STRAY_M).isSome
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1420] CROSSOVER anySpeed envCross) == RAW
@@ -1194,7 +1221,7 @@ private def envSBad : Env :=
       correct := fun d _ _ _ => nudge d }
 
 #guard !(matchImprovesDisplay ((S_CLEAN.map PedFix.pathPt).map PathPt.pt) (S_BADLINE.map PathPt.pt) STREETS
-  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M).use
+  WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M (S_BADLINE.map PathPt.pt) none WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO).use
 -- Four vertices, not five: the fallback draws the HELD fixes.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] STRAGGLER anySpeed envSBad)
   == #[(some (nudge (S_HELD.map PedFix.pathPt)), none)]

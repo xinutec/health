@@ -1,3 +1,5 @@
+import Verified.Geo.CorridorStall
+
 /-!
 # Walk-geometry referee metrics (#1048 Group B)
 
@@ -298,6 +300,24 @@ The witness `scoreWalk` cannot see, because `scoreWalk` never looks at the raw
 fixes: how far the drawn line travels while making no progress ALONG the GPS
 corridor. High for an invented detour, ~0 for a faithful line, a gap-fill (the
 corridor advances) or a there-and-back the GPS actually traced. -/
+
+/-! ⚠ **THE REFEREE KEEPS ITS OWN BODY, AND THAT IS A DELIBERATE DUPLICATE.**
+
+`Verified.Geo.CorridorStall` holds the same DP over `Pt`, because the DECISION
+gate needs it and `Verified.Geo` cannot import `Verified.Eval` (#1497). The
+obvious move — have this delegate to that one — SIGSEGVs the corpus gate.
+Bisected 2026-09-10: with the veto inert AND the fold-side DP disabled, so no
+line moves and no DP runs in the fold, the referee calling across the module
+boundary still crashes. The same DP ran here for months.
+
+So there are two copies on purpose, and they are NOT an unnoticed second
+notion: the six `#guard`s below pin THIS one, `Verified.Geo.CorridorStall`
+carries the same fixtures, and any divergence fails the build. A duplicate
+gated against its twin is a different thing from a fork nobody is comparing.
+
+⚠ If the boundary bug is ever found, collapse these back into one. Until then,
+changing either copy without the other is the failure mode to watch for.
+-/
 
 /-- The longest run of `path` that travels far while its monotone projection
 onto the time-ordered `fixes` polyline barely advances (m).

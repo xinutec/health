@@ -174,6 +174,10 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
             -- Match first, then decide on the DRAWN line.
             let d := matchImprovesDisplay (fixes.map PathPt.pt) (path.map PathPt.pt)
               (ways.map (·.coords)) NEEDS_MATCH_M MATCH_MAX_STRAY_M
+              -- ⚠ NO DETOUR VETO ON THE ROAD MATCHER (#1497): a pedometer is
+              -- not a witness for a vehicle, and this pass has no steps. `none`
+              -- fails open, so the verdict is exactly what it was.
+              (path.map PathPt.pt) none 200 1.5
             out := out.push (if d.use then { seg with matchedPath := some path } else seg)
   return out
 
