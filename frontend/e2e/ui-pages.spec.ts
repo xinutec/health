@@ -65,11 +65,19 @@ const BODY = [
 	{ date: day(-1), weight_kg: "74.5", bmi: "23.0", body_fat_pct: "18.7" },
 ];
 
+// ⚠ `ts_utc` AND `tz` BELONG HERE. Without them the hypnogram falls to its
+// DEGRADED arm — reading the wall clock as though it were UTC — so the chart
+// rendered, the layout checks passed, and the path production actually takes
+// went unexercised. Every stage row in production carries both.
 const STAGES = [
-	{ ts: `${day(-1)}T23:10:00Z`, stage: "light", duration_seconds: 1800 },
-	{ ts: `${day(-1)}T23:40:00Z`, stage: "deep", duration_seconds: 2400 },
-	{ ts: `${day(0)}T00:20:00Z`, stage: "rem", duration_seconds: 1500 },
-	{ ts: `${day(0)}T00:45:00Z`, stage: "wake", duration_seconds: 300 },
+	{ ts: `${day(-1)}T23:10:00Z`, ts_utc: `${day(-1)}T23:10:00Z`, tz: "Europe/London",
+	  stage: "light", duration_seconds: 1800 },
+	{ ts: `${day(-1)}T23:40:00Z`, ts_utc: `${day(-1)}T23:40:00Z`, tz: "Europe/London",
+	  stage: "deep", duration_seconds: 2400 },
+	{ ts: `${day(0)}T00:20:00Z`, ts_utc: `${day(0)}T00:20:00Z`, tz: "Europe/London",
+	  stage: "rem", duration_seconds: 1500 },
+	{ ts: `${day(0)}T00:45:00Z`, ts_utc: `${day(0)}T00:45:00Z`, tz: "Europe/London",
+	  stage: "wake", duration_seconds: 300 },
 ];
 
 const INTRADAY = [

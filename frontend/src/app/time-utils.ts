@@ -91,3 +91,28 @@ export function wallClockAt(instantMs: number, offsetMs: number): string {
 function asIfUtc(ts: string): string {
   return ts.endsWith("Z") ? ts : `${ts}Z`;
 }
+
+/**
+ * The wall clock an instant showed IN A NAMED ZONE.
+ *
+ * The honest form of [[wallClockAt]]: that one takes a single offset measured
+ * from one row, which is right for an ordinary night and approximate for one
+ * where the zone changed — a fixed offset cannot bend. A zone can, so this
+ * asks `Intl` to apply it at the instant in question.
+ *
+ * ⚠ `tz` ABSENT IS A DEGRADATION, not a default. Reading the instant as UTC
+ * reproduces the old geometry exactly on a night lived in UTC and is wrong by
+ * the offset anywhere else. Every `sleep_stages` row in production carries a
+ * zone; this arm is for a payload that predates the column.
+ */
+export function wallClockInZone(instantMs: number, tz: string | null | undefined): string {
+	if (!tz) return wallClockAt(instantMs, 0);
+	const parts = new Intl.DateTimeFormat("en-GB", {
+		timeZone: tz,
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+	}).format(new Date(instantMs));
+	// `en-GB` renders "24:05" at midnight in some runtimes; normalise the hour.
+	return parts.startsWith("24:") ? `00:${parts.slice(3)}` : parts;
+}

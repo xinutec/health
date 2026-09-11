@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLocalTime, rowInstant, wallClockAt, wallOffsetMs } from "./time-utils";
+import { formatLocalTime, rowInstant, wallClockAt, wallClockInZone, wallOffsetMs } from "./time-utils";
 
 // The API serves every DATETIME with a "Z" suffix. For the Fitbit wall-clock
 // columns that suffix is NOT true (#340), and the honest instant is the `_utc`
@@ -56,4 +56,34 @@ describe("wall clock vs instant (#340)", () => {
     const later = "2026-09-09T01:14:00.000Z";
     expect(rowInstant(later, null) - rowInstant(ts, null)).toBe(90 * 60 * 1000);
   });
+});
+
+describe("wallClockInZone", () => {
+	// The instant is 23:10 UTC. London in summer is BST, so the clock he saw
+	// read 00:10 the next day — the hour a fixed offset of zero would have lost.
+	it("renders an instant in the sleeper's zone, not the viewer's", () => {
+		const at = Date.parse("2026-06-15T23:10:00Z");
+		expect(wallClockInZone(at, "Europe/London")).toBe("00:10");
+		expect(wallClockInZone(at, "Europe/Amsterdam")).toBe("01:10");
+		expect(wallClockInZone(at, "UTC")).toBe("23:10");
+	});
+
+	// ⚠ The same instant in WINTER is 23:10 in London. A single stored offset
+	// cannot be right in both seasons; a zone is.
+	it("follows the zone across the summer-time boundary", () => {
+		const winter = Date.parse("2026-01-15T23:10:00Z");
+		expect(wallClockInZone(winter, "Europe/London")).toBe("23:10");
+	});
+
+	// An absent zone degrades to reading the instant as UTC, which is what the
+	// old offset-of-zero path did. It is a fallback, not a default.
+	it("degrades to UTC when no zone is given", () => {
+		const at = Date.parse("2026-06-15T23:10:00Z");
+		expect(wallClockInZone(at, null)).toBe("23:10");
+		expect(wallClockInZone(at, undefined)).toBe("23:10");
+	});
+
+	it("renders midnight as 00:xx rather than 24:xx", () => {
+		expect(wallClockInZone(Date.parse("2026-01-15T00:05:00Z"), "UTC")).toBe("00:05");
+	});
 });

@@ -1,7 +1,7 @@
 import { Component, effect, ElementRef, input, type OnDestroy, signal, viewChild, ChangeDetectionStrategy } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
 import type { SleepStage } from "../../services/health.service";
-import { rowInstant, wallClockAt, wallOffsetMs } from "../../time-utils";
+import { rowInstant, wallClockInZone } from "../../time-utils";
 
 // Y positions: Awake at top, Deep at bottom
 const STAGE_Y: Record<string, number> = {
@@ -73,9 +73,6 @@ export class HypnogramComponent implements OnDestroy {
       // a night he changed zones. Measured 2026-09-11: 0 of 37718 stage rows
       // in production lack `ts_utc`, so this is for old payloads only.
       const instant = (s: SleepStage): number => rowInstant(s.ts, s.ts_utc);
-      // wall − instant, the zone offset the night was lived on. Applied to an
-      // interpolated instant it recovers the clock he actually saw.
-      const wallOffset = (s: SleepStage): number => wallOffsetMs(s.ts, s.ts_utc);
 
       const firstTime = instant(data[0]);
       const stageEnds = data.map((s, i) =>
@@ -152,16 +149,16 @@ export class HypnogramComponent implements OnDestroy {
 
       // Time labels — the wall clock of the stage each tick lands in, so a
       // night that crossed a zone reads the way it was lived rather than the
-      // way one end of it was. Formatting is via the UTC accessors on purpose:
-      // the offset is already in `ms`, and using the local ones would add the
-      // VIEWER's zone on top of the sleeper's.
+      // way one end of it was. The ZONE does the work: asking Intl to render the
+      // instant in the sleeper's zone cannot pick up the VIEWER's, and unlike a
+      // fixed offset it stays right across a night he changed zones.
       const labelCount = 6;
       const labels: string[] = [];
       for (let i = 0; i <= labelCount; i++) {
         const at = firstTime + (totalMs * i) / labelCount;
         let k = 0;
         while (k < data.length - 1 && stageEnds[k] <= at) k++;
-        labels.push(wallClockAt(at, wallOffset(data[k])));
+        labels.push(wallClockInZone(at, data[k].tz));
       }
       this.timeLabels.set(labels);
     });

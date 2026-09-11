@@ -43,6 +43,10 @@ export interface SleepStage {
   ts: string;
   /** The true instant. Use this for any duration, position or comparison. */
   ts_utc: string | null;
+  /** IANA zone the night was lived in. The honest way to turn `ts_utc` into the
+   *  clock he saw — it bends where a fixed offset cannot, which matters on a
+   *  night he changed zones. */
+  tz?: string | null;
   stage: string;
   duration_seconds: number;
 }
