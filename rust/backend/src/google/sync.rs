@@ -713,6 +713,24 @@ pub async fn sync_daily_activity(
     Ok(written)
 }
 
+/// How much shorter a re-fetched sleep session may be before the writer refuses
+/// it rather than overwriting the night in place.
+///
+/// 4x, where the narrowest measured stub was 8.6x shorter than the night it
+/// would have replaced (#1536). Set BELOW the evidence rather than at it: the bound
+/// guards a class — a session Google recorded in progress and never revised —
+/// not the seven dates that happened to show it.
+pub const SLEEP_SHRINK_REFUSAL_RATIO: i64 = 4;
+
+/// Whether a re-fetched session is a STUB that must not overwrite the night it
+/// shares a start instant with.
+///
+/// Pure so the rule can be pinned against the measured pairs without a
+/// database; the writer holds the same decision behind `--allow-shrink`.
+pub fn refuses_as_sleep_stub(new_ms: i64, existing_ms: i64) -> bool {
+    new_ms.saturating_mul(SLEEP_SHRINK_REFUSAL_RATIO) < existing_ms
+}
+
 /// `sleep` + `sleep_stages` from Google's `sleep` session type.
 ///
 /// # ⚠ The fetch MUST be filtered — and not for volume this time
@@ -749,24 +767,6 @@ pub async fn sync_daily_activity(
 ///
 /// ⚠ `tz` STAYS NULL, like the heart-rate writer: Google gives an offset, not a
 /// zone name.
-/// How much shorter a re-fetched sleep session may be before the writer refuses
-/// it rather than overwriting the night in place.
-///
-/// 4x, where the narrowest measured stub was 8.6x shorter than the night it
-/// would have replaced (#1536). Set BELOW the evidence rather than at it: the bound
-/// guards a class — a session Google recorded in progress and never revised —
-/// not the seven dates that happened to show it.
-pub const SLEEP_SHRINK_REFUSAL_RATIO: i64 = 4;
-
-/// Whether a re-fetched session is a STUB that must not overwrite the night it
-/// shares a start instant with.
-///
-/// Pure so the rule can be pinned against the measured pairs without a
-/// database; the writer holds the same decision behind `--allow-shrink`.
-pub fn refuses_as_sleep_stub(new_ms: i64, existing_ms: i64) -> bool {
-    new_ms.saturating_mul(SLEEP_SHRINK_REFUSAL_RATIO) < existing_ms
-}
-
 pub async fn sync_sleep(
     pool: &MySqlPool,
     http: &reqwest::Client,
