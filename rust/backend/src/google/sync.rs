@@ -749,12 +749,33 @@ pub async fn sync_daily_activity(
 ///
 /// ⚠ `tz` STAYS NULL, like the heart-rate writer: Google gives an offset, not a
 /// zone name.
+/// How much shorter a re-fetched sleep session may be before the writer refuses
+/// it rather than overwriting the night in place.
+///
+/// 4x, where the narrowest measured stub was 8.6x shorter than the night it
+/// would have replaced (#1536). Set BELOW the evidence rather than at it: the bound
+/// guards a class — a session Google recorded in progress and never revised —
+/// not the seven dates that happened to show it.
+pub const SLEEP_SHRINK_REFUSAL_RATIO: i64 = 4;
+
+/// Whether a re-fetched session is a STUB that must not overwrite the night it
+/// shares a start instant with.
+///
+/// Pure so the rule can be pinned against the measured pairs without a
+/// database; the writer holds the same decision behind `--allow-shrink`.
+pub fn refuses_as_sleep_stub(new_ms: i64, existing_ms: i64) -> bool {
+    new_ms.saturating_mul(SLEEP_SHRINK_REFUSAL_RATIO) < existing_ms
+}
+
 pub async fn sync_sleep(
     pool: &MySqlPool,
     http: &reqwest::Client,
     access_token: &str,
     user_id: &str,
     backfill_days: Option<i64>,
+    // Write a session that is drastically shorter than the one it replaces.
+    // Only a human at the CLI passes this; the nightly path never does.
+    allow_shrink: bool,
 ) -> Result<usize> {
     if let Some(days) = backfill_days {
         anyhow::ensure!(
@@ -798,12 +819,53 @@ pub async fn sync_sleep(
         .context("fetching sleep sessions")?;
 
     let mut written = 0usize;
+    let mut refused = 0usize;
     let mut skipped = 0usize;
     for pt in &points {
         let Some(s) = crate::google::health::parse_sleep_point(pt) else {
             skipped += 1;
             continue;
         };
+        // ⚠ A REVISED NIGHT DOES NOT LOSE AN ORDER OF MAGNITUDE (#1536). Google
+        // writes a session while it is still in progress and sometimes never
+        // revises it, leaving a fragment that ends shortly before midnight.
+        // Measured over 130 days: seven such fragments stood against full nights
+        // at the SAME start instant, each between 8.6x and 23x shorter than the
+        // night it would have replaced, every one of their durations ending in
+        // `999`. The ratios are quoted rather than the lengths: a sleep duration
+        // is a biometric value and this repo is public (#860).
+        //
+        // That start instant is `uniq_sleep_user_start`, so a stub does not land
+        // BESIDE the night, it overwrites it — every figure in the update list
+        // at once. The routine nightly sync has not done this only because the
+        // high-water mark keeps it from reaching back; a backfill states its own
+        // window and does reach.
+        if !allow_shrink {
+            let prev: Option<i64> = sqlx::query_scalar(
+                "SELECT duration_ms FROM sleep WHERE user_id = ? AND start_time = ?",
+            )
+            .bind(user_id)
+            .bind(&s.start_time)
+            .fetch_optional(pool)
+            .await
+            .context("reading the session being overwritten")?
+            .flatten();
+            if let Some(prev) = prev
+                && refuses_as_sleep_stub(s.duration_ms, prev)
+            {
+                tracing::warn!(
+                    "[{user_id}] google sleep: REFUSED {} — {} ms would replace {} ms \
+                         ({}x shorter); pass --allow-shrink to write it anyway",
+                    s.start_time,
+                    s.duration_ms,
+                    prev,
+                    prev / s.duration_ms.max(1)
+                );
+                refused += 1;
+                continue;
+            }
+        }
+
         sqlx::query(
             // The same column policy as the Fitbit writer: figures overwrite
             // (Google revises a recent night exactly as Fitbit did), tz and the
@@ -912,7 +974,7 @@ pub async fn sync_sleep(
     }
 
     tracing::info!(
-        "[{user_id}] google sleep: {written} session(s) from {} point(s), {skipped} unreadable",
+        "[{user_id}] google sleep: {written} session(s) from {} point(s), {skipped} unreadable, {refused} refused as stubs",
         points.len()
     );
     Ok(written)

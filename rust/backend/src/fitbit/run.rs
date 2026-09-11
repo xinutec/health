@@ -300,7 +300,7 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
         }
     }
     if !crate::google::source::fitbit_still_owns("sleep") {
-        match crate::google::sync::sync_sleep(pool, http, &token, &user_id, None).await {
+        match crate::google::sync::sync_sleep(pool, http, &token, &user_id, None, false).await {
             Ok(n) => tracing::info!("[{user_id}] google sleep: {n} session(s)"),
             Err(e) => tracing::error!("[{user_id}] google sleep failed: {e:#}"),
         }

@@ -386,18 +386,21 @@ async fn main() -> Result<()> {
             google_compare_steps(days).await
         }
         "google-backfill-sleep" => {
-            let (days, write) = match flags {
-                [d] => (d, false),
-                [d, w] if w == "--write" => (d, true),
+            let (days, write, allow_shrink) = match flags {
+                [d] => (d, false, false),
+                [d, w] if w == "--write" => (d, true, false),
+                [d, w, a] if w == "--write" && a == "--allow-shrink" => (d, true, true),
                 _ => {
-                    eprintln!("usage: backend google-backfill-sleep <days> [--write]");
+                    eprintln!(
+                        "usage: backend google-backfill-sleep <days> [--write [--allow-shrink]]"
+                    );
                     std::process::exit(64);
                 }
             };
             let days = days
                 .parse()
                 .with_context(|| format!("days {days:?} is not a number"))?;
-            google_backfill_sleep(days, write).await
+            google_backfill_sleep(days, write, allow_shrink).await
         }
         "google-compare-sleep" => {
             let days = match flags {
@@ -1314,7 +1317,7 @@ async fn google_compare_intraday(days: i64) -> Result<()> {
 /// overwrite, so a wide window rewrites every night inside it. That is the
 /// intent, and it is still not something to do by typing a number slightly
 /// wrong. `google-compare-sleep <days>` shows the diff first and never writes.
-async fn google_backfill_sleep(days: i64, write: bool) -> Result<()> {
+async fn google_backfill_sleep(days: i64, write: bool, allow_shrink: bool) -> Result<()> {
     anyhow::ensure!(days > 0, "a backfill window must be at least a day");
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
@@ -1326,8 +1329,13 @@ async fn google_backfill_sleep(days: i64, write: bool) -> Result<()> {
              ({days} day(s)) for {user_id} and upsert every one through the routine writer.\n\
              \n\
              The writer's figures OVERWRITE, so this rewrites every night in the window.\n\
+             A session more than {ratio}x SHORTER than the one it would replace is refused\n\
+             and named instead: Google leaves a fragment behind when it records a night in\n\
+             progress and never revises it, and that fragment shares the start instant the\n\
+             night is keyed on. --allow-shrink writes those too.\n\
              See the diff first:  backend google-compare-sleep {days}\n\
-             Then apply:          backend google-backfill-sleep {days} --write"
+             Then apply:          backend google-backfill-sleep {days} --write",
+            ratio = backend::google::sync::SLEEP_SHRINK_REFUSAL_RATIO
         );
         return Ok(());
     }
@@ -1349,9 +1357,10 @@ async fn google_backfill_sleep(days: i64, write: bool) -> Result<()> {
     // ⚠ THE ROUTINE WRITER, not a copy of it. A backfill that wrote through its
     // own INSERT would repair the rows and prove nothing about the path that
     // produces them daily.
-    let n = backend::google::sync::sync_sleep(&pool, &http, &token, &user_id, Some(days))
-        .await
-        .context("backfilling sleep")?;
+    let n =
+        backend::google::sync::sync_sleep(&pool, &http, &token, &user_id, Some(days), allow_shrink)
+            .await
+            .context("backfilling sleep")?;
     println!("backfilled {n} sleep session(s) ending on or after {since} for {user_id}");
     Ok(())
 }
