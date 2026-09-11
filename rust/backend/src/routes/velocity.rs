@@ -271,6 +271,11 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
         "segments": segments,
         "states": out.get("states").cloned().unwrap_or_else(|| json!([])),
         "episodes": out.get("episodes").cloned().unwrap_or_else(|| json!([])),
+        // The timeline's collapsible journeys, assembled server-side (#229). The
+        // client folded its own until #339 put `city` on a state and made the two
+        // rules agree; measured over 41 replayable days, both produce the same 102
+        // journeys.
+        "journeys": out.get("journeys").cloned().unwrap_or_else(|| json!([])),
         // `Battery` is already `(ts, level)` pairs — the chart's own shape.
         "battery": h.battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
         "watchBattery": watch_battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),

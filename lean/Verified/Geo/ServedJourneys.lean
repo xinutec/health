@@ -73,11 +73,21 @@ That is why the threshold is two and not one. -/
 def servedJourneys (states : Array DayState) : Array Journey := Id.run do
   let mut out : Array Journey := #[]
   let mut run : Array Leg := #[]
+  let mut lastCity : Option String := none
   let close : Array Leg → Array Journey → Array Journey := fun r acc =>
     if h : r.size ≥ 2 then
       acc.push { startTs := r[0]!.startTs, endTs := r[r.size - 1]!.endTs, legs := r }
     else acc
   for s in states do
+    -- ⚠ A CITY HEADER ENDS A RUN, because in the client it is a ROW and any
+    -- non-travelling row ends one. The header appears before a state whose city
+    -- is present and differs from the last one seen — tracked across ALL states,
+    -- travelling or not, exactly as `buildRowsFromStates` tracks it.
+    let header := s.city.isSome && s.city != lastCity
+    if s.city.isSome then lastCity := s.city
+    if header then
+      out := close run out
+      run := #[]
     if isJourneyMode s.mode then
       run := run.push (legOfState s)
     else
@@ -87,8 +97,9 @@ def servedJourneys (states : Array DayState) : Array Journey := Id.run do
 
 /-! ## Guards -/
 
-private def st (a b : Int) (m : Mode) (way : Option String := none) : DayState :=
-  { startTs := a, endTs := b, mode := m, wayName := way }
+private def st (a b : Int) (m : Mode) (way : Option String := none)
+    (city : Option String := none) : DayState :=
+  { startTs := a, endTs := b, mode := m, wayName := way, city := city }
 
 private def TRAIN_LABEL : String := "Euston Square → King's Cross St Pancras · Circle Line"
 
@@ -135,5 +146,24 @@ private def TRAIN_LABEL : String := "Euston Square → King's Cross St Pancras �
 #guard (legOfState (st 0 60 "train" (some "Euston Square → King's Cross St Pancras"))).line == none
 #guard (legOfState (st 0 60 "train" (some "Euston Square → King's Cross St Pancras"))).board
   == some "Euston Square"
+
+-- ⚠ A CITY CHANGE SPLITS THE RUN, because the client draws a header row there
+-- and any non-travelling row ends a journey. Two legs either side of the change
+-- are two lone legs, so neither collapses.
+#guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
+                         st 60 120 "train" none (some "Utrecht")]).size == 0
+-- The same pair inside ONE city is one journey.
+#guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
+                         st 60 120 "train" none (some "Nijmegen")]).size == 1
+-- An ABSENT city is not a change: a leg crossing cities carries none
+-- (`commonCity` returns nothing unless both ends agree), and it must not split
+-- the run it sits in the middle of.
+#guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
+                         st 60 120 "train" none none,
+                         st 120 180 "walking" none (some "Nijmegen")]).size == 1
+-- The FIRST city seen is not a change either — there is no header above the
+-- first row of the day to break anything.
+#guard (servedJourneys #[st 0 60 "walking" none (some "Nijmegen"),
+                         st 60 120 "train" none (some "Nijmegen")])[0]!.legs.size == 2
 
 end Verified.Geo.ServedJourneys

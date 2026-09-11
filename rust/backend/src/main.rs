@@ -3455,7 +3455,7 @@ async fn velocity(user: &str, date: &str, display_tz: Option<&str>) -> Result<()
         len("watchBattery"),
     );
     for k in [
-        "points", "rawFixes", "segments", "states", "episodes", "battery",
+        "points", "rawFixes", "segments", "states", "episodes", "journeys", "battery",
     ] {
         if body.get(k).is_none() {
             anyhow::bail!("the response has no `{k}` — the frontend reads it");
