@@ -73,7 +73,7 @@ export class TimelineComponent {
     const v = this.data();
     let flat: TimelineRow[];
     if (v?.states && v.states.length > 0) {
-      flat = this.buildRowsFromStates(v.states, v.segments ?? []);
+      flat = this.buildRowsFromStates(v.states);
     } else if (!v?.segments?.length) {
       return [];
     } else {
@@ -183,11 +183,11 @@ export class TimelineComponent {
     };
   }
 
-  private buildRowsFromStates(states: DayState[], segments: TrackSegment[]): TimelineRow[] {
+  private buildRowsFromStates(states: DayState[]): TimelineRow[] {
     const rows: TimelineRow[] = [];
     let lastCity: string | null = null;
     for (const state of states) {
-      const city = this.cityForState(state, segments);
+      const city = state.city;
       if (city && city !== lastCity) {
         rows.push({ kind: "city", city });
         lastCity = city;
@@ -195,23 +195,6 @@ export class TimelineComponent {
       rows.push({ kind: "entry", entry: this.stateToEntry(state) });
     }
     return rows;
-  }
-
-  private cityForState(state: DayState, segments: TrackSegment[]): string | undefined {
-    const midTs = state.startTs + (state.endTs - state.startTs) / 2;
-    const byMidpoint = segments.find((seg) => seg.startTs <= midTs && seg.endTs >= midTs && !!seg.city);
-    if (byMidpoint?.city) return byMidpoint.city;
-    // Synthesised sleeping states extend beyond segment coverage
-    // (morning sleep before first fix; evening sleep after last
-    // fix). Their midpoint falls in a no-segment gap, so look up
-    // city by place match instead — any segment with the same
-    // place lends its city tag. Without this fallback the city
-    // header lands after the sleep row instead of above it.
-    if (state.place) {
-      const byPlace = segments.find((seg) => seg.place === state.place && !!seg.city);
-      if (byPlace?.city) return byPlace.city;
-    }
-    return undefined;
   }
 
   private stateToEntry(state: DayState): TimelineEntry {

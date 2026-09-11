@@ -124,6 +124,11 @@ export interface DayState {
   mode: DayStateMode;
   /** Human-readable place (stationary / sleeping). */
   place?: string;
+  /** The metro area this state sits in — the timeline's city header. Served
+   *  by the backend (`DayState.cityForState`) rather than re-derived here: the
+   *  client used to join back to TrackSegment by midpoint, which was the same
+   *  rule computed twice (#339). */
+  city?: string;
   /** Human-readable way (moving — road, line, station-pair). */
   wayName?: string;
   /** True iff user was asleep during a moving state (sleeping on a

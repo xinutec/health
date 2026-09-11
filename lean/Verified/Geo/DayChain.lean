@@ -119,7 +119,7 @@ series: each drops fields the consumer does not read, none invents one. -/
 def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
     vehicleKind := s.vehicleKind, place := s.place, wayName := s.wayName
-    displayTz := s.displayTz }
+    displayTz := s.displayTz, city := s.city }
 
 /-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
 `Array SPt` here — absent and empty mean the same thing to the renderer.
@@ -203,8 +203,16 @@ def dayChain (e : Env) :
     | some st => (#[st], #[])
     | none => (#[], #[])
   else
-  let final := Verified.Geo.DwellContinuation.applyDwellContinuation
+  let continued := Verified.Geo.DwellContinuation.applyDwellContinuation
     states e.segments e.dwellPlaces e.dayEndTs
+  -- ⚠ CITY IS STAMPED LAST, over the FINAL states (#339). The client it
+  -- replaces ran over the served list, so an INFERRED stay — created by the
+  -- dwell continuation, after `segmentsToDayStates` has returned — got a header
+  -- there and must get one here. Stamping it earlier silently drops exactly
+  -- those rows.
+  let segs := (e.segments.map stateSeg).toList
+  let final := continued.map fun s =>
+    { s with city := Verified.Geo.DayState.cityForState segs s }
   (final, Verified.Geo.EpisodeGeometry.buildEpisodes (final.map episodeState)
     (e.segments.map episodeSeg) e.points (some e.displayFixes))
 

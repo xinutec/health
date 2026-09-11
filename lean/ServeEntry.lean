@@ -2202,7 +2202,7 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
   return { startTs := ← (← j.getObjVal? "startTs").getInt?
          , endTs := ← (← j.getObjVal? "endTs").getInt?
          , mode := ← (← j.getObjVal? "mode").getStr?
-         , place := ← optS "place", wayName := ← optS "wayName"
+         , place := ← optS "place", city := ← optS "city", wayName := ← optS "wayName"
          , asleep := ← optB "asleep", tz := ← optS "tz"
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }

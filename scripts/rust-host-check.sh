@@ -34,17 +34,27 @@ ROOT="$SCRIPT_DIR/.."
 cd "$ROOT"
 
 # The crates link `libverified_DayEntry.a` (day-shell), `libverified_BackendEntry.a`
-# (backend, #982) and `libverified_Verified.a`, and each `build.rs` fails with a
-# message naming the missing one — but only if lake has been asked for them.
+# (backend, #982), `libverified_ServeEntry.a` and `libverified_Verified.a`, and each
+# `build.rs` fails with a message naming the missing one — but only if lake has been
+# asked for them.
 # `lake build verified_cli` alone does NOT emit the static libs, which is the
 # same shape as `lake build <Module>` not relinking the CLI.
+#
+# ⚠ ServeEntry WAS MISSING FROM THIS LIST until 2026-09-11, and it shows up as a
+# SIGSEGV rather than a build failure. A struct the archives disagree about — a
+# new `DayState` field compiled into Verified.a while ServeEntry.a still held the
+# old parser — is written at the wrong shape and corrupts memory. Two
+# `clip_inferred` tests died that way, and the symptom reads as a bug in the
+# change rather than as a stale archive. Every archive the link line names
+# belongs on the command below.
 #
 # ⚠ THE ROWS AFTER THIS ONE DEPEND ON IT. `clippy` and `rust workspace tests`
 # both compile `backend`, whose build.rs reads these archives; on a clean
 # checkout they exist only because this ran first. The gate runs rows in table
 # order (gate/src/main.rs) and gate.dhall records the dependency.
 echo "rust-host-check: lean static libs"
-(cd lean && lake build verified_cli DayEntry:static BackendEntry:static Verified:static >/dev/null)
+(cd lean && lake build verified_cli \
+	DayEntry:static BackendEntry:static ServeEntry:static Verified:static >/dev/null)
 
 echo "rust-host-check: build"
 cd rust

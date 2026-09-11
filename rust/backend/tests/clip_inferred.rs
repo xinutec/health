@@ -73,7 +73,7 @@ fn a_settled_day_round_trips_through_the_clip_unchanged() {
 fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
     json!({
         "startTs": start, "endTs": end, "mode": "stationary",
-        "place": "somewhere", "wayName": "a way", "asleep": false,
+        "place": "somewhere", "city": null, "wayName": "a way", "asleep": false,
         "tz": "Europe/London", "minutesAsleep": 42,
         "inferred": inferred,
     })
@@ -118,7 +118,7 @@ fn absent_optional_fields_survive_as_null_rather_than_vanishing() {
     // because both come from `Day.stateJson`.
     let bare = json!({
         "startTs": 100, "endTs": 200, "mode": "walking",
-        "place": null, "wayName": null, "asleep": null,
+        "place": null, "city": null, "wayName": null, "asleep": null,
         "tz": null, "minutesAsleep": null, "inferred": null,
     });
     let got = lean::clip_inferred_future(std::slice::from_ref(&bare), 1_000).unwrap();

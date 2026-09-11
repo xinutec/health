@@ -744,7 +744,8 @@ as a field quietly missing from a clipped day but present in an unclipped one. -
 def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
-    ("mode", Json.str s.mode), ("place", jOptS s.place), ("wayName", jOptS s.wayName),
+    ("mode", Json.str s.mode), ("place", jOptS s.place), ("city", jOptS s.city),
+    ("wayName", jOptS s.wayName),
     ("asleep", match s.asleep with | none => Json.null | some b => Json.bool b),
     ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),
     ("inferred", match s.inferred with | none => Json.null | some b => Json.bool b)]

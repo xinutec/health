@@ -65,6 +65,9 @@ structure DayState where
   endTs : Int
   mode : Mode
   place : Option String := none
+  /-- The city header the timeline draws above this state. Served rather than
+  re-derived by the client (#339); see `cityForState`. -/
+  city : Option String := none
   wayName : Option String := none
   /-- Asleep while the underlying state is not `sleeping` (in transit). Omitted
       when the mode IS `sleeping` — it would be redundant. -/
@@ -98,6 +101,9 @@ structure Seg where
   place : Option String := none
   wayName : Option String := none
   displayTz : Option String := none
+  /-- The metro area the leg sits in, where both its ends agree on one
+  (`Enrich.commonCity`). Absent on a leg that CROSSES cities. -/
+  city : Option String := none
   deriving Inhabited, BEq
 
 /-! ## `segmentsToDayStates` -/
@@ -194,6 +200,36 @@ def stripPartialMinutesAsleep (states : List DayState) (sleeps : List SleepWindo
     if s.mode != "sleeping" || s.minutesAsleep.isNone then s
     else if sleeps.any (fun w => w.startTs == s.startTs && w.endTs == s.endTs) then s
     else { s with minutesAsleep := none })
+
+
+/-- The city header the timeline draws above a state — a port of the client's
+`cityForState`, not a new rule (#339).
+
+⚠ COMPUTED AFTER THE MERGE, on the merged span, because that is where the client
+computes it. Taking the city from a contributing segment instead would answer
+differently for any state that merged across a city edge, and the whole point is
+that the drawn timeline does not move.
+
+Two lookups, in the client's order:
+
+* the segment whose span CONTAINS the state's midpoint and has a city. The
+  bounds are inclusive at both ends there, and the midpoint is float — so the
+  comparison is doubled here rather than floored, which is the same question in
+  exact integers (`2·segStart ≤ start + end ≤ 2·segEnd`).
+* failing that, ANY segment sharing the state's place. This is not decoration: a
+  synthesised sleeping state runs beyond segment coverage (morning sleep before
+  the first fix), so its midpoint lands in a gap, and without the fallback the
+  header sits BELOW the sleep row instead of above it.
+-/
+def cityForState (segments : List Seg) (s : DayState) : Option String :=
+  let mid2 := s.startTs + s.endTs
+  match segments.find? (fun g =>
+      2 * g.startTs ≤ mid2 && mid2 ≤ 2 * g.endTs && g.city.isSome) with
+  | some g => g.city
+  | none =>
+    match s.place with
+    | none => none
+    | some p => (segments.find? (fun g => g.place == some p && g.city.isSome)).bind (·.city)
 
 /-- The day's non-overlapping state sequence. Boundary sweep: take every
     distinct boundary, and for each sub-interval pick the state from the
