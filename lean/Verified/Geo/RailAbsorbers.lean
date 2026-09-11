@@ -514,7 +514,8 @@ a lone fast step landing back at the labelled board is the stuck-GPS signature
 and extending there eats a real walk's tail. -/
 def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fix)
     (stationsLookup : Float → Float → Array NearbyStation)
-    (servedLookup : String → Array LineMembership.ServedStation) : Array Seg := Id.run do
+    (servedLookup : String → Array LineMembership.ServedStation)
+    (pairVeto : String → String → Bool := fun _ _ => false) : Array Seg := Id.run do
   let mut out := segments
   for k in [1 : out.size] do
     let train := out[k]!
@@ -557,7 +558,12 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
           match rail.line with
           | some line =>
             if line != "" && LineMembership.lineCannotServe line station.name servedLookup then continue
-          | none => pure ()
+          | none =>
+            -- #810: the UNLABELLED arm, which stood empty. There is no line to
+            -- ask `lineCannotServe` about, but the re-anchor still proposes a
+            -- pair — this station onward to the known alight — and the mirror
+            -- can say whether one service joins them.
+            if pairVeto station.name rail.alight then continue
         let reason :=
           if sameBoard then
             s!"boarding boundary extended back to the {station.name} departure — reclaimed a {metres tailDist} m hop the underground reconstruction had left in the walk"
@@ -632,7 +638,8 @@ Wembley Park (#377). -/
 def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
     (steps : List Verified.Geo.Worldline.FeasibilityStepPoint)
     (stationsLookup : Float → Float → Array NearbyStation)
-    (servedLookup : String → Array LineMembership.ServedStation) : Array Seg := Id.run do
+    (servedLookup : String → Array LineMembership.ServedStation)
+    (pairVeto : String → String → Bool := fun _ _ => false) : Array Seg := Id.run do
   let mut out := segments
   if out.isEmpty then return out
   for k in [0 : out.size - 1] do
@@ -671,7 +678,10 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
         match rail.line with
         | some line =>
           if line != "" && LineMembership.lineCannotServe line station.name servedLookup then continue
-        | none => pure ()
+        | none =>
+          -- #810, alight side. Applied before the rename decision, as the
+          -- labelled arm above is.
+          if pairVeto rail.board station.name then continue
         let hopM := metres (fixDist surfaced alightFix)
         let sameAlight := station.name == rail.alight
         -- CADENCE, not step count, decides a ride tail (TS `dd72209`). A single
@@ -1036,8 +1046,9 @@ private def board (segs : Array Seg) (pts : Array Fix) :=
   aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed)
 private def alight (segs : Array Seg) (pts : Array Fix)
     (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := [])
-    (stations : Float → Float → Array NearbyStation := aStations) :=
-  aview (anchorTrainAlightToWalkedStation segs pts steps stations aServed)
+    (stations : Float → Float → Array NearbyStation := aStations)
+    (pairVeto : String → String → Bool := fun _ _ => false) :=
+  aview (anchorTrainAlightToWalkedStation segs pts steps stations aServed pairVeto)
 
 /-- Slow, slow, then a TWO-step vehicle-paced run: the boarding hop. -/
 private def boardWalk : Array Fix :=
@@ -1337,9 +1348,33 @@ private def alightTwoFix : Array Fix := #[f 0 51.5, f 30 51.5028]
 -- `lineCannotServe` on the line topology (the guards above prove it); a leg
 -- with no line is not covered by anything here.
 --
--- When a legless-leg check lands, this expectation flips back to a refusal —
--- deliberately, and this comment goes with it.
+-- This leg CARRIES one (`WP` appends the Metropolitan by default), so the
+-- legless check of #810 does not reach it and this expectation is unchanged.
+-- The legless twin is the pair of guards below.
 #guard alight #[atrain (-600) 0 (WP "Euston Square"), awalk 0 180] alightWalk
   == #[(-600, 60, WP "Great Portland Street", some GPS_RENAME), (60, 180, none, none)]
+
+/-! ### The legless leg, both arms (#810)
+
+`WP _ ""` drops the ` · <line>` suffix, which is the shape the corpus actually
+carries: of 108 real train states, 92 name a line, 16 read `A → B` with no
+separator at all, and NONE carry the empty-line `A → B · ` that the guarded
+`line != ""` condition describes. So this pair — not that condition — is the
+live arm. -/
+
+-- No mirror answer, so nothing can refuse: the anchor re-anchors the alight on
+-- geometry alone. This is the gap #810 names, and it is still the behaviour
+-- wherever the relations cannot speak.
+#guard alight #[atrain (-600) 0 (WP "Euston Square" ""), awalk 0 180] alightWalk
+  == #[(-600, 60, some "Wembley Park → Great Portland Street", some GPS_RENAME),
+       (60, 180, none, none)]
+
+-- The same fixes with a mirror that refuses the pair: the rename is declined
+-- and the leg keeps both its boundary and its name. Proof the veto reaches the
+-- decision rather than merely existing — `Env.noLineConnects` supplies it in
+-- the fold, and its own arms are pinned in `PassFold`.
+#guard alight #[atrain (-600) 0 (WP "Euston Square" ""), awalk 0 180] alightWalk
+    (pairVeto := fun _ _ => true)
+  == #[(-600, 0, some "Wembley Park → Euston Square", none), (0, 180, none, none)]
 
 end Verified.Geo.RailAbsorbers

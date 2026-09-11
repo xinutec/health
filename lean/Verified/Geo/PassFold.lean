@@ -219,7 +219,53 @@ def Env.geomFixes (e : Env) : Array Verified.Geo.EpisodeGeometry.Fix :=
 answer. The env carries the RICHEST — name and coordinate — and each consumer
 takes what it declares, the same rule the fixes follow. -/
 
-/-- Name only: what the anchors' served-station test compares. -/
+/-- Whether NO service in the mirror runs between both named stations — the veto
+form, so the caller's condition reads as the rejection it is.
+
+The `line = none` counterpart to `lineCannotServe`. An absorber that re-anchors a
+boarding to a walked station proposes a NEW pair (that station → the known
+alight); with no line label there is nothing to ask `lineCannotServe` about, and
+the question that remains is whether any service at all connects the two. A
+relation is one direction of one service, so a single relation holding both
+stations is exactly "one ride could do this".
+
+⚠ `false` when either station is absent from every relation — unknown is not
+evidence, the rule `lineCannotServe`'s scan already applies. Without that arm
+every National Rail station would veto, the mirror covering those by operator
+code (`SN7.2`) rather than by a line name. -/
+def Env.noLineConnects (e : Env) (a b : String) : Bool :=
+  let norm := Verified.Geo.LineStoppingPattern.normalizeStationName
+  let na := norm a
+  let nb := norm b
+  let stops (r : Verified.Geo.LineStoppingPattern.RailStopRelation) (t : String) : Bool :=
+    r.stops.any fun s =>
+      match s.name with
+      | none => false
+      | some n => norm n == t
+  if !(e.railStops.any fun r => stops r na) then false
+  else if !(e.railStops.any fun r => stops r nb) then false
+  else !(e.railStops.any fun r => stops r na && stops r nb)
+
+/-- Name only: what the anchors' served-station test compares.
+
+⚠ PROXIMITY, and measured WRONG IN BOTH DIRECTIONS — left in place anyway,
+because replacing it regresses a floor. `stationsOnLine` filters stations by
+distance from the line's ways (`filter_stations_by_line_proximity`), so it both
+INFLATES (66 stations for the Northern's real 52, 54 for the Circle's 35) and
+OMITS stations the line truly serves (21 on the Central). An inflated list makes
+`lineCannotServe` decline a veto it should raise; an omission makes it veto a
+line that does serve the station.
+
+The mirror already carries the honest answer — `railStops`, the ordered
+stop-role members of each route relation, whose lists reproduce the true size of
+every tube line they cover. Swapping it in was BUILT AND REVERTED (#181): it
+correctly vetoes a blessed `Euston Square → King's Cross St Pancras ·
+Victoria Line`, which is geographically impossible — all four Victoria line
+relations stop at Euston, not Euston Square, and the relations holding both that
+pair are Circle, Hammersmith & City and Metropolitan. But the leg then falls to
+`driving` with no name instead of being relabelled, and the walk `offPath` floor
+regresses with it. The veto is not the missing piece; SUBSTITUTING the line that
+can serve the pair is, and that is #238's half. -/
 def Env.servedStations (e : Env) : String → Array Verified.Geo.LineMembership.ServedStation :=
   fun line => (e.stationsOnLine line).map fun s => ⟨s.name⟩
 
@@ -495,7 +541,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.absorberFixes
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      e.servedStations),
+      e.servedStations e.noLineConnects),
 
   -- The mirror on the disembark side: the train closes at the surfaced station
   -- and the ride on to the true alight is stranded as the FAST leading fixes of
@@ -504,7 +550,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes e.feasSteps
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      e.servedStations),
+      e.servedStations e.noLineConnects),
 
   -- One continuous Underground ride, shattered by a mid-tunnel GPS surface into
   -- several train legs plus slivers. If a SINGLE line serves every station the
@@ -660,6 +706,37 @@ private def NO_LOOKUPS : Env :=
     nearbyStations := fun _ _ _ => #[], linesAtPoint := fun _ _ _ => #[]
     nearbyWays := fun _ _ => #[]
     bestPlace := fun _ _ _ _ _ => none, tzAt := fun _ _ => "Europe/London" }
+
+/-! ### The legless-leg pair veto (#810)
+
+Three stations on one service and two on another is enough to exercise every
+arm: connected, unconnected, and unknown-so-silent. -/
+
+private def stopN (n : String) : Verified.Geo.LineStoppingPattern.RouteStop :=
+  { name := some n }
+
+private def PAIR_MIRROR : Env :=
+  { NO_LOOKUPS with railStops := #[
+      { stops := #[stopN "Great Portland Street", stopN "Euston Square",
+                   stopN "King's Cross St Pancras"], lineRef := some "Circle" },
+      { stops := #[stopN "Euston", stopN "King's Cross St Pancras"],
+        lineRef := some "Victoria" }] }
+
+-- One relation holds both, so a single ride joins them: no veto. This is the
+-- REAL topology — Euston Square and Great Portland Street are adjacent on the
+-- Circle/H&C/Metropolitan track, and ten relations hold the pair in the mirror.
+#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Euston Square" == false
+-- THE #810 SHAPE, and the arm that stood empty. Both stations are known to the
+-- mirror and NO single relation holds both: Euston is Victoria-only here, Great
+-- Portland Street Circle-only. One ride cannot do this.
+#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Euston" == true
+-- Unknown to every relation — asserts nothing, the same rule `lineCannotServe`'s
+-- scan applies. Both orders, since the guard is not symmetric in its early exit.
+#guard PAIR_MIRROR.noLineConnects "Great Portland Street" "Ongar" == false
+#guard PAIR_MIRROR.noLineConnects "Ongar" "Euston Square" == false
+-- Normalisation on BOTH sides: these names arrive from two different mirrors,
+-- so case and the apostrophe are stripped by one rule before comparison.
+#guard PAIR_MIRROR.noLineConnects "kings cross st pancras" "EUSTON" == false
 
 -- The cascade, named and ordered. A pass that moves or disappears fails here
 -- before it fails as a wrong day.
