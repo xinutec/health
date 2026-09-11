@@ -2,11 +2,19 @@
  * The one place the frontend writes down what a mode *is*.
  *
  * This vocabulary used to live in four separate maps — the timeline's icons, the
- * timeline's set of "moving" modes, the map's track colours, the speed chart's
+ * timeline's set of travelling modes, the map's track colours, the speed chart's
  * fills and labels — and they had quietly drifted apart: the map had no colour
  * for `boat` or `unknown` and silently greyed them out, the speed chart was also
  * missing `sleeping`. Adding a mode server-side degraded three of the four to a
  * fallback without anyone noticing.
+ *
+ * ⚠ WHICH MODES COUNT AS TRAVEL IS NOT HERE ANY MORE, deliberately. This file
+ * carried a `moving` flag per mode, and it was the client's own answer to a
+ * question the backend also answers — the duplication #339 is about. The
+ * backend assembles journeys now (`Verified.Geo.ServedJourneys`) and the client
+ * binds the result, so the last reader of that flag went with
+ * `coalesceJourneys`. Do not reintroduce it: a second list cannot disagree with
+ * the first if it does not exist.
  *
  * So: one entry per mode, `Record<DayStateMode, …>` so the compiler refuses a
  * missing key, and every component reads from here. Adding a mode to the backend
@@ -48,26 +56,24 @@ export interface ModeStyle {
 	fill: string;
 	/** Whether this is travel (a leg that can fold into a journey, and that the
 	 *  map draws as a line) rather than a visit or a gap. */
-	moving: boolean;
 }
 
 export const MODES: Record<DayStateMode, ModeStyle> = {
-	sleeping: { icon: "bedtime", label: "Asleep", verb: "Sleeping", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.2)", moving: false },
-	stationary: { icon: "place", label: "Still", verb: "Stopped", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.2)", moving: false },
-	walking: { icon: "directions_walk", label: "Walking", verb: "Walking", color: "#22c55e", fill: "rgba(34, 197, 94, 0.25)", moving: true },
-	cycling: { icon: "directions_bike", label: "Cycling", verb: "Cycling", color: "#f59e0b", fill: "rgba(59, 130, 246, 0.25)", moving: true },
-	driving: { icon: "directions_car", label: "Driving", verb: "Driving", color: "#ef4444", fill: "rgba(249, 115, 22, 0.25)", moving: true },
+	sleeping: { icon: "bedtime", label: "Asleep", verb: "Sleeping", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.2)" },
+	stationary: { icon: "place", label: "Still", verb: "Stopped", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.2)" },
+	walking: { icon: "directions_walk", label: "Walking", verb: "Walking", color: "#22c55e", fill: "rgba(34, 197, 94, 0.25)" },
+	cycling: { icon: "directions_bike", label: "Cycling", verb: "Cycling", color: "#f59e0b", fill: "rgba(59, 130, 246, 0.25)" },
+	driving: { icon: "directions_car", label: "Driving", verb: "Driving", color: "#ef4444", fill: "rgba(249, 115, 22, 0.25)" },
 	// A ride nobody could identify: vehicle speed, but no road matched, no street
 	// name, no bus route, no rail line. Deliberately NOT a car — see
 	// `resolveVehicleIdentity`. Muted, and named for the doubt it represents.
-	vehicle: { icon: "commute", label: "In a vehicle", verb: "In a vehicle", color: "#a78bfa", fill: "rgba(167, 139, 250, 0.25)", moving: true },
-	bus: { icon: "directions_bus", label: "Bus", verb: "On a bus", color: "#ea580c", fill: "rgba(234, 88, 12, 0.25)", moving: true },
-	train: { icon: "train", label: "Train", verb: "Train", color: "#3b82f6", fill: "rgba(168, 85, 247, 0.25)", moving: true },
-	boat: { icon: "directions_boat", label: "Boat", verb: "On a boat", color: "#06b6d4", fill: "rgba(6, 182, 212, 0.25)", moving: true },
-	plane: { icon: "flight", label: "Plane", verb: "Flying", color: "#8b5cf6", fill: "rgba(236, 72, 153, 0.25)", moving: true },
-	// No observation at all — a GPS gap, not a leg. Breaks a run of travel
-	// rather than joining it, so `moving` is false.
-	unknown: { icon: "signal_disconnected", label: "No GPS signal", verb: "No GPS signal", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.12)", moving: false },
+	vehicle: { icon: "commute", label: "In a vehicle", verb: "In a vehicle", color: "#a78bfa", fill: "rgba(167, 139, 250, 0.25)" },
+	bus: { icon: "directions_bus", label: "Bus", verb: "On a bus", color: "#ea580c", fill: "rgba(234, 88, 12, 0.25)" },
+	train: { icon: "train", label: "Train", verb: "Train", color: "#3b82f6", fill: "rgba(168, 85, 247, 0.25)" },
+	boat: { icon: "directions_boat", label: "Boat", verb: "On a boat", color: "#06b6d4", fill: "rgba(6, 182, 212, 0.25)" },
+	plane: { icon: "flight", label: "Plane", verb: "Flying", color: "#8b5cf6", fill: "rgba(236, 72, 153, 0.25)" },
+	// No observation at all — a GPS gap, not a leg.
+	unknown: { icon: "signal_disconnected", label: "No GPS signal", verb: "No GPS signal", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.12)" },
 };
 
 const FALLBACK: ModeStyle = MODES.unknown;
@@ -83,8 +89,3 @@ export function modeStyle(mode: string): ModeStyle {
 	return styles[mode] ?? FALLBACK;
 }
 
-/** Modes that count as travel: eligible to fold into a journey, drawn as a line
- *  on the map. Excludes visits (`stationary`/`sleeping`) and `unknown` (a gap). */
-export function isMoving(mode: string): boolean {
-	return modeStyle(mode).moving;
-}

@@ -25,14 +25,22 @@ the timeline asks "what should collapse into one row?". So this module shares
 the `Journey`/`Leg` TYPE with the scorer and keeps the serving rule, rather
 than defining a third journey type for the same day.
 
-## ⚠ `isJourneyMode` is NOT `Eval.Journeys.isMovementMode`
+## ⚠ `isJourneyMode` is NOT `Eval.Journeys.isMovementMode`, and NOT because one is wrong
 
-They disagree, and the corpus cannot show it. `isMovementMode` omits `vehicle`
-and `boat`; the timeline treats both as travel (`modes.ts`, `moving: true`), and
-the pipeline EMITS both — `SegmentPasses` refines an unidentified ride to
-`vehicle`, and `RefineMode` names a waterway leg `boat`. Neither mode occurs in
-the 42-day corpus, so a gate cannot tell the two predicates apart; a real day
-with an unidentified ride would split one drawn journey into two.
+They cover different vocabularies, and an earlier version of this note got that
+wrong — it claimed `isMovementMode` "omits" `vehicle` and `boat` and that a real
+day would therefore split a drawn journey in two. It cannot. `isMovementMode`
+takes the ground-truth `Mode`, an INDUCTIVE whose constructors are
+`sleeping | stationary | walking | cycling | driving | bus | train | plane`.
+There is no `vehicle` and no `boat` to omit: a human audit cell says "driving",
+never "vehicle", because `vehicle` is precisely the pipeline's own label for a
+ride no pass could identify. It never reaches a served state.
+
+This predicate answers the SERVED question instead, over `DayState.mode`, a
+plain `String` from `WireVocab.DAY_STATE_MODES` — which does carry `vehicle` and
+`boat`, both of them emitted (`SegmentPasses` refines an unidentified ride;
+`RefineMode` names a waterway leg). Neither occurs in the 42-day corpus, so no
+golden day can pin them, which is why the guards below do.
 
 So the predicate here is derived from the drawn-line list rather than restated:
 `EpisodeGeometry.MOVING_MODES` plus `train`, which that list omits ONLY because

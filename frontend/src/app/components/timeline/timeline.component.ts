@@ -313,9 +313,12 @@ export class TimelineComponent {
       primary = `${verb} · ${s.avgSpeed} km/h`;
       if (s.wayName) {
         secondary = `On ${s.wayName} · ${durationLabel}`;
-      } else if (s.refinedReason) {
-        secondary = `${s.refinedReason} · ${durationLabel}`;
       } else {
+        // ⚠ `refinedReason` USED TO BE PRINTED HERE and is not any more (#339).
+        // The backend calls it display-and-debugging-only, and it reads like
+        // it: "no pass could identify this ride" is a note to whoever is
+        // debugging the classifier, not prose for the person whose day it is.
+        // The speed line below says the same thing in their terms.
         secondary = `${durationLabel} · max ${s.maxSpeed} km/h`;
       }
     }
