@@ -21,6 +21,21 @@
 //!   second because a Fitbit sleep log id does not survive an f64.
 //! * `TINYINT(1)` is `0`/`1`. ⚠ sqlx NAMES that type `"BOOLEAN"`, so decoding
 //!   what the name suggests would put `true` on the wire.
+//! * ⚠ EVERY `DATETIME` GETS A `Z`, AND FOR HALF OF THEM THAT IS FALSE. The
+//!   Fitbit wall-clock columns — `sleep.start_time`/`end_time`,
+//!   `sleep_stages.ts`, `heart_rate_intraday.ts`, `steps_intraday.ts` — hold the
+//!   clock the watch showed, with no zone in the value, so the suffix asserts a
+//!   zone the column does not carry. The `TIMESTAMP` columns (`updated_at`,
+//!   `synced_at`, …) and every `_utc` sibling ARE UTC and the suffix is honest.
+//!   One wire, two populations, one suffix.
+//!
+//!   This is a rendering that dispatches on SQL TYPE, and telling the two apart
+//!   needs a per-COLUMN classification that does not exist (#1532). It is not a
+//!   live defect: the honest `_utc` column is served beside every wall clock and
+//!   is complete, and no client compensates for the suffix any more (#340
+//!   deleted the Z-stripper). It misleads a reader who does not know the
+//!   convention, which is why it is written down here rather than left to be
+//!   rediscovered.
 //!
 //! # Nothing here decides anything
 //!
