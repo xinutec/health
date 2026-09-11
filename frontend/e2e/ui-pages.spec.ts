@@ -82,6 +82,57 @@ const INTRADAY = [
  *  Playwright runs handlers last-registered-first, so specifics below win. The
  *  more-specific sleep/stages route is registered AFTER the sleep window route
  *  so it takes priority for that URL. */
+/** A day with real rows, so the timeline is actually RENDERED here.
+ *
+ * ⚠ This used to be `{points: [], segments: []}`, which drew an empty card and
+ * made the layout assertions below pass by construction on the app's main view
+ * (#1551). Overflow and collision are properties of real rows — a long
+ * station-pair way name, a city header, a collapsed journey — so an empty list
+ * cannot exercise them.
+ *
+ * The labels are deliberately among the longest the app produces: a
+ * Circle-line station pair is the widest secondary line the timeline draws.
+ */
+// Midnight local on the day the app is showing, so the rows carry NO day-offset
+// marker. Dating this to a fixed epoch put a "−1031d" badge on every row, which
+// widens the time column and tests a layout the app never actually shows.
+const DAY0 = (() => {
+	const d = new Date();
+	d.setHours(0, 0, 0, 0);
+	return Math.floor(d.getTime() / 1000);
+})();
+const VELOCITY = {
+	points: [],
+	segments: [],
+	states: [
+		{ startTs: DAY0, endTs: DAY0 + 7 * 3600, mode: "sleeping", place: "Home",
+		  city: "Greater London", tz: "Europe/London" },
+		{ startTs: DAY0 + 7 * 3600, endTs: DAY0 + 7 * 3600 + 1200, mode: "stationary",
+		  place: "Home", city: "Greater London", tz: "Europe/London" },
+		{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1800, mode: "walking",
+		  wayName: "Wembley Park Boulevard", city: "Greater London", tz: "Europe/London" },
+		{ startTs: DAY0 + 7 * 3600 + 1800, endTs: DAY0 + 7 * 3600 + 3000, mode: "train",
+		  wayName: "Euston Square → King's Cross St Pancras · Circle Line",
+		  city: "Greater London", tz: "Europe/London" },
+		{ startTs: DAY0 + 7 * 3600 + 3000, endTs: DAY0 + 7 * 3600 + 3300, mode: "walking",
+		  wayName: "Pancras Road", city: "Greater London", tz: "Europe/London" },
+		{ startTs: DAY0 + 7 * 3600 + 3300, endTs: DAY0 + 12 * 3600, mode: "stationary",
+		  place: "University College Hospital", city: "Greater London", tz: "Europe/London" },
+	],
+	journeys: [
+		{
+			startTs: DAY0 + 7 * 3600 + 1200,
+			endTs: DAY0 + 7 * 3600 + 3300,
+			legs: [
+				{ startTs: DAY0 + 7 * 3600 + 1200, endTs: DAY0 + 7 * 3600 + 1800, mode: "walking" },
+				{ startTs: DAY0 + 7 * 3600 + 1800, endTs: DAY0 + 7 * 3600 + 3000, mode: "train",
+				  line: "Circle Line", board: "Euston Square", alight: "King's Cross St Pancras" },
+				{ startTs: DAY0 + 7 * 3600 + 3000, endTs: DAY0 + 7 * 3600 + 3300, mode: "walking" },
+			],
+		},
+	],
+};
+
 async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/**", (r) =>
 		r.request().method() === "GET" ? r.fulfill({ json: [] }) : r.fulfill({ status: 204, body: "" }),
@@ -93,7 +144,7 @@ async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/sleep*", (r) => r.fulfill({ json: SLEEP }));
 	await page.route("**/api/sleep/stages*", (r) => r.fulfill({ json: STAGES }));
 	await page.route("**/api/heartrate/intraday*", (r) => r.fulfill({ json: INTRADAY }));
-	await page.route("**/api/velocity*", (r) => r.fulfill({ json: { points: [], segments: [] } }));
+	await page.route("**/api/velocity*", (r) => r.fulfill({ json: VELOCITY }));
 	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null }));
 }
 
@@ -114,6 +165,21 @@ test("dashboard Day tab — summary cards + charts: lays out cleanly @ phone wid
 	// The toolbar's mat-icons (settings/logout) must render as glyphs, not their
 	// ligature words.
 	await expectIconFontLoaded(page);
+
+	// ⚠ PROVE THE TIMELINE ACTUALLY DREW ROWS. The mock used to be empty, and
+	// the assertions below then passed on a blank card — the defect #1551
+	// records. If this waits time out, the layout checks are meaningless.
+	await page.getByText("Your Day").waitFor();
+	await page.getByText("University College Hospital").waitFor();
+
+	await expectNoTextOverlaps(page, testInfo);
+	await expectNoHorizontalOverflow(page, testInfo);
+
+	// EXPANDED is where the widest content is: a collapsed journey hides its
+	// legs, and a leg carries the longest secondary the app draws (a Circle-line
+	// station pair). Check the layout in that state too.
+	await page.getByRole("button", { name: "Expand all" }).click();
+	await page.getByText("Circle Line", { exact: false }).first().waitFor();
 	await expectNoTextOverlaps(page, testInfo);
 	await expectNoHorizontalOverflow(page, testInfo);
 });
