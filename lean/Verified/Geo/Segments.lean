@@ -227,8 +227,16 @@ reference-tested THROUGH `classifySegments`, which is the only caller. -/
 def STATIONARY_SPLIT_DIST_M : Float := 100
 /-- How long a stretch must hold still to be CUT AS A STAY by the sparse-data
 fallback. NOT `Verified.Geo.FocusPlaces.FOCUS_VISIT_MIN_S` (10 min), which asks
-whether a dwell is worth mining. This is the HIGHER bar, and the floor #268's
-swallowed shop stops fall under. Both were `STAY_MIN_DURATION_SEC` until #762. -/
+whether a dwell is worth mining. This is the HIGHER bar. Both were
+`STAY_MIN_DURATION_SEC` until #762.
+
+⚠ This used to add "and the floor #268's swallowed shop stops fall under",
+which reads as a diagnosis and is not one. Measured 2026-09-11: five-minute and
+nine-minute stays BETWEEN TWO WALKING LEGS are cut and named routinely, so the
+class #268 is about is not forbidden by any duration bar — and one of those
+stays is on the same day as a stop that was swallowed, hours apart. This
+constant governs the sparse-data fallback only, as the sentence above says; it
+is not established that it is what loses those stops. -/
 def SEGMENT_STAY_MIN_S : Int := 15 * 60
 def CLUSTER_RADIUS_M : Float := 150
 def WINDOW_SEC : Int := 300
