@@ -9,8 +9,8 @@ rendering the real page refuted them (#1280).
 #919 is what a document of line numbers becomes. Every entry names a definition
 you can grep for by name.
 
-⚠ **This covers the STATE half.** The 25 served segment fields are not mapped
-yet — see the end.
+⚠ **The nine STATE fields are mapped. Of the 25 SEGMENT fields, seven are
+established and five are shown NOT to have a single producer** — see the end.
 
 ## The entry point
 
@@ -78,14 +78,47 @@ says why: `inferred := true` is not decoration, it is what lets the renderer say
 "no data" instead of presenting an asserted stay as an observed one. Merging
 them once turned 4h35m of assumption into what reads as an observed stay.
 
-## The segment half — not written
+## The segment half — partly established
 
-25 fields ship per segment (everything on `segs` except `snappedPath`,
+25 fields ship per segment: everything on `segs` except `snappedPath`,
 `matchedPath` and `walkMatchedPath`, which `routes::velocity::strip_paths`
-removes because `episodes` already carries the drawn geometry).
+removes because `episodes` already carries the drawn geometry.
 
-They are NOT mapped here, deliberately: the fold runs 38 passes and several
-fields are written by more than one, so the honest entry is "the pass that LAST
-decides it", which needs the fold order traced per field. A half-checked table
-would be exactly the artefact this document exists to replace. Start from
-`Verified.Geo.PassFold` and add rows as they are established.
+The fold is `Verified.Geo.PassFold.passes`, **41 passes** run in order by
+`runPasses`, each a `Seg[] -> Seg[]`. The served value of a field is whatever
+the LAST pass to write it left, so an entry here names a pass, not just a
+module.
+
+### Established
+
+| field | written by | pass |
+| --- | --- | --- |
+| `displayTz` | `PassFold`'s local `displayTz` — `homeTz` when the segment has no points, else `e.tzAt lat lon` | `displayTz` |
+| `biometrics` | `PassFold`, sole writer | `biomEnrich` |
+| `walkSmoothedPath` | `WalkAnnotate`, attached only when the smoother's output is kept | `walkMatch` |
+| `focusPlaceId` | `StayEnrich` sets it with the venue; `SegmentMerge` CLEARS it when stays merge | `merge` clears after any earlier set |
+| `needsReenrich` | `StaySplit` sets it; `PassFold` consumes and clears it | `reenrichSplitWalks` |
+| `needsRename` | `StaySplit` sets it; `PassFold` clears it and re-reads `wayName` | `reenrichSplitWalks` |
+| `roadCorridorFraction` | `Enrich`, via `Velocity.computeRoadNearestFraction`; `orElse` keeps an earlier value | the enrich fold |
+
+⚠ `needsReenrich` and `needsRename` are FLAGS THE FOLD CONSUMES. They ship, but
+a served `true` means the fold did not get to clear it — which is a signal about
+the pipeline, not about the day.
+
+### ⚠ Five fields do not have a single producer, and that is the finding
+
+`mode`, `place`, `wayName`, `refinedMode` and `refinedReason` are assigned in 31,
+13, 19, 23 and 18 modules respectively. Even discounting fixtures and other
+types, each is written by many passes, and WHICH one wrote the served value
+depends on which passes fired for that segment on that day.
+
+So "the producer of `wayName`" is not a well-posed question, and a table row
+claiming one would be the confident-wrong answer this document exists to
+prevent. For those five the honest procedure is per-case:
+
+    CORPUS_DAYS=<date> … the day grader, or `runPassesTraced`, which keeps each
+    pass's output beside its name — it exists for the shadow ledger and is the
+    tool for exactly this.
+
+Adding a row for one of the five means naming the pass that wrote it FOR A
+STATED CASE, not in general.
