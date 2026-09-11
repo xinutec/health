@@ -1,7 +1,7 @@
 import { Component, effect, ElementRef, input, type OnDestroy, signal, viewChild, ChangeDetectionStrategy } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
 import type { SleepStage } from "../../services/health.service";
-import { rowInstant, wallClockInZone } from "../../time-utils";
+import { wallClockInZone } from "../../time-utils";
 
 // Y positions: Awake at top, Deep at bottom
 const STAGE_Y: Record<string, number> = {
@@ -72,7 +72,7 @@ export class HypnogramComponent implements OnDestroy {
       // geometry exactly — correct on an ordinary night, wrong by the shift on
       // a night he changed zones. Measured 2026-09-11: 0 of 37718 stage rows
       // in production lack `ts_utc`, so this is for old payloads only.
-      const instant = (s: SleepStage): number => rowInstant(s.ts, s.ts_utc);
+      const instant = (s: SleepStage): number => Date.parse(s.ts_utc);
 
       const firstTime = instant(data[0]);
       const stageEnds = data.map((s, i) =>

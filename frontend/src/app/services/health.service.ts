@@ -35,14 +35,10 @@ export interface SleepLog {
 }
 
 export interface SleepStage {
-  /**
-   * The WALL CLOCK the stage was lived on — what the watch showed. Carries a
-   * "Z" suffix the API adds to every DATETIME; it is not UTC (#340). Use it for
-   * labels, never for arithmetic.
-   */
-  ts: string;
-  /** The true instant. Use this for any duration, position or comparison. */
-  ts_utc: string | null;
+  /** The true instant, always present: the route repairs a missing one from the
+   *  wall clock and the zone, and drops a row it cannot place (#1532). The wall
+   *  clock itself is no longer served — it carried a "Z" it had not earned. */
+  ts_utc: string;
   /** IANA zone the night was lived in. The honest way to turn `ts_utc` into the
    *  clock he saw — it bends where a fixed offset cannot, which matters on a
    *  night he changed zones. */

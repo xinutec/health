@@ -342,14 +342,47 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
     };
     let log_id: i64 = log.try_get("log_id").context("sleep.log_id")?;
 
+    // ⚠ THE WALL CLOCK DOES NOT SHIP, and the instant is REPAIRED rather than
+    // served nullable (#1532). `sleep_stages.ts` is the clock the watch showed,
+    // which `row_json` renders with a `Z` it has not earned — one wire carrying
+    // two meanings under one suffix. Dropping it costs nothing, because a row
+    // missing `ts_utc` is not missing information: `ts` and `tz` determine the
+    // instant exactly, which is what `CONVERT_TZ` does here.
+    //
+    // ⚠ `CONVERT_TZ` RETURNS NULL when the server's zone tables are absent, and
+    // that is handled rather than assumed: such a row stays NULL, falls into the
+    // filter below and is REPORTED. The COALESCE only reaches it when `ts_utc`
+    // is already null, so an ordinary row cannot be harmed by a missing table.
     let rows = sqlx::query(
-        "SELECT * FROM sleep_stages WHERE user_id = ? AND sleep_log_id = ? ORDER BY ts",
+        "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, stage, \
+         duration_seconds, tz FROM sleep_stages \
+         WHERE user_id = ? AND sleep_log_id = ? ORDER BY 1",
     )
     .bind(&session.user_id)
     .bind(log_id)
     .fetch_all(&st.pool)
     .await?;
-    Ok(Json(row_json::rows_to_json(&rows)?).into_response())
+
+    // A row with neither a stored instant nor a convertible zone cannot be
+    // placed on a time axis at all. Drop it and SAY SO — a silently shorter
+    // night reads as a real statement about how he slept.
+    let total = rows.len();
+    let placed: Vec<_> = rows
+        .into_iter()
+        .filter(|r| {
+            r.try_get_raw("ts_utc")
+                .map(|v| !sqlx::ValueRef::is_null(&v))
+                .unwrap_or(false)
+        })
+        .collect();
+    if placed.len() != total {
+        tracing::warn!(
+            "sleep stages: {} of {total} row(s) have no instant and no convertible zone — \
+             dropped from the chart",
+            total - placed.len()
+        );
+    }
+    Ok(Json(row_json::rows_to_json(&placed)?).into_response())
 }
 
 /// `GET /heartrate/intraday?date=` — one day of per-minute heart rate.
