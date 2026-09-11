@@ -192,7 +192,7 @@ export class TimelineComponent {
         rows.push({ kind: "city", city });
         lastCity = city;
       }
-      rows.push({ kind: "entry", entry: this.stateToEntry(state, segments) });
+      rows.push({ kind: "entry", entry: this.stateToEntry(state) });
     }
     return rows;
   }
@@ -214,9 +214,18 @@ export class TimelineComponent {
     return undefined;
   }
 
-  private stateToEntry(state: DayState, segments: TrackSegment[]): TimelineEntry {
+  private stateToEntry(state: DayState): TimelineEntry {
     const icon = modeStyle(state.mode).icon;
-    const tz = state.tz ?? this.displayTzForState(state, segments);
+    // ⚠ `state.tz` IS the segment's `displayTz` — the backend reads it straight
+    // off the segment the state came from (`DayState.lean:127`), and a sleeping
+    // window prefers its own zone over it (:162). The frontend used to fall back
+    // to re-finding a segment by midpoint, which could not help: it searches the
+    // SAME field by a NARROWER rule, so it only differs when some OTHER segment
+    // covers this state's midpoint — and segments do not overlap. Measured over
+    // the corpus 2026-09-11 (#339): 626 states across 41 days, none without a
+    // tz. Deleted rather than kept as insurance, because a second rule for a
+    // domain question is what this ticket is about.
+    const tz = state.tz;
     const startLabel = this.formatTime(state.startTs, tz);
     const startDayOffset = this.dayOffsetLabel(state.startTs, tz);
     const endLabel = this.formatTime(state.endTs, tz);
@@ -273,12 +282,6 @@ export class TimelineComponent {
       secondary,
       inferred: !!state.inferred,
     };
-  }
-
-  private displayTzForState(state: DayState, segments: TrackSegment[]): string | undefined {
-    const midTs = state.startTs + (state.endTs - state.startTs) / 2;
-    const s = segments.find((seg) => seg.startTs <= midTs && seg.endTs >= midTs && !!seg.displayTz);
-    return s?.displayTz;
   }
 
   private buildRowsFromSegments(segments: TrackSegment[]): TimelineRow[] {
