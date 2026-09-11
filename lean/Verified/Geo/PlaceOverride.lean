@@ -407,8 +407,8 @@ private def PLACES : List (Int × PlaceLookup) := [
 /-! ### The #244 doorstep gate, at its own bar. -/
 
 -- 100.07543398026468 m and 2223.8985328915223 m — the 1500 m bar sits between them.
-#guard doorstepConsistent 51.5 (-0.1) 51.5009 (-0.1) == true
-#guard doorstepConsistent 51.5 (-0.1) 51.52 (-0.1) == false
+#guard doorstepConsistent 51.5 (-38.1) 51.5009 (-38.1) == true
+#guard doorstepConsistent 51.5 (-38.1) 51.52 (-38.1) == false
 
 end Guards
 

@@ -236,23 +236,23 @@ def classifyMode (speedKmh : Float) : String :=
 -- spike, dropped from output), and reset + forward-look seed after a long gap.
 private def gp (ts : Int) (lat lon : Float) : GpsPoint := ⟨ts, lat, lon, some 20⟩
 private def track : Array GpsPoint := #[
-  gp 0 51.5000 (-0.1000), gp 10 51.5001 (-0.1000), gp 20 51.5002 (-0.1000),
-  gp 30 51.5003 (-0.1001), gp 40 51.5100 (-0.1000), gp 50 51.5004 (-0.1001),
-  gp 60 51.5005 (-0.1002), gp 4000 51.6000 (-0.2000), gp 4010 51.6001 (-0.2001)]
+  gp 0 51.5000 (-38.1000), gp 10 51.5001 (-38.1000), gp 20 51.5002 (-38.1000),
+  gp 30 51.5003 (-38.1001), gp 40 51.5100 (-38.1000), gp 50 51.5004 (-38.1001),
+  gp 60 51.5005 (-38.1002), gp 4000 51.6000 (-38.2000), gp 4010 51.6001 (-38.2001)]
 private def out : Array FilteredPoint := filterGpsTrack track
 private def approxK (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 private def rowOk (f : FilteredPoint) (ts : Int) (lat lon spd brg : Float) : Bool :=
   f.ts == ts && approxK f.lat lat && approxK f.lon lon && approxK f.speedKmh spd && approxK f.bearing brg
 
 #guard out.size == 8                                             -- 9 in, spike gated out
-#guard rowOk out[0]! 0 51.5 (-0.1) 0 0
-#guard rowOk out[1]! 10 51.50009905063291 (-0.1) 4 0
-#guard rowOk out[2]! 20 51.500199899933286 (-0.1) 4 0
-#guard rowOk out[3]! 30 51.500300058631304 (-0.10009182429544923) 4.6 331
-#guard rowOk out[4]! 50 51.50040190162477 (-0.10010327735151499) 1.7 10   -- post-gate
-#guard rowOk out[5]! 60 51.500495664150236 (-0.10019179364539346) 4.4 329
-#guard rowOk out[6]! 4000 51.6 (-0.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
-#guard rowOk out[7]! 4010 51.6001 (-0.2001) 4.7 328
+#guard rowOk out[0]! 0 51.5 (-38.1) 0 0
+#guard rowOk out[1]! 10 51.50009905063291 (-38.1) 4 0
+#guard rowOk out[2]! 20 51.500199899933286 (-38.1) 4 0
+#guard rowOk out[3]! 30 51.500300058631304 (-38.10009182429544923) 4.6 331
+#guard rowOk out[4]! 50 51.50040190162477 (-38.10010327735151499) 1.7 10   -- post-gate
+#guard rowOk out[5]! 60 51.500495664150236 (-38.10019179364539346) 4.4 329
+#guard rowOk out[6]! 4000 51.6 (-38.2) 4.717694629017221 328.1536087263755  -- reset: UNROUNDED
+#guard rowOk out[7]! 4010 51.6001 (-38.2001) 4.7 328
 #guard classifyMode 1.0 == "stationary" && classifyMode 5 == "walking" && classifyMode 20 == "cycling"
 
 -- The velocity-observability bound, which `track` above never reaches. Shape of

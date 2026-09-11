@@ -328,11 +328,11 @@ private def steps1 : List StepPoint :=
 
 /-! ### `bridgeStayRuns` -/
 
-private def HOME : Option (Float × Float) := some (51.5205, -0.1275)
+private def HOME : Option (Float × Float) := some (51.5205, -38.1275)
 /-- ~13 m from HOME. -/
-private def NEAR : Option (Float × Float) := some (51.5206, -0.1276)
+private def NEAR : Option (Float × Float) := some (51.5206, -38.1276)
 /-- ~1.7 km from HOME. -/
-private def FAR : Option (Float × Float) := some (51.53, -0.14)
+private def FAR : Option (Float × Float) := some (51.53, -38.14)
 
 private def quietHr : List HrPoint := [hp (T0 + 3700) 62, hp (T0 + 3750) 63, hp (T0 + 3800) 64]
 private def zeroSteps : List StepPoint := [sp (T0 + 3700) 0, sp (T0 + 3800) 0]

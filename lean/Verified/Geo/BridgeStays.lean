@@ -201,7 +201,7 @@ private def walking (startTs endTs : Int) : Seg :=
 /-- Pizza Union: two stays either side of a 5-minute no-fix gap, same table. -/
 private def pizza : Array Seg := #[stay 0 1200 40, stay 1500 3000 50]
 private def sameSpot : Array (Option (Float × Float)) :=
-  #[some (51.5200, -0.0800), some (51.5200, -0.0800)]
+  #[some (51.5200, -38.0800), some (51.5200, -38.0800)]
 
 /-- Resting HR through the gap, no steps: the merge case. -/
 private def restingHr : Array HrPoint :=
@@ -230,9 +230,9 @@ private def noSteps : Array StepPoint := #[⟨1260, 0⟩, ⟨1320, 0⟩]
 
 -- 280 m apart is not the same place, whatever the biometrics say.
 #guard (bridgeStaysWithBiometrics pizza
-  #[some (51.5200, -0.0800), some (51.5225, -0.0800)] restingHr noSteps).size == 2
+  #[some (51.5200, -38.0800), some (51.5225, -38.0800)] restingHr noSteps).size == 2
 -- A missing centroid cannot be compared, so it cannot merge.
-#guard (bridgeStaysWithBiometrics pizza #[some (51.52, -0.08), none] restingHr noSteps).size == 2
+#guard (bridgeStaysWithBiometrics pizza #[some (51.52, -38.08), none] restingHr noSteps).size == 2
 -- Beyond MAX_GAP_SEC even perfect evidence is not enough.
 #guard (bridgeStaysWithBiometrics #[stay 0 1200, stay 2000 3000] sameSpot
   #[⟨1300, 60⟩, ⟨1400, 60⟩, ⟨1500, 60⟩] noSteps).size == 2
@@ -255,7 +255,7 @@ private def backToBack : Array Seg := #[stay 0 1200 40, stay 1200 2400 50]
 
 -- A non-stationary segment is emitted untouched and breaks any run.
 #guard (bridgeStaysWithBiometrics #[stay 0 1200 40, walking 1200 1500, stay 1500 3000 50]
-  #[some (51.52, -0.08), some (51.52, -0.08), some (51.52, -0.08)] restingHr noSteps).size == 3
+  #[some (51.52, -38.08), some (51.52, -38.08), some (51.52, -38.08)] restingHr noSteps).size == 3
 #guard (bridgeStaysWithBiometrics #[] #[] #[] #[]).size == 0
 #guard (bridgeStaysWithBiometrics #[walking 0 600] #[none] #[] #[]).size == 1
 
@@ -263,6 +263,6 @@ private def backToBack : Array Seg := #[stay 0 1200 40, stay 1200 2400 50]
 -- third ~220 m from the FIRST. Co-location is measured from the run's first
 -- stay, so the third does NOT join — a slow drift down a street stays separate.
 #guard (bridgeStaysWithBiometrics #[stay 0 600 10, stay 600 1200 10, stay 1200 1800 10]
-  #[some (51.5200, -0.0800), some (51.5210, -0.0800), some (51.5220, -0.0800)] #[] #[]).size == 2
+  #[some (51.5200, -38.0800), some (51.5210, -38.0800), some (51.5220, -38.0800)] #[] #[]).size == 2
 
 end Verified.Geo.BridgeStays

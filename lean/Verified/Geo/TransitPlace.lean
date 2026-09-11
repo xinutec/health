@@ -208,7 +208,7 @@ private def md (mode : Mode) (refinedMode : Option Mode := none) : Seg :=
 private def alight (prev : Option Seg)
     (lookup : Float → Float → Float → Array NearbyStation := two)
     (radiusM : Float := STATION_AT_ALIGHT_RADIUS_M) : Option String :=
-  stationAtTrainAlight prev 51.5 (-0.2) lookup radiusM
+  stationAtTrainAlight prev 51.5 (-38.2) lookup radiusM
 
 #guard alight none == none
 #guard alight (some (md "walking")) == none
@@ -244,7 +244,7 @@ private def withAt (segs : Array Seg) (i : Nat) (s : Seg) : Array Seg := segs.se
 private def ix (segs : Array Seg) (i : Int)
     (lookup : Float → Float → Float → Array NearbyStation := two)
     (focusDays : Option Int := none) : Option String :=
-  stationAtTransitInterchange segs i 51.5 (-0.2) lookup STATION_AT_ALIGHT_RADIUS_M focusDays
+  stationAtTransitInterchange segs i 51.5 (-38.2) lookup STATION_AT_ALIGHT_RADIUS_M focusDays
 
 #guard ix direct 1 == some "Near"
 #guard ix viaWalk 2 == some "Near"

@@ -471,7 +471,7 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
 /-! ## Reference values
 
 Pinned against Node/V8 (`lean/experiments/underground-annotate-refs.mts`). The
-synthetic frame is the journey harness's: metres north of `51.52, -0.13`, with
+synthetic frame is the journey harness's: metres north of `51.52, -38.13`, with
 three station zones and way names that differ by zone so a leaked side label
 would be visible.
 -/

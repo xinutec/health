@@ -203,7 +203,7 @@ private def DEMOTED (startTs : Int) (mode : Mode) : Int × Mode × Option Mode �
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving", sg 200 300 "stationary"])
   == #[(100, "driving", none, none), (200, "stationary", none, none)]
 -- Any claim at all exempts it: a matched road, a named street, a bus route.
-#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := some #[⟨51.52, -0.13, 100⟩])])
+#guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (matchedPath := some #[⟨51.52, -38.13, 100⟩])])
   == #[(100, "driving", none, none)]
 #guard iview (resolveVehicleIdentity #[sg 100 200 "driving" (some "Euston Road")])
   == #[(100, "driving", none, none)]

@@ -380,7 +380,7 @@ private def tr (a b : Int) (wayName : Option String) (pointCount : Int := 10)
   { blank with
     startTs := a, endTs := b, mode := mode, refinedMode := refinedMode, wayName := wayName,
     pointCount := pointCount, avgSpeed := avgSpeed, maxSpeed := maxSpeed, linearity := linearity,
-    snappedPath := if snapped then some #[⟨51.52, -0.13, 0⟩] else none }
+    snappedPath := if snapped then some #[⟨51.52, -38.13, 0⟩] else none }
 
 private def mview (out : Array Seg) : Array (Int × Int × Int × Float × Float × Float × Option String × Bool) :=
   out.map fun s => (s.startTs, s.endTs, s.pointCount, s.avgSpeed, s.maxSpeed, s.linearity, s.wayName,

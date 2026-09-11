@@ -633,9 +633,9 @@ private def mkFixes (startTs : Int) (n : Nat) (stepSec : Int) (lat lon : Float) 
 -- A run needs at least two fixes.
 #guard detectKnownPlaceStays (mkFixes T0 1 120 HOME_LAT HOME_LON) [homePlace] == []
 -- A cluster that snaps to nothing is dropped, not surfaced unnamed.
-#guard detectKnownPlaceStays (mkFixes T0 10 120 51.6 (-0.3)) [homePlace] == []
+#guard detectKnownPlaceStays (mkFixes T0 10 120 51.6 (-38.3)) [homePlace] == []
 #guard (detectKnownPlaceStays
-  (mkFixes T0 10 120 HOME_LAT HOME_LON ++ mkFixes (T0+5000) 10 120 51.6 (-0.3)) [homePlace]).length == 1
+  (mkFixes T0 10 120 HOME_LAT HOME_LON ++ mkFixes (T0+5000) 10 120 51.6 (-38.3)) [homePlace]).length == 1
 -- The closer of two in-range places wins.
 #guard (detectKnownPlaceStays (mkFixes T0 10 120 HOME_LAT HOME_LON)
   [{ centroidLat := HOME_LAT + 0.0003, centroidLon := HOME_LON, displayName := some "Farther" },

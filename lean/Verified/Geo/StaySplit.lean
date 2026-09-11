@@ -275,7 +275,7 @@ def shedVehiclePedestrianEdges (segments : Array Seg) (points : Array PointF)
 /-! ### Reference values
 
 Pinned against Node/V8 (`lean/experiments/shed-edges-refs.mts`). Frame: metres
-north of `51.52, -0.13`.
+north of `51.52, -38.13`.
 -/
 
 section ShedGuards

@@ -570,9 +570,9 @@ private def burst : List StepPoint := sp (T0 + 120) 95 :: steady 0
 -- 2026-06-17 Bloomsbury Surgery dwell).
 private def dwell : LabelSeg := { stroll with endTs := T0 + 12 * 60 }
 private def tight : List Fix :=
-  [⟨T0, 51.5200, -0.1300⟩, ⟨T0 + 300, 51.5202, -0.1301⟩, ⟨T0 + 700, 51.5201, -0.1299⟩]
+  [⟨T0, 51.5200, -38.1300⟩, ⟨T0 + 300, 51.5202, -38.1301⟩, ⟨T0 + 700, 51.5201, -38.1299⟩]
 private def spread : List Fix :=
-  [⟨T0, 51.5200, -0.1300⟩, ⟨T0 + 300, 51.5240, -0.1360⟩, ⟨T0 + 700, 51.5280, -0.1420⟩]
+  [⟨T0, 51.5200, -38.1300⟩, ⟨T0 + 300, 51.5240, -38.1360⟩, ⟨T0 + 700, 51.5280, -38.1420⟩]
 private def burst12 : List StepPoint := sp (T0 + 120) 95 :: steady 0 12
 
 #guard correctStationaryWalkThrough dwell burst12 tight == .keep

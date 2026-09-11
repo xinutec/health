@@ -298,14 +298,14 @@ private def approxC (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 
 private def walkLeg : List FeasibilityLeg := [⟨0, 200, "walking", none⟩]
 private def fastFixes : List FeasibilityFix :=
-  [⟨0, 51.5000, -0.1000⟩, ⟨30, 51.5053, -0.1000⟩, ⟨60, 51.5106, -0.1000⟩, ⟨90, 51.5159, -0.1000⟩]
+  [⟨0, 51.5000, -38.1000⟩, ⟨30, 51.5053, -38.1000⟩, ⟨60, 51.5106, -38.1000⟩, ⟨90, 51.5159, -38.1000⟩]
 #guard checkWorldlineFeasibility walkLeg (some fastFixes) ==
   [⟨"impossible-mode-kinematics", 0, 200,
     "walking leg sustains a vehicle-paced run: 1768 m net over 3 consecutive fast steps (peak 71 km/h) — not physically walking"⟩]
 
 private def trainLeg : List FeasibilityLeg := [⟨0, 200, "train", some "A → A"⟩]
 private def slowFixes : List FeasibilityFix :=
-  [⟨0, 51.5000, -0.1000⟩, ⟨60, 51.5008, -0.1000⟩, ⟨120, 51.5016, -0.1000⟩, ⟨180, 51.5024, -0.1000⟩]
+  [⟨0, 51.5000, -38.1000⟩, ⟨60, 51.5008, -38.1000⟩, ⟨120, 51.5016, -38.1000⟩, ⟨180, 51.5024, -38.1000⟩]
 private def walkCadence : List FeasibilityStepPoint := [⟨0, 100⟩, ⟨60, 100⟩, ⟨120, 100⟩]
 #guard checkWorldlineFeasibility trainLeg (some slowFixes) (some walkCadence) ==
   [⟨"impossible-mode-kinematics", 0, 200,

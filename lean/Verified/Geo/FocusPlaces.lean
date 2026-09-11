@@ -735,17 +735,17 @@ private def workdays (n : Nat) (lat lon : Float) : List Stay := Id.run do
   return out.toList
 
 private def homeC : Cluster := mkCluster 1 HOME_LAT HOME_LON (nightly 40)
-private def workC : Cluster := mkCluster 2 51.53 (-0.13) (workdays 25 51.53 (-0.13))
+private def workC : Cluster := mkCluster 2 51.53 (-38.13) (workdays 25 51.53 (-38.13))
 
 #guard classifyClusterLabel homeC == "home"
 #guard classifyClusterLabel workC == "work"
 #guard classifyClusterLabel (mkCluster 3 40.7 (-74) (nightly 6 40.7 (-74))) == "hotel"
 #guard classifyClusterLabel (mkCluster 4 48.8 2.3 [mkStay 48.8 2.3 (DAY0 + 13 * 3600) 7200]) == "one-off"
-#guard classifyClusterLabel (mkCluster 5 51.51 (-0.12)
-        ((List.range 8).map (fun i => mkStay 51.51 (-0.12) (DAY0 + Int.ofNat i * 5 * 86400 + 13 * 3600) 5400)))
+#guard classifyClusterLabel (mkCluster 5 51.51 (-38.12)
+        ((List.range 8).map (fun i => mkStay 51.51 (-38.12) (DAY0 + Int.ofNat i * 5 * 86400 + 13 * 3600) 5400)))
        == "frequent"
-#guard classifyClusterLabel (mkCluster 6 51.51 (-0.12)
-        ((List.range 4).map (fun i => mkStay 51.51 (-0.12) (DAY0 + Int.ofNat i * 2 * 86400 + 13 * 3600) 5400)))
+#guard classifyClusterLabel (mkCluster 6 51.51 (-38.12)
+        ((List.range 4).map (fun i => mkStay 51.51 (-38.12) (DAY0 + Int.ofNat i * 2 * 86400 + 13 * 3600) 5400)))
        == "other"
 
 /-! ### Display names -/
@@ -754,8 +754,8 @@ private def workC : Cluster := mkCluster 2 51.53 (-0.13) (workdays 25 51.53 (-0.
        == [(1, "Home"), (2, "Work"), (7, "Stay")]
 #guard assignDisplayNames [homeC] == [(1, "Home")]
 -- A handful of afternoon visits earns no name at all.
-#guard assignDisplayNames [mkCluster 9 51.51 (-0.12)
-        ((List.range 4).map (fun i => mkStay 51.51 (-0.12) (DAY0 + Int.ofNat i * 2 * 86400 + 13 * 3600) 5400))]
+#guard assignDisplayNames [mkCluster 9 51.51 (-38.12)
+        ((List.range 4).map (fun i => mkStay 51.51 (-38.12) (DAY0 + Int.ofNat i * 2 * 86400 + 13 * 3600) 5400))]
        == []
 
 /-! ### `pickWinningAmenity` -/
@@ -814,7 +814,7 @@ private def cafeResidence : Cluster :=
 private def dayPoints : List RawPoint :=
   (List.range 3).flatMap (fun d =>
     stationaryPoints HOME_LAT HOME_LON (DAY0 + Int.ofNat d * 86400) (DAY0 + Int.ofNat d * 86400 + 6 * 3600)
-    ++ stationaryPoints 51.53 (-0.13) (DAY0 + Int.ofNat d * 86400 + 9 * 3600)
+    ++ stationaryPoints 51.53 (-38.13) (DAY0 + Int.ofNat d * 86400 + 9 * 3600)
          (DAY0 + Int.ofNat d * 86400 + 17 * 3600))
 
 -- Ids are assigned before the dwell sort, so the busier cluster keeps id 2.
