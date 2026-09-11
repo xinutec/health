@@ -35,7 +35,14 @@ export interface SleepLog {
 }
 
 export interface SleepStage {
+  /**
+   * The WALL CLOCK the stage was lived on — what the watch showed. Carries a
+   * "Z" suffix the API adds to every DATETIME; it is not UTC (#340). Use it for
+   * labels, never for arithmetic.
+   */
   ts: string;
+  /** The true instant. Use this for any duration, position or comparison. */
+  ts_utc: string | null;
   stage: string;
   duration_seconds: number;
 }

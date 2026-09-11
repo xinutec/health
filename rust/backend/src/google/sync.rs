@@ -817,6 +817,19 @@ pub async fn sync_sleep(
             // sat at the start day's `date` with `is_main_sleep = 0` while
             // Google reported the end day and 1, agreeing on every other column.
             // A night the dashboard cannot see, because it selects on both.
+            //
+            // ⚠ `end_time_utc` OVERWRITES for exactly that reason, and freezing
+            // it was the same defect one column over (#340). The revision above
+            // moves `end_time` and `duration_ms`; a COALESCE that kept the first
+            // `end_time_utc` pinned the in-progress instant beside a corrected
+            // wall clock, and the two then disagreed forever. Measured
+            // 2026-09-11 on the three most recent nights: the ends were frozen
+            // 612, 51 and 33 minutes early while `duration_ms` matched the wall
+            // clock exactly. It cannot go null when `end_time` does not —
+            // `parse_sleep_point` takes both from `interval.endTime` under one
+            // `?`, so there is no null to preserve. `start_time_utc` keeps the
+            // COALESCE because `start_time` is not revised either: a start is
+            // observed once.
             "INSERT INTO sleep (user_id, log_id, date, start_time, end_time, duration_ms, \
              efficiency, minutes_asleep, minutes_awake, minutes_deep, minutes_light, \
              minutes_rem, minutes_wake, is_main_sleep, tz, start_time_utc, end_time_utc) \
@@ -828,7 +841,7 @@ pub async fn sync_sleep(
              minutes_deep=VALUES(minutes_deep), minutes_light=VALUES(minutes_light), \
              minutes_rem=VALUES(minutes_rem), minutes_wake=VALUES(minutes_wake), \
              start_time_utc=COALESCE(start_time_utc, VALUES(start_time_utc)), \
-             end_time_utc=COALESCE(end_time_utc, VALUES(end_time_utc))",
+             end_time_utc=VALUES(end_time_utc)",
         )
         .bind(user_id)
         .bind(s.log_id)

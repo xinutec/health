@@ -213,10 +213,35 @@ pub async fn sync_sleep(
     for log in &parsed.sleep {
         let r = parse_sleep_log(log, tz_for);
         sqlx::query(
-            // `tz` and the two UTC columns COALESCE-preserve so a backfill that
-            // later learns the zone can fill a null, while a re-sync with no tz
-            // cannot erase one. Everything else overwrites: Fitbit revises a
-            // recent night's figures and the newer answer is the right one.
+            // Everything overwrites: Fitbit revises a recent night's figures and
+            // the newer answer is the right one. `tz` and the two instants
+            // derived from it use `COALESCE(new, old)` rather than plain
+            // `VALUES()` so that a re-sync which learns NO zone derives `None`
+            // and preserves what is stored — the original reason they were
+            // singled out — while a sync that does learn one may correct it.
+            //
+            // ⚠ THE TWO UTC COLUMNS MUST TRACK THE WALL CLOCKS THEY DERIVE FROM
+            // (#340). All three used to be `COALESCE(old, new)`, which
+            // freezes the FIRST answer — and `start_time` and
+            // `end_time` are both revised two lines above, so the derived
+            // instant stayed pinned to a superseded wall clock and the pair
+            // silently disagreed forever. Measured against production
+            // 2026-09-11: 44 of 1268 sessions carry an end whose offset differs
+            // from its own start's, 4 of them a real DST night and 40 of them
+            // this, written here while `tz IS NOT NULL`.
+            //
+            // `COALESCE(new, old)` — the argument order is the whole fix —
+            // keeps the stated intent while letting a revision through.
+            //
+            // ⚠ `tz` MOVES WITH THEM, and it has to. Leaving `tz` frozen while
+            // the instants it derives from it overwrite lets a row state zone A
+            // and carry an instant computed from zone B — a contradiction the
+            // old code could not produce, so fixing one column and not the
+            // other would have traded a stale value for an incoherent one.
+            // ⚠ `heartrate.rs` and `steps.rs` deliberately keep the OLD rule:
+            // their `ts` is in the primary key and is never revised, so nothing
+            // there can go stale, and the audit measured 0 of 32.5M rows
+            // contradicting their own tz.
             "INSERT INTO sleep (user_id, log_id, date, start_time, end_time, duration_ms, \
              efficiency, minutes_asleep, minutes_awake, minutes_deep, minutes_light, \
              minutes_rem, minutes_wake, is_main_sleep, tz, start_time_utc, end_time_utc) \
@@ -227,9 +252,9 @@ pub async fn sync_sleep(
              minutes_asleep=VALUES(minutes_asleep), minutes_awake=VALUES(minutes_awake), \
              minutes_deep=VALUES(minutes_deep), minutes_light=VALUES(minutes_light), \
              minutes_rem=VALUES(minutes_rem), minutes_wake=VALUES(minutes_wake), \
-             is_main_sleep=VALUES(is_main_sleep), tz=COALESCE(tz, VALUES(tz)), \
-             start_time_utc=COALESCE(start_time_utc, VALUES(start_time_utc)), \
-             end_time_utc=COALESCE(end_time_utc, VALUES(end_time_utc))",
+             is_main_sleep=VALUES(is_main_sleep), tz=COALESCE(VALUES(tz), tz), \
+             start_time_utc=COALESCE(VALUES(start_time_utc), start_time_utc), \
+             end_time_utc=COALESCE(VALUES(end_time_utc), end_time_utc)",
         )
         .bind(user_id)
         .bind(r.log_id)

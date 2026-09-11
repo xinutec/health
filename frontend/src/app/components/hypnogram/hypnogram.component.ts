@@ -1,7 +1,7 @@
 import { Component, effect, ElementRef, input, type OnDestroy, signal, viewChild, ChangeDetectionStrategy } from "@angular/core";
 import { MatCardModule } from "@angular/material/card";
 import type { SleepStage } from "../../services/health.service";
-import { localEpoch } from "../../time-utils";
+import { rowInstant, wallClockAt, wallOffsetMs } from "../../time-utils";
 
 // Y positions: Awake at top, Deep at bottom
 const STAGE_Y: Record<string, number> = {
@@ -57,16 +57,29 @@ export class HypnogramComponent implements OnDestroy {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      // Compute time range (local time, not UTC). Each stage runs until
-      // the NEXT stage begins — Fitbit's stages partition the night.
-      // duration_seconds is unreliable: at a timezone boundary a watch
-      // clock shift can inflate it (one travel night stored an 86-min
-      // "wake" where only 26 min was real), which would draw stages
-      // overlapping. Derive every stage end from the next stage's
-      // start; only the final stage falls back to its own duration.
-      const firstTime = localEpoch(data[0].ts);
+      // GEOMETRY IN TRUE INSTANTS, LABELS IN WALL CLOCK (#340).
+      //
+      // `ts` is the watch's wall clock wearing a "Z" the API puts on every
+      // DATETIME; `ts_utc` beside it is the real instant. Doing the arithmetic
+      // on `ts` used to need a repair here — strip the Z, rebuild a Date, and
+      // distrust duration_seconds, because a clock shift mid-night inflates a
+      // wall-clock difference (one travel night stored an 86-min "wake" where
+      // only 26 was real). On instants that distortion cannot arise, so the
+      // repair is gone and the stage ends are simply the next stage's start.
+      //
+      // ⚠ The fallback is a DEGRADATION, not a default: without `ts_utc` the
+      // wall clock is read as though it were UTC, which reproduces the old
+      // geometry exactly — correct on an ordinary night, wrong by the shift on
+      // a night he changed zones. Measured 2026-09-11: 0 of 37718 stage rows
+      // in production lack `ts_utc`, so this is for old payloads only.
+      const instant = (s: SleepStage): number => rowInstant(s.ts, s.ts_utc);
+      // wall − instant, the zone offset the night was lived on. Applied to an
+      // interpolated instant it recovers the clock he actually saw.
+      const wallOffset = (s: SleepStage): number => wallOffsetMs(s.ts, s.ts_utc);
+
+      const firstTime = instant(data[0]);
       const stageEnds = data.map((s, i) =>
-        i < data.length - 1 ? localEpoch(data[i + 1].ts) : localEpoch(s.ts) + s.duration_seconds * 1000,
+        i < data.length - 1 ? instant(data[i + 1]) : instant(s) + s.duration_seconds * 1000,
       );
       const totalMs = stageEnds[stageEnds.length - 1] - firstTime;
 
@@ -102,7 +115,7 @@ export class HypnogramComponent implements OnDestroy {
       // Draw each stage as a filled rectangle in its lane
       for (let i = 0; i < data.length; i++) {
         const stage = data[i];
-        const stageStart = localEpoch(stage.ts);
+        const stageStart = instant(stage);
         const stageEnd = stageEnds[i];
 
         const x1 = ((stageStart - firstTime) / totalMs) * w;
@@ -137,16 +150,18 @@ export class HypnogramComponent implements OnDestroy {
         }
       }
 
-      // Time labels — use formatLocalTime for first/last, interpolate for middle
+      // Time labels — the wall clock of the stage each tick lands in, so a
+      // night that crossed a zone reads the way it was lived rather than the
+      // way one end of it was. Formatting is via the UTC accessors on purpose:
+      // the offset is already in `ms`, and using the local ones would add the
+      // VIEWER's zone on top of the sleeper's.
       const labelCount = 6;
-      // For interpolated labels, use the local epoch (already local time)
       const labels: string[] = [];
       for (let i = 0; i <= labelCount; i++) {
-        const ms = firstTime + (totalMs * i) / labelCount;
-        const d = new Date(ms);
-        const hh = d.getHours().toString().padStart(2, "0");
-        const mm = d.getMinutes().toString().padStart(2, "0");
-        labels.push(`${hh}:${mm}`);
+        const at = firstTime + (totalMs * i) / labelCount;
+        let k = 0;
+        while (k < data.length - 1 && stageEnds[k] <= at) k++;
+        labels.push(wallClockAt(at, wallOffset(data[k])));
       }
       this.timeLabels.set(labels);
     });
