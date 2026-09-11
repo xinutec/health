@@ -9,8 +9,9 @@ rendering the real page refuted them (#1280).
 #919 is what a document of line numbers becomes. Every entry names a definition
 you can grep for by name.
 
-⚠ **The nine STATE fields are mapped. Of the 25 SEGMENT fields, seven are
-established and five are shown NOT to have a single producer** — see the end.
+⚠ **All nine STATE fields and all 25 SEGMENT fields are covered** — but five of
+the segment fields are covered by SHOWING they have no single producer, which is
+the answer, not a gap. See the end.
 
 ## The entry point
 
@@ -100,6 +101,38 @@ module.
 | `needsReenrich` | `StaySplit` sets it; `PassFold` consumes and clears it | `reenrichSplitWalks` |
 | `needsRename` | `StaySplit` sets it; `PassFold` clears it and re-reads `wayName` | `reenrichSplitWalks` |
 | `roadCorridorFraction` | `Enrich`, via `Velocity.computeRoadNearestFraction`; `orElse` keeps an earlier value | the enrich fold |
+
+### Born before the fold, then blended
+
+⚠ **Ten fields are NOT produced by a pass at all.** They are built by
+`Verified.Geo.Segments.classifySegments`, which turns filtered points into the
+segment list the fold then operates on — so the fold's job for these is to
+MERGE them, not to decide them.
+
+| field | born in | changed after by |
+| --- | --- | --- |
+| `startTs` / `endTs` | `classifySegments` (window bounds) | every pass that splits or merges |
+| `mode` | `classifySegments` (the classifier's verdict) | many passes — see the five below |
+| `confidence` | `classifySegments`, mean of normalised scores | `SegmentMerge` blends on merge; `Enrich` applies `roadSupportedConfidence` |
+| `confidenceMargin` | `classifySegments`, mean of the score margins | `SegmentMerge` blends on merge |
+| `avgSpeed` | `classifySegments`, median of window medians | blended on merge |
+| `maxSpeed` | `classifySegments`, max over windows | blended on merge |
+| `linearity` | `classifySegments`, mean over windows | `RailReconcile` re-blends when it joins rail legs |
+| `pointCount` | `classifySegments`, sum over windows | summed on merge |
+
+So a question about one of these is usually a question about the CLASSIFIER, not
+about a pass — and looking for a pass that "sets avgSpeed" finds only the merge
+arithmetic, which is the confidently-wrong answer for anyone asking why the
+number is what it is.
+
+### The rest
+
+| field | decided by |
+| --- | --- |
+| `centroidLat` / `centroidLon` | `SegmentMerge`, from the merged stay's recomputed centroid |
+| `city` | `StayEnrich` sets it; ⚠ `SegmentMerge` CLEARS it when two segments disagree, so an absent city can mean "merged across a boundary" rather than "unknown" |
+| `vehicleKind` | `Bus` sets `some "bus"`; `PlaceOverride` clears it. The `busEvidence` / `busRoutes` passes |
+| `refinedKinds` | `SegmentMerge`, set to `["gps-jitter"]` when the merge was a jitter collapse |
 
 ⚠ `needsReenrich` and `needsRename` are FLAGS THE FOLD CONSUMES. They ship, but
 a served `true` means the fold did not get to clear it — which is a signal about
