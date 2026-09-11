@@ -21,7 +21,7 @@
 
 import { TestBed } from "@angular/core/testing";
 import { describe, expect, it } from "vitest";
-import type { DayState } from "../../services/health.service";
+import type { DayState, ServedJourney } from "../../services/health.service";
 import { TimelineComponent } from "./timeline.component";
 
 let cursor = 1_700_000_000; // arbitrary fixed epoch; tests are relative
@@ -38,9 +38,24 @@ function state(mode: DayState["mode"], minutes: number, extra: Partial<DayState>
 	return { startTs, endTs, mode, tz: "Europe/London", ...extra };
 }
 
-function setup(states: DayState[]) {
+/** Build the fixture with the journeys the BACKEND would have served.
+ *
+ *  The grouping rule lives in `Verified.Geo.ServedJourneys` now, so a test here
+ *  STATES which states form a journey rather than recomputing it — recomputing
+ *  would put a third copy of the rule in the tree, which is the thing #339 is
+ *  about. Spans are inclusive state indices. */
+function setup(states: DayState[], journeySpans: [number, number][] = []) {
+	const journeys: ServedJourney[] = journeySpans.map(([from, to]) => ({
+		startTs: states[from].startTs,
+		endTs: states[to].endTs,
+		legs: states.slice(from, to + 1).map((s) => ({
+			startTs: s.startTs,
+			endTs: s.endTs,
+			mode: s.mode,
+		})),
+	}));
 	const fixture = TestBed.createComponent(TimelineComponent);
-	fixture.componentRef.setInput("data", { segments: [], states });
+	fixture.componentRef.setInput("data", { segments: [], states, journeys });
 	fixture.componentRef.setInput("referenceDate", null);
 	fixture.detectChanges();
 	return fixture;
@@ -64,7 +79,7 @@ function commuteDay(): DayState[] {
 
 describe("TimelineComponent journey grouping", () => {
 	it("collapses a walk/train/walk run into one journey naming the destination", () => {
-		const fixture = setup(commuteDay());
+		const fixture = setup(commuteDay(), [[2, 4]]);
 		const c = fixture.componentInstance;
 
 		const journeys = c.rows().filter((r) => r.kind === "journey");
@@ -90,7 +105,7 @@ describe("TimelineComponent journey grouping", () => {
 			state("bus", 12, { wayName: "Route 24" }),
 			state("walking", 4),
 			state("stationary", 30, { place: "Work" }),
-		]);
+		], [[1, 5]]);
 		const c = fixture.componentInstance;
 		const j = c.rows().find((r) => r.kind === "journey");
 		// Two trains collapse to one "Train"; bus kept; walks dropped.
@@ -98,7 +113,7 @@ describe("TimelineComponent journey grouping", () => {
 	});
 
 	it("keeps visits as their own rows and does not fold a lone leg", () => {
-		const fixture = setup(commuteDay());
+		const fixture = setup(commuteDay(), [[2, 4]]);
 		const c = fixture.componentInstance;
 
 		const kinds = c.rows().map((r) => r.kind);
@@ -112,7 +127,7 @@ describe("TimelineComponent journey grouping", () => {
 	});
 
 	it("defaults collapsed; toggle reveals exactly the legs", () => {
-		const fixture = setup(commuteDay());
+		const fixture = setup(commuteDay(), [[2, 4]]);
 		const c = fixture.componentInstance;
 
 		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Barn Rise");
@@ -138,7 +153,7 @@ describe("TimelineComponent journey grouping", () => {
 			state("walking", 5),
 			state("bus", 15, { wayName: "Route 12" }),
 			state("stationary", 30, { place: "Gym" }),
-		]);
+		], [[1, 2], [4, 5]]);
 		const c = fixture.componentInstance;
 
 		expect(c.journeyCount()).toBe(2);
@@ -177,7 +192,7 @@ describe("TimelineComponent journey grouping", () => {
 			state("walking", 10),
 			state("train", 15, { wayName: "A → B", inferred: true }),
 			state("stationary", 60, { place: "Work" }),
-		]);
+		], [[1, 2]]);
 		const c = fixture.componentInstance;
 		const j = c.rows().find((r) => r.kind === "journey");
 		expect(j?.kind === "journey" && j.journey.inferred).toBe(true);

@@ -188,6 +188,27 @@ export function displayTzAt(segments: readonly TrackSegment[] | undefined, ts: n
   return nearest?.displayTz;
 }
 
+/** One leg of a journey, as the backend assembles it
+ *  (`Verified.Geo.ServedJourneys`). */
+export interface JourneyLeg {
+  startTs: number;
+  endTs: number;
+  mode: string;
+  line?: string | null;
+  board?: string | null;
+  alight?: string | null;
+}
+
+/** A run of travelling states the timeline collapses into one row. Assembled
+ *  server-side so the client does not carry a second grouping rule (#230); the
+ *  two were measured to agree on every replayable golden day before the
+ *  client's copy was deleted. */
+export interface ServedJourney {
+  startTs: number;
+  endTs: number;
+  legs: JourneyLeg[];
+}
+
 export interface VelocityData {
   points: VelocityPoint[];
   /** The raw, accuracy-bearing GPS fixes the map-matcher consumes — the input
@@ -211,6 +232,10 @@ export interface VelocityData {
    *  sync, from `device_battery_log`. Plotted as a second series on the same
    *  chart. Optional + possibly empty (history builds going forward). */
   watchBattery?: BatterySample[];
+  /** The collapsible journeys, assembled by the backend. Optional so an older
+   *  backend that omits them leaves the timeline as flat rows rather than
+   *  breaking. */
+  journeys?: ServedJourney[];
   /** Per-phase wall-clock ms from the server-side classification pipeline. */
   timing?: Record<string, number>;
 }

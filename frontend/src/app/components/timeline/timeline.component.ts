@@ -2,10 +2,13 @@ import { Component, computed, input, signal, ChangeDetectionStrategy } from "@an
 import { NgTemplateOutlet } from "@angular/common";
 import { MatCardModule } from "@angular/material/card";
 import { MatIconModule } from "@angular/material/icon";
-import { isMoving, modeStyle } from "../../modes";
-import type { DayState, TrackSegment, VelocityData } from "../../services/health.service";
+import { modeStyle } from "../../modes";
+import type { DayState, ServedJourney, TrackSegment, VelocityData } from "../../services/health.service";
 
 interface TimelineEntry {
+  /** The state's own start instant — what a served journey's span is matched
+   *  against, since the labels are already localised and cannot be compared. */
+  startTs: number;
   startLabel: string;
   /** Day-offset annotation (e.g. "−1d", "+1d") when the state's
    *  start falls on a different calendar day than referenceDate;
@@ -79,7 +82,7 @@ export class TimelineComponent {
     } else {
       flat = this.buildRowsFromSegments(v.segments);
     }
-    return this.coalesceJourneys(flat);
+    return this.applyServedJourneys(flat, v?.journeys ?? []);
   });
 
   /** How many collapsible journeys the current day has — drives the
@@ -119,36 +122,46 @@ export class TimelineComponent {
    *  toggle-all control flips to "Collapse all" in that case. */
   readonly anyExpanded = computed(() => this.expanded().size > 0);
 
-  /** Fold each run of ≥2 consecutive moving entry-rows into one journey
-   *  row, preserving the legs for on-demand expand. Visits, city
-   *  headers, `unknown` gaps, and lone single-leg moves pass through
-   *  untouched — a city change or a visit between two transit legs sits
-   *  as a non-moving row and so naturally breaks a run. */
-  private coalesceJourneys(rows: TimelineRow[]): TimelineRow[] {
+  /** Fold the entry rows a SERVED journey spans into one collapsible row.
+   *
+   *  The grouping rule itself lives in the backend now
+   *  (`Verified.Geo.ServedJourneys`) — this only binds its answer to rows.
+   *  The client used to decide for itself which runs collapsed, which made it a
+   *  second copy of a backend rule (#339) that could drift from the first. The
+   *  two were measured to agree on every replayable golden day — 102 journeys
+   *  each, none differing — before this replaced the copy (#230).
+   *
+   *  Rows are matched on the state's own `startTs`, which is why
+   *  `TimelineEntry` carries one: the labels are already localised, so they
+   *  cannot be compared against a span.
+   *
+   *  ⚠ An absent or empty `journeys` leaves every row flat rather than falling
+   *  back to a local rule. That is deliberate — a second rule kept "just for
+   *  the fallback" is the thing this removes — and it is what the
+   *  segments-only path (no states, so no journeys) now renders. */
+  private applyServedJourneys(rows: TimelineRow[], journeys: ServedJourney[]): TimelineRow[] {
+    if (journeys.length === 0) return rows;
+    const spanOf = (e: TimelineEntry) =>
+      journeys.find((j) => e.startTs >= j.startTs && e.startTs < j.endTs);
     const out: TimelineRow[] = [];
     let journeyIdx = 0;
     let i = 0;
     while (i < rows.length) {
       const r = rows[i];
-      if (r.kind === "entry" && isMoving(r.entry.mode)) {
-        const legs: TimelineEntry[] = [];
-        let j = i;
-        while (j < rows.length) {
-          const rj = rows[j];
-          if (rj.kind !== "entry" || !isMoving(rj.entry.mode)) break;
-          legs.push(rj.entry);
-          j++;
-        }
-        if (legs.length >= 2) {
-          out.push({ kind: "journey", journey: this.buildJourney(legs, journeyIdx++) });
-        } else {
-          out.push(r); // lone leg — no benefit to hiding its way-name behind a click
-        }
-        i = j;
-      } else {
+      const j = r.kind === "entry" ? spanOf(r.entry) : undefined;
+      if (!j) {
         out.push(r);
         i++;
+        continue;
       }
+      const legs: TimelineEntry[] = [];
+      while (i < rows.length) {
+        const ri = rows[i];
+        if (ri.kind !== "entry" || spanOf(ri.entry) !== j) break;
+        legs.push(ri.entry);
+        i++;
+      }
+      out.push({ kind: "journey", journey: this.buildJourney(legs, journeyIdx++) });
     }
     return out;
   }
@@ -254,6 +267,7 @@ export class TimelineComponent {
     }
 
     return {
+      startTs: state.startTs,
       startLabel,
       startDayOffset,
       endLabel,
@@ -307,6 +321,7 @@ export class TimelineComponent {
     }
 
     return {
+      startTs: s.startTs,
       startLabel,
       startDayOffset: "",
       endLabel,
