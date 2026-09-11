@@ -83,6 +83,7 @@ import Verified.Geo.PlacePrior
 import Verified.Geo.FocusPlaces
 import Verified.Geo.BiometricWindows
 import Verified.Geo.BiometricLabels
+import Verified.Geo.ServedJourneys
 import Verified.Geo.DayChain
 import Verified.Geo.DayState
 import Verified.Geo.Factors

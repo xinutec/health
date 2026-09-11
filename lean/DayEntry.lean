@@ -749,6 +749,25 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
     ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),
     ("inferred", match s.inferred with | none => Json.null | some b => Json.bool b)]
 
+/-- One leg of an assembled journey. Optional fields ride as `null` rather
+than being omitted, the same convention `stateJson` uses one structure over. -/
+private def legJson (l : Verified.Eval.Journeys.Leg) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson l.startTs), ("endTs", Lean.toJson l.endTs),
+    ("mode", Json.str l.mode), ("line", jOptS l.line),
+    ("board", jOptS l.board), ("alight", jOptS l.alight)]
+
+/-- A run of travelling states the timeline collapses into one row.
+
+⚠ ASSEMBLED HERE rather than in the client, which is the point of #229: the
+frontend still folds its own (`coalesceJourneys`) and #230 deletes that once
+this is read. While both exist, a disagreement between them is a FINDING —
+do not reconcile it by tuning the client. -/
+private def journeyJson (j : Verified.Eval.Journeys.Journey) : Json :=
+  Json.mkObj [
+    ("startTs", Lean.toJson j.startTs), ("endTs", Lean.toJson j.endTs),
+    ("legs", Json.arr (j.legs.map legJson))]
+
 private def episodeJson (e : Verified.Geo.EpisodeGeometry.Episode) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson e.startTs), ("endTs", Lean.toJson e.endTs),
@@ -859,6 +878,8 @@ def dayResult (j : Json) : Json :=
       ("segs", Json.arr (out.map segJson)),
       ("states", Json.arr (states.map stateJson)),
       ("episodes", Json.arr (episodes.map episodeJson)),
+      ("journeys", Json.arr
+        ((Verified.Geo.ServedJourneys.servedJourneys states).map journeyJson)),
       ("passes", Json.arr ((Verified.Geo.PassFold.passNames env).map Json.str)),
       ("changed", Json.arr ((changedPasses segs trace).map Json.str)),
       ("unfed", Json.arr (UNFED.map Json.str))]
@@ -983,6 +1004,7 @@ def chainNoEncode (j : Json) : Json :=
       ("nSegs", Lean.toJson out.size),
       ("nStates", Lean.toJson states.size),
       ("nEpisodes", Lean.toJson episodes.size),
+      ("nJourneys", Lean.toJson (Verified.Geo.ServedJourneys.servedJourneys states).size),
       ("nChanged", Lean.toJson (changedPasses segs trace).size),
       ("sumSegTs", Lean.toJson (tsSum out)),
       ("sumStateTs", Lean.toJson (states.foldl (fun acc s => acc + s.startTs + s.endTs) (0 : Int))),
