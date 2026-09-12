@@ -10,6 +10,7 @@
         "install",
         "--frozen-lockfile"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -27,6 +28,7 @@
         "run",
         "typecheck:frontend"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CI": "true"
@@ -49,6 +51,7 @@
         "--test",
         "frontend_unions"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "frontend union copies match the backend",
@@ -67,6 +70,7 @@
         "--manifest-path",
         "rust/Cargo.toml"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "rust formatting",
@@ -80,6 +84,7 @@
         "--command",
         "scripts/rust-host-check.sh"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "the in-process Rust host agrees with the spawned CLI",
@@ -100,6 +105,7 @@
         "-D",
         "warnings"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CARGO_TARGET_DIR": "target/clippy"
@@ -113,6 +119,7 @@
         "-f",
         "rust/target/mode-trace.txt"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "reset the mode trace",
@@ -133,6 +140,7 @@
         "-E",
         "not (binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "HEALTH_MODE_TRACE": "1"
@@ -156,6 +164,7 @@
         "-E",
         "binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "HEALTH_MODE_TRACE": "1"
@@ -179,6 +188,7 @@
         "--example",
         "mode_reachability"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "every dispatched Lean mode is executed by something",
@@ -197,6 +207,7 @@
         "rust/Cargo.toml",
         "--workspace"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "rust doctests",
@@ -213,6 +224,7 @@
         "--no-deps",
         "--workspace"
       ],
+      "artifacts": [],
       "cwd": "rust",
       "env": {
         "RUSTDOCFLAGS": "-D rustdoc::broken_intra_doc_links"
@@ -230,6 +242,7 @@
         "run",
         "lint:frontend"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CI": "true"
@@ -247,6 +260,7 @@
         "run",
         "test:frontend"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CI": "true",
@@ -265,6 +279,7 @@
         "run",
         "lean-check"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {
         "CI": "true"
@@ -289,6 +304,7 @@
         "run",
         "build"
       ],
+      "artifacts": [],
       "cwd": "frontend",
       "env": {
         "CI": "true"
@@ -305,6 +321,9 @@
         "pnpm",
         "run",
         "ui-check"
+      ],
+      "artifacts": [
+        "test-results"
       ],
       "cwd": "frontend",
       "env": {
@@ -323,6 +342,7 @@
         ".dev-lint-baseline",
         "."
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "dev-lint (baselined)",
@@ -337,6 +357,7 @@
         ".#verified-cli",
         ".#health-bins"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "the verified CLI packages (what the production image consumes)",
@@ -352,6 +373,7 @@
         "gate.dhall",
         "gate.json"
       ],
+      "artifacts": [],
       "cwd": ".",
       "env": {},
       "name": "the table matches its Dhall",

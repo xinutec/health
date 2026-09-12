@@ -426,6 +426,12 @@ in  { name = "health"
         , name = "frontend ui-check (phone-width layout harness)"
         , cwd = "frontend"
         , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
+        , {-  Playwright DELETES this at the start of every run, so the run made
+              to investigate a failure is the run that erases it — and no option
+              turns that off (`preserveOutput` is about PASSING tests). Declaring
+              it here makes the gate copy it aside when this check fails. #1545
+          -}
+          artifacts = [ "test-results" ]
         , env = G.nonInteractive
         , timeout_s = 1800
         }
