@@ -64,7 +64,48 @@ fn every_golden_day_grades_shard_b() {
     run(1, 2);
 }
 
+/// ⚠ ONE SHARD PER PROCESS, REFUSED RATHER THAN LEFT TO CORRUPT.
+///
+/// The walk referee hands its ways and buildings to the Lean runtime ONCE per
+/// process, deduped across the days it was given (`lean.rs`'s `INIT` is a
+/// process-wide `OnceLock`). Two shards in one process therefore overwrite each
+/// other's captures, and the fold goes on to ask for keys the survivor does not
+/// carry — which does not fail, it silently REGRADES.
+///
+/// Measured 2026-09-12, same commit and same archives, one variable at a time:
+///
+/// ```text
+/// nextest    + dev       0 of 118 walks moved   day 21/21
+/// nextest    + release   0 of 118 walks moved   day 21/21
+/// cargo test + release   94 moved, 49 regressed — 215 OSM lookups unanswered
+///                        against 17 under nextest
+/// ```
+///
+/// ⚠ `deploy.sh` WAS THE ONLY CALLER THAT RAN THEM THIS WAY, and it produced
+/// FALSE FAILURES for an unknown length of time — it reproduced at `7f5b412`
+/// with identical numbers. Nothing caught it: `gate.dhall`'s rows are nextest
+/// (its header says the #1003 mode trace RELIES on test-per-process) and CI
+/// cannot run these gates at all, because the fixtures are gitignored. So the
+/// breakage was invisible until somebody tried to ship (#1560).
+///
+/// The fix there was to stop asking; this is the fix here — `cargo test` is the
+/// obvious thing to type by hand, and it must say so rather than hand back 49
+/// regressions that are not real.
+static SHARD_IN_PROCESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn run(shard: usize, of: usize) {
+    assert!(
+        !SHARD_IN_PROCESS.swap(true, std::sync::atomic::Ordering::SeqCst),
+        "corpus_gate: a second shard is running in this process, which silently \
+         regrades the walk referee — the two shards overwrite each other's OSM \
+         captures in the shared Lean runtime.\n\
+         \n\
+         Run it test-per-process:\n\
+         \n\
+         \x20   cargo nextest run -p backend --test corpus_gate\n\
+         \n\
+         `cargo test` runs both shards as threads in one process. See #1560."
+    );
     if !Path::new(GOLDEN).is_dir() {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
         return;
