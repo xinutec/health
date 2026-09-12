@@ -3,6 +3,7 @@ import { NgTemplateOutlet } from "@angular/common";
 import { MatCardModule } from "@angular/material/card";
 import { MatIconModule } from "@angular/material/icon";
 import { modeStyle } from "../../modes";
+import { todayLocal } from "../../time-utils";
 import type { DayState, ServedJourney, TrackSegment, VelocityData } from "../../services/health.service";
 
 interface TimelineEntry {
@@ -71,6 +72,25 @@ export class TimelineComponent {
    *  displayed day — typical for sleep windows that begin the
    *  previous evening or end the next morning. */
   readonly referenceDate = input<string | null>(null);
+
+  /**
+   * True when the day on screen is the one still being written.
+   *
+   * ⚠ A DAY-LEVEL FACT, DELIBERATELY NOT A PER-ROW ONE (#1271). Every other day
+   * on this page is history; today is an inference in progress, and rows change
+   * identity as data arrives — measured 2026-08-30, a `stationary place=null`
+   * at 12:20 was a `train` when the same day was recomputed an hour later.
+   *
+   * ⚠ It is NOT the `inferred` marker's job. That says something narrower and
+   * more useful — THIS row was asserted from surrounding days rather than
+   * observed — and stamping a day-level caveat onto every row would drown it in
+   * a hedge that is true of all of them. One note, once.
+   *
+   * On settled days the namer is not the problem: 184 of 184 stationary states
+   * across the golden corpus are named, 34 of 36 across seven served days. So
+   * this is the only place the honesty was missing.
+   */
+  readonly stillRecording = computed(() => this.referenceDate() === todayLocal());
 
   readonly rows = computed<TimelineRow[]>(() => {
     const v = this.data();

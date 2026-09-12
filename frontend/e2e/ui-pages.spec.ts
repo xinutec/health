@@ -181,6 +181,11 @@ test("dashboard Day tab — summary cards + charts: lays out cleanly @ phone wid
 	// records. If this waits time out, the layout checks are meaningless.
 	await page.getByText("Your Day").waitFor();
 	await page.getByText("University College Hospital").waitFor();
+	// The fixture's day IS today, so the day-in-progress note is on screen and
+	// its two wrapped lines are part of what the overlap check below reads
+	// (#1271). Asserted rather than assumed — a note that silently stopped
+	// rendering would leave the layout checks passing on a card without it.
+	await page.getByText("Still being recorded").waitFor();
 
 	await expectNoTextOverlaps(page, testInfo);
 	await expectNoHorizontalOverflow(page, testInfo);

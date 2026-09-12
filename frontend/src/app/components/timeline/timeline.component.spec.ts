@@ -22,6 +22,7 @@
 import { TestBed } from "@angular/core/testing";
 import { describe, expect, it } from "vitest";
 import type { DayState, ServedJourney } from "../../services/health.service";
+import { todayLocal } from "../../time-utils";
 import { TimelineComponent } from "./timeline.component";
 
 let cursor = 1_700_000_000; // arbitrary fixed epoch; tests are relative
@@ -44,7 +45,11 @@ function state(mode: DayState["mode"], minutes: number, extra: Partial<DayState>
  *  STATES which states form a journey rather than recomputing it — recomputing
  *  would put a third copy of the rule in the tree, which is the thing #339 is
  *  about. Spans are inclusive state indices. */
-function setup(states: DayState[], journeySpans: [number, number][] = []) {
+function setup(
+	states: DayState[],
+	journeySpans: [number, number][] = [],
+	referenceDate: string | null = null,
+) {
 	const journeys: ServedJourney[] = journeySpans.map(([from, to]) => ({
 		startTs: states[from].startTs,
 		endTs: states[to].endTs,
@@ -56,7 +61,7 @@ function setup(states: DayState[], journeySpans: [number, number][] = []) {
 	}));
 	const fixture = TestBed.createComponent(TimelineComponent);
 	fixture.componentRef.setInput("data", { segments: [], states, journeys });
-	fixture.componentRef.setInput("referenceDate", null);
+	fixture.componentRef.setInput("referenceDate", referenceDate);
 	fixture.detectChanges();
 	return fixture;
 }
@@ -196,5 +201,56 @@ describe("TimelineComponent journey grouping", () => {
 		const c = fixture.componentInstance;
 		const j = c.rows().find((r) => r.kind === "journey");
 		expect(j?.kind === "journey" && j.journey.inferred).toBe(true);
+	});
+});
+
+/**
+ * The day still being written says so (#1271).
+ *
+ * Every other day on this page is history. Today is an inference in progress —
+ * measured 2026-08-30, a row served as `stationary place=null` at 12:20 came
+ * back as `train` when the same day was recomputed an hour later — and nothing
+ * on the card said the difference.
+ *
+ * ⚠ ONE NOTE, NOT A PER-ROW MARKER. `· no data (inferred)` already means
+ * something narrower: THIS row was asserted rather than observed. A day-level
+ * hedge on every row would be true of all of them and would drown the one that
+ * distinguishes.
+ */
+describe("TimelineComponent day-in-progress note", () => {
+	// ⚠ THE APP'S OWN `todayLocal`, not a second copy of it. A copy would agree
+	// with the component for the same reason rather than as a check, and it would
+	// inherit the runner's zone independently — two date derivations that can
+	// disagree at midnight. What is under test is the COMPARISON; `todayLocal`
+	// has its own tests in `time-utils.spec.ts`.
+
+	it("says the day is still being recorded when it is today", () => {
+		const fixture = setup(commuteDay(), [[2, 4]], todayLocal());
+		expect(fixture.componentInstance.stillRecording()).toBe(true);
+		const note = (fixture.nativeElement as HTMLElement).querySelector(".provisional");
+		expect(note?.textContent).toContain("Still being recorded");
+	});
+
+	it("says nothing on a settled day", () => {
+		const fixture = setup(commuteDay(), [[2, 4]], "2026-06-16");
+		expect(fixture.componentInstance.stillRecording()).toBe(false);
+		expect((fixture.nativeElement as HTMLElement).querySelector(".provisional")).toBeNull();
+	});
+
+	// ⚠ The date is computed in the BROWSER'S zone, not read off a state's `tz`.
+	// The reader is looking at their own clock when they ask "is this today", and
+	// a day recorded abroad is still their today or not by that clock.
+	it("says nothing when no day is named at all", () => {
+		const fixture = setup(commuteDay(), [[2, 4]], null);
+		expect(fixture.componentInstance.stillRecording()).toBe(false);
+	});
+
+	// The note is about the DAY, so it must not add a row or disturb the
+	// grouping the rest of this file pins.
+	it("adds no row and changes no journey", () => {
+		const today = setup(commuteDay(), [[2, 4]], todayLocal());
+		const settled = setup(commuteDay(), [[2, 4]], "2026-06-16");
+		expect(today.componentInstance.rows().length).toBe(settled.componentInstance.rows().length);
+		expect(today.componentInstance.journeyCount()).toBe(settled.componentInstance.journeyCount());
 	});
 });
