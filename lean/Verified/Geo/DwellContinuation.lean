@@ -1,5 +1,6 @@
 import Verified.Geo.SegmentMerge
 import Verified.Geo.DayState
+import Verified.Geo.FocusPlaces
 /-!
 # Dwell-prior continuation (port of `src/geo/dwell-continuation.ts`)
 
@@ -14,10 +15,22 @@ visits; continue the stay while P ≥ a floor. The whole module ports:
   weakly established / unusable / no trailing room.
 * `applyDwellContinuation` — the DayState orchestration around them: pick the
   anchor, bind the day's last stay centroid to a focus place, and splice the
-  inferred stay in after the anchor.
+  inferred stay in after the anchor — unless it would be too short to assert
+  (`MIN_CONTINUATION_S`).
 
-UNPROVEN; pinned by the `#guard`s against Node/V8
-(`lean/experiments/dwell-refs.mts`, `lean/experiments/apply-dwell-refs.mts`).
+UNPROVEN; pinned by the `#guard`s below.
+
+⚠ THOSE GUARDS ARE NOW THE ONLY RECORD. They were captured from Node/V8 via
+`lean/experiments/dwell-refs.mts` and `apply-dwell-refs.mts`, and NEITHER FILE
+EXISTS any more — nothing re-derives them, so a guard here cannot be re-checked
+against the original, only read. Treat a change to one as a change to the
+specification rather than as a correction to a transcription.
+
+⚠ AND ONE OF THEM IS A DELIBERATE DIVERGENCE from the TS as of #1271: a
+continuation shorter than `MIN_CONTINUATION_S` is no longer spliced, so the
+`applyDwellContinuation` guards no longer all agree with what Node printed. The
+guard that used to pin a ONE-SECOND inferred stay now pins its refusal, and
+says so where it sits.
 -/
 
 namespace Verified.Geo.DwellContinuation
@@ -99,6 +112,28 @@ open Verified.Geo.DayState (DayState)
 /-- Max distance to bind the day's last observed stay to a focus place. Falls
 back to the place's own radius when that is larger. -/
 def PLACE_MATCH_M : Float := 120
+
+/-- How long a spliced continuation must run to be worth asserting.
+
+⚠ NOT A NEW BAR. A continuation asserts a VISIT to the anchor's place, and
+`FocusPlaces.FOCUS_VISIT_MIN_S` is already the pipeline's answer to "how long
+must a dwell last to count as one" — the LOWEST such bar there is, chosen to
+catch cafés. Asserting a visit the miner would not count is asserting something
+the rest of the pipeline would not record.
+
+⚠ THE NAME IS THE POINT, not the number. Pasting `10 * 60` here would carry the
+value without the reasoning that sets it, and the two would drift the first time
+the miner's bar moved.
+
+It fires because `dwellContinuation` CLAMPS to the day end: the survival horizon
+can want hours and get whatever is left, which is sometimes seconds. Measured
+over the 41-day golden corpus, 15 continuations survive every other guard and
+their lengths are bimodal — 3 s, 76 s and 194 s, then nothing at all until
+1,135 s (19 min). So this cuts three rows and the nearest one it keeps is 80%
+clear of the bar; every threshold between 194 s and 1,135 s does exactly the
+same thing on this data. The corpus is 41 curated days, which is why the bar is
+still argued from the miner rather than read off the gap. -/
+def MIN_CONTINUATION_S : Int := Verified.Geo.FocusPlaces.FOCUS_VISIT_MIN_S
 
 /-- The `KnownPlaceProjection` fields this pass reads. The dwell stats are
 optional because fixtures captured before they existed replay as "no dwell
@@ -186,6 +221,14 @@ def applyDwellContinuation
           match dwellContinuation place anchor.endTs dayEndTs with
           | none => states
           | some (endTs, _) =>
+            -- ⚠ THE BAR IS HERE, NOT IN `dwellContinuation`. That function is a
+            -- port pinned bit-for-bit against Node/V8 and answers a different
+            -- question — how far the prior CARRIES — which the clamp can cut to
+            -- seconds. Whether a span that short is worth SPLICING AS A STATE is
+            -- this orchestration's call, so the ported maths stays untouched and
+            -- its `#guard`s keep meaning what they say.
+            if decide (endTs - anchor.endTs < MIN_CONTINUATION_S) then states
+            else
             let continuation : DayState :=
               { startTs := anchor.endTs, endTs, mode := "stationary",
                 place := truthy anchor.place, inferred := some true,
@@ -280,11 +323,26 @@ private def far : DwellCandidate := { homeFocus with centroidLat := 51.51 }   --
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, visitCount := some 30 }] == #[stay]
 #guard run #[stay] here
     #[{ centroidLat := 51.5, centroidLon := -0.2, uniqueDays := 30, totalDwellSec := some 1080000 }] == #[stay]
--- τ = 1 s: a 0.69 s horizon ROUNDS UP to a one-second stay…
-#guard run #[stay] here #[{ homeFocus with totalDwellSec := some 30, visitCount := some 30 }]
-  == #[stay, cont 950000 950001 (some "Home") (some "Europe/London")]
--- …and τ = 0.7 s rounds to 0, which is no room at all.
+-- ⚠ τ = 1 s USED TO SPLICE A ONE-SECOND STAY, and this guard pinned it. The
+-- rounding it describes is unchanged — `dwellContinuation` still answers
+-- `some (950001, _)`, because a 0.69 s horizon ROUNDS UP — but a one-second
+-- visit is not one the miner would count, so `MIN_CONTINUATION_S` refuses to
+-- draw it (#1271). The kernel and the splice decision now differ here on
+-- purpose, which is the whole reason the bar sits in the orchestration.
+#guard match dwellContinuation ⟨30, 30, 30⟩ 950000 DAY_END with
+  | some (e, _) => e == 950001
+  | none => false
+#guard run #[stay] here #[{ homeFocus with totalDwellSec := some 30, visitCount := some 30 }] == #[stay]
+-- …and τ = 0.7 s rounds to 0, which is no room at all — refused one step
+-- earlier, by the kernel, and still worth pinning separately.
 #guard run #[stay] here #[{ homeFocus with totalDwellSec := some 21, visitCount := some 30 }] == #[stay]
+-- The bar's OWN EDGE, one second wide. τ = 864 s carries the stay 599 s and is
+-- refused; τ = 865 s carries it 600 s and is kept, because the comparison is
+-- strict — exactly the bar is long enough. (The horizon is τ·ln 2, not τ, so
+-- these are 25,920 and 25,950 seconds of total dwell over 30 visits.)
+#guard run #[stay] here #[{ homeFocus with totalDwellSec := some 25920, visitCount := some 30 }] == #[stay]
+#guard run #[stay] here #[{ homeFocus with totalDwellSec := some 25950, visitCount := some 30 }]
+  == #[stay, cont 950000 950600 (some "Home") (some "Europe/London")]
 
 end ApplyGuards
 
