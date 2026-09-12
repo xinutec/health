@@ -5,8 +5,11 @@
 //! `/api/heartrate/intraday?date=2026-08-30` returned **2,556,228 bytes** for
 //! one half-finished day, with `encodedBodySize == decodedBodySize` — no
 //! encoding was negotiated at all, because `tower-http` was built with only
-//! `fs` and `trace`. The body is 18,656 rows each repeating `user_id` and `tz`
-//! verbatim, so it is mostly one constant.
+//! `fs` and `trace`. The body was 18,656 rows each repeating `user_id` and `tz`
+//! verbatim, so it was mostly one constant. ⚠ THAT BYTE COUNT IS HISTORICAL:
+//! the route now names its columns and `user_id` no longer ships (#1532), so
+//! the same day would measure smaller. The argument is unchanged — the rows are
+//! still mostly one repeated zone — and nothing here asserts a size.
 //!
 //! ⚠ The failure was SILENT IN EVERY DIRECTION. Every response was correct,
 //! every status was right, no test failed and no log said anything; the only

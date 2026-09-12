@@ -47,10 +47,10 @@ const ACTIVITY = [
 ];
 
 const SLEEP = [
-	{ log_id: "1234567890", date: day(0), start_time: `${day(-1)}T23:10:00`, end_time: `${day(0)}T07:05:00`,
+	{ log_id: "1234567890", date: day(0), start_time_utc: `${day(-1)}T22:10:00Z`, end_time_utc: `${day(0)}T06:05:00Z`, tz: "Europe/London",
 		duration_ms: 28500000, efficiency: 94, minutes_asleep: 445, minutes_awake: 30, minutes_deep: 82,
 		minutes_light: 250, minutes_rem: 113, minutes_wake: 30, is_main_sleep: true },
-	{ log_id: "1234567891", date: day(-1), start_time: `${day(-2)}T23:30:00`, end_time: `${day(-1)}T07:00:00`,
+	{ log_id: "1234567891", date: day(-1), start_time_utc: `${day(-2)}T22:30:00Z`, end_time_utc: `${day(-1)}T06:00:00Z`, tz: "Europe/London",
 		duration_ms: 27000000, efficiency: 91, minutes_asleep: 430, minutes_awake: 20, minutes_deep: 75,
 		minutes_light: 240, minutes_rem: 115, minutes_wake: 20, is_main_sleep: true },
 ];
@@ -76,11 +76,17 @@ const STAGES = [
 	{ ts_utc: `${day(0)}T00:45:00Z`, tz: "Europe/London", stage: "wake", duration_seconds: 300 },
 ];
 
-const INTRADAY = [
-	{ ts: `${day(0)}T08:00:00Z`, bpm: 62 },
-	{ ts: `${day(0)}T08:01:00Z`, bpm: 64 },
-	{ ts: `${day(0)}T08:02:00Z`, bpm: 66 },
-];
+// Instant + zone, like STAGES above and for the same reason: a fixture carrying
+// the wall clock exercises a path the API no longer has (#1532).
+//
+// ⚠ SIXTEEN POINTS, NOT THREE. The chart keeps every fifth sample, so a
+// three-point fixture drew a single dot with one axis label — the #1551 shape,
+// where the card renders and the code under it is never run. Sixteen gives four
+// plotted points and four labels, one of which crosses the hour.
+const INTRADAY = Array.from({ length: 16 }, (_, i) => {
+	const at = new Date(Date.parse(`${day(0)}T07:50:00Z`) + i * 60_000);
+	return { ts_utc: at.toISOString(), tz: "Europe/London", bpm: 60 + (i % 7) };
+});
 
 /** Mock every backend call the dashboard makes on load. Catch-all FIRST —
  *  Playwright runs handlers last-registered-first, so specifics below win. The

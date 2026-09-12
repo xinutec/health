@@ -31,6 +31,7 @@
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
 
+use crate::routes::tables::{sql_heartrate_intraday, sql_sleep_stages};
 use crate::{lean, row_json};
 
 /// Print one line per endpoint: `<name>\t<rows as compact JSON>`.
@@ -113,6 +114,14 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
 
     // `sleep/stages` resolves its main-sleep log first, exactly as the endpoint
     // does — including the absent `ORDER BY`.
+    //
+    // ⚠ NO `ensure!` GUARDS THE STAGE QUERY, and that is stronger rather than
+    // weaker: it is the ROUTE'S OWN macro, so there is one literal and drift is
+    // not possible to write. The arrays above still compare against consts
+    // because they hold their own copies — and the copy DID drift here, for a
+    // day, when `#1532`'s repair landed in the route and not in the mirror. A
+    // runtime equality check is the second-best fix for duplication; not
+    // duplicating is the first.
     let log = sqlx::query(
         "SELECT log_id FROM sleep WHERE user_id = ? AND date = ? AND is_main_sleep = 1 LIMIT 1",
     )
@@ -125,14 +134,12 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
         None => Vec::new(),
         Some(row) => {
             let log_id: i64 = row.try_get("log_id").context("sleep.log_id")?;
-            sqlx::query(
-                "SELECT * FROM sleep_stages WHERE user_id = ? AND sleep_log_id = ? ORDER BY ts",
-            )
-            .bind(user)
-            .bind(log_id)
-            .fetch_all(pool)
-            .await
-            .context("sleep/stages: stages")?
+            sqlx::query(sql_sleep_stages!())
+                .bind(user)
+                .bind(log_id)
+                .fetch_all(pool)
+                .await
+                .context("sleep/stages: stages")?
         }
     };
     failures += emit("sleep/stages", row_json::rows_to_json(&stages))?;
@@ -162,15 +169,13 @@ pub async fn run(pool: &MySqlPool, user: &str, since: &str, date: &str) -> Resul
     }
 
     let next = lean::next_day(date)?;
-    let hr = sqlx::query(
-        "SELECT * FROM heart_rate_intraday WHERE user_id = ? AND ts >= ? AND ts < ? ORDER BY ts",
-    )
-    .bind(user)
-    .bind(date)
-    .bind(&next)
-    .fetch_all(pool)
-    .await
-    .context("heartrate/intraday: query")?;
+    let hr = sqlx::query(sql_heartrate_intraday!())
+        .bind(user)
+        .bind(date)
+        .bind(&next)
+        .fetch_all(pool)
+        .await
+        .context("heartrate/intraday: query")?;
     failures += emit("heartrate/intraday", row_json::rows_to_json(&hr))?;
 
     // ⚠ `/me`'s two status reads, which are `fetch_optional` and therefore

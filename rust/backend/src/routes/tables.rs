@@ -147,6 +147,36 @@ fn empty() -> Response {
     Json(Value::Array(Vec::new())).into_response()
 }
 
+/// Keep the rows whose instant survived the repair, and SAY how many did not.
+///
+/// A row with neither a stored `_utc` nor a convertible zone cannot be placed on
+/// a time axis at all, so it is dropped rather than served as a null a chart
+/// would render as `NaN`. ⚠ The count is WARNED rather than swallowed: a
+/// silently shorter series reads as a real statement about the day, when what it
+/// actually says is that the server has no zone tables (#1532).
+///
+/// ⚠ Only for rows that ARE a position in time. A `sleep` row is mostly not —
+/// see the note on [`SQL_SLEEP`], which keeps the night and nulls the instant.
+fn placed_rows(rows: Vec<sqlx::mysql::MySqlRow>, what: &str) -> Vec<sqlx::mysql::MySqlRow> {
+    let total = rows.len();
+    let placed: Vec<_> = rows
+        .into_iter()
+        .filter(|r| {
+            r.try_get_raw("ts_utc")
+                .map(|v| !sqlx::ValueRef::is_null(&v))
+                .unwrap_or(false)
+        })
+        .collect();
+    if placed.len() != total {
+        tracing::warn!(
+            "{what}: {} of {total} row(s) have no instant and no convertible zone — \
+             dropped from the chart",
+            total - placed.len()
+        );
+    }
+    placed
+}
+
 /// True when a share recipient may not see this single date.
 fn outside_share_window(session: &UserSession, date: &str) -> Result<bool> {
     match &session.share_viewer {
@@ -204,10 +234,35 @@ days_back_handler!(
     SQL_ACTIVITY,
     "SELECT * FROM daily_activity WHERE user_id = ? AND date >= ? ORDER BY date"
 );
+// ⚠ THE WALL CLOCK DOES NOT SHIP, and the instant is REPAIRED rather than
+// served beside it (#1532). `start_time`/`end_time` are the clock the watch
+// showed, which `row_json` stamps with a `Z` they have not earned; `CONVERT_TZ`
+// recovers the true instant from the wall clock and the zone whenever the stored
+// `_utc` is missing, which is the same repair `/sleep/stages` makes.
+//
+// ⚠ AND A NULL SURVIVES HERE, where `/sleep/stages` drops the row. A stage point
+// IS a position on a time axis and means nothing unplaced. A sleep row is mostly
+// NOT time-axis data — efficiency, the minutes in each stage, whether it was the
+// main sleep — so refusing the night to punish an unrecoverable instant would
+// hide real data from the dashboard. The instant goes null; the night still
+// shows.
+//
+// ⚠ THE REPAIR IS A NET, NOT A PATH. Measured against production 2026-09-12
+// (`scripts/probe-served-instants.mjs`): all 1,270 sleep rows, all 37,780 stage
+// rows and all 32,587,081 intraday heart-rate rows already carry a stored
+// `_utc`, so the COALESCE reaches its second arm zero times today. It is here
+// for a legacy row the backfill never touched, and for the case where it cannot
+// help — `CONVERT_TZ` also returns NULL when the server has no zone tables, and
+// that is why the fallback is written rather than assumed.
 days_back_handler!(
     sleep,
     SQL_SLEEP,
-    "SELECT * FROM sleep WHERE user_id = ? AND date >= ? ORDER BY date"
+    "SELECT log_id, date, \
+     COALESCE(start_time_utc, CONVERT_TZ(start_time, tz, 'UTC')) AS start_time_utc, \
+     COALESCE(end_time_utc, CONVERT_TZ(end_time, tz, 'UTC')) AS end_time_utc, \
+     duration_ms, efficiency, minutes_asleep, minutes_awake, minutes_deep, \
+     minutes_light, minutes_rem, minutes_wake, is_main_sleep, tz \
+     FROM sleep WHERE user_id = ? AND date >= ? ORDER BY date"
 );
 // ⚠ The second sort key is load-bearing: the frontend renders zones in the
 // order they arrive, and dropping it would order them by whatever the storage
@@ -318,6 +373,31 @@ pub async fn sleep_stages(
     }
 }
 
+/// The stage query, as a zero-arg macro so it can reach two places and stay ONE
+/// literal.
+///
+/// ⚠ NOT a `const` read at the query site. `DL-SQLX-SCHEMA-TRUTH` resolves a
+/// literal, a `concat!`, or a crate-local zero-arg macro — a `const` path is
+/// opaque to it, so `sqlx::query(SQL_SLEEP_STAGES)` would be UNCHECKED SQL. The
+/// macro gives the parity harness something to compare against without trading
+/// the schema check away.
+macro_rules! sql_sleep_stages {
+    () => {
+        "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, stage, \
+         duration_seconds, tz FROM sleep_stages \
+         WHERE user_id = ? AND sleep_log_id = ? ORDER BY 1"
+    };
+}
+pub(crate) use sql_sleep_stages;
+
+/// The stage query this endpoint serves, exported so `backend rows-check` can
+/// verify the RENDERING of these exact rows against production.
+///
+/// ⚠ The mirror in `rows_check` DID drift, for a day, when the `#1532` repair
+/// landed in the route and not in the copy — which is why there is a const to
+/// compare against at all.
+pub const SQL_SLEEP_STAGES: &str = sql_sleep_stages!();
+
 async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -> Result<Response> {
     let Some(date) = parse_date(p.date.as_deref()) else {
         return Ok(bad_request("date must be YYYY-MM-DD"));
@@ -353,37 +433,42 @@ async fn sleep_stages_run(st: &AppState, session: &UserSession, p: DateParams) -
     // that is handled rather than assumed: such a row stays NULL, falls into the
     // filter below and is REPORTED. The COALESCE only reaches it when `ts_utc`
     // is already null, so an ordinary row cannot be harmed by a missing table.
-    let rows = sqlx::query(
-        "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, stage, \
-         duration_seconds, tz FROM sleep_stages \
-         WHERE user_id = ? AND sleep_log_id = ? ORDER BY 1",
-    )
-    .bind(&session.user_id)
-    .bind(log_id)
-    .fetch_all(&st.pool)
-    .await?;
+    let rows = sqlx::query(sql_sleep_stages!())
+        .bind(&session.user_id)
+        .bind(log_id)
+        .fetch_all(&st.pool)
+        .await?;
 
-    // A row with neither a stored instant nor a convertible zone cannot be
-    // placed on a time axis at all. Drop it and SAY SO — a silently shorter
-    // night reads as a real statement about how he slept.
-    let total = rows.len();
-    let placed: Vec<_> = rows
-        .into_iter()
-        .filter(|r| {
-            r.try_get_raw("ts_utc")
-                .map(|v| !sqlx::ValueRef::is_null(&v))
-                .unwrap_or(false)
-        })
-        .collect();
-    if placed.len() != total {
-        tracing::warn!(
-            "sleep stages: {} of {total} row(s) have no instant and no convertible zone — \
-             dropped from the chart",
-            total - placed.len()
-        );
-    }
+    let placed = placed_rows(rows, "sleep stages");
     Ok(Json(row_json::rows_to_json(&placed)?).into_response())
 }
+
+/// One day of per-minute heart rate, as a zero-arg macro for the same reason as
+/// [`sql_sleep_stages`]: one literal, two readers, and still lint-checked.
+///
+/// ⚠ THE WINDOW IS ON THE WALL CLOCK and the PAYLOAD IS THE INSTANT — they are
+/// deliberately different columns. `[date, nextDay)` against `ts` is what "his
+/// Tuesday" means; running the bound against `ts_utc` would shift the day's
+/// edges by the offset for anyone not living in UTC. What SHIPS is the instant,
+/// because `row_json` stamps a `Z` on `ts` that it has not earned (#1532), and
+/// `tz`, because that is what turns the instant back into the clock he saw.
+///
+/// ⚠ `CONVERT_TZ` RETURNS NULL when the server has no zone tables. Such a row
+/// keeps a null instant, is dropped by [`placed_rows`] and is REPORTED. The
+/// COALESCE only reaches it when `ts_utc` is already null, so an ordinary row
+/// cannot be harmed by a missing table.
+macro_rules! sql_heartrate_intraday {
+    () => {
+        "SELECT COALESCE(ts_utc, CONVERT_TZ(ts, tz, 'UTC')) AS ts_utc, bpm, tz \
+         FROM heart_rate_intraday \
+         WHERE user_id = ? AND ts >= ? AND ts < ? ORDER BY ts"
+    };
+}
+pub(crate) use sql_heartrate_intraday;
+
+/// The query this endpoint serves, exported so `backend rows-check` can verify
+/// the RENDERING of these exact rows against production.
+pub const SQL_HEARTRATE_INTRADAY: &str = sql_heartrate_intraday!();
 
 /// `GET /heartrate/intraday?date=` — one day of per-minute heart rate.
 pub async fn heartrate_intraday(
@@ -417,19 +502,13 @@ async fn heartrate_intraday_run(
     if outside_share_window(session, &date)? {
         return Ok(empty());
     }
-    // ⚠ A HALF-OPEN range on the WALL-CLOCK `ts`, not on `ts_utc`. The two
-    // differ by the offset, and reading the UTC column instead would shift the
-    // day's boundaries by an hour for anyone not on UTC. `[date, nextDay)` is
-    // what the TypeScript asks for; the strings compare against a DATETIME the
-    // same way there and here.
     let next = lean::next_day(&date)?;
-    let rows = sqlx::query(
-        "SELECT * FROM heart_rate_intraday WHERE user_id = ? AND ts >= ? AND ts < ? ORDER BY ts",
-    )
-    .bind(&session.user_id)
-    .bind(&date)
-    .bind(&next)
-    .fetch_all(&st.pool)
-    .await?;
-    Ok(Json(row_json::rows_to_json(&rows)?).into_response())
+    let rows = sqlx::query(sql_heartrate_intraday!())
+        .bind(&session.user_id)
+        .bind(&date)
+        .bind(&next)
+        .fetch_all(&st.pool)
+        .await?;
+    let placed = placed_rows(rows, "heart rate intraday");
+    Ok(Json(row_json::rows_to_json(&placed)?).into_response())
 }

@@ -21,8 +21,17 @@ export interface SleepLog {
    *  it as bigint and BigInt.prototype.toJSON stringifies it). */
   log_id: string;
   date: string;
-  start_time: string;
-  end_time: string;
+  /** When the night began, as a true instant. ⚠ NULLABLE, unlike a stage's:
+   *  the route repairs it from the wall clock and the zone, but KEEPS the row
+   *  when it cannot — a night's efficiency and stage minutes are worth showing
+   *  even when its instant is unrecoverable (#1532). The wall clock itself is
+   *  no longer served; it carried a "Z" it had not earned. */
+  start_time_utc: string | null;
+  /** When the night ended. Nullable for the same reason as `start_time_utc`. */
+  end_time_utc: string | null;
+  /** IANA zone the night was lived in — what turns the instants above back into
+   *  the clock he saw. */
+  tz?: string | null;
   duration_ms: number;
   efficiency: number;
   minutes_asleep: number;
@@ -48,7 +57,13 @@ export interface SleepStage {
 }
 
 export interface HeartRatePoint {
-  ts: string;
+  /** The true instant of the reading. The route repairs a missing one from the
+   *  wall clock and the zone, and drops a point it cannot place — a point is
+   *  nothing but a position in time, so an unplaced one has no chart to be on
+   *  (#1532). */
+  ts_utc: string;
+  /** IANA zone the reading was taken in, for labelling. */
+  tz?: string | null;
   bpm: number;
 }
 

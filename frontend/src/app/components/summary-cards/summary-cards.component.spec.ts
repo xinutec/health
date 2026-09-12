@@ -49,8 +49,8 @@ describe("SummaryCardsComponent", () => {
 		fixture.componentRef.setInput("latestSleep", {
 			log_id: "1",
 			date: "2026-05-10",
-			start_time: "",
-			end_time: "",
+			start_time_utc: null,
+			end_time_utc: null,
 			duration_ms: 489 * 60_000,
 			efficiency: 92,
 			minutes_asleep: 489, // 8h 9m

@@ -21,21 +21,23 @@
 //!   second because a Fitbit sleep log id does not survive an f64.
 //! * `TINYINT(1)` is `0`/`1`. ⚠ sqlx NAMES that type `"BOOLEAN"`, so decoding
 //!   what the name suggests would put `true` on the wire.
-//! * ⚠ EVERY `DATETIME` GETS A `Z`, AND FOR HALF OF THEM THAT IS FALSE. The
-//!   Fitbit wall-clock columns — `sleep.start_time`/`end_time`,
-//!   `sleep_stages.ts`, `heart_rate_intraday.ts`, `steps_intraday.ts` — hold the
-//!   clock the watch showed, with no zone in the value, so the suffix asserts a
-//!   zone the column does not carry. The `TIMESTAMP` columns (`updated_at`,
-//!   `synced_at`, …) and every `_utc` sibling ARE UTC and the suffix is honest.
-//!   One wire, two populations, one suffix.
+//! * ⚠ EVERY `DATETIME` GETS A `Z`, EARNED OR NOT — and this module cannot tell
+//!   which. It dispatches on SQL TYPE, and separating a UTC instant from a
+//!   Fitbit wall clock needs a per-COLUMN classification that does not exist.
+//!   The `TIMESTAMP` columns (`updated_at`, `synced_at`, …) and every `_utc`
+//!   sibling ARE UTC, so for those the suffix is honest.
 //!
-//!   This is a rendering that dispatches on SQL TYPE, and telling the two apart
-//!   needs a per-COLUMN classification that does not exist (#1532). It is not a
-//!   live defect: the honest `_utc` column is served beside every wall clock and
-//!   is complete, and no client compensates for the suffix any more (#340
-//!   deleted the Z-stripper). It misleads a reader who does not know the
-//!   convention, which is why it is written down here rather than left to be
-//!   rediscovered.
+//!   ⚠ FIXED AT THE ROUTE, NOT HERE (#1532). No `/api` read hands this module a
+//!   wall clock any more: `sleep`, `sleep/stages` and `heartrate/intraday` name
+//!   their columns and serve `COALESCE(<col>_utc, CONVERT_TZ(<col>, tz, 'UTC'))`
+//!   plus `tz`, so the instant is repaired where the meaning is known and the
+//!   clock the watch showed is derived on the client from the zone. The other
+//!   nine reads are over tables with no wall-clock DATETIME at all.
+//!
+//!   So the hazard here is LATENT, not live: a new `SELECT *` over `sleep`,
+//!   `sleep_stages`, `heart_rate_intraday` or `steps_intraday` would put a
+//!   false `Z` back on the wire without changing a line of this file.
+//!   `steps_intraday` has no endpoint and never did.
 //!
 //! # Nothing here decides anything
 //!

@@ -25,8 +25,9 @@ function mainSleep(date: string, minutes = 489): SleepLog {
 	return {
 		log_id: "1",
 		date,
-		start_time: `${date}T22:00:00`,
-		end_time: `${date}T06:00:00`,
+		start_time_utc: `${date}T21:00:00Z`,
+		end_time_utc: `${date}T05:00:00Z`,
+		tz: "Europe/London",
 		duration_ms: minutes * 60_000,
 		efficiency: 90,
 		minutes_asleep: minutes,

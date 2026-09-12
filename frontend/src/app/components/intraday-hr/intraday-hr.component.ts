@@ -4,7 +4,7 @@ import { BaseChartDirective } from "ng2-charts";
 import type { ChartConfiguration } from "chart.js";
 import type { HeartRatePoint } from "../../services/health.service";
 import { chartColors, tickColor, gridColor } from "../../chart-theme";
-import { formatLocalTime } from "../../time-utils";
+import { wallClockInZone } from "../../time-utils";
 
 @Component({
   selector: "app-intraday-hr",
@@ -45,7 +45,10 @@ export class IntradayHrComponent {
       const sampled = data.filter((_, i) => i % 5 === 0);
 
       this.chartData.set({
-        labels: sampled.map((p) => formatLocalTime(p.ts)),
+        // The instant, put back on the clock he was living by. Reading the
+        // label off a wall-clock string is what this used to do, and the API no
+        // longer serves one (#1532).
+        labels: sampled.map((p) => wallClockInZone(Date.parse(p.ts_utc), p.tz)),
         datasets: [{
           data: sampled.map((p) => p.bpm),
           borderColor: chartColors.red,

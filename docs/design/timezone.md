@@ -514,6 +514,18 @@ Integration:
    that *does* convert these timestamps to instants knows to read the
    row's tz, not the browser's.
 
+   ⚠ **SETTLED, AND THE OTHER WAY ROUND (#1532).** The frontend update this
+   anticipated happened, and what it changed was the WIRE rather than the
+   reader. `selectAll()` is gone from `sleep`, `sleep/stages` and
+   `heartrate/intraday`: each names its columns and serves the repaired
+   instant, `COALESCE(<col>_utc, CONVERT_TZ(<col>, tz, 'UTC'))`, plus `tz`.
+   The wall clock does not ship at all, because the JSON renderer stamps every
+   DATETIME with a `Z` and cannot tell which have earned it. So the dashboard
+   does read the row's tz and not the browser's — but by deriving the label
+   from instant + zone, not by converting a wall clock it no longer receives.
+   ⚠ TIER 1 IS UNAFFECTED: `ts` is still stored, still immutable, still the
+   recompute source. It stopped being a RESPONSE, not a column.
+
 ## Where these things live now
 
 ⚠ **THE FILE REFERENCES IN THE PROSE ABOVE ARE HISTORICAL.** Every `src/**.ts`
