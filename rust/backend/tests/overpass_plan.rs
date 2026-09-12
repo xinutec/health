@@ -85,6 +85,58 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
     assert_eq!(tile_key(&t), "51.5235,-0.1235");
 }
 
+/// ⚠ A MOVED BBOX RENAMES EVERY TILE, and that is how a cache goes stale for
+/// ever rather than for a night.
+///
+/// The plan is derived from mined focus places, so the bbox is not a constant:
+/// it shifts when the places do. `tile_key` is the south-west corner, so a
+/// shifted origin produces a lattice with NO key in common with the old one —
+/// and the merge's per-tile `DELETE` only ever names keys from the CURRENT
+/// plan. Rows under the old names are then unreachable by every future run.
+///
+/// ⚠ NOT HYPOTHETICAL. Measured on production 2026-09-12, `bus_route_cache`
+/// held 318 of 998 rows under names no plan could emit — 274 from before the
+/// column existed, and 44 under an off-lattice latitude band. The reader takes
+/// the table unfiltered, so all of them were reaching the bus matcher (#1153).
+#[test]
+fn shifting_the_bbox_renames_every_tile() {
+    // One degree of origin apart is absurd; a few hundred metres is the real
+    // case, and is enough. These are the two lattices production actually had.
+    let live = |k: f64| MirrorTile {
+        min_lat: 51.4828 + 0.0360 * k,
+        max_lat: 51.4828 + 0.0360 * (k + 1.0),
+        min_lon: -0.3419,
+        max_lon: -0.2952,
+    };
+    let retired = MirrorTile {
+        min_lat: 51.5704,
+        max_lat: 51.6064,
+        min_lon: -0.2953,
+        max_lon: -0.2486,
+    };
+
+    let planned: Vec<String> = (0..5).map(|k| tile_key(&live(f64::from(k)))).collect();
+    assert!(
+        !planned.contains(&tile_key(&retired)),
+        "the retired key must not be reachable from the live lattice: {planned:?}"
+    );
+
+    // ⚠ AND THE NEAR MISS IS THE POINT. The longitudes differ by 0.0001 — one
+    // unit in the last place the key keeps — so the two names look identical at
+    // a glance and share nothing as strings.
+    assert_eq!(tile_key(&retired), "51.5704,-0.2953");
+    assert_eq!(tile_key(&live(0.0)), "51.4828,-0.3419");
+    let neighbour = MirrorTile {
+        min_lon: -0.2952,
+        ..retired
+    };
+    assert_ne!(
+        tile_key(&neighbour),
+        tile_key(&retired),
+        "0.0001 of longitude is a different owner, not a rounding detail"
+    );
+}
+
 #[test]
 fn a_query_names_the_tile_and_the_right_route_types() {
     setup();
