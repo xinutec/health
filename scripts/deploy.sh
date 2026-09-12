@@ -280,9 +280,33 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	#
 	# They announce a SKIP rather than passing quietly when the corpus is
 	# absent, so a machine without it cannot read as gated.
-	$DEV cargo test --manifest-path rust/Cargo.toml -p backend --release \
+	# ⚠ `nextest`, NOT `cargo test`, AND THE DIFFERENCE IS NOT STYLE. `cargo test`
+	# runs the two corpus_gate shards as THREADS IN ONE PROCESS; nextest runs
+	# test-per-process. The walk referee sends its OSM ways and buildings ONCE,
+	# deduped across the days it was given, into state the Lean runtime holds for
+	# the process — so two shards in one process overwrite each other's captures
+	# and the fold then asks for keys the survivor does not carry.
+	#
+	# Measured 2026-09-12, one variable at a time, same commit and same archives:
+	#
+	#   nextest    + dev      0 walks moved   day 21/21
+	#   nextest    + release  0 walks moved   day 21/21
+	#   cargo test + release  94 of 118 moved, 49 regressed — and 215 OSM
+	#                         lookups unanswered against 17 under nextest
+	#
+	# So this step produced FALSE FAILURES, and had since before 7f5b412 — the
+	# control reproduced it there with identical numbers. Nothing caught it:
+	# gate.dhall's rows are nextest (its header says the mode trace RELIES on
+	# test-per-process), CI cannot run these gates at all because the fixtures are
+	# gitignored, and this script was the only caller of `cargo test` left. The
+	# breakage was therefore invisible until someone tried to ship.
+	#
+	# ⚠ The harness being unsound in one process is a REAL defect and is filed
+	# separately; production never runs two shards in a process, so the fix here
+	# is to stop asking it to.
+	$DEV cargo nextest run --manifest-path rust/Cargo.toml -p backend --release \
 		--test corpus_gate \
-		--test decoder_scoreboard --test hsmm_decode_corpus -- --nocapture
+		--test decoder_scoreboard --test hsmm_decode_corpus --no-capture
 else
 	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
 	# once said "golden + walk-gate + score-decoder" while skipping six more, and
