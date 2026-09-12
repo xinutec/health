@@ -94,25 +94,33 @@ fn the_tile_key_is_four_decimal_places_of_the_south_west_corner() {
 /// and the merge's per-tile `DELETE` only ever names keys from the CURRENT
 /// plan. Rows under the old names are then unreachable by every future run.
 ///
-/// ⚠ NOT HYPOTHETICAL. Measured on production 2026-09-12, `bus_route_cache`
-/// held 318 of 998 rows under names no plan could emit — 274 from before the
-/// column existed, and 44 under an off-lattice latitude band. The reader takes
-/// the table unfiltered, so all of them were reaching the bus matcher (#1153).
+/// ⚠ NOT HYPOTHETICAL. Measured against production 2026-09-12: nearly a third
+/// of `bus_route_cache` sat under names no plan could emit, some from before
+/// the column existed and the rest under a band from a retired grid. The reader
+/// takes the table unfiltered, so all of them reached the bus matcher (#1153).
+///
+/// ⚠ THE NUMBERS BELOW ARE SYNTHETIC, and must stay that way. The real grid is
+/// derived from mined focus places, so its corners describe where he actually
+/// goes — and this repository is public (#860). The property under test needs A
+/// lattice and AN off-lattice key, never his.
 #[test]
 fn shifting_the_bbox_renames_every_tile() {
-    // One degree of origin apart is absurd; a few hundred metres is the real
-    // case, and is enough. These are the two lattices production actually had.
+    // A whole degree apart would be absurd; the real case is a shift of a few
+    // hundred metres, and that is what this reproduces. Round origins, chosen to
+    // be obviously invented.
     let live = |k: f64| MirrorTile {
-        min_lat: 51.4828 + 0.0360 * k,
-        max_lat: 51.4828 + 0.0360 * (k + 1.0),
-        min_lon: -0.3419,
-        max_lon: -0.2952,
+        min_lat: 51.5000 + 0.0360 * k,
+        max_lat: 51.5000 + 0.0360 * (k + 1.0),
+        min_lon: -0.2000,
+        max_lon: -0.1533,
     };
+    // Off both lattices: 51.5876 is not 51.5000 + 0.0360k, and the longitude
+    // misses by a single unit in the last place the key keeps.
     let retired = MirrorTile {
-        min_lat: 51.5704,
-        max_lat: 51.6064,
-        min_lon: -0.2953,
-        max_lon: -0.2486,
+        min_lat: 51.5876,
+        max_lat: 51.6236,
+        min_lon: -0.2001,
+        max_lon: -0.1534,
     };
 
     let planned: Vec<String> = (0..5).map(|k| tile_key(&live(f64::from(k)))).collect();
@@ -124,10 +132,10 @@ fn shifting_the_bbox_renames_every_tile() {
     // ⚠ AND THE NEAR MISS IS THE POINT. The longitudes differ by 0.0001 — one
     // unit in the last place the key keeps — so the two names look identical at
     // a glance and share nothing as strings.
-    assert_eq!(tile_key(&retired), "51.5704,-0.2953");
-    assert_eq!(tile_key(&live(0.0)), "51.4828,-0.3419");
+    assert_eq!(tile_key(&retired), "51.5876,-0.2001");
+    assert_eq!(tile_key(&live(0.0)), "51.5000,-0.2000");
     let neighbour = MirrorTile {
-        min_lon: -0.2952,
+        min_lon: -0.2000,
         ..retired
     };
     assert_ne!(
