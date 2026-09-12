@@ -6015,6 +6015,21 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
         return Ok(());
     };
 
+    // ⚠ BEFORE THE FETCH AND BEFORE THE COVERAGE REFUSAL, deliberately. Retiring a
+    // key the plan can no longer emit needs the PLAN and nothing else: such a key
+    // can never be refreshed by any future run, whatever tonight's coverage turns
+    // out to be. Measured 2026-09-12, this is not theoretical — it sat inside the
+    // merge, the run came back at 8/18 tiles (44%), `may_rebuild` refused BELOW
+    // the 50%% floor and bailed, and the retirement never executed. It cannot
+    // wait behind a successful refresh, because the nights it is most needed are
+    // the nights there isn't one (#1153).
+    //
+    // Its own transaction, because it is its own decision — nothing here depends
+    // on what the mirrors are about to say.
+    if !dry_run {
+        retire_unplannable(&pool, &plan, "rail").await?;
+    }
+
     let client = reqwest::Client::new();
     let h = mirror_fetch(&client, "rail", &plan.tiles).await?;
     // ⚠ `existing` MUST be the real row count. It was a literal `0` here, and
@@ -6109,61 +6124,6 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
                 .await
                 .with_context(|| format!("clearing tile {key}"))?;
         }
-
-        // ⚠ AND RETIRE THE KEYS THE PLAN CAN NO LONGER EMIT. The per-tile delete above
-        // only names tiles from the CURRENT plan, so a row written under a tile
-        // the grid has since renamed is unreachable for ever — as is every
-        // `tile_key IS NULL` row from before the column existed. Only a
-        // `full_rebuild` used to clear those, and a full rebuild needs all 18
-        // tiles to answer, which has not happened while the mirrors rate-limit
-        // (#1153 defect A). "Only a full rebuild" therefore meant "never".
-        //
-        // ⚠ MEASURED ON PRODUCTION 2026-09-12, and it is not a rounding error:
-        // 318 of 998 bus rows — 31.8% — sat under such keys. 274 were pre-column
-        // NULLs from 14 June; the other 44 were a whole retired latitude band.
-        // Rail measured CLEAN on the same day — 0 orphans, because its
-        // `tile_key` arrived with the table's current grid — so this arm is here
-        // to stop the same drift, not to clean anything up today.
-        //
-        // ⚠ SAFE ON A PARTIAL RUN, unlike the tile deletes. The orphan set comes
-        // from the PLAN, not from which tiles answered: a planned tile that
-        // failed tonight keeps its rows, while a key outside the plan is one no
-        // future run can refresh whatever happens.
-        let planned: std::collections::BTreeSet<String> =
-            plan.tiles.iter().map(lean::tile_key).collect();
-        let present: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT tile_key FROM rail_stops_cache WHERE tile_key IS NOT NULL",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .context("listing rail_stops_cache tiles")?;
-        for key in present.iter().filter(|k| !planned.contains(*k)) {
-            let n = sqlx::query(
-                "DELETE FROM rail_stops_cache WHERE tile_key = ? \
-                 AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-            )
-            .bind(key)
-            .bind(ORPHAN_RETIRE_DAYS)
-            .execute(&mut *tx)
-            .await
-            .with_context(|| format!("retiring orphaned tile {key}"))?
-            .rows_affected();
-            if n > 0 {
-                eprintln!("  retired {n} row(s) under orphaned tile {key}");
-            }
-        }
-        let n = sqlx::query(
-            "DELETE FROM rail_stops_cache WHERE tile_key IS NULL \
-             AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-        )
-        .bind(ORPHAN_RETIRE_DAYS)
-        .execute(&mut *tx)
-        .await
-        .context("retiring pre-tile_key rail rows")?
-        .rows_affected();
-        if n > 0 {
-            eprintln!("  retired {n} row(s) written before tile_key existed");
-        }
     }
     for (tile, r) in h.routes.values() {
         // ⚠ UPSERT, not a plain insert: a relation can survive the delete above
@@ -6208,6 +6168,105 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// Retire the rows no future run can reach: keys the plan can no longer emit.
+///
+/// ⚠ THE TILE GRID MOVES, which is what makes this necessary. The plan is derived
+/// from mined focus places and `tile_key` is the south-west corner to four
+/// decimals, so a shifted bbox renames every tile. The merge's per-tile `DELETE`
+/// names keys from the CURRENT plan, so rows under the old names are unreachable
+/// for ever — as are `tile_key IS NULL` rows from before the column existed.
+///
+/// Measured on production 2026-09-12: `bus_route_cache` held 318 of 998 rows
+/// under such names — 274 pre-column NULLs and 44 under a retired latitude band
+/// — and `classification_inputs::bus_route_cache` reads the table with NO
+/// filter, so every one reached the bus matcher.
+///
+/// ⚠ INDEPENDENT OF COVERAGE, which is why the caller runs it before the
+/// refusal. A key outside the plan is one no future run can refresh, so retiring
+/// it is as correct at 44% coverage as at 100%.
+async fn retire_unplannable(
+    pool: &sqlx::MySqlPool,
+    plan: &backend::lean::MirrorPlan,
+    mode: &str,
+) -> Result<()> {
+    use backend::lean;
+    let planned: std::collections::BTreeSet<String> =
+        plan.tiles.iter().map(lean::tile_key).collect();
+    let mut tx = pool.begin().await.context("opening the retirement")?;
+
+    // ⚠ The table name cannot be bound and the SQL must stay literal for
+    // `DL-SQLX-SCHEMA-TRUTH`, so each arm names its own statements.
+    let present: Vec<String> = match mode {
+        "bus" => sqlx::query_scalar(
+            "SELECT DISTINCT tile_key FROM bus_route_cache WHERE tile_key IS NOT NULL",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("listing bus_route_cache tiles")?,
+        _ => sqlx::query_scalar(
+            "SELECT DISTINCT tile_key FROM rail_stops_cache WHERE tile_key IS NOT NULL",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .context("listing rail_stops_cache tiles")?,
+    };
+
+    let mut retired = 0u64;
+    for key in present.iter().filter(|k| !planned.contains(*k)) {
+        let n = match mode {
+            "bus" => sqlx::query(
+                "DELETE FROM bus_route_cache WHERE tile_key = ? \
+                 AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+            ),
+            _ => sqlx::query(
+                "DELETE FROM rail_stops_cache WHERE tile_key = ? \
+                 AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+            ),
+        }
+        .bind(key)
+        .bind(ORPHAN_RETIRE_DAYS)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("retiring orphaned tile {key}"))?
+        .rows_affected();
+        if n > 0 {
+            eprintln!("  retired {n} row(s) under orphaned tile {key}");
+            retired += n;
+        }
+    }
+
+    let n = match mode {
+        "bus" => sqlx::query(
+            "DELETE FROM bus_route_cache WHERE tile_key IS NULL \
+             AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+        ),
+        _ => sqlx::query(
+            "DELETE FROM rail_stops_cache WHERE tile_key IS NULL \
+             AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+        ),
+    }
+    .bind(ORPHAN_RETIRE_DAYS)
+    .execute(&mut *tx)
+    .await
+    .context("retiring pre-tile_key rows")?
+    .rows_affected();
+    if n > 0 {
+        eprintln!("  retired {n} row(s) written before tile_key existed");
+        retired += n;
+    }
+
+    tx.commit().await.context("committing the retirement")?;
+    // ⚠ SAY SO EVEN WHEN IT IS ZERO. A run that retires nothing and a run that
+    // never reached the retirement look identical in a log that only speaks up
+    // when it acts — and "never reached it" is exactly the bug this placement
+    // fixes.
+    eprintln!(
+        "{mode}: retired {retired} unplannable row(s) across {} planned tile(s)",
+        planned.len()
+    );
+    Ok(())
+}
+
 /// Tier 2 of #982 — the node cron is `src/cli/refresh-bus-routes.ts`.
 ///
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
@@ -6224,6 +6283,21 @@ async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
         pool.close().await;
         return Ok(());
     };
+
+    // ⚠ BEFORE THE FETCH AND BEFORE THE COVERAGE REFUSAL, deliberately. Retiring a
+    // key the plan can no longer emit needs the PLAN and nothing else: such a key
+    // can never be refreshed by any future run, whatever tonight's coverage turns
+    // out to be. Measured 2026-09-12, this is not theoretical — it sat inside the
+    // merge, the run came back at 8/18 tiles (44%), `may_rebuild` refused BELOW
+    // the 50%% floor and bailed, and the retirement never executed. It cannot
+    // wait behind a successful refresh, because the nights it is most needed are
+    // the nights there isn't one (#1153).
+    //
+    // Its own transaction, because it is its own decision — nothing here depends
+    // on what the mirrors are about to say.
+    if !dry_run {
+        retire_unplannable(&pool, &plan, "bus").await?;
+    }
 
     let client = reqwest::Client::new();
     let h = mirror_fetch(&client, "bus", &plan.tiles).await?;
@@ -6290,60 +6364,6 @@ async fn refresh_bus_routes(dry_run: bool) -> Result<()> {
                 .execute(&mut *tx)
                 .await
                 .with_context(|| format!("clearing tile {key}"))?;
-        }
-
-        // ⚠ AND RETIRE THE KEYS THE PLAN CAN NO LONGER EMIT. The per-tile delete above
-        // only names tiles from the CURRENT plan, so a row written under a tile
-        // the grid has since renamed is unreachable for ever — as is every
-        // `tile_key IS NULL` row from before the column existed. Only a
-        // `full_rebuild` used to clear those, and a full rebuild needs all 18
-        // tiles to answer, which has not happened while the mirrors rate-limit
-        // (#1153 defect A). "Only a full rebuild" therefore meant "never".
-        //
-        // ⚠ MEASURED ON PRODUCTION 2026-09-12, and it is not a rounding error:
-        // 318 of 998 bus rows — 31.8% — sat under such keys. 274 were pre-column
-        // NULLs from 14 June; the other 44 were a whole retired latitude band.
-        // `classification_inputs::bus_route_cache` reads the table with NO
-        // filter, so every one of them was being handed to the bus matcher.
-        //
-        // ⚠ SAFE ON A PARTIAL RUN, unlike the tile deletes. The orphan set comes
-        // from the PLAN, not from which tiles answered: a planned tile that
-        // failed tonight keeps its rows, while a key outside the plan is one no
-        // future run can refresh whatever happens.
-        let planned: std::collections::BTreeSet<String> =
-            plan.tiles.iter().map(lean::tile_key).collect();
-        let present: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT tile_key FROM bus_route_cache WHERE tile_key IS NOT NULL",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .context("listing bus_route_cache tiles")?;
-        for key in present.iter().filter(|k| !planned.contains(*k)) {
-            let n = sqlx::query(
-                "DELETE FROM bus_route_cache WHERE tile_key = ? \
-                 AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-            )
-            .bind(key)
-            .bind(ORPHAN_RETIRE_DAYS)
-            .execute(&mut *tx)
-            .await
-            .with_context(|| format!("retiring orphaned tile {key}"))?
-            .rows_affected();
-            if n > 0 {
-                eprintln!("  retired {n} row(s) under orphaned tile {key}");
-            }
-        }
-        let n = sqlx::query(
-            "DELETE FROM bus_route_cache WHERE tile_key IS NULL \
-             AND computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-        )
-        .bind(ORPHAN_RETIRE_DAYS)
-        .execute(&mut *tx)
-        .await
-        .context("retiring pre-tile_key bus rows")?
-        .rows_affected();
-        if n > 0 {
-            eprintln!("  retired {n} row(s) written before tile_key existed");
         }
     }
     for (tile, r) in h.routes.values() {
