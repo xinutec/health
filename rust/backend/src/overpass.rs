@@ -48,8 +48,35 @@ const OVERPASS_URLS: [&str; 2] = [
 pub const REQUEST_TIMEOUT_MS: u64 = 20_000;
 
 /// The offline mirrors' budget — well above the request path's fail-fast cap,
-/// because a 0.05-degree central-London tile legitimately returns ~5 MB.
+/// because a 0.05-degree central-London tile legitimately returns ~5 MB and
+/// Overpass queues for a compute slot under load, holding the socket silent
+/// before it streams.
 pub const MIRROR_TIMEOUT_MS: u64 = 90_000;
+
+/// What a mirror gets AFTER the first one has already failed.
+///
+/// ⚠ A FALLBACK IS ONLY WORTH A SHORT WAIT. By the time it is tried the primary
+/// has refused, the tile has already cost its budget, and the fallback's job is
+/// to be a QUICK alternative — one that cannot answer promptly is not helping,
+/// it is just delaying the next tile.
+///
+/// ⚠ MEASURED, because the 90 s above was costing a full minute and a half per
+/// failed tile. From isis on 2026-09-12:
+///
+/// ```text
+/// overpass-api.de  200, first byte 1.4 s, 3.3 MB complete in 2.1 s
+/// overpass-api.de  504, in 6.0-6.3 s
+/// kumi.systems     connects in 0.15 s and then NEVER ANSWERS — 120 s cap hit
+/// ```
+///
+/// So `kumi.systems` was burning the whole 90 s on every tile the primary
+/// refused, and that is where ~102 s between consecutive tile failures went
+/// (#1153). Fifteen seconds is seven times a healthy full tile's total.
+///
+/// ⚠ NOT APPLIED TO THE FIRST MIRROR. Overpass's slot queuing means a
+/// legitimate primary request can sit silent well past this, and cutting it
+/// would trade a real answer for a fast failure.
+pub const FALLBACK_TIMEOUT_MS: u64 = 15_000;
 
 /// What one fetch attempt produced.
 pub enum Outcome {
@@ -73,12 +100,20 @@ pub enum Outcome {
 /// `recordSuccess` belong.
 pub async fn fetch_once(client: &reqwest::Client, query: &str, timeout_ms: u64) -> Outcome {
     let mut errors: Vec<String> = Vec::new();
-    for url in OVERPASS_URLS {
+    for (i, url) in OVERPASS_URLS.iter().enumerate() {
+        // The first mirror gets the caller's budget; anything after it gets the
+        // fallback's, which is what stops a hung mirror costing a minute and a
+        // half per tile.
+        let budget = if i == 0 {
+            timeout_ms
+        } else {
+            timeout_ms.min(FALLBACK_TIMEOUT_MS)
+        };
         let res = client
-            .post(url)
+            .post(*url)
             .header("Content-Type", "text/plain")
             .header("User-Agent", USER_AGENT)
-            .timeout(Duration::from_millis(timeout_ms))
+            .timeout(Duration::from_millis(budget))
             .body(query.to_string())
             .send()
             .await;
