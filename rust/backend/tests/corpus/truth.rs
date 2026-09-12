@@ -91,7 +91,7 @@ const BASELINE: &str = concat!(
 /// ⚠ THIS LIST HELD TWO ROWS UNTIL 2026-09-01, AND THE FIRST ONE WAS NOT A
 /// PIPELINE DEFECT AT ALL. `@11:09Z` was carried here on the ticket's diagnosis
 /// — "the walk overruns by nine seconds because `vehicleSplit` ends on a fix
-/// above `ACCURACY_CEILING_M`". Replaying the day with the fold trace refuted
+/// above the Kalman admission ceiling". Replaying the day with the fold trace refuted
 /// it twice over: the fix at 11:11:09Z is an ordinary walking-pace one (53 m in
 /// 75 s, then 1023 m in the next 35), and the points this pass receives are
 /// `[ts, lat, lon, speedKmh]` — there is no accuracy field in them to test.

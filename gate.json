@@ -365,6 +365,16 @@
     },
     {
       "argv": [
+        "scripts/rules-live-in-lean.sh"
+      ],
+      "artifacts": [],
+      "cwd": ".",
+      "env": {},
+      "name": "a rule is declared once (Lean or Rust, not both)",
+      "timeout_s": 120
+    },
+    {
+      "argv": [
         "nix",
         "run",
         "git+file:../dev-lint?ref=HEAD#gate",

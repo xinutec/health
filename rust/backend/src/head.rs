@@ -55,11 +55,18 @@ pub struct Smoothed {
 
 /// The accuracy ceiling for a fix to reach the Kalman filter at all.
 ///
+/// ⚠ RENAMED FROM `ACCURACY_CEILING_M`, which `Verified.Geo.GpsQuality` also
+/// declares — at **80**, for a different job entirely (spotting a garbage fix by
+/// pairing a bad accuracy with an impossible implied speed). One name, two
+/// rules, two values, two languages: a reader who found either would have had
+/// no way to know the other existed. `scripts/rules-live-in-lean.sh` now refuses
+/// a name declared on both sides.
+///
 /// Deliberately loose. The filter weights each measurement by its accuracy²
 /// variance, so a noisy fix already contributes little; pre-filtering harder
 /// throws away anchors that matter most on fast linear travel, where even a
 /// 150 m fix pins a smooth path. See the note in `velocity.ts`.
-const ACCURACY_CEILING_M: f64 = 200.0;
+const KALMAN_ADMIT_ACCURACY_M: f64 = 200.0;
 
 /// A `f64` on the Lean wire: its IEEE-754 bit pattern as a decimal string.
 ///
@@ -425,7 +432,7 @@ pub fn run(inputs: &Value, date: &str) -> Result<Head> {
         .unwrap_or(&[]);
     let snapped = snap_all(&cleaned, places)?;
 
-    let usable = |p: &&Fix| p.accuracy.is_none_or(|a| a <= ACCURACY_CEILING_M);
+    let usable = |p: &&Fix| p.accuracy.is_none_or(|a| a <= KALMAN_ADMIT_ACCURACY_M);
     let gps_points: Vec<Fix> = snapped.iter().filter(usable).copied().collect();
     // ⚠ From `cleaned`, NOT `snapped`. Place-snap pulls a fix near a known
     // cluster onto its centroid — right for stay detection, but on a leg that

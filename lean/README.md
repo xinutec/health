@@ -4,6 +4,12 @@ The provable half of the backend's decision logic, being ported from
 TypeScript one component at a time. Design, rationale, and roadmap:
 [`docs/proposals/2026-07-verified-core-lean.md`](../docs/proposals/2026-07-verified-core-lean.md).
 
+⚠ **What belongs here rather than in Rust** —
+[`docs/design/lean-and-rust.md`](../docs/design/lean-and-rust.md). Short version:
+decisions go in Lean, IO glue goes in Rust, and Rust is there for ecosystem
+(a MariaDB driver, a TLS stack, the IANA zone database) rather than for anything
+Lean cannot do.
+
 ## Build
 
 The toolchain comes from the repo flake (no elan, no `lean-toolchain` file —

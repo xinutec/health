@@ -1,0 +1,42 @@
+# Constant names currently declared in BOTH Rust and Lean.
+#
+# ⚠ THIS LIST MAY ONLY SHRINK. Every line is a rule written twice, which is a
+# silent divergence waiting to happen: change one side, forget the other, and
+# nothing says so. They are grandfathered because they predate the check, not
+# because they are acceptable.
+#
+# A new entry needs a REASON on the line above it, and "it was easier" is not
+# one. The usual right answers are: delete the Rust copy and ask Lean, or
+# rename, if the two genuinely mean different things.
+#
+# Checked by scripts/rules-live-in-lean.sh. Measured 2026-09-12: 14 shared, of
+# which ACCURACY_CEILING_M was the same name for two DIFFERENT rules (200.0 in
+# Rust, 80 in Lean) and was renamed rather than listed.
+
+# Sync-window policy, duplicated for the backfill CLI's argument defaults.
+DEFAULT_MAX_EMPTY_DAYS
+DEFAULT_MAX_EMPTY_WINDOWS
+RANGE_WINDOW_DAYS
+
+# Fitbit tz inference: how far either way to look for a PhoneTrack fix.
+FIX_SEARCH_WINDOW_S
+
+# Calendar arithmetic. Genuinely constants of the world rather than decisions,
+# but still two declarations that could disagree.
+HOUR_BUCKETS
+MINUTES_PER_DAY
+METERS_PER_DEG_LAT
+
+# Location-tail cache shape and freshness. Read by the route AND by the Lean
+# cache rule, which is why both name them.
+LATEST_FIX_TTL_MS
+TAIL_MAX_POINTS
+TAIL_TTL_MS
+
+# PhoneTrack fetch chunking — the Rust side chunks the HTTP calls, the Lean side
+# reasons about the chunks.
+MAX_TRACK_CHUNKS
+TRACK_CHUNK_DAYS
+
+# Focus-place mining: how long asleep somewhere makes it a residence.
+RESIDENCE_SLEEP_THRESHOLD_H

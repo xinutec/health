@@ -489,6 +489,32 @@ in  { name = "health"
             ]
         , timeout_s = 3600
         }
+      , {-  ⚠ A NAME DECLARED IN BOTH LANGUAGES IS A RULE WRITTEN TWICE. The
+            decisions belong in Lean and Rust is IO glue, but nothing enforced
+            that and the boundary has a gradient: a rule needed AT an IO site
+            costs one line to write there against a new entry point and a JSON
+            round-trip to write in Lean. So rules drift Rustwards, one constant
+            at a time.
+
+            Measured the first time anybody looked (2026-09-12): FOURTEEN shared
+            names. Thirteen were exact duplicates — same value, two declarations,
+            so changing one and forgetting the other diverges silently. The
+            fourteenth, `ACCURACY_CEILING_M`, was 200.0 in Rust and 80 in Lean:
+            one name, two different rules. It was renamed rather than listed.
+
+            ⚠ CHECKS NAMES, NOT SEMANTICS, deliberately. "Is this a rule or IO
+            tuning?" has no oracle and a check needing that judgement argues with
+            its reader and gets muted. "Is this name declared twice?" is decided
+            by the two trees.
+
+            ⚠ It cannot see a rule only ever written in Rust. A ratchet against
+            divergence and regrowth, not a proof the split is right.
+        -}
+        G.Check::{
+        , name = "a rule is declared once (Lean or Rust, not both)"
+        , argv = [ "scripts/rules-live-in-lean.sh" ]
+        , timeout_s = 120
+        }
       , G.checkTable "../dev-lint"
       ]
     }
