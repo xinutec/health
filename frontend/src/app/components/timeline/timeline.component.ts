@@ -363,7 +363,7 @@ export class TimelineComponent {
    *  Rendered on a separate line below the time so the column width
    *  stays narrow (a "23:43 (−1d)" suffix would otherwise overflow
    *  the right-aligned 56px time column to the left). */
-  private dayOffsetLabel(unixTs: number, tz?: string): string {
+  private dayOffsetLabel(unixTs: number, tz?: string | null): string {
     const ref = this.referenceDate();
     if (!ref) return "";
     const dateStr = this.formatDate(unixTs, tz);
@@ -373,9 +373,13 @@ export class TimelineComponent {
     return `${sign}${Math.abs(offset)}d`;
   }
 
-  private formatDate(unixTs: number, tz?: string): string {
+  private formatDate(unixTs: number, tz?: string | null): string {
     const d = new Date(unixTs * 1000);
-    if (tz === undefined) {
+    // ⚠ FALSY, NOT `=== undefined`. The wire sends `null` for a tz the backend
+    // could not derive, and `Intl` THROWS on `timeZone: null` — a RangeError
+    // inside `rows()`, which kills the render and blanks the page. That is what
+    // a degraded day did on 2026-09-12 (#1153).
+    if (!tz) {
       const y = d.getFullYear();
       const m = (d.getMonth() + 1).toString().padStart(2, "0");
       const day = d.getDate().toString().padStart(2, "0");
@@ -409,9 +413,10 @@ export class TimelineComponent {
     return Math.round((act - ref) / 86400000);
   }
 
-  private formatTime(unixTs: number, tz?: string): string {
+  private formatTime(unixTs: number, tz?: string | null): string {
     const d = new Date(unixTs * 1000);
-    if (tz === undefined) {
+    // ⚠ Falsy, not `=== undefined` — see `formatDate`.
+    if (!tz) {
       return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
     }
     const parts = new Intl.DateTimeFormat("en-GB", {

@@ -254,3 +254,50 @@ describe("TimelineComponent day-in-progress note", () => {
 		expect(today.componentInstance.journeyCount()).toBe(settled.componentInstance.journeyCount());
 	});
 });
+
+/**
+ * A DEGRADED DAY STILL DRAWS (#1153).
+ *
+ * ⚠ THIS BLANKED THE WHOLE DASHBOARD IN PRODUCTION on 2026-09-12. The backend
+ * derives a state's `tz` from a geo lookup and serialises a missing one as
+ * `null`; `formatTime` guarded with `tz === undefined`, so `null` sailed through
+ * to `Intl.DateTimeFormat({ timeZone: null })`, which THROWS. The throw happened
+ * inside the `rows()` computed, so Angular rendered nothing at all — header, and
+ * an empty page.
+ *
+ * ⚠ The server had degraded CORRECTLY and said so: "day served with unanswered
+ * lookups ... reverseGeocode: 42", a 200 with usable states. Only the client
+ * could not cope. The lesson is the asymmetry — the moment the UI most needs to
+ * draw is the moment its inputs are thinnest.
+ */
+describe("TimelineComponent with a degraded day", () => {
+	it("renders states whose tz the backend could not derive", () => {
+		reset();
+		const states: DayState[] = [
+			state("stationary", 30, { place: "Home", tz: null as unknown as string }),
+			state("walking", 15, { tz: null as unknown as string }),
+			state("stationary", 45, { place: "Work", tz: null as unknown as string }),
+		];
+		const fixture = setup(states);
+		// The bug was a THROW, so reaching an assertion at all is most of the test.
+		expect(fixture.componentInstance.rows().length).toBe(3);
+		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
+		expect(text).toContain("Home");
+		expect(text).toContain("Work");
+	});
+
+	// ⚠ A null tz must fall back to the same label an absent one gives, not to
+	// some third behaviour — otherwise a degraded day would render times that
+	// silently disagree with a complete one.
+	it("labels a null tz exactly as an absent tz", () => {
+		reset();
+		const withNull = setup([state("stationary", 30, { place: "A", tz: null as unknown as string })]);
+		reset();
+		const withAbsent = setup([state("stationary", 30, { place: "A", tz: undefined })]);
+		const label = (f: typeof withNull) => {
+			const r = f.componentInstance.rows()[0];
+			return r.kind === "entry" ? r.entry.startLabel : "";
+		};
+		expect(label(withNull)).toBe(label(withAbsent));
+	});
+});

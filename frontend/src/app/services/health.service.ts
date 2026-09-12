@@ -126,8 +126,14 @@ export interface TrackSegment {
    *  Derived per-segment from the segment's location (stationary
    *  centroid, moving midpoint). Lets the UI show times "as you
    *  experienced them" — morning in one tz, evening in another
-   *  on a travel day. */
-  displayTz?: string;
+   *  on a travel day.
+   *
+   *  ⚠ NULLABLE ON THE WIRE, not merely absent. The backend derives it from a
+   *  geo lookup, and it serialises a missing one as `null` — so a reader that
+   *  tests `=== undefined` lets it through. That is not hypothetical: it blanked
+   *  the dashboard on 2026-09-12 when Overpass was unreachable and 42 lookups
+   *  went unanswered (#1153). */
+  displayTz?: string | null;
   // The segment-level path arrays (snappedPath/matchedPath/walkMatchedPath)
   // are pipeline intermediates; the API strips them — drawn geometry arrives
   // once, in `episodes`.
@@ -152,8 +158,12 @@ export interface DayState {
   /** IANA tz to render this state's timestamps in. Populated from
    *  the underlying segment, or from the sleep window's tz for
    *  synthesized sleeping intervals that have no overlapping
-   *  segment. */
-  tz?: string;
+   *  segment.
+   *
+   *  ⚠ NULLABLE ON THE WIRE. Lean's `Option String` renders as `null`, and the
+   *  DEGRADED DAY is exactly when it is missing — which is exactly when the UI
+   *  most needs to still draw. */
+  tz?: string | null;
   /** For sleeping states only: minutes the user was actually asleep
    *  (Fitbit minutes_asleep). Differs from the wall-clock span by
    *  the time spent awake in bed. */
@@ -200,7 +210,12 @@ export function displayTzAt(segments: readonly TrackSegment[] | undefined, ts: n
       nearest = s;
     }
   }
-  return nearest?.displayTz;
+  // ⚠ `?? undefined` COLLAPSES null, and the callers depend on it: they hand the
+  // result straight to `Intl` as `timeZone`, which treats `undefined` as "use the
+  // default" and THROWS on `null`. The loop above already skips falsy zones, so
+  // this only narrows the type — but narrowing it here is what keeps every
+  // caller from needing the same guard (#1153).
+  return nearest?.displayTz ?? undefined;
 }
 
 /** One leg of a journey, as the backend assembles it
