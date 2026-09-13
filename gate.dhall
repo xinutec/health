@@ -282,6 +282,25 @@ in  { name = "health"
             and exhaustive by construction: this row names its binaries and the
             row above is its exact negation.
 
+            ⚠ NAMED AS `--test` TARGETS, NOT SELECTED OUT OF `--workspace`, and
+            the difference is only in what gets BUILT. `-E` chooses what RUNS;
+            the build scope is still whatever `--workspace` said, so this row
+            used to compile ~98 test binaries in release in order to run three.
+            Measured 2026-09-13, same warm tree, one `touch` of backend's lib:
+
+                --workspace           187 s wall, 783 s CPU
+                the three targets     103 s wall, 259 s CPU
+
+            84 s of wall and 524 CPU-seconds per Rust change, for the same three
+            tests. It matters more than it looks because this phase SATURATES
+            the machine — median load1 8.8 on ten cores — so the only thing that
+            helps is less work, not more of it.
+
+            ⚠ The explicit list is not self-maintaining, and that is survivable
+            rather than a hole: a fourth `*_corpus` binary matches the row
+            above's negation, so it would RUN there — slowly, in debug, but run.
+            Adding it here is an optimisation, never a correctness fix.
+
             Same ordering constraint as everything cargo here: after the host
             row, which writes the `.rsp` link line day-shell's build.rs reads.
         -}
@@ -296,9 +315,14 @@ in  { name = "health"
               , "--release"
               , "--manifest-path"
               , "rust/Cargo.toml"
-              , "--workspace"
-              , "-E"
-              , "binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus)"
+              , "-p"
+              , "backend"
+              , "--test"
+              , "corpus_gate"
+              , "--test"
+              , "head_corpus"
+              , "--test"
+              , "hsmm_decode_corpus"
               ]
         , timeout_s = 1800
         }

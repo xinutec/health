@@ -54,14 +54,43 @@ mod corpus;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 
+/// How many ways the corpus is split.
+///
+/// ⚠ FOUR, AND FOUR IS NOT ARBITRARY. This row's wall clock is its SLOWEST
+/// SINGLE TEST, not its total work — the shards run concurrently and the
+/// machine is not saturated during the replay (it is during the compile). At
+/// two shards the corpus was 21 days each, ~340 s, while `hsmm_decode_corpus`
+/// beside it took 244 s. Splitting to four puts the corpus at ~170 s, under
+/// that floor, so a fifth shard buys nothing until `hsmm` is the one that moves.
+///
+/// ⚠ It was stuck at two because two shards in one process CORRUPTED each
+/// other — `day-shell`'s `osm::TRACE` was a process global and the replays
+/// interleaved (#1560). That is fixed; the trace is thread-local, so shard
+/// count is now a scheduling choice rather than a correctness one.
+///
+/// ⚠ The ceiling is MEMORY, not cores. The walk referee is ~1.6 GB per
+/// process, so four is ~6.4 GB of the 32 available, alongside the rest of the
+/// gate. Raise it only with that measured, not by taste.
+const SHARDS: usize = 4;
+
 #[test]
 fn every_golden_day_grades_shard_a() {
-    run(0, 2);
+    run(0, SHARDS);
 }
 
 #[test]
 fn every_golden_day_grades_shard_b() {
-    run(1, 2);
+    run(1, SHARDS);
+}
+
+#[test]
+fn every_golden_day_grades_shard_c() {
+    run(2, SHARDS);
+}
+
+#[test]
+fn every_golden_day_grades_shard_d() {
+    run(3, SHARDS);
 }
 
 /// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY (#1560).
