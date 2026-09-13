@@ -1,13 +1,10 @@
 ---
 name: build
 
-# health-sync (Node/Hono backend + Angular frontend) — gate the image on `npm
-# run verify` (typecheck + schema-drift + biome + angular-eslint + backend and
-# frontend unit tests), then build + push xinutec/health-sync:latest to Docker
-# Hub. The golden + walk-geometry fixture gates are NOT here: they need the
-# gitignored local fixtures and run from scripts/deploy.sh, not CI. The k8s
-# manifests + deploy live in the home monorepo (xinutec/pippijn
-# code/kubes/health/k8s); the image tag is the only contract with the deploy.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -22,9 +19,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      # Before setup-node, whose `cache: pnpm` shells out to `pnpm store path`.
-      # The major floats: pinning it would be a second version held level with
-      # the flake's by hand, and the lockfile is what has to match.
       - uses: pnpm/action-setup@v6
         with:
           version: 11
@@ -35,30 +29,10 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
             frontend/pnpm-lock.yaml
-      # lean-check (lake build of the verified core — every #guard — plus the
-      # TS↔Lean parity harness) runs under `nix develop`, so CI needs nix. The
-      # toolchain download comes from cache.nixos.org (flake-pinned; a couple of
-      # minutes).
       - uses: cachix/install-nix-action@v31
-      # ⚠ FRONTEND ONLY. The root install existed for the TypeScript backend,
-      # which #975 deleted; nothing at the repo root builds or runs now.
       - run: pnpm install --frozen-lockfile --dir frontend
-      # The rows of gate.json that a single-repo runner can run, listed
-      # rather than chained. NOT `pnpm run verify`: that script runs the gate
-      # itself now, and the gate reaches `../dev-lint` — a private sibling
-      # repository this checkout does not have. Naming them individually also
-      # buys here what the table bought locally: a red run says which one
-      # broke, instead of one name for all of them.
-      #
-      # Missing on purpose, because a runner cannot do them: the artifact-judged
-      # `ng build` and the phone-width layout harness (both go through
-      # `dev-lint#ng-build`), the shared dev-lint rules, and the gate.json /
-      # gate.dhall lockfile check. The 03:00 fleet sweep runs the whole table.
       - run: pnpm run typecheck:frontend
       - run: pnpm run lint:frontend
-      # `lake build`, which is also what produces
-      # `lean/.lake/build/bin/verified_cli` — the binary every day-driving check
-      # spawns now that the fold is the only arm.
       - run: pnpm run lean-check
       - run: pnpm run test:frontend
 
@@ -83,5 +57,4 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=registry,ref=xinutec/health-sync:cache
-          # mode=max persists the builder-stage layers (npm installs, backend build) too.
           cache-to: type=registry,ref=xinutec/health-sync:cache,mode=max
