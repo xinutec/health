@@ -36,10 +36,10 @@
 //! bitten by. So misses are tallied separately and printed. A run whose misses
 //! are nonzero has NOT exercised the matcher, however green it looks.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 // `unsafe extern` and not plain `extern`: edition 2024 makes the block itself
 // carry the word, because what is unchecked here is the DECLARATION — that these
@@ -130,30 +130,79 @@ struct Trace {
     keys: Vec<RawKey>,
 }
 
-/// The loaded trace, REPLACEABLE — see [`load_fixture`].
+thread_local! {
+/// The loaded trace, REPLACEABLE and PER-THREAD — see [`load_fixture`].
 ///
 /// ⚠ This was a `OnceLock` until 2026-09-08, and that made every backend
 /// corpus gate blind to the walk pass (#1418): one fixture per process
 /// lifetime is fine for the CLI, which replays one day, and impossible for a
-/// harness replaying forty-two. An `Arc` is cloned out under a short read lock
-/// rather than held across the lookup, so a callback never keeps the lock while
-/// it encodes an answer.
-static TRACE: RwLock<Option<Arc<Trace>>> = RwLock::new(None);
+/// harness replaying forty-two. It became an `RwLock` for that.
+///
+/// ⚠ **AND THAT MADE TWO SHARDS IN ONE PROCESS UNSOUND (#1560).** A replay is
+/// `load_trace(day)` then `replay(day)`, and the trace lives HERE, between the
+/// two. Run the corpus shards as threads — which is exactly what `cargo test`
+/// does — and the pairs interleave: shard A loads day 1, shard B loads day 2,
+/// then A replays day 1 against day 2's roads. Measured: 94 of 118 walks moved
+/// and 215 lookups went unanswered against 17 under nextest. Nothing crashed;
+/// it graded a real corpus against the wrong day's map and reported a verdict.
+///
+/// Thread-local rather than a lock held across the replay, because the lock
+/// would serialise the shards and give back the wall-clock sharding exists to
+/// save. A replay is single-threaded by construction — `lean::serve` calls into
+/// Lean DIRECTLY rather than through `spawn_blocking` (see `backend::lean`), so
+/// every callback runs on the thread that loaded the trace.
+    static TRACE: RefCell<Option<Arc<Trace>>> = const { RefCell::new(None) };
+}
 
 /// The trace as of this instant, or `None` if none is loaded.
 fn trace() -> Option<Arc<Trace>> {
-    TRACE.read().expect("trace lock poisoned").clone()
+    TRACE.with(|t| t.borrow().clone())
 }
 
-static WALKABLE_HITS: AtomicU64 = AtomicU64::new(0);
-static WALKABLE_MISSES: AtomicU64 = AtomicU64::new(0);
-static BUILDINGS_HITS: AtomicU64 = AtomicU64::new(0);
-static BUILDINGS_MISSES: AtomicU64 = AtomicU64::new(0);
-static DRIVABLE_HITS: AtomicU64 = AtomicU64::new(0);
-static DRIVABLE_MISSES: AtomicU64 = AtomicU64::new(0);
-/// Lookups the MIRROR answered — counted apart from the fixture's hits, so a
-/// run cannot claim the fixture served it when the database did.
-static MIRROR_READS: AtomicU64 = AtomicU64::new(0);
+/// One thread's lookup tallies. `mirror_reads` counts lookups the MIRROR
+/// answered, apart from the fixture's hits, so a run cannot claim the fixture
+/// served it when the database did.
+///
+/// ⚠ **PER-THREAD FOR THE SAME REASON AS [`TRACE`], and it is not cosmetic.**
+/// The walk gate FAILS a run when `missed * 4 >= asked`. Pooling two shards'
+/// tallies in one process lets one shard's misses condemn the other's day, and
+/// that verdict is indistinguishable from a real one.
+#[derive(Clone, Copy)]
+struct Tally {
+    walkable_hits: u64,
+    walkable_misses: u64,
+    buildings_hits: u64,
+    buildings_misses: u64,
+    drivable_hits: u64,
+    drivable_misses: u64,
+    mirror_reads: u64,
+}
+
+impl Tally {
+    const ZERO: Self = Self {
+        walkable_hits: 0,
+        walkable_misses: 0,
+        buildings_hits: 0,
+        buildings_misses: 0,
+        drivable_hits: 0,
+        drivable_misses: 0,
+        mirror_reads: 0,
+    };
+}
+
+thread_local! {
+    static TALLY: Cell<Tally> = const { Cell::new(Tally::ZERO) };
+}
+
+/// Add to this thread's tally. `Cell` rather than atomics: nothing shares it,
+/// so there is no contention to order against.
+fn bump(f: impl FnOnce(&mut Tally)) {
+    TALLY.with(|c| {
+        let mut t = c.get();
+        f(&mut t);
+        c.set(t);
+    });
+}
 
 pub struct Counts {
     pub walkable_hits: u64,
@@ -191,14 +240,15 @@ pub fn have_trace() -> bool {
 }
 
 pub fn take_counts() -> Counts {
+    let t = TALLY.with(|c| c.replace(Tally::ZERO));
     Counts {
-        walkable_hits: WALKABLE_HITS.swap(0, Ordering::Relaxed),
-        walkable_misses: WALKABLE_MISSES.swap(0, Ordering::Relaxed),
-        buildings_hits: BUILDINGS_HITS.swap(0, Ordering::Relaxed),
-        buildings_misses: BUILDINGS_MISSES.swap(0, Ordering::Relaxed),
-        drivable_hits: DRIVABLE_HITS.swap(0, Ordering::Relaxed),
-        drivable_misses: DRIVABLE_MISSES.swap(0, Ordering::Relaxed),
-        mirror_reads: MIRROR_READS.swap(0, Ordering::Relaxed),
+        walkable_hits: t.walkable_hits,
+        walkable_misses: t.walkable_misses,
+        buildings_hits: t.buildings_hits,
+        buildings_misses: t.buildings_misses,
+        drivable_hits: t.drivable_hits,
+        drivable_misses: t.drivable_misses,
+        mirror_reads: t.mirror_reads,
         mirror_fails: crate::mirror::take_fails(),
     }
 }
@@ -355,7 +405,7 @@ pub fn load_fixture_sections(
     want_buildings: bool,
     want_drivable: bool,
 ) -> Result<(usize, usize), String> {
-    *TRACE.write().expect("trace lock poisoned") = None;
+    TRACE.with(|t| *t.borrow_mut() = None);
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
@@ -453,7 +503,8 @@ pub fn load_fixture_sections(
             }
         }
     }
-    *TRACE.write().expect("trace lock poisoned") = Some(Arc::new(t));
+    let loaded = Arc::new(t);
+    TRACE.with(|slot| *slot.borrow_mut() = Some(loaded));
     Ok(n)
 }
 
@@ -650,10 +701,9 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let key = (quantise(lat), quantise(lon), quantise_r(radius));
     let loaded = trace();
     let found = loaded.as_ref().and_then(|t| t.buildings.get(&key));
-    let (hits, misses) = (&BUILDINGS_HITS, &BUILDINGS_MISSES);
     match found {
         Some(lines) => {
-            hits.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.buildings_hits += 1);
             // `OSM_LOG=1` names every HIT too, in call order.
             //
             // A hit count alone cannot tell "asked the same four questions" from
@@ -672,7 +722,7 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             answer(lines)
         }
         None => {
-            misses.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.buildings_misses += 1);
             // Named, because a miss is a finding about the two arms asking
             // different questions, and a count alone cannot be chased.
             //
@@ -694,7 +744,7 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // exactly the case that must not read as "there are no roads here".
             if crate::mirror::configured() {
                 let lines: Vec<Line> = crate::mirror::buildings_near(lat, lon, radius);
-                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                bump(|t| t.mirror_reads += 1);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
                         "osm: MIRROR buildingsNear lat={lat:.17} lon={lon:.17} r={radius} -> {} line(s) {}",
@@ -718,7 +768,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let loaded = trace();
     match loaded.as_ref().and_then(|t| t.walkable.get(&key)) {
         Some(ways) => {
-            WALKABLE_HITS.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.walkable_hits += 1);
             if std::env::var_os("OSM_LOG").is_some() {
                 eprintln!(
                     "osm: HIT  walkableRoads lat={lat:.17} lon={lon:.17} r={radius} -> {} way(s) {}",
@@ -729,7 +779,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             hand_over(&encode_ways(ways))
         }
         None => {
-            WALKABLE_MISSES.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.walkable_misses += 1);
             if loaded.is_some() {
                 eprintln!(
                     "osm: MISS walkableRoads lat={lat:.17} lon={lon:.17} r={radius} \
@@ -748,7 +798,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                         coords: w.coords,
                     })
                     .collect();
-                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                bump(|t| t.mirror_reads += 1);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
                         "osm: MIRROR walkableRoads lat={lat:.17} lon={lon:.17} r={radius} \
@@ -772,7 +822,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
     let loaded = trace();
     match loaded.as_ref().and_then(|t| t.drivable.get(&key)) {
         Some(ways) => {
-            DRIVABLE_HITS.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.drivable_hits += 1);
             if std::env::var_os("OSM_LOG").is_some() {
                 eprintln!(
                     "osm: HIT  drivableRoads lat={lat:.17} lon={lon:.17} r={radius} -> {} way(s)",
@@ -782,7 +832,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             hand_over(&encode_ways(ways))
         }
         None => {
-            DRIVABLE_MISSES.fetch_add(1, Ordering::Relaxed);
+            bump(|t| t.drivable_misses += 1);
             if loaded.is_some() {
                 eprintln!(
                     "osm: MISS drivableRoads lat={lat:.17} lon={lon:.17} r={radius} \
@@ -801,7 +851,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                         coords: w.coords,
                     })
                     .collect();
-                MIRROR_READS.fetch_add(1, Ordering::Relaxed);
+                bump(|t| t.mirror_reads += 1);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
                         "osm: MIRROR drivableRoads lat={lat:.17} lon={lon:.17} r={radius} \

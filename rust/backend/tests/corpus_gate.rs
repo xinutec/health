@@ -64,13 +64,7 @@ fn every_golden_day_grades_shard_b() {
     run(1, 2);
 }
 
-/// ⚠ ONE SHARD PER PROCESS, REFUSED RATHER THAN LEFT TO CORRUPT.
-///
-/// The walk referee hands its ways and buildings to the Lean runtime ONCE per
-/// process, deduped across the days it was given (`lean.rs`'s `INIT` is a
-/// process-wide `OnceLock`). Two shards in one process therefore overwrite each
-/// other's captures, and the fold goes on to ask for keys the survivor does not
-/// carry — which does not fail, it silently REGRADES.
+/// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY (#1560).
 ///
 /// Measured 2026-09-12, same commit and same archives, one variable at a time:
 ///
@@ -81,31 +75,26 @@ fn every_golden_day_grades_shard_b() {
 ///                        against 17 under nextest
 /// ```
 ///
+/// ⚠ **THE FIRST DIAGNOSIS WAS WRONG, and it is worth saying why.** It blamed
+/// the Lean runtime: the walk referee "hands its ways to a process-wide
+/// `OnceLock`, so two shards overwrite each other". Lean holds NO mutable state
+/// — there is not one `IO.Ref` or `initialize` in the tree — and the way tables
+/// travel INSIDE each request. The story fit every number and named the wrong
+/// layer, which is the failure mode this file exists to record.
+///
+/// The clobbered global was Rust's, in `day-shell`'s `osm::TRACE`. A replay is
+/// `load_trace(day)` then `replay(day)`; run the shards as threads and those
+/// pairs interleave, so one shard replays its day against the other's roads.
+/// `TRACE` is thread-local as of 2026-09-13 and the interleaving cannot happen,
+/// so `cargo test` is sound again and the refusal that stood here is gone.
+///
 /// ⚠ `deploy.sh` WAS THE ONLY CALLER THAT RAN THEM THIS WAY, and it produced
 /// FALSE FAILURES for an unknown length of time — it reproduced at `7f5b412`
 /// with identical numbers. Nothing caught it: `gate.dhall`'s rows are nextest
 /// (its header says the #1003 mode trace RELIES on test-per-process) and CI
 /// cannot run these gates at all, because the fixtures are gitignored. So the
-/// breakage was invisible until somebody tried to ship (#1560).
-///
-/// The fix there was to stop asking; this is the fix here — `cargo test` is the
-/// obvious thing to type by hand, and it must say so rather than hand back 49
-/// regressions that are not real.
-static SHARD_IN_PROCESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
+/// breakage was invisible until somebody tried to ship.
 fn run(shard: usize, of: usize) {
-    assert!(
-        !SHARD_IN_PROCESS.swap(true, std::sync::atomic::Ordering::SeqCst),
-        "corpus_gate: a second shard is running in this process, which silently \
-         regrades the walk referee — the two shards overwrite each other's OSM \
-         captures in the shared Lean runtime.\n\
-         \n\
-         Run it test-per-process:\n\
-         \n\
-         \x20   cargo nextest run -p backend --test corpus_gate\n\
-         \n\
-         `cargo test` runs both shards as threads in one process. See #1560."
-    );
     if !Path::new(GOLDEN).is_dir() {
         eprintln!("SKIPPED: no golden corpus at {GOLDEN}; see this file's header.");
         return;
