@@ -182,6 +182,7 @@ async fn main() -> Result<()> {
             let mut soft_out: Option<String> = None;
             let mut hard_out: Option<String> = None;
             let mut dry = false;
+            let mut as_of: Option<chrono::DateTime<chrono::Utc>> = None;
             let mut pos: Vec<&String> = Vec::new();
             let mut it = flags.iter();
             while let Some(f) = it.next() {
@@ -198,6 +199,27 @@ async fn main() -> Result<()> {
                         }
                     }
                     "--dry" => dry = true,
+                    "--as-of" => {
+                        let Some(d) = it.next() else {
+                            eprintln!("refresh-focus-places: --as-of needs a YYYY-MM-DD");
+                            std::process::exit(2);
+                        };
+                        // End of that civil day in UTC, so the day itself is
+                        // inside the window rather than cut off at its start.
+                        match chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
+                            Ok(nd) => {
+                                as_of = Some(
+                                    nd.and_hms_opt(23, 59, 59)
+                                        .expect("23:59:59 is a time")
+                                        .and_utc(),
+                                )
+                            }
+                            Err(e) => {
+                                eprintln!("refresh-focus-places: --as-of {d:?}: {e}");
+                                std::process::exit(2);
+                            }
+                        }
+                    }
                     _ => pos.push(f),
                 }
             }
@@ -214,7 +236,8 @@ async fn main() -> Result<()> {
                 _ => {
                     eprintln!(
                         "usage: backend refresh-focus-places [user] [lookback-days] \
-                         [--hard-out <file>] [--soft-out <file>] [--dry]"
+                         [--hard-out <file>] [--soft-out <file>] [--dry] \
+                         [--as-of YYYY-MM-DD]"
                     );
                     std::process::exit(64);
                 }
@@ -223,6 +246,7 @@ async fn main() -> Result<()> {
                 soft_out,
                 hard_out,
                 dry,
+                as_of,
             };
             if sinks.active() && user.is_none() {
                 eprintln!(
@@ -3853,6 +3877,13 @@ struct MineSinks {
     soft_out: Option<String>,
     hard_out: Option<String>,
     dry: bool,
+    /// Mine as the window stood on this instant rather than now (#1405).
+    ///
+    /// ⚠ A MEASUREMENT FLAG, and it must stay one until somebody has costed
+    /// it. Answering a day this way means re-clustering per day served, and one
+    /// 730-day mine is 272,977 points into 372 clusters — that cannot go near
+    /// the serving path.
+    as_of: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl MineSinks {
@@ -3920,8 +3951,15 @@ async fn refresh_focus_places_one(
     .await
     .with_context(|| format!("opening PhoneTrack for {user_id}"))?;
 
+    // ⚠ THE WINDOW'S ANCHOR IS A PARAMETER (#1405). Mining always counted back
+    // from NOW, which is why an as-of-the-day prior could not be reconstructed:
+    // filtering the mined events by timestamp cuts their COUNTS but not their
+    // LABELS, because every stay's subtype comes from a cluster built over the
+    // whole window — including the part after the cut. Anchoring the window
+    // itself is the only way to ask what was knowable on a past day.
+    let anchor = sinks.as_of.unwrap_or_else(chrono::Utc::now);
     let day = |n: i64| -> String {
-        (chrono::Utc::now() - chrono::Duration::days(n))
+        (anchor - chrono::Duration::days(n))
             .format("%Y-%m-%d")
             .to_string()
     };
