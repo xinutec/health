@@ -145,12 +145,31 @@ the point of recording them:
 - `838d617` names a city in a `linesAtPoint(...)` line beside the
   date of the trip that produced the query.
 
-The lesson is narrower than "be careful": a **dump pasted verbatim**
+A third, added 2026-09-13, and it is a DIFFERENT shape from the two
+above:
+
+- `3a10910` pastes the bus-refresh TILE PLAN into its body — a
+  lattice of corner coordinates, two lines of them. No date, no
+  place name, no narrative about anyone; by the sentence-level
+  reading of the rule it looks clean, which is exactly why it got
+  written.
+
+The lesson the first two teach is that a **dump pasted verbatim**
 is the failure mode. Pipeline output is exactly a (place, time,
 mode) tuple per line, so quoting it into a message is the rule's
 worst case even when the surrounding prose is abstract. Quote the
 SHAPE — "train, then a 5-minute walk, then a bus" — and keep the
 labels in the task tracker, which is private.
+
+The third teaches something the rule did not say out loud: **a
+COVERAGE GEOMETRY is personal data even with no personal datum in
+it.** The rule above is written in terms of points — "the user was
+at (lat, lon) at 17:44" — and a tile grid is not a point and names
+no instant. But a grid exists to cover somewhere, so its corners
+outline the home range directly, and a lattice states the extent
+more plainly than any single fix does. The same goes for a bounding
+box, a search radius, or the argument list of a coverage query.
+Print the tile COUNT and the tile SIZE; never the corners.
 
 The rule for source comments is unchanged and was not broken here:
 station names as test data are fine when decoupled from a narrative
