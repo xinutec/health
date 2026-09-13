@@ -78,6 +78,127 @@ pub const MIRROR_TIMEOUT_MS: u64 = 90_000;
 /// would trade a real answer for a fast failure.
 pub const FALLBACK_TIMEOUT_MS: u64 = 15_000;
 
+/// `overpass-api.de`'s status endpoint. Cheap, and the one they publish so a
+/// client does not have to guess.
+const STATUS_URL: &str = "https://overpass-api.de/api/status";
+
+/// What `/api/status` says about THIS client's compute slots.
+///
+/// ⚠ **OVERPASS PUBLISHES A CONCURRENCY LIMIT AND LIVE AVAILABILITY, and until
+/// 2026-09-13 nothing here read either.** Measured from isis that day:
+///
+/// ```text
+/// Connected as: 3712168559
+/// Current time: 2026-09-13T10:21:15Z
+/// Rate limit: 2
+/// 2 slots available now.
+/// ```
+///
+/// **Two.** The bus refresh fired eighteen tile queries back to back with no
+/// regard for that number, which is what got isis banned at the IP level for
+/// 45+ minutes (#1153 defect A). A fixed inter-tile sleep cannot fix it either,
+/// because it is not tracking anything — which is why the pacing bracket came
+/// out non-monotonic and was rightly refuted.
+///
+/// When the slots are spent the endpoint names the moment the next one frees:
+///
+/// ```text
+/// Slot available after: 2026-09-13T10:25:00Z, in 42 seconds.
+/// ```
+///
+/// So the polite client is not a slower one, it is one that ASKS.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Slots {
+    /// The per-IP concurrency limit. `0` means unmetered for this client.
+    pub limit: u32,
+    pub available: u32,
+    /// Seconds until the soonest slot frees. `None` when one is free now.
+    pub next_in_s: Option<u64>,
+}
+
+/// Read `/api/status`. `None` when it cannot be parsed, which is deliberately
+/// NOT an error: a status endpoint that changed shape must not stop the refresh.
+///
+/// ⚠ The seconds are taken from `in N seconds`, not by subtracting the quoted
+/// timestamp from the local clock. A host whose clock is off would otherwise
+/// compute a negative or enormous wait out of a correct answer.
+pub fn parse_status(body: &str) -> Option<Slots> {
+    let mut limit = None;
+    let mut available = None;
+    let mut next: Option<u64> = None;
+    for line in body.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Rate limit:") {
+            limit = rest.trim().parse::<u32>().ok();
+        } else if let Some(n) = t
+            .strip_suffix("slots available now.")
+            .or_else(|| t.strip_suffix("slot available now."))
+        {
+            available = n.trim().parse::<u32>().ok();
+        } else if t.starts_with("Slot available after:")
+            && let Some((_, tail)) = t.rsplit_once(", in ")
+        {
+            // `42 seconds.` — the soonest of however many are listed.
+            if let Some(secs) = tail
+                .trim_end_matches('.')
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                next = Some(next.map_or(secs, |c: u64| c.min(secs)));
+            }
+        }
+    }
+    // A body naming neither a count nor a wait is not a status page.
+    //
+    // ⚠ NOT `unwrap_or`, which evaluates its argument even when the Option is
+    // Some — the `return None` inside one fired on every healthy response and
+    // made a parsed "2 slots available now." read as an unparseable page.
+    let available = match available {
+        Some(a) => a,
+        None if next.is_some() => 0,
+        None => return None,
+    };
+    Some(Slots {
+        limit: limit.unwrap_or(0),
+        available,
+        next_in_s: if available > 0 { None } else { next },
+    })
+}
+
+/// Ask Overpass whether it has a slot for us, and wait out the answer.
+///
+/// Returns the seconds actually slept. `cap_s` bounds it so a mirror announcing
+/// an absurd wait cannot stall the whole refresh — the caller's breaker and
+/// deadline stay in charge.
+///
+/// ⚠ ONE STATUS READ PER TILE, not a poll loop. The endpoint says how long to
+/// wait, so waiting that long and proceeding is the whole protocol; asking
+/// repeatedly while we wait would be the same discourtesy in miniature.
+pub async fn wait_for_slot(client: &reqwest::Client, cap_s: u64) -> u64 {
+    let res = client
+        .get(STATUS_URL)
+        .header("User-Agent", USER_AGENT)
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+        .send()
+        .await;
+    let Ok(r) = res else { return 0 };
+    let Ok(body) = r.text().await else { return 0 };
+    let Some(s) = parse_status(&body) else {
+        return 0;
+    };
+    if s.available > 0 {
+        return 0;
+    }
+    // `+1` so we come back just after the slot frees rather than on the tick.
+    let wait = s.next_in_s.unwrap_or(0).saturating_add(1).min(cap_s);
+    if wait > 0 {
+        eprintln!("  overpass: 0 of {} slots free — waiting {wait}s", s.limit);
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+    }
+    wait
+}
+
 /// What one fetch attempt produced.
 pub enum Outcome {
     /// A 2xx, with the body.

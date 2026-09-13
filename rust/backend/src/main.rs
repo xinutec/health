@@ -5827,6 +5827,16 @@ struct MirrorHarvest {
 /// ([[feedback_a_degenerate_example_cannot_show_a_convention]]).
 const TILE_PACE_MS: u64 = 5_000;
 
+/// The longest one tile will wait for a compute slot.
+///
+/// ⚠ CHOSEN AGAINST THE RUN'S DEADLINE, not picked round. The CronJob's
+/// `activeDeadlineSeconds` is 5400 and a full plan is 18 tiles, so the worst
+/// case here is 18 x 120 s = 36 minutes of waiting — comfortably inside it even
+/// with every tile's own fetch budget on top. A larger cap would let one
+/// congested night eat the deadline and return nothing at all, which is worse
+/// than a partial refresh.
+const SLOT_WAIT_CAP_S: u64 = 120;
+
 /// How long a tile key must go unrefreshed before a run retires its rows.
 ///
 /// ⚠ THE TILE GRID MOVES, which is what makes this necessary at all. The plan is
@@ -5871,6 +5881,15 @@ async fn mirror_fetch(
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(TILE_PACE_MS)).await;
         }
+        // ⚠ ASK, rather than pace blind. The constant above is a GUESS at what a
+        // two-slot allowance sustains; `/api/status` is Overpass telling us. On
+        // a healthy run every slot is free and this costs one cheap GET per
+        // tile; when they are spent it waits exactly as long as the server said
+        // instead of firing into a refusal and spending the breaker on it.
+        //
+        // Checked before the FIRST tile too, unlike the pace — a slot held by an
+        // earlier run is exactly the case that makes tile 1 the one refused.
+        backend::overpass::wait_for_slot(client, SLOT_WAIT_CAP_S).await;
         let key = lean::tile_key(tile);
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
         // ⚠ Fail fast while the breaker is open — the whole point is not to eat
