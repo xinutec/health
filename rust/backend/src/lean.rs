@@ -2157,6 +2157,28 @@ struct WirePriorsBlob {
     by_category: Vec<(String, WirePriorStats)>,
     #[serde(rename = "totalVisitsBits")]
     total_visits_bits: String,
+    /// The evidence behind the aggregate, so a past day can be re-aggregated
+    /// as it stood THEN (#1405).
+    ///
+    /// ⚠ `default` because `priorsAsOf` replies with this same shape and has no
+    /// events to hand back — it is answering FROM them. An absent list there is
+    /// correct, not a truncated payload.
+    #[serde(default)]
+    events: Vec<WirePriorEvent>,
+}
+
+/// One unit of mined evidence, as `Verified.Geo.VenuePrior.PriorEvent` spells
+/// it. `weight` rides as bits (soft attribution makes it fractional); the rest
+/// are integers the shell already holds as integers.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct WirePriorEvent {
+    pub subtype: String,
+    #[serde(rename = "startUnix")]
+    pub start_unix: i64,
+    pub dwell: u32,
+    pub hour: u32,
+    #[serde(rename = "weightBits")]
+    pub weight_bits: String,
 }
 
 #[derive(Deserialize)]
@@ -2201,7 +2223,31 @@ fn wire_priors_to_json(w: &WirePriorsBlob) -> Result<serde_json::Value> {
         "bySubtype": table(&w.by_subtype)?,
         "byCategory": table(&w.by_category)?,
         "totalVisits": bits(&w.total_visits_bits)?,
+        // ⚠ ALONGSIDE the aggregate, never instead of it. A blob written by
+        // this build must stay readable by a pod that predates #1405 — during
+        // a rollout both are serving — and the aggregate is what that pod
+        // reads.
+        "events": w.events,
     }))
+}
+
+/// Re-aggregate stored evidence as it stood at `as_of_unix`.
+///
+/// ⚠ THE AGGREGATION IS LEAN'S, called rather than reimplemented. Doing the
+/// sum here would be a second copy of `bumpStats`/`dwellBucket` and of the
+/// insertion order that `shapeScore` reads back as the subtype-universe size —
+/// the exact class of duplication the Lean/Rust split exists to prevent.
+pub fn priors_as_of(events: &[WirePriorEvent], as_of_unix: i64) -> Result<serde_json::Value> {
+    #[derive(Deserialize)]
+    struct Wire {
+        value: WirePriorsBlob,
+    }
+    let w: Wire = call_json(&serde_json::json!({
+        "op": "priorsAsOf",
+        "events": events,
+        "asOfUnix": as_of_unix,
+    }))?;
+    wire_priors_to_json(&w.value)
 }
 
 pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {

@@ -697,15 +697,74 @@ def dispatch (j : Json) : Json :=
         , ("hours", Json.arr ((s.hours.map (fun x => Json.str (toString x.toBits))).toArray)) ]
     let tableJson (t : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) : Json :=
       Json.arr ((t.map fun (k, s) => Json.arr #[Json.str k, statsJson s]).toArray)
+    let eventJson (e : Verified.Geo.VenuePrior.PriorEvent) : Json :=
+      Json.mkObj
+        [ ("subtype", Json.str e.subtype)
+        , ("startUnix", Lean.toJson e.startUnix)
+        , ("dwell", Lean.toJson e.dwell)
+        , ("hour", Lean.toJson e.hour)
+        , ("weightBits", Json.str (toString e.weight.toBits)) ]
     match (do
         let stays ← (← (← j.getObjVal? "attributed").getArr?).toList.mapM stayOf
-        pure (Verified.Geo.VenuePrior.minePriors stays)) with
+        pure (stays, Verified.Geo.VenuePrior.minePriors stays)) with
     | .error e => err e
-    | .ok p =>
+    | .ok (stays, p) =>
       Json.mkObj
         [ ("value", Json.mkObj
             [ ("bySubtype", tableJson p.bySubtype)
             , ("byCategory", tableJson p.byCategory)
+            , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits))
+            -- ⚠ THE EVIDENCE RIDES ALONGSIDE THE AGGREGATE, and the aggregate
+            -- is NOT dropped. It is what every pre-#1405 reader expects, and a
+            -- stored blob must stay readable by code that has never heard of
+            -- `events` — including the running pod during a rollout.
+            , ("events", Json.arr
+                ((Verified.Geo.VenuePrior.eventsOfAttributed stays).map eventJson).toArray) ]) ]
+  -- The stored evidence, re-aggregated as it stood at the end of one day
+  -- (#1405). The reply is the SAME shape `minePriors` returns, so the fold, the
+  -- payload encoder and `shapeScore` are all unchanged — the only difference is
+  -- which stays were counted.
+  --
+  -- ⚠ THE CUT BELONGS TO THE CALLER. The shell knows the day being served and
+  -- its timezone; deriving a day boundary here would mean a second copy of the
+  -- tz arithmetic that `localHour` already comes pre-resolved from.
+  | some "priorsAsOf" =>
+    let eventOf (e : Json) : Except String Verified.Geo.VenuePrior.PriorEvent := do
+      let sub ← match str? e "subtype" with
+        | some s => pure s
+        | none => throw "priorsAsOf: an event has no subtype"
+      let su ← match int? e "startUnix" with
+        | some i => pure i
+        | none => throw "priorsAsOf: an event has no startUnix"
+      let dw ← match int? e "dwell" with
+        | some i => pure i.toNat
+        | none => throw "priorsAsOf: an event has no dwell"
+      let hr ← match int? e "hour" with
+        | some i => pure i.toNat
+        | none => throw "priorsAsOf: an event has no hour"
+      let w ← match str? e "weightBits" with
+        | some s => pure (Float.ofBits s.toNat!.toUInt64)
+        | none => throw "priorsAsOf: an event has no weightBits"
+      pure { subtype := sub, startUnix := su, dwell := dw, hour := hr, weight := w }
+    let statsJson' (s : Verified.Geo.VenuePrior.VenueTypeStats) : Json :=
+      Json.mkObj
+        [ ("visits", Json.str (toString s.visits.toBits))
+        , ("dwell", Json.arr ((s.dwell.map (fun x => Json.str (toString x.toBits))).toArray))
+        , ("hours", Json.arr ((s.hours.map (fun x => Json.str (toString x.toBits))).toArray)) ]
+    let tableJson' (t : List (String × Verified.Geo.VenuePrior.VenueTypeStats)) : Json :=
+      Json.arr ((t.map fun (k, s) => Json.arr #[Json.str k, statsJson' s]).toArray)
+    match (do
+        let events ← (← (← j.getObjVal? "events").getArr?).toList.mapM eventOf
+        let cut ← match int? j "asOfUnix" with
+          | some i => pure i
+          | none => throw "priorsAsOf: no asOfUnix"
+        pure (Verified.Geo.VenuePrior.priorsAsOf events cut)) with
+    | .error e => err e
+    | .ok p =>
+      Json.mkObj
+        [ ("value", Json.mkObj
+            [ ("bySubtype", tableJson' p.bySubtype)
+            , ("byCategory", tableJson' p.byCategory)
             , ("totalVisitsBits", Json.str (toString p.totalVisits.toBits)) ]) ]
   -- Raw OSM rows → the `{edges, nodes}` the assemble modes consume (#982).
   --

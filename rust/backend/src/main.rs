@@ -3001,7 +3001,10 @@ async fn check() -> Result<()> {
     let places = classification_inputs::known_places(&pool, &user).await?;
     let modes = classification_inputs::mode_biometrics(&pool, &user).await?;
     let rail = classification_inputs::rail_route_cache(&pool).await?;
-    let priors = classification_inputs::venue_priors(&pool, &user).await?;
+    // As of NOW, which is every event — and it exercises the `priorsAsOf` round
+    // trip rather than stepping around it, which is the point of this check.
+    let priors =
+        classification_inputs::venue_priors(&pool, &user, chrono::Utc::now().timestamp()).await?;
     let len = |v: &serde_json::Value| v.as_array().map_or(0, Vec::len);
     // ⚠ VALUES, NOT JUST COUNTS. `focus_places.centroid_lat` is DECIMAL, which
     // the driver hands back as a STRING — the TypeScript wraps every one in

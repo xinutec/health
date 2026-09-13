@@ -367,7 +367,7 @@ pub async fn mode_biometrics(pool: &MySqlPool, user_id: &str) -> Result<Value> {
 /// ⚠ A blob that fails to parse is `null`, not an error. The TS warns and
 /// carries on, on the rule that a prior is evidence: losing it weakens the venue
 /// scorer and must not fail the day.
-pub async fn venue_priors(pool: &MySqlPool, user_id: &str) -> Result<Value> {
+pub async fn venue_priors(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> Result<Value> {
     let row = sqlx::query("SELECT priors_json FROM venue_type_priors WHERE user_id = ?")
         .bind(user_id)
         .fetch_optional(pool)
@@ -383,13 +383,48 @@ pub async fn venue_priors(pool: &MySqlPool, user_id: &str) -> Result<Value> {
     // weakens the venue scorer and must not fail the day, but a scorer running
     // without priors it believes it has is a different thing from one that knows
     // they are missing. The TypeScript warns here too.
-    match serde_json::from_str::<Value>(&raw) {
-        Ok(v) => Ok(v),
+    let blob = match serde_json::from_str::<Value>(&raw) {
+        Ok(v) => v,
         Err(e) => {
             tracing::warn!(
                 "venue_type_priors blob for {user_id} did not parse ({e}) — treating as no evidence"
             );
-            Ok(Value::Null)
+            return Ok(Value::Null);
+        }
+    };
+    Ok(as_of(blob, user_id, as_of_unix))
+}
+
+/// Re-aggregate the blob's evidence as it stood at the end of the day being
+/// served, so a day in May is named from what was known in May (#1405).
+///
+/// ⚠ **A BLOB WITH NO `events` IS SERVED AS-IS, and that is a migration state
+/// rather than a fallback.** Every row written before this landed holds only the
+/// aggregate, and there is no way to recover the evidence behind it — the table
+/// is one row per user, overwritten in place. Those rows keep TODAY's prior for
+/// every day until the next mining run, which is the status quo and not a
+/// regression. It is logged, because a prior that silently is not as-of is
+/// exactly the thing this ticket is about.
+fn as_of(blob: Value, user_id: &str, as_of_unix: i64) -> Value {
+    let Some(events) = blob.get("events") else {
+        tracing::info!(
+            "venue_type_priors for {user_id} predates the event log — serving the \
+             aggregate, so this day is scored against the prior as mined, not as of itself"
+        );
+        return blob;
+    };
+    let events: Vec<crate::lean::WirePriorEvent> = match serde_json::from_value(events.clone()) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("venue_type_priors events for {user_id} did not parse ({e})");
+            return blob;
+        }
+    };
+    match crate::lean::priors_as_of(&events, as_of_unix) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("priorsAsOf failed for {user_id} ({e}) — serving the aggregate");
+            blob
         }
     }
 }
@@ -1282,6 +1317,9 @@ pub async fn load(
         "emptyDayBracket".into(),
         empty_day_bracket(pool, user_id, date).await?,
     );
-    m.insert("venuePriors".into(), venue_priors(pool, user_id).await?);
+    m.insert(
+        "venuePriors".into(),
+        venue_priors(pool, user_id, end_utc).await?,
+    );
     Ok(Value::Object(m))
 }
