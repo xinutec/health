@@ -89,7 +89,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 77] = [
+    let migrations: [&str; 78] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -456,6 +456,37 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     mined_stays INT NOT NULL,
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
+  )"#,
+        // The mined prior AS IT STOOD at an anchor date, so a past day can be
+        // named from what was known then (#1405).
+        //
+        // ⚠ A SEPARATE TABLE RATHER THAN A COLUMN ON `venue_type_priors`, and
+        // deliberately so twice over. `CREATE TABLE IF NOT EXISTS` adds nothing
+        // to a table that already exists, so a new column there needs an ALTER
+        // that every fresh-built test would pass without ever exercising; and
+        // what the change really wants is a different PRIMARY KEY, which is
+        // surgery on a live table. This is additive — the old row and its read
+        // path are untouched, so a pod predating this keeps working.
+        //
+        // ⚠ `as_of` IS A DATE, NOT A TIMESTAMP. It names the day the mining
+        // window ENDED, which is the grain a snapshot is taken at and the grain
+        // a day-level read asks for. A timestamp would invite two snapshots for
+        // one day differing by minutes, with no rule for which one that day
+        // means.
+        //
+        // ⚠ WHY THE HISTORY IS WORTH KEEPING: mining RE-CLUSTERS from scratch,
+        // so re-running it changes what PAST days were called even with no new
+        // evidence. Measured over 42 days it moved three labels, broke one that
+        // was right, and improved none. Freezing each run is what makes a past
+        // label stable — the prior that named a day correctly was right by luck
+        // of that run's clustering, and nothing preserved it.
+        r#"CREATE TABLE IF NOT EXISTS venue_type_prior_snapshots (
+    user_id     VARCHAR(64) NOT NULL,
+    as_of       DATE NOT NULL,
+    priors_json MEDIUMTEXT NOT NULL,
+    mined_stays INT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, as_of)
   )"#,
         r#"CREATE TABLE IF NOT EXISTS hrv_intraday (
     user_id VARCHAR(64) NOT NULL,

@@ -4301,6 +4301,45 @@ async fn refresh_focus_places_one(
     .await
     .context("writing venue_type_priors")?;
 
+    // The same blob, FROZEN at the day this run's window ended (#1405).
+    //
+    // ⚠ BESIDE the row above, never instead of it. That row is what every
+    // reader predating this expects, including a pod mid-rollout, and the
+    // snapshot is additive history.
+    //
+    // ⚠ THIS IS THE HALF THAT MAKES A PAST LABEL STABLE. Mining re-clusters
+    // from scratch, so the prior is not a stable function of its own window —
+    // re-running it rewrites what past days were called. Filtering the mined
+    // events by timestamp does NOT fix that, because each stay's subtype comes
+    // from a cluster built across the whole window; only anchoring the window
+    // does, and only a stored anchor keeps the answer.
+    //
+    // `ON DUPLICATE KEY UPDATE` so re-mining the same anchor replaces it rather
+    // than failing: the newest run for a date is the one to keep, and a refresh
+    // that cannot write is worse than one that overwrites its own earlier try.
+    let anchor = sinks
+        .as_of
+        .unwrap_or_else(chrono::Utc::now)
+        .format("%Y-%m-%d")
+        .to_string();
+    sqlx::query(
+        "INSERT INTO venue_type_prior_snapshots (user_id, as_of, priors_json, mined_stays) \
+         VALUES (?, ?, ?, ?) \
+         ON DUPLICATE KEY UPDATE priors_json = VALUES(priors_json), \
+                                 mined_stays = VALUES(mined_stays)",
+    )
+    .bind(user_id)
+    .bind(&anchor)
+    .bind(serde_json::to_string(&priors)?)
+    .bind(attributed_all.len() as i64)
+    .execute(pool)
+    .await
+    .context("writing venue_type_prior_snapshots")?;
+    eprintln!(
+        "[{user_id}] priors snapshot stored as of {anchor} ({} stay(s))",
+        attributed_all.len()
+    );
+
     // ── 7. the write, in one transaction ────────────────────────────────────
     // ⚠ The DELETE and the upserts must land together. A half-applied refresh
     // leaves rows deleted whose replacements were never written, and the

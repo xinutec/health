@@ -368,11 +368,35 @@ pub async fn mode_biometrics(pool: &MySqlPool, user_id: &str) -> Result<Value> {
 /// carries on, on the rule that a prior is evidence: losing it weakens the venue
 /// scorer and must not fail the day.
 pub async fn venue_priors(pool: &MySqlPool, user_id: &str, as_of_unix: i64) -> Result<Value> {
-    let row = sqlx::query("SELECT priors_json FROM venue_type_priors WHERE user_id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .with_context(|| format!("reading venue_type_priors for {user_id}"))?;
+    // The newest snapshot taken AT OR BEFORE the day being served (#1405), and
+    // only then the overwritten current row.
+    //
+    // ⚠ THE ORDER IS THE WHOLE POINT. The current row is whatever the last
+    // mining run produced over a window ending TODAY, so serving it to a day in
+    // May is the anachronism this ticket exists for. A snapshot anchored on or
+    // before that day was mined over a window that ended then.
+    //
+    // ⚠ `<=`, and a day with no snapshot before it falls through rather than
+    // borrowing a LATER one. Taking the nearest snapshot in either direction
+    // would quietly reintroduce future evidence and look like it was working.
+    let snap = sqlx::query(
+        "SELECT priors_json, as_of FROM venue_type_prior_snapshots \
+         WHERE user_id = ? AND as_of <= FROM_UNIXTIME(?) \
+         ORDER BY as_of DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(as_of_unix)
+    .fetch_optional(pool)
+    .await
+    .with_context(|| format!("reading venue_type_prior_snapshots for {user_id}"))?;
+    let row = match snap {
+        Some(r) => Some(r),
+        None => sqlx::query("SELECT priors_json FROM venue_type_priors WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .with_context(|| format!("reading venue_type_priors for {user_id}"))?,
+    };
     let Some(row) = row else {
         return Ok(Value::Null);
     };
