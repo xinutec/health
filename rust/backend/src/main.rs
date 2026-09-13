@@ -4289,17 +4289,35 @@ async fn refresh_focus_places_one(
         return Ok(());
     }
 
-    sqlx::query(
-        "INSERT INTO venue_type_priors (user_id, priors_json, mined_stays) VALUES (?, ?, ?) \
-         ON DUPLICATE KEY UPDATE priors_json = VALUES(priors_json), \
-                                 mined_stays = VALUES(mined_stays)",
-    )
-    .bind(user_id)
-    .bind(serde_json::to_string(&priors)?)
-    .bind(attributed_all.len() as i64)
-    .execute(pool)
-    .await
-    .context("writing venue_type_priors")?;
+    // ⚠ **A BACKFILL WRITES THE SNAPSHOT AND NOTHING ELSE (#1405).**
+    //
+    // `--as-of` in the PAST re-mines history to manufacture a snapshot for a day
+    // that never had one. Everything else this function writes describes NOW:
+    // `venue_type_priors` is the current blob every present-day request reads,
+    // and `focus_places` is DELETED and rewritten below. Letting a backfill
+    // through both would replace today's clusters and today's prior with May's
+    // — it would corrupt the present in order to describe the past, which is
+    // the exact inversion of what the caller asked for.
+    //
+    // `--as-of` set to TODAY is not a backfill: it is an ordinary run that
+    // happens to name its own anchor, and it writes everything.
+    let backfill = sinks
+        .as_of
+        .is_some_and(|d| d.date_naive() < chrono::Utc::now().date_naive());
+
+    if !backfill {
+        sqlx::query(
+            "INSERT INTO venue_type_priors (user_id, priors_json, mined_stays) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE priors_json = VALUES(priors_json), \
+                                     mined_stays = VALUES(mined_stays)",
+        )
+        .bind(user_id)
+        .bind(serde_json::to_string(&priors)?)
+        .bind(attributed_all.len() as i64)
+        .execute(pool)
+        .await
+        .context("writing venue_type_priors")?;
+    }
 
     // The same blob, FROZEN at the day this run's window ended (#1405).
     //
@@ -4339,6 +4357,19 @@ async fn refresh_focus_places_one(
         "[{user_id}] priors snapshot stored as of {anchor} ({} stay(s))",
         attributed_all.len()
     );
+
+    if backfill {
+        // ⚠ STOPS HERE, and the reason is the DELETE below. `focus_places` is
+        // rewritten from THIS run's clusters, and a backfill's clusters are
+        // May's — applying them would delete the places the user goes to now
+        // and replace them with where they went in the spring. The snapshot
+        // above is the entire product of a backfill.
+        eprintln!(
+            "[{user_id}] backfill as of {anchor}: snapshot only — NOT touching \
+             venue_type_priors or focus_places, which describe now"
+        );
+        return Ok(());
+    }
 
     // ── 7. the write, in one transaction ────────────────────────────────────
     // ⚠ The DELETE and the upserts must land together. A half-applied refresh
