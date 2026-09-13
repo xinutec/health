@@ -359,8 +359,7 @@
         "build",
         "--no-warn-dirty",
         "--no-link",
-        ".#verified-cli",
-        ".#health-bins"
+        ".#verified-cli"
       ],
       "artifacts": [],
       "cwd": ".",

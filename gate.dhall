@@ -500,6 +500,34 @@ in  { name = "health"
             that will replace `node dist/server.js`: shipping a server nobody
             built inside the sandbox is exactly the gap this check exists to
             close.
+
+            ⚠ **`.#health-bins` LEFT THIS ROW ON 2026-09-13, and the argument
+            above for it is still TRUE — what changed is where it is paid.**
+            Measured over 251 recorded runs of this row: 1,356 CPU-MINUTES —
+            22.6 hours, a THIRD of every CPU-minute this gate has ever spent —
+            for ONE failure. For comparison, over the same window `clippy`
+            caught thirteen for 40 minutes and `rust formatting` twelve for six.
+
+            Two things make it that expensive. Its `src = ./.` is the WHOLE
+            REPOSITORY, so a markdown-only commit invalidates it exactly as a
+            Rust one does; and it rebuilds, in a sandbox with vendored crates,
+            the same code the cargo rows compiled minutes earlier.
+
+            ⚠ **AND CI ALREADY BUILDS IT.** The Dockerfile's stages run
+            `nix build .#verified-cli` and the Rust halves on every push, on
+            GitHub's runners. So this row was not the only thing standing
+            between a broken derivation and production — it was the SECOND
+            thing, paid on the slowest machine of the two.
+
+            What is genuinely lost: the sandboxed build can break while the dev
+            build is fine ("either can break without the other", above), and
+            that is now found ~10 minutes after a push rather than before the
+            commit. That is the trade, taken deliberately by Pippijn.
+
+            ⚠ `.#verified-cli` STAYS, and cheaply: its `src = ./lean`, so it is
+            a cache hit unless Lean changed, and BUILDING IT IS THE PROOF GATE
+            per the paragraph above. Do not fold it in with the Rust halves
+            again — the two have completely different invalidation.
         -}
         G.Check::{
         , name = "the verified CLI packages (what the production image consumes)"
@@ -509,7 +537,6 @@ in  { name = "health"
             , "--no-warn-dirty"
             , "--no-link"
             , ".#verified-cli"
-            , ".#health-bins"
             ]
         , timeout_s = 3600
         }
