@@ -2023,6 +2023,10 @@ pub struct AttributedStay {
     pub subtype: String,
     pub duration_sec: f64,
     pub local_hour: i64,
+    /// When the stay STARTED, so a prior can be taken as of a past day
+    /// (#1405). A plain unix second — it is an integer the shell already
+    /// holds, never a measured double, so it does not ride as float bits.
+    pub start_unix: i64,
 }
 
 /// One stay's contribution: its window, its resolved local hour, and the
@@ -2066,6 +2070,12 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
         duration_sec_bits: String,
         #[serde(rename = "localHour")]
         local_hour: i64,
+        // ⚠ NOT `Option`. A stay that reached mining without a start time is a
+        // broken payload, and defaulting it to 0 would quietly date every such
+        // stay to 1970 — which an as-of-the-day prior would then include in
+        // every day's prefix, restoring the exact bug this field removes.
+        #[serde(rename = "startUnix")]
+        start_unix: i64,
     }
 
     let stays_json: Vec<serde_json::Value> = stays
@@ -2110,6 +2120,7 @@ pub fn mine_cluster(stays: &[MineStay], centroid: &serde_json::Value) -> Result<
                         },
                     )?),
                     local_hour: a.local_hour,
+                    start_unix: a.start_unix,
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -2206,6 +2217,7 @@ pub fn mine_priors(attributed: &[AttributedStay]) -> Result<serde_json::Value> {
                 "subtype": a.subtype,
                 "durationSecBits": crate::fold_payload::bits(a.duration_sec),
                 "localHour": a.local_hour,
+                "startUnix": a.start_unix,
             })
         })
         .collect();

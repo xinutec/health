@@ -93,7 +93,10 @@ structure VenuePriors where
   bySubtype : List (String × VenueTypeStats)
   byCategory : List (String × VenueTypeStats)
   totalVisits : Float
-  deriving Inhabited
+  -- `BEq` so the as-of path can be pinned against `minePriors` as a WHOLE
+  -- blob. Comparing field by field would let the key ORDER differ unnoticed,
+  -- and that order is what `shapeScore` reads as the universe size (#1405).
+  deriving Inhabited, BEq
 
 structure VenueScoreParts where
   distance : Float
@@ -478,6 +481,15 @@ structure AttributedStay where
   durationSec : Float
   /-- Local hour of the stay midpoint; negatives wrap (`-3` ⇒ 21). -/
   localHour : Int
+  /-- When the stay STARTED.
+
+  ⚠ Carried so a prior can be taken AS OF a past day (#1405). Without it a day
+  in May is scored against a prior mined over a window ending TODAY, which is
+  how re-mining silently rewrites historical labels. Measured over 42 days,
+  re-mining changed three labels, broke one that was right and improved none.
+  The value was always in scope at the only construction site and was dropped
+  one line after it was available. -/
+  startUnix : Int
   deriving Inhabited
 
 /-- Aggregate attributed stays into the priors blob. Pure counting — every
@@ -497,6 +509,8 @@ structure SoftAttributedStay where
   responsibilities : StayResponsibilities
   durationSec : Float
   localHour : Int
+  /-- When the stay STARTED — see `AttributedStay.startUnix` (#1405). -/
+  startUnix : Int
   deriving Inhabited
 
 /--
@@ -520,6 +534,86 @@ def minePriorsSoft (stays : List SoftAttributedStay) : VenuePriors := Id.run do
       byCategory := bumpStats byCategory (categoryOfSubtype landmark.subtype) bucket hour r
       total := total + r
   return ⟨bySubtype, byCategory, total⟩
+
+/-! ## As-of-the-day priors (#1405)
+
+A day in May must be named from evidence that existed in May. The blob is one
+row per user, overwritten in place with no history, so a historical day is
+scored against a window ending today — and re-mining then rewrites what past
+days were called.
+
+⚠ **THE EVIDENCE IS SHIPPED, NOT A SUMMARY OF IT.** The obvious shape is
+monthly buckets of the existing stats, and it is worse in both directions. It
+is BIGGER — `totalVisits` is ~52, so the whole mined evidence is about fifty
+events, against thirteen subtypes times twelve buckets of a 31-float summary —
+and it is INEXACT, because the bucket containing the target day also holds the
+stays that came AFTER it, which is the very anachronism being removed.
+
+So the unit here is the mined event itself, and `priorsAsOf` re-aggregates the
+prefix. That makes the cut exact at the second and keeps `VenuePriors`
+unchanged, which matters: `shapeScore` reads `bySubtype`'s LENGTH as the
+subtype-universe size, so a reshaped blob would move the score for a second,
+unrelated reason. -/
+
+/-- One unit of mined prior evidence: which subtype, WHEN, where it falls on the
+    two shape axes, and how much of a visit it is worth.
+
+    `weight` is what lets the hard and soft mining paths share this: the hard
+    path contributes 1 to the argmax, the soft path `r` to each candidate. -/
+structure PriorEvent where
+  subtype : String
+  startUnix : Int
+  dwell : Nat
+  hour : Nat
+  weight : Float
+  deriving Inhabited, BEq
+
+/-- The events behind `minePriors`, in stay order. -/
+def eventsOfAttributed (stays : List AttributedStay) : List PriorEvent :=
+  stays.map fun s =>
+    { subtype := s.subtype, startUnix := s.startUnix,
+      dwell := dwellBucket s.durationSec, hour := (s.localHour.emod 24).toNat,
+      weight := 1 }
+
+/-- The events behind `minePriorsSoft`, in stay-then-candidate order.
+
+    ⚠ ORDER IS DATA. `bumpStats` appends an unseen key, and `shapeScore` reads
+    the resulting length, so preserving the traversal order is what makes the
+    aggregate below identical to the one `minePriorsSoft` produces. -/
+def eventsOfSoft (stays : List SoftAttributedStay) : List PriorEvent :=
+  stays.flatMap fun s =>
+    s.responsibilities.candidates.filterMap fun (landmark, r) =>
+      if decide (r ≤ 0) then none
+      else some
+        { subtype := landmark.subtype, startUnix := s.startUnix,
+          dwell := dwellBucket s.durationSec, hour := (s.localHour.emod 24).toNat,
+          weight := r }
+
+/-- Aggregate the events whose stay STARTED at or before `asOfUnix`.
+
+    ⚠ INCLUSIVE, and the bound is the stay's START rather than its end: a stay
+    in progress at the cut is evidence that had begun, and keying on the end
+    would make a long stay vanish from its own day. -/
+def priorsAsOf (events : List PriorEvent) (asOfUnix : Int) : VenuePriors := Id.run do
+  let mut bySubtype : List (String × VenueTypeStats) := []
+  let mut byCategory : List (String × VenueTypeStats) := []
+  let mut total : Float := 0
+  for e in events do
+    if decide (e.startUnix > asOfUnix) then continue
+    bySubtype := bumpStats bySubtype e.subtype e.dwell e.hour e.weight
+    byCategory := bumpStats byCategory (categoryOfSubtype e.subtype) e.dwell e.hour e.weight
+    total := total + e.weight
+  return ⟨bySubtype, byCategory, total⟩
+
+/-- A cut no real stay is after, for "every event, whenever it happened".
+
+    Deliberately a concrete Int rather than an `Option`: an optional cut would
+    put a `none` branch on the hot path that only the parity guards ever take. -/
+def NO_CUT : Int := 1 <<< 62
+
+/-- Every event, whenever it happened — the blob as mined today. -/
+def priorsOfEvents (events : List PriorEvent) : VenuePriors :=
+  priorsAsOf events NO_CUT
 
 /-! ## Parity with Node/V8 (`lean/experiments/venue-prior-refs.mts`) -/
 
@@ -650,9 +744,12 @@ private def LMH (name type subtype : String) (d : Float) (frac : Option Float) :
 
 /-! ### Mining + the shape term -/
 
+-- The `startUnix` column ascends by 1000 so a cut can name a prefix exactly;
+-- nothing below reads the values themselves except the as-of guards.
 private def attributed : List AttributedStay :=
-  [⟨"cafe", 1800, 10⟩, ⟨"cafe", 3600, 11⟩, ⟨"restaurant", 4800, 19⟩, ⟨"restaurant", 5400, 20⟩,
-   ⟨"restaurant", 300, 13⟩, ⟨"pharmacy", 400, 14⟩, ⟨"hospital", 12000, 9⟩]
+  [⟨"cafe", 1800, 10, 1000⟩, ⟨"cafe", 3600, 11, 2000⟩, ⟨"restaurant", 4800, 19, 3000⟩,
+   ⟨"restaurant", 5400, 20, 4000⟩, ⟨"restaurant", 300, 13, 5000⟩, ⟨"pharmacy", 400, 14, 6000⟩,
+   ⟨"hospital", 12000, 9, 7000⟩]
 private def priors : VenuePriors := minePriors attributed
 
 #guard priors.totalVisits == 7
@@ -668,9 +765,39 @@ private def priors : VenuePriors := minePriors attributed
        | some s => s.visits == 5 && s.dwell == [1, 1, 3, 0]
        | none => false
 -- A negative local hour wraps into the 24-hour ring.
-#guard match lookupStats (minePriors [⟨"cafe", 60, -3⟩]).bySubtype "cafe" with
+#guard match lookupStats (minePriors [⟨"cafe", 60, -3, 0⟩]).bySubtype "cafe" with
        | some s => s.hours.getD 21 0 == 1
        | none => false
+
+/-! ### As-of-the-day priors (#1405)
+
+⚠ THE FIRST GUARD IS THE ONE THAT MAKES THIS SAFE TO LAND. Re-aggregating the
+events with no cut must reproduce `minePriors` EXACTLY — same numbers, same keys,
+in the same order — because `shapeScore` reads the key count. Until that holds,
+nothing downstream may be switched over to the event path. -/
+
+#guard priorsOfEvents (eventsOfAttributed attributed) == priors
+
+-- A cut BEFORE everything is no evidence, not a crash.
+#guard (priorsAsOf (eventsOfAttributed attributed) 0).totalVisits == 0
+#guard (priorsAsOf (eventsOfAttributed attributed) 0).bySubtype == []
+
+-- ⚠ The cut is INCLUSIVE and reads the stay's START: at 3000 the third stay
+-- counts, so `restaurant` appears with one visit and the universe is 2 keys.
+#guard (priorsAsOf (eventsOfAttributed attributed) 3000).totalVisits == 3
+#guard (priorsAsOf (eventsOfAttributed attributed) 3000).bySubtype.map (·.1)
+       == ["cafe", "restaurant"]
+#guard (priorsAsOf (eventsOfAttributed attributed) 2999).bySubtype.map (·.1) == ["cafe"]
+
+-- ⚠ THE SUBTYPE UNIVERSE SHRINKS WITH THE CUT, and that is the point rather
+-- than a side effect: `shapeScore` reads this length as the universe size, so a
+-- day in the past is scored against the types known THEN. `hospital` is the
+-- last stay mined, and it is absent from every earlier day.
+#guard (priorsAsOf (eventsOfAttributed attributed) 6999).bySubtype.length == 3
+#guard priors.bySubtype.length == 4
+
+-- The whole point, in one line: an early day does not see a later subtype.
+#guard lookupStats (priorsAsOf (eventsOfAttributed attributed) 5000).bySubtype "hospital" == none
 
 -- The prior is what separates a meal-length evening restaurant from a pharmacy.
 #guard names (rankVenues [LM "Resto" "amenity" "restaurant" 32, LM "Pharm" "amenity" "pharmacy" 30]
@@ -768,9 +895,10 @@ private def rs (lms : List Landmark) : StayResponsibilities := stayResponsibilit
 
 /-! ### `minePriorsSoft` -/
 
-private def soft : VenuePriors := minePriorsSoft
-  [⟨rs [LM "A" "amenity" "cafe" 10, LM "B" "amenity" "restaurant" 15], 3600, 11⟩,
-   ⟨rs [LM "C" "amenity" "cafe" 20], 5400, 19⟩]
+private def softStays : List SoftAttributedStay :=
+  [⟨rs [LM "A" "amenity" "cafe" 10, LM "B" "amenity" "restaurant" 15], 3600, 11, 1000⟩,
+   ⟨rs [LM "C" "amenity" "cafe" 20], 5400, 19, 2000⟩]
+private def soft : VenuePriors := minePriorsSoft softStays
 
 #guard approx soft.totalVisits 1.9210795328420089
 #guard match lookupStats soft.bySubtype "cafe" with
@@ -782,5 +910,13 @@ private def soft : VenuePriors := minePriorsSoft
 #guard match lookupStats soft.byCategory "food" with
        | some s => approx s.visits 1.9210795328420089
        | none => false
+
+-- ⚠ The same parity the hard path is held to, and it is the stricter of the two
+-- here: the soft path emits one event PER CANDIDATE, so this pins the
+-- stay-then-candidate traversal order as well as the fractional weights.
+#guard priorsOfEvents (eventsOfSoft softStays) == soft
+-- A cut between the two stays keeps the first stay's candidates and drops C.
+#guard (priorsAsOf (eventsOfSoft softStays) 1500).bySubtype.map (·.1) == ["cafe", "restaurant"]
+#guard lookupStats (priorsAsOf (eventsOfSoft softStays) 999).bySubtype "cafe" == none
 
 end Verified.Geo.VenuePrior

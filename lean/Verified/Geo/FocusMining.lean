@@ -121,7 +121,7 @@ def mineCluster (stays : List MinedStay) (centroid : List Landmark)
     | some a =>
       attributed := attributed ++
         [{ subtype := a.subtype, durationSec := Float.ofInt s.durationSec,
-           localHour := s.shape.localHour }]
+           localHour := s.shape.localHour, startUnix := s.shape.startUnix }]
     | none => pure ()
     match rankVenues s.landmarks (some s.shape) none with
     | [] => pure ()

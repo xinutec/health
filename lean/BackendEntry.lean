@@ -682,7 +682,14 @@ def dispatch (j : Json) : Json :=
       let lh ← match int? e "localHour" with
         | some i => pure i
         | none => throw "minePriors: a stay has no localHour"
-      pure { subtype := sub, durationSec := dur, localHour := lh }
+      -- ⚠ REQUIRED, not defaulted. A missing `startUnix` defaulted to 0 would
+      -- make every stay look like 1970 evidence, so an as-of-the-day prior
+      -- would silently include all of it and the anachronism this field exists
+      -- to remove would be back with nothing to show for it (#1405).
+      let su ← match int? e "startUnix" with
+        | some i => pure i
+        | none => throw "minePriors: a stay has no startUnix"
+      pure { subtype := sub, durationSec := dur, localHour := lh, startUnix := su }
     let statsJson (s : Verified.Geo.VenuePrior.VenueTypeStats) : Json :=
       Json.mkObj
         [ ("visits", Json.str (toString s.visits.toBits))
@@ -828,7 +835,12 @@ def dispatch (j : Json) : Json :=
                 Json.mkObj
                   [ ("subtype", Json.str a.subtype)
                   , ("durationSecBits", Json.str (toString a.durationSec.toBits))
-                  , ("localHour", Lean.toJson a.localHour) ]).toArray)) ]) ]
+                  , ("localHour", Lean.toJson a.localHour)
+                  -- ⚠ A PLAIN INTEGER, not bits. It is a unix second the shell
+                  -- already holds as an integer, never a measured double, so
+                  -- keying it on float bits would invent a spelling both sides
+                  -- must agree on for nothing. Same reasoning as `zoom`.
+                  , ("startUnix", Lean.toJson a.startUnix) ]).toArray)) ]) ]
   -- The SOFT twin of `minePriors` (#343 P0). Same stay wire as `mineCluster`;
   -- responsibilities come from `stayResponsibilities` — evidence independent
   -- of the shape prior being trained — and the reply carries the honesty
@@ -883,7 +895,8 @@ def dispatch (j : Json) : Json :=
       let soft : List Verified.Geo.VenuePrior.SoftAttributedStay := stays.map fun s =>
         { responsibilities := Verified.Geo.VenuePrior.stayResponsibilities s.landmarks (some s.shape)
         , durationSec := Float.ofInt s.durationSec
-        , localHour := s.shape.localHour }
+        , localHour := s.shape.localHour
+        , startUnix := s.shape.startUnix }
       let p := Verified.Geo.VenuePrior.minePriorsSoft soft
       let ess := Verified.Geo.VenuePrior.effectiveSampleSize (soft.map (·.responsibilities))
       let teaching := soft.filter (fun s => !s.responsibilities.candidates.isEmpty)
