@@ -75,3 +75,12 @@ lean/.lake/
 # the package locally.
 result
 result-*
+
+# `use flake` makes nix-direnv cache the dev shell here — a ~76 KB generated rc
+# plus symlinks into /nix/store. Unignored it was one `git add -A` from a
+# commit, and `scripts/deploy.sh` runs exactly that after its gates.
+#
+# ⚠ IGNORED, NOT DELETED. Those symlinks are GC roots: removing the directory
+# lets `nix-collect-garbage` take the dev shell, and the next `nix develop`
+# rebuilds it from scratch.
+.direnv/
