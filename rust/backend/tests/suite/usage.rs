@@ -15,7 +15,7 @@
 /// Two shapes are dispatched and both are matched here: a plain `"name" =>` arm,
 /// and `sub @ ("day-live" | "day-mirror")`, which handles two at once.
 fn dispatched() -> std::collections::BTreeSet<String> {
-    let src = include_str!("../src/main.rs");
+    let src = include_str!("../../src/main.rs");
     // ⚠ BOUNDED TO THE DISPATCH `match`, not the whole file. An unbounded scan
     // picked up `"bus" =>` from the Overpass mirror's mode match and reported it
     // as an undocumented subcommand — the test's first run, and its own parser

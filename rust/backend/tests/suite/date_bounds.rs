@@ -21,7 +21,7 @@ struct Case {
 
 #[test]
 fn every_case_matches_the_typescript() {
-    let raw = include_str!("fixtures/date-bounds-ts.json");
+    let raw = include_str!("../fixtures/date-bounds-ts.json");
     let cases: Vec<Case> = serde_json::from_str(raw).expect("fixture parses");
     assert!(cases.len() >= 100, "fixture shrank: {} cases", cases.len());
 

@@ -22,7 +22,7 @@ use serde_json::Value;
 
 #[test]
 fn every_captured_segment_encodes_as_the_typescript_does() {
-    let raw = include_str!("fixtures/encode-seg-ts.json");
+    let raw = include_str!("../fixtures/encode-seg-ts.json");
     let cases: Vec<Value> = serde_json::from_str(raw).expect("fixture parses");
     assert!(
         cases.len() >= 100,

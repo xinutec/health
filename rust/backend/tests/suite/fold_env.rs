@@ -23,7 +23,7 @@ use serde_json::Value;
 
 #[test]
 fn every_day_encodes_its_observations_as_the_typescript_does() {
-    let raw = include_str!("fixtures/fold-env-ts.json");
+    let raw = include_str!("../fixtures/fold-env-ts.json");
     let days: Vec<Value> = serde_json::from_str(raw).expect("fixture parses");
     assert!(days.len() >= 20, "fixture shrank to {} days", days.len());
 
@@ -102,7 +102,7 @@ fn every_day_encodes_its_observations_as_the_typescript_does() {
 /// consistent, since the fold uses the second to look up the first.
 #[test]
 fn the_speed_lookup_matches_the_track_it_is_derived_from() {
-    let raw = include_str!("fixtures/fold-env-ts.json");
+    let raw = include_str!("../fixtures/fold-env-ts.json");
     let days: Vec<Value> = serde_json::from_str(raw).expect("fixture parses");
     let day = days.first().expect("at least one day");
     let got = encode_obs_and_tail(

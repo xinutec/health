@@ -17,7 +17,7 @@ use serde_json::Value;
 
 #[test]
 fn the_local_hour_matches_the_typescript() {
-    let raw = include_str!("fixtures/local-time-ts.json");
+    let raw = include_str!("../fixtures/local-time-ts.json");
     let fx: Value = serde_json::from_str(raw).expect("fixture parses");
     let cases = fx["hours"].as_array().expect("hours");
     assert!(cases.len() >= 40, "fixture shrank to {}", cases.len());
@@ -33,7 +33,7 @@ fn the_local_hour_matches_the_typescript() {
 
 #[test]
 fn the_stay_samples_match_the_typescript() {
-    let raw = include_str!("fixtures/local-time-ts.json");
+    let raw = include_str!("../fixtures/local-time-ts.json");
     let fx: Value = serde_json::from_str(raw).expect("fixture parses");
     let cases = fx["stays"].as_array().expect("stays");
     assert!(!cases.is_empty());
