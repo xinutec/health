@@ -459,9 +459,21 @@ async fn main() -> Result<()> {
             std::process::exit(64);
         }
         other => {
-            eprintln!(
-                "backend: unknown subcommand {other:?} — expected check, serve, sync, inputs, head, day, day-live, day-mirror, mirror-check, google-probe, coverage, google-compare or velocity"
-            );
+            // ⚠ RENDERED FROM `SUBCOMMANDS`, never spelled out here. This arm
+            // used to carry its own prose list, and it had rotted to 13 of the
+            // 29 names — it omitted `decode-day` and every `refresh-*`, which
+            // are the nightly crons, and `mint-session`, which
+            // `check-serving-conditions.sh` calls. So a typo was answered with
+            // a list that denied half the CLI existed.
+            //
+            // `usage_lists_every_subcommand` guards the table against the match
+            // arms below, but it could not see a SECOND copy of the list. That
+            // is the same rot its own note describes ("the printed list had 19
+            // of 29"), surviving in the one place the fix did not reach.
+            eprintln!("backend: unknown subcommand {other:?} — expected one of:\n");
+            for (name, args, what) in backend::SUBCOMMANDS {
+                eprintln!("  {name:<22}{args:<26}{what}");
+            }
             std::process::exit(64);
         }
     }

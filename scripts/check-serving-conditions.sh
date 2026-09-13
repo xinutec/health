@@ -38,7 +38,12 @@ set -euo pipefail
 HOST=${HOST:-isis.xinutec.org}
 NS=health
 POD=health-auth-conditions
-BIN=${BIN:-/Users/pippijn/Library/Caches/cargo/target/release/backend}
+# ⚠ REPO-RELATIVE, and this file `cd`s to the repo root a few lines below before
+# anything reads it. It used to name a shared cargo target under
+# `~/Library/Caches`; the fleet went back to a per-repo `target/` on 2026-09-05
+# and that directory is gone, so every run died at the first `"$BIN"` with 127
+# (#1579). Note the `rust/` — this repo's cargo output is not at the root.
+BIN=${BIN:-rust/target/release/backend}
 DAY=${DAY:-2026-05-22}
 # `ABLATE=no-tmp` — see the note in the pod derivation below.
 ABLATE=${ABLATE:-}
