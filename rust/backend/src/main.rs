@@ -5983,6 +5983,11 @@ async fn mirror_fetch(
         std::collections::BTreeMap::new();
     let mut succeeded: Vec<String> = Vec::new();
     let mut failures = 0usize;
+    // How often a tile's first attempt was refused, and how often trying again
+    // rescued it. Printed so the retry has to justify its cost out of its own
+    // numbers rather than out of the argument that introduced it (#1153).
+    let mut retried = 0usize;
+    let mut retries_won = 0usize;
     let mut breaker = lean::BreakerState::new();
 
     for (i, tile) in tiles.iter().enumerate() {
@@ -6018,9 +6023,55 @@ async fn mirror_fetch(
         }
 
         let query = lean::overpass_query(mode, tile)?;
-        match backend::overpass::fetch_once(client, &query, backend::overpass::MIRROR_TIMEOUT_MS)
-            .await
-        {
+        // ⚠ A TRANSIENT REFUSAL IS RETRIED ONCE, not surrendered. A skipped tile
+        // is a permanent hole in THIS run's coverage, and coverage is the
+        // quantity #1153 is about — 2026-09-14 lost 15 of 36 tiles to 504s while
+        // tiles 31, 35 and 36 answered normally in the same window, so the
+        // primary was up throughout and the refusals were momentary.
+        //
+        // ⚠ NOT PROOF THAT A RETRY LANDS. Nothing here has yet observed a second
+        // attempt succeed; the case for it is that a 504 is by definition a
+        // timeout rather than a verdict, and that skipping costs a tile while
+        // retrying costs ~6 s. The tally below is what will settle it — if the
+        // next nightlies print retries that never win, this should go.
+        let mut outcome = backend::overpass::fetch_attempt(
+            client,
+            &query,
+            backend::overpass::MIRROR_TIMEOUT_MS,
+            0,
+        )
+        .await;
+        if matches!(outcome, backend::overpass::Outcome::AllFailed { .. }) {
+            retried += 1;
+            // Ask again before trying again: a refusal is the moment we are
+            // least entitled to fire blind.
+            backend::overpass::wait_for_slot(client, SLOT_WAIT_CAP_S).await;
+            let again = backend::overpass::fetch_attempt(
+                client,
+                &query,
+                backend::overpass::MIRROR_TIMEOUT_MS,
+                1,
+            )
+            .await;
+            if matches!(again, backend::overpass::Outcome::Ok(_)) {
+                retries_won += 1;
+            }
+            // ⚠ THE FIRST ATTEMPT'S ERRORS SURVIVE. Overwriting the outcome
+            // wholesale would drop them, which is precisely the defect the
+            // `AllFailed { errors }` vector exists to prevent — a log naming
+            // only the retry reads as a one-endpoint outage again.
+            outcome = match (outcome, again) {
+                (
+                    backend::overpass::Outcome::AllFailed { errors: mut first },
+                    backend::overpass::Outcome::AllFailed { errors: second },
+                ) => {
+                    first.extend(second.into_iter().map(|e| format!("retry: {e}")));
+                    backend::overpass::Outcome::AllFailed { errors: first }
+                }
+                (_, other) => other,
+            };
+        }
+        match outcome {
             backend::overpass::Outcome::Ok(body) => {
                 let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
                 breaker = lean::breaker_step(&breaker, "success", now_ms)?;
@@ -6075,6 +6126,9 @@ async fn mirror_fetch(
                 failures += 1;
             }
         }
+    }
+    if retried > 0 {
+        eprintln!("  retried {retried} refused tile(s); {retries_won} answered on the second try");
     }
     Ok(MirrorHarvest {
         routes,

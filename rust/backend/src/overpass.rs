@@ -44,6 +44,32 @@ const OVERPASS_URLS: [&str; 2] = [
     "https://overpass.kumi.systems/api/interpreter",
 ];
 
+/// Which mirrors attempt number `attempt` may use. Attempt 0 is the first try.
+///
+/// ⚠ A RETRY GOES TO THE PRIMARY ALONE, because the fallback has never answered
+/// anything. Measured from isis on 2026-09-12 and again on 2026-09-14:
+/// `kumi.systems` completes the TCP connect in 0.02-0.15 s and then returns
+/// zero bytes until the cap. What it reliably costs is `FALLBACK_TIMEOUT_MS`;
+/// what it has reliably produced is nothing.
+///
+/// That cost is what makes the retry affordable. On 2026-09-14 the nightly lost
+/// 15 of 36 tiles, each spending ~6 s on the primary's 504 and then the full
+/// 15 s on the fallback — ~21 s a tile, which accounts for the whole 5m17s by
+/// which that run exceeded 2026-09-13's. A second full-mirror pass would add
+/// another five minutes; a primary-only pass adds ~6 s per tile still refusing.
+///
+/// ⚠ THE FALLBACK IS NOT REMOVED FROM ATTEMPT 0. It has never answered *here*,
+/// on this host, in these measurements — a reason not to pay for it twice, not
+/// proof it can never answer. Dropping it would leave one endpoint with nothing
+/// behind it, and `overpass.osm.ch` cannot be that something (see above).
+pub fn attempt_urls(attempt: usize) -> &'static [&'static str] {
+    if attempt == 0 {
+        &OVERPASS_URLS
+    } else {
+        &OVERPASS_URLS[..1]
+    }
+}
+
 /// The request path's budget. The offline mirrors pass their own, larger one.
 pub const REQUEST_TIMEOUT_MS: u64 = 20_000;
 
@@ -213,15 +239,22 @@ pub enum Outcome {
     AllFailed { errors: Vec<String> },
 }
 
-/// POST one query to each mirror in turn until one answers.
+/// POST one query to each mirror this attempt may use, in turn, until one
+/// answers. `attempt` is 0 for a tile's first try; see [`attempt_urls`] for why
+/// a later one is narrower.
 ///
 /// ⚠ THIS DOES NOT TOUCH THE BREAKER. The caller owns the breaker state because
 /// the breaker is Lean's, and threading it through here would mean holding Lean
 /// state in a `static`. The caller's loop is where `recordFailure` and
 /// `recordSuccess` belong.
-pub async fn fetch_once(client: &reqwest::Client, query: &str, timeout_ms: u64) -> Outcome {
+pub async fn fetch_attempt(
+    client: &reqwest::Client,
+    query: &str,
+    timeout_ms: u64,
+    attempt: usize,
+) -> Outcome {
     let mut errors: Vec<String> = Vec::new();
-    for (i, url) in OVERPASS_URLS.iter().enumerate() {
+    for (i, url) in attempt_urls(attempt).iter().enumerate() {
         // The first mirror gets the caller's budget; anything after it gets the
         // fallback's, which is what stops a hung mirror costing a minute and a
         // half per tile.
