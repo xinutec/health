@@ -270,7 +270,9 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
         })).collect::<Vec<_>>(),
         "segments": segments,
         "states": out.get("states").cloned().unwrap_or_else(|| json!([])),
-        "episodes": out.get("episodes").cloned().unwrap_or_else(|| json!([])),
+        // ⚠ DECODED, not forwarded. See `decode_episode_bits` — the fold's
+        // bit-string coordinates hung the Android app for a full day.
+        "episodes": decode_episode_bits(out.get("episodes").cloned().unwrap_or_else(|| json!([]))),
         // The timeline's collapsible journeys, assembled server-side (#229). The
         // client folded its own until #339 put `city` on a state and made the two
         // rules agree; measured over 41 replayable days, both produce the same 102
@@ -348,6 +350,54 @@ fn rail_fill_candidates(out: &Value, h: &head::Head) -> Result<Vec<lean::FillCan
         })
         .collect();
     lean::unsnapped_train_routes(&wire, &points)
+}
+
+/// Decode the fold's IEEE-754 bit-string coordinates into the numbers the
+/// client's wire type declares (#1616).
+///
+/// ⚠ **THE CLIENT MUST NEVER SEE A BIT STRING.** The Lean fold encodes
+/// coordinates this way so nothing is re-rounded on its internal wire, and
+/// `episodes` used to be forwarded from it VERBATIM while `points` and
+/// `rawFixes` were built here from typed `f64`s. One response therefore carried
+/// numbers in two fields and bit strings in the third — and only the third
+/// draws the map. Leaflet coerced `"4632454559779392337"` to `4.63e18` as a
+/// latitude; on Android WebView the synchronous compositor then spun at a full
+/// core with JavaScript dead, and on desktop Chrome the same poison silently
+/// drew nothing.
+///
+/// ⚠ **TOLERANT OF NUMBERS**, so a fold that starts emitting them is not
+/// double-decoded into nonsense, and **LEAVES WHAT IT CANNOT PARSE** rather than
+/// defaulting to zero — a zeroed coordinate is a point off the coast of Africa
+/// that draws a line across the planet, which is worse than an obviously wrong
+/// value and harder to notice.
+pub fn decode_episode_bits(episodes: Value) -> Value {
+    fn bits(v: &Value) -> Option<f64> {
+        v.as_str()?.parse::<u64>().ok().map(f64::from_bits)
+    }
+    let Value::Array(eps) = episodes else {
+        return episodes;
+    };
+    Value::Array(
+        eps.into_iter()
+            .map(|mut ep| {
+                if let Some(pts) = ep.get_mut("points").and_then(Value::as_array_mut) {
+                    for p in pts.iter_mut() {
+                        for key in ["lat", "lon", "ts"] {
+                            let Some(slot) = p.get_mut(key) else { continue };
+                            let Some(f) = bits(slot) else { continue };
+                            // A whole `ts` ships as an integer, matching `points`.
+                            *slot = if key == "ts" && f.fract() == 0.0 && f.is_finite() {
+                                json!(f as i64)
+                            } else {
+                                json!(f)
+                            };
+                        }
+                    }
+                }
+                ep
+            })
+            .collect(),
+    )
 }
 
 /// Remove the three per-segment path arrays. See the caller's note.

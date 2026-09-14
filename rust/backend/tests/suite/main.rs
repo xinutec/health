@@ -120,6 +120,7 @@ mod tz_source;
 mod usage;
 mod velocity_cache;
 mod velocity_cache_store;
+mod velocity_episode_bits;
 mod velocity_route;
 mod venue_rank_probe;
 mod watch_battery;
