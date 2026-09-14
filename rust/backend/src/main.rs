@@ -6041,7 +6041,12 @@ async fn mirror_fetch(
             0,
         )
         .await;
-        if matches!(outcome, backend::overpass::Outcome::AllFailed { .. }) {
+        // ⚠ ONLY IF SOMETHING ANSWERED. A refusal where no mirror replied at all
+        // is the BAN shape, and this ticket's own design note warns that an
+        // eager retry re-trips it. `wait_for_slot` cannot catch that case — it
+        // returns 0 immediately when `/api/status` is itself unreachable, which
+        // is exactly what a ban looks like — so the guard has to be here.
+        if outcome.may_retry() {
             retried += 1;
             // Ask again before trying again: a refusal is the moment we are
             // least entitled to fire blind.
@@ -6062,11 +6067,19 @@ async fn mirror_fetch(
             // only the retry reads as a one-endpoint outage again.
             outcome = match (outcome, again) {
                 (
-                    backend::overpass::Outcome::AllFailed { errors: mut first },
-                    backend::overpass::Outcome::AllFailed { errors: second },
+                    backend::overpass::Outcome::AllFailed {
+                        errors: mut first, ..
+                    },
+                    backend::overpass::Outcome::AllFailed {
+                        errors: second,
+                        answered,
+                    },
                 ) => {
                     first.extend(second.into_iter().map(|e| format!("retry: {e}")));
-                    backend::overpass::Outcome::AllFailed { errors: first }
+                    backend::overpass::Outcome::AllFailed {
+                        errors: first,
+                        answered,
+                    }
                 }
                 (_, other) => other,
             };
@@ -6110,7 +6123,7 @@ async fn mirror_fetch(
                 );
                 failures += 1;
             }
-            backend::overpass::Outcome::AllFailed { errors } => {
+            backend::overpass::Outcome::AllFailed { errors, .. } => {
                 let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
                 breaker = lean::breaker_step(&breaker, "failure", now_ms)?;
                 // ⚠ EVERY mirror is named. The 2026-08-25 dry run printed only

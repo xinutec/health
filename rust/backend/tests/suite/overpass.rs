@@ -62,3 +62,44 @@ fn a_retry_skips_the_mirror_that_has_never_answered() {
         assert!(urls[0].contains("overpass-api.de"));
     }
 }
+
+// --- a ban must not be retried (#1153) ------------------------------------
+
+use backend::overpass::Outcome;
+
+// ⚠ `Outcome::may_retry` IS THE PRODUCTION PREDICATE, called here rather than
+// restated. Written out again as a local `matches!`, these tests would pass
+// whatever the tile loop actually does — including the opposite of this.
+
+#[test]
+fn a_throttled_tile_may_be_retried() {
+    // 504 and 429 are the server TALKING. It has not stopped taking our
+    // packets, and 2026-09-14 lost 15 tiles to 504s while other tiles in the
+    // same window answered normally.
+    let throttled = Outcome::AllFailed {
+        errors: vec!["https://overpass-api.de/api/interpreter returned 504".into()],
+        answered: true,
+    };
+    assert!(throttled.may_retry());
+}
+
+#[test]
+fn a_banned_tile_is_not_retried() {
+    // ⚠ THE CASE THAT MATTERS. During the 2026-09-13 ban the connection was
+    // REFUSED at 46 ms — nothing answered, including `/api/status`. That makes
+    // `wait_for_slot` return 0 instantly, so a retry would fire with nothing
+    // pacing it and double the request rate into a server that has already
+    // stopped listening. This ticket's own design note calls that out by name:
+    // an eager retry just re-trips it.
+    let banned = Outcome::AllFailed {
+        errors: vec!["https://overpass-api.de/api/interpreter: error sending request".into()],
+        answered: false,
+    };
+    assert!(!banned.may_retry());
+}
+
+#[test]
+fn a_success_or_a_permanent_refusal_is_not_retried() {
+    assert!(!Outcome::Ok("{}".into()).may_retry());
+    assert!(!Outcome::Permanent { status: 400 }.may_retry());
+}

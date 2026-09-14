@@ -236,7 +236,37 @@ pub enum Outcome {
     ///
     /// ⚠ ONE ENTRY PER MIRROR, in the order tried. A single string here is what
     /// made a two-endpoint outage unreadable.
-    AllFailed { errors: Vec<String> },
+    AllFailed {
+        errors: Vec<String>,
+        /// Did ANY mirror reply with an HTTP status — a 429 or a 5xx — as
+        /// opposed to failing at the transport?
+        ///
+        /// ⚠ THIS IS THE BAN/THROTTLE LINE, and it decides whether a retry is
+        /// allowed. This ticket's own method note says to tell the two apart by
+        /// how the connection behaves: a `000` at 46 ms is a REFUSAL, while a
+        /// throttle answers 429 or 504. A server that answered is a server
+        /// willing to talk to us, and asking again is fair. A server that
+        /// refused the connection is one that has stopped, and asking again is
+        /// the discourtesy that earned the ban in the first place (#1153).
+        ///
+        /// ⚠ IT CANNOT BE INFERRED FROM `wait_for_slot`. That returns 0
+        /// IMMEDIATELY when `/api/status` is unreachable — which is precisely
+        /// the banned case — so a retry gated only on the slot check would fire
+        /// straight into a ban, at double the rate, with nothing slowing it.
+        answered: bool,
+    },
+}
+
+impl Outcome {
+    /// May the tile that produced this be asked again?
+    ///
+    /// ⚠ LIVES HERE SO THE TILE LOOP AND ITS TEST READ THE SAME ONE. Written as
+    /// a `matches!` at the call site, a test could only restate it — and a test
+    /// that rebuilds the condition it is checking passes whatever the caller
+    /// actually does, including the opposite.
+    pub fn may_retry(&self) -> bool {
+        matches!(self, Outcome::AllFailed { answered: true, .. })
+    }
 }
 
 /// POST one query to each mirror this attempt may use, in turn, until one
@@ -254,6 +284,7 @@ pub async fn fetch_attempt(
     attempt: usize,
 ) -> Outcome {
     let mut errors: Vec<String> = Vec::new();
+    let mut answered = false;
     for (i, url) in attempt_urls(attempt).iter().enumerate() {
         // The first mirror gets the caller's budget; anything after it gets the
         // fallback's, which is what stops a hung mirror costing a minute and a
@@ -280,6 +311,8 @@ pub async fn fetch_attempt(
             },
             Ok(r) => {
                 let status = r.status().as_u16();
+                // It replied. Whatever it said, it is not refusing our packets.
+                answered = true;
                 // ⚠ Permanent unless transient. 429 and 5xx are worth another
                 // mirror; every other 4xx means the query itself is wrong and
                 // the second mirror will say the same thing.
@@ -291,7 +324,7 @@ pub async fn fetch_attempt(
             Err(e) => errors.push(format!("{url}: {e}")),
         }
     }
-    Outcome::AllFailed { errors }
+    Outcome::AllFailed { errors, answered }
 }
 
 /// Parse an Overpass response body into its `elements` array.
