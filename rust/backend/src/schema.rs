@@ -6,6 +6,12 @@
 //! and the new one is recorded under a version that already exists. APPEND
 //! ONLY, forever.
 //!
+//! ⚠ THIS HAS HAPPENED. On 2026-09-14 a statement went in at index 57 and was
+//! silently never applied in production, while the log said "schema is up to
+//! date". The scar and the reasoning are at index 77, near the end of the array.
+//! Nothing failed, nothing was logged, and the table was simply absent — which
+//! is why the rule is written in capitals and why reading it is not enough.
+//!
 //! ⚠ Transcribed from `src/db/schema.ts` MECHANICALLY — its template literals
 //! extracted in order, with a check that nothing but commas sat between them.
 //! A hand copy of 67 statements is a transcription error waiting to happen, and
@@ -89,7 +95,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 78] = [
+    let migrations: [&str; 79] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -457,37 +463,6 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
   )"#,
-        // The mined prior AS IT STOOD at an anchor date, so a past day can be
-        // named from what was known then (#1405).
-        //
-        // ⚠ A SEPARATE TABLE RATHER THAN A COLUMN ON `venue_type_priors`, and
-        // deliberately so twice over. `CREATE TABLE IF NOT EXISTS` adds nothing
-        // to a table that already exists, so a new column there needs an ALTER
-        // that every fresh-built test would pass without ever exercising; and
-        // what the change really wants is a different PRIMARY KEY, which is
-        // surgery on a live table. This is additive — the old row and its read
-        // path are untouched, so a pod predating this keeps working.
-        //
-        // ⚠ `as_of` IS A DATE, NOT A TIMESTAMP. It names the day the mining
-        // window ENDED, which is the grain a snapshot is taken at and the grain
-        // a day-level read asks for. A timestamp would invite two snapshots for
-        // one day differing by minutes, with no rule for which one that day
-        // means.
-        //
-        // ⚠ WHY THE HISTORY IS WORTH KEEPING: mining RE-CLUSTERS from scratch,
-        // so re-running it changes what PAST days were called even with no new
-        // evidence. Measured over 42 days it moved three labels, broke one that
-        // was right, and improved none. Freezing each run is what makes a past
-        // label stable — the prior that named a day correctly was right by luck
-        // of that run's clustering, and nothing preserved it.
-        r#"CREATE TABLE IF NOT EXISTS venue_type_prior_snapshots (
-    user_id     VARCHAR(64) NOT NULL,
-    as_of       DATE NOT NULL,
-    priors_json MEDIUMTEXT NOT NULL,
-    mined_stays INT NOT NULL,
-    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, as_of)
-  )"#,
         r#"CREATE TABLE IF NOT EXISTS hrv_intraday (
     user_id VARCHAR(64) NOT NULL,
     ts DATETIME NOT NULL,
@@ -601,6 +576,65 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    WHERE s.log_id <> dup.keep_id"#,
         r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start (user_id, start_time)"#,
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
+        // ⚠ INDEX 77 IS A DELIBERATE REPEAT OF INDEX 76, AND IT IS A SCAR.
+        //
+        // The statement below it — `venue_type_prior_snapshots` — was first
+        // written INTO THE MIDDLE of this array, at index 57, against the
+        // append-only rule at the top of this file. The rule is not advice, and
+        // this is exactly the failure it names.
+        //
+        // What production did with it, on 2026-09-14: `schema_migrations` held
+        // 0..76, applied 09-08. The array had grown to 78, so the first pod to
+        // run the new code applied index 77 ALONE — which was this
+        // `DROP INDEX IF EXISTS`, already applied at its old index 76, and a
+        // harmless no-op — recorded 77, and logged "schema is up to date
+        // total=78". Index 57 had been recorded six days earlier, so the CREATE
+        // TABLE never ran and never would have. `health-rail-refresh` did this
+        // at 05:00:21; nothing anywhere reported a problem.
+        //
+        // ⚠ SO THE STATEMENT COULD NOT SIMPLY BE MOVED TO THE END. Every
+        // database that has already seen the broken array recorded a version 77
+        // it did not really apply. Putting the CREATE TABLE at 77 would leave it
+        // skipped in precisely those databases — the live one among them. It
+        // goes at 78, and 77 stays occupied by something already true.
+        //
+        // ⚠ THE ALTERNATIVE WAS DELETING ROW 77 IN PRODUCTION, and it was not
+        // taken. It would have to be repeated by hand in every other database
+        // that ran the broken array, and a hand-edited migration ledger is worse
+        // to inherit than a repeated idempotent statement. A fresh database runs
+        // this twice and is unharmed; `IF EXISTS` is what makes that safe.
+        r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
+        // The mined prior AS IT STOOD at an anchor date, so a past day can be
+        // named from what was known then (#1405).
+        //
+        // ⚠ A SEPARATE TABLE RATHER THAN A COLUMN ON `venue_type_priors`, and
+        // deliberately so twice over. `CREATE TABLE IF NOT EXISTS` adds nothing
+        // to a table that already exists, so a new column there needs an ALTER
+        // that every fresh-built test would pass without ever exercising; and
+        // what the change really wants is a different PRIMARY KEY, which is
+        // surgery on a live table. This is additive — the old row and its read
+        // path are untouched, so a pod predating this keeps working.
+        //
+        // ⚠ `as_of` IS A DATE, NOT A TIMESTAMP. It names the day the mining
+        // window ENDED, which is the grain a snapshot is taken at and the grain
+        // a day-level read asks for. A timestamp would invite two snapshots for
+        // one day differing by minutes, with no rule for which one that day
+        // means.
+        //
+        // ⚠ WHY THE HISTORY IS WORTH KEEPING: mining RE-CLUSTERS from scratch,
+        // so re-running it changes what PAST days were called even with no new
+        // evidence. Measured over 42 days it moved three labels, broke one that
+        // was right, and improved none. Freezing each run is what makes a past
+        // label stable — the prior that named a day correctly was right by luck
+        // of that run's clustering, and nothing preserved it.
+        r#"CREATE TABLE IF NOT EXISTS venue_type_prior_snapshots (
+    user_id     VARCHAR(64) NOT NULL,
+    as_of       DATE NOT NULL,
+    priors_json MEDIUMTEXT NOT NULL,
+    mined_stays INT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, as_of)
+  )"#,
     ];
 
     sqlx::query(
