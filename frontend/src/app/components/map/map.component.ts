@@ -18,7 +18,6 @@ import * as L from "leaflet";
 import { modeStyle } from "../../modes";
 import { displayTzAt, type EpisodeGeometry, type LatestFix, type VelocityData } from "../../services/health.service";
 import { sourceLabel } from "./map.labels";
-import { canFitBounds, FIT_PADDING_PX } from "./map.fit";
 
 /** Longest gap (m) between two episodes' drawn ends that still joins the next
  *  episode's own polyline. Sized to cosmetic stitching: a station platform →
@@ -139,11 +138,6 @@ export class MapComponent implements OnDestroy {
 	 *  day change (or first render) re-fits. */
 	private fittedKey: string | undefined = undefined;
 
-	/** A fit was asked for and REFUSED because the container was too small to
-	 *  compute a zoom from (#1616). The resize observer re-runs it once a real
-	 *  size arrives. */
-	private fitDeferred = false;
-
 	constructor() {
 		// Redraw when the day's data or the live fix changes.
 		effect(() => {
@@ -196,20 +190,7 @@ export class MapComponent implements OnDestroy {
 			layer = L.layerGroup().addTo(map);
 			// The container can resize after the mat-tab transition
 			// settles; re-measure so tiles and bounds use the real size.
-			this.resizeObs = new ResizeObserver(() => {
-				if (!this.map) return;
-				this.map.invalidateSize();
-				// ⚠ AND RE-FIT IF ONE WAS REFUSED. The observer exists because
-				// the container's size is not final at init; before #1616 it
-				// only re-measured, so a fit skipped at 0x0 was skipped for
-				// good. Cleared first: `render` decides afresh whether it can.
-				if (this.fitDeferred) {
-					this.fitDeferred = false;
-					this.zone.runOutsideAngular(() =>
-						this.render(el, this.data(), this.liveFix()),
-					);
-				}
-			});
+			this.resizeObs = new ResizeObserver(() => this.map?.invalidateSize());
 			this.resizeObs.observe(el);
 			// Tap-to-inspect: report the nearest drawn vertex. Bound once.
 			map.on("click", (e: L.LeafletMouseEvent) => this.showInspect(map!, e.latlng));
@@ -372,24 +353,9 @@ export class MapComponent implements OnDestroy {
 			// New day (or first render): fit the track. Same-day refetches —
 			// walk-snap toggle, pull-to-refresh, the 5-min recompute, a poll —
 			// keep the same key, so the viewer's pan/zoom is preserved.
-			//
-			// ⚠ NOT WHILE THE CONTAINER IS TOO SMALL TO FIT INTO (#1616).
-			// `fitBounds` on a container at or under twice the padding computes
-			// a NaN zoom — see `canFitBounds` — and NaN reaches Leaflet's
-			// `setView` and then its tile grid, where the renderer spins on a
-			// full core and never runs JavaScript again. Measured on a Pixel 9:
-			// blank map, every button in the app dead, ~88% of a core burned.
-			//
-			// ⚠ `fittedKey` IS LEFT ALONE when the fit is refused, so this is a
-			// DEFERRAL and not a skip — the day still counts as unfitted and the
-			// resize observer above runs it again at a real size.
-			if (!canFitBounds(map.getSize(), FIT_PADDING_PX)) {
-				this.fitDeferred = true;
-				return;
-			}
 			this.fittedKey = key;
 			if (allCoords.length > 0) {
-				map.fitBounds(L.latLngBounds(allCoords), { padding: [FIT_PADDING_PX, FIT_PADDING_PX] });
+				map.fitBounds(L.latLngBounds(allCoords), { padding: [24, 24] });
 			} else if (pos) {
 				map.setView([pos.lat, pos.lon], 14);
 			} else {
