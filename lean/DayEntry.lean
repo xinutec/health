@@ -734,6 +734,12 @@ private def segJson (s : Seg) : Json :=
     ("matchedPath", match s.matchedPath with | none => Json.null | some p => pathJson p),
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
+    -- A DEBUG surface (#1464): where the walk matcher's route actually ran,
+    -- named way by named way, longest first. ⚠ Nothing consumes it — the day
+    -- gate compares `states`, and `parseSeg` does not read it back, so a
+    -- replay's INPUT is unchanged by its presence.
+    ("walkWayUm", Json.arr (s.walkWayUm.map fun (n, um) =>
+      Json.arr #[Json.str n, Lean.toJson um])),
     ("biometrics", match s.biometrics with | none => Json.null | some b => biomJson b)]
 
 /-- One `DayState` on the wire.

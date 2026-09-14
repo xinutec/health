@@ -2436,6 +2436,9 @@ private structure WalkIn where
   drawn : Array LatLon
   raw : Array LatLon
   acceptedNames : Array String
+  /-- The matcher's identity report for this leg (#1464): named ways and their
+  metres, longest first. A DIAGNOSTIC — nothing here scores it. -/
+  wayUm : Array (String × Nat) := #[]
 
 private def parseWalkIn (j : Json) : Except String WalkIn := do
   return {
@@ -2443,7 +2446,10 @@ private def parseWalkIn (j : Json) : Except String WalkIn := do
     endTs := ← (← j.getObjVal? "endTs").getInt?
     drawn := ← (← optArr j "drawn").mapM parseLL
     raw := ← (← optArr j "raw").mapM parseLL
-    acceptedNames := ← (← optArr j "acceptedNames").mapM (·.getStr?) }
+    acceptedNames := ← (← optArr j "acceptedNames").mapM (·.getStr?)
+    wayUm := ← (← optArr j "wayUm").mapM fun e => do
+      let a ← e.getArr?
+      return (← (← nth a 0).getStr?, ← (← nth a 1).getNat?) }
 
 private structure DayIn where
   date : String
@@ -2544,14 +2550,20 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
     offPathM := if d.buildings.isEmpty then none
                 else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
     lenM := sc.drawnLengthM
-    budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs) }
+    budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
+    wayUm := w.wayUm }
 
 private def entryJson (e : WalkEntry) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson e.startTs), ("p90M", oBits e.p90M),
     ("stallM", fBits e.stallM), ("speedKmh", fBits e.speedKmh),
     ("routeCorr", oBits e.routeCorr), ("offPathM", oBits e.offPathM),
-    ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM)]
+    ("lenM", fBits e.lenM), ("budgetM", oBits e.budgetM),
+    -- ⚠ PASSED THROUGH, NEVER SCORED (#1464). It rides the referee's wire so
+    -- `WALK_GATE_DUMP` can print it beside the metrics; no floor holds it and
+    -- no delta is computed from it.
+    ("wayUm", Json.arr (e.wayUm.map fun (n, um) =>
+      Json.arr #[Json.str n, Lean.toJson um]))]
 
 private def metricName : Metric → String
   | .stall => "stall" | .speed => "speed" | .route => "route"

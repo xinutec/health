@@ -307,6 +307,33 @@ fn accepted_names(windows: &[(i64, i64, String)], start: i64, end: i64) -> Vec<S
     names
 }
 
+/// The walk matcher's identity report for the segment covering `[start, end)`
+/// — `Seg.walkWayUm`, where the route ran and for how many metres (#1464).
+///
+/// ⚠ **A DIAGNOSTIC, AND NOT A METRIC.** Nothing scores it and no floor holds
+/// it. It exists so a `wayContinuityNats` bracket can read whether a route
+/// actually moved onto the way the narrative names, instead of inferring it
+/// from a length that changed.
+///
+/// ⚠ Matched on EXACT bounds rather than overlap: a walking episode is built
+/// from the walking segment and keeps its window, so a near-miss means the two
+/// have diverged and silently attaching the neighbouring leg's report would be
+/// worse than attaching none.
+fn way_um_for(out: &Value, start: i64, end: i64) -> Vec<Value> {
+    out.get("segs")
+        .and_then(Value::as_array)
+        .and_then(|segs| {
+            segs.iter().find(|s| {
+                s.get("startTs").and_then(Value::as_i64) == Some(start)
+                    && s.get("endTs").and_then(Value::as_i64) == Some(end)
+            })
+        })
+        .and_then(|s| s.get("walkWayUm"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// The walking legs of a fold reply, with the line the map would draw.
 ///
 /// `acceptedNames` comes from the day's ground-truth narrative via
@@ -338,6 +365,12 @@ fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) ->
                 "drawn": drawn,
                 "raw": raw_in_window(request, start, end),
                 "acceptedNames": accepted_names(windows, start, end),
+                // ⚠ JOINED FROM `segs`, BECAUSE AN EPISODE DOES NOT CARRY IT.
+                // The matcher's identity report is attached to the SEGMENT
+                // (#1464); episodes are the display flattening and drop it. A
+                // window join is exact here — the walking episode is built from
+                // the walking segment and keeps its bounds.
+                "wayUm": way_um_for(out, start, end),
             }))
         })
         .collect()
@@ -797,6 +830,47 @@ impl Walk {
                         g("budgetM"),
                         bf("budgetM"),
                     );
+                    // ⚠ ON ITS OWN LINE, and only when non-empty. A route that
+                    // named nothing prints nothing rather than an empty column
+                    // that would read as "measured, found none" (#1464).
+                    // ⚠ A SHARE, NEVER A DISTANCE. `wayUm` is in the matcher's
+                    // own integer units and `MatchOut.wayUm` says outright that
+                    // the unit never converts — printing it with an `m` suffix
+                    // would invent a precision nobody measured. The share is
+                    // also the readable form: what a nats bracket asks is
+                    // whether a way carries a MEANINGFUL part of the route.
+                    let raw: Vec<(String, u64)> = w["wayUm"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|e| {
+                                    let p = e.as_array()?;
+                                    Some((p.first()?.as_str()?.to_string(), p.get(1)?.as_u64()?))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let total: u64 = raw.iter().map(|(_, u)| *u).sum();
+                    let report: Vec<String> = raw
+                        .iter()
+                        .map(|(n, u)| {
+                            // Denominator is the NAMED arc only — unnamed ways
+                            // never reach this report, so these sum to 100%
+                            // and do not describe the whole route.
+                            let pct = if total == 0 {
+                                0.0
+                            } else {
+                                (*u as f64) * 100.0 / (total as f64)
+                            };
+                            format!("{n}={pct:.0}%")
+                        })
+                        .collect();
+                    if !report.is_empty() {
+                        eprintln!(
+                            "{date} ts={ts}  route (share of NAMED arc) {}",
+                            report.join("  ")
+                        );
+                    }
                 }
             }
         }

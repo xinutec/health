@@ -132,6 +132,31 @@ structure Seg where
   `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
   own fields are empty because Fitbit had nothing for the day. -/
   biometrics : Option BiometricEnrichment := none
+  /-- **A DEBUG SURFACE, AND NOTHING READS IT (#1464).** The walk matcher's
+  identity report for this leg: how much of the chosen route ran along each NAMED
+  way, longest first. Unnamed arcs are dropped — they cannot answer the question
+  this exists for.
+
+  ⚠ **THE UNIT IS THE MATCHER'S OWN AND DOES NOT CONVERT TO METRES.**
+  `MatchOut.wayUm` says so where the arc lengths are summed: relative weight is
+  all any reader needs, so nothing ever converted it. Read these as SHARES.
+  Printing one with an `m` suffix invents a precision nobody measured.
+
+  ⚠ **WHY IT HAD TO BECOME OBSERVABLE.** `wayUm` and `matchWayName` lived and
+  died inside `WalkAnnotate`: no Rust file, no serialization, no debug surface
+  carried them. So "does the route ever run along Queen's Walk?" — the question
+  #445's veto turns on, and the one a `wayContinuityNats` bracket has to read —
+  was answerable only through geometry side-effects. Measuring 5 nats on
+  2026-09-10 could say a route MOVED and that its length changed, and could not
+  say whether it moved onto the right way.
+
+  ⚠ **UNGATED, AND DELIBERATELY WIDER THAN `wayName`.** `drawMatcher` adopts a
+  route name only on a leg the cascade left unnamed, unspliced, and inside the
+  stray bar — every stronger use having been measured and REFUTED (#445). Those
+  conditions are exactly what must NOT filter a diagnostic: a report that
+  appeared only where the name was already adopted could not show a route
+  riding the wrong way on a leg that kept its cascade name. -/
+  walkWayUm : Array (String × Nat) := #[]
   deriving Inhabited, BEq, Repr
 
 /-- A GPS fix, as these passes see it. -/

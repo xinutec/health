@@ -336,15 +336,66 @@ def matchWayName (wayUm : Array (Option String × Nat)) : Option String :=
 -- A tie keeps the first — route traversal order, deterministic.
 #guard matchWayName #[(some "A", 100), (some "B", 100)] == some "A"
 
+/-- The whole identity report as a DEBUG surface (#1464): every NAMED way the
+route ran along, with its arc weight, longest first.
+
+⚠ **THE WEIGHT IS THE MATCHER'S OWN INTEGER UNIT, NOT METRES** — see
+`MatchOut.wayUm`, which states that relative weight is all naming reads and so
+the unit never converts. Compare them to each other; never label one a distance.
+
+⚠ **`matchWayName` ANSWERS A DIFFERENT QUESTION AND CANNOT SUBSTITUTE.** It
+returns the single dominant name, so a way the route merely TOUCHED is
+invisible to it — and "does Queen's Walk carry any metres at all?" is exactly
+what a `wayContinuityNats` bracket has to read. A dominant name would report
+the same value for a route that never went near it and one that spent a third
+of its length on it.
+
+⚠ **UNNAMED ARCS ARE DROPPED, and that loses real information.** A route can be
+mostly on unnamed footways, and this will not say so. It is the same choice
+`matchWayName` makes, kept deliberately so the two agree about what a name is.
+
+⚠ A TIE KEEPS TRAVERSAL ORDER, like `matchWayName`, so the report is
+deterministic and two runs are diffable. -/
+def wayUmReport (wayUm : Array (Option String × Nat)) : Array (String × Nat) :=
+  let named := wayUm.filterMap fun (n, um) => n.map (·, um)
+  -- ⚠ A STABLE sort on a STRICT comparison: `>` alone would let a tie reorder.
+  named.zipIdx.qsort (fun (a, i) (b, j) =>
+    if a.2 == b.2 then i < j else a.2 > b.2) |>.map (·.1)
+
+#guard wayUmReport #[] == #[]
+-- Unnamed arcs are dropped, however long.
+#guard wayUmReport #[(none, 900)] == #[]
+-- Longest first, and an unnamed arc between two named ones does not reorder them.
+#guard wayUmReport #[(some "Park Place", 100), (none, 900), (some "Queen's Walk", 400)]
+  == #[("Queen's Walk", 400), ("Park Place", 100)]
+-- ⚠ THE CASE `matchWayName` CANNOT SEE: a way carrying metres but not the most.
+-- The bracket on #1464 reads this to tell "never went there" from "went there".
+#guard wayUmReport #[(some "Grosvenor Place", 700), (some "Queen's Walk", 3)]
+  == #[("Grosvenor Place", 700), ("Queen's Walk", 3)]
+#guard matchWayName #[(some "Grosvenor Place", 700), (some "Queen's Walk", 3)]
+  == some "Grosvenor Place"
+-- A tie keeps traversal order, so a diff between two runs means a real move.
+#guard wayUmReport #[(some "A", 100), (some "B", 100)] == #[("A", 100), ("B", 100)]
+-- The report's head is `matchWayName`, always — one fact, two shapes.
+#guard ((wayUmReport #[(some "Park Place", 100), (none, 900), (some "Queen's Walk", 400)])[0]?.map
+  (·.1)) == matchWayName #[(some "Park Place", 100), (none, 900), (some "Queen's Walk", 400)]
+
 /-- One leg's drawn line under the matcher arm: the display gate, the
 local-divergence splice salvage, the de-boxing refinement, and the
 robust-reconstruction swap. Returns the line, whether a match (or a splice) was
 used, whether the reconstruction replaced it, and — only for a leg whose
 cascade name is `none` — the way name the matcher's own route endorses (#445;
-see the ledger comment at the `matchName` binding). -/
+see the ledger comment at the `matchName` binding).
+
+Also returns the route's FULL identity report, ungated, as a debug surface
+(#1464) — see `Seg.walkWayUm`. ⚠ It is reported even when the route is
+DISCARDED (no match used, or the reconstruction swapped in), because "the
+matcher wanted to go this way and we overrode it" is exactly what a bracket
+needs to see. A reader must therefore not infer from a non-empty report that
+the drawn line follows it. -/
 private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (buildings : Array Ring)
     (clean held : Array PedFix) (ev : WalkEvidence) (cascadeName : Option String) :
-    Array TPt × Bool × Bool × Option String := Id.run do
+    Array TPt × Bool × Bool × Option String × Array (String × Nat) := Id.run do
   let geom : Ways := ways.map Way.coords
   let fixes := clean.map PedFix.pathPt
   let result := env.matcher fixes ways buildings
@@ -410,6 +461,11 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   -- display gate's own parallel-way guard: a match that does not track the
   -- fixes describes some other street's pavement. A splice keeps raw
   -- geometry over divergent runs, so a spliced route describes nothing.
+  -- ⚠ FROM `result`, NOT from the gated `matchName` below. The report exists to
+  -- show where the route ran even on legs whose name the cascade kept.
+  let report := match result with
+    | some r => wayUmReport r.wayUm
+    | none => #[]
   let matchName :=
     match result, decision with
     | some r, some d =>
@@ -427,9 +483,9 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
         let reconLen := pathLenM recon
         if reconLen ≤ drawnLen * RECON_SWAP_MAX_LEN_FRACTION
             && drawnLen - reconLen ≥ RECON_SWAP_MIN_ABS_DROP_M then
-          return (recon, useMatch, true, none)
+          return (recon, useMatch, true, none, report)
     | none => pure ()
-  return (drawn, useMatch, false, matchName)
+  return (drawn, useMatch, false, matchName, report)
 
 /--
 Attach `walkMatchedPath` / `walkSmoothedPath` to every walking leg the evidence
@@ -469,10 +525,12 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           let held := hold clean
           let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs
           let ev := evidenceFor segments si stepsWalked
-          let (drawn0, useMatch, smoothed0, matchName) := match draw with
+          let (drawn0, useMatch, smoothed0, matchName, wayUm) := match draw with
             | .recon =>
+              -- ⚠ The recon arm runs NO matcher, so it has no identity report —
+              -- empty here means "not measured", not "the route named nothing".
               let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
-              (d, false, s, none)
+              (d, false, s, none, #[])
             | .matcher => drawMatcher env flags ways buildings clean held ev seg.wayName
           let mut drawn := drawn0
           let mut corrected := false
@@ -487,7 +545,13 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
             if changed drawn snapped then
               drawn := snapped
               corrected := true
-          if smoothed0 then out := out.push { seg with walkSmoothedPath := some drawn }
+          -- ⚠ `walkWayUm` IS ATTACHED ON EVERY BRANCH, including the ones that
+          -- throw the matcher's line away (#1464). A report present only where
+          -- the route was drawn could not answer "what did the matcher want
+          -- here?" on the legs where it was overridden — which is the half of
+          -- the bracket that says whether a nats value is doing anything.
+          if smoothed0 then
+            out := out.push { seg with walkSmoothedPath := some drawn, walkWayUm := wayUm }
           else if useMatch || corrected then
             -- #445: when the full match ships, its own route names the leg —
             -- the corrector only escapes buildings locally and does not change
@@ -496,8 +560,13 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
             out := out.push
               { seg with
                   walkMatchedPath := some drawn
-                  wayName := matchName.orElse (fun _ => seg.wayName) }
-          else out := out.push { seg with wayName := matchName.orElse (fun _ => seg.wayName) }
+                  wayName := matchName.orElse (fun _ => seg.wayName)
+                  walkWayUm := wayUm }
+          else
+            out := out.push
+              { seg with
+                  wayName := matchName.orElse (fun _ => seg.wayName)
+                  walkWayUm := wayUm }
     | _, _, _ => out := out.push seg
   return out
 

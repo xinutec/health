@@ -103,6 +103,19 @@ structure WalkEntry where
   lenM : Float
   /-- Pedometer displacement budget (steps × stride, m); `none` = no step data. -/
   budgetM : Option Float
+  /-- **A DIAGNOSTIC COLUMN, NOT AN AXIS (#1464).** The matcher's identity
+  report for this leg: named ways and their metres, longest first.
+
+  ⚠ **IT IS NOT IN `Metric` AND MUST NOT BE.** Every other field here is scored
+  against a blessed floor; this one is carried so `WALK_GATE_DUMP` can print
+  where the route ran beside the numbers. Gating it would bless a route shape
+  nobody has adjudicated, and #445 measured that route-dominant naming BREAKS
+  more truth rows than it fixes.
+
+  ⚠ Defaulted, because the blessed floor file predates it — `parseEntry` reads
+  a baseline that has no such column, and an absent one means "not recorded",
+  exactly as it does for the `Option` axes above. -/
+  wayUm : Array (String × Nat) := #[]
   deriving Inhabited, BEq, Repr
 
 /-- The gated axes. `p90` is absent on purpose — see `WalkEntry.p90M`. -/
