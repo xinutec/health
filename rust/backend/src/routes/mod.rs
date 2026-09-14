@@ -2,9 +2,8 @@
 //!
 //! ⚠ THIS IS PRODUCTION. It serves `health.xinutec.org` — the SPA shell, the
 //! static build and every `/api` route — and there is no TypeScript server
-//! left to fall back to. This header said the opposite until 2026-08-30, when
-//! the page was measured being served by this router; `src/server.ts` went with
-//! the TS arm (#975). Treat a change here as a change to the live site.
+//! left to fall back to — `src/server.ts` went with the TS arm (#975). Treat a
+//! change here as a change to the live site.
 //!
 //! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
 //! `ORDER BY ST_Distance … LIMIT 50`. #413's re-bless was the decision to let

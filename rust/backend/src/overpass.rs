@@ -19,26 +19,17 @@ use std::time::Duration;
 /// and this address is the one their admins can reach.
 pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 
-/// ⚠ SAME ORDER AS THE TYPESCRIPT, and that is deliberate rather than
-/// incidental: `overpass-api.de` first, `kumi.systems` second. Measurement on
-/// 2026-08-25 had the first answering a central-London bus query in 1.5 s while
-/// the second returned 500 after 31 s, so the order also happens to be the fast
-/// one — but matching the arm being replaced is the reason it is written this
-/// way.
+/// ⚠ ORDER MATTERS: `overpass-api.de` first, `kumi.systems` second — the order
+/// the replaced TypeScript used, and the faster one.
 ///
-/// ⚠ EVERY MIRROR'S FAILURE IS CARRIED, NOT JUST THE LAST — this is a deliberate
-/// DEPARTURE from `overpassFetch`, which keeps only `lastErr`. That is why
-/// #1153's log named `kumi.systems` on every line and read as a one-endpoint
-/// outage while BOTH endpoints were down: the first mirror's failure was
-/// overwritten before anything printed it. Reproduced here once (2026-08-25
-/// dry run, 6 of 18 tiles) and then fixed. The behaviour is unchanged — only
-/// the diagnosis is.
+/// ⚠ EVERY MIRROR'S FAILURE IS CARRIED, NOT JUST THE LAST. Keeping only the
+/// final error makes a two-endpoint outage read as a one-endpoint one, because
+/// the first mirror's failure is overwritten before anything prints it.
 ///
 /// ⚠ `overpass.osm.ch` IS NOT A SUBSTITUTE and is deliberately absent: it
-/// answers 200 with zero elements for anything outside Switzerland, which is
+/// answers 200 with zero elements outside Switzerland, which is
 /// indistinguishable from "no routes here" and would silently empty the mirror
-/// for a London user. #1153 reached for it as a replacement mirror; it cannot be
-/// one.
+/// for a London user.
 const OVERPASS_URLS: [&str; 2] = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -46,22 +37,15 @@ const OVERPASS_URLS: [&str; 2] = [
 
 /// Which mirrors attempt number `attempt` may use. Attempt 0 is the first try.
 ///
-/// ⚠ A RETRY GOES TO THE PRIMARY ALONE, because the fallback has never answered
-/// anything. Measured from isis on 2026-09-12 and again on 2026-09-14:
-/// `kumi.systems` completes the TCP connect in 0.02-0.15 s and then returns
-/// zero bytes until the cap. What it reliably costs is `FALLBACK_TIMEOUT_MS`;
-/// what it has reliably produced is nothing.
+/// ⚠ A RETRY GOES TO THE PRIMARY ALONE. `kumi.systems` connects and then returns
+/// zero bytes until the cap, so a second full-mirror pass costs
+/// `FALLBACK_TIMEOUT_MS` per tile to buy nothing; primary-only keeps a retry
+/// affordable against the job's deadline.
 ///
-/// That cost is what makes the retry affordable. On 2026-09-14 the nightly lost
-/// 15 of 36 tiles, each spending ~6 s on the primary's 504 and then the full
-/// 15 s on the fallback — ~21 s a tile, which accounts for the whole 5m17s by
-/// which that run exceeded 2026-09-13's. A second full-mirror pass would add
-/// another five minutes; a primary-only pass adds ~6 s per tile still refusing.
-///
-/// ⚠ THE FALLBACK IS NOT REMOVED FROM ATTEMPT 0. It has never answered *here*,
-/// on this host, in these measurements — a reason not to pay for it twice, not
-/// proof it can never answer. Dropping it would leave one endpoint with nothing
-/// behind it, and `overpass.osm.ch` cannot be that something (see above).
+/// ⚠ IT IS NOT REMOVED FROM ATTEMPT 0. Never having answered here is a reason
+/// not to pay for it twice, not proof it cannot answer — and dropping it leaves
+/// one endpoint with nothing behind it (`overpass.osm.ch` cannot be that; see
+/// [`OVERPASS_URLS`]).
 pub fn attempt_urls(attempt: usize) -> &'static [&'static str] {
     if attempt == 0 {
         &OVERPASS_URLS
@@ -81,23 +65,10 @@ pub const MIRROR_TIMEOUT_MS: u64 = 90_000;
 
 /// What a mirror gets AFTER the first one has already failed.
 ///
-/// ⚠ A FALLBACK IS ONLY WORTH A SHORT WAIT. By the time it is tried the primary
-/// has refused, the tile has already cost its budget, and the fallback's job is
-/// to be a QUICK alternative — one that cannot answer promptly is not helping,
-/// it is just delaying the next tile.
-///
-/// ⚠ MEASURED, because the 90 s above was costing a full minute and a half per
-/// failed tile. From isis on 2026-09-12:
-///
-/// ```text
-/// overpass-api.de  200, first byte 1.4 s, 3.3 MB complete in 2.1 s
-/// overpass-api.de  504, in 6.0-6.3 s
-/// kumi.systems     connects in 0.15 s and then NEVER ANSWERS — 120 s cap hit
-/// ```
-///
-/// So `kumi.systems` was burning the whole 90 s on every tile the primary
-/// refused, and that is where ~102 s between consecutive tile failures went
-/// (#1153). Fifteen seconds is seven times a healthy full tile's total.
+/// ⚠ A FALLBACK IS ONLY WORTH A SHORT WAIT. The tile has already spent its
+/// budget on the primary, so a fallback that cannot answer promptly is not
+/// helping — it is delaying the next tile. `kumi.systems` connects and then
+/// never answers, so at the full budget it cost ~90 s per refused tile.
 ///
 /// ⚠ NOT APPLIED TO THE FIRST MIRROR. Overpass's slot queuing means a
 /// legitimate primary request can sit silent well past this, and cutting it
@@ -110,29 +81,14 @@ const STATUS_URL: &str = "https://overpass-api.de/api/status";
 
 /// What `/api/status` says about THIS client's compute slots.
 ///
-/// ⚠ **OVERPASS PUBLISHES A CONCURRENCY LIMIT AND LIVE AVAILABILITY, and until
-/// 2026-09-13 nothing here read either.** Measured from isis that day:
+/// ⚠ OVERPASS PUBLISHES A CONCURRENCY LIMIT AND LIVE AVAILABILITY, and the
+/// limit is small (2 for this client). Firing a tile burst without regard for
+/// it earns an IP-level ban, and a fixed inter-tile sleep cannot substitute:
+/// it tracks nothing, which is why a pacing bracket came out non-monotonic.
 ///
-/// ```text
-/// Connected as: 3712168559
-/// Current time: 2026-09-13T10:21:15Z
-/// Rate limit: 2
-/// 2 slots available now.
-/// ```
-///
-/// **Two.** The bus refresh fired eighteen tile queries back to back with no
-/// regard for that number, which is what got isis banned at the IP level for
-/// 45+ minutes (#1153 defect A). A fixed inter-tile sleep cannot fix it either,
-/// because it is not tracking anything — which is why the pacing bracket came
-/// out non-monotonic and was rightly refuted.
-///
-/// When the slots are spent the endpoint names the moment the next one frees:
-///
-/// ```text
-/// Slot available after: 2026-09-13T10:25:00Z, in 42 seconds.
-/// ```
-///
-/// So the polite client is not a slower one, it is one that ASKS.
+/// When the slots are spent the endpoint names the moment the next one frees
+/// (`Slot available after: <ts>, in N seconds`), so the polite client is not a
+/// slower one — it is one that ASKS.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Slots {
     /// The per-IP concurrency limit. `0` means unmetered for this client.
@@ -238,21 +194,16 @@ pub enum Outcome {
     /// made a two-endpoint outage unreadable.
     AllFailed {
         errors: Vec<String>,
-        /// Did ANY mirror reply with an HTTP status — a 429 or a 5xx — as
-        /// opposed to failing at the transport?
+        /// Did ANY mirror reply with an HTTP status, as opposed to failing at
+        /// the transport?
         ///
-        /// ⚠ THIS IS THE BAN/THROTTLE LINE, and it decides whether a retry is
-        /// allowed. This ticket's own method note says to tell the two apart by
-        /// how the connection behaves: a `000` at 46 ms is a REFUSAL, while a
-        /// throttle answers 429 or 504. A server that answered is a server
-        /// willing to talk to us, and asking again is fair. A server that
-        /// refused the connection is one that has stopped, and asking again is
-        /// the discourtesy that earned the ban in the first place (#1153).
+        /// ⚠ THE BAN/THROTTLE LINE, and it decides whether a retry is allowed.
+        /// A refused connection means the server has stopped listening, and
+        /// asking again is what earns a ban; a 429 or 5xx means it is still
+        /// talking, and asking again is fair.
         ///
-        /// ⚠ IT CANNOT BE INFERRED FROM `wait_for_slot`. That returns 0
-        /// IMMEDIATELY when `/api/status` is unreachable — which is precisely
-        /// the banned case — so a retry gated only on the slot check would fire
-        /// straight into a ban, at double the rate, with nothing slowing it.
+        /// ⚠ IT CANNOT BE INFERRED FROM `wait_for_slot`, which returns 0 when
+        /// `/api/status` is itself unreachable — precisely the banned case.
         answered: bool,
     },
 }

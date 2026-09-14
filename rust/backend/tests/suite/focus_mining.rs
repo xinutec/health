@@ -14,10 +14,10 @@ use backend::lean::{MineStay, mine_cluster};
 /// ⚠ THE DISTANCE FIELD IS `distanceM`, AND IT IS A BIT-PATTERN STRING. The
 /// Lean `shapeLandmarks` export names it `distanceMBits`; the Rust wrapper
 /// remaps it to `distanceM` because `DayEntry.parsePoi` and the trace-fed fold
-/// read that name. This helper said `distanceMBits` until 2026-08-24 and every
-/// test here passed — against a shape the producer never emits. Production
-/// then refused every landmark with "a landmark has no distanceMBits", after
-/// the cluster half had already answered correctly.
+/// read that name. ⚠ A helper saying `distanceMBits` passes every test here
+/// while describing a shape the producer never emits — production then refuses
+/// every landmark with "a landmark has no distanceMBits", after the cluster
+/// half has already answered correctly.
 ///
 /// ⚠ So: build fixtures from what the PRODUCER emits, not from what the
 /// consumer's parser happens to accept. A test that invents its own wire
@@ -67,8 +67,8 @@ fn a_long_stay_on_one_venue_takes_the_label() {
 fn the_near_field_exemption_survives_the_ffi() {
     init();
     // 10 minutes against a 30-minute floor, but seen from 10 m — inside the
-    // 12 m near field. This is the behaviour that was MISSING from Lean for
-    // nine days (#1003); pinning it here means the wire carries it too.
+    // 12 m near field (#1003). Pinned here so the wire carries it too, not
+    // only the Lean guard.
     let cafe = lm("Cafe", "amenity", "cafe", 10.0);
     let out = mine_cluster(&[stay(600, vec![cafe.clone()])], &serde_json::json!([cafe]))
         .expect("mineCluster answers");

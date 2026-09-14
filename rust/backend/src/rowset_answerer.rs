@@ -681,9 +681,9 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // terminals, which OSM tags as nodes rather than ways — and the
             // result would still be a well-formed, slightly emptier answer.
             // ⚠ THE SERVING PATH AND `decode-day` SHARE ONE IMPLEMENTATION — see
-            // the free `nearby_ways`. It was inlined here until 2026-08-25; the
-            // cron needs the same five-query fan-out per fix-bearing minute, and
-            // a second copy is what drifts while nothing compares the two.
+            // the free `nearby_ways`. The cron needs the same five-query
+            // fan-out per fix-bearing minute, and a second copy is what drifts
+            // while nothing compares the two.
             //
             // ⚠ THE KEY PARTS ARE REUSED VERBATIM. `lat`/`lon` go back into the
             // table as the bit-pattern strings the fold spelled them with, NOT

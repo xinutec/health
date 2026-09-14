@@ -10,14 +10,12 @@ Central Line station, and without this the trellis is free to say you did.
 
 Port of `buildPlaceNearLine` in `src/cli/decode-day.ts`.
 
-## ⚠ THIS WAS MISSING FROM THE RUST DECODE PATH ENTIRELY
+## ⚠ AN ABSENT `placeNearLine` IS NOT A SOFTER CONSTRAINT — IT IS A DIFFERENT ONE
 
-Not ported wrongly — absent. `parseAssemble` reads `placeNearLine` as OPTIONAL
-and an absent one is the empty set, which reads to the transition matrix as "no
-place is near any line". That is not a softer constraint than the TypeScript's;
-it is a DIFFERENT one, and it removes every hard zero rather than adding them.
-The decode would have run, produced a plausible timeline, and allowed boardings
-the TypeScript forbids (#982).
+`parseAssemble` reads it as OPTIONAL, and an absent one is the empty set, which
+reads to the transition matrix as "no place is near any line". That removes
+every hard zero rather than adding them: the decode runs, produces a plausible
+timeline, and allows boardings the TypeScript forbids (#982).
 
 ## The shell's half
 

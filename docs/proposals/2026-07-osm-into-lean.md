@@ -1,3 +1,10 @@
+---
+created: 2026-07
+status: design — the body records no shipped phase
+references:
+  - docs/proposals/2026-07-verified-core-lean.md
+---
+
 # OSM into Lean — push raw rows, not captured answers
 
 Goal: let Lean own the spatial predicate. Today "the nearest station to this

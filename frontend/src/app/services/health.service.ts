@@ -398,10 +398,9 @@ export class HealthService {
         // Seed connection-state from /api/me so the banner can render on
         // app-load without waiting for the first 409 from a data endpoint.
         //
-        // ⚠ The legacy fallback that used to sit here — optimistically
-        // "active" when `connections` was absent — was DEAD: the handler always
-        // sends the field. It also failed open, showing a healthy banner for an
-        // account that may need reauth, which is the wrong direction to guess in.
+        // ⚠ NO FALLBACK when `connections` is absent: the handler always sends
+        // it, and defaulting to "active" would fail OPEN — a healthy banner for
+        // an account that may need reauth, the wrong direction to guess in.
         this.connection.setNextcloudStatus(info.connections.nextcloud.status);
         return true;
       }

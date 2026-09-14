@@ -88,11 +88,11 @@ const BASELINE: &str = concat!(
 /// leaves nothing independent to check the change against. This gate is what
 /// makes those fixes measurable; it has to land first.
 ///
-/// ⚠ THIS LIST HELD TWO ROWS UNTIL 2026-09-01, AND THE FIRST ONE WAS NOT A
-/// PIPELINE DEFECT AT ALL. `@11:09Z` was carried here on the ticket's diagnosis
-/// — "the walk overruns by nine seconds because `vehicleSplit` ends on a fix
-/// above the Kalman admission ceiling". Replaying the day with the fold trace refuted
-/// it twice over: the fix at 11:11:09Z is an ordinary walking-pace one (53 m in
+/// ⚠ A ROW HERE MUST BE A PIPELINE DEFECT, NOT A TICKET'S DIAGNOSIS. `@11:09Z`
+/// was carried in on "the walk overruns by nine seconds because `vehicleSplit`
+/// ends on a fix above the Kalman admission ceiling". Replaying the day with the
+/// fold trace refuted it twice over: the fix at 11:11:09Z is an ordinary
+/// walking-pace one (53 m in
 /// 75 s, then 1023 m in the next 35), and the points this pass receives are
 /// `[ts, lat, lon, speedKmh]` — there is no accuracy field in them to test.
 ///

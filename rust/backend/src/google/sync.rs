@@ -411,11 +411,10 @@ pub const DAILY_ACTIVITY_CUTOVER: &str = "2026-09-01";
 
 /// Which days the Google writer owns as of `today`, or `None` before the cutover.
 ///
-/// ⚠ EXTRACTED SO THE BOUNDARY CAN BE DRIVEN. Until 2026-09-01 this returns
-/// `None` on every run, so the branch that actually writes had never executed —
-/// and the only test on the cutover asserted the CONSTANT was not earlier than
-/// the shutdown, which is a fact about a string. A guard that has only ever been
-/// observed refusing is a guard nobody has tested
+/// ⚠ EXTRACTED SO THE BOUNDARY CAN BE DRIVEN. Before the cutover this returns
+/// `None` on every run, so the branch that writes never executes — and a test
+/// asserting the CONSTANT is not earlier than the shutdown is a fact about a
+/// string. A guard only ever observed refusing is a guard nobody has tested
 /// (\[\[feedback_verify_conditions_not_only_behaviour\]\]).
 ///
 /// ⚠ HALF-OPEN `[start, end)`, because `fetch_daily_rollup` is: "the inclusive

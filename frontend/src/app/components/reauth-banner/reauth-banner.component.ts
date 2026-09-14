@@ -29,8 +29,8 @@ type ConnectState = "idle" | "starting" | "waiting" | "success" | "failed";
  *
  * # Why step 3 is not a poll
  *
- * It was, until 2026-08-10: a 2s `setTimeout` loop against
- * /api/nextcloud/connect/status, to a five-minute deadline. Granting
+ * ⚠ A POLL DOES NOT WORK HERE — a 2s `setTimeout` loop against
+ * /api/nextcloud/connect/status to a five-minute deadline fails. Granting
  * access happens on NEXTCLOUD's page, which on a phone takes the
  * foreground and in a PWA/WebView can replace this document — so the
  * timer doing the watching is throttled or not running at all, and the

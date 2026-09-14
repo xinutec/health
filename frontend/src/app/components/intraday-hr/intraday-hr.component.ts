@@ -45,9 +45,8 @@ export class IntradayHrComponent {
       const sampled = data.filter((_, i) => i % 5 === 0);
 
       this.chartData.set({
-        // The instant, put back on the clock he was living by. Reading the
-        // label off a wall-clock string is what this used to do, and the API no
-        // longer serves one (#1532).
+        // The instant, put back on the clock he was living by. ⚠ The API
+        // serves no wall-clock string to read the label off (#1532).
         labels: sampled.map((p) => wallClockInZone(Date.parse(p.ts_utc), p.tz)),
         datasets: [{
           data: sampled.map((p) => p.bpm),

@@ -642,12 +642,9 @@ pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<
 /// stale and re-decode, so `decoded_days` reading empty for a day the cron
 /// decoded is the symptom of a disagreement.
 ///
-/// ⚠ IT WAS DECLARED TWICE UNTIL 2026-09-01, here and in `main.rs`, both saying
-/// they had to track `src/hmm/persist.ts` — the TypeScript original, which was
-/// the writer this loader had to agree with. That file was deleted with the TS
-/// backend (#975), so the reason for two copies went with it while both copies
-/// and both "keep these in sync" comments stayed. Nothing forced them to agree
-/// and nothing would have reported it if they stopped: the symptom is a silent
+/// ⚠ DECLARED ONCE, HERE. A second copy in `main.rs` had nothing forcing the
+/// two to agree and nothing that would report it if they stopped: the symptom
+/// is a silent
 /// re-decode, not an error.
 pub const CLASSIFIER_VERSION: i32 = 7;
 

@@ -355,21 +355,16 @@ fn rail_fill_candidates(out: &Value, h: &head::Head) -> Result<Vec<lean::FillCan
 /// Decode the fold's IEEE-754 bit-string coordinates into the numbers the
 /// client's wire type declares (#1616).
 ///
-/// ⚠ **THE CLIENT MUST NEVER SEE A BIT STRING.** The Lean fold encodes
-/// coordinates this way so nothing is re-rounded on its internal wire, and
-/// `episodes` used to be forwarded from it VERBATIM while `points` and
-/// `rawFixes` were built here from typed `f64`s. One response therefore carried
-/// numbers in two fields and bit strings in the third — and only the third
-/// draws the map. Leaflet coerced `"4632454559779392337"` to `4.63e18` as a
-/// latitude; on Android WebView the synchronous compositor then spun at a full
-/// core with JavaScript dead, and on desktop Chrome the same poison silently
-/// drew nothing.
+/// ⚠ **THE CLIENT MUST NEVER SEE A BIT STRING.** The fold encodes coordinates
+/// that way so nothing is re-rounded on its internal wire; forwarding them made
+/// Leaflet read `"4632454559779392337"` as a latitude, spinning WebView's
+/// compositor at a full core. `points` and `rawFixes` are built here from typed
+/// `f64`s and were always numbers — only `episodes` was forwarded raw.
 ///
 /// ⚠ **TOLERANT OF NUMBERS**, so a fold that starts emitting them is not
-/// double-decoded into nonsense, and **LEAVES WHAT IT CANNOT PARSE** rather than
-/// defaulting to zero — a zeroed coordinate is a point off the coast of Africa
-/// that draws a line across the planet, which is worse than an obviously wrong
-/// value and harder to notice.
+/// double-decoded, and **LEAVES WHAT IT CANNOT PARSE** rather than defaulting to
+/// zero — a zeroed coordinate is a point off the coast of Africa that draws a
+/// line across the planet.
 pub fn decode_episode_bits(episodes: Value) -> Value {
     fn bits(v: &Value) -> Option<f64> {
         v.as_str()?.parse::<u64>().ok().map(f64::from_bits)

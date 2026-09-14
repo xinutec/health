@@ -1,3 +1,10 @@
+---
+created: 2026-07
+status: active — partly shipped; the body names which parts
+references:
+  - docs/proposals/2026-07-lean-port-roadmap.md
+---
+
 # Verified core: porting decision logic to Lean 4
 
 Raise the static-correctness ceiling of the backend by moving its *decision

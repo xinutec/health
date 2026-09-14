@@ -216,9 +216,8 @@ async fn the_owner_is_unrestricted() {
 /// ⚠ A request with NO SESSION reaching this layer is a MOUNTING BUG, and is
 /// refused as one.
 ///
-/// This test asserted the opposite until 2026-08-22: an extension-less request
-/// passed through, on the reasoning that "there is no session" is 401's job.
-/// The reasoning was right and the behaviour was still wrong, because it made
+/// ⚠ "There is no session, so let 401 handle it" is right as reasoning and
+/// still wrong as behaviour: letting an extension-less request through makes
 /// the layer order a silent correctness condition — mounted before
 /// `require_session`, a share viewer's POST arrives with no extension, reads as
 /// not-a-share-viewer, and is ALLOWED.

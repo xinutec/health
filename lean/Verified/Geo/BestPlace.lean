@@ -235,9 +235,8 @@ def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
 
 /-! ## `placeLabel` -/
 
-/-- The bare venue name. Until 2026-09-03 this was `` `${name} (${type})` ``
-(the TS's format); Pippijn picked bare names for the timeline (#344), and the
-type still rides beside the label in the data for anything that needs it. -/
+/-- The bare venue name — Pippijn's choice for the timeline (#344). The type
+still rides beside the label in the data for anything that needs it. -/
 private def named (name _type : String) : String := name
 
 /-- Everything before the first comma of `display_name`.

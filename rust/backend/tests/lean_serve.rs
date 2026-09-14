@@ -5,9 +5,8 @@
 //!
 //! # What this is evidence FOR
 //!
-//! That `ServeEntry` — every handler that used to sit beside `main` and so
-//! could not be linked — answers the same question here that it answers as a
-//! subprocess. The expected strings below were produced by
+//! That `ServeEntry` answers the same question linked in-process as it does as
+//! a subprocess. The expected strings below were produced by
 //!
 //!     lean/.lake/build/bin/verified_cli serve
 //!

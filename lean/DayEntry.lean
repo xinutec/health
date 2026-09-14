@@ -832,18 +832,16 @@ def dayResult (j : Json) : Json :=
     let env ← parseEnv envJson
     let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
     let wantTrace ← optBool j "trace" false
-    -- ONE input, and one chain from here to the episodes (#430 B2). It used to be
-    -- two — the OSM enrichment stage ran between the splits and the corrections
-    -- and was not ported, so the corrections had to start from what the TS arm
-    -- handed them. `EnrichFold` closed that gap and the day gate measured the
-    -- new boundary green on all 33 golden days before this line was joined up.
+    -- ONE input, and one chain from here to the episodes (#430 B2). `EnrichFold`
+    -- carries the OSM enrichment stage that would otherwise split the chain in
+    -- two and force the corrections to start from another arm's output.
     let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
     let splitCtx : Stays.SplitContext :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
         steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
     let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
-    -- The OSM enrichment stage itself, the piece that used to be the gap between
-    -- the two sub-chains (#430 B2). Chained on both sides now.
+    -- The OSM enrichment stage, chained on both sides so the two sub-chains
+    -- meet here rather than through another arm's output (#430 B2).
     let namer ← namerOf envJson
     let enrichReads : Verified.Geo.EnrichFold.Reads :=
       { ways := env.nearbyWays
@@ -876,9 +874,9 @@ def dayResult (j : Json) : Json :=
       -- The split stage's output — the earliest boundary, and the only one whose
       -- input is not another Lean stage's output.
       ("segsSplit", Json.arr (segsSplit.map segJson)),
-      -- The enrichment stage's output — the boundary that used to be the seam.
+      -- The enrichment stage's output — the seam between the two sub-chains.
       ("segsEnriched", Json.arr (segsEnriched.map segJson)),
-      -- The corrections' output — the BOUNDARY the chain used to start at. Sent
+      -- The corrections' output — a chain BOUNDARY. Sent
       -- back so a divergence in the five stages is named where it happens
       -- rather than read off the fold's output dozens of decisions later.
       ("segsMid", Json.arr (segs.map segJson)),
@@ -1056,10 +1054,10 @@ def decodeOnly (j : Json) : Json :=
     let n4 ← probe3 lk "linesAtPoint" env.linesAtPoint Array.size
     let n5 ← probe3 lk "transitStops" env.transitStops Array.size
     -- The three `namerOf` tables — `nearbyLandmarks`, `reverseGeocode`,
-    -- `bestPlace`. They used to be charged to the fold because the only route to
-    -- them was `Namer.name`, which composes three lookups and can reach a key a
-    -- probe did not choose; a miss `panic!`s, and a panic inside a timing
-    -- handler both prints and formats. `Namer.sizes` removes the need to guess a
+    -- `bestPlace`. Reaching them through `Namer.name` charges them to the fold
+    -- and composes three lookups, so it can reach a key a probe did not choose;
+    -- a miss `panic!`s, and a panic inside a timing handler both prints and
+    -- formats. `Namer.sizes` removes the need to guess a
     -- key at all: it is a structure field, so building the `Namer` builds the
     -- maps. This moves real work out of the residual and into layer 3, which is
     -- where it belongs.

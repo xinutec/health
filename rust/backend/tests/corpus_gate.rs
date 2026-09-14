@@ -7,12 +7,10 @@
 //!                               └→ walks    (the walk referee's four axes)
 //! ```
 //!
-//! ⚠ **THE REPLAY USED TO BE PAID FOUR TIMES**, once per harness, and the walk
-//! matcher made that untenable: measured 2026-09-08 on one gate row, `user`
-//! 2934 s against 718 s wall, with the matcher's ~305 s charged to `walk_gate`
-//! alone and the other three graders replaying WITHOUT it. That is also why the
-//! matcher could not simply be switched on for them (#1418) — it was not the
-//! matcher that was unaffordable, it was paying for it four times.
+//! ⚠ **THE REPLAY IS PAID ONCE, NOT ONCE PER HARNESS.** With the walk matcher
+//! on, four replays cost `user` 2934 s against 718 s wall (measured 2026-09-08,
+//! one gate row), the matcher's ~305 s charged to `walk_gate` alone. What was
+//! unaffordable was paying for it four times, not the matcher (#1418).
 //!
 //! ⚠ **SO #1418 IS NOT A FLAG HERE, IT IS THE STRUCTURE.** `load_trace` runs
 //! before the replay every day that captured one, exactly as production does,

@@ -34,11 +34,10 @@
 //!
 //! # All four axes are live
 //!
-//! `routeCorr` was dark on 45 floor entries until 2026-08-31 — it is the only
-//! walk metric scored by NAME rather than geometry, and its narrative parser
-//! went with the TypeScript (#975). The parser is Lean now
-//! (`Verified.Eval.GroundTruth`, #1290) and those 45 entries MEASURE, and agree
-//! with the floor.
+//! ⚠ `routeCorr` IS THE ONE SCORED BY NAME rather than geometry, so it goes
+//! dark the moment its narrative parser is missing — 45 floor entries once did.
+//! The parser is Lean (`Verified.Eval.GroundTruth`, #1290) and those entries
+//! MEASURE, and agree with the floor.
 //!
 //! ⚠ THAT AGREEMENT IS AN END-TO-END ORACLE, and it is worth more than the
 //! metric. The chain is: Lean parses the narrative, Rust resolves the anchored
@@ -398,8 +397,6 @@ impl Arm {
     /// in production — measured, `day-mirror` names 8 of 8 walking states on
     /// 2026-06-16 while `day-live` with no OSM source names 0 of 7 — so a gate
     /// that never loads a trace grades a pass the serving path does not execute.
-    /// It was `none` until `d7bcd2e`; this comment said so until 2026-09-09,
-    /// three commits after the flip.
     ///
     /// ⚠ THE 68 "REGRESSIONS" THE FLIP EXPOSED WERE GRADED, NOT BLESSED AWAY,
     /// and 62 of them were an artefact rather than a cost. They are `stall`,

@@ -38,11 +38,10 @@ fn the_margin_widens_the_box() {
 #[test]
 fn wkt_is_lon_lat_and_comes_back_lat_lon() {
     // Two points by Kings Cross, which `docs/design/privacy-in-tests-and-
-    // commits.md` names as an allowed landmark. These were a pair of captured
-    // fixes three metres apart in the home range until 2026-09-13 (#860).
-    // Seven decimals is the SHAPE of a real GPS fix and the parser is what is
-    // under test, so the digit count is kept and the place is not. Do not
-    // "restore" measured ones.
+    // commits.md` names as an allowed landmark. ⚠ NOT captured fixes from the
+    // home range (#860). Seven decimals is the SHAPE of a real GPS fix and the
+    // parser is what is under test, so the digit count is kept and the place is
+    // not. Do not "restore" measured ones.
     let pts = parse_linestring_wkt("LINESTRING(-0.1233000 51.5309000,-0.1232000 51.5309500)");
     assert_eq!(
         pts,

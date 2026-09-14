@@ -11,13 +11,10 @@
 //!
 //! # ⚠ THE PLAN THIS HEADER USED TO DESCRIBE HAS COMPLETED
 //!
-//! Until 2026-09-01 the next two sections were written in the future tense —
-//! "#982 is blocked by #975", "the `/api` routes come after the tenants retire,
-//! not before", and an open question about whether the new ingestion would be
-//! Rust or TypeScript. All three resolved and the text did not move, so a
-//! reader was told the tenants were still live and this crate did not serve.
+//! ⚠ KEEP THE SECTIONS BELOW IN THE PRESENT TENSE. Written as plans they
+//! outlive the plan and tell a reader the opposite of what is live.
 //!
-//! What actually happened:
+//! Where it stands:
 //!
 //!   * the TS↔Lean per-tenant A/B retired with the TypeScript backend (#975,
 //!     2026-08-26). `state.rs` still names `setVerifiedCoreOverride`; that

@@ -189,9 +189,7 @@ fn the_two_arms_refuse_differently_and_that_is_deliberate() {
     assert!(!v.may_write);
     assert!(v.refusal.unwrap().contains("Every tile failed"));
 
-    // Bus: ONE tile answered against a POPULATED cache — refused since
-    // 2026-08-29. This assertion used to read `assert!(v.may_write)` and was
-    // labelled "the shape #1134 reports as a defect: 2 of 18 exits 0". #1134 is
+    // Bus: ONE tile answered against a POPULATED cache — REFUSED. #1134 is
     // decided: lossless is not the same as reported, and a cache left 17/18
     // stale by a run that exits 0 is the defect itself.
     let v = lean::may_rebuild("bus", 12, 17, 18, 995).unwrap();

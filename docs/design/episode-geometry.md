@@ -6,6 +6,12 @@ rendered as a raw GPS zigzag, a stay smeared into a cloud of jittered
 fixes. The narrative does not have these problems. The reason is
 structural, not cosmetic.
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. The prose is kept as the record of why each decision was
+taken; the paths are not a map of the code today. `docs/design/timezone.md`
+shows the convention: a "Where these things live now" section mapping each name
+to the Rust or Lean symbol that does the work (#919).
+
 ## The diagnosis
 
 The narrative and the map are two *projections of the same day*, but

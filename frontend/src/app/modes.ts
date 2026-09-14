@@ -1,12 +1,10 @@
 /**
  * The one place the frontend writes down what a mode *is*.
  *
- * This vocabulary used to live in four separate maps — the timeline's icons, the
- * timeline's set of travelling modes, the map's track colours, the speed chart's
- * fills and labels — and they had quietly drifted apart: the map had no colour
- * for `boat` or `unknown` and silently greyed them out, the speed chart was also
- * missing `sleeping`. Adding a mode server-side degraded three of the four to a
- * fallback without anyone noticing.
+ * ⚠ ONE MAP, NOT FOUR. Split across the timeline's icons, its travelling-mode
+ * set, the map's track colours and the speed chart's fills, they drift: a mode
+ * added server-side degrades silently to a fallback in whichever copies were
+ * missed, with no colour and no label.
  *
  * ⚠ WHICH MODES COUNT AS TRAVEL IS NOT HERE ANY MORE, deliberately. This file
  * carried a `moving` flag per mode, and it was the client's own answer to a

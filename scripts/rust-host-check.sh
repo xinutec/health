@@ -16,12 +16,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #   2. it AGREES        — same bytes as `verified_cli day` on a real day
 #   3. it ANSWERS       — the fold's OSM callbacks reach the HOST, not the stub
 #
-# ⚠ CLIPPY USED TO BE ITEM 2 AND IS NOW ITS OWN GATE ROW (#990). Not because it
-# stopped mattering — it runs at the same `-D warnings` bar — but because a
-# lint failure here reported "the in-process Rust host agrees with the spawned
-# CLI", which is not what broke. `gate.dhall`'s header is an argument against
-# one name standing for several failures, and this script was four of them.
-# It still builds, because item 2 needs the binary.
+# ⚠ CLIPPY IS ITS OWN GATE ROW (#990), not an item here. It runs at the same
+# `-D warnings` bar; the point is that a lint failure must not report "the
+# in-process Rust host agrees with the spawned CLI", which is not what broke.
+# One name must not stand for several failures. This still builds, because
+# item 2 needs the binary.
 #
 # (2) is the one that matters and the one that can skip: the day request is
 # built from `tests/golden/`, which is gitignored, so a clean checkout cannot
@@ -40,12 +39,11 @@ cd "$ROOT"
 # `lake build verified_cli` alone does NOT emit the static libs, which is the
 # same shape as `lake build <Module>` not relinking the CLI.
 #
-# ⚠ ServeEntry WAS MISSING FROM THIS LIST until 2026-09-11, and it shows up as a
-# SIGSEGV rather than a build failure. A struct the archives disagree about — a
-# new `DayState` field compiled into Verified.a while ServeEntry.a still held the
-# old parser — is written at the wrong shape and corrupts memory. Two
-# `clip_inferred` tests died that way, and the symptom reads as a bug in the
-# change rather than as a stale archive. Every archive the link line names
+# ⚠ AN ARCHIVE MISSING FROM THIS LIST SHOWS UP AS A SIGSEGV, not a build
+# failure. A struct the archives disagree about — a new `DayState` field
+# compiled into Verified.a while ServeEntry.a still holds the old parser — is
+# written at the wrong shape and corrupts memory, and the symptom reads as a bug
+# in the change rather than as a stale archive. Every archive the link line names
 # belongs on the command below.
 #
 # ⚠ THE ROWS AFTER THIS ONE DEPEND ON IT. `clippy` and `rust workspace tests`
@@ -73,9 +71,9 @@ fi
 # received. It exits 2 when there is no corpus, the same contract this script
 # already read from the old day gate.
 #
-# ⚠ IT USED TO BE `DAY_REQ_DUMP=… pnpm run day-gate`, i.e. `src/cli/compare-day.ts`.
-# Deleting the TypeScript backend (#975) would have taken this check with it —
-# not loudly, but by turning it into a permanent SKIP, which reads as a pass.
+# ⚠ THIS CHECK MUST NOT DEPEND ON A DELETABLE ARM. Hanging it off the
+# TypeScript's `compare-day.ts` would not fail loudly when that went (#975) — it
+# would turn into a permanent SKIP, which reads as a pass.
 DAY="${RUST_HOST_CHECK_DATE:-2026-05-14}"
 USER_STEM="${RUST_HOST_CHECK_USER:-pippijn}"
 REQ_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rust-host-check.XXXXXX")"

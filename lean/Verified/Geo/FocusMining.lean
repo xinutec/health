@@ -192,8 +192,8 @@ private def shop : Landmark := LM "Shop" "shop" "books" 80
 #guard (mineCluster [ST 600 13 [LM "Far" "amenity" "cafe" 40]]
           [LM "Far" "amenity" "cafe" 40] 1800 0.5).refusal == some Refusal.weight
 -- ⚠ The near-field exemption rescues exactly that case when the venue was seen
--- from inside 12 m. This is the behaviour that was missing from Lean for nine
--- days; a guard on `mineCluster` pins it at the level the cron uses it.
+-- from inside 12 m. Guarded on `mineCluster` — the level the cron uses — so the
+-- exemption cannot go missing without failing here.
 #guard (mineCluster [ST 600 13 [cafe]] [cafe] 1800 0.5).label == some "Cafe"
 -- Gate 2: a `leisure` park is not a label-worthy venue however long the stay.
 #guard (mineCluster [ST 7200 13 [LM "Park" "leisure" "park" 5]]

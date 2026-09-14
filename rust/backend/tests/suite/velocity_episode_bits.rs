@@ -1,17 +1,14 @@
 //! Episode coordinates must leave `/api/velocity` as NUMBERS (#1616).
 //!
 //! ⚠ THE DEFECT THIS PINS HUNG THE ANDROID APP. The Lean fold encodes
-//! coordinates as IEEE-754 bit strings to avoid re-rounding on its internal
-//! wire, and `velocity.rs` forwarded `episodes` from it verbatim while building
-//! `points` and `rawFixes` in Rust from typed `f64`s. So one response carried
-//! numbers in two fields and bit strings in the third — and only the third
-//! feeds the map. Leaflet coerced `"4632454559779392337"` to `4.63e18` as a
-//! LATITUDE, and Android WebView's synchronous compositor spun on the geometry
-//! at a full core with JavaScript dead. Measured on the Pixel 9 2026-09-14:
-//! prod's own bytes storm, the same bytes decoded draw 19 polylines and idle.
+//! coordinates as IEEE-754 bit strings for its internal wire; forwarding them
+//! to the client made Leaflet read `"4632454559779392337"` as a LATITUDE, and
+//! WebView's compositor spun a full core with JavaScript dead. The same
+//! response already sent `points` and `rawFixes` as numbers — only the field
+//! that draws the map was raw.
 //!
-//! ⚠ The frontend has NO bit-string decoder anywhere, which is the tell: it was
-//! never meant to receive them. The fix belongs at the serve boundary.
+//! ⚠ The frontend has NO bit-string decoder, which is the tell: it was never
+//! meant to receive them. The fix belongs at the serve boundary.
 
 use backend::routes::velocity::decode_episode_bits;
 use serde_json::json;

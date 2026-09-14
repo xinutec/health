@@ -111,12 +111,10 @@ fn skin_temperature_is_google_owned_and_written() {
     assert!(has_writer("skin_temperature"));
 }
 
-// `the_intraday_siblings_did_not_move_with_their_daily_streams` lived here
-// until 2026-09-02: it pinned hrv_intraday (and before it heart_rate_intraday)
-// to Fitbit while they had no Google writer. Both then moved the way the test
-// demanded — on their own per-stream measurement, writer first — and the
-// generic pairing tests below (`every_google_owner_has_a_writer` and its
-// converse) now assert the invariant it existed for.
+// ⚠ NO PER-STREAM PINS HERE. A test naming one stream as Fitbit-owned has to be
+// deleted the day that stream moves, writer first. The generic pairing tests
+// below (`every_google_owner_has_a_writer` and its converse) assert the
+// invariant such a pin would be standing in for.
 
 /// ⚠ `daily_activity` STAYS ON FITBIT while a Google writer also exists — the
 /// one deliberate exception to the roster's model, because its columns need
@@ -144,9 +142,9 @@ fn the_cutover_is_not_before_the_fitbit_shutdown() {
 
 /// ⚠ THE ASSERTION ABOVE IS ABOUT A STRING, NOT ABOUT BEHAVIOUR. It cannot fail
 /// on the day the writer is supposed to start, because it does not run the
-/// writer's decision. Until 2026-09-01 `sync_daily_activity` logs "before the
-/// cutover, nothing to write" on every run, so the branch that WRITES has never
-/// executed in production or in a test — the guard has only ever been observed
+/// writer's decision. Before the cutover `sync_daily_activity` logs "before the
+/// cutover, nothing to write" on every run, so the branch that WRITES never
+/// executes in production or in a test — the guard is only ever observed
 /// refusing. These drive it.
 mod the_cutover_opens_exactly_once {
     use backend::google::sync::cutover_window;

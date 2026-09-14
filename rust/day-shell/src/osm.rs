@@ -133,12 +133,12 @@ struct Trace {
 thread_local! {
 /// The loaded trace, REPLACEABLE and PER-THREAD — see [`load_fixture`].
 ///
-/// ⚠ This was a `OnceLock` until 2026-09-08, and that made every backend
-/// corpus gate blind to the walk pass (#1418): one fixture per process
-/// lifetime is fine for the CLI, which replays one day, and impossible for a
-/// harness replaying forty-two. It became an `RwLock` for that.
+/// ⚠ **REPLACEABLE, because one fixture per process lifetime is fine for the
+/// CLI replaying one day and impossible for a harness replaying forty-two — a
+/// fixed trace makes the corpus gate blind to the walk pass (#1418).**
 ///
-/// ⚠ **AND THAT MADE TWO SHARDS IN ONE PROCESS UNSOUND (#1560).** A replay is
+/// ⚠ **PER-THREAD, because a shared one makes two shards in one process unsound
+/// (#1560).** A replay is
 /// `load_trace(day)` then `replay(day)`, and the trace lives HERE, between the
 /// two. Run the corpus shards as threads — which is exactly what `cargo test`
 /// does — and the pairs interleave: shard A loads day 1, shard B loads day 2,

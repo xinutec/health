@@ -39,12 +39,11 @@ directions and both failures are live:
   read `994 -> 994 routes`, which is exactly what a healthy run prints when OSM
   did not change. That is #1134.
 
-* **Rail is LOUD, and WAS lossy until 2026-08-25.** Its guard trips whenever zero
-  relations came back with any failure, so the same outage made the rail job exit
-  1 while the bus job looked fine — the odd one out was the QUIET one, not the
-  healthy one. It also had no `tile_key`, so it DELETEd the whole table and
-  rewrote what it found, shrinking the mirror whenever most tiles failed. It now
-  carries one, so that half is fixed and only the reporting question remains.
+* **Rail is LOUD.** Its guard trips whenever zero relations come back with any
+  failure, so one outage makes the rail job exit 1 while the bus job looks fine
+  — ⚠ the odd one out is the QUIET one, not the healthy one. Rail carries a
+  `tile_key`, so it no longer DELETEs the whole table and shrinks the mirror
+  when most tiles fail; only the reporting question remains.
 
 ⚠ A COUNT-BASED FLOOR CANNOT FIX EITHER, and that is measured rather than
 supposed (2026-08-14, #255): a run fetching 796 of 995 routes but losing the

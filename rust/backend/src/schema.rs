@@ -6,11 +6,9 @@
 //! and the new one is recorded under a version that already exists. APPEND
 //! ONLY, forever.
 //!
-//! ⚠ THIS HAS HAPPENED. On 2026-09-14 a statement went in at index 57 and was
-//! silently never applied in production, while the log said "schema is up to
-//! date". The scar and the reasoning are at index 77, near the end of the array.
-//! Nothing failed, nothing was logged, and the table was simply absent — which
-//! is why the rule is written in capitals and why reading it is not enough.
+//! ⚠ An inserted statement is silently never applied and the log still says
+//! "schema is up to date" — nothing fails and nothing is logged. See the repeat
+//! at index 77 for a case this rule already cost.
 //!
 //! ⚠ Transcribed from `src/db/schema.ts` MECHANICALLY — its template literals
 //! extracted in order, with a check that nothing but commas sat between them.
@@ -69,10 +67,9 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
     // ⚠ Released even when a migration FAILED. Holding it would block every
     // later pod from trying, turning one bad statement into a stuck deployment.
     //
-    // ⚠ And a FAILED RELEASE IS LOUD. This used to be `.unwrap_or(None)`, which
-    // is how the defect above stayed invisible: the release ran on the wrong
-    // connection, returned NULL, and was discarded. A lock this process still
-    // holds is not a detail to swallow.
+    // ⚠ And a FAILED RELEASE IS LOUD. Swallowing it (`.unwrap_or(None)`) is how
+    // the defect above hides: the release runs on the wrong connection, returns
+    // NULL, and is discarded. A lock this process still holds is not a detail.
     let released: Option<i64> = sqlx::query_scalar("SELECT RELEASE_LOCK('health_migrate')")
         .fetch_one(&mut *conn)
         .await
@@ -576,33 +573,11 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    WHERE s.log_id <> dup.keep_id"#,
         r#"ALTER TABLE sleep ADD UNIQUE INDEX IF NOT EXISTS uniq_sleep_user_start (user_id, start_time)"#,
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
-        // ⚠ INDEX 77 IS A DELIBERATE REPEAT OF INDEX 76, AND IT IS A SCAR.
-        //
-        // The statement below it — `venue_type_prior_snapshots` — was first
-        // written INTO THE MIDDLE of this array, at index 57, against the
-        // append-only rule at the top of this file. The rule is not advice, and
-        // this is exactly the failure it names.
-        //
-        // What production did with it, on 2026-09-14: `schema_migrations` held
-        // 0..76, applied 09-08. The array had grown to 78, so the first pod to
-        // run the new code applied index 77 ALONE — which was this
-        // `DROP INDEX IF EXISTS`, already applied at its old index 76, and a
-        // harmless no-op — recorded 77, and logged "schema is up to date
-        // total=78". Index 57 had been recorded six days earlier, so the CREATE
-        // TABLE never ran and never would have. `health-rail-refresh` did this
-        // at 05:00:21; nothing anywhere reported a problem.
-        //
-        // ⚠ SO THE STATEMENT COULD NOT SIMPLY BE MOVED TO THE END. Every
-        // database that has already seen the broken array recorded a version 77
-        // it did not really apply. Putting the CREATE TABLE at 77 would leave it
-        // skipped in precisely those databases — the live one among them. It
-        // goes at 78, and 77 stays occupied by something already true.
-        //
-        // ⚠ THE ALTERNATIVE WAS DELETING ROW 77 IN PRODUCTION, and it was not
-        // taken. It would have to be repeated by hand in every other database
-        // that ran the broken array, and a hand-edited migration ledger is worse
-        // to inherit than a repeated idempotent statement. A fresh database runs
-        // this twice and is unharmed; `IF EXISTS` is what makes that safe.
+        // ⚠ A DELIBERATE REPEAT OF INDEX 76 — do not tidy it away. Databases
+        // that ran an earlier build recorded version 77 without applying what
+        // now sits there, so the statement below must live at 78 or it would be
+        // skipped exactly where it matters. `IF EXISTS` makes the repeat safe
+        // on a fresh database. See health #1405 and dev-lint #1613.
         r#"ALTER TABLE sleep DROP INDEX IF EXISTS uniq_sleep_user_start_main"#,
         // The mined prior AS IT STOOD at an anchor date, so a past day can be
         // named from what was known then (#1405).

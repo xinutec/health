@@ -42,12 +42,11 @@ fn the_parser_survives_a_key_containing_brackets() {
 
 /// The capture itself, against a request that is known to miss BY CONSTRUCTION.
 ///
-/// ⚠ THIS USED TO READ A BARE `/tmp` PATH, and it was wrong twice over (#1531).
-/// The path could only be filled by a recipe that died with the TypeScript
-/// (`node dist/cli/golden-check.js`), so the test announced a skip on every
-/// machine and the skip could never lift. And when an unrelated session happened
-/// to leave a file there, it FAILED — blaming an fd-2 redirection that was
-/// working fine, because that file held the fold's FINAL round, which by
+/// ⚠ NEVER A BARE `/tmp` PATH (#1531). It is wrong twice over: nothing left
+/// alive fills it, so the test announces a skip that can never lift — and when
+/// an unrelated session happens to leave a file there it FAILS, blaming an fd-2
+/// redirection that is working fine, because that file holds the fold's FINAL
+/// round, which by
 /// definition carries every answer table and therefore misses nothing.
 ///
 /// So the request is built here instead, from the corpus, with EMPTY answer

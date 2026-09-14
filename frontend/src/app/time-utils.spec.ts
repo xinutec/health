@@ -8,11 +8,10 @@ import { wallClockInZone } from "./time-utils";
 // repaired at the route — so these pin what is left: one instant, one zone, and
 // labels derived rather than read.
 describe("one instant, one zone (#1532)", () => {
-	// ⚠ THE CASE THE OLD CODE GOT WRONG, now unwritable. Stage ends used to be a
-	// difference of two wall clocks; across a zone change that difference counts
-	// the clock shift as elapsed time, and a real night stored an 86-minute
-	// "wake" that was 26. With only instants on the wire, the subtraction is the
-	// right one by construction.
+	// ⚠ THE CASE A WALL-CLOCK DIFFERENCE GETS WRONG, now unwritable. Across a
+	// zone change that difference counts the clock shift as elapsed time — a
+	// real night stored an 86-minute "wake" that was 26. With only instants on
+	// the wire, the subtraction is the right one by construction.
 	it("measures a duration across a zone change as the instants", () => {
 		// Woke at 02:00 in Berlin (CEST, UTC+2), next stage at 02:00 having moved
 		// to London (BST, UTC+1) — one hour later by the world, no time at all by

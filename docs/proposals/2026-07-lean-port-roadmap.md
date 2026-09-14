@@ -1,3 +1,10 @@
+---
+created: 2026-07
+status: active — a roadmap, not a plan of record; see "Already in Lean"
+references:
+  - docs/proposals/2026-07-verified-core-lean.md
+---
+
 # Lean port roadmap — what remains to move from TS to Lean
 
 Goal: almost everything algorithmic in Lean; TS (later Rust) is a thin shell doing

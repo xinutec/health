@@ -221,11 +221,11 @@ pub async fn sync_sleep(
             // singled out — while a sync that does learn one may correct it.
             //
             // ⚠ THE TWO UTC COLUMNS MUST TRACK THE WALL CLOCKS THEY DERIVE FROM
-            // (#340). All three used to be `COALESCE(old, new)`, which
-            // freezes the FIRST answer — and `start_time` and
-            // `end_time` are both revised two lines above, so the derived
-            // instant stayed pinned to a superseded wall clock and the pair
-            // silently disagreed forever. Measured against production
+            // (#340). `COALESCE(old, new)` freezes the FIRST answer — and
+            // `start_time`/`end_time` are both revised two lines above, so the
+            // derived instant would stay pinned to a superseded wall clock and
+            // the pair would silently disagree forever. Measured against
+            // production
             // 2026-09-11: 44 of 1268 sessions carry an end whose offset differs
             // from its own start's, 4 of them a real DST night and 40 of them
             // this, written here while `tz IS NOT NULL`.

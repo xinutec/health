@@ -6,6 +6,12 @@ PhoneTrack, joins them per "Your Day" timeline segment, and serves a
 web dashboard authenticated through Nextcloud SSO. All running on
 isis's k3s cluster behind `health.xinutec.org`.
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. The prose is kept as the record of why each decision was
+taken; the paths are not a map of the code today. `docs/design/timezone.md`
+shows the convention: a "Where these things live now" section mapping each name
+to the Rust or Lean symbol that does the work (#919).
+
 ## Architecture
 
 ```

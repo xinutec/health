@@ -666,9 +666,9 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
       -- CASE 2 and CASE 2.5 are CANDIDATES, scored against each other — not
       -- tried in order until one sticks. Case 2's guard asks only "less
       -- implausible than the gap", which a street route that still clips a
-      -- corner passes, and case 2.5 used to be reached only when case 2 FAILED
-      -- — so a mediocre route silently blocked a detour that eliminated the
-      -- crossing outright. Both are computed even when one already reaches
+      -- corner passes. ⚠ Reaching case 2.5 only when case 2 FAILS lets a
+      -- mediocre route silently block a detour that eliminates the crossing
+      -- outright. Both are computed even when one already reaches
       -- bad = 0: they then tie on badness and the tie-break, ADDED LENGTH,
       -- decides. That length is not cosmetic — enough of it trips the whole-leg
       -- step-budget revert, which discards every correction on the leg.

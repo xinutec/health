@@ -12,24 +12,15 @@
 //!   serve  — the HTTP server. THE server: `health-auth` runs this and nothing
 //!            else does.
 //!
-//! ⚠ `sync` NO LONGER EXITS 2. It did, and the reason it did still holds: a
-//! `sync` returning 0 having done nothing shows as a healthy scheduled run while
-//! data silently stops. That guard is now carried by the code rather than by the
-//! stub — the run fails loudly when it cannot read its users or reach Lean, and
-//! reports a spent rate budget as the ordinary ending it is.
+//! ⚠ `sync` FAILS LOUDLY rather than exiting 0 having done nothing — a silent
+//! success shows as a healthy scheduled run while data stops. It errors when it
+//! cannot read its users or reach Lean, and reports a spent rate budget as the
+//! ordinary ending it is.
 //!
-//! ⚠ AND IT IS NOT ENOUGH ON ITS OWN, which is the lesson of #1231: on
-//! 2026-08-28 `daily_activity` stopped for over an hour while every run exited
-//! 0, because a run that reads its users and reaches Lean can still write no
-//! rows. `backend freshness` asks the outcome question instead, on its own
-//! schedule.
-//!
-//! ⚠ THIS HEADER USED TO SAY the opposite of all of the above — "NOT
-//! production's server", "`health-sync` still runs `dist/sync.js`", "nothing
-//! switches over until…". Every cron and the Deployment have run this binary
-//! since 2026-08-26, and the TypeScript it deferred to was deleted the same day
-//! (#975). Corrected 2026-08-29; the claim survived three days past the thing it
-//! described.
+//! ⚠ AND IT IS NOT ENOUGH ON ITS OWN (#1231): a run that reads its users and
+//! reaches Lean can still write no rows, so `daily_activity` can stop while
+//! every run exits 0. `backend freshness` asks the outcome question instead, on
+//! its own schedule.
 
 use anyhow::{Context, Result};
 use backend::fold_converge::Answerer;
@@ -301,10 +292,9 @@ async fn main() -> Result<()> {
         //   backend decode-day <user> <YYYY-MM-DD> one user, one day
         //   … plus --dry-run anywhere              decode and print, write nothing
         //
-        // ⚠ THE DATE IS POSITIONAL, not `--date <ymd>`, which is what this
-        // comment claimed until 2026-08-26 — a numeric second argument is a day
-        // COUNT and anything else is a date. Nothing enforced the label, so it
-        // was wrong in the one place somebody would read before typing.
+        // ⚠ THE DATE IS POSITIONAL, not `--date <ymd>`: a numeric second
+        // argument is a day COUNT and anything else is a date. Nothing enforces
+        // the label, so a wrong one here misleads before anybody types.
         //
         // ⚠ `--dry-run` DECODES AND PRINTS, writing nothing. `decoded_days` is
         // keyed `(user_id, date)` and the write is an OVERWRITE, so a run made to
@@ -483,11 +473,9 @@ async fn main() -> Result<()> {
             std::process::exit(64);
         }
         other => {
-            // ⚠ RENDERED FROM `SUBCOMMANDS`, never spelled out here. This arm
-            // used to carry its own prose list, and it had rotted to 13 of the
-            // 29 names — it omitted `decode-day` and every `refresh-*`, which
-            // are the nightly crons, and `mint-session`, which
-            // `check-serving-conditions.sh` calls. So a typo was answered with
+            // ⚠ RENDERED FROM `SUBCOMMANDS`, never spelled out here. A prose
+            // list rots: it omits the nightly `refresh-*` crons and
+            // `mint-session`, so a typo is answered with
             // a list that denied half the CLI existed.
             //
             // `usage_lists_every_subcommand` guards the table against the match
@@ -2284,7 +2272,7 @@ async fn tz_census() -> Result<()> {
             hi: row.try_get("hi").unwrap_or(None),
         })
         .collect();
-    // The sort the SQL used to do; see the note on the missing ORDER BY above.
+    // The sort, in Rust: see the note on the missing ORDER BY above.
     out.sort_by(|a, b| a.table.cmp(&b.table).then(b.rows.cmp(&a.rows)));
 
     println!("{:<22} {:<28} {:>10}  span", "table", "tz", "rows");
@@ -2842,8 +2830,7 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
 ///
 /// ⚠ THIS IS PRODUCTION'S SERVER. It answers `health.xinutec.org`, and there is
 /// no TypeScript server left beside it — `src/server.ts` went with the TS arm
-/// (#975). This doc said the opposite until 2026-08-30, when the live page was
-/// measured being served by this binary.
+/// (#975).
 ///
 /// It binds `AUTH_PORT`, which is what the manifest sets; see the note in the
 /// body. The 8081 default is a local-run convenience and is not what production
@@ -2858,11 +2845,10 @@ async fn serve() -> Result<()> {
 
     let cfg = Config::from_env()?;
     let pool = db::connect(&cfg.db.url()).await?;
-    // ⚠ `AUTH_PORT`, which is what the manifest ALREADY SETS and what
-    // `src/config.ts` reads. This used to read `PORT`, which production does not
-    // set — so flipping the manifest to this binary would have bound 8081 while
-    // the Service and the readiness probe expected 3000, and the rollout would
-    // have stalled on a pod that looked healthy from inside (#982).
+    // ⚠ `AUTH_PORT`, which is what the manifest sets. `PORT` is NOT set in
+    // production, so reading it would bind 8081 while the Service and the
+    // readiness probe expect 3000 — a pod that looks healthy from inside while
+    // the rollout stalls (#982).
     //
     // One name, not two with a fallback: a second accepted spelling is how the
     // two arms drift apart again, and the parity harness must run the same
@@ -3743,8 +3729,7 @@ async fn mirror_check(fixture: &str) -> Result<()> {
 ///
 /// ⚠ HOW FAR IT DIVERGES FROM PRODUCTION IS UNMEASURED. #413 records 0 of 315
 /// timeline states differing for the oracle swap alone, so "they disagree by
-/// construction" — which this note used to say — is a stronger claim than
-/// anything measured.
+/// construction" is a stronger claim than anything measured.
 ///
 /// ⚠ REAL LOCATION DATA on stdout — where the user was and when. Redirect to
 /// /tmp, never into the repo: both health repos are public.
@@ -4127,8 +4112,8 @@ async fn refresh_focus_places_one(
         // through to the residential-address lookup. Populating it would be
         // dead data an older code path could mis-pick up.
         //
-        // ⚠ Absent from this port until 2026-08-24, and the omission was NOT
-        // visible as a shortfall: it made the Rust arm label 88 of 128 clusters
+        // ⚠ ITS ABSENCE IS NOT VISIBLE AS A SHORTFALL: without it the arm
+        // labels 88 of 128 clusters
         // where production labels 82. Every one of the six extra was a place
         // with 6-36 sleep hours — hotels, a guest house, a clinic. So the miss
         // wrote WHERE HE SLEPT AND WHAT KIND OF PLACE IT WAS into a column the
@@ -5125,8 +5110,7 @@ async fn decode_one(
         // ⚠ ABSENT IS NOT NEUTRAL. `parseAssemble` treats a missing
         // `placeNearLine` as the EMPTY SET, which removes every place→line hard
         // zero instead of adding them — so the decode runs, looks plausible, and
-        // permits boardings the TypeScript forbids. It was missing entirely
-        // until 2026-08-26.
+        // permits boardings the TypeScript forbids.
         "placeNearLine": osm.place_near_line,
         "railStopRelations": inputs.get("railStopsCache").cloned().unwrap_or(serde_json::Value::Null),
         "continuity": continuity,
@@ -5176,8 +5160,8 @@ async fn decode_one(
 /// `null`, which is a legitimate chain start rather than a fault.
 ///
 /// ⚠ FOUR FIELDS, NOT ONE. `priorPlaceId` alone is refused with `property not
-/// found: hoursSince`, and this path sent exactly that until 2026-08-26.
-/// `priorPlaceCoord` is a `[lat, lon]` PAIR on the wire even though the
+/// found: hoursSince`. `priorPlaceCoord` is a `[lat, lon]` PAIR on the wire
+/// even though the
 /// TypeScript's own type is an object — `lean/experiments/compare-assemble-*.mts`
 /// convert it the same way.
 ///
@@ -6023,17 +6007,12 @@ async fn mirror_fetch(
         }
 
         let query = lean::overpass_query(mode, tile)?;
-        // ⚠ A TRANSIENT REFUSAL IS RETRIED ONCE, not surrendered. A skipped tile
-        // is a permanent hole in THIS run's coverage, and coverage is the
-        // quantity #1153 is about — 2026-09-14 lost 15 of 36 tiles to 504s while
-        // tiles 31, 35 and 36 answered normally in the same window, so the
-        // primary was up throughout and the refusals were momentary.
+        // ⚠ A TRANSIENT REFUSAL IS RETRIED ONCE, not surrendered: a skipped
+        // tile is a permanent hole in this run's coverage, and coverage is the
+        // quantity #1153 is about. A 504 is a timeout, not a verdict.
         //
-        // ⚠ NOT PROOF THAT A RETRY LANDS. Nothing here has yet observed a second
-        // attempt succeed; the case for it is that a 504 is by definition a
-        // timeout rather than a verdict, and that skipping costs a tile while
-        // retrying costs ~6 s. The tally below is what will settle it — if the
-        // next nightlies print retries that never win, this should go.
+        // ⚠ WHETHER IT EARNS ITS ~6 s IS NOT YET KNOWN — the tally below is what
+        // settles it. If the nightlies print retries that never win, drop this.
         let mut outcome = backend::overpass::fetch_attempt(
             client,
             &query,
@@ -6041,11 +6020,9 @@ async fn mirror_fetch(
             0,
         )
         .await;
-        // ⚠ ONLY IF SOMETHING ANSWERED. A refusal where no mirror replied at all
-        // is the BAN shape, and this ticket's own design note warns that an
-        // eager retry re-trips it. `wait_for_slot` cannot catch that case — it
-        // returns 0 immediately when `/api/status` is itself unreachable, which
-        // is exactly what a ban looks like — so the guard has to be here.
+        // ⚠ ONLY IF SOMETHING ANSWERED — see `Outcome::may_retry`. `wait_for_slot`
+        // cannot gate this: it returns 0 when `/api/status` is itself
+        // unreachable, which is exactly the banned case.
         if outcome.may_retry() {
             retried += 1;
             // Ask again before trying again: a refusal is the moment we are
@@ -6267,10 +6244,10 @@ async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     );
     if !verdict.may_write {
         pool.close().await;
-        // ⚠ SAY LEAN'S SENTENCE, not a guessed one. This used to hardcode "all N
-        // tiles failed", which was the only refusal rail could produce — and
-        // since #1134 it can also refuse for COVERAGE, where "all tiles failed"
-        // would be flatly untrue and send the reader looking for an outage that
+        // ⚠ SAY LEAN'S SENTENCE, not a guessed one. Hardcoding "all N tiles
+        // failed" covers only one refusal; since #1134 it can also refuse for
+        // COVERAGE, where that wording is untrue and sends the reader after an
+        // outage that
         // did not happen. The bus arm already did this; the two now agree.
         anyhow::bail!(
             "{} — leaving rail_stops_cache untouched",

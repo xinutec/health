@@ -174,12 +174,11 @@ $DEV pnpm run verify
 # cron actually runs on, and the only input that reaches the long-span
 # classification branches — and finally the captured conflated café/residence
 # cluster through `splitCluster`. 8 s for 35 cases.
-# ⚠ EIGHT OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975, 06346bd,
-# 2026-08-26), not the four this banner claimed until 2026-08-29. The first four
-# — `golden`, `golden` with tenants ON, `day-gate`, `golden-hsmm` — lost their
-# package.json scripts with `src/` and were noticed. The other four were not:
-# `walk-gate`, `score-decoder`, `focus-gate` and `compare-match` kept their
-# entries and kept being invoked here.
+# ⚠ EIGHT OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975).
+# `golden`, `golden` with tenants ON, `day-gate` and `golden-hsmm` lost their
+# package.json scripts with `src/` and were noticed at once. `walk-gate`,
+# `score-decoder`, `focus-gate` and `compare-match` kept their entries and kept
+# being invoked — a dead gate that still has a script name is the quiet kind.
 #
 # ⚠ AND THEY DID NOT FAIL AT `node dist/`, WHICH IS WHY IT WENT UNSEEN FOR THREE
 # DAYS. Each begins `pnpm run build >/dev/null`, and `package.json` has had no
@@ -245,11 +244,10 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	echo "==> [2/7] corpus replay gates — walk geometry, the truth floor, the journey floor"
 	dead_gates_banner
 	DEAD_GATES=1
-	# ⚠ `compare-gps-outliers` USED TO BE THIS STEP, described as "the one replay
-	# gate that still runs". IT DID NOT RUN. Measured 2026-09-01: it exits 1 with
-	# ERR_MODULE_NOT_FOUND on `src/hmm/gps-outliers.js`, deleted at 06346bd — so
-	# under `set -euo pipefail` this block has been unable to complete since
-	# 2026-08-26, and the 2026-08-29 repair that removed eight corpses around it
+	# ⚠ `compare-gps-outliers` IS NOT A LIVE GATE, whatever a banner claims. It
+	# exits 1 with ERR_MODULE_NOT_FOUND on `src/hmm/gps-outliers.js`, deleted at
+	# 06346bd — so under `set -euo pipefail` this block cannot complete, and a
+	# repair that removed eight corpses around it
 	# did not change that.
 	#
 	# ⚠ AND IT FAILED FOR THE REASON `require_pnpm_scripts` ALREADY NAMES in its

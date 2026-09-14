@@ -123,11 +123,10 @@ pub const CANDIDATE_LIMIT: i64 = 20_000;
 /// measured from the Mac says nothing about production unless the query count is
 /// known.
 ///
-/// ⚠ This used to say the fold's wall clock "is dominated by round trips". That
-/// is REFUTED (#1071, 2026-08-23): halving the queries — 489 to 273 on one day —
-/// moved fold time by 0-17%. The claim came from dividing fold by query count,
-/// which assumes what it appears to measure. [`take_db_nanos`] exists so the
-/// question is answered rather than inferred.
+/// ⚠ "The fold is dominated by round trips" is REFUTED (#1071): halving the
+/// queries — 489 to 273 on one day — moved fold time by 0-17%. That claim came
+/// from dividing fold time by query count, which assumes what it appears to
+/// measure. [`take_db_nanos`] exists so the question is answered, not inferred.
 static QUERIES: AtomicU64 = AtomicU64::new(0);
 
 /// Nanoseconds spent INSIDE [`MirrorSource::block`] — the database, and nothing

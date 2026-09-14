@@ -74,7 +74,7 @@ pub async fn sync_google_weight(
 
     // ⚠ ONE TRANSACTION. Between the delete and the inserts the window is
     // EMPTY, and a failure there would leave the table with a hole where the
-    // stale-but-plausible values used to be — worse than either endpoint,
+    // stale-but-plausible values were — worse than either endpoint,
     // because a gap in weight reads as "did not weigh" rather than as a failed
     // sync. The TypeScript runs these as separate statements on a shared
     // connection and has exactly that exposure.

@@ -340,22 +340,14 @@ def matchWayName (wayUm : Array (Option String × Nat)) : Option String :=
 route ran along, with its arc weight, longest first.
 
 ⚠ **THE WEIGHT IS THE MATCHER'S OWN INTEGER UNIT, NOT METRES** — see
-`MatchOut.wayUm`, which states that relative weight is all naming reads and so
-the unit never converts. Compare them to each other; never label one a distance.
+`MatchOut.wayUm`. Compare them to each other; never label one a distance.
 
-⚠ **`matchWayName` ANSWERS A DIFFERENT QUESTION AND CANNOT SUBSTITUTE.** It
-returns the single dominant name, so a way the route merely TOUCHED is
-invisible to it — and "does Queen's Walk carry any metres at all?" is exactly
-what a `wayContinuityNats` bracket has to read. A dominant name would report
-the same value for a route that never went near it and one that spent a third
-of its length on it.
+⚠ **`matchWayName` CANNOT SUBSTITUTE.** It returns the single dominant name, so
+a way the route merely TOUCHED is invisible to it — and "does this way carry any
+arc at all?" is what a `wayContinuityNats` bracket has to read.
 
-⚠ **UNNAMED ARCS ARE DROPPED, and that loses real information.** A route can be
-mostly on unnamed footways, and this will not say so. It is the same choice
-`matchWayName` makes, kept deliberately so the two agree about what a name is.
-
-⚠ A TIE KEEPS TRAVERSAL ORDER, like `matchWayName`, so the report is
-deterministic and two runs are diffable. -/
+⚠ Unnamed arcs are dropped, the same choice `matchWayName` makes. A tie keeps
+traversal order, so two runs are diffable. -/
 def wayUmReport (wayUm : Array (Option String × Nat)) : Array (String × Nat) :=
   let named := wayUm.filterMap fun (n, um) => n.map (·, um)
   -- ⚠ A STABLE sort on a STRICT comparison: `>` alone would let a tie reorder.

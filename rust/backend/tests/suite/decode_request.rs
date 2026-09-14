@@ -190,8 +190,8 @@ fn the_pairs_are_accepted_by_assemblesegments() {
 }
 
 /// ⚠ THE CHAIN SEED IS FOUR FIELDS, NOT ONE — the third field-shape defect on
-/// this request. `{priorPlaceId}` alone is refused, and `decode-day` sent exactly
-/// that until 2026-08-26. Both halves are asserted, because the refusal alone
+/// this request. `{priorPlaceId}` alone is refused. Both halves are asserted,
+/// because the refusal alone
 /// would still pass if the replacement shape were also wrong.
 #[test]
 fn the_continuity_seed_needs_all_four_fields() {

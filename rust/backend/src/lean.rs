@@ -1072,11 +1072,10 @@ pub struct Miss {
 /// means one captures the other's misses or loses its own — and the failure does
 /// not look like a race, it looks like convergence: the fold appears to re-ask a
 /// key that was already answered, because the answer went to the other caller's
-/// file. This comment used to say "not thread-safe, and it cannot be", with the
-/// sequential walk as the argument. That argument held for production and NOT
-/// for the tests, which `cargo test` runs on parallel threads in one process —
-/// `fold_converge_corpus` has two, and they raced. It surfaced only under a
-/// loaded gate, where the windows overlap; three unloaded runs "refuted" it.
+/// file. ⚠ "The walk is sequential, so this cannot race" holds for production
+/// and NOT for the tests, which `cargo test` runs on parallel threads in one
+/// process — `fold_converge_corpus` has two. It surfaces only under a loaded
+/// gate, where the windows overlap; three unloaded runs "refuted" it.
 ///
 /// The lock is free where the walk really is sequential, so making the guarantee
 /// true costs nothing and removes a landmine that a documented precondition

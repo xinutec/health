@@ -124,8 +124,8 @@ async fn already_complete(store: &dyn CursorStore, user_id: &str, name: &str) ->
 /// Record that a stream has run out of history, and why.
 ///
 /// The reason is logged rather than stored: `sync_state` holds one flag, and
-/// three different findings collapsing into `true` is precisely why the walk
-/// used to be hard to diagnose.
+/// three different findings collapsing into `true` is what makes the walk hard
+/// to diagnose.
 async fn mark_complete(
     store: &dyn CursorStore,
     user_id: &str,

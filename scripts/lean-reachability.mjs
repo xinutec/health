@@ -192,9 +192,8 @@ console.log(`  lines in unreachable defs    : ${dead.reduce((a, d) => a + d.loc,
 // module: `splitReversingLegs` is REACHABLE (PassFold calls it) while `reversesAt`
 // beside it is not.
 //
-// There used to be a more trustworthy number here — the cross-reference in
-// lean-port-coverage.mjs, TS exports counted as ported whose every twin is
-// dead. It cannot be computed any more; see the note at the foot of this file.
+// ⚠ A more trustworthy number — TS exports counted as ported whose every twin
+// is dead — is no longer computable; see the note at the foot of this file.
 console.log("⚠ The count above INCLUDES #guard fixtures; it is context, not port debt.");
 console.log("  It is also reachability from LEAN dispatch, which is one hop short of a caller.\n");
 
