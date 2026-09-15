@@ -3166,7 +3166,12 @@ async fn check() -> Result<()> {
     let buses = classification_inputs::bus_route_cache(&pool).await?;
     let rail_stops = classification_inputs::rail_stops_cache(&pool).await?;
     let decode = classification_inputs::hsmm_decode(&pool, &user, &check_date).await?;
-    let sleeps = classification_inputs::sleep_windows(&pool, &user, &check_date).await?;
+    // ⚠ This probe prints what the loader produces, so it must resolve the zone
+    // the same way. Passing `None` would print UTC-read windows and report a
+    // healthy day while production reads them an hour later (#1633).
+    let home_tz = crate::sync_state::get(&pool, &user, "home_tz").await?;
+    let sleeps =
+        classification_inputs::sleep_windows(&pool, &user, &check_date, home_tz.as_deref()).await?;
     println!(
         "inputs[{user}] @{check_date}: bus_route_cache {} · rail_stops_cache {} · \
          decoded_days {} segment(s) · sleep_windows {}",

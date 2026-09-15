@@ -658,10 +658,36 @@ pub const CLASSIFIER_VERSION: i32 = 7;
 /// database chose. Both are optional; a day with neither yields `[]`.
 ///
 /// ⚠ `start_time` / `end_time` are WALL CLOCK, not UTC (#340, and
-/// `docs/design/timezone.md`). `tz` rides alongside and may be NULL, in which
-/// case the TS falls back to reading the components AS UTC — a guess, but the
-/// established one, and changing it here would re-time rows nothing else moved.
-pub async fn sleep_windows(pool: &MySqlPool, user_id: &str, date: &str) -> Result<Value> {
+/// `docs/design/timezone.md`). `tz` rides alongside and MAY BE NULL.
+///
+/// ⚠ **A NULL `tz` FALLS BACK TO `home_tz`, NOT TO UTC.** Reading the components
+/// as UTC was the TypeScript's guess, and it was harmless only while every row
+/// carried a zone. The Google Health cutover stopped populating `tz` — the last
+/// sleep row with one is 2026-09-02, the first without is 2026-09-03 — so under
+/// BST every night since has been read an HOUR LATE. On 2026-09-14 that put the
+/// window end at 09:44 local against Fitbit's 08:44, which marked a walk to the
+/// station and a train ride as asleep (#1633).
+///
+/// ⚠ **IT SELF-HEALS AT THE GMT CHANGEOVER AND COMES BACK IN SPRING.** Under GMT
+/// local IS UTC and the bug is invisible. That is the shape that gets blamed on
+/// something else, so the fallback is here rather than in a seasonal workaround.
+///
+/// `resolve_tz` in `day_biometrics` has done exactly this — `row_tz`, then
+/// `home_tz` — since it was written; only this loader passed the raw column.
+///
+/// ⚠ **NOT the `start_time_utc` / `end_time_utc` columns, though they hold the
+/// right answer and are populated on all 1273 rows.** Three rows disagree with
+/// their own wall clock by 10, 25 and 41 minutes — offsets London cannot have —
+/// and two of the three are IN THE GOLDEN CORPUS. Reading them would re-time
+/// graded days to fix a fortnight. `home_tz` is verified correct for every
+/// affected row: all 14 carry a 60-minute stored offset, so London is what they
+/// mean, not an assumption.
+pub async fn sleep_windows(
+    pool: &MySqlPool,
+    user_id: &str,
+    date: &str,
+    home_tz: Option<&str>,
+) -> Result<Value> {
     let mut out: Vec<Value> = Vec::new();
     for d in [date.to_string(), next_date_string(date)?] {
         let row = sqlx::query(
@@ -674,11 +700,14 @@ pub async fn sleep_windows(pool: &MySqlPool, user_id: &str, date: &str) -> Resul
         .await
         .with_context(|| format!("reading sleep for {d}"))?;
         let Some(row) = row else { continue };
-        let tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
+        let row_tz: Option<String> = row.try_get("tz").context("sleep.tz")?;
+        // The zone used for CONVERSION. `tz` below stays the row's own value so
+        // the served window still says where the reading came from.
+        let tz = row_tz.clone().or_else(|| home_tz.map(str::to_string));
         out.push(json!({
             "startTs": wall_clock_ts(&row, "start_time", tz.as_deref())?,
             "endTs": wall_clock_ts(&row, "end_time", tz.as_deref())?,
-            "tz": tz,
+            "tz": row_tz,
             // ⚠ NULL becomes 0, matching the TS `?? 0`. Not a mask: the field
             // is a reported duration, and "we do not know how long" is not a
             // reason to drop a window whose BOUNDS are known.
@@ -1332,7 +1361,7 @@ pub async fn load(
     );
     m.insert(
         "sleepWindows".into(),
-        sleep_windows(pool, user_id, date).await?,
+        sleep_windows(pool, user_id, date, home_tz).await?,
     );
     m.insert(
         "emptyDayBracket".into(),
