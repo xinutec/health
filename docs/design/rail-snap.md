@@ -106,3 +106,15 @@ skips it; locally it is the verdict. The capture tool is
   the table remains inert. If line disambiguation is built later it
   needs route membership, but populated by a deliberate, throttled,
   non-request-path job.
+
+## Where these things live now
+
+⚠ **THE `src/**.ts` PATHS ABOVE ARE HISTORICAL** — see the note at the top. This
+is the map from those names to the code that does the work today, BY SYMBOL: a
+symbol survives a move, a line number does not (#919, #1205).
+
+| the document says | today |
+| --- | --- |
+| `src/geo/rail-snap.ts` — `snapTrainSegment` | `lean/Verified/Geo/RailSnap.lean` — `snapTrainSegment`, plus `snapTrainSegmentOnLine` for the single-line fallback. Its production caller is `lean::rail_snap`, the `railsnap` serve mode |
+| `tests/railsnap-e2e.test.ts` — the end-to-end check | `rust/backend/tests/suite/rail_snap.rs` |
+| `src/cli/capture-railsnap-fixture.ts` — the capture tool | ⚠ **NO SUCCESSOR, and the fixture under `tests/fixtures/railsnap/` therefore cannot be regenerated.** The tool went with `src/` (#975) and nothing replaced it, so the captured file is the only copy and a lost or stale one cannot be rebuilt from this repo |

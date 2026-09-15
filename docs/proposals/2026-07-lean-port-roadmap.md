@@ -7,6 +7,12 @@ references:
 
 # Lean port roadmap — what remains to move from TS to Lean
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. A proposal is an argument made at a point in time, so the
+paths are left as written; they are not a map of the code today. For current
+behaviour read `docs/design/`, whose files carry a "Where these things live now"
+mapping (#919, #1620).
+
 Goal: almost everything algorithmic in Lean; TS (later Rust) is a thin shell doing
 I/O, DB, HTTP, external APIs, and the parse/tz/topology boundary Lean genuinely
 cannot do. Rust replaces the TS shell only at the very end, once the Lean surface

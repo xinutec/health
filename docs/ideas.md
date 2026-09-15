@@ -51,6 +51,6 @@ genuine short walks. Revisit when we have a captured day with a
 verified indoor-pacing episode.
 
 **Where it would land.** Post-processing pass in
-`src/sleep/day-state.ts` (the same module that already merges
+`lean/Verified/Geo/DayState.lean` (the same module that already merges
 adjacent same-state runs). New helper `foldIndoorPacing` runs
 after `mergeAdjacent`.

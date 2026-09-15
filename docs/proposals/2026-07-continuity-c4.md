@@ -8,6 +8,12 @@ references:
 
 # C4 — cross-segment continuity: implementation design
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. A proposal is an argument made at a point in time, so the
+paths are left as written; they are not a map of the code today. For current
+behaviour read `docs/design/`, whose files carry a "Where these things live now"
+mapping (#919, #1620).
+
 Phase 3's long pole from `decoder-roadmap.md` (#224), designed against the
 five-day acceptance suite recorded on #327 (ten enforced wrong rows in the
 gitignored ground-truth narratives). This doc is the *how*; the roadmap

@@ -6,6 +6,12 @@ updated: 2026-05-24
 
 # HMM learned emissions (Phase 2 of joint-sequence-model)
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. A proposal is an argument made at a point in time, so the
+paths are left as written; they are not a map of the code today. For current
+behaviour read `docs/design/`, whose files carry a "Where these things live now"
+mapping (#919, #1620).
+
 ## Why now
 
 The Phase 1.7 audit on 5 blessed days regressed against Phase 1.6

@@ -585,3 +585,18 @@ each justified by a real day that looks wrong.
   of the classifier can erase the GPS-vs-network mismatch the classifier
   uses as signal. Geometry is strictly downstream: we depict the
   decision, we never let depiction re-decide.
+
+## Where these things live now
+
+⚠ **THE `src/**.ts` PATHS ABOVE ARE HISTORICAL** — see the note at the top. This
+is the map from those names to the code that does the work today, BY SYMBOL: a
+symbol survives a move, a line number does not (#919, #1205).
+
+| the document says | today |
+| --- | --- |
+| `src/geo/episode-geometry.ts` — `buildEpisodes` | `lean/Verified/Geo/EpisodeGeometry.lean` — `buildEpisodes` |
+| `src/geo/pedestrian-match.ts` — the walk profile | `lean/Verified/Geo/WalkAnnotate.lean` — `annotateWalkMatches` (the pass). The matcher is injected as `Env.matcher` and supplied by `lean/Verified/Geo/WalkMatchAdapt.lean` |
+| `src/geo/road-match.ts` — the driving profile | `lean/Verified/Geo/RoadMatchAnnotate.lean`, matcher from `RoadMatchAdapt.lean` — the same shape as the walk side |
+| `map-match-core.ts` — the shared Newson-Krumm core | `lean/Verified/Geo/Match.lean`, Viterbi pass in `MatchViterbi.lean` |
+| `src/routes/velocity-cache.ts` — `getVelocityCached` | `rust/backend/src/velocity_cache.rs`, keyed `(user, date, tz, walkMatch)` |
+| `src/hmm/tube-journey-assembler.ts` — `TubeJourney` | ⚠ **NO SUCCESSOR — the name and the concept are both gone.** Nothing in the tree spells `TubeJourney`. The paragraph above cites it only to say what `EpisodeGeometry` is NOT, and that contrast still holds against today's nearest thing, `lean/Verified/Geo/RailJourney.lean` — `assembleRailJourney`. Do not read it as a live module |

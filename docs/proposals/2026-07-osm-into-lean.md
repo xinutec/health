@@ -7,6 +7,12 @@ references:
 
 # OSM into Lean — push raw rows, not captured answers
 
+⚠ **Its `src/**.ts` paths are HISTORICAL** — they name the TypeScript backend,
+deleted whole in #975. A proposal is an argument made at a point in time, so the
+paths are left as written; they are not a map of the code today. For current
+behaviour read `docs/design/`, whose files carry a "Where these things live now"
+mapping (#919, #1620).
+
 Goal: let Lean own the spatial predicate. Today "the nearest station to this
 fix" is computed by MariaDB and reaches the algorithm as a number; nothing about
 it can be stated or proved. Pushing the raw OSM rows instead and doing the
