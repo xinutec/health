@@ -263,6 +263,24 @@ pub fn take_refusals() -> u64 {
     REFUSALS.swap(0, Ordering::Relaxed)
 }
 
+/// Nanoseconds spent inside mirror queries, so the fold's OSM cost can be split
+/// into DATABASE and COMPUTE rather than guessed at.
+///
+/// ⚠ **THE ANSWERER HALF HAS HAD THIS SINCE IT WAS WRITTEN AND THIS HALF DID
+/// NOT** (`mirror_source::take_db_nanos`). The same asymmetry left the refusals
+/// uncounted until #1619 — one of the two paths into OSM was instrumented and
+/// nobody noticed the other was dark.
+///
+/// ⚠ Wall clock around `block_on`, so it includes waiting for a connection, not
+/// only the query. That is the number the caller cares about; it is not a
+/// server-side execution time and must not be quoted as one.
+static DB_NANOS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the query time and reset it, so a count belongs to one request.
+pub fn take_db_nanos() -> u64 {
+    DB_NANOS.swap(0, Ordering::Relaxed)
+}
+
 thread_local! {
     /// The runtime to block on, installed by a caller that KNOWS this thread may
     /// block. `None` means nobody vouched for it.
@@ -335,7 +353,10 @@ where
     // `spawn_blocking` (`with_mirror_answerer`), which may block and whose
     // runtime is the one holding the IO driver.
     if let Some(h) = blocking_handle() {
-        return match h.block_on(f(pool)) {
+        let t0 = std::time::Instant::now();
+        let answered = h.block_on(f(pool));
+        DB_NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        return match answered {
             Ok(v) => Some(v),
             Err(e) => {
                 eprintln!("mirror: query failed: {e}");

@@ -222,6 +222,7 @@ pub async fn compute_with(
     crate::rowset_answerer::take_lean_nanos();
     day_shell::mirror::take_refusals();
     day_shell::mirror::take_fails();
+    day_shell::mirror::take_db_nanos();
     let folded =
         mirror_source::converge_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
@@ -249,6 +250,11 @@ pub async fn compute_with(
     // only means something where a mirror is real, which is here.
     let refusals = day_shell::mirror::take_refusals();
     let fails = day_shell::mirror::take_fails();
+    // ⚠ THE OTHER HALF OF THE FOLD'S DATABASE TIME. `db_ms` above is the
+    // ANSWERER's; this is the three `@[extern]` OSM callbacks, which are a
+    // separate path with a separate pool. Reporting only one of them is how
+    // #1632's 26 s stayed unsplit between query and compute.
+    let osm_db_ms = day_shell::mirror::take_db_nanos() / 1_000_000;
     if refusals > 0 || fails > 0 {
         eprintln!(
             "⚠ [{user_id}] {date}: {refusals} mirror read(s) REFUSED, {fails} failed — each answered EMPTY, so walks and drives are drawn RAW"
@@ -337,7 +343,9 @@ pub async fn compute_with(
         // ⚠ The fold's ROUND COUNT rides here too. It is the depth of the
         // dependency chain among the day's lookups, not a duration, and it is
         // what distinguishes a slow day from a deep one.
-        "timing": timing_with(&timing, folded.rounds, folded.answered, mirror_queries, db_ms, lean_ms),
+        "timing": timing_with(
+            &timing, folded.rounds, folded.answered, mirror_queries, db_ms, lean_ms, osm_db_ms,
+        ),
     }))
 }
 
@@ -353,6 +361,7 @@ fn timing_with(
     mirror_queries: u64,
     db_ms: u64,
     lean_ms: u64,
+    osm_db_ms: u64,
 ) -> Value {
     let mut out = t.clone();
     out.insert("rounds".into(), json!(rounds));
@@ -366,8 +375,12 @@ fn timing_with(
     // wrong. `fold` minus these two is the fold's own work.
     out.insert("foldDbMs".into(), json!(db_ms));
     out.insert("foldLeanMs".into(), json!(lean_ms));
-    out.insert("foldDbMs".into(), json!(db_ms));
-    out.insert("foldLeanMs".into(), json!(lean_ms));
+    // ⚠ A THIRD SLICE, AND IT IS NOT INSIDE `foldDbMs`. The fold reaches OSM two
+    // ways: the answerer above, and `day_shell::mirror`'s three `@[extern]`
+    // callbacks, which have their own pool and their own clock. Only the first
+    // was ever reported, which is why #1632's walk-matcher cost sat unsplit
+    // between query time and solver time.
+    out.insert("foldOsmDbMs".into(), json!(osm_db_ms));
     Value::Object(out)
 }
 
