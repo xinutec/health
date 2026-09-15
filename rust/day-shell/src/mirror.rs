@@ -199,7 +199,14 @@ fn pool() -> Option<&'static MySqlPool> {
         // reason entirely and had to set DB_HOST to reach the guard — the
         // pre-existing test never builds a pool at all, so nothing else here
         // would have caught it before production did.
-        let _guard = runtime()?.enter();
+        // ⚠ AND INSIDE THE RIGHT ONE. The maintenance task belongs to whichever
+        // runtime is entered here, so entering the private one under an async
+        // host would hand it to a runtime nothing ever drives.
+        let vouched = blocking_handle();
+        let _guard = match &vouched {
+            Some(h) => h.enter(),
+            None => runtime()?.enter(),
+        };
         Some(
             MySqlPoolOptions::new()
                 .max_connections(1)
@@ -240,6 +247,71 @@ fn pool() -> Option<&'static MySqlPool> {
 /// the reader to ignore the one signal that means something.
 static FAILS: AtomicU64 = AtomicU64::new(0);
 
+/// Reads REFUSED because the thread had no permission to block, as opposed to
+/// reads that ran and failed.
+///
+/// ⚠ SEPARATE FROM [`FAILS`] because conflating them is what hid health #1619
+/// for weeks. A refusal and a dead database both answer empty and both counted
+/// here as one number, so "the mirror returned no roads" could not be told from
+/// "the mirror was never asked" — and production was the second one on EVERY
+/// lookup while every gate, which asks on a thread with no runtime at all, was
+/// the first.
+static REFUSALS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the refusal count and reset it.
+pub fn take_refusals() -> u64 {
+    REFUSALS.swap(0, Ordering::Relaxed)
+}
+
+thread_local! {
+    /// The runtime to block on, installed by a caller that KNOWS this thread may
+    /// block. `None` means nobody vouched for it.
+    static BLOCKING: std::cell::RefCell<Option<tokio::runtime::Handle>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn blocking_handle() -> Option<tokio::runtime::Handle> {
+    BLOCKING.with(|b| b.borrow().clone())
+}
+
+/// Restores the previous handle on the way out, panic or not — these run on
+/// POOLED threads, so a leaked handle would outlive the task that installed it
+/// and vouch for a thread nobody vouched for.
+struct BlockingScope(Option<tokio::runtime::Handle>);
+
+impl Drop for BlockingScope {
+    fn drop(&mut self) {
+        let prev = self.0.take();
+        BLOCKING.with(|b| *b.borrow_mut() = prev);
+    }
+}
+
+/// Declare that `f` runs where blocking is legal, and give the mirror the
+/// runtime to block on.
+///
+/// ⚠ **THIS IS THE ONLY WAY A MIRROR READ WORKS UNDER AN ASYNC HOST**, and it
+/// has to be an assertion by the caller rather than a check here. tokio sets
+/// the runtime context on `spawn_blocking` threads too, so
+/// `Handle::try_current()` reads the same on a thread that may block and on a
+/// worker where blocking deadlocks the runtime. Only the code that chose the
+/// thread knows which it is.
+///
+/// ⚠ Call it on a thread that may NOT block and the reads deadlock instead of
+/// refusing. The one supported caller is `with_mirror_answerer`, immediately
+/// inside its `spawn_blocking`.
+///
+/// ⚠ AND THE RUNTIME MUST BE MULTI-THREAD. `Handle::block_on` cannot drive the
+/// IO driver of a current-thread runtime, so a read would hang rather than
+/// answer. `#[tokio::main]` gives a multi-thread runtime, which is what both the
+/// server and the CLI run — and `MirrorSource::block` has been blocking on that
+/// same handle from that same thread all along, which is why the answerer half
+/// of the fold kept working while these three returned nothing.
+pub fn with_blocking_handle<T>(h: tokio::runtime::Handle, f: impl FnOnce() -> T) -> T {
+    let prev = BLOCKING.with(|b| b.replace(Some(h)));
+    let _restore = BlockingScope(prev);
+    f()
+}
+
 /// Read the failure count and reset it, so a count belongs to one request.
 pub fn take_fails() -> u64 {
     FAILS.swap(0, Ordering::Relaxed)
@@ -258,16 +330,40 @@ where
     // Before the counter, deliberately: an unconfigured mirror is absence.
     let pool = pool()?;
 
-    // ⚠ REFUSE rather than panic when already inside a runtime. `block_on`
-    // aborts the process with "cannot start a runtime from within a runtime",
-    // which for the async backend (#982) would turn a mirror read into a crash
-    // instead of the empty answer every other failure produces here. Counted as
-    // a failure, because it IS one — the caller gets no roads.
+    // The caller vouched for this thread, so block on the runtime it named.
+    // This is the PRODUCTION path: the async backend runs the fold on
+    // `spawn_blocking` (`with_mirror_answerer`), which may block and whose
+    // runtime is the one holding the IO driver.
+    if let Some(h) = blocking_handle() {
+        return match h.block_on(f(pool)) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("mirror: query failed: {e}");
+                FAILS.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        };
+    }
+
+    // ⚠ REFUSE rather than panic when inside a runtime NOBODY VOUCHED FOR.
+    // `block_on` aborts the process with "cannot start a runtime from within a
+    // runtime", which for the async backend (#982) would turn a mirror read into
+    // a crash instead of the empty answer every other failure produces here.
+    //
+    // ⚠ THIS REFUSAL WAS PRODUCTION'S ANSWER TO EVERY OSM READ (health #1619).
+    // The guard's own note said day-shell "can refuse because it owns a private
+    // runtime" — but that runtime is only reached when there is no ambient one,
+    // and under axum there always is. So `walkable_roads` answered empty for
+    // every walking leg, `annotateWalkMatches` bails on `ways.isEmpty`, and
+    // every walk on every served day kept its raw drawing. Nothing caught it:
+    // the message below goes to a stderr that `serve_capturing_misses`
+    // redirects into a temporary file and reads only miss lines out of.
     if tokio::runtime::Handle::try_current().is_ok() {
         eprintln!(
             "mirror: called from inside a tokio runtime; this path is sync-only. \
              Use an async mirror read from async code rather than blocking here."
         );
+        REFUSALS.fetch_add(1, Ordering::Relaxed);
         FAILS.fetch_add(1, Ordering::Relaxed);
         return None;
     }

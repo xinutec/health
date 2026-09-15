@@ -1119,6 +1119,20 @@ pub fn serve_capturing_misses(request: &str) -> Result<(String, Vec<Miss>)> {
     let mut text = String::new();
     sink.read_to_string(&mut text)
         .context("reading the stderr capture")?;
+    // ⚠ EVERYTHING LEAN AND THE OSM HOST WRITE TO STDERR LANDS IN THAT FILE, and
+    // only the miss lines were ever read out of it. So the fold's own
+    // diagnostics — including every `OSM_LOG=1` line from `day_shell::osm` —
+    // were discarded on the SERVING path while printing normally everywhere
+    // else.
+    //
+    // ⚠ THAT SILENCE READS AS A FINDING AND IS NOT ONE. #1619 spent a day on
+    // "the walk pass never asks OSM for roads", measured as zero `osm:` lines
+    // from a served day. The lookups were firing; their output was going into
+    // this file. An instrument that answers "nothing happened" when it is
+    // itself disconnected cannot be told from the thing it is watching.
+    if std::env::var_os("LEAN_STDERR").is_some() {
+        eprint!("{text}");
+    }
     Ok((out, misses_in(&text)))
 }
 

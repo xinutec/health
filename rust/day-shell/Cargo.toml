@@ -45,4 +45,13 @@ cc = "1"
 # The async-guard test needs a runtime to call the mirror from INSIDE one.
 # tokio is already a normal dependency; an integration test links the crate but
 # not its dependencies, so it has to be named again here.
-tokio = { version = "1", default-features = false, features = ["rt"] }
+#
+# ⚠ `rt-multi-thread` is what production runs (`#[tokio::main]`), and the
+# blocking-handle test must match it: on a CURRENT-THREAD runtime
+# `Handle::block_on` cannot drive the IO driver, so a mirror read from a
+# `spawn_blocking` thread would hang instead of answering. Testing the fix on the
+# one flavour it does not support would prove nothing about the host it runs on.
+tokio = { version = "1", default-features = false, features = [
+  "rt",
+  "rt-multi-thread",
+] }

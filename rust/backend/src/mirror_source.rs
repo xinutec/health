@@ -818,10 +818,23 @@ where
 {
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        let source = MirrorSource::new(pool, handle, now_ms);
-        f(&mut crate::rowset_answerer::OsmAnswerer::with_source(
-            source,
-        ))
+        // ⚠ THE SAME PERMISSION, EXTENDED TO THE OTHER MIRROR. The fold reaches
+        // OSM two ways: the answerer below, and `day_shell::mirror`'s three
+        // `@[extern]` callbacks — `walkableRoads`, `buildingsNear`,
+        // `drivableRoads` — which Lean calls directly and which cannot be handed
+        // a handle through an argument. Only this thread knows blocking is legal
+        // here, so it says so once and both halves are served.
+        //
+        // ⚠ WITHOUT THIS, THOSE THREE ANSWER EMPTY ON EVERY SERVED DAY (#1619):
+        // day-shell refuses to block on a runtime nobody vouched for, and under
+        // axum there is always one. The answerer kept working throughout, which
+        // is why the day looked healthy — the map just drew every walk raw.
+        let source = MirrorSource::new(pool, handle.clone(), now_ms);
+        day_shell::mirror::with_blocking_handle(handle, move || {
+            f(&mut crate::rowset_answerer::OsmAnswerer::with_source(
+                source,
+            ))
+        })
     })
     .await
     .context("the mirror thread panicked")?

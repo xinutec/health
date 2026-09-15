@@ -11,7 +11,10 @@
 //! path that behaves differently, and it is the one the Rust backend (#982)
 //! will hit first — axum handlers are async everywhere.
 //!
-//! So `with_pool` checks `Handle::try_current()` and refuses. This pins that.
+//! So `with_pool` refuses when it is inside a runtime NOBODY VOUCHED FOR. This
+//! pins that. ⚠ The other half — a caller that vouches for its thread and gets a
+//! real read — is `mirror_blocking_handle.rs`, and it is the production path:
+//! refusing there was health #1619.
 //!
 //! ⚠ ITS OWN FILE, and not because it is tidier. `POOL` is a `OnceLock`, so the
 //! first call decides for the whole process whether a mirror is configured. This
@@ -59,6 +62,12 @@ fn calling_from_inside_a_runtime_refuses_instead_of_panicking() {
         "a refused read must answer empty, as every other failure does"
     );
     assert!(buildings.is_empty());
+    assert_eq!(
+        day_shell::mirror::take_refusals(),
+        2,
+        "and both must be counted REFUSALS, not just failures — that is the one \
+         number separating 'never asked' from 'asked and got nothing'"
+    );
     assert_eq!(
         day_shell::mirror::take_fails(),
         2,
