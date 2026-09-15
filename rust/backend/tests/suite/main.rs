@@ -80,6 +80,7 @@ mod js_number_wire;
 mod landmark_shaping;
 mod lean_ffi;
 mod lean_misses;
+mod lean_stderr_residue;
 mod local_time;
 mod location_tail;
 mod log_line;

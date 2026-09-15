@@ -1121,19 +1121,66 @@ pub fn serve_capturing_misses(request: &str) -> Result<(String, Vec<Miss>)> {
         .context("reading the stderr capture")?;
     // ⚠ EVERYTHING LEAN AND THE OSM HOST WRITE TO STDERR LANDS IN THAT FILE, and
     // only the miss lines were ever read out of it. So the fold's own
-    // diagnostics — including every `OSM_LOG=1` line from `day_shell::osm` —
-    // were discarded on the SERVING path while printing normally everywhere
-    // else.
+    // diagnostics were discarded on the SERVING path while printing normally
+    // everywhere else.
     //
     // ⚠ THAT SILENCE READS AS A FINDING AND IS NOT ONE. #1619 spent a day on
     // "the walk pass never asks OSM for roads", measured as zero `osm:` lines
     // from a served day. The lookups were firing; their output was going into
-    // this file. An instrument that answers "nothing happened" when it is
-    // itself disconnected cannot be told from the thing it is watching.
+    // this file, and so was the `mirror:` refusal that WAS the bug — 85 times a
+    // request, for weeks.
+    //
+    // ⚠ FORWARDING EVERYTHING IS NOT THE ANSWER EITHER. Measured on one served
+    // day: 15,373 lines, of which 502 are misses and ~14,786 are the BACKTRACES
+    // those misses print. `hit` panics per unanswered key and Lean's panic
+    // prints a ~29-frame stack, so the expected noise is 96% of the volume.
+    //
+    // Dropping each miss's backtrace WITH its miss line leaves 183, and in a
+    // healthy request with `OSM_LOG` off it leaves ~none. That residue is the
+    // part worth seeing, so it goes out unconditionally.
+    let residue = residue_of(&text);
+    if !residue.is_empty() {
+        eprint!("{residue}");
+    }
+    // The whole capture, backtraces included, for when the residue is not enough.
     if std::env::var_os("LEAN_STDERR").is_some() {
         eprint!("{text}");
     }
     Ok((out, misses_in(&text)))
+}
+
+/// The captured stderr minus the misses and the backtraces they print.
+///
+/// ⚠ **A REAL PANIC KEEPS ITS BACKTRACE.** Only a frame block FOLLOWING a line
+/// that names an uncaptured key is dropped. A panic from anywhere else does not
+/// match, so it is forwarded whole — which is the case this exists for.
+///
+/// ⚠ The frame test is a shape, not a parse: `backtrace:`, a blank line, or a
+/// line that starts with a digit and carries an address. Lean's formatting is
+/// not a contract, so a change there degrades this to forwarding MORE, never to
+/// swallowing a panic.
+pub fn residue_of(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_miss_trace = false;
+    for line in text.lines() {
+        if line.contains("uncaptured ") {
+            in_miss_trace = true;
+            continue;
+        }
+        if in_miss_trace {
+            let t = line.trim();
+            let is_frame = t == "backtrace:"
+                || t.is_empty()
+                || (t.starts_with(|c: char| c.is_ascii_digit()) && t.contains("0x"));
+            if is_frame {
+                continue;
+            }
+            in_miss_trace = false;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Every key a round asked for, deduplicated.
