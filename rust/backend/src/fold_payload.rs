@@ -941,6 +941,13 @@ pub fn build_day_request(
         i.get("homeTz").cloned().unwrap_or(Value::Null),
     );
     env.insert("modeStats".into(), encode_mode_stats(c.get("modeStats")));
+    // ⚠ ONLY WHEN THE CALLER SET IT. Lean defaults an absent `walkMatch` to
+    // true, so the gates and the CLIs — which never put it in `inputs` — keep
+    // the production draw. Writing `true` here instead would say the same thing
+    // and make every request carry a field only one caller can vary.
+    if let Some(wm) = i.get("walkMatch") {
+        env.insert("walkMatch".into(), wm.clone());
+    }
 
     let obs = c.get("obs").context("capture has no obs")?;
     for (k, v) in encode_obs_and_tail(obs, c.get("tail")) {

@@ -93,15 +93,24 @@ async fn main() -> Result<()> {
             day(fixture)
         }
         "velocity" => {
-            let (user, date, tz) = match flags {
-                [user, date] => (user, date, None),
-                [user, date, tz] => (user, date, Some(tz.as_str())),
+            // ⚠ THE CLI MUST BE ABLE TO ASK FOR THE RAW ARM. `?walkMatch=0` is
+            // the map's A/B baseline, and without a way to reach it from here
+            // the only way to exercise it is a live session against the HTTP
+            // route — which is why it went unnoticed that the parameter reached
+            // nothing at all (#1619).
+            let rest: Vec<&String> = flags.iter().filter(|f| *f != "--no-walk-match").collect();
+            let walk_match = !flags.iter().any(|f| f == "--no-walk-match");
+            let (user, date, tz) = match rest.as_slice() {
+                [user, date] => (*user, *date, None),
+                [user, date, tz] => (*user, *date, Some(tz.as_str())),
                 _ => {
-                    eprintln!("usage: backend velocity <user> <date> [display-tz]");
+                    eprintln!(
+                        "usage: backend velocity <user> <date> [display-tz] [--no-walk-match]"
+                    );
                     std::process::exit(64);
                 }
             };
-            velocity(user, date, tz).await
+            velocity(user, date, tz, walk_match).await
         }
         "locations-check" => {
             let [user, date] = flags else {
@@ -3414,7 +3423,12 @@ fn day(fixture: &str) -> Result<()> {
 ///
 /// ⚠ REAL LOCATION DATA on stdout. Redirect to /tmp, never into the repo: both
 /// health repos are public.
-async fn velocity(user: &str, date: &str, display_tz: Option<&str>) -> Result<()> {
+async fn velocity(
+    user: &str,
+    date: &str,
+    display_tz: Option<&str>,
+    walk_match: bool,
+) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -3422,7 +3436,8 @@ async fn velocity(user: &str, date: &str, display_tz: Option<&str>) -> Result<()
     let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
 
     let started = std::time::Instant::now();
-    let body = backend::routes::velocity::compute(&st, user, date, display_tz).await?;
+    let body =
+        backend::routes::velocity::compute_with(&st, user, date, display_tz, walk_match).await?;
     let compute_ms = started.elapsed().as_millis();
 
     // ⚠ The per-request clip, so this prints what a CALLER sees. Skipping it

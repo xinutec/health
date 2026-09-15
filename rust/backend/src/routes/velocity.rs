@@ -119,7 +119,7 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     let cached = st
         .velocity
         .get_or_compute(&key, now_ms, policy, || {
-            compute(st, &session.user_id, &date, tz)
+            compute_with(st, &session.user_id, &date, tz, walk_match)
         })
         .await?;
 
@@ -144,6 +144,23 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 /// gate above it has tests, but nothing else anywhere proves this produces a
 /// real response body.
 pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>) -> Result<Value> {
+    compute_with(st, user_id, date, tz, true).await
+}
+
+/// [`compute`] with the pedestrian matcher switchable.
+///
+/// ⚠ `walk_match = false` is `?walkMatch=0`, the RAW BASELINE the map compares
+/// the matched line against. It reaches the fold as `env.walkMatch`, and until
+/// #1619 it reached nothing at all: the query parameter was spent entirely on
+/// the cache key, so both arms computed the identical day and the A/B compared
+/// a value with itself. ⚠ That was invisible while every walk drew raw anyway.
+pub async fn compute_with(
+    st: &AppState,
+    user_id: &str,
+    date: &str,
+    tz: Option<&str>,
+    walk_match: bool,
+) -> Result<Value> {
     let home_tz = crate::sync_state::get(&st.pool, user_id, "home_tz")
         .await?
         .unwrap_or_else(|| "Europe/Amsterdam".into());
@@ -180,6 +197,17 @@ pub async fn compute(st: &AppState, user_id: &str, date: &str, tz: Option<&str>)
         Some(&home_tz),
     )
     .await?;
+    // ⚠ CARRIED IN `inputs` rather than through four signatures. `converge` and
+    // `build_day_request` are shared with the gates and `decode-day`, and a
+    // parameter none of them can answer would have to be given a default at
+    // every call site — which is the same field, spelled four times, with four
+    // chances to disagree. Only written when the raw baseline was ASKED for, so
+    // every other caller's request is byte-for-byte what it was.
+    let mut inputs = inputs;
+    if !walk_match && let Some(o) = inputs.as_object_mut() {
+        o.insert("walkMatch".into(), json!(false));
+    }
+    let inputs = inputs;
     mark(&mut timing, "load");
 
     let h = head::run(&inputs, date)?;

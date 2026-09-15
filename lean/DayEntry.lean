@@ -687,6 +687,14 @@ private def parseEnv (j : Json) : Except String Env := do
     sleep := (← (← optArr j "sleep").mapM parseSleep).toList
     displayFixes := ← (← optArr j "displayFixes").mapM parsePedFix
     speedByTs := fun ts => speeds[toString ts]?
+    -- `/api/velocity?walkMatch=0`, the raw baseline the map A/Bs the matched
+    -- line against. ABSENT MEANS MATCH: every other caller — the gates, the
+    -- CLIs, `decode-day` — omits the field and must keep the production draw.
+    --
+    -- ⚠ It reaches the fold only because the host puts it here. Until #1619 the
+    -- query parameter was spent entirely on the cache key, so the two arms
+    -- computed the same day and the A/B compared a value with itself.
+    walkFlags := { matchDisable := !(← optBool j "walkMatch" true) }
   }
 
 /-! ### Encoding -/
@@ -821,10 +829,11 @@ is part of the `LEAN_DAY=on` cutover, because `compare-day`'s classifier reads
 it and the default arm would then report a divergence it cannot avoid. -/
 private def UNFED : Array String := #["roadEnv", "walkEnv"]
 
-/-- `walkDraw` and `walkFlags` stay at their `Env` defaults — `.matcher`, which
-is what production draws, and no flags, which is the request without
-`walkMatch=0`. Not in `UNFED` because they are configuration rather than a
-callback: the fold gets the production answer, not an empty one. -/
+/-- `walkDraw` stays at its `Env` default — `.matcher`, which is what production
+draws. `walkFlags` is now FED, from `env.walkMatch`: absent means match, and
+`walkMatch=0` sets `matchDisable` for the raw baseline. Neither is in `UNFED`,
+because they are configuration rather than a callback: the fold gets the
+production answer, not an empty one. -/
 
 def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
