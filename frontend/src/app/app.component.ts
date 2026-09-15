@@ -2,6 +2,7 @@ import { Component, computed, effect, inject, signal, ChangeDetectionStrategy } 
 import { toSignal } from "@angular/core/rxjs-interop";
 import { NavigationEnd, Router, RouterLink, RouterOutlet } from "@angular/router";
 import { filter, map, startWith } from "rxjs/operators";
+import { SwUpdates } from "./sw-updates";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
@@ -41,6 +42,7 @@ export class AppComponent {
 	// Instrumented from the shell alone: a trace each screen had to remember to
 	// join would have holes in exactly the screens nobody thought about.
 	private readonly telemetry = inject(Telemetry);
+	private readonly swUpdates = inject(SwUpdates);
 
 	/** Mirror of `router.url` as a signal, recomputed on every
 	 *  NavigationEnd. `startWith(router.url)` seeds the value so
@@ -96,6 +98,9 @@ export class AppComponent {
 		// What the person *did*, beside the errors above. Different question,
 		// same stdout.
 		this.telemetry.init();
+
+		// Wired once here, so no view has to know a service worker exists.
+		this.swUpdates.start();
 
 		// One unauthenticated fetch; failure just leaves the footer empty.
 		fetch("/version")
