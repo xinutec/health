@@ -488,6 +488,44 @@ def pointInRing (p : LatLon) (ring : Ring) : Bool := Id.run do
 private def inAnyBuilding (p : LatLon) (buildings : Array Ring) : Bool :=
   buildings.any (fun ring => pointInRing p ring)
 
+/-- A ring's bounding box. An EMPTY ring gets a box no point satisfies
+(`minLat > maxLat`), which matches `pointInRing`'s own `size < 3 → false`. -/
+private structure Box where
+  minLat : Float
+  maxLat : Float
+  minLon : Float
+  maxLon : Float
+  deriving Inhabited
+
+private def ringBox (ring : Ring) : Box := Id.run do
+  if ring.isEmpty then
+    return { minLat := 1.0, maxLat := 0.0, minLon := 1.0, maxLon := 0.0 }
+  let p0 := ring[0]!
+  let mut b : Box := { minLat := p0.lat, maxLat := p0.lat, minLon := p0.lon, maxLon := p0.lon }
+  for q in ring do
+    b := { minLat := min b.minLat q.lat, maxLat := max b.maxLat q.lat,
+           minLon := min b.minLon q.lon, maxLon := max b.maxLon q.lon }
+  return b
+
+private def inBox (p : LatLon) (b : Box) : Bool :=
+  p.lat >= b.minLat && p.lat <= b.maxLat && p.lon >= b.minLon && p.lon <= b.maxLon
+
+/-- [`inAnyBuilding`] with the ray cast gated behind a bounding-box test.
+
+⚠ **EXACT, NOT APPROXIMATE.** `pointInRing` casts a ray in +lon: a point outside
+the box has no edge spanning its latitude, or every intersection on one side, so
+it already answered `false`. The box only decides WHICH rings are worth walking,
+never whether a point is inside one. Bounds are inclusive, so a point on the box
+edge still reaches the ray cast.
+
+⚠ **THIS IS NOT #1291's PRUNE.** That one bounded a NEAREST-way search, where a
+bound bites only once the running best is small and nothing orders the ways —
+measured 3.3x SLOWER. Containment has no running best and no ordering: each ring
+is accepted or rejected on its own. The two share the word "prune" and nothing
+else. -/
+private def inAnyBuildingBoxed (p : LatLon) (boxed : Array (Box × Ring)) : Bool :=
+  boxed.any (fun br => inBox p br.1 && pointInRing p br.2)
+
 /-- Total length (m) of the drawn line inside ANY building footprint.
 
 The line is sampled into `stepM` sub-segments and each is attributed by its
@@ -498,6 +536,9 @@ turns on. -/
 def buildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     (stepM : Float := 2) : Float := Id.run do
   if drawn.size < 2 || buildings.isEmpty then return 0
+  -- ONCE per call, not per sample: a walk is sampled every 2 m and each sample
+  -- used to ray-cast every footprint in the day's bbox.
+  let boxed := buildings.map (fun r => (ringBox r, r))
   let mut crossed := 0.0
   for i in [1:drawn.size] do
     let a := drawn[i-1]!
@@ -507,7 +548,7 @@ def buildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     let steps := ceilSteps (segLen / stepM)
     for k in [0:steps] do
       let mid := lerp a b ((k.toFloat + 0.5) / steps.toFloat)
-      if inAnyBuilding mid buildings then crossed := crossed + segLen / steps.toFloat
+      if inAnyBuildingBoxed mid boxed then crossed := crossed + segLen / steps.toFloat
   return crossed
 
 /-- A drawn point within this many metres of a walkable way is ON the mapped
@@ -527,6 +568,7 @@ def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     (walkable : RoadGeometry) (onWayM : Float := ON_WAY_M)
     (stepM : Float := 2) : Float := Id.run do
   if drawn.size < 2 || buildings.isEmpty then return 0
+  let boxed := buildings.map (fun r => (ringBox r, r))
   let mut crossed := 0.0
   for i in [1:drawn.size] do
     let a := drawn[i-1]!
@@ -536,7 +578,7 @@ def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
     let steps := ceilSteps (segLen / stepM)
     for k in [0:steps] do
       let mid := lerp a b ((k.toFloat + 0.5) / steps.toFloat)
-      if inAnyBuilding mid buildings && distToNearestWay mid walkable > onWayM then
+      if inAnyBuildingBoxed mid boxed && distToNearestWay mid walkable > onWayM then
         crossed := crossed + segLen / steps.toFloat
   return crossed
 
