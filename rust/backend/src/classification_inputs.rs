@@ -1157,8 +1157,8 @@ pub fn decode_window(now: chrono::DateTime<chrono::Utc>, days: i64) -> Vec<Strin
 /// tail. The last input, and the only one that is not SQL.
 ///
 /// ⚠ THE THREE WINDOWS ARE NOT THE DAY. `today` is the date's own UTC span,
-/// `morning` reaches to noon UTC on the following day, and `priorEvening` back
-/// to noon UTC on the previous one — because a local day is not a UTC day, and
+/// `morning` reaches to noon UTC on the following day, and `priorEvening` spans
+/// the WHOLE previous day — because a local day is not a UTC day, and
 /// a segment that starts before local midnight or ends after it needs fixes
 /// from outside the date to be reconstructed at all.
 ///
@@ -1193,12 +1193,33 @@ async fn phonetrack_windows(
     let midnight = |d: &str| -> Result<i64> {
         crate::lean::midnight_utc(d).with_context(|| format!("resolving UTC midnight for {d}"))
     };
-    // `${nextDay}T12:00:00Z` and `${prevDay}T12:00:00Z` — noon UTC, expressed
-    // as midnight plus half a day so there is one date parser here, not two.
+    // `${nextDay}T12:00:00Z` — noon UTC, expressed as midnight plus half a day
+    // so there is one date parser here, not two.
+    //
+    // ⚠ `priorEvening` NO LONGER USES IT and the name is now wider than the
+    // thing: it spans the previous day entire. Renaming it reaches into the
+    // wire field and the Lean `Env`, so it is left as a separate mechanical
+    // change rather than smuggled into a behaviour fix.
     let noon = 12 * 3600;
     let today = (midnight(date)?, midnight(&next_day)?);
     let morning = (midnight(&next_day)?, midnight(&next_day)? + noon);
-    let prior_evening = (midnight(&prev_day)? + noon, midnight(date)?);
+    // ⚠ THE WHOLE PREVIOUS DAY, NOT ITS EVENING (#1633). This reached back to
+    // NOON, which is the right window for "where was he before bed" only while
+    // the phone is still reporting at bedtime. A phone that goes quiet around
+    // midnight and stays quiet has its LAST KNOWN POSITION before noon, and the
+    // old window could not see it.
+    //
+    // ⚠ MEASURED: on 2026-09-13 the last fix was at 00:00:12 and sat 7 m from
+    // Home. The window opened twelve hours later, `detectKnownPlaceStays` had
+    // nothing to mine, and the night was attributed to the first place he
+    // reached after waking — Work, 11.3 km away. Pippijn: "it is extremely
+    // likely that I sleep where my phone went to sleep."
+    //
+    // ⚠ THE CORPUS CANNOT GRADE THIS. The golden fixtures carry a CAPTURED
+    // `priorEvening`, so a replay re-reads the old window whatever this says.
+    // A green gate after this change means the arm never ran. Verify on served
+    // days (see #1633) — and #1627 is the standing reason that is necessary.
+    let prior_evening = (midnight(&prev_day)?, midnight(date)?);
     let tail = (day_end_utc, day_end_utc + BATTERY_TAIL_LOOKAHEAD_H * 3600);
 
     let mut fetched = Vec::with_capacity(4);
