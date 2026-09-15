@@ -220,6 +220,8 @@ pub async fn compute_with(
     mirror_source::take_queries();
     mirror_source::take_db_nanos();
     crate::rowset_answerer::take_lean_nanos();
+    day_shell::mirror::take_refusals();
+    day_shell::mirror::take_fails();
     let folded =
         mirror_source::converge_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
@@ -229,6 +231,29 @@ pub async fn compute_with(
     // query count, which assumes the answer. These say which half is which.
     let db_ms = mirror_source::take_db_nanos() / 1_000_000;
     let lean_ms = crate::rowset_answerer::take_lean_nanos() / 1_000_000;
+
+    // ⚠ THE SIGNAL THAT WAS MISSING FOR WEEKS (#1619). `walkableRoads`,
+    // `buildingsNear` and `drivableRoads` answer an EMPTY Vec when the mirror
+    // refuses or fails, and empty is a legitimate answer — "no roads here". So a
+    // fold with every OSM read refused produced a well-formed day, a normal
+    // summary line, and a map drawing every walk as a raw chord through
+    // buildings. Nothing downstream could tell it apart.
+    //
+    // ⚠ NOT AN ERROR, DELIBERATELY. A day is still worth serving on raw chords,
+    // and failing the request would turn a degraded map into no map. What it
+    // must not do is stay SILENT.
+    //
+    // ⚠ A GATE CANNOT CARRY THIS CHECK. Every gate answers from a captured
+    // trace with no mirror configured, so `pool()` returns before the counter is
+    // touched and the count is zero for the wrong reason (#1627). The assertion
+    // only means something where a mirror is real, which is here.
+    let refusals = day_shell::mirror::take_refusals();
+    let fails = day_shell::mirror::take_fails();
+    if refusals > 0 || fails > 0 {
+        eprintln!(
+            "⚠ [{user_id}] {date}: {refusals} mirror read(s) REFUSED, {fails} failed — each answered EMPTY, so walks and drives are drawn RAW"
+        );
+    }
     mark(&mut timing, "fold");
 
     // ⚠ A day that converged with UNANSWERABLE keys was built from DEFAULTS for
