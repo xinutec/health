@@ -161,14 +161,84 @@ def sleepCandidates (e : Env) : List Verified.Geo.DayState.Seg :=
     else { c with place := (e.sleepPlace c.centroidLat c.centroidLon).getD c.place }
   (e.segments.map stateSeg).toList ++ resolved.map stayCandidateSeg
 
+/-- How far a BRACKETED position may sit from a known place and still name it.
+
+⚠ **LOOSER THAN THE 25 m A DWELL SNAP USES, AND THE AGREEMENT IS WHAT BUYS IT.**
+A dwell earns its snap from many fixes concentrating on one centroid; a single
+position has no such support, so `snapClusterToPlace` rightly refuses it beyond
+the mined radius. Two INDEPENDENT positions — the last before the window and the
+first after it — agreeing on the same place is a different claim, and it is the
+agreement rather than either distance that carries it.
+
+100 m because that is already this pipeline's notion of "still the same place":
+`CLUSTER_RADIUS_M`. ⚠ Do NOT raise `DEFAULT_PLACE_RADIUS_M` or the mined 25 m to
+achieve this — those govern every dwell snap, venue attribution and the dwell
+continuation, none of which asked. -/
+private def BRACKET_RADIUS_M : Float := 100
+
+open Verified.Hsmm.FloatScore (haversineMeters) in
+/-- The nearest named place within `radiusM`, ignoring each place's own radius. -/
+private def snapWithin (radiusM lat lon : Float)
+    (places : List Verified.Geo.DayState.StayKnownPlace) : Option String :=
+  let inRange := places.filterMap fun p =>
+    let d := haversineMeters lat lon p.centroidLat p.centroidLon
+    if decide (d > radiusM) then none else p.displayName.map fun n => (n, d)
+  (inRange.foldl (fun acc (n, d) =>
+    match acc with
+    | none => some (n, d)
+    | some (_, bd) => if decide (d < bd) then some (n, d) else acc) none).map (·.1)
+
+/-- The place a sleep window is BRACKETED by: the last known position before it
+and the first after it, when both name the same place.
+
+⚠ **THIS IS THE CASE A GAP BOUND CANNOT EXPRESS.** A phone that goes quiet at
+home and reports again from home next morning leaves no dwell inside the window
+and no candidate within six hours of it — but it is not unevidenced, it is
+CONSTRAINED. `inferredEmptyDay` already reasons this way for a fully-empty day:
+"bracketed by the same place on both sides ... constrained rather than
+unevidenced". A sleep window is the same shape at smaller scale.
+
+⚠ Measured 2026-09-14: 7 m from Home before a day-long silence, 46 m from Home
+after it, served as eight hours at Work 11.3 km away. Neither edge clears the
+25 m dwell radius alone; together they are the strongest evidence the night has.
+
+⚠ **DISAGREEMENT MEANS SILENCE, NOT A GUESS.** If the two sides name different
+places — he went somewhere — this yields `none` and the ordinary rule decides. -/
+def bracketPlaceForSleep (winStart winEnd : Int) (before : List Verified.Geo.DayState.StayFix)
+    (after : Array Verified.Geo.EpisodeGeometry.Fix)
+    (places : List Verified.Geo.DayState.StayKnownPlace) : Option String :=
+  -- ⚠ A GENERIC LABEL IS NOT A NAME. `sleepCandidates` re-resolves
+  -- `GENERIC_STAY_LABEL` through `Env.sleepPlace` into a real lodging name, and
+  -- this path does not — so admitting one would serve the placeholder where the
+  -- ordinary rule serves "Guest House Vertoef". The corpus caught exactly that
+  -- on 2026-04-30. Excluding it here leaves those nights to the path that can
+  -- name them properly, which is the conservative half of the trade.
+  let named := places.filter fun p =>
+    p.displayName.isSome && p.displayName != some GENERIC_STAY_LABEL
+  match (before.filter (·.ts ≤ winStart)).getLast?,
+        (after.toList.filter (fun p => p.ts ≥ winEnd)).head? with
+  | some b, some a =>
+    match snapWithin BRACKET_RADIUS_M b.lat b.lon named,
+          snapWithin BRACKET_RADIUS_M a.lat a.lon named with
+    | some nb, some na => if nb == na then some nb else none
+    | _, _ => none
+  | _, _ => none
+
 /-- `enrichSleepWindows` — the raw windows, each given the place its onset side
 points at. A one-line map in the TS, and the decision it wraps is
-`derivePlaceForSleep`. -/
+`derivePlaceForSleep`.
+
+⚠ The BRACKET is consulted first. Where both sides of the window agree it is
+strictly better evidence than the side-and-gap ranking, which cannot see across
+a silence at all; where they do not agree it yields `none` and the ordinary rule
+runs unchanged. -/
 def enrichSleepWindows (raw : List RawSleepWindow)
-    (candidates : List Verified.Geo.DayState.Seg) : List SleepWindow :=
+    (candidates : List Verified.Geo.DayState.Seg)
+    (bracket : Int → Int → Option String) : List SleepWindow :=
   raw.map fun w =>
     { startTs := w.startTs, endTs := w.endTs, tz := w.tz, minutesAsleep := w.minutesAsleep
-      place := derivePlaceForSleep w.startTs w.endTs candidates }
+      place := (bracket w.startTs w.endTs).orElse fun _ =>
+        derivePlaceForSleep w.startTs w.endTs candidates }
 
 /-- The one state a fully-unobserved day gets, or nothing.
 
@@ -192,6 +262,7 @@ the timeline does not describe. -/
 def dayChain (e : Env) :
     Array DayState × Array Verified.Geo.EpisodeGeometry.Episode :=
   let windows := enrichSleepWindows e.sleep (sleepCandidates e)
+    (fun ws we => bracketPlaceForSleep ws we e.prevEveningFixes e.points e.stayPlaces)
   let states := (segmentsToDayStates (e.segments.map stateSeg).toList windows).toArray
   -- ⚠ THE EMPTY-DAY ARM, and it is tested on `states` rather than on
   -- `e.segments`: a day with no segments can still have SLEEP windows, and that
