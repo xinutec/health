@@ -9,6 +9,17 @@
 //! Widening a crate's surface to hold a stopwatch is the wrong trade: the split
 //! below is coarser and costs nothing to keep.
 //!
+//! ⚠ **IT ALSO PRINTS RSS PER PHASE**, because the fold's memory is now the
+//! user-visible fault and its time is not (#1071): `health-auth`'s container
+//! limit is 512Mi and a day's replay peaks at 614 MiB, so opening a historical
+//! day OOM-kills the serving pod and the app 502s. The split below is what says
+//! whether the bytes are Rust's or Lean's — 614-vs-466 between a heavy and a
+//! light day says nothing about which side holds them.
+//!
+//! ⚠ RSS is read by shelling out to `ps`, which is crude and right for an
+//! example: it is the SAME number the kernel's OOM killer acts on, where an
+//! allocator's own accounting is not.
+//!
 //! ```text
 //! cargo run --release --example time_day -- 2026-05-14-pippijn
 //! ```
@@ -19,6 +30,20 @@ use backend::lean;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
 use std::time::Instant;
+
+/// Resident set size of this process (MiB), or 0 if `ps` cannot say.
+///
+/// ⚠ RESIDENT, not allocated. The OOM killer counts pages the process is
+/// holding, so that is what a limit has to be compared against.
+fn rss_mib() -> u64 {
+    std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map_or(0, |kib| kib / 1024)
+}
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 
@@ -39,9 +64,11 @@ fn main() -> Result<()> {
     let read_ms = t.elapsed().as_millis();
     let bytes = text.len();
 
+    let rss_read = rss_mib();
     let t = Instant::now();
     let fx: Value = serde_json::from_str(&text).context("parsing the fixture")?;
     let parse_ms = t.elapsed().as_millis();
+    let rss_parse = rss_mib();
 
     let inputs = &fx["inputs"];
     let (date, user) = (&name[..10], &name[11..]);
@@ -50,6 +77,7 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let cap = backend::head::capture(inputs, date, user).context("capture")?;
     let capture_ms = t.elapsed().as_millis();
+    let rss_capture = rss_mib();
 
     let t = Instant::now();
     let mut answerer = RowSetAnswerer::new(rows).context("opening the row set")?;
@@ -58,6 +86,7 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let conv = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer).context("converge")?;
     let converge_ms = t.elapsed().as_millis();
+    let rss_converge = rss_mib();
 
     // The final round's request is what every round approximates: earlier ones
     // carry fewer answer tables, so this is the UPPER bound on per-round size.
@@ -71,6 +100,7 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let _ = lean::serve(&wrapped).context("one settled fold")?;
     let one_fold_ms = t.elapsed().as_millis();
+    let rss_fold = rss_mib();
 
     println!("day {name}");
     println!("  fixture            {bytes:>11} bytes");
@@ -93,5 +123,15 @@ fn main() -> Result<()> {
         conv.rounds as u128 * one_fold_ms,
         converge_ms
     );
+    println!("  ---");
+    println!("  RSS after read     {rss_read:>8} MiB   (Rust: the fixture text)");
+    println!("  RSS after parse    {rss_parse:>8} MiB   (Rust: + the serde tree)");
+    println!("  RSS after capture  {rss_capture:>8} MiB   (+ ONE lean::serve)");
+    println!(
+        "  RSS after converge {rss_converge:>8} MiB   (+ {} rounds)",
+        conv.rounds
+    );
+    println!("  RSS after one fold {rss_fold:>8} MiB   (+ one more)");
+    println!("  ⚠ health-auth's container limit is 512 MiB.");
     Ok(())
 }
