@@ -1,4 +1,12 @@
-//! Repair `sleep.end_time_utc` rows that contradict their own wall clock (#340).
+//! Repair `sleep`'s derived UTC columns where they contradict their own wall
+//! clock (#340).
+//!
+//! ⚠ **TWO COLUMNS, AND THE SECOND ONE IS WHY THIS TICKET REOPENED.** The first
+//! run (2026-09-11) named `end_time_utc` alone and repaired 39 rows. Its twin
+//! `start_time_utc` was never asked the same question, so three rows went on
+//! contradicting their own wall clock for four more days — by 10, 25 and 41
+//! minutes, offsets London cannot produce. A repair scoped to one column of a
+//! pair leaves the pair inconsistent and reports success.
 //!
 //! ⚠ AN EXAMPLE, NOT A `bin/backend` VERB — a one-off data repair, and a
 //! production CLI that exists to rewrite production rows is the wrong shape.
@@ -17,7 +25,8 @@
 //! # The oracle
 //!
 //! A row is wrong when its stored instant disagrees with what its OWN stored
-//! wall clock and zone imply: `end_time_utc <> CONVERT_TZ(end_time, tz, 'UTC')`.
+//! wall clock and zone imply — `end_time_utc <> CONVERT_TZ(end_time, tz, 'UTC')`,
+//! and the same sentence with `start_`.
 //! That is an internal contradiction, not a judgement about where he was — a
 //! genuine DST night converts correctly and is left alone, because `CONVERT_TZ`
 //! consults the zone database rather than assuming a fixed offset.
@@ -49,12 +58,36 @@ fn count(r: &sqlx::mysql::MySqlRow, col: &str) -> Result<i64> {
         .with_context(|| format!("column `{col}` = {s:?} is not a number"))
 }
 
-/// ⚠ THE PREDICATE IS WRITTEN OUT AT EVERY SITE, not hoisted into a `const`.
-/// `DL-SQLX-SCHEMA-TRUTH` wants a string LITERAL so sqlx can check it against
-/// the schema, and a tool that UPDATEs production is the last place to trade
-/// that away for tidiness. The three copies below must stay identical — the
-/// before/after counts are only evidence if they ask the same question.
+/// Print the rows a pass is about to change.
+///
+/// ⚠ **DATES AND CLOCK TIMES ONLY.** These repos are public and a sleep row
+/// says where he was; the columns selected here carry no place and no
+/// coordinate, and the callers all alias to `wall`/`stored`/`fixed` so this
+/// stays true however the query is edited.
+fn show(rows: &[sqlx::mysql::MySqlRow]) {
+    for r in rows {
+        let g = |c: &str| -> String { r.try_get(c).unwrap_or_default() };
+        println!(
+            "  {}  wall {}   stored {}  ->  {}",
+            g("d"),
+            g("wall"),
+            g("stored"),
+            g("fixed")
+        );
+    }
+}
 
+// ⚠ THE PREDICATE IS WRITTEN OUT AT EVERY SITE, not hoisted into a `const`.
+// `DL-SQLX-SCHEMA-TRUTH` wants a string LITERAL so sqlx can check it against
+// the schema, and a tool that UPDATEs production is the last place to trade
+// that away for tidiness. The three copies per column must stay identical —
+// the before/after counts are only evidence if they ask the same question.
+//
+// ⚠ **AND THAT DUPLICATION IS WHAT HID THE SECOND COLUMN.** Six near-identical
+// literals that differ in one token read as one repair; the eye supplies the
+// symmetry the code does not have. The pairing is now stated by the OUTPUT —
+// both columns are counted on every run, including the dry one, so a column
+// left out is visible before anything is written rather than four days after.
 #[tokio::main]
 async fn main() -> Result<()> {
     let write = std::env::args().any(|a| a == "--write");
@@ -79,7 +112,11 @@ async fn main() -> Result<()> {
     };
     println!("CONVERT_TZ probe: Europe/London 12:00 -> {v} UTC (expect 11:00:00)");
 
-    let n = count(
+    // ⚠ **BOTH COLUMNS ARE COUNTED BEFORE EITHER IS WRITTEN**, so a dry run
+    // states the whole job. The first pass of this repair reported "0 still
+    // contradicting" while three rows in the twin column were untouched — a
+    // true sentence about half a question.
+    let end_n = count(
         &sqlx::query(
             "SELECT CAST(COUNT(*) AS CHAR) n FROM sleep \
              WHERE tz IS NOT NULL AND end_time_utc IS NOT NULL \
@@ -88,15 +125,15 @@ async fn main() -> Result<()> {
         )
         .fetch_one(&pool)
         .await
-        .context("counting broken rows")?,
+        .context("counting broken end_time_utc rows")?,
         "n",
     )?;
-    println!("{n} row(s) whose end_time_utc contradicts their own end_time + tz");
+    println!("{end_n} row(s) whose end_time_utc contradicts their own end_time + tz");
 
     // Show them before touching anything — dates and offsets only, no places.
     let rows = sqlx::query(
-        "SELECT CAST(date AS CHAR) d, CAST(end_time AS CHAR) et, \
-         CAST(end_time_utc AS CHAR) etu, CAST(CONVERT_TZ(end_time, tz, 'UTC') AS CHAR) fixed \
+        "SELECT CAST(date AS CHAR) d, CAST(end_time AS CHAR) wall, \
+         CAST(end_time_utc AS CHAR) stored, CAST(CONVERT_TZ(end_time, tz, 'UTC') AS CHAR) fixed \
          FROM sleep \
          WHERE tz IS NOT NULL AND end_time_utc IS NOT NULL \
            AND CONVERT_TZ(end_time, tz, 'UTC') IS NOT NULL \
@@ -105,23 +142,43 @@ async fn main() -> Result<()> {
     )
     .fetch_all(&pool)
     .await
-    .context("listing broken rows")?;
-    for r in &rows {
-        let g = |c: &str| -> String { r.try_get(c).unwrap_or_default() };
-        println!(
-            "  {}  end {}   stored {}  ->  {}",
-            g("d"),
-            g("et"),
-            g("etu"),
-            g("fixed")
-        );
-    }
+    .context("listing broken end_time_utc rows")?;
+    show(&rows);
+
+    let start_n = count(
+        &sqlx::query(
+            "SELECT CAST(COUNT(*) AS CHAR) n FROM sleep \
+             WHERE tz IS NOT NULL AND start_time_utc IS NOT NULL \
+               AND CONVERT_TZ(start_time, tz, 'UTC') IS NOT NULL \
+               AND start_time_utc <> CONVERT_TZ(start_time, tz, 'UTC')",
+        )
+        .fetch_one(&pool)
+        .await
+        .context("counting broken start_time_utc rows")?,
+        "n",
+    )?;
+    println!("{start_n} row(s) whose start_time_utc contradicts their own start_time + tz");
+
+    let rows = sqlx::query(
+        "SELECT CAST(date AS CHAR) d, CAST(start_time AS CHAR) wall, \
+         CAST(start_time_utc AS CHAR) stored, \
+         CAST(CONVERT_TZ(start_time, tz, 'UTC') AS CHAR) fixed \
+         FROM sleep \
+         WHERE tz IS NOT NULL AND start_time_utc IS NOT NULL \
+           AND CONVERT_TZ(start_time, tz, 'UTC') IS NOT NULL \
+           AND start_time_utc <> CONVERT_TZ(start_time, tz, 'UTC') \
+         ORDER BY date",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("listing broken start_time_utc rows")?;
+    show(&rows);
 
     if !write {
         println!(
-            "\nDRY RUN — nothing written. This sets end_time_utc from the row's own \
-             end_time and tz on the {n} row(s) above, and touches no other column.\n\
-             Apply with: --write"
+            "\nDRY RUN — nothing written. This sets each column from the row's own \
+             wall clock and tz on the {end_n} + {start_n} row(s) above, and touches \
+             no other column.\nApply with: --write"
         );
         pool.close().await;
         return Ok(());
@@ -135,10 +192,21 @@ async fn main() -> Result<()> {
     )
     .execute(&pool)
     .await
-    .context("applying the repair")?;
-    println!("wrote {} row(s)", res.rows_affected());
+    .context("applying the end_time_utc repair")?;
+    println!("wrote {} end_time_utc row(s)", res.rows_affected());
 
-    let left = count(
+    let res = sqlx::query(
+        "UPDATE sleep SET start_time_utc = CONVERT_TZ(start_time, tz, 'UTC') \
+         WHERE tz IS NOT NULL AND start_time_utc IS NOT NULL \
+           AND CONVERT_TZ(start_time, tz, 'UTC') IS NOT NULL \
+           AND start_time_utc <> CONVERT_TZ(start_time, tz, 'UTC')",
+    )
+    .execute(&pool)
+    .await
+    .context("applying the start_time_utc repair")?;
+    println!("wrote {} start_time_utc row(s)", res.rows_affected());
+
+    let end_left = count(
         &sqlx::query(
             "SELECT CAST(COUNT(*) AS CHAR) n FROM sleep \
              WHERE tz IS NOT NULL AND end_time_utc IS NOT NULL \
@@ -147,10 +215,25 @@ async fn main() -> Result<()> {
         )
         .fetch_one(&pool)
         .await
-        .context("re-counting after the write")?,
+        .context("re-counting end_time_utc after the write")?,
         "n",
     )?;
-    println!("{left} row(s) still contradicting (expect 0)");
+    let start_left = count(
+        &sqlx::query(
+            "SELECT CAST(COUNT(*) AS CHAR) n FROM sleep \
+             WHERE tz IS NOT NULL AND start_time_utc IS NOT NULL \
+               AND CONVERT_TZ(start_time, tz, 'UTC') IS NOT NULL \
+               AND start_time_utc <> CONVERT_TZ(start_time, tz, 'UTC')",
+        )
+        .fetch_one(&pool)
+        .await
+        .context("re-counting start_time_utc after the write")?,
+        "n",
+    )?;
+    println!(
+        "{end_left} end_time_utc + {start_left} start_time_utc row(s) still contradicting \
+         (expect 0 and 0)"
+    );
     pool.close().await;
     Ok(())
 }

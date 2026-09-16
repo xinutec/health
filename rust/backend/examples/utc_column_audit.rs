@@ -18,9 +18,20 @@
 //!     zone; the question is whether the derived column matches the zone stored
 //!     BESIDE it. A wrong answer is an internal contradiction, not a journey.
 //!   * `sleep` — the two ends of ONE session must carry the SAME offset. No zone
-//!     needed, and it is the comparison that finds a frozen `end_time_utc`
-//!     (`start_time_utc` is right because a start is never revised). A genuine
-//!     DST transition mid-sleep shows as exactly ±60 and is reported apart.
+//!     needed, and it is the comparison that finds a frozen `end_time_utc`. A
+//!     genuine DST transition mid-sleep shows as exactly ±60 and is reported
+//!     apart.
+//!
+//!     ⚠ **A PAIRWISE ORACLE NAMES THE PAIR, NOT THE CULPRIT.** This line used
+//!     to add "(`start_time_utc` is right because a start is never revised)",
+//!     and that parenthesis is what scoped the 2026-09-11 repair to one column.
+//!     The offset test can only say the two ends disagree; which end moved is a
+//!     question it never asks. Three rows had a wrong `start_time_utc` — off by
+//!     10, 25 and 41 minutes, offsets London cannot produce — and every one of
+//!     them was inside a pair this audit had already flagged and attributed to
+//!     the other end. The `CONVERT_TZ` oracle in `sleep_utc_repair` DOES
+//!     attribute, because it asks each column against the row's own wall clock
+//!     instead of against its twin; prefer it whenever `tz` is present.
 //!
 //! ```text
 //! scripts/prod-db.sh rust/target/release/examples/utc_column_audit

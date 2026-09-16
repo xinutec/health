@@ -675,13 +675,17 @@ pub const CLASSIFIER_VERSION: i32 = 7;
 /// `resolve_tz` in `day_biometrics` has done exactly this — `row_tz`, then
 /// `home_tz` — since it was written; only this loader passed the raw column.
 ///
-/// ⚠ **NOT the `start_time_utc` / `end_time_utc` columns, though they hold the
-/// right answer and are populated on all 1273 rows.** Three rows disagree with
-/// their own wall clock by 10, 25 and 41 minutes — offsets London cannot have —
-/// and two of the three are IN THE GOLDEN CORPUS. Reading them would re-time
-/// graded days to fix a fortnight. `home_tz` is verified correct for every
-/// affected row: all 14 carry a 60-minute stored offset, so London is what they
-/// mean, not an assumption.
+/// ⚠ **NOT the `start_time_utc` / `end_time_utc` columns, even now that they
+/// agree.** Both were repaired against this same wall clock (#340: 39 rows on
+/// 2026-09-11, 3 more on 2026-09-16) and the contradiction count is 0 on each.
+/// They still are not the source here, for two reasons that outlive the repair:
+/// the wall clock is what the Fitbit and Google writers actually set, so the
+/// derived columns can go stale again the moment a writer revises one; and 14
+/// rows carry no `tz` at all, which is the case the fallback below exists for
+/// and which no derived column can answer.
+///
+/// `home_tz` is verified correct for every affected row: all 14 carry a
+/// 60-minute stored offset, so London is what they mean, not an assumption.
 pub async fn sleep_windows(
     pool: &MySqlPool,
     user_id: &str,
