@@ -320,6 +320,14 @@ structure DisplayMatchDecision where
   /-- True when the match both stalls badly AND draws more than the pedometer
   justifies. Only the conjunction rejects; see `matchImprovesDisplay`. -/
   detour : Bool
+  /-- Building-crossing badness of the RAW line and of the MATCHED line (m), and
+  whether the BUILDING ground alone admitted this match (#1501).
+
+  ⚠ Defaulted, so a caller that passes no buildings — the road matcher — gets
+  `buildingGround = false` and is bit-for-bit unchanged. -/
+  rawBuildingM : Float := 0
+  matchedBuildingM : Float := 0
+  buildingGround : Bool := false
   deriving Inhabited, Repr
 
 /-- Total length of a polyline (m). -/
@@ -339,7 +347,8 @@ def polylineLength (pts : Array Pt) : Float := Id.run do
 def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
     (needsMatchM maxStrayM : Float)
     (stallPath : Array Pt)
-    (stepBudgetM : Option Float) (maxStallM overBudgetRatio : Float) :
+    (stepBudgetM : Option Float) (maxStallM overBudgetRatio : Float)
+    (rawBuildingM matchedBuildingM minBuildingGainM : Float := 0) :
     DisplayMatchDecision :=
   let index := if ways.size > 0 then NearGrid.ofWays ways wayDistGridCellM else none
   let rawOffRoadM := maxPolylineOffRoad fixes ways 15 index
@@ -372,9 +381,24 @@ def matchImprovesDisplay (fixes matchedPath : Array Pt) (ways : Ways)
     | some b => b > 0 && polylineLength stallPath > b * overBudgetRatio
     | none => false
   let detour := stallM > maxStallM && overBudget
-  { use := rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM
-           && strayM ≤ maxStrayM && !detour
-    rawOffRoadM, matchedOffRoadM, strayM, stallM, detour }
+  -- ⚠ **TWO GROUNDS, AND THE SECOND IS NOT A LOOSENED FIRST (#1501).** The
+  -- off-road ground asks whether the match moves the line back onto the
+  -- network. A line can already be on the network and still cut a building
+  -- corner, and that line's off-road figure has nothing left to improve — so
+  -- the only ground it could ever meet is one about WALLS. Measured on
+  -- 2026-06-15 @1781531224: `offPath 25.8 -> 0.0` with `rawOffRoadM` unmoved.
+  let offRoadGround := rawOffRoadM > needsMatchM && matchedOffRoadM < rawOffRoadM
+  -- ⚠ `≤`, not `<`. The building ground's claim is that the match stops going
+  -- through walls; requiring it to ALSO improve the off-road figure would be
+  -- requiring the first ground again, and nothing would ever reach here.
+  let buildingGround := rawBuildingM - matchedBuildingM > minBuildingGainM
+                        && matchedOffRoadM ≤ rawOffRoadM
+  -- ⚠ MONOTONE-ADDITIVE: `A∧B` became `(A∧B)∨(D∧E)`, so this can only turn a
+  -- decline INTO a use. The 45 walks the matcher already corrects cannot move,
+  -- which is why only the NEW admissions needed adjudicating.
+  { use := (offRoadGround || buildingGround) && strayM ≤ maxStrayM && !detour
+    rawOffRoadM, matchedOffRoadM, strayM, stallM, detour
+    rawBuildingM, matchedBuildingM, buildingGround }
 
 /-! ## The divergent-run splice -/
 

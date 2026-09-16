@@ -66,7 +66,7 @@ namespace Verified.Geo.WalkAnnotate
 
 open Verified.Geo.WalkableRoute (Pt Ways)
 open Verified.Geo.OsmCorridor (Way)
-open Verified.Geo.WalkEscape (Ring TPt)
+open Verified.Geo.WalkEscape (Ring TPt makeBadnessCtx pathBadnessM)
 open Verified.Geo.WalkSmooth (WalkFix WalkEvidence countSharpTurns)
 open Verified.Geo.DisplayGate (MPt matchImprovesDisplay spliceMatchedWithDivergentRuns)
 open Verified.Geo.BiometricWindows (StepPoint stepsInWindow)
@@ -180,6 +180,14 @@ distribution is what would move them. -/
 def WALK_MATCH_MAX_STALL_M : Float := 200
 /-- …and the drawn line must exceed the step budget by this factor. -/
 def WALK_MATCH_MAX_BUDGET_RATIO : Float := 1.5
+/-- The building-crossing metres a match must remove before the building ground
+alone admits it (#1501).
+
+⚠ **`segBadnessM`'s own sampling step, not a tuned number** — it is the smallest
+gain the metric can resolve, so anything above it is a real reduction rather
+than sampling noise. -/
+def WALK_MATCH_MIN_BUILDING_GAIN_M : Float := 2
+
 /-- The reconstruction replaces the drawn line only when it is at most this
 fraction of its length… -/
 def RECON_SWAP_MAX_LEN_FRACTION : Float := 0.75
@@ -396,12 +404,20 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
   -- #1497: the detour veto needs the pedometer as its independent witness.
   -- Same budget the corrector and the ratchet use — steps x stride x slack.
   let stepBudget := ev.stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
+  -- #1501's second ground. ⚠ Measured on the SAME line the off-road clauses
+  -- judge (`coarsePath`), for #369 decision parity — the gate, the salvage and
+  -- the refinement must agree about the route, and reading a different line
+  -- here would break that for one clause only.
+  let badCtx := makeBadnessCtx geom buildings {}
+  let rawBuildingM := pathBadnessM (fixes.map PathPt.pt) badCtx
   let decision := result.map fun r =>
     matchImprovesDisplay (fixes.map PathPt.pt) (r.coarsePath.map PathPt.pt) geom
       WALK_NEEDS_MATCH_M WALK_MATCH_MAX_STRAY_M
       -- The FINER display line: what the veto is judging is what gets drawn.
       (r.path.map PathPt.pt)
       stepBudget WALK_MATCH_MAX_STALL_M WALK_MATCH_MAX_BUDGET_RATIO
+      rawBuildingM (pathBadnessM (r.coarsePath.map PathPt.pt) badCtx)
+      WALK_MATCH_MIN_BUILDING_GAIN_M
   let mut useMatch := match decision with
     | some d => d.use
     | none => false
