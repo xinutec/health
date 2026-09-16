@@ -47,7 +47,53 @@ fn rss_mib() -> u64 {
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
 
+/// Price ONE `lean::serve` on a pre-dumped request, from a COLD process.
+///
+/// ⚠ **Cold is the whole point.** Inside a normal run the allocator already
+/// holds an arena from earlier rounds, so a later call shows a +0 RSS delta and
+/// says nothing about what a round costs. This reads bytes, calls once, and
+/// stops.
+///
+/// `mode=day` prices parse + fold. Any other mode prices the PARSE ALONE:
+/// `serveDispatchExport` runs `Json.parse` over the whole input before it looks
+/// at `mode`, so an unknown one parses everything and folds nothing. The
+/// difference between the two is what the ALGORITHM costs, as opposed to what
+/// carrying the request costs.
+///
+/// ```text
+/// cargo run --release --example time_day -- --serve-only /tmp/req.json day
+/// cargo run --release --example time_day -- --serve-only /tmp/req.json nosuchmode
+/// ```
+fn serve_only(path: &str, mode: &str) -> Result<()> {
+    let rss0 = rss_mib();
+    let body = std::fs::read_to_string(path).context("reading the request")?;
+    let wrapped = format!("{{\"mode\":\"{mode}\",{}", &body[1..]);
+    let rss1 = rss_mib();
+    let t = Instant::now();
+    let reply = lean::serve(&wrapped).context("the one call")?;
+    let ms = t.elapsed().as_millis();
+    let rss2 = rss_mib();
+    println!("request           {:>11} bytes", wrapped.len());
+    println!("mode              {mode}");
+    println!("RSS before        {rss0:>8} MiB");
+    println!("RSS with bytes    {rss1:>8} MiB   (+{})", rss1 - rss0);
+    println!(
+        "RSS after serve   {rss2:>8} MiB   (+{})   in {ms} ms",
+        rss2 - rss1
+    );
+    println!("reply             {:>11} bytes", reply.len());
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|a| a == "--serve-only") {
+        let (Some(path), Some(mode)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: time_day --serve-only <request.json> <mode>");
+            std::process::exit(64);
+        };
+        return serve_only(path, mode);
+    }
     let name = std::env::args().nth(1).unwrap_or_default();
     if name.is_empty() {
         eprintln!("usage: cargo run --example time_day -- <YYYY-MM-DD-user>");
