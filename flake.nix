@@ -62,39 +62,18 @@
 
         # BOTH production Rust binaries, in ONE derivation (#1131).
         #
-        # ⚠ SPLIT THEM AND THE COST DOUBLES. Each would run its own `lake build`
-        # and its own `cargo build`, in separate sandboxes with separate target
-        # directories, so the image pays for the Lean statics TWICE and for the
-        # dependency compile (sqlx with the full house feature list, tokio
-        # multi-thread, axum, chrono) TWICE.
+        # ⚠ Split them and each runs its own `lake build` and `cargo build` in its
+        # own sandbox, so the image pays for the Lean statics and the sqlx/tokio/axum
+        # dependency compile TWICE — about 40% more, measured by ablation on a warm
+        # store. Quote the RATIO, not seconds: CI is a colder, slower machine.
         #
-        # MEASURED by ablation on a warm store: building the two separately costs
-        # about 40% more than building them together.
+        # ⚠ `backend`'s static set is a SUPERSET of day-shell's, so one `lake build`
+        # of the larger set serves both. A missing static is a LINK error, which is
+        # the good direction but only because they are all named here.
         #
-        # ⚠ QUOTE THE RATIO, NOT SECONDS. A CI stage timing is a cold-store Linux
-        # container on slower cores, so the ratio should carry and the seconds
-        # will not. Re-measure where it
-        # matters.
-        #
-        # ⚠ The old comment argued AGAINST merging — "building both in one
-        # derivation would make each image rebuild pay for the other's compile".
-        # That holds only if something builds them SEPARATELY, and nothing does:
-        # the Dockerfile builds both in one RUN, and the single dev-lint gate row
-        # names both. Checked before merging rather than assumed.
-        #
-        # ⚠ `backend`'s static set is a SUPERSET of day-shell's — day-shell
-        # serves the `day` mode from `DayEntry`, the backend additionally answers
-        # every route from `BackendEntry` and `ServeEntry` — so one `lake build`
-        # of the larger set serves both. A missing static is a LINK error, not a
-        # runtime miss, which is the good direction but only because they are all
-        # named here.
-        #
-        # ⚠ The Lean build has to happen IN THIS TREE and cannot be reused from
-        # `verified-cli`: both `build.rs` files read their link line out of
-        # `lean/.lake/build/bin/verified_cli.rsp` — the file lake WROTE when it
-        # linked the CLI — rather than restating nine libraries and two store
-        # paths that move on every `nix flake update`. `verified-cli` exports the
-        # binary, not the `.rsp` or the statics.
+        # ⚠ The Lean build must happen IN THIS TREE and cannot come from
+        # `verified-cli`: both `build.rs` files read their link line out of the
+        # `verified_cli.rsp` lake wrote, and `verified-cli` exports the binary alone.
         health-bins = pkgs.stdenv.mkDerivation (finalAttrs: {
           name = "health-bins";
           src = ./.;
