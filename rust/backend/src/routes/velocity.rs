@@ -238,6 +238,16 @@ pub async fn compute_with(
     let folded =
         mirror_source::converge_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
+    // ⚠ PRINTED, NEVER SHIPPED — see the note on `mark`. The callbacks' YIELD is
+    // the one thing #1071 never counted: rows and the geometry text in them.
+    if std::env::var_os("FOLD_SPLIT").is_some() {
+        let (rows, wkt, distinct) = day_shell::mirror::take_rows();
+        eprintln!(
+            "  mirror yield: {rows} row(s), {} KiB of WKT across {mirror_queries} quer(ies) \
+             — {distinct} DISTINCT way(s)",
+            wkt / 1024
+        );
+    }
     // ⚠ The two halves of the fold, MEASURED. #1071 batched the queries on the
     // assumption that round trips dominated and the wall clock barely moved; the
     // per-query cost it reasoned from had been derived by dividing fold by

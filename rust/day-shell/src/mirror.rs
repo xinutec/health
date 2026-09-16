@@ -281,6 +281,61 @@ pub fn take_db_nanos() -> u64 {
     DB_NANOS.swap(0, Ordering::Relaxed)
 }
 
+/// Rows returned by mirror queries, and the bytes of geometry TEXT in them.
+///
+/// ⚠ **BECAUSE TIME DID NOT ANSWER THE QUESTION.** `DB_NANOS` splits the fold's
+/// OSM cost into database and compute; #1071 is a MEMORY fault, and nothing
+/// counted how much geometry the callbacks hand back. Every row carries an
+/// `ST_AsText(geom)` WKT string parsed into a coordinate vector, and each query
+/// is bounded only by `LIMIT 20000` — so a day's 292 queries can return a very
+/// large amount of geometry without any counter noticing.
+///
+/// ⚠ The byte figure is the WKT TEXT as it arrives, not the parsed size. The
+/// `Vec<(f64, f64)>` it becomes is a different number and this must not be
+/// quoted as it.
+static ROWS: AtomicU64 = AtomicU64::new(0);
+static WKT_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Distinct `osm_id`s behind those rows.
+///
+/// ⚠ **The rows count alone cannot tell over-FETCHING from re-fetching**, and
+/// the two need different fixes. 292 bboxes strung along one day's path overlap
+/// heavily, so the same way is returned again and again; a distinct count says
+/// how much of the yield is genuinely different geometry.
+static DISTINCT: std::sync::Mutex<Option<std::collections::HashSet<i64>>> =
+    std::sync::Mutex::new(None);
+
+/// Count one query's yield. Called from every callback that reads geometry.
+fn count_rows(rows: usize, wkt_bytes: usize) {
+    ROWS.fetch_add(rows as u64, Ordering::Relaxed);
+    WKT_BYTES.fetch_add(wkt_bytes as u64, Ordering::Relaxed);
+}
+
+/// Record the ids one query returned. Only tracked when `FOLD_SPLIT` is set —
+/// the set is unbounded and this is a diagnostic, not a production tally.
+fn count_ids(ids: impl Iterator<Item = i64>) {
+    if std::env::var_os("FOLD_SPLIT").is_none() {
+        return;
+    }
+    if let Ok(mut g) = DISTINCT.lock() {
+        g.get_or_insert_with(Default::default).extend(ids);
+    }
+}
+
+/// Read the row and geometry-byte counts and reset them.
+pub fn take_rows() -> (u64, u64, u64) {
+    let distinct = DISTINCT
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take())
+        .map_or(0, |s| s.len() as u64);
+    (
+        ROWS.swap(0, Ordering::Relaxed),
+        WKT_BYTES.swap(0, Ordering::Relaxed),
+        distinct,
+    )
+}
+
 thread_local! {
     /// The runtime to block on, installed by a caller that KNOWS this thread may
     /// block. `None` means nobody vouched for it.
@@ -477,6 +532,11 @@ fn query_ways(lat: f64, lon: f64, radius_m: f64, subtypes: &[&str]) -> Vec<Mirro
             }
             q = q.bind(&poly);
             let rows = q.fetch_all(pool).await?;
+            count_rows(
+                rows.len(),
+                rows.iter().map(|r| r.get::<String, _>("wkt").len()).sum(),
+            );
+            count_ids(rows.iter().map(|r| r.get::<i64, _>("osm_id")));
             Ok(rows
                 .into_iter()
                 .map(|r| MirrorWay {
@@ -527,6 +587,10 @@ pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Vec<Vec<(f64, f64)>>
             }
             q = q.bind(&poly);
             let rows = q.fetch_all(pool).await?;
+            count_rows(
+                rows.len(),
+                rows.iter().map(|r| r.get::<String, _>("wkt").len()).sum(),
+            );
             Ok(rows
                 .into_iter()
                 .map(|r| parse_linestring_wkt(&r.get::<String, _>("wkt")))
