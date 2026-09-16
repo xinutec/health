@@ -757,6 +757,10 @@ impl Walk {
         // everything moved would mean the pairing quietly matched nothing.
         let mut compared = 0usize;
         let mut moved = 0usize;
+        // The building-crossing SIGNAL, counted on both sides. See the guard
+        // below for why a count and not a value.
+        let mut floor_crossings = 0usize;
+        let mut now_crossings = 0usize;
         for d in r["current"].as_array().map_or(&[][..], Vec::as_slice) {
             let date = d["date"].as_str().unwrap_or("");
             let Some(floor) = self.baseline.get(date).and_then(Value::as_array) else {
@@ -774,6 +778,12 @@ impl Walk {
                     continue;
                 };
                 compared += 1;
+                if b["offPathM"].as_f64().is_some_and(|v| v > 0.0) {
+                    floor_crossings += 1;
+                }
+                if bits_of(&w["offPathM"]).is_some_and(|v| v > 0.0) {
+                    now_crossings += 1;
+                }
                 if (now - was).abs() > 0.5 {
                     moved += 1;
                 }
@@ -921,6 +931,28 @@ impl Walk {
         // grading twice. The arm dumps the referee's whole reply instead, and
         // the caller grades it.
         if self.arm.label == "all" {
+            // ⚠ AN ANTI-VACUITY GUARD ON THE BUILDING DETECTOR, and it exists
+            // because the absence of one was MEASURED (#1501, 2026-09-16).
+            // `inAnyBuildingBoxed` was stubbed to return `false` while pricing
+            // containment for #1367 — every crossing metric then reads 0.0 —
+            // and this shard PASSED TWICE. The ratchet fails on REGRESSIONS,
+            // and a metric where lower is better, driven to zero everywhere,
+            // scores as an improvement on every walk at once.
+            //
+            // ⚠ A COUNT, NOT A VALUE, and that is the whole point. Any single
+            // walk may legitimately reach 0.0 — that is the fix working. What
+            // cannot legitimately happen is the floor knowing this shard has
+            // crossings and the run finding NONE.
+            //
+            // Deliberately only the collapse to zero. A bar like "at least half
+            // the floor's count" would be a threshold on very little data — 28
+            // of 238 walks corpus-wide — and this shape is what the truth
+            // grader already guards, for the same reason.
+            if floor_crossings > 0 && now_crossings == 0 {
+                out.push(format!(
+                    "walks: the floor records {floor_crossings} walk(s) crossing a building on                      these days and this run found NONE — the building detector is answering                      nothing, which the ratchet scores as an improvement on every walk"
+                ));
+            }
             if moved != 0 {
                 out.push(format!(
                     "walks: {moved} of {compared} paired walks moved more than 0.5 m against the \
