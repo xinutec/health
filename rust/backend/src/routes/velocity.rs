@@ -181,6 +181,18 @@ pub async fn compute_with(
     let mut phase = std::time::Instant::now();
     let mut mark = |timing: &mut serde_json::Map<String, Value>, name: &str| {
         timing.insert(name.into(), json!(phase.elapsed().as_millis() as u64));
+        // ⚠ RSS PRINTED, NEVER SHIPPED. `timing` goes over the wire into
+        // `VelocityData.timing`, so putting a memory figure in it would change
+        // the served shape and the generated TS types for a diagnostic. #1071
+        // is a memory fault and the per-phase split is the thing five wrong
+        // accounts of it were all missing; `FOLD_SPLIT` already gates the
+        // per-round half of the same picture.
+        if std::env::var_os("FOLD_SPLIT").is_some() {
+            eprintln!(
+                "  phase {name}: RSS {} MiB",
+                crate::fold_converge::rss_mib()
+            );
+        }
         phase = std::time::Instant::now();
     };
 

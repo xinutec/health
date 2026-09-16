@@ -116,6 +116,26 @@ fn biggest_keys(obj: &serde_json::Map<String, Value>, prefix: &str) {
     }
 }
 
+/// Resident set size of this process (MiB), or 0 if `ps` cannot say.
+///
+/// ⚠ **Printed per round because the TIME split was not the question.** #1071
+/// is a memory fault: the pod grows ~323 MiB serving one day and OOMs. Five
+/// separate accounts of where that goes have been written down and withdrawn,
+/// and the one measurement nobody had taken was RSS at the round boundary —
+/// which says whether the growth is per-round or once.
+///
+/// Resident, not allocated: the OOM killer counts pages held, so that is what a
+/// limit must be compared against.
+pub fn rss_mib() -> u64 {
+    std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map_or(0, |kib| kib / 1024)
+}
+
 /// Walk the fold to convergence.
 pub fn converge<A: Answerer>(
     cap: &Value,
@@ -168,9 +188,10 @@ pub fn converge<A: Answerer>(
         if std::env::var_os("FOLD_SPLIT").is_some() {
             eprintln!(
                 "  r{round} build {build_ms}ms · serialise {ser_ms}ms · wrap {wrap_ms}ms \
-                 · serve {serve_ms}ms · body {} KiB · tables {} key(s)",
+                 · serve {serve_ms}ms · body {} KiB · tables {} key(s) · RSS {} MiB",
                 wrapped.len() / 1024,
                 tables.len(),
+                rss_mib(),
             );
         }
 

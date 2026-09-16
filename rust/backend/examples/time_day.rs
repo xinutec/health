@@ -94,6 +94,31 @@ fn main() -> Result<()> {
         };
         return serve_only(path, mode);
     }
+    // ⚠ SEVERAL FOLDS IN ONE PROCESS — the question the pod's OOM turns on.
+    // If the allocator REUSES its arena, RSS plateaus and a second day is free;
+    // if it ACCUMULATES, each fold adds and the second one is what dies. One
+    // fold in isolation cannot tell those apart, and predicting it from a
+    // single fold is how this was got wrong once already.
+    if args.get(1).is_some_and(|a| a == "--serve-many") {
+        let rss0 = rss_mib();
+        println!("RSS cold          {rss0:>8} MiB");
+        for (i, path) in args[2..].iter().enumerate() {
+            let body = std::fs::read_to_string(path).context("reading the request")?;
+            let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
+            let before = rss_mib();
+            let t = Instant::now();
+            let _ = lean::serve(&wrapped).context("fold")?;
+            let ms = t.elapsed().as_millis();
+            let after = rss_mib();
+            println!(
+                "fold {:>2}  {:>28}   RSS {before:>4} -> {after:>4} MiB  (+{})  {ms} ms",
+                i + 1,
+                path.rsplit('/').next().unwrap_or(path),
+                after.saturating_sub(before)
+            );
+        }
+        return Ok(());
+    }
     let name = std::env::args().nth(1).unwrap_or_default();
     if name.is_empty() {
         eprintln!("usage: cargo run --example time_day -- <YYYY-MM-DD-user>");
