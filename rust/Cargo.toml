@@ -1,80 +1,37 @@
 # The in-process host for the Lean day fold (#952).
 #
-# WHAT THIS IS FOR. The TS day arm survives `LEAN_DAY=on` for two reasons, both
-# transport: the fold is reached by spawning `verified_cli day` (so every call
-# pays a JSON wire — #433 measured 9.3 s request + 8.0 s typed decode against
-# 3.4 s of real work), and a spawned pure function cannot call back for a lookup
-# (so `day-serve.ts` runs it 2-7 times, median 6, feeding one more table each
-# round). A host that SHARES THE PROCESS deletes both.
+# IN-PROCESS because `PassFold.Env`'s `walkEnv`/`roadEnv` are CALLBACKS the fold
+# generates mid-run, and a spawned pure function cannot answer a question it invents
+# while running. That is what makes the shells fillable at all.
 #
-# ⚠ AND THAT FRAMING WAS WRONG, kept here because the correction is the point.
-# The wire and the round loop are real costs, but they are not why the TS arm
-# survives. `PassFold.Env`'s `walkEnv`/`roadEnv` are CALLBACKS the fold generates
-# mid-run — `walkableRoads`, `buildingsNear`, `drivableRoads` — and a spawned
-# pure function cannot answer a question it invents while running. THAT is what
-# a shared process buys, and it is what makes the shells fillable at all.
-#
-# The solvers are NOT here and must not come here: they are already written in
-# Lean (`Verified.Geo.Match`, `WalkSmooth`, `WalkEscape`). The rule is that as
-# much as possible lives in Lean and Rust takes only what proof would not help —
-# the process, the lookups, the IO. An earlier note here sized "~6k lines of
-# matcher to port into Rust"; there was never such a port to do.
+# ⚠ The solvers stay in Lean (`Verified.Geo.Match`, `WalkSmooth`, `WalkEscape`).
+# Rust takes only what proof would not help: the process, the lookups, the IO.
 [workspace]
 members = ["backend", "day-shell"]
 resolver = "2"
 
-# ⚠ THE EDITION LIVES HERE, not in the members, and the reason is a mistake I
-# made rather than a preference. `rust/backend` was created by copying
-# `day-shell/Cargo.toml`, which said `edition = "2021"` — so it inherited the
-# one thing about that manifest that was already wrong, and health went from
-# being the fleet's only 2021 crate (1 of 32) to two of them. #990 predicted
-# exactly this ("#982 is about to make it much worse") and was right.
-#
-# A per-crate literal is a value a third member can only get right by knowing to
-# look. Inherited, a copied manifest carries `edition.workspace = true` and is
-# correct by construction. The fleet's other Rust repos state it per crate
-# because they are single-crate; this is the only workspace with members.
+# ⚠ THE EDITION LIVES HERE, not in the members: a copied manifest then carries
+# `edition.workspace = true` and is correct by construction, where a per-crate
+# literal is a value a new member gets right only by knowing to look.
 [workspace.package]
 edition = "2024"
 
-# ⚠ DEPENDENCIES ONLY, and it is a measured number, not a habit.
+# The test corpus is tens of megabytes of JSON per fixture, parsed several times
+# over, so unoptimised serde_json dominates the gate's largest row.
 #
-# The gate's largest row is `day_corpus`, and nearly all of its time was the
-# unoptimised build rather than the work. One golden day, same code, same machine:
-#
-#     phase             debug vs release
-#     serde_json parse      10x
-#     converge             3.5x
-#     ONE Lean fold          1x   <- precompiled, unaffected
-#
-# The fixtures are 44-86 MB of JSON each and there are 42 of them, so the whole
-# corpus is parsed four times over by four tests. That is what `opt-level = 3`
-# on the dependency graph buys.
-#
-# ⚠ `package."*"` EXCLUDES THE WORKSPACE'S OWN CRATES on purpose. Our code stays
-# at opt-level 0 so a backtrace still names a frame and a debugger still steps —
-# the cost is in serde_json, not in us. Compile time moves once, then caches.
+# ⚠ `package."*"` EXCLUDES the workspace's own crates: they stay at opt-level 0 so
+# a backtrace names a frame and a debugger steps.
 [profile.dev.package."*"]
 opt-level = 3
 
-# ⚠ OUR CRATES TOO, and only because `package."*"` alone was NOT enough:
-# 6.1 s -> 4.0 s, where the profile accounts for ~4.8 s of it. A generic
-# instantiates in the CALLING crate, so `serde_json::from_str::<Value>` is
-# codegen'd into `backend` and compiles at whatever level `backend` uses. The
-# dependency being optimised does not help when the hot code is a monomorphised
-# copy living here.
-#
-# opt-level 1 keeps line tables, names and stepping; it is not the debug cliff
-# that 2 and 3 are.
+# ⚠ Our crates too, because `package."*"` alone is not enough: a generic
+# instantiates in the CALLING crate, so `serde_json::from_str::<Value>` is codegen'd
+# into `backend` at `backend`'s level. opt-level 1 keeps line tables and stepping.
 [profile.dev]
 opt-level = 1
 
-# ⚠ MEASURED, not a habit. Full debuginfo on a 14,328-line crate costs real
-# time to generate and to link: building backend's lib and its 63 test targets
-# went 51.4 s -> 36.2 s with this alone, on an otherwise identical tree.
-#
-# "line-tables-only" keeps file and line numbers in panics and backtraces —
-# which is how this codebase is actually debugged, through failing tests and
-# refusals. What it drops is variable inspection under a live debugger. If
-# someone needs that, raise it locally for the session rather than for everyone.
+# Full debuginfo costs real time to generate and link across backend's lib and its
+# test targets. "line-tables-only" keeps file and line numbers in panics and
+# backtraces, and drops variable inspection under a live debugger — raise it locally
+# for a session if you need that.
 debug = "line-tables-only"

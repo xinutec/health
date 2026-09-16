@@ -17,16 +17,11 @@ libc = "0.2"
 # `c/osm-host-stub.c`, which answers every lookup with zero polylines and so
 # decodes a day with no map while reporting success.
 day-shell = { path = "../day-shell" }
-# The house sqlx line (#982): crate, version and FULL feature list matching
-# `tasks`, `messages`, `life`, `coach`, `fleetwatch` and `signal`. `day-shell`
-# deliberately took a subset because it is a Lean host with two reads; this is
-# the backend those repos are siblings of, so it matches them exactly.
+# The house sqlx line (#982), matching the sibling repos exactly.
 #
 # ⚠ RUNTIME QUERIES ONLY — `sqlx::query(…)` / `query_as(…)`, never the checked
-# `query!` macros. The `macros` feature is present because the siblings carry
-# it, not as licence to use it: the checked forms need a live database or a
-# committed `.sqlx` cache at COMPILE time, and no repo here has one. Reaching
-# for `query!` breaks the image build for a benefit nothing else here takes.
+# `query!` macros: those need a live database or a committed `.sqlx` cache at
+# COMPILE time, and no repo here has one. `macros` is present only to match.
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",
@@ -38,30 +33,24 @@ sqlx = { version = "0.9", default-features = false, features = [
     "migrate",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
-# The fleet's HTTP stack, matching the ten sibling repos that serve: axum 0.8,
-# axum-extra 0.12 for cookies, tower-http 0.7 for static files and tracing.
-# Health's TypeScript serves the built Angular app from ./public alongside the
-# API, so `fs` is not optional here.
+# The fleet's HTTP stack, matching the sibling repos. `fs` because this serves the
+# built Angular app from ./public alongside the API.
 axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie"] }
-# Session cookies (#982). Every one of these is ALREADY in the lockfile via
-# sqlx, so declaring them adds no resolution — the versions below are the ones
-# already resolved, and `hmac` 0.13 pairs with `sha2` 0.11 because both are on
-# `digest` 0.11. Pinning a `sha2` 0.10 here would silently fail to satisfy it.
+# Session cookies (#982), already in the lockfile via sqlx.
+# ⚠ `hmac` 0.13 pairs with `sha2` 0.11 because both are on `digest` 0.11; a `sha2`
+# 0.10 here would silently fail to satisfy it.
 #
-# ⚠ These are the ONLY part of auth that is not in Lean, and that is the split
-# `lib.rs` describes: there is nothing to prove about an HMAC beyond that it was
-# asked for. The rules around them — the framing, the expiry boundary, what a
-# share viewer may do — are `Verified.Session`.
+# These are the only part of auth not in Lean — the rules around them (framing,
+# expiry, what a share viewer may do) are `Verified.Session`.
 hmac = "0.13"
 sha2 = "0.11"
 # Constant-time comparison. A signature check that returns early on the first
 # differing byte leaks where it differed, one request at a time.
 subtle = "2.6"
 base64 = "0.22"
-# The CSPRNG behind a session id. `getrandom` rather than `rand`: this wants the
-# OS entropy source and nothing else — no seeding, no distributions, no
-# generator to get wrong.
+# `getrandom` rather than `rand`: the OS entropy source and nothing else — no
+# seeding, no distributions, no generator to get wrong.
 getrandom = "0.4"
 tower = { version = "0.5", features = ["util"] }
 # ⚠ `compression-*` IS LOAD-BEARING, not a nicety. Without it every API response
