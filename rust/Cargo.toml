@@ -39,14 +39,13 @@ edition = "2024"
 
 # ⚠ DEPENDENCIES ONLY, and it is a measured number, not a habit.
 #
-# The gate's largest row is `day_corpus`, and 250 of its ~252 s were the
-# unoptimised build rather than the work. One golden day, same code, same
-# machine, 2026-08-27:
+# The gate's largest row is `day_corpus`, and nearly all of its time was the
+# unoptimised build rather than the work. One golden day, same code, same machine:
 #
-#     phase              debug     release
-#     serde_json parse  2656 ms     261 ms   10.2x
-#     converge          3231 ms     915 ms    3.5x
-#     ONE Lean fold      131 ms     143 ms    1.0x   <- precompiled, unaffected
+#     phase             debug vs release
+#     serde_json parse      10x
+#     converge             3.5x
+#     ONE Lean fold          1x   <- precompiled, unaffected
 #
 # The fixtures are 44-86 MB of JSON each and there are 42 of them, so the whole
 # corpus is parsed four times over by four tests. That is what `opt-level = 3`

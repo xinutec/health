@@ -11,9 +11,9 @@ COPY lean/ lean/
 # ⚠ `verified-cli` BEFORE `COPY rust/`, and that ordering is the whole point of
 # splitting this in two. Its `src = ./lean` (see the flake), so it does not
 # depend on the Rust tree at all — but while it sat under `COPY rust/` every
-# Rust commit invalidated the layer and rebuilt Lean from scratch. Measured
-# 2026-08-23 on run 32670483768: 225 s of an 1101 s stage, paid on nearly every
-# push, for a derivation whose inputs had not changed.
+# Rust commit invalidated the layer and rebuilt Lean from scratch — a fifth of
+# the stage, paid on nearly every push, for a derivation whose inputs had not
+# changed.
 #
 # Verified rather than assumed: `.#verified-cli` evaluates AND builds with only
 # `flake.nix`, `flake.lock` and `lean/` in the context.
@@ -23,15 +23,12 @@ RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp
 # line out of the `.rsp` lake wrote in this tree — which no other derivation
 # exports.
 #
-# ⚠ ONE derivation for BOTH binaries since 2026-08-25 (#1131). It was two, and
-# each ran its own `lake build` and its own `cargo build` in a separate sandbox,
-# so the image paid for the Lean statics twice and for the sqlx/tokio/axum
-# dependency compile twice.
+# ⚠ ONE derivation for BOTH binaries (#1131). Split them and each runs its own
+# `lake build` and its own `cargo build` in a separate sandbox, so the image pays
+# for the Lean statics twice and for the sqlx/tokio/axum dependency compile twice.
 #
-# Ablated on the dev machine: 98 s + 182 s apart against 169 s together, so 40%
-# off this stage. ⚠ The "~800 s" this comment used to claim was #1131's estimate
-# from a CI timing, never a measured saving — expect the ratio to carry and the
-# seconds not to.
+# Ablated on the dev machine: about 40% off this stage. ⚠ Quote the RATIO, not
+# seconds — a CI timing is a different machine and a cold store.
 COPY rust/ rust/
 # Both binaries, and their closures copied ONCE as a union.
 #
@@ -78,10 +75,8 @@ COPY --from=lean-build /export/bin/day-shell lean/day-shell
 # `bin/backend` by `rust/backend/build.rs`, which parses lake's own
 # `verified_cli.rsp` for the link line. These two are kept as a hand-run
 # oracle, not as a serving path.
-# The Rust+Lean HTTP server (#982) — now the ONLY server. It shipped alongside
-# `dist/server.js` through the cutover so a rollback was a manifest change
-# rather than an image rebuild; every cron and the Deployment have run on it
-# since 2026-08-26, so the second copy is gone with the rest of the TypeScript.
+# The Rust+Lean HTTP server (#982), and the ONLY server — there is no
+# `dist/server.js` beside it, so a rollback means building one first.
 COPY --from=lean-build /export/bin/backend bin/backend
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale
 # client/deploy is visible at a glance. Injected by .github/workflows/docker.yml.

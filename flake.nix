@@ -62,22 +62,18 @@
 
         # BOTH production Rust binaries, in ONE derivation (#1131).
         #
-        # ⚠ THEY USED TO BE TWO, and the duplication was the cost. Each ran its
-        # own `lake build` and its own `cargo build`, in separate sandboxes with
-        # separate target directories, so the image paid for the Lean statics
-        # TWICE and for the dependency compile (sqlx with the full house feature
-        # list, tokio multi-thread, axum, chrono) TWICE.
+        # ⚠ SPLIT THEM AND THE COST DOUBLES. Each would run its own `lake build`
+        # and its own `cargo build`, in separate sandboxes with separate target
+        # directories, so the image pays for the Lean statics TWICE and for the
+        # dependency compile (sqlx with the full house feature list, tokio
+        # multi-thread, axum, chrono) TWICE.
         #
-        # MEASURED by ablation on 2026-08-25, warm store, dev machine:
+        # MEASURED by ablation on a warm store: building the two separately costs
+        # about 40% more than building them together.
         #
-        #     day-shell   98 s
-        #     backend    182 s   = 280 s apart
-        #     health-bins        = 169 s together      -> 40% off
-        #
-        # ⚠ NOT the "~800 s" #1131 estimated and this comment first claimed. That
-        # figure came from a CI stage timing, and CI is a cold-store Linux
-        # container on slower cores — the RATIO should carry, the seconds will
-        # not. Do not quote 800 s; quote the ratio, or re-measure where it
+        # ⚠ QUOTE THE RATIO, NOT SECONDS. A CI stage timing is a cold-store Linux
+        # container on slower cores, so the ratio should carry and the seconds
+        # will not. Re-measure where it
         # matters.
         #
         # ⚠ The old comment argued AGAINST merging — "building both in one

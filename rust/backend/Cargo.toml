@@ -64,13 +64,11 @@ base64 = "0.22"
 # generator to get wrong.
 getrandom = "0.4"
 tower = { version = "0.5", features = ["util"] }
-# ⚠ `compression-*` IS LOAD-BEARING, not a nicety. Without it every API
-# response goes out as raw JSON: measured 2026-08-30 in production,
-# `/api/heartrate/intraday` for a single half-finished day was 2,556,228 bytes
-# with `encodedBodySize == decodedBodySize`, i.e. no encoding at all. The rows
-# repeat `user_id` and `tz` verbatim 18,656 times, so the body is mostly one
-# constant — exactly what a stream compressor removes and a schema change would
-# take an API break to fix.
+# ⚠ `compression-*` IS LOAD-BEARING, not a nicety. Without it every API response
+# goes out as raw JSON — `/api/heartrate/intraday` for ONE day is megabytes, and
+# most of it is `user_id` and `tz` repeated verbatim per row. That is exactly what
+# a stream compressor removes, and what a schema change could only fix by breaking
+# the API.
 tower-http = { version = "0.7", features = [
     "fs",
     "trace",
