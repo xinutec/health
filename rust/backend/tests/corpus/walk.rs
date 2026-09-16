@@ -827,6 +827,27 @@ impl Walk {
                         g("budgetM"),
                         bf("budgetM"),
                     );
+                    // ⚠ COVERAGE, on its own line and with NO floor column
+                    // (#1501). No baseline holds these, so printing a
+                    // `(floor …)` beside them would invent a comparison — the
+                    // same reason `wayUm` prints alone. They are here to be
+                    // read as a DISTRIBUTION over the corpus, which is what
+                    // #1501 needs and cannot get from the floor file.
+                    eprintln!(
+                        "{date} ts={ts}  COVER  raw {:>7}  matched/raw {:>5}  \
+                         coverMax {:>7}  cover90 {:>7}  uncov {:>5}  headGap {:>6}  \
+                         tailGap {:>6}",
+                        g("rawLenM"),
+                        match (bits_of(&w["lenM"]), bits_of(&w["rawLenM"])) {
+                            (Some(l), Some(r)) if r > 0.0 => format!("{:.2}", l / r),
+                            _ => "null".into(),
+                        },
+                        g("coverMaxM"),
+                        g("cover90M"),
+                        bits_of(&w["uncoveredFrac"]).map_or("null".into(), |v| format!("{v:.2}")),
+                        g("headGapM"),
+                        g("tailGapM"),
+                    );
                     // ⚠ ON ITS OWN LINE, and only when non-empty. A route that
                     // named nothing prints nothing rather than an empty column
                     // that would read as "measured, found none" (#1464).

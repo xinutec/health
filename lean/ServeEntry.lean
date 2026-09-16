@@ -2526,6 +2526,15 @@ private def parseEntry (j : Json) : Except String WalkEntry := do
 private def parseBaselineDay (j : Json) : Except String (String × Array WalkEntry) := do
   return ((← (← j.getObjVal? "date").getStr?), ← (← optArr j "walks").mapM parseEntry)
 
+/-- How far from the drawn line a raw fix counts as UNCOVERED (m).
+
+⚠ Not tuned: it is the display gate's own `WALK_MATCH_MAX_STRAY_M` order of
+magnitude, chosen so the share asks the same "is this fix on the line" question
+the gate already asks — and the whole point of the share is that its answer
+moves smoothly with the radius rather than hinging on it. Re-read the
+distribution before any bar is placed here. -/
+private def UNCOVERED_RADIUS_M : Float := 30
+
 /-- Measure one drawn walk into exactly the shape the floor records.
 
 ⚠ EVERY `none` HERE IS A DIFFERENT QUESTION GOING UNANSWERED, and not one of
@@ -2538,6 +2547,7 @@ completely differently, so collapsing any of these would be a silent pass.
 different stride and a different window from the budget the gate acts on; the
 budget comes from `stepBudgetM` below, separately. Handing steps to both would
 put two incompatible pedometer readings in one row. -/
+
 private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
   let sc := scoreWalk w.drawn (Float.ofInt w.startTs) (Float.ofInt w.endTs) #[] (some d.ways)
               0.72 35 wantP90
@@ -2551,7 +2561,18 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
                 else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
     lenM := sc.drawnLengthM
     budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
-    wayUm := w.wayUm }
+    wayUm := w.wayUm
+    -- ⚠ COVERAGE, recorded and not scored (#1501). `maxFixDistToLine` is the
+    -- MAXIMUM on purpose: the display gate already asks a quantile of the same
+    -- two tracks, and a quantile cannot see a line that abandons part of a
+    -- walk. Cheap enough to take unconditionally — unlike `p90M`, nothing here
+    -- touches the way network.
+    rawLenM := pathLength w.raw
+    coverMaxM := maxFixDistToLine w.raw w.drawn
+    headGapM := (endpointGapsM w.raw w.drawn).1
+    tailGapM := (endpointGapsM w.raw w.drawn).2
+    cover90M := (fixCoverage w.raw w.drawn 0.9 UNCOVERED_RADIUS_M).1
+    uncoveredFrac := (fixCoverage w.raw w.drawn 0.9 UNCOVERED_RADIUS_M).2 }
 
 private def entryJson (e : WalkEntry) : Json :=
   Json.mkObj [
@@ -2563,7 +2584,11 @@ private def entryJson (e : WalkEntry) : Json :=
     -- `WALK_GATE_DUMP` can print it beside the metrics; no floor holds it and
     -- no delta is computed from it.
     ("wayUm", Json.arr (e.wayUm.map fun (n, um) =>
-      Json.arr #[Json.str n, Lean.toJson um]))]
+      Json.arr #[Json.str n, Lean.toJson um])),
+    -- Same terms as `wayUm`: on the wire for the dump, held by no floor.
+    ("rawLenM", fBits e.rawLenM), ("coverMaxM", fBits e.coverMaxM),
+    ("headGapM", fBits e.headGapM), ("tailGapM", fBits e.tailGapM),
+    ("cover90M", fBits e.cover90M), ("uncoveredFrac", fBits e.uncoveredFrac)]
 
 private def metricName : Metric → String
   | .stall => "stall" | .speed => "speed" | .route => "route"

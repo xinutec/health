@@ -461,6 +461,80 @@ def walkPlausibility (fixes drawn : Array LatLon) (startTs endTs : Float)
     corridorStallM := maxCorridorStall fixes drawn
     rawLengthM, avgDrawnSpeedKmh }
 
+/-! ## Coverage — does the drawn line still reach where the fixes went? -/
+
+/--
+The farthest a raw fix falls from the DRAWN line (m). `0` when there is no line
+to fall away from.
+
+⚠ **A MAXIMUM, and that is the whole difference from the display gate's
+`strayM`**, which is a QUANTILE over the same two inputs. A quantile is the
+right shape for asking "is this line broadly faithful" and the wrong shape for
+asking "did it abandon part of the walk": a match that stops halfway leaves
+every fix in the second half far away, and a quantile set below that fraction
+reports a clean number for a line covering half the journey.
+
+⚠ **It is not the same question as `corridorStallM` either.** Stall asks whether
+the drawn line went somewhere the fixes did not. This asks whether the fixes
+went somewhere the drawn line did not. Both directions can be zero while the
+other is large, so neither substitutes.
+-/
+def maxFixDistToLine (fixes drawn : Array LatLon) : Float := Id.run do
+  if drawn.size < 2 || fixes.isEmpty then return 0
+  let mut worst : Float := 0
+  for p in fixes do
+    let mut best := posInf
+    for i in [1:drawn.size] do
+      best := min best (distToSeg p drawn[i-1]! drawn[i]!)
+    worst := max worst best
+  return worst
+
+/--
+The `q`-quantile of the raw fixes' distance to the DRAWN line (m), and the SHARE
+of fixes farther than `radiusM` from it.
+
+⚠ **BOTH, because `maxFixDistToLine` alone cannot be used and the reason is
+measured.** Over the 238 blessed walks its max is 3026.9 m and its p95 is
+932.8 m — a dozen blessed lines leave a kilometre or more of raw track behind.
+A maximum is set by the single farthest fix, so ONE GPS spike scores exactly
+like an abandoned half, and the corpus is full of spikes. That is the same
+reason the display gate takes a quantile of these two tracks rather than a max.
+
+⚠ **The quantile has the opposite blind spot**, which is why the share is here
+too: a quantile set below the abandoned fraction reports a clean number for a
+line covering half a journey. The SHARE is the shape that survives both — one
+spike is `1/n`, and an abandoned half is `0.5`.
+
+`(0, 0)` when there is no line or no fixes.
+-/
+def fixCoverage (fixes drawn : Array LatLon) (q radiusM : Float) : Float × Float := Id.run do
+  if drawn.size < 2 || fixes.isEmpty then return (0, 0)
+  let mut ds : Array Float := #[]
+  for p in fixes do
+    let mut best := posInf
+    for i in [1:drawn.size] do
+      best := min best (distToSeg p drawn[i-1]! drawn[i]!)
+    ds := ds.push best
+  let far := (ds.filter (· > radiusM)).size
+  let sorted := ds.qsort (· < ·)
+  let idx := min (sorted.size - 1) (ceilSteps (q * Float.ofNat sorted.size) - 1)
+  return (sorted[idx]!, Float.ofNat far / Float.ofNat ds.size)
+
+/--
+How far the drawn line's two ENDS sit from the raw track's two ends (m), as
+`(head, tail)`. `(0, 0)` when either side has nothing to compare.
+
+⚠ **Never zero for a legitimate match, and the floor is not noise.** The matcher
+connects SNAPPED endpoints rather than raw ones, so an accepted match pays a gap
+the size of the snap — `ONEOFF -> F_LINE` draws 222.64 m over a 241.95 m span
+for exactly this reason. A bar here has to clear that, which is what makes the
+distribution over the blessed corpus the only way to place one.
+-/
+def endpointGapsM (fixes drawn : Array LatLon) : Float × Float :=
+  if fixes.isEmpty || drawn.isEmpty then (0, 0)
+  else (metersBetween fixes[0]! drawn[0]!,
+        metersBetween fixes[fixes.size - 1]! drawn[drawn.size - 1]!)
+
 /-! ## Buildings -/
 
 /-- Even-odd ray cast: is `p` inside the closed ring? The ring need not repeat
@@ -783,6 +857,42 @@ private def twoPassInvented : Array LatLon :=
 
 #guard approx (maxCorridorStall twoPassFixes twoPassFaithful) 0
 #guard approx (maxCorridorStall twoPassFixes twoPassInvented) 207.89133875972067
+
+-- A line that follows the fixes leaves none of them behind.
+#guard maxFixDistToLine fixes line < 10
+-- The invented out-and-back still covers every fix: the excursion ADDS line,
+-- it does not withdraw any. This is the case that separates coverage from
+-- stall, which scores the same pair high.
+#guard maxFixDistToLine fixes detour < 10
+#guard maxCorridorStall fixes detour > 50
+-- A line that stops at the corner abandons the fixes past it. The last fix is
+-- ~84 m east of where the line ends.
+private def halfLine : Array LatLon := #[P 51.5 (-0.12), P 51.5008 (-0.12)]
+#guard maxFixDistToLine fixes halfLine > 70
+#guard maxCorridorStall fixes halfLine == 0
+-- Nothing to measure is 0, never a fabricated distance.
+#guard maxFixDistToLine #[] line == 0
+#guard maxFixDistToLine fixes #[] == 0
+#guard (endpointGapsM fixes halfLine).1 < 1
+#guard (endpointGapsM fixes halfLine).2 > 70
+#guard (endpointGapsM fixes line).2 < 1
+#guard endpointGapsM #[] line == (0, 0)
+
+-- A faithful line leaves nobody far away, at either shape.
+#guard (fixCoverage fixes line 0.9 30).2 == 0
+-- Half a line abandons half the fixes — the SHARE sees it where a low quantile
+-- would not, and the quantile sees it where a high one would not. Two of the
+-- four fixes lie past the corner the half-line stops at.
+#guard (fixCoverage fixes halfLine 0.9 30).2 == 0.5
+#guard (fixCoverage fixes halfLine 0.5 50).1 < 50
+#guard (fixCoverage fixes halfLine 0.9 50).1 > 70
+-- One wild fix moves the SHARE by 1/n and the max by its whole distance.
+private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
+#guard maxFixDistToLine spiked line > 10000
+#guard (fixCoverage spiked line 0.9 30).2 == 0.2
+#guard (fixCoverage spiked line 0.5 50).1 < 50
+#guard fixCoverage #[] line 0.9 50 == (0, 0)
+
 
 -- ⚠ ONE CONSTANT IN THIS FILE IS UNWITNESSED, stated here rather than left to
 -- be discovered: the DP's 1 m BACKTRACK TOLERANCE (`sMax := arc + 1`). Setting

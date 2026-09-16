@@ -116,6 +116,30 @@ structure WalkEntry where
   a baseline that has no such column, and an absent one means "not recorded",
   exactly as it does for the `Option` axes above. -/
   wayUm : Array (String × Nat) := #[]
+  /-- **COVERAGE — DIAGNOSTIC COLUMNS, NOT AXES (#1501).** Length of the raw GPS
+  track, the farthest a raw fix falls from the drawn line, and the gaps between
+  the two tracks' ends.
+
+  ⚠ **NOT IN `Metric`, and not yet a bar anywhere.** They exist so the question
+  #1501 is stuck on — *does the matched line still get from where the fixes
+  started to where they ended?* — can be ASKED of the corpus at all. Four
+  candidate discriminators were refuted there because no band separated the
+  disputed walk from blessed ones; a fifth cannot even be tried while the
+  referee records no quantity about where the fixes went. Place a bar only from
+  a distribution over the blessed set, never from the one walk that prompted it.
+
+  ⚠ Defaulted for `wayUm`'s reason: the blessed floor predates them, and an
+  absent column means "not recorded". -/
+  rawLenM : Float := 0
+  coverMaxM : Float := 0
+  headGapM : Float := 0
+  tailGapM : Float := 0
+  /-- p90 of the fixes' distance to the drawn line, and the SHARE of fixes more
+  than 30 m from it. ⚠ Both, because measured over this corpus `coverMaxM` is
+  useless on its own: its p95 is 932.8 m and its max 3026.9 m, so ONE GPS spike
+  scores like an abandoned half. See `Eval.WalkMetrics.fixCoverage`. -/
+  cover90M : Float := 0
+  uncoveredFrac : Float := 0
   deriving Inhabited, BEq, Repr
 
 /-- The gated axes. `p90` is absent on purpose — see `WalkEntry.p90M`. -/
