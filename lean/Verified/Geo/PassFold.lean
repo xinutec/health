@@ -674,15 +674,32 @@ def passes (e : Env) : Array Pass := #[
 def runPasses (e : Env) (segs : Array Seg) : Array Seg :=
   (passes e).foldl (fun acc (_, run) => run acc) segs
 
+/-- `runPassesTraced` over an EXPLICIT pass array, so a caller can run a PREFIX
+of the cascade.
+
+⚠ **A MEASUREMENT SEAM, NOT A FEATURE.** Health #1071 spent a day attributing
++595 MiB to the wrong things because `FOLD_SPLIT` resolves to the ROUND and stops
+— there is nothing inside a round that says WHICH pass grew the heap. Running the
+first `n` passes and reading RSS is monotone in `n` by construction, so the jump
+between `n` and `n+1` names the pass without anyone having to guess.
+
+⚠ A truncated cascade produces a WRONG DAY, deliberately: passes exist to undo
+one another (`revertIsolatedCadence` is there to undo the pass before it), so a
+prefix is not a smaller correct answer. Nothing may bless, compare or serve its
+output. -/
+def runPassArrayTraced (ps : Array Pass) (segs : Array Seg) :
+    Array Seg × Array (String × Array Seg) :=
+  ps.foldl (fun (acc, trace) (name, run) =>
+    let next := run acc
+    (next, trace.push (name, next))) (segs, #[])
+
 /-- Run the cascade, keeping each pass's output alongside its name.
 
 The shadow ledger reports a divergence against the pass that produced it, so the
 per-pass output is part of what this module owes its caller — not a debugging
 aid. Same reason `annotateRailRuns` returns its OSM read trace. -/
 def runPassesTraced (e : Env) (segs : Array Seg) : Array Seg × Array (String × Array Seg) :=
-  (passes e).foldl (fun (acc, trace) (name, run) =>
-    let next := run acc
-    (next, trace.push (name, next))) (segs, #[])
+  runPassArrayTraced (passes e) segs
 
 /-- The pass names, in order. -/
 def passNames (e : Env) : Array String := (passes e).map (·.1)

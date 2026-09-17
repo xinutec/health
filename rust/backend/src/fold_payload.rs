@@ -1053,6 +1053,18 @@ pub fn build_day_request(
         "venuePriors".into(),
         encode_venue_priors(i.get("venuePriors")),
     );
+    // ⚠ `FOLD_PASS_LIMIT` RUNS A PREFIX OF THE CASCADE — an ablation seam for
+    // #1071, absent unless the harness sets it. A truncated cascade is a WRONG
+    // day by construction (passes undo one another), so it exists to be measured
+    // and never to be served, blessed or compared.
+    if let Ok(n) = std::env::var("FOLD_PASS_LIMIT") {
+        let n: u32 = n
+            .parse()
+            .with_context(|| format!("FOLD_PASS_LIMIT is not a number: {n:?}"))?;
+        eprintln!("⚠ FOLD_PASS_LIMIT={n} — running a PREFIX of the cascade; this day is WRONG");
+        env.insert("passLimit".into(), Value::from(n));
+    }
+
     // ⚠ THE FILTER SITS HERE, NOT INSIDE `encode_caches`, and that is deliberate.
     // `fold_env` pins `encode_caches` against what the TypeScript produced, whole
     // field for whole field. That oracle is about the PORT being faithful, so an

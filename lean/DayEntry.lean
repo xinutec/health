@@ -872,7 +872,15 @@ def dayResult (j : Json) : Json :=
     -- thing under test outside the test. Their observations are the fold's own
     -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
     let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched
-    let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
+    -- ⚠ `passLimit` RUNS A PREFIX OF THE CASCADE, for #1071's per-pass memory
+    -- attribution. Absent it runs them all, which is every caller but the
+    -- ablation harness. A truncated cascade is a WRONG day on purpose — passes
+    -- undo one another — so its output is for reading RSS and nothing else.
+    let allPasses := Verified.Geo.PassFold.passes env
+    let chosen := match ← optInt j "passLimit" with
+      | some n => allPasses.extract 0 n.toNat
+      | none => allPasses
+    let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these
     -- run in one call rather than two: a second bridge crossing would have to
     -- ship the segments back out and in again, and the two arms could then be
