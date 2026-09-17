@@ -421,6 +421,99 @@ fn hour_profile(v: Option<&Value>) -> Value {
     }
 }
 
+/// Metres of slack around `BUS_STOP_ANCHOR_M` when deciding a route is
+/// reachable. The Lean gate is 120 m; the grid below is coarser than that on
+/// purpose, so the kept set is a strict superset rather than a near-miss.
+const BUS_REACH_LAT_CELL: f64 = 0.002;
+/// ~277 m at London's latitude — wider than the lat cell because a degree of
+/// longitude is shorter here, and erring wide is the safe direction.
+const BUS_REACH_LON_CELL: f64 = 0.004;
+
+/// The cells the day's fixes occupy, for {@link reachable_bus_routes}.
+///
+/// Quantised rather than compared pairwise: a day is ~850 fixes and the cache
+/// is ~1000 routes of ~50 stops, so the honest pairwise test is ~42 M distance
+/// computations per request. A cell lookup is O(1) and the cells are larger
+/// than the matcher's radius, which is what makes dropping the rest sound.
+fn fix_cells(points: Option<&Value>) -> std::collections::HashSet<(i64, i64)> {
+    let mut cells = std::collections::HashSet::new();
+    for p in points.and_then(Value::as_array).into_iter().flatten() {
+        let (Some(la), Some(lo)) = (
+            p.get("lat").and_then(Value::as_f64),
+            p.get("lon").and_then(Value::as_f64),
+        ) else {
+            continue;
+        };
+        cells.insert((
+            (la / BUS_REACH_LAT_CELL).floor() as i64,
+            (lo / BUS_REACH_LON_CELL).floor() as i64,
+        ));
+    }
+    cells
+}
+
+/// Drop bus routes the day cannot possibly have travelled.
+///
+/// ⚠ **THIS IS SOUND BY THE MATCHER'S OWN GATE, not by a heuristic.**
+/// `Verified.Geo.Bus.bestPairFor` returns `none` unless `anchorsNear` finds a
+/// stop within `BUS_STOP_ANCHOR_M` (120 m) of BOTH the leg's board fix and its
+/// alight fix, and `Env.busFixes` is `env.points` — the very array probed here.
+/// So a route with no stop near any fix cannot match any leg, and keeping it
+/// only costs the parse. The grid cells are ~222 m x ~277 m and a stop is
+/// accepted if any of the nine cells around it holds a fix, so every route
+/// within 120 m of a fix survives with room to spare.
+///
+/// ⚠ **WHY IT IS WORTH DOING AT ALL**: `busRouteCache` is 1.50 MB of a 3.10 MB
+/// request, and `Json.parse` on the Lean side costs ~20x the text in heap —
+/// 61 MiB for the whole request, against 1 MiB for everything the fold then
+/// computes (health #1071). The cheapest way to shrink the Lean heap is to stop
+/// handing it reference data the day cannot reach.
+///
+/// ⚠ Returns the input UNFILTERED when there are no fixes to filter against. No
+/// fixes means no basis for the judgement, and a silent empty cache would read
+/// downstream exactly like a day with no bus service.
+pub fn reachable_bus_routes(bus_routes: Option<&Value>, points: Option<&Value>) -> Option<Value> {
+    let cells = fix_cells(points);
+    let all = bus_routes?.as_array()?;
+    if cells.is_empty() {
+        return bus_routes.cloned();
+    }
+    let near = |s: &Value| -> bool {
+        let (Some(la), Some(lo)) = (
+            s.get("lat").and_then(Value::as_f64),
+            s.get("lon").and_then(Value::as_f64),
+        ) else {
+            // A stop with no coordinate cannot be shown unreachable, so it is
+            // kept. Erring towards the larger set is the only safe direction.
+            return true;
+        };
+        let (ci, cj) = (
+            (la / BUS_REACH_LAT_CELL).floor() as i64,
+            (lo / BUS_REACH_LON_CELL).floor() as i64,
+        );
+        (-1..=1).any(|di| (-1..=1).any(|dj| cells.contains(&(ci + di, cj + dj))))
+    };
+    let kept: Vec<Value> = all
+        .iter()
+        .filter(|r| {
+            r.get("stops")
+                .and_then(Value::as_array)
+                .is_none_or(|ss| ss.iter().any(near))
+        })
+        .cloned()
+        .collect();
+    // ⚠ STDERR, NOT STDOUT. `dump_day_request` and `replay-corpus-states.sh`
+    // write the REQUEST to stdout — a diagnostic line there corrupts the JSON
+    // they emit, which is how the first version of this broke both.
+    eprintln!(
+        "busRouteCache: {} of {} route(s) reachable from {} fix cell(s)",
+        kept.len(),
+        all.len(),
+        cells.len()
+    );
+    Some(Value::Array(kept))
+}
+
 /// A route's stop list: `[optStr(name), bits(lat), bits(lon), seq]`.
 ///
 /// Shared by the bus and rail caches — the same four columns in the same order,
@@ -960,10 +1053,16 @@ pub fn build_day_request(
         "venuePriors".into(),
         encode_venue_priors(i.get("venuePriors")),
     );
+    // ⚠ THE FILTER SITS HERE, NOT INSIDE `encode_caches`, and that is deliberate.
+    // `fold_env` pins `encode_caches` against what the TypeScript produced, whole
+    // field for whole field. That oracle is about the PORT being faithful, so an
+    // optimisation must not be smuggled through it — it belongs one level up,
+    // where it is visible at the call site and has its own test.
+    let bus_reachable = reachable_bus_routes(i.get("busRouteCache"), obs.get("points"));
     for (k, v) in encode_caches(
         i.get("hsmmDecode"),
         i.get("railRouteCache"),
-        i.get("busRouteCache"),
+        bus_reachable.as_ref().or_else(|| i.get("busRouteCache")),
         i.get("railStopsCache"),
     )? {
         env.insert(k, v);
