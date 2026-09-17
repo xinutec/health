@@ -79,6 +79,11 @@ async fn main() -> Result<()> {
             i + 1,
             after as i64 - before as i64,
         );
+        // The served per-phase split, DB time included — the one place the
+        // fold's OSM database time is separated from its compute.
+        if let Some(t) = body.get("timing") {
+            println!("         timing {t}");
+        }
     }
     pool.close().await;
     println!("high-water            {high:>5} MiB");

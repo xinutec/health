@@ -1883,6 +1883,19 @@ def qMatchTrajectory (fixes : Array QPt) (ways : Array QWay)
         rrow := rrow.push route
       rmat := rmat.push rrow
     routeAcc := routeAcc.push rmat
+    -- Drop every cached search whose source is not an endpoint of THIS layer's
+    -- candidates — the only sources the next layer can ask for. Each `LState`
+    -- carries three arrays of `n` (`linit`), so an unbounded cache is
+    -- O(sources × n): 985 candidates over a 20,631-vertex corridor on
+    -- 2026-05-25 was ~500 MiB, the whole of #1071. Value-preserving by
+    -- `qRouteBetween_route_pure`: the route result is independent of which
+    -- valid cache is threaded, and a cache with entries removed is still
+    -- `OnTrajCache`. What is lost is re-use when a source recurs two or more
+    -- layers later; a source shared by consecutive layers is kept.
+    let keep : Array Nat := cur.cands.foldl (init := #[]) fun acc c =>
+      let s := graph.segments.getD c.si default
+      (acc.push s.u).push s.v
+    routeCache := routeCache.mapIdx fun i o => if keep.contains i then o else none
   let routeOf := routeAcc
 
   -- Phase B — the concrete first-order max-sum trellis (`MatchViterbi`): node

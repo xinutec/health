@@ -872,12 +872,17 @@ def dayResult (j : Json) : Json :=
     --
     -- ⚠ A skipped stage is a WRONG day — nothing downstream gets a name, a city
     -- or a station. For reading RSS only; never served, blessed or compared.
-    let skipEnrich ← optBool j "skipEnrich" false
+    -- ⚠ READ OFF `env`, where `build_day_request` writes it (and `walkMatch`).
+    -- The first version read the ROOT, so neither seam ever reached Lean and two
+    -- arms of identical code were recorded as an ablation.
+    let skipEnrich ← optBool envJson "skipEnrich" false
     -- ⚠ HOISTED out of the branch: `(← …)` may only appear directly in a `do`
     -- block, not nested inside an `if` expression.
     let enrichPlaces := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
+    -- `dbgTrace` so the ablation announces itself FROM LEAN: the Rust warning
+    -- only proves the flag was written, not that it was read.
     let segsEnriched :=
-      if skipEnrich then segsSplit
+      if skipEnrich then dbgTrace "lean: skipEnrich — enrichment stage skipped" fun _ => segsSplit
       else Verified.Geo.EnrichFold.enrichFold enrichReads
         { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
           steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
@@ -894,8 +899,10 @@ def dayResult (j : Json) : Json :=
     -- ablation harness. A truncated cascade is a WRONG day on purpose — passes
     -- undo one another — so its output is for reading RSS and nothing else.
     let allPasses := Verified.Geo.PassFold.passes env
-    let chosen := match ← optInt j "passLimit" with
-      | some n => allPasses.extract 0 n.toNat
+    let chosen := match ← optInt envJson "passLimit" with
+      | some n =>
+        dbgTrace s!"lean: passLimit {n} — running {min n.toNat allPasses.size} of {allPasses.size} passes"
+          fun _ => allPasses.extract 0 n.toNat
       | none => allPasses
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these
