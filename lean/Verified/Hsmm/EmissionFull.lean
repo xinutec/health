@@ -62,8 +62,9 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
     `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
     model sums onto it. `placeCoords` resolves `s.placeId`; `isCovered`
     (train-generator) and `reacquireRobust` are caller flags, matching the TS
-    `buildHsmmModel`. `continuity` is the presence-continuity seed (`none` when
-    `USE_CONTINUITY_CONTINUATION` is off). -/
+    `buildHsmmModel`. `continuity` is the presence-continuity seed; the
+    production caller always supplies it, and the `none` arm is the chain-start
+    and test shape rather than a flag being off (see `Continuity`). -/
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))

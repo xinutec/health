@@ -2,12 +2,21 @@ import Verified.Hsmm.Emissions
 /-!
 # Presence-continuity emission bonus (implementation-first port of `continuityLogLikelihood`)
 
-Phase 3 of presence-continuity (`USE_CONTINUITY_CONTINUATION`, ON in the served
-decode cron): a per-no-fix-minute log-bonus to the stationary state matching the
+Phase 3 of presence-continuity: a per-no-fix-minute log-bonus to the stationary state matching the
 prior day's end-of-day place, decaying with hours-since-last-fix and scaled by the
 prior posterior — silenced once today's most-recent fix contradicts the prior
 place (>`CONTRADICTION_RADIUS_M`). This carries a multi-day no-data stay (e.g. a
 hospital) to the prior place with decaying confidence.
+
+⚠ `USE_CONTINUITY_CONTINUATION` NO LONGER GATES THIS, and saying it does sends
+the next reader looking for a flag to flip. The Rust that builds the decode
+request calls `load_continuity` UNCONDITIONALLY (`main.rs`) — the seed is sent on
+every decode, and the env var is read by nothing in this repo. Measured
+2026-09-17: of the 46 workloads in namespace `health`, only the one-shot
+`health-decode-backfill-v6` job still carries the variable at all; the serving
+Deployment and `CronJob/health-decode-recent` do not, and the decode is
+continuity-seeded regardless. So the seed is always on, but by the CALLER, not
+by that name (health #192).
 
 Pure factor; `haversine`/`exp`/`log` make the fired bonus ULP-close (`approx`),
 the gated-zero branches exact. UNPROVEN; pinned by the `#guard`s.

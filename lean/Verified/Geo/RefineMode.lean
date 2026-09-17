@@ -15,10 +15,17 @@ takes this cascade. `Verified.Geo.Factors` ports the OTHER arm
 (`refineModeViaFactors`); the two are alternatives, not layers, and which one is
 live is an environment fact rather than a code fact.
 
-STATED BECAUSE IT IS NOT VERIFIABLE FROM HERE: what the production deployment
-sets is unknown — its manifests are not in this repo. If production runs with the
-flag on, then production and the corpus take different arms, and this module is
-the corpus's.
+MEASURED 2026-09-17, so it no longer has to be assumed: production does not set
+it either. Read from the cluster API (`kubectl -n health get deploy,cronjob,job
+-o json` — the spec, never a pod exec), all 46 workloads carry no
+`USE_FACTOR_SCORER` and no `USE_BIOMETRIC_FACTOR`. What they do carry, on the
+serving Deployment and the decode CronJob alike, is the four C4 flags at `1`.
+So production and the corpus take the SAME arm, and it is this one.
+
+The other arm was tried: `docs/proposals/decoder-roadmap.md` records
+`USE_FACTOR_SCORER=1` costing +15 truth regressions. That is why nothing sets
+it. Re-check this paragraph if the manifests move, not because the flag is
+unknowable — it is one read away (health #192).
 
 ## What reaches it inside the fold
 
