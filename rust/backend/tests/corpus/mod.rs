@@ -165,6 +165,46 @@ pub fn load_trace(
     if section("walkableRoads") + section("buildingsNear") == 0 {
         return Ok(false);
     }
+    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN (#1501). The wall
+    // metric `offPathBuildingCrossingM` is the walk referee's "true defect"
+    // axis, and it reads 0.0 both when a line crosses no wall and when the
+    // mirror had no walls to check it against. The referee draws that
+    // distinction per DAY (`offPathM` is `none` when the day's buildings are
+    // empty) but not per LOCATION, which is where coverage actually varies.
+    //
+    // Measured 2026-09-17 over the whole corpus: 239 `buildingsNear` keys, ZERO
+    // empty, and the least-covered query still returns 27 outlines (p50 327).
+    // So this cannot fire today, and that is the point — it is a TRIPWIRE for
+    // the first re-capture that lands on ground the building layer does not
+    // reach, not a check that something is presently wrong.
+    //
+    // It is deliberately FATAL rather than a warning. The failure mode it
+    // guards is a metric scoring 0.0 everywhere and reading as an improvement
+    // on all of it, which is the same shape that let a deleted detector pass
+    // this gate twice (#1501 §2). When it does fire, the fix is the
+    // per-location distinction that ticket asks for — not a looser bar here.
+    if let Some(bldg) = fx
+        .pointer("/inputs/osmTrace/buildingsNear")
+        .and_then(Value::as_object)
+    {
+        let blank: Vec<&String> = bldg
+            .iter()
+            .filter(|(_, v)| v.as_array().is_none_or(Vec::is_empty))
+            .map(|(k, _)| k)
+            .collect();
+        if !blank.is_empty() {
+            return Err(format!(
+                "{name}: {} of {} buildingsNear key(s) came back EMPTY. That is \
+                 UNMEASURED ground, and every walk reading it scores \
+                 offPathBuildingCrossingM 0.0 — which the referee cannot tell \
+                 from a clean line. See #1501: the fix is to report wall \
+                 coverage per location, not to drop this check.",
+                blank.len(),
+                bldg.len(),
+            ));
+        }
+    }
+
     backend::osm_host::load_trace_sections(
         &format!("{golden}/{name}"),
         walkable,
