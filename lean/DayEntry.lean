@@ -860,11 +860,28 @@ def dayResult (j : Json) : Json :=
         stations := env.nearbyStations
         place := fun lat lon pref stay => namer.name lat lon stay pref
         tzAt := env.tzAt }
-    let segsEnriched := Verified.Geo.EnrichFold.enrichFold enrichReads
-      { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
-        steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
-      (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
-      env.points segsSplit
+    -- ⚠ `skipEnrich` SKIPS THE OSM ENRICHMENT STAGE, for #1071. `passLimit`
+    -- exonerated the pass cascade (0 passes costs what 38 do), and the same
+    -- round still issues 133 mirror queries with NO pass running — so the OSM
+    -- reads come from here, and this seam says whether the memory does too.
+    --
+    -- ⚠ ONLY ON THIS CALL SITE. `decodeOnly` has the same three lines and must
+    -- keep running the stage: it is the TIMING harness's parse prefix, and an
+    -- ablation flag that silently changed it would move a number nobody was
+    -- measuring.
+    --
+    -- ⚠ A skipped stage is a WRONG day — nothing downstream gets a name, a city
+    -- or a station. For reading RSS only; never served, blessed or compared.
+    let skipEnrich ← optBool j "skipEnrich" false
+    -- ⚠ HOISTED out of the branch: `(← …)` may only appear directly in a `do`
+    -- block, not nested inside an `if` expression.
+    let enrichPlaces := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
+    let segsEnriched :=
+      if skipEnrich then segsSplit
+      else Verified.Geo.EnrichFold.enrichFold enrichReads
+        { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
+          steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
+        enrichPlaces env.points segsSplit
     -- The five corrections that run between the OSM enrichment stage and pass 1
     -- (#430). Same argument as the fold's: they are one stage because the order
     -- is what is being measured — `revertIsolatedCadence` exists to undo the

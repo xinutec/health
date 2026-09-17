@@ -322,6 +322,21 @@ fn count_ids(ids: impl Iterator<Item = i64>) {
     }
 }
 
+/// Read the row and geometry-byte counts WITHOUT resetting them.
+///
+/// ⚠ **EXISTS SO TWO READERS CAN COEXIST.** `fold_converge` reports a per-ROUND
+/// yield and `routes::velocity` reports the per-REQUEST total. When the former
+/// used `take_rows` it drained the counter every round and the aggregate line
+/// printed `0 row(s)` — a reading that looked like "the mirror was never
+/// touched" on a request that had just fetched 41,612 rows. A peek plus the
+/// caller's own delta leaves the total intact.
+pub fn peek_rows() -> (u64, u64) {
+    (
+        ROWS.load(Ordering::Relaxed),
+        WKT_BYTES.load(Ordering::Relaxed),
+    )
+}
+
 /// Read the row and geometry-byte counts and reset them.
 pub fn take_rows() -> (u64, u64, u64) {
     let distinct = DISTINCT

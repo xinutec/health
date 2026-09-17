@@ -1057,6 +1057,20 @@ pub fn build_day_request(
     // #1071, absent unless the harness sets it. A truncated cascade is a WRONG
     // day by construction (passes undo one another), so it exists to be measured
     // and never to be served, blessed or compared.
+    // ⚠ `FOLD_SKIP_ENRICH` drops the OSM enrichment stage — the #1071 ablation
+    // seam the pass-limit result pointed at. Absent by default, loud when set,
+    // and its day is WRONG on purpose.
+    //
+    // ⚠ THE WARNING IS PART OF THE INSTRUMENT, NOT DECORATION. The first attempt
+    // at this seam wired the Lean half and not this half, so the flag was read by
+    // nothing and BOTH arms ran enrichment. Two runs of the same thing agreed to
+    // the row and were recorded as "enrichment exonerated". Grep for this line to
+    // confirm the ablation FIRED before reading any result from it.
+    if std::env::var_os("FOLD_SKIP_ENRICH").is_some() {
+        eprintln!("⚠ FOLD_SKIP_ENRICH — skipping OSM enrichment; this day is WRONG");
+        env.insert("skipEnrich".into(), Value::Bool(true));
+    }
+
     if let Ok(n) = std::env::var("FOLD_PASS_LIMIT") {
         let n: u32 = n
             .parse()

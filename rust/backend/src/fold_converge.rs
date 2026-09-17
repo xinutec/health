@@ -147,6 +147,9 @@ pub fn converge<A: Answerer>(
     let mut asked: HashSet<Miss> = HashSet::new();
     let mut unanswerable: Vec<Miss> = Vec::new();
 
+    // Running totals for the per-round yield delta; see the peek below.
+    let mut seen_rows: u64 = 0;
+    let mut seen_wkt: u64 = 0;
     for round in 1..=MAX_ROUNDS {
         // ⚠ SPLITTING THE RESIDUAL, which #1071 requires before anyone acts on
         // it. Two guesses at this number have already been wrong. `FOLD_SPLIT=1`
@@ -186,12 +189,31 @@ pub fn converge<A: Answerer>(
         }
 
         if std::env::var_os("FOLD_SPLIT").is_some() {
+            // ⚠ PER ROUND, NOT PER REQUEST (#1071). The aggregate "mirror yield"
+            // line at the end could not distinguish a round that misses
+            // everything from one that hits everything — and round 1 is the
+            // interesting one precisely because it starts with `tables 0`, so
+            // every OSM ask misses the answerer and falls through to the live
+            // mirror. Both counters are TAKEs, so each round reports its own.
+            let c = day_shell::osm::take_counts();
+            // ⚠ PEEK AND DELTA, never `take_rows` — `routes::velocity` reports the
+            // per-request total from the same counter after the last round, and
+            // draining it here made that line read `0 row(s)`.
+            let (rows_now, wkt_now) = day_shell::mirror::peek_rows();
+            let (rows, wkt) = (rows_now - seen_rows, wkt_now - seen_wkt);
+            seen_rows = rows_now;
+            seen_wkt = wkt_now;
             eprintln!(
                 "  r{round} build {build_ms}ms · serialise {ser_ms}ms · wrap {wrap_ms}ms \
-                 · serve {serve_ms}ms · body {} KiB · tables {} key(s) · RSS {} MiB",
+                 · serve {serve_ms}ms · body {} KiB · tables {} key(s) · RSS {} MiB \
+                 · osm {}/{} miss/asked · {} row(s) {} KiB",
                 wrapped.len() / 1024,
                 tables.len(),
                 rss_mib(),
+                c.misses(),
+                c.asked(),
+                rows,
+                wkt / 1024,
             );
         }
 
