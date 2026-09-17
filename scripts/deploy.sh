@@ -19,13 +19,16 @@
 # NOT come from the pinned flake.
 # (2026-06-29 Angular 21->22 + zoneless migration; Node 22->24.)
 #
-# Runs `pnpm run verify` (typecheck + lint + tests), then the replay gates
-# in step 2 (count the commands there — golden, walk-gate, score-decoder,
-# day-gate, focus-gate, golden with the Lean tenants on, golden-hsmm; they
-# can only run here, the fixtures are gitignored), commits all changes in
-# this repo, pushes to main, waits for CI, then rolls out the new image
-# on isis. The k8s manifests live in the home monorepo (xinutec/pippijn
-# code/kubes/health/k8s).
+# Runs the FULL gate ONCE — `pnpm run verify:deploy` = gate.json, every row,
+# including the 42-day corpus replay that can only run here (the fixtures are
+# gitignored) — commits all changes in this repo WITHOUT the hook (its table,
+# gate-commit.json, is a subset of what just ran), pushes to main, waits for
+# CI, then rolls out the new image on isis. The k8s manifests live in the home
+# monorepo (xinutec/pippijn code/kubes/health/k8s).
+#
+# ⚠ Until 2026-09-17 this ran the gate table, then the corpus replay again on
+# its own, then `git commit` ran the hook's copy of the whole table: two gates
+# and three corpus replays per deploy, ~45 min. The table runs once now.
 #
 # WHAT THIS DOES NOT DO — do not read the gates above as controlling what
 # reaches production. This script BUILDS NOTHING: `.github/workflows/
@@ -35,7 +38,7 @@
 # have). Every CronJob in the health namespace pulls `:latest` per
 # invocation, so a green CI run puts new classification code into
 # production the next time a cron fires, with no replay gate in front of
-# it. Step 7 restarts ONE Deployment — health-auth — which is the only
+# it. Step 6 restarts ONE Deployment — health-auth — which is the only
 # workload that does not re-pull on its own, and therefore the only thing
 # these gates actually gate. Measured and written down 2026-08-14 (#813),
 # where the two ways to end that asymmetry are set out.
@@ -118,90 +121,10 @@ trap cleanup EXIT
 # tells any nested health script (pnpm run golden -> golden.sh) it is already
 # inside the devShell, so it skips its own re-exec.
 DEV="nix develop $HEALTH_DIR -c env HEALTH_DEVSHELL=1"
-echo "==> [1/7] pnpm run verify (node from flake devShell)"
-cd "$HEALTH_DIR"
-$DEV pnpm run verify
-
-# --- golden + geometry + decoder gates ------------------------------------
-# The deterministic fixture gates: day-state snapshot diff (incl. worldline
-# feasibility + the journey ratchet), the walk-geometry ratchet, and the
-# decoder scoreboard. All are zero-DB replays of the local fixtures under
-# tests/golden/ — gitignored, so CI can never run them; the deploy path is the
-# only place they can gate. Skip only with DEPLOY_SKIP_GOLDEN=1 (e.g. an
-# infra-only change while a bless is in flight).
-#
-# score-decoder joined this list on 2026-07-29 because it had gone red
-# unnoticed: it was in no gate at all, so a scoreboard regression could sit
-# there indefinitely. It had — 2026-05-22 phantomRides 0 → 1, which turned out
-# to be the NARRATIVE getting sharper (an `unclear` row upgraded to `wrong
-# {user}`, so it became enforceable and could convict a leg) rather than any
-# decoder change. Harmless in the end, but nothing would have said so. Ordered
-# last of the three because it is the newest and the noisiest.
-#
-# day-gate joined on 2026-08-04 (#426). It is the only thing in the repo that
-# asks whether a Lean port has drifted from the TS it ports, and until it existed
-# nothing did: `pickBestStation` went stale against #373 and was found by reading
-# (#417); the underground trio went five commits and ~300 lines behind and was
-# found by a fold abort on the first real day it ran (#425). The alternative — a
-# timestamp sweep flagging any `Verified/**.lean` older than a `src/**.ts` its
-# docstring names — over-reports: a TS commit touching a file need not touch the
-# ported function.
-#
-# Its bar is ABSOLUTE, not a ratchet: every day IDENTICAL or SHELL ONLY, no
-# baseline to bless a divergence into. Verified red as well as green — a TS-only
-# change to the enricher's sample count reddens it on the first two days tried,
-# and reddens it as a LOOKUP MISS naming the coordinate, which is the localised
-# signal rather than a downstream field diff.
-#
-# It covers four Lean stages as of #430 — the biometric splits and the stay
-# bridge, the five corrections before the cascade, the 38 passes, and the six
-# stages after them — and compares all five boundaries between them, so a
-# divergence is named where it happens rather than where it surfaces. The splits
-# are a second sub-chain, not chained to the rest: the OSM enrichment loop runs
-# between them and is not ported.
-#
-# 50 s for 33 days, so its place in this list is not a cost question.
-#
-# focus-gate joined on 2026-08-05 (#435) and asks the same question about the
-# OTHER end of the pipeline. The day gate reaches everything `computeVelocity`
-# runs; it reaches nothing the weekly `refresh-focus-places` cron runs, so
-# `Verified.Geo.FocusPlaces` (800 lines) and `Verified.Geo.FocusIdentity` were
-# guard-pinned and nothing else — a guard is a snapshot of V8 at porting time
-# and keeps passing while the TS moves, which is exactly how #417 happened.
-#
-# Same absolute bar, no baseline. It replays each golden day's PhoneTrack fixes
-# through `detectFocusPlaces`, then the whole corpus at once — the shape the
-# cron actually runs on, and the only input that reaches the long-span
-# classification branches — and finally the captured conflated café/residence
-# cluster through `splitCluster`. 8 s for 35 cases.
-# ⚠ EIGHT OF THIS BLOCK'S GATES DIED WITH THE TYPESCRIPT BACKEND (#975).
-# `golden`, `golden` with tenants ON, `day-gate` and `golden-hsmm` lost their
-# package.json scripts with `src/` and were noticed at once. `walk-gate`,
-# `score-decoder`, `focus-gate` and `compare-match` kept their entries and kept
-# being invoked — a dead gate that still has a script name is the quiet kind.
-#
-# ⚠ AND THEY DID NOT FAIL AT `node dist/`, WHICH IS WHY IT WENT UNSEEN FOR THREE
-# DAYS. Each begins `pnpm run build >/dev/null`, and `package.json` has had no
-# `build` script since 06346bd. So they died one line EARLIER than anyone was
-# looking, printing `==> building` and nothing else. Measured 2026-08-29:
-# `walk-gate.sh` exits 1 with that as its entire output.
-#
-# The consequence was not a silent pass. `set -euo pipefail` means step 2
-# ABORTED at the first of them — so this block has been unable to complete since
-# 06346bd.
-#
-# ⚠ AND IT STAYED UNABLE AFTER THE 2026-08-29 REPAIR. That pass removed the eight
-# and kept `compare-gps-outliers`, calling it "the one gate that still works";
-# measured 2026-09-01, it exits 1 on a deleted `src/` import. Believing it was a
-# survivor took checking that its script EXISTED and that it did not share the
-# others\' `pnpm run build` failure — neither of which is running it. Three
-# harnesses that do run replaced it (#1301).
-#
-# They are removed from the run rather than left to fail, and their loss is
-# announced at the start and again at the end, on the same argument as the skip
-# banner below: a deploy is judged by its last line, and a check that goes quiet
-# is worse than one that goes red. The coverage is GONE, not waived — #1048 is
-# where that is held.
+# Eight replay gates died with the TypeScript backend (#975); three came back in
+# Rust against Lean and run in the full table. The rest is coverage LOST, not
+# waived — #1048 holds it — and a deploy says so at the start and at the end,
+# because a check that goes quiet is worse than one that goes red.
 dead_gates_banner() {
 	cat >&2 <<-BANNER
 
@@ -214,119 +137,41 @@ dead_gates_banner() {
 	================================================================
 	  deleted with the TS backend, #975 (06346bd, 2026-08-26)
 	  held at health #1048 — do not treat this deploy as gated by them
-	  THREE came back 2026-08-31/09-01 and run in step 2 below.
+	  THREE came back 2026-08-31/09-01 and run in the full gate (gate.json).
 	================================================================
 
 	BANNER
 }
 
-# The other half of the same lesson: a gate whose script vanishes must say so by
-# name, not die inside `pnpm` with an exit code and no subject. Everything below
-# is checked to exist before any of it runs, so the NEXT deletion of a producer
-# is caught here instead of at whichever call site happens to be first.
-require_pnpm_scripts() {
-	local missing=()
-	for s in "$@"; do
-		$DEV node -e "process.exit(require('./package.json').scripts['$s']?0:1)" \
-			|| missing+=("$s")
-	done
-	if (( ${#missing[@]} )); then
-		echo "==> [2/7] ABORT: package.json has no script named: ${missing[*]}" >&2
-		echo "    A gate's script was deleted without its call site. See #1048 for" >&2
-		echo "    the last time this happened (#975 took EIGHT of them, and this" >&2
-		echo "    guard missed four because it checks that a package.json ENTRY" >&2
-		echo "    exists, not that the script it names can RUN)." >&2
-		exit 1
-	fi
-}
-
+cd "$HEALTH_DIR"
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [2/7] corpus replay gates — walk geometry, the truth floor, the journey floor"
+	echo "==> [1/6] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
 	dead_gates_banner
 	DEAD_GATES=1
-	# ⚠ `compare-gps-outliers` IS NOT A LIVE GATE, whatever a banner claims. It
-	# exits 1 with ERR_MODULE_NOT_FOUND on `src/hmm/gps-outliers.js`, deleted at
-	# 06346bd — so under `set -euo pipefail` this block cannot complete, and a
-	# repair that removed eight corpses around it
-	# did not change that.
-	#
-	# ⚠ AND IT FAILED FOR THE REASON `require_pnpm_scripts` ALREADY NAMES in its
-	# own abort message: that guard checks a package.json ENTRY EXISTS, not that
-	# what it names can RUN. The 08-29 pass checked the `pnpm run build` failure
-	# mode the other eight shared and stopped one layer short of the import. The
-	# script is deleted now (#1301) rather than left as a name that lies.
-	#
-	# What replaces it is three harnesses that DO run, in Rust against Lean, with
-	# no TypeScript arm to lose. They replay the gitignored corpora — which is
-	# why they belong here and not in gate.dhall — and each gates a committed
-	# floor a human blessed from the TypeScript before it went:
-	#
-	#   corpus_gate         ONE replay of each of 42 days, graded four ways:
-	#                         walks     238 walks vs walk-baseline.json
-	#                         truth     312 confirmed rows vs truth-baseline.json
-	#                         journeys  80 of 92 vs journey-baseline.json
-	#                         day       every state vs each fixture's statesOut
-	#   decoder_scoreboard  11 days x 10 counts vs decoder-scoreboard.json
-	#                       (scores the FROZEN decodes)
-	#   hsmm_decode_corpus  11 days RE-DECODED from raw materials vs each
-	#                       fixture's blessed segments — the decoder gate itself
-	#
-	# ⚠ `corpus_gate` REPLACED FOUR TEST BINARIES on 2026-09-09 (#1359), and it
-	# ADDS the `day` grader, which this list never ran. They each replayed the
-	# same day from the same fixture and graded it differently; now one replay
-	# feeds all four, sharded two ways by day.
-	#
-	# They announce a SKIP rather than passing quietly when the corpus is
-	# absent, so a machine without it cannot read as gated.
-	# ⚠ `nextest`, NOT `cargo test`, AND THE DIFFERENCE IS NOT STYLE. `cargo test`
-	# runs the two corpus_gate shards as THREADS IN ONE PROCESS; nextest runs
-	# test-per-process. The walk referee sends its OSM ways and buildings ONCE,
-	# deduped across the days it was given, into state the Lean runtime holds for
-	# the process — so two shards in one process overwrite each other's captures
-	# and the fold then asks for keys the survivor does not carry.
-	#
-	# Measured 2026-09-12, one variable at a time, same commit and same archives:
-	#
-	#   nextest    + dev      0 walks moved   day 21/21
-	#   nextest    + release  0 walks moved   day 21/21
-	#   cargo test + release  94 of 118 moved, 49 regressed — and 215 OSM
-	#                         lookups unanswered against 17 under nextest
-	#
-	# So this step produced FALSE FAILURES, and had since before 7f5b412 — the
-	# control reproduced it there with identical numbers. Nothing caught it:
-	# gate.dhall's rows are nextest (its header says the mode trace RELIES on
-	# test-per-process), CI cannot run these gates at all because the fixtures are
-	# gitignored, and this script was the only caller of `cargo test` left. The
-	# breakage was therefore invisible until someone tried to ship.
-	#
-	# ⚠ The harness being unsound in one process is a REAL defect and is filed
-	# separately; production never runs two shards in a process, so the fix here
-	# is to stop asking it to.
-	$DEV cargo nextest run --manifest-path rust/Cargo.toml -p backend --release \
-		--test corpus_gate \
-		--test decoder_scoreboard --test hsmm_decode_corpus --no-capture
+	$DEV pnpm run verify:deploy
 else
-	# ⚠ ONE gate, by name. This message has twice outlived what it describes: it
-	# once said "golden + walk-gate + score-decoder" while skipping six more, and
-	# then named five while four of those could no longer run at all.
+	# ⚠ The COMMIT table only: everything but the corpus replay, the host/CLI
+	# equivalence, the mode-reachability pair and the sandboxed CLI build —
+	# `scripts/commit-table.sh` is the list. Announced here and again at the end.
+	echo "==> [1/6] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
 	cat >&2 <<-BANNER
 
 	================================================================
 	  ⚠  DEPLOYING WITH THE REPLAY GATES SKIPPED
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
-	    corpus_gate  decoder_scoreboard  hsmm_decode_corpus
-	================================================================
-	  the other five do not run either way — deleted with the TS
-	  backend, #975/#1048
+	    corpus_gate  hsmm_decode_corpus  (and the host/CLI equivalence,
+	    mode reachability, the sandboxed CLI build)
 	================================================================
 
 	BANNER
 	SKIPPED_GOLDEN=1
+	$DEV pnpm run verify
 fi
 
+
 # --- stage + commit ------------------------------------------------------
-echo "==> [3/7] staging changes"
+echo "==> [2/6] staging changes"
 cd "$HEALTH_DIR"
 git add -A
 
@@ -337,16 +182,16 @@ git add -A
 # 5ef3517 walk fix sat committed and unshippable until this was fixed. Skip the
 # commit, deploy what HEAD already says.
 if git diff --cached --quiet; then
-	echo "==> [4/7] git commit — nothing staged; deploying the existing HEAD"
+	echo "==> [3/6] git commit — nothing staged; deploying the existing HEAD"
 else
-	echo "==> [4/7] git commit"
-	git commit -F "$MSG_FILE"
+	echo "==> [3/6] git commit (--no-verify: the hook's table is a subset of step 1)"
+	git commit --no-verify -F "$MSG_FILE"
 fi
 
 COMMIT_SHA=$(git rev-parse HEAD)
 echo "    HEAD is now $COMMIT_SHA"
 
-echo "==> [5/7] git push origin main"
+echo "==> [4/6] git push origin main"
 git push origin main
 
 # --- wait for CI ---------------------------------------------------------
@@ -355,7 +200,7 @@ git push origin main
 # still the freshest, and gh run watch on an already-completed run exits
 # in ~0 ms, which then rolls out the stale image. Poll until a run for
 # our specific SHA shows up (Actions usually queues within a few seconds).
-echo "==> [6/7] watching CI for $COMMIT_SHA"
+echo "==> [5/6] watching CI for $COMMIT_SHA"
 cd "$HEALTH_DIR"
 RUN_ID=""
 for attempt in $(seq 1 30); do
@@ -373,13 +218,15 @@ if [[ -z "$RUN_ID" ]]; then
 fi
 # Bound the CI wait. `gh run watch` polls until the run finishes — with
 # no ceiling, a stuck Actions queue (a real ~5-hour stall has happened)
-# would hang the deploy indefinitely. Cap it at 15 min: a normal build
+# would hang the deploy indefinitely. Cap it at 30 min — ⚠ NOT 15: the image build takes 20-23 min (three runs on
+# 2026-09-17: 21, 23, 20), so a 15-min cap failed every deploy at step 5 and
+# left the rollout undone, reading as a CI fault. A normal build
 # is ~1 min, so anything past 15 is wedged — fail fast, before rollout.
 ci_status=0
-timeout 900 gh run watch --exit-status "$RUN_ID" || ci_status=$?
+timeout 1800 gh run watch --exit-status "$RUN_ID" || ci_status=$?
 if [[ $ci_status -ne 0 ]]; then
 	if [[ $ci_status -eq 124 ]]; then
-		echo "deploy: CI run $RUN_ID did not finish within 15 min — aborting before rollout." >&2
+		echo "deploy: CI run $RUN_ID did not finish within 30 min — aborting before rollout." >&2
 		echo "        Inspect or cancel it: gh run view $RUN_ID  |  gh run cancel $RUN_ID" >&2
 	else
 		echo "deploy: CI run $RUN_ID failed (exit $ci_status) — aborting before rollout." >&2
@@ -388,7 +235,7 @@ if [[ $ci_status -ne 0 ]]; then
 fi
 
 # --- rollout -------------------------------------------------------------
-echo "==> [7/7] rollout on isis"
+echo "==> [6/6] rollout on isis"
 ssh root@isis.xinutec.org \
 	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
 

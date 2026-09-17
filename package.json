@@ -10,8 +10,9 @@
     "test:frontend": "cd frontend && pnpm test",
     "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.e2e.json",
     "lint:frontend": "cd frontend && pnpm run lint",
-    "verify": "nix run ../dev-lint#gate -- . gate.json",
-    "lean-check": "scripts/lean-check.sh"
+    "verify": "scripts/dev nix run ../dev-lint#gate -- . gate-commit.json",
+    "lean-check": "scripts/lean-check.sh",
+    "verify:deploy": "scripts/dev nix run ../dev-lint#gate -- . gate.json"
   },
   "dependencies": {
     "mariadb": "^3.4.0"

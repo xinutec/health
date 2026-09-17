@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Run a command in this repository's dev shell — entering it ONCE.
+#
+# `nix develop` costs ~9 s of flake evaluation per call (measured 2026-09-17:
+# `nix develop -c true` = 8.7 s wall). Seventeen gate rows each paid it, so a
+# gate spent ~2.5 min entering the same shell. This is the row prefix instead:
+# already inside (`HEALTH_DEVSHELL=1`, the same marker scripts/_devshell.sh
+# sets), it just execs; outside, it enters once and marks the shell, so every
+# child that goes through here execs directly.
+#
+# A row is still self-contained — `gate . gate.json` from a bare terminal works
+# and pays per row as before. The hook and `pnpm run verify` enter first.
+set -euo pipefail
+if [[ "${HEALTH_DEVSHELL:-}" == "1" ]]; then
+	exec "$@"
+fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec nix develop "$root" --no-warn-dirty -c env HEALTH_DEVSHELL=1 "$@"

@@ -67,17 +67,6 @@
     {
       "argv": [
         "scripts/dev",
-        "scripts/rust-host-check.sh"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "the in-process Rust host agrees with the spawned CLI",
-      "timeout_s": 1800
-    },
-    {
-      "argv": [
-        "scripts/dev",
         "cargo",
         "clippy",
         "--manifest-path",
@@ -94,18 +83,6 @@
       },
       "name": "clippy",
       "timeout_s": 1800
-    },
-    {
-      "argv": [
-        "rm",
-        "-f",
-        "rust/target/mode-trace.txt"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "reset the mode trace",
-      "timeout_s": 60
     },
     {
       "argv": [
@@ -126,51 +103,6 @@
       },
       "name": "rust workspace tests",
       "timeout_s": 1800
-    },
-    {
-      "argv": [
-        "scripts/dev",
-        "cargo",
-        "nextest",
-        "run",
-        "--release",
-        "--manifest-path",
-        "rust/Cargo.toml",
-        "-p",
-        "backend",
-        "--test",
-        "corpus_gate",
-        "--test",
-        "head_corpus",
-        "--test",
-        "hsmm_decode_corpus"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {
-        "HEALTH_MODE_TRACE": "1"
-      },
-      "name": "corpus replay gates (release)",
-      "timeout_s": 1800
-    },
-    {
-      "argv": [
-        "scripts/dev",
-        "cargo",
-        "run",
-        "--release",
-        "--manifest-path",
-        "rust/Cargo.toml",
-        "-p",
-        "backend",
-        "--example",
-        "mode_reachability"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "every dispatched Lean mode is executed by something",
-      "timeout_s": 600
     },
     {
       "argv": [
@@ -307,20 +239,6 @@
       "env": {},
       "name": "dev-lint (baselined)",
       "timeout_s": 900
-    },
-    {
-      "argv": [
-        "nix",
-        "build",
-        "--no-warn-dirty",
-        "--no-link",
-        ".#verified-cli"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "the verified CLI packages (what the production image consumes)",
-      "timeout_s": 3600
     },
     {
       "argv": [

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Single health gate. A commit must be healthy: this runs the full gate
-# (gate.json, rendered from gate.dhall) — typecheck and lint on both halves,
-# schema-type drift, vitest, the frontend unit tests, the Lean verified core and
-# its decode parity harness, the Angular build and the phone-width layout
-# harness, and the shared dev-lint rules. There is NO separate pre-push step.
-# Slow by design; we optimise for healthy commits, not commit speed.
-# Quiet on success: the gate prints a check's output only when it FAILS, so a
-# healthy commit isn't buried under build/test noise (DL-GIT-PRECOMMIT-GATE).
-# `pnpm run verify` runs this same table, so the two cannot disagree.
+# The COMMIT gate: gate-commit.json, a projection of gate.json (gate.dhall) — the rows that decide
+# whether a commit is healthy in minutes, not the replay corpus. The full table
+# (gate.json: plus the 42-day corpus replay, the host/CLI equivalence and
+# the sandboxed CLI build) runs in scripts/deploy.sh before anything reaches the
+# pod. `pnpm run verify` runs this same table, so the two cannot disagree.
+# Quiet on success: a check's output is printed only when it FAILS.
 # Bypass a genuine work-in-progress commit with:  git commit --no-verify
+#
+# The dev shell is entered ONCE here (scripts/dev then execs each row directly);
+# entering it per row cost ~2.5 min of a gate that runs in ~3 (2026-09-17).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-if ! out=$(nix run "git+file:../dev-lint?ref=HEAD#gate" -- . gate.json 2>&1); then
+if ! out=$(scripts/dev nix run "git+file:../dev-lint?ref=HEAD#gate" -- . gate-commit.json 2>&1); then
   printf '%s\n' "$out" >&2
   exit 1
 fi

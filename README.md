@@ -35,12 +35,13 @@ log (see `docs/proposals/README.md`).
 
 | Command | What it does |
 |---|---|
-| `pnpm run verify` | The commit gate: every row in `gate.json` (rendered from `gate.dhall`) — Rust fmt/clippy/tests/doctests, the frontend's typecheck, lint, unit tests, build and phone-width layout harness, the union copies, the Lean verified core and decode parity, the verified CLI packaging, dev-lint, and the table against its own Dhall. Runs them all and names every one that failed. The pre-commit hook runs the same table, and so does `deploy.sh`. ⚠ The row COUNT is not restated here on purpose — it is counted in `gate.json`, and the number in this sentence was wrong (fourteen, against sixteen) for long enough to be quoted. |
+| `pnpm run verify` | The COMMIT gate: `gate-commit.json`, which is `gate.json` (rendered from `gate.dhall`) minus its slow rows — Rust fmt/clippy/tests/doctests, the frontend's typecheck, lint, unit tests, build and phone-width layout harness, the union copies, the Lean verified core, dev-lint, and both tables against their sources. Names every row that failed. The pre-commit hook runs the same table. ⚠ The row COUNT is not restated here on purpose — count it in the JSON. |
+| `pnpm run verify:deploy` | The FULL gate: `gate.json`, every row — the commit table plus the 42-day corpus replay, the in-process host against the spawned CLI, the mode-reachability pair and the sandboxed CLI build. `deploy.sh` runs this once; nothing reaches the pod without it. `scripts/commit-table.sh` names the rows that differ. |
 | `cargo nextest run` | The backend test suite, from `rust/`. (`pnpm test` is gone with the TypeScript backend.) |
 | `bin/backend <sub>` | The CLI. Run it with no subcommand for the list — `check`, `sync`, `serve`, `coverage`, `freshness`, `zones-census`, `decode-day`, the `compare-*` pairs, and the rest. |
 | `cargo test -p backend --release --test corpus_gate --test decoder_scoreboard --test hsmm_decode_corpus` | The replay gates, from `rust/`. `corpus_gate` replays each golden day ONCE and grades it four ways — walks, truth, journeys, day (#1359). They replay the gitignored `tests/golden/` corpora against committed floors a human blessed from the TypeScript: 238 walks, 312 confirmed ground-truth rows, 80 of 92 journeys, 11 days of decoder-scoreboard counts, and the same 11 days RE-DECODED from raw materials against their blessed segments. Each ANNOUNCES A SKIP when the corpus is absent rather than passing quietly. ⚠ `pnpm run compare-gps-outliers` used to be listed here as "the one replay gate left"; it had not run since 2026-08-26 (#1301). |
 | `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
-| `bash scripts/deploy.sh -m "msg"` | Full deploy: verify → the three replay gates → commit → push this repo → wait for CI (capped at 15 min) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
+| `bash scripts/deploy.sh -m "msg"` | Full deploy: the full gate once → commit (the hook is skipped: its table is a subset of what just ran) → push this repo → wait for CI (capped at 30 min; a build is 20-23) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
 
 ⚠ **`pnpm run golden`, `walk-gate`, `score-decoder`, `focus-gate`, `day-gate`,
 `golden-hsmm` and `compare-match` ARE GONE.** All eight replay gates ran
@@ -61,8 +62,8 @@ rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn`
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:
 
 ```
-pnpm run verify   # in this repo; deploy.sh also runs the three replay gates
-git add -A && git commit -F msg.txt
+pnpm run verify:deploy   # the full table, corpus replay included
+git add -A && git commit --no-verify -F msg.txt   # the hook's table is a subset of what just ran
 git push origin main
 gh run watch --exit-status <run-id>
 ssh root@isis.xinutec.org \

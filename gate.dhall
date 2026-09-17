@@ -59,18 +59,33 @@ and diffs it, so running the gate needs no `dhall`.
 
 let G = ../dev-lint/gate/schema.dhall
 
+{-  `scripts/dev` in place of `G.inDevShell`. The prelude's helper is
+    `nix develop --command`, and `nix develop` is ~9 s of flake evaluation per
+    call (2026-09-17: `nix develop -c true` = 8.7 s wall); seventeen rows paid it,
+    ~2.5 min of every gate spent entering one shell. The wrapper execs directly
+    when `HEALTH_DEVSHELL=1` is already set — the hook, `pnpm run verify` and
+    deploy.sh set it by entering once — and enters the shell itself otherwise, so
+    a row run from a bare terminal still works.
+-}
+let dev = \(argv : List Text) -> [ "scripts/dev" ] # argv
+
+{-  The same, for a row whose `cwd` is one level below the root — the path to
+    the wrapper is relative to the row's cwd, and the first run of this table
+    failed exactly the three rows that set one (`frontend`, `rust`). -}
+let devBelow = \(argv : List Text) -> [ "../scripts/dev" ] # argv
+
 in  { name = "health"
     , checks =
       [ G.Check::{
         , name = "frontend deps match the lockfile"
         , cwd = "frontend"
-        , argv = G.inDevShell [ "pnpm", "install", "--frozen-lockfile" ]
+        , argv = devBelow [ "pnpm", "install", "--frozen-lockfile" ]
         , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "typecheck (frontend app + e2e)"
-        , argv = G.inDevShell [ "pnpm", "run", "typecheck:frontend" ]
+        , argv = dev [ "pnpm", "run", "typecheck:frontend" ]
         , env = G.nonInteractive
         , timeout_s = 900
         }
@@ -88,7 +103,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "frontend union copies match the backend"
-        , argv = G.inDevShell
+        , argv = dev
             [ "cargo", "test", "--manifest-path", "rust/Cargo.toml"
             , "-p", "backend", "--test", "frontend_unions"
             ]
@@ -111,7 +126,7 @@ in  { name = "health"
         G.Check::{
         , name = "rust formatting"
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "fmt"
               , "--all"
@@ -137,7 +152,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "the in-process Rust host agrees with the spawned CLI"
-        , argv = G.inDevShell [ "scripts/rust-host-check.sh" ]
+        , argv = dev [ "scripts/rust-host-check.sh" ]
         , timeout_s = 1800
         }
       , {-  Clippy at `-D warnings`, over the whole workspace.
@@ -174,7 +189,7 @@ in  { name = "health"
         G.Check::{
         , name = "clippy"
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "clippy"
               , "--manifest-path"
@@ -244,7 +259,7 @@ in  { name = "health"
         , name = "rust workspace tests"
         , env = toMap { HEALTH_MODE_TRACE = "1" }
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "nextest"
               , "run"
@@ -308,7 +323,7 @@ in  { name = "health"
         , name = "corpus replay gates (release)"
         , env = toMap { HEALTH_MODE_TRACE = "1" }
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "nextest"
               , "run"
@@ -350,7 +365,7 @@ in  { name = "health"
         G.Check::{
         , name = "every dispatched Lean mode is executed by something"
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "run"
               , "--release"
@@ -379,7 +394,7 @@ in  { name = "health"
         G.Check::{
         , name = "rust doctests"
         , argv =
-            G.inDevShell
+            dev
               [ "cargo"
               , "test"
               , "--doc"
@@ -397,16 +412,18 @@ in  { name = "health"
             repository's shell from a subdirectory — verified by running it,
             2026-09-05, not read off the documentation.
         -}
-        G.cargoDoc with cwd = "rust"
+        G.cargoDoc
+          with cwd = "rust"
+          with argv = devBelow [ "cargo", "doc", "--no-deps", "--workspace" ]
       , G.Check::{
         , name = "lint (eslint, frontend)"
-        , argv = G.inDevShell [ "pnpm", "run", "lint:frontend" ]
+        , argv = dev [ "pnpm", "run", "lint:frontend" ]
         , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "frontend unit tests"
-        , argv = G.inDevShell [ "pnpm", "run", "test:frontend" ]
+        , argv = dev [ "pnpm", "run", "test:frontend" ]
         , env = G.nonInteractive # G.oneAngularWorker
         , timeout_s = 1800
         }
@@ -431,7 +448,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "Lean verified core (#guards)"
-        , argv = G.inDevShell [ "pnpm", "run", "lean-check" ]
+        , argv = dev [ "pnpm", "run", "lean-check" ]
         , env = G.nonInteractive
         , timeout_s = 3600
         }
@@ -449,7 +466,7 @@ in  { name = "health"
         G.Check::{
         , name = "frontend ui-check (phone-width layout harness)"
         , cwd = "frontend"
-        , argv = G.inDevShell [ "pnpm", "run", "ui-check" ]
+        , argv = devBelow [ "pnpm", "run", "ui-check" ]
         , {-  Playwright DELETES this at the start of every run, so the run made
               to investigate a failure is the run that erases it — and no option
               turns that off (`preserveOutput` is about PASSING tests). Declaring
@@ -567,5 +584,30 @@ in  { name = "health"
         , timeout_s = 120
         }
       , G.checkTable "../dev-lint"
+      , {-  THIS FILE IS THE FULL TABLE, and the commit hook runs a PROJECTION of
+            it: `gate-commit.json` is `gate.json` minus the rows named in
+            `scripts/commit-table.sh` — the 42-day corpus replay, the host/CLI
+            equivalence (a release build), the mode-reachability pair around
+            them, and the sandboxed CLI build. Those run in deploy.sh, before
+            anything reaches the pod, and NOT on every commit.
+
+            Why a projection and not a second Dhall table: `--check-table`
+            renders the Dhall in a staged copy that provides ONLY the schema
+            import, so a second table could not share rows with this one — it
+            would be a copy, and two copies of a gate drift (the reason this
+            file exists at all). One source, one projection, and this row is
+            what keeps the projection honest: it re-derives `gate-commit.json`
+            from `gate.json` and fails on any difference.
+
+            Measured before the split (2026-09-17, 8 runs): the full table is
+            ~8.7 min sequential, and the five rows dropped from the commit gate
+            are ~6 min of it. A deploy ran the table TWICE (deploy.sh, then the
+            hook) plus the corpus a third time on its own — ~45 min per deploy.
+        -}
+        G.Check::{
+        , name = "the commit table is the full table minus its slow rows"
+        , argv = dev [ "scripts/commit-table.sh", "--check" ]
+        , timeout_s = 120
+        }
       ]
     }
