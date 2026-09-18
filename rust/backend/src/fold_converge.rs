@@ -116,17 +116,27 @@ fn biggest_keys(obj: &serde_json::Map<String, Value>, prefix: &str) {
     }
 }
 
-/// Resident set size of this process (MiB), or 0 if `ps` cannot say.
+/// Resident set size of this process (MiB), or 0 if nothing can say.
 ///
 /// ⚠ **Printed per round because the TIME split was not the question.** #1071
-/// is a memory fault: the pod grows ~323 MiB serving one day and OOMs. Five
-/// separate accounts of where that goes have been written down and withdrawn,
-/// and the one measurement nobody had taken was RSS at the round boundary —
-/// which says whether the growth is per-round or once.
+/// is a memory fault. Resident, not allocated: the OOM killer counts pages
+/// held, so that is what a limit must be compared against.
 ///
-/// Resident, not allocated: the OOM killer counts pages held, so that is what a
-/// limit must be compared against.
+/// ⚠ **`/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER.** The serving
+/// image is `node:24-alpine`, whose busybox `ps` does not take `-o rss= -p`, so
+/// every RSS line a production `FOLD_SPLIT` run printed was `0 MiB` — a blind
+/// instrument in the one place the limit is real, and it printed a number
+/// rather than failing. `/proc/self/statm` needs no fork and exists on every
+/// Linux; `ps` stays as the macOS fallback, where local arms are taken.
 pub fn rss_mib() -> u64 {
+    // field 2 of statm is resident pages
+    if let Ok(s) = std::fs::read_to_string("/proc/self/statm")
+        && let Some(pages) = s.split_whitespace().nth(1)
+        && let Ok(n) = pages.parse::<u64>()
+    {
+        let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(4096);
+        return n * page / (1024 * 1024);
+    }
     std::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
