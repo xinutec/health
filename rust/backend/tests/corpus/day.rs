@@ -149,6 +149,15 @@ fn drop_nulls(v: &Value) -> Value {
     }
 }
 
+/// Days whose timeline is SELF-blessed — this pipeline's own output, frozen —
+/// because they were captured after the TypeScript went (#975) and can never
+/// carry an arm from the other implementation.
+///
+/// ⚠ A self-blessed oracle catches a REGRESSION and cannot catch "it was always
+/// wrong". The ground-truth narrative grades correctness for these days; this
+/// only holds the line.
+const SELF_BLESSED: &[&str] = &["2026-09-06"];
+
 pub struct Day {
     golden: &'static str,
     /// ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
@@ -188,13 +197,38 @@ impl Day {
         self.graded += 1;
         let fx = &rep.fx;
 
-        let Some(want) = fx.pointer("/expected/tsArm/capture/statesOut").cloned() else {
+        // ⚠ TWO KINDS OF ORACLE, and the difference matters when reading a
+        // failure. `tsArm.capture.statesOut` was blessed from the OTHER
+        // IMPLEMENTATION — it says the port is faithful. `expected.statesOut`
+        // is SELF-BLESSED: this pipeline's own output, frozen. It catches a
+        // regression and cannot catch "it was always wrong", which is what the
+        // ground-truth narrative is for (#1660).
+        //
+        // A day captured since #975 can only ever have the second. Refusing it
+        // does not protect the first — it closes the corpus, which is why the
+        // recent days carrying every defect worth fixing could not be graded.
+        let ts = fx.pointer("/expected/tsArm/capture/statesOut").cloned();
+        // ⚠ NAMED, NOT COUNTED — because the corpus is SHARDED. A ratchet on the
+        // NUMBER of TypeScript-blessed days cannot work here: each shard grades
+        // about ten, so any global figure is wrong in every shard (it failed at
+        // "only 10 day(s) ... was 42"). What IS shard-safe is the rule "every
+        // day carries a tsArm unless named here", which catches an old day
+        // losing its arm wherever it happens to be graded.
+        if ts.is_none() && !SELF_BLESSED.contains(&date) {
             self.failures.push(format!(
-                "{name}: no frozen tsArm timeline — and one CANNOT be created. \
-                 `compare-day --freeze` went with the TS cascade (#975), so a day \
-                 arriving without an oracle can never gain one and cannot join this \
-                 corpus. Every day here carries one; seeing this means a new day was \
-                 added or a capture dropped an existing arm. See #1063."
+                "{name}: no frozen tsArm timeline, and not named in SELF_BLESSED. \
+                 A day captured since #975 can only be self-blessed — add it to \
+                 that list DELIBERATELY. If this is an OLD day, its TypeScript arm \
+                 has been dropped and cannot be recreated (#1063)."
+            ));
+            return;
+        }
+        let Some(want) = ts.or_else(|| fx.pointer("/expected/statesOut").cloned()) else {
+            self.failures.push(format!(
+                "{name}: no timeline to replay against — neither a frozen tsArm \
+                 (which CANNOT be created; `compare-day --freeze` went with the TS \
+                 cascade, #975) nor a self-blessed `expected.statesOut`. A day needs \
+                 one of the two to join the corpus. See #1063, #1660."
             ));
             return;
         };
