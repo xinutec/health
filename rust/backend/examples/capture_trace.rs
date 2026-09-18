@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
     // the same refusal answering every OSM read in the pod for weeks).
     backend::osm_host::start_capture();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let conv = backend::mirror_source::converge_from_mirror(
+    let (conv, row_set) = backend::mirror_source::converge_from_mirror_recording(
         pool.clone(),
         cap.clone(),
         inputs.clone(),
@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
     .await
     .context("converge from the mirror")?;
     pool.close().await;
+    let live_day: Value = serde_json::from_str(&conv.out).context("the live fold's reply")?;
 
     let trace = backend::osm_host::take_capture();
     let sections: Vec<(String, usize)> = trace
@@ -150,13 +151,58 @@ async fn main() -> Result<()> {
         );
     }
 
+    let rs = row_set.as_object().cloned().unwrap_or_default();
+    let n = |k: &str| rs.get(k).and_then(Value::as_array).map_or(0, Vec::len);
+    eprintln!(
+        "  osmRowSet         {} line(s), {} point(s), {} declined, rail {} way(s)/{} station(s)",
+        n("lines"),
+        n("points"),
+        n("declined"),
+        rs.get("railLines")
+            .and_then(|r| r.get("ways"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        rs.get("railLines")
+            .and_then(|r| r.get("stations"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+    );
+
     let doc = json!({ "inputs": { "osmTrace": trace } });
     backend::osm_host::load_trace_value_sections(&doc, "<captured>", true, true, true)
         .map_err(|e| anyhow::anyhow!("reloading the capture: {e}"))?;
-    let empty = json!({"coverage": [], "points": [], "lines": [], "railLines": []});
-    let mut answerer2 = RowSetAnswerer::new(&empty).context("row set")?;
-    let _ = converge(&cap, &inputs, None, &mut answerer2).context("replay")?;
+    let mut answerer2 = RowSetAnswerer::new(&row_set).context("row set")?;
+    let replay = converge(&cap, &inputs, None, &mut answerer2).context("replay")?;
     let back = backend::osm_host::take_counts();
+
+    // ⚠ **DAY EQUALITY, NOT KEY MATCHING.** The row set is a CONVERSION —
+    // positional mirror rows into the fixture's object form — and a conversion
+    // that loses a field produces a fixture that is well formed and wrong. The
+    // only proof worth having is that the fold reaches the same day from it.
+    let replay_day: Value = serde_json::from_str(&replay.out).context("the replayed reply")?;
+    if replay_day == live_day {
+        eprintln!("day equality: the replay reproduces the live fold EXACTLY");
+    } else {
+        let differing: Vec<&str> = live_day
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(k, v)| replay_day.get(*k) != Some(*v))
+            .map(|(k, _)| k.as_str())
+            .collect();
+        eprintln!(
+            "⚠ day equality FAILED — {} top-level key(s) differ: {:?}",
+            differing.len(),
+            differing
+        );
+        eprintln!(
+            "   live {} round(s)/{} unanswerable · replay {} round(s)/{} unanswerable",
+            conv.rounds,
+            conv.unanswerable.len(),
+            replay.rounds,
+            replay.unanswerable.len()
+        );
+    }
     let (asked, missed) = (back.asked(), back.misses());
     eprintln!(
         "replayed against the capture: {asked} asked, {missed} missed  ({:.1}% hit), \
@@ -175,7 +221,63 @@ async fn main() -> Result<()> {
         );
     }
 
-    let out: Value = doc["inputs"]["osmTrace"].clone();
+    // ── the control ──────────────────────────────────────────────────────────
+    // ⚠ **DOES THE DECLINE LIST DO ANY WORK?** Day equality above says the
+    // capture is faithful; it does NOT say which part of it mattered. Replay
+    // once more with `declined` stripped: if the day is STILL identical, the
+    // list is inert for this day and nobody should conclude from it that a
+    // low-coverage day is being reproduced. Where it is not identical, that
+    // difference is precisely the gap a fixture could not express before
+    // (#1658 — 2026-09-06 declines 275 questions).
+    let mut stripped = rs.clone();
+    stripped.remove("declined");
+    let stripped = Value::Object(stripped);
+    let mut answerer3 = RowSetAnswerer::new(&stripped).context("row set")?;
+    let no_declines = converge(&cap, &inputs, None, &mut answerer3).context("control replay")?;
+    let no_declines_day: Value =
+        serde_json::from_str(&no_declines.out).context("the control reply")?;
+    // ⚠ THE COUNTS GO OUT EITHER WAY. An identical DAY does not mean an
+    // identical PROVENANCE: a declined key leaves the fold on defaults and is
+    // counted `unanswerable`, while an empty answer is a claim that there is
+    // nothing there. Those can reach the same day and are not the same fact —
+    // and `routes::velocity` logs the unanswerable count as the signal that a
+    // served day was built from defaults (#1658). Reporting only when the day
+    // moves would hide exactly that.
+    eprintln!(
+        "control: unanswerable — live {} · replay {} · without `declined` {}",
+        conv.unanswerable.len(),
+        replay.unanswerable.len(),
+        no_declines.unanswerable.len(),
+    );
+    // ⚠ THE DAY IS THE COARSER TEST AND IT MISSES THIS. On 2026-09-06 the output
+    // is identical either way, while the unanswerable count falls 108 -> 49:
+    // 59 coverage gaps answered as "nothing is there" instead of "nobody
+    // knows". That is the erasure #1658 is about, and comparing days alone
+    // reports it as no difference at all.
+    if no_declines.unanswerable.len() != replay.unanswerable.len() {
+        eprintln!(
+            "control: `declined` is LOAD-BEARING — without it {} gap(s) read as \
+             empty answers rather than as unknowns",
+            replay.unanswerable.len() - no_declines.unanswerable.len(),
+        );
+    }
+    if no_declines_day == live_day {
+        eprintln!(
+            "control: stripping `declined` leaves the DAY unchanged on this one — \
+             read the counts above, not this line"
+        );
+    } else {
+        eprintln!(
+            "control: stripping `declined` CHANGES the day — the list is load-bearing \
+             ({} declined key(s), {} unanswerable without them against {} with)",
+            n("declined"),
+            no_declines.unanswerable.len(),
+            replay.unanswerable.len(),
+        );
+    }
+
+    // Both halves of a fixture's `inputs`, in the shape it carries them.
+    let out = json!({ "osmTrace": doc["inputs"]["osmTrace"].clone(), "osmRowSet": row_set });
     match args.get(3) {
         Some(path) => {
             std::fs::write(path, serde_json::to_string(&out)?)?;

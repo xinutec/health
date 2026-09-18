@@ -840,6 +840,40 @@ where
     .context("the mirror thread panicked")?
 }
 
+/// [`converge_from_mirror`], RECORDING every row the answerer was served, as the
+/// `osmRowSet` a golden fixture carries (#1660).
+///
+/// ⚠ The recorder wraps the source rather than re-running the queries, so what
+/// is captured is exactly what production asked and got — including the
+/// DECLINES, without which a replay answers where the mirror could not and the
+/// day comes out better in the fixture than it does in production.
+pub async fn converge_from_mirror_recording(
+    pool: MySqlPool,
+    cap: Value,
+    inputs: Value,
+    now_ms: i64,
+) -> Result<(crate::fold_converge::Converged, Value)> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let source = MirrorSource::new(pool, handle.clone(), now_ms);
+        let (recording, rec) = crate::rowset_capture::RecordingSource::new(source);
+        day_shell::mirror::with_blocking_handle(handle, move || {
+            let mut answerer = crate::rowset_answerer::OsmAnswerer::with_source(recording);
+            let conv = crate::fold_converge::converge(&cap, &inputs, None, &mut answerer)?;
+            // ⚠ Read AFTER the fold and inside this thread: the recorder is
+            // shared with us by `Arc`, which is how the row set comes back
+            // without handing out `OsmAnswerer`'s private source.
+            let row_set = rec
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .row_set();
+            Ok((conv, row_set))
+        })
+    })
+    .await
+    .context("the mirror thread panicked")?
+}
+
 /// Walk a day to convergence against the live mirror. See
 /// [`with_mirror_answerer`] for why this hop exists.
 pub async fn converge_from_mirror(
