@@ -39,7 +39,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::c_void;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // `unsafe extern` and not plain `extern`: edition 2024 makes the block itself
 // carry the word, because what is unchecked here is the DECLARATION — that these
@@ -155,6 +155,109 @@ thread_local! {
 }
 
 /// The trace as of this instant, or `None` if none is loaded.
+/// Recorded answers for a day being captured into a golden fixture (#1660).
+///
+/// ⚠ **This is the writer the corpus lost.** Replaying a golden day needs
+/// `inputs.osmTrace`, and nothing has produced one since the TypeScript went
+/// (#975) — so the corpus froze at 2026-08-13 and no recent day could be
+/// graded. Every reader of the format is in this file; the writer belongs
+/// beside them so the two cannot drift.
+///
+/// Keyed table name → key string → the answer, in the exact shape
+/// `parse_way_records` / `parse_rings` read back.
+type CaptureTables =
+    std::collections::BTreeMap<&'static str, serde_json::Map<String, serde_json::Value>>;
+
+/// ⚠ **GLOBAL, NOT A THREAD-LOCAL — unlike `TRACE` and `TALLY` beside it.**
+/// The production fold does not run on the thread that starts it:
+/// `converge_from_mirror` hands the whole converge loop to a blocking worker,
+/// so a thread-local armed by the caller is simply not there when the callbacks
+/// fire. The first version of this recorded NOTHING and reported "0 asked",
+/// which reads exactly like a day that made no OSM calls.
+static CAPTURE: Mutex<Option<CaptureTables>> = Mutex::new(None);
+
+/// Begin recording what the mirror answers. Replaces any run in progress.
+pub fn start_capture() {
+    *CAPTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(CaptureTables::new());
+}
+
+/// The recorded `osmTrace` sections, and STOP recording.
+///
+/// ⚠ Returns only the three this file answers. The other seven sections of a
+/// fixture's `osmTrace` come from the answerer, not from these callbacks.
+pub fn take_capture() -> serde_json::Value {
+    let taken = CAPTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let mut out = serde_json::Map::new();
+    for (table, entries) in taken.unwrap_or_default() {
+        out.insert(table.to_string(), serde_json::Value::Object(entries));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// ⚠ FULL PRECISION, not a rounded format. The key is parsed back with
+/// `parse_key`, which multiplies by 1e9 before rounding — a `{:.6}` here would
+/// quantise to a DIFFERENT bucket than the live lookup did, and the replay
+/// would miss every key it had just captured while looking perfectly well
+/// formed.
+fn capture_key(lat: f64, lon: f64, radius: f64) -> String {
+    format!("{lat}|{lon}|{radius}")
+}
+
+/// Record one mirror answer, if a capture is running.
+fn capture(table: &'static str, lat: f64, lon: f64, radius: f64, answer: serde_json::Value) {
+    let mut guard = CAPTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(tables) = guard.as_mut() {
+        tables
+            .entry(table)
+            .or_default()
+            .insert(capture_key(lat, lon, radius), answer);
+    }
+}
+
+/// `Way`s in the shape `parse_way_records` reads: `coords` as `[lat, lon]`.
+fn ways_to_json(ways: &[Way]) -> serde_json::Value {
+    serde_json::Value::Array(
+        ways.iter()
+            .map(|w| {
+                serde_json::json!({
+                    "osmId": w.osm_id,
+                    "name": w.name,
+                    "subtype": w.subtype,
+                    "coords": w.coords.iter().map(|(la, lo)| serde_json::json!([la, lo])).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Rings in the shape `parse_rings` reads. ⚠ `{lat, lon}` OBJECTS, not pairs:
+/// `parse_pair` accepts both, but the existing fixtures spell a building ring
+/// this way and a capture that spelled it the other way would be a silent
+/// second format. The cost of getting this wrong is not an error — it is rings
+/// that decode to ZERO vertices, which reads downstream as "no walk ever
+/// entered a building".
+fn rings_to_json(lines: &[Line]) -> serde_json::Value {
+    serde_json::Value::Array(
+        lines
+            .iter()
+            .map(|r| {
+                serde_json::Value::Array(
+                    r.iter()
+                        .map(|(la, lo)| serde_json::json!({"lat": la, "lon": lo}))
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn trace() -> Option<Arc<Trace>> {
     TRACE.with(|t| t.borrow().clone())
 }
@@ -774,6 +877,7 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                         geom_hash(&lines)
                     );
                 }
+                capture("buildingsNear", lat, lon, radius, rings_to_json(&lines));
                 return answer(&lines);
             }
             answer(&[])
@@ -829,6 +933,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                         geom_hash_ways(&ways)
                     );
                 }
+                capture("walkableRoads", lat, lon, radius, ways_to_json(&ways));
                 return hand_over(&encode_ways(&ways));
             }
             hand_over(&encode_ways(&[]))
@@ -881,6 +986,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                         ways.len()
                     );
                 }
+                capture("drivableRoads", lat, lon, radius, ways_to_json(&ways));
                 return hand_over(&encode_ways(&ways));
             }
             hand_over(&encode_ways(&[]))

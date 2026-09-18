@@ -93,3 +93,19 @@ pub fn load_trace_value_sections(
 pub fn take_counts() -> day_shell::osm::Counts {
     day_shell::osm::take_counts()
 }
+
+/// Begin recording what the mirror answers, for capturing a new golden day
+/// (#1660). See `day_shell::osm::start_capture`.
+pub fn start_capture() {
+    day_shell::osm::start_capture();
+}
+
+/// The recorded `osmTrace` sections, and STOP recording.
+///
+/// ⚠ Only the three this crate's callbacks answer — `walkableRoads`,
+/// `buildingsNear`, `drivableRoads`. A fixture's `osmTrace` has seven more that
+/// come from the ANSWERER, and a capture that shipped these three alone would
+/// replay with the road and walk matchers fed and everything else missing.
+pub fn take_capture() -> serde_json::Value {
+    day_shell::osm::take_capture()
+}
