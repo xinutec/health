@@ -23,6 +23,13 @@ use anyhow::{Context, Result};
 use backend::{classification_inputs, config::Config, db, sync_state};
 use sqlx::Row;
 
+/// The local hour a fix falls in, for the histogram. ⚠ LOCAL, not UTC: the
+/// ground-truth files and every blessed row are written in the day's display
+/// zone, so a UTC histogram would lay an hour's blame on the wrong hour.
+fn local_hour(ts: i64, tz: &str) -> i64 {
+    backend::timezone::local_hour_of(ts, tz).map_or(-1, i64::from)
+}
+
 struct Bbox {
     min_lat: f64,
     max_lat: f64,
@@ -82,11 +89,13 @@ async fn main() -> Result<()> {
     // `priorEvening` bracket it, and a trip that starts before local midnight
     // is carried in those. Testing only `today` would report coverage for a
     // window narrower than the one the matcher asks about.
-    let fixes: Vec<(f64, f64)> = ["today", "morning", "priorEvening"]
+    let rows: Vec<(f64, f64, i64)> = ["today", "morning", "priorEvening"]
         .iter()
         .flat_map(|k| inputs["phonetrack"][k].as_array().into_iter().flatten())
-        .filter_map(|f| Some((f["lat"].as_f64()?, f["lon"].as_f64()?)))
+        .filter_map(|f| Some((f["lat"].as_f64()?, f["lon"].as_f64()?, f["ts"].as_i64()?)))
         .collect();
+    let fixes: Vec<(f64, f64)> = rows.iter().map(|(a, b, _)| (*a, *b)).collect();
+    let stamps: Vec<i64> = rows.iter().map(|(_, _, t)| *t).collect();
     if fixes.is_empty() {
         println!("{date}: no fixes — nothing to test");
         pool.close().await;
@@ -124,6 +133,27 @@ async fn main() -> Result<()> {
         fixes.len(),
         by_type.len()
     );
+    // ⚠ WHEN, not just how much. A day that is 66% covered is not uniformly
+    // two-thirds described — it is fully described at home and BLANK for the
+    // hours spent somewhere new, which is what makes the failure read as an
+    // intermittent algorithm bug (#1658). The histogram names the hours to stop
+    // diagnosing: on 2026-09-06 they are the Watford afternoon.
+    if let Some(boxes) = by_type.get("highway") {
+        let mut uncovered: std::collections::BTreeMap<i64, usize> =
+            std::collections::BTreeMap::new();
+        for ((la, lo), ts) in fixes.iter().zip(stamps.iter()) {
+            if !boxes.iter().any(|b| b.holds(*la, *lo)) {
+                *uncovered.entry(local_hour(*ts, display_tz)).or_default() += 1;
+            }
+        }
+        if !uncovered.is_empty() {
+            let hours: Vec<String> = uncovered
+                .iter()
+                .map(|(h, n)| format!("{h:02}:00 x{n}"))
+                .collect();
+            println!("  highway-UNCOVERED by local hour: {}", hours.join(", "));
+        }
+    }
     for (ft, boxes) in &by_type {
         let covered = fixes
             .iter()
