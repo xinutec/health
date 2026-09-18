@@ -156,7 +156,7 @@ fn drop_nulls(v: &Value) -> Value {
 /// ⚠ A self-blessed oracle catches a REGRESSION and cannot catch "it was always
 /// wrong". The ground-truth narrative grades correctness for these days; this
 /// only holds the line.
-const SELF_BLESSED: &[&str] = &["2026-09-06"];
+const SELF_BLESSED: &[&str] = &[];
 
 pub struct Day {
     golden: &'static str,

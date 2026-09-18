@@ -276,23 +276,42 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Both halves of a fixture's `inputs`, and the `meta` stamp that says what
-    // they were taken under — see `osm_host::capture_inputs`. Without it a
-    // fixture cannot notice the constants it depends on moving, and every gate
-    // stays green while the served day differs (#1071, #328).
+    // ── the whole fixture ────────────────────────────────────────────────────
+    // `{meta, inputs, expected}`, the shape a golden day carries.
+    //
+    // ⚠ `expected.statesOut`, NOT under `tsArm`. A `tsArm` oracle was blessed
+    // from the OTHER IMPLEMENTATION and no day captured since #975 can have
+    // one; this is SELF-blessed — the pipeline's own output, frozen. It catches
+    // a REGRESSION and cannot catch "it was always wrong". The ground-truth
+    // narrative grades correctness, and the day must be named in
+    // `corpus::day::SELF_BLESSED` to be accepted (#1660).
+    //
+    // ⚠ `meta.captureInputs` says what the capture was taken under. Without it
+    // a fixture cannot notice the constants it depends on moving, and every
+    // gate stays green while the served day differs (#1071, #328).
+    let mut fixture_inputs = inputs.clone();
+    if let Some(o) = fixture_inputs.as_object_mut() {
+        o.insert("osmTrace".into(), doc["inputs"]["osmTrace"].clone());
+        o.insert("osmRowSet".into(), row_set.clone());
+    }
     let out = json!({
         "meta": {
+            "fixtureFormatVersion": 1,
             "capturedAt": chrono::Utc::now().to_rfc3339(),
             "date": date,
             "user": user,
+            "tz": home_tz,
+            "description": "",
             "captureInputs": backend::osm_host::capture_inputs(),
         },
-        "osmTrace": doc["inputs"]["osmTrace"].clone(),
-        "osmRowSet": row_set,
+        "inputs": fixture_inputs,
+        "expected": { "statesOut": live_day.get("states").cloned().unwrap_or(Value::Null) },
     });
     eprintln!(
-        "stamped captureInputs: {}",
-        backend::osm_host::capture_inputs()
+        "fixture: inputs {} key(s) · expected.statesOut {} state(s) · stamp {}",
+        out["inputs"].as_object().map_or(0, serde_json::Map::len),
+        out["expected"]["statesOut"].as_array().map_or(0, Vec::len),
+        backend::osm_host::capture_inputs(),
     );
     match args.get(3) {
         Some(path) => {
