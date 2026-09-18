@@ -59,6 +59,22 @@ const NARRATIVES: &str = concat!(
 );
 
 /// Measured by running the recovered TypeScript over this corpus, 2026-08-31.
+/// Narratives written AFTER the TypeScript went (#975), NAMED rather than
+/// counted.
+///
+/// ⚠ **The header above says to re-derive these numbers by re-running the
+/// recovered TypeScript. That is no longer possible**, and pretending otherwise
+/// would either freeze the corpus at its 2026-08-13 shape or quietly reduce the
+/// constants to "whatever Lean now says", which is exactly what the header
+/// forbids. So the TS-blessed counts below stay EXACT over the TS-era files,
+/// and a narrative written since is listed here instead.
+///
+/// Listing rather than counting is the point: adding one is a deliberate act
+/// with a name attached, and it cannot dilute a number a human blessed from the
+/// other implementation. It is the same split `head_corpus` makes for a day
+/// with no `tsArm` — the fourth place #975 blocked the corpus from growing.
+const POST_TS: &[&str] = &["2026-09-06.md"];
+
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 395;
 const TS_ENFORCEABLE: usize = 349;
@@ -96,6 +112,10 @@ fn every_narrative_parses_as_the_typescript_did() {
     let mut failures: Vec<String> = Vec::new();
 
     for name in &names {
+        // ⚠ A POST-TS narrative is checked exactly as hard — it must parse, its
+        // civil times must resolve, its rows must anchor — but it feeds NONE of
+        // the TS-blessed totals, because no TypeScript ever read it.
+        let ts_blessed = !POST_TS.contains(&name.as_str());
         let md = std::fs::read_to_string(format!("{NARRATIVES}/{name}"))
             .unwrap_or_else(|e| panic!("reading {name}: {e}"));
         let date = &name[..10];
@@ -164,6 +184,9 @@ fn every_narrative_parses_as_the_typescript_did() {
             failures.push(format!("{name}: journeys refused: {e}"));
         } else {
             for j in jr["journeys"].as_array().map_or(&[][..], Vec::as_slice) {
+                if !ts_blessed {
+                    continue;
+                }
                 journeys += 1;
                 for leg in j["legs"].as_array().map_or(&[][..], Vec::as_slice) {
                     legs += 1;
@@ -173,8 +196,22 @@ fn every_narrative_parses_as_the_typescript_did() {
                 }
             }
         }
-        rows += day_rows.len();
+        if ts_blessed {
+            rows += day_rows.len();
+        }
         for row in day_rows {
+            if !ts_blessed {
+                // still anchored-checked below; just not counted
+                let (sd, ed) = (row["startDay"].as_str(), row["endDay"].as_str());
+                if let (Some(sd), Some(ed)) = (sd, ed)
+                    && ed < sd
+                {
+                    failures.push(format!(
+                        "{name}: a row ends on {ed}, before it starts on {sd}"
+                    ));
+                }
+                continue;
+            }
             if row["enforceable"].as_bool() == Some(true) {
                 enforceable += 1;
             }
@@ -196,7 +233,17 @@ fn every_narrative_parses_as_the_typescript_did() {
     }
 
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    assert_eq!(names.len(), TS_FILES, "narrative count moved");
+    assert_eq!(
+        names.len(),
+        TS_FILES + POST_TS.len(),
+        "narrative count moved — a new one must be NAMED in POST_TS, not absorbed"
+    );
+    for n in POST_TS {
+        assert!(
+            names.iter().any(|x| x == n),
+            "{n} is named in POST_TS but is not in the corpus — remove it from the list"
+        );
+    }
     assert_eq!(
         rows, TS_ROWS,
         "row count moved — see this file's header before touching it"

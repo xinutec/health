@@ -46,6 +46,7 @@ fn the_head_reproduces_the_typescript_segments_on_every_golden_day() {
     assert!(!names.is_empty(), "the corpus directory is empty");
 
     let mut agreed = 0usize;
+    let mut unjudged: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
     for name in &names {
@@ -55,12 +56,18 @@ fn the_head_reproduces_the_typescript_segments_on_every_golden_day() {
             serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {name}: {e}"));
 
         let Some(want) = fixture.pointer("/expected/tsArm/capture/segsRaw") else {
-            // NO ORACLE is a red verdict elsewhere; here it is a fixture the
-            // head cannot be judged against, and saying so beats counting it.
-            failures.push(format!(
-                "{name}: no frozen tsArm segsRaw — and one CANNOT be created. \
-                 `compare-day --freeze` went with the TS cascade (#975). See #1063."
-            ));
+            // ⚠ UNJUDGEABLE, NOT FAILED — and the floor below is what keeps that
+            // honest. This used to be a failure, on the reasoning that no oracle
+            // is a red verdict. That was right while every day had one; it is
+            // now unsatisfiable, because `compare-day --freeze` went with the TS
+            // cascade (#975) and no NEW day can ever have a tsArm. Held as a
+            // failure it does not protect the oracle — it forbids the corpus
+            // growing at all, which is why two captured days have been sitting
+            // unread in `adhoc-days/` since 2026-08-12 (#1660).
+            //
+            // The claim this test can still make is the stronger one: every day
+            // that HAS an oracle still matches it, and we never LOSE one.
+            unjudged.push(name.clone());
             continue;
         };
         let inputs = fixture.get("inputs").unwrap_or_else(|| {
@@ -95,7 +102,27 @@ fn the_head_reproduces_the_typescript_segments_on_every_golden_day() {
         names.len(),
         failures.join("\n")
     );
-    eprintln!("{agreed}/{} days agree on segsRaw", names.len());
+
+    // ⚠ THE RATCHET, and it is the whole reason skipping is safe. A day can
+    // join the corpus without an oracle; an EXISTING day may not quietly lose
+    // one. Dropping below this count means a tsArm was deleted, overwritten by
+    // a re-capture, or moved — none of which any other check would notice,
+    // because the only symptom is a day silently ceasing to be compared.
+    const ORACLES: usize = 42;
+    assert!(
+        agreed >= ORACLES,
+        "only {agreed} day(s) carry a frozen tsArm to compare against, was {ORACLES}.          A NEW day without one is expected and fine — this is about an EXISTING          oracle disappearing, which cannot be recreated (#975, #1063)."
+    );
+    eprintln!(
+        "{agreed}/{} days agree on segsRaw · {} unjudged (no tsArm, and none can be made): {}",
+        names.len(),
+        unjudged.len(),
+        if unjudged.is_empty() {
+            "—".to_string()
+        } else {
+            unjudged.join(", ")
+        },
+    );
 }
 
 /// The first segment index that differs, with both renderings.
@@ -152,6 +179,7 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
 
     let mut failures: Vec<String> = Vec::new();
     let mut agreed = 0usize;
+    let mut unjudged: Vec<String> = Vec::new();
     let mut bands: Vec<String> = Vec::new();
 
     for name in &names {
@@ -160,10 +188,11 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
         let fixture: Value =
             serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {name}: {e}"));
         let Some(want) = fixture.pointer("/expected/tsArm/capture") else {
-            failures.push(format!(
-                "{name}: no frozen tsArm capture — and one CANNOT be created. \
-                 `compare-day --freeze` went with the TS cascade (#975). See #1063."
-            ));
+            // ⚠ UNJUDGEABLE, NOT FAILED — same reasoning and same ratchet as
+            // the segsRaw test above. No NEW day can carry a tsArm (#975), so
+            // holding this as a failure forbids the corpus growing rather than
+            // protecting the oracle.
+            unjudged.push(name.clone());
             continue;
         };
         let inputs = fixture.get("inputs").expect("a fixture has inputs");
@@ -251,10 +280,26 @@ fn the_capture_the_fold_reads_matches_the_typescript_on_every_golden_day() {
         names.len(),
         failures.join("\n")
     );
+
+    // ⚠ THE SAME RATCHET as the segsRaw test: a new day may arrive without an
+    // oracle, an existing one may not quietly lose the one it has.
+    const ORACLES: usize = 42;
+    assert!(
+        agreed >= ORACLES,
+        "only {agreed} day(s) carry a frozen tsArm capture, was {ORACLES}. A NEW day \
+         without one is expected; this is about an EXISTING oracle disappearing, \
+         which cannot be recreated (#975, #1063)."
+    );
     eprintln!(
-        "{agreed}/{} days pass; {} within the documented libm band",
+        "{agreed}/{} days pass; {} within the documented libm band; {} unjudged: {}",
         names.len(),
-        bands.len()
+        bands.len(),
+        unjudged.len(),
+        if unjudged.is_empty() {
+            "—".to_string()
+        } else {
+            unjudged.join(", ")
+        },
     );
 }
 
