@@ -214,6 +214,15 @@ pub fn converge<A: Answerer>(
             if let Some(env) = obj.get("env").and_then(|e| e.as_object()) {
                 biggest_keys(env, "       env.env");
             }
+            // ⚠ AND SAY WHAT THAT COST. `biggest_keys` re-serialises every key to
+            // size it, on round 1 only — which is the same round the phase table
+            // shows a jump in, so the two are indistinguishable without this
+            // line. An instrument that lands inside the quantity it reports is
+            // this ticket's recurring failure, not a hypothetical (#1071).
+            eprintln!(
+                "  r{round} RSS after FOLD_SPLIT's own key sizing: {} MiB",
+                rss_mib()
+            );
         }
 
         if std::env::var_os("FOLD_SPLIT").is_some() {
@@ -277,6 +286,8 @@ pub fn converge<A: Answerer>(
             );
         }
 
+        let rss_pre_answer = if split { rss_mib() } else { 0 };
+        let n_fresh = fresh.len();
         for m in fresh {
             asked.insert(m.clone());
             match answerer.answer(&m)? {
@@ -289,6 +300,12 @@ pub fn converge<A: Answerer>(
                     unanswerable.push(m);
                 }
             }
+        }
+        if split {
+            eprintln!(
+                "  r{round} answerer: {n_fresh} fresh key(s)  RSS {rss_pre_answer} -> {} MiB",
+                rss_mib()
+            );
         }
     }
 
