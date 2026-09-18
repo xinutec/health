@@ -150,8 +150,9 @@ pub struct OsmAnswerer<S: RowSource> {
 /// Answering from the row set a golden fixture carries.
 ///
 /// A fixture's rows are complete by construction — extracted for exactly these
-/// days — so this source never declines, and every `Ok(None)` a day reports
-/// comes from a table with no arm rather than from missing rows.
+/// days — so this source declines only where the capture recorded that the
+/// MIRROR declined. Everywhere else an `Ok(None)` a day reports comes from a
+/// table with no arm rather than from missing rows.
 pub type RowSetAnswerer<'a> = OsmAnswerer<RowSetSource<'a>>;
 
 /// OSM points and lines from a fixture, each tagged with the feature bucket it
@@ -168,6 +169,31 @@ pub struct RowSetSource<'a> {
     /// and a caller reaching for `new_unfiltered` outside that test is asking
     /// for 157,489 coordinate pairs per question.
     prefilter: bool,
+    /// The questions the MIRROR declined when this row set was captured (#1660).
+    ///
+    /// ⚠ **Without this a fixture cannot reproduce a gap, only rows.** A
+    /// capture records what the mirror answered; where it could not vouch for
+    /// an area it returns `None`, and replaying that as "no rows near here"
+    /// makes the day come out BETTER in the fixture than in production. On
+    /// 2026-09-06 that is 108 keys — the whole of #1658's defect — blessed away
+    /// into a fixture that then asserts the erased behaviour as correct.
+    ///
+    /// ⚠ **ABSENT MEANS NO RECORD, NOT "NOTHING WAS DECLINED".** The 42
+    /// fixtures captured before this existed carry no list, and they keep
+    /// today's behaviour exactly: they answer everything. That is not a claim
+    /// that their mirror vouched for every question — it is the honest
+    /// statement that nobody wrote it down, and changing it would silently
+    /// re-bless 42 days.
+    declined: std::collections::HashSet<String>,
+}
+
+/// The key a decline is recorded under: the method, the bucket and the question.
+///
+/// ⚠ FULL PRECISION on the floats, for `osmTrace`'s reason — a rounded key
+/// records a decline against a question nobody ever asks, and the real one is
+/// then answered.
+pub fn decline_key(method: &str, bucket: &str, lat: f64, lon: f64, radius_m: f64) -> String {
+    format!("{method}|{bucket}|{lat}|{lon}|{radius_m}")
 }
 
 impl<'a> OsmAnswerer<RowSetSource<'a>> {
@@ -252,6 +278,15 @@ impl<'a> RowSetSource<'a> {
         let o = row_set.as_object().context("osmRowSet is not an object")?;
         Ok(Self {
             prefilter: true,
+            declined: o
+                .get("declined")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
             rail: o.get("railLines").and_then(Value::as_object),
             points: o
                 .get("points")
@@ -342,13 +377,29 @@ impl<'a> RowSetSource<'a> {
                             .collect()
                     })
                     .unwrap_or_default();
+                // ⚠ POSITION 4, AND IT WAS MISSING. `parseLineRow` reads the tag
+                // map here and `nearbyLandmarks` spawns one landmark per tag
+                // key; a four-element row parses fine and yields an EMPTY map.
+                // So every fixture replay answered that table with no building
+                // tags while production had them — the same absence that lost
+                // served days their venue names (#1054), reintroduced on the
+                // replay side only, where no gate could see it because both
+                // arms of every comparison were the handicapped one. The
+                // fixtures carry the tags (36,474 of 36,474 line rows on
+                // 2026-06-16); only this conversion dropped them.
+                let tags: Vec<Value> = r
+                    .get("tags")
+                    .and_then(Value::as_object)
+                    .map(|t| t.iter().map(|(k, v)| json!([k, v])).collect())
+                    .unwrap_or_default();
                 json!([
                     r.get("osmId").cloned().unwrap_or(Value::Null),
                     r.get("subtype")
                         .cloned()
                         .unwrap_or(Value::String(String::new())),
                     r.get("name").cloned().unwrap_or(Value::Null),
-                    coords
+                    coords,
+                    tags
                 ])
             })
             .collect()
@@ -403,8 +454,13 @@ impl<'a> RowSetSource<'a> {
     }
 }
 
-/// Answering from a fixture's rows never declines: the set was extracted for
-/// these days, so "no rows near here" is a real answer rather than a gap.
+/// Answering from a fixture's rows declines only where the CAPTURE recorded
+/// that the mirror declined (`declined`, #1660). Everywhere else the set is
+/// complete by construction — extracted for these days — so "no rows near here"
+/// is a real answer rather than a gap.
+///
+/// ⚠ A fixture with no `declined` list cannot express a gap at all. See the
+/// field.
 impl RowSource for RowSetSource<'_> {
     fn line_rows(
         &mut self,
@@ -413,6 +469,12 @@ impl RowSource for RowSetSource<'_> {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<Vec<Value>>> {
+        if self
+            .declined
+            .contains(&decline_key("line_rows", bucket, lat, lon, radius_m))
+        {
+            return Ok(None);
+        }
         Ok(Some(RowSetSource::line_rows(
             self, bucket, lat, lon, radius_m,
         )))
@@ -425,6 +487,12 @@ impl RowSource for RowSetSource<'_> {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<Vec<Value>>> {
+        if self
+            .declined
+            .contains(&decline_key("point_rows", bucket, lat, lon, radius_m))
+        {
+            return Ok(None);
+        }
         Ok(Some(RowSetSource::point_rows(
             self, bucket, lat, lon, radius_m,
         )))
