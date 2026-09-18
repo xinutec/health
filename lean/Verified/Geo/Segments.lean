@@ -58,6 +58,24 @@ structure WindowFeatures where
   centroidLat : Float := 0
   centroidLon : Float := 0
   pointCount : Nat := 0
+  /-- Whether this window MOVED FARTHER THAN ITS OWN GPS ERROR, so `linearity`
+      means something (#185).
+
+      ⚠ `linearity` is a net/path ratio and reads 1.0 — maximally directed — for
+      any path with one effective hop, so a fix landing elsewhere inside the
+      noise outscores a genuine walk, which wanders. Measured 2026-09-06: a
+      2-minute leg, 3 fixes at 100 m accuracy, 89 m net, scored 1.0000 against
+      0.52 and 0.65 for the real walks that day.
+
+      ⚠ DEFAULT `true` — "assume measurable" — because no caller that omits it
+      should change behaviour, and because a window with no accuracy reported is
+      not thereby suspect.
+
+      ⚠ It does NOT alter `linearity` itself. Doing that broke 41 of 42 corpus
+      days: a STATIONARY window is unresolvable by definition, and mode is
+      classified FROM these features. This is a separate fact for the one
+      consumer that needs it. -/
+  directionResolvable : Bool := true
   deriving Inhabited
 
 /-- A mode with its raw score. -/
@@ -287,6 +305,9 @@ structure TrackSegment where
   pointCount : Nat
   refinedReason : Option String := none
   refinedKinds : Array String := #[]
+  /-- See `WindowFeatures.directionResolvable`. Carried so the jitter demotion
+      can tell an undirected path from an unmeasurable one (#185). -/
+  directionResolvable : Bool := true
   deriving Inhabited, BEq, Repr
 
 open Verified.JsNum (jsRound)
@@ -393,6 +414,10 @@ private def featuresOf (wp : Array FilteredPoint) : WindowFeatures :=
     accelerationBursts := Float.ofNat accelBursts
     stopFraction := Float.ofNat stops / Float.ofNat speeds.size
     netDisplacement := straightLine
+    directionResolvable :=
+      match medianAccuracyM wp with
+      | some acc => straightLine > acc
+      | none => true
     boundingRadius := wp.foldl (fun m p => max m (haversineMeters centroidLat centroidLon p.lat p.lon)) 0.0
     pointCount := n }
 
@@ -445,7 +470,13 @@ private def flushSeg (windows : Array WindowFeatures) (scores : Array (List Mode
     avgSpeed := jsRound (median (segW.map (·.medianSpeed)) * 10) / 10
     maxSpeed := jsRound ((segW.foldl (fun m w => max m w.maxSpeed) segW[0]!.maxSpeed) * 10) / 10
     linearity := jsRound (avgLinearity * 100) / 100
-    pointCount := segW.foldl (fun s w => s + w.pointCount) 0 }
+    pointCount := segW.foldl (fun s w => s + w.pointCount) 0
+    -- ⚠ ANY, not ALL. A segment whose direction was measurable in even one of
+    -- its windows has a linearity worth believing; requiring every window to
+    -- clear its own error would call a long real walk unresolvable because it
+    -- paused once. The demotion this feeds is looking for a segment that NEVER
+    -- moved (#185).
+    directionResolvable := segW.any (·.directionResolvable) }
 
 /-- Merge consecutive same-mode windows into segments.
 

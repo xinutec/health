@@ -1656,6 +1656,10 @@ private def headSegJson (s : Verified.Geo.Segments.TrackSegment) : Json :=
     ("confidence", fBits s.confidence), ("confidenceMargin", fBits s.confidenceMargin),
     ("avgSpeed", fBits s.avgSpeed), ("maxSpeed", fBits s.maxSpeed),
     ("linearity", fBits s.linearity), ("pointCount", Lean.toJson s.pointCount),
+    -- ⚠ Whether `linearity` MEANS anything for this segment: it is a net/path
+    -- ratio and reads 1.0 for a path with one effective hop, so a jump inside
+    -- the GPS noise outscores a real walk (#185).
+    ("directionResolvable", Json.bool s.directionResolvable),
     ("refinedReason", match s.refinedReason with | none => Json.null | some r => Json.str r),
     ("refinedKinds", Json.arr (s.refinedKinds.map Json.str))]
 

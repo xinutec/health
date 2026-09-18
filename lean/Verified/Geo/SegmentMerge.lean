@@ -91,6 +91,14 @@ structure Seg where
   centroidLat : Option Float := none
   centroidLon : Option Float := none
   focusPlaceId : Option Int := none
+  /-- Whether `linearity` MEANS anything for this segment — whether it moved
+  farther than its own GPS error (#185). See
+  `Verified.Geo.Segments.WindowFeatures.directionResolvable`.
+
+  ⚠ DEFAULT `true`. Every existing construction omits it and must keep its
+  behaviour: "we have no reason to doubt the direction" is the status quo, and
+  a segment with no accuracy reported is not thereby suspect. -/
+  directionResolvable : Bool := true
   /-- Set by the stay-split rebuilds (`Verified.Geo.StaySplit`) when a segment's
   window changed and its inherited enrichment is therefore no longer evidence
   about it. The `reenrichSplitWalks` pass sends these back through OSM naming. -/

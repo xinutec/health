@@ -150,6 +150,9 @@ private def parseSeg (j : Json) : Except String Seg := do
     centroidLat := ← optBits j "centroidLat"
     centroidLon := ← optBits j "centroidLon"
     focusPlaceId := ← optInt j "focusPlaceId"
+    -- ⚠ Defaults TRUE when absent: a caller that predates this is not asserting
+    -- the direction was unmeasurable, it simply never said (#185).
+    directionResolvable := ← optBool j "directionResolvable" true
     needsReenrich := ← optBool j "needsReenrich" false
     needsRename := ← optBool j "needsRename" false
     vehicleKind := ← optStr j "vehicleKind"
