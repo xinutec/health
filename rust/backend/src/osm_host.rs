@@ -109,3 +109,54 @@ pub fn start_capture() {
 pub fn take_capture() -> serde_json::Value {
     day_shell::osm::take_capture()
 }
+
+/// What a capture was taken under, for stamping into a fixture's `meta` (#1660).
+///
+/// ⚠ **A FIXTURE THAT DOES NOT RECORD THESE CANNOT NOTICE THEM MOVING.** Each
+/// one changes what the mirror is ASKED or what it may return, and none of them
+/// is part of any key a fixture holds — so a change to one alters production
+/// and alters nothing a gate replays. #1071 records that for
+/// `ROAD_CORRIDOR_MARGIN_M`; #328 is the same fault from the other side, a
+/// fixture asserting a verdict production had already stopped producing.
+#[must_use]
+pub fn capture_inputs() -> serde_json::Value {
+    serde_json::json!({
+        "roadCorridorMarginM": day_shell::mirror::road_corridor_margin_m(),
+        "candidateLimit": crate::mirror_source::CANDIDATE_LIMIT,
+    })
+}
+
+/// Refuse a fixture captured under inputs this build no longer uses.
+///
+/// ⚠ **ABSENT IS NOT A MISMATCH.** The 42 fixtures captured before this existed
+/// carry no stamp, and they must keep working — refusing them would be claiming
+/// they were taken under something they never recorded. Only a stamp that is
+/// PRESENT and DIFFERENT is a refusal, which is the case the check exists for.
+pub fn check_capture_inputs(meta: &serde_json::Value) -> Result<(), String> {
+    let Some(stamped) = meta
+        .get("captureInputs")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(());
+    };
+    let now = capture_inputs();
+    let mut moved: Vec<String> = Vec::new();
+    for (k, was) in stamped {
+        let is = now.get(k);
+        if is != Some(was) {
+            moved.push(format!(
+                "{k}: captured under {was}, this build uses {}",
+                is.map_or("(nothing of that name)".to_string(), ToString::to_string)
+            ));
+        }
+    }
+    if moved.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "this fixture was captured under different inputs and replaying it would \
+         compare the wrong things — {}. Re-capture the day, or restore the constant; \
+         do NOT bless around it, because every gate stays green either way (#1071)",
+        moved.join("; ")
+    ))
+}

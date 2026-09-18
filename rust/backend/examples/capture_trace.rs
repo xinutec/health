@@ -276,8 +276,24 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Both halves of a fixture's `inputs`, in the shape it carries them.
-    let out = json!({ "osmTrace": doc["inputs"]["osmTrace"].clone(), "osmRowSet": row_set });
+    // Both halves of a fixture's `inputs`, and the `meta` stamp that says what
+    // they were taken under — see `osm_host::capture_inputs`. Without it a
+    // fixture cannot notice the constants it depends on moving, and every gate
+    // stays green while the served day differs (#1071, #328).
+    let out = json!({
+        "meta": {
+            "capturedAt": chrono::Utc::now().to_rfc3339(),
+            "date": date,
+            "user": user,
+            "captureInputs": backend::osm_host::capture_inputs(),
+        },
+        "osmTrace": doc["inputs"]["osmTrace"].clone(),
+        "osmRowSet": row_set,
+    });
+    eprintln!(
+        "stamped captureInputs: {}",
+        backend::osm_host::capture_inputs()
+    );
     match args.get(3) {
         Some(path) => {
             std::fs::write(path, serde_json::to_string(&out)?)?;

@@ -45,6 +45,19 @@ use sqlx::{AssertSqlSafe, Row, query};
 
 /// `ROAD_CORRIDOR_MARGIN_M` — `osm-local.ts:951`.
 const ROAD_CORRIDOR_MARGIN_M: f64 = 400.0;
+
+/// The margin a capture was taken under, for stamping into a fixture (#1660).
+///
+/// ⚠ **A FIXTURE THAT DOES NOT RECORD THIS CANNOT NOTICE THE CONSTANT MOVING.**
+/// The margin is applied INSIDE `query_ways`, after the trace key is formed, so
+/// changing it changes what production fetches and changes NOTHING any fixture
+/// answers: every gate stays green by construction while the served day
+/// quietly differs (#1071). #328 hit the same wall from the other side — a
+/// fixture still asserting a bus verdict production no longer produces.
+#[must_use]
+pub fn road_corridor_margin_m() -> f64 {
+    ROAD_CORRIDOR_MARGIN_M
+}
 /// `BUILDING_QUERY_MARGIN_M` — `osm-local.ts:1057`.
 const BUILDING_QUERY_MARGIN_M: f64 = 100.0;
 

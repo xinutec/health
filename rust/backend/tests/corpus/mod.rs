@@ -205,6 +205,14 @@ pub fn load_trace(
         }
     }
 
+    // ⚠ REFUSE A FIXTURE CAPTURED UNDER CONSTANTS THIS BUILD NO LONGER USES.
+    // The margin and the candidate limit are applied AFTER the trace key is
+    // formed, so moving one changes production and changes nothing any fixture
+    // answers — the gate stays green while the served day differs (#1071), and
+    // #328 is the same fault from the other side. Absent stamp is not a
+    // mismatch: the 42 fixtures predating this carry none.
+    backend::osm_host::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
+
     // ⚠ FROM `fx`, NOT FROM THE PATH. The path form re-reads and re-parses the
     // fixture this function was already handed — 370 MiB and 470 ms on a 28 MB
     // golden day, per day, in a gate that walks 42 of them (#1654).
