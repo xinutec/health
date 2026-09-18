@@ -153,11 +153,49 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let mut answerer = RowSetAnswerer::new(rows).context("opening the row set")?;
     let answerer_ms = t.elapsed().as_millis();
+    // ⚠ SAMPLED, because it is not free and the phase table hid it: the row set
+    // is the fixture's `osmRowSet` (tens of thousands of lines), and indexing it
+    // lands entirely inside what the old table called "converge" (#1071).
+    // FIXTURE-ONLY — production answers from the live mirror and never builds
+    // this — so it is a gate cost (#1654), not a pod one.
+    let rss_answerer = rss_mib();
+
+    // ⚠ THE TRACE HAS TO BE INSTALLED, and until 2026-09-18 it was not.
+    // `converge`'s `osmTrace` argument goes into the REQUEST, for the answerer.
+    // The three `@[extern]` callbacks read a separate thread-local that only
+    // `osm_host::load_trace` fills — the two OSM paths this ticket keeps
+    // confusing (#1071). Without it all three answer empty, `annotateWalkMatches`
+    // and the road matcher bail per leg, and this example prints a confident
+    // phase table for a fold whose largest consumer never ran: 37 asks, 37
+    // misses, 0 rows, against 9,029 rows on the same day through the mirror.
+    let t = Instant::now();
+    // ⚠ FROM `fx`, NOT FROM THE PATH — the path form re-parses this same 28 MB
+    // document (370 MiB, 470 ms), which would land inside the numbers below.
+    backend::osm_host::load_trace_value_sections(&fx, &path, true, true, true)
+        .map_err(|e| anyhow::anyhow!("osm trace: {e}"))?;
+    let trace_ms = t.elapsed().as_millis();
+    let rss_trace = rss_mib();
 
     let t = Instant::now();
     let conv = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer).context("converge")?;
     let converge_ms = t.elapsed().as_millis();
     let rss_converge = rss_mib();
+    // ⚠ Loading is not answering. A fixture whose keys the fold never spells
+    // answers nothing and looks exactly like no fixture at all, so read the
+    // counters rather than trusting the load — the failure this example just
+    // spent a morning demonstrating.
+    //
+    // ⚠ AND ONLY WHEN NOTHING ELSE IS READING THEM. `take_counts` RESETS, and
+    // `FOLD_SPLIT` calls it once per round inside `converge`; a second reader
+    // here gets zero and prints "0 asked" over a fold that asked 41 times. That
+    // is the same take-and-reset trap that once made `mirror yield` report
+    // `0 row(s)` on a request that had just fetched 41,612 — so under
+    // `FOLD_SPLIT` the per-round lines are the report, and this one stands down.
+    let counts = if std::env::var_os("FOLD_SPLIT").is_some() {
+        None
+    } else {
+        Some(backend::osm_host::take_counts())
+    };
 
     // The final round's request is what every round approximates: earlier ones
     // carry fewer answer tables, so this is the UPPER bound on per-round size.
@@ -199,10 +237,39 @@ fn main() -> Result<()> {
     println!("  RSS after parse    {rss_parse:>8} MiB   (Rust: + the serde tree)");
     println!("  RSS after capture  {rss_capture:>8} MiB   (+ ONE lean::serve)");
     println!(
+        "  RSS after row set  {rss_answerer:>8} MiB   (Rust: the fixture's osmRowSet index — GATE ONLY)"
+    );
+    println!(
+        "  RSS after trace    {rss_trace:>8} MiB   ({trace_ms} ms: the OSM trace, off the fixture ALREADY parsed above)"
+    );
+    println!(
         "  RSS after converge {rss_converge:>8} MiB   (+ {} rounds)",
         conv.rounds
     );
     println!("  RSS after one fold {rss_fold:>8} MiB   (+ one more)");
+    println!("  ---");
+    match counts {
+        None => println!("  osm callbacks      per round above (FOLD_SPLIT owns the counter)"),
+        Some(c) => {
+            println!(
+                "  osm callbacks      {:>8} asked, {} missed   (walkable {}/{}, buildings {}/{}, drivable {}/{})",
+                c.asked(),
+                c.misses(),
+                c.walkable_hits,
+                c.walkable_hits + c.walkable_misses,
+                c.buildings_hits,
+                c.buildings_hits + c.buildings_misses,
+                c.drivable_hits,
+                c.drivable_hits + c.drivable_misses,
+            );
+            if c.asked() > 0 && c.misses() == c.asked() {
+                println!(
+                    "  ⚠ EVERY callback MISSED — the walk and road matchers did not run, so\n\
+                     \x20   the numbers above are a fold with its largest consumer switched off."
+                );
+            }
+        }
+    }
     println!("  ⚠ health-auth's container limit is 512 MiB.");
     Ok(())
 }

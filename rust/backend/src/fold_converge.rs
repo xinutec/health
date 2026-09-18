@@ -150,29 +150,57 @@ pub fn converge<A: Answerer>(
     // Running totals for the per-round yield delta; see the peek below.
     let mut seen_rows: u64 = 0;
     let mut seen_wkt: u64 = 0;
+    if std::env::var_os("FOLD_SPLIT").is_some() {
+        eprintln!("  converge entry     RSS {} MiB", rss_mib());
+    }
     for round in 1..=MAX_ROUNDS {
         // ⚠ SPLITTING THE RESIDUAL, which #1071 requires before anyone acts on
         // it. Two guesses at this number have already been wrong. `FOLD_SPLIT=1`
         // prints build / serialise / wrap / serve per round, so the next change
         // is made against a measurement instead of a third guess.
+        // ⚠ RSS AROUND EACH STEP, not just at the end of the round (#1071).
+        // The phase table says a round costs N MiB and CANNOT say whose N it
+        // is: `build` makes a `serde_json::Value` and `to_string` a 2 MiB
+        // String, both Rust, before Lean is called at all. Attributing the
+        // round to "the fold" is the assumption three explanations died on.
+        // Sampled only under `FOLD_SPLIT` — `rss_mib` shells out to `ps`.
+        let split = std::env::var_os("FOLD_SPLIT").is_some();
+        let rss_at = |on: bool| if on { rss_mib() } else { 0 };
+        let rss_0 = rss_at(split);
+
         let t_build = std::time::Instant::now();
         let req = build_day_request(cap, inputs, trace, &tables)
             .with_context(|| format!("building the request for round {round}"))?;
         let build_ms = t_build.elapsed().as_millis();
+        let rss_built = rss_at(split);
 
         let t_ser = std::time::Instant::now();
         let body = serde_json::to_string(&req).context("serialising the request")?;
         let ser_ms = t_ser.elapsed().as_millis();
+        let rss_ser = rss_at(split);
 
         // The fold takes `{"mode": "day", …}`; the request object IS the rest.
         let t_wrap = std::time::Instant::now();
         let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
         let wrap_ms = t_wrap.elapsed().as_millis();
+        let rss_wrap = rss_at(split);
 
         let t_serve = std::time::Instant::now();
         let (out, misses) =
             lean::serve_capturing_misses(&wrapped).with_context(|| format!("round {round}"))?;
         let serve_ms = t_serve.elapsed().as_millis();
+        let rss_serve = rss_at(split);
+
+        if split {
+            eprintln!(
+                "  r{round} RSS {rss_0} -> build {rss_built} (+{}) -> serialise {rss_ser} (+{}) \
+                 -> wrap {rss_wrap} (+{}) -> LEAN {rss_serve} (+{})  MiB",
+                rss_built.saturating_sub(rss_0),
+                rss_ser.saturating_sub(rss_built),
+                rss_wrap.saturating_sub(rss_ser),
+                rss_serve.saturating_sub(rss_wrap),
+            );
+        }
 
         // ⚠ WHERE THE BYTES ARE, on round 1 only — the invariant is what repeats,
         // so its composition decides whether the fix is to PRUNE the payload or

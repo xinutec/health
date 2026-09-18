@@ -205,7 +205,11 @@ pub fn load_trace(
         }
     }
 
-    backend::osm_host::load_trace_sections(
+    // ⚠ FROM `fx`, NOT FROM THE PATH. The path form re-reads and re-parses the
+    // fixture this function was already handed — 370 MiB and 470 ms on a 28 MB
+    // golden day, per day, in a gate that walks 42 of them (#1654).
+    backend::osm_host::load_trace_value_sections(
+        fx,
         &format!("{golden}/{name}"),
         walkable,
         buildings,

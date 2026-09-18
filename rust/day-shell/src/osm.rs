@@ -405,30 +405,52 @@ pub fn load_fixture_sections(
     want_buildings: bool,
     want_drivable: bool,
 ) -> Result<(usize, usize), String> {
-    TRACE.with(|t| *t.borrow_mut() = None);
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let root: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    load_value_sections(&root, path, want_walkable, want_buildings, want_drivable)
+}
+
+/// [`load_fixture_sections`] on a fixture the caller has ALREADY parsed.
+///
+/// ⚠ **This exists because the path form parses the fixture a SECOND time.**
+/// Every caller here — the corpus gate, `time_day` — holds the same document in
+/// a `serde_json::Value` when it asks for the trace, and a golden day is ~28 MB
+/// that serde blows up to ~380 MiB. Measured on 2026-05-25: `load_trace` cost
+/// **370 MiB and 470 ms** on top of a caller already holding the identical tree
+/// (#1071, #1654). Nothing about the load needs its own copy.
+///
+/// `label` is what error messages name the document; pass the path when there
+/// is one.
+pub fn load_value_sections(
+    root: &serde_json::Value,
+    label: &str,
+    want_walkable: bool,
+    want_buildings: bool,
+    want_drivable: bool,
+) -> Result<(usize, usize), String> {
+    let path = label;
+    TRACE.with(|t| *t.borrow_mut() = None);
     let masked = !(want_walkable && want_buildings && want_drivable);
     let mut t = Trace {
         walkable: if want_walkable {
-            section(&root, "walkableRoads", parse_way_records)
+            section(root, "walkableRoads", parse_way_records)
         } else {
             HashMap::new()
         },
         buildings: if want_buildings {
-            section(&root, "buildingsNear", parse_rings)
+            section(root, "buildingsNear", parse_rings)
         } else {
             HashMap::new()
         },
         drivable: if want_drivable {
-            section(&root, "drivableRoads", parse_way_records)
+            section(root, "drivableRoads", parse_way_records)
         } else {
             HashMap::new()
         },
         keys: Vec::new(),
     };
-    t.keys = raw_keys(&root);
+    t.keys = raw_keys(root);
     let n = (t.walkable.len(), t.buildings.len());
     // An empty trace would answer every lookup with a miss, which reads like a
     // disagreeing fold rather than a fixture without the sections. Say so here,

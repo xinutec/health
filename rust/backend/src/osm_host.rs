@@ -69,6 +69,22 @@ pub fn load_trace_sections(
     day_shell::osm::load_fixture_sections(fixture_path, walkable, buildings, drivable)
 }
 
+/// [`load_trace_sections`] on a fixture the caller has already parsed.
+///
+/// ⚠ Prefer this wherever the document is in hand. The path forms re-read and
+/// re-parse it: a golden day is ~28 MB and costs **370 MiB and 470 ms** to
+/// parse, and a caller asking for a trace is by definition already holding the
+/// same tree (#1654).
+pub fn load_trace_value_sections(
+    fixture: &serde_json::Value,
+    label: &str,
+    walkable: bool,
+    buildings: bool,
+    drivable: bool,
+) -> Result<(usize, usize), String> {
+    day_shell::osm::load_value_sections(fixture, label, walkable, buildings, drivable)
+}
+
 /// Hit/miss counts for the three callbacks since the last call, and RESET.
 ///
 /// ⚠ A gate that loads a trace should assert on these rather than trusting the
