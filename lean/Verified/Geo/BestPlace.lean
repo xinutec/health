@@ -247,6 +247,32 @@ modelled. An empty `displayName` yields `""` in both arms. -/
 private def firstPart (s : String) : String :=
   (s.splitOn ",").headD ""
 
+/-- OSM types that must never NAME a stay (Pippijn, 2026-09-18).
+
+⚠ **The `"{type} on {road}"` fallback below produces a CATEGORY, not an
+identity** — "Wagamama" says where he was, "waste_basket on Barn Hill" says a bin
+exists nearby. Two kinds of type reach it and neither denotes somewhere a person
+visits:
+
+**street furniture** — a bin, a bench, a post box. Untended, unnamed, and present
+on almost every street, so it names a stay by accident of proximity rather than
+because he went there. `waste_basket on Barn Hill` is blessed in the corpus today.
+
+⚠ **HIGHWAY CLASSES ARE DELIBERATELY NOT HERE**, though `secondary on First Way`
+is blessed alongside it and reads just as oddly. A `#guard` in this file pins
+`placeLabel … == "residential on Caledonian Road"`, so that shape is intended,
+not an accident — and "a residential street on Caledonian Road" does locate him,
+where a bin does not. Filtering them is a SEPARATE decision and has not been
+taken.
+
+⚠ A DELIBERATE DIVERGENCE FROM THE TYPESCRIPT, which reproduced the bin (#1076).
+Faithfulness is not the goal where the TS was wrong. -/
+def UNNAMEABLE_TYPES : List String :=
+  [ -- street furniture: untended, unnamed, everywhere
+    "waste_basket", "bench", "post_box", "bicycle_parking", "drinking_water",
+    "telephone", "recycling", "street_lamp", "waste_disposal", "bollard",
+    "vending_machine", "parking_meter", "clock", "hydrant", "grit_bin" ]
+
 /-- The label the timeline shows for a resolved place. -/
 def placeLabel (r : Result) : String :=
   let a := r.address
@@ -257,8 +283,10 @@ def placeLabel (r : Result) : String :=
   else if truthy a.building && r.type != "" then a.building.getD ""
   else if truthy a.houseNumber && truthy a.road then s!"{a.road.getD ""} {a.houseNumber.getD ""}"
   else if truthy a.pedestrian then named (a.pedestrian.getD "") r.type
-  else if r.type != "" && truthy a.road then s!"{r.type} on {a.road.getD ""}"
-  else if r.type != "" && truthy a.neighbourhood then s!"{r.type} in {a.neighbourhood.getD ""}"
+  else if r.type != "" && !UNNAMEABLE_TYPES.contains r.type && truthy a.road then
+    s!"{r.type} on {a.road.getD ""}"
+  else if r.type != "" && !UNNAMEABLE_TYPES.contains r.type && truthy a.neighbourhood then
+    s!"{r.type} in {a.neighbourhood.getD ""}"
   else firstPart r.displayName
 
 /-! ## The chain -/
