@@ -1629,12 +1629,21 @@ are the same shape under different field names (`speed_kmh` vs `speedKmh`) and
 `classifySegments` takes this one, so `parseKalmanPt` cannot be reused here. -/
 private def parseHeadPt (j : Json) : Except String Verified.Geo.Segments.FilteredPoint := do
   let a ← j.getArr?
+  -- ⚠ Index 5, and OPTIONAL. A caller that predates it sends five elements and
+  -- gets `none`, which `linearityOf` reads as "no accuracy supplied" and answers
+  -- with the original formula — so adding it changed no existing behaviour
+  -- (#185). Absent and `null` both mean not supplied; they are NOT zero, which
+  -- would claim a perfect fix.
+  let acc ← match a[5]? with
+    | some v => if v.isNull then pure none else some <$> jBits v
+    | none => pure none
   return {
     ts := ← (← nth a 0).getInt?
     lat := ← jBits (← nth a 1)
     lon := ← jBits (← nth a 2)
     speed_kmh := ← jBits (← nth a 3)
-    bearing := ← jBits (← nth a 4) }
+    bearing := ← jBits (← nth a 4)
+    accuracyM := acc }
 
 private def parseHeadStayPt (j : Json) : Except String Verified.Geo.Segments.StayPoint := do
   let a ← j.getArr?

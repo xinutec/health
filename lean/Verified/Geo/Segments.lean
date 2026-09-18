@@ -253,6 +253,15 @@ structure FilteredPoint where
   lon : Float
   speed_kmh : Float
   bearing : Float
+  /-- The reported accuracy of the fix this was smoothed from, in metres.
+      OPTIONAL, and `none` means "not supplied" rather than "perfect" (#185).
+
+      ⚠ It survives the Kalman filter for one reason: `linearity` is a
+      net/path RATIO and is therefore 1.0 — maximally directed — for a path
+      that did not move at all, which is the opposite of the truth. Without
+      knowing the fixes' own error radius there is no way to tell a real
+      straight walk from a single jump inside the noise. -/
+  accuracyM : Option Float := none
   deriving Inhabited, BEq
 
 /-- The looser-accuracy point set stay detection may run on instead. -/
@@ -300,6 +309,57 @@ private def variance (xs : Array Float) : Float :=
 two fixes sharing a timestamp would otherwise divide by zero. Negative spans are
 truthy in JS and pass through unchanged, so this tests `== 0`, not `≤ 0`. -/
 private def orOneSec (d : Int) : Float := if d == 0 then 1 else Float.ofInt d
+
+/-- The median reported accuracy of a window's fixes, when they carry one.
+
+⚠ MEDIAN, not the worst or the mean: one bad fix in a good window should not
+disqualify it, and one good fix in a bad window should not rescue it. -/
+private def medianAccuracyM (wp : Array FilteredPoint) : Option Float :=
+  let accs := (wp.toList.filterMap (·.accuracyM)).toArray.qsort (· < ·)
+  if accs.isEmpty then none else some accs[accs.size / 2]!
+
+/-- ⚠ **REFUTED AS A SOURCE-LEVEL FIX — NOT WIRED IN. Read this before trying it
+again (#185).**
+
+The reasoning is right and the PLACEMENT is wrong. Zeroing linearity wherever the
+path did not out-move its error breaks **41 of 42 corpus days**, because a
+STATIONARY window is unresolvable BY DEFINITION — it is standing still, so its
+displacement is always inside the noise. Measured 2026-09-18:
+
+    2026-04-29 seg 5, stationary, 13 points:  rust 0  ·  ts 0.1
+
+Mode is classified FROM these features, so rewriting linearity at the source
+moves the input to every downstream decision rather than the one it was aimed at.
+
+The test has to run where the QUESTION is asked — in
+`BiometricLabels.demoteJitterWalkToStationary`, which already knows the segment
+is called "walking" and is deciding whether to believe it. That needs
+resolvability carried to it as its own field rather than smuggled through
+linearity. Kept here because the formula and its guards below are correct and
+re-deriving them costs more than reading this.
+
+How directed a window's path is — `straightLine / pathDistance`, clamped.
+
+⚠ **IT IS ZERO WHEN THE PATH DID NOT OUT-MOVE ITS OWN ERROR.** The ratio is 1.0
+for any path with a single effective hop, so a fix landing elsewhere inside the
+GPS noise scores MAXIMALLY DIRECTED — more directed than a genuine walk, which
+wanders. Measured on 2026-09-06: a 2-minute leg with 3 fixes at 100 m accuracy,
+89 m net, scored 1.0000, while the real walks that day scored 0.52 and 0.65 and
+the 3½-hour cinema stay it was splitting scored 0.13.
+
+A displacement smaller than the fixes' own accuracy is not evidence of movement,
+so there is no direction to measure and 0 — "not directed" — is the honest
+answer rather than a convenient one. Consumers read it that way: the jitter
+demotion can then fire, and `isStationaryIncoherent` sees a low linearity beside
+a low displacement, which is exactly what a stationary window looks like.
+
+⚠ With no accuracy supplied this is the ORIGINAL formula unchanged, so a caller
+that does not send it sees no behaviour change at all. -/
+private def linearityOf (wp : Array FilteredPoint) (straightLine pathDistance : Float) : Float :=
+  if pathDistance ≤ 0 then 0
+  else match medianAccuracyM wp with
+    | some acc => if straightLine ≤ acc then 0 else min (straightLine / pathDistance) 1
+    | none => min (straightLine / pathDistance) 1
 
 /-- Features of one window's points. Requires `wp.size ≥ 2` (the caller skips
 shorter windows), which is what makes the `[0]!` / `[size-1]!` reads total. -/
@@ -654,8 +714,38 @@ Whole `TrackSegment` records compared, not selected fields: the rounded values
 bit-equal, and comparing the record means a field nobody thought about cannot
 drift silently. -/
 
-private def fp (ts : Int) (lat lon spd : Float) (brg : Float := 0) : FilteredPoint :=
-  ⟨ts, lat, lon, spd, brg⟩
+private def fp (ts : Int) (lat lon spd : Float) (brg : Float := 0)
+    (acc : Option Float := none) : FilteredPoint :=
+  { ts := ts, lat := lat, lon := lon, speed_kmh := spd, bearing := brg, accuracyM := acc }
+
+-- ## linearity against the fixes' own error (#185)
+--
+-- ⚠ The ratio is 1.0 for ANY single-hop path, so without accuracy a jump inside
+-- the noise outscores a real walk. These pin all three cases.
+
+-- No accuracy supplied: the original formula, unchanged. A straight two-point
+-- hop still reads as maximally directed, which is what every caller that does
+-- not send accuracy keeps seeing.
+#guard linearityOf #[fp 0 51.5 (-0.1) 0, fp 60 51.501 (-0.1) 0] 111.0 111.0 == 1.0
+
+-- 89 m of displacement measured with 100 m fixes: the 2026-09-06 cinema case.
+-- There is no direction to read, so it is NOT directed.
+#guard linearityOf #[fp 0 51.5 (-0.1) 0 0 (some 100), fp 120 51.5008 (-0.1) 0 0 (some 100)]
+  89.0 89.0 == 0.0
+
+-- The same fixes with good GPS: 89 m is real movement and the path is straight.
+#guard linearityOf #[fp 0 51.5 (-0.1) 0 0 (some 6), fp 120 51.5008 (-0.1) 0 0 (some 6)]
+  89.0 89.0 == 1.0
+
+-- A wandering path out-moves its error and keeps its true, LOW linearity — the
+-- veto must still protect a real walk.
+#guard linearityOf #[fp 0 51.5 (-0.1) 0 0 (some 6), fp 120 51.503 (-0.1) 0 0 (some 6)]
+  300.0 1000.0 == 0.3
+
+-- Median, not worst: one bad fix among good ones does not disqualify a window.
+#guard linearityOf
+  #[fp 0 51.5 (-0.1) 0 0 (some 6), fp 60 51.5 (-0.1) 0 0 (some 200), fp 120 51.5 (-0.1) 0 0 (some 6)]
+  89.0 89.0 == 1.0
 
 -- A steady northward walk, 8 fixes a minute apart: one window, one segment.
 private def walkPts : Array FilteredPoint :=

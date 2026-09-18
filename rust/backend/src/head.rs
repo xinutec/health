@@ -51,6 +51,13 @@ pub struct Smoothed {
     pub lon: f64,
     pub speed_kmh: f64,
     pub bearing: f64,
+    /// The accuracy of the RAW fix this was smoothed from, in metres.
+    ///
+    /// ⚠ Carried through the filter so the segmenter can tell a real straight
+    /// walk from a single jump inside the noise: `linearity` is a net/path
+    /// ratio and reads 1.0 — maximally directed — for a path that did not move
+    /// (#185). `None` means the fix reported none, never "perfect".
+    pub accuracy: Option<f64>,
 }
 
 /// The accuracy ceiling for a fix to reach the Kalman filter at all.
@@ -256,6 +263,13 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
         .get("pts")
         .and_then(Value::as_array)
         .context("kalman reply has no pts")?;
+    // ⚠ REJOINED BY TIMESTAMP, not carried through the filter's wire format.
+    // The Kalman runs in Lean and its reply is a SUBSEQUENCE of the input —
+    // duplicate timestamps and innovation-gated fixes are dropped — so every
+    // output row's `ts` is an input row's `ts` and the join is exact. That
+    // keeps the accuracy plumbing out of the filter entirely (#185).
+    let acc_by_ts: std::collections::HashMap<i64, Option<f64>> =
+        pts.iter().map(|p| (p.ts, p.accuracy)).collect();
     rows.iter()
         .map(|r| {
             let a = r.as_array().context("a kalman row is not an array")?;
@@ -268,6 +282,11 @@ pub fn kalman(pts: &[Fix]) -> Result<Vec<Smoothed>> {
                 lon: unbits(a.get(2).context("a kalman row has no lon")?)?,
                 speed_kmh: unbits(a.get(3).context("a kalman row has no speed")?)?,
                 bearing: unbits(a.get(4).context("a kalman row has no bearing")?)?,
+                accuracy: a
+                    .first()
+                    .and_then(Value::as_i64)
+                    .and_then(|ts| acc_by_ts.get(&ts).copied())
+                    .flatten(),
             })
         })
         .collect()
@@ -287,12 +306,16 @@ pub fn classify_segments(pts: &[Smoothed], stay_pts: Option<&[Fix]>) -> Result<V
         Value::Array(
             pts.iter()
                 .map(|p| {
+                    // ⚠ Position 5 and OPTIONAL: `parseHeadPt` treats a
+                    // five-element row as "no accuracy supplied" and keeps the
+                    // original linearity, so nothing that predates this changes.
                     json!([
                         p.ts,
                         bits(p.lat),
                         bits(p.lon),
                         bits(p.speed_kmh),
-                        bits(p.bearing)
+                        bits(p.bearing),
+                        opt_bits(p.accuracy)
                     ])
                 })
                 .collect(),
