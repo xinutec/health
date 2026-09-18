@@ -258,12 +258,9 @@ visits:
 on almost every street, so it names a stay by accident of proximity rather than
 because he went there. `waste_basket on Barn Hill` is blessed in the corpus today.
 
-⚠ **HIGHWAY CLASSES ARE DELIBERATELY NOT HERE**, though `secondary on First Way`
-is blessed alongside it and reads just as oddly. A `#guard` in this file pins
-`placeLabel … == "residential on Caledonian Road"`, so that shape is intended,
-not an accident — and "a residential street on Caledonian Road" does locate him,
-where a bin does not. Filtering them is a SEPARATE decision and has not been
-taken.
+⚠ **HIGHWAY CLASSES ARE HANDLED SEPARATELY, in `HIGHWAY_CLASSES`** — they keep
+the street and drop the class, rather than being discarded. A bin carries no
+information; a road he was standing on does.
 
 ⚠ A DELIBERATE DIVERGENCE FROM THE TYPESCRIPT, which reproduced the bin (#1076).
 Faithfulness is not the goal where the TS was wrong. -/
@@ -272,6 +269,25 @@ def UNNAMEABLE_TYPES : List String :=
     "waste_basket", "bench", "post_box", "bicycle_parking", "drinking_water",
     "telephone", "recycling", "street_lamp", "waste_disposal", "bollard",
     "vending_machine", "parking_meter", "clock", "hydrant", "grit_bin" ]
+
+/-- OSM highway classes. A stay that resolves to one of these is ON a street,
+which is worth saying — but `secondary` is OSM's vocabulary, not a person's
+(Pippijn, 2026-09-18).
+
+⚠ **DIFFERENT TREATMENT FROM `UNNAMEABLE_TYPES`, deliberately.** A bin names a
+stay by accident of proximity and carries no information, so it is dropped
+entirely. A highway class means the geocode resolved to the road he was actually
+on, so the ROAD is kept and only the class is discarded:
+
+    "secondary on First Way"          ->  "First Way"
+    "residential on Caledonian Road"  ->  "Caledonian Road"
+
+Both are blessed in the corpus, and the second is the `#guard` below — which
+moves with this, because the spec changed on purpose rather than by accident. -/
+def HIGHWAY_CLASSES : List String :=
+  [ "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
+    "residential", "service", "living_street", "pedestrian", "track", "road",
+    "footway", "path", "cycleway", "bridleway", "steps" ]
 
 /-- The label the timeline shows for a resolved place. -/
 def placeLabel (r : Result) : String :=
@@ -283,6 +299,7 @@ def placeLabel (r : Result) : String :=
   else if truthy a.building && r.type != "" then a.building.getD ""
   else if truthy a.houseNumber && truthy a.road then s!"{a.road.getD ""} {a.houseNumber.getD ""}"
   else if truthy a.pedestrian then named (a.pedestrian.getD "") r.type
+  else if HIGHWAY_CLASSES.contains r.type && truthy a.road then a.road.getD ""
   else if r.type != "" && !UNNAMEABLE_TYPES.contains r.type && truthy a.road then
     s!"{r.type} on {a.road.getD ""}"
   else if r.type != "" && !UNNAMEABLE_TYPES.contains r.type && truthy a.neighbourhood then
@@ -429,8 +446,17 @@ private def buildingNoType : Address :=
   == "Elm Street 161"
 #guard placeLabel (res "square" "place" { A with pedestrian := some "Granary Square" })
   == "Granary Square"
+-- ⚠ CHANGED 2026-09-18 from "residential on Caledonian Road" (Pippijn's call).
+-- The class is OSM's word, not a person's; the street is what locates him. See
+-- `HIGHWAY_CLASSES`.
 #guard placeLabel (res "residential" "highway" { A with road := some "Caledonian Road" })
-  == "residential on Caledonian Road"
+  == "Caledonian Road"
+-- …and a type that is NEITHER furniture nor a highway class still says both.
+#guard placeLabel (res "attraction" "tourism" { A with road := some "Barn Hill" })
+  == "attraction on Barn Hill"
+-- …while furniture says neither, falling through to the display name.
+#guard placeLabel (res "waste_basket" "amenity" { A with road := some "Barn Hill" })
+  != "waste_basket on Barn Hill"
 #guard placeLabel (res "suburb" "place" { A with neighbourhood := some "Barnsbury" })
   == "suburb in Barnsbury"
 -- Nothing at all: the first comma-separated part of the display name.
