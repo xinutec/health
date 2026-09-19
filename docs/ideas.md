@@ -42,6 +42,12 @@ The rule must NOT fold a brief outdoor walk that just happens to
 loop back. The OSM-footway and HR signals are what keep the rule
 honest.
 
+⚠ **Its blocker is partly lifted (see health #185).** A 99-second "walk" on
+2026-09-06 satisfies every clause above and is MANUFACTURED — a carve remnant, not
+an observed event — so "every walking event we've seen is real" no longer holds.
+That makes this a live candidate, and also a SYMPTOM fix: #185's case A would
+rather stop the carve leaving a stub.
+
 **Why we're not landing it now.** Every walking event we've
 captured to validate against has at least one of the outdoor
 signals (footway match, HR rise, or > 50m displacement). Without a
