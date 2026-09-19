@@ -150,7 +150,7 @@ fn runtime() -> Option<&'static tokio::runtime::Runtime> {
 }
 
 /// `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` — the same five the TS
-/// reads in `src/config.ts:72`. Absent host or database means "no mirror
+/// read in `src/config.ts` (deleted with #975; recoverable at `06346bd^`). Absent host or database means "no mirror
 /// configured", which is not an error: it is the fixture-only and stub cases,
 /// and they must keep working.
 ///

@@ -5,6 +5,23 @@ The rule is one sentence: **decisions go in Lean, IO glue goes in Rust.**
 This file exists because that sentence was nowhere in the repository until
 2026-09-12, and a rule nobody can read is a rule that erodes.
 
+## ⚠ `src/*.ts` in a comment is PROVENANCE, and the tree is recoverable
+
+Roughly 55 deleted TypeScript files are named in comments across `rust/` and
+`lean/` — almost all as "port of `src/geo/osm.ts`" or "transcribed from". **Those
+are not dangling pointers and must not be stripped.** The TypeScript was deleted
+in #975 and the whole tree is one command away:
+
+    git show 06346bd^:src/geo/osm.ts
+
+That is not hypothetical. On 2026-09-19 the Nominatim client was re-ported by
+reading exactly that file, because the cache it wrote is still in production and a
+key that disagrees does not fail — it MISSES. A comment naming its origin is what
+made recovering the original behaviour possible instead of guessing it.
+
+⚠ What a comment may NOT promise is a LINE NUMBER in a file that no longer
+exists. Cite the file; let the reader find the function.
+
 ## Rust is here for ecosystem, not for ability
 
 Lean 4 has full `IO`. Nothing in the split is about what Lean can do. What Lean
