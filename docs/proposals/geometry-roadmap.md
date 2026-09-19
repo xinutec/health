@@ -1,6 +1,22 @@
 ---
 created: 2026-07-07
 status: active
+
+⚠ **ITS `*.ts` NAMES ARE HISTORICAL.** The TypeScript backend was deleted whole
+(#975) and is recoverable at `06346bd^:<path>`. The prose records why each
+decision was taken; the names are not a map of the code today. Where the work
+lives now:
+
+    pedestrian-match.ts / walk-smooth-map.ts   lean/Verified/Geo/Match.lean,
+                                               WalkAnchors.lean, WalkAnnotate.lean
+    walk-score.ts, walk-buildings.ts,          lean/Verified/Eval/WalkMetrics.lean
+      walk-plausibility.ts,
+      walk-route-correctness.ts
+    walk-gate.ts / score-walk-match.ts         the `walk_gate` corpus test —
+                                               rust/backend/tests/corpus/walk.rs
+    episode-geometry.ts                        lean/Verified/Geo (see
+                                               docs/design/episode-geometry.md)
+
 references:
   - ../design/probabilistic-principles.md
   - ../design/episode-geometry.md

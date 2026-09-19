@@ -8,6 +8,13 @@ references:
 
 # Decoder roadmap — one joint model owns the day
 
+⚠ **Its `*.ts` names are HISTORICAL** — the TypeScript backend was deleted whole
+(#975), recoverable at `06346bd^:<path>`. `worldline-feasibility.ts` is now
+`lean/Verified/Eval/Feasibility.lean`, graded by the `feasibility_corpus` test;
+the journey/leg shapes and scoreboard are `lean/Verified/Eval/Journeys.lean` and
+`DecoderScore.lean`, gated by `journey_corpus` and `decoder_scoreboard`.
+
+
 This is the single forward plan for the classification line of work. It
 replaces seven separate proposals that each described one slice of the same
 arc (physical-plausibility, journey-worldline, constraint-first-decoder,

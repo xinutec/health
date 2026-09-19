@@ -19,7 +19,7 @@ ungossiped.
 >
 > Files that **do** go into git (source, tests, docs) describe
 > classes of behaviour and use synthetic data. Files that hold real
-> data (`tests/fixtures/days/*.json` captured by `capture-day.ts`)
+> data (`tests/golden/**` captured by `--example capture_trace`)
 > are gitignored and stay local.
 
 ## Why this exists
@@ -90,9 +90,21 @@ narrative about "the user."
 
 ## Fixtures
 
-- **`tests/fixtures/days/*.json`** — gitignored. Captured by
-  `capture-day.ts` from real data. Used locally for calibration and
-  for hand-editing `groundTruth`. Never goes into git.
+⚠ **THE REAL-DATA TREE IS `tests/golden/`, and it was missing from this file.**
+~1.1 GB of captured days, their ground-truth narratives and decoded days live
+there. It is gitignored by the outer repo AND is its own INNER git repo with no
+remote and a `pre-push` hook that refuses — because a re-capture overwrites a
+28 MB fixture in place and the outer repo protects nothing it ignores. **Never
+add a remote.** See `tests/golden/README.md`.
+
+Captured by `cargo run --release --example capture_trace` under
+`scripts/prod-db.sh`.
+
+- **`tests/fixtures/days/*.json`** — gitignored, and a FOSSIL: last written
+  2026-05-24, by `capture-day.ts`, which was deleted with the TypeScript (#975).
+  Sibling directories under `tests/fixtures/` (route-graphs, roadmatch, …) are
+  still read by tests; `days/` is not. The gitignore entry stays because the
+  files are still on disk and still real.
 - **`tests/fixtures/synthetic/*.json`** (when this directory exists)
   — in git. Hand-authored with synthetic place names ("Town A
   Station", "Mainline B"), synthetic coordinates (e.g. fixed offsets
