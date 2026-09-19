@@ -49,6 +49,7 @@ pub mod classification_inputs;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod fetch_queue;
 pub mod fitbit;
 pub mod fold_converge;
 pub mod fold_payload;
@@ -212,6 +213,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "refresh-bus-routes",
         "[--dry-run]",
         "mirror bus routes from Overpass",
+    ),
+    (
+        "fetch-geocodes",
+        "[--dry-run] [--limit N]",
+        "fetch the reverse geocodes the fold could not answer",
     ),
     ("mint-session", "<user>", "issue a session cookie"),
     ("drop-session", "<cookie>", "revoke a session cookie"),

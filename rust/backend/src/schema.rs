@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 79] = [
+    let migrations: [&str; 80] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -609,6 +609,34 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     mined_stays INT NOT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, as_of)
+  )"#,
+        // ⚠ APPEND ONLY — see the header. This is the last statement; the next
+        // one goes BELOW it, never above.
+        //
+        // What the serving path could not answer, so a job can fetch it later
+        // (#1076, #1658). The fold declines rather than guessing, and a decline
+        // used to leave no trace at all: the same coordinate went unanswered on
+        // every fold, forever, because nothing recorded that anyone had asked.
+        //
+        // ⚠ `kind` IS `osm_cache.query_type` for the geocode kinds
+        // (`nominatim_z16`, `nominatim_z18`), deliberately — the drain writes
+        // straight back into the cache the fold reads, and two vocabularies for
+        // one thing is how a queue fills with entries nothing consumes.
+        //
+        // ⚠ `attempts` and `last_error` exist so a key that CANNOT be fetched
+        // stops being retried forever while staying visible. Deleting a failed
+        // key would make it reappear on the next fold and be retried anyway —
+        // an invisible infinite loop against a rate-limited public service.
+        r#"CREATE TABLE IF NOT EXISTS osm_fetch_queue (
+    kind        VARCHAR(32) NOT NULL,
+    fetch_key   VARCHAR(160) NOT NULL,
+    asked_count INT NOT NULL DEFAULT 1,
+    attempts    INT NOT NULL DEFAULT 0,
+    last_error  VARCHAR(255) NULL,
+    first_seen  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (kind, fetch_key),
+    INDEX idx_ofq_due (kind, attempts, last_seen)
   )"#,
     ];
 

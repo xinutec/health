@@ -741,7 +741,20 @@ impl RowSource for MirrorSource {
             // different state from an unanswered key, and the reason this arm
             // exists separately from the two below.
             Some(crate::nominatim::Cached::Answer(None)) => Some(Value::Null),
-            Some(crate::nominatim::Cached::Failed { .. }) | None => None,
+            // ⚠ **RECORDED, NOT FETCHED.** A decline used to leave no trace, so
+            // the same coordinate went unanswered on every fold forever. The
+            // queue is what lets a job fill it later; fetching here would put a
+            // Nominatim round trip on the serving path (#1071, #1076).
+            Some(crate::nominatim::Cached::Failed { .. }) | None => {
+                let pool = self.pool.clone();
+                let kind = crate::nominatim::query_type(zoom);
+                let key = crate::nominatim::queue_key(lat, lon);
+                self.block(async move {
+                    crate::fetch_queue::record(&pool, &kind, &key).await;
+                    Ok::<(), anyhow::Error>(())
+                })?;
+                None
+            }
         })
     }
 }

@@ -54,9 +54,36 @@ pub fn round_coord(n: f64) -> f64 {
 }
 
 /// The `query_type` a zoom is cached under: `nominatim_z18`, `nominatim_z16`.
+///
+/// ⚠ Also the `kind` of an [`crate::fetch_queue`] row, on purpose — the drain
+/// writes straight back into the cache the fold reads, and two vocabularies for
+/// one thing is how a queue fills with entries nothing consumes.
 #[must_use]
 pub fn query_type(zoom: i64) -> String {
     format!("nominatim_z{zoom}")
+}
+
+/// The zoom back out of a [`query_type`], for a drain that learns which zooms
+/// were asked from the queue rather than from a list it carries.
+///
+/// ⚠ The zooms are declared in `Verified.Geo.BestPlace` and
+/// `Verified.Geo.Enrich`. Restating them here would be a second source of truth
+/// for a number the fold owns.
+#[must_use]
+pub fn zoom_of(query_type: &str) -> Option<i64> {
+    query_type.strip_prefix("nominatim_z")?.parse().ok()
+}
+
+/// The `fetch_key` a queued geocode is recorded under.
+///
+/// ⚠ ROUNDED, so two fixes 3 m apart queue ONE fetch rather than two against a
+/// service that allows one request per second. And rounded with the SAME rule
+/// the cache is keyed by, so the answer the drain writes lands where the fold
+/// looks — [`round_coord`] is idempotent, which is what makes parsing this key
+/// and re-rounding it safe.
+#[must_use]
+pub fn queue_key(lat: f64, lon: f64) -> String {
+    format!("{}|{}", round_coord(lat), round_coord(lon))
 }
 
 /// One Nominatim answer, in the shape the fold's `osmTrace.reverseGeocode`

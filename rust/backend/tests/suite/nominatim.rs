@@ -85,3 +85,52 @@ fn a_geocode_encodes_in_the_fixtures_own_field_names() {
     assert_eq!(v["type"], "residential");
     assert_eq!(v["category"], "highway");
 }
+
+/// ⚠ THE SEAM BETWEEN THE QUEUE AND THE CACHE. A miss is recorded under
+/// `queue_key`, and the drain parses that key back into coordinates and hands
+/// them to `cache_put`, which rounds AGAIN. If rounding were not idempotent the
+/// answer would land under a key the fold never forms — a fetch paid for and an
+/// entry that stays missing, with nothing to see.
+#[test]
+fn a_queued_key_parses_back_to_the_same_cache_key() {
+    for (lat, lon) in [
+        (51.508_039_f64, -0.128_069_f64),
+        (51.5, -0.12),
+        (51.556_213_7, -0.279_481_2),
+        (-33.868_82, 151.209_29),
+    ] {
+        let key = backend::nominatim::queue_key(lat, lon);
+        let mut parts = key.split('|');
+        let (plat, plon) = (
+            parts.next().unwrap().parse::<f64>().unwrap(),
+            parts.next().unwrap().parse::<f64>().unwrap(),
+        );
+        assert_eq!(
+            format!("{:.4}|{:.4}", round_coord(plat), round_coord(plon)),
+            format!("{:.4}|{:.4}", round_coord(lat), round_coord(lon)),
+            "the drain must write where the reader looks, for {lat},{lon}"
+        );
+    }
+}
+
+/// Two fixes metres apart must queue ONE fetch. The service allows one request
+/// per second, so a queue keyed on raw coordinates would spend a night on one
+/// stay.
+#[test]
+fn nearby_coordinates_collapse_to_one_queued_key() {
+    let a = backend::nominatim::queue_key(51.508_039, -0.128_069);
+    let b = backend::nominatim::queue_key(51.508_041, -0.128_071);
+    assert_eq!(a, b);
+}
+
+/// The drain learns which zooms were asked by reading them back off the queue's
+/// `kind`, rather than carrying a list. If this did not round-trip, a whole
+/// consumer's keys would sit in the table forever with nothing to notice.
+#[test]
+fn a_query_type_round_trips_back_to_its_zoom() {
+    for z in [16_i64, 18] {
+        assert_eq!(backend::nominatim::zoom_of(&query_type(z)), Some(z));
+    }
+    assert_eq!(backend::nominatim::zoom_of("overpass_r50"), None);
+    assert_eq!(backend::nominatim::zoom_of("nominatim"), None);
+}

@@ -331,6 +331,30 @@ async fn main() -> Result<()> {
         //
         //   backend refresh-rail-stops              mirror and rebuild the cache
         //   backend refresh-rail-stops --dry-run    fetch and report, write nothing
+        // The deferred half of the geocode port (#1076): the serving path RECORDS
+        // what it could not answer, this FETCHES it. Never inline — a Nominatim
+        // round trip on the serving path is what this design exists to avoid.
+        "fetch-geocodes" => {
+            let mut dry = false;
+            let mut limit: i64 = 200;
+            let mut rest = flags.iter();
+            while let Some(f) = rest.next() {
+                match f.as_str() {
+                    "--dry-run" => dry = true,
+                    "--limit" => {
+                        limit = rest
+                            .next()
+                            .and_then(|v| v.parse().ok())
+                            .context("--limit takes a number")?;
+                    }
+                    _ => {
+                        eprintln!("usage: backend fetch-geocodes [--dry-run] [--limit N]");
+                        std::process::exit(64);
+                    }
+                }
+            }
+            fetch_geocodes(dry, limit).await
+        }
         "refresh-rail-stops" => match flags {
             [] => refresh_rail_stops(false).await,
             [f] if f == "--dry-run" => refresh_rail_stops(true).await,
@@ -6209,6 +6233,112 @@ fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
 /// ⚠ THE REFUSAL RULE IS UNCHANGED and is still the rail one — zero relations
 /// with any failure. It no longer has to carry the partial case, because tile
 /// ownership does.
+/// Drain the geocode half of `osm_fetch_queue` (#1076).
+///
+/// ⚠ **RATE LIMITED TO ONE REQUEST PER SECOND, and that is Nominatim's stated
+/// policy rather than a politeness.** Exceeding it earns an IP-level ban, which
+/// would take the whole naming cascade down for everyone behind this address —
+/// the same terms `overpass.rs` records for Overpass.
+///
+/// ⚠ **A FAILURE IS RECORDED, NOT RETRIED IN A LOOP.** `attempts` rises and the
+/// key stays visible. Deleting it would make it reappear on the next fold and be
+/// retried forever against a rate-limited public service, with nothing to see.
+async fn fetch_geocodes(dry_run: bool, limit: i64) -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+
+    for (kind, waiting, exhausted) in backend::fetch_queue::census(&pool).await? {
+        println!(
+            "queue {kind:<20} {waiting:>6} waiting · {exhausted} past {} attempts",
+            backend::fetch_queue::MAX_ATTEMPTS
+        );
+    }
+
+    let client = reqwest::Client::new();
+    let (mut fetched, mut empty, mut failed) = (0usize, 0usize, 0usize);
+
+    // ⚠ THE ZOOMS COME FROM THE QUEUE, not from a list here. `AREA_ZOOM` and
+    // `DETAIL_ZOOM` are declared in `Verified.Geo.BestPlace` and `CITY_ZOOM` in
+    // `Verified.Geo.Enrich`; restating them in Rust would be a second source of
+    // truth for a number the fold owns, and a drain that knew only the zooms
+    // someone remembered would silently leave a whole consumer's keys in the
+    // table forever.
+    let zooms: Vec<i64> = backend::fetch_queue::census(&pool)
+        .await?
+        .into_iter()
+        .filter_map(|(kind, waiting, _)| {
+            (waiting > 0)
+                .then(|| backend::nominatim::zoom_of(&kind))
+                .flatten()
+        })
+        .collect();
+
+    for zoom in zooms {
+        let kind = backend::nominatim::query_type(zoom);
+        let pending = backend::fetch_queue::due(&pool, &kind, limit).await?;
+        if pending.is_empty() {
+            continue;
+        }
+        println!("{kind}: {} key(s) to fetch", pending.len());
+        if dry_run {
+            continue;
+        }
+        for p in pending {
+            // ⚠ The key is `lat|lon` ALREADY ROUNDED by whoever recorded it, so
+            // it is parsed and not re-rounded. Rounding twice is harmless here
+            // and rounding differently would write the answer under a key the
+            // reader never forms.
+            let mut parts = p.key.split('|');
+            let (Some(lat), Some(lon)) = (
+                parts.next().and_then(|v| v.parse::<f64>().ok()),
+                parts.next().and_then(|v| v.parse::<f64>().ok()),
+            ) else {
+                backend::fetch_queue::failed(&pool, &kind, &p.key, "unparseable key").await?;
+                failed += 1;
+                continue;
+            };
+            // ⚠ BEFORE the request, not after. A sleep after the last fetch of a
+            // run is a second wasted; a sleep skipped before the first fetch of
+            // the NEXT run is a policy breach across two processes.
+            tokio::time::sleep(backend::nominatim::MIN_INTERVAL).await;
+            match backend::nominatim::reverse(&client, lat, lon, zoom).await {
+                Ok(backend::nominatim::Fetched::Answer(answer)) => {
+                    if answer.is_none() {
+                        empty += 1;
+                    } else {
+                        fetched += 1;
+                    }
+                    // ⚠ An empty answer IS cached. Nominatim knowing of nothing
+                    // there is a fact about the world and re-asking it every
+                    // night would spend the budget on settled questions.
+                    backend::nominatim::cache_put(&pool, zoom, lat, lon, &answer).await?;
+                    backend::fetch_queue::done(&pool, &kind, &p.key).await?;
+                }
+                Ok(backend::nominatim::Fetched::Refused(status)) => {
+                    failed += 1;
+                    backend::fetch_queue::failed(&pool, &kind, &p.key, &format!("HTTP {status}"))
+                        .await?;
+                }
+                Err(e) => {
+                    failed += 1;
+                    backend::fetch_queue::failed(&pool, &kind, &p.key, &e.to_string()).await?;
+                }
+            }
+        }
+    }
+
+    if dry_run {
+        println!("--dry-run: nothing fetched, nothing written");
+    } else {
+        println!("fetched {fetched} · {empty} empty (cached as such) · {failed} failed");
+    }
+    pool.close().await;
+    Ok(())
+}
+
 async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
