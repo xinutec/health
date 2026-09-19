@@ -73,7 +73,16 @@ const NARRATIVES: &str = concat!(
 /// with a name attached, and it cannot dilute a number a human blessed from the
 /// other implementation. It is the same split `head_corpus` makes for a day
 /// with no `tsArm` — the fourth place #975 blocked the corpus from growing.
-const POST_TS: &[&str] = &["2026-09-06.md"];
+const POST_TS: &[&str] = &[
+    // The coverage cliff (#1658), and now two confirmed venue misnamings on
+    // ground that was blank until #1076's fetch ran (#325).
+    "2026-09-06.md",
+    // The Nonos day (#325's freshest instance). ⚠ It does NOT pin #1659 — the
+    // raw mode never reaches `statesOut`.
+    "2026-09-14.md",
+    // The CONTROL: no known defects, which nothing else in the corpus offers.
+    "2026-09-15.md",
+];
 
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 395;

@@ -711,6 +711,49 @@ pub fn nearby_ways(source: &mut dyn RowSource, lat: f64, lon: f64) -> Result<Opt
     Ok(Some(ways))
 }
 
+/// The transit stops near a point, as `[{subtype, distanceM}]` (#1660).
+///
+/// ⚠ **THE MIRROR HAS THIS DATA AND NOTHING ASKED IT FOR IT.** `Verified/Geo/Bus.lean`
+/// documents `nearbyTransitStops` as INJECTED — "modelled here as an ordinary
+/// function of the caller's" — and that was read as "cannot be computed from
+/// rows". It can: `osm_points` carries a `transit_stop` feature type, 8,619 of
+/// them across the captured corpus, with `bus_stop`, `tram_stop`, `stop` and
+/// `subway_entrance` subtypes. Injection describes where Lean gets it, not
+/// whether the shell can supply it.
+///
+/// ⚠ ONE QUERY, so — unlike `nearby_landmarks` and `nearby_ways` — there is no
+/// partial answer to worry about. A decline is the source declining.
+pub fn nearby_transit_stops(
+    source: &mut dyn RowSource,
+    lat: f64,
+    lon: f64,
+    radius: f64,
+) -> Result<Option<Value>> {
+    let Some(rows) = source.point_rows("transit_stop", lat, lon, radius)? else {
+        return Ok(None);
+    };
+    let answer = spatial("queryPoints", &bits(lat), &bits(lon), &bits(radius), rows)?;
+    // ⚠ `{rows: [...]}`, NOT a bare array — reading it as one shapes nothing and
+    // answers `[]`, which CLAIMS there is no transit here. That exact mistake
+    // cost `nearbyLandmarks` a revert and a day of states (see its arm).
+    let shaped: Vec<Value> = answer
+        .get("rows")
+        .and_then(Value::as_array)
+        .context("osmspatial queryPoints answered without `rows`")?
+        .iter()
+        .map(|r| {
+            json!({
+                // ⚠ Two fields only. `Bus.TransitStop` is `{subtype, distanceM}`
+                // and Lean's parser reads exactly those; a name or an id here
+                // would be dropped silently by one arm and not the other.
+                "subtype": r.get("subtype").cloned().unwrap_or(Value::Null),
+                "distanceM": r.get("distanceM").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+    Ok(Some(Value::Array(shaped)))
+}
+
 fn spatial(op: &str, lat: &str, lon: &str, radius: &str, rows: Vec<Value>) -> Result<Value> {
     let req = json!({
         "mode": "osmspatial", "op": op,
@@ -910,6 +953,28 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 )))
             }
 
+            // Bus stops, tram stops and station entrances near a dwell — the
+            // evidence `annotateBusEvidence` reads to tell a bus from a taxi.
+            //
+            // ⚠ THE RADIUS COMES FROM THE KEY, like `nearbyLandmarks`. The fold
+            // asks at `Bus.TRANSIT_QUERY_RADIUS_M`, and answering at a different
+            // one would be a well-formed answer to a question nobody asked.
+            "transitStops" => {
+                let radius = p.get(2).map_or(
+                    crate::fold_payload::default_radius_m::NEARBY_TRANSIT_STOPS,
+                    |s| radius_of(s),
+                );
+                let Some(shaped) = nearby_transit_stops(&mut self.source, flat, flon, radius)?
+                else {
+                    return Ok(None);
+                };
+                let key_radius = p.get(2).map_or_else(|| bits(radius), |s| (*s).to_string());
+                Ok(Some((
+                    "transitStops".into(),
+                    json!([lat, lon, key_radius, shaped]),
+                )))
+            }
+
             // ⚠ NOT COMPUTED FROM ROWS, and the arm exists anyway. `RowSource`
             // declines by default, so this answers nothing unless a source can
             // reach a geocode cache — which is what keeps the corpus replay
@@ -943,11 +1008,10 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // is how a missing arm came to be filed as a missing lookup
             // (#1054, corrected 2026-08-22).
             //
-            // `transitStops` — declined on purpose. `Verified/Geo/Bus.lean`
-            // records stop resolution as INJECTED, modelled as an ordinary
-            // function rather than computed from rows, so there is nothing here
-            // to compute it from. An empty answer would be a coordinate with no
-            // transit stops near it, which is a claim; declining is not.
+            // `transitStops` has its own arm above — it IS computable from
+            // rows, and the note that used to sit here (Lean models it as
+            // injected, therefore the shell cannot supply it) confused where
+            // Lean gets a value with whether one exists.
             //
             // `reverseGeocode` has its own arm above — it is not answerable
             // from rows, but a source that can reach a geocode cache may answer
