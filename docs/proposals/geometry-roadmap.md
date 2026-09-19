@@ -321,9 +321,17 @@ are now also theorem-pinned (`decode_argmax`, cache-purity, honesty
 corollaries) and bit-exact-gated (173/173 quant↔Lean), so it is the *cheaper*
 component to keep, not the dearer.
 
+⚠ **THE REOPEN CRITERION IS NOT TESTABLE TODAY — the arm below was dismantled.**
+Checked 2026-09-19: `reconstructWalk` SURVIVED the port (`Verified/Geo/WalkAnnotate.lean`,
+`PassFold.lean`, `DayEntry.lean`), but the `walkDraw: "recon"` pipeline arm and the
+`SMOOTHER-PRIMARY vs CURRENT` referee block did NOT. The walk gate's arms are now
+TRACE arms (`none|walkable|buildings|drivable|all` — which OSM sections are fed),
+not DRAW arms. Rebuilding a recon-primary replay is a prerequisite for any re-run,
+and that cost belongs to whoever brings G3.
+
 **Reopen criterion (explicit).** Reopen only when recon beats the matcher on
-the ordinary-leg ratchet — the `SMOOTHER-PRIMARY vs CURRENT` block emitted by
-`score-walk-match.js` — AFTER a genuinely new capability lands. G3 true
+the ordinary-leg ratchet — an ordinary-leg comparison of a recon-primary draw
+against the shipped one — AFTER a genuinely new capability lands. G3 true
 heading (#322) is the plausible one; more soft factors are not (measured
 three times: the loss is a routing gap, not a factor gap). The G0 gate
 machinery stays live as the standing referee precisely so this criterion is
@@ -450,8 +458,16 @@ tunnel-transit coherence #251).
 
 ## Verification
 
-- `pnpm run verify`; `pnpm run golden` byte-identical until the flag flips.
-- `node dist/cli/score-walk-match.js` under the G0-reframed gate.
+⚠ **The commands below are the TypeScript's and DO NOT RUN.** `dist/` was deleted
+(#1225) and `scripts/prod-db.sh` refuses any `dist/*` argument on purpose; there is
+no `pnpm run golden` script and no `score-walk-match`. Today:
+
+- `pnpm run verify` (still the name) and the `walk_gate` row of the deploy gate —
+  `rust/backend/tests/corpus/walk.rs`, replaying every golden day's walks against
+  `tests/golden/walk-baseline.json`.
+- ⚠ **No gate reads a leg's `wayName`** (#1418). A change that moves walk
+  segmentation can degrade a user-confirmed way name with every floor green —
+  measured 2026-09-19. Judge naming changes by the narratives, not by the gate.
 - **The case**: replay 2026-07-06; the 10:16 leg must be a short
   Euston Square→Hospital U walk (~350 m, bbox staying east of lon −0.14), not a
   Regent's Park out-and-back.
