@@ -1,7 +1,7 @@
 ---
 created: 2026-07-12
 updated: 2026-07-12
-status: V0 shipped; V1 refuted by V0 — see "What V0 measured"
+status: V0 shipped (its referee since replaced); V1 refuted by V0; V2/V3 not the lead — see "What V0 measured". ⚠ The focus-place override analysis predates #344 shipping; see "Where these things live now"
 references:
   - ../design/probabilistic-principles.md
   - 2026-06-magnetic-focus-places.md
@@ -103,7 +103,11 @@ cannot name is a bug, and it stays open as a bug.
 
 ## What V0 measured — and what it refuted (2026-07-12)
 
-V0 (the referee, `scripts/score-venues.sh`) is built and green. It replays
+V0 (the referee, then `scripts/score-venues.sh`) was built and green. ⚠ **That
+script no longer exists.** Its replacement is the injection harness documented on
+health #325: `VENUE_PRIORS_FILE` into `truth_corpus` (report-only) and
+`day_corpus`, with `VENUE_AB_OUT` / `VENUE_PLACES_OUT` dumping per-row verdicts
+and every stay's place. It replays
 the corpus, adjudicates every narrative-named stay against the label the
 **timeline** shows, and reports which layer produced it. **Read this section
 before acting on the phases below: it refutes V1 and undercuts V2.**
@@ -162,6 +166,18 @@ Pizza Union → "Bell & Viv".
 > The self-confirmation loop itself is NOT closed. It is narrowed to
 > multi-visit clusters, where the frozen answer at least rests on more than
 > one look. #344 owns deleting the override outright.
+>
+> ⚠ **AND #344 THEN SHIPPED IT (2026-09-03, `f8c8540`) — this whole analysis
+> predates that.** Its close records "the override deleted", at zero venue cost,
+> with 23 days re-blessed and the surviving semantics guard-pinned (a labelled
+> cluster is not venueless; asks with `preferResidential=false`).
+>
+> ⚠ **DO NOT READ THE PARAGRAPHS ABOVE AS THE CURRENT CASCADE.** The naming
+> cascade today is documented in `lean/Verified/Geo/StayEnrich.lean`'s module
+> header, as a five-step list — and its step 4 still describes an amenity arm
+> taking a mined label, which I could not reconcile with "deleted" in one
+> sitting (2026-09-19). **Read the module, not this file**, and if you settle
+> the question, record it there rather than here.
 
 ### But removing the override does NOT fix Urban Social
 
@@ -421,3 +437,23 @@ expected value:
   5 says expose the uncertainty. The timeline currently has no way to say
   "Urban Social **or** The Library" — and that, not a picker, is the correct
   UI for a real tie.
+
+## Where these things live now
+
+⚠ **THE `src/**.ts` PATHS ABOVE ARE HISTORICAL** — the TypeScript backend was
+deleted whole (#975), recoverable at `06346bd^:<path>`. BY SYMBOL, because a
+symbol survives a move and a line number does not (#919, #1205):
+
+| the document says | today |
+| --- | --- |
+| `rankVenues`, the venue scorer | `lean/Verified/Geo/VenuePrior.lean` — `rankVenues`, `shapeScore` |
+| the naming cascade / `velocity.ts` early return | `lean/Verified/Geo/StayEnrich.lean` (module header states the five steps) and `Verified/Geo/BestPlace.lean` — `bestPlace`, `resolve` |
+| `attributeStayVenue`, the training gate | the mining loop behind `backend refresh-focus-places` (`--dry --hard-out/--soft-out` to inspect) |
+| `scripts/score-venues.sh` — the V0 referee | gone; see the correction above |
+| `venue_type_priors` | unchanged, plus `venue_type_prior_snapshots` for per-day as-of blobs |
+
+⚠ **Ticket state, checked 2026-09-19:** #341, #343, #344 and #345 are all CLOSED.
+#345 closed with a finding this document does not carry — the near-field metric
+was fixed and **refutes** the rule change, worst override 1.26 nats. The live
+ticket is **health #325**, which owns the ranking defect and carries the
+instrument.
