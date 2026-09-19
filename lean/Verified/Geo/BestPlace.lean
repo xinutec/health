@@ -289,7 +289,31 @@ def HIGHWAY_CLASSES : List String :=
     "residential", "service", "living_street", "pedestrian", "track", "road",
     "footway", "path", "cycleway", "bridleway", "steps" ]
 
-/-- The label the timeline shows for a resolved place. -/
+/-- ⚠ **A HOUSE NUMBER IS PRECISION A STAY CENTROID CANNOT SUPPORT** (Pippijn,
+2026-09-18: "area by default, street when confident").
+
+The geocode locates a POINT; the stay is a cloud of fixes, and the label claims
+a door. Measured over the 42-day corpus, every stay this branch ever named is
+spread **79-102 m** — several buildings wide — while the stays that resolve to a
+real venue sit at 19-58 m. So the number is not merely sometimes wrong, it is
+asserted from evidence that cannot distinguish one door from its neighbours.
+
+**And in the corpus it is wrong every time it is checkable.** Ground truth for
+2026-04-30 records `Plein 1944 187` for the flat at **161** ("same square, off by
+a house number"), and 2026-04-29 `Molenstraat 61A` for a hotel at **53**. Not one
+instance is confirmed right. There is nothing to trade away.
+
+⚠ **THE ROAD IS KEPT, and that is the same rule as `HIGHWAY_CLASSES` above** —
+whatever the geocode legitimately located survives, and only the part it cannot
+support is dropped:
+
+    "Plein 1944 187"   ->  "Plein 1944"
+    "Molenstraat 77"   ->  "Molenstraat"
+
+⚠ The branch CONDITION is unchanged, so `hasResidentialAddress` still decides the
+same way and the chain still returns the same `Result`. Only the rendering moves.
+Widening the condition would change which stays are named residential at all,
+which is the lodging work (#188/#189), not this. -/
 def placeLabel (r : Result) : String :=
   let a := r.address
   if truthy a.amenity then named (a.amenity.getD "") r.type
@@ -297,7 +321,7 @@ def placeLabel (r : Result) : String :=
   else if truthy a.leisure then named (a.leisure.getD "") r.type
   else if truthy a.shop then named (a.shop.getD "") r.type
   else if truthy a.building && r.type != "" then a.building.getD ""
-  else if truthy a.houseNumber && truthy a.road then s!"{a.road.getD ""} {a.houseNumber.getD ""}"
+  else if truthy a.houseNumber && truthy a.road then a.road.getD ""
   else if truthy a.pedestrian then named (a.pedestrian.getD "") r.type
   else if HIGHWAY_CLASSES.contains r.type && truthy a.road then a.road.getD ""
   else if r.type != "" && !UNNAMEABLE_TYPES.contains r.type && truthy a.road then
@@ -440,10 +464,17 @@ private def poi (n t s : String) (d : Float) : Poi :=
 #guard placeLabel (res "office" "building" { A with building := some "Kings Place" }) == "Kings Place"
 private def buildingNoType : Address :=
   { A with building := some "Kings Place", houseNumber := some "90", road := some "York Way" }
-#guard placeLabel (res "" "building" buildingNoType) == "York Way 90"
--- Dutch ordering: street then number.
+-- ⚠ CHANGED 2026-09-19 from "York Way 90" (Pippijn's call). The number is
+-- precision a stay centroid cannot support; the road survives. See `placeLabel`.
+#guard placeLabel (res "" "building" buildingNoType) == "York Way"
+-- ⚠ CHANGED 2026-09-19 from "Elm Street 161". `161` is the parents' real flat
+-- number and the corpus labelled it 187 — the case this rule exists for.
 #guard placeLabel (res "house" "building" { A with houseNumber := some "161", road := some "Elm Street" })
-  == "Elm Street 161"
+  == "Elm Street"
+-- ⚠ A house number with NO road still falls through, rather than printing a bare
+-- number. The condition needs both and always did; this pins that it still does.
+#guard placeLabel (res "house" "building" { A with houseNumber := some "161" })
+  == "Somewhere"
 #guard placeLabel (res "square" "place" { A with pedestrian := some "Granary Square" })
   == "Granary Square"
 -- ⚠ CHANGED 2026-09-18 from "residential on Caledonian Road" (Pippijn's call).
@@ -543,11 +574,15 @@ private def landmarkVsStreet : Reads :=
   { landmarks := [poi "Olivomare" "amenity" "restaurant" 11], geocode := geo (some streetGeocode) none }
 #guard (bestPlace landmarkVsStreet (some stay) none false).map placeLabel == some "Olivomare"
 
--- Nothing nearby, a residential geocode: the address is the honest label.
+-- Nothing nearby, a residential geocode: the STREET is the honest label.
+-- ⚠ CHANGED 2026-09-19 from "Downing Street 10". `hasResidentialAddress` still
+-- selects this result — the chain is untouched — and only the rendering drops the
+-- number it cannot support. That separation is the point: this guard is what
+-- would catch a future edit that widened the CONDITION instead.
 private def downing : Result :=
   res "house" "building" { A with houseNumber := some "10", road := some "Downing Street" }
 private def addressOnly : Reads := { landmarks := [], geocode := geo (some downing) none }
-#guard (bestPlace addressOnly none none false).map placeLabel == some "Downing Street 10"
+#guard (bestPlace addressOnly none none false).map placeLabel == some "Downing Street"
 
 -- The fall-through: no landmark, no residential address, and the zoom-16 area
 -- names a square.
