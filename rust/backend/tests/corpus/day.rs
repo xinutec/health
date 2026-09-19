@@ -156,7 +156,18 @@ fn drop_nulls(v: &Value) -> Value {
 /// ⚠ A self-blessed oracle catches a REGRESSION and cannot catch "it was always
 /// wrong". The ground-truth narrative grades correctness for these days; this
 /// only holds the line.
-const SELF_BLESSED: &[&str] = &[];
+const SELF_BLESSED: &[&str] = &[
+    // The first day added since the TypeScript went (#975), and the first since
+    // 2026-08-13. Its narrative is user-confirmed and it has NO KNOWN DEFECTS,
+    // which nothing else in the corpus offers — it is here to be the control a
+    // regression fails against.
+    //
+    // ⚠ Self-blessed catches a REGRESSION and cannot catch an error we already
+    // make. Pippijn chose that trade knowingly on 2026-09-19: the alternative is
+    // a corpus frozen at 2026-08-13 forever, because the implementation that
+    // blessed the other 42 no longer exists.
+    "2026-09-15",
+];
 
 pub struct Day {
     golden: &'static str,
