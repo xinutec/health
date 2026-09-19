@@ -1,7 +1,7 @@
 ---
 created: 2026-07-12
 updated: 2026-07-12
-status: P0 shipped (stop condition passed 6.8x); P1 built but NOT shipped — blocked behind #344 + near-field
+status: P0 shipped (stop condition passed 6.8x); P1 built, measured TRUTH-NEUTRAL, NOT shipped — the blocker is near-field decisiveness, and #325 owns it
 references:
   - 2026-07-venue-measurement-model.md
   - ../design/probabilistic-principles.md
