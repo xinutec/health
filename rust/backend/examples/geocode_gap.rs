@@ -14,6 +14,16 @@
 //! lookup rounds to ~110 m (`Enrich.cityGrid`) precisely so habitual endpoints
 //! share a cell, while a stay centroid never lands on that grid by accident.
 //!
+//! ⚠ **THE TWO KEY FORMATS ARE NOT INTERCHANGEABLE, and reading one as the other
+//! silently mis-bins everything.** A golden fixture's `osmTrace.reverseGeocode`
+//! is keyed in PLAIN DECIMALS — the TypeScript wrote it — while the fold's own
+//! miss key is the DECIMAL STRING OF THE IEEE-754 BIT PATTERN (`Wire.fBits`).
+//! Parsing a bit pattern as a decimal yields ~4.6e18, and every huge float is an
+//! exact integer, so the grid test says "gridded" for EVERY key and the area
+//! branch reads as asking nothing. A first version of this did exactly that.
+//! [`coord`] decides by the presence of a `.` rather than guessing, and a key it
+//! cannot read is counted as unreadable instead of binned.
+//!
 //! Point it at a CAPTURED fixture to see what a recent day cannot answer, or at
 //! a golden day to see the shape the TypeScript filled.
 //!
@@ -34,14 +44,28 @@ fn on_city_grid(v: f64) -> bool {
     (v * 1000.0 - (v * 1000.0).round()).abs() < 1e-6
 }
 
+/// One coordinate out of a key part, in EITHER format — see the module header.
+///
+/// ⚠ The `.` decides, rather than "try one and fall back". A bit pattern parses
+/// perfectly well as an f64, so a fallback would never fire and the
+/// misinterpretation would be invisible.
+fn coord(part: &str) -> Option<f64> {
+    if part.contains('.') {
+        part.parse::<f64>().ok()
+    } else {
+        part.parse::<u64>().ok().map(f64::from_bits)
+    }
+    .filter(|v| v.is_finite() && v.abs() <= 180.0)
+}
+
 /// Split one `reverseGeocode` key into the consumer that asked it.
 fn consumer(key: &str) -> &'static str {
     let p: Vec<&str> = key.split('|').collect();
     let (Some(lat), Some(lon)) = (
-        p.first().and_then(|s| s.parse::<f64>().ok()),
-        p.get(1).and_then(|s| s.parse::<f64>().ok()),
+        p.first().copied().and_then(coord),
+        p.get(1).copied().and_then(coord),
     ) else {
-        return "unparseable";
+        return "UNREADABLE KEY";
     };
     match p.get(2).copied().unwrap_or("18") {
         "18" => "BestPlace DETAIL (zoom 18)",
