@@ -71,7 +71,8 @@ for the merely unlikely, always an honest raw fallback
   exemption alone fixed 4 walks (one 332→0 m) — the old soft field had been
   nudging genuine indoor fixes toward walls.
 - **`WALK_RECON` per-leg swap** (`pedestrian-match-annotate.ts`, **on by
-  default** since the G2 flip; `WALK_RECON=0` is the off-switch): draws the
+  default** since the G2 flip; ⚠ `WALK_RECON=0` was the off-switch and DID NOT
+  SURVIVE THE PORT — see `../design/episode-geometry.md`): draws the
   reconstruction only when it is ≥25 % AND ≥150 m shorter than the
   matched/raw line — the dissolved-phantom signature. Surfaces as
   `walkSmoothedPath` / `kind:"smoothed"`. **Input parity is load-bearing**:
@@ -254,7 +255,7 @@ none is rebuilt:
    can**: the step budget, the leg's endpoint anchors, a true heading.
 
 Corollary (RESOLVED 2026-07-08): G1 landed, the swap fires on class 2, and
-the flag is ON by default (`WALK_RECON=0` is the off-switch).
+the flag is ON by default — ⚠ and the off-switch is GONE (see above).
 
 ## Phase G0 — measurement honesty (gates everything) — DONE 2026-07-08
 

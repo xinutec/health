@@ -239,8 +239,12 @@ the signature of a dissolved phantom (an isolated out-and-back spur, or a
 coherent reacquire smear collapsed by the independent-evidence factors:
 step budget + endpoint anchors). The segment then carries
 `walkSmoothedPath` and `episode-geometry` prefers it as `kind:"smoothed"`,
-above `walkMatchedPath`. The swap is **on by default** (`WALK_RECON=0` is
-the emergency off-switch), and both ways the reconstruction is invoked —
+above `walkMatchedPath`. The swap is **on by default**, and ⚠ **THERE IS NO
+OFF-SWITCH ANY MORE** — `WALK_RECON=0` was a TypeScript env read that did not
+survive the port. Only `WALK_RECON_DEBUG` tracing remains, and `WalkSmooth.lean`
+lists the env read itself among the parts deliberately left as shell. If the
+reconstructor ever draws badly in production, the mitigation this sentence used
+to promise does not exist. Both ways the reconstruction is invoked —
 primary draw and conditional swap — are fed the same collapsed fix set
 (`rejectSpikes` + `holdImplausibleSpeed`); feeding the swap un-collapsed
 fixes let dense indoor jitter reach the solver as consistent evidence and
