@@ -2452,6 +2452,22 @@ private structure WalkIn where
   /-- The matcher's identity report for this leg (#1464): named ways and their
   metres, longest first. A DIAGNOSTIC — nothing here scores it. -/
   wayUm : Array (String × Nat) := #[]
+  /-- Does the mirror hold building outlines for the ground THIS leg ran over
+  (#1501)?
+
+  ⚠ `offPathBuildingCrossingM` reads 0.0 for two different worlds — a line that
+  crosses no wall, and a line over ground with no walls to cross. The day-level
+  `buildings.isEmpty` test below cannot separate them, because coverage varies
+  per LOCATION: 2026-09-06 answered three of its four `buildingsNear` keys and
+  left one empty, so its Watford walks would have scored a clean 0.0 off
+  outlines fetched 20 km away.
+
+  ⚠ **DEFAULTS TRUE, and the loudness lives in the GATE.** Defaulting false
+  would be the conservative direction for one leg and a disaster for the metric:
+  a wiring slip that dropped the field would turn the whole wall lens off while
+  every day reported `none` and nothing failed. The gate prints the tally on
+  every run instead, so a coverage number that collapses is visible. -/
+  buildingsMeasured : Bool := true
 
 private def parseWalkIn (j : Json) : Except String WalkIn := do
   return {
@@ -2460,6 +2476,7 @@ private def parseWalkIn (j : Json) : Except String WalkIn := do
     drawn := ← (← optArr j "drawn").mapM parseLL
     raw := ← (← optArr j "raw").mapM parseLL
     acceptedNames := ← (← optArr j "acceptedNames").mapM (·.getStr?)
+    buildingsMeasured := (j.getObjVal? "buildingsMeasured").toOption.bind (·.getBool?.toOption) |>.getD true
     wayUm := ← (← optArr j "wayUm").mapM fun e => do
       let a ← e.getArr?
       return (← (← nth a 0).getStr?, ← (← nth a 1).getNat?) }
@@ -2570,7 +2587,10 @@ private def measure (d : DayIn) (wantP90 : Bool) (w : WalkIn) : WalkEntry :=
     stallM := maxCorridorStall w.raw w.drawn
     speedKmh := if span > 0 then (sc.drawnLengthM / span) * 3.6 else 0
     routeCorr := onNamedWayFraction w.drawn w.acceptedNames d.ways
-    offPathM := if d.buildings.isEmpty then none
+    -- ⚠ UNMEASURED IS NOT CLEAN (#1501). `none` when the day holds no outlines
+    -- at all, and now also when none were fetched for THIS leg's ground — the
+    -- distinction coverage actually varies along.
+    offPathM := if d.buildings.isEmpty || !w.buildingsMeasured then none
                 else some (offPathBuildingCrossingM w.drawn d.buildings d.ways)
     lenM := sc.drawnLengthM
     budgetM := stepBudgetM d.steps (Float.ofInt w.startTs) (Float.ofInt w.endTs)
