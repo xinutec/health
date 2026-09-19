@@ -314,7 +314,10 @@ the referee will test once the stack is unblocked — not as a result.
 
 ## Phases
 
-**The referee (`scripts/score-venues.sh`) is the measurement.** Baseline today:
+**The referee was `scripts/score-venues.sh`.** ⚠ **It no longer exists**; the
+measurement today is the `VENUE_PRIORS_FILE` injection harness into `truth_corpus`
+and `day_corpus` (`VENUE_AB_OUT`, `VENUE_PLACES_OUT`), documented on health #325.
+Baseline as measured then:
 **25/36 (69%)** overall; the venue scorer **16/17 (94%)** when it runs. Every
 phase reports it.
 
@@ -383,7 +386,10 @@ deploy.
 ### Not in scope, but unblocked by this
 
 `#344` — the focus-place `amenity_label` hard override. It bypasses `rankVenues`
-entirely and is 0/4 on the corpus. It should become *evidence* (a prior term in
+entirely. ⚠ **"0/4 on the corpus" is WRONG and this document refutes it itself** —
+see "CORRECTION (same day): the referee was lying about #344", which re-measures
+the layer at **17/21 (81%)** once the exclusion that hid its successes is
+removed. The sentence survived the correction; treat 81% as the number. It should become *evidence* (a prior term in
 nats on that candidate) rather than a veto. It is a separate change and it does
 not depend on this one, but both are the same disease: **a remembered answer
 outranking present evidence.**
@@ -490,3 +496,31 @@ Two other things worth keeping:
 
 **Order of work:** #345 (near-field) → delete the override (#344) → the soft
 prior (#343, P2/P3) → #325 (Urban Social).
+
+---
+
+## What actually happened — checked 2026-09-19
+
+**The first three all closed, in the order this document set out, and the
+three-layer thesis held.**
+
+* **#345** closed having FIXED the near-field metric — and it **refutes** the rule
+  change: worst override 1.26 nats.
+* **#344** then **SHIPPED the deletion** (2026-09-03, `f8c8540`), "at zero venue
+  cost", 23 days re-blessed. The deletion that was *blocked* above became free
+  once near-field was settled — which is precisely what "three layers, each
+  masking the next" predicted. ⚠ The mechanism's current shape is
+  `lean/Verified/Geo/StayEnrich.lean`'s five-step cascade; read it there rather
+  than from this file.
+* **#343** closed: P1 built, measured TRUTH-NEUTRAL, not shipped. Its refutation —
+  dwell shape is too flat to discriminate even unstarved — moved to #325.
+
+**So the whole stack is spent and Urban Social is still wrong.** That is the
+result, and it is the one this document said to expect ("If Urban Social still
+loses, that is a result, not a failure").
+
+⚠ **What #325 carries that this file cannot know:** the defect has TWO sub-classes,
+and everything above is about only the first. Ranking-among-candidates is this
+document's subject. The second — no candidates at all, so the zoom-18 geocode
+returns a neighbour — appeared on 2026-09-06 in Watford, twice, and **a ranking
+fix cannot reach it.**
