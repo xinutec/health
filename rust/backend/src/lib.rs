@@ -59,6 +59,7 @@ pub mod lean;
 pub mod location_cache;
 pub mod mirror_source;
 pub mod nextcloud;
+pub mod nominatim;
 pub mod osm_host;
 pub mod overpass;
 pub mod routes;
