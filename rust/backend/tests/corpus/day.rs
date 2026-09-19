@@ -167,6 +167,9 @@ const SELF_BLESSED: &[&str] = &[
     // a corpus frozen at 2026-08-13 forever, because the implementation that
     // blessed the other 42 no longer exists.
     "2026-09-15",
+    // The Nonos day. It grades #325's freshest venue misnaming, and it does NOT
+    // grade #1659 — the raw mode never reaches `statesOut`.
+    "2026-09-14",
 ];
 
 pub struct Day {
