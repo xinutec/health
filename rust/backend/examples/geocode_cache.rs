@@ -49,6 +49,47 @@ async fn main() -> Result<()> {
         println!("  (empty)");
     }
 
+    // ⚠ HOW MUCH OF IT IS AN ANSWER? `withCache` recorded a failed fetch as a
+    // NEGATIVE SENTINEL `{_err, _at}` under a 5-minute TTL — a TTL that assumed
+    // a live fetcher would come back and overwrite it. The fetcher died with the
+    // TypeScript on 2026-08-26 (#975), so every sentinel written before then is
+    // PERMANENT. A row count alone would read a poisoned cache as a warm one.
+    println!("\nwhat the rows HOLD");
+    for r in &rows {
+        let ty: String = r.try_get("query_type")?;
+        if !ty.starts_with("nominatim") {
+            continue;
+        }
+        // ⚠ `CAST(... AS SIGNED)`. MariaDB's `SUM` over a boolean returns
+        // DECIMAL, which sqlx will not hand back as an i64 — the family of type
+        // mismatch that fails only on real rows.
+        let split = sqlx::query(
+            "SELECT \
+               CAST(SUM(result LIKE '%\"_err\"%') AS SIGNED) AS sentinels, \
+               CAST(SUM(result = 'null') AS SIGNED) AS nulls, \
+               CAST(SUM(result LIKE '%displayName%') AS SIGNED) AS answers, \
+               COUNT(*) AS total \
+             FROM osm_cache WHERE query_type = ?",
+        )
+        .bind(&ty)
+        .fetch_one(&pool)
+        .await?;
+        let g = |n: &str| -> i64 {
+            split
+                .try_get::<Option<i64>, _>(n)
+                .ok()
+                .flatten()
+                .unwrap_or(0)
+        };
+        let total: i64 = split.try_get("total")?;
+        println!(
+            "  {ty:<16} {total:>6} rows = {:>5} answer(s)  {:>5} null(s)  {:>5} SENTINEL(s)",
+            g("answers"),
+            g("nulls"),
+            g("sentinels")
+        );
+    }
+
     // One sample per type, reported as SHAPE only — the field names a cached
     // result carries, never its values.
     for r in &rows {

@@ -27,6 +27,17 @@
 //! Point it at a CAPTURED fixture to see what a recent day cannot answer, or at
 //! a golden day to see the shape the TypeScript filled.
 //!
+//! # With a database, it also says whether the CACHE could have answered
+//!
+//! `osm_cache` holds what the TypeScript fetched before it was deleted (#975):
+//! 2,437 real answers, and 331 negative sentinels whose 5-minute TTL assumed a
+//! live fetcher that no longer exists. When `DB_HOST` is set this probes every
+//! missing key against it, which is the number that decides whether the serving
+//! path can answer from the cache or must wait for a fetch.
+//!
+//! ⚠ A SENTINEL IS NOT A HIT. It is a recorded failure, and counting it as a hit
+//! would report a poisoned cache as a warm one.
+//!
 //! ⚠ PRINTS NO COORDINATES. Health's repositories are public and a geocode key
 //! is a real place he stood (#860): counts and consumer names only.
 //!
@@ -36,6 +47,7 @@
 
 use anyhow::{Context, Result};
 use backend::fold_converge::converge;
+use backend::nominatim::{self, Cached};
 use backend::rowset_answerer::RowSetAnswerer;
 
 /// `Enrich.cityGrid` is `round(n * 1000) / 1000`, so a city key lands exactly on
@@ -56,6 +68,16 @@ fn coord(part: &str) -> Option<f64> {
         part.parse::<u64>().ok().map(f64::from_bits)
     }
     .filter(|v| v.is_finite() && v.abs() <= 180.0)
+}
+
+/// One key, decoded: latitude, longitude, zoom.
+fn decode(key: &str) -> Option<(f64, f64, i64)> {
+    let p: Vec<&str> = key.split('|').collect();
+    Some((
+        coord(p.first().copied()?)?,
+        coord(p.get(1).copied()?)?,
+        p.get(2).copied().unwrap_or("18").parse().ok()?,
+    ))
 }
 
 /// Split one `reverseGeocode` key into the consumer that asked it.
@@ -125,5 +147,46 @@ fn main() -> Result<()> {
             println!("    {w:<40} {n}");
         }
     }
+
+    // ⚠ Only with a database, and only AFTER the fold — `converge` is blocking
+    // and the mirror's sync path refuses inside a tokio runtime (#1619). Opening
+    // the runtime here keeps the two apart.
+    if std::env::var("DB_HOST").is_err() {
+        println!("\n  (no DB_HOST — not probing osm_cache)");
+        return Ok(());
+    }
+    let keys: Vec<(&str, f64, f64, i64)> = converged
+        .unanswerable
+        .iter()
+        .filter(|m| m.what == "reverseGeocode")
+        .filter_map(|m| decode(&m.key).map(|(a, o, z)| (consumer(&m.key), a, o, z)))
+        .collect();
+
+    let rt = tokio::runtime::Runtime::new().context("a runtime for the cache probe")?;
+    rt.block_on(async {
+        let cfg = backend::config::Config::from_env().context("reading configuration")?;
+        let pool = backend::db::connect(&cfg.db.url())
+            .await
+            .context("connecting")?;
+        let mut tally: std::collections::BTreeMap<&str, [usize; 3]> =
+            std::collections::BTreeMap::new();
+        for (c, lat, lon, zoom) in &keys {
+            let slot = tally.entry(c).or_default();
+            match nominatim::cache_get(&pool, *zoom, *lat, *lon).await? {
+                Some(Cached::Answer(Some(_))) => slot[0] += 1,
+                // An answer of `null` is Nominatim saying nothing is there —
+                // still an answer, and still a hit.
+                Some(Cached::Answer(None)) => slot[0] += 1,
+                Some(Cached::Failed { .. }) => slot[1] += 1,
+                None => slot[2] += 1,
+            }
+        }
+        pool.close().await;
+        println!("\n  could osm_cache answer them?   hit / SENTINEL / absent");
+        for (c, [hit, sent, miss]) in &tally {
+            println!("    {c:<40} {hit:>3} / {sent:>3} / {miss:>3}");
+        }
+        anyhow::Ok(())
+    })?;
     Ok(())
 }
