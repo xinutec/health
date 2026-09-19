@@ -234,9 +234,10 @@ impl MirrorSource {
     /// where the fold can be told. health #976 is that distinction going wrong
     /// in the other direction — a database that is down producing byte-for-byte
     /// the same answer as an area with no roads.
-    fn block<T, F>(&self, f: F) -> Result<T>
+    fn block<T, E, F>(&self, f: F) -> Result<T>
     where
-        F: std::future::Future<Output = Result<T, sqlx::Error>>,
+        F: std::future::Future<Output = Result<T, E>>,
+        E: Into<anyhow::Error>,
     {
         // Counted here rather than at each call site: every query this source
         // makes goes through this one boundary, so the count cannot drift from
@@ -245,7 +246,7 @@ impl MirrorSource {
         let t0 = std::time::Instant::now();
         let out = self.handle.block_on(f);
         DB_NANOS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        Ok(out?)
+        out.map_err(Into::into)
     }
 
     /// The coverage boxes for one bucket, read once.
@@ -711,6 +712,38 @@ impl RowSource for MirrorSource {
         }
         Ok(self.rail_stations.clone())
     }
+
+    /// One reverse geocode, from the cache the TypeScript filled (#1076).
+    ///
+    /// ⚠ **READ-ONLY, AND NO NETWORK.** `osm_cache` stopped growing when the
+    /// TypeScript was deleted (#975), so this answers habitual ground and
+    /// declines on new ground — measured at 13 of 15 keys on an ordinary day and
+    /// 6 of 32 on the first day somewhere new. Putting the FETCH here would put
+    /// a Nominatim round trip on the serving path, which is where the fold's
+    /// latency already hurts (#1071); the fetch belongs in a deferred job, which
+    /// is the same shape #1658 needs for Overpass.
+    ///
+    /// ⚠ **A NEGATIVE SENTINEL DECLINES, WHATEVER ITS AGE.** `withCache` wrote a
+    /// failed fetch as `{_err, _at}` under a five-minute TTL, and 331 of those
+    /// are now permanent because the fetcher that would have overwritten them is
+    /// gone. But the TTL only ever governed whether to RE-FETCH, and this reader
+    /// does not fetch — so a sentinel is simply an absent answer. Returning
+    /// `null` for a fresh one would tell the fold "nothing is named here", which
+    /// is a claim about the world made out of a network error (#976).
+    fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
+        let pool = self.pool.clone();
+        let found =
+            self.block(async move { crate::nominatim::cache_get(&pool, zoom, lat, lon).await })?;
+        Ok(match found {
+            Some(crate::nominatim::Cached::Answer(Some(g))) => Some(serde_json::to_value(g)?),
+            // ⚠ Nominatim answering "nothing is here" IS an answer, and the fold
+            // reads a null entry as a RESOLVED lookup with no name — which is a
+            // different state from an unanswered key, and the reason this arm
+            // exists separately from the two below.
+            Some(crate::nominatim::Cached::Answer(None)) => Some(Value::Null),
+            Some(crate::nominatim::Cached::Failed { .. }) | None => None,
+        })
+    }
 }
 
 /// ⚠ A NULL subtype becomes `""`, not `null`. Lean's row parser reads this
@@ -847,12 +880,16 @@ where
 /// is captured is exactly what production asked and got — including the
 /// DECLINES, without which a replay answers where the mirror could not and the
 /// day comes out better in the fixture than it does in production.
+///
+/// Returns the row set AND the `osmTrace.reverseGeocode` section, which is
+/// `None` when the source answered no geocode at all (#1076). The two are
+/// separate because they land in different halves of a fixture.
 pub async fn converge_from_mirror_recording(
     pool: MySqlPool,
     cap: Value,
     inputs: Value,
     now_ms: i64,
-) -> Result<(crate::fold_converge::Converged, Value)> {
+) -> Result<(crate::fold_converge::Converged, Value, Option<Value>)> {
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
         let source = MirrorSource::new(pool, handle.clone(), now_ms);
@@ -863,11 +900,13 @@ pub async fn converge_from_mirror_recording(
             // ⚠ Read AFTER the fold and inside this thread: the recorder is
             // shared with us by `Arc`, which is how the row set comes back
             // without handing out `OsmAnswerer`'s private source.
-            let row_set = rec
+            let recorded = rec
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .row_set();
-            Ok((conv, row_set))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let row_set = recorded.row_set();
+            let geocodes = recorded.geocode_section();
+            drop(recorded);
+            Ok((conv, row_set, geocodes))
         })
     })
     .await

@@ -882,7 +882,7 @@ fn stations_on_line(section: Option<&Value>) -> Value {
 
 /// `reverseGeocode`'s `zoom = 18` default, so a key that omitted it records the
 /// EFFECTIVE argument rather than a blank.
-const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
+pub const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
 
 /// `[latBits, lonBits, zoom, address|null]`.
 ///
@@ -891,7 +891,12 @@ const NOMINATIM_DEFAULT_ZOOM: f64 = 18.0;
 /// is no precision to preserve — but it means this one table cannot reuse
 /// `table3`, and a copy of that helper "tidied" to share it would silently
 /// bit-encode the zoom and miss every key.
-fn geocode_table(section: Option<&Value>) -> Value {
+///
+/// ⚠ Public so the ANSWERER's live row can be compared against it directly
+/// (#1076). A geocode reaching the fold from a cache and one reaching it from a
+/// recorded section must be the same bytes, and that is a claim worth a test
+/// rather than a comment.
+pub fn geocode_table(section: Option<&Value>) -> Value {
     let mut out = Vec::new();
     for (k, v) in section.and_then(Value::as_object).into_iter().flatten() {
         let n = key_nums(k);
@@ -927,7 +932,11 @@ fn geocode_table(section: Option<&Value>) -> Value {
 
 /// One Nominatim answer, flattened: the three top-level fields plus the address
 /// components the naming cascade reads.
-fn encode_geocode(v: &Value) -> Value {
+///
+/// ⚠ Public because the ANSWERER encodes here too (#1076). A geocode reaching the
+/// fold from a live cache and one reaching it from a recorded section must be the
+/// same bytes, and the only way to guarantee that is one encoder.
+pub fn encode_geocode(v: &Value) -> Value {
     let Some(o) = v.as_object() else {
         return Value::Null;
     };

@@ -65,6 +65,10 @@ pub struct Recorded {
     rail_ways: Vec<Value>,
     stations: Option<Vec<Value>>,
     declined: Vec<String>,
+    /// Geocodes the source answered, keyed `lat|lon|zoom` in PLAIN DECIMALS —
+    /// the format the 42 TypeScript-written fixtures use, so a captured section
+    /// is diffable against them (#1076).
+    geocodes: BTreeMap<String, Value>,
 }
 
 /// A [`RowSource`] that answers from `inner` and remembers everything.
@@ -112,6 +116,24 @@ impl Recorded {
             }),
             "declined": self.declined,
         })
+    }
+
+    /// The `osmTrace.reverseGeocode` section a fixture carries, or `None` when
+    /// the source answered no geocode at all.
+    ///
+    /// ⚠ Omitted rather than emitted empty when nothing was answered. An empty
+    /// section is a day that asked and got nothing; an absent one is a day whose
+    /// source could not answer. #1660 grades on that difference.
+    pub fn geocode_section(&self) -> Option<Value> {
+        if self.geocodes.is_empty() {
+            return None;
+        }
+        Some(Value::Object(
+            self.geocodes
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ))
     }
 
     fn record_lines(&mut self, bucket: &str, rows: &[Value]) {
@@ -303,6 +325,26 @@ impl<S: RowSource> RowSource for RecordingSource<S> {
             }
         }
         Ok(got)
+    }
+
+    /// ⚠ **FORWARDED, AND THE DEFAULT WOULD HAVE BEEN SILENT.** `RowSource`
+    /// declines geocodes by default, so a recorder that did not override this
+    /// would answer every `reverseGeocode` with a decline while wrapping a
+    /// source that could answer it — and the capture would come out looking like
+    /// a day whose geocodes are simply unavailable. Nothing downstream could tell
+    /// that apart from the truth.
+    fn geocode(&mut self, lat: f64, lon: f64, zoom: i64) -> Result<Option<Value>> {
+        let found = self.inner.geocode(lat, lon, zoom)?;
+        if let Some(answer) = &found {
+            // ⚠ PLAIN DECIMALS, matching the TypeScript's own section — NOT the
+            // bit patterns the fold's miss key uses. `fold_payload::geocode_table`
+            // converts on the way in, and a section written in bits would parse
+            // to ~4.6e18 and match nothing.
+            self.rec()
+                .geocodes
+                .insert(format!("{lat}|{lon}|{zoom}"), answer.clone());
+        }
+        Ok(found)
     }
 
     fn rail_stations(&mut self) -> Result<Option<Vec<Value>>> {

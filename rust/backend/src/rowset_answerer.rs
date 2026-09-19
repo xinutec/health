@@ -132,6 +132,24 @@ pub trait RowSource {
     /// out of the result. A source that returned these in a different order
     /// would answer the same question differently.
     fn rail_stations(&mut self) -> Result<Option<Vec<Value>>>;
+
+    /// One reverse geocode, in the shape `osmTrace.reverseGeocode` records —
+    /// `{displayName, type, category, address}` — or `None` to DECLINE (#1076).
+    ///
+    /// ⚠ **DECLINING IS THE DEFAULT AND IT IS THE HONEST ANSWER.** A geocode
+    /// cannot be computed from mirror rows at all: it is a Nominatim call over
+    /// coordinates the pipeline DERIVES. A source with no geocode to hand must
+    /// decline, because answering "nothing is named here" is a claim about the
+    /// world that it has no grounds to make (#976).
+    ///
+    /// ⚠ **THE CORPUS REPLAY KEEPS THE DEFAULT ON PURPOSE.** A golden day
+    /// answers this from its own recorded `osmTrace` section. A replay that
+    /// started consulting a live cache would grade the day against answers its
+    /// fixture does not carry, and the fixture would stop being the record of
+    /// what that day was.
+    fn geocode(&mut self, _lat: f64, _lon: f64, _zoom: i64) -> Result<Option<Value>> {
+        Ok(None)
+    }
 }
 
 /// Answers the fold's misses, whatever the rows come from.
@@ -892,6 +910,33 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 )))
             }
 
+            // ⚠ NOT COMPUTED FROM ROWS, and the arm exists anyway. `RowSource`
+            // declines by default, so this answers nothing unless a source can
+            // reach a geocode cache — which is what keeps the corpus replay
+            // reading its own fixture while the serving path can do better.
+            //
+            // ⚠ ONE ENCODER. The row goes through `fold_payload::encode_geocode`,
+            // the same function the recorded section is encoded by, so a geocode
+            // that arrives live and one that arrives from a fixture are the same
+            // bytes. Two encoders here would diverge silently and only the served
+            // day would show it.
+            "reverseGeocode" => {
+                // ⚠ THE ZOOM IS A PLAIN INTEGER IN THE KEY, not a bit pattern —
+                // it is a literal the caller wrote, not a measurement. Parsing it
+                // as bits would ask for zoom 8.9e-323 and miss every row.
+                let zoom = p
+                    .get(2)
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(crate::fold_payload::NOMINATIM_DEFAULT_ZOOM as i64);
+                let Some(found) = self.source.geocode(flat, flon, zoom)? else {
+                    return Ok(None);
+                };
+                Ok(Some((
+                    "reverseGeocode".into(),
+                    json!([lat, lon, zoom, crate::fold_payload::encode_geocode(&found)]),
+                )))
+            }
+
             // ⚠ EVERYTHING ELSE IS DECLINED, and the reasons are NOT the same.
             // This comment used to justify `transitStops` alone, which read as
             // if the whole catch-all had been adjudicated; it had not, and that
@@ -904,9 +949,9 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             // to compute it from. An empty answer would be a coordinate with no
             // transit stops near it, which is a claim; declining is not.
             //
-            // `reverseGeocode` — never answerable from rows at all. It is a
-            // Nominatim call, permanently delegated to the captured trace, and
-            // its keys are coordinates the pipeline DERIVES.
+            // `reverseGeocode` has its own arm above — it is not answerable
+            // from rows, but a source that can reach a geocode cache may answer
+            // it, and `RowSetSource` deliberately does not.
             _ => Ok(None),
         }
     }

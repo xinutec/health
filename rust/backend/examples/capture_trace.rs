@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
     // the same refusal answering every OSM read in the pod for weeks).
     backend::osm_host::start_capture();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (conv, row_set) = backend::mirror_source::converge_from_mirror_recording(
+    let (conv, row_set, geocodes) = backend::mirror_source::converge_from_mirror_recording(
         pool.clone(),
         cap.clone(),
         inputs.clone(),
@@ -89,7 +89,14 @@ async fn main() -> Result<()> {
     pool.close().await;
     let live_day: Value = serde_json::from_str(&conv.out).context("the live fold's reply")?;
 
-    let trace = backend::osm_host::take_capture();
+    let mut trace = backend::osm_host::take_capture();
+    // ⚠ The geocodes do NOT come from `take_capture` — that reads the three
+    // `@[extern]` callbacks, and `reverseGeocode` travels the answerer instead
+    // (#1071 records how that asymmetry hid a defect for weeks). Merged here so
+    // a captured fixture carries the section the 42 TypeScript days carry.
+    if let (Some(section), Some(o)) = (geocodes, trace.as_object_mut()) {
+        o.insert("reverseGeocode".into(), section);
+    }
     let sections: Vec<(String, usize)> = trace
         .as_object()
         .into_iter()
@@ -125,9 +132,17 @@ async fn main() -> Result<()> {
     let mut total_answers = 0usize;
     for (table, entries) in trace.as_object().into_iter().flatten() {
         let obj = entries.as_object().cloned().unwrap_or_default();
+        // ⚠ AN ANSWER IS NOT ALWAYS AN ARRAY. The three callback sections hold
+        // row lists; `reverseGeocode` holds an OBJECT per key. Counting only
+        // non-empty arrays would report a fully captured geocode section as
+        // entirely empty and trip the warning below.
         let filled = obj
             .values()
-            .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+            .filter(|v| match v {
+                Value::Array(a) => !a.is_empty(),
+                Value::Null => false,
+                _ => true,
+            })
             .count();
         total_answers += filled;
         eprintln!("  {table:<16} {:>4} key(s), {filled} non-empty", obj.len());
@@ -172,7 +187,21 @@ async fn main() -> Result<()> {
     backend::osm_host::load_trace_value_sections(&doc, "<captured>", true, true, true)
         .map_err(|e| anyhow::anyhow!("reloading the capture: {e}"))?;
     let mut answerer2 = RowSetAnswerer::new(&row_set).context("row set")?;
-    let replay = converge(&cap, &inputs, None, &mut answerer2).context("replay")?;
+    // ⚠ THE TRACE IS PASSED, not `None`, and this is what the corpus gate does
+    // (`tests/corpus/mod.rs` replays with `inputs.get("osmTrace")`). It used to
+    // be `None` and that was only accidentally right: the captured trace held
+    // the three CALLBACK sections, which reach the fold through the thread-local
+    // installed just above and never through the request. `reverseGeocode` is
+    // the opposite — an answerer TABLE — so with `None` the replay could not
+    // answer the 13 geocodes the live arm had, and the two arms drew different
+    // days while every section looked captured.
+    let replay = converge(
+        &cap,
+        &inputs,
+        Some(&doc["inputs"]["osmTrace"]),
+        &mut answerer2,
+    )
+    .context("replay")?;
     let back = backend::osm_host::take_counts();
 
     // ⚠ **DAY EQUALITY, NOT KEY MATCHING.** The row set is a CONVERSION —
@@ -233,7 +262,17 @@ async fn main() -> Result<()> {
     stripped.remove("declined");
     let stripped = Value::Object(stripped);
     let mut answerer3 = RowSetAnswerer::new(&stripped).context("row set")?;
-    let no_declines = converge(&cap, &inputs, None, &mut answerer3).context("control replay")?;
+    // ⚠ THE SAME TRACE AS THE REPLAY ARM. `declined` is the axis under test, so
+    // it must be the ONLY thing that differs. Passing `None` here while the
+    // replay passed the trace would withhold the geocode table from the control
+    // as well, and the difference reported would be two changes at once.
+    let no_declines = converge(
+        &cap,
+        &inputs,
+        Some(&doc["inputs"]["osmTrace"]),
+        &mut answerer3,
+    )
+    .context("control replay")?;
     let no_declines_day: Value =
         serde_json::from_str(&no_declines.out).context("the control reply")?;
     // ⚠ THE COUNTS GO OUT EITHER WAY. An identical DAY does not mean an
@@ -254,12 +293,38 @@ async fn main() -> Result<()> {
     // 59 coverage gaps answered as "nothing is there" instead of "nobody
     // knows". That is the erasure #1658 is about, and comparing days alone
     // reports it as no difference at all.
-    if no_declines.unanswerable.len() != replay.unanswerable.len() {
-        eprintln!(
+    // ⚠ `abs_diff`, and the DIRECTION is named. These are `usize`, and the
+    // subtraction was written assuming the control can only ever answer MORE —
+    // it underflowed to 18446744073709551602 the first time the replay arm
+    // gained an answer the control lacked, printing a number rather than
+    // failing.
+    // ⚠ THE DIRECTION IS NAMED, because only one of the two is ordinary.
+    // Stripping `declined` can only turn an UNKNOWN into an empty answer, so the
+    // control must have FEWER unanswerable, never more. The other way round means
+    // the arms differ in something else — which is how a biased control reads,
+    // and this one WAS biased until 2026-09-19 (it withheld the trace the replay
+    // arm was given, so it varied along two axes at once).
+    //
+    // ⚠ And it is `usize`: the subtraction underflowed to 18446744073709551602
+    // the first time the control came out ahead, printing a number rather than
+    // failing.
+    match replay
+        .unanswerable
+        .len()
+        .cmp(&no_declines.unanswerable.len())
+    {
+        std::cmp::Ordering::Greater => eprintln!(
             "control: `declined` is LOAD-BEARING — without it {} gap(s) read as \
              empty answers rather than as unknowns",
             replay.unanswerable.len() - no_declines.unanswerable.len(),
-        );
+        ),
+        std::cmp::Ordering::Less => eprintln!(
+            "⚠ control: stripping `declined` left {} FEWER gap(s) than the replay \
+             has. That cannot happen from the decline list alone — the two arms \
+             differ in something else and this control is not measuring what it says",
+            no_declines.unanswerable.len() - replay.unanswerable.len(),
+        ),
+        std::cmp::Ordering::Equal => {}
     }
     if no_declines_day == live_day {
         eprintln!(
