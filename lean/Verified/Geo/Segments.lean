@@ -707,22 +707,15 @@ private def approxRel (a b : Float) : Bool :=
 
 -- Mode ORDER pinned exactly; top score / normalise fields ≤1 ULP (relative).
 --
--- ⚠ **EIGHT OF THESE MOVED WITH #1659's CYCLING FLOOR, and the class matters
--- more than the count.** `scoreCycling` is a term in the DENOMINATOR of every
--- confidence (`normalizeScores` is share-of-total), so a floor that sends
--- cycling away below 12 km/h moves every slow window in the file — the
--- STATIONARY fixtures included, which have nothing to do with the defect.
+-- ⚠ **THESE NUMBERS CANNOT BE REGENERATED.** `segments-refs.mts` produced them
+-- and went with the TypeScript (#975), so touching one is a deliberate choice,
+-- not a re-derivation. Take a new value from the evaluator's BIT PATTERN:
+-- `toString` on a Float gives six decimals and `approxRel` compares at 1e-9.
 --
--- ⚠ **NO WINNING MODE CHANGED, here or in the corpus.** What changed is the
--- ORDER BENEATH the winner (cycling 2nd -> 3rd on a walk, 3rd -> 4th on a
--- stay) and how confident the pipeline reports being.
---
--- ⚠ **AND THESE NUMBERS CANNOT BE REGENERATED.** They came from the
--- TypeScript through `segments-refs.mts`, which went with it (#975). Editing
--- them is a DELIBERATE departure from the ported reference — the TS carried
--- this defect too — not a re-derivation. Values below were read off the
--- evaluator's bit patterns, because `toString` on a Float gives six decimals
--- and `approxRel` compares at 1e-9.
+-- ⚠ **A CHANGE TO ANY SCORER MOVES EVERY SLOW WINDOW HERE**, stationary
+-- fixtures included. `normalizeScores` is share-of-total, so each scorer sits
+-- in the DENOMINATOR of every confidence — expect the ORDER beneath the winner
+-- and the confidence figures to move together, and the winner not to.
 #guard (scoreWindow wfStationary).map (·.mode) == ["stationary", "walking", "driving", "cycling", "train", "plane"]
 #guard approxRel (scoreWindow wfStationary).head!.score 30.649086792579197
 #guard (scoreWindow wfWalking).map (·.mode) == ["walking", "driving", "cycling", "stationary", "train", "plane"]

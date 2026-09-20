@@ -17,13 +17,14 @@
 //!     → segments     (Lean)                 classify → segsRaw
 //! ```
 //!
-//! ## The parity target is free
+//! ## The oracle is free
 //!
-//! Each golden fixture carries the frozen TypeScript head as
-//! `expected.statesOut`, computed from the same `inputs` this
-//! module reads. So the whole chain checks against 42 real days with no DB and
-//! no Node. ⚠ The TypeScript parity test that used to check this is DELETED
-//! (2026-09-20) — there is no other implementation to agree with any more.
+//! Each golden fixture carries `expected.statesOut` — this arm's own last
+//! blessed output — computed from the same `inputs` this module reads. So the
+//! whole chain replays against the corpus with no DB and no Node.
+//!
+//! ⚠ It is a REGRESSION oracle: it catches the answer MOVING and cannot catch
+//! "it was always wrong". Only the ground-truth narratives grade correctness.
 //!
 //! ⚠ COMPARE THE SERIALISED TEXT. `jq` parses both sides to doubles, so
 //! `25.0 == 25` and a keyed diff calls a rendering difference clean. Every
@@ -565,19 +566,17 @@ fn parse_input_fix(v: &Value) -> Option<Fix> {
 
 /// The head's output in the shape `fold_payload::build_day_request` reads.
 ///
-/// That function was written against `FOLD_CAPTURE` files — the TypeScript
-/// pipeline recording what it handed the fold — and is already verified field
-/// by field against them. So the last step to a Node-free day is not a second
-/// encoder but the same one, fed a capture this crate computed. The frozen
-/// `expected.tsArm.capture` on each fixture is then the oracle for BOTH halves
-/// at once.
+/// One encoder, fed a capture this crate computes — not a second encoder
+/// beside it. The corpus replays the result against each fixture's
+/// `expected.statesOut`, so the capture and the encoding are checked together
+/// rather than separately.
 ///
 /// Only the fields the fold reads are produced: `segsRaw`, `modeStats`, `obs`,
 /// `tail`, and the two answer tables, which start empty because a serving
 /// caller has no recorded trace to seed them from — the converge loop fills
-/// them by asking. The capture's other keys (`segsSplit`, `statesOut`, …) are
-/// the TypeScript's own intermediate boundaries, recorded for the day gate to
-/// compare; nothing downstream of `build_day_request` reads them.
+/// them by asking. ⚠ Nothing downstream of `build_day_request` reads the
+/// capture's other keys — they are intermediate boundaries kept for the day
+/// gate, not inputs.
 ///
 /// ⚠ AN EMPTY DAY IS REFUSED RATHER THAN APPROXIMATED. When a day observes
 /// nothing, `tail.bracketPlace` carries the resolved NAME of the cross-day

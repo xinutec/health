@@ -4,10 +4,9 @@
 //!   fixture.inputs → head::capture → build_day_request → converge → states
 //! ```
 //!
-//! Every link existed before this file except the first: `converge` and
-//! `RowSetAnswerer` were written against `FOLD_CAPTURE` files, which only the
-//! TypeScript pipeline could produce. `head::capture` computes the same thing,
-//! so the chain closes and the day can be replayed from the fixture alone
+//! ⚠ `converge` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that nothing
+//! in this repo could produce until `head::capture` did. That is what closes
+//! the chain: a day replays from the fixture alone, with no external producer
 //! (#982).
 //!
 //! The oracle is `expected.statesOut` — this pipeline's own last blessed
@@ -34,11 +33,6 @@
 //! grade correctness. When this goes red the ANSWER MOVED; whether it moved for
 //! the better is a question this file does not answer.
 //!
-//! ⚠ There was a second oracle, a frozen TypeScript arm under `expected.tsArm`,
-//! and it is GONE — deleted from the fixtures on 2026-09-20 (Pippijn: "End TS
-//! comparison everywhere. We don't care about TS anymore."). Do not reach for a
-//! TS comparison to settle a question here; there is nothing to compare to.
-//!
 //! `DAY_BLESS=1` re-blesses — it OVERWRITES each fixture's `statesOut` with the
 //! current replay and prints what it touched. Bless deliberately, on a clean
 //! tree, and read the inner golden repo's diff before committing it.
@@ -60,8 +54,8 @@ use serde_json::{Map, Value, json};
 
 use super::Replay;
 
-/// Days whose timeline the Lean fold and the TypeScript cascade build
-/// differently — each with its divergence ADJUDICATED, not merely observed.
+/// Days whose timeline diverges from the blessed oracle — each with its
+/// divergence ADJUDICATED, not merely observed.
 ///
 /// ⚠ THIS LIST MAY ONLY SHRINK. Listing a day keeps the other 41 checkable
 /// instead of one red day hiding them all; re-capturing a day to make a miss
@@ -79,8 +73,8 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// Keys the offline answerer cannot supply, BY DAY, beyond the blank-zone
 /// `bestPlace` asked before `tzAt` resolves.
 ///
-/// Each means the fold reached a lookup the TypeScript run never made, so the
-/// recorded trace has no answer and the row set is not that lookup's source.
+/// Each means the fold reached a lookup the recorded trace has no answer for,
+/// so the row set is not that lookup's source.
 /// Per #1054 the miss IS the finding, so this is a CEILING that must fall, not
 /// a budget.
 ///
@@ -185,13 +179,7 @@ impl Day {
         self.graded += 1;
         let fx = &rep.fx;
 
-        // ⚠ ONE ORACLE, AND IT IS THIS PIPELINE'S OWN LAST BLESSED OUTPUT.
-        // There was a second — a frozen TypeScript arm under `expected.tsArm` —
-        // and it was DELETED on 2026-09-20 (Pippijn: "End TS comparison
-        // everywhere. We don't care about TS anymore."). Every day is graded the
-        // same way now, and no day is special for having been ported.
-        //
-        // ⚠ SO EVERY ORACLE HERE CATCHES A REGRESSION AND NONE CATCHES "it was
+        // ⚠ EVERY ORACLE HERE CATCHES A REGRESSION AND NONE CATCHES "it was
         // always wrong". The ground-truth narratives are the only thing in the
         // corpus that grades CORRECTNESS rather than change (#1660) — when this
         // gate goes red it means the ANSWER MOVED, which is not the same as the

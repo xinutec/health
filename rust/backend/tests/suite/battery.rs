@@ -1,9 +1,8 @@
 //! The battery trace's marshalling, on synthetic rows.
 //!
-//! ⚠ The corpus check that used to live in `head_corpus.rs` is DELETED with it
-//! (2026-09-20, TypeScript parity). This unit check needs both the golden days
-//! and a Node-produced oracle. This one needs neither, and covers the case the
-//! corpus CANNOT: a PhoneTrack row with no `battery` key at all.
+//! ⚠ Nothing else covers this. A corpus replay needs the golden days; this
+//! needs neither them nor a database, and it reaches the case a replay CANNOT:
+//! a PhoneTrack row with no `battery` key at all.
 //!
 //! ⚠ That gap is measured, not assumed. Sending `0` instead of `null` for an
 //! absent reading left all 42 golden days agreeing, because every row the

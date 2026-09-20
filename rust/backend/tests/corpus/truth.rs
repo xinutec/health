@@ -335,11 +335,9 @@ impl Truth {
                 }
                 Some("known-error") => self.tally_k += 1,
                 Some("cleared") => self.tally_c += 1,
-                // ⚠ NOT "a row we could not grade yet" — a row that grades
-                // NOTHING, and looks like a verdict while doing it. The usual
-                // cause is a bare `correct` with no `{provenance}`: that parses
-                // as `.unspecified`, `trusted` rejects it, and `rowVerdict`
-                // returns `.unverified` (#1669).
+                // ⚠ `unverified` is a REFUSAL, not a failure to grade yet:
+                // `rowVerdict` declines the row on purpose. See the reporter
+                // below for both branches and why neither is debt (#1669).
                 _ => {
                     self.tally_u += 1;
                     // Which of `rowVerdict`'s two branches sent it here. The row

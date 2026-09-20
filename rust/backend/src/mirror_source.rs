@@ -62,12 +62,10 @@
 //! unanswerable and the caller can see it — where an empty row list would be the
 //! claim that there are no roads there (#976).
 //!
-//! ⚠ **AND IT RECORDS THE DECLINE, since 2026-09-20.** The write half is
-//! [`crate::osm_mirror`], drained out of band by `backend fetch-osm`: a fetch
-//! here would put an Overpass round trip on the serving path, which is what the
-//! queue exists to avoid (#1076, #1658). This header used to end "the write half
-//! is separate work and is not in this module" — the second clause still holds,
-//! the first no longer does.
+//! ⚠ **AND IT RECORDS THE DECLINE.** The write half is [`crate::osm_mirror`],
+//! drained out of band by `backend fetch-osm`: a fetch here would put an
+//! Overpass round trip on the serving path, which is what the queue exists to
+//! avoid (#1076, #1658).
 //!
 //! ⚠ **THE THREE `@[extern]` CALLBACKS DO NOT COME THROUGH HERE.**
 //! `walkableRoads`, `buildingsNear` and `drivableRoads` read
