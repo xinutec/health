@@ -186,6 +186,12 @@ pub struct Truth {
     tally_k: usize,
     tally_c: usize,
     tally_u: usize,
+    /// Rows that produced NO VERDICT, by date, SPLIT BY CAUSE (#1669).
+    ///
+    /// ⚠ `rowVerdict` has two ways in and a bare count mixes them, which is how
+    /// a static grep over the markdown produced "53 rows over 8 days" against
+    /// the grader's 47 over 17. `(untrusted, unstatused)`.
+    ungraded: BTreeMap<String, (usize, usize)>,
 }
 
 impl Truth {
@@ -213,6 +219,7 @@ impl Truth {
             tally_k: 0,
             tally_c: 0,
             tally_u: 0,
+            ungraded: BTreeMap::new(),
         })
     }
 
@@ -328,7 +335,28 @@ impl Truth {
                 }
                 Some("known-error") => self.tally_k += 1,
                 Some("cleared") => self.tally_c += 1,
-                _ => self.tally_u += 1,
+                // ⚠ NOT "a row we could not grade yet" — a row that grades
+                // NOTHING, and looks like a verdict while doing it. The usual
+                // cause is a bare `correct` with no `{provenance}`: that parses
+                // as `.unspecified`, `trusted` rejects it, and `rowVerdict`
+                // returns `.unverified` (#1669).
+                _ => {
+                    self.tally_u += 1;
+                    // Which of `rowVerdict`'s two branches sent it here. The row
+                    // carries both fields, so this is read rather than guessed:
+                    // a status outside {correct, wrong} is one cause, an
+                    // untrusted provenance the other, and they want different
+                    // repairs — the first is a malformed cell, the second is a
+                    // question only Pippijn can answer.
+                    let row = &narrative.rows[i];
+                    let st = row["status"].as_str().unwrap_or("");
+                    let e = self.ungraded.entry(date.to_string()).or_default();
+                    if st == "correct" || st == "wrong" {
+                        e.0 += 1;
+                    } else {
+                        e.1 += 1;
+                    }
+                }
             }
         }
     }
@@ -417,9 +445,52 @@ impl Truth {
         if standing_n > 0 {
             eprintln!(
                 "truth: {standing_n} standing regressed row(s) across {} day(s) — \
-                 below the floor, reported not enforced.",
+                 below the floor, reported not enforced:",
                 self.standing.values().filter(|v| !v.is_empty()).count()
             );
+            // ⚠ NAMED, NOT COUNTED. A count is unactionable: it says something
+            // in the narratives does not hold and gives nobody a row to open.
+            // These are `correct` rows that have NEVER held, so they sit under
+            // the floor and no gate will ever go red for them — the only way
+            // they get fixed is somebody reading this line (#1669).
+            //
+            // ⚠ AND A MALFORMED CELL LANDS HERE LOOKING LIKE A DEFECT. A way
+            // cell naming a COMPOSED label ("A, B") matches no component, so
+            // the row can never hold however right the pipeline is. Check the
+            // cell before chasing the pipeline: `../README.md` has the rule.
+            for (date, rows) in &self.standing {
+                for ts in rows {
+                    eprintln!("  standing  {date} @{}", hm(*ts));
+                }
+            }
+        }
+        // ⚠ **THESE ARE REFUSALS, NOT FAILURES — do not read the count as debt.**
+        // `rowVerdict` declines a row whose status is `partial`/`unclear` (it is
+        // not a clean assertion) or whose provenance is untrusted (`unspecified`
+        // / `inferred` — an un-annotated legacy row, or one read back off the
+        // pipeline's own output). Both refusals are the POINT: `GroundTruth`
+        // records that 2026-04-29's "hair appointment" was inferred output
+        // wearing a `correct` badge, and the ladder exists so that cannot gate.
+        //
+        // It is printed because a refusal should be VISIBLE, not because it is
+        // wrong. ⚠ Do NOT "fix" an untrusted row by writing `{user}` on it —
+        // that asserts Pippijn confirmed it, which is the exact claim the guard
+        // is refusing to take on trust (#1669).
+        if !self.ungraded.is_empty() {
+            let n: usize = self.ungraded.values().map(|(a, b)| a + b).sum();
+            eprintln!(
+                "truth: {n} row(s) on {} day(s) are REFUSED by the provenance ladder \
+                 — not graded, and deliberately so. `partial`/`unclear` is a row \
+                 that makes no clean assertion; an untrusted provenance is a legacy \
+                 or pipeline-derived row that must not gate:",
+                self.ungraded.len()
+            );
+            for (date, (untrusted, unstatused)) in &self.ungraded {
+                eprintln!(
+                    "  ungraded  {date}  {untrusted} untrusted-provenance · \
+                     {unstatused} status-not-correct-or-wrong"
+                );
+            }
         }
         if !unmeasured.is_empty() {
             eprintln!(
