@@ -32,10 +32,15 @@
 //! corpus caught it immediately. When re-deriving, count ROWS.
 //!
 //! ⚠ SO IF YOU EDIT A NARRATIVE, THESE NUMBERS MOVE and this test goes red. That
-//! is correct: the corpus is a fixture, and a row appearing or vanishing should
-//! be deliberate. Re-derive by re-running the recovered TypeScript, not by
-//! adjusting the constants to whatever Lean now says — the point of the numbers
-//! is that a human blessed them from the other implementation.
+//! is correct and it is the whole point: the corpus is a fixture, and a row
+//! appearing, vanishing or changing what it asserts must be DELIBERATE.
+//!
+//! ⚠ **THE NUMBERS ARE A TRIPWIRE, NOT A CROSS-CHECK.** There is no second
+//! implementation to re-derive them from (Pippijn, 2026-09-20: "End TS
+//! comparison everywhere"), so moving one is an assertion by whoever moves it.
+//! Adjust a constant ONLY with the narrative edit that caused it, in the same
+//! commit, and say in the message which rows moved and why. A constant nudged
+//! on its own to make a red gate green destroys the only signal this file has.
 //!
 //! # Why the reply carries civil time
 //!
@@ -86,20 +91,20 @@ const POST_TS: &[&str] = &[
 
 const TS_FILES: usize = 31;
 const TS_ROWS: usize = 395;
-const TS_ENFORCEABLE: usize = 349;
+const TS_ENFORCEABLE: usize = 367;
 const TS_UNPARSEABLE: usize = 5;
 const TS_DECLARED_TZ: usize = 2;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
-const TS_JOURNEYS: usize = 92;
-const TS_LEGS: usize = 228;
+const TS_JOURNEYS: usize = 91;
+const TS_LEGS: usize = 227;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. 228 legs could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 143)];
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 142)];
 
 #[test]
-fn every_narrative_parses_as_the_typescript_did() {
+fn the_narrative_corpus_matches_its_blessed_shape() {
     if !Path::new(NARRATIVES).is_dir() {
         eprintln!("SKIPPED: no narratives at {NARRATIVES}; see this file's header.");
         return;
