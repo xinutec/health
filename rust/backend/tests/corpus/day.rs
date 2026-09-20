@@ -10,9 +10,8 @@
 //! so the chain closes and the day can be replayed from the fixture alone
 //! (#982).
 //!
-//! The oracle is `expected.tsArm.capture.statesOut`. ⚠ THE KEY IS NAMED FOR AN
-//! ARM THAT NO LONGER EXISTS: since 2026-09-03 it holds the last BLESSED LEAN
-//! output, not what the TypeScript cascade produced.
+//! The oracle is `expected.statesOut` — this pipeline's own last blessed
+//! output.
 //!
 //! # ⚠ WHERE THIS GRADER BEGINS, AND THEREFORE WHAT IT DOES NOT COVER
 //!
@@ -28,23 +27,21 @@
 //! that is named — a loader is the most dangerous place for this, because it
 //! moves the answer while every assertion here still holds.
 //!
-//! # ⚠ THE CORPUS IS CLOSED, and not by policy
+//! # ⚠ WHAT THE ORACLE IS, AND WHAT IT THEREFORE CANNOT TELL YOU
 //!
-//! Every day here carries a frozen `tsArm`, and one CANNOT be created any more:
-//! `compare-day --freeze` went with the TS cascade (#975). So a day arriving
-//! without an oracle fails and can never be made to pass. That is option 2 of
-//! #1063 in force — arrived at by deletion rather than chosen — and it means
-//! the corpus can lose days but cannot gain them.
+//! `statesOut` is the last BLESSED output of this arm. It catches a REGRESSION
+//! and it cannot catch "it was always wrong" — only the ground-truth narratives
+//! grade correctness. When this goes red the ANSWER MOVED; whether it moved for
+//! the better is a question this file does not answer.
 //!
-//! # ⚠ THE ORACLE'S MEANING CHANGED on 2026-09-03 (#394, Pippijn's call)
+//! ⚠ There was a second oracle, a frozen TypeScript arm under `expected.tsArm`,
+//! and it is GONE — deleted from the fixtures on 2026-09-20 (Pippijn: "End TS
+//! comparison everywhere. We don't care about TS anymore."). Do not reach for a
+//! TS comparison to settle a question here; there is nothing to compare to.
 //!
-//! `statesOut` is no longer "what the TypeScript produced" but "the last
-//! BLESSED output of the Lean arm". The port-fidelity era ended when the #394
-//! bearing fix shipped: the fix makes timelines the deleted TS is wrong about,
-//! so holding its output as the oracle would freeze the bug in. `DAY_BLESS=1`
-//! re-blesses — it OVERWRITES each fixture's `statesOut` with the current
-//! replay and prints what it touched. Bless deliberately, on a clean tree,
-//! and read the diff of the inner golden repo before committing it.
+//! `DAY_BLESS=1` re-blesses — it OVERWRITES each fixture's `statesOut` with the
+//! current replay and prints what it touched. Bless deliberately, on a clean
+//! tree, and read the inner golden repo's diff before committing it.
 //!
 //! ⚠ Blessing is per-FIXTURE here, not to a shared floor file, so it is the one
 //! bless in the corpus that is safe to run sharded: each shard rewrites only
@@ -149,38 +146,6 @@ fn drop_nulls(v: &Value) -> Value {
     }
 }
 
-/// Days whose timeline is SELF-blessed — this pipeline's own output, frozen —
-/// because they were captured after the TypeScript went (#975) and can never
-/// carry an arm from the other implementation.
-///
-/// ⚠ A self-blessed oracle catches a REGRESSION and cannot catch "it was always
-/// wrong". The ground-truth narrative grades correctness for these days; this
-/// only holds the line.
-const SELF_BLESSED: &[&str] = &[
-    // The first day added since the TypeScript went (#975), and the first since
-    // 2026-08-13. Its narrative is user-confirmed and it has NO KNOWN DEFECTS,
-    // which nothing else in the corpus offers — it is here to be the control a
-    // regression fails against.
-    //
-    // ⚠ Self-blessed catches a REGRESSION and cannot catch an error we already
-    // make. Pippijn chose that trade knowingly on 2026-09-19: the alternative is
-    // a corpus frozen at 2026-08-13 forever, because the implementation that
-    // blessed the other 42 no longer exists.
-    "2026-09-15",
-    // The Nonos day. It grades #325's freshest venue misnaming, and it does NOT
-    // grade #1659 — the raw mode never reaches `statesOut`.
-    "2026-09-14",
-    // The Watford day, admitted 2026-09-20 once #1658's writer filled the mirror
-    // it needed — it was refused on three unanswered `nearbyWays` until then.
-    //
-    // ⚠ It carries THREE known-error venue names (`YO! Sushi` for Cineworld,
-    // `Fireaway Pizza` for L'Artista, `Sutton Road Car Park` for a bus stop) and
-    // a Jubilee ride cut into walk/train/walk. Self-blessing FREEZES those as
-    // `expected`, which is the point: the narrative grades them `wrong {user}`
-    // and they clear when #325 and the underground boundary work do.
-    "2026-09-06",
-];
-
 pub struct Day {
     golden: &'static str,
     /// ⚠ INJECTION MAKES THE RUN REPORT-ONLY, for the reason the truth referee
@@ -220,38 +185,22 @@ impl Day {
         self.graded += 1;
         let fx = &rep.fx;
 
-        // ⚠ TWO KINDS OF ORACLE, and the difference matters when reading a
-        // failure. `tsArm.capture.statesOut` was blessed from the OTHER
-        // IMPLEMENTATION — it says the port is faithful. `expected.statesOut`
-        // is SELF-BLESSED: this pipeline's own output, frozen. It catches a
-        // regression and cannot catch "it was always wrong", which is what the
-        // ground-truth narrative is for (#1660).
+        // ⚠ ONE ORACLE, AND IT IS THIS PIPELINE'S OWN LAST BLESSED OUTPUT.
+        // There was a second — a frozen TypeScript arm under `expected.tsArm` —
+        // and it was DELETED on 2026-09-20 (Pippijn: "End TS comparison
+        // everywhere. We don't care about TS anymore."). Every day is graded the
+        // same way now, and no day is special for having been ported.
         //
-        // A day captured since #975 can only ever have the second. Refusing it
-        // does not protect the first — it closes the corpus, which is why the
-        // recent days carrying every defect worth fixing could not be graded.
-        let ts = fx.pointer("/expected/tsArm/capture/statesOut").cloned();
-        // ⚠ NAMED, NOT COUNTED — because the corpus is SHARDED. A ratchet on the
-        // NUMBER of TypeScript-blessed days cannot work here: each shard grades
-        // about ten, so any global figure is wrong in every shard (it failed at
-        // "only 10 day(s) ... was 42"). What IS shard-safe is the rule "every
-        // day carries a tsArm unless named here", which catches an old day
-        // losing its arm wherever it happens to be graded.
-        if ts.is_none() && !SELF_BLESSED.contains(&date) {
+        // ⚠ SO EVERY ORACLE HERE CATCHES A REGRESSION AND NONE CATCHES "it was
+        // always wrong". The ground-truth narratives are the only thing in the
+        // corpus that grades CORRECTNESS rather than change (#1660) — when this
+        // gate goes red it means the ANSWER MOVED, which is not the same as the
+        // answer getting worse.
+        let Some(want) = fx.pointer("/expected/statesOut").cloned() else {
             self.failures.push(format!(
-                "{name}: no frozen tsArm timeline, and not named in SELF_BLESSED. \
-                 A day captured since #975 can only be self-blessed — add it to \
-                 that list DELIBERATELY. If this is an OLD day, its TypeScript arm \
-                 has been dropped and cannot be recreated (#1063)."
-            ));
-            return;
-        }
-        let Some(want) = ts.or_else(|| fx.pointer("/expected/statesOut").cloned()) else {
-            self.failures.push(format!(
-                "{name}: no timeline to replay against — neither a frozen tsArm \
-                 (which CANNOT be created; `compare-day --freeze` went with the TS \
-                 cascade, #975) nor a self-blessed `expected.statesOut`. A day needs \
-                 one of the two to join the corpus. See #1063, #1660."
+                "{name}: no `expected.statesOut` to replay against. A fixture \
+                 written by `--example capture_trace` carries one; an older day \
+                 that lost it cannot be regraded without a re-capture."
             ));
             return;
         };
@@ -318,7 +267,7 @@ impl Day {
         let same = drop_nulls(&got) == drop_nulls(&want);
         if !same && std::env::var("DAY_BLESS").is_ok() {
             let mut fx2 = fx.clone();
-            *fx2.pointer_mut("/expected/tsArm/capture/statesOut")
+            *fx2.pointer_mut("/expected/statesOut")
                 .expect("the oracle node exists — we just read it") = got.clone();
             std::fs::write(format!("{}/{name}", self.golden), fx2.to_string())
                 .unwrap_or_else(|e| panic!("blessing {name}: {e}"));
@@ -445,7 +394,7 @@ fn first_state_difference(got: &Value, want: &Value) -> String {
             .filter(|k| a.get(k.as_str()) != b.get(k.as_str()))
             .map(|k| {
                 format!(
-                    "{k}: rust {} vs ts {}",
+                    "{k}: now {} vs blessed {}",
                     a.get(k.as_str()).unwrap_or(&Value::Null),
                     b.get(k.as_str()).unwrap_or(&Value::Null)
                 )

@@ -55,7 +55,6 @@ mod battery;
 mod bio_labels;
 mod bus_route_reach;
 mod capture_inputs_stamp;
-mod capture_tz_completeness;
 mod classification_inputs;
 mod clip_inferred;
 mod compression;

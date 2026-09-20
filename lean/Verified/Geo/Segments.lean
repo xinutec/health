@@ -1,3 +1,4 @@
+import Verified.Geo.ModeBiometrics
 import Verified.Hsmm.FloatScore
 import Verified.JsNum
 /-!
@@ -108,11 +109,23 @@ def scoreWalking (f : WindowFeatures) : Float := Id.run do
   if decide (f.netDisplacement < 30) then score := score * 0.2
   return score
 
+/-- ⚠ **THE LOW-SPEED FLOOR IS WHY A WALK STOPS READING AS A RIDE (#1659).**
+Every other locomotion scorer has one — `scoreDriving` below `10`, `scoreTrain`
+below `30` — and cycling had none, while `scoreWalking` carries a `maxSpeed > 15`
+veto that a SINGLE GPS spike trips. So a spiky walk lost a factor of ten on the
+right answer and nothing on the wrong one, and seven walks over two weeks were
+classified as cycling at 4.5-7.0 km/h.
+
+The bar is `ModeBiometrics.CYCLING_MIN_SPEED_KMH`, IMPORTED rather than
+restated: `gateCycling` already refuses to KEEP cycling below it, so without
+this the raw scorer proposed exactly what the gate then threw away. -/
 def scoreCycling (f : WindowFeatures) : Float := Id.run do
   let mut score := rangeScore f.medianSpeed 18 8
   score := score * rangeScore f.linearity 0.7 0.3
   score := score * rangeScore f.speedVariance 15 20
   if decide (f.maxSpeed > 50) then score := score * 0.1
+  if decide (f.medianSpeed < Verified.Geo.ModeBiometrics.CYCLING_MIN_SPEED_KMH) then
+    score := score * 0.1
   return score
 
 def scoreDriving (f : WindowFeatures) : Float := Id.run do
@@ -693,19 +706,43 @@ private def approxRel (a b : Float) : Bool :=
   Float.abs (a - b) ≤ 1e-9 * max (Float.abs a) (Float.abs b) + 1e-12
 
 -- Mode ORDER pinned exactly; top score / normalise fields ≤1 ULP (relative).
-#guard (scoreWindow wfStationary).map (·.mode) == ["stationary", "walking", "cycling", "driving", "train", "plane"]
+--
+-- ⚠ **EIGHT OF THESE MOVED WITH #1659's CYCLING FLOOR, and the class matters
+-- more than the count.** `scoreCycling` is a term in the DENOMINATOR of every
+-- confidence (`normalizeScores` is share-of-total), so a floor that sends
+-- cycling away below 12 km/h moves every slow window in the file — the
+-- STATIONARY fixtures included, which have nothing to do with the defect.
+--
+-- ⚠ **NO WINNING MODE CHANGED, here or in the corpus.** What changed is the
+-- ORDER BENEATH the winner (cycling 2nd -> 3rd on a walk, 3rd -> 4th on a
+-- stay) and how confident the pipeline reports being.
+--
+-- ⚠ **AND THESE NUMBERS CANNOT BE REGENERATED.** They came from the
+-- TypeScript through `segments-refs.mts`, which went with it (#975). Editing
+-- them is a DELIBERATE departure from the ported reference — the TS carried
+-- this defect too — not a re-derivation. Values below were read off the
+-- evaluator's bit patterns, because `toString` on a Float gives six decimals
+-- and `approxRel` compares at 1e-9.
+#guard (scoreWindow wfStationary).map (·.mode) == ["stationary", "walking", "driving", "cycling", "train", "plane"]
 #guard approxRel (scoreWindow wfStationary).head!.score 30.649086792579197
-#guard (scoreWindow wfWalking).map (·.mode) == ["walking", "cycling", "driving", "stationary", "train", "plane"]
+#guard (scoreWindow wfWalking).map (·.mode) == ["walking", "driving", "cycling", "stationary", "train", "plane"]
 #guard approxRel (scoreWindow wfWalking).head!.score 1.1341381842555036
 #guard (scoreWindow wfTrain).map (·.mode) == ["train", "driving", "plane", "cycling", "stationary", "walking"]
 #guard approxRel (scoreWindow wfTrain).head!.score 0.9937694906233948
 #guard (scoreWindow wfDriving).map (·.mode) == ["driving", "train", "cycling", "plane", "walking", "stationary"]
 #guard approxRel (scoreWindow wfDriving).head!.score 1.876536109320096
 
+/-- ⚠ **THE ONE-FIELD PERTURBATION, and it FAILED before #1659's fix.**
+`wfWalking` is this file's own walking window (median 4.5, max 7). Only
+`maxSpeed` moves, so a single GPS spike is the WHOLE cause — no cycling day has
+to exist for this to be pinned, which matters because the corpus has none. -/
+private def wfWalkingWithSpike : WindowFeatures := { wfWalking with maxSpeed := 32 }
+#guard (scoreWindow wfWalkingWithSpike).head!.mode == "walking"
+
 #guard match normalizeScores (scoreWindow wfWalking) with
-  | (m, p, mg) => m == "walking" && approxRel p 0.8634051835758314 && approxRel mg 7.792590923803349
+  | (m, p, mg) => m == "walking" && approxRel p 0.9590390156211506 && approxRel mg 49.79553227544871
 #guard match normalizeScores (scoreWindow wfStationary) with
-  | (m, p, mg) => m == "stationary" && approxRel p 0.999650345935714 && mg == 1000
+  | (m, p, mg) => m == "stationary" && approxRel p 0.9997834232822996 && mg == 1000
 #guard match normalizeScores (scoreWindow wfDriving) with
   | (m, p, mg) => m == "driving" && approxRel p 0.9953900869184644 && approxRel mg 215.966224361806
 -- The train window was the one `segments-refs.mts` GENERATED and nothing pinned:
@@ -782,7 +819,7 @@ private def fp (ts : Int) (lat lon spd : Float) (brg : Float := 0)
 private def walkPts : Array FilteredPoint :=
   (Array.range 8).map (fun i => fp (Int.ofNat i * 60) (51.5 + Float.ofNat i * 0.0007) (-0.1) 4.5 10)
 #guard classifySegments walkPts == #[
-  { startTs := 0, endTs := 420, mode := "walking", confidence := 0.75, confidenceMargin := 4.1,
+  { startTs := 0, endTs := 420, mode := "walking", confidence := 0.89, confidenceMargin := 26.17,
     avgSpeed := 4.5, maxSpeed := 4.5, linearity := 1, pointCount := 8 }]
 
 -- THE `locationSplit` BRANCH: two stationary clusters 280 m apart. Same mode
@@ -794,7 +831,7 @@ private def twoStayPts : Array FilteredPoint :=
 #guard classifySegments twoStayPts == #[
   { startTs := 0, endTs := 240, mode := "stationary", confidence := 1, confidenceMargin := 1000,
     avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0, pointCount := 5 },
-  { startTs := 300, endTs := 660, mode := "stationary", confidence := 0.94, confidenceMargin := 504.83,
+  { startTs := 300, endTs := 660, mode := "stationary", confidence := 0.95, confidenceMargin := 504.83,
     avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0.5, pointCount := 7 }]
 
 -- `smoothSegments`: a lone 90 km/h fix between two walks is under
@@ -804,8 +841,15 @@ private def blipPts : Array FilteredPoint :=
   (Array.range 6).map (fun i => fp (Int.ofNat i * 60) (51.5 + Float.ofNat i * 0.0007) (-0.1) 4.5 10) ++
   #[fp 360 51.512 (-0.1) 90 10] ++
   (Array.range 6).map (fun i => fp (420 + Int.ofNat i * 60) (51.52 + Float.ofNat i * 0.0007) (-0.1) 4.5 10)
+-- ⚠ **CONFIDENCE AND MARGIN MOVED WITH #1659's CYCLING FLOOR, 0.7/3.28 ->
+-- 0.80/17.99.** The MODE did not, here or anywhere: cycling was the runner-up
+-- on a 4.5 km/h walk and the floor sends it away, so what is left is a walk that
+-- knows it is one. ⚠ These numbers came from the TypeScript via
+-- `segments-refs.mts`, which went with it (#975) and cannot regenerate them —
+-- so this is a DELIBERATE departure from the ported behaviour, not a re-derived
+-- reference, and the TS had the defect too.
 #guard classifySegments blipPts == #[
-  { startTs := 0, endTs := 720, mode := "walking", confidence := 0.7, confidenceMargin := 3.28,
+  { startTs := 0, endTs := 720, mode := "walking", confidence := 0.8, confidenceMargin := 17.99,
     avgSpeed := 4.5, maxSpeed := 90, linearity := 1, pointCount := 13 }]
 
 -- `findStays` proper: a dwell in the uncovered stretch between two DIFFERENTLY
@@ -817,7 +861,8 @@ private def movePts : Array FilteredPoint :=
 private def dwellPts : Array StayPoint :=
   (Array.range 20).map (fun i => ⟨1200 + Int.ofNat i * 180, 51.55, -0.1⟩)
 #guard classifySegments movePts (some (movePts.map (fun p => ⟨p.ts, p.lat, p.lon⟩) ++ dwellPts)) == #[
-  { startTs := 0, endTs := 240, mode := "walking", confidence := 0.75, confidenceMargin := 4.1,
+  -- 0.75/4.1 before #1659's cycling floor; see the note on `blipPts` above.
+  { startTs := 0, endTs := 240, mode := "walking", confidence := 0.89, confidenceMargin := 26.17,
     avgSpeed := 4.5, maxSpeed := 4.5, linearity := 1, pointCount := 5 },
   { startTs := 240, endTs := 1200, mode := "driving", confidence := 0.3, confidenceMargin := 1.2,
     avgSpeed := 40.5, maxSpeed := 40.5, linearity := 1, pointCount := 0,
@@ -916,4 +961,7 @@ private def stay (startTs endTs : Int) (pointCount : Nat) : TrackSegment :=
                  #[sSeg 1000 2000 "walking" 6 5]
   == #[stay 0 900 3, stay 2100 3300 3]
 
+
+
 end Verified.Geo.Segments
+

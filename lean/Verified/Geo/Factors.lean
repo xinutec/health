@@ -536,7 +536,13 @@ private def sew (mode : String) (wf : WindowFeatures) : Option Float :=
 
 #guard approxO (sew "walking" wfWalk) (some 2.3527563839094818)
 #guard approxO (sew "stationary" wfWalk) (some (-4.4512098358305678))
-#guard approxO (sew "cycling" wfWalk) (some (-2.1618781249999999))
+-- ⚠ **MOVED BY #1659's CYCLING FLOOR, and by EXACTLY `ln(0.1)`.**
+-- -2.161878125 -> -4.464463217994045, a delta of -2.3025850929940455 to the
+-- last bit: the raw scorer's `x0.1` below 12 km/h is a -ln(10) shift in log
+-- space, and nothing else in this emission moved. ⚠ This scorer is the arm
+-- NOTHING RUNS (no workload sets `USE_FACTOR_SCORER`; #366), so the guard is
+-- the only record that its behaviour changed too.
+#guard approxO (sew "cycling" wfWalk) (some (-4.464463217994045))
 #guard approxO (sew "driving" wfWalk) (some (-4.0598299909532294))
 #guard approxO (sew "stationary" wfStill) (some 3.5493122415829315)
 #guard approxO (sew "walking" wfStill) (some (-5.2142452276503679))
@@ -806,5 +812,6 @@ private def bioAt (cadence speed : Option Float) : Option BiometricContext :=
   == "walking|Barn Rise|residential|8  walking|-|-|-"
 
 end CandidateGuards
+
 
 end Verified.Geo.Factors

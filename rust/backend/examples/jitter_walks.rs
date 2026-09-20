@@ -45,7 +45,7 @@ fn main() -> Result<()> {
         // The blessed timeline is what a reader sees; the raw fixes are what it
         // was derived from.
         let states = fx
-            .pointer("/expected/tsArm/capture/statesOut")
+            .pointer("/expected/statesOut")
             .or_else(|| fx.pointer("/expected/statesOut"));
         let Some(states) = states.and_then(Value::as_array) else {
             continue;

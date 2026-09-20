@@ -450,10 +450,13 @@ cutover.
 - One commit per day. Per-day v1↔v2 expected diff reviewed and
   documented in the commit message.
 
-### Phase 6i: decommission v1
+### Phase 6i: decommission v1 — ✅ DONE 2026-09-20
 
 - Delete `tests/golden/manifest.json`, `tests/golden/expected/`,
   `src/cli/golden-check.ts`, `src/cli/capture-day.ts`.
+  ✅ All four gone. The two CLIs went with the TypeScript (#975), `expected/`
+  earlier, and `manifest.json` last — it had sat listing 13 of 45 days, unread
+  by anything, long enough to mislead anyone who trusted it.
 - Rename `*-v2` → `*`. `pnpm run golden` points at the new harness.
 - Outcome: one harness, one format.
 
