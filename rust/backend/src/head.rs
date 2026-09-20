@@ -20,9 +20,10 @@
 //! ## The parity target is free
 //!
 //! Each golden fixture carries the frozen TypeScript head as
-//! `expected.tsArm.capture.segsRaw`, computed from the same `inputs` this
+//! `expected.statesOut`, computed from the same `inputs` this
 //! module reads. So the whole chain checks against 42 real days with no DB and
-//! no Node — see `tests/head_corpus.rs`.
+//! no Node. ⚠ The TypeScript parity test that used to check this is DELETED
+//! (2026-09-20) — there is no other implementation to agree with any more.
 //!
 //! ⚠ COMPARE THE SERIALISED TEXT. `jq` parses both sides to doubles, so
 //! `25.0 == 25` and a keyed diff calls a rendering difference clean. Every

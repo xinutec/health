@@ -22,7 +22,7 @@
 //! ⚠ **SIX BINARIES ARE DELIBERATELY NOT IN HERE**, because something names
 //! each by binary and would silently stop selecting it:
 //!
-//! * `corpus_gate`, `head_corpus`, `hsmm_decode_corpus` — the release row's
+//! * `corpus_gate`, `hsmm_decode_corpus` — the release row's
 //!   `--test` arguments, `scripts/deploy.sh`, `scripts/venue-prior-drift.sh`
 //! * `frontend_unions` — its own gate row
 //! * `decoder_scoreboard` — `scripts/deploy.sh`

@@ -1,6 +1,7 @@
 //! The battery trace's marshalling, on synthetic rows.
 //!
-//! The corpus check lives in `head_corpus.rs` and needs both the golden days
+//! ⚠ The corpus check that used to live in `head_corpus.rs` is DELETED with it
+//! (2026-09-20, TypeScript parity). This unit check needs both the golden days
 //! and a Node-produced oracle. This one needs neither, and covers the case the
 //! corpus CANNOT: a PhoneTrack row with no `battery` key at all.
 //!

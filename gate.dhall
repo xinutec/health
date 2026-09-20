@@ -267,7 +267,7 @@ in  { name = "health"
               , "rust/Cargo.toml"
               , "--workspace"
               , "-E"
-              , "not (binary(=corpus_gate) | binary(=head_corpus) | binary(=hsmm_decode_corpus))"
+              , "not (binary(=corpus_gate) | binary(=hsmm_decode_corpus))"
               ]
         , timeout_s = 1800
         }
@@ -334,8 +334,6 @@ in  { name = "health"
               , "backend"
               , "--test"
               , "corpus_gate"
-              , "--test"
-              , "head_corpus"
               , "--test"
               , "hsmm_decode_corpus"
               ]
