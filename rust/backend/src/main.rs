@@ -6623,7 +6623,12 @@ async fn fetch_osm(dry_run: bool, limit: i64) -> Result<()> {
 /// the CURRENT day it would fall back on a light one. It does not.
 async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
-    let cfg = backend::config::Config::from_env().context("reading configuration")?;
+    // ⚠ `from_env_batch`, NOT `from_env`. The fold needs the DATABASE and
+    // nothing else; `from_env` demands the Fitbit credentials and this died in
+    // its first Job on `missing required env var FITBIT_CLIENT_ID`. Carrying
+    // them would also hand a MEASUREMENT job the ability to write to a health
+    // stream, which is the posture every other batch verb refuses.
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
         .context("connecting to the database")?;
