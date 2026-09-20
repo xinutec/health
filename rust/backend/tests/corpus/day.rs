@@ -170,6 +170,15 @@ const SELF_BLESSED: &[&str] = &[
     // The Nonos day. It grades #325's freshest venue misnaming, and it does NOT
     // grade #1659 — the raw mode never reaches `statesOut`.
     "2026-09-14",
+    // The Watford day, admitted 2026-09-20 once #1658's writer filled the mirror
+    // it needed — it was refused on three unanswered `nearbyWays` until then.
+    //
+    // ⚠ It carries THREE known-error venue names (`YO! Sushi` for Cineworld,
+    // `Fireaway Pizza` for L'Artista, `Sutton Road Car Park` for a bus stop) and
+    // a Jubilee ride cut into walk/train/walk. Self-blessing FREEZES those as
+    // `expected`, which is the point: the narrative grades them `wrong {user}`
+    // and they clear when #325 and the underground boundary work do.
+    "2026-09-06",
 ];
 
 pub struct Day {

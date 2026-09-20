@@ -60,8 +60,22 @@
 //! [`lean::osm_covered`](crate::lean::osm_covered), and where the TypeScript
 //! would fetch, this DECLINES. A decline is honest — the fold records the key as
 //! unanswerable and the caller can see it — where an empty row list would be the
-//! claim that there are no roads there (#976). The write half is separate work
-//! and is not in this module.
+//! claim that there are no roads there (#976).
+//!
+//! ⚠ **AND IT RECORDS THE DECLINE, since 2026-09-20.** The write half is
+//! [`crate::osm_mirror`], drained out of band by `backend fetch-osm`: a fetch
+//! here would put an Overpass round trip on the serving path, which is what the
+//! queue exists to avoid (#1076, #1658). This header used to end "the write half
+//! is separate work and is not in this module" — the second clause still holds,
+//! the first no longer does.
+//!
+//! ⚠ **THE THREE `@[extern]` CALLBACKS DO NOT COME THROUGH HERE.**
+//! `walkableRoads`, `buildingsNear` and `drivableRoads` read
+//! `rust/day-shell/src/mirror.rs`, which consults no coverage rows at all — so
+//! on unfetched ground they answer EMPTY rather than declining, and nothing
+//! queues a fetch for them. That is #976's defect still live on the walk path,
+//! and it is why `building` stays the weakest layer however often this drain
+//! runs.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
