@@ -62,6 +62,7 @@ pub mod mirror_source;
 pub mod nextcloud;
 pub mod nominatim;
 pub mod osm_host;
+pub mod osm_mirror;
 pub mod overpass;
 pub mod routes;
 pub mod row_json;
@@ -218,6 +219,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "fetch-geocodes",
         "[--dry-run] [--limit N]",
         "fetch the reverse geocodes the fold could not answer",
+    ),
+    (
+        "fetch-osm",
+        "[--dry-run] [--limit N]",
+        "fill the OSM mirror where the fold found no coverage",
     ),
     ("mint-session", "<user>", "issue a session cookie"),
     ("drop-session", "<cookie>", "revoke a session cookie"),

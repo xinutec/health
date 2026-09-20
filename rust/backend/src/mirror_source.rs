@@ -375,6 +375,27 @@ impl MirrorSource {
             covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, true)
                 .with_context(|| format!("coverage gate for {bucket} with local data"))?;
         }
+        // ⚠ **RECORDED, NOT FETCHED** — the same trade `geocode` makes below,
+        // for the same reason. A decline used to leave no trace at all, so
+        // unmirrored ground stayed unmirrored on every fold forever: nothing in
+        // the tree wrote `osm_lines`/`osm_points`/`osm_coverage`, and the base
+        // mirror was frozen at whatever the TypeScript left (#1658). Fetching
+        // here would put an Overpass round trip inside a fold that already costs
+        // ~27 s on a heavy day (#1071).
+        //
+        // ⚠ Inside the memo, so one question is recorded once per source even
+        // though `nearbyWays` asks four buckets per coordinate.
+        if !covered
+            && crate::osm_mirror::bucket_of(&crate::osm_mirror::queue_kind(bucket)).is_some()
+        {
+            let pool = self.pool.clone();
+            let kind = crate::osm_mirror::queue_kind(bucket);
+            let key = crate::osm_mirror::queue_key(lat, lon, radius_m);
+            self.block(async move {
+                crate::fetch_queue::record(&pool, &kind, &key).await;
+                Ok::<(), anyhow::Error>(())
+            })?;
+        }
         self.decided.insert(k, covered);
         Ok(covered)
     }

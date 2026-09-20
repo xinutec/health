@@ -355,6 +355,36 @@ async fn main() -> Result<()> {
             }
             fetch_geocodes(dry, limit).await
         }
+        // The Overpass half of the same queue (#1658). The base OSM mirror had
+        // no writer at all until this: `osm_lines`, `osm_points` and
+        // `osm_coverage` were a dead snapshot of whatever the TypeScript left,
+        // so every place he went that it never fetched was blank permanently.
+        //
+        // ⚠ The default limit is LOWER than the geocode drain's 200. These are
+        // ~5 MB Overpass requests against a two-slot public endpoint, not
+        // one-second Nominatim points; the skip in `fetch_osm` means one box
+        // usually clears many keys, so a small number still drains a day.
+        "fetch-osm" => {
+            let mut dry = false;
+            let mut limit: i64 = 40;
+            let mut rest = flags.iter();
+            while let Some(f) = rest.next() {
+                match f.as_str() {
+                    "--dry-run" => dry = true,
+                    "--limit" => {
+                        limit = rest
+                            .next()
+                            .and_then(|v| v.parse().ok())
+                            .context("--limit takes a number")?;
+                    }
+                    _ => {
+                        eprintln!("usage: backend fetch-osm [--dry-run] [--limit N]");
+                        std::process::exit(64);
+                    }
+                }
+            }
+            fetch_osm(dry, limit).await
+        }
         "refresh-rail-stops" => match flags {
             [] => refresh_rail_stops(false).await,
             [f] if f == "--dry-run" => refresh_rail_stops(true).await,
@@ -5952,12 +5982,20 @@ struct MirrorHarvest {
 ///     mac  -> overpass-api.de      200 in 0.25 s
 ///
 /// A RST rather than a timeout, with no local rule naming the address and
-/// general egress healthy (github 200 in 0.08 s). `overpass-api.de` is refusing
-/// isis (188.165.200.180) at the far end. Rate limiting was never the cron's
-/// problem — see health #1153, which now records the real one.
+/// general egress healthy (github 200 in 0.08 s): `overpass-api.de` was refusing
+/// isis (188.165.200.180) at the far end.
+///
+/// ⚠ **THAT REFUSAL WAS A BAN, AND IT HAS LIFTED — do not read the table above
+/// as a standing fact about this host.** #1153 closed it: the burst of eighteen
+/// back-to-back queries against a TWO-slot allowance is what earned the block,
+/// and once `wait_for_slot` asked `/api/status` first the same cron reached 35
+/// of 36 tiles (97%) from isis. So the endpoint WAS rate-limiting us; what was
+/// wrong was the axis every earlier fix measured, which is why slowing the job
+/// down changed nothing.
 ///
 /// The pacing stays because it is correct behaviour toward a two-slot endpoint
-/// and it is what got the Mac from 56% to 83%. It is not a fix for the cron.
+/// and it is what got the Mac from 56% to 83%. It is not what fixed the cron —
+/// `wait_for_slot` is.
 ///
 /// ⚠ NOT a fix for `kumi.systems`, which is a different failure and still dead:
 /// its `/api/status` answers, and a real query returns 500 in 0.23 s. A status
@@ -6334,6 +6372,211 @@ async fn fetch_geocodes(dry_run: bool, limit: i64) -> Result<()> {
         println!("--dry-run: nothing fetched, nothing written");
     } else {
         println!("fetched {fetched} · {empty} empty (cached as such) · {failed} failed");
+    }
+    pool.close().await;
+    Ok(())
+}
+
+/// Read every fresh coverage box for one bucket, so the drain can ask the same
+/// gate the serving path asks.
+///
+/// ⚠ `CAST(… AS CHAR)` then `str::parse`, for [`backend::mirror_source`]'s
+/// reason: these columns are `DECIMAL(9,6)` and sqlx will not hand a DECIMAL
+/// back as an `f64`. The first loader in this crate to get that wrong decoded
+/// 117 places to centroid 0.0 and still printed OK.
+async fn osm_coverage_rows(
+    pool: &sqlx::MySqlPool,
+    feature_type: &str,
+) -> Result<Vec<backend::lean::CoverageRow>> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT CAST(min_lat AS CHAR) AS min_lat, CAST(max_lat AS CHAR) AS max_lat, \
+            CAST(min_lon AS CHAR) AS min_lon, CAST(max_lon AS CHAR) AS max_lon, \
+            CAST(UNIX_TIMESTAMP(fetched_at) AS SIGNED) AS fetched_s \
+         FROM osm_coverage WHERE feature_type = ?",
+    )
+    .bind(feature_type)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("reading osm_coverage for {feature_type}"))?;
+    rows.iter()
+        .map(|r| {
+            let f = |name: &str| -> Result<f64> {
+                r.try_get::<String, _>(name)
+                    .with_context(|| format!("osm_coverage.{name} is not a string"))?
+                    .trim()
+                    .parse::<f64>()
+                    .with_context(|| format!("osm_coverage.{name} does not parse"))
+            };
+            Ok(backend::lean::CoverageRow {
+                min_lat: f("min_lat")?,
+                max_lat: f("max_lat")?,
+                min_lon: f("min_lon")?,
+                max_lon: f("max_lon")?,
+                // A row with no fetch time is FRESH, not stale — see
+                // `decideCoverage`. Mapping it to 0 re-fetches the whole mirror.
+                fetched_at: r.try_get::<Option<i64>, _>("fetched_s")?.map(|s| s * 1000),
+            })
+        })
+        .collect()
+}
+
+/// Drain `osm_fetch_queue`'s Overpass half: fill the base OSM mirror with the
+/// areas the serving path could not answer (#1658).
+///
+/// ⚠ **THE SKIP IS THE POINT, and it is decided by the coverage gate rather
+/// than by a grid.** A day on new ground records dozens of declines a few
+/// hundred metres apart — 2026-09-06 has 52 `nearbyWays` alone — and the first
+/// 10 km box answers nearly all of them. Re-asking `osm_covered` per key after
+/// each fetch collapses those into a handful of requests, and it cannot drift
+/// from what the serving path will conclude, because it IS that function.
+///
+/// ⚠ A skipped key is `done`, not `failed`. It is answered now.
+async fn fetch_osm(dry_run: bool, limit: i64) -> Result<()> {
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    backend::schema::migrate(&pool).await?;
+
+    for (kind, waiting, exhausted) in backend::fetch_queue::census(&pool).await? {
+        println!(
+            "queue {kind:<20} {waiting:>6} waiting · {exhausted} past {} attempts",
+            backend::fetch_queue::MAX_ATTEMPTS
+        );
+    }
+
+    let client = reqwest::Client::new();
+    let (mut fetched, mut covered_already, mut failed) = (0usize, 0usize, 0usize);
+    let (mut rows_written, mut refused) = (0u64, 0usize);
+
+    // ⚠ THE BUCKETS COME FROM THE QUEUE, not from a loop over `BUCKETS` — a
+    // bucket with nothing waiting must not cost a coverage read.
+    let waiting: std::collections::BTreeSet<String> = backend::fetch_queue::census(&pool)
+        .await?
+        .into_iter()
+        .filter_map(|(kind, waiting, _)| {
+            (waiting > 0)
+                .then(|| backend::osm_mirror::bucket_of(&kind).map(str::to_string))
+                .flatten()
+        })
+        .collect();
+
+    for bucket in waiting {
+        let kind = backend::osm_mirror::queue_kind(&bucket);
+        let pending = backend::fetch_queue::due(&pool, &kind, limit).await?;
+        if pending.is_empty() {
+            continue;
+        }
+        println!("{kind}: {} key(s) to fetch", pending.len());
+        if dry_run {
+            continue;
+        }
+        // Read once per bucket and extended in memory as boxes land, so a key
+        // the run has just covered is recognised without a second round trip.
+        let mut boxes = osm_coverage_rows(&pool, &bucket).await?;
+
+        for p in pending {
+            // ⚠ Both of the next two are RETIRED rather than failed: a key
+            // that does not parse, and a question wider than its bucket's cap,
+            // are the same key tomorrow. Retrying either is the invisible loop
+            // `exhaust` exists to prevent.
+            let Some((lat, lon, radius_m)) = backend::osm_mirror::parse_queue_key(&p.key) else {
+                backend::fetch_queue::exhaust(&pool, &kind, &p.key, "unparseable key").await?;
+                failed += 1;
+                continue;
+            };
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            // ⚠ `has_local_data: false`. The serving path's probe short-circuits
+            // on a sibling bucket's overflow rows, which is the right trade for
+            // a read that must not stall — but a DRAIN that honoured it would
+            // decline to fill an area on the strength of one stray row, and the
+            // coverage table would stay empty forever.
+            if backend::lean::osm_covered(lat, lon, radius_m, &boxes, now_ms, false)? {
+                backend::fetch_queue::done(&pool, &kind, &p.key).await?;
+                covered_already += 1;
+                continue;
+            }
+            let half_width_m = match backend::osm_mirror::half_width_for(&bucket, radius_m) {
+                Ok(w) => w,
+                Err(e) => {
+                    backend::fetch_queue::exhaust(&pool, &kind, &p.key, &e.to_string()).await?;
+                    failed += 1;
+                    continue;
+                }
+            };
+            let bbox = backend::osm_mirror::fetch_bbox_around(lat, lon, half_width_m);
+            let query = backend::osm_mirror::overpass_query(&bucket, &bbox)?;
+
+            backend::overpass::wait_for_slot(&client, SLOT_WAIT_CAP_S).await;
+            let outcome = backend::overpass::fetch_attempt(
+                &client,
+                &query,
+                backend::overpass::MIRROR_TIMEOUT_MS,
+                0,
+            )
+            .await;
+            let body = match outcome {
+                backend::overpass::Outcome::Ok(b) => b,
+                backend::overpass::Outcome::Permanent { status } => {
+                    // ⚠ Retired, not merely failed. A non-429 4xx is a malformed
+                    // query and will be malformed tomorrow too, so spending five
+                    // nights discovering that buys nothing.
+                    backend::fetch_queue::exhaust(
+                        &pool,
+                        &kind,
+                        &p.key,
+                        &format!("HTTP {status} — a permanent refusal, not retried"),
+                    )
+                    .await?;
+                    refused += 1;
+                    continue;
+                }
+                backend::overpass::Outcome::AllFailed { errors, .. } => {
+                    backend::fetch_queue::failed(&pool, &kind, &p.key, &errors.join("; ")).await?;
+                    failed += 1;
+                    continue;
+                }
+            };
+
+            let elements = backend::overpass::elements(&body)?;
+            let features: Vec<_> = elements
+                .iter()
+                .filter_map(backend::osm_mirror::parse_element)
+                .collect();
+            let written = backend::osm_mirror::upsert_features(&pool, &features).await?;
+            // ⚠ AFTER the rows. A coverage row is a promise the area can be
+            // answered from the mirror; written first, a crash mid-insert would
+            // look like a fetched area with no roads in it (#976).
+            backend::osm_mirror::record_coverage(&pool, &bucket, &bbox).await?;
+            boxes.push(backend::lean::CoverageRow {
+                min_lat: bbox.min_lat,
+                max_lat: bbox.max_lat,
+                min_lon: bbox.min_lon,
+                max_lon: bbox.max_lon,
+                fetched_at: Some(now_ms),
+            });
+            backend::fetch_queue::done(&pool, &kind, &p.key).await?;
+            fetched += 1;
+            rows_written += written;
+            println!(
+                "  {bucket} {:.4},{:.4} r={radius_m:.0}m box={half_width_m:.0}m \
+                 elements={} features={} rows={written}",
+                lat,
+                lon,
+                elements.len(),
+                features.len(),
+            );
+        }
+    }
+
+    if dry_run {
+        println!("--dry-run: nothing fetched, nothing written");
+    } else {
+        println!(
+            "fetched {fetched} box(es), {rows_written} row(s) · \
+             {covered_already} key(s) already covered · {failed} failed · {refused} refused"
+        );
     }
     pool.close().await;
     Ok(())

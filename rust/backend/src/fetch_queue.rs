@@ -128,6 +128,29 @@ pub async fn failed(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Resul
     Ok(())
 }
 
+/// Retire a key that will fail the same way every time.
+///
+/// ⚠ THE DIFFERENCE FROM [`failed`] IS THE CAUSE, not the count. A transport
+/// failure earns another night; a PERMANENT refusal — a malformed query, an area
+/// the endpoint will not serve — is the same query tomorrow, and spending
+/// [`MAX_ATTEMPTS`] nights discovering that is an invisible loop against a
+/// rate-limited public service. The row STAYS, past the bar, carrying why.
+pub async fn exhaust(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
+    let why: String = why.chars().take(255).collect();
+    sqlx::query(
+        "UPDATE osm_fetch_queue SET attempts = ?, last_error = ? \
+         WHERE kind = ? AND fetch_key = ?",
+    )
+    .bind(MAX_ATTEMPTS)
+    .bind(&why)
+    .bind(kind)
+    .bind(key)
+    .execute(pool)
+    .await
+    .context("retiring an osm_fetch_queue row")?;
+    Ok(())
+}
+
 /// What is waiting, by kind: `(kind, waiting, exhausted)`.
 pub async fn census(pool: &MySqlPool) -> Result<Vec<(String, i64, i64)>> {
     let rows = sqlx::query(

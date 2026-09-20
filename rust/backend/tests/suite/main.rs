@@ -93,6 +93,7 @@ mod mirror_coverage;
 mod mirror_source;
 mod nominatim;
 mod osm_coverage;
+mod osm_mirror;
 mod overpass;
 mod overpass_extract;
 mod overpass_plan;
