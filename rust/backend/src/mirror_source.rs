@@ -565,10 +565,22 @@ impl RowSource for MirrorSource {
         lon: f64,
         radius_m: f64,
     ) -> Result<Option<crate::rowset_answerer::LinesByBucket>> {
+        // ⚠ EVERY BUCKET IS ASKED even once one has already declined. The
+        // answer is the same — one bucket the mirror cannot vouch for declines
+        // the whole thing — but `covered` is where a decline is RECORDED for
+        // the fetch queue (#1658), and an early return records only the first
+        // uncovered bucket of four. The queue would then need a fetch, a
+        // re-fold and another fetch per bucket to converge, which is three
+        // extra rounds against a two-slot endpoint to learn what this one loop
+        // already knows.
+        let mut all_covered = true;
         for b in buckets {
             if !self.covered(b, lat, lon, radius_m)? {
-                return Ok(None);
+                all_covered = false;
             }
+        }
+        if !all_covered {
+            return Ok(None);
         }
         let poly = Self::mbr_box_wkt(lat, lon, radius_m);
         let placeholders = std::iter::repeat_n("?", buckets.len())
