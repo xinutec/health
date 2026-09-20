@@ -485,7 +485,12 @@ so it owns the day — lives in one place:
 - Altitude-aware features (e.g. distinguish flat walk from stairs).
 - "Patterns" tab — health × location correlations (largest product win).
 - Off-site backup of `health` PVC (tracked under fleet-wide odin work).
-- Google Health API migration (Fitbit API deprecated September 2026).
+- `daily_activity`'s Fitbit-only columns. ⚠ NOT the Google migration, which is
+  done — ten of eleven streams are Google-owned and `daily_activity` cut over on
+  `DAILY_ACTIVITY_CUTOVER` (2026-09-01), Fitbit keeping the history before it.
+  What has no Google equivalent is `minutes_sedentary` and `active_score`: they
+  stop when the Web API does. `google::source::STREAMS` is the roster and each
+  entry carries the measurement that moved it.
 
 ## Where these things live now
 
