@@ -221,6 +221,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "fetch the reverse geocodes the fold could not answer",
     ),
     (
+        "velocity-many",
+        "<user> <date>...",
+        "fold several days in ONE process — the arena's high-water (#1071)",
+    ),
+    (
         "fetch-osm",
         "[--dry-run] [--limit N]",
         "fill the OSM mirror where the fold found no coverage",

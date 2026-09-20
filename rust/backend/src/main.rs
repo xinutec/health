@@ -385,6 +385,20 @@ async fn main() -> Result<()> {
             }
             fetch_osm(dry, limit).await
         }
+        // #1071's instrument. Several days in ONE process, so the arena's
+        // high-water is visible; `velocity` restarts the process each time and
+        // therefore cannot see it.
+        "velocity-many" => {
+            let [user, dates @ ..] = flags else {
+                eprintln!("usage: backend velocity-many <user> <YYYY-MM-DD>...");
+                std::process::exit(64);
+            };
+            if dates.is_empty() {
+                eprintln!("usage: backend velocity-many <user> <YYYY-MM-DD>...  (>=1 date)");
+                std::process::exit(64);
+            }
+            velocity_many(user, dates).await
+        }
         "refresh-rail-stops" => match flags {
             [] => refresh_rail_stops(false).await,
             [f] if f == "--dry-run" => refresh_rail_stops(true).await,
@@ -6579,6 +6593,74 @@ async fn fetch_osm(dry_run: bool, limit: i64) -> Result<()> {
         );
     }
     pool.close().await;
+    Ok(())
+}
+
+/// Several days through the SERVING path, in ONE process (#1071).
+///
+/// # Why this is a VERB and not an example
+///
+/// The Lean arena never returns memory to the OS, so a process's high-water is
+/// set by the heaviest thing it has ever done. Measuring that needs several
+/// DIFFERENT days without restarting — and measuring it where it MATTERS needs
+/// Linux cgroup accounting, which means a Job, which means the production
+/// image.
+///
+/// ⚠ **IT HAS TO BE THIS BINARY.** A debug image would measure a different
+/// artefact than production serves, which for a memory question gives up the
+/// one thing worth having. Pippijn's call, 2026-09-20: "We should be allowed to
+/// debug the one running in prod." The image already ships thirteen read-only
+/// diagnostic verbs; this is the fourteenth.
+///
+/// ⚠ **WHY THE LIVE POD CANNOT ANSWER IT.** Measured 2026-09-20: the serving
+/// pod had folded ONE day in 25 hours. Accumulation across a pod's life is not
+/// observable when that life contains one fold, so the load has to be driven.
+///
+/// ⚠ **READ-ONLY, AND STILL A PRODUCTION ACTOR.** `compute_with` only reads,
+/// but it takes connections and read locks like any client.
+///
+/// ⚠ Repeat a day at the END to prove the ratchet: if the high-water tracked
+/// the CURRENT day it would fall back on a light one. It does not.
+async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
+    backend::lean::init().context("starting the Lean runtime")?;
+    let cfg = backend::config::Config::from_env().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
+
+    use backend::fold_converge::rss_mib;
+    println!("RSS before any fold   {:>5} MiB", rss_mib());
+    let mut high = rss_mib();
+    for (i, date) in dates.iter().enumerate() {
+        let before = rss_mib();
+        let t0 = std::time::Instant::now();
+        // ⚠ The SAME entry point the HTTP route uses. Anything cheaper would
+        // measure a path production does not take — and the walk matcher, the
+        // term most likely to be ratcheting, is exactly what a cheaper harness
+        // switches off.
+        let body = backend::routes::velocity::compute_with(&st, user, date, None, true).await?;
+        let ms = t0.elapsed().as_millis();
+        let after = rss_mib();
+        let states = body
+            .get("states")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, Vec::len);
+        // ⚠ The HIGH-WATER is the quantity, not the current reading: a fold that
+        // allocates and frees leaves the arena grown, and `after` alone hides it.
+        high = high.max(after);
+        println!(
+            "fold {:>2}  {date}  RSS {before:>4} -> {after:>4} MiB  ({:+})  high {high:>4}  \
+             {states:>3} state(s)  {ms:>6} ms",
+            i + 1,
+            after as i64 - before as i64,
+        );
+        if let Some(t) = body.get("timing") {
+            println!("         timing {t}");
+        }
+    }
+    pool.close().await;
+    println!("high-water            {high:>5} MiB");
     Ok(())
 }
 
