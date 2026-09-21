@@ -908,7 +908,8 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // and correctly: a walk over an area the mirror does not cover is
             // exactly the case that must not read as "there are no roads here".
             if crate::mirror::configured() {
-                let Some(lines): Option<Vec<Line>> = crate::mirror::buildings_near(lat, lon, radius)
+                let Some(lines): Option<Vec<Line>> =
+                    crate::mirror::buildings_near(lat, lon, radius)
                 else {
                     // The mirror does not cover this disc, or the read failed.
                     // Either way nobody has looked here, and saying so is what

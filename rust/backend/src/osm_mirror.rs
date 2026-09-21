@@ -416,4 +416,3 @@ pub fn bucket_of(kind: &str) -> Option<&str> {
     let b = kind.strip_prefix("osm_")?;
     BUCKETS.contains(&b).then_some(b)
 }
-

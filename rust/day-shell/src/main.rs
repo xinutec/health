@@ -83,10 +83,7 @@ fn main() {
     if let Some(w) = argv.windows(2).find(|w| w[0] == "--osm-verify") {
         // ⚠ BEFORE THE READ, not only before a fold. Every mirror read passes
         // the coverage gate, and the gate is Lean code (#1667).
-        assert!(
-            day_shell::init_lean(),
-            "Lean runtime initialisation failed"
-        );
+        assert!(day_shell::init_lean(), "Lean runtime initialisation failed");
         match osm::verify_against_mirror(&w[1]) {
             Ok(()) => return,
             Err(e) => {
@@ -120,10 +117,7 @@ fn main() {
     let input = CString::new(input).expect("request contains an interior NUL byte");
 
     let t_init = Instant::now();
-    assert!(
-        day_shell::init_lean(),
-        "Lean runtime initialisation failed"
-    );
+    assert!(day_shell::init_lean(), "Lean runtime initialisation failed");
     let init_ms = t_init.elapsed().as_secs_f64() * 1e3;
 
     let mut out = String::new();

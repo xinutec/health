@@ -108,7 +108,14 @@ pub fn encode_ask(has_local: bool, now_ms: i64, boxes: &[CoverageBox]) -> Vec<u8
 /// rather than a re-entrant task.
 ///
 /// `ask` is handed over and not touched again.
-pub fn decide(lat: f64, lon: f64, radius_m: f64, has_local: bool, now_ms: i64, boxes: &[CoverageBox]) -> bool {
+pub fn decide(
+    lat: f64,
+    lon: f64,
+    radius_m: f64,
+    has_local: bool,
+    now_ms: i64,
+    boxes: &[CoverageBox],
+) -> bool {
     if !crate::lean_ready() {
         // ⚠ A SIGSEGV OTHERWISE. `health_osm_covered` is Lean code, and calling
         // it before the runtime is up crashes the process rather than failing.
@@ -200,10 +207,7 @@ pub fn boxes_for(bucket: &str) -> Option<Vec<CoverageBox>> {
     })?;
 
     if let Ok(mut c) = boxes_cache().lock() {
-        c.insert(
-            bucket.to_string(),
-            (Instant::now(), rows.clone()),
-        );
+        c.insert(bucket.to_string(), (Instant::now(), rows.clone()));
     }
     Some(rows)
 }
@@ -267,7 +271,13 @@ fn record(bucket: &str, lat: f64, lon: f64, radius_m: f64) {
 /// `None` when the coverage table itself could not be read — which is not "no
 /// boxes": nothing is known, so nothing may be claimed.
 #[must_use]
-pub fn decision(bucket: &str, lat: f64, lon: f64, radius_m: f64, poly: &str) -> Option<(bool, bool)> {
+pub fn decision(
+    bucket: &str,
+    lat: f64,
+    lon: f64,
+    radius_m: f64,
+    poly: &str,
+) -> Option<(bool, bool)> {
     let boxes = boxes_for(bucket)?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -288,7 +298,10 @@ pub fn decision(bucket: &str, lat: f64, lon: f64, radius_m: f64, poly: &str) -> 
     // trade is a rule — it belongs in `decideCoverage`, not in a `||` on this
     // line.
     let local = has_local_data(bucket, poly);
-    Some((local && decide(lat, lon, radius_m, true, now_ms, &boxes), local))
+    Some((
+        local && decide(lat, lon, radius_m, true, now_ms, &boxes),
+        local,
+    ))
 }
 
 /// May `bucket` be read at `(lat, lon)` within `radius_m`, and if not, record

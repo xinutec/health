@@ -538,12 +538,7 @@ pub fn placeholders(n: usize) -> String {
 /// ran and matched nothing"; this used to flatten the two with
 /// `unwrap_or_default`, which is how a fold over unmirrored ground came to
 /// report that there are no roads there (#976).
-fn query_ways(
-    lat: f64,
-    lon: f64,
-    radius_m: f64,
-    subtypes: &[&str],
-) -> Option<Vec<MirrorWay>> {
+fn query_ways(lat: f64, lon: f64, radius_m: f64, subtypes: &[&str]) -> Option<Vec<MirrorWay>> {
     let poly = bbox_polygon_wkt(lat, lon, radius_m, ROAD_CORRIDOR_MARGIN_M);
     // ⚠ BEFORE THE QUERY, because the query cannot tell the two cases apart:
     // no rows over unfetched ground and no rows over empty ground are the same
