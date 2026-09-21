@@ -129,11 +129,14 @@ private def win (s : LabelSeg) : Seg :=
 /-- How many whole minutes inside the window are at or above pedestrian cadence.
 Where `peakCadenceForSegment` asks "was there one unmistakable walking minute",
 this asks "how much of this window was spent walking" — the question an
-interrupted walk can actually answer. Mirrors the TS `walkingMinutesInSegment`
-window test exactly, bound for bound. -/
+interrupted walk can actually answer.
+
+⚠ WHOLE minutes, as the sentence above always claimed: the window test is
+`stepMinuteInside`, which is containment rather than the TS's membership of the
+start instant. See that function for the stay it cost (#185). -/
 def walkingMinutesInSegment (seg : Seg) (stepPoints : List StepPoint) : Nat :=
   stepPoints.foldl (fun n sp =>
-    if decide (sp.ts ≥ seg.startTs) && decide (sp.ts ≤ seg.endTs)
+    if Verified.Geo.BiometricWindows.stepMinuteInside sp seg
         && decide (sp.steps ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
     then n + 1 else n) 0
 

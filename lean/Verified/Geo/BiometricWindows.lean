@@ -135,12 +135,33 @@ def cadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
       decide (sp.ts ≥ seg.startTs) && decide (sp.ts ≤ seg.endTs))).foldl (fun a sp => a + sp.steps) 0
     (total / Float.ofInt durationSec) * 60
 
+/-- How long a step row covers. A row's `ts` is the START of its minute, so the
+    steps it carries were taken across `[ts, ts + STEP_MINUTE_S)`. -/
+def STEP_MINUTE_S : Int := 60
+
+/-- Does a step row's whole minute lie inside the window?
+
+⚠ **CONTAINMENT, NOT MEMBERSHIP OF THE START INSTANT**, and the difference is a
+real defect (#185). A segment ending at 18:54:12 shares twelve seconds with the
+minute beginning 18:54; testing `sp.ts ≤ seg.endTs` charges it that whole
+minute's steps. On 2026-06-24 that is what destroyed a five-minute shop stay:
+the 82 steps belonged to the walk to the NEXT shop, they cleared
+`STATIONARY_WALK_PEAK_CADENCE`, and `applyStationaryWalkThrough` relabelled the
+stay as walking on the strength of a minute it barely touched.
+
+Symmetric at the near end on purpose — a partial first minute is somebody
+else's minute for the same reason a partial last one is. -/
+def stepMinuteInside (sp : StepPoint) (seg : Seg) : Bool :=
+  decide (sp.ts ≥ seg.startTs) && decide (sp.ts + STEP_MINUTE_S ≤ seg.endTs)
+
 /-- Highest single per-minute step count inside the window. Unlike the mean,
     the peak survives a window that is slow overall but contains one
-    unmistakable walking minute. -/
+    unmistakable walking minute.
+
+    ⚠ Counts only minutes the window WHOLLY contains — see `stepMinuteInside`. -/
 def peakCadenceForSegment (seg : Seg) (stepPoints : List StepPoint) : Float :=
   stepPoints.foldl (fun peak sp =>
-    if decide (sp.ts ≥ seg.startTs) && decide (sp.ts ≤ seg.endTs) && decide (sp.steps > peak)
+    if stepMinuteInside sp seg && decide (sp.steps > peak)
     then sp.steps else peak) 0
 
 /-! ## The stay bridge -/
