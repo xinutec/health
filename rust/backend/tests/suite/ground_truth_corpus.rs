@@ -89,19 +89,31 @@ const POST_TS: &[&str] = &[
     "2026-09-15.md",
 ];
 
+/// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
+/// the header asks for. On 2026-09-21 its evening row — one vague
+/// `shop dwell(s)` over a ~10-minute window — was replaced by FOUR: the two
+/// walking halves of the out-and-back, and the two dwells between them, which
+/// the day's own GPS and step series resolve into two separate stops 49 m
+/// apart. Pippijn confirmed the count; he had not remembered it when the
+/// original row was written.
+///
+/// So: rows +3, enforceable +3 (all four carry `{user}`), one more walking leg
+/// and one more journey. Every other TS-era file is untouched and these numbers
+/// are still exact over them. The two dwells stand as known-error — they are
+/// #185 case C, still absorbed into a flat walk.
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 395;
-const TS_ENFORCEABLE: usize = 367;
+const TS_ROWS: usize = 398;
+const TS_ENFORCEABLE: usize = 370;
 const TS_UNPARSEABLE: usize = 5;
 const TS_DECLARED_TZ: usize = 2;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
-const TS_JOURNEYS: usize = 91;
-const TS_LEGS: usize = 227;
+const TS_JOURNEYS: usize = 92;
+const TS_LEGS: usize = 228;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. 228 legs could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 142)];
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 143)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {
