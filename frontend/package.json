@@ -24,7 +24,7 @@
     "@angular/service-worker": "^22.0.4",
     "@angular/router": "^22.0.4",
     "@types/leaflet": "^1.9.21",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#efe5ee46bd138dee8ee195b7b4925c59d4f5c3d4",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#c57aca71aa6064adefb87263f3c4ce6f74e48606",
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",
     "ng2-charts": "^10.0.0",

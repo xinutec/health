@@ -16,11 +16,7 @@ import {
  * group beside a number field — the classic too-wide toggle row) and the Day
  * summary-cards grid. (settings.spec.ts covers /settings, the other historically
  * collision-prone screen.)
- *
- * No service worker in this app, but block it anyway for parity with the fleet's
- * layout specs — SW-controlled fetches would bypass page.route.
  */
-test.use({ serviceWorkers: "block" });
 
 // The dashboard keys its day view on todayLocal(), so the day the test runs is
 // the day it fetches — date the first window element to today so the summary
