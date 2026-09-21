@@ -322,6 +322,20 @@
     },
     {
       "argv": [
+        "nix",
+        "build",
+        "--no-warn-dirty",
+        "--no-link",
+        ".#health-bins.cargoDeps"
+      ],
+      "artifacts": [],
+      "cwd": ".",
+      "env": {},
+      "name": "the cargo vendor hash matches rust/Cargo.lock",
+      "timeout_s": 1800
+    },
+    {
+      "argv": [
         "scripts/rules-live-in-lean.sh"
       ],
       "artifacts": [],

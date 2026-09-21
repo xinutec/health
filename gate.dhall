@@ -555,6 +555,45 @@ in  { name = "health"
             ]
         , timeout_s = 3600
         }
+      , {-  ⚠ THIS CHECKS THE VENDOR HASH. IT DOES NOT CHECK THAT THE IMAGE
+            BUILDS, and reading it as if it did is the way it turns negative.
+
+            `flake.nix` pins `cargoDeps.hash`, so any change to `rust/Cargo.lock`
+            — a dependency added, a version bumped — invalidates a fixed-output
+            derivation nothing else on the commit path builds. On 2026-09-21 that
+            broke `main`: `day-shell` grew `anyhow` for #1667, every gate row was
+            green, and the image build failed 13 minutes after the push.
+
+            ⚠ **IT IS NOT THE SANDBOXED RUST BUILD THAT WAS REMOVED ABOVE.** That
+            one rebuilt the whole workspace from `src = ./.`, so a markdown commit
+            paid for it, and it was taken out deliberately. This builds the VENDOR
+            TREE alone: a fixed-output derivation keyed on the lockfile, so it is
+            a store hit — MEASURED at 2.6 s — on every commit that does not touch
+            `Cargo.lock`. Same reasoning that keeps `.#verified-cli`: narrow
+            input, cheap hit.
+
+            It costs nothing extra when it fires, either. The vendor tree is
+            303 MB and a hash mismatch discards it, so learning the new hash and
+            then verifying it is two fetches — which is what the CI round trip
+            already cost. What this buys is that they happen BEFORE the push
+            instead of on either side of a red `main`.
+
+            ⚠ The other ways to break the image are still uncaught: the
+            Dockerfile, a flake input, anything Linux-specific (the gate runs on
+            darwin), a renamed binary in the image's `install -m755` lines. One
+            class, named.
+        -}
+        G.Check::{
+        , name = "the cargo vendor hash matches rust/Cargo.lock"
+        , argv =
+            [ "nix"
+            , "build"
+            , "--no-warn-dirty"
+            , "--no-link"
+            , ".#health-bins.cargoDeps"
+            ]
+        , timeout_s = 1800
+        }
       , {-  ⚠ A NAME DECLARED IN BOTH LANGUAGES IS A RULE WRITTEN TWICE. The
             decisions belong in Lean and Rust is IO glue, but nothing enforced
             that and the boundary has a gradient: a rule needed AT an IO site
