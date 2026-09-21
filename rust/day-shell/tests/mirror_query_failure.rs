@@ -41,7 +41,7 @@ const DEAD_HOST: &str = "127.0.0.1";
 const DEAD_PORT: &str = "1";
 
 #[test]
-fn a_failed_query_is_counted_and_answers_empty() {
+fn a_failed_query_is_counted_and_declines() {
     // SAFETY: single-threaded test binary, set before any mirror call.
     unsafe {
         std::env::set_var("DB_HOST", DEAD_HOST);
@@ -52,8 +52,8 @@ fn a_failed_query_is_counted_and_answers_empty() {
     assert!(
         day_shell::mirror::configured(),
         "a query is only reachable once a mirror is configured; without that the \
-         readers return empty at the earlier absence check and this test would \
-         pass for the wrong reason"
+         readers decline at the earlier absence check and this test would pass \
+         for the wrong reason"
     );
     assert_eq!(
         day_shell::mirror::take_fails(),
@@ -67,9 +67,10 @@ fn a_failed_query_is_counted_and_answers_empty() {
     let ways = day_shell::mirror::walkable_roads(51.5, -0.1, 100.0);
 
     assert!(
-        ways.is_empty(),
-        "a failed query must answer empty like every other failure here — the \
-         fold draws raw chords rather than aborting a day"
+        ways.is_none(),
+        "a failed query must DECLINE, not answer empty (#1667). The fold still \
+         draws raw chords rather than aborting a day — what it must not do is \
+         report that a database fault is an area with no roads"
     );
     assert_eq!(
         day_shell::mirror::take_fails(),

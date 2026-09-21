@@ -154,10 +154,22 @@ the results. `query` is `osm.drivableRoads` (roads) or `osm.walkableRoads`
 
 The `Float` radius is the TS's: the single-disc arm rounds its own radius to a
 whole metre, the corridor arm passes `radiusM` through untouched.
+
+⚠ **`query` MAY DECLINE**, and a corridor of declines is not an empty corridor
+(#1667). `none` here means every read the corridor made went unanswered — the
+mirror has never covered this ground — where `some #[]` means it was asked and
+there is nothing there.
+
+A PARTLY answered corridor returns what it found. The union is already a
+best-effort over many independent discs, and one sample falling off the edge of
+a coverage box should not throw away the roads the other samples did find; the
+declined disc is recorded by the HOST at the read, so the gap is fetched without
+the drawing having to lose anything meanwhile.
 -/
-def corridorWays (query : Float → Float → Float → Array Way)
-    (track : Array Pt) (stepM radiusM : Float) : TraceM (Array Way) := do
-  if track.isEmpty then return #[]
+def corridorWays (query : Float → Float → Float → Option (Array Way))
+    (track : Array Pt) (stepM radiusM : Float) : TraceM (Option (Array Way)) := do
+  -- Nothing was asked, so nothing is unknown.
+  if track.isEmpty then return some #[]
 
   -- Centroid, and the farthest fix from it: how big a single disc would be.
   let n := Float.ofNat track.size
@@ -175,14 +187,19 @@ def corridorWays (query : Float → Float → Float → Array Way)
 
   let samples := resamplePolyline track stepM
   let mut acc : Array Way := #[]
+  let mut answered := false
   for s in samples do
     modify (·.push ⟨s.lat, s.lon, radiusM⟩)
-    acc := unionById acc (query s.lat s.lon radiusM)
-  return acc
+    match query s.lat s.lon radiusM with
+    | none => pure ()
+    | some ws =>
+      answered := true
+      acc := unionById acc ws
+  return if answered then some acc else none
 
 /-- `corridorWays` with the read trace discarded. -/
-def corridorWaysOf (query : Float → Float → Float → Array Way)
-    (track : Array Pt) (stepM radiusM : Float) : Array Way :=
+def corridorWaysOf (query : Float → Float → Float → Option (Array Way))
+    (track : Array Pt) (stepM radiusM : Float) : Option (Array Way) :=
   (corridorWays query track stepM radiusM).run' #[]
 
 /-! ## Guards (V8 reference values)
@@ -364,52 +381,74 @@ private def ROADS : Array RoadsEntry := #[
       { osmId := 3, name := some "Parallel Road", subtype := some "residential", coords := #[p 51.5 (-0.13920633007295433), p 51.501796622349985 (-0.13920633007295433), p 51.503593244699964 (-0.13920633007295433), p 51.50538986704995 (-0.13920633007295433), p 51.50718648939993 (-0.13920633007295433), p 51.50898311174991 (-0.13920633007295433)] }] }
 ]
 
-private def stubRoads (la lo rad : Float) : Array Way :=
+/-- ⚠ ANSWERS `some #[]` ON AN UNKNOWN KEY, not `none`. These guards pin the
+corridor ARITHMETIC — which discs are read, and how their ways union — against a
+mirror that covers the whole track. Declining here would test the decline path
+instead, and the discriminating stub is what makes the read trace meaningful. -/
+private def stubRoads (la lo rad : Float) : Option (Array Way) :=
   match ROADS.find? fun e => approx e.lat la && approx e.lon lo && approx e.radiusM rad with
-  | some e => e.ways
-  | none => #[]
+  | some e => some e.ways
+  | none => some #[]
 
 -- C1: an empty track reads nothing at all
 private def C1_TRACK : Array Pt := #[]
 private def C1_RUN := (corridorWays stubRoads C1_TRACK 700.0 50.0).run #[]
 #guard approxReads C1_RUN.2 #[]
-#guard C1_RUN.1.map (·.osmId) == #[]
-#guard C1_RUN.1.map (·.name) == #[]
+#guard C1_RUN.1.map (·.map (·.osmId)) == some #[]
+#guard C1_RUN.1.map (·.map (·.name)) == some #[]
 
 -- C2: a short leg: ONE centroid disc, radius Math.round(maxDist + 150)
 private def C2_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.500179662235 (-0.1382683565228094), p 51.500538986704996 (-0.13624810579942034), p 51.50125763564499 (-0.1349493731915274), p 51.502335609054974 (-0.1343000068875809), p 51.503593244699964 (-0.1342278550760313)]
 private def C2_RUN := (corridorWays stubRoads C2_TRACK 700.0 50.0).run #[]
 #guard approxReads C2_RUN.2 #[r 51.501317523056656 (-0.1363322829128949) 443.0]
-#guard C2_RUN.1.map (·.osmId) == #[1, 2, 3]
-#guard C2_RUN.1.map (·.name) == #[some "Main Street", some "Bent Lane", some "Parallel Road"]
+#guard C2_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3]
+#guard C2_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Bent Lane", some "Parallel Road"]
 
 -- C3: a 3.4 km leg: the corridor arm, one disc per resampled sample
 private def C3_TRACK : Array Pt := #[p 51.5 (-0.14), p 51.501796622349985 (-0.14), p 51.503593244699964 (-0.14), p 51.50538986704995 (-0.14), p 51.50718648939993 (-0.14), p 51.50898311174991 (-0.14), p 51.51077973409989 (-0.14), p 51.51257635644988 (-0.14), p 51.514372978799855 (-0.14), p 51.51616960114984 (-0.14), p 51.51796622349982 (-0.14), p 51.519762845849804 (-0.14), p 51.52155946819978 (-0.14), p 51.52335609054977 (-0.14), p 51.52515271289975 (-0.14), p 51.52694933524973 (-0.14), p 51.52874595759971 (-0.14), p 51.530542579949696 (-0.14)]
 private def C3_RUN := (corridorWays stubRoads C3_TRACK 700.0 50.0).run #[]
 #guard approxReads C3_RUN.2 #[r 51.5 (-0.14) 50.0, r 51.506288178224935 (-0.14) 50.0, r 51.51257635644988 (-0.14) 50.0, r 51.51886453467481 (-0.14) 50.0, r 51.52515271289975 (-0.14) 50.0, r 51.530542579949696 (-0.14) 50.0]
-#guard C3_RUN.1.map (·.osmId) == #[1, 2, 3, 4]
-#guard C3_RUN.1.map (·.name) == #[some "Main Street", some "Bent Lane", some "Parallel Road", some "Cross Street"]
+#guard C3_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3, 4]
+#guard C3_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Bent Lane", some "Parallel Road", some "Cross Street"]
 
 -- C4: just inside the single-disc bar (max fix-to-centroid 599.4 m)
 private def C4_TRACK : Array Pt := #[p 51.494619116061806 (-0.14), p 51.5 (-0.14), p 51.505380883938194 (-0.14)]
 private def C4_RUN := (corridorWays stubRoads C4_TRACK 700.0 50.0).run #[]
 #guard approxReads C4_RUN.2 #[r 51.5 (-0.14) 749.0]
-#guard C4_RUN.1.map (·.osmId) == #[1, 2, 3]
-#guard C4_RUN.1.map (·.name) == #[some "Main Street", some "Bent Lane", some "Parallel Road"]
+#guard C4_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3]
+#guard C4_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Bent Lane", some "Parallel Road"]
 
 -- C5: just past it (601.5 m) — the same shape takes the corridor arm
 private def C5_TRACK : Array Pt := #[p 51.4946011498383 (-0.14), p 51.5 (-0.14), p 51.5053988501617 (-0.14)]
 private def C5_RUN := (corridorWays stubRoads C5_TRACK 700.0 50.0).run #[]
 #guard approxReads C5_RUN.2 #[r 51.4946011498383 (-0.14) 50.0, r 51.50088932806324 (-0.14) 50.0, r 51.5053988501617 (-0.14) 50.0]
-#guard C5_RUN.1.map (·.osmId) == #[1, 2, 3]
-#guard C5_RUN.1.map (·.name) == #[some "Main Street", some "Bent Lane", some "Parallel Road"]
+#guard C5_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3]
+#guard C5_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Bent Lane", some "Parallel Road"]
 
 -- C6: the single-disc arm does NOT dedupe — it returns the query verbatim
 private def C6_TRACK : Array Pt := #[p 51.51257635644988 (-0.1407215181154961), p 51.51257635644988 (-0.14), p 51.51257635644988 (-0.13927848188450392)]
 private def C6_RUN := (corridorWays stubRoads C6_TRACK 700.0 50.0).run #[]
 #guard approxReads C6_RUN.2 #[r 51.51257635644988 (-0.14) 200.0]
-#guard C6_RUN.1.map (·.osmId) == #[1, 4, 4]
-#guard C6_RUN.1.map (·.name) == #[some "Main Street", some "Cross Street", some "Cross Street (dup record)"]
+#guard C6_RUN.1.map (·.map (·.osmId)) == some #[1, 4, 4]
+#guard C6_RUN.1.map (·.map (·.name)) == some #[some "Main Street", some "Cross Street", some "Cross Street (dup record)"]
+
+-- C7: the same track over ground the mirror has never covered. Every read
+-- declines, so the corridor declines — which is NOT C1's `some #[]`: that one
+-- asked nothing, this one asked six times and learned nothing.
+private def noRoads (_ _ _ : Float) : Option (Array Way) := none
+private def C7_RUN := (corridorWays noRoads C3_TRACK 700.0 50.0).run #[]
+#guard C7_RUN.1 == none
+-- ⚠ The reads still HAPPEN and are still traced. A declined disc is exactly the
+-- one a host records for fetching, so losing it from the trace would lose the
+-- only evidence that this ground was ever wanted.
+#guard C7_RUN.2.size == 6
+
+-- C8: one sample answers and the other five decline — the corridor keeps what
+-- it found rather than discarding it for the company it kept.
+private def oneRoad (la lo rad : Float) : Option (Array Way) :=
+  if approx la 51.5 && approx lo (-0.14) && approx rad 50.0 then stubRoads la lo rad else none
+private def C8_RUN := (corridorWays oneRoad C3_TRACK 700.0 50.0).run #[]
+#guard C8_RUN.1.map (·.map (·.osmId)) == some #[1, 2, 3]
 
 /-! ### `unionById` — first record wins, insertion order kept -/
 

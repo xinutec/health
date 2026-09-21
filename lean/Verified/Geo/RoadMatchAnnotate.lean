@@ -80,8 +80,10 @@ abbrev Seg := Verified.Geo.SegmentMerge.Seg
 
 /-- The shell: the mirror read and the matcher. -/
 structure Env where
-  /-- `osm.drivableRoads(lat, lon, radiusM)`. -/
-  drivableRoads : Float → Float → Float → Array Way
+  /-- `osm.drivableRoads(lat, lon, radiusM)`. `none` is a DECLINE — the mirror
+  does not cover this disc — and is not the same answer as `some #[]`, which is
+  "asked, and there is no road here" (#1667). -/
+  drivableRoads : Float → Float → Float → Option (Array Way)
   /-- `matchRoadSegment(fixes, { ways })` — `none` is the TS `null`, i.e. "draw
   the raw fixes". -/
   matcher : Array MPt → Array Way → Option (Array MPt)
@@ -160,9 +162,15 @@ def annotateRoadMatchesTraced (env : Env) (segments : Array Seg) (points : Array
       if clean.size < MIN_LEG_FIXES then
         out := out.push seg
       else
-        let ways ← corridorWays env.drivableRoads
+        let ways? ← corridorWays env.drivableRoads
           (clean.map fun p => ({ lat := p.lat, lon := p.lon } : Pt))
           ROAD_SAMPLE_STEP_M ROAD_SAMPLE_RADIUS_M
+        -- ⚠ A DECLINED CORRIDOR AND AN EMPTY ONE LEAVE THE LEG RAW ALIKE, and
+        -- they should: there is no network to match against either way. The
+        -- difference the type now carries is spent upstream, where the host
+        -- RECORDS the declined discs so the ground is fetched (#1667) — not
+        -- here, where acting differently would mean inventing a road.
+        let ways := ways?.getD #[]
         if ways.isEmpty then
           out := out.push seg
         else
@@ -199,8 +207,9 @@ The two shell values are ORACLE TABLES, not stubs that re-derive an answer.
 `stubRoads` holds every `(lat, lon, radius)` the V8 arm was actually asked
 about; `stubMatcher` holds every fix array the V8 matcher was actually handed.
 A query outside either table is a query this arm never made: the roads table
-answers EMPTY and the matcher table answers `MISS`, an off-Africa vertex that
-no output guard can accept. Neither can silently agree with a wrong caller.
+answers `some #[]` and the matcher table answers `MISS`, an off-Africa vertex
+that no output guard can accept. Neither can silently agree with a wrong
+caller.
 -/
 
 section Guards
@@ -317,10 +326,13 @@ private def ROADS : Array RoadsEntry := #[
       { osmId := 3, name := some "Parallel Road", subtype := some "residential", coords := #[p 51.5 (-0.13920633007295433), p 51.501796622349985 (-0.13920633007295433), p 51.503593244699964 (-0.13920633007295433), p 51.50538986704995 (-0.13920633007295433), p 51.50718648939993 (-0.13920633007295433), p 51.50898311174991 (-0.13920633007295433)] }] }
 ]
 
-private def stubRoads (la lo rad : Float) : Array Way :=
+-- ⚠ `some #[]` OUTSIDE THE TABLE, never `none`: these guards pin what the pass
+-- does with the roads it was given, against a mirror that covers the whole leg.
+-- Declining here would silently move every case onto the decline path.
+private def stubRoads (la lo rad : Float) : Option (Array Way) :=
   match ROADS.find? fun e => approx e.lat la && approx e.lon lo && approx e.radiusM rad with
-  | some e => e.ways
-  | none => #[]
+  | some e => some e.ways
+  | none => some #[]
 
 private structure MatchEntry where
   fixes : Array MPt

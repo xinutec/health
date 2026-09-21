@@ -40,7 +40,14 @@ static INIT: OnceLock<bool> = OnceLock::new();
 pub fn init() -> Result<()> {
     let ok = *INIT.get_or_init(|| {
         // SAFETY: called at most once, before any other entry point here.
-        unsafe { health_backend_init() == 0 }
+        let ok = unsafe { health_backend_init() == 0 };
+        if ok {
+            // ⚠ `day-shell` cannot see that Lean came up through OUR shim, and
+            // its coverage gate calls into Lean. Without this every OSM lookup
+            // in this process declines and every walk draws raw (#1667).
+            day_shell::mark_lean_ready();
+        }
+        ok
     });
     if ok {
         Ok(())

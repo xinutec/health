@@ -406,14 +406,9 @@ pub async fn record_coverage(pool: &MySqlPool, feature_type: &str, bbox: &Bbox) 
     Ok(())
 }
 
-/// The queue `kind` for a feature bucket.
-///
-/// ⚠ NAMESPACED. `osm_fetch_queue` already holds the geocode's `nominatim_z<n>`
-/// kinds (#1076); a bare `highway` beside those reads as a third vocabulary.
-#[must_use]
-pub fn queue_kind(bucket: &str) -> String {
-    format!("osm_{bucket}")
-}
+/// The queue's key vocabulary, from the crate that owns the queue. Re-exported
+/// so this module reads as one thing: the drain below is its only other caller.
+pub use day_shell::fetch_queue::{parse_queue_key, queue_key, queue_kind};
 
 /// The bucket a queue `kind` names, or `None` when it is not one of ours.
 #[must_use]
@@ -422,31 +417,3 @@ pub fn bucket_of(kind: &str) -> Option<&str> {
     BUCKETS.contains(&b).then_some(b)
 }
 
-/// The queue key for one declined question.
-///
-/// ⚠ THE QUESTION, NOT THE BOX. Keying by box would need the box to be snapped
-/// to a grid to dedup at all, and a grid-shaped box leaves every point within
-/// its radius of a cell edge permanently uncovered — `osm_covered` wants the
-/// disc inside ONE box and boxes do not union. Keying by the question keeps the
-/// key exact, lets `asked_count` mean "folds that wanted this", and moves the
-/// dedup to the drain, which can ask the coverage gate itself.
-///
-/// ⚠ FULL PRECISION, for [`crate::rowset_answerer::decline_key`]'s reason: a
-/// rounded key names a question nobody asks.
-#[must_use]
-pub fn queue_key(lat: f64, lon: f64, radius_m: f64) -> String {
-    format!("{lat}|{lon}|{radius_m}")
-}
-
-/// Read a key back. `None` when it is not three numbers.
-#[must_use]
-pub fn parse_queue_key(key: &str) -> Option<(f64, f64, f64)> {
-    let mut p = key.split('|');
-    let lat = p.next()?.parse().ok()?;
-    let lon = p.next()?.parse().ok()?;
-    let radius = p.next()?.parse().ok()?;
-    if p.next().is_some() {
-        return None;
-    }
-    Some((lat, lon, radius))
-}

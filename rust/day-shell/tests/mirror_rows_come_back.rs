@@ -46,6 +46,11 @@ fn the_three_callbacks_return_rows_from_a_real_mirror() {
         );
         return;
     }
+    // ⚠ THE GATE IS LEAN CODE. Every mirror read now asks `decideCoverage`
+    // through `@[export]`, so a test that reaches the mirror without the
+    // runtime up does not fail — it SIGSEGVs, which is how this line came to
+    // be here rather than by being foreseen.
+    assert!(day_shell::init_lean(), "the Lean runtime must come up");
     assert!(
         day_shell::mirror::configured(),
         "DB_HOST and DB_NAME are set, so the mirror must report itself configured \
@@ -84,6 +89,33 @@ fn the_three_callbacks_return_rows_from_a_real_mirror() {
     // ⚠ EACH ONE NAMED SEPARATELY. A single "all three answered" assertion would
     // let two callbacks carry a third that is silently broken — which is the
     // failure mode this file exists for.
+    //
+    // ⚠ AND EACH IS CHECKED AGAINST WHAT THE MIRROR ACTUALLY HOLDS. A callback
+    // may now DECLINE (#1667), and a decline is right or wrong depending on the
+    // coverage gate's own reading of the same ground — so the gate is asked
+    // first, with `decision`, which does not record. Asserting "rings come
+    // back" outright would be asserting a fact about the mirror's CONTENTS, and
+    // that fact went stale: the building layer is the thinnest in the mirror
+    // and does not reach this square today.
+    let poly = day_shell::mirror::bbox_polygon_wkt(lat, lon, RADIUS_M, 0.0);
+    let gate = |bucket: &str| -> bool {
+        day_shell::coverage::decision(bucket, lat, lon, RADIUS_M, &poly)
+            .expect("the coverage table reads")
+            .0
+    };
+
+    // Highway is the covered layer here, so both way readers must ANSWER.
+    assert!(
+        gate("highway"),
+        "the highway bucket is uncovered at a central-London square, so this \
+         run can say nothing about whether the way readers work. Either the \
+         mirror lost its coverage or the gate is broken"
+    );
+    let walkable = walkable.expect(
+        "walkable_roads DECLINED over ground the gate calls covered — the \
+         reader and the gate disagree about the same bucket",
+    );
+    let drivable = drivable.expect("drivable_roads DECLINED over covered ground");
     assert!(
         !walkable.is_empty(),
         "walkable_roads answered nothing 250 m around a central-London square. \
@@ -94,10 +126,34 @@ fn the_three_callbacks_return_rows_from_a_real_mirror() {
         !drivable.is_empty(),
         "drivable_roads answered nothing 250 m around a central-London square"
     );
-    assert!(
-        !buildings.is_empty(),
-        "buildings_near answered nothing 250 m around a central-London square"
-    );
+
+    // ⚠ BUILDINGS: THE ANSWER MUST MATCH THE GATE, whichever way the gate goes.
+    // That is the check this file can still make honestly — not "there are
+    // buildings here", which depends on what has been fetched, but "the reader
+    // declines exactly when the ground is uncovered and answers otherwise".
+    let buildings = match (gate("building"), buildings) {
+        (true, Some(b)) => {
+            assert!(
+                !b.is_empty(),
+                "the building bucket is covered here, so a read that finds \
+                 nothing means the query or the bbox is wrong"
+            );
+            b
+        }
+        (false, None) => {
+            eprintln!(
+                "buildings_near declined: the building bucket does not cover \
+                 this square. That is the honest answer and the reason #1667 \
+                 exists — before it, this read claimed there were no buildings."
+            );
+            Vec::new()
+        }
+        (true, None) => panic!("buildings_near DECLINED over covered ground"),
+        (false, Some(_)) => panic!(
+            "buildings_near ANSWERED over uncovered ground — the read got past \
+             the gate, which is the defect the gate was added to stop"
+        ),
+    };
 
     // ⚠ A RING IS AT LEAST A TRIANGLE. `buildings_near` already drops anything
     // shorter, so an empty or two-point ring arriving here would mean the WKT

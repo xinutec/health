@@ -647,11 +647,26 @@ pub fn load_value_sections(
 /// a difference as "one of these two things" rather than as a verdict on the
 /// port. A difference in COUNT ORDER or in the subtype set is the port; a
 /// handful of moved vertices on one way is the world.
+///
+/// ⚠ A DECLINED KEY IS NOT A PASS. The mirror may answer that it does not cover
+/// this disc at all (#1667), and a key that could not be compared must not be
+/// counted as one that agreed — a fixture of zero lines and a mirror that never
+/// looked would otherwise "match". They are reported and counted separately,
+/// and they fail the run: a captured key the mirror can no longer answer is
+/// drift in the mirror, which is exactly what this looks for.
 pub fn verify_against_mirror(path: &str) -> Result<(), String> {
     load_fixture(path)?;
     let t = trace().ok_or("no trace")?;
     let mut checked = 0usize;
     let mut mismatched = 0usize;
+    let mut declined = 0usize;
+
+    let decline_note = |label: &str, k: &RawKey| {
+        eprintln!(
+            "verify: {label} ({:.7}, {:.7}, {}) DECLINED — the mirror does not cover this disc",
+            k.lat, k.lon, k.radius
+        );
+    };
 
     let mut report = |label: &str, k: &RawKey, want: usize, got: usize, detail: String| {
         checked += 1;
@@ -672,16 +687,22 @@ pub fn verify_against_mirror(path: &str) -> Result<(), String> {
                     .get(&k.key)
                     .map(|ws| ws.iter().map(|w| w.coords.clone()).collect())
                     .unwrap_or_default();
-                let got: Vec<Line> = crate::mirror::walkable_roads(k.lat, k.lon, k.radius)
-                    .into_iter()
-                    .map(|w| w.coords)
-                    .collect();
+                let Some(found) = crate::mirror::walkable_roads(k.lat, k.lon, k.radius) else {
+                    declined += 1;
+                    decline_note("walkableRoads", k);
+                    continue;
+                };
+                let got: Vec<Line> = found.into_iter().map(|w| w.coords).collect();
                 let d = diff_lines(&want, &got);
                 report("walkableRoads", k, want.len(), got.len(), d);
             }
             "buildingsNear" => {
                 let want = t.buildings.get(&k.key).cloned().unwrap_or_default();
-                let got = crate::mirror::buildings_near(k.lat, k.lon, k.radius);
+                let Some(got) = crate::mirror::buildings_near(k.lat, k.lon, k.radius) else {
+                    declined += 1;
+                    decline_note("buildingsNear", k);
+                    continue;
+                };
                 let d = diff_lines(&want, &got);
                 report("buildingsNear", k, want.len(), got.len(), d);
             }
@@ -691,10 +712,12 @@ pub fn verify_against_mirror(path: &str) -> Result<(), String> {
                     .get(&k.key)
                     .map(|ws| ws.iter().map(|w| w.coords.clone()).collect())
                     .unwrap_or_default();
-                let got: Vec<Line> = crate::mirror::drivable_roads(k.lat, k.lon, k.radius)
-                    .into_iter()
-                    .map(|w| w.coords)
-                    .collect();
+                let Some(found) = crate::mirror::drivable_roads(k.lat, k.lon, k.radius) else {
+                    declined += 1;
+                    decline_note("drivableRoads", k);
+                    continue;
+                };
+                let got: Vec<Line> = found.into_iter().map(|w| w.coords).collect();
                 let d = diff_lines(&want, &got);
                 report("drivableRoads", k, want.len(), got.len(), d);
             }
@@ -702,11 +725,13 @@ pub fn verify_against_mirror(path: &str) -> Result<(), String> {
         }
     }
 
-    eprintln!("verify: {checked} key(s) checked, {mismatched} mismatched");
-    if mismatched == 0 {
+    eprintln!("verify: {checked} key(s) checked, {mismatched} mismatched, {declined} declined");
+    if mismatched == 0 && declined == 0 {
         Ok(())
     } else {
-        Err(format!("{mismatched} of {checked} key(s) differ"))
+        Err(format!(
+            "{mismatched} of {checked} key(s) differ, and {declined} could not be compared at all"
+        ))
     }
 }
 
@@ -806,12 +831,27 @@ fn geom_hash(lines: &[Line]) -> String {
 }
 
 fn answer(lines: &[Line]) -> *mut c_void {
-    hand_over(&encode(lines))
+    mk_bytes(&encode(lines))
 }
 
-fn hand_over(b: &[u8]) -> *mut c_void {
+/// A Lean `ByteArray` holding `b`, for Lean to take ownership of.
+///
+/// `pub(crate)` because `coverage` builds its ask with it: one definition of
+/// "hand bytes to Lean", not two.
+pub(crate) fn mk_bytes(b: &[u8]) -> *mut c_void {
     // SAFETY: `b` outlives the call and the callee copies it.
     unsafe { health_shell_mk_bytes(b.as_ptr(), b.len()) }
+}
+
+/// "I cannot answer this" — a ZERO-LENGTH buffer, which neither wire format can
+/// produce, so Lean's `decodeWays?`/`decodePolylines?` read it as `none`
+/// (`DayEntry.OsmHost`, #1667).
+///
+/// ⚠ NOT `mk_bytes(&[0, 0, 0, 0])`. Four zero bytes is a well-formed answer of
+/// no features — a claim that this ground is empty — and the whole point of the
+/// distinction is that an unread area must not be able to make it (#976).
+fn decline() -> *mut c_void {
+    mk_bytes(&[])
 }
 
 /// Geometry digest of ways, for the same `OSM_LOG` comparison [`geom_hash`]
@@ -868,7 +908,18 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
             // and correctly: a walk over an area the mirror does not cover is
             // exactly the case that must not read as "there are no roads here".
             if crate::mirror::configured() {
-                let lines: Vec<Line> = crate::mirror::buildings_near(lat, lon, radius);
+                let Some(lines): Option<Vec<Line>> = crate::mirror::buildings_near(lat, lon, radius)
+                else {
+                    // The mirror does not cover this disc, or the read failed.
+                    // Either way nobody has looked here, and saying so is what
+                    // gets the ground fetched instead of re-asked forever.
+                    if std::env::var_os("OSM_LOG").is_some() {
+                        eprintln!(
+                            "osm: DECLINE buildingsNear lat={lat:.17} lon={lon:.17} r={radius}"
+                        );
+                    }
+                    return decline();
+                };
                 bump(|t| t.mirror_reads += 1);
                 if std::env::var_os("OSM_LOG").is_some() {
                     eprintln!(
@@ -880,7 +931,10 @@ fn lookup(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                 capture("buildingsNear", lat, lon, radius, rings_to_json(&lines));
                 return answer(&lines);
             }
-            answer(&[])
+            // ⚠ NO MIRROR AND NO FIXTURE ENTRY: nothing in this process has any
+            // idea what is here, so it declines rather than inventing an empty
+            // world. That is the `verified_cli` arm's normal state.
+            decline()
         }
     }
 }
@@ -902,7 +956,7 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     geom_hash_ways(ways)
                 );
             }
-            hand_over(&encode_ways(ways))
+            mk_bytes(&encode_ways(ways))
         }
         None => {
             bump(|t| t.walkable_misses += 1);
@@ -915,7 +969,16 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                 );
             }
             if crate::mirror::configured() {
-                let ways: Vec<Way> = crate::mirror::walkable_roads(lat, lon, radius)
+                let Some(found) = crate::mirror::walkable_roads(lat, lon, radius) else {
+                    // Unmirrored ground — see `decline`.
+                    if std::env::var_os("OSM_LOG").is_some() {
+                        eprintln!(
+                            "osm: DECLINE walkableRoads lat={lat:.17} lon={lon:.17} r={radius}"
+                        );
+                    }
+                    return decline();
+                };
+                let ways: Vec<Way> = found
                     .into_iter()
                     .map(|w| Way {
                         osm_id: w.osm_id,
@@ -934,9 +997,10 @@ fn lookup_walkable(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     );
                 }
                 capture("walkableRoads", lat, lon, radius, ways_to_json(&ways));
-                return hand_over(&encode_ways(&ways));
+                return mk_bytes(&encode_ways(&ways));
             }
-            hand_over(&encode_ways(&[]))
+            // As in `lookup`: nothing here knows this ground.
+            decline()
         }
     }
 }
@@ -956,7 +1020,7 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     ways.len()
                 );
             }
-            hand_over(&encode_ways(ways))
+            mk_bytes(&encode_ways(ways))
         }
         None => {
             bump(|t| t.drivable_misses += 1);
@@ -969,7 +1033,16 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                 );
             }
             if crate::mirror::configured() {
-                let ways: Vec<Way> = crate::mirror::drivable_roads(lat, lon, radius)
+                let Some(found) = crate::mirror::drivable_roads(lat, lon, radius) else {
+                    // Unmirrored ground — see `decline`.
+                    if std::env::var_os("OSM_LOG").is_some() {
+                        eprintln!(
+                            "osm: DECLINE drivableRoads lat={lat:.17} lon={lon:.17} r={radius}"
+                        );
+                    }
+                    return decline();
+                };
+                let ways: Vec<Way> = found
                     .into_iter()
                     .map(|w| Way {
                         osm_id: w.osm_id,
@@ -987,9 +1060,10 @@ fn lookup_ways(lat: f64, lon: f64, radius: f64) -> *mut c_void {
                     );
                 }
                 capture("drivableRoads", lat, lon, radius, ways_to_json(&ways));
-                return hand_over(&encode_ways(&ways));
+                return mk_bytes(&encode_ways(&ways));
             }
-            hand_over(&encode_ways(&[]))
+            // As in `lookup`: nothing here knows this ground.
+            decline()
         }
     }
 }

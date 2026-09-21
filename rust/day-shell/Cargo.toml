@@ -19,6 +19,9 @@ publish = false
 # ⚠ RUNTIME QUERIES ONLY — `sqlx::query(…)`, never the checked `query!` macros.
 # Those need a live database or a committed `.sqlx` cache at COMPILE time, and
 # no repo here has one; reaching for them breaks the image build.
+# The queue's write half returns `Result` with context — the same error idiom
+# `backend` uses, and the module is re-exported there.
+anyhow = "1"
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",

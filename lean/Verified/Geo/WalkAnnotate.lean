@@ -133,10 +133,13 @@ structure Env where
   the capture always carried `name`/`osmId`/`subtype` and only the old `Ways`
   type dropped them. The solver leaves still consume plain geometry — the
   pass projects — but the MATCHER receives the names, so it can report the
-  way identity it chose and naming need not re-derive it. -/
-  walkableRoads : Float → Float → Int → Array Way
-  /-- `osm.buildingsNear(lat, lon, radiusM)`. -/
-  buildingsNear : Float → Float → Int → Array Ring
+  way identity it chose and naming need not re-derive it.
+
+  ⚠ `none` is a DECLINE — the mirror covers no data for this disc — and is not
+  `some #[]`, "asked, and there is no road here" (#1667). -/
+  walkableRoads : Float → Float → Int → Option (Array Way)
+  /-- `osm.buildingsNear(lat, lon, radiusM)`. Declines as `walkableRoads` does. -/
+  buildingsNear : Float → Float → Int → Option (Array Ring)
   /-- `matchWalkSegment(fixes, { ways, buildings })`. Takes the full way
   records (see `walkableRoads`); the walk profile's way-switch penalty is
   0 nats so the names decide NOTHING about the line — they only ride along
@@ -509,10 +512,24 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
   -- both promises up front so the DB round-trips overlap). The buildings read
   -- is CONDITIONAL on the ways coming back non-empty, so a fixture replay sees
   -- exactly the captured keys.
-  let waysOf := prep.map fun p? => p?.map fun p => env.walkableRoads p.cLat p.cLon p.discRadiusM
+  --
+  -- ⚠ A DECLINED WAYS READ FLATTENS INTO "no leg to draw" (#1667). It leaves
+  -- the leg raw, which is also what an empty answer does two `match`es below —
+  -- correctly, since neither gives the solver anything to run on. The decline
+  -- is not lost: the HOST records the disc it could not answer, so the ground
+  -- is fetched instead of being re-asked forever.
+  let waysOf := prep.map fun p? => p?.bind fun p => env.walkableRoads p.cLat p.cLon p.discRadiusM
   let buildingsOf := (Array.range prep.size).map fun i =>
     match prep[i]!, waysOf[i]! with
-    | some p, some w => if w.isEmpty then some #[] else some (env.buildingsNear p.cLat p.cLon p.discRadiusM)
+    -- ⚠ AND A DECLINED BUILDINGS READ FLATTENS TO `#[]`, which is the one place
+    -- this pass still cannot tell the two apart. Buildings are a CORRECTION to a
+    -- line the ways already drew: with no wall data the leg is drawn exactly as
+    -- it is on ground that genuinely has none. What the two cases must not share
+    -- is the wall METRIC, and `Seg` has nowhere to carry that yet — that is what
+    -- `WalkIn.buildingsMeasured` stands in for (#1501), and what #1667's third
+    -- step reconsiders once a building box can be fetched at all.
+    | some p, some w =>
+      if w.isEmpty then some #[] else some ((env.buildingsNear p.cLat p.cLon p.discRadiusM).getD #[])
     | _, _ => none
   let mut out : Array Seg := #[]
   for si in [0 : segments.size] do
@@ -729,9 +746,13 @@ private def mkEnv (ways : Ways) (key : Float × Float × Int)
   -- The stub wraps its plain geometry into anonymous `Way` records: these
   -- fixtures pin ORCHESTRATION, and no guard here exercises the #445 naming
   -- report (`matchWayName` has its own guards on literals).
+  -- ⚠ OFF-KEY ANSWERS `some #[]`, NOT `none`. Every guard below pins what the
+  -- pass does with data, against a mirror that has this ground; a stub that
+  -- declined off-key would quietly move the misses onto the decline path and
+  -- stop discriminating on the key at all.
   { walkableRoads := fun la lo r =>
-      if (la, lo, r) == key then ways.map (fun w => { osmId := 0, coords := w }) else #[]
-    buildingsNear := fun _ _ _ => #[]
+      some (if (la, lo, r) == key then ways.map (fun w => { osmId := 0, coords := w }) else #[])
+    buildingsNear := fun _ _ _ => some #[]
     matcher := fun fx _ _ => if fx == cleanIn.map PedFix.pathPt then m else none
     reconstruct := fun fx _ _ ev =>
       if wfKey fx == pedKey heldIn && ev.stepsWalked.isNone then rec else none
@@ -966,7 +987,8 @@ private def OFF_SNAPPED : Array TPt := OFF_FIXED.map fun p => { p with lat := p.
 private def envOff (correct : Array TPt → Ways → Array Ring → Option Float → Array TPt)
     (snap : Array TPt → Ways → Array Ring → Array TPt) : Env :=
   { (mkEnv STREETS (51.501, -0.1455, 231) #[] OFF_HELD none none #[] none) with
-      buildingsNear := fun la lo r => if (la, lo, r) == (51.501, -0.1455, 231) then BLOCK else #[]
+      buildingsNear := fun la lo r =>
+        some (if (la, lo, r) == (51.501, -0.1455, 231) then BLOCK else #[])
       correct := correct
       snapPassages := snap }
 
@@ -1201,7 +1223,7 @@ private def SPIKE_CLEAN : Array PedFix :=
   #[f 1000 51.5 (-0.14), f 1060 51.5005 (-0.14), f 1180 51.5015 (-0.14), f 1240 51.502 (-0.14)]
 private def echoEnv (key : Float × Float × Int) : Env :=
   { mkEnv STREETS key #[] #[] none none #[] none with
-      buildingsNear := fun la lo r => if (la, lo, r) == key then BLOCK else #[]
+      buildingsNear := fun la lo r => some (if (la, lo, r) == key then BLOCK else #[])
       correct := fun d _ _ _ => nudge d }
 
 -- The matcher bailed: the drawn line is the HELD fixes, not the despiked ones.
@@ -1225,7 +1247,7 @@ private def echoEnv (key : Float × Float × Int) : Env :=
 -- An empty building layer keeps both leaves out even when they would have
 -- changed the line.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
-  { echoEnv (51.504599999999996, -0.14, 631) with buildingsNear := fun _ _ _ => #[] }) == RAW
+  { echoEnv (51.504599999999996, -0.14, 631) with buildingsNear := fun _ _ _ => some #[] }) == RAW
 -- With the pass switched off the corner leg, which otherwise draws a match,
 -- draws nothing.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] CORNER anySpeed envC [] .matcher
@@ -1294,7 +1316,7 @@ private def envSBad : Env :=
   { mkEnv STREETS (51.501, -0.13940000000000002, 320) S_CLEAN S_HELD
       (some { path := S_BADLINE, coarsePath := S_BADLINE }) none #[] none with
       buildingsNear := fun la lo r =>
-        if (la, lo, r) == (51.501, -0.13940000000000002, 320) then BLOCK else #[]
+        some (if (la, lo, r) == (51.501, -0.13940000000000002, 320) then BLOCK else #[])
       correct := fun d _ _ _ => nudge d }
 
 #guard !(matchImprovesDisplay ((S_CLEAN.map PedFix.pathPt).map PathPt.pt) (S_BADLINE.map PathPt.pt) STREETS
@@ -1319,7 +1341,22 @@ private def envSBad : Env :=
 -- A leg whose ways came back empty is returned untouched even where the
 -- corrector would have had something to say about its raw line.
 #guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
-  { echoEnv (51.504599999999996, -0.14, 631) with walkableRoads := fun _ _ _ => #[] }) == RAW
+  { echoEnv (51.504599999999996, -0.14, 631) with walkableRoads := fun _ _ _ => some #[] }) == RAW
+
+-- ⚠ AND A DECLINED WAYS READ LEAVES IT RAW TOO — the same outcome as the empty
+-- answer above, from the opposite fact about the world. The pass has nothing to
+-- draw from in either case; what must not happen is a leg drawn from roads
+-- nobody ever looked up.
+#guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
+  { echoEnv (51.504599999999996, -0.14, 631) with walkableRoads := fun _ _ _ => none }) == RAW
+
+-- A DECLINED BUILDING READ TAKES EXACTLY THE EMPTY-LAYER PATH above: the ways
+-- answered, so the leg is still eligible, and only the two wall leaves stay
+-- out. (This fixture's matcher bails as well, so the result is `RAW`.) Making
+-- the decline refuse the leg outright would blank most walks — the building
+-- layer is the thinnest in the mirror, 26 boxes against highway's 187.
+#guard outOf (annotateWalkMatches #[walkSeg 1000 1240] TELEPORTED anySpeed
+  { echoEnv (51.504599999999996, -0.14, 631) with buildingsNear := fun _ _ _ => none }) == RAW
 
 /-! ### Deliberately unpinned
 

@@ -130,13 +130,21 @@ structure Env where
   segment as it stands. The only genuinely async pass in the cascade; what is
   ASYNC is the OSM naming, and what is sequencing stays here. -/
   reenrich : Seg → Option Seg := fun _ => none
-  /-- The road matcher's shell: the street-network read and the solver. -/
+  /-- The road matcher's shell: the street-network read and the solver.
+
+  ⚠ **THE UNFED READ DECLINES, IT DOES NOT ANSWER EMPTY** (#1667). A shell
+  nobody wired has no mirror behind it, and "there are no roads here" is a claim
+  about the world that an unwired shell is in no position to make. The pass
+  leaves the leg raw either way, so this changes no drawing — what it changes is
+  that a host can tell the two apart, and record the ground it could not
+  answer for. -/
   roadEnv : Verified.Geo.RoadMatchAnnotate.Env :=
-    { drivableRoads := fun _ _ _ => #[], matcher := fun _ _ => none }
-  /-- The pedestrian matcher's shell: two OSM reads and five solver leaves. -/
+    { drivableRoads := fun _ _ _ => none, matcher := fun _ _ => none }
+  /-- The pedestrian matcher's shell: two OSM reads and five solver leaves. The
+  two reads decline for the same reason `roadEnv`'s does. -/
   walkEnv : Verified.Geo.WalkAnnotate.Env :=
-    { walkableRoads := fun _ _ _ => #[]
-      buildingsNear := fun _ _ _ => #[]
+    { walkableRoads := fun _ _ _ => none
+      buildingsNear := fun _ _ _ => none
       matcher := fun _ _ _ => none
       reconstruct := fun _ _ _ _ => none
       refineMatched := fun _ _ => none
@@ -1386,7 +1394,7 @@ private def ROADMATCH : Env :=
   { NO_LOOKUPS with
     points := raggedRoad
     roadEnv :=
-      { drivableRoads := fun _ _ _ => #[straightWay]
+      { drivableRoads := fun _ _ _ => some #[straightWay]
         matcher := fun pts _ => some (pts.map fun q => { q with lon := lon0 }) } }
 
 #guard fires ROADMATCH "roadMatch" #[dr 3000 4200]
@@ -1408,7 +1416,7 @@ private def WALKMATCH : Env :=
     walkEnv :=
       { NO_LOOKUPS.walkEnv with
         walkableRoads := fun _ _ _ =>
-          #[{ osmId := 0, coords := #[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩] }]
+          some #[{ osmId := 0, coords := #[⟨lat0, lon0⟩, ⟨lat0 + 4000 * mlat, lon0⟩] }]
         matcher := fun pts _ _ =>
           let snapped := pts.map fun q => { q with lon := lon0 }
           some { path := snapped, coarsePath := snapped } } }

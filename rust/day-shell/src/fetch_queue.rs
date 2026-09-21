@@ -26,9 +26,56 @@
 //! `Ok` on a write failure — the alternative is a 500 on a page because a
 //! telemetry insert lost a race, and the miss will be re-recorded on the next
 //! fold anyway.
+//!
+//! # Why this lives in the HOST crate
+//!
+//! Two paths decline, and only one of them can see `backend`. `MirrorSource`
+//! declines on the row-source path; the three `@[extern]` OSM callbacks decline
+//! inside the fold itself (`crate::osm`), and `backend` depends on THIS crate,
+//! not the reverse (#1667). `backend` re-exports the module, so there is one
+//! `INSERT` and one key vocabulary rather than a second set written to satisfy
+//! the dependency direction. The drain stays in `backend`, where Overpass is.
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
+
+/// The queue `kind` for a feature bucket.
+///
+/// ⚠ NAMESPACED. `osm_fetch_queue` already holds the geocode's `nominatim_z<n>`
+/// kinds (#1076); a bare `highway` beside those reads as a third vocabulary.
+#[must_use]
+pub fn queue_kind(bucket: &str) -> String {
+    format!("osm_{bucket}")
+}
+
+/// The queue key for one declined question.
+///
+/// ⚠ THE QUESTION, NOT THE BOX. Keying by box would need the box to be snapped
+/// to a grid to dedup at all, and a grid-shaped box leaves every point within
+/// its radius of a cell edge permanently uncovered — `osm_covered` wants the
+/// disc inside ONE box and boxes do not union. Keying by the question keeps the
+/// key exact, lets `asked_count` mean "folds that wanted this", and moves the
+/// dedup to the drain, which can ask the coverage gate itself.
+///
+/// ⚠ FULL PRECISION, for `backend::rowset_answerer::decline_key`'s reason: a
+/// rounded key names a question nobody asks.
+#[must_use]
+pub fn queue_key(lat: f64, lon: f64, radius_m: f64) -> String {
+    format!("{lat}|{lon}|{radius_m}")
+}
+
+/// Read a key back. `None` when it is not three numbers.
+#[must_use]
+pub fn parse_queue_key(key: &str) -> Option<(f64, f64, f64)> {
+    let mut p = key.split('|');
+    let lat = p.next()?.parse().ok()?;
+    let lon = p.next()?.parse().ok()?;
+    let radius = p.next()?.parse().ok()?;
+    if p.next().is_some() {
+        return None;
+    }
+    Some((lat, lon, radius))
+}
 
 /// How many times a key is retried before it is left alone.
 ///

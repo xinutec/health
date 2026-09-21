@@ -49,7 +49,13 @@ pub mod classification_inputs;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod fetch_queue;
+/// ⚠ THE QUEUE LIVES IN `day-shell` and is re-exported here, because it has TWO
+/// writers and one of them cannot reach this crate. `MirrorSource` declines on
+/// the row-source path (here); the three `@[extern]` OSM callbacks decline on
+/// the fold's own path (`day-shell::osm`), and `backend` depends on `day-shell`,
+/// not the other way round. A second `INSERT … ON DUPLICATE KEY` written to
+/// satisfy the direction is how two vocabularies for one table begin.
+pub use day_shell::fetch_queue;
 pub mod fitbit;
 pub mod fold_converge;
 pub mod fold_payload;

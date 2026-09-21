@@ -38,8 +38,8 @@ fn calling_from_inside_a_runtime_refuses_instead_of_panicking() {
     assert!(
         day_shell::mirror::configured(),
         "the guard is only reachable once a mirror is configured; without that \
-         the readers return empty at the earlier absence check and this test \
-         would pass for the wrong reason"
+         the readers decline at the earlier absence check and this test would \
+         pass for the wrong reason"
     );
     // Absence must not have been counted on the way here.
     assert_eq!(day_shell::mirror::take_fails(), 0);
@@ -58,10 +58,10 @@ fn calling_from_inside_a_runtime_refuses_instead_of_panicking() {
     });
 
     assert!(
-        ways.is_empty(),
-        "a refused read must answer empty, as every other failure does"
+        ways.is_none(),
+        "a refused read must DECLINE, as every other failure does (#1667)"
     );
-    assert!(buildings.is_empty());
+    assert!(buildings.is_none());
     assert_eq!(
         day_shell::mirror::take_refusals(),
         2,

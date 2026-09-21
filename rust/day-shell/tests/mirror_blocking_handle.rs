@@ -58,7 +58,11 @@ fn a_vouched_thread_asks_and_an_unvouched_one_refuses() {
         .expect("the blocking thread panicked")
     });
 
-    assert!(ways.is_empty(), "the host does not resolve, so no rows");
+    assert!(
+        ways.is_none(),
+        "the host does not resolve, so the read declines — it does not answer \
+         that there is nothing there (#1667)"
+    );
     assert_eq!(
         day_shell::mirror::take_refusals(),
         0,
@@ -80,7 +84,7 @@ fn a_vouched_thread_asks_and_an_unvouched_one_refuses() {
             .expect("the blocking thread panicked")
     });
 
-    assert!(ways.is_empty());
+    assert!(ways.is_none());
     assert_eq!(
         day_shell::mirror::take_refusals(),
         1,

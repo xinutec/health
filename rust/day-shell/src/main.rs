@@ -47,7 +47,6 @@ use std::time::Instant;
 
 // `unsafe extern` — see the same block in `osm.rs`.
 unsafe extern "C" {
-    fn health_shell_init() -> i32;
     fn health_shell_day(input: *const c_char) -> *mut c_char;
     fn health_shell_free(p: *mut c_char);
 }
@@ -82,6 +81,12 @@ fn main() {
     // of the three mirror queries is checked (#959) — against what the TS arm
     // recorded for the same (lat, lon, radius), not against "it returned rows".
     if let Some(w) = argv.windows(2).find(|w| w[0] == "--osm-verify") {
+        // ⚠ BEFORE THE READ, not only before a fold. Every mirror read passes
+        // the coverage gate, and the gate is Lean code (#1667).
+        assert!(
+            day_shell::init_lean(),
+            "Lean runtime initialisation failed"
+        );
         match osm::verify_against_mirror(&w[1]) {
             Ok(()) => return,
             Err(e) => {
@@ -115,9 +120,10 @@ fn main() {
     let input = CString::new(input).expect("request contains an interior NUL byte");
 
     let t_init = Instant::now();
-    // SAFETY: called exactly once, before any other entry point in the shim.
-    let rc = unsafe { health_shell_init() };
-    assert_eq!(rc, 0, "Lean runtime initialisation failed");
+    assert!(
+        day_shell::init_lean(),
+        "Lean runtime initialisation failed"
+    );
     let init_ms = t_init.elapsed().as_secs_f64() * 1e3;
 
     let mut out = String::new();

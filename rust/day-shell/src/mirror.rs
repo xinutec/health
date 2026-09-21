@@ -419,10 +419,11 @@ pub fn take_fails() -> u64 {
 }
 
 /// Run `f` against the shared pool, blocking on the shared runtime. `None`
-/// when no mirror is configured or the query fails — the caller then answers
-/// empty and counts a miss, rather than aborting a day's fold over a database
-/// that is merely absent.
-fn with_pool<T, F>(f: F) -> Option<T>
+/// when no mirror is configured or the query fails — the caller then DECLINES
+/// and counts a miss, rather than aborting a day's fold over a database that is
+/// merely absent, or claiming the ground is empty when it was never read
+/// (#1667).
+pub(crate) fn with_pool<T, F>(f: F) -> Option<T>
 where
     F: FnOnce(
         &'static MySqlPool,
@@ -532,8 +533,24 @@ pub fn placeholders(n: usize) -> String {
     std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",")
 }
 
-fn query_ways(lat: f64, lon: f64, radius_m: f64, subtypes: &[&str]) -> Vec<MirrorWay> {
+/// ⚠ `None` IS A DECLINE, NOT AN EMPTY ANSWER (#1667). `with_pool` already
+/// distinguishes "no mirror configured, or the query failed" from "the query
+/// ran and matched nothing"; this used to flatten the two with
+/// `unwrap_or_default`, which is how a fold over unmirrored ground came to
+/// report that there are no roads there (#976).
+fn query_ways(
+    lat: f64,
+    lon: f64,
+    radius_m: f64,
+    subtypes: &[&str],
+) -> Option<Vec<MirrorWay>> {
     let poly = bbox_polygon_wkt(lat, lon, radius_m, ROAD_CORRIDOR_MARGIN_M);
+    // ⚠ BEFORE THE QUERY, because the query cannot tell the two cases apart:
+    // no rows over unfetched ground and no rows over empty ground are the same
+    // answer. Both way readers draw from `feature_type = 'highway'`.
+    if !crate::coverage::covered("highway", lat, lon, radius_m, &poly) {
+        return None;
+    }
     let sql = format!(
         "SELECT osm_id, name, subtype, ST_AsText(geom) AS wkt \
          FROM osm_lines \
@@ -576,26 +593,37 @@ fn query_ways(lat: f64, lon: f64, radius_m: f64, subtypes: &[&str]) -> Vec<Mirro
                 .collect::<Vec<_>>())
         })
     })
-    .unwrap_or_default()
-    .into_iter()
-    // `coords.length >= 2` — a way with one vertex is not a line.
-    .filter(|w| w.coords.len() >= 2)
-    .collect()
+    .map(|ways| {
+        ways.into_iter()
+            // `coords.length >= 2` — a way with one vertex is not a line.
+            .filter(|w| w.coords.len() >= 2)
+            .collect()
+    })
 }
 
-pub fn walkable_roads(lat: f64, lon: f64, radius_m: f64) -> Vec<MirrorWay> {
+/// `None` declines; see [`query_ways`].
+pub fn walkable_roads(lat: f64, lon: f64, radius_m: f64) -> Option<Vec<MirrorWay>> {
     query_ways(lat, lon, radius_m, WALKABLE_ROAD_SUBTYPES)
 }
 
-pub fn drivable_roads(lat: f64, lon: f64, radius_m: f64) -> Vec<MirrorWay> {
+/// `None` declines; see [`query_ways`].
+pub fn drivable_roads(lat: f64, lon: f64, radius_m: f64) -> Option<Vec<MirrorWay>> {
     query_ways(lat, lon, radius_m, DRIVABLE_ROAD_SUBTYPES)
 }
 
 /// Building outlines as closed rings. `subtype IS NULL OR subtype NOT IN (…)`
 /// is the TS's own predicate: an untagged building is enclosing, and only the
 /// named roof-like subtypes are exempt.
-pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Vec<Vec<(f64, f64)>> {
+///
+/// `None` declines; see [`query_ways`].
+pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Option<Vec<Vec<(f64, f64)>>> {
     let poly = bbox_polygon_wkt(lat, lon, radius_m, BUILDING_QUERY_MARGIN_M);
+    // As in `query_ways`, and this is the bucket the gate was missing entirely:
+    // nothing declined a building question, so no `building` box was ever
+    // queued and the layer stayed at 26 boxes against highway's 187 (#1667).
+    if !crate::coverage::covered("building", lat, lon, radius_m, &poly) {
+        return None;
+    }
     let sql = format!(
         "SELECT ST_AsText(geom) AS wkt \
          FROM osm_lines \
@@ -625,9 +653,11 @@ pub fn buildings_near(lat: f64, lon: f64, radius_m: f64) -> Vec<Vec<(f64, f64)>>
                 .collect::<Vec<_>>())
         })
     })
-    .unwrap_or_default()
-    .into_iter()
-    // `coords.length >= 3` — fewer than three vertices is not a polygon.
-    .filter(|r| r.len() >= 3)
-    .collect()
+    .map(|rings| {
+        rings
+            .into_iter()
+            // `coords.length >= 3` — fewer than three vertices is not a polygon.
+            .filter(|r| r.len() >= 3)
+            .collect()
+    })
 }

@@ -61,6 +61,24 @@ The absent marker is distinct from a length of zero on purpose. `Way.name` is an
 way and a way named `""` are different things to a turn prior, and collapsing
 them would be a silent routing change.
 
+# A ZERO-LENGTH BUFFER IS A DECLINE
+
+Both formats open with a mandatory `u32` count, so the shortest well-formed
+answer — "I looked, and there is nothing here" — is four zero bytes. A buffer of
+NO bytes is unused by either format, and that is what a host sends when it
+cannot answer at all: no mirror coverage over this disc, or the read failed.
+
+⚠ **AN EMPTY ANSWER IS A CLAIM ABOUT THE WORLD** (#976). "There are no roads
+here" and "nobody has ever fetched here" are different facts, and until this
+distinction existed the three lookups could only state the first. The walk pass
+bails on empty ways either way, so what a decline buys is not a different
+DRAWING — it is that the gap becomes a fact the caller can see, record, and
+fetch against, instead of an absence shaped exactly like data.
+
+The direction of the mapping is deliberate: a corrupt buffer that happens to be
+zero-length reads as a decline and costs a re-fetch, where the reverse would
+manufacture emptiness.
+
 # Deliberately not in `Verified`
 
 That library has no `Json`, no `IO` and no `@[extern]`, and its folds are pure so
@@ -127,6 +145,11 @@ def decodePolylines (b : ByteArray) : Polylines :=
   -- can be: a corrupt or hostile count cannot make this loop long.
   go b (min (u32At b 0).toNat (b.size / 4 + 1)) 4 #[]
 
+/-- The same decode, with the header's decline: `none` for a zero-length buffer,
+`some` — possibly of `#[]` — for anything a host actually wrote. -/
+def decodePolylines? (b : ByteArray) : Option Polylines :=
+  if b.size == 0 then none else some (decodePolylines b)
+
 /-! ## Reading a way
 
 The second format, for `drivableRoads`. Same totality contract: every read is
@@ -184,6 +207,10 @@ def decodeWays (b : ByteArray) : Array Way :=
   -- be: a corrupt or hostile count cannot make this loop long.
   goWays b (min (u32At b 0).toNat (b.size / 20 + 1)) 4 #[]
 
+/-- As `decodePolylines?`, for the way format. -/
+def decodeWays? (b : ByteArray) : Option (Array Way) :=
+  if b.size == 0 then none else some (decodeWays b)
+
 /-! ## The externs
 
 Implemented by whoever links this — see the header. All three take
@@ -209,14 +236,85 @@ always carried `name`/`osmId`/`subtype` for walkable ways, and the pedestrian
 matcher now reports the way identity it chose, which needs the names to
 exist on its side of the boundary. An empty answer is the same four zero
 bytes in both formats, so the stub linkage is unchanged. -/
-def walkableRoads (lat lon : Float) (radiusM : Int) : Array Way :=
-  decodeWays (walkableRoadsRaw lat lon radiusM)
+def walkableRoads (lat lon : Float) (radiusM : Int) : Option (Array Way) :=
+  decodeWays? (walkableRoadsRaw lat lon radiusM)
 
-def buildingsNear (lat lon : Float) (radiusM : Int) : Polylines :=
-  decodePolylines (buildingsNearRaw lat lon radiusM)
+def buildingsNear (lat lon : Float) (radiusM : Int) : Option Polylines :=
+  decodePolylines? (buildingsNearRaw lat lon radiusM)
 
-def drivableRoads (lat lon radiusM : Float) : Array Way :=
-  decodeWays (drivableRoadsRaw lat lon radiusM)
+def drivableRoads (lat lon radiusM : Float) : Option (Array Way) :=
+  decodeWays? (drivableRoadsRaw lat lon radiusM)
+
+/-! ## The coverage gate, asked the other way round
+
+Everything above answers a question Lean asked. This asks one the HOST has:
+"may I read the mirror here at all?" — `Verified.Geo.OsmCoverage.decideCoverage`,
+reachable from C.
+
+⚠ **IT EXISTS SO THE RULE IS NOT WRITTEN TWICE.** Without it a host that wants
+to decline honestly has to decide coverage itself, and the five rules in
+`OsmCoverage` — the conservative box, ONE row containing it, inclusive ends,
+staleness before containment, a missing `fetchedAt` counting as fresh — are
+exactly the kind that drift silently in a second copy.
+
+The ask crosses as ONE buffer, the same discipline as the answers above:
+
+    u8           hasLocalData, 0 or 1
+    i64          nowMs
+    u32          number of rows
+    per row:     f64 minLat, f64 maxLat, f64 minLon, f64 maxLon
+                 i64 fetchedAt, or `NO_FETCH_TIME` for a row that has none
+
+⚠ A SHORT OR EMPTY BUFFER DECIDES `false` — not covered — because every read is
+bounds-checked to zero and no rows can contain a box. That is the conservative
+direction: a host whose ask did not arrive re-fetches, where the reverse would
+have it answer from a mirror it never checked.
+-/
+
+/-- The `fetchedAt` sentinel: `Int64.minValue`, which no real timestamp is. -/
+def NO_FETCH_TIME : Int := -9223372036854775808
+
+/-- One row at `off`. 40 bytes: four doubles and a timestamp. -/
+def COVERAGE_ROW_BYTES : Nat := 40
+
+private def coverageRowAt (b : ByteArray) (off : Nat) :
+    Verified.Geo.OsmCoverage.CoverageRow :=
+  let t := i64At b (off + 32)
+  { minLat := f64At b off
+    maxLat := f64At b (off + 8)
+    minLon := f64At b (off + 16)
+    maxLon := f64At b (off + 24)
+    fetchedAt := if t == NO_FETCH_TIME then none else some t }
+
+/-- `fuel` bounds the row loop so this is structurally total. -/
+private def goRows (b : ByteArray) (fuel off : Nat)
+    (acc : List Verified.Geo.OsmCoverage.CoverageRow) :
+    List Verified.Geo.OsmCoverage.CoverageRow :=
+  match fuel with
+  | 0 => acc.reverse
+  | fuel + 1 =>
+    if off + COVERAGE_ROW_BYTES > b.size then acc.reverse
+    else goRows b fuel (off + COVERAGE_ROW_BYTES) (coverageRowAt b off :: acc)
+
+/-- Decode the whole ask: `(hasLocalData, nowMs, rows)`. -/
+def decodeCoverageAsk (b : ByteArray) :
+    Bool × Int × List Verified.Geo.OsmCoverage.CoverageRow :=
+  let hasLocal := if b.size == 0 then false else b.get! 0 != 0
+  let nowMs := i64At b 1
+  -- A row costs 40 bytes, so the buffer itself caps how many there can be: a
+  -- corrupt or hostile count cannot make this loop long.
+  let n := min (u32At b 9).toNat (b.size / COVERAGE_ROW_BYTES + 1)
+  (hasLocal, nowMs, goRows b n 13 [])
+
+/-- May the mirror be read at `(lat, lon)` within `radiusM`?
+
+⚠ CALLED FROM INSIDE THE FOLD, by the same host whose `@[extern]` lookups this
+gates. It is pure and allocates nothing beyond the decode, so asking it per read
+costs a decode rather than a round trip. -/
+@[export health_osm_covered]
+def osmCovered (lat lon radiusM : Float) (ask : ByteArray) : Bool :=
+  let (hasLocal, nowMs, rows) := decodeCoverageAsk ask
+  Verified.Geo.OsmCoverage.decideCoverage lat lon radiusM rows nowMs hasLocal
 
 /-! ## Specs
 
@@ -225,6 +323,14 @@ fail on a FORMAT change instead of on a data change. -/
 
 -- The empty answer — what the stub returns, and so what the CLI sees.
 #guard decodePolylines (ByteArray.mk #[0, 0, 0, 0]) == #[]
+
+-- ⚠ THE TWO ANSWERS THAT MUST NOT COLLAPSE. Four zero bytes is "nothing is
+-- here"; no bytes at all is "I cannot say". Both decode to nothing under the
+-- total decoder, which is why the `?` pair exists.
+#guard decodePolylines? (ByteArray.mk #[0, 0, 0, 0]) == some #[]
+#guard decodePolylines? ByteArray.empty == none
+#guard decodeWays? (ByteArray.mk #[0, 0, 0, 0]) == some #[]
+#guard decodeWays? ByteArray.empty == none
 
 -- A buffer shorter than its own header decodes to nothing, not a panic.
 #guard decodePolylines (ByteArray.mk #[1, 0, 0]) == #[]
@@ -288,5 +394,50 @@ private def ONE_WAY : ByteArray := ByteArray.mk
 -- Truncation loses ways rather than panicking, at every field boundary.
 #guard decodeWays (ByteArray.mk #[1, 0, 0, 0, 7, 0, 0]) == #[]
 #guard (decodeWays (ONE_WAY.extract 0 20)).size == 1
+
+/-! ### The coverage ask
+
+Literal bytes again, so these fail on a LAYOUT change rather than on a data one.
+`51.0` is `0x4049800000000000`, `52.0` is `0x404A000000000000`, `-1.0` is
+`0xBFF0000000000000`, `1.0` is `0x3FF0000000000000`. -/
+
+/-- `hasLocalData = 0`, `nowMs = 0`, one row covering 51..52 N, -1..1 E, with no
+fetch time. -/
+private def ONE_BOX : ByteArray := ByteArray.mk
+  #[0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0x80, 0x49, 0x40,
+    0, 0, 0, 0, 0, 0, 0x4A, 0x40,
+    0, 0, 0, 0, 0, 0, 0xF0, 0xBF,
+    0, 0, 0, 0, 0, 0, 0xF0, 0x3F,
+    0, 0, 0, 0, 0, 0, 0, 0x80]
+
+#guard (decodeCoverageAsk ONE_BOX).1 == false
+#guard (decodeCoverageAsk ONE_BOX).2.1 == 0
+#guard (decodeCoverageAsk ONE_BOX).2.2.length == 1
+#guard (decodeCoverageAsk ONE_BOX).2.2.head!.minLat == 51.0
+#guard (decodeCoverageAsk ONE_BOX).2.2.head!.maxLon == 1.0
+-- The sentinel decodes to "no fetch time", which `decideCoverage` reads as
+-- FRESH. A row that decoded to `some (-9223372036854775808)` would be stale
+-- instead, and every legacy box would re-fetch.
+#guard (decodeCoverageAsk ONE_BOX).2.2.head!.fetchedAt == none
+
+-- A disc well inside the box is covered; one wider than the box is not, because
+-- there is no union and no partial credit.
+#guard osmCovered 51.5 0.0 100 ONE_BOX == true
+#guard osmCovered 51.5 0.0 500000 ONE_BOX == false
+
+-- ⚠ THE CONSERVATIVE DEFAULT. An ask that did not arrive decides "not covered",
+-- so the host declines and the ground is fetched. Deciding `true` here would
+-- have it answer from a mirror whose coverage was never checked.
+#guard osmCovered 51.5 0.0 100 ByteArray.empty == false
+
+-- `hasLocalData` short-circuits everything, rows included — the deliberate
+-- trade `OsmCoverage` documents.
+#guard osmCovered 51.5 0.0 100
+  (ByteArray.mk #[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) == true
+#guard osmCovered 51.5 0.0 100
+  (ByteArray.mk #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) == false
 
 end DayEntry.OsmHost

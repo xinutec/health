@@ -14,10 +14,10 @@
 //!     _lp_verified_DayEntry_OsmHost_walkableRoads in libverified_DayEntry.a
 //! ```
 //!
-//! The alternative — letting `c/osm-host-stub.c` satisfy them — is worse than a
-//! link error and is what `build.rs` filters the stub out to prevent: it answers
-//! every lookup with zero polylines, so the day fold decodes with no map and
-//! reports success.
+//! The alternative — letting `c/osm-host-stub.c` satisfy them — is what
+//! `build.rs` filters the stub out to prevent. The stub DECLINES every lookup
+//! (#1667), which is honest for a spawned CLI and wrong here: this process has
+//! a mirror, and a binary that links the stub would never ask it.
 //!
 //! `#[used]` rather than a call, because there is nothing to call: the fold
 //! invokes these, not us. Taking their addresses is the whole point.
@@ -43,12 +43,13 @@ static DRIVABLE: extern "C" fn(f64, f64, f64) -> *mut c_void =
 /// Load a golden fixture's captured OSM trace so the fold's walk pass can
 /// actually run in THIS process.
 ///
-/// ⚠ **Without a trace the three callbacks above answer empty, and empty is not
-/// a neutral answer**: `annotateWalkMatches` bails on `ways.isEmpty` and the leg
-/// keeps its raw drawing, so a harness that never loads one measures the walk
-/// pass by not running it. That was true of every backend corpus gate until
+/// ⚠ **Without a trace and without a mirror the three callbacks DECLINE, and a
+/// leg with no ways is not annotated at all**: `annotateWalkMatches` bails, the
+/// leg keeps its raw drawing, and a harness that never loads one measures the
+/// walk pass by not running it. That was true of every backend corpus gate until
 /// 2026-09-08 (#1418) — they were green across a change that renamed 104 of 239
-/// corpus walking rows.
+/// corpus walking rows. The decline is what makes that state nameable rather
+/// than merely quiet (#1667); it does not by itself make a harness notice.
 ///
 /// Loading REPLACES: call it per day, and read the miss counters afterwards to
 /// find out whether the fixture actually answered what the fold asked for.
@@ -57,9 +58,9 @@ pub fn load_trace(fixture_path: &str) -> Result<(usize, usize), String> {
 }
 
 /// [`load_trace`] with sections withheld, for attributing a measured change to
-/// ONE of the three rather than to "the trace". A withheld section answers
-/// empty — the same thing a trace-less process sees — so every arm runs
-/// identical code and only the answer differs.
+/// ONE of the three rather than to "the trace". A withheld section falls through
+/// to whatever a trace-less process would do — the mirror, or a decline — so
+/// every arm runs identical code and only the answer differs.
 pub fn load_trace_sections(
     fixture_path: &str,
     walkable: bool,
