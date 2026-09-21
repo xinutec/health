@@ -46,10 +46,30 @@ fn at(day_start: i64, s: &str) -> Result<i64> {
     Ok(day_start + h.parse::<i64>()? * 3600 + m.parse::<i64>()? * 60)
 }
 
+/// The stationary segments short enough to be an errand.
+///
+/// ⚠ SHORT ONES ONLY. A day at home is stationary at every phase and would
+/// drown the signal; the claim is about dwells of roughly one window.
+fn short_stays(segs: &[serde_json::Value]) -> Vec<Dwell> {
+    segs.iter()
+        .filter(|s| s["mode"] == "stationary")
+        .filter_map(|s| Some((s["startTs"].as_i64()?, s["endTs"].as_i64()?)))
+        .filter(|(a, b)| b - a < 15 * 60)
+        .collect()
+}
+
+/// A dwell, as `(startTs, endTs)`.
+type Dwell = (i64, i64);
+
+/// Two phases naming the same dwell differ by seconds, not minutes.
+fn near(a: &Dwell, b: &Dwell) -> bool {
+    (a.0 - b.0).abs() < 150
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(name) = args.first() else {
-        eprintln!("usage: classify_window <YYYY-MM-DD-user> [FROM_HH:MM TO_HH:MM]");
+        eprintln!("usage: classify_window <DAY> [FROM_HH:MM TO_HH:MM] [--sweep N]");
         std::process::exit(64);
     };
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
@@ -66,6 +86,64 @@ fn main() -> Result<()> {
     backend::lean::init()?;
     let head = backend::head::run(&fx["inputs"], date).context("running the head")?;
 
+    // ⚠ `--sweep N` RE-PHASES, dropping the first k points of each run for k in
+    // 0..N. That is the only handle on the tumble origin from outside
+    // `extractFeatures`, and it reports the dwells findable at SOME phase but
+    // not at the one the day actually has (#1694).
+    //
+    // ⚠ **ONE SWEEP PER RUN.** `extractLoop` starts each window at the first
+    // point NOT YET CONSUMED, so a gap longer than a window RE-ANCHORS the
+    // grid. Re-phasing from the day's start therefore says nothing past the
+    // first gap: on 2026-06-24 a 123-minute gap (16:30:43 -> 18:33:48) anchors
+    // the whole evening on the instant he left the house, and a day-wide sweep
+    // moved nothing after it.
+    if let Some(n) = args
+        .iter()
+        .position(|a| a == "--sweep")
+        .and_then(|i| args.get(i + 1))
+    {
+        let n: usize = n.parse().context("--sweep takes a count")?;
+        let mut runs: Vec<Vec<backend::head::Smoothed>> = vec![Vec::new()];
+        for p in &head.points {
+            if let Some(last) = runs.last().and_then(|r| r.last())
+                && p.ts - last.ts > 300
+            {
+                runs.push(Vec::new());
+            }
+            runs.last_mut().expect("a run is open").push(*p);
+        }
+
+        let (mut base, mut extra): (Vec<Dwell>, Vec<Dwell>) = (vec![], vec![]);
+        for run in &runs {
+            for k in 0..n {
+                if run.len() <= k + 2 {
+                    break;
+                }
+                for w in short_stays(&backend::head::classify_segments(&run[k..], None)?) {
+                    if k == 0 {
+                        base.push(w);
+                    } else if !base.iter().any(|b| near(&w, b))
+                        // ⚠ AND AGAINST ITSELF, or the same dwell is counted
+                        // once per phase that happens to find it.
+                        && !extra.iter().any(|e| near(&w, e))
+                    {
+                        extra.push(w);
+                    }
+                }
+            }
+        }
+        println!(
+            "{name}\town-phase {}\tmissed-by-phase {}\truns {}",
+            base.len(),
+            extra.len(),
+            runs.len()
+        );
+        for w in &extra {
+            println!("   missed by phase:  {}-{}", hhmm(w.0), hhmm(w.1));
+        }
+        return Ok(());
+    }
+
     // The fixture's UTC midnight, from its own first point rather than a parse.
     let day_start = head
         .points
@@ -75,28 +153,13 @@ fn main() -> Result<()> {
         (Some(a), Some(b)) => (at(day_start, a)?, at(day_start, b)?),
         _ => (i64::MIN, i64::MAX),
     };
-
     let slice: Vec<_> = head
         .points
         .iter()
         .filter(|p| p.ts >= from && p.ts <= to)
         .cloned()
         .collect();
-    eprintln!(
-        "{} of {} point(s) in [{}, {}]",
-        slice.len(),
-        head.points.len(),
-        if from == i64::MIN {
-            "day start".into()
-        } else {
-            hhmm(from)
-        },
-        if to == i64::MAX {
-            "day end".into()
-        } else {
-            hhmm(to)
-        },
-    );
+    eprintln!("{} of {} point(s)", slice.len(), head.points.len());
     if slice.len() < 2 {
         eprintln!("classify_window: fewer than two points; the classifier emits nothing.");
         return Ok(());
