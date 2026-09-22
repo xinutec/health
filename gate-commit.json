@@ -242,11 +242,7 @@
     },
     {
       "argv": [
-        "nix",
-        "build",
-        "--no-warn-dirty",
-        "--no-link",
-        ".#health-bins.cargoDeps"
+        "scripts/vendor-hash-check.sh"
       ],
       "artifacts": [],
       "cwd": ".",

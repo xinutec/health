@@ -72,7 +72,7 @@
           # changes; nix prints the correct one on mismatch.
           cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
             src = ./rust;
-            hash = "sha256-YMPklda2vYEmXsq3okekIQccjbqVVD2U+0oNZCeBdkw=";
+            hash = "sha256-0eImuzts2VdvP186HWtQPIkCHkQ+8Orscef3YzqgzKg=";
           };
           cargoRoot = "rust";
           nativeBuildInputs = [

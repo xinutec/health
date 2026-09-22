@@ -523,16 +523,21 @@ in  { name = "health"
             ⚠ **IT IS NOT THE SANDBOXED RUST BUILD THAT WAS REMOVED ABOVE.** That
             one rebuilt the whole workspace from `src = ./.`, so a markdown commit
             paid for it, and it was taken out deliberately. This builds the VENDOR
-            TREE alone: a fixed-output derivation keyed on the lockfile, so it is
-            a store hit — MEASURED at 2.6 s — on every commit that does not touch
-            `Cargo.lock`. Same reasoning that keeps `.#verified-cli`: narrow
-            input, cheap hit.
+            TREE alone: `vendorStaging`, the fixed-output derivation keyed on
+            the lockfile.
 
-            It costs nothing extra when it fires, either. The vendor tree is
-            303 MB and a hash mismatch discards it, so learning the new hash and
-            then verifying it is two fetches — which is what the CI round trip
-            already cost. What this buys is that they happen BEFORE the push
-            instead of on either side of a red `main`.
+            ⚠ **`--rebuild`, AND THE STAGING STAGE BY NAME — the first version
+            of this row was BLIND.** It built `.#health-bins.cargoDeps`, whose
+            fixed-output stage is addressed by its DECLARED hash: once an output
+            with that hash is in the local store, nix never recomputes it, for
+            ANY lockfile. So on 2026-09-22 a 409-line `Cargo.lock` change passed
+            this row green (2.6 s, "a store hit") and CI failed 11 minutes later
+            on the mismatch — the very failure the row was added the day before
+            to catch. `scripts/vendor-hash-check.sh` builds, then `--rebuild`s
+            — the first step is the only one that works on a hash not yet in
+            the store, the second the only one that recomputes a hash that is.
+            4 s on a warm store; a mismatch prints the hash to paste into
+            `flake.nix`.
 
             ⚠ The other ways to break the image are still uncaught: the
             Dockerfile, a flake input, anything Linux-specific (the gate runs on
@@ -542,12 +547,7 @@ in  { name = "health"
         G.Check::{
         , name = "the cargo vendor hash matches rust/Cargo.lock"
         , argv =
-            [ "nix"
-            , "build"
-            , "--no-warn-dirty"
-            , "--no-link"
-            , ".#health-bins.cargoDeps"
-            ]
+            [ "scripts/vendor-hash-check.sh" ]
         , timeout_s = 1800
         }
       , {-  ⚠ A NAME DECLARED IN BOTH LANGUAGES IS A RULE WRITTEN TWICE. The
