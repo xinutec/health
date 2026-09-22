@@ -16,6 +16,11 @@
 //! `OnceLock`, so the first call decides for the whole process, and that file
 //! pins the OPPOSITE case.
 
+#![expect(
+    unsafe_code,
+    reason = "a test that sets the process environment, unsafe under edition 2024"
+)]
+
 /// A host that cannot resolve. `connect_lazy_with` dials nothing until a query
 /// runs, and the query here is expected to fail — what is under test is whether
 /// it is ATTEMPTED. Nothing reaches the network beyond a failed DNS lookup.

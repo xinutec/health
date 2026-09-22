@@ -8,6 +8,8 @@
 //! against — are defined HERE now. `scripts/rust-host-check.sh` is what proves
 //! they survive the link.
 
+#![expect(unsafe_code, reason = "FFI onto the Lean host library")]
+
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 

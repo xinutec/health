@@ -25,6 +25,8 @@
 //! exactly like convergence: the round asks for nothing NEW, so a loop watching
 //! for new keys would stop and return the poisoned output as the day.
 
+#![expect(unsafe_code, reason = "libc::sysconf for the page size")]
+
 use std::collections::HashSet;
 
 use anyhow::{Context, Result, bail};

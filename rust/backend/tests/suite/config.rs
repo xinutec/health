@@ -19,6 +19,11 @@
 //! the case. `clear_all` runs before each section so none of them can pass on a
 //! leftover from the one above.
 
+#![expect(
+    unsafe_code,
+    reason = "tests of from_env set and clear the process environment, unsafe under edition 2024"
+)]
+
 use backend::config::Config;
 
 /// # Safety

@@ -38,6 +38,8 @@
 //! rest pay only the fold, and the gap between them is what a shared process
 //! buys over `converge`'s 2-7 spawns.
 
+#![expect(unsafe_code, reason = "FFI onto the Lean host library")]
+
 use day_shell::{mirror, osm};
 
 use std::ffi::{CStr, CString};

@@ -19,6 +19,11 @@
 //! the work. That holds only while the exported functions stay pure and cheap;
 //! anything here that grew a real workload would need revisiting.
 
+#![expect(
+    unsafe_code,
+    reason = "FFI onto the Lean library, and descriptor redirection through libc around it"
+)]
+
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;

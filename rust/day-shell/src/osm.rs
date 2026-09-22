@@ -36,6 +36,11 @@
 //! bitten by. So misses are tallied separately and printed. A run whose misses
 //! are nonzero has NOT exercised the matcher, however green it looks.
 
+#![expect(
+    unsafe_code,
+    reason = "FFI onto the Lean host library, both directions"
+)]
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::c_void;

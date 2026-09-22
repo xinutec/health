@@ -23,6 +23,11 @@
 //! `tests/` as its own binary, so the two cannot collide — in one file they
 //! would, and the loser would depend on test ordering.
 
+#![expect(
+    unsafe_code,
+    reason = "a test that sets the process environment, unsafe under edition 2024"
+)]
+
 /// A host that cannot resolve. The pool is built with `connect_lazy_with`, so
 /// nothing is dialled until a query runs — and the guard returns before that,
 /// which is the whole point. Nothing here touches the network.

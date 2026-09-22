@@ -35,3 +35,17 @@ opt-level = 1
 # backtraces, and drops variable inspection under a live debugger — raise it locally
 # for a session if you need that.
 debug = "line-tables-only"
+
+# The fleet's `[lints]` baseline (dev-lint docs/standards.md §7): every member
+# takes it with `lints.workspace = true`, so clippy is no weaker here than
+# anywhere else. `deny`, not `forbid`, for unsafe: the Lean host is reached over FFI,
+# and edition 2024 makes env::set_var one
+# — each such module carries an `#![expect(unsafe_code, reason)]` at its top,
+# the ledgered shape (standards.md §3), so a new one is a visible edit.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

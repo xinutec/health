@@ -36,6 +36,11 @@
 //! own failure, and this test would pass having never reached a query at all —
 //! the exact "green for the wrong reason" shape #976 is about.
 
+#![expect(
+    unsafe_code,
+    reason = "a test that sets the process environment, unsafe under edition 2024"
+)]
+
 /// Loopback, with nothing listening. Refused immediately.
 const DEAD_HOST: &str = "127.0.0.1";
 const DEAD_PORT: &str = "1";

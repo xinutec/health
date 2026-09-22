@@ -26,6 +26,8 @@
 //! already costs ~27 s on a heavy day (health #1071) — the same trade
 //! `MirrorSource` makes on the serving path, for the same reason.
 
+#![expect(unsafe_code, reason = "FFI onto the Lean host library")]
+
 use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::sync::{Mutex, OnceLock};
