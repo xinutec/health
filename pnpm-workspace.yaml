@@ -17,5 +17,5 @@ allowBuilds:
 # the floor it declares, in a lockfile that looks normal. It happened to home's
 # backend during this rollout — esbuild 0.28.1 became 0.27.7.
 overrides:
-  esbuild: ^0.28.1
+  esbuild: ^0.28.2
   vite: ^7.3.5
