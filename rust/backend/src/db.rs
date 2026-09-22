@@ -1,20 +1,13 @@
 //! The MariaDB connection pool.
 //!
-//! sqlx, matching the six sibling repos (#982), and proven in this repo first
-//! by `rust/day-shell/src/mirror.rs` against the live OSM mirror.
+//! sqlx, matching the six sibling repos (#982).
 //!
-//! # What is different from `mirror.rs`, and why
+//! # Eager, and `await`ed
 //!
-//! `mirror.rs` builds its pool with `connect_lazy_with` from SYNCHRONOUS code
-//! and has to `runtime().enter()` first, because an sqlx pool spawns a
-//! maintenance task on construction and panics without a Tokio context. That
-//! shape exists because the fold reaches it through a Lean callback with no
-//! `await` to hand an answer back through.
-//!
-//! Nothing here has that constraint: the backend is async from `main` down. So
-//! this connects eagerly and `await`s, which also means a bad credential or an
-//! unreachable host fails AT STARTUP with a clear error, rather than at the
-//! first query in whatever CronJob invocation happens to run next.
+//! The backend is async from `main` down, so this connects eagerly and
+//! `await`s, which means a bad credential or an unreachable host fails AT
+//! STARTUP with a clear error, rather than at the first query in whatever
+//! CronJob invocation happens to run next.
 
 use anyhow::{Context, Result};
 use sqlx::MySqlPool;

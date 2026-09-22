@@ -67,17 +67,6 @@
     {
       "argv": [
         "scripts/dev",
-        "scripts/rust-host-check.sh"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "the in-process Rust host agrees with the spawned CLI",
-      "timeout_s": 1800
-    },
-    {
-      "argv": [
-        "scripts/dev",
         "cargo",
         "clippy",
         "--manifest-path",

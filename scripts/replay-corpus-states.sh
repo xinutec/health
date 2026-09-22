@@ -33,8 +33,7 @@ days_dir=tests/golden/days
 
 # Built rather than assumed: a stale binary would replay code that is not HEAD's,
 # which is the failure this tool exists to avoid one level up.
-cargo build --release -p day-shell --manifest-path rust/Cargo.toml >/dev/null
-cargo build --release --example dump_day_request --manifest-path rust/backend/Cargo.toml >/dev/null
+cargo build --release -p backend --manifest-path rust/Cargo.toml >/dev/null
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -43,13 +42,8 @@ shown=0
 for f in "$days_dir"/*.json; do
 	stem=$(basename "$f" .json)
 	[ -n "$only" ] && case "$stem" in "$only"*) ;; *) continue ;; esac
-	if ! rust/target/release/examples/dump_day_request "$stem" >"$work/req.json" 2>/dev/null; then
-		echo "$stem: no request (day is not replayable)" >&2
-		continue
-	fi
-	if ! rust/target/release/day-shell --osm "$f" <"$work/req.json" 2>/dev/null |
-		head -1 >"$work/out.json" || [ ! -s "$work/out.json" ]; then
-		echo "$stem: no timeline (day-shell declined)" >&2
+	if ! rust/target/release/backend day "$f" >"$work/out.json" 2>/dev/null || [ ! -s "$work/out.json" ]; then
+		echo "$stem: no timeline (the day did not fold)" >&2
 		continue
 	fi
 	shown=$((shown + 1))

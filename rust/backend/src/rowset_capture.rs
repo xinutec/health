@@ -2,9 +2,9 @@
 //!
 //! ⚠ **WHY: nothing has written one since the TypeScript went (#975).** The
 //! corpus froze at 2026-08-13, so no recent day could become a gate — and
-//! recent days are where the defects are (#1658, #1659). `capture_trace` did
-//! the three `@[extern]` callback sections; this is the other half, the rows
-//! the ANSWERER serves its seven tables from.
+//! recent days are where the defects are (#1658, #1659). `osm_trace`'s
+//! recording answerer does the three matcher-read sections; this is the other
+//! half, the rows the ANSWERER serves its seven tables from.
 //!
 //! It wraps any [`RowSource`] and delegates, so the capture sees exactly what
 //! production asked and got, rather than a second copy of the queries.

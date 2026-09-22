@@ -12,8 +12,8 @@
 // calls either. Deleting their TS counterparts would delete the working system.
 //
 // A def deletes TS only if a request can reach it. That means a path from one of
-// the two binaries — `Main` (the `verified_cli` verbs) or `DayEntry` (the
-// in-process day-shell host). Nothing else is an entry point.
+// `Main` (the `verified_cli` verbs, `serve` included). Nothing else is an
+// entry point.
 //
 // ⚠ #guard DOES NOT COUNT, AND THAT IS THE ENTIRE POINT. Guards are top-level
 // terms, not defs, so they contribute NO edges here. `snapToPlace` carries 20 of

@@ -1,7 +1,7 @@
 //! The walk referee over the whole golden corpus — no Node, no database.
 //!
 //! ```text
-//!   fixture.inputs → head::capture → converge → episodes → walkgate → metrics
+//!   fixture.inputs → head::capture → fold → episodes → walkgate → metrics
 //! ```
 //!
 //! This is #1048's Group B for the walk gate. The five replay gates died with
@@ -51,10 +51,10 @@
 //!
 //! # ⚠ THIS GATE DOES NOT RUN THE WALK MATCHER, AND THAT IS STAGED (#1418)
 //!
-//! The fold's walk pass reads its roads through day-shell's `walkableRoads`
-//! callback, which answers from a loaded trace and EMPTY otherwise — and on
-//! empty `annotateWalkMatches` bails per leg, so the RAW drawing survives
-//! looking exactly like a leg the matcher considered and left alone.
+//! The fold's walk pass asks its host for `walkableRoads`, answered from the
+//! fixture's recorded trace and DECLINED otherwise — and on a decline
+//! `annotateWalkMatches` bails per leg, so the RAW drawing survives looking
+//! exactly like a leg the matcher considered and left alone.
 //!
 //! `WALK_TRACE=none|walkable|buildings|drivable|all` chooses what the trace
 //! answers, per day; `WALK_DAYS=<dates>` restricts the corpus. **`none` is the
@@ -589,12 +589,12 @@ impl Walk {
     pub fn grade(&mut self, name: &str, rep: &Replay) {
         let date = &name[..10];
         self.graded += 1;
-        // ⚠ ASKED-AND-HIT, not "a trace loaded". A fixture whose keys the fold
-        // never spells answers nothing and is indistinguishable from no fixture
-        // at all — which is the exact failure #1418 was about.
-        let c = backend::osm_host::take_counts();
-        self.osm_asked += c.asked();
-        self.osm_missed += c.misses();
+        // ⚠ ASKED-AND-ANSWERED, not "a trace loaded". A fixture whose keys the
+        // fold never spells answers nothing and is indistinguishable from no
+        // fixture at all — which is the exact failure #1418 was about.
+        let (hits, misses) = rep.osm_counts();
+        self.osm_asked += hits + misses;
+        self.osm_missed += misses;
 
         let inputs = &rep.fx["inputs"];
         let tz = rep

@@ -1,7 +1,7 @@
 //! The JOURNEY floor over the golden corpus — no Node, no database.
 //!
 //! ```text
-//!   fixture.inputs → head::capture → converge → states ─┐
+//!   fixture.inputs → head::capture → fold → states ─┐
 //!   ground-truth/<date>.md → parse → resolve → journeys ┴→ journeyshape → floorgate
 //! ```
 //!

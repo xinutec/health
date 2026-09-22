@@ -19,11 +19,11 @@
 //! cargo run --example dump_day_request -- 2026-05-14-pippijn > /tmp/req.json
 //! ```
 //!
-//! Exit 2 when the corpus is absent — the same contract `rust-host-check.sh`
-//! already reads from the old day gate, so the caller's SKIP path is unchanged.
+//! Exit 2 when the corpus is absent, so a caller can tell a missing corpus
+//! from a day that failed to build.
 
 use anyhow::{Context, Result};
-use backend::fold_converge::converge;
+use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 
 fn main() -> Result<()> {
@@ -53,11 +53,16 @@ fn main() -> Result<()> {
 
     backend::lean::init()?;
     let cap = backend::head::capture(inputs, date, &user).context("head::capture")?;
-    let mut answerer = RowSetAnswerer::new(rows).context("the row set opens")?;
-    let converged = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer)
-        .context("converging the day")?;
+    let trace =
+        TraceAnswerer::from_fixture(&fx, &path, Sections::ALL).map_err(|e| anyhow::anyhow!(e))?;
+    let mut answerer = backend::lean::Chain(
+        trace,
+        RowSetAnswerer::new(rows).context("the row set opens")?,
+    );
+    let converged =
+        backend::fold::run_day(&cap, inputs, &mut answerer).context("folding the day")?;
 
-    // ⚠ A DAY THAT DID NOT CONVERGE ON COMPLETE DATA IS NOT A SENTINEL. It would
+    // ⚠ A DAY THAT RAN WITH DECLINED ASKS IS NOT A SENTINEL. It would
     // still produce a request and both arms would still agree on it, so the
     // check would pass — on a day whose fold never got its answers.
     //
@@ -69,8 +74,8 @@ fn main() -> Result<()> {
     // A first pass here refused this day over one of them, which would have made
     // the sentinel unavailable for a gap that is not one.
     const DECLINED_ON_PURPOSE: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
-    let real_gaps: Vec<&backend::lean::Miss> = converged
-        .unanswerable
+    let declined = converged.declined();
+    let real_gaps: Vec<&backend::lean::Ask> = declined
         .iter()
         .filter(|m| !DECLINED_ON_PURPOSE.contains(&m.what.as_str()))
         // `bestPlace` with an empty coordinate key is the same deliberate decline.
@@ -78,7 +83,7 @@ fn main() -> Result<()> {
         .collect();
     if !real_gaps.is_empty() {
         for m in &real_gaps {
-            eprintln!("dump_day_request: unanswered {}({})", m.what, m.key);
+            eprintln!("dump_day_request: declined {}({})", m.what, m.key);
         }
         eprintln!("dump_day_request: this day is not a usable sentinel");
         std::process::exit(1);

@@ -136,34 +136,11 @@ in  { name = "health"
               ]
         , timeout_s = 180
         }
-      , {-  `rust/day-shell` calls the SAME Lean fold in-process that
-            `verified_cli day` is spawned for, and the entire argument for it is
-            that the two answers are identical. That is a third arm computing the
-            day, and every silent drift this repository has had came from a
-            second copy with no check between the copies (#444, `feefb75`, the
-            frontend unions).
-
-            Builds it, runs clippy at `-D warnings`, then diffs the two answers
-            byte for byte on a real day. Verified RED as well as green: a change
-            to the export that leaves `Day.dayResult` alone fails it.
-
-            Skips the equivalence out loud when the gitignored corpus is absent —
-            build and clippy still run — so this passes on a clean checkout.
-        -}
-        G.Check::{
-        , name = "the in-process Rust host agrees with the spawned CLI"
-        , argv = dev [ "scripts/rust-host-check.sh" ]
-        , timeout_s = 1800
-        }
       , {-  Clippy at `-D warnings`, over the whole workspace.
 
-            A MOVE, not new coverage: `scripts/rust-host-check.sh` ran exactly
-            this from the day the crate existed. What the row buys is the NAME.
-            That script builds, linted, checked the host/CLI equivalence and
-            checked the callbacks reached the host — four failures under one
-            name, which is the thing the header of this file exists to argue
-            against. A lint failure reported "the in-process Rust host agrees
-            with the spawned CLI", and that was never what broke.
+            Its own row, so a lint failure is reported as a lint failure: it
+            used to run inside a host-equivalence script and a warning came
+            out under that script's name (#990).
 
             It also clears a fleet red that was NOT a real gap, and the
             distinction is worth writing down: `check -c` derives the rows a
@@ -173,14 +150,8 @@ in  { name = "health"
             was the first repo to run a demanded tool from inside a script, so
             it was the first to look uncovered while being covered.
 
-            ⚠ ORDERING: this must come after the host row above, which is what
-            runs `lake build … DayEntry:static Verified:static`. `day-shell`'s
-            `build.rs` reads its link line out of the `.rsp` that build writes,
-            so cargo cannot even run its build script on a clean checkout until
-            then. The gate runs rows in table order (`gate/src/main.rs`), and
-            the tests row below already depends on this — it is stated here
-            because an implicit dependency that nothing writes down is one a
-            reorder breaks silently.
+            `backend`'s `build.rs` runs `lake build verified_cli` itself, so
+            this row needs nothing above it to have built the Lean side.
 
             Own target directory, the house `clippyTarget`: clippy-driver and
             rustc fingerprint the workspace differently and evict each other in
@@ -220,19 +191,10 @@ in  { name = "health"
         }
       , {-  The Rust workspace's own tests, which NOTHING ran until #982.
 
-            A compile error or a lint in `rust/backend` was already a red row —
-            `scripts/rust-host-check.sh` built the workspace and, until #990
-            moved it to the row above, linted it too. `cargo test` was in
-            neither: that script is about one equivalence, and widening it would
-            have made its name a lie.
-
             So `rust/backend/tests/config.rs` — the file whose whole subject is
             that a missing `DB_PASSWORD` is REFUSED rather than defaulted to the
             empty string — could have failed for a week without anything saying
             so. That is the same shape as a ledger nobody's build fails on.
-
-            Whole workspace, not `-p backend`: `day-shell`'s own tests
-            (`mirror_port`, `mirror_async_guard`) were in the same position.
 
             ⚠ THE TIMEOUT WAS 900s AND THAT WAS TOO TIGHT. Measured clean on
             2026-08-24 with an idle machine: 524s. Under any concurrent load --
@@ -316,8 +278,6 @@ in  { name = "health"
             above's negation, so it would RUN there — slowly, in debug, but run.
             Adding it here is an optimisation, never a correctness fix.
 
-            Same ordering constraint as everything cargo here: after the host
-            row, which writes the `.rsp` link line day-shell's build.rs reads.
         -}
         G.Check::{
         , name = "corpus replay gates (release)"
@@ -502,13 +462,9 @@ in  { name = "health"
             and shipping a derivation nobody built is the gap this closes: the
             thing production consumes is the thing that has to be green.
 
-            `.#day-shell` joined it when the image started carrying the host
-            (#959) — for exactly the same reason, and it is a DIFFERENT build
-            from the dev one `the in-process Rust host agrees with the spawned
-            CLI` exercises: that check runs cargo in the dev shell against a
-            local `lake` tree, where this builds both halves inside a
-            sandboxed derivation with vendored crates. Either can break
-            without the other.
+            It is a DIFFERENT build from the dev-shell one the cargo rows
+            exercise: a sandboxed derivation with vendored crates. Either can
+            break without the other.
 
             `.#backend` joined it when the image started carrying the HTTP
             server (#982). Same argument once more, and it is the derivation
@@ -561,7 +517,7 @@ in  { name = "health"
             `flake.nix` pins `cargoDeps.hash`, so any change to `rust/Cargo.lock`
             — a dependency added, a version bumped — invalidates a fixed-output
             derivation nothing else on the commit path builds. On 2026-09-21 that
-            broke `main`: `day-shell` grew `anyhow` for #1667, every gate row was
+            broke `main`: a crate grew `anyhow` for #1667, every gate row was
             green, and the image build failed 13 minutes after the push.
 
             ⚠ **IT IS NOT THE SANDBOXED RUST BUILD THAT WAS REMOVED ABOVE.** That
@@ -623,9 +579,8 @@ in  { name = "health"
       , G.checkTable "../dev-lint"
       , {-  THIS FILE IS THE FULL TABLE, and the commit hook runs a PROJECTION of
             it: `gate-commit.json` is `gate.json` minus the rows named in
-            `scripts/commit-table.sh` — the 42-day corpus replay, the host/CLI
-            equivalence (a release build), the mode-reachability pair around
-            them, and the sandboxed CLI build. Those run in deploy.sh, before
+            `scripts/commit-table.sh` — the 42-day corpus replay, the
+            mode-reachability pair around it, and the sandboxed CLI build. Those run in deploy.sh, before
             anything reaches the pod, and NOT on every commit.
 
             Why a projection and not a second Dhall table: `--check-table`

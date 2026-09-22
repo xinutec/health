@@ -3,7 +3,7 @@
 //! The Rust backend is a DROP-IN for the TypeScript one, so it reads the
 //! variables `src/config.ts` reads and the k8s manifests already set —
 //! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`, and the
-//! Fitbit client pair. `rust/day-shell/src/mirror.rs` reads the same DB set.
+//! Fitbit client pair.
 //!
 //! It deliberately does NOT adopt `life`'s single `DATABASE_URL`, which is the
 //! house shape elsewhere: adopting it would mean changing the Deployment and

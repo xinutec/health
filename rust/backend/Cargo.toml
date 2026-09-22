@@ -5,18 +5,6 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-# For the converge loop: the fold reports unanswered keys by panicking to
-# stderr, so a host has to capture fd 2 around the call. A temporary FILE, not a
-# pipe — see lean::serve_capturing_misses.
-tempfile = "3"
-libc = "0.2"
-# ⚠ LINKED FOR ITS SYMBOLS, not for its API. `day-shell`'s `osm` module defines
-# the `#[unsafe(no_mangle)]` entry points that `DayEntry.OsmHost`'s `@[extern]`
-# lookups resolve against, and this binary links `ServeEntry`, which imports
-# `DayEntry`. Without it the link falls back to nothing — or worse, to
-# `c/osm-host-stub.c`, which answers every lookup with zero polylines and so
-# decodes a day with no map while reporting success.
-day-shell = { path = "../day-shell" }
 # The house sqlx line (#982), matching the sibling repos exactly.
 #
 # ⚠ RUNTIME QUERIES ONLY — `sqlx::query(…)` / `query_as(…)`, never the checked
@@ -113,11 +101,6 @@ tzf-rs = { version = "1.3.7", default-features = false, features = ["bundled"] }
 # `cargo update` breaks the build. A direct `=` pin is what cargo unifies the
 # transitive range with; lift it when tzf-rs releases against `-d`.
 tzf-dist = "=0.0.2026-c-fix1"
-
-[build-dependencies]
-# Compiles src/shim.c, which is how Rust reaches the  half of
-# Lean's runtime interface. Same reason and same version as day-shell.
-cc = "1"
 
 [lints]
 workspace = true

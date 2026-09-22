@@ -1,92 +1,49 @@
 //! Calling the Lean decisions.
 //!
-//! The backend links `BackendEntry` and calls `health_backend_call` through the
-//! C ABI, exactly as `day-shell` calls the day fold. What that buys is that the
-//! rules in `Verified/Sync.lean` are the ones the running backend uses — not a
-//! Rust paraphrase of them that drifts.
+//! Every function here is one request to `verified_cli serve` (#1709) —
+//! `{"mode":"backend","op":…}` for the decision table in `Verified/Sync.lean`
+//! and its siblings, `{"mode":…}` for the algorithm modes — typed on this side
+//! so a caller never spells a wire shape. The process, the pool and the ask
+//! protocol are [`crate::lean_worker`]; this module is the vocabulary.
 //!
-//! # Initialisation happens once, and a failure here is fatal
+//! What that buys is that the rules the running backend uses ARE the ones in
+//! Lean — not a Rust paraphrase of them that drifts.
 //!
-//! `OnceLock` rather than a lazy retry: if the Lean runtime cannot start, every
-//! subsequent call would fail the same way, and a backend that limped on
-//! answering "could not decide" per request is worse than one that refuses to
-//! start. The `init` is therefore expected to be called from the entrypoint.
+//! # `init` once, and a failure there is fatal
 //!
-//! # Blocking, from an async context
-//!
-//! These calls are microseconds of pure computation with no IO, so they run
-//! directly rather than through `spawn_blocking` — the hop would cost more than
-//! the work. That holds only while the exported functions stay pure and cheap;
-//! anything here that grew a real workload would need revisiting.
-
-#![expect(
-    unsafe_code,
-    reason = "FFI onto the Lean library, and descriptor redirection through libc around it"
-)]
+//! If Lean cannot be spawned, every later call would fail the same way, and a
+//! backend that limped on answering "could not decide" per request is worse
+//! than one that refuses to start. `init` is therefore called from the
+//! entrypoint, and it is what a test that needs Lean calls first.
 
 use std::collections::BTreeSet;
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-unsafe extern "C" {
-    fn health_backend_init() -> i32;
-    fn health_backend_json(input: *const c_char) -> *mut c_char;
-    fn health_serve_json(input: *const c_char) -> *mut c_char;
-    fn health_backend_free(p: *mut c_char);
-}
+pub use crate::lean_worker::{Answerer, Ask, Called, Chain, NoAnswers};
 
-static INIT: OnceLock<bool> = OnceLock::new();
-
-/// Start the Lean runtime. Idempotent; call once at startup.
+/// Start the Lean process. Idempotent; call once at startup.
 pub fn init() -> Result<()> {
-    let ok = *INIT.get_or_init(|| {
-        // SAFETY: called at most once, before any other entry point here.
-        let ok = unsafe { health_backend_init() == 0 };
-        if ok {
-            // ⚠ `day-shell` cannot see that Lean came up through OUR shim, and
-            // its coverage gate calls into Lean. Without this every OSM lookup
-            // in this process declines and every walk draws raw (#1667).
-            day_shell::mark_lean_ready();
-        }
-        ok
-    });
-    if ok {
-        Ok(())
-    } else {
-        Err(anyhow!("Lean runtime failed to initialise"))
-    }
+    crate::lean_worker::init().context("starting verified_cli")
 }
 
-/// One request/response round trip through the C ABI.
-fn call_raw(request: &str) -> Result<String> {
-    if !*INIT
-        .get()
-        .ok_or_else(|| anyhow!("lean::init() was never called"))?
-    {
-        return Err(anyhow!("Lean runtime failed to initialise"));
-    }
-    let c = CString::new(request).context("request contained a NUL byte")?;
-    // SAFETY: `c` outlives the call; the returned pointer is a `strdup` the
-    // shim hands over and this function frees before returning.
-    let out = unsafe {
-        let p = health_backend_json(c.as_ptr());
-        if p.is_null() {
-            return Err(anyhow!("Lean returned null"));
-        }
-        let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-        health_backend_free(p);
-        s
-    };
-    Ok(out)
+/// One decision: the request object goes out as `{"mode":"backend","req":…}`,
+/// the reply body comes back as text.
+///
+/// ⚠ WRAPPED, not merged. Some ops carry a `mode` of their own (`mayRebuild`'s
+/// is `bus`/`rail`), and merging the routing key into the payload overwrote it
+/// — the first run of the suite over the pipe failed exactly there.
+fn call_raw(request: &Value) -> Result<String> {
+    let req = serde_json::json!({ "mode": "backend", "req": request });
+    crate::lean_worker::call_plain(&req.to_string())
 }
 
 /// A dispatch that failed inside Lean reports `{"error": …}`; surface it as one.
-fn call_json<T: for<'de> Deserialize<'de>>(request: &serde_json::Value) -> Result<T> {
-    let raw = call_raw(&request.to_string())?;
+fn call_json<T: for<'de> Deserialize<'de>>(request: &Value) -> Result<T> {
+    let raw = call_raw(request)?;
     if let Ok(e) = serde_json::from_str::<LeanError>(&raw) {
         return Err(anyhow!("lean: {}", e.error));
     }
@@ -1000,8 +957,6 @@ fn mode_after_key(head: &str) -> Option<String> {
 /// through rather than in a grep: several callers build the mode from a
 /// parameter, so a scan of the source cannot see who asks for what.
 ///
-/// ⚠ ONLY THE `ServeEntry` TABLE. `day-shell` links `DayEntry`, a different
-/// entry point with its own arms, and nothing here sees those.
 fn record_mode(request: &str) {
     if !*MODE_TRACE.get_or_init(|| std::env::var_os("HEALTH_MODE_TRACE").is_some()) {
         return;
@@ -1033,205 +988,20 @@ fn record_mode(request: &str) {
 /// Ask the Lean algorithm mode table one question.
 ///
 /// The request is the same object `verified_cli serve` reads off a line
-/// (`{"mode": "focus", …}`), so this host and the subprocess ask an identical
-/// question and any difference between their answers is transport rather than
-/// intent. That is what makes the subprocess a usable oracle for this path.
+/// (`{"mode": "focus", …}`); the reply is the body of its `result`, verbatim.
+/// A mode that asks the host something gets a decline — the day fold, which
+/// does ask, goes through [`serve_with`].
 pub fn serve(request: &str) -> Result<String> {
-    init()?;
     record_mode(request);
-    let c = CString::new(request).context("request contains a NUL byte")?;
-    // SAFETY: `init` has succeeded, the pointer is valid for the call, and the
-    // result is copied out before it is freed — see the note in `shim.c` about
-    // `lean_string_cstr` pointing into a heap object the caller must not keep.
-    let out = unsafe {
-        let p = health_serve_json(c.as_ptr());
-        if p.is_null() {
-            anyhow::bail!("lean serve returned null");
-        }
-        let s = CStr::from_ptr(p).to_string_lossy().into_owned();
-        health_backend_free(p);
-        s
-    };
-    Ok(out)
+    crate::lean_worker::call_plain(request)
 }
 
-/// One key the fold asked for and did not find in its answer tables.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Miss {
-    /// The table: `nearbyWays`, `tzAt`, `nearbyStations`, `transitStops`, …
-    pub what: String,
-    /// The key as the fold spelled it — bit patterns joined by `|`.
-    pub key: String,
+/// [`serve`], answering the asks the mode makes mid-request.
+pub fn serve_with(request: &str, answerer: &mut dyn Answerer) -> Result<Called> {
+    record_mode(request);
+    crate::lean_worker::call(request, answerer)
 }
 
-/// Call the fold and collect the keys it could not answer.
-///
-/// # Why the misses come back on stderr
-///
-/// `DayEntry`'s `hit` uses `panic!`, which in Lean PRINTS AND CONTINUES: the
-/// round runs to the end naming every key it reached, rather than stopping at
-/// the first. The rest of that round's output is poisoned by the defaults it
-/// read and is thrown away — only the key set is kept. That is what makes the
-/// converge loop possible at all, and it is why this cannot simply read a field
-/// off the response.
-///
-/// ⚠ FD 2 IS REDIRECTED TO A TEMPORARY FILE, not to a pipe. A pipe has a 64 KiB
-/// buffer and nothing draining it during the call, so a day with enough misses
-/// would deadlock inside Lean rather than return a long list. A file has no
-/// such limit and the call is synchronous, so there is nothing to drain.
-///
-/// ⚠ FD 2 IS PROCESS-WIDE, so this SERIALISES. Two callers redirecting at once
-/// means one captures the other's misses or loses its own — and the failure does
-/// not look like a race, it looks like convergence: the fold appears to re-ask a
-/// key that was already answered, because the answer went to the other caller's
-/// file. ⚠ "The walk is sequential, so this cannot race" holds for production
-/// and NOT for the tests, which `cargo test` runs on parallel threads in one
-/// process — `fold_converge_corpus` has two. It surfaces only under a loaded
-/// gate, where the windows overlap; three unloaded runs "refuted" it.
-///
-/// The lock is free where the walk really is sequential, so making the guarantee
-/// true costs nothing and removes a landmine that a documented precondition
-/// could not.
-pub fn serve_capturing_misses(request: &str) -> Result<(String, Vec<Miss>)> {
-    use std::io::{Read, Seek};
-    use std::os::fd::AsRawFd;
-
-    static FD2: Mutex<()> = Mutex::new(());
-    // Poisoning is not a reason to stop: the guard protects fd 2, and a previous
-    // caller panicking mid-serve leaves the fd restored (that happens before the
-    // `?`). Refusing here would turn one failed day into every later day failing.
-    let _fd2 = FD2.lock().unwrap_or_else(|e| e.into_inner());
-
-    init()?;
-
-    let mut sink = tempfile::tempfile().context("creating the stderr capture file")?;
-    // SAFETY: `dup`/`dup2` on fd 2 with a live fd. The original is restored
-    // below on every path, including the error one.
-    let saved = unsafe { libc::dup(2) };
-    if saved < 0 {
-        anyhow::bail!("could not duplicate stderr");
-    }
-    let redirect = unsafe { libc::dup2(sink.as_raw_fd(), 2) };
-    if redirect < 0 {
-        unsafe { libc::close(saved) };
-        anyhow::bail!("could not redirect stderr");
-    }
-
-    let answer = serve(request);
-
-    // Restore BEFORE inspecting the result, so a failure below still leaves the
-    // process able to report itself.
-    unsafe {
-        libc::dup2(saved, 2);
-        libc::close(saved);
-    }
-
-    let out = answer?;
-    sink.rewind().context("rewinding the stderr capture")?;
-    let mut text = String::new();
-    sink.read_to_string(&mut text)
-        .context("reading the stderr capture")?;
-    // ⚠ EVERYTHING LEAN AND THE OSM HOST WRITE TO STDERR LANDS IN THAT FILE, and
-    // only the miss lines were ever read out of it. So the fold's own
-    // diagnostics were discarded on the SERVING path while printing normally
-    // everywhere else.
-    //
-    // ⚠ THAT SILENCE READS AS A FINDING AND IS NOT ONE. #1619 spent a day on
-    // "the walk pass never asks OSM for roads", measured as zero `osm:` lines
-    // from a served day. The lookups were firing; their output was going into
-    // this file, and so was the `mirror:` refusal that WAS the bug — 85 times a
-    // request, for weeks.
-    //
-    // ⚠ FORWARDING EVERYTHING IS NOT THE ANSWER EITHER. Measured on one served
-    // day: 15,373 lines, of which 502 are misses and ~14,786 are the BACKTRACES
-    // those misses print. `hit` panics per unanswered key and Lean's panic
-    // prints a ~29-frame stack, so the expected noise is 96% of the volume.
-    //
-    // Dropping each miss's backtrace WITH its miss line leaves 183, and in a
-    // healthy request with `OSM_LOG` off it leaves ~none. That residue is the
-    // part worth seeing, so it goes out unconditionally.
-    let residue = residue_of(&text);
-    if !residue.is_empty() {
-        eprint!("{residue}");
-    }
-    // The whole capture, backtraces included, for when the residue is not enough.
-    if std::env::var_os("LEAN_STDERR").is_some() {
-        eprint!("{text}");
-    }
-    Ok((out, misses_in(&text)))
-}
-
-/// The captured stderr minus the misses and the backtraces they print.
-///
-/// ⚠ **A REAL PANIC KEEPS ITS BACKTRACE.** Only a frame block FOLLOWING a line
-/// that names an uncaptured key is dropped. A panic from anywhere else does not
-/// match, so it is forwarded whole — which is the case this exists for.
-///
-/// ⚠ The frame test is a shape, not a parse: `backtrace:`, a blank line, or a
-/// line that starts with a digit and carries an address. Lean's formatting is
-/// not a contract, so a change there degrades this to forwarding MORE, never to
-/// swallowing a panic.
-pub fn residue_of(text: &str) -> String {
-    let mut out = String::new();
-    let mut in_miss_trace = false;
-    for line in text.lines() {
-        if line.contains("uncaptured ") {
-            in_miss_trace = true;
-            continue;
-        }
-        if in_miss_trace {
-            let t = line.trim();
-            let is_frame = t == "backtrace:"
-                || t.is_empty()
-                || (t.starts_with(|c: char| c.is_ascii_digit()) && t.contains("0x"));
-            if is_frame {
-                continue;
-            }
-            in_miss_trace = false;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-/// Every key a round asked for, deduplicated.
-///
-/// ⚠ ANCHORED ON THE TAIL of the message, not on the first `)`. A line name is
-/// a key and line names contain brackets — `Northern Line (Charing Cross
-/// Branch) Southbound`. Stopping at the first one answers a DIFFERENT key,
-/// which the loop then believes it has handled; the TypeScript records two days
-/// that converged wrongly that way before its own parser was anchored.
-pub fn misses_in(stderr: &str) -> Vec<Miss> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for line in stderr.lines() {
-        let Some(i) = line.find("uncaptured ") else {
-            continue;
-        };
-        let rest = &line[i + "uncaptured ".len()..];
-        let Some(end) = rest.rfind(") — re-capture required") else {
-            continue;
-        };
-        let head = &rest[..end];
-        let Some(open) = head.find('(') else {
-            continue;
-        };
-        let m = Miss {
-            what: head[..open].to_string(),
-            key: head[open + 1..].to_string(),
-        };
-        if seen.insert(m.clone()) {
-            out.push(m);
-        }
-    }
-    out
-}
-
-/// How one column's value is rendered into JSON — `Verified.RowShape.Shape`.
-///
-/// ⚠ The variants carry the wire tags Lean emits; renaming one breaks the
-/// interface at runtime rather than at compile time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum RowShape {
     #[serde(rename = "num")]

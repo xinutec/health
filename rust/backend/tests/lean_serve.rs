@@ -1,25 +1,20 @@
-//! The backend calls the Lean algorithm mode table in-process (#982).
-//!
-//! ⚠ ONE `#[test]`, for the reason `tests/lean_ffi.rs` gives: `lean::init()`
-//! starts a runtime, and several tests racing on it would flake.
+//! The backend reaches the Lean algorithm mode table over the worker's pipe
+//! (#1709), and gets back exactly what `verified_cli serve` writes.
 //!
 //! # What this is evidence FOR
 //!
-//! That `ServeEntry` answers the same question linked in-process as it does as
-//! a subprocess. The expected strings below were produced by
+//! That the worker hands back the reply BODY byte for byte. The expected
+//! strings below were produced by
 //!
 //!     lean/.lake/build/bin/verified_cli serve
 //!
-//! on exactly these requests, which makes `verified_cli` the oracle for this
-//! path rather than my expectation of it — MINUS the `{"id", "result"}`
-//! envelope, which `serveLoop` adds and `dispatch` does not. That envelope
-//! correlates replies on one NDJSON pipe; a host that called the function has
-//! nothing to correlate. The BODY is the answer and it is what must match.
+//! on exactly these requests, MINUS the `{"id", "result"}` envelope, which the
+//! worker strips textually rather than by re-serialising.
 
 use backend::lean;
 
 #[test]
-fn the_mode_table_answers_in_process() {
+fn the_mode_table_answers_over_the_pipe() {
     lean::init().expect("the Lean runtime must start");
 
     // A real answer, not an error: focus on empty input is a well-defined

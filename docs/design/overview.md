@@ -501,4 +501,4 @@ symbol survives a move, a line number does not (#919, #1205).
 | the document says | today |
 | --- | --- |
 | `src/db/schema.ts` — the numbered migrations | `rust/backend/src/schema.rs` — the same array under the same rule: APPEND ONLY. The index IS the version and `schema_migrations` records applied indices, so a statement inserted in the middle is silently never applied while the log reports the schema up to date |
-| `src/geo/velocity.ts` — owns the day, orchestrates the rest | `rust/backend/src/routes/velocity.rs` — `run` (the route) and `compute_with` (the day). ⚠ It no longer owns the reasoning: the passes are Lean, reached through `mirror_source::converge_from_mirror`. What is left here is orchestration and the cache around it |
+| `src/geo/velocity.ts` — owns the day, orchestrates the rest | `rust/backend/src/routes/velocity.rs` — `run` (the route) and `compute_with` (the day). ⚠ It no longer owns the reasoning: the passes are Lean, reached through `mirror_source::fold_from_mirror`. What is left here is orchestration and the cache around it |

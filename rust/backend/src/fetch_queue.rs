@@ -27,14 +27,12 @@
 //! telemetry insert lost a race, and the miss will be re-recorded on the next
 //! fold anyway.
 //!
-//! # Why this lives in the HOST crate
+//! # One writer
 //!
-//! Two paths decline, and only one of them can see `backend`. `MirrorSource`
-//! declines on the row-source path; the three `@[extern]` OSM callbacks decline
-//! inside the fold itself (`crate::osm`), and `backend` depends on THIS crate,
-//! not the reverse (#1667). `backend` re-exports the module, so there is one
-//! `INSERT` and one key vocabulary rather than a second set written to satisfy
-//! the dependency direction. The drain stays in `backend`, where Overpass is.
+//! Every decline — the seven answerer tables and the three matcher reads —
+//! comes through `MirrorSource`'s coverage gate (#1709), so there is one
+//! `INSERT` and one key vocabulary. The drain is `backend fetch-osm`, where
+//! Overpass is.
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};

@@ -1,27 +1,26 @@
 import Verified
 import DayEntry.Wire
 import DayEntry.OsmHost
+import DayEntry.Host
 import Verified.Geo.WalkMatchAdapt
 
 /-!
-# `DayEntry` — the day cascade's JSON boundary, and the C entry point
+# `DayEntry` — the day cascade's JSON boundary
 
-`namespace Day` lived in `Main.lean`, the root module of the `verified_cli`
-EXECUTABLE. That is fine for a process the TS bridge spawns and fatal for a host
-that links the fold in: Lean emits `main` into the same object as everything
-else in an exe root, so `libverified_Main.a` carried a second `_main`, it won the
-link silently, and `rust/day-shell` answered a day request as a decoder model
-while printing well-formed JSON. `build.rs` worked around that with
-`ld -r -unexported_symbol _main`. This module is the fix the workaround stood in
-for: a LIBRARY with no entry point, so there is nothing to collide.
+The day request comes in as one JSON object (`segsRaw` + `env`), the fold runs,
+and the timeline goes back out. Every lookup the fold needs beyond its request —
+the OSM tables, the zone at a coordinate, a geocode, a stay's local hours — is
+asked of the host mid-fold through `DayEntry.Host.ask` (#1709). Nothing is
+carried in the request that the host could answer on demand: there are no
+lookup tables here and no miss policy, because a miss is an ask.
 
 Layering, and why it is three and not two:
 
     Verified        pure folds + their #guard specs. No Json, anywhere.
     DayEntry.Wire   the float-exact JSON helpers all entry points share.
-    DayEntry        this: the day request/response shape + @[export].
-    Main            everything else, `Focus`, `StationChain`, and `def main` —
-                    the only module that defines an entry point.
+    DayEntry.Host   the one ask, and the pipe it crosses.
+    DayEntry        this: the day request/response shape.
+    ServeEntry      the mode table `verified_cli serve` dispatches on.
 
 `Verified` stays parser-free on purpose; see `DayEntry/Wire.lean`.
 -/
@@ -37,19 +36,20 @@ abbrev Seg := Verified.Geo.SegmentMerge.Seg
 abbrev StepPoint := Verified.Geo.SegmentMerge.StepPoint
 abbrev Env := Verified.Geo.PassFold.Env
 
-/-- Table key for a lookup of two coordinates, and for three where the third is
-the caller's radius. Bit patterns, per the section note. -/
+/-- Ask key for a lookup of two coordinates, and for three where the third is
+the caller's radius. Bit patterns: the host parses them back exactly. -/
 private def k2 (a b : Float) : String := s!"{a.toBits}|{b.toBits}"
 private def k3 (a b c : Float) : String := s!"{a.toBits}|{b.toBits}|{c.toBits}"
 
 private def mkMap (xs : Array (String × α)) : Std.HashMap String α :=
   xs.foldl (fun m (k, v) => m.insert k v) (Std.HashMap.emptyWithCapacity xs.size)
 
-/-- Answer or abort. Never a default: see the section note on the miss policy. -/
-private def hit [Inhabited α] (m : Std.HashMap String α) (what key : String) : α :=
-  match m[key]? with
-  | some v => v
-  | none => panic! s!"verified_cli day: uncaptured {what}({key}) — re-capture required"
+/-- One ask, parsed as the table's row; the row's answer half, or the default
+when the host declines. The row shape (`entry2`/`entry3`/…) is the same one the
+golden fixtures record, so a replayed day and a served day read one parser. -/
+private def askRow [Inhabited α] (what key : String)
+    (entry : Json → Except String (String × α)) : α :=
+  ((DayEntry.Host.askAs what key entry).map (·.2)).getD default
 
 /-! ### Decoding -/
 
@@ -506,31 +506,20 @@ private structure Namer where
   geocodeAt : Float → Float → Int → Option Verified.Geo.BestPlace.Result
   stayCtx : Float → Float → Int → Int → String → List (Nat × Nat) × Int
   priors : Option Verified.Geo.VenuePrior.VenuePriors
-  /-- The three tables' entry counts.
-      These exist so the LAYER MEASUREMENT can force the three `mkMap` calls
-      without calling the closures above (#433). The other five tables are
-      forced by a probe that asks them for a key they hold, but these three are
-      reachable only through `Namer.name`, which composes a landmark lookup, a
-      geocode lookup and a stay-context lookup — any of which can reach a key a
-      probe did not choose, and a miss `panic!`s. A structure field is computed
-      when the structure is built, so reading a size here forces the map with no
-      key to guess and no miss to risk.
-      `dayResult` ignores them and is unaffected: it forces all three through
-      the fold regardless, so the same work happens either way. -/
-  sizes : Nat
 
 private def namerOf (j : Json) : Except String Namer := do
-  let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
-  let landmarks := mkMap (← (← optArr lk "nearbyLandmarks").mapM
-    (entry3 (fun v => do (← v.getArr?).mapM parsePoi)))
-  let geocodes := mkMap (← (← optArr lk "reverseGeocode").mapM entryGeo)
-  let stays := mkMap (← (← optArr lk "bestPlace").mapM entryPlace)
   return {
-    landmarksAt := fun lat lon => hit landmarks "nearbyLandmarks" (k3 lat lon LANDMARK_RADIUS_M)
-    geocodeAt := fun lat lon zoom => hit geocodes "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}"
-    stayCtx := fun lat lon s e tz => hit stays "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{tz}"
+    landmarksAt := fun lat lon =>
+      askRow "nearbyLandmarks" (k3 lat lon LANDMARK_RADIUS_M)
+        (entry3 (fun v => do (← v.getArr?).mapM parsePoi))
+    -- `entryGeo` stores `null` as a real answer, so a declined ask and a
+    -- geocode that resolved nothing both read `none` here — which is right:
+    -- the moving arm names nothing either way.
+    geocodeAt := fun lat lon zoom =>
+      askRow "reverseGeocode" s!"{lat.toBits}|{lon.toBits}|{zoom}" entryGeo
+    stayCtx := fun lat lon s e tz =>
+      askRow "bestPlace" s!"{lat.toBits}|{lon.toBits}|{s}|{e}|{tz}" entryPlace
     priors := ← parseVenuePriors j
-    sizes := landmarks.size + geocodes.size + stays.size
   }
 
 /-- Name one coordinate.
@@ -580,20 +569,10 @@ private def parseChain (j : Json) (segs : Array Seg)
   }
 
 private def parseEnv (j : Json) : Except String Env := do
-  let lk := (j.getObjVal? "lookups").toOption.getD (Json.mkObj [])
-  let stations := mkMap (← (← optArr lk "nearbyStations").mapM
-    (entry3 (fun v => do (← v.getArr?).mapM parseStation)))
-  let lines := mkMap (← (← optArr lk "linesAtPoint").mapM (entry3 strs))
-  let ways := mkMap (← (← optArr lk "nearbyWays").mapM
-    (entry2 (fun v => do (← v.getArr?).mapM parseWay)))
-  let stops := mkMap (← (← optArr lk "transitStops").mapM
-    (entry3 (fun v => do (← v.getArr?).mapM parseTransitStop)))
-  let onLine := mkMap (← (← optArr lk "stationsOnLine").mapM
-    (entryS (fun v => do (← v.getArr?).mapM parseLineStation)))
-  let tz := mkMap (← (← optArr lk "tzAt").mapM (entry2 (·.getStr?)))
   let namer ← namerOf j
-  -- Not under `lookups`: these two are columns and a derived series, not
-  -- questions put to the OSM mirror, so a miss in them is not a capture gap.
+  let homeTz ← (← j.getObjVal? "homeTz").getStr?
+  -- Carried in the request rather than asked: these two are columns and a
+  -- derived series the host already holds, not questions for the OSM mirror.
   let days := mkMap (← (← optArr j "focusPlaceDays").mapM
     (fun v => do let a ← v.getArr?; return (toString (← (← nth a 0).getInt?), ← (← nth a 1).getInt?)))
   let speeds := mkMap (← (← optArr j "speedByTs").mapM
@@ -601,7 +580,8 @@ private def parseEnv (j : Json) : Except String Env := do
   -- Bound rather than inlined: the Kalman track is both an `Env` field and the
   -- window the re-enrichment closure samples, and those must be the same series.
   let pts ← (← optArr j "points").mapM parsePointF
-  let waysAt := fun lat lon => hit ways "nearbyWays" (k2 lat lon)
+  let waysAt := fun lat lon =>
+    askRow "nearbyWays" (k2 lat lon) (entry2 (fun v => do (← v.getArr?).mapM parseWay))
   -- `enrichMovingSegment` reads only the city fields, so the full response is
   -- narrowed here rather than at the table.
   let geocodeAt := fun (lat lon : Float) (zoom : Int) =>
@@ -611,8 +591,9 @@ private def parseEnv (j : Json) : Except String Env := do
     rawFixes := ← (← optArr j "rawFixes").mapM parseCoarse
     steps := ← (← optArr j "steps").mapM parseStep
     railStops := ← (← optArr j "railStops").mapM parseRailStops
-    nearbyStations := fun lat lon r => hit stations "nearbyStations" (k3 lat lon r)
-    linesAtPoint := fun lat lon r => hit lines "linesAtPoint" (k3 lat lon r)
+    nearbyStations := fun lat lon r =>
+      askRow "nearbyStations" (k3 lat lon r) (entry3 (fun v => do (← v.getArr?).mapM parseStation))
+    linesAtPoint := fun lat lon r => askRow "linesAtPoint" (k3 lat lon r) (entry3 strs)
     nearbyWays := waysAt
     -- `reenrichSplitWalks` re-derives one carve remainder's enrichment from its
     -- OWN geometry. `samplesInWindow` is inclusive at both ends, and an empty
@@ -622,20 +603,10 @@ private def parseEnv (j : Json) : Except String Env := do
       Verified.Geo.Enrich.enrichMovingSegment waysAt geocodeAt seg
         ((pts.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs).map fun p =>
           ({ ts := p.ts, lat := p.lat, lon := p.lon } : Verified.Geo.Enrich.Pt))
-    -- The pedestrian matcher, whole: two OSM reads answered by whoever LINKS
-    -- the fold rather than by the request, and all five solver leaves (#952).
-    --
-    -- Under `verified_cli` the reads resolve to `c/osm-host-stub.c`, which
-    -- answers zero polylines — and a leg whose ways come back empty is skipped
-    -- before any leaf runs, so the spawned CLI draws exactly what the shells
-    -- drew. That is why `UNFED` below still names `walkEnv`: not because a
-    -- field here is a stub, but because the answer depends on the link, and the
-    -- day gate's default arm is the one that cannot answer.
-    -- The road matcher, the same way and for the same reason: the mirror read
-    -- comes from the link, the matcher is `Verified.Geo.Match`'s quantised road
-    -- arm through `RoadMatchAdapt`. A leg whose corridor comes back empty bails
-    -- before the matcher runs (`ways.length === 0` — the pass's own third
-    -- asymmetry), so under `verified_cli` this draws what the shell drew.
+    -- The road matcher: the corridor read is an ask of the host
+    -- (`OsmHost.drivableRoads`), the matcher is `Verified.Geo.Match`'s
+    -- quantised road arm through `RoadMatchAdapt`. A leg whose corridor is
+    -- declined or empty bails before the matcher runs.
     roadEnv := {
       drivableRoads := DayEntry.OsmHost.drivableRoads
       matcher := Verified.Geo.RoadMatchAdapt.matcher }
@@ -643,10 +614,8 @@ private def parseEnv (j : Json) : Except String Env := do
       walkableRoads := DayEntry.OsmHost.walkableRoads
       buildingsNear := DayEntry.OsmHost.buildingsNear
       -- The real pedestrian matcher, through the quantisation adapter
-      -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so
-      -- under `verified_cli` — which links the empty stub — this is still the
-      -- shell's answer. It only becomes visible in a host that can answer
-      -- `walkableRoads`, which is the point.
+      -- (`Verified.Geo.WalkMatchAdapt`). It draws NOTHING without ways, so a
+      -- host that declines `walkableRoads` gets the raw leg back.
       matcher := Verified.Geo.WalkMatchAdapt.matcher
       -- The four smoothing/correction leaves. Every one of them was ALREADY
       -- PORTED — `WalkSmooth.reconstructWalk`, `WalkSmooth.refineMatchedPath`,
@@ -676,12 +645,19 @@ private def parseEnv (j : Json) : Except String Env := do
         Verified.Geo.WalkEscape.snapPassages drawn ways buildings }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.
     bestPlace := fun lat lon s e m => namer.name lat lon (some (s, e, m)) false
-    tzAt := fun lat lon => hit tz "tzAt" (k2 lat lon)
-    homeTz := ← (← j.getObjVal? "homeTz").getStr?
-    stationsOnLine := fun line => hit onLine "stationsOnLine" line
+    -- The host answers from a polygon set; where it declines (open sea, a
+    -- pole) the home zone is the fallback, as `Env.tzAt`'s doc asks of whoever
+    -- supplies the function.
+    tzAt := fun lat lon =>
+      ((DayEntry.Host.askAs "tzAt" (k2 lat lon) (entry2 (·.getStr?))).map (·.2)).getD homeTz
+    homeTz := homeTz
+    stationsOnLine := fun line =>
+      askRow "stationsOnLine" line (entryS (fun v => do (← v.getArr?).mapM parseLineStation))
     railRouteCache := ← (← optArr j "railRouteCache").mapM parseRouteRow
     busRouteCache := (← (← optArr j "busRouteCache").mapM parseBusRoute).toList
-    transitStops := fun lat lon r => hit stops "transitStops" (k3 lat lon r)
+    transitStops := fun lat lon r =>
+      askRow "transitStops" (k3 lat lon r)
+        (entry3 (fun v => do (← v.getArr?).mapM parseTransitStop))
     hmmDecode := ← (← optArr j "hmmDecode").mapM parseHmmSeg
     hsmmPlaces := (← (← optArr j "hsmmPlaces").mapM parseHsmmPlace).toList
     knownPlaces := ← (← optArr j "knownPlaces").mapM parseKnownPlace
@@ -811,32 +787,9 @@ private def changedPasses (input : Array Seg) (trace : Array (String × Array Se
       prev := segs
     return out
 
-/-- The `Env` fields this mode does not feed. Their `Env` defaults are no-ops, so
-a pass that needs one runs but decides nothing. Named in the output rather than
-left to be inferred from a divergence: an unfed callback and a real disagreement
-are different findings, and a parity run that cannot tell them apart reports the
-wrong one.
-
-Both entries are SOLVERS — the road and pedestrian matchers, whose street-network
-reads and search leaves are 4.31 MiB/day the wire measurement deliberately left
-shell-side. `reenrich` was here too and is not any more: it was an OSM read plus
-arithmetic, which is a port (`Verified.Geo.Enrich`), not a shell.
-
-⚠ `walkEnv` is now a HALF-TRUTH here and stays only until the gate can tell the
-two arms apart. Every one of its seven fields is wired to real Lean; what is
-unfed is the LINK — `verified_cli` answers both OSM reads with zero polylines,
-and a leg with no ways never reaches a leaf. A host that answers them draws the
-same lines the TS does (2026-05-14: the corrector and the reconstruction
-bit-identical, the matcher within the quantisation). Removing it from this list
-is part of the `LEAN_DAY=on` cutover, because `compare-day`'s classifier reads
-it and the default arm would then report a divergence it cannot avoid. -/
-private def UNFED : Array String := #["roadEnv", "walkEnv"]
-
 /-- `walkDraw` stays at its `Env` default — `.matcher`, which is what production
-draws. `walkFlags` is now FED, from `env.walkMatch`: absent means match, and
-`walkMatch=0` sets `matchDisable` for the raw baseline. Neither is in `UNFED`,
-because they are configuration rather than a callback: the fold gets the
-production answer, not an empty one. -/
+draws. `walkFlags` is fed from `env.walkMatch`: absent means match, and
+`walkMatch=0` sets `matchDisable` for the raw baseline. -/
 
 def dayResult (j : Json) : Json :=
   let parsed : Except String Json := do
@@ -930,8 +883,7 @@ def dayResult (j : Json) : Json :=
       ("journeys", Json.arr
         ((Verified.Geo.ServedJourneys.servedJourneys states).map journeyJson)),
       ("passes", Json.arr ((Verified.Geo.PassFold.passNames env).map Json.str)),
-      ("changed", Json.arr ((changedPasses segs trace).map Json.str)),
-      ("unfed", Json.arr (UNFED.map Json.str))]
+      ("changed", Json.arr ((changedPasses segs trace).map Json.str))]
     return Json.mkObj (if !wantTrace then base else base ++ [
       ("trace", Json.arr (trace.map fun (name, segs) =>
         Json.mkObj [("name", Json.str name), ("segs", Json.arr (segs.map segJson))]))])
@@ -939,219 +891,12 @@ def dayResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
-/-! ### The decode ablation (#433)
-
-#405 measured a bridge call as four layers — request wire, response wire,
-per-mode decode, algorithm — and only the last survives the Rust-shell
-architecture, where the two arms are one process and there is nothing to
-serialise. It also recorded that measuring with `noop` ALONE gets the answer
-wrong in the reassuring direction, because `{}` as a reply hides both the
-response wire and the decode; on gpsquality that mistake read the floor as a
-quarter of the call when it was seven eighths.
-
-`gpsquality` has `gqdecode` for its layer 3. The day mode had nothing, so
-`lean/experiments/day-arm-cost.mts` could only report `fold − noop`, which is
-layers 2+3+4 added together and therefore an upper bound on the residual rather
-than the residual.
-
-This is layer 3: `dayResult`'s parse prefix, and then stop. -/
-
-/-- Force a two-key lookup table by asking it something it CAN answer.
-
-The probe is not decoration. `parseEnv` binds each table's entries with `←`, so
-the per-entry parse is forced by the `Except` bind — but `mkMap` on the result is
-a plain pure `let` whose only consumers are the closures stored in `Env`, and the
-compiler is free to sink such a `let` to its use site (`Main.lean`'s decode-timing
-note records the same behaviour biting a timestamp). Whether the hash maps are
-built during `parseEnv` or on the fold's first lookup could not be settled by
-reading, and a layer measurement that skipped the work it claims to measure would
-be worse than none, because it would be quoted.
-
-So each table is asked for the key of its own FIRST entry — a hit, so no `panic!`
-fires and no miss-formatting cost enters the measurement — and the answer's size
-is folded into the reply, which is what forces it. An empty table has nothing to
-build and contributes zero. -/
-private def probe2 (lk : Json) (name : String) (f : Float → Float → α) (sz : α → Nat) :
-    Except String Nat := do
-  match (← optArr lk name)[0]? with
-  | none => return 0
-  | some e =>
-    let a ← e.getArr?
-    return sz (f (← jBits (← nth a 0)) (← jBits (← nth a 1)))
-
-/-- As {@link probe2}, for the tables keyed by a radius as well as a coordinate. -/
-private def probe3 (lk : Json) (name : String) (f : Float → Float → Float → α) (sz : α → Nat) :
-    Except String Nat := do
-  match (← optArr lk name)[0]? with
-  | none => return 0
-  | some e =>
-    let a ← e.getArr?
-    return sz (f (← jBits (← nth a 0)) (← jBits (← nth a 1)) (← jBits (← nth a 2)))
-
-/-- Layer 2: run the WHOLE chain and return a summary instead of the rows.
-
-`day − dayresp` is the response side — the six `Json.arr (… .map …Json)` AST
-builds, `resp.compress`, the wire, and the caller's `JSON.parse`. `dayresp −
-daydecode` is then the algorithm alone, which is what `#433` set out to isolate:
-the 3.4 s the earlier measurement attributed to "response wire + algorithm,
-unseparated" splits here.
-
-`echo` cannot serve this tenant. Its reply is COMPUTED, so there is no input row
-to ship back at realistic size — which is why this mode runs the real chain and
-withholds only the encode.
-
-# The forcing argument, and why it is CHECKED rather than argued
-
-A handler returning only `changed` would be wrong in a way that looks fine.
-`changedPasses segs trace` forces the pass fold, but `let (states, episodes) :=
-dayChain chain` is a pure `let` whose result would then go unused — dead-code
-elimination removes the call, and the handler would time the fold while claiming
-to time the chain.
-
-So the reply carries INTEGER CHECKSUMS over the same values the encoders read:
-the timestamp sums and the vertex count. Those cannot be produced without
-running the chain, and — the part that matters — they are recomputable from the
-full `day` reply, so `day-arm-cost.mts` ASSERTS the two agree instead of
-inferring it from a plausible-looking duration. A chain that silently did not
-run reads as a mismatch, not as a fast number.
-
-Two admitted biases, both in the same direction as every other choice in this
-harness (against the port): the checksum folds are work `day` does not do, and
-`passes`/`unfed` are not built here. Both make `dayresp` slower than a pure
-"chain without encode", so they UNDERSTATE layer 2 and OVERSTATE the residual. -/
-def chainNoEncode (j : Json) : Json :=
-  let parsed : Except String Json := do
-    let envJson ← j.getObjVal? "env"
-    let env ← parseEnv envJson
-    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
-    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
-    let splitCtx : Stays.SplitContext :=
-      { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
-        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
-    let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
-    let namer ← namerOf envJson
-    let enrichReads : Verified.Geo.EnrichFold.Reads :=
-      { ways := env.nearbyWays
-        geocode := fun lat lon zoom => (namer.geocodeAt lat lon zoom).map (·.address)
-        stations := env.nearbyStations
-        place := fun lat lon pref stay => namer.name lat lon stay pref
-        tzAt := env.tzAt }
-    let segsEnriched := Verified.Geo.EnrichFold.enrichFold enrichReads
-      { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
-        steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
-      (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
-      env.points segsSplit
-    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched
-    let (out, trace) := Verified.Geo.PassFold.runPassesTraced env segs
-    let chain ← parseChain envJson out env.points env.displayFixes
-    let (states, episodes) := Verified.Geo.DayChain.dayChain chain
-    let tsSum (a : Array Seg) : Int := a.foldl (fun acc s => acc + s.startTs + s.endTs) 0
-    return Json.mkObj [
-      ("nSplit", Lean.toJson segsSplit.size),
-      ("nEnriched", Lean.toJson segsEnriched.size),
-      ("nMid", Lean.toJson segs.size),
-      ("nSegs", Lean.toJson out.size),
-      ("nStates", Lean.toJson states.size),
-      ("nEpisodes", Lean.toJson episodes.size),
-      ("nJourneys", Lean.toJson (Verified.Geo.ServedJourneys.servedJourneys states).size),
-      ("nChanged", Lean.toJson (changedPasses segs trace).size),
-      ("sumSegTs", Lean.toJson (tsSum out)),
-      ("sumStateTs", Lean.toJson (states.foldl (fun acc s => acc + s.startTs + s.endTs) (0 : Int))),
-      ("sumEpisodeTs", Lean.toJson (episodes.foldl (fun acc e => acc + e.startTs + e.endTs) (0 : Int))),
-      ("nEpisodePoints", Lean.toJson (episodes.foldl (fun acc e => acc + e.points.size) 0))]
-  match parsed with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok out => out
-
-/-- Layer 3: decode the request into the day's own structures and stop.
-
-Mirrors `dayResult`'s parse prefix exactly — same calls, same order — and must
-keep mirroring it. `parseChain` is deliberately absent: it takes the fold's
-OUTPUT, so it cannot run before the fold and its cost belongs to whatever
-handler runs the chain.
-
-The reply is a count rather than `{}` so that the sizes cannot be optimised
-away, and small so that layer 2 stays out of it. -/
-def decodeOnly (j : Json) : Json :=
-  let parsed : Except String Json := do
-    let envJson ← j.getObjVal? "env"
-    let env ← parseEnv envJson
-    let modeStats := (← (← optArr envJson "modeStats").mapM parseModeStats).toList
-    let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
-    let places := (← (← optArr envJson "enrichPlaces").mapM parseNamedPlace).toList
-    let lk := (envJson.getObjVal? "lookups").toOption.getD (Json.mkObj [])
-    -- FIVE of the eight maps. The three `namerOf` builds — `nearbyLandmarks`,
-    -- `reverseGeocode`, `bestPlace` — are NOT probed, and the reason is a
-    -- property of the miss policy rather than an oversight: every route to them
-    -- from `Env` goes through `Namer.name`, which composes a landmark lookup
-    -- with a geocode lookup and a stay-context lookup, and any of the three can
-    -- reach a key this handler did not choose. A miss `panic!`s, and a `panic!`
-    -- inside a timing handler both prints and formats its message — cost that
-    -- would land in the number and did not come from the decode.
-    --
-    -- So their hash-map construction is attributed to whatever forces it first,
-    -- which is the fold. That UNDERSTATES layer 3 and overstates the residual —
-    -- the same direction as every other choice here, against the port.
-    let n1 ← probe2 lk "nearbyWays" env.nearbyWays Array.size
-    let n2 ← probe2 lk "tzAt" env.tzAt String.length
-    let n3 ← probe3 lk "nearbyStations" env.nearbyStations Array.size
-    let n4 ← probe3 lk "linesAtPoint" env.linesAtPoint Array.size
-    let n5 ← probe3 lk "transitStops" env.transitStops Array.size
-    -- The three `namerOf` tables — `nearbyLandmarks`, `reverseGeocode`,
-    -- `bestPlace`. Reaching them through `Namer.name` charges them to the fold
-    -- and composes three lookups, so it can reach a key a probe did not choose;
-    -- a miss `panic!`s, and a panic inside a timing handler both prints and
-    -- formats. `Namer.sizes` removes the need to guess a
-    -- key at all: it is a structure field, so building the `Namer` builds the
-    -- maps. This moves real work out of the residual and into layer 3, which is
-    -- where it belongs.
-    let namer ← namerOf envJson
-    let n := n1 + n2 + n3 + n4 + n5 + namer.sizes
-    return Json.mkObj [("n", Lean.toJson
-      (n + env.points.size + env.rawFixes.size + env.steps.size + env.displayFixes.size
-        + env.railStops.size + env.railRouteCache.size + env.busRouteCache.length
-        + env.hmmDecode.size + env.hsmmPlaces.length + env.knownPlaces.size
-        + env.hr.length + env.sleep.length
-        + modeStats.length + segsRaw.size + places.length))]
-  match parsed with
-  | .error e => Json.mkObj [("error", Json.str e)]
-  | .ok out => out
-
 end Day
-/-!
-# In-process entry point (#952 spike)
+/-! ## `focus` lives here, with its helpers
 
-`main` above is the process boundary the TS bridge uses: spawn `verified_cli
-day`, write JSON to stdin, read JSON from stdout. That transport is 84% of the
-day tenant's cost (#433: 9.3 s request wire + 8.0 s typed decode against 3.4 s
-of actual work) and it is also why `converge` exists at all — a spawned fold
-cannot call back into its caller for a lookup, so `day-serve.ts` runs it 2-7
-times, feeding it one more table each round.
-
-Both costs are the WIRE, not the fold. This export is the same `Day.dayResult`
-reached through the C ABI instead, so a host that shares the process can call it
-directly. It is deliberately the SAME function `main` dispatches to on line
-2401: a spike that exported a reimplementation would prove nothing about the
-thing that actually runs.
-
-String in, string out, because that is the narrowest possible C ABI that still
-carries a real day — `lean_object*` either side, no structs to keep in sync. The
-typed decode this leaves in place is the NEXT thing to delete, not this one.
--/
-/-! ## `focus` lives here, with its helpers (#982)
-
-Moved out of `Main.lean` because its handler sat in the exe's root module, which
-is the one place a host cannot link: a `lean_exe` root emits `main`, and an
-archive carrying it wins the link in a foreign host silently. Every helper it
-uses — `nth`, `optArr`, `jBits` — was already in this library's `Wire`, so
-nothing moved but the namespace itself, byte for byte.
-
-⚠ THAT REASON NO LONGER DISTINGUISHES IT. The same problem was then fixed for
-every other handler at once: `Main.lean` is an eleven-line shim and the rest are
-`ServeEntry`, a library. So `focus` is here rather than there for the smaller
-reason only — this is where its wire helpers are, and it has its own
-`health_focus_result` export beside `health_day_result`. A later tidy that moved
-it back beside its siblings would not be wrong.
+Beside the day cascade rather than in `ServeEntry` only because this is where
+its wire helpers are. A later tidy that moved it beside its siblings would not
+be wrong.
 -/
 
 namespace Focus
@@ -1248,15 +993,3 @@ def focusResult (j : Json) : Json :=
   | .ok out => out
 
 end Focus
-
-@[export health_focus_result]
-def focusResultExport (input : String) : String :=
-  match Json.parse input with
-  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
-  | .ok j => (Focus.focusResult j).compress
-
-@[export health_day_result]
-def dayResultExport (input : String) : String :=
-  match Json.parse input with
-  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
-  | .ok j => (Day.dayResult j).compress

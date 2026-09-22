@@ -15,18 +15,18 @@ fn an_absent_stamp_is_not_a_mismatch() {
     // ⚠ THE 42 EXISTING FIXTURES CARRY NO STAMP. Refusing them would be
     // claiming they were taken under something they never recorded, and would
     // break every gate on a change that improved nothing.
-    assert!(backend::osm_host::check_capture_inputs(&json!({})).is_ok());
+    assert!(backend::osm_trace::check_capture_inputs(&json!({})).is_ok());
     assert!(
-        backend::osm_host::check_capture_inputs(&json!({"fixtureFormatVersion": 1})).is_ok(),
+        backend::osm_trace::check_capture_inputs(&json!({"fixtureFormatVersion": 1})).is_ok(),
         "a meta block without captureInputs must pass"
     );
 }
 
 #[test]
 fn the_stamp_this_build_writes_is_accepted() {
-    let meta = json!({ "captureInputs": backend::osm_host::capture_inputs() });
+    let meta = json!({ "captureInputs": backend::osm_trace::capture_inputs() });
     assert!(
-        backend::osm_host::check_capture_inputs(&meta).is_ok(),
+        backend::osm_trace::check_capture_inputs(&meta).is_ok(),
         "a capture taken under this build must replay under it"
     );
 }
@@ -39,7 +39,7 @@ fn a_moved_constant_refuses_and_says_which() {
     let meta = json!({
         "captureInputs": { "roadCorridorMarginM": 100.0, "candidateLimit": 20_000 }
     });
-    let err = backend::osm_host::check_capture_inputs(&meta)
+    let err = backend::osm_trace::check_capture_inputs(&meta)
         .expect_err("a fixture captured at a different margin must REFUSE");
     assert!(
         err.contains("roadCorridorMarginM"),
@@ -57,7 +57,7 @@ fn a_stamp_naming_something_this_build_lost_also_refuses() {
     // obvious implementation — look up each key and compare — silently passes
     // when the key is gone. This is the arm that catches that.
     let meta = json!({ "captureInputs": { "someRetiredKnob": 7 } });
-    let err = backend::osm_host::check_capture_inputs(&meta)
+    let err = backend::osm_trace::check_capture_inputs(&meta)
         .expect_err("a stamp naming a constant this build does not have must REFUSE");
     assert!(err.contains("someRetiredKnob"), "got: {err}");
 }

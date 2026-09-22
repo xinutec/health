@@ -30,7 +30,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ALLOW=scripts/rules-live-in-lean.allow
 
 rust_consts() {
-	grep -rhoE "^[[:space:]]*(pub )?const [A-Z][A-Z0-9_]+" rust/backend/src rust/day-shell/src 2>/dev/null |
+	grep -rhoE "^[[:space:]]*(pub )?const [A-Z][A-Z0-9_]+" rust/backend/src 2>/dev/null |
 		grep -oE "[A-Z][A-Z0-9_]+$" | sort -u
 }
 lean_defs() {

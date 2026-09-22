@@ -46,7 +46,6 @@
 //! ```
 
 use anyhow::{Context, Result};
-use backend::fold_converge::converge;
 use backend::nominatim::{self, Cached};
 use backend::rowset_answerer::RowSetAnswerer;
 
@@ -117,14 +116,24 @@ fn main() -> Result<()> {
 
     backend::lean::init()?;
     let cap = backend::head::capture(inputs, date, &user).context("head::capture")?;
-    let mut answerer = RowSetAnswerer::new(rows).context("the row set opens")?;
-    let converged = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer)
-        .context("converging the day")?;
+    let trace = backend::osm_trace::TraceAnswerer::from_fixture(
+        &fx,
+        &path,
+        backend::osm_trace::Sections::ALL,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let mut answerer = backend::lean::Chain(
+        trace,
+        RowSetAnswerer::new(rows).context("the row set opens")?,
+    );
+    let converged =
+        backend::fold::run_day(&cap, inputs, &mut answerer).context("folding the day")?;
+    let unanswerable = converged.declined();
 
     let mut by_consumer: std::collections::BTreeMap<&str, usize> =
         std::collections::BTreeMap::new();
     let mut other: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for m in &converged.unanswerable {
+    for m in &unanswerable {
         if m.what == "reverseGeocode" {
             *by_consumer.entry(consumer(&m.key)).or_default() += 1;
         } else {
@@ -133,7 +142,7 @@ fn main() -> Result<()> {
     }
 
     let geo: usize = by_consumer.values().sum();
-    println!("{date}: {} unanswered key(s)", converged.unanswerable.len());
+    println!("{date}: {} declined key(s)", unanswerable.len());
     println!("\n  reverseGeocode {geo}, by consumer:");
     for (c, n) in &by_consumer {
         println!("    {c:<40} {n}");
@@ -155,8 +164,7 @@ fn main() -> Result<()> {
         println!("\n  (no DB_HOST — not probing osm_cache)");
         return Ok(());
     }
-    let keys: Vec<(&str, f64, f64, i64)> = converged
-        .unanswerable
+    let keys: Vec<(&str, f64, f64, i64)> = unanswerable
         .iter()
         .filter(|m| m.what == "reverseGeocode")
         .filter_map(|m| decode(&m.key).map(|(a, o, z)| (consumer(&m.key), a, o, z)))

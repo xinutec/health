@@ -1,7 +1,7 @@
 //! Every corpus grader, over ONE replay of each golden day (#1359).
 //!
 //! ```text
-//!   fixture → trace → converge ─┬→ day      (the TypeScript timeline, state by state)
+//!   fixture → trace → fold ─┬→ day      (the last blessed timeline, state by state)
 //!                               ├→ truth    (confirmed rows, a ratchet)
 //!                               ├→ journeys (the story, a floor)
 //!                               └→ walks    (the walk referee's four axes)
@@ -62,9 +62,9 @@ const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/da
 /// that floor, so a fifth shard buys nothing until `hsmm` is the one that moves.
 ///
 /// ⚠ It was stuck at two because two shards in one process CORRUPTED each
-/// other — `day-shell`'s `osm::TRACE` was a process global and the replays
-/// interleaved (#1560). That is fixed; the trace is thread-local, so shard
-/// count is now a scheduling choice rather than a correctness one.
+/// other — the trace was a process global and the replays interleaved
+/// (#1560). It is a value each replay borrows now, so shard count is a
+/// scheduling choice rather than a correctness one.
 ///
 /// ⚠ The ceiling is MEMORY, not cores. The walk referee is ~1.6 GB per
 /// process, so four is ~6.4 GB of the 32 available, alongside the rest of the
@@ -109,11 +109,11 @@ fn every_golden_day_grades_shard_d() {
 /// travel INSIDE each request. The story fit every number and named the wrong
 /// layer, which is the failure mode this file exists to record.
 ///
-/// The clobbered global was Rust's, in `day-shell`'s `osm::TRACE`. A replay is
+/// The clobbered global was Rust's: the loaded trace. A replay was
 /// `load_trace(day)` then `replay(day)`; run the shards as threads and those
-/// pairs interleave, so one shard replays its day against the other's roads.
-/// `TRACE` is thread-local as of 2026-09-13 and the interleaving cannot happen,
-/// so `cargo test` is sound again and the refusal that stood here is gone.
+/// pairs interleaved, so one shard replayed its day against the other's roads.
+/// The trace is a value the replay is handed now, so `cargo test` is sound and
+/// the refusal that stood here is gone.
 ///
 /// ⚠ `deploy.sh` WAS THE ONLY CALLER THAT RAN THEM THIS WAY, and it produced
 /// FALSE FAILURES for an unknown length of time — it reproduced at `7f5b412`
@@ -193,9 +193,7 @@ fn run(shard: usize, of: usize) {
                 continue;
             }
         };
-        // ⚠ Before the replay, and once for both arms: the matcher reads its
-        // roads out of a day-shell global, so a day that captured nothing must
-        // leave NO trace loaded rather than the PREVIOUS day's roads.
+        // Once for both arms: the trace is read-only and both replays borrow it.
         let traced = match corpus::load_trace(
             GOLDEN,
             name,
@@ -210,12 +208,11 @@ fn run(shard: usize, of: usize) {
                 continue;
             }
         };
-        // ⚠ Leave NO trace loaded rather than the PREVIOUS day's roads.
-        if let Some(w) = walk.as_mut().filter(|_| !traced) {
+        if let Some(w) = walk.as_mut().filter(|_| traced.is_none()) {
             w.no_capture(name);
         }
 
-        let clean = match corpus::replay(name, corpus::with_priors(&fx, None)) {
+        let clean = match corpus::replay(name, corpus::with_priors(&fx, None), traced.as_ref()) {
             Ok(r) => r,
             Err(e) => {
                 failures.push(e);
@@ -228,20 +225,19 @@ fn run(shard: usize, of: usize) {
         // that is this same replay and no second fold is paid.
         let injected_rep = match injected.as_ref() {
             None => None,
-            Some(p) => match corpus::replay(name, corpus::with_priors(&fx, Some(p))) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    failures.push(e);
-                    continue;
+            Some(p) => {
+                match corpus::replay(name, corpus::with_priors(&fx, Some(p)), traced.as_ref()) {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        failures.push(e);
+                        continue;
+                    }
                 }
-            },
+            }
         };
         let priors_arm = injected_rep.as_ref().unwrap_or(&clean);
 
-        // ⚠ `walk` FIRST: it drains day-shell's lookup counters, and they must
-        // be read for the replay that just ran rather than accumulated across
-        // days into a number that cannot be attributed.
-        if let Some(w) = walk.as_mut().filter(|_| traced) {
+        if let Some(w) = walk.as_mut().filter(|_| traced.is_some()) {
             w.grade(name, &clean);
         }
         if !gating_arm {

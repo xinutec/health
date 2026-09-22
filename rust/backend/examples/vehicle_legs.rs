@@ -31,7 +31,6 @@
 //! Exit 2 when the corpus is absent.
 
 use anyhow::{Context, Result};
-use backend::fold_converge::converge;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
 
@@ -66,19 +65,30 @@ fn one(name: &str) -> Result<usize> {
 
     let cap = backend::head::capture(inputs, date, user).context("capture")?;
     let rows = inputs.get("osmRowSet").context("no osmRowSet")?;
-    let mut answerer = RowSetAnswerer::new(rows).context("row set")?;
+    let rows = RowSetAnswerer::new(rows).context("row set")?;
     // ⚠ A FIXTURE WITHOUT TRACE SECTIONS IS UNMEASURED, NOT ZERO, and it must
     // not take the table down with it: some captures predate the sections
     // (2026-08-12), which is a corpus gap rather than a product defect. Saying
     // so per day keeps the population honest — twelve legs is the whole of it,
     // and a day silently missing from the denominator is how a bar gets tuned
     // on less than it claims.
-    if let Err(e) = backend::osm_host::load_trace_value_sections(&fx, &path, true, true, true) {
-        println!("{date}  UNMEASURED — {e}");
-        return Ok(0);
-    }
-
-    let conv = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer).context("converge")?;
+    let trace = match backend::osm_trace::TraceAnswerer::from_fixture(
+        &fx,
+        &path,
+        backend::osm_trace::Sections::ALL,
+    ) {
+        Ok(t) if t.has_walk_capture() => t,
+        Ok(_) => {
+            println!("{date}  UNMEASURED — no walk reads captured");
+            return Ok(0);
+        }
+        Err(e) => {
+            println!("{date}  UNMEASURED — {e}");
+            return Ok(0);
+        }
+    };
+    let mut answerer = backend::lean::Chain(trace, rows);
+    let conv = backend::fold::run_day(&cap, inputs, &mut answerer).context("fold")?;
     let out: Value = serde_json::from_str(&conv.out).context("the fold reply")?;
 
     if std::env::var_os("ALL_MODES").is_some() {

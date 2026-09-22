@@ -1,7 +1,7 @@
 //! The WORLDLINE-FEASIBILITY ceiling over the golden corpus — no Node, no DB.
 //!
 //! ```text
-//!   fixture.inputs → head::capture → converge → states ─┐
+//!   fixture.inputs → head::capture → fold → states ─┐
 //!   fixture.osmTrace.stationsOnLine ────────────────────┴→ feasibility → ceilinggate
 //! ```
 //!
@@ -40,7 +40,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use backend::fold_converge::converge;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
 
@@ -115,11 +114,25 @@ fn no_day_draws_more_impossible_legs_than_its_ceiling() {
                 continue;
             }
         };
-        let mut answerer = RowSetAnswerer::new(rowset).expect("the row set opens");
-        let r = match converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer) {
+        let trace = match backend::osm_trace::TraceAnswerer::from_fixture(
+            &fx,
+            name,
+            backend::osm_trace::Sections::ALL,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                failures.push(format!("{name}: osm trace: {e}"));
+                continue;
+            }
+        };
+        let mut answerer = backend::lean::Chain(
+            trace,
+            RowSetAnswerer::new(rowset).expect("the row set opens"),
+        );
+        let r = match backend::fold::run_day(&cap, inputs, &mut answerer) {
             Ok(r) => r,
             Err(e) => {
-                failures.push(format!("{name}: converge: {e:#}"));
+                failures.push(format!("{name}: fold: {e:#}"));
                 continue;
             }
         };

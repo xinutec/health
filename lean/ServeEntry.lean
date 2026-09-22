@@ -1,18 +1,15 @@
 import Verified
 import DayEntry
+import BackendEntry
 import Lean.Data.Json
 
 /-!
-# `ServeEntry` — the serve-mode handlers, as a LIBRARY (#982)
+# `ServeEntry` — the mode table `verified_cli serve` dispatches on
 
-Was `Main.lean`. Split so a host process can link these handlers and call them
-in-process, which `Main.lean`'s `main` made impossible: an exe root's `main`
-wins the link in a foreign host silently (#952 — the reason `DayEntry` and
-`BackendEntry` are libraries already).
-
-Nothing here changed but the name of `main`, which is now `cliMain`, and the
-extraction of `dispatch` out of `serveLoop` so callers other than the loop can
-reach the mode table. `verified_cli` behaves exactly as before.
+One NDJSON request per line in, one reply per line out (`serveLoop`), and mid-
+request the day fold may put questions of its own on the same pipe
+(`DayEntry.Host`). The Rust backend keeps one or more of these processes alive
+and every Lean decision it makes crosses here (#1709).
 -/
 
 
@@ -3318,86 +3315,23 @@ def dispatch (j : Json) : Json :=
   | .ok "feasibility" => Feasibility.feasibilityResult j
   | .ok "ceilinggate" => CeilingGate.ceilingGateResult j
   | .ok "ceilingbless" => CeilingGate.ceilingBlessResult j
-  -- Layer 3 for the day mode (#433), the counterpart of `gqdecode`. Runs
-  -- `dayResult`'s parse prefix and stops, so `day − daydecode` is the
-  -- response wire plus the algorithm rather than those plus the decode.
-  | .ok "daydecode" => Day.decodeOnly j
-  -- Layer 2 for the day mode (#433): the whole chain, no row encoding, so
-  -- `day − dayresp` is the response side and `dayresp − daydecode` is the
-  -- algorithm. Its counts are cross-checked against the `day` reply.
-  | .ok "dayresp" => Day.chainNoEncode j
-  -- Ablation mode (#405): accept the request, do nothing, reply empty.
-  -- The payload is still shipped across the SharedArrayBuffer and still
-  -- parsed by `Json.parse line` above — only the ALGORITHM is skipped.
-  -- So a `noop` round trip is the floor every tenant pays for consulting
-  -- Lean at all, and `real − noop` is what the verified code itself costs.
-  --
-  -- This exists because the arm ratios (#404) run inverse to how much
-  -- work the call does — gpsquality is 213x with a 0.05 ms TS arm — which
-  -- says the numbers are measuring the crossing, not the core. That is a
-  -- claim about the staging mechanism, and it has to be measured rather
-  -- than argued: under the Rust-shell architecture there is no crossing,
-  -- so anything below this floor is not a cost the verified core has.
-  | .ok "noop" => Json.mkObj []
-  -- The other half of the ablation. `noop` returns `{}`, so it measures
-  -- only the REQUEST side — the response encode (`resp.compress` below)
-  -- and the caller's `JSON.parse` of it are transport too, and charging
-  -- them to the algorithm would understate the floor. `echo` ships the
-  -- input rows straight back, so a real-sized response crosses the wire
-  -- with no computation behind it.
-  --
-  -- Neither bounds the floor alone: `noop` is a floor for tenants whose
-  -- reply is small (geo returns keep-indices), `echo` is the honest model
-  -- for tenants whose reply is the rows (gpsquality returns a subset of
-  -- its input). Read them as a bracket, not as one number.
-  | .ok "echo" =>
-    match j.getObjVal? "pts" with
-    | .ok pts => Json.mkObj [("pts", pts)]
-    | .error _ => Json.mkObj []
-  -- The third layer. `noop`/`echo` leave the payload as generic `Json`;
-  -- the real handler must still turn it into `GpsPoint`s, which for this
-  -- tenant means a decimal-string → UInt64 → Float parse PER COORDINATE
-  -- (see `fBits`/`parseKalmanPt`). That decode exists only because the
-  -- two arms live in different processes — under a Rust shell the points
-  -- are already in memory — so charging it to the verified algorithm
-  -- would overstate what the algorithm costs.
-  --
-  -- Runs exactly `gpsQualityResult`'s parse and then stops, so
-  -- `real − gqdecode` is the filter itself plus its response encode.
-  | .ok "gqdecode" =>
-    match (do
-      let pts ← (← (← j.getObjVal? "pts").getArr?).mapM parseKalmanPt
-      return pts.size : Except String Nat) with
-    | .ok n => Json.mkObj [("n", Lean.toJson n)]
-    | .error e => Json.mkObj [("error", Json.str e)]
+  -- The backend's decision table (`Verified.Sync`, `Verified.Session`, …),
+  -- keyed on `op`. One process serves both tables so the host has one pipe to
+  -- keep alive. ⚠ The payload rides under `req`, not merged into this object:
+  -- some ops carry a `mode` of their own (`mayRebuild`'s is `bus`/`rail`), and
+  -- merging would have the routing key overwrite it.
+  | .ok "backend" =>
+    match j.getObjVal? "req" with
+    | .ok r => BackendEntry.dispatch r
+    | .error _ => Json.mkObj [("error", Json.str "backend: no req")]
   | .ok other => Json.mkObj [("error", Json.str s!"unknown mode {other}")]
   | .error _ => Json.mkObj [("error", Json.str "missing mode")]
 
-/-- The C ABI a host links this library for.
-
-Mirrors `health_day_result` in `DayEntry` and `health_backend_call` in
-`BackendEntry`: an owned Lean string in, an owned Lean string out, so the shim
-in `rust/*/src/shim.c` stays the same three functions. The payload is one
-`serve` request — the same object `serveLoop` reads off a line — so a host and
-the subprocess ask the identical question, and any divergence between them is a
-transport bug rather than a difference in what was asked.
-
-⚠ It returns the BODY, not `serveLoop`'s `{"id", "result"}` envelope. That
-envelope correlates replies on one NDJSON pipe; a caller that has just invoked a
-function has nothing to correlate, and handing it back would make every host
-strip a field the transport invented. -/
-@[export health_serve_dispatch]
-def serveDispatchExport (input : String) : String :=
-  match Json.parse input with
-  | .error e => (Json.mkObj [("error", Json.str s!"parse: {e}")]).compress
-  | .ok j => (dispatch j).compress
-
-
 /-- Persistent request loop: one NDJSON request per line
 (`{"id", "mode":"geo|match|rail|hsmm", …}`) → one NDJSON response
-(`{"id", "result": …}`), flushed per line. Lets a long-lived worker serve
-many calls without a process spawn each — the request-path execution
-substrate the TS bridge drives. -/
+(`{"id", "result": …}`), flushed per line. A handler may write `{"ask": …}`
+lines and read the reply off the same stdin before its result goes out
+(`DayEntry.Host`); the host drives both. -/
 private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
   let line ← stdin.getLine
   if line.isEmpty then return  -- EOF: the worker closed our stdin
@@ -3413,15 +3347,8 @@ private partial def serveLoop (stdin stdout : IO.FS.Stream) : IO Unit := do
   stdout.flush
   serveLoop stdin stdout
 
-/-- The `verified_cli` command line, as a plain function.
-
-⚠ NOT called `main`. A `lean_exe`'s root module emits `main`, and an archive
-carrying it wins the link inside a foreign host silently — it builds, runs, and
-answers from the wrong entry point. That is why `DayEntry` and `BackendEntry`
-exist as libraries, and this file is now one for the same reason: every handler
-below was unreachable from Rust purely because it shared a module with `main`.
-
-`Main.lean` is the shim that turns this back into an executable. -/
+/-- The `verified_cli` command line, as a plain function; `Main.lean` is the
+eleven-line shim that turns it into an executable. -/
 def cliMain (args : List String) : IO UInt32 := do
   if args.contains "serve" then
     serveLoop (← IO.getStdin) (← IO.getStdout)

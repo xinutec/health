@@ -18,17 +18,9 @@ COPY lean/ lean/
 # Verified rather than assumed: `.#verified-cli` evaluates AND builds with only
 # `flake.nix`, `flake.lock` and `lean/` in the context.
 RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli
-# rust/ AFTER it: `.#health-bins` takes `src = ./.`, so it needs the Rust tree,
-# and it rebuilds the Lean statics because both `build.rs` files read their link
-# line out of the `.rsp` lake wrote in this tree — which no other derivation
-# exports.
-#
-# ⚠ ONE derivation for BOTH binaries (#1131). Split them and each runs its own
-# `lake build` and its own `cargo build` in a separate sandbox, so the image pays
-# for the Lean statics twice and for the sqlx/tokio/axum dependency compile twice.
-#
-# Ablated on the dev machine: about 40% off this stage. ⚠ Quote the RATIO, not
-# seconds — a CI timing is a different machine and a cold store.
+# rust/ AFTER it: `.#health-bins` takes `src = ./.`, so it needs the Rust
+# tree. Its `build.rs` runs `lake build verified_cli` in this tree too, which is
+# an incremental no-op after the stage above.
 COPY rust/ rust/
 # Both binaries, and their closures copied ONCE as a union.
 #
@@ -41,7 +33,6 @@ RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp
     mkdir -p /export/nix/store /export/bin && \
     cp -a $(nix-store -qR /tmp/vc /tmp/bins) /export/nix/store/ && \
     install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli && \
-    install -m755 /tmp/bins/bin/day-shell /export/bin/day-shell && \
     install -m755 /tmp/bins/bin/backend /export/bin/backend
 
 FROM node:24-alpine AS frontend-build
@@ -62,20 +53,13 @@ WORKDIR /app
 # base image is still node's only because the frontend build stage above uses
 # it; nothing in the running container executes node.
 COPY --from=frontend-build /app/dist/frontend/browser public/
-# The verified decoder + its /nix/store runtime closure.
+# The verified core + its /nix/store runtime closure. `bin/backend` SPAWNS it
+# (`verified_cli serve`, one NDJSON request per line) and every Lean decision
+# crosses that pipe; `VERIFIED_CLI` is how the backend finds it (#1709).
 COPY --from=lean-build /export/nix/store /nix/store/
 COPY --from=lean-build /export/bin/verified_cli lean/verified_cli
-# The day tenant's own binary: `day-shell` serves the `day` mode only, where
-# `verified_cli` answers every mode.
-COPY --from=lean-build /export/bin/day-shell lean/day-shell
-# ⚠ NOTHING IN THE RUNNING CONTAINER SPAWNS EITHER BINARY. They were reached
-# through `ENV LEAN_CLI` / `ENV LEAN_DAY_HOST`, deleted with the rest of the
-# dead `LEAN_*` flags (#1213) — no Rust or Lean source reads a `LEAN_*`
-# variable. The Lean the server actually runs is STATICALLY LINKED into
-# `bin/backend` by `rust/backend/build.rs`, which parses lake's own
-# `verified_cli.rsp` for the link line. These two are kept as a hand-run
-# oracle, not as a serving path.
-# The Rust+Lean HTTP server (#982), and the ONLY server — there is no
+ENV VERIFIED_CLI=/app/lean/verified_cli
+# The Rust HTTP server (#982), and the ONLY server — there is no
 # `dist/server.js` beside it, so a rollback means building one first.
 COPY --from=lean-build /export/bin/backend bin/backend
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale

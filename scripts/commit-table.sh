@@ -16,7 +16,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # Names, exactly as gate.dhall spells them.
 DEPLOY_ONLY=(
-	"the in-process Rust host agrees with the spawned CLI"
 	"reset the mode trace"
 	"corpus replay gates (release)"
 	"every dispatched Lean mode is executed by something"

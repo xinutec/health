@@ -1,11 +1,11 @@
 //! A WHOLE DAY with no Node and no database, against the last blessed timeline.
 //!
 //! ```text
-//!   fixture.inputs → head::capture → build_day_request → converge → states
+//!   fixture.inputs → head::capture → build_day_request → fold → states
 //! ```
 //!
-//! ⚠ `converge` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that nothing
-//! in this repo could produce until `head::capture` did. That is what closes
+//! ⚠ `build_day_request` and `RowSetAnswerer` read a `FOLD_CAPTURE` shape that
+//! nothing in this repo could produce until `head::capture` did. That is what closes
 //! the chain: a day replays from the fixture alone, with no external producer
 //! (#982).
 //!
@@ -155,7 +155,7 @@ pub struct Day {
     divergent: Vec<String>,
     agreed: usize,
     graded: usize,
-    deepest: u32,
+    asks: usize,
 }
 
 impl Day {
@@ -170,7 +170,7 @@ impl Day {
             divergent: Vec::new(),
             agreed: 0,
             graded: 0,
-            deepest: 0,
+            asks: 0,
         }
     }
 
@@ -192,7 +192,7 @@ impl Day {
             ));
             return;
         };
-        self.deepest = self.deepest.max(rep.rounds);
+        self.asks = self.asks.max(rep.asks.len());
 
         // ⚠ THE ONLY ACCEPTED RESIDUE. The fold asks `bestPlace` once before
         // `tzAt` has resolved the stay's zone and again after; the blank-zone
@@ -203,8 +203,16 @@ impl Day {
         // was built from a default for a question the day really asked, and
         // matching `statesOut` anyway would be luck rather than agreement.
         let mut n = 0usize;
-        for m in &rep.unanswerable {
+        for m in &rep.declined() {
             if m.what == "bestPlace" && m.key.ends_with('|') {
+                continue;
+            }
+            // The three matcher reads are asks too since #1709, and a trace
+            // that lacks one key declines it — which the WALK gate counts and
+            // bounds (`missed * 4 < asked`). Here it is not a default the
+            // timeline was built from: the leg draws raw, which is what the
+            // blessed timeline was built from as well.
+            if backend::fold::OSM_READS.contains(&m.what.as_str()) {
                 continue;
             }
             if UNANSWERED_KINDS.contains(&m.what.as_str()) {
@@ -323,10 +331,10 @@ impl Day {
         let mut out = Vec::new();
         if !self.failures.is_empty() {
             out.push(format!(
-                "day: {}/{} days replay to the blessed timeline (deepest walk {} rounds).\n{}",
+                "day: {}/{} days replay to the blessed timeline (most asks in a day: {}).\n{}",
                 self.agreed,
                 self.graded,
-                self.deepest,
+                self.asks,
                 self.failures.join("\n")
             ));
             return out;
@@ -339,12 +347,12 @@ impl Day {
         }
         eprintln!(
             "day: {}/{} days replay to the blessed timeline; {} known-divergent (#1054); \
-             {} key(s) unanswered; deepest walk {} rounds",
+             {} key(s) declined; most asks in a day: {}",
             self.agreed,
             self.graded,
             self.divergent.len(),
             self.unanswered.len(),
-            self.deepest
+            self.asks
         );
         out
     }

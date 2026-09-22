@@ -571,10 +571,8 @@ fn parse_input_fix(v: &Value) -> Option<Fix> {
 /// `expected.statesOut`, so the capture and the encoding are checked together
 /// rather than separately.
 ///
-/// Only the fields the fold reads are produced: `segsRaw`, `modeStats`, `obs`,
-/// `tail`, and the two answer tables, which start empty because a serving
-/// caller has no recorded trace to seed them from — the converge loop fills
-/// them by asking. ⚠ Nothing downstream of `build_day_request` reads the
+/// Only the fields the fold reads are produced: `segsRaw`, `modeStats`, `obs`
+/// and `tail`. ⚠ Nothing downstream of `build_day_request` reads the
 /// capture's other keys — they are intermediate boundaries kept for the day
 /// gate, not inputs.
 ///

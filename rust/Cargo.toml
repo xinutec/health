@@ -1,13 +1,8 @@
-# The in-process host for the Lean day fold (#952).
-#
-# IN-PROCESS because `PassFold.Env`'s `walkEnv`/`roadEnv` are CALLBACKS the fold
-# generates mid-run, and a spawned pure function cannot answer a question it invents
-# while running. That is what makes the shells fillable at all.
-#
-# ⚠ The solvers stay in Lean (`Verified.Geo.Match`, `WalkSmooth`, `WalkEscape`).
-# Rust takes only what proof would not help: the process, the lookups, the IO.
+# One crate: the backend. The Lean side is a process it spawns (`lean_worker`),
+# not a library it links — the solvers stay in Lean and Rust takes only what
+# proof would not help: the process, the lookups, the IO.
 [workspace]
-members = ["backend", "day-shell"]
+members = ["backend"]
 resolver = "2"
 
 # ⚠ THE EDITION LIVES HERE, not in the members: a copied manifest then carries
@@ -38,10 +33,10 @@ debug = "line-tables-only"
 
 # The fleet's `[lints]` baseline (dev-lint docs/standards.md §7): every member
 # takes it with `lints.workspace = true`, so clippy is no weaker here than
-# anywhere else. `deny`, not `forbid`, for unsafe: the Lean host is reached over FFI,
-# and edition 2024 makes env::set_var one
-# — each such module carries an `#![expect(unsafe_code, reason)]` at its top,
-# the ledgered shape (standards.md §3), so a new one is a visible edit.
+# anywhere else. `deny`, not `forbid`, for unsafe: edition 2024 makes
+# env::set_var one — each such module carries an `#![expect(unsafe_code,
+# reason)]` at its top, the ledgered shape (standards.md §3), so a new one is a
+# visible edit.
 [workspace.lints.rust]
 unsafe_code = "deny"
 

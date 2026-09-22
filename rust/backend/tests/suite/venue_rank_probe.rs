@@ -7,8 +7,8 @@
 //! artefact is worth nothing. The mode has to stay reachable for the next such
 //! question, so it ships with this.
 //!
-//! ⚠ `rankvenues` is registered in BOTH dispatch surfaces — `result` (the
-//! in-process host and `serve`) and `cliMain` (argv). Registering only the
+//! ⚠ `rankvenues` is registered in BOTH dispatch surfaces — `dispatch`
+//! (`serve`) and `cliMain` (argv). Registering only the
 //! first is how the first run of this probe failed: argv fell through to the
 //! HSMM model parser, which asks for property `T`, and the error named a field
 //! this mode has never heard of.

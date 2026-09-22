@@ -1,7 +1,7 @@
 //! The provenance-aware TRUTH gate over the golden corpus — no Node, no database.
 //!
 //! ```text
-//!   fixture.inputs → head::capture → converge → states ─┐
+//!   fixture.inputs → head::capture → fold → states ─┐
 //!   ground-truth/<date>.md → Lean parse → tz resolve ───┴→ truthcheck → floorgate
 //! ```
 //!

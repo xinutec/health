@@ -18,18 +18,17 @@
 
 use std::path::Path;
 
-use backend::fold_converge::Answerer;
-use backend::lean::Miss;
+use backend::lean::Answerer;
+use backend::lean::Ask;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
 
 /// The unfiltered answer, computed the slow way this test exists to replace.
-fn unfiltered(row_set: &Value, miss: &Miss) -> Value {
+fn unfiltered(row_set: &Value, miss: &Ask) -> Value {
     let mut slow = RowSetAnswerer::new_unfiltered(row_set).expect("row set");
     slow.answer(miss)
         .expect("answers")
         .expect("nearbyWays is answerable")
-        .1
 }
 
 #[test]
@@ -76,7 +75,7 @@ fn the_prefilter_changes_no_answer() {
             let (Ok(la), Ok(lo)) = (la.parse::<f64>(), lo.parse::<f64>()) else {
                 continue;
             };
-            let miss = Miss {
+            let miss = Ask {
                 what: "nearbyWays".to_string(),
                 key: format!("{}|{}", la.to_bits(), lo.to_bits()),
             };
@@ -85,8 +84,7 @@ fn the_prefilter_changes_no_answer() {
             let got = fast
                 .answer(&miss)
                 .expect("answers")
-                .expect("nearbyWays is answerable")
-                .1;
+                .expect("nearbyWays is answerable");
             assert_eq!(
                 got,
                 unfiltered(rs, &miss),

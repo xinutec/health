@@ -60,20 +60,10 @@
           '';
         };
 
-        # BOTH production Rust binaries, in ONE derivation (#1131).
-        #
-        # ⚠ Split them and each runs its own `lake build` and `cargo build` in its
-        # own sandbox, so the image pays for the Lean statics and the sqlx/tokio/axum
-        # dependency compile TWICE — about 40% more, measured by ablation on a warm
-        # store. Quote the RATIO, not seconds: CI is a colder, slower machine.
-        #
-        # ⚠ `backend`'s static set is a SUPERSET of day-shell's, so one `lake build`
-        # of the larger set serves both. A missing static is a LINK error, which is
-        # the good direction but only because they are all named here.
-        #
-        # ⚠ The Lean build must happen IN THIS TREE and cannot come from
-        # `verified-cli`: both `build.rs` files read their link line out of the
-        # `verified_cli.rsp` lake wrote, and `verified-cli` exports the binary alone.
+        # The production Rust binary. It does not link Lean: it spawns the
+        # `verified_cli` the image carries beside it (`rust/backend/src/lean_worker.rs`),
+        # so the `lake build` below exists only because `build.rs` runs one to keep
+        # a dev tree honest — an incremental no-op here.
         health-bins = pkgs.stdenv.mkDerivation (finalAttrs: {
           name = "health-bins";
           src = ./.;
@@ -93,16 +83,11 @@
           ];
           buildPhase = ''
             export HOME=$TMPDIR
-            (cd lean && lake build verified_cli BackendEntry:static ServeEntry:static DayEntry:static Verified:static)
-            # ⚠ Both selectors in ONE invocation, so the shared dependency graph
-            # compiles once into one target directory. Two `cargo build` calls
-            # here would still share the directory and be nearly as good, but
-            # this also lets cargo schedule both crates' codegen together.
-            (cd rust && cargo build --release --offline -p day-shell -p backend)
+            (cd lean && lake build verified_cli)
+            (cd rust && cargo build --release --offline -p backend)
           '';
           installPhase = ''
             mkdir -p $out/bin
-            cp rust/target/release/day-shell $out/bin/
             cp rust/target/release/backend $out/bin/
           '';
         });

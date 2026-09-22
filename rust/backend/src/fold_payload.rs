@@ -1,10 +1,11 @@
-//! The day fold's wire encoding — port of `src/lean/fold-payload.ts` (#982).
+//! The day fold's wire encoding.
 //!
-//! The fold takes one JSON object and the pipeline builds it. Under
-//! `LEAN_DAY=solo` — which the decode CronJob runs — this encoding IS the
-//! interface between the TypeScript pipeline and the verified core, so a Rust
-//! host that gets it wrong asks a different question and gets a confidently
-//! wrong day rather than an error.
+//! The fold takes one JSON object and the pipeline builds it. This encoding IS
+//! the interface between the pipeline and the verified core, so a host that
+//! gets it wrong asks a different question and gets a confidently wrong day
+//! rather than an error. The lookup tables that used to ride in it are gone
+//! (#1709): the fold asks for those, and `lookup_rows` below turns a fixture's
+//! recorded trace into the rows it will be answered with.
 //!
 //! # Floats cross as their BIT PATTERN, and that is the point
 //!
@@ -739,13 +740,51 @@ fn list_of<F: Fn(&Map<String, Value>) -> Value>(v: &Value, f: F) -> Value {
     arr_map(Some(v), f)
 }
 
-/// The seven recorded-answer tables the fold consults.
+/// A fixture's recorded trace as `(table, key, row)` triples — the rows the
+/// fold's asks are answered with, keyed as the fold spells the ask.
 ///
-/// ⚠ These are ANSWER TABLES, not inputs. A key the fold asks for and does not
-/// find is a MISS: `DayEntry`'s `hit` panics, names the key, and the round's
-/// output is poisoned — which is how the converge loop discovers what to answer
-/// next. So a table that is subtly mis-keyed does not fail here; it fails as an
-/// extra round, or as a day that never converges.
+/// The row shapes are the ones `DayEntry`'s `entry2`/`entry3`/… parsers read,
+/// and the key is derived FROM the row so the two cannot disagree: three-key
+/// tables spell `row[0]|row[1]|row[2]`, two-key tables `row[0]|row[1]`,
+/// `reverseGeocode` `lat|lon|zoom`, `bestPlace` `lat|lon|start|end|tz`, and
+/// `stationsOnLine` the bare line name.
+pub fn lookup_rows(
+    trace: Option<&Value>,
+    tz_at: Option<&Value>,
+    best: Option<&Value>,
+) -> Result<Vec<(String, String, Value)>> {
+    let tables = encode_lookups(trace, tz_at, best)?;
+    let mut out = Vec::new();
+    let Some(o) = tables.as_object() else {
+        return Ok(out);
+    };
+    for (what, rows) in o {
+        let key_len = match what.as_str() {
+            "nearbyWays" | "tzAt" => 2,
+            "stationsOnLine" => 1,
+            "bestPlace" => 5,
+            _ => 3,
+        };
+        for row in rows.as_array().into_iter().flatten() {
+            let parts: Vec<String> = row
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(key_len)
+                .map(|p| match p {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect();
+            if parts.len() < key_len {
+                anyhow::bail!("{what}: a row shorter than its key: {row}");
+            }
+            out.push((what.clone(), parts.join("|"), row.clone()));
+        }
+    }
+    Ok(out)
+}
+
 pub fn encode_lookups(
     trace: Option<&Value>,
     tz_at: Option<&Value>,
@@ -980,44 +1019,6 @@ pub fn encode_geocode(v: &Value) -> Value {
 /// round-trips through text are exactly where this port already found a
 /// one-ULP disagreement with V8. So a round's answers are appended as the rows
 /// the fold reads, and the loop never converts back.
-#[derive(Debug, Default, Clone)]
-pub struct AnswerTables {
-    rows: std::collections::BTreeMap<String, Vec<Value>>,
-}
-
-impl AnswerTables {
-    /// Append one already-encoded row to a lookup table.
-    pub fn push(&mut self, table: &str, row: Value) {
-        self.rows.entry(table.to_string()).or_default().push(row);
-    }
-
-    /// How many rows have been gathered, across every table.
-    pub fn len(&self) -> usize {
-        self.rows.values().map(Vec::len).sum()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Append these rows onto an encoded `lookups` object.
-    fn merge_into(&self, lookups: &mut Value) {
-        let Some(o) = lookups.as_object_mut() else {
-            return;
-        };
-        for (table, rows) in &self.rows {
-            // ⚠ An unknown table name is created rather than dropped. The fold
-            // reads by name, so a typo here would silently answer nothing —
-            // and the loop would report the same key unanswered forever, which
-            // it treats as a harness fault rather than convergence.
-            let entry = o.entry(table.clone()).or_insert_with(|| json!([]));
-            if let Some(arr) = entry.as_array_mut() {
-                arr.extend(rows.iter().cloned());
-            }
-        }
-    }
-}
-
 /// The whole fold request: `{segsRaw, trace, env}`.
 ///
 /// Port of `buildDayRequest`. The pieces are separately verified against the
@@ -1028,12 +1029,7 @@ impl AnswerTables {
 /// object by name, but the byte-diff against the TypeScript is what makes this
 /// checkable at all, and `preserve_order` means the order written here is the
 /// order emitted. It follows `buildDayRequest`'s.
-pub fn build_day_request(
-    cap: &Value,
-    inputs: &Value,
-    trace: Option<&Value>,
-    extra: &AnswerTables,
-) -> Result<Value> {
+pub fn build_day_request(cap: &Value, inputs: &Value) -> Result<Value> {
     let c = cap.as_object().context("capture is not an object")?;
     let i = inputs.as_object().context("inputs is not an object")?;
 
@@ -1102,10 +1098,6 @@ pub fn build_day_request(
     )? {
         env.insert(k, v);
     }
-    let mut lookups = encode_lookups(trace, c.get("tzAt"), c.get("bestPlace"))?;
-    extra.merge_into(&mut lookups);
-    env.insert("lookups".into(), lookups);
-
     let segs: Vec<Value> = c
         .get("segsRaw")
         .and_then(Value::as_array)

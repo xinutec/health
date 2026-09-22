@@ -1,9 +1,9 @@
-//! Answering the day fold's misses from a pushed row set (#982).
+//! Answering the day fold's asks from a pushed row set (#982).
 //!
-//! The converge loop asks this for a key the fold could not find. Here the
-//! answer is computed from the rows a golden fixture carries, so a whole day
-//! can be walked with no database — which is what makes the port checkable
-//! before any of it runs against production.
+//! The fold asks its host for a key mid-run (#1709); here the answer is
+//! computed from the rows a golden fixture carries, so a whole day can be
+//! folded with no database — which is what makes the port checkable before any
+//! of it runs against production.
 //!
 //! # The scoring is Lean's; this is the fan-out and the wire form
 //!
@@ -33,7 +33,7 @@ use serde_json::{Value, json};
 
 use crate::fitbit::tz_source::PolygonLookup;
 use crate::fold_payload::{bits, default_radius_m};
-use crate::lean::{self, Miss};
+use crate::lean::{self, Ask};
 
 /// Where candidate rows come from, in the positional form `osmspatial` reads.
 ///
@@ -44,7 +44,7 @@ use crate::lean::{self, Miss};
 ///
 /// ⚠ `None` MEANS DECLINE, NOT EMPTY. An empty row list is a real answer — "no
 /// ways within the radius" — and returning one for an unfetched area is a claim
-/// about the world. `converge` already counts a decline; it cannot count a lie.
+/// about the world. The fold counts a decline; it cannot count a lie.
 /// Line rows grouped by the feature bucket they came from.
 ///
 /// ⚠ Named rather than inlined because the pairing is the POINT: the bucket
@@ -55,6 +55,24 @@ use crate::lean::{self, Miss};
 pub type LinesByBucket = Vec<(String, Vec<Value>)>;
 
 pub trait RowSource {
+    /// The walkable ways within a disc, as the fold reads them (`osmId`,
+    /// `name`, `subtype`, `coords` as bit-pattern pairs). `None` declines. A
+    /// row set has no arm for these — a replay answers them from its recorded
+    /// trace — so only the mirror answers.
+    fn walkable_roads(&mut self, _lat: f64, _lon: f64, _radius_m: f64) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    /// As [`walkable_roads`](Self::walkable_roads), for the road matcher.
+    fn drivable_roads(&mut self, _lat: f64, _lon: f64, _radius_m: f64) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Building outlines within a disc, as rings of bit-pattern pairs.
+    fn buildings_near(&mut self, _lat: f64, _lon: f64, _radius_m: f64) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
     /// Line rows of one feature bucket near a point.
     fn line_rows(
         &mut self,
@@ -265,7 +283,7 @@ impl<S: RowSource> OsmAnswerer<S> {
     /// no stations. Flattening the first into the second would say a real line
     /// has no stations, and every place would stop being near it.
     pub fn stations_serving(&mut self, line: &str) -> Result<Option<Vec<Value>>> {
-        let Some((_, answer)) = self.stations_on_line(line)? else {
+        let Some(answer) = self.stations_on_line(line)? else {
             return Ok(None);
         };
         Ok(Some(
@@ -603,25 +621,25 @@ impl<S: RowSource> OsmAnswerer<S> {
     /// a junction curve — because "no way of this name" really is "no stations
     /// on it". Declining would leave the fold asking forever for a line that
     /// genuinely has none.
-    fn stations_on_line(&mut self, line: &str) -> Result<Option<(String, Value)>> {
+    fn stations_on_line(&mut self, line: &str) -> Result<Option<Value>> {
         let Some(all_names) = self.source.rail_line_names()? else {
             return Ok(None);
         };
         let matched = crate::lean::line_names_matching(line, &all_names)?;
         if matched.is_empty() {
-            return Ok(Some(("stationsOnLine".into(), json!([line, []]))));
+            return Ok(Some(json!([line, []])));
         }
         let Some(ways) = self.source.rail_ways_named(&matched)? else {
             return Ok(None);
         };
         if ways.is_empty() {
-            return Ok(Some(("stationsOnLine".into(), json!([line, []]))));
+            return Ok(Some(json!([line, []])));
         }
         let Some(stations) = self.source.rail_stations()? else {
             return Ok(None);
         };
         let served = crate::lean::filter_stations_by_line_proximity(&stations, &ways)?;
-        Ok(Some(("stationsOnLine".into(), json!([line, served]))))
+        Ok(Some(json!([line, served])))
     }
 }
 
@@ -784,14 +802,32 @@ fn key_parts(key: &str) -> Vec<&str> {
     key.split('|').filter(|s| !s.is_empty()).collect()
 }
 
-impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
-    fn answer(&mut self, miss: &Miss) -> Result<Option<(String, Value)>> {
+impl<S: RowSource> crate::lean::Answerer for OsmAnswerer<S> {
+    fn answer(&mut self, miss: &Ask) -> Result<Option<Value>> {
         // ⚠ BEFORE the coordinate-key guard. `stationsOnLine` is keyed by a bare
         // LINE NAME, so it has no `|` and never survives `key_parts` — which is
         // exactly how it went unanswered 13 times a day while every other table
         // was wired (#1075).
         if miss.what == "stationsOnLine" {
             return self.stations_on_line(&miss.key);
+        }
+        // The three matcher reads, keyed `latBits|lonBits|radiusBits`. A row
+        // set carries no arm for them — a replay answers them from the recorded
+        // trace — so only a source that implements them (the mirror) does.
+        if crate::fold::OSM_READS.contains(&miss.what.as_str()) {
+            let p = key_parts(&miss.key);
+            let (Some(lat), Some(lon), Some(r)) = (
+                p.first().map(|s| radius_of(s)),
+                p.get(1).map(|s| radius_of(s)),
+                p.get(2).map(|s| radius_of(s)),
+            ) else {
+                return Ok(None);
+            };
+            return match miss.what.as_str() {
+                "walkableRoads" => self.source.walkable_roads(lat, lon, r),
+                "drivableRoads" => self.source.drivable_roads(lat, lon, r),
+                _ => self.source.buildings_near(lat, lon, r),
+            };
         }
         let p = key_parts(&miss.key);
         if p.len() < 2 {
@@ -822,10 +858,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 let Some(ways) = nearby_ways(&mut self.source, flat, flon)? else {
                     return Ok(None);
                 };
-                Ok(Some((
-                    "nearbyWays".into(),
-                    json!([lat, lon, Value::Array(ways)]),
-                )))
+                Ok(Some(json!([lat, lon, Value::Array(ways)])))
             }
 
             // Complete in Lean end to end: `NearbyStation` already carries the
@@ -840,7 +873,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 };
                 let v = spatial("nearbyStations", lat, lon, r, rows)?;
                 let rows = v.get("rows").cloned().unwrap_or_else(|| json!([]));
-                Ok(Some(("nearbyStations".into(), json!([lat, lon, r, rows]))))
+                Ok(Some(json!([lat, lon, r, rows])))
             }
 
             "linesAtPoint" => {
@@ -850,7 +883,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 };
                 let v = spatial("linesAtPoint", lat, lon, r, rows)?;
                 let names = v.get("names").cloned().unwrap_or_else(|| json!([]));
-                Ok(Some(("linesAtPoint".into(), json!([lat, lon, r, names]))))
+                Ok(Some(json!([lat, lon, r, names])))
             }
 
             // The venue-local zone at a coordinate. Not in the row set at all —
@@ -865,7 +898,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
             "tzAt" => {
                 let finder = self.zones.get_or_insert_with(PolygonLookup::new);
                 match finder.zone(flat, flon) {
-                    Some(tz) => Ok(Some(("tzAt".into(), json!([lat, lon, tz])))),
+                    Some(tz) => Ok(Some(json!([lat, lon, tz]))),
                     None => Ok(None),
                 }
             }
@@ -898,21 +931,18 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 }
                 let samples = crate::timezone::local_stay_samples(start, end, tz)?;
                 let hour = crate::timezone::local_hour_of((start + end) / 2, tz)?;
-                Ok(Some((
-                    "bestPlace".into(),
-                    json!([
-                        lat,
-                        lon,
-                        start,
-                        end,
-                        tz,
-                        samples
-                            .iter()
-                            .map(|(d, m)| json!([d, m]))
-                            .collect::<Vec<_>>(),
-                        hour
-                    ]),
-                )))
+                Ok(Some(json!([
+                    lat,
+                    lon,
+                    start,
+                    end,
+                    tz,
+                    samples
+                        .iter()
+                        .map(|(d, m)| json!([d, m]))
+                        .collect::<Vec<_>>(),
+                    hour
+                ])))
             }
 
             // Venues near a stay — what names a timeline entry after the place
@@ -947,10 +977,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 // ask at a non-default radius is answered at that radius rather
                 // than silently at 100 m.
                 let key_radius = p.get(2).map_or_else(|| r.clone(), |s| (*s).to_string());
-                Ok(Some((
-                    "nearbyLandmarks".into(),
-                    json!([lat, lon, key_radius, shaped]),
-                )))
+                Ok(Some(json!([lat, lon, key_radius, shaped])))
             }
 
             // Bus stops, tram stops and station entrances near a dwell — the
@@ -969,10 +996,7 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                     return Ok(None);
                 };
                 let key_radius = p.get(2).map_or_else(|| bits(radius), |s| (*s).to_string());
-                Ok(Some((
-                    "transitStops".into(),
-                    json!([lat, lon, key_radius, shaped]),
-                )))
+                Ok(Some(json!([lat, lon, key_radius, shaped])))
             }
 
             // ⚠ NOT COMPUTED FROM ROWS, and the arm exists anyway. `RowSource`
@@ -996,10 +1020,12 @@ impl<S: RowSource> crate::fold_converge::Answerer for OsmAnswerer<S> {
                 let Some(found) = self.source.geocode(flat, flon, zoom)? else {
                     return Ok(None);
                 };
-                Ok(Some((
-                    "reverseGeocode".into(),
-                    json!([lat, lon, zoom, crate::fold_payload::encode_geocode(&found)]),
-                )))
+                Ok(Some(json!([
+                    lat,
+                    lon,
+                    zoom,
+                    crate::fold_payload::encode_geocode(&found)
+                ])))
             }
 
             // ⚠ EVERYTHING ELSE IS DECLINED, and the reasons are NOT the same.

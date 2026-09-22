@@ -18,14 +18,13 @@
 //! each ARM it needs: one when `VENUE_PRIORS_FILE` is unset (every grader wants
 //! the fixture's own blob, so they share it), two when it is set.
 //!
-//! ⚠ **THE TRACE IS LOADED ONCE PER DAY, BEFORE ANY ARM.** It lives in a
-//! day-shell global, so loading it per replay would pay the parse twice for
-//! nothing. `load_trace` is separate from `replay` for that reason, not by
+//! ⚠ **THE TRACE IS INDEXED ONCE PER DAY, BEFORE ANY ARM,** and both arms
+//! borrow it. `load_trace` is separate from `replay` for that reason, not by
 //! accident.
 
 use serde_json::Value;
 
-use backend::fold_converge::converge;
+use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 
 pub mod day;
@@ -47,11 +46,33 @@ pub struct Replay {
     pub out: Value,
     /// The day request the fold was driven with; `walk` reads raw fixes out of it.
     pub request: Value,
-    /// Converge rounds, which `day` reports.
-    pub rounds: u32,
-    /// Keys no answerer could supply — `day` names them. `Miss`, not a rendered
-    /// string: the table and the key parts are what a caller reports.
-    pub unanswerable: Vec<backend::lean::Miss>,
+    /// Every ask the fold made, with whether it was answered. `day` names the
+    /// declined ones; `walk` counts the three matcher reads.
+    pub asks: Vec<(backend::lean::Ask, bool)>,
+}
+
+impl Replay {
+    pub fn declined(&self) -> Vec<backend::lean::Ask> {
+        self.asks
+            .iter()
+            .filter(|(_, ok)| !ok)
+            .map(|(a, _)| a.clone())
+            .collect()
+    }
+
+    /// `(answered, declined)` over `walkableRoads`, `buildingsNear`,
+    /// `drivableRoads`.
+    pub fn osm_counts(&self) -> (u64, u64) {
+        backend::fold::OSM_READS.iter().fold((0, 0), |(h, m), w| {
+            self.asks
+                .iter()
+                .filter(|(a, _)| a.what == *w)
+                .fold(
+                    (h, m),
+                    |(h, m), (_, ok)| if *ok { (h + 1, m) } else { (h, m + 1) },
+                )
+        })
+    }
 }
 
 /// Every golden day, sorted.
@@ -132,23 +153,21 @@ pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
     fx
 }
 
-/// Load the day's walkable roads, buildings and drivable ways into day-shell's
-/// global, so the fold's walk pass runs the way production runs it.
+/// Index the day's recorded walkable roads, buildings and drivable ways, so the
+/// fold's walk pass runs the way production runs it.
 ///
-/// ⚠ **WITHOUT A TRACE THE WALK PASS DOES NOT RUN** (#1418). The matcher reads
-/// its roads through day-shell's `walkableRoads` callback, which answers EMPTY
-/// unless one is loaded — and on empty `annotateWalkMatches` bails per leg, so
-/// the raw drawing survives looking exactly like a leg the matcher considered
-/// and left alone.
+/// ⚠ **WITHOUT A TRACE THE WALK PASS DOES NOT RUN** (#1418). The matcher's
+/// `walkableRoads` ask is DECLINED unless a trace answers it — and on a decline
+/// `annotateWalkMatches` bails per leg, so the raw drawing survives looking
+/// exactly like a leg the matcher considered and left alone.
 ///
 /// ⚠ **PRESENCE OF THE KEY IS NOT PRESENCE OF A TRACE.** 2026-08-12 carries all
 /// three sections as EMPTY OBJECTS; a key-presence check calls that capturable
 /// and the loader then refuses it, which cost a 9-minute run to find out. Count
 /// the entries.
 ///
-/// `Ok(false)` means the fixture captured nothing to load, and the caller must
-/// record that day as unmeasured for walks rather than grading it against the
-/// PREVIOUS day's roads.
+/// `Ok(None)` means the fixture captured no walk read, and the caller must
+/// record that day as unmeasured for walks.
 pub fn load_trace(
     golden: &str,
     name: &str,
@@ -156,67 +175,36 @@ pub fn load_trace(
     walkable: bool,
     buildings: bool,
     drivable: bool,
-) -> Result<bool, String> {
-    let section = |k: &str| {
-        fx.pointer(&format!("/inputs/osmTrace/{k}"))
-            .and_then(Value::as_object)
-            .map_or(0, serde_json::Map::len)
-    };
-    if section("walkableRoads") + section("buildingsNear") == 0 {
-        return Ok(false);
-    }
-    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN (#1501) — AND THE
-    // REFEREE NOW KNOWS THAT, so this no longer refuses the fixture.
-    //
-    // It used to be fatal, and rightly: `offPathBuildingCrossingM` reads 0.0
-    // both when a line crosses no wall and when the mirror had no walls to
-    // check it against, and the referee drew that distinction only per DAY
-    // (`offPathM` was `none` when the whole day's buildings were empty) while
-    // coverage varies per LOCATION. A day with SOME outlines scored every leg,
-    // including legs over ground nothing was ever fetched for.
-    //
-    // 2026-09-06 (Watford) fired it — three of four `buildingsNear` keys
-    // answered, one did not — and the fix it named is now built: the walk gate
-    // computes coverage per LEG from the keyed section and the referee returns
-    // `none` for a leg no key reaches (`WalkIn.buildingsMeasured`).
-    //
-    // ⚠ IT FOUND MORE THAN THE DAY IT FIRED ON. Three legs already in the
-    // corpus were scoring a fabricated 0.0: 2026-05-22 has EIGHT walking legs
-    // and SIX `buildingsNear` keys, because buildings are only asked when a
-    // leg's ways come back non-empty — so two legs were graded against 4,191
-    // outlines fetched elsewhere that day. Both of the corpus's real non-zero
-    // wall defects keep their metric.
-    //
-    // What replaces the refusal is the REPORT: `walks:` prints the measured /
-    // unmeasured tally and names each unmeasured leg on every run. That is the
-    // half a refusal could never give — a count that speaks when everything is
-    // fine is the only kind that can show the check itself breaking.
-
+) -> Result<Option<TraceAnswerer>, String> {
     // ⚠ REFUSE A FIXTURE CAPTURED UNDER CONSTANTS THIS BUILD NO LONGER USES.
-    // The margin and the candidate limit are applied AFTER the trace key is
+    // The margin and the candidate limit are applied AFTER the ask key is
     // formed, so moving one changes production and changes nothing any fixture
     // answers — the gate stays green while the served day differs (#1071), and
     // #328 is the same fault from the other side. Absent stamp is not a
     // mismatch: the 42 fixtures predating this carry none.
-    backend::osm_host::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
+    backend::osm_trace::check_capture_inputs(&fx["meta"]).map_err(|e| format!("{name}: {e}"))?;
 
-    // ⚠ FROM `fx`, NOT FROM THE PATH. The path form re-reads and re-parses the
-    // fixture this function was already handed — 370 MiB and 470 ms on a 28 MB
-    // golden day, per day, in a gate that walks 42 of them (#1654).
-    backend::osm_host::load_trace_value_sections(
+    let trace = TraceAnswerer::from_fixture(
         fx,
         &format!("{golden}/{name}"),
-        walkable,
-        buildings,
-        drivable,
+        Sections {
+            walkable,
+            buildings,
+            drivable,
+        },
     )
     .map_err(|e| format!("{name}: osm trace: {e}"))?;
-    Ok(true)
+    // ⚠ AN EMPTY BUILDING ANSWER IS UNMEASURED, NOT CLEAN (#1501), and the
+    // referee knows that per LEG (`WalkIn.buildingsMeasured`), so a partial
+    // capture is answered as far as it goes rather than refused. What replaces
+    // a refusal is the REPORT: `walks:` prints the measured / unmeasured tally
+    // and names each unmeasured leg on every run.
+    Ok(trace.has_walk_capture().then_some(trace))
 }
 
 /// Replay one already-parsed fixture. `Err` carries a message already prefixed
 /// with `name`, which is the shape every caller's `failures` vector wants.
-pub fn replay(name: &str, fx: Value) -> Result<Replay, String> {
+pub fn replay(name: &str, fx: Value, trace: Option<&TraceAnswerer>) -> Result<Replay, String> {
     let (date, user) = (&name[..10], name[11..].trim_end_matches(".json"));
 
     let inputs = &fx["inputs"];
@@ -225,19 +213,36 @@ pub fn replay(name: &str, fx: Value) -> Result<Replay, String> {
         .ok_or_else(|| format!("{name}: no osmRowSet to answer from"))?;
     let cap =
         backend::head::capture(inputs, date, user).map_err(|e| format!("{name}: head: {e:#}"))?;
-    let mut answerer =
-        RowSetAnswerer::new(rowset).map_err(|e| format!("{name}: row set: {e:#}"))?;
+    let rows = RowSetAnswerer::new(rowset).map_err(|e| format!("{name}: row set: {e:#}"))?;
 
-    let r = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer)
-        .map_err(|e| format!("{name}: converge: {e:#}"))?;
+    // The trace first — the answers the day was blessed on — and the row set
+    // for what it does not hold. No trace loaded means the seven answerer
+    // tables still come from the trace sections the fixture carries, if any;
+    // only the three matcher reads are withheld.
+    let r = match trace {
+        Some(t) => backend::fold::run_day(&cap, inputs, &mut backend::lean::Chain(t, rows)),
+        None => {
+            let tables = TraceAnswerer::from_fixture(
+                &fx,
+                name,
+                Sections {
+                    walkable: false,
+                    buildings: false,
+                    drivable: false,
+                },
+            )
+            .map_err(|e| format!("{name}: osm trace: {e}"))?;
+            backend::fold::run_day(&cap, inputs, &mut backend::lean::Chain(tables, rows))
+        }
+    }
+    .map_err(|e| format!("{name}: fold: {e:#}"))?;
     let out: Value =
         serde_json::from_str(&r.out).map_err(|e| format!("{name}: the fold reply: {e}"))?;
     Ok(Replay {
         fx,
         out,
         request: r.request,
-        rounds: r.rounds,
-        unanswerable: r.unanswerable,
+        asks: r.asks,
     })
 }
 
@@ -249,5 +254,5 @@ pub fn replay(name: &str, fx: Value) -> Result<Replay, String> {
 #[allow(dead_code)]
 pub fn replay_own(golden: &str, name: &str, priors: Option<&Value>) -> Result<Replay, String> {
     let fx = read_fixture(golden, name)?;
-    replay(name, with_priors(&fx, priors))
+    replay(name, with_priors(&fx, priors), None)
 }

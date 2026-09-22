@@ -191,20 +191,16 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.23.1",
- "cc",
  "chrono",
  "chrono-tz",
- "day-shell",
  "getrandom 0.4.3",
  "hmac",
- "libc",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
  "subtle",
- "tempfile",
  "thiserror",
  "tokio",
  "tower",
@@ -508,17 +504,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
-]
-
-[[package]]
-name = "day-shell"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "serde_json",
- "sqlx",
- "tokio",
 ]
 
 [[package]]
@@ -2348,7 +2333,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

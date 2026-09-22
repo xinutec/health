@@ -7,7 +7,7 @@
 //!   * whether a share recipient may see this date — `Verified.Share`
 //!   * what to clip off the future — `Verified.Geo.DayState`
 //!   * which train legs want a route fill — `Verified.Geo.RailRouteFill`
-//!   * the day itself — the head, then the fold, then converge.
+//!   * the day itself — the head, then the fold.
 //!
 //! # ⚠ The clip is applied AFTER the cache, per request
 //!
@@ -188,10 +188,7 @@ pub async fn compute_with(
         // accounts of it were all missing; `FOLD_SPLIT` already gates the
         // per-round half of the same picture.
         if std::env::var_os("FOLD_SPLIT").is_some() {
-            eprintln!(
-                "  phase {name}: RSS {} MiB",
-                crate::fold_converge::rss_mib()
-            );
+            eprintln!("  phase {name}: RSS {} MiB", crate::fold::rss_mib());
         }
         phase = std::time::Instant::now();
     };
@@ -209,7 +206,7 @@ pub async fn compute_with(
         Some(&home_tz),
     )
     .await?;
-    // ⚠ CARRIED IN `inputs` rather than through four signatures. `converge` and
+    // ⚠ CARRIED IN `inputs` rather than through four signatures. `run_day` and
     // `build_day_request` are shared with the gates and `decode-day`, and a
     // parameter none of them can answer would have to be given a default at
     // every call site — which is the same field, spelled four times, with four
@@ -232,26 +229,9 @@ pub async fn compute_with(
     mirror_source::take_queries();
     mirror_source::take_db_nanos();
     crate::rowset_answerer::take_lean_nanos();
-    day_shell::mirror::take_refusals();
-    day_shell::mirror::take_fails();
-    day_shell::mirror::take_db_nanos();
     let folded =
-        mirror_source::converge_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
+        mirror_source::fold_from_mirror(st.pool.clone(), cap, inputs.clone(), now_ms).await?;
     let mirror_queries = mirror_source::take_queries();
-    // ⚠ PRINTED, NEVER SHIPPED — see the note on `mark`. The callbacks' YIELD is
-    // the one thing #1071 never counted: rows and the geometry text in them.
-    if std::env::var_os("FOLD_SPLIT").is_some() {
-        let (rows, wkt, distinct) = day_shell::mirror::take_rows();
-        eprintln!(
-            "  mirror yield: {rows} row(s), {} KiB of WKT across {mirror_queries} quer(ies) \
-             — {distinct} DISTINCT way(s)",
-            wkt / 1024
-        );
-    }
-    // ⚠ The two halves of the fold, MEASURED. #1071 batched the queries on the
-    // assumption that round trips dominated and the wall clock barely moved; the
-    // per-query cost it reasoned from had been derived by dividing fold by
-    // query count, which assumes the answer. These say which half is which.
     let db_ms = mirror_source::take_db_nanos() / 1_000_000;
     let lean_ms = crate::rowset_answerer::take_lean_nanos() / 1_000_000;
 
@@ -270,31 +250,15 @@ pub async fn compute_with(
     // trace with no mirror configured, so `pool()` returns before the counter is
     // touched and the count is zero for the wrong reason (#1627). The assertion
     // only means something where a mirror is real, which is here.
-    let refusals = day_shell::mirror::take_refusals();
-    let fails = day_shell::mirror::take_fails();
-    // ⚠ THE OTHER HALF OF THE FOLD'S DATABASE TIME. `db_ms` above is the
-    // ANSWERER's; this is the three `@[extern]` OSM callbacks, which are a
-    // separate path with a separate pool. Reporting only one of them is how
-    // #1632's 26 s stayed unsplit between query and compute.
-    let osm_db_ms = day_shell::mirror::take_db_nanos() / 1_000_000;
-    if refusals > 0 || fails > 0 {
-        eprintln!(
-            "⚠ [{user_id}] {date}: {refusals} mirror read(s) REFUSED, {fails} failed — each answered EMPTY, so walks and drives are drawn RAW"
-        );
-    }
     mark(&mut timing, "fold");
 
-    // ⚠ A day that converged with UNANSWERABLE keys was built from DEFAULTS for
-    // them, and that is not the same day. It is not an error — three tables are
-    // unanswerable by construction (`reverseGeocode`, `nearbyLandmarks`,
-    // `transitStops`) — but it must be visible, because the response looks
-    // identical either way.
-    if !folded.unanswerable.is_empty() {
-        let mut by_table: std::collections::BTreeMap<&str, usize> = Default::default();
-        for m in &folded.unanswerable {
-            *by_table.entry(m.what.as_str()).or_default() += 1;
-        }
-        tracing::info!(date, ?by_table, "day served with unanswered lookups");
+    // ⚠ A day whose asks were DECLINED was built from DEFAULTS for them, and
+    // that is not the same day. It is not an error — unfetched ground declines
+    // by design and is queued for `fetch-osm` — but it must be visible, because
+    // the response looks identical either way.
+    let by_table = folded.declined_by_table();
+    if !by_table.is_empty() {
+        tracing::info!(date, ?by_table, "day served with declined lookups");
     }
 
     let out: Value = serde_json::from_str(&folded.out).context("the fold's answer is not JSON")?;
@@ -362,31 +326,29 @@ pub async fn compute_with(
         // `Battery` is already `(ts, level)` pairs — the chart's own shape.
         "battery": h.battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
         "watchBattery": watch_battery.iter().map(|(ts, l)| json!({ "ts": ts, "level": l })).collect::<Vec<_>>(),
-        // ⚠ The fold's ROUND COUNT rides here too. It is the depth of the
-        // dependency chain among the day's lookups, not a duration, and it is
-        // what distinguishes a slow day from a deep one.
+        // ⚠ The fold's ASK COUNT rides here too: how many lookups the day
+        // made and how many were answered, which is what distinguishes a slow
+        // day from a deep one.
         "timing": timing_with(
-            &timing, folded.rounds, folded.answered, mirror_queries, db_ms, lean_ms, osm_db_ms,
+            &timing, folded.asks.len(), folded.answered(), mirror_queries, db_ms, lean_ms,
         ),
     }))
 }
 
 /// The phase timings plus what the fold cost, as the response carries them.
 ///
-/// ⚠ `rounds` is not a duration. It is the DEPTH of the dependency chain among
-/// the day's lookups — how many times an answer decided the next question — and
-/// it is what tells a slow day from a deep one.
+/// `asks` and `answered` are counts, not durations: how many lookups the day
+/// made, and how many the mirror could answer.
 fn timing_with(
     t: &serde_json::Map<String, Value>,
-    rounds: u32,
+    asks: usize,
     answered: usize,
     mirror_queries: u64,
     db_ms: u64,
     lean_ms: u64,
-    osm_db_ms: u64,
 ) -> Value {
     let mut out = t.clone();
-    out.insert("rounds".into(), json!(rounds));
+    out.insert("asks".into(), json!(asks));
     out.insert("answered".into(), json!(answered));
     // ⚠ The DENOMINATOR for `fold`. Measured from a laptop, that duration is
     // dominated by round trips over an SSH tunnel; with the count beside it the
@@ -397,12 +359,6 @@ fn timing_with(
     // wrong. `fold` minus these two is the fold's own work.
     out.insert("foldDbMs".into(), json!(db_ms));
     out.insert("foldLeanMs".into(), json!(lean_ms));
-    // ⚠ A THIRD SLICE, AND IT IS NOT INSIDE `foldDbMs`. The fold reaches OSM two
-    // ways: the answerer above, and `day_shell::mirror`'s three `@[extern]`
-    // callbacks, which have their own pool and their own clock. Only the first
-    // was ever reported, which is why #1632's walk-matcher cost sat unsplit
-    // between query time and solver time.
-    out.insert("foldOsmDbMs".into(), json!(osm_db_ms));
     Value::Object(out)
 }
 

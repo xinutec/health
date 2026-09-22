@@ -13,7 +13,6 @@
 
 use std::path::Path;
 
-use backend::fold_converge::converge;
 use backend::lean;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
@@ -41,8 +40,14 @@ fn states_of_a_real_day() -> Option<Vec<Value>> {
 
     let cap = backend::head::capture(inputs, &date, &user).ok()?;
     let rows = inputs.get("osmRowSet")?;
-    let mut answerer = RowSetAnswerer::new(rows).ok()?;
-    let r = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer).ok()?;
+    let trace = backend::osm_trace::TraceAnswerer::from_fixture(
+        &fx,
+        &name,
+        backend::osm_trace::Sections::ALL,
+    )
+    .ok()?;
+    let mut answerer = backend::lean::Chain(trace, RowSetAnswerer::new(rows).ok()?);
+    let r = backend::fold::run_day(&cap, inputs, &mut answerer).ok()?;
     let out: Value = serde_json::from_str(&r.out).ok()?;
     Some(out.get("states")?.as_array()?.clone())
 }

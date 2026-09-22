@@ -1397,10 +1397,4 @@ def dispatch (j : Json) : Json :=
     match run with | .ok v => v | .error e => err e
   | some other => err s!"unknown op: {other}"
 
-@[export health_backend_call]
-def backendCallExport (input : String) : String :=
-  match Json.parse input with
-  | .error e => (err s!"parse: {e}").compress
-  | .ok j => (dispatch j).compress
-
 end BackendEntry

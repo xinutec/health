@@ -8,11 +8,11 @@
 //! ⚠ The failure this guards is silent and looks like success. An answerer that
 //! turned "cannot vouch" into an empty row list would answer `nearbyWays` with
 //! "no roads near here" — a CLAIM about the world — and the fold would build a
-//! day on it without one error. `converge` counts a decline; it cannot count a
+//! day on it without one error. The fold counts a decline; it cannot count a
 //! lie. Same shape as #976.
 
-use backend::fold_converge::Answerer;
-use backend::lean::Miss;
+use backend::lean::Answerer;
+use backend::lean::Ask;
 use backend::rowset_answerer::{OsmAnswerer, RowSource};
 use serde_json::{Value, json};
 
@@ -141,13 +141,13 @@ impl RowSource for CoveredButEmpty {
 }
 
 /// A coordinate key in the spelling the fold uses: bit patterns joined by `|`.
-fn miss(what: &str, lat: f64, lon: f64, radius: Option<f64>) -> Miss {
+fn miss(what: &str, lat: f64, lon: f64, radius: Option<f64>) -> Ask {
     let mut key = format!("{}|{}", lat.to_bits(), lon.to_bits());
     if let Some(r) = radius {
         key.push('|');
         key.push_str(&r.to_bits().to_string());
     }
-    Miss {
+    Ask {
         what: what.to_string(),
         key,
     }
@@ -203,11 +203,10 @@ fn covered_but_empty_is_an_answer_not_a_decline() {
     // an area that HAS been fetched and genuinely holds no railway is a real,
     // empty answer, and declining it would make the fold re-ask forever.
     let mut a = OsmAnswerer::with_source(CoveredButEmpty);
-    let (table, row) = a
+    let row = a
         .answer(&miss("linesAtPoint", 51.5, -0.1, Some(500.0)))
         .expect("the call succeeds")
         .expect("an empty area is still an answer");
-    assert_eq!(table, "linesAtPoint");
     assert_eq!(
         row.as_array().and_then(|a| a.get(3)),
         Some(&json!([])),
@@ -226,7 +225,7 @@ fn tables_that_need_no_rows_are_unaffected_by_the_source() {
         (-0.1f64).to_bits()
     );
     let got = a
-        .answer(&Miss {
+        .answer(&Ask {
             what: "bestPlace".into(),
             key,
         })

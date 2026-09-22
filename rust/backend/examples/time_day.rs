@@ -25,7 +25,6 @@
 //! ```
 
 use anyhow::{Context, Result};
-use backend::fold_converge::converge;
 use backend::lean;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
@@ -151,86 +150,58 @@ fn main() -> Result<()> {
     let rss_capture = rss_mib();
 
     let t = Instant::now();
-    let mut answerer = RowSetAnswerer::new(rows).context("opening the row set")?;
+    let rows_answerer = RowSetAnswerer::new(rows).context("opening the row set")?;
     let answerer_ms = t.elapsed().as_millis();
     // ⚠ SAMPLED, because it is not free and the phase table hid it: the row set
     // is the fixture's `osmRowSet` (tens of thousands of lines), and indexing it
-    // lands entirely inside what the old table called "converge" (#1071).
-    // FIXTURE-ONLY — production answers from the live mirror and never builds
-    // this — so it is a gate cost (#1654), not a pod one.
+    // is a gate cost (#1654), not a pod one — production answers from the mirror.
     let rss_answerer = rss_mib();
 
-    // ⚠ THE TRACE HAS TO BE INSTALLED, and until 2026-09-18 it was not.
-    // `converge`'s `osmTrace` argument goes into the REQUEST, for the answerer.
-    // The three `@[extern]` callbacks read a separate thread-local that only
-    // `osm_host::load_trace` fills — the two OSM paths this ticket keeps
-    // confusing (#1071). Without it all three answer empty, `annotateWalkMatches`
-    // and the road matcher bail per leg, and this example prints a confident
-    // phase table for a fold whose largest consumer never ran: 37 asks, 37
-    // misses, 0 rows, against 9,029 rows on the same day through the mirror.
+    // The recorded trace: the matcher reads and the seven answerer tables as
+    // the day was blessed on. Without it the three matcher reads decline and
+    // `annotateWalkMatches` bails per leg, so the phase table would describe a
+    // fold whose largest consumer never ran (#1071).
     let t = Instant::now();
-    // ⚠ FROM `fx`, NOT FROM THE PATH — the path form re-parses this same 28 MB
-    // document (370 MiB, 470 ms), which would land inside the numbers below.
-    backend::osm_host::load_trace_value_sections(&fx, &path, true, true, true)
-        .map_err(|e| anyhow::anyhow!("osm trace: {e}"))?;
+    let trace = backend::osm_trace::TraceAnswerer::from_fixture(
+        &fx,
+        &path,
+        backend::osm_trace::Sections::ALL,
+    )
+    .map_err(|e| anyhow::anyhow!("osm trace: {e}"))?;
     let trace_ms = t.elapsed().as_millis();
     let rss_trace = rss_mib();
 
     let t = Instant::now();
-    let conv = converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer).context("converge")?;
-    let converge_ms = t.elapsed().as_millis();
-    let rss_converge = rss_mib();
-    // ⚠ Loading is not answering. A fixture whose keys the fold never spells
-    // answers nothing and looks exactly like no fixture at all, so read the
-    // counters rather than trusting the load — the failure this example just
-    // spent a morning demonstrating.
-    //
-    // ⚠ AND ONLY WHEN NOTHING ELSE IS READING THEM. `take_counts` RESETS, and
-    // `FOLD_SPLIT` calls it once per round inside `converge`; a second reader
-    // here gets zero and prints "0 asked" over a fold that asked 41 times. That
-    // is the same take-and-reset trap that once made `mirror yield` report
-    // `0 row(s)` on a request that had just fetched 41,612 — so under
-    // `FOLD_SPLIT` the per-round lines are the report, and this one stands down.
-    let counts = if std::env::var_os("FOLD_SPLIT").is_some() {
-        None
-    } else {
-        Some(backend::osm_host::take_counts())
-    };
-
-    // The final round's request is what every round approximates: earlier ones
-    // carry fewer answer tables, so this is the UPPER bound on per-round size.
-    let body = serde_json::to_string(&conv.request)?;
-    let t = Instant::now();
-    let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
-    let wrap_ms = t.elapsed().as_millis();
-
-    // One more call on the settled request, to price a single fold apart from
-    // the loop around it.
-    let t = Instant::now();
-    let _ = lean::serve(&wrapped).context("one settled fold")?;
-    let one_fold_ms = t.elapsed().as_millis();
+    let mut answerer = backend::lean::Chain(&trace, rows_answerer);
+    let folded = backend::fold::run_day(&cap, inputs, &mut answerer).context("fold")?;
+    let fold_ms = t.elapsed().as_millis();
     let rss_fold = rss_mib();
 
+    // One more call on the same request with every ask declined, to price the
+    // fold apart from the answers it waits for.
+    let body = serde_json::to_string(&folded.request)?;
+    let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
+    let t = Instant::now();
+    let _ = lean::serve(&wrapped).context("one unanswered fold")?;
+    let bare_fold_ms = t.elapsed().as_millis();
+
+    let (osm_hits, osm_misses) = folded.osm_counts();
     println!("day {name}");
     println!("  fixture            {bytes:>11} bytes");
     println!("  read               {read_ms:>8} ms");
     println!("  parse              {parse_ms:>8} ms");
     println!("  head::capture      {capture_ms:>8} ms   (one lean::serve inside)");
     println!("  RowSetAnswerer     {answerer_ms:>8} ms");
+    println!("  trace index        {trace_ms:>8} ms");
     println!(
-        "  converge           {converge_ms:>8} ms   over {} rounds",
-        conv.rounds
+        "  fold               {fold_ms:>8} ms   {} ask(s), {} declined",
+        folded.asks.len(),
+        folded.declined().len()
     );
     println!("  ---");
-    println!("  final request      {:>11} bytes", wrapped.len());
-    println!("  prepend-mode copy  {wrap_ms:>8} ms   (a full copy of the above)");
-    println!("  ONE settled fold   {one_fold_ms:>8} ms   (parse + fold + emit, in Lean)");
+    println!("  request            {:>11} bytes", wrapped.len());
     println!(
-        "  => {} rounds x ~{} ms is {} ms of the {} ms converge",
-        conv.rounds,
-        one_fold_ms,
-        conv.rounds as u128 * one_fold_ms,
-        converge_ms
+        "  fold, all declined {bare_fold_ms:>8} ms   (parse + fold + emit, no waiting on answers)"
     );
     println!("  ---");
     println!("  RSS after read     {rss_read:>8} MiB   (Rust: the fixture text)");
@@ -239,36 +210,20 @@ fn main() -> Result<()> {
     println!(
         "  RSS after row set  {rss_answerer:>8} MiB   (Rust: the fixture's osmRowSet index — GATE ONLY)"
     );
+    println!("  RSS after trace    {rss_trace:>8} MiB   (the recorded answers, indexed)");
     println!(
-        "  RSS after trace    {rss_trace:>8} MiB   ({trace_ms} ms: the OSM trace, off the fixture ALREADY parsed above)"
+        "  RSS after fold     {rss_fold:>8} MiB   (this process; the fold ran in verified_cli)"
     );
-    println!(
-        "  RSS after converge {rss_converge:>8} MiB   (+ {} rounds)",
-        conv.rounds
-    );
-    println!("  RSS after one fold {rss_fold:>8} MiB   (+ one more)");
     println!("  ---");
-    match counts {
-        None => println!("  osm callbacks      per round above (FOLD_SPLIT owns the counter)"),
-        Some(c) => {
-            println!(
-                "  osm callbacks      {:>8} asked, {} missed   (walkable {}/{}, buildings {}/{}, drivable {}/{})",
-                c.asked(),
-                c.misses(),
-                c.walkable_hits,
-                c.walkable_hits + c.walkable_misses,
-                c.buildings_hits,
-                c.buildings_hits + c.buildings_misses,
-                c.drivable_hits,
-                c.drivable_hits + c.drivable_misses,
-            );
-            if c.asked() > 0 && c.misses() == c.asked() {
-                println!(
-                    "  ⚠ EVERY callback MISSED — the walk and road matchers did not run, so\n\
-                     \x20   the numbers above are a fold with its largest consumer switched off."
-                );
-            }
-        }
+    println!(
+        "  matcher reads      {:>8} asked, {osm_misses} declined",
+        osm_hits + osm_misses
+    );
+    if osm_hits + osm_misses > 0 && osm_hits == 0 {
+        println!(
+            "  ⚠ EVERY matcher read was DECLINED — the walk and road matchers did not run, so\n\
+             \x20   the numbers above are a fold with its largest consumer switched off."
+        );
     }
     println!("  ⚠ health-auth's container limit is 512 MiB.");
     Ok(())

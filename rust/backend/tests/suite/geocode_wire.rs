@@ -166,8 +166,8 @@ fn sample() -> Value {
 /// coordinate.
 #[test]
 fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
-    use backend::fold_converge::Answerer;
-    use backend::lean::Miss;
+    use backend::lean::Answerer;
+    use backend::lean::Ask;
     use backend::rowset_answerer::OsmAnswerer;
 
     // A coordinate with a negative longitude, because that is where the two
@@ -177,13 +177,12 @@ fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
 
     let mut live = OsmAnswerer::with_source(OneGeocode(sample()));
     let answered = live
-        .answer(&Miss {
+        .answer(&Ask {
             what: "reverseGeocode".into(),
             key: key.clone(),
         })
         .expect("the arm runs")
         .expect("a source with a geocode answers");
-    assert_eq!(answered.0, "reverseGeocode", "it lands in the right table");
 
     // The recorded path: a fixture section keyed in PLAIN DECIMALS — the format
     // the TypeScript wrote — through the encoder the request builder uses.
@@ -194,8 +193,8 @@ fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
     let recorded_row = recorded[0].clone();
 
     assert_eq!(
-        answered.1, recorded_row,
-        "the live row and the recorded row must be byte-identical"
+        answered, recorded_row,
+        "the live row and the recorded row must agree"
     );
 }
 
@@ -204,13 +203,13 @@ fn a_live_geocode_and_a_recorded_one_are_the_same_row() {
 /// against answers its fixture does not carry.
 #[test]
 fn a_source_with_no_geocode_declines_rather_than_answering_nothing_is_there() {
-    use backend::fold_converge::Answerer;
-    use backend::lean::Miss;
+    use backend::lean::Answerer;
+    use backend::lean::Ask;
     use backend::rowset_answerer::OsmAnswerer;
 
     let mut plain = OsmAnswerer::with_source(DeclinesAll);
     let out = plain
-        .answer(&Miss {
+        .answer(&Ask {
             what: "reverseGeocode".into(),
             key: format!("{}|{}|16", 51.5_f64.to_bits(), (-0.12_f64).to_bits()),
         })

@@ -39,9 +39,9 @@
 
 use std::path::Path;
 
-use backend::fold_converge::Answerer;
 use backend::fold_payload::default_radius_m;
-use backend::lean::Miss;
+use backend::lean::Answerer;
+use backend::lean::Ask;
 use backend::mirror_source::{MirrorSource, parse_linestring_wkt, tags_pairs};
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
@@ -175,7 +175,7 @@ fn the_mirrors_candidate_box_holds_everything_lean_scores() {
                 } else {
                     format!("{}|{}|{}", la.to_bits(), lo.to_bits(), radius.to_bits())
                 };
-                let miss = Miss {
+                let miss = Ask {
                     what: table.to_string(),
                     key,
                 };

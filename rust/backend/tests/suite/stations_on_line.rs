@@ -19,9 +19,9 @@
 //! place names. Like `corpus_gate`, this ANNOUNCES A SKIP rather than passing
 //! quietly when the corpus is absent.
 
-use backend::fold_converge::Answerer;
 use backend::lean;
-use backend::lean::Miss;
+use backend::lean::Answerer;
+use backend::lean::Ask;
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::Value;
 
@@ -61,7 +61,7 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
 
     for (line, want) in recorded {
         let got = a
-            .answer(&Miss {
+            .answer(&Ask {
                 what: "stationsOnLine".into(),
                 key: line.clone(),
             })
@@ -69,10 +69,8 @@ fn the_fixture_arm_reproduces_the_recorded_answers() {
             .unwrap_or_else(|| {
                 panic!("DECLINED {line} — a line-name key must reach the arm (#1075)")
             });
-        assert_eq!(got.0, "stationsOnLine");
-
         // `[line, [[name, latBits, lonBits], …]]`.
-        let parts = got.1.as_array().expect("the row is not an array");
+        let parts = got.as_array().expect("the row is not an array");
         assert_eq!(parts[0].as_str(), Some(line.as_str()), "row is mis-keyed");
         let names: Vec<&str> = parts[1]
             .as_array()
@@ -113,8 +111,8 @@ fn a_line_the_mirror_does_not_carry_is_answered_empty() {
     let Some(day) = fixture() else { return };
     let rows = day.pointer("/inputs/osmRowSet").expect("no osmRowSet");
     let mut a = RowSetAnswerer::new(rows).expect("building the answerer");
-    let (_, row) = a
-        .answer(&Miss {
+    let row = a
+        .answer(&Ask {
             what: "stationsOnLine".into(),
             key: "Nonexistent Fictional Line".into(),
         })

@@ -1,9 +1,8 @@
 //! The Lean decisions, called through the C ABI (#982).
 //!
-//! This is the equivalence `rust/day-shell`'s check makes for the day fold,
-//! at this crate's scale: the point of linking Lean is that the rules the
-//! backend runs ARE the ones in `Verified/Sync.lean`, and an FFI that builds
-//! but answers wrongly would look exactly like one that works.
+//! The point of asking Lean at all is that the rules the backend runs ARE the
+//! ones in `Verified/Sync.lean`, and a pipe that carries the question wrongly
+//! would look exactly like one that works.
 //!
 //! ⚠ ONE `#[test]` FUNCTION, DELIBERATELY. `health_backend_init` starts a
 //! process-global runtime, and Rust runs a test binary's tests on many threads.

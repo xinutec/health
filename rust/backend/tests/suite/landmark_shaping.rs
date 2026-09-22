@@ -2,7 +2,7 @@
 //!
 //! This is the shape of #1054. `nearbyLandmarks` is what puts a venue name on a
 //! timeline instead of a bare "stationary". When the shaping returned an empty
-//! list, every count in the converge loop still read as answered, the stay
+//! list, every ask still read as answered, the stay
 //! still rendered, and two venue names a day silently vanished — measured
 //! against production on a day where all six asks answered and all six were
 //! empty.
@@ -29,8 +29,8 @@
 //! feature within the radius comes back AS a landmark, spelled the way the fold
 //! reads it.
 
-use backend::fold_converge::Answerer;
-use backend::lean::Miss;
+use backend::lean::Answerer;
+use backend::lean::Ask;
 use backend::rowset_answerer::{OsmAnswerer, RowSource};
 use serde_json::{Value, json};
 
@@ -99,8 +99,8 @@ impl RowSource for OneVenue {
     }
 }
 
-fn ask() -> Miss {
-    Miss {
+fn ask() -> Ask {
+    Ask {
         what: "nearbyLandmarks".into(),
         key: format!(
             "{}|{}|{}",
@@ -113,11 +113,10 @@ fn ask() -> Miss {
 
 #[test]
 fn a_tagged_venue_in_range_becomes_a_landmark() {
-    let (table, row) = OsmAnswerer::with_source(OneVenue)
+    let row = OsmAnswerer::with_source(OneVenue)
         .answer(&ask())
         .expect("the answerer errored")
         .expect("the answerer DECLINED — it must answer when both buckets vouch");
-    assert_eq!(table, "nearbyLandmarks");
 
     // ⚠ FOUR elements: `[lat, lon, radius, answer]`. The three-element form
     // `nearbyWays` uses is a different row, and the fold reads it as malformed.
@@ -184,7 +183,7 @@ fn no_venues_in_range_is_an_empty_answer_not_a_decline() {
             Ok(Some(vec![]))
         }
     }
-    let (_, row) = OsmAnswerer::with_source(Empty)
+    let row = OsmAnswerer::with_source(Empty)
         .answer(&ask())
         .expect("errored")
         .expect("declined");

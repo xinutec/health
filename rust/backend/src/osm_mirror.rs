@@ -408,7 +408,7 @@ pub async fn record_coverage(pool: &MySqlPool, feature_type: &str, bbox: &Bbox) 
 
 /// The queue's key vocabulary, from the crate that owns the queue. Re-exported
 /// so this module reads as one thing: the drain below is its only other caller.
-pub use day_shell::fetch_queue::{parse_queue_key, queue_key, queue_kind};
+pub use crate::fetch_queue::{parse_queue_key, queue_key, queue_kind};
 
 /// The bucket a queue `kind` names, or `None` when it is not one of ours.
 #[must_use]

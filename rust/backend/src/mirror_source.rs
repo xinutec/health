@@ -1,4 +1,4 @@
-//! Candidate OSM rows from the live mirror, for the fold's converge walk (#982).
+//! Candidate OSM rows from the live mirror, for the fold's asks (#982, #1709).
 //!
 //! [`RowSetSource`](crate::rowset_answerer::RowSetSource) answers from the rows
 //! a golden fixture carries, which is what made the day port checkable with no
@@ -67,13 +67,10 @@
 //! Overpass round trip on the serving path, which is what the queue exists to
 //! avoid (#1076, #1658).
 //!
-//! ⚠ **THE THREE `@[extern]` CALLBACKS DO NOT COME THROUGH HERE.**
-//! `walkableRoads`, `buildingsNear` and `drivableRoads` read
-//! `rust/day-shell/src/mirror.rs`, which consults no coverage rows at all — so
-//! on unfetched ground they answer EMPTY rather than declining, and nothing
-//! queues a fetch for them. That is #976's defect still live on the walk path,
-//! and it is why `building` stays the weakest layer however often this drain
-//! runs.
+//! The three matcher reads — `walkableRoads`, `buildingsNear`,
+//! `drivableRoads` — come through here too (#1709), on the same pool and
+//! through the same coverage gate, so a decline on the walk path is recorded
+//! exactly as one on the naming path is.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,6 +82,71 @@ use sqlx::{MySqlPool, Row};
 use crate::fold_payload::bits;
 use crate::lean::{self, CoverageRow};
 use crate::rowset_answerer::RowSource;
+
+/// How far beyond the asked disc a ROAD corridor read reaches. The corridor
+/// fetch samples the leg and unions the ways around each sample; the margin is
+/// what lets a way that starts just outside one sample's disc still be found.
+/// ⚠ Applied AFTER the ask key is formed, so moving it changes production and
+/// changes nothing any fixture answers — which is why it is stamped into a
+/// capture's `meta` (`osm_trace::capture_inputs`).
+pub const ROAD_CORRIDOR_MARGIN_M: f64 = 400.0;
+
+/// As above, for building outlines around a walk.
+const BUILDING_QUERY_MARGIN_M: f64 = 100.0;
+
+const WALKABLE_ROAD_SUBTYPES: &[&str] = &[
+    "footway",
+    "path",
+    "pedestrian",
+    "steps",
+    "cycleway",
+    "bridleway",
+    "living_street",
+    "residential",
+    "service",
+    "unclassified",
+    "track",
+    "tertiary",
+    "tertiary_link",
+    "secondary",
+    "secondary_link",
+    "primary",
+    "primary_link",
+];
+
+const DRIVABLE_ROAD_SUBTYPES: &[&str] = &[
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "residential",
+    "service",
+    "unclassified",
+    "track",
+    "living_street",
+];
+
+/// An untagged building is enclosing; only the named roof-like subtypes are
+/// exempt.
+const NON_ENCLOSING_BUILDING_SUBTYPES: &[&str] = &["roof", "canopy"];
+
+/// `subtype IN (…)` with one placeholder per value — never interpolated.
+fn placeholders(n: usize) -> String {
+    std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",")
+}
+
+/// The matcher reads' box: the disc plus a margin, in degrees.
+fn margin_box_wkt(lat: f64, lon: f64, radius_m: f64, margin_m: f64) -> String {
+    let d_lat = (radius_m + margin_m) / 111_320.0;
+    let d_lon = (radius_m + margin_m) / (111_320.0 * lat.to_radians().cos());
+    let (min_lat, max_lat) = (lat - d_lat, lat + d_lat);
+    let (min_lon, max_lon) = (lon - d_lon, lon + d_lon);
+    format!(
+        "POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},{max_lon} {max_lat},\
+         {min_lon} {max_lat},{min_lon} {min_lat}))"
+    )
+}
 
 /// How much larger than the TypeScript's box, and why it is not 1.
 ///
@@ -160,7 +222,7 @@ pub fn take_db_nanos() -> u64 {
     DB_NANOS.swap(0, Ordering::Relaxed)
 }
 
-/// Rows from the live mirror. One per converge walk: the coverage decisions it
+/// Rows from the live mirror. One per fold: the coverage decisions it
 /// memoises are only valid for the `now_ms` it was built with.
 pub struct MirrorSource {
     pool: MySqlPool,
@@ -241,11 +303,8 @@ impl MirrorSource {
     /// Run one query against the pool, blocking on the captured runtime.
     ///
     /// ⚠ A FAILED QUERY IS AN ERROR, never a decline and never an empty answer.
-    /// `day-shell`'s mirror turns a failure into `None` and counts it, because
-    /// it must finish a day it is halfway through; this is on the serving path,
-    /// where the fold can be told. health #976 is that distinction going wrong
-    /// in the other direction — a database that is down producing byte-for-byte
-    /// the same answer as an area with no roads.
+    /// health #976 is that distinction going wrong — a database that is down
+    /// producing the same answer as an area with no roads.
     fn block<T, E, F>(&self, f: F) -> Result<T>
     where
         F: std::future::Future<Output = Result<T, E>>,
@@ -431,7 +490,119 @@ impl MirrorSource {
     }
 }
 
+impl MirrorSource {
+    /// Ways of the given subtypes intersecting the disc plus its margin, as the
+    /// fold reads them. `None` declines: the coverage gate said no, and the
+    /// decline is recorded for `fetch-osm`.
+    fn ways(
+        &mut self,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+        subtypes: &[&str],
+    ) -> Result<Option<Value>> {
+        // ⚠ BEFORE THE QUERY, because the query cannot tell the two cases
+        // apart: no rows over unfetched ground and no rows over empty ground are
+        // the same answer. Both way readers draw from `highway`.
+        if !self.covered("highway", lat, lon, radius_m)? {
+            return Ok(None);
+        }
+        let poly = margin_box_wkt(lat, lon, radius_m, ROAD_CORRIDOR_MARGIN_M);
+        let sql = format!(
+            "SELECT osm_id, name, subtype, ST_AsText(geom) AS wkt \
+             FROM osm_lines \
+             WHERE feature_type = 'highway' \
+               AND subtype IN ({}) \
+               AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) \
+             LIMIT ?",
+            placeholders(subtypes.len())
+        );
+        // ⚠ `AssertSqlSafe` because sqlx refuses a non-'static SQL string by
+        // default — a good rule, and this is the audited exception. The only
+        // runtime part of the statement is `placeholders(n)`, which emits `?`
+        // and commas; every value, each subtype included, is BOUND.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for st in subtypes {
+            q = q.bind(*st);
+        }
+        q = q.bind(&poly).bind(CANDIDATE_LIMIT);
+        let rows = self
+            .block(q.fetch_all(&self.pool))
+            .context("reading osm_lines for a matcher corridor")?;
+        Self::check_limit(rows.len(), "osm_lines", "highway corridor")?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
+            let coords: Vec<Value> = parse_linestring_wkt(&wkt)
+                .into_iter()
+                .map(|(la, lo)| json!([bits(la), bits(lo)]))
+                .collect();
+            // A way with one vertex is not a line.
+            if coords.len() < 2 {
+                continue;
+            }
+            out.push(json!({
+                "osmId": r.try_get::<i64, _>("osm_id").context("osm_lines.osm_id")?,
+                "name": r.try_get::<Option<String>, _>("name").context("osm_lines.name")?,
+                "subtype": r.try_get::<Option<String>, _>("subtype").context("osm_lines.subtype")?,
+                "coords": coords,
+            }));
+        }
+        Ok(Some(Value::Array(out)))
+    }
+}
+
 impl RowSource for MirrorSource {
+    fn walkable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        self.ways(lat, lon, radius_m, WALKABLE_ROAD_SUBTYPES)
+    }
+
+    fn drivable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        self.ways(lat, lon, radius_m, DRIVABLE_ROAD_SUBTYPES)
+    }
+
+    /// Building outlines as closed rings. `None` declines, and this is the
+    /// bucket the gate was missing entirely until #1667: nothing declined a
+    /// building question, so no `building` box was ever queued.
+    fn buildings_near(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        if !self.covered("building", lat, lon, radius_m)? {
+            return Ok(None);
+        }
+        let poly = margin_box_wkt(lat, lon, radius_m, BUILDING_QUERY_MARGIN_M);
+        let sql = format!(
+            "SELECT ST_AsText(geom) AS wkt \
+             FROM osm_lines \
+             WHERE feature_type = 'building' \
+               AND (subtype IS NULL OR subtype NOT IN ({})) \
+               AND MBRIntersects(geom, ST_GeomFromText(?, 4326)) \
+             LIMIT ?",
+            placeholders(NON_ENCLOSING_BUILDING_SUBTYPES.len())
+        );
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for st in NON_ENCLOSING_BUILDING_SUBTYPES {
+            q = q.bind(*st);
+        }
+        q = q.bind(&poly).bind(CANDIDATE_LIMIT);
+        let rows = self
+            .block(q.fetch_all(&self.pool))
+            .context("reading osm_lines for buildings")?;
+        Self::check_limit(rows.len(), "osm_lines", "building")?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
+            let ring: Vec<Value> = parse_linestring_wkt(&wkt)
+                .into_iter()
+                .map(|(la, lo)| json!([bits(la), bits(lo)]))
+                .collect();
+            // Fewer than three vertices is not a polygon.
+            if ring.len() < 3 {
+                continue;
+            }
+            out.push(Value::Array(ring));
+        }
+        Ok(Some(Value::Array(out)))
+    }
+
     /// Line candidates, in `osmspatial`'s positional form.
     ///
     /// ⚠ `parse_linestring_wkt` swaps to `(lat, lon)`: WKT writes `lon lat` and
@@ -477,9 +648,8 @@ impl RowSource for MirrorSource {
                 .into_iter()
                 .map(|(la, lo)| json!([bits(la), bits(lo)]))
                 .collect();
-            // A way with one vertex is not a line — the same guard `day-shell`'s
-            // mirror applies, and `lineDistDeg` on a single point would measure
-            // to a vertex rather than along anything.
+            // A way with one vertex is not a line; `lineDistDeg` on a single
+            // point would measure to a vertex rather than along anything.
             if coords.len() < 2 {
                 continue;
             }
@@ -889,19 +1059,17 @@ pub fn parse_linestring_wkt(wkt: &str) -> Vec<(f64, f64)> {
 ///
 /// # ⚠ Why this exists rather than a `MirrorSource` the caller drives
 ///
-/// `converge` is SYNCHRONOUS — the fold reaches an answerer through a Lean
-/// callback, and there is no `await` to hand an answer back through — while
-/// `sqlx` is async. So the walk has to happen on a blocking thread with a
-/// runtime handle to block on, and `Handle::block_on` from a runtime WORKER
-/// aborts the process instead of returning an error.
+/// The fold answers its asks SYNCHRONOUSLY — the worker is blocked on the pipe
+/// until the row comes back — while `sqlx` is async. So the fold has to run on
+/// a blocking thread with a runtime handle to block on, and `Handle::block_on`
+/// from a runtime WORKER aborts the process instead of returning an error.
 ///
 /// That hazard cannot be detected from inside [`MirrorSource`]: tokio sets the
 /// runtime context on blocking-pool threads too, so `Handle::try_current()`
-/// says the same thing in the safe case and the fatal one. `day-shell`'s mirror
-/// can refuse because it owns a private runtime; this cannot. What replaces the
+/// says the same thing in the safe case and the fatal one. What replaces the
 /// check is that the blocking hop lives HERE, with the only public constructor
-/// that pairs a pool with a handle — a caller that reaches `converge` from a
-/// handler has to have gone around this function to do it.
+/// that pairs a pool with a handle — a caller that folds from a handler has to
+/// have gone around this function to do it.
 pub async fn with_mirror_answerer<F, T>(pool: MySqlPool, now_ms: i64, f: F) -> Result<T>
 where
     F: FnOnce(&mut crate::rowset_answerer::OsmAnswerer<MirrorSource>) -> Result<T> + Send + 'static,
@@ -909,80 +1077,63 @@ where
 {
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        // ⚠ THE SAME PERMISSION, EXTENDED TO THE OTHER MIRROR. The fold reaches
-        // OSM two ways: the answerer below, and `day_shell::mirror`'s three
-        // `@[extern]` callbacks — `walkableRoads`, `buildingsNear`,
-        // `drivableRoads` — which Lean calls directly and which cannot be handed
-        // a handle through an argument. Only this thread knows blocking is legal
-        // here, so it says so once and both halves are served.
-        //
-        // ⚠ WITHOUT THIS, THOSE THREE ANSWER EMPTY ON EVERY SERVED DAY (#1619):
-        // day-shell refuses to block on a runtime nobody vouched for, and under
-        // axum there is always one. The answerer kept working throughout, which
-        // is why the day looked healthy — the map just drew every walk raw.
-        let source = MirrorSource::new(pool, handle.clone(), now_ms);
-        day_shell::mirror::with_blocking_handle(handle, move || {
-            f(&mut crate::rowset_answerer::OsmAnswerer::with_source(
-                source,
-            ))
-        })
+        let source = MirrorSource::new(pool, handle, now_ms);
+        f(&mut crate::rowset_answerer::OsmAnswerer::with_source(
+            source,
+        ))
     })
     .await
     .context("the mirror thread panicked")?
 }
 
-/// [`converge_from_mirror`], RECORDING every row the answerer was served, as the
-/// `osmRowSet` a golden fixture carries (#1660).
+/// [`fold_from_mirror`], RECORDING every row the answerer was served, as the
+/// `osmRowSet` a golden fixture carries, and the three matcher reads' answers
+/// as its `osmTrace` sections (#1660).
 ///
 /// ⚠ The recorder wraps the source rather than re-running the queries, so what
 /// is captured is exactly what production asked and got — including the
 /// DECLINES, without which a replay answers where the mirror could not and the
 /// day comes out better in the fixture than it does in production.
 ///
-/// Returns the row set AND the `osmTrace.reverseGeocode` section, which is
-/// `None` when the source answered no geocode at all (#1076). The two are
-/// separate because they land in different halves of a fixture.
-pub async fn converge_from_mirror_recording(
+/// Returns `(folded, row_set, matcher_trace, geocode_section)`; the geocode
+/// section is `None` when the source answered no geocode at all (#1076).
+pub async fn fold_from_mirror_recording(
     pool: MySqlPool,
     cap: Value,
     inputs: Value,
     now_ms: i64,
-) -> Result<(crate::fold_converge::Converged, Value, Option<Value>)> {
+) -> Result<(crate::fold::Folded, Value, Value, Option<Value>)> {
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        let source = MirrorSource::new(pool, handle.clone(), now_ms);
+        let source = MirrorSource::new(pool, handle, now_ms);
         let (recording, rec) = crate::rowset_capture::RecordingSource::new(source);
-        day_shell::mirror::with_blocking_handle(handle, move || {
-            let mut answerer = crate::rowset_answerer::OsmAnswerer::with_source(recording);
-            let conv = crate::fold_converge::converge(&cap, &inputs, None, &mut answerer)?;
-            // ⚠ Read AFTER the fold and inside this thread: the recorder is
-            // shared with us by `Arc`, which is how the row set comes back
-            // without handing out `OsmAnswerer`'s private source.
-            let recorded = rec
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let row_set = recorded.row_set();
-            let geocodes = recorded.geocode_section();
-            drop(recorded);
-            Ok((conv, row_set, geocodes))
-        })
+        let mut answerer = crate::osm_trace::RecordingAnswerer::new(
+            crate::rowset_answerer::OsmAnswerer::with_source(recording),
+        );
+        let folded = crate::fold::run_day(&cap, &inputs, &mut answerer)?;
+        let trace = answerer.take();
+        let recorded = rec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row_set = recorded.row_set();
+        let geocodes = recorded.geocode_section();
+        drop(recorded);
+        Ok((folded, row_set, trace, geocodes))
     })
     .await
     .context("the mirror thread panicked")?
 }
 
-/// Walk a day to convergence against the live mirror. See
-/// [`with_mirror_answerer`] for why this hop exists.
-pub async fn converge_from_mirror(
+/// Fold a day against the live mirror. See [`with_mirror_answerer`] for why
+/// this hop exists.
+pub async fn fold_from_mirror(
     pool: MySqlPool,
     cap: Value,
     inputs: Value,
     now_ms: i64,
-) -> Result<crate::fold_converge::Converged> {
+) -> Result<crate::fold::Folded> {
     with_mirror_answerer(pool, now_ms, move |answerer| {
-        // No trace: production has no recording to seed the tables from, and
-        // passing one would answer questions the mirror is here to answer.
-        crate::fold_converge::converge(&cap, &inputs, None, answerer)
+        crate::fold::run_day(&cap, &inputs, answerer)
     })
     .await
 }

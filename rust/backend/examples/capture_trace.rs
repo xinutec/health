@@ -25,7 +25,7 @@
 //! ```
 
 use anyhow::{Context, Result};
-use backend::fold_converge::converge;
+use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
 
@@ -67,33 +67,27 @@ async fn main() -> Result<()> {
 
     let cap = backend::head::capture(&inputs, date, user).context("head capture")?;
 
-    // ⚠ THROUGH `converge_from_mirror`, NOT `converge` DIRECTLY. The mirror's
-    // sync path REFUSES when an ambient tokio runtime exists — it cannot
-    // `block_on` inside one — and the refusal is not an error, it is an EMPTY
-    // ANSWER. Calling `converge` from an async main captured a trace in which
-    // `buildingsNear` had zero keys and `walkableRoads` had four, and the
-    // round-trip proof below still reported 100% because an empty answer
-    // recorded is an empty answer returned. This is production's own entry
-    // point, so the capture records what production records (health #1619 is
-    // the same refusal answering every OSM read in the pod for weeks).
-    backend::osm_host::start_capture();
+    // ⚠ THROUGH `fold_from_mirror_recording`, production's own entry point,
+    // so the capture records what production records: the mirror is read on
+    // a blocking thread with a runtime handle, which is the only place it may
+    // be read from (health #1619 is the refusal answering every OSM read in
+    // the pod for weeks).
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (conv, row_set, geocodes) = backend::mirror_source::converge_from_mirror_recording(
+    let (conv, row_set, mut trace, geocodes) = backend::mirror_source::fold_from_mirror_recording(
         pool.clone(),
         cap.clone(),
         inputs.clone(),
         now_ms,
     )
     .await
-    .context("converge from the mirror")?;
+    .context("fold from the mirror")?;
     pool.close().await;
     let live_day: Value = serde_json::from_str(&conv.out).context("the live fold's reply")?;
 
-    let mut trace = backend::osm_host::take_capture();
-    // ⚠ The geocodes do NOT come from `take_capture` — that reads the three
-    // `@[extern]` callbacks, and `reverseGeocode` travels the answerer instead
-    // (#1071 records how that asymmetry hid a defect for weeks). Merged here so
-    // a captured fixture carries the section the 42 TypeScript days carry.
+    // ⚠ The geocodes do NOT come from the recording answerer — that records
+    // the three matcher reads, and `reverseGeocode` travels the row source
+    // instead (#1071 records how that asymmetry hid a defect for weeks). Merged
+    // here so a captured fixture carries the section the 42 TypeScript days carry.
     if let (Some(section), Some(o)) = (geocodes, trace.as_object_mut()) {
         o.insert("reverseGeocode".into(), section);
     }
@@ -103,15 +97,10 @@ async fn main() -> Result<()> {
         .flatten()
         .map(|(k, v)| (k.clone(), v.as_object().map_or(0, serde_json::Map::len)))
         .collect();
-    // ⚠ NO CALLBACK COUNT HERE. `take_counts` is a THREAD-LOCAL tally and the
-    // fold just ran on a blocking worker, so reading it from this thread
-    // returns 0 over a day that made 135 calls. The replay below runs on THIS
-    // thread and its count is real; the capture's own evidence is the section
-    // sizes.
     eprintln!(
-        "captured {date}: {} round(s), {} unanswerable answerer key(s)",
-        conv.rounds,
-        conv.unanswerable.len(),
+        "captured {date}: {} ask(s), {} declined",
+        conv.asks.len(),
+        conv.declined().len(),
     );
     for (k, n) in &sections {
         eprintln!("  {k:<16} {n} key(s)");
@@ -184,25 +173,14 @@ async fn main() -> Result<()> {
     );
 
     let doc = json!({ "inputs": { "osmTrace": trace } });
-    backend::osm_host::load_trace_value_sections(&doc, "<captured>", true, true, true)
+    let captured = TraceAnswerer::from_fixture(&doc, "<captured>", Sections::ALL)
         .map_err(|e| anyhow::anyhow!("reloading the capture: {e}"))?;
-    let mut answerer2 = RowSetAnswerer::new(&row_set).context("row set")?;
-    // ⚠ THE TRACE IS PASSED, not `None`, and this is what the corpus gate does
-    // (`tests/corpus/mod.rs` replays with `inputs.get("osmTrace")`). It used to
-    // be `None` and that was only accidentally right: the captured trace held
-    // the three CALLBACK sections, which reach the fold through the thread-local
-    // installed just above and never through the request. `reverseGeocode` is
-    // the opposite — an answerer TABLE — so with `None` the replay could not
-    // answer the 13 geocodes the live arm had, and the two arms drew different
-    // days while every section looked captured.
-    let replay = converge(
-        &cap,
-        &inputs,
-        Some(&doc["inputs"]["osmTrace"]),
-        &mut answerer2,
-    )
-    .context("replay")?;
-    let back = backend::osm_host::take_counts();
+    // ⚠ THE TRACE IS ANSWERED FIRST, and this is what the corpus gate does
+    // (`tests/corpus/mod.rs`): the matcher reads and the geocodes both come
+    // from it, the row set answers the rest.
+    let mut answerer2 =
+        backend::lean::Chain(&captured, RowSetAnswerer::new(&row_set).context("row set")?);
+    let replay = backend::fold::run_day(&cap, &inputs, &mut answerer2).context("replay")?;
 
     // ⚠ **DAY EQUALITY, NOT KEY MATCHING.** The row set is a CONVERSION —
     // positional mirror rows into the fixture's object form — and a conversion
@@ -225,14 +203,15 @@ async fn main() -> Result<()> {
             differing
         );
         eprintln!(
-            "   live {} round(s)/{} unanswerable · replay {} round(s)/{} unanswerable",
-            conv.rounds,
-            conv.unanswerable.len(),
-            replay.rounds,
-            replay.unanswerable.len()
+            "   live {} ask(s)/{} declined · replay {} ask(s)/{} declined",
+            conv.asks.len(),
+            conv.declined().len(),
+            replay.asks.len(),
+            replay.declined().len()
         );
     }
-    let (asked, missed) = (back.asked(), back.misses());
+    let (hits, missed) = replay.osm_counts();
+    let asked = hits + missed;
     eprintln!(
         "replayed against the capture: {asked} asked, {missed} missed  ({:.1}% hit), \
          {total_answers} non-empty answer(s) recorded",
@@ -261,18 +240,19 @@ async fn main() -> Result<()> {
     let mut stripped = rs.clone();
     stripped.remove("declined");
     let stripped = Value::Object(stripped);
-    let mut answerer3 = RowSetAnswerer::new(&stripped).context("row set")?;
     // ⚠ THE SAME TRACE AS THE REPLAY ARM. `declined` is the axis under test, so
-    // it must be the ONLY thing that differs. Passing `None` here while the
-    // replay passed the trace would withhold the geocode table from the control
-    // as well, and the difference reported would be two changes at once.
-    let no_declines = converge(
-        &cap,
-        &inputs,
-        Some(&doc["inputs"]["osmTrace"]),
-        &mut answerer3,
-    )
-    .context("control replay")?;
+    // it must be the ONLY thing that differs.
+    let mut answerer3 = backend::lean::Chain(
+        &captured,
+        RowSetAnswerer::new(&stripped).context("row set")?,
+    );
+    let no_declines =
+        backend::fold::run_day(&cap, &inputs, &mut answerer3).context("control replay")?;
+    let (conv_declined, replay_declined, control_declined) = (
+        conv.declined().len(),
+        replay.declined().len(),
+        no_declines.declined().len(),
+    );
     let no_declines_day: Value =
         serde_json::from_str(&no_declines.out).context("the control reply")?;
     // ⚠ THE COUNTS GO OUT EITHER WAY. An identical DAY does not mean an
@@ -283,10 +263,8 @@ async fn main() -> Result<()> {
     // served day was built from defaults (#1658). Reporting only when the day
     // moves would hide exactly that.
     eprintln!(
-        "control: unanswerable — live {} · replay {} · without `declined` {}",
-        conv.unanswerable.len(),
-        replay.unanswerable.len(),
-        no_declines.unanswerable.len(),
+        "control: declined — live {} · replay {} · without `declined` {}",
+        conv_declined, replay_declined, control_declined,
     );
     // ⚠ THE DAY IS THE COARSER TEST AND IT MISSES THIS. On 2026-09-06 the output
     // is identical either way, while the unanswerable count falls 108 -> 49:
@@ -308,21 +286,17 @@ async fn main() -> Result<()> {
     // ⚠ And it is `usize`: the subtraction underflowed to 18446744073709551602
     // the first time the control came out ahead, printing a number rather than
     // failing.
-    match replay
-        .unanswerable
-        .len()
-        .cmp(&no_declines.unanswerable.len())
-    {
+    match replay_declined.cmp(&control_declined) {
         std::cmp::Ordering::Greater => eprintln!(
             "control: `declined` is LOAD-BEARING — without it {} gap(s) read as \
              empty answers rather than as unknowns",
-            replay.unanswerable.len() - no_declines.unanswerable.len(),
+            replay_declined - control_declined,
         ),
         std::cmp::Ordering::Less => eprintln!(
             "⚠ control: stripping `declined` left {} FEWER gap(s) than the replay \
              has. That cannot happen from the decline list alone — the two arms \
              differ in something else and this control is not measuring what it says",
-            no_declines.unanswerable.len() - replay.unanswerable.len(),
+            control_declined - replay_declined,
         ),
         std::cmp::Ordering::Equal => {}
     }
@@ -336,8 +310,8 @@ async fn main() -> Result<()> {
             "control: stripping `declined` CHANGES the day — the list is load-bearing \
              ({} declined key(s), {} unanswerable without them against {} with)",
             n("declined"),
-            no_declines.unanswerable.len(),
-            replay.unanswerable.len(),
+            control_declined,
+            replay_declined,
         );
     }
 
@@ -367,7 +341,7 @@ async fn main() -> Result<()> {
             "user": user,
             "tz": home_tz,
             "description": "",
-            "captureInputs": backend::osm_host::capture_inputs(),
+            "captureInputs": backend::osm_trace::capture_inputs(),
         },
         "inputs": fixture_inputs,
         "expected": { "statesOut": live_day.get("states").cloned().unwrap_or(Value::Null) },
@@ -376,7 +350,7 @@ async fn main() -> Result<()> {
         "fixture: inputs {} key(s) · expected.statesOut {} state(s) · stamp {}",
         out["inputs"].as_object().map_or(0, serde_json::Map::len),
         out["expected"]["statesOut"].as_array().map_or(0, Vec::len),
-        backend::osm_host::capture_inputs(),
+        backend::osm_trace::capture_inputs(),
     );
     match args.get(3) {
         Some(path) => {

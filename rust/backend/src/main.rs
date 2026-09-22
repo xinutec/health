@@ -23,7 +23,7 @@
 //! its own schedule.
 
 use anyhow::{Context, Result};
-use backend::fold_converge::Answerer;
+use backend::lean::Answerer;
 use backend::{
     classification_inputs, config::Config, db, fitbit, lean, routes, state::AppState, sync_state,
 };
@@ -3437,9 +3437,9 @@ fn head(fixture: &str) -> Result<()> {
 
 /// Run a whole day from a golden fixture: inputs → head → request → fold.
 ///
-/// The chain end to end with no Node and no database. `head` prints what the
-/// fold is asked; this prints what it answers, having walked the converge loop
-/// against the fixture's own OSM row set.
+/// The chain end to end with no database. The fold's asks are answered from
+/// the fixture's recorded trace first and its OSM row set second — the same
+/// pair the corpus gates replay against.
 ///
 /// The oracle is `expected.velocity` in the same file. This prints the timeline
 /// rather than judging it — `tests/corpus/day.rs` is what compares.
@@ -3461,20 +3461,28 @@ fn day(fixture: &str) -> Result<()> {
     let rows = inputs
         .get("osmRowSet")
         .context("the fixture has no osmRowSet to answer from")?;
-    let mut answerer = backend::rowset_answerer::RowSetAnswerer::new(rows)?;
-    let r = backend::fold_converge::converge(&cap, inputs, inputs.get("osmTrace"), &mut answerer)?;
+    let trace = backend::osm_trace::TraceAnswerer::from_fixture(
+        &parsed,
+        fixture,
+        backend::osm_trace::Sections::ALL,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let mut answerer =
+        backend::lean::Chain(trace, backend::rowset_answerer::RowSetAnswerer::new(rows)?);
+    let r = backend::fold::run_day(&cap, inputs, &mut answerer)?;
 
-    // ⚠ On stderr, so stdout stays a clean timeline to diff. A walk that left
-    // keys unanswered produced a timeline from DEFAULTS for them, and that is
+    // ⚠ On stderr, so stdout stays a clean timeline to diff. A fold that had
+    // asks declined produced a timeline from DEFAULTS for them, and that is
     // not the same day — it has to be visible without reading the JSON.
+    let declined = r.declined();
     eprintln!(
-        "{date} {user}: {} round(s), {} key(s) answered, {} unanswerable",
-        r.rounds,
-        r.answered,
-        r.unanswerable.len()
+        "{date} {user}: {} ask(s), {} answered, {} declined",
+        r.asks.len(),
+        r.answered(),
+        declined.len()
     );
-    for m in &r.unanswerable {
-        eprintln!("  UNANSWERED {}({})", m.what, m.key);
+    for m in &declined {
+        eprintln!("  DECLINED {}({})", m.what, m.key);
     }
     println!("{}", r.out);
     Ok(())
@@ -3641,7 +3649,7 @@ async fn mirror_check(fixture: &str) -> Result<()> {
 
     // The questions: every coordinate the day actually asked about, spelled the
     // way the fold spells a miss — bit patterns, not decimals.
-    let mut asks: Vec<backend::lean::Miss> = Vec::new();
+    let mut asks: Vec<backend::lean::Ask> = Vec::new();
     for table in TABLES {
         let Some(keys) = trace.get(table).and_then(serde_json::Value::as_object) else {
             continue;
@@ -3658,7 +3666,7 @@ async fn mirror_check(fixture: &str) -> Result<()> {
                 Some(r) => format!("{}|{}|{}", la.to_bits(), lo.to_bits(), r.to_bits()),
                 None => format!("{}|{}", la.to_bits(), lo.to_bits()),
             };
-            asks.push(backend::lean::Miss {
+            asks.push(backend::lean::Ask {
                 what: table.to_string(),
                 key,
             });
@@ -3670,7 +3678,7 @@ async fn mirror_check(fixture: &str) -> Result<()> {
     let mut offline = backend::rowset_answerer::RowSetAnswerer::new(rows)?;
     let from_rows: Vec<Option<serde_json::Value>> = asks
         .iter()
-        .map(|m| Ok(offline.answer(m)?.map(|(_, v)| v)))
+        .map(|m| offline.answer(m))
         .collect::<Result<_>>()?;
 
     // The live arm.
@@ -3687,7 +3695,7 @@ async fn mirror_check(fixture: &str) -> Result<()> {
         backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |answerer| {
             questions
                 .iter()
-                .map(|m| Ok(answerer.answer(m)?.map(|(_, v)| v)))
+                .map(|m| answerer.answer(m))
                 .collect::<Result<Vec<_>>>()
         })
         .await?;
@@ -3799,11 +3807,10 @@ async fn mirror_check(fixture: &str) -> Result<()> {
 /// `osmRowSet` and an `osmTrace` the loader does not produce. Production has
 /// neither: `ClassificationInputs.osm` is an ADAPTER there, not data.
 ///
-/// **`day-live`** walks with `RecordOnly`, which answers nothing. The keys it
-/// reports are exactly what a live answerer has to supply — a measurement, not
-/// a failure; `fold_converge`'s own note calls `RecordOnly` "how a day is
-/// MEASURED". ⚠ Its timeline was built from DEFAULTS for every key listed, so
-/// it is not a day to judge.
+/// **`day-live`** folds with `NoAnswers`, which declines everything. The keys
+/// it reports are exactly what a live answerer has to supply — a measurement,
+/// not a failure. ⚠ Its timeline was built from DEFAULTS for every key listed,
+/// so it is not a day to judge.
 ///
 /// **`day-mirror`** walks with [`mirror_source::MirrorSource`], which answers
 /// what the local OSM mirror covers. What it still reports as unanswerable is
@@ -3875,34 +3882,22 @@ async fn day_live(
             .duration_since(std::time::UNIX_EPOCH)
             .context("the system clock is before the epoch")?
             .as_millis() as i64;
-        backend::mirror_source::converge_from_mirror(
-            pool.clone(),
-            cap.clone(),
-            inputs.clone(),
-            now_ms,
-        )
-        .await?
+        backend::mirror_source::fold_from_mirror(pool.clone(), cap.clone(), inputs.clone(), now_ms)
+            .await?
     } else {
-        // No trace: production has no recording to seed the tables from, and
-        // passing one would answer questions this measurement exists to count.
-        backend::fold_converge::converge(
-            &cap,
-            &inputs,
-            None,
-            &mut backend::fold_converge::RecordOnly,
-        )?
+        // Nothing answers, so every ask is a key a live answerer must supply —
+        // which is the measurement this arm exists to take.
+        backend::fold::run_day(&cap, &inputs, &mut backend::lean::NoAnswers)?
     };
     pool.close().await;
 
-    let mut by_table: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-    for m in &r.unanswerable {
-        *by_table.entry(m.what.as_str()).or_default() += 1;
-    }
+    let declined = r.declined();
+    let by_table = r.declined_by_table();
     eprintln!(
-        "fold: {} round(s); {} key(s) answered; {} key(s) a live answerer must supply",
-        r.rounds,
-        r.answered,
-        r.unanswerable.len()
+        "fold: {} ask(s); {} answered; {} a live answerer must supply",
+        r.asks.len(),
+        r.answered(),
+        declined.len()
     );
     for (table, n) in &by_table {
         eprintln!("  {table}: {n}");
@@ -3913,8 +3908,7 @@ async fn day_live(
     // a question asked too early, and answering it with UTC would put a second
     // row on the table for the same stay keyed differently. Splitting it here is
     // what makes "4 unanswered" readable as "4 early asks, none missed".
-    let early = r
-        .unanswerable
+    let early = declined
         .iter()
         .filter(|m| m.what == "bestPlace" && m.key.split('|').nth(4).is_none_or(str::is_empty))
         .count();
@@ -6634,7 +6628,7 @@ async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
         .context("connecting to the database")?;
     let st = backend::state::AppState::new(pool.clone(), cfg, reqwest::Client::new());
 
-    use backend::fold_converge::rss_mib;
+    use backend::fold::rss_mib;
     println!("RSS before any fold   {:>5} MiB", rss_mib());
     let mut high = rss_mib();
     for (i, date) in dates.iter().enumerate() {
