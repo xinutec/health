@@ -516,6 +516,14 @@ def passes (e : Env) : Array Pass := #[
   ("rideHeadClaim", fun segs => RideHead.claimRideHeadFromStay segs e.points e.feasSteps),
   ("stayArrivalClaim", fun segs => FootArrival.claimStayArrivalFromWalk segs e.points),
 
+  -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay
+  -- (#1694). After every rail and vehicle carver, so a platform wait is never
+  -- taken for one, and before the re-enrichment, so the walk remainders it
+  -- leaves are named over their own windows. Lean-only: the TS had no pass here.
+  ("walkDwell", fun segs =>
+    Dwell.splitWalksOnDwell segs e.points e.feasSteps
+      (fun la lo s en => e.bestPlace la lo s en (e.tzAt la lo))),
+
   -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
   -- ran ~30 passes ago, on segments not yet split, so everything it concluded
   -- about a walk that turned out to span a ride was derived from a window
@@ -771,7 +779,7 @@ private def PAIR_MIRROR : Env :=
     "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
     "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
-    "rideHeadClaim", "stayArrivalClaim",
+    "rideHeadClaim", "stayArrivalClaim", "walkDwell",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "changeoverWindow", "interchangeStayLabel",
@@ -795,12 +803,15 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
+  -- `walkDwell` is Lean-only (#1694); it sits here so the containment check
+  -- keeps holding for the order the TS had.
+  "walkDwell",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 41
+#guard TS_CASCADE.size == 42
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1288,6 +1299,18 @@ private def ARRIVAL : Env := { NO_LOOKUPS with points := arrivalTrack }
 -- MIN_WALK_REMAINDER_S respectively.
 #guard fires ARRIVAL "stayArrivalClaim" #[wk 1000 1600, st 1600 2200]
 
+-- A walk that stops for five minutes and carries on: north at 1.5 m/s, held
+-- within 3 m from 300 to 600, north again. The dwell pass cuts it into
+-- walk | stay | walk; with a train beside the walk it would not (its own
+-- guards pin that), and nothing else here has a train.
+private def dwellTrack : Array Shed.PointF :=
+  (Array.range 10).map (fun i => fxm (Int.ofNat i * 30) (Float.ofNat i * 45) 5) ++
+  (Array.range 11).map (fun i => fxm (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++
+  (Array.range 20).map (fun i => fxm (630 + Int.ofNat i * 30) (495 + Float.ofNat i * 45) 5)
+private def DWELL : Env := { NO_LOOKUPS with points := dwellTrack }
+#guard fires DWELL "walkDwell" #[wk 0 1200]
+#guard (runNamed DWELL "walkDwell" #[wk 0 1200]).map (·.mode) == #["walking", "stationary", "walking"]
+
 /-- One train leg holding a ride, a walk out of the station, then a standstill —
 the 06-18 shape, lifted from `Interchange`'s own guards.
 
@@ -1569,7 +1592,7 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 41
+#guard witnessed.size == 42
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size

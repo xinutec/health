@@ -2649,3 +2649,197 @@ private def CLINIC : Array Float := rep 20 0 ++ rep 10 60
 #guard wrun #[] #[] #[] == #[]
 
 end WalksGuards
+
+/-! ## `splitWalksOnDwell`
+
+A walk that stops for a few minutes — a shop, a queue, a bench — and carries on
+is one walking segment, because the tumbling grid finds a dwell shorter than
+about two windows only when it happens to dominate one (#1694). Re-phasing the
+grid was measured four ways and lost confirmed rows every time; the dwell
+itself is what can be found, from the walk's own fixes.
+
+A run of fixes that holds position — every fix within `DWELL_RADIUS_M` of the
+run's running mean — for at least `DWELL_MIN_S`, with a walk of at least
+`DWELL_MIN_REMAINDER_S` left on both sides, becomes a stay of its own. The
+step counter is the veto, not the evidence: a run whose cadence reads
+`DWELL_WALKING_CADENCE` or more is a GPS that froze while the wearer walked
+on, and is left alone; no step data at all lets the GPS decide.
+
+Runs LATE in the cascade, after every rail and vehicle carver: measured in
+the split stage instead (2026-09-23), a four-minute held position next to a
+train was the platform wait, and carving it there moved the train's edge and
+lost four confirmed rail rows. So a walk with a train on either side is left
+alone — its held positions are the rail absorbers' business.
+
+The stay is named through the same venue resolver the jitter consolidation
+uses, from the run's centroid; the remainders are `walkRemainder`s, rebuilt
+over their own windows but keeping the walk's name and refinement — a stop
+taken out of a walk does not change which street it was. A boundary fix
+belongs to the stay on both sides. The second remainder is
+searched again, so a walk with two stops yields two.
+
+Entry is on the effective mode (`segMode`): by this point refinements are the
+truth about a leg. -/
+
+namespace Dwell
+
+open Verified.Geo.SegmentMerge (Seg ResolvedPlace)
+open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF segMode sortedIn walkRemainder)
+open Verified.JsNum (jsRound)
+
+/-- The venue at a centroid over a window: `(lat, lon, startTs, endTs)`. -/
+abbrev Namer := Float → Float → Int → Int → Option ResolvedPlace
+
+/-- A held position must last this long to be a stop rather than a crossing. -/
+def DWELL_MIN_S : Int := 240
+/-- How far a fix may sit from the run's mean and still be "here". Observed
+    foot arrivals hold within 1–9 m; a shop's aisles are wider than a kerb. -/
+def DWELL_RADIUS_M : Float := 30
+/-- A dwell at a walk's edge is the arrival and departure passes' business. -/
+def DWELL_MIN_REMAINDER_S : Int := 60
+/-- Cadence at or above which the run was walked through, not stood in. -/
+def DWELL_WALKING_CADENCE : Float := 40
+
+/-- End (exclusive) of the longest run from `i` whose fixes all stay within
+    `DWELL_RADIUS_M` of the run's running mean. -/
+private def runEnd (fixes : Array PointF) (i : Fin fixes.size) : Nat := Id.run do
+  let mut cLat := fixes[i].lat
+  let mut cLon := fixes[i].lon
+  let mut n : Nat := 1
+  let mut e := i.val + 1
+  for hm_j : j in [i.val + 1:fixes.size] do
+    let p := fixes[j]
+    if haversineMeters cLat cLon p.lat p.lon > DWELL_RADIUS_M then break
+    n := n + 1
+    cLat := cLat + (p.lat - cLat) / Float.ofNat n
+    cLon := cLon + (p.lon - cLon) / Float.ofNat n
+    e := j + 1
+  return e
+
+/-- The first dwell in a walk's fixes: `(first, last)` indices, inclusive. -/
+private def findDwell (fixes : Array PointF) (steps : List FeasibilityStepPoint)
+    (segStart segEnd : Int) : Option (Fin fixes.size × Fin fixes.size) := Id.run do
+  for hm_i : i in [0:fixes.size] do
+    let fi : Fin fixes.size := ⟨i, hm_i.upper⟩
+    let e := runEnd fixes fi
+    if he : e - 1 < fixes.size then
+      let last : Fin fixes.size := ⟨e - 1, he⟩
+      if e - i ≥ 3 then
+        let ds := fixes[fi].ts
+        let de := fixes[last].ts
+        if de - ds ≥ DWELL_MIN_S && ds - segStart ≥ DWELL_MIN_REMAINDER_S
+            && segEnd - de ≥ DWELL_MIN_REMAINDER_S then
+          let walked := match meanCadenceSpm steps ds de with
+            | some c => c ≥ DWELL_WALKING_CADENCE
+            | none => false
+          if !walked then return some (fi, last)
+  return none
+
+/-- Cut one walk at its first dwell; the trailing remainder is cut again. -/
+private def cutWalk (seg : Seg) (points : Array PointF) (steps : List FeasibilityStepPoint)
+    (name : Namer) : Nat → Array Seg
+  | 0 => #[seg]
+  | fuel + 1 =>
+    let fixes := sortedIn points seg.startTs seg.endTs
+    match findDwell fixes steps seg.startTs seg.endTs with
+    | none => #[seg]
+    | some (a, b) =>
+      let ds := fixes[a].ts
+      let de := fixes[b].ts
+      let run := fixes.extract a.val (b.val + 1)
+      let cLat := (run.foldl (fun s p => s + p.lat) 0) / Float.ofNat run.size
+      let cLon := (run.foldl (fun s p => s + p.lon) 0) / Float.ofNat run.size
+      let spreadM := run.foldl (fun m p => max m (haversineMeters cLat cLon p.lat p.lon)) 0
+      let venue := name cLat cLon ds de
+      let stay : Seg :=
+        { startTs := ds, endTs := de, mode := "stationary"
+          confidence := 0.9, confidenceMargin := 1000
+          avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := Int.ofNat (b.val + 1 - a.val)
+          place := venue.map (·.label), city := venue.bind (·.city)
+          centroidLat := some cLat, centroidLon := some cLon
+          displayTz := seg.displayTz
+          refinedReason := some s!"stop inside a walk: held position within {toString (jsRound spreadM).toInt64.toInt} m for {de - ds} s"
+          refinedKinds := #["walk-dwell"] }
+      -- The remainders keep the walk's NAME and refinement: a stop taken out
+      -- of a walk changes its window and never which street it was, and a
+      -- name re-derived over the shorter window picked the neighbouring street
+      -- on 2026-06-24 and lost a confirmed row. Only the kinematics are
+      -- rebuilt, as the foot-arrival trim does.
+      let keep (r : Seg) : Seg :=
+        { r with wayName := seg.wayName, refinedMode := seg.refinedMode, place := seg.place
+                 needsReenrich := false, needsRename := false }
+      let before := keep (walkRemainder seg seg.startTs ds points false)
+      let after := keep (walkRemainder seg de seg.endTs points true)
+      #[before, stay] ++ cutWalk after points steps name fuel
+
+/-- Carve every held position of `DWELL_MIN_S` or more out of each walking
+    segment as a stay of its own — except a walk with a train on either side,
+    whose held positions are platform waits. -/
+def splitWalksOnDwell (segments : Array Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) (name : Namer) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for hm_i : i in [0:segments.size] do
+    let seg := segments[i]
+    let nextTrain := if h1 : i + 1 < segments.size then segMode segments[i + 1] == "train" else false
+    let prevTrain := if h0 : 0 < i then segMode (segments[i - 1]'(by have h1 : i < segments.size := hm_i.upper; omega)) == "train" else false
+    if segMode seg != "walking" || nextTrain || prevTrain then out := out.push seg
+    else out := out ++ cutWalk seg points steps name points.size
+  return out
+
+end Dwell
+
+section DwellGuards
+
+open Dwell
+open Shed (PointF)
+open Verified.Geo.SegmentMerge (Seg)
+
+private def dLat0 : Float := 51.52
+private def dLon0 : Float := -0.13
+private def dMlat : Float := 1 / 111320
+/-- A fix `m` metres north of the origin. -/
+private def dfx (ts : Int) (m : Float) (spd : Float := 4) : PointF :=
+  { ts, lat := dLat0 + m * dMlat, lon := dLon0, speedKmh := spd }
+
+-- North at 1.5 m/s for 5 min, held within 3 m for 5 min, north again for 10
+-- min: one walk becomes walk | stay | walk, the stay spanning exactly the held
+-- fixes. 45 m between walking fixes, so no two of them sit inside the radius.
+private def STOP : Array PointF :=
+  (Array.range 10).map (fun i => dfx (Int.ofNat i * 30) (Float.ofNat i * 45)) ++
+  (Array.range 11).map (fun i => dfx (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++
+  (Array.range 20).map (fun i => dfx (630 + Int.ofNat i * 30) (495 + Float.ofNat i * 45))
+private def WALK : Seg := { startTs := 0, endTs := 1200, mode := "walking" }
+private def unnamed : Namer := fun _ _ _ _ => none
+private def cut := splitWalksOnDwell #[WALK] STOP [] unnamed
+#guard cut.map (fun s => (s.mode, s.startTs, s.endTs)) ==
+  #[("walking", 0, 300), ("stationary", 300, 600), ("walking", 600, 1200)]
+-- 19, not 20: `walkRemainder` counts `[startTs, endTs)`, its family's convention.
+#guard (cut.map (·.pointCount)) == #[10, 11, 19]
+
+-- The same stop walked THROUGH at 60 steps a minute: a frozen GPS, left alone.
+private def marching : Array Verified.Geo.Worldline.FeasibilityStepPoint :=
+  (Array.range 20).map fun i => { ts := Int.ofNat i * 60, steps := 60 }
+#guard (splitWalksOnDwell #[WALK] STOP marching.toList unnamed).size == 1
+
+-- The stop is named from its centroid through the injected resolver.
+#guard ((splitWalksOnDwell #[WALK] STOP [] fun _ _ _ _ => some { label := "Shop Alpha", city := some "Townsville" })[1]!).place
+  == some "Shop Alpha"
+
+-- A walk with a train on either side is left alone: its held position is a
+-- platform wait, and the rail absorbers own it.
+private def TRAIN : Seg := { startTs := 1200, endTs := 2400, mode := "train" }
+#guard (splitWalksOnDwell #[WALK, TRAIN] STOP [] unnamed).size == 2
+
+-- A held position under four minutes is a crossing, not a stop.
+private def BRIEF : Array PointF :=
+  (Array.range 10).map (fun i => dfx (Int.ofNat i * 30) (Float.ofNat i * 45)) ++
+  (Array.range 5).map (fun i => dfx (300 + Int.ofNat i * 30) 450 0.5) ++
+  (Array.range 20).map (fun i => dfx (450 + Int.ofNat i * 30) (495 + Float.ofNat i * 45))
+#guard (splitWalksOnDwell #[{ WALK with endTs := 1020 }] BRIEF [] unnamed).size == 1
+
+-- Not a walk: untouched.
+#guard splitWalksOnDwell #[{ WALK with mode := "driving" }] STOP [] unnamed == #[{ WALK with mode := "driving" }]
+
+end DwellGuards

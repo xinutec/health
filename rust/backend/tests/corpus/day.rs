@@ -97,7 +97,13 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// mistake that made day_corpus red in its own configuration (backed out at
 /// `c226cb9`) — the flip and this table move together or not at all.
 /// `DAY_UNANSWERED_OUT=<path>` prints the table this run measured.
-const UNANSWERED_BY_DAY: [(&str, usize); 12] = [
+///
+/// Re-blessed 2026-09-23 with the walk-dwell pass (#1694): a stop carved out
+/// of a walk is a new stay, and a new stay DERIVES a `reverseGeocode` key at
+/// its centroid that the capture never asked — 04-30 and 08-08 each gained
+/// one. The pass and these two entries move together.
+const UNANSWERED_BY_DAY: [(&str, usize); 13] = [
+    ("2026-04-30", 1),
     ("2026-05-11", 2),
     ("2026-05-22", 1),
     ("2026-05-25", 1),
@@ -109,7 +115,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 12] = [
     ("2026-07-10", 1),
     ("2026-07-17", 1),
     ("2026-08-06", 1),
-    ("2026-08-08", 1),
+    ("2026-08-08", 2),
 ];
 
 fn ceiling_for(date: &str) -> usize {

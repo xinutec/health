@@ -104,13 +104,23 @@
     },
     {
       "startTs": 1777570661,
-      "budgetM": 996.75,
-      "lenM": 778.2590382728706,
-      "offPathM": 0.0,
+      "budgetM": 972.0,
+      "lenM": 1064.1120153033246,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 2.263111904509155,
-      "stallM": 23.45224027297479
+      "speedKmh": 4.770614265369824,
+      "stallM": 9.95030629907319
+    },
+    {
+      "startTs": 1777571762,
+      "budgetM": 0.0,
+      "lenM": 31.43341482518493,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 0.8259875428515748,
+      "stallM": 0.0
     }
   ],
   "2026-05-11": [
@@ -128,7 +138,7 @@
       "startTs": 1778529867,
       "budgetM": 1701.0,
       "lenM": 1753.8959565373527,
-      "offPathM": 0.0,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 4.940551990246065,
@@ -140,7 +150,7 @@
       "startTs": 1778588395,
       "budgetM": 827.25,
       "lenM": 666.156091957854,
-      "offPathM": 0.0,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 4.185273876174999,
@@ -507,14 +517,14 @@
       "stallM": 13.687254495140735
     },
     {
-      "startTs": 1779478011,
-      "budgetM": 99.75,
-      "lenM": 268.21977054462275,
-      "offPathM": 0.0,
+      "startTs": 1779478571,
+      "budgetM": 12.0,
+      "lenM": 109.82797548175765,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 1.4034755435474446,
-      "stallM": 14.999443045146506
+      "speedKmh": 3.0889118104244337,
+      "stallM": 12.342286535970544
     },
     {
       "startTs": 1779478979,
@@ -552,7 +562,7 @@
       "startTs": 1779718835,
       "budgetM": 98.25,
       "lenM": 1289.7198959840775,
-      "offPathM": 109.97611516143304,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 6.758357533541018,
@@ -1112,7 +1122,7 @@
       "startTs": 1782326028,
       "budgetM": 1046.25,
       "lenM": 1101.1154052021268,
-      "offPathM": 9.424552874861838,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": 0.3880563004886316,
       "speedKmh": 5.017741086997034,
@@ -1120,13 +1130,23 @@
     },
     {
       "startTs": 1782327279,
-      "budgetM": 1314.0,
-      "lenM": 1331.9858441601586,
-      "offPathM": 159.93367693661904,
+      "budgetM": 91.5,
+      "lenM": 61.8597372560092,
+      "offPathM": null,
       "p90M": null,
-      "routeCorr": 0.3651723910993645,
-      "speedKmh": 3.755010993716971,
-      "stallM": 14.93151420254003
+      "routeCorr": null,
+      "speedKmh": 2.7157933429467453,
+      "stallM": 8.063902946402749
+    },
+    {
+      "startTs": 1782327708,
+      "budgetM": 1103.25,
+      "lenM": 1153.4531450978618,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": 0.4216941604344086,
+      "speedKmh": 4.896735049943754,
+      "stallM": 0.0
     }
   ],
   "2026-06-28": [
@@ -1544,13 +1564,23 @@
     },
     {
       "startTs": 1783676551,
-      "budgetM": 365.25,
-      "lenM": 392.45831644652264,
-      "offPathM": 0.0,
+      "budgetM": 91.5,
+      "lenM": 139.0178833814198,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 2.743397940208702,
-      "stallM": 22.112625795725876
+      "speedKmh": 5.381337421216251,
+      "stallM": 1.1886102189481278
+    },
+    {
+      "startTs": 1783676939,
+      "budgetM": 199.5,
+      "lenM": 153.23298517204057,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.343612178105087,
+      "stallM": 13.373323355481109
     },
     {
       "startTs": 1783685238,
@@ -1886,7 +1916,7 @@
       "startTs": 1784279776,
       "budgetM": 360.0,
       "lenM": 466.76267831541253,
-      "offPathM": 169.12488685534095,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 3.005985048185125,
@@ -2234,13 +2264,23 @@
     },
     {
       "startTs": 1786206995,
-      "budgetM": 1420.5,
-      "lenM": 1398.5193586995576,
-      "offPathM": 0.0,
+      "budgetM": 477.0,
+      "lenM": 417.404277268467,
+      "offPathM": null,
       "p90M": null,
       "routeCorr": null,
-      "speedKmh": 3.360927697809351,
-      "stallM": 31.73886833842016
+      "speedKmh": 2.9755552438940227,
+      "stallM": 14.383794970601405
+    },
+    {
+      "startTs": 1786207753,
+      "budgetM": 889.5,
+      "lenM": 1007.2696258626706,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.900230612304885,
+      "stallM": 14.943108268668311
     }
   ],
   "2026-08-09": [
@@ -2487,7 +2527,7 @@
       "startTs": 1788699266,
       "budgetM": 1736.25,
       "lenM": 1738.582613917442,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 3.540100345080764,
@@ -2497,7 +2537,7 @@
       "startTs": 1788701383,
       "budgetM": 407.25,
       "lenM": 353.1156106721522,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 1.908733030660282,
@@ -2507,7 +2547,7 @@
       "startTs": 1788714902,
       "budgetM": 306.75,
       "lenM": 278.02128722904445,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 3.6662147766467403,
@@ -2517,7 +2557,7 @@
       "startTs": 1788719575,
       "budgetM": 263.25,
       "lenM": 289.3822138975841,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 3.72062846439751,
@@ -2527,7 +2567,7 @@
       "startTs": 1788722029,
       "budgetM": 279.0,
       "lenM": 272.47935948050724,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 3.3478692632417273,
@@ -2537,7 +2577,7 @@
       "startTs": 1788722658,
       "budgetM": 0.0,
       "lenM": 2.0985264295930994,
-      "offPathM": null,
+      "offPathM": 0.0,
       "p90M": null,
       "routeCorr": null,
       "speedKmh": 0.044968423491280704,
