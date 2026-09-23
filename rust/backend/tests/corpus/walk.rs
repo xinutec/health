@@ -339,83 +339,32 @@ fn way_um_for(out: &Value, start: i64, end: i64) -> Vec<Value> {
 /// `named_walk_windows` above. An empty list is not a failure — it means the
 /// narrative named no street over this leg, and `routeCorr` is then honestly
 /// unmeasured rather than scored 0.
-/// One coordinate out of a wire value, in EITHER encoding.
+/// Whether the fold had building outlines for this leg's ground (#1501,
+/// #1678): `Seg.walkBuildingsMeasured`, joined from `segs` by window like
+/// `way_um_for`. The fold is the one that made (or was refused) the read, so
+/// it is the one that knows; this harness used to reconstruct the answer by
+/// walking the captured trace for a key whose disc reached the leg, which was
+/// the harness rebuilding the wiring it is checking.
 ///
-/// ⚠ The fold's own keys are IEEE-754 bit strings and a trace section written by
-/// the TypeScript is plain decimals; the walk request carries the bit form
-/// untouched. Reading one as the other is silent — a bit pattern parses happily
-/// as ~4.6e18 — so the `.` decides rather than a fallback that never fires.
-fn wire_coord(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) if s.contains('.') => s.parse().ok(),
-        Value::String(s) => s.parse::<u64>().ok().map(f64::from_bits),
-        _ => None,
-    }
+/// ⚠ ABSENT IS UNMEASURED. `null` means no read was made for this leg — no
+/// ways to draw on, or the pass did not run — so the day's other outlines are
+/// from elsewhere and scoring walls against them would be scoring against the
+/// wrong ground.
+fn buildings_measured_for(out: &Value, start: i64, end: i64) -> bool {
+    out.get("segs")
+        .and_then(Value::as_array)
+        .and_then(|segs| {
+            segs.iter().find(|s| {
+                s.get("startTs").and_then(Value::as_i64) == Some(start)
+                    && s.get("endTs").and_then(Value::as_i64) == Some(end)
+            })
+        })
+        .and_then(|s| s.get("walkBuildingsMeasured"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
-/// Was the building layer MEASURED where this leg ran? (#1501)
-///
-/// ⚠ **`offPathBuildingCrossingM` READS 0.0 FOR TWO DIFFERENT WORLDS**: a line
-/// that crosses no wall, and a line over ground the mirror holds no walls for.
-/// The referee has only ever drawn that distinction per DAY — `offPathM` is
-/// `none` when the whole day's buildings are empty — and coverage varies per
-/// LOCATION, which is why 2026-09-06 (Watford) trips the `load_trace` guard: three
-/// of its four `buildingsNear` keys answered and one did not.
-///
-/// The per-location answer exists and was being discarded one line below, where
-/// `flatten_section` melts the keyed section into a day-level list. A key is
-/// `lat|lon|radiusM` — the coordinate the matcher actually asked at, and its disc.
-/// So: this leg is measured iff SOME key whose disc reaches it came back with
-/// outlines.
-///
-/// ⚠ NO COVERING KEY AT ALL is also unmeasured, not measured. It means the
-/// matcher never asked around here, so the day's other outlines are from
-/// elsewhere and scoring against them is scoring against the wrong ground.
-fn buildings_measured(trace: &Value, drawn: &[Value]) -> bool {
-    let Some(Value::Object(sec)) = trace.get("buildingsNear") else {
-        // No section at all. The day-level `d.buildings.isEmpty` rule already
-        // answers that case, and it is not this check's to duplicate.
-        return true;
-    };
-    let pts: Vec<(f64, f64)> = drawn
-        .iter()
-        .filter_map(|p| {
-            let a = p.as_array()?;
-            Some((wire_coord(a.first()?)?, wire_coord(a.get(1)?)?))
-        })
-        .collect();
-    if pts.is_empty() {
-        return true;
-    }
-    sec.iter().any(|(k, v)| {
-        if v.as_array().is_none_or(Vec::is_empty) {
-            return false;
-        }
-        let mut p = k.split('|');
-        let (Some(klat), Some(klon), Some(kr)) = (
-            p.next().and_then(|x| x.parse::<f64>().ok()),
-            p.next().and_then(|x| x.parse::<f64>().ok()),
-            p.next().and_then(|x| x.parse::<f64>().ok()),
-        ) else {
-            return false;
-        };
-        pts.iter().any(|(lat, lon)| {
-            // Equirectangular; the discs are hundreds of metres and this is
-            // exact well below that.
-            let dy = (lat - klat) * 111_320.0;
-            let dx = (lon - klon) * 111_320.0 * klat.to_radians().cos();
-            dy.hypot(dx) <= kr
-        })
-    })
-}
-
-fn walking_legs(
-    out: &Value,
-    request: &Value,
-    windows: &[(i64, i64, String)],
-    trace: &Value,
-) -> Vec<Value> {
+fn walking_legs(out: &Value, request: &Value, windows: &[(i64, i64, String)]) -> Vec<Value> {
     let Some(eps) = out.get("episodes").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -446,8 +395,8 @@ fn walking_legs(
                 // window join is exact here — the walking episode is built from
                 // the walking segment and keeps its bounds.
                 "wayUm": way_um_for(out, start, end),
-                // ⚠ PER LEG, NOT PER DAY (#1501). See `buildings_measured`.
-                "buildingsMeasured": buildings_measured(trace, &drawn),
+                // ⚠ PER LEG, NOT PER DAY (#1501), and the FOLD's own answer.
+                "buildingsMeasured": buildings_measured_for(out, start, end),
             }))
         })
         .collect()
@@ -604,7 +553,7 @@ impl Walk {
             .unwrap_or("Europe/London");
         let windows = named_walk_windows(date, tz);
         let trace = inputs.get("osmTrace").cloned().unwrap_or_else(|| json!({}));
-        let legs = walking_legs(&rep.out, &rep.request, &windows, &trace);
+        let legs = walking_legs(&rep.out, &rep.request, &windows);
         // ⚠ THE PER-LOCATION COVERAGE REPORT #1501 ASKS FOR, and it is reported
         // whether or not anything is unmeasured. A tally that only speaks up on
         // a bad day cannot tell "all covered" from "the test stopped working" —

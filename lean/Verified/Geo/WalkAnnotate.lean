@@ -519,26 +519,31 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
   -- is not lost: the HOST records the disc it could not answer, so the ground
   -- is fetched instead of being re-asked forever.
   let waysOf := prep.map fun p? => p?.bind fun p => env.walkableRoads p.cLat p.cLon p.discRadiusM
+  -- A DECLINED BUILDINGS READ draws the leg as if the ground had no walls —
+  -- buildings are a CORRECTION to a line the ways already drew, and with no
+  -- wall data there is nothing to correct against. What the two cases must not
+  -- share is the wall METRIC, so the segment carries whether the read answered
+  -- (`walkBuildingsMeasured`, #1501/#1678) and the referee scores walls only
+  -- where it did.
   let buildingsOf := (Array.range prep.size).map fun i =>
     match prep[i]!, waysOf[i]! with
-    -- ⚠ AND A DECLINED BUILDINGS READ FLATTENS TO `#[]`, which is the one place
-    -- this pass still cannot tell the two apart. Buildings are a CORRECTION to a
-    -- line the ways already drew: with no wall data the leg is drawn exactly as
-    -- it is on ground that genuinely has none. What the two cases must not share
-    -- is the wall METRIC, and `Seg` has nowhere to carry that yet — that is what
-    -- `WalkIn.buildingsMeasured` stands in for (#1501), and what #1667's third
-    -- step reconsiders once a building box can be fetched at all.
     | some p, some w =>
-      if w.isEmpty then some #[] else some ((env.buildingsNear p.cLat p.cLon p.discRadiusM).getD #[])
+      if w.isEmpty then some (#[], false)
+      else match env.buildingsNear p.cLat p.cLon p.discRadiusM with
+        | some b => some (b, true)
+        | none => some (#[], false)
     | _, _ => none
   let mut out : Array Seg := #[]
   for si in [0 : segments.size] do
     let seg := segments[si]!
     match prep[si]!, waysOf[si]!, buildingsOf[si]! with
-    | some p, some ways, some buildings =>
+    | some p, some ways, some (buildings, measured) =>
       if ways.isEmpty then
         out := out.push seg
       else
+        -- From here on a buildings read was made for this ground, and every
+        -- branch below says so — including the ones that keep the raw line.
+        let seg := { seg with walkBuildingsMeasured := some measured }
         let clean := despike p.inWin
         if clean.size < MIN_LEG_FIXES then
           out := out.push seg

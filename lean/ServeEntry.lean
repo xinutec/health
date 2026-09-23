@@ -2459,6 +2459,10 @@ private structure WalkIn where
   left one empty, so its Watford walks would have scored a clean 0.0 off
   outlines fetched 20 km away.
 
+  The fold itself says so now: `Seg.walkBuildingsMeasured` (#1678) records
+  whether the `buildingsNear` read for the leg's ground answered, and the
+  harness copies it onto this row rather than reconstructing it from a trace.
+
   ⚠ **DEFAULTS TRUE, and the loudness lives in the GATE.** Defaulting false
   would be the conservative direction for one leg and a disaster for the metric:
   a wiring slip that dropped the field would turn the whole wall lens off while

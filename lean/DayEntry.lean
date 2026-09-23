@@ -721,6 +721,7 @@ private def segJson (s : Seg) : Json :=
     ("matchedPath", match s.matchedPath with | none => Json.null | some p => pathJson p),
     ("walkMatchedPath", match s.walkMatchedPath with | none => Json.null | some p => pathJson p),
     ("walkSmoothedPath", match s.walkSmoothedPath with | none => Json.null | some p => pathJson p),
+    ("walkBuildingsMeasured", match s.walkBuildingsMeasured with | none => Json.null | some b => Json.bool b),
     -- A DEBUG surface (#1464): where the walk matcher's route actually ran,
     -- named way by named way, longest first. ⚠ Nothing consumes it — the day
     -- gate compares `states`, and `parseSeg` does not read it back, so a

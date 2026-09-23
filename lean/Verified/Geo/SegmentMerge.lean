@@ -136,6 +136,13 @@ structure Seg where
   attached only where the reconstruction is substantially shorter. Takes
   precedence over `walkMatchedPath` when present. -/
   walkSmoothedPath : Option (Array PathPt) := none
+  /-- Whether the walk annotation had building outlines for THIS leg's ground
+  (#1501, #1678): `some true` when the `buildingsNear` read answered (possibly
+  with no rings — ground that genuinely has none), `some false` when it was
+  DECLINED, `none` when no read was made (no ways to draw on, or the pass did
+  not run). The wall metric is honest only when this is `some true`: a line
+  over unmeasured ground crosses no wall for the wrong reason. -/
+  walkBuildingsMeasured : Option Bool := none
   /-- HR, sleep and step aggregates over this segment's window, attached by the
   `biomEnrich` pass. `none` until it runs — distinct from an enrichment whose
   own fields are empty because Fitbit had nothing for the day. -/
