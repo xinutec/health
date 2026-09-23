@@ -1,4 +1,5 @@
 import Verified.Hsmm.Ckpt
+import Verified.ArrayLoop
 import Std.Data.HashMap
 
 /-!
