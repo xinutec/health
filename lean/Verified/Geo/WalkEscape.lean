@@ -240,13 +240,22 @@ structure Box where
   maxLon : Float
   deriving Inhabited, Repr
 
+/-- A footprint with its (possibly expanded) bbox, kept together so one index
+    reaches both. -/
+structure Footprint where
+  ring : Ring
+  box : Box
+  deriving Inhabited
+
 /-- The ring-geometry slice: footprints plus their (possibly expanded) bboxes.
     Narrow on purpose so the corner router is reusable without a walkable
     network in scope. -/
 structure RingCtx where
-  buildings : Array Ring
-  boxes : Array Box
+  footprints : Array Footprint
   deriving Inhabited
+
+/-- The footprints alone, for callers that route around rings. -/
+def RingCtx.buildings (c : RingCtx) : Array Ring := c.footprints.map (·.ring)
 
 structure BadnessCtx where
   ring : RingCtx
@@ -275,8 +284,12 @@ def ringBoxes (buildings : Array Ring) (expandM : Float) : Array Box :=
     return { minLat := minLat - dLat, maxLat := maxLat + dLat,
              minLon := minLon - dLon, maxLon := maxLon + dLon }
 
+/-- Each building with its bbox expanded by `expandM`. -/
+def RingCtx.ofRings (buildings : Array Ring) (expandM : Float) : RingCtx :=
+  { footprints := (buildings.zip (ringBoxes buildings expandM)).map fun (ring, box) => { ring, box } }
+
 def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOptions) : BadnessCtx :=
-  { ring := { buildings, boxes := ringBoxes buildings opts.buildingProxM }
+  { ring := RingCtx.ofRings buildings opts.buildingProxM
     walkable
     grid := mkWaySegmentGrid walkable (max opts.onWayM opts.offNetworkM)
     opts }
@@ -284,21 +297,21 @@ def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOpt
 /-- Is `p` inside a building? The bbox prefilter rejects almost every ring
     before the ray cast. -/
 def insideBuildingCtx (p : Pt) (ctx : RingCtx) : Bool := Id.run do
-  for hm_i : i in [0:ctx.buildings.size] do
-    let b := ctx.boxes[i]!
+  for f in ctx.footprints do
+    let b := f.box
     if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
       continue
-    if pointInRing p ctx.buildings[i] then return true
+    if pointInRing p f.ring then return true
   return false
 
 /-- Is a building within `buildingProxM` of `p` (or `p` inside one)? -/
 def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
-  for hm_i : i in [0:ctx.ring.buildings.size] do
-    let b := ctx.ring.boxes[i]!
+  for f in ctx.ring.footprints do
+    let b := f.box
     if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
       continue
-    if pointInRing p ctx.ring.buildings[i] then return true
-    match nearestOnRing p ctx.ring.buildings[i] with
+    if pointInRing p f.ring then return true
+    match nearestOnRing p f.ring with
     | some near => if near.distM <= ctx.opts.buildingProxM then return true
     | none => pure ()
   return false
@@ -321,7 +334,7 @@ Open-ground samples (off-network, no buildings near) contribute nothing.
 -/
 def segBadnessM (a b : Pt) (ctx : BadnessCtx) : Float := Id.run do
   let segLen := metersBetween a b
-  if segLen == 0 || ctx.ring.buildings.isEmpty then return 0
+  if segLen == 0 || ctx.ring.footprints.isEmpty then return 0
   let (stepsF, stepsN) := sampleSteps (segLen / 2)
   let mut bad := 0.0
   for k in [0:stepsN] do
@@ -461,15 +474,18 @@ def polylineEntersBuilding (pts : Array Pt) (ctx : RingCtx) : Bool := Id.run do
 def firstCrossedRing (a b : Pt) (ctx : RingCtx) : Option Ring := Id.run do
   let mut best : Option Ring := none
   let mut bestT := posInf
-  for hm_i : i in [0:ctx.buildings.size] do
-    let box := ctx.boxes[i]!
+  for f in ctx.footprints do
+    let box := f.box
     if max a.lat b.lat < box.minLat || min a.lat b.lat > box.maxLat
        || max a.lon b.lon < box.minLon || min a.lon b.lon > box.maxLon then
       continue
-    let ts := segRingCrossingTs a b ctx.buildings[i]
-    if ts.size ≥ 2 && ts[0]! < bestT then
-      bestT := ts[0]!
-      best := some ctx.buildings[i]
+    let ts := segRingCrossingTs a b f.ring
+    match ts[0]? with
+    | some t0 =>
+      if ts.size ≥ 2 && t0 < bestT then
+        bestT := t0
+        best := some f.ring
+    | none => pure ()
   return best
 
 private def polylineLenM (pts : Array Pt) : Float := Id.run do
@@ -540,7 +556,7 @@ termination_by fuel
     that have footprints but no walkable network in scope. -/
 def routeChordAroundBuildings (a b : Pt) (buildings : Array Ring) : Option (Array Pt) :=
   if buildings.isEmpty then some #[a, b]
-  else repairChord CORNER_MAX_DEPTH a b { buildings, boxes := ringBoxes buildings 0 }
+  else repairChord CORNER_MAX_DEPTH a b (RingCtx.ofRings buildings 0)
 
 /-! ## The corrector -/
 
