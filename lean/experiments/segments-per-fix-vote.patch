@@ -1,0 +1,365 @@
+# Per-fix vote over sliding windows — the #1694 arm, measured 2026-09-23 and REFUTED on the floors.
+# Apply with: git apply lean/experiments/segments-per-fix-vote.patch   (against 1372e22)
+# Verdict: truth rows lost on every shard, 1 journey regressed, 3 days draw an impossible leg; see task #1694.
+
+diff --git a/lean/Verified/Geo/Segments.lean b/lean/Verified/Geo/Segments.lean
+index 5f47ea2..e4599df 100644
+--- a/lean/Verified/Geo/Segments.lean
++++ b/lean/Verified/Geo/Segments.lean
+@@ -11,9 +11,9 @@ scorers, `scoreWindow` (assemble + stable-sort desc), `normalizeScores`
+ `pedestrianCoreDisplacementM` largest-pedestrian-run, and the
+ `enforcePhysicalConstraints` mode decision.
+ 
+-The window→segment *merging* (`mergeWindows` / `smoothSegments` / `findStays` /
+-`classifySegments`) sequences these over arrays and builds `TrackSegment`s — that
+-stays with the orchestrator for now; here we port the leaf math each pass calls.
++The window→segment assembly (`segmentsByVote` / `smoothSegments` / `findStays` /
++`classifySegments`) sequences these over arrays and builds `TrackSegment`s; the
++scorers here are the leaf math each pass calls.
+ 
+ `rangeScore` is `exp`-based ⇒ scores are ≤1-ULP (guarded relatively); the sort
+ ORDER of the modes — what actually classifies — is pinned EXACTLY. Displacement
+@@ -40,10 +40,10 @@ def PEDESTRIAN_CORE_MAX_STEP_KMH : Float := 15
+ 
+ /-- The kinematic features the scorers read from a window.
+ 
+-The last five fields are DEFAULTED because the scorers never read them: only
+-`extractFeatures` (which fills them) and `mergeWindows` (which splits stationary
+-runs on centroid distance, and sums `pointCount`) care. Defaulting keeps every
+-scorer guard written before the merging half was ported compiling unchanged. -/
++The last fields are DEFAULTED because the scorers never read them: only
++`slidingWindows` (which fills them) and `splitRun` (which splits stationary
++runs on centroid distance) care. Defaulting keeps every scorer guard written
++before the assembly half was ported compiling unchanged. -/
+ structure WindowFeatures where
+   medianSpeed : Float
+   maxSpeed : Float
+@@ -59,6 +59,10 @@ structure WindowFeatures where
+   centroidLat : Float := 0
+   centroidLon : Float := 0
+   pointCount : Nat := 0
++  /-- The fixes this window was cut from, as an index range into the track
++      (`endIdx` exclusive). Zero for a window built by hand. -/
++  startIdx : Nat := 0
++  endIdx : Nat := 0
+   /-- Whether this window MOVED FARTHER THAN ITS OWN GPS ERROR, so `linearity`
+       means something (#185).
+ 
+@@ -246,14 +250,16 @@ def enforcePhysicalConstraints (mode : String) (avgSpeed maxSpeed : Float) : Str
+ 
+ /-! ## Window → segment assembly
+ 
+-The second half of `segments.ts`, and the half the module header used to defer:
+-`extractFeatures` → `mergeWindows` → `smoothSegments` → `findStays` →
+-`inferTransitGaps`, assembled by `classifySegments`. Unlike the scorers above,
+-the OUTPUT RECORDS are the answer here rather than a number a caller decides on,
+-so the whole rewrite ports — the same judgement made for `SegmentMerge`.
++The second half of the segmenter: `slidingWindows` → `segmentsByVote` →
++`smoothSegments` → `findStays` → `inferTransitGaps`, assembled by
++`classifySegments`. The OUTPUT RECORDS are the answer here rather than a number
++a caller decides on.
+ 
+-`extractFeatures` and `mergeWindows` are module-PRIVATE in the TS, so they are
+-reference-tested THROUGH `classifySegments`, which is the only caller. -/
++⚠ The windows are no longer the TS's tumbling grid (#1694). Every fix anchors a
++window, every fix takes the mode the windows covering it agree on most, and a
++segment is a run of fixes rather than a run of windows — so a dwell's fate no
++longer turns on where a grid started. The assembly is reference-tested THROUGH
++`classifySegments`, its only caller, against values derived from this code. -/
+ 
+ /-! ### Constants (verbatim from segments.ts) -/
+ def STATIONARY_SPLIT_DIST_M : Float := 100
+@@ -442,49 +448,75 @@ private def scanWindowEnd (points : Array FilteredPoint) (endTs : Int) : Nat →
+   | 0, i => i
+   | fuel+1, i => if i < points.size && points[i]!.ts < endTs then scanWindowEnd points endTs fuel (i+1) else i
+ 
+-/-- Fixed-width tumbling windows, each starting at the first fix not yet
+-consumed. A window holding fewer than two fixes is DROPPED, not emitted.
+-
+-Fuelled by the point count: each step consumes at least one point whenever
+-`windowSec > 0` (the first fix always satisfies `ts < ts + windowSec`), so the
+-fuel can only over-provide. At `windowSec ≤ 0` the TS loops forever; here the
+-fuel runs out and the recursion terminates, which is the one deliberate
+-difference and is unreachable from `classifySegments` (`WINDOW_SEC = 300`). -/
+-private def extractLoop (points : Array FilteredPoint) (windowSec : Int) :
+-    Nat → Nat → Array WindowFeatures → Array WindowFeatures
+-  | 0, _, acc => acc
+-  | fuel+1, windowStart, acc =>
+-    if windowStart < points.size then
+-      let startTs := points[windowStart]!.ts
+-      let windowEnd := scanWindowEnd points (startTs + windowSec) points.size windowStart
+-      let wp := (points.toList.drop windowStart).take (windowEnd - windowStart) |>.toArray
+-      let acc := if wp.size < 2 then acc else acc.push (featuresOf wp)
+-      extractLoop points windowSec fuel windowEnd acc
+-    else acc
+-
+-def extractFeatures (points : Array FilteredPoint) (windowSec : Int) : Array WindowFeatures :=
+-  if points.size < 2 then #[] else extractLoop points windowSec points.size 0 #[]
+-
+-/-- Collapse a run of windows into one segment. Confidence and margin are the
+-per-window posteriors AVERAGED (the TS calls this "close enough for a
+-heuristic"); `avgSpeed` is the MEDIAN of the per-window medians, not a mean. -/
+-private def flushSeg (windows : Array WindowFeatures) (scores : Array (List ModeScore))
+-    (segStart endIdx : Nat) (mode : String) : TrackSegment :=
+-  let segW := ((windows.toList.drop segStart).take (endIdx - segStart)).toArray
+-  let segS := ((scores.toList.drop segStart).take (endIdx - segStart)).toArray
++/-- A window anchored at EVERY fix: `[i, i + windowSec)` for each `i`, kept when
++it holds at least two fixes. Every alignment of the fixed-width window the
++track admits is scored, so no dwell depends on where a grid happened to start —
++the phase problem of the tumbling grid this replaced (#1694): that grid
++re-anchored at every gap longer than a window, and a dwell shorter than two
++windows was found or missed on `(time since the last gap) mod 300`. -/
++private def slidingWindows (points : Array FilteredPoint) (windowSec : Int) : Array WindowFeatures := Id.run do
++  let mut out : Array WindowFeatures := #[]
++  for hm_i : i in [0:points.size] do
++    let e := scanWindowEnd points (points[i].ts + windowSec) points.size i
++    if e - i ≥ 2 then
++      out := out.push { featuresOf (points.extract i e) with startIdx := i, endIdx := e }
++  return out
++
++/-- The modes in the order `scoreWindow` lists them. -/
++private def MODES : Array String := #["stationary", "walking", "cycling", "driving", "train", "plane"]
++
++/-- Share-of-total posterior of every mode in `MODES` order; all zero when the
++scores sum to zero (the window is then evidence of nothing). -/
++private def posteriors (scores : List ModeScore) : Array Float :=
++  let sum := scores.foldl (fun a s => a + s.score) 0
++  MODES.map fun m =>
++    if sum == 0 then 0 else match scores.find? (·.mode == m) with
++      | some s => s.score / sum
++      | none => 0
++
++/-- The index of the first maximum. -/
++private def argmax (xs : Array Float) : Nat := Id.run do
++  let mut best := 0
++  for hm_i : i in [1:xs.size] do
++    if xs[i] > xs.getD best 0 then best := i
++  return best
++
++/-- Each fix's mode: the mode with the highest posterior summed over every
++window that covers the fix, or `none` for a fix no window covers (an isolated
++fix with no neighbour within a window either side). -/
++private def fixModes (n : Nat) (windows : Array WindowFeatures) (scores : Array (List ModeScore)) :
++    Array (Option Nat) := Id.run do
++  let mut votes : Array (Array Float) := Array.replicate n (Array.replicate MODES.size 0.0)
++  let mut covered : Array Bool := Array.replicate n false
++  for hm_w : w in [0:windows.size] do
++    let win := windows[w]
++    let post := posteriors (scores.getD w [])
++    for j in [win.startIdx:min win.endIdx n] do
++      covered := covered.set! j true
++      votes := votes.set! j ((votes.getD j #[]).zipWith (· + ·) post)
++  return (Array.range n).map fun j =>
++    if covered.getD j false then some (argmax (votes.getD j #[])) else none
++
++/-- One segment from a group of windows over the fixes `[fa, fb)`. Confidence
++and margin are the per-window posteriors AVERAGED (the TS called this "close
++enough for a heuristic"); `avgSpeed` is the MEDIAN of the per-window medians,
++not a mean. The span and the point count are the FIXES', not the windows':
++a window reaches past the run it was anchored in. -/
++private def segmentOf (points : Array FilteredPoint) (segW : Array WindowFeatures)
++    (segS : Array (List ModeScore)) (fa fb : Nat) (mode : String) : TrackSegment :=
+   let norms := segS.map normalizeScores
+   let avgConfidence := norms.foldl (fun s n => s + n.2.1) 0.0 / norms.size.toFloat
+   let avgMargin := norms.foldl (fun s n => s + n.2.2) 0.0 / norms.size.toFloat
+   let avgLinearity := segW.foldl (fun s w => s + w.linearity) 0.0 / segW.size.toFloat
+-  { startTs := segW[0]!.startTs
+-    endTs := segW[segW.size-1]!.endTs
++  { startTs := (points.getD fa default).ts
++    endTs := (points.getD (fb - 1) default).ts
+     mode := mode
+     confidence := jsRound (avgConfidence * 100) / 100
+     confidenceMargin := jsRound (avgMargin * 100) / 100
+     avgSpeed := jsRound (median (segW.map (·.medianSpeed)) * 10) / 10
+-    maxSpeed := jsRound ((segW.foldl (fun m w => max m w.maxSpeed) segW[0]!.maxSpeed) * 10) / 10
++    maxSpeed := jsRound ((segW.foldl (fun m w => max m w.maxSpeed) 0) * 10) / 10
+     linearity := jsRound (avgLinearity * 100) / 100
+-    pointCount := segW.foldl (fun s w => s + w.pointCount) 0
++    pointCount := fb - fa
+     -- ⚠ ANY, not ALL. A segment whose direction was measurable in even one of
+     -- its windows has a linearity worth believing; requiring every window to
+     -- clear its own error would call a long real walk unresolvable because it
+@@ -492,34 +524,73 @@ private def flushSeg (windows : Array WindowFeatures) (scores : Array (List Mode
+     -- moved (#185).
+     directionResolvable := segW.any (·.directionResolvable) }
+ 
+-/-- Merge consecutive same-mode windows into segments.
+-
+-Two things force a cut: a mode change, and — for stationary runs only — a new
+-window whose centroid is more than `STATIONARY_SPLIT_DIST_M` from the run's
+-POINT-WEIGHTED running centroid. Without the second, "stationary at A, then
+-stationary at B 280 m away" collapses into one stay. -/
+-def mergeWindows (windows : Array WindowFeatures) (scores : Array (List ModeScore)) : Array TrackSegment :=
+-  if windows.isEmpty then #[] else Id.run do
+-    let mut segments : Array TrackSegment := #[]
+-    let mut currentMode := (scores[0]!).head!.mode
+-    let mut segStart := 0
+-    for i in [1:windows.size+1] do
+-      let newMode : Option String := if i < windows.size then some (scores[i]!).head!.mode else none
+-      let mut locationSplit := false
+-      if i < windows.size && currentMode == "stationary" && newMode == some "stationary" then
+-        let segW := ((windows.toList.drop segStart).take (i - segStart)).toArray
+-        let totalPts := Float.ofNat (segW.foldl (fun s w => s + w.pointCount) 0)
+-        let cLat := segW.foldl (fun s w => s + w.centroidLat * Float.ofNat w.pointCount) 0.0 / totalPts
+-        let cLon := segW.foldl (fun s w => s + w.centroidLon * Float.ofNat w.pointCount) 0.0 / totalPts
+-        let next := windows[i]!
+-        if haversineMeters cLat cLon next.centroidLat next.centroidLon > STATIONARY_SPLIT_DIST_M then
+-          locationSplit := true
+-      if newMode != some currentMode || locationSplit || i == windows.size then
+-        segments := segments.push (flushSeg windows scores segStart i currentMode)
+-        if i < windows.size then
+-          currentMode := (scores[i]!).head!.mode
+-          segStart := i
+-    return segments
++/-- The segments of one same-mode run of fixes `[a, b)`.
++
++A stationary run is cut where a FIX is more than `STATIONARY_SPLIT_DIST_M` from
++the running mean of the fixes before it in its group — without that,
++"stationary at A, then stationary at B 280 m away" collapses into one stay. The
++cut is at fix resolution: a window straddling the move would put its centroid
++between the two places and cut a window early.
++
++Each group is described by the windows anchored inside it; a group too short to
++anchor a window (its fixes were voted by windows anchored before it) borrows the
++windows covering its first fix. -/
++private def splitRun (points : Array FilteredPoint) (windows : Array WindowFeatures)
++    (scores : Array (List ModeScore)) (a b : Nat) (mode : String) : Array TrackSegment := Id.run do
++  -- Group starts, as fix indices.
++  let mut starts : Array Nat := #[a]
++  if mode == "stationary" then
++    let mut cLat := 0.0
++    let mut cLon := 0.0
++    let mut cN : Nat := 0
++    for i in [a:b] do
++      let p := points.getD i default
++      if cN > 0 && haversineMeters cLat cLon p.lat p.lon > STATIONARY_SPLIT_DIST_M then
++        starts := starts.push i
++        cLat := p.lat; cLon := p.lon; cN := 1
++      else
++        -- Running mean: the divisor is the size AFTER the join.
++        cN := cN + 1
++        cLat := cLat + (p.lat - cLat) / Float.ofNat cN
++        cLon := cLon + (p.lon - cLon) / Float.ofNat cN
++  let bounds := starts.push b
++  let mut out : Array TrackSegment := #[]
++  for g in [0:bounds.size - 1] do
++    let fa := bounds.getD g a
++    let fb := bounds.getD (g + 1) b
++    if fb ≤ fa then continue
++    let anchored := (Array.range windows.size).filter fun w =>
++      let win := windows.getD w default
++      fa ≤ win.startIdx && win.startIdx < fb
++    let idx := if anchored.isEmpty then
++        (Array.range windows.size).filter fun w =>
++          let win := windows.getD w default
++          win.startIdx ≤ fa && fa < win.endIdx
++      else anchored
++    if idx.isEmpty then continue
++    let ws := idx.map fun w => windows.getD w default
++    let ss := idx.map fun w => scores.getD w []
++    out := out.push (segmentOf points ws ss fa fb mode)
++  return out
++
++/-- Segments from the per-fix vote: maximal runs of fixes that agree on a mode,
++each cut as `splitRun` says. A fix no window covers ends the run before it and
++belongs to no segment, as a lone fix in a too-short window did before. -/
++def segmentsByVote (points : Array FilteredPoint) (windows : Array WindowFeatures)
++    (scores : Array (List ModeScore)) : Array TrackSegment := Id.run do
++  let n := points.size
++  let modes := fixModes n windows scores
++  let mut out : Array TrackSegment := #[]
++  let mut runStart := 0
++  for i in [1:n + 1] do
++    let cur := modes.getD (i - 1) none
++    let next := if i < n then modes.getD i none else none
++    if next != cur || i == n then
++      match cur with
++      | some m => out := out ++ splitRun points windows scores runStart i (MODES.getD m "stationary")
++      | none => pure ()
++      runStart := i
++  return out
+ 
+ /-- Absorb sub-`minDurationSec` segments into their predecessor. A 10-second
+ "driving" segment between two walks is noise, not a car ride.
+@@ -677,10 +748,10 @@ filtered out of the movement pipeline but are still evidence that you were
+ somewhere. Absent, the movement fixes double as stay evidence. -/
+ def classifySegments (points : Array FilteredPoint)
+     (stayPoints : Option (Array StayPoint) := none) : Array TrackSegment :=
+-  let windows := extractFeatures points WINDOW_SEC
++  let windows := slidingWindows points WINDOW_SEC
+   let classified :=
+     if windows.isEmpty then #[]
+-    else smoothSegments (mergeWindows windows (windows.map scoreWindow)) MIN_SEGMENT_SEC
++    else smoothSegments (segmentsByVote points windows (windows.map scoreWindow)) MIN_SEGMENT_SEC
+   let sps := stayPoints.getD (points.map (fun p => ⟨p.ts, p.lat, p.lon⟩))
+   let stays := findStays sps classified
+   let ordered := (((classified ++ stays).toList).mergeSort (fun a b => a.startTs ≤ b.startTs)).toArray
+@@ -816,17 +887,19 @@ private def walkPts : Array FilteredPoint :=
+   { startTs := 0, endTs := 420, mode := "walking", confidence := 0.89, confidenceMargin := 26.17,
+     avgSpeed := 4.5, maxSpeed := 4.5, linearity := 1, pointCount := 8 }]
+ 
+--- THE `locationSplit` BRANCH: two stationary clusters 280 m apart. Same mode
+--- throughout, so only the point-weighted centroid test can separate them —
+--- without it these collapse into one stay at neither place.
++-- THE LOCATION SPLIT: two stationary clusters 280 m apart. Same mode
++-- throughout, so only the running-centroid test can separate them — without
++-- it these collapse into one stay at neither place. The cut falls exactly
++-- between the places, six fixes each; the tumbling grid it replaced gave the
++-- second stay a fix from the first (#1694).
+ private def twoStayPts : Array FilteredPoint :=
+   (Array.range 6).map (fun i => fp (Int.ofNat i * 60) 51.5 (-0.1) 0.2) ++
+   (Array.range 6).map (fun i => fp (360 + Int.ofNat i * 60) 51.5025 (-0.1) 0.2)
+ #guard classifySegments twoStayPts == #[
+-  { startTs := 0, endTs := 240, mode := "stationary", confidence := 1, confidenceMargin := 1000,
+-    avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0, pointCount := 5 },
+-  { startTs := 300, endTs := 660, mode := "stationary", confidence := 0.95, confidenceMargin := 504.83,
+-    avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0.5, pointCount := 7 }]
++  { startTs := 0, endTs := 300, mode := "stationary", confidence := 0.93, confidenceMargin := 339.77,
++    avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0.67, pointCount := 6 },
++  { startTs := 360, endTs := 660, mode := "stationary", confidence := 1, confidenceMargin := 1000,
++    avgSpeed := 0.2, maxSpeed := 0.2, linearity := 0, pointCount := 6 }]
+ 
+ -- `smoothSegments`: a lone 90 km/h fix between two walks is under
+ -- MIN_SEGMENT_SEC. Its MODE is discarded but its maxSpeed survives into the
+@@ -842,8 +915,10 @@ private def blipPts : Array FilteredPoint :=
+ -- `segments-refs.mts`, which went with it (#975) and cannot regenerate them —
+ -- so this is a DELIBERATE departure from the ported behaviour, not a re-derived
+ -- reference, and the TS had the defect too.
++-- 0.80/17.99 under the tumbling grid; the vote averages more windows, some
++-- of which see the blip.
+ #guard classifySegments blipPts == #[
+-  { startTs := 0, endTs := 720, mode := "walking", confidence := 0.8, confidenceMargin := 17.99,
++  { startTs := 0, endTs := 720, mode := "walking", confidence := 0.78, confidenceMargin := 16.01,
+     avgSpeed := 4.5, maxSpeed := 90, linearity := 1, pointCount := 13 }]
+ 
+ -- `findStays` proper: a dwell in the uncovered stretch between two DIFFERENTLY
+@@ -856,11 +931,13 @@ private def dwellPts : Array StayPoint :=
+   (Array.range 20).map (fun i => ⟨1200 + Int.ofNat i * 180, 51.55, -0.1⟩)
+ #guard classifySegments movePts (some (movePts.map (fun p => ⟨p.ts, p.lat, p.lon⟩) ++ dwellPts)) == #[
+   -- 0.75/4.1 before #1659's cycling floor; see the note on `blipPts` above.
+-  { startTs := 0, endTs := 240, mode := "walking", confidence := 0.89, confidenceMargin := 26.17,
+-    avgSpeed := 4.5, maxSpeed := 4.5, linearity := 1, pointCount := 5 },
+-  { startTs := 240, endTs := 1200, mode := "driving", confidence := 0.3, confidenceMargin := 1.2,
+-    avgSpeed := 40.5, maxSpeed := 40.5, linearity := 1, pointCount := 0,
+-    refinedReason := some "inferred from GPS gap (10.8 km in 16 min)",
++  -- The walk holds all six of its fixes: the sixth sat alone in a tumbling
++  -- window of its own and was dropped (#1694).
++  { startTs := 0, endTs := 300, mode := "walking", confidence := 0.89, confidenceMargin := 26.17,
++    avgSpeed := 4.5, maxSpeed := 4.5, linearity := 1, pointCount := 6 },
++  { startTs := 300, endTs := 1200, mode := "driving", confidence := 0.3, confidenceMargin := 1.2,
++    avgSpeed := 42.9, maxSpeed := 42.9, linearity := 1, pointCount := 0,
++    refinedReason := some "inferred from GPS gap (10.7 km in 15 min)",
+     refinedKinds := #["gps-gap-inferred"] },
+   { startTs := 1200, endTs := 4620, mode := "stationary", confidence := 0.9, confidenceMargin := 1000,
+     avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 20 },
+@@ -868,8 +945,8 @@ private def dwellPts : Array StayPoint :=
+     avgSpeed := 15, maxSpeed := 15, linearity := 1, pointCount := 0,
+     refinedReason := some "inferred from GPS gap (10.7 km in 43 min)",
+     refinedKinds := #["gps-gap-inferred"] },
+-  { startTs := 7200, endTs := 7440, mode := "driving", confidence := 0.55, confidenceMargin := 1.24,
+-    avgSpeed := 60, maxSpeed := 60, linearity := 1, pointCount := 5 }]
++  { startTs := 7200, endTs := 7500, mode := "driving", confidence := 0.55, confidenceMargin := 1.24,
++    avgSpeed := 60, maxSpeed := 60, linearity := 1, pointCount := 6 }]
+ 
+ private def gapSeg (s e : Int) (mode : String) (lin maxS : Float) : TrackSegment :=
+   { startTs := s, endTs := e, mode := mode, confidence := 0.9, confidenceMargin := 3,
