@@ -7,15 +7,13 @@ the response carries a configuration patch. So this decides, on every fix, how
 often that phone should take the next one — which is a direct trade of the
 user's battery against the fidelity of their timeline.
 
-⚠ THIS NEVER DEMOTES. Pippijn's decision, 2026-09-23: a missing journey is a
-hole in the record and a flat battery is an inconvenience, and the two are not
-symmetric — so the phone is never told to drop to Significant. A demotion rule
-existed until that day, gated on sustained standstill at a place he lingers,
-and it still cost a walk: 2026-06-07 (three hours at home, a fourteen-minute
-gap walking out) and 2026-09-23 (a twelve-minute standstill on a walk, a
-fourteen-and-a-half-minute gap walking on). He sets Move mode himself each
-morning; this decides only how OFTEN to locate inside it, and escalates a
-phone that reports itself in Significant.
+⚠ THIS NEVER DEMOTES (2026-09-23). A missing journey is a hole in the record;
+a flat battery is not. The demotion rule that existed until then was gated on
+standstill at a place the user lingers and still cost a walk twice: 2026-06-07
+(three hours at home, a fourteen-minute gap walking out) and 2026-09-23 (a
+twelve-minute standstill mid-walk, fourteen minutes lost walking on). The user
+sets Move mode by hand; this decides how often to locate inside it, and
+escalates a phone that reports itself in Significant.
 
 ## The cascade, in priority order
 
@@ -23,17 +21,16 @@ phone that reports itself in Significant.
    to accumulate; a single fix above the transit threshold escalates.
 2. **Significant → Move**, on any evidence of motion. Only fires when the phone
    is actually in Significant — there is nothing to escalate from Move. With no
-   evidence the answer is still a Move profile, because every answer is one.
+   evidence the answer is still a Move profile.
 3. **Refinement inside Move**, once there is enough trajectory to tell walking
    from a bus.
 4. **Night.** Between `NIGHT_START_H` and `NIGHT_END_H` local time a phone
    that is not moving locates once an hour — still Move mode, so a night walk
-   is seen at the next fix and escalates like any other. The interval is what
-   spares the unnecessary data, which is what it is for; it is not a battery
-   measure and it is not a pause.
+   is seen at the next fix and escalates like any other. The interval spares
+   data, not battery; it is not a pause.
 
 Pure and total. UNPROVEN; the thresholds are the TypeScript's, the night
-window Pippijn's (2026-09-23).
+window a 2026-09-23 decision.
 -/
 namespace Verified.Owntracks
 
@@ -81,9 +78,9 @@ def Profile.name : Profile → String
   | .night => "night"
 
 /-- Local hours inside which a still phone locates hourly: from 23:00 up to
-    but not including 06:00. The window ends early on purpose — precision
-    should be back before he goes out, and the last hourly fix can land up to
-    an hour after the window closes. -/
+    but not including 06:00. The window ends early: the last hourly fix can
+    land up to an hour after it closes, and the day's cadence must be back
+    before the first trip out. -/
 def NIGHT_START_H : Int := 23
 def NIGHT_END_H : Int := 6
 
@@ -281,10 +278,9 @@ def decideTransition (s : Signals) (prev : Option Profile) : Transition :=
 /-- What we decide for a device we have never seen, or one with no evidence
 either way: the gentlest Move profile.
 
-⚠ Move, not the phone's factory default of Significant. Every answer is a
-push, so the first fix after a restart used to push Significant onto a phone
-that was walking (2026-09-23, after a deploy); now the first fix puts it in
-Move, which is where Pippijn wants it whenever it reports at all. -/
+⚠ Move, not the phone's factory default of Significant: every answer is a
+push, and the first fix after a restart used to push Significant onto a
+walking phone (2026-09-23, after a deploy). -/
 def DEFAULT_PROFILE : Profile := .walking
 
 /-- The Owntracks settings for a profile: monitoring mode (always 2, Move), and

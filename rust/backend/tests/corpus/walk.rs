@@ -341,10 +341,9 @@ fn way_um_for(out: &Value, start: i64, end: i64) -> Vec<Value> {
 /// unmeasured rather than scored 0.
 /// Whether the fold had building outlines for this leg's ground (#1501,
 /// #1678): `Seg.walkBuildingsMeasured`, joined from `segs` by window like
-/// `way_um_for`. The fold is the one that made (or was refused) the read, so
-/// it is the one that knows; this harness used to reconstruct the answer by
-/// walking the captured trace for a key whose disc reached the leg, which was
-/// the harness rebuilding the wiring it is checking.
+/// `way_um_for`. The fold made (or was refused) the read, so it knows; this
+/// harness used to reconstruct the answer from the captured trace, which was
+/// rebuilding the wiring it is checking.
 ///
 /// ⚠ ABSENT IS UNMEASURED. `null` means no read was made for this leg — no
 /// ways to draw on, or the pass did not run — so the day's other outlines are

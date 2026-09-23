@@ -2655,8 +2655,8 @@ end WalksGuards
 A walk that stops for a few minutes — a shop, a queue, a bench — and carries on
 is one walking segment, because the tumbling grid finds a dwell shorter than
 about two windows only when it happens to dominate one (#1694). Re-phasing the
-grid was measured four ways and lost confirmed rows every time; the dwell
-itself is what can be found, from the walk's own fixes.
+grid was measured four ways and lost confirmed rows every time; the dwell is
+found from the walk's own fixes instead.
 
 A run of fixes that holds position — every fix within `DWELL_RADIUS_M` of the
 run's running mean — for at least `DWELL_MIN_S`, with a walk of at least
@@ -2665,11 +2665,10 @@ step counter is the veto, not the evidence: a run whose cadence reads
 `DWELL_WALKING_CADENCE` or more is a GPS that froze while the wearer walked
 on, and is left alone; no step data at all lets the GPS decide.
 
-Runs LATE in the cascade, after every rail and vehicle carver: measured in
-the split stage instead (2026-09-23), a four-minute held position next to a
-train was the platform wait, and carving it there moved the train's edge and
-lost four confirmed rail rows. So a walk with a train on either side is left
-alone — its held positions are the rail absorbers' business.
+Runs LATE in the cascade, after every rail and vehicle carver: in the split
+stage (measured 2026-09-23) a held position next to a train was the platform
+wait, and carving it moved the train's edge and lost four confirmed rail
+rows. A walk with a train on either side is left alone.
 
 The stay is named through the same venue resolver the jitter consolidation
 uses, from the run's centroid; the remainders are `walkRemainder`s, rebuilt

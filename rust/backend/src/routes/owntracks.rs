@@ -6,10 +6,9 @@
 //! duplicated here — but sitting in the path lets the decision use context the
 //! phone cannot have: the user's recent trajectory, and the local hour.
 //!
-//! ⚠ IT NEVER DEMOTES. Pippijn's decision, 2026-09-23: the phone stays in Move
-//! mode and this only chooses how often it locates — hourly at night when
-//! still, every 30 s by day, faster in a vehicle. He puts the phone in Move
-//! himself each morning; the one thing this must never do is take it out.
+//! ⚠ IT NEVER DEMOTES (2026-09-23). The phone stays in Move mode; this chooses
+//! how often it locates — hourly at night when still, every 30 s by day,
+//! faster in a vehicle — and must never take it out.
 //!
 //! ⚠ THE FORWARD HAPPENS FIRST, AND ITS FAILURE IS FATAL TO THE REQUEST. Losing
 //! a fix loses a piece of the timeline permanently; getting the config patch

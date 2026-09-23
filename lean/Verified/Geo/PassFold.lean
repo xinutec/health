@@ -518,8 +518,8 @@ def passes (e : Env) : Array Pass := #[
 
   -- A stop of a few minutes inside a walk — a shop, a queue — is its own stay
   -- (#1694). After every rail and vehicle carver, so a platform wait is never
-  -- taken for one, and before the re-enrichment, so the walk remainders it
-  -- leaves are named over their own windows. Lean-only: the TS had no pass here.
+  -- taken for one. The remainders keep the walk's name, so the re-enrichment
+  -- that follows leaves them alone. Lean-only: the TS had no pass here.
   ("walkDwell", fun segs =>
     Dwell.splitWalksOnDwell segs e.points e.feasSteps
       (fun la lo s en => e.bestPlace la lo s en (e.tzAt la lo))),
