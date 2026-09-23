@@ -83,35 +83,37 @@ abbrev SmoothedPoint := TPt
 the uniform edge weight of the step-magnitude contraction factor.
 -/
 
-/-- Apply `A` to a vector, matrix-free. -/
-def applyA (v d : Array Float) (wAcc : Float) (wEdge : Float := 0) : Array Float := Id.run do
-  let n := v.size
-  let mut out := Array.replicate n 0.0
-  for i in [0:n] do
-    out := out.set! i (d[i]! * v[i]!)
+/-- Apply `A` to a vector, matrix-free. The system's dimension is in the
+    types: every vector here has the `n` of the vector being solved for, so an
+    index proved once by the loop bound reaches all of them. -/
+def applyA {n : Nat} (v d : Vector Float n) (wAcc : Float) (wEdge : Float := 0) :
+    Vector Float n := Id.run do
+  let mut out := Vector.replicate n 0.0
+  for h : i in [0:n] do
+    out := out.set i (d[i] * v[i])
   -- Lv has length n-2: (Lv)[k] = v[k] − 2v[k+1] + v[k+2]; scatter LᵀLv back
   -- onto rows k (+1), k+1 (−2), k+2 (+1).
   for k in [0:n] do
-    if k + 2 < n then
-      let lv := wAcc * (v[k]! - 2 * v[k+1]! + v[k+2]!)
-      out := out.set! k (out[k]! + lv)
-      out := out.set! (k+1) (out[k+1]! - 2 * lv)
-      out := out.set! (k+2) (out[k+2]! + lv)
+    if h : k + 2 < n then
+      let lv := wAcc * (v[k] - 2 * v[k+1] + v[k+2])
+      out := out.set k (out[k] + lv)
+      out := out.set (k+1) (out[k+1] - 2 * lv)
+      out := out.set (k+2) (out[k+2] + lv)
   if wEdge > 0 then
     -- Scatter D₁ᵀD₁v: edge k couples rows k (−) and k+1 (+).
     for k in [0:n] do
-      if k + 1 < n then
-        let f := wEdge * (v[k+1]! - v[k]!)
-        out := out.set! k (out[k]! - f)
-        out := out.set! (k+1) (out[k+1]! + f)
+      if h : k + 1 < n then
+        let f := wEdge * (v[k+1] - v[k])
+        out := out.set k (out[k] - f)
+        out := out.set (k+1) (out[k+1] + f)
   return out
 
 /-- Diagonal of `A`, for Jacobi preconditioning. The biharmonic stencil
     contributes 1/5/6/5/1 down the band; the first-difference stencil 1/2/…/2/1. -/
-def diagOfA (d : Array Float) (wAcc : Float) (wEdge : Float := 0) : Array Float := Id.run do
-  let n := d.size
-  let mut out := Array.replicate n 0.0
-  for i in [0:n] do
+def diagOfA {n : Nat} (d : Vector Float n) (wAcc : Float) (wEdge : Float := 0) :
+    Vector Float n := Id.run do
+  let mut out := Vector.replicate n 0.0
+  for h : i in [0:n] do
     let mut ltl := 0.0
     -- `i ≤ n-3`, `0 ≤ i-1 ≤ n-3`, `0 ≤ i-2 ≤ n-3` — written additively because
     -- Nat subtraction truncates where the JS number goes negative.
@@ -121,32 +123,31 @@ def diagOfA (d : Array Float) (wAcc : Float) (wEdge : Float := 0) : Array Float 
     let mut d1 := 0.0
     if i + 2 ≤ n then d1 := d1 + 1
     if i ≥ 1 then d1 := d1 + 1
-    out := out.set! i (d[i]! + wAcc * ltl + wEdge * d1)
+    out := out.set i (d[i] + wAcc * ltl + wEdge * d1)
   return out
 
 /-- Solve the SPD system `A x = b` by Jacobi-preconditioned conjugate gradient,
     seeded at `x0`. -/
-def solvePCG (d : Array Float) (wAcc : Float) (b x0 : Array Float)
-    (wEdge : Float := 0) : Array Float := Id.run do
-  let n := b.size
+def solvePCG {n : Nat} (d : Vector Float n) (wAcc : Float) (b x0 : Vector Float n)
+    (wEdge : Float := 0) : Vector Float n := Id.run do
   let mut invDiag := diagOfA d wAcc wEdge
-  for i in [0:n] do
-    invDiag := invDiag.set! i (1 / invDiag[i]!)
+  for h : i in [0:n] do
+    invDiag := invDiag.set i (1 / invDiag[i])
   let mut x := x0
   let ax0 := applyA x d wAcc wEdge
-  let mut r := Array.replicate n 0.0
-  for i in [0:n] do
-    r := r.set! i (b[i]! - ax0[i]!)
-  let mut z := Array.replicate n 0.0
-  for i in [0:n] do
-    z := z.set! i (invDiag[i]! * r[i]!)
+  let mut r := Vector.replicate n 0.0
+  for h : i in [0:n] do
+    r := r.set i (b[i] - ax0[i])
+  let mut z := Vector.replicate n 0.0
+  for h : i in [0:n] do
+    z := z.set i (invDiag[i] * r[i])
   let mut p := z
   let mut rz := 0.0
-  for i in [0:n] do
-    rz := rz + r[i]! * z[i]!
+  for h : i in [0:n] do
+    rz := rz + r[i] * z[i]
   let mut bNorm := 0.0
-  for i in [0:n] do
-    bNorm := bNorm + b[i]! * b[i]!
+  for h : i in [0:n] do
+    bNorm := bNorm + b[i] * b[i]
   let tol2 := max 1e-18 (bNorm * 1e-14)
   let maxIter := min (2 * n + 50) 2000
   let mut it := 0
@@ -154,30 +155,30 @@ def solvePCG (d : Array Float) (wAcc : Float) (b x0 : Array Float)
   while it < maxIter && !stop do
     let ap := applyA p d wAcc wEdge
     let mut pap := 0.0
-    for i in [0:n] do
-      pap := pap + p[i]! * ap[i]!
+    for h : i in [0:n] do
+      pap := pap + p[i] * ap[i]
     -- Numerical guard: A is SPD, so this is only round-off.
     if pap ≤ 0 then
       stop := true
     else
       let alpha := rz / pap
-      for i in [0:n] do
-        x := x.set! i (x[i]! + alpha * p[i]!)
-        r := r.set! i (r[i]! - alpha * ap[i]!)
+      for h : i in [0:n] do
+        x := x.set i (x[i] + alpha * p[i])
+        r := r.set i (r[i] - alpha * ap[i])
       let mut rNorm := 0.0
-      for i in [0:n] do
-        rNorm := rNorm + r[i]! * r[i]!
+      for h : i in [0:n] do
+        rNorm := rNorm + r[i] * r[i]
       if rNorm ≤ tol2 then
         stop := true
       else
-        for i in [0:n] do
-          z := z.set! i (invDiag[i]! * r[i]!)
+        for h : i in [0:n] do
+          z := z.set i (invDiag[i] * r[i])
         let mut rzNew := 0.0
-        for i in [0:n] do
-          rzNew := rzNew + r[i]! * z[i]!
+        for h : i in [0:n] do
+          rzNew := rzNew + r[i] * z[i]
         let beta := rzNew / rz
-        for i in [0:n] do
-          p := p.set! i (z[i]! + beta * p[i]!)
+        for h : i in [0:n] do
+          p := p.set i (z[i] + beta * p[i])
         rz := rzNew
         it := it + 1
   return x
@@ -215,22 +216,21 @@ def smoothWalkMap (fixes : Array WalkFix) (walkable : Ways)
     (profile : MapSmoothProfile := {}) : Option (Array SmoothedPoint) := Id.run do
   let n := fixes.size
   if n < profile.minFixes then return none
+  let some first := fixes[0]? | return none
+  let fixesV : Vector WalkFix n := ⟨fixes, rfl⟩
 
   -- Local equirectangular frame (metres) anchored at the first fix.
-  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+  let fr := Frame.of first.lat first.lon
   let toE := fr.toE
   let toN := fr.toN
   let toLon := fr.toLon
   let toLat := fr.toLat
 
-  let mut ze := Array.replicate n 0.0
-  let mut zn := Array.replicate n 0.0
-  let mut wGps := Array.replicate n 0.0
-  for i in [0:n] do
-    ze := ze.set! i (toE fixes[i]!.lon)
-    zn := zn.set! i (toN fixes[i]!.lat)
-    let sigma := max profile.gpsSigmaMinM (fixes[i]!.accuracyM.getD profile.gpsSigmaFallbackM)
-    wGps := wGps.set! i (1 / (sigma * sigma))
+  let ze := fixesV.map fun f => toE f.lon
+  let zn := fixesV.map fun f => toN f.lat
+  let wGps := fixesV.map fun f =>
+    let sigma := max profile.gpsSigmaMinM (f.accuracyM.getD profile.gpsSigmaFallbackM)
+    1 / (sigma * sigma)
   let wAcc := 1 / (profile.smoothSigmaM * profile.smoothSigmaM)
   let wNetFull := 1 / (profile.networkSigmaM * profile.networkSigmaM)
 
@@ -240,28 +240,25 @@ def smoothWalkMap (fixes : Array WalkFix) (walkable : Ways)
 
   for _iter in [0:profile.iterations] do
     -- Re-linearise the network attractor at the current estimate.
-    let mut d := Array.replicate n 0.0
-    let mut be := Array.replicate n 0.0
-    let mut bn := Array.replicate n 0.0
-    for i in [0:n] do
-      d := d.set! i wGps[i]!
-      be := be.set! i (wGps[i]! * ze[i]!)
-      bn := bn.set! i (wGps[i]! * zn[i]!)
-      if !walkable.isEmpty then
-        let cur : Pt := ⟨toLat nn[i]!, toLon e[i]!⟩
+    let mut d := wGps
+    let mut be := Vector.zipWith (· * ·) wGps ze
+    let mut bn := Vector.zipWith (· * ·) wGps zn
+    if !walkable.isEmpty then
+      for h : i in [0:n] do
+        let cur : Pt := ⟨toLat nn[i], toLon e[i]⟩
         match nearestWalkable cur walkable with
         | none => pure ()
         | some near =>
           if near.distM ≤ profile.networkRadiusM then
-            d := d.set! i (d[i]! + wNetFull)
-            be := be.set! i (be[i]! + wNetFull * toE near.lon)
-            bn := bn.set! i (bn[i]! + wNetFull * toN near.lat)
+            d := d.set i (d[i] + wNetFull)
+            be := be.set i (be[i] + wNetFull * toE near.lon)
+            bn := bn.set i (bn[i] + wNetFull * toN near.lat)
     e := solvePCG d wAcc be e
     nn := solvePCG d wAcc bn nn
 
   let mut out : Array SmoothedPoint := #[]
-  for i in [0:n] do
-    out := out.push ⟨toLat nn[i]!, toLon e[i]!, fixes[i]!.ts⟩
+  for h : i in [0:n] do
+    out := out.push ⟨toLat nn[i], toLon e[i], fixesV[i].ts⟩
   return some out
 
 /-! ## Path shape metrics -/
@@ -791,19 +788,22 @@ whole — it threads too much shared mutable state to divide without inventing a
 state record that exists in neither language.
 -/
 
-/-- The state chain the solver runs over. -/
-structure StateChain where
-  seedE : Array Float
-  seedN : Array Float
+/-- One state of the chain the solver runs over: an observed fix (`obsW > 0`)
+    or a free interpolated state between two. -/
+structure ChainState where
+  seedE : Float
+  seedN : Float
   /-- GPS target; only meaningful where `obsW > 0`. -/
-  obsE : Array Float
-  obsN : Array Float
+  obsE : Float
+  obsN : Float
   /-- Weak accuracy prior; `0` marks a FREE state (no GPS emission). -/
-  obsW : Array Float
-  ts : Array Float
+  obsW : Float
+  ts : Float
   deriving Inhabited
 
-def StateChain.size (c : StateChain) : Nat := c.seedE.size
+/-- The densified chain: one record per state, so there is one length rather
+    than six parallel arrays that happen to agree. -/
+abbrev StateChain := Array ChainState
 
 /-- Densify: keep every fix as an OBSERVED state and insert FREE states so the
     spacing is ≤ `targetSpacingM`. Free states are placed purely by smoothness +
@@ -811,38 +811,29 @@ def StateChain.size (c : StateChain) : Nat := c.seedE.size
     straight chord would otherwise cut through it with no vertex inside to repel. -/
 def buildStateChain (fixes : Array WalkFix) (fr : Frame) (profile : ReconstructProfile) :
     StateChain := Id.run do
-  let mut seedE : Array Float := #[]
-  let mut seedN : Array Float := #[]
-  let mut obsE : Array Float := #[]
-  let mut obsN : Array Float := #[]
-  let mut obsW : Array Float := #[]
-  let mut ts : Array Float := #[]
-  for i in [0:fixes.size] do
-    let fe := fr.toE fixes[i]!.lon
-    let fn := fr.toN fixes[i]!.lat
-    let acc := fixes[i]!.accuracyM.getD profile.accFallbackM
+  let mut states : StateChain := #[]
+  for h : i in [0:fixes.size] do
+    let fix := fixes[i]
+    let fe := fr.toE fix.lon
+    let fn := fr.toN fix.lat
+    let acc := fix.accuracyM.getD profile.accFallbackM
     let sigma := min profile.accClampMaxM (max profile.accClampMinM acc)
-    seedE := seedE.push fe
-    seedN := seedN.push fn
-    obsE := obsE.push fe
-    obsN := obsN.push fn
-    obsW := obsW.push (1 / (sigma * sigma))
-    ts := ts.push fixes[i]!.ts
-    if i + 1 < fixes.size then
-      let ne := fr.toE fixes[i+1]!.lon
-      let nn2 := fr.toN fixes[i+1]!.lat
+    states := states.push
+      { seedE := fe, seedN := fn, obsE := fe, obsN := fn, obsW := 1 / (sigma * sigma), ts := fix.ts }
+    if h1 : i + 1 < fixes.size then
+      let next := fixes[i + 1]
+      let ne := fr.toE next.lon
+      let nn2 := fr.toN next.lat
       let segLen := hyp (ne - fe) (nn2 - fn)
       let kF := max 0 (Float.floor (segLen / profile.targetSpacingM) - 1)
       let k := kF.toUInt64.toNat
       for j in [1:k+1] do
         let f := j.toFloat / (kF + 1)
-        seedE := seedE.push (fe + (ne - fe) * f)
-        seedN := seedN.push (fn + (nn2 - fn) * f)
-        obsE := obsE.push 0
-        obsN := obsN.push 0
-        obsW := obsW.push 0   -- free state — no GPS emission
-        ts := ts.push (jsRound (fixes[i]!.ts + (fixes[i+1]!.ts - fixes[i]!.ts) * f))
-  return { seedE, seedN, obsE, obsN, obsW, ts }
+        -- A free state: no GPS emission.
+        states := states.push
+          { seedE := fe + (ne - fe) * f, seedN := fn + (nn2 - fn) * f, obsE := 0, obsN := 0, obsW := 0,
+            ts := jsRound (fix.ts + (next.ts - fix.ts) * f) }
+  return states
 
 /-- The leg's spatial index in the metric frame: walkable segments plus building
     rings (a ring with fewer than 3 points is not a polygon and is dropped).
@@ -880,8 +871,8 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
   let mut exempt := Array.replicate m false
   let some g := grid | return exempt
   let mut obsIdx : Array Nat := #[]
-  for i in [0:m] do
-    if chain.obsW[i]! > 0 then obsIdx := obsIdx.push i
+  for h : i in [0:m] do
+    if chain[i].obsW > 0 then obsIdx := obsIdx.push i
   let mut runStart := 0
   let mut runRing : Int := -2
   -- from/to index into obsIdx, inclusive; exempt every STATE between the run's
@@ -894,7 +885,7 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
     return ex
   for k in [0:obsIdx.size] do
     let i := obsIdx[k]!
-    let ring := g.ringContaining chain.seedE[i]! chain.seedN[i]!
+    let ring := g.ringContaining chain[i]!.seedE chain[i]!.seedN
     if ring != runRing || ring == -1 then
       if runRing ≥ 0 && k ≥ 1 then exempt := markRun exempt runStart (k-1)
       runStart := k
@@ -903,10 +894,10 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
   return exempt
 
 /-- Along-chain drawn length (m) in the metric frame. -/
-def chainLenM (e nn : Array Float) : Float := Id.run do
+def chainLenM {n : Nat} (e nn : Vector Float n) : Float := Id.run do
   let mut len := 0.0
-  for i in [0:e.size] do
-    if i + 1 < e.size then len := len + hyp (e[i+1]! - e[i]!) (nn[i+1]! - nn[i]!)
+  for i in [0:n] do
+    if h : i + 1 < n then len := len + hyp (e[i+1] - e[i]) (nn[i+1] - nn[i])
   return len
 
 /-- Corner insertion: the clearance field keeps VERTICES out of footprints, but an
@@ -946,38 +937,24 @@ def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
       repaired := repaired.push b
   return repaired
 
-/-- Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
-    One vertex per fix, timestamps preserved; `none` when too short. -/
-def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Ring)
-    (profile : ReconstructProfile := {}) (evidence : WalkEvidence := {}) :
-    Option (Array SmoothedPoint) := Id.run do
-  if fixes.size < profile.minFixes then return none
-
-  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+/-- The GNC/IRLS core over a chain of `m` states: the annealed robust solve,
+    returning the east and north estimates in the metric frame. `m` is a
+    parameter so every index proof below is about a variable — not about the
+    output of the chain builder, which the elaborator would otherwise try to
+    unfold. -/
+private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool)
+    (grid : Option WalkGrid) (fr : Frame) (profile : ReconstructProfile)
+    (evidence : WalkEvidence) : Vector Float m × Vector Float m := Id.run do
   let toE := fr.toE
   let toN := fr.toN
-  let toLon := fr.toLon
-  let toLat := fr.toLat
-
-  let chain := buildStateChain fixes fr profile
-  let m := chain.size
-  let seedE := chain.seedE
-  let seedN := chain.seedN
-  let obsE := chain.obsE
-  let obsN := chain.obsN
-  let obsW := chain.obsW
-  let ts := chain.ts
 
   let wSmooth := 1 / (profile.smoothSigmaM * profile.smoothSigmaM)
   let wNet := 1 / (profile.networkSigmaM * profile.networkSigmaM)
   let wBuild := 1 / (profile.buildingSigmaM * profile.buildingSigmaM)
   let wFreeTether := 1 / (profile.freeTetherSigmaM * profile.freeTetherSigmaM)
 
-  let grid := buildLegGrid ways buildings fr (max profile.networkRadiusM 15)
-  let exempt := presenceExempt chain grid profile.indoorPresenceMinFixes
-
-  let mut e := chain.seedE
-  let mut nn := chain.seedN
+  let mut e := cv.map (·.seedE)
+  let mut nn := cv.map (·.seedN)
 
   -- Step-magnitude displacement budget: the drawn length may not grossly exceed
   -- what the pedometer says was walked. Soft, never a gate.
@@ -1001,13 +978,14 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
       -- Is a piece of hard evidence still grossly unsatisfied? Length beyond the
       -- step budget (>5 %), or a terminal state further than 3σ from its anchor.
       let pathLen := chainLenM e nn
-      let off := fun (a : Option WalkAnchor) (i : Nat) =>
+      let off := fun (a : Option WalkAnchor) (i : Nat) (_ : i < m) =>
         match a with
         | none => false
-        | some an => hyp (e[i]! - toE an.lon) (nn[i]! - toN an.lat) > 3 * an.sigmaM
+        | some an => hyp (e[i] - toE an.lon) (nn[i] - toN an.lat) > 3 * an.sigmaM
+      let anchorOff :=
+        if h0 : 0 < m then off evidence.start 0 h0 || off evidence.finish (m-1) (by omega) else false
       let evidenceViolated :=
-        (match stepTargetM with | some t => pathLen > t * 1.05 | none => false)
-          || off evidence.start 0 || off evidence.finish (m-1)
+        (match stepTargetM with | some t => pathLen > t * 1.05 | none => false) || anchorOff
       if step ≥ profile.gncSteps && !evidenceViolated then
         halted := true
       else
@@ -1015,10 +993,10 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
           -- Per-axis diagonals: the network attraction is ANISOTROPIC
           -- (normal-only, point-to-line), so east and north see different weights
           -- there. All other factors contribute identically to both.
-          let mut dE := Array.replicate m 0.0
-          let mut dN := Array.replicate m 0.0
-          let mut be := Array.replicate m 0.0
-          let mut bn := Array.replicate m 0.0
+          let mut dE := Vector.replicate m 0.0
+          let mut dN := Vector.replicate m 0.0
+          let mut be := Vector.replicate m 0.0
+          let mut bn := Vector.replicate m 0.0
           -- Step-magnitude contraction, re-linearised at the current estimate:
           -- when the current length L exceeds the budget, every edge gets a
           -- first-difference target of `s·(current edge)` with s = target/L — a
@@ -1035,33 +1013,34 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
               wEdge := ramp / (profile.stepSigmaM * profile.stepSigmaM)
               let shrink := 1 / excess
               for k in [0:m] do
-                if k + 1 < m then
-                  let tE := shrink * (e[k+1]! - e[k]!)
-                  let tN := shrink * (nn[k+1]! - nn[k]!)
-                  be := be.set! k (be[k]! - wEdge * tE)
-                  be := be.set! (k+1) (be[k+1]! + wEdge * tE)
-                  bn := bn.set! k (bn[k]! - wEdge * tN)
-                  bn := bn.set! (k+1) (bn[k+1]! + wEdge * tN)
-          for i in [0:m] do
-            let px := e[i]!
-            let py := nn[i]!
-            if obsW[i]! > 0 then
+                if h1 : k + 1 < m then
+                  let tE := shrink * (e[k+1] - e[k])
+                  let tN := shrink * (nn[k+1] - nn[k])
+                  be := be.set k (be[k] - wEdge * tE)
+                  be := be.set (k+1) (be[k+1] + wEdge * tE)
+                  bn := bn.set k (bn[k] - wEdge * tN)
+                  bn := bn.set (k+1) (bn[k+1] + wEdge * tN)
+          for h : i in [0:m] do
+            let px := e[i]
+            let py := nn[i]
+            let st := cv[i]
+            if st.obsW > 0 then
               -- Robust GPS emission: reject a fix that disagrees with the
               -- consensus trajectory.
-              let rGps := hyp (px - obsE[i]!) (py - obsN[i]!)
-              let wg := obsW[i]! * gmWeight rGps c
-              dE := dE.set! i (dE[i]! + wg)
-              dN := dN.set! i (dN[i]! + wg)
-              be := be.set! i (be[i]! + wg * obsE[i]!)
-              bn := bn.set! i (bn[i]! + wg * obsN[i]!)
+              let rGps := hyp (px - st.obsE) (py - st.obsN)
+              let wg := st.obsW * gmWeight rGps c
+              dE := dE.set i (dE[i] + wg)
+              dN := dN.set i (dN[i] + wg)
+              be := be.set i (be[i] + wg * st.obsE)
+              bn := bn.set i (bn[i] + wg * st.obsN)
             else
               -- Free state: weak, non-robust tether to its interpolated position
               -- on the raw corridor — keeps it from drifting off without pinning
               -- it, so it can still bow around a building.
-              dE := dE.set! i (dE[i]! + wFreeTether)
-              dN := dN.set! i (dN[i]! + wFreeTether)
-              be := be.set! i (be[i]! + wFreeTether * seedE[i]!)
-              bn := bn.set! i (bn[i]! + wFreeTether * seedN[i]!)
+              dE := dE.set i (dE[i] + wFreeTether)
+              dN := dN.set i (dN[i] + wFreeTether)
+              be := be.set i (be[i] + wFreeTether * st.seedE)
+              bn := bn.set i (bn[i] + wFreeTether * st.seedN)
             match grid with
             | none => pure ()
             | some g =>
@@ -1077,37 +1056,39 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
                 let wN := wNet * gmWeight near.distM profile.networkRobustM
                 let nx := -near.ty
                 let ny := near.tx
-                dE := dE.set! i (dE[i]! + wN * nx * nx)
-                dN := dN.set! i (dN[i]! + wN * ny * ny)
-                be := be.set! i (be[i]! + wN * nx * nx * near.x)
-                bn := bn.set! i (bn[i]! + wN * ny * ny * near.y)
+                dE := dE.set i (dE[i] + wN * nx * nx)
+                dN := dN.set i (dN[i] + wN * ny * ny)
+                be := be.set i (be[i] + wN * nx * nx * near.x)
+                bn := bn.set i (bn[i] + wN * ny * ny * near.y)
               -- Building clearance field. Presence-exempt states are genuinely
               -- indoors: no pull at all.
               if !exempt[i]! then
                 match g.clearanceTarget px py profile.buildingClearM with
                 | none => pure ()
                 | some esc =>
-                  dE := dE.set! i (dE[i]! + wBuild)
-                  dN := dN.set! i (dN[i]! + wBuild)
-                  be := be.set! i (be[i]! + wBuild * esc.x)
-                  bn := bn.set! i (bn[i]! + wBuild * esc.y)
-          -- Endpoint anchors — reconstruct between confident truths.
-          match evidence.start with
-          | none => pure ()
-          | some a =>
-            let w := 1 / (a.sigmaM * a.sigmaM)
-            dE := dE.set! 0 (dE[0]! + w)
-            dN := dN.set! 0 (dN[0]! + w)
-            be := be.set! 0 (be[0]! + w * toE a.lon)
-            bn := bn.set! 0 (bn[0]! + w * toN a.lat)
-          match evidence.finish with
-          | none => pure ()
-          | some a =>
-            let w := 1 / (a.sigmaM * a.sigmaM)
-            dE := dE.set! (m-1) (dE[m-1]! + w)
-            dN := dN.set! (m-1) (dN[m-1]! + w)
-            be := be.set! (m-1) (be[m-1]! + w * toE a.lon)
-            bn := bn.set! (m-1) (bn[m-1]! + w * toN a.lat)
+                  dE := dE.set i (dE[i] + wBuild)
+                  dN := dN.set i (dN[i] + wBuild)
+                  be := be.set i (be[i] + wBuild * esc.x)
+                  bn := bn.set i (bn[i] + wBuild * esc.y)
+          -- Endpoint anchors — reconstruct between confident truths. An empty
+          -- chain has no endpoint to anchor.
+          if h0 : 0 < m then
+            match evidence.start with
+            | none => pure ()
+            | some a =>
+              let w := 1 / (a.sigmaM * a.sigmaM)
+              dE := dE.set 0 (dE[0] + w)
+              dN := dN.set 0 (dN[0] + w)
+              be := be.set 0 (be[0] + w * toE a.lon)
+              bn := bn.set 0 (bn[0] + w * toN a.lat)
+            match evidence.finish with
+            | none => pure ()
+            | some a =>
+              let w := 1 / (a.sigmaM * a.sigmaM)
+              dE := dE.set (m-1) (dE[m-1] + w)
+              dN := dN.set (m-1) (dN[m-1] + w)
+              be := be.set (m-1) (be[m-1] + w * toE a.lon)
+              bn := bn.set (m-1) (bn[m-1] + w * toN a.lat)
           e := solvePCG dE wSmooth be e wEdge
           nn := solvePCG dN wSmooth bn nn wEdge
           -- Hard projection: occupancy of a footprint is impossible for the
@@ -1119,19 +1100,35 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
             match grid with
             | none => pure ()
             | some g =>
-              for i in [1:m-1] do
+              for h : i in [1:m-1] do
+                have hi : i < m := by have hu := Membership.mem.upper h; dsimp only at hu; omega
                 if !exempt[i]! then
-                  match g.clearanceTarget e[i]! nn[i]! profile.buildingClearM with
+                  match g.clearanceTarget e[i] nn[i] profile.buildingClearM with
                   | none => pure ()
                   | some esc =>
-                    if esc.inside && (g.nearest e[i]! nn[i]! profile.passageWayReachM).isNone then
-                      e := e.set! i esc.x
-                      nn := nn.set! i esc.y
+                    if esc.inside && (g.nearest e[i] nn[i] profile.passageWayReachM).isNone then
+                      e := e.set i esc.x
+                      nn := nn.set i esc.y
         c := max profile.gncTargetM (c * ratio)
+  return (e, nn)
+
+/-- Reconstruct a walk leg as the robust, annealed MAP continuous trajectory.
+    One vertex per fix, timestamps preserved; `none` when too short. -/
+def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Ring)
+    (profile : ReconstructProfile := {}) (evidence : WalkEvidence := {}) :
+    Option (Array SmoothedPoint) := Id.run do
+  if fixes.size < profile.minFixes then return none
+
+  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+  let chain := buildStateChain fixes fr profile
+  let grid := buildLegGrid ways buildings fr (max profile.networkRadiusM 15)
+  let exempt := presenceExempt chain grid profile.indoorPresenceMinFixes
+  let cv : Vector ChainState chain.size := ⟨chain, rfl⟩
+  let (e, nn) := solveChain cv exempt grid fr profile evidence
 
   let mut out : Array SmoothedPoint := #[]
-  for i in [0:m] do
-    out := out.push ⟨toLat nn[i]!, toLon e[i]!, ts[i]!⟩
+  for h : i in [0:chain.size] do
+    out := out.push ⟨fr.toLat (nn[i]'h.upper), fr.toLon (e[i]'h.upper), (cv[i]'h.upper).ts⟩
 
   if profile.insertCornerDetours && !buildings.isEmpty then
     return some (spliceCornerDetours out buildings exempt fr)
