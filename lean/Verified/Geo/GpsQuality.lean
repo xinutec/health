@@ -14,7 +14,8 @@ poor-accuracy jitter that never travelled (kept).
 Pure over the track; the only transcendental is `cos` in `distanceM` (≤1 ULP),
 and every decision is a threshold well clear of the boundary on real data, so the
 KEPT SET is exact (a subset of the input, coords unchanged — like `dropGpsOutliers`).
-UNPROVEN; pinned by the `#guard`.
+WHICH fixes it keeps is pinned by the `#guard`s below; THAT it can only keep — it
+never invents or moves a fix — is a theorem, `mem_of_mem_qualityFilterGps`.
 -/
 
 namespace Verified.Geo.GpsQuality
@@ -106,6 +107,58 @@ def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
   let points := input.filter fun p =>
     match p.accuracy with | some acc => decide (acc ≤ ACCURACY_UNINFORMATIVE_M) | none => true
   if h : points.size ≤ 2 then points else walk points points[0] #[points[0]] 1
+
+/-! ### What the filter can never do
+
+Every element of the output is an element of the input. The guards below pin
+what the filter keeps on particular tracks; this holds on every track, and no
+finite set of tracks could show it. The walk only ever pushes `points[i]` or
+`points[b]`, so it is an induction over the walk's own measure. -/
+
+theorem mem_of_mem_walk {points : Array GpsPoint} {anchor : GpsPoint} {kept : Array GpsPoint}
+    {i : Nat} {p : GpsPoint} (hp : p ∈ walk points anchor kept i) : p ∈ kept ∨ p ∈ points := by
+  rw [walk.eq_def] at hp
+  split at hp
+  · rename_i h
+    simp only at hp
+    split at hp
+    · rcases mem_of_mem_walk hp with hk | hpts
+      · rcases Array.mem_push.1 hk with hk | rfl
+        · exact .inl hk
+        · exact .inr (Array.getElem_mem h)
+      · exact .inr hpts
+    · split at hp
+      · rename_i b hb _
+        split at hp
+        · rcases mem_of_mem_walk hp with hk | hpts
+          · rcases Array.mem_push.1 hk with hk | rfl
+            · exact .inl hk
+            · exact .inr (Array.getElem_mem hb.2)
+          · exact .inr hpts
+        · rcases mem_of_mem_walk hp with hk | hpts
+          · rcases Array.mem_push.1 hk with hk | rfl
+            · exact .inl hk
+            · exact .inr (Array.getElem_mem h)
+          · exact .inr hpts
+      · rcases mem_of_mem_walk hp with hk | hpts
+        · rcases Array.mem_push.1 hk with hk | rfl
+          · exact .inl hk
+          · exact .inr (Array.getElem_mem h)
+        · exact .inr hpts
+  · exact .inl hp
+termination_by points.size - i
+
+theorem mem_of_mem_qualityFilterGps {input : Array GpsPoint} {p : GpsPoint}
+    (hp : p ∈ qualityFilterGps input) : p ∈ input := by
+  unfold qualityFilterGps at hp
+  simp only at hp
+  split at hp
+  · exact (Array.mem_filter.1 hp).1
+  · rcases mem_of_mem_walk hp with hk | hpts
+    · simp only [Array.mem_singleton] at hk
+      subst hk
+      exact (Array.mem_filter.1 (Array.getElem_mem _)).1
+    · exact (Array.mem_filter.1 hpts).1
 
 -- Parity with the real `qualityFilterGps` (kept-set ts from Node/V8): teleport
 -- (t=20) and a poor-accuracy tube run (t=100) dropped; poor-accuracy jitter
