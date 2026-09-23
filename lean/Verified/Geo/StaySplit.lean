@@ -132,10 +132,10 @@ open Verified.JsNum (jsRound)
 
 /-- The TS `median`: ascending sort, mean of the middle pair when even. -/
 def median (values : Array Float) : Float :=
-  if values.isEmpty then 0 else
   let sorted := (values.toList.mergeSort (· ≤ ·)).toArray
-  let mid := sorted.size / 2
-  if sorted.size % 2 == 0 then (sorted[mid - 1]! + sorted[mid]!) / 2 else sorted[mid]!
+  if h : sorted.size = 0 then 0
+  else if sorted.size % 2 == 0 then (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2
+  else sorted[sorted.size / 2]
 
 /-- Net-progress pace between consecutive fixes. A non-advancing pair reads as
 infinitely fast, so it can never be mistaken for a pedestrian step. -/
@@ -169,20 +169,22 @@ def sortedIn (points : Array PointF) (startTs endTs : Int) : Array PointF :=
 As with `netM`, the `≤ PEDESTRIAN_STEP_MAX_KMH` comparison's strictness sits on
 a float distance and cannot be pinned; the CONSTANT is, by `paceCeiling` (a
 probe moving it 9 → 10 fails that guard). -/
-private def tailScanStart (fixes : Array PointF) : Nat := Id.run do
-  let mut s := fixes.size - 1
-  for _ in [0:fixes.size] do
-    if s > 0 && stepKmh fixes[s - 1]! fixes[s]! ≤ PEDESTRIAN_STEP_MAX_KMH then s := s - 1
-    else break
-  return s
+private def tailScanStart (fixes : Array PointF) : Nat := go (fixes.size - 1)
+where
+  go (s : Nat) : Nat :=
+    if h : 0 < s ∧ s < fixes.size then
+      if stepKmh fixes[s - 1] fixes[s] ≤ PEDESTRIAN_STEP_MAX_KMH then go (s - 1) else s
+    else s
+  termination_by s
 
 /-- Walk forwards from the first fix while every step is pedestrian-paced. -/
-private def headScanEnd (fixes : Array PointF) : Nat := Id.run do
-  let mut e := 0
-  for _ in [0:fixes.size] do
-    if e + 1 < fixes.size && stepKmh fixes[e]! fixes[e + 1]! ≤ PEDESTRIAN_STEP_MAX_KMH then e := e + 1
-    else break
-  return e
+private def headScanEnd (fixes : Array PointF) : Nat := go 0
+where
+  go (e : Nat) : Nat :=
+    if h : e + 1 < fixes.size then
+      if stepKmh fixes[e] fixes[e + 1] ≤ PEDESTRIAN_STEP_MAX_KMH then go (e + 1) else e
+    else e
+  termination_by fixes.size - e
 
 /--
 Rebuild a walk over a new window from its OWN fixes.
@@ -206,20 +208,48 @@ def walkRemainder (seg : Seg) (startTs endTs : Int) (points : Array PointF)
       startTs := startTs, endTs := endTs, pointCount := Int.ofNat fixes.size
       refinedMode := none, refinedReason := none, wayName := none, place := none
       needsReenrich := true }
-  if fixes.size ≥ 2 then
+  if h2 : fixes.size ≥ 2 then
     let speeds := fixes.map (·.speedKmh)
-    let pathDist := (Array.range (fixes.size - 1)).foldl (init := (0 : Float)) fun acc k =>
-      acc + haversineMeters fixes[k]!.lat fixes[k]!.lon fixes[k + 1]!.lat fixes[k + 1]!.lon
-    let straight := haversineMeters fixes[0]!.lat fixes[0]!.lon
-      fixes[fixes.size - 1]!.lat fixes[fixes.size - 1]!.lon
+    let pathDist := Id.run do
+      let mut acc : Float := 0
+      for h : k in [0:fixes.size - 1] do
+        have hk : k < fixes.size - 1 := h.upper
+        acc := acc + haversineMeters fixes[k].lat fixes[k].lon fixes[k + 1].lat fixes[k + 1].lon
+      return acc
+    let last := fixes[fixes.size - 1]
+    let straight := haversineMeters fixes[0].lat fixes[0].lon last.lat last.lon
     { base with
       avgSpeed := jsRound (median speeds * 10) / 10
-      maxSpeed := jsRound (speeds.foldl max speeds[0]! * 10) / 10
+      maxSpeed := jsRound (speeds.foldl max fixes[0].speedKmh * 10) / 10
       -- The `min … 1` clamp is defensive only: a polyline's straight-line
       -- distance never exceeds its path length, so the ratio is ≤ 1 except for
       -- float noise on a perfectly straight run. Unpinnable; kept for fidelity.
       linearity := if pathDist > 0 then jsRound (min (straight / pathDist) 1 * 100) / 100 else 0 }
   else base
+
+/-- HEAD → the walk before segment `i` claims the pedestrian-paced run at the
+    start of the train leg `i` (the boarding-side mirror of the tail case). -/
+private def claimHead {n : Nat} (out : Vector Seg n) (i : Nat) (hi : i < n) (h0 : 0 < i)
+    (points : Array PointF) (steps : List FeasibilityStepPoint) : Vector Seg n :=
+  let prev := out[i - 1]
+  if segMode prev != "walking" then out else
+  let host := out[i]
+  let fixes := sortedIn points host.startTs host.endTs
+  let e := headScanEnd fixes
+  -- BOTH bounds are provably dead here, unlike the tail: at e = 0 the run is
+  -- `fixes[0]` to itself and at e = size - 1 it is the whole leg ending at the
+  -- last fix — the former gives `durS = 0`, and the latter cannot arise with a
+  -- vehicle-paced step present.
+  if he : 0 < e ∧ e < fixes.size - 1 then
+    if qualifies steps fixes[0] fixes[e] then
+      -- The fix the ride departs from stays with the ride.
+      let boundary := fixes[e].ts
+      if host.endTs - boundary ≥ MIN_REMAINING_RIDE_S then
+        (out.set i { host with startTs := boundary }).set (i - 1)
+          (walkRemainder prev prev.startTs boundary points false)
+      else out
+    else out
+  else out
 
 /-- Move a train leg's pedestrian-paced edge runs into the neighbouring walks. -/
 def shedVehiclePedestrianEdges (segments : Array Seg) (points : Array PointF)
@@ -228,13 +258,13 @@ def shedVehiclePedestrianEdges (segments : Array Seg) (points : Array PointF)
   -- returns `none`, so `qualifies` refuses every run anyway. No guard can catch
   -- its removal. Kept as the TS has it.
   if steps.isEmpty then return segments
-  let mut out := segments
-  for i in [0:out.size] do
-    if segMode out[i]! != "train" then continue
+  let mut out : Vector Seg segments.size := ⟨segments, rfl⟩
+  for h : i in [0:segments.size] do
+    if segMode out[i] != "train" then continue
     -- TAIL → the following walk claims the run.
-    if i + 1 < out.size then
-      let cur := out[i]!
-      let next := out[i + 1]!
+    if h1 : i + 1 < segments.size then
+      let cur := out[i]
+      let next := out[i + 1]
       if segMode next == "walking" then
         let fixes := sortedIn points cur.startTs cur.endTs
         if fixes.size > 0 then
@@ -245,31 +275,17 @@ def shedVehiclePedestrianEdges (segments : Array Seg) (points : Array PointF)
           -- `s < size - 1` is PROVABLY dead: at s = size - 1 the run is one fix
           -- to itself, so `durS = 0 < PEDESTRIAN_MIN_RUN_S`. Asymmetric, and the
           -- asymmetry is the point.
-          if s > 0 && s < fixes.size - 1 && qualifies steps fixes[s]! fixes[fixes.size - 1]! then
-            -- The fix the ride arrived on stays with the ride.
-            let boundary := fixes[s]!.ts
-            if boundary - cur.startTs ≥ MIN_REMAINING_RIDE_S then
-              out := out.set! i { cur with endTs := boundary }
-              out := out.set! (i + 1) (walkRemainder next boundary next.endTs points true)
+          if hs : 0 < s ∧ s < fixes.size - 1 then
+            if qualifies steps fixes[s] fixes[fixes.size - 1] then
+              -- The fix the ride arrived on stays with the ride.
+              let boundary := fixes[s].ts
+              if boundary - cur.startTs ≥ MIN_REMAINING_RIDE_S then
+                out := out.set i { cur with endTs := boundary }
+                out := out.set (i + 1) (walkRemainder next boundary next.endTs points true)
     -- HEAD → the preceding walk claims the run (the boarding-side mirror).
-    if i > 0 then
-      let prev := out[i - 1]!
-      if segMode prev == "walking" then
-        let host := out[i]!
-        let fixes := sortedIn points host.startTs host.endTs
-        if fixes.size > 0 then
-          let e := headScanEnd fixes
-          -- BOTH bounds are provably dead here, unlike the tail: at e = 0 the
-          -- run is `fixes[0]` to itself and at e = size - 1 it is the whole leg
-          -- ending at the last fix — the former gives `durS = 0`, and the
-          -- latter cannot arise with a vehicle-paced step present.
-          if e > 0 && e < fixes.size - 1 && qualifies steps fixes[0]! fixes[e]! then
-            -- The fix the ride departs from stays with the ride.
-            let boundary := fixes[e]!.ts
-            if host.endTs - boundary ≥ MIN_REMAINING_RIDE_S then
-              out := out.set! i { host with startTs := boundary }
-              out := out.set! (i - 1) (walkRemainder prev prev.startTs boundary points false)
-  return out
+    if h0 : 0 < i then
+      out := claimHead out i h.upper h0 points steps
+  return out.toArray
 
 
 /-! ### Reference values
@@ -550,64 +566,69 @@ private def stepKmh (a b : PointF) : Float :=
 
 /-- Walk back from the last fix over consecutive vehicle-paced steps, returning
 the run's start index and its length in steps. -/
-private def tailScan (fixes : Array PointF) : Nat × Nat := Id.run do
-  let mut s := fixes.size - 1
-  let mut n := 0
-  for _ in [0:fixes.size] do
-    if s > 0 && stepKmh fixes[s - 1]! fixes[s]! ≥ HANDOFF_MOVE_KMH then
-      s := s - 1
-      n := n + 1
-    else break
-  return (s, n)
+private def tailScan (fixes : Array PointF) : Option (Fin fixes.size × Nat) :=
+  if h0 : 0 < fixes.size then some (go ⟨fixes.size - 1, by omega⟩ 0) else none
+where
+  go (s : Fin fixes.size) (n : Nat) : Fin fixes.size × Nat :=
+    if hs : 0 < s.val then
+      if stepKmh fixes[s.val - 1] fixes[s.val] ≥ HANDOFF_MOVE_KMH then go ⟨s.val - 1, by omega⟩ (n + 1)
+      else (s, n)
+    else (s, n)
+  termination_by s.val
 
 /-- Recomputed speed stats over a HALF-OPEN `[startTs, endTs)` window — note
 the exclusive end, unlike the inclusive `sortedIn` used for the scan. -/
 private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
   let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
-  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  let mx : Float := match speeds[0]? with | none => 0 | some s0 => speeds.foldl max s0
   (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
 
 private def roundStr (x : Float) : String := toString (jsRound x).toInt64.toInt
 
+/-- The walk `cur` hands its vehicle-paced tail to the ride `next`: the two
+    rewritten segments, or `none` when the tail does not qualify. -/
+private def handoff (cur next : Seg) (points : Array PointF) : Option (Seg × Seg) := Id.run do
+  -- RAW mode on the walk side, `segMode` on the vehicle side.
+  if !(cur.mode == "walking" && HANDOFF_VEHICLE_MODES.contains (segMode next)) then return none
+  let fixes := sortedIn points cur.startTs cur.endTs
+  -- PROVABLY shadowed by `HANDOFF_MIN_TAIL_STEPS = 2`: with two fixes the
+  -- scan can find at most ONE step, so the run is refused there anyway. No
+  -- guard can catch relaxing this to `< 2`. Kept as the TS has it.
+  if fixes.size < 3 then return none
+  let some (s, tailSteps) := tailScan fixes | return none
+  if tailSteps < HANDOFF_MIN_TAIL_STEPS then return none
+  let last := fixes[fixes.size - 1]'(by have := s.isLt; omega)
+  let netDist := haversineMeters fixes[s].lat fixes[s].lon last.lat last.lon
+  let peak := Id.run do
+    let mut a : Float := 0
+    for h : k in [s.val:fixes.size] do a := max a fixes[k].speedKmh
+    return a
+  let driveStart := fixes[s].ts
+  if netDist < HANDOFF_MIN_NET_DIST_M || peak < HANDOFF_PEAK_KMH then return none
+  if driveStart - cur.startTs < HANDOFF_MIN_WALK_REMAINDER_S then return none
+  let (wc, wa, wm) := stats points cur.startTs driveStart
+  let (vc, va, vm) := stats points driveStart next.endTs
+  return some
+    ({ cur with endTs := driveStart, avgSpeed := wa, maxSpeed := wm, pointCount := Int.ofNat wc },
+     { next with
+       startTs := driveStart, avgSpeed := va, maxSpeed := vm, pointCount := Int.ofNat vc
+       refinedReason := some s!"walk→vehicle boundary: {roundStr netDist} m vehicle-paced run (peak {roundStr peak} km/h) reassigned from the preceding walk to this ride" })
+
 /-- Advance a walk→vehicle boundary over the walk's vehicle-paced tail. -/
 def reassignWalkTailToVehicle (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
-  let mut segs := segments
+  let mut segs : Vector Seg segments.size := ⟨segments, rfl⟩
   let mut out : Array Seg := #[]
-  for i in [0:segs.size] do
+  for h : i in [0:segments.size] do
     -- Read fresh: a previous iteration may have rewritten this slot as its
     -- successor, and the TS reads `segs[i]` the same way.
-    let cur := segs[i]!
-    let moved : Option (Seg × Seg) := Id.run do
-      if i + 1 ≥ segs.size then return none
-      let next := segs[i + 1]!
-      -- RAW mode on the walk side, `segMode` on the vehicle side.
-      if !(cur.mode == "walking" && HANDOFF_VEHICLE_MODES.contains (segMode next)) then return none
-      let fixes := sortedIn points cur.startTs cur.endTs
-      -- PROVABLY shadowed by `HANDOFF_MIN_TAIL_STEPS = 2`: with two fixes the
-      -- scan can find at most ONE step, so the run is refused there anyway. No
-      -- guard can catch relaxing this to `< 2`. Kept as the TS has it.
-      if fixes.size < 3 then return none
-      let (s, tailSteps) := tailScan fixes
-      if tailSteps < HANDOFF_MIN_TAIL_STEPS then return none
-      let last := fixes.size - 1
-      let netDist := haversineMeters fixes[s]!.lat fixes[s]!.lon fixes[last]!.lat fixes[last]!.lon
-      let peak := (Array.range (last - s + 1)).foldl (init := (0 : Float)) fun a k =>
-        max a fixes[s + k]!.speedKmh
-      let driveStart := fixes[s]!.ts
-      if netDist < HANDOFF_MIN_NET_DIST_M || peak < HANDOFF_PEAK_KMH then return none
-      if driveStart - cur.startTs < HANDOFF_MIN_WALK_REMAINDER_S then return none
-      let (wc, wa, wm) := stats points cur.startTs driveStart
-      let (vc, va, vm) := stats points driveStart next.endTs
-      return some
-        ({ cur with endTs := driveStart, avgSpeed := wa, maxSpeed := wm, pointCount := Int.ofNat wc },
-         { next with
-           startTs := driveStart, avgSpeed := va, maxSpeed := vm, pointCount := Int.ofNat vc
-           refinedReason := some s!"walk→vehicle boundary: {roundStr netDist} m vehicle-paced run (peak {roundStr peak} km/h) reassigned from the preceding walk to this ride" })
-    match moved with
-    | none => out := out.push cur
-    | some (c, n) =>
-      out := out.push c
-      segs := segs.set! (i + 1) n
+    let cur := segs[i]
+    if h1 : i + 1 < segments.size then
+      match handoff cur segs[i + 1] points with
+      | none => out := out.push cur
+      | some (c, n) =>
+        out := out.push c
+        segs := segs.set (i + 1) n
+    else out := out.push cur
   return out
 
 /-! ### Reference values
@@ -798,43 +819,27 @@ private def stepKmh (a b : PointF) : Float :=
   if dt > 0 then haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 else 0
 
 /-- Walk forward from the first fix over consecutive vehicle-paced steps. -/
-private def headScan (fixes : Array PointF) : Nat × Nat := Id.run do
-  let mut h := 0
-  let mut n := 0
-  for _ in [0:fixes.size] do
-    if h + 1 < fixes.size && stepKmh fixes[h]! fixes[h + 1]! ≥ ARRIVAL_MOVE_KMH then
-      h := h + 1
-      n := n + 1
-    else break
-  return (h, n)
+private def headScan (fixes : Array PointF) : Option (Fin fixes.size × Nat) :=
+  if h0 : 0 < fixes.size then some (go ⟨0, h0⟩ 0) else none
+where
+  go (hd : Fin fixes.size) (n : Nat) : Fin fixes.size × Nat :=
+    if hh : hd.val + 1 < fixes.size then
+      if stepKmh fixes[hd.val] fixes[hd.val + 1] ≥ ARRIVAL_MOVE_KMH then go ⟨hd.val + 1, hh⟩ (n + 1)
+      else (hd, n)
+    else (hd, n)
+  termination_by fixes.size - hd.val
 
 /-- Half-open `[startTs, endTs)` speed stats, as in the departure pass. -/
 private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
   let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
-  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  let mx : Float := match speeds[0]? with | none => 0 | some s0 => speeds.foldl max s0
   (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
 
 private def roundStr (x : Float) : String := toString (jsRound x).toInt64.toInt
 
-/-- Dissolve a phantom walk that is really a vehicle's decelerating arrival. -/
-def reassignVehicleArrivalWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
-  let mut segs := segments
-  let mut out : Array Seg := #[]
-  for i in [0:segs.size] do
-    let cur := segs[i]!
-    -- `prev` is the last EMITTED segment, not `segs[i-1]`. The TS reads `out`,
-    -- and this mirrors it — but the two are PROVABLY indistinguishable here, so
-    -- no guard pins the choice. They can only diverge on the iteration right
-    -- after a fold, and a fold requires `segs[i+1].mode == "stationary"`; that
-    -- same segment is the next iteration's `cur`, which then fails the
-    -- `cur.mode == "walking"` test either way.
-    let prev? := out.back?
-    let acted : Option (Seg × Seg) := Id.run do
-      if i + 1 ≥ segs.size then return none
-      let next := segs[i + 1]!
-      match prev? with
-      | none => return none
-      | some prev =>
+/-- The ride `prev` absorbs the decelerating head of the phantom walk `cur`
+    that precedes the stay `next`: the rewritten ride and stay, or `none`. -/
+private def arrival (prev cur next : Seg) (points : Array PointF) : Option (Seg × Seg) := Id.run do
         -- segMode on the vehicle, RAW mode on the stay.
         if !(cur.mode == "walking" && HANDOFF_VEHICLE_MODES.contains (segMode prev)
              && next.mode == "stationary") then return none
@@ -842,28 +847,35 @@ def reassignVehicleArrivalWalk (segments : Array Seg) (points : Array PointF) : 
         -- PROVABLY shadowed by `ARRIVAL_MIN_HEAD_STEPS = 2`, exactly as in the
         -- departure pass: two fixes admit at most one step.
         if fixes.size < 3 then return none
-        let (h, headSteps) := headScan fixes
+        let some (hd, headSteps) := headScan fixes | return none
         if headSteps < ARRIVAL_MIN_HEAD_STEPS then return none
-        let headNet := haversineMeters fixes[0]!.lat fixes[0]!.lon fixes[h]!.lat fixes[h]!.lon
-        let peak := (Array.range (h + 1)).foldl (init := (0 : Float)) fun a k => max a fixes[k]!.speedKmh
+        let first := fixes[0]'(by have := hd.isLt; omega)
+        let headNet := haversineMeters first.lat first.lon fixes[hd].lat fixes[hd].lon
+        let peak := Id.run do
+          let mut a : Float := 0
+          for hk : k in [0:hd.val + 1] do
+            a := max a (fixes[k]'(by have h1 : k < hd.val + 1 := hk.upper; have h2 := hd.isLt; omega)).speedKmh
+          return a
         if headNet < ARRIVAL_MIN_NET_DIST_M || peak < ARRIVAL_PEAK_KMH then return none
-        let boundaryTs := fixes[h]!.ts
+        let boundaryTs := fixes[hd].ts
         -- Stay centroid, falling back to the walk's LAST fix when the stay has
         -- no fixes of its own.
         let stayFixes := sortedIn points next.startTs next.endTs
         let sc : Float × Float :=
-          if stayFixes.isEmpty then (fixes[fixes.size - 1]!.lat, fixes[fixes.size - 1]!.lon)
+          if stayFixes.isEmpty then
+            let last := fixes[fixes.size - 1]'(by have := hd.isLt; omega)
+            (last.lat, last.lon)
           else
             let n := Float.ofNat stayFixes.size
             (stayFixes.foldl (fun a p => a + p.lat) 0 / n, stayFixes.foldl (fun a p => a + p.lon) 0 / n)
-        let tail := fixes.extract h fixes.size
+        let tail := fixes.extract hd.val fixes.size
         -- The `≥ 2` here is PROVABLY a no-op: `tail` is `fixes[h:]`, so a
         -- single-element tail means `h` is the last index, and the distance
         -- from that fix to itself is 0 — the same value the `else` branch
         -- supplies. Kept as the TS has it.
         let tailNet :=
-          if tail.size ≥ 2 then
-            haversineMeters tail[0]!.lat tail[0]!.lon tail[tail.size - 1]!.lat tail[tail.size - 1]!.lon
+          if ht : tail.size ≥ 2 then
+            haversineMeters tail[0].lat tail[0].lon tail[tail.size - 1].lat tail[tail.size - 1].lon
           else 0
         let tailMedianKmh := median (tail.map (·.speedKmh))
         let tailParked :=
@@ -882,12 +894,32 @@ def reassignVehicleArrivalWalk (segments : Array Seg) (points : Array PointF) : 
              refinedReason := some s!"{head}extended forward: absorbed the drive's decelerating arrival tail ({roundStr headNet} m, peak {roundStr peak} km/h) that segmentation glued onto the following walk" },
            { next with
              startTs := boundaryTs, avgSpeed := sa, maxSpeed := sm, pointCount := Int.ofNat sc2 })
+
+/-- Dissolve a phantom walk that is really a vehicle's decelerating arrival. -/
+def reassignVehicleArrivalWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut segs : Vector Seg segments.size := ⟨segments, rfl⟩
+  let mut out : Array Seg := #[]
+  for h : i in [0:segments.size] do
+    let cur := segs[i]
+    -- `prev` is the last EMITTED segment, not `segs[i-1]`. The TS reads `out`,
+    -- and this mirrors it — but the two are PROVABLY indistinguishable here, so
+    -- no guard pins the choice. They can only diverge on the iteration right
+    -- after a fold, and a fold requires `segs[i+1].mode == "stationary"`; that
+    -- same segment is the next iteration's `cur`, which then fails the
+    -- `cur.mode == "walking"` test either way.
+    let acted : Option (Seg × Seg × PLift (i + 1 < segments.size)) :=
+      if h1 : i + 1 < segments.size then
+        match out.back? with
+        | none => none
+        | some prev => (arrival prev cur segs[i + 1] points).map fun (p, n) => (p, n, ⟨h1⟩)
+      else none
     match acted with
     | none => out := out.push cur
-    | some (p, n) =>
-      -- The walk is DROPPED: `cur` is never pushed.
-      out := out.set! (out.size - 1) p
-      segs := segs.set! (i + 1) n
+    | some (p, n, ⟨h1⟩) =>
+      -- The walk is DROPPED: `cur` is never pushed; the ride already emitted
+      -- is replaced by its extended self.
+      out := out.pop.push p
+      segs := segs.set (i + 1) n h1
   return out
 
 /-! ### Reference values
@@ -1085,47 +1117,49 @@ def BLEED_S : Int := 90
 private def isTrain (s : Option Seg) : Bool :=
   match s with | some x => segMode x == "train" | none => false
 
-private def peakBetween (fixes : Array PointF) (a b : Nat) : Float :=
-  (Array.range (b + 1 - a)).foldl (init := (0 : Float)) fun p k => max p fixes[a + k]!.speedKmh
+private def peakBetween (fixes : Array PointF) (a b : Nat) (hb : b < fixes.size) : Float := Id.run do
+  let mut p : Float := 0
+  for h : k in [a:b + 1] do p := max p (fixes[k]'(by have h1 : k < b + 1 := h.upper; omega)).speedKmh
+  return p
 
-private def stepKmh (fixes : Array PointF) (i j : Nat) : Float :=
-  let dt := fixes[j]!.ts - fixes[i]!.ts
+private def stepKmh (fixes : Array PointF) (i j : Fin fixes.size) : Float :=
+  let dt := fixes[j].ts - fixes[i].ts
   if dt > 0 then
-    haversineMeters fixes[i]!.lat fixes[i]!.lon fixes[j]!.lat fixes[j]!.lon / Float.ofInt dt * 3.6
+    haversineMeters fixes[i].lat fixes[i].lon fixes[j].lat fixes[j].lon / Float.ofInt dt * 3.6
   else 0
 
 /-- The contiguous interval that best looks like a ride: most ground covered,
 shorter duration breaking an exact tie. -/
-private structure Cand where
-  a : Nat
-  b : Nat
+private structure Cand (n : Nat) where
+  a : Fin n
+  b : Fin n
   netDist : Float
   dur : Int
-  deriving Inhabited
 
-private def bestInterval (fixes : Array PointF) : Option Cand := Id.run do
-  let mut best : Option Cand := none
-  for a in [0:fixes.size - 1] do
-    for b in [a + 1:fixes.size] do
-      let dur := fixes[b]!.ts - fixes[a]!.ts
+private def bestInterval (fixes : Array PointF) : Option (Cand fixes.size) := Id.run do
+  let mut best : Option (Cand fixes.size) := none
+  for ha : a in [0:fixes.size - 1] do
+    have ha' : a < fixes.size := by have h1 : a < fixes.size - 1 := ha.upper; omega
+    for hb : b in [a + 1:fixes.size] do
+      let dur := fixes[b].ts - fixes[a].ts
       if dur < VEHICLE_LEG_MIN_DURATION_S then continue
-      let netDist := haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
+      let netDist := haversineMeters fixes[a].lat fixes[a].lon fixes[b].lat fixes[b].lon
       if netDist < VEHICLE_LEG_MIN_DIST_M then continue
       if netDist / Float.ofInt dur * 3.6 < VEHICLE_LEG_MOVE_KMH then continue
-      if peakBetween fixes a b < VEHICLE_LEG_PEAK_KMH then continue
+      if peakBetween fixes a b hb.upper < VEHICLE_LEG_PEAK_KMH then continue
       match best with
-      | none => best := some { a, b, netDist, dur }
+      | none => best := some { a := ⟨a, ha'⟩, b := ⟨b, hb.upper⟩, netDist, dur }
       | some cur =>
         if netDist > cur.netDist || (netDist == cur.netDist && dur < cur.dur) then
-          best := some { a, b, netDist, dur }
+          best := some { a := ⟨a, ha'⟩, b := ⟨b, hb.upper⟩, netDist, dur }
   return best
 
 /-- Split each walking segment that hides a vehicle leg into
 `[walk?, driving, walk?]`. -/
 def splitWalksOnVehicleLeg (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
   let mut out : Array Seg := #[]
-  for i in [0:segments.size] do
-    let seg := segments[i]!
+  for h : i in [0:segments.size] do
+    let seg := segments[i]
     -- The EFFECTIVE mode: a leg already identified as a vehicle IS the ride.
     if segMode seg != "walking" || seg.endTs - seg.startTs < VEHICLE_LEG_MIN_SEGMENT_S then
       out := out.push seg
@@ -1139,25 +1173,33 @@ def splitWalksOnVehicleLeg (segments : Array Seg) (points : Array PointF) : Arra
     | some cand =>
       -- Trim on-foot shoulders the max-distance interval may have absorbed:
       -- shrink inward while the boundary step is not itself vehicle-paced.
-      let mut a := cand.a
-      let mut b := cand.b
+      let mut a : Fin fixes.size := cand.a
+      let mut b : Fin fixes.size := cand.b
       for _ in [0:fixes.size] do
-        if a < b && stepKmh fixes a (a + 1) < VEHICLE_LEG_MOVE_KMH then a := a + 1 else break
+        if hab : a.val < b.val then
+          if stepKmh fixes a ⟨a.val + 1, by omega⟩ < VEHICLE_LEG_MOVE_KMH then a := ⟨a.val + 1, by omega⟩
+          else break
+        else break
       for _ in [0:fixes.size] do
-        if b > a && stepKmh fixes (b - 1) b < VEHICLE_LEG_MOVE_KMH then b := b - 1 else break
-      let netDist := haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
-      let dur := fixes[b]!.ts - fixes[a]!.ts
-      let peak := peakBetween fixes a b
+        if hab : a.val < b.val then
+          if stepKmh fixes ⟨b.val - 1, by omega⟩ b < VEHICLE_LEG_MOVE_KMH then b := ⟨b.val - 1, by omega⟩
+          else break
+        else break
+      let fa := fixes[a]
+      let fb := fixes[b]
+      let netDist := haversineMeters fa.lat fa.lon fb.lat fb.lon
+      let dur := fb.ts - fa.ts
+      let peak := peakBetween fixes a b b.isLt
       -- Boundaries: fold a sub-minute residual walk into the ride.
       let driveStart :=
-        if fixes[a]!.ts - seg.startTs < VEHICLE_LEG_MIN_REMAINDER_S then seg.startTs else fixes[a]!.ts
+        if fa.ts - seg.startTs < VEHICLE_LEG_MIN_REMAINDER_S then seg.startTs else fa.ts
       let driveEnd :=
-        if seg.endTs - fixes[b]!.ts < VEHICLE_LEG_MIN_REMAINDER_S then seg.endTs else fixes[b]!.ts
+        if seg.endTs - fb.ts < VEHICLE_LEG_MIN_REMAINDER_S then seg.endTs else fb.ts
       -- Train-bleed guard: a walk's tail accelerating into the next train (or
       -- its head decelerating out of the previous one) is the train boundary
       -- bleeding into the walk, not a separate ride.
-      let nextTrain := isTrain (if i + 1 < segments.size then some segments[i + 1]! else none)
-      let prevTrain := isTrain (if i > 0 then some segments[i - 1]! else none)
+      let nextTrain := isTrain (if h1 : i + 1 < segments.size then some segments[i + 1] else none)
+      let prevTrain := isTrain (if h0 : 0 < i then some (segments[i - 1]'(by have h1 : i < segments.size := h.upper; omega)) else none)
       if (nextTrain && seg.endTs - driveEnd < BLEED_S)
          || (prevTrain && driveStart - seg.startTs < BLEED_S) then
         out := out.push seg
@@ -1432,113 +1474,136 @@ def RIDE_HEAD_MIN_REMAINING_STAY_S : Int := 600
 /-- Steps below this pace are standing (the platform wait), not marching. -/
 def MARCH_STILL_KMH : Float := 2.5
 
-private def stepKmh (fixes : Array PointF) (i j : Nat) : Float :=
-  let dt := fixes[j]!.ts - fixes[i]!.ts
+private def stepKmh (fixes : Array PointF) (i j : Fin fixes.size) : Float :=
+  let dt := fixes[j].ts - fixes[i].ts
   if dt > 0 then
-    haversineMeters fixes[i]!.lat fixes[i]!.lon fixes[j]!.lat fixes[j]!.lon / Float.ofInt dt * 3.6
+    haversineMeters fixes[i].lat fixes[i].lon fixes[j].lat fixes[j].lon / Float.ofInt dt * 3.6
   else 0
 
 private def stats (points : Array PointF) (startTs endTs : Int) : Nat × Float × Float :=
   let speeds := (points.filter fun p => p.ts ≥ startTs && p.ts < endTs).map (·.speedKmh)
-  let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+  let mx : Float := match speeds[0]? with | none => 0 | some s0 => speeds.foldl max s0
   (speeds.size, jsRound (median speeds * 10) / 10, jsRound (mx * 10) / 10)
 
 /-- Median of `values` weighted by `holds`: the first value, in ascending order,
-at which the cumulative weight reaches half the total. -/
-private def weightedMedian (values holds : Array Float) : Float := Id.run do
-  let order := (((Array.range values.size).map fun j => (values[j]!, holds[j]!)).toList.mergeSort
+at which the cumulative weight reaches half the total; `0` of nothing. -/
+private def weightedMedian {n : Nat} (values holds : Vector Float n) : Float := Id.run do
+  let order := ((Vector.zipWith Prod.mk values holds).toArray.toList.mergeSort
     fun a b => a.1 ≤ b.1).toArray
   let half := (order.foldl (fun s e => s + e.2) 0) / 2
   let mut acc : Float := 0
   for e in order do
     acc := acc + e.2
     if acc ≥ half then return e.1
-  return order[order.size - 1]!.1
+  return match order.back? with | some e => e.1 | none => 0
+
+/-- Carve the ride's head out of the stay `cur` that precedes the train leg
+    `next`: the trimmed stay, the station walk, and the extended train, or
+    `none` when the evidence for a march is not there. -/
+private def carveRideHead (cur next : Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) : Option (Seg × Seg × Seg) := Id.run do
+  if !(segMode cur == "stationary" && segMode next == "train") then return none
+  let fixes := sortedIn points cur.startTs cur.endTs
+  if fixes.size < 8 then return none
+  let fixesV : Vector PointF fixes.size := ⟨fixes, rfl⟩
+  -- How long each fix's position HELD, so the dwell outweighs a dense tail.
+  let holdS : Vector Float fixes.size := Vector.ofFn fun j =>
+    if h1 : j.val + 1 < fixes.size then max (Float.ofInt (fixes[j.val + 1].ts - fixes[j].ts)) 1 else 1
+  let dwellLat := weightedMedian (fixesV.map (·.lat)) holdS
+  let dwellLon := weightedMedian (fixesV.map (·.lon)) holdS
+  let fromDwell := fixesV.map fun f => haversineMeters f.lat f.lon dwellLat dwellLon
+  -- The closest any fix from j onward comes back to the dwell.
+  let minAfter := Id.run do
+    let mut m := fromDwell
+    for hk : k in [0:fixes.size - 1] do
+      have hk' : k < fixes.size - 1 := hk.upper
+      m := m.set (fixes.size - 2 - k)
+        (min (m[fixes.size - 2 - k]'(by omega)) (m[fixes.size - 1 - k]'(by omega)))
+    return m
+  -- The ride: first vehicle-paced step whose suffix never returns.
+  let r : Option (Fin fixes.size) := Id.run do
+    for hj : j in [1:fixes.size] do
+      have hj' : j < fixes.size := hj.upper
+      if stepKmh fixes ⟨j - 1, by omega⟩ ⟨j, hj'⟩ ≥ RIDE_HEAD_STEP_KMH
+         && minAfter[j] > DWELL_RETURN_RADIUS_M then
+        return some ⟨j, hj'⟩
+    return none
+  let some r := r | return none
+  let rideNetM :=
+    haversineMeters (fixes[r.val - 1]'(by have := r.isLt; omega)).lat
+      (fixes[r.val - 1]'(by have := r.isLt; omega)).lon
+      (fixes[fixes.size - 1]'(by have := r.isLt; omega)).lat
+      (fixes[fixes.size - 1]'(by have := r.isLt; omega)).lon
+  if rideNetM < RIDE_HEAD_MIN_NET_M then return none
+  -- March end: strip the standing platform wait off the pedestrian run.
+  let mut m : Fin fixes.size := ⟨r.val - 1, by have := r.isLt; omega⟩
+  for _ in [0:fixes.size] do
+    if hm : 0 < m.val then
+      if stepKmh fixes ⟨m.val - 1, by have := m.isLt; omega⟩ m < MARCH_STILL_KMH then
+        m := ⟨m.val - 1, by have := m.isLt; omega⟩
+      else break
+    else break
+  -- March start: the maximal contiguous moving run ending at m. The step
+  -- INTO the dwell's last fix spans the still dwell (often a long indoor fix
+  -- gap), so its pace is negligible and the scan stops there.
+  let mut w : Fin fixes.size := m
+  for _ in [0:fixes.size] do
+    if hw : 0 < w.val then
+      if stepKmh fixes ⟨w.val - 1, by have := w.isLt; omega⟩ w ≥ MARCH_STILL_KMH then
+        w := ⟨w.val - 1, by have := w.isLt; omega⟩
+      else break
+    else break
+  -- PROVABLY unpinnable (probed at zero): `w` only decreases from `m`, so
+  -- this fires exactly at `w = m`, where the march spans one fix and the
+  -- `durS`/`netM` bars below refuse it anyway. A pure short-circuit.
+  if w.val ≥ m.val then return none
+  -- Four-signal walk evidence over the march, plus two placement gates.
+  let durS := fixes[m].ts - fixes[w].ts
+  let netM := haversineMeters fixes[w].lat fixes[w].lon fixes[m].lat fixes[m].lon
+  let pedestrianPaced := Id.run do
+    for hk : k in [w.val:m.val] do
+      have hk' : k < m.val := hk.upper
+      if !(stepKmh fixes ⟨k, by have := m.isLt; omega⟩ ⟨k + 1, by have := m.isLt; omega⟩
+            ≤ PEDESTRIAN_STEP_MAX_KMH) then return false
+    return true
+  let cadenceOk := match meanCadenceSpm steps fixes[w].ts fixes[m].ts with
+    | none => false
+    | some c => c ≥ PEDESTRIAN_MIN_CADENCE_SPM
+  if !pedestrianPaced || Float.ofInt durS < PEDESTRIAN_MIN_RUN_S
+     || netM < PEDESTRIAN_MIN_RUN_NET_M || !cadenceOk
+     || fromDwell[w] > MARCH_START_MAX_FROM_DWELL_M
+     || fixes[w].ts - cur.startTs < RIDE_HEAD_MIN_REMAINING_STAY_S then return none
+  -- Carve: stay | walk (the march) | train (wait + reacquire fixes on).
+  let walkStart := fixes[w].ts
+  let rideStart := fixes[m].ts
+  let (sc, sa, sm) := stats points cur.startTs walkStart
+  let (tc, ta, tm) := stats points rideStart next.endTs
+  let reason := s!"extended back over the boarding: claimed a {toString (jsRound netM).toInt64.toInt} m station walk + the ride's reacquire fixes out of the preceding stay"
+  return some
+    ({ cur with endTs := walkStart, avgSpeed := sa, maxSpeed := sm, pointCount := Int.ofNat sc },
+     walkRemainder { cur with mode := "walking" } walkStart rideStart points false,
+     { next with
+       startTs := rideStart, avgSpeed := ta, maxSpeed := tm, pointCount := Int.ofNat tc
+       refinedReason := some (match next.refinedReason with
+         | some r => s!"{r}; {reason}"
+         | none => reason) })
 
 /-- Claim a ride's head — the station walk, the platform wait, and the first
 tunnel-reacquire fixes — out of the STAY that precedes a train leg. -/
 def claimRideHeadFromStay (segments : Array Seg) (points : Array PointF)
     (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
   if steps.isEmpty then return segments
-  let mut segs := segments
+  let mut segs : Vector Seg segments.size := ⟨segments, rfl⟩
   let mut out : Array Seg := #[]
-  for i in [0:segs.size] do
-    let cur := segs[i]!
-    let carved : Option (Seg × Seg × Seg) := Id.run do
-      if i + 1 ≥ segs.size then return none
-      let next := segs[i + 1]!
-      if !(segMode cur == "stationary" && segMode next == "train") then return none
-      let fixes := sortedIn points cur.startTs cur.endTs
-      let n := fixes.size
-      if n < 8 then return none
-      -- How long each fix's position HELD, so the dwell outweighs a dense tail.
-      let holdS := (Array.range n).map fun j =>
-        if j < n - 1 then max (Float.ofInt (fixes[j + 1]!.ts - fixes[j]!.ts)) 1 else 1
-      let dwellLat := weightedMedian (fixes.map (·.lat)) holdS
-      let dwellLon := weightedMedian (fixes.map (·.lon)) holdS
-      let fromDwell := fixes.map fun f => haversineMeters f.lat f.lon dwellLat dwellLon
-      -- The closest any fix from j onward comes back to the dwell.
-      let minAfter := Id.run do
-        let mut m := fromDwell
-        for k in [0:n - 1] do
-          let j := n - 2 - k
-          m := m.set! j (min m[j]! m[j + 1]!)
-        return m
-      -- The ride: first vehicle-paced step whose suffix never returns.
-      let r := Id.run do
-        for j in [1:n] do
-          if stepKmh fixes (j - 1) j ≥ RIDE_HEAD_STEP_KMH && minAfter[j]! > DWELL_RETURN_RADIUS_M then
-            return j
-        return 0
-      if r < 1 then return none
-      let rideNetM :=
-        haversineMeters fixes[r - 1]!.lat fixes[r - 1]!.lon fixes[n - 1]!.lat fixes[n - 1]!.lon
-      if rideNetM < RIDE_HEAD_MIN_NET_M then return none
-      -- March end: strip the standing platform wait off the pedestrian run.
-      let mut m := r - 1
-      for _ in [0:n] do
-        if m > 0 && stepKmh fixes (m - 1) m < MARCH_STILL_KMH then m := m - 1 else break
-      -- March start: the maximal contiguous moving run ending at m. The step
-      -- INTO the dwell's last fix spans the still dwell (often a long indoor fix
-      -- gap), so its pace is negligible and the scan stops there.
-      let mut w := m
-      for _ in [0:n] do
-        if w > 0 && stepKmh fixes (w - 1) w ≥ MARCH_STILL_KMH then w := w - 1 else break
-      -- PROVABLY unpinnable (probed at zero): `w` only decreases from `m`, so
-      -- this fires exactly at `w = m`, where the march spans one fix and the
-      -- `durS`/`netM` bars below refuse it anyway. A pure short-circuit.
-      if w ≥ m then return none
-      -- Four-signal walk evidence over the march, plus two placement gates.
-      let durS := fixes[m]!.ts - fixes[w]!.ts
-      let netM := haversineMeters fixes[w]!.lat fixes[w]!.lon fixes[m]!.lat fixes[m]!.lon
-      let pedestrianPaced := (Array.range (m - w)).all fun k =>
-        stepKmh fixes (w + k) (w + k + 1) ≤ PEDESTRIAN_STEP_MAX_KMH
-      let cadenceOk := match meanCadenceSpm steps fixes[w]!.ts fixes[m]!.ts with
-        | none => false
-        | some c => c ≥ PEDESTRIAN_MIN_CADENCE_SPM
-      if !pedestrianPaced || Float.ofInt durS < PEDESTRIAN_MIN_RUN_S
-         || netM < PEDESTRIAN_MIN_RUN_NET_M || !cadenceOk
-         || fromDwell[w]! > MARCH_START_MAX_FROM_DWELL_M
-         || fixes[w]!.ts - cur.startTs < RIDE_HEAD_MIN_REMAINING_STAY_S then return none
-      -- Carve: stay | walk (the march) | train (wait + reacquire fixes on).
-      let walkStart := fixes[w]!.ts
-      let rideStart := fixes[m]!.ts
-      let (sc, sa, sm) := stats points cur.startTs walkStart
-      let (tc, ta, tm) := stats points rideStart next.endTs
-      let reason := s!"extended back over the boarding: claimed a {toString (jsRound netM).toInt64.toInt} m station walk + the ride's reacquire fixes out of the preceding stay"
-      return some
-        ({ cur with endTs := walkStart, avgSpeed := sa, maxSpeed := sm, pointCount := Int.ofNat sc },
-         walkRemainder { cur with mode := "walking" } walkStart rideStart points false,
-         { next with
-           startTs := rideStart, avgSpeed := ta, maxSpeed := tm, pointCount := Int.ofNat tc
-           refinedReason := some (match next.refinedReason with
-             | some r => s!"{r}; {reason}"
-             | none => reason) })
-    match carved with
-    | none => out := out.push cur
-    | some (stay, walk, train) =>
-      out := (out.push stay).push walk
-      segs := segs.set! (i + 1) train
+  for h : i in [0:segments.size] do
+    let cur := segs[i]
+    if h1 : i + 1 < segments.size then
+      match carveRideHead cur segs[i + 1] points steps with
+      | none => out := out.push cur
+      | some (stay, walk, train) =>
+        out := (out.push stay).push walk
+        segs := segs.set (i + 1) train
+    else out := out.push cur
   return out
 
 /-! ### Reference values
@@ -1814,36 +1879,28 @@ reclassification, which is not this pass's decision. -/
 def FOOT_ARRIVAL_MIN_WALK_REMAINDER_S : Int := 60
 
 /-- Index of the first fix of the trailing run of standing fixes. -/
-private def arrivalIdx (fixes : Array PointF) : Nat := Id.run do
-  let mut k := fixes.size - 1
-  while k > 0 do
-    if stepKmh fixes (k - 1) k < MARCH_STILL_KMH then k := k - 1 else break
-  return k
+private def arrivalIdx (fixes : Array PointF) : Nat :=
+  if h0 : 0 < fixes.size then (go ⟨fixes.size - 1, by omega⟩).val else 0
+where
+  go (k : Fin fixes.size) : Fin fixes.size :=
+    if hk : 0 < k.val then
+      if stepKmh fixes ⟨k.val - 1, by omega⟩ k < MARCH_STILL_KMH then go ⟨k.val - 1, by omega⟩ else k
+    else k
+  termination_by k.val
 
-/-- Move a walk→stay boundary back to the moment the walking actually stopped.
-
-`segments.ts` classifies in 300 s windows, so the window straddling an arrival
-is scored whole and its walking half carries the verdict; the stay starts up to
-a window late. Only ever moves the boundary BACK, and only when the walk's own
-tail is a held position. Marks the shortened walk `needsRename` — a walk
-trimmed of its arrival can belong to a different street than the one it
-overran onto — but not `needsReenrich`, so its mode is left alone. -/
-def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
-  let mut segs := segments
-  let mut out : Array Seg := #[]
-  for i in [0:segs.size] do
-    let cur := segs[i]!
-    let moved : Option (Seg × Seg) := Id.run do
-      if i + 1 ≥ segs.size then return none
-      let next := segs[i + 1]!
+/-- The walk `cur` gives its standing tail to the stay `next`: the shortened
+    walk and the grown stay, or `none` when the tail is not a held position. -/
+private def footArrival (cur next : Seg) (points : Array PointF) : Option (Seg × Seg) := Id.run do
       if !(segMode cur == "walking" && segMode next == "stationary") then return none
       let fixes := sortedIn points cur.startTs cur.endTs
       if fixes.size < 4 then return none
       let k := arrivalIdx fixes
       let run := fixes.extract k fixes.size
-      if run.size < 2 then return none
-      let arrivalTs := run[0]!.ts
-      let durS := run[run.size - 1]!.ts - arrivalTs
+      if hr : run.size < 2 then return none
+      let some first := run[0]? | return none
+      let some last := run.back? | return none
+      let arrivalTs := first.ts
+      let durS := last.ts - arrivalTs
       if durS < FOOT_ARRIVAL_MIN_DWELL_S then return none
       let cLat := (run.foldl (fun s p => s + p.lat) 0) / Float.ofNat run.size
       let cLon := (run.foldl (fun s p => s + p.lon) 0) / Float.ofNat run.size
@@ -1886,14 +1943,24 @@ def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Ar
         if staySpeeds.isEmpty then { next with startTs := arrivalTs, pointCount := 0 }
         else
           let avg := jsRound (median staySpeeds * 10) / 10
-          let mx := jsRound ((staySpeeds.foldl max staySpeeds[0]!) * 10) / 10
+          let mx := jsRound ((staySpeeds.foldl max (staySpeeds[0]?.getD 0)) * 10) / 10
           { next with startTs := arrivalTs, pointCount := Int.ofNat stayFixes.size, avgSpeed := avg, maxSpeed := mx }
       return some (walk, stay)
-    match moved with
-    | some (walk, stay) =>
-      out := out.push walk
-      segs := segs.set! (i + 1) stay
-    | none => out := out.push cur
+
+/-- Move a walk→stay boundary back to the moment the walking actually stopped.
+    See `footArrival` for the evidence; this is the pass over the segments. -/
+def claimStayArrivalFromWalk (segments : Array Seg) (points : Array PointF) : Array Seg := Id.run do
+  let mut segs : Vector Seg segments.size := ⟨segments, rfl⟩
+  let mut out : Array Seg := #[]
+  for h : i in [0:segments.size] do
+    let cur := segs[i]
+    if h1 : i + 1 < segments.size then
+      match footArrival cur segs[i + 1] points with
+      | some (walk, stay) =>
+        out := out.push walk
+        segs := segs.set (i + 1) stay
+      | none => out := out.push cur
+    else out := out.push cur
   return out
 
 
