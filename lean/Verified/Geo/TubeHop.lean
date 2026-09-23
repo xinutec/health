@@ -184,12 +184,13 @@ def findBlackoutHop (fixes : Array Fix) : Option (Nat × Nat) := Id.run do
   let mut bestS : Int := 0
   let mut bestEnd : Nat := 0
   let mut totalM : Float := 0
-  for i in [1:fixes.size] do
-    let d := haversineMeters fixes[i - 1]!.lat fixes[i - 1]!.lon fixes[i]!.lat fixes[i]!.lon
+  for hm_i : i in [1:fixes.size] do
+    have hb_i : i < fixes.size := hm_i.upper
+    let d := haversineMeters fixes[i - 1].lat fixes[i - 1].lon fixes[i].lat fixes[i].lon
     totalM := totalM + d
     if d > bestM then
       bestM := d
-      bestS := fixes[i]!.ts - fixes[i - 1]!.ts
+      bestS := fixes[i].ts - fixes[i - 1].ts
       bestEnd := i
   if bestM / netM < TUBE_HOP_BLACKOUT_MIN_SHARE then return none
   let impliedKmh := if bestS > 0 then bestM / Float.ofInt bestS * 3.6 else (1.0 / 0.0)

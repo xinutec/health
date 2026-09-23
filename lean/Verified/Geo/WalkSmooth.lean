@@ -287,8 +287,9 @@ def countSharpTurns (pts : Array Pt) (thresholdDeg : Float := 50) : Nat := Id.ru
 def tortuosity (pts : Array Pt) : Float := Id.run do
   if pts.size < 2 then return 1
   let mut len := 0.0
-  for i in [1:pts.size] do
-    len := len + metersBetween pts[i-1]! pts[i]!
+  for hm_i : i in [1:pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
+    len := len + metersBetween pts[i - 1] pts[i]
   let straight := metersBetween pts[0]! pts[pts.size - 1]!
   return if straight > 1 then len / straight else 1
 
@@ -338,12 +339,12 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
     if countSharpTurns (matchedPath.extract (i-1) (i+2)) > 0 then
       corners := corners.push matchedPath[i]!
   let mut artifactCorners : Array Pt := #[]
-  for i in [0:corners.size] do
+  for hm_i : i in [0:corners.size] do
     let mut near := 0
     for j in [0:corners.size] do
-      if j != i && distM corners[i]! corners[j]! ≤ REFINE_STAIRCASE_NEIGHBOR_M then
+      if j != i && distM corners[i] corners[j]! ≤ REFINE_STAIRCASE_NEIGHBOR_M then
         near := near + 1
-    if near ≥ REFINE_STAIRCASE_MIN_NEIGHBORS then artifactCorners := artifactCorners.push corners[i]!
+    if near ≥ REFINE_STAIRCASE_MIN_NEIGHBORS then artifactCorners := artifactCorners.push corners[i]
   let budgetAt := fun (p : Pt) => Id.run do
     let mut dMin := posInf
     for c in artifactCorners do
@@ -371,16 +372,18 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
   let toXY := fun (p : Pt) =>
     ((p.lon - matchedPath[0]!.lon) * 111320.0 * cl, (p.lat - matchedPath[0]!.lat) * 111320.0)
   let mut cum : Array Float := #[0.0]
-  for i in [1:matchedPath.size] do
-    cum := cum.push (cum[i-1]! + distM matchedPath[i-1]! matchedPath[i]!)
+  for hm_i : i in [1:matchedPath.size] do
+    have hb_i : i < matchedPath.size := hm_i.upper
+    cum := cum.push (cum[i-1]! + distM matchedPath[i - 1] matchedPath[i])
   -- Arclength of the nearest point on the matched line to `p`.
   let arcOf := fun (p : Pt) => Id.run do
     let (px, py) := toXY p
     let mut bestD := posInf
     let mut bestS := 0.0
-    for i in [1:matchedPath.size] do
-      let (ax, ay) := toXY matchedPath[i-1]!
-      let (bx, by') := toXY matchedPath[i]!
+    for hm_i : i in [1:matchedPath.size] do
+      have hb_i : i < matchedPath.size := hm_i.upper
+      let (ax, ay) := toXY matchedPath[i - 1]
+      let (bx, by') := toXY matchedPath[i]
       let dx := bx - ax
       let dy := by' - ay
       let len2 := if dx * dx + dy * dy == 0 then 1e-9 else dx * dx + dy * dy
@@ -406,7 +409,7 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
   -- from 2.5 m beside the line would otherwise kink at the seams.
   let mut inserts : Array (Array Nat) := Array.replicate clamped.size #[]
   let mut snapToRoute : Std.HashSet Nat := {}
-  for i in [0:clamped.size] do
+  for hm_i : i in [0:clamped.size] do
     if i + 1 < clamped.size then
       let sA := arcs[i]!
       let sB := arcs[i+1]!
@@ -415,16 +418,16 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
         let mut gap : Array Nat := #[]
         for k in [0:matchedPath.size] do
           if cum[k]! > sA && cum[k]! < sB
-             && chordDistM matchedPath[k]! clamped[i]!.pt clamped[i+1]!.pt > budgetAt matchedPath[k]! then
+             && chordDistM matchedPath[k]! clamped[i].pt clamped[i+1]!.pt > budgetAt matchedPath[k]! then
             gap := gap.push k
         if !gap.isEmpty then
-          let mut chain : Array Pt := #[clamped[i]!.pt]
+          let mut chain : Array Pt := #[clamped[i].pt]
           for k in gap do chain := chain.push matchedPath[k]!
           chain := chain.push clamped[i+1]!.pt
           let mut pathLen := 0.0
           for k in [1:chain.size] do
             pathLen := pathLen + distM chain[k-1]! chain[k]!
-          let chord := max 1 (distM clamped[i]!.pt clamped[i+1]!.pt)
+          let chord := max 1 (distM clamped[i].pt clamped[i+1]!.pt)
           -- BOUNDED DETOUR ONLY: past both bounds this is a route spur, not a
           -- skipped corner, and reinstating one measured a leg 11→300 m.
           if !(pathLen > chord * SPLICE_MAX_LEN_RATIO && pathLen - chord > SPLICE_MAX_EXTRA_M) then
@@ -438,9 +441,9 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
       | some near => ⟨near.lat, near.lon, p.ts⟩
       | none => p
   let mut out : Array SmoothedPoint := #[positioned[0]!]
-  for i in [0:positioned.size] do
+  for hm_i : i in [0:positioned.size] do
     if i + 1 < positioned.size then
-      let a := positioned[i]!
+      let a := positioned[i]
       let b := positioned[i+1]!
       for k in inserts[i]! do
         let frac := (cum[k]! - arcs[i]!) / (arcs[i+1]! - arcs[i]!)
@@ -621,8 +624,8 @@ private def insertBox (m : Std.HashMap Int (Array Nat)) (cell : Float) (id : Nat
 def mkWalkGrid (segs : Array (Array Float)) (ringPts : Array (Array Float)) (cell : Float) : WalkGrid := Id.run do
   let mut seg := Array.replicate (segs.size * 4) 0.0
   let mut segCells : Std.HashMap Int (Array Nat) := {}
-  for i in [0:segs.size] do
-    let s := segs[i]!
+  for hm_i : i in [0:segs.size] do
+    let s := segs[i]
     seg := seg.set! (i*4) s[0]!
     seg := seg.set! (i*4+1) s[1]!
     seg := seg.set! (i*4+2) s[2]!
@@ -631,8 +634,8 @@ def mkWalkGrid (segs : Array (Array Float)) (ringPts : Array (Array Float)) (cel
       (min s[0]! s[2]!) (min s[1]! s[3]!) (max s[0]! s[2]!) (max s[1]! s[3]!)
   let mut rings : Array MetricRing := #[]
   let mut ringCells : Std.HashMap Int (Array Nat) := {}
-  for r in [0:ringPts.size] do
-    let pts := ringPts[r]!
+  for hm_r : r in [0:ringPts.size] do
+    let pts := ringPts[r]
     let mut minx := posInf
     let mut miny := posInf
     let mut maxx := negInf
@@ -843,15 +846,16 @@ def buildLegGrid (ways : Ways) (buildings : Array Ring) (fr : Frame) (cell : Flo
     Option WalkGrid := Id.run do
   let mut segs : Array (Array Float) := #[]
   for w in ways do
-    for i in [1:w.size] do
-      segs := segs.push #[fr.toE w[i-1]!.lon, fr.toN w[i-1]!.lat, fr.toE w[i]!.lon, fr.toN w[i]!.lat]
+    for hm_i : i in [1:w.size] do
+      have hb_i : i < w.size := hm_i.upper
+      segs := segs.push #[fr.toE w[i - 1].lon, fr.toN w[i - 1].lat, fr.toE w[i].lon, fr.toN w[i].lat]
   let mut ringPts : Array (Array Float) := #[]
   for ring in buildings do
     if ring.size ≥ 3 then
       let mut arr := Array.replicate (ring.size * 2) 0.0
-      for k in [0:ring.size] do
-        arr := arr.set! (k*2) (fr.toE ring[k]!.lon)
-        arr := arr.set! (k*2+1) (fr.toN ring[k]!.lat)
+      for hm_k : k in [0:ring.size] do
+        arr := arr.set! (k*2) (fr.toE ring[k].lon)
+        arr := arr.set! (k*2+1) (fr.toN ring[k].lat)
       ringPts := ringPts.push arr
   if segs.size > 0 || ringPts.size > 0 then
     return some (mkWalkGrid segs ringPts cell)
@@ -883,8 +887,8 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
       for s in [obsIdx[from_]!:obsIdx[to]! + 1] do
         ex := ex.set! s true
     return ex
-  for k in [0:obsIdx.size] do
-    let i := obsIdx[k]!
+  for hm_k : k in [0:obsIdx.size] do
+    let i := obsIdx[k]
     let ring := g.ringContaining chain[i]!.seedE chain[i]!.seedN
     if ring != runRing || ring == -1 then
       if runRing ≥ 0 && k ≥ 1 then exempt := markRun exempt runStart (k-1)
@@ -922,18 +926,20 @@ def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
         | some path =>
           if path.size > 2 then
             let mut lenM := 0.0
-            for k in [1:path.size] do
-              lenM := lenM + hyp (fr.toE path[k]!.lon - fr.toE path[k-1]!.lon)
-                                 (fr.toN path[k]!.lat - fr.toN path[k-1]!.lat)
+            for hm_k : k in [1:path.size] do
+              have hb_k : k < path.size := hm_k.upper
+              lenM := lenM + hyp (fr.toE path[k].lon - fr.toE path[k - 1].lon)
+                                 (fr.toN path[k].lat - fr.toN path[k - 1].lat)
             if lenM ≤ chordM * CORNER_DETOUR_MAX_RATIO then
               -- Interior corners, timestamps interpolated by along-path distance.
               let mut acc := 0.0
-              for k in [1:path.size] do
+              for hm_k : k in [1:path.size] do
+                have hb_k : k < path.size := hm_k.upper
                 if k + 1 < path.size then
-                  acc := acc + hyp (fr.toE path[k]!.lon - fr.toE path[k-1]!.lon)
-                                   (fr.toN path[k]!.lat - fr.toN path[k-1]!.lat)
+                  acc := acc + hyp (fr.toE path[k].lon - fr.toE path[k - 1].lon)
+                                   (fr.toN path[k].lat - fr.toN path[k - 1].lat)
                   repaired := repaired.push
-                    ⟨path[k]!.lat, path[k]!.lon, jsRound (a.ts + (b.ts - a.ts) * (acc / lenM))⟩
+                    ⟨path[k].lat, path[k].lon, jsRound (a.ts + (b.ts - a.ts) * (acc / lenM))⟩
       repaired := repaired.push b
   return repaired
 

@@ -229,14 +229,14 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
   let cellLon := gapBridgeM / (111320.0 * Float.cos (midLat * pi / 180))
   let cellOf := fun (v : Pt) => (floorInt (v.lat / cellLat), floorInt (v.lon / cellLon))
   let mut buckets : Std.HashMap (Int × Int) (Array Nat) := {}
-  for i in [0:vertices.size] do
-    let c := cellOf vertices[i]!
+  for hm_i : i in [0:vertices.size] do
+    let c := cellOf vertices[i]
     match buckets[c]? with
     | some b => buckets := buckets.insert c (b.push i)
     | none => buckets := buckets.insert c #[i]
   let mut adj := adj
-  for i in [0:vertices.size] do
-    let v := vertices[i]!
+  for hm_i : i in [0:vertices.size] do
+    let v := vertices[i]
     let (baseLatCell, baseLonCell) := cellOf v
     for dLat in [0:3] do
       for dLon in [0:3] do
@@ -386,8 +386,8 @@ def shortestPath (graph : RailGraph) (src dst : Nat) : Option (Array Nat) := Id.
 def nearestVertex (graph : RailGraph) (p : Pt) : Option (Nat × Float) := Id.run do
   let mut bestId : Int := -1
   let mut bestD := posInf
-  for i in [0:graph.vertices.size] do
-    let d := metersBetween p graph.vertices[i]!
+  for hm_i : i in [0:graph.vertices.size] do
+    let d := metersBetween p graph.vertices[i]
     if d < bestD then
       bestD := d
       bestId := Int.ofNat i
@@ -418,12 +418,13 @@ structure SnapResult where
     by how far along they are. -/
 def interpolateTimes (coords : Array Pt) (startTs endTs : Float) : Array SnappedPoint := Id.run do
   let mut cum : Array Float := #[0]
-  for i in [1:coords.size] do
-    cum := cum.push (cum[i - 1]! + metersBetween coords[i - 1]! coords[i]!)
+  for hm_i : i in [1:coords.size] do
+    have hb_i : i < coords.size := hm_i.upper
+    cum := cum.push (cum[i - 1]! + metersBetween coords[i - 1] coords[i])
   let total := if cum.size > 0 then cum[cum.size - 1]! else 0
   let mut out : Array SnappedPoint := #[]
-  for i in [0:coords.size] do
-    let c := coords[i]!
+  for hm_i : i in [0:coords.size] do
+    let c := coords[i]
     let ts := if total > 0 then jsRound (startTs + (endTs - startTs) * (cum[i]! / total)) else startTs
     out := out.push ⟨c.lat, c.lon, ts⟩
   return out

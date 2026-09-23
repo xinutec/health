@@ -2098,9 +2098,10 @@ def splitByEvidence (fixes : Array PointF) (ctx : SplitContext) : Array (Array P
   let mut priorGaps : Array Float := #[]
   let mut cLat := fixes[0]!.lat
   let mut cLon := fixes[0]!.lon
-  for i in [1:fixes.size] do
-    let prev := fixes[i - 1]!
-    let cur := fixes[i]!
+  for hm_i : i in [1:fixes.size] do
+    have hb_i : i < fixes.size := hm_i.upper
+    let prev := fixes[i - 1]
+    let cur := fixes[i]
     let gapS := cur.ts - prev.ts
     -- Only a gap long enough to hide a departure is worth scoring.
     let split :=
@@ -2147,8 +2148,8 @@ def splitStaysOnEvidence (segments : Array Seg) (points : Array PointF)
     if subRuns.size ≤ 1 then
       out := out.push seg
     else
-      for i in [0:subRuns.size] do
-        let run := subRuns[i]!
+      for hm_i : i in [0:subRuns.size] do
+        let run := subRuns[i]
         out := out.push
           { seg with
             startTs := run[0]!.ts, endTs := run[run.size - 1]!.ts

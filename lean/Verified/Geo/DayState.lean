@@ -469,8 +469,8 @@ stays shell (same split as `classifyCluster.reason`).
 def checkDayConstraints (states : List DayState) : List Violation := Id.run do
   let arr := states.toArray
   let mut out : Array Violation := #[]
-  for i in [0:arr.size] do
-    let s := arr[i]!
+  for hm_i : i in [0:arr.size] do
+    let s := arr[i]
     -- Law 3 — a transit leg must run between two distinct stations.
     if s.mode == "train" || s.mode == "bus" then
       match parseStationPair s.wayName with

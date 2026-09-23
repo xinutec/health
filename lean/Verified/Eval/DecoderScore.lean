@@ -174,10 +174,11 @@ away — `journey-score.ts`'s `modeShape`, on the Journeys types. -/
 def modeShape (j : Journey) : Array String := Id.run do
   let legs := j.legs
   let mut kept : Array String := #[]
-  for i in [0:legs.size] do
-    let m := legs[i]!.mode
+  for hm_i : i in [0:legs.size] do
+    have hb_i : i < legs.size := hm_i.upper
+    let m := legs[i].mode
     if m == "walking" && i > 0 && i + 1 < legs.size then
-      let prev := legs[i-1]!.mode
+      let prev := legs[i - 1].mode
       let next := legs[i+1]!.mode
       if prev == next && (prev == "train" || prev == "bus") then
         continue

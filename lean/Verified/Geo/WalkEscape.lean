@@ -102,8 +102,9 @@ def nearestOnRing (p : Pt) (ring : Ring) : Option NearPt := Id.run do
 def nearestWalkable (p : Pt) (ways : Ways) : Option NearPt := Id.run do
   let mut best : Option NearPt := none
   for w in ways do
-    for i in [1:w.size] do
-      let proj := projectPointToSegment p w[i-1]! w[i]!
+    for hm_i : i in [1:w.size] do
+      have hb_i : i < w.size := hm_i.upper
+      let proj := projectPointToSegment p w[i - 1] w[i]
       let better := match best with
         | none => true
         | some b => proj.distM < b.distM
@@ -145,9 +146,10 @@ def mkWaySegmentGrid (ways : Ways) (maxQueryM : Float) : WaySegmentGrid := Id.ru
   let cellLon := maxQueryM / (111320.0 * Float.cos (refLat * pi / 180))
   let mut buckets : Std.HashMap (Int × Int) (Array (Pt × Pt)) := {}
   for w in ways do
-    for i in [1:w.size] do
-      let a := w[i-1]!
-      let b := w[i]!
+    for hm_i : i in [1:w.size] do
+      have hb_i : i < w.size := hm_i.upper
+      let a := w[i - 1]
+      let b := w[i]
       let loLat := floorInt (min a.lat b.lat / cellLat)
       let hiLat := floorInt (max a.lat b.lat / cellLat)
       let loLon := floorInt (min a.lon b.lon / cellLon)
@@ -282,21 +284,21 @@ def makeBadnessCtx (walkable : Ways) (buildings : Array Ring) (opts : CorrectOpt
 /-- Is `p` inside a building? The bbox prefilter rejects almost every ring
     before the ray cast. -/
 def insideBuildingCtx (p : Pt) (ctx : RingCtx) : Bool := Id.run do
-  for i in [0:ctx.buildings.size] do
+  for hm_i : i in [0:ctx.buildings.size] do
     let b := ctx.boxes[i]!
     if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
       continue
-    if pointInRing p ctx.buildings[i]! then return true
+    if pointInRing p ctx.buildings[i] then return true
   return false
 
 /-- Is a building within `buildingProxM` of `p` (or `p` inside one)? -/
 def nearBuilding (p : Pt) (ctx : BadnessCtx) : Bool := Id.run do
-  for i in [0:ctx.ring.buildings.size] do
+  for hm_i : i in [0:ctx.ring.buildings.size] do
     let b := ctx.ring.boxes[i]!
     if p.lat < b.minLat || p.lat > b.maxLat || p.lon < b.minLon || p.lon > b.maxLon then
       continue
-    if pointInRing p ctx.ring.buildings[i]! then return true
-    match nearestOnRing p ctx.ring.buildings[i]! with
+    if pointInRing p ctx.ring.buildings[i] then return true
+    match nearestOnRing p ctx.ring.buildings[i] with
     | some near => if near.distM <= ctx.opts.buildingProxM then return true
     | none => pure ()
   return false
@@ -334,8 +336,9 @@ def segBadnessM (a b : Pt) (ctx : BadnessCtx) : Float := Id.run do
 /-- Total badness (m) over a polyline. -/
 def pathBadnessM (pts : Array Pt) (ctx : BadnessCtx) : Float := Id.run do
   let mut total := 0.0
-  for i in [1:pts.size] do
-    total := total + segBadnessM pts[i-1]! pts[i]! ctx
+  for hm_i : i in [1:pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
+    total := total + segBadnessM pts[i - 1] pts[i] ctx
   return total
 
 /-! ## Case 2.5: geometric corner detour
@@ -443,9 +446,10 @@ def ringCornersBetween (a b : Pt) (ring : Ring) (forward : Bool) : Array Pt := I
 
 /-- Does the polyline enter any footprint? 2 m midpoint sampling. -/
 def polylineEntersBuilding (pts : Array Pt) (ctx : RingCtx) : Bool := Id.run do
-  for i in [1:pts.size] do
-    let a := pts[i-1]!
-    let b := pts[i]!
+  for hm_i : i in [1:pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
+    let a := pts[i - 1]
+    let b := pts[i]
     let (stepsF, stepsN) := sampleSteps (metersBetween a b / 2)
     for k in [0:stepsN+1] do
       let f := k.toFloat / stepsF
@@ -457,29 +461,31 @@ def polylineEntersBuilding (pts : Array Pt) (ctx : RingCtx) : Bool := Id.run do
 def firstCrossedRing (a b : Pt) (ctx : RingCtx) : Option Ring := Id.run do
   let mut best : Option Ring := none
   let mut bestT := posInf
-  for i in [0:ctx.buildings.size] do
+  for hm_i : i in [0:ctx.buildings.size] do
     let box := ctx.boxes[i]!
     if max a.lat b.lat < box.minLat || min a.lat b.lat > box.maxLat
        || max a.lon b.lon < box.minLon || min a.lon b.lon > box.maxLon then
       continue
-    let ts := segRingCrossingTs a b ctx.buildings[i]!
+    let ts := segRingCrossingTs a b ctx.buildings[i]
     if ts.size ≥ 2 && ts[0]! < bestT then
       bestT := ts[0]!
-      best := some ctx.buildings[i]!
+      best := some ctx.buildings[i]
   return best
 
 private def polylineLenM (pts : Array Pt) : Float := Id.run do
   let mut len := 0.0
-  for k in [1:pts.size] do
-    len := len + metersBetween pts[k-1]! pts[k]!
+  for hm_k : k in [1:pts.size] do
+    have hb_k : k < pts.size := hm_k.upper
+    len := len + metersBetween pts[k - 1] pts[k]
   return len
 
 /-- Cumulative along-path distances (`cum[0] = 0`) and the total. -/
 private def cumLengths (pts : Array Pt) : Array Float × Float := Id.run do
   let mut total := 0.0
   let mut cum : Array Float := #[0.0]
-  for k in [1:pts.size] do
-    total := total + metersBetween pts[k-1]! pts[k]!
+  for hm_k : k in [1:pts.size] do
+    have hb_k : k < pts.size := hm_k.upper
+    total := total + metersBetween pts[k - 1] pts[k]
     cum := cum.push total
   return (cum, total)
 
@@ -489,9 +495,9 @@ private def cumLengths (pts : Array Pt) : Array Float × Float := Id.run do
 private def timedAlong (pts : Array Pt) (cum : Array Float) (total tsA tsB : Float) :
     Array TPt := Id.run do
   let mut out : Array TPt := #[]
-  for k in [0:pts.size] do
+  for hm_k : k in [0:pts.size] do
     let f := if total > 0 then cum[k]! / total else 0
-    out := out.push ⟨pts[k]!.lat, pts[k]!.lon, tsA + (tsB - tsA) * f⟩
+    out := out.push ⟨pts[k].lat, pts[k].lon, tsA + (tsB - tsA) * f⟩
   return out
 
 /-- Repair a chord recursively: replace each pass-through with the shorter
@@ -542,10 +548,11 @@ def routeChordAroundBuildings (a b : Pt) (buildings : Array Ring) : Option (Arra
     interpolated linearly. Original vertices are kept exactly. -/
 def densify (drawn : Array TPt) (stepM : Float) : Array TPt := Id.run do
   let mut out : Array TPt := #[]
-  for i in [0:drawn.size] do
+  for hm_i : i in [0:drawn.size] do
+    have hb_i : i < drawn.size := hm_i.upper
     if i > 0 then
-      let a := drawn[i-1]!
-      let b := drawn[i]!
+      let a := drawn[i - 1]
+      let b := drawn[i]
       let len := metersBetween a.pt b.pt
       let extraF := Float.floor (len / stepM)
       let extra := extraF.toUInt64.toNat
@@ -553,7 +560,7 @@ def densify (drawn : Array TPt) (stepM : Float) : Array TPt := Id.run do
         let f := k.toFloat / (extraF + 1)
         out := out.push ⟨a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f,
                          a.ts + (b.ts - a.ts) * f⟩
-    out := out.push drawn[i]!
+    out := out.push drawn[i]
   return out
 
 inductive Outcome where
@@ -610,12 +617,14 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
 
   let pts := densify drawn opts.densifyStepM
   let mut segCross : Array Float := #[]
-  for k in [1:pts.size] do
-    segCross := segCross.push (segBadnessM pts[k-1]!.pt pts[k]!.pt ctx)
+  for hm_k : k in [1:pts.size] do
+    have hb_k : k < pts.size := hm_k.upper
+    segCross := segCross.push (segBadnessM pts[k - 1].pt pts[k].pt ctx)
 
   let mut originalLenM := 0.0
-  for k in [1:drawn.size] do
-    originalLenM := originalLenM + metersBetween drawn[k-1]!.pt drawn[k]!.pt
+  for hm_k : k in [1:drawn.size] do
+    have hb_k : k < drawn.size := hm_k.upper
+    originalLenM := originalLenM + metersBetween drawn[k - 1].pt drawn[k].pt
   let mut budgetM := max (originalLenM * opts.maxLegInflation) opts.minRouteBudgetM
 
   let mut out : Array TPt := #[]
@@ -624,8 +633,8 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
   while i < pts.size do
     -- Next crossing run at or after vertex i.
     let mut runStart : Int := -1
-    for s in [i:segCross.size] do
-      if segCross[s]! > 0 then
+    for hm_s : s in [i:segCross.size] do
+      if segCross[s] > 0 then
         runStart := Int.ofNat s
         break
     if runStart == -1 then
@@ -800,8 +809,8 @@ structure SnapWay where
 
 def snapWithWay (q : Pt) (ways : Ways) : Option SnapWay := Id.run do
   let mut best : Option SnapWay := none
-  for w in [0:ways.size] do
-    let coords := ways[w]!
+  for hm_w : w in [0:ways.size] do
+    let coords := ways[w]
     for i in [1:coords.size] do
       let a := coords[i-1]!
       let b := coords[i]!
@@ -832,10 +841,11 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
   if walkable.isEmpty || buildings.isEmpty || pts.size < 2 then return pts
   let ctx := makeBadnessCtx walkable buildings opts
   let mut out : Array TPt := #[]
-  for i in [0:pts.size] do
+  for hm_i : i in [0:pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
     if i > 0 then
-      let a := pts[i-1]!
-      let b := pts[i]!
+      let a := pts[i - 1]
+      let b := pts[i]
       let segLen := metersBetween a.pt b.pt
       let (stepsF, stepsN) := sampleSteps (segLen / 2)
       -- A line that merely nicks a footprint corner beside the pavement must
@@ -880,7 +890,7 @@ def snapPassages (pts : Array TPt) (walkable : Ways) (buildings : Array Ring)
           k := k + 1
         if coherent then
           for q in snapped do out := out.push q
-    let p := pts[i]!
+    let p := pts[i]
     if insideBuildingCtx p.pt ctx.ring then
       match snapWithWay p.pt ctx.walkable with
       | some near =>

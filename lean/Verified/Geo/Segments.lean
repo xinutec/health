@@ -223,8 +223,9 @@ def pedestrianCoreDisplacementM (fixes : Array PedFix) : Float := Id.run do
   let mut bestStart : Nat := 0
   let mut bestEnd : Nat := 0
   let mut runStart : Nat := 0
-  for i in [1:fixes.size] do
-    if vehiclePaced fixes[i-1]! fixes[i]! then
+  for hm_i : i in [1:fixes.size] do
+    have hb_i : i < fixes.size := hm_i.upper
+    if vehiclePaced fixes[i - 1] fixes[i] then
       if i - 1 - runStart > bestEnd - bestStart then
         bestStart := runStart
         bestEnd := i - 1
@@ -529,8 +530,8 @@ point count and peak speed survive. -/
 def smoothSegments (segments : Array TrackSegment) (minDurationSec : Int) : Array TrackSegment :=
   if segments.size ≤ 1 then segments else Id.run do
     let mut result : Array TrackSegment := #[segments[0]!]
-    for i in [1:segments.size] do
-      let seg := segments[i]!
+    for hm_i : i in [1:segments.size] do
+      let seg := segments[i]
       if seg.endTs - seg.startTs < minDurationSec && result.size > 0 then
         let j := result.size - 1
         let prev := result[j]!
@@ -625,8 +626,8 @@ fabricating a walk at 0.1 km/h. -/
 def inferTransitGaps (segments : Array TrackSegment) (points : Array FilteredPoint) : Array TrackSegment :=
   if segments.size < 2 || points.size < 2 then segments else Id.run do
     let mut result : Array TrackSegment := #[]
-    for i in [0:segments.size] do
-      let seg := segments[i]!
+    for hm_i : i in [0:segments.size] do
+      let seg := segments[i]
       result := result.push seg
       if i + 1 < segments.size then
         let next := segments[i+1]!

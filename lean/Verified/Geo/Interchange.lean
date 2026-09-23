@@ -293,13 +293,13 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
       let inLeg := samplesInWindow points seg.startTs seg.endTs
       if inLeg.size < 3 then return out.push seg
       let mut resumes := false
-      for i in [1:inLeg.size] do
-        if inLeg[i]!.ts > burst.endTs && tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then
+      for hm_i : i in [1:inLeg.size] do
+        if inLeg[i].ts > burst.endTs && tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then
           resumes := true
       if resumes then return out.push seg
       let mut alightTs := seg.startTs
-      for i in [1:inLeg.size] do
-        if tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then alightTs := inLeg[i]!.ts
+      for hm_i : i in [1:inLeg.size] do
+        if tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then alightTs := inLeg[i].ts
       if alightTs - seg.startTs < TAIL_MIN_REMAINING_RIDE_S || alightTs ≥ seg.endTs then
         return out.push seg
       let trimmedS := seg.endTs - alightTs
@@ -320,9 +320,10 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
       let tail := inLeg.filter (fun p => p.ts ≥ alightTs)
       let mut speeds : Array Float := #[]
       let mut path : Float := 0
-      for i in [1:tail.size] do
-        let dt := tail[i]!.ts - tail[i-1]!.ts
-        let d := haversineMeters tail[i-1]!.lat tail[i-1]!.lon tail[i]!.lat tail[i]!.lon
+      for hm_i : i in [1:tail.size] do
+        have hb_i : i < tail.size := hm_i.upper
+        let dt := tail[i].ts - tail[i - 1].ts
+        let d := haversineMeters tail[i - 1].lat tail[i - 1].lon tail[i].lat tail[i].lon
         path := path + d
         if dt > 0 then speeds := speeds.push (d / Float.ofInt dt * 3.6)
       let net : Float := if tail.size ≥ 2 then

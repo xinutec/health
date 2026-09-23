@@ -118,12 +118,14 @@ def batterySeries (points : List (Int × Option Int)) : List BatterySample := Id
     match b with | some lvl => acc.push (ts, lvl) | none => acc) #[]
   -- collapse runs sharing a timestamp to the first sample
   let mut read : Array BatterySample := #[]
-  for i in [0:all.size] do
-    if i == 0 || (all[i]!).1 != (all[i-1]!).1 then read := read.push all[i]!
+  for hm_i : i in [0:all.size] do
+    have hb_i : i < all.size := hm_i.upper
+    if i == 0 || (all[i]).1 != (all[i - 1]).1 then read := read.push all[i]
   let mut out : List BatterySample := []
-  for i in [0:read.size] do
-    let s := read[i]!
-    let prevDiff := i == 0 || s.2 != (read[i-1]!).2
+  for hm_i : i in [0:read.size] do
+    have hb_i : i < read.size := hm_i.upper
+    let s := read[i]
+    let prevDiff := i == 0 || s.2 != (read[i - 1]).2
     let nextDiff := i + 1 ≥ read.size || s.2 != (read[i+1]!).2
     if prevDiff || nextDiff then out := out ++ [s]
   return out

@@ -76,11 +76,13 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
   if path.size < 2 || fixes.size < 2 then return 0
   if path.size * (fixes.size - 1) > maxCorridorStallCap then return 0
   let mut fArc : Array Float := #[0]
-  for i in [1:fixes.size] do
-    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i-1]! fixes[i]!)
+  for hm_i : i in [1:fixes.size] do
+    have hb_i : i < fixes.size := hm_i.upper
+    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i - 1] fixes[i])
   let mut pArc : Array Float := #[0]
-  for i in [1:path.size] do
-    pArc := pArc.push (pArc[i-1]! + metersBetween path[i-1]! path[i]!)
+  for hm_i : i in [1:path.size] do
+    have hb_i : i < path.size := hm_i.upper
+    pArc := pArc.push (pArc[i-1]! + metersBetween path[i - 1] path[i])
   let V := path.size
   let S := fixes.size - 1
   -- `dist` is each vertex's distance to each fix-segment; `arc` is where on the

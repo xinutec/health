@@ -215,9 +215,9 @@ not try to be — the tolerance is 120 s and walks within 120 s of each other ar
 the segmentation move this exists to absorb, not a competition. -/
 def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
   let mut candidates : Array (Nat × Nat × Nat) := #[]
-  for b in [0:base.size] do
+  for hm_b : b in [0:base.size] do
     for c in [0:cur.size] do
-      let d := (base[b]!.startTs - cur[c]!.startTs).natAbs
+      let d := (base[b].startTs - cur[c]!.startTs).natAbs
       if d ≤ START_TS_TOLERANCE_S then
         candidates := candidates.push (b, c, d)
   -- Stable ascending by distance: ties keep generation order (base-major),

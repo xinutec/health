@@ -103,11 +103,12 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
   let mut adj : Array (Array (Nat × Float)) := #[]
   let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
   for w in ways do
-    for i in [1:w.size] do
+    for hm_i : i in [1:w.size] do
+      have hb_i : i < w.size := hm_i.upper
       -- `nodeAt` for each end, earlier coordinate first — that order is what
       -- numbers the nodes.
       let mut ids : Array Nat := #[]
-      for c in #[w[i - 1]!, w[i]!] do
+      for c in #[w[i - 1], w[i]] do
         let key := Verified.JsNum.coordKey7 c.lat c.lon
         match index[key]? with
         | some id => ids := ids.push id
@@ -144,14 +145,15 @@ structure Snap where
     way-iteration order is load-bearing. -/
 def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.run do
   let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
-  for i in [0:graph.nodes.size] do
-    let n := graph.nodes[i]!
+  for hm_i : i in [0:graph.nodes.size] do
+    let n := graph.nodes[i]
     index := index.insert (Verified.JsNum.coordKey7 n.lat n.lon) i
   let mut best : Option Snap := none
   for w in ways do
-    for i in [1:w.size] do
-      let a := w[i - 1]!
-      let b := w[i]!
+    for hm_i : i in [1:w.size] do
+      have hb_i : i < w.size := hm_i.upper
+      let a := w[i - 1]
+      let b := w[i]
       let proj := projectPointToSegment p a b
       let better := match best with
         | none => true

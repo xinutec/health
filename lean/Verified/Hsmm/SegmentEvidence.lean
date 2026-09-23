@@ -114,8 +114,8 @@ open Verified.Hsmm.FloatScore (haversineMeters)
     so a segment's step total is one subtraction. -/
 def stepPrefix (obs : Array ObsRow) : Array Float := Id.run do
   let mut a := Array.replicate (obs.size + 1) 0.0
-  for i in [0:obs.size] do
-    a := a.set! (i + 1) (a[i]! + obs[i]!.cadence.getD 0)
+  for hm_i : i in [0:obs.size] do
+    a := a.set! (i + 1) (a[i]! + obs[i].cadence.getD 0)
   return a
 
 /-- The caller-side `Window` for `[startIndex, segEnd]`, or `none` ("assert

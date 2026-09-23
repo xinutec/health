@@ -148,16 +148,17 @@ def checkModeKinematics (legs : List FeasibilityLeg) (points : List FeasibilityF
       let mut runSteps : Nat := 0
       let mut peakKmh : Float := 0
       let mut worst : Option (Float × Nat × Float) := none
-      for i in [1:fixes.size] do
-        let dt := fixes[i]!.ts - fixes[i-1]!.ts
-        let stepM := fixDistanceM fixes[i-1]! fixes[i]!
+      for hm_i : i in [1:fixes.size] do
+        have hb_i : i < fixes.size := hm_i.upper
+        let dt := fixes[i].ts - fixes[i - 1].ts
+        let stepM := fixDistanceM fixes[i - 1] fixes[i]
         let stepKmh := if decide (dt > 0) then (stepM / dt.toNat.toFloat) * 3.6 else 0
         if decide (stepKmh ≥ KINEMATIC_VEHICLE_STEP_KMH) then
           if runStart.isNone then
             runStart := some (i-1); runSteps := 0; peakKmh := 0
           runSteps := runSteps + 1
           peakKmh := max peakKmh stepKmh
-          let netM := fixDistanceM fixes[runStart.getD 0]! fixes[i]!
+          let netM := fixDistanceM fixes[runStart.getD 0]! fixes[i]
           if decide (runSteps ≥ KINEMATIC_MIN_RUN_STEPS) && decide (netM ≥ KINEMATIC_MIN_RUN_NET_M)
               && (worst.isNone || decide (netM > (worst.getD (0,0,0)).1)) then
             worst := some (netM, runSteps, peakKmh)
@@ -180,17 +181,18 @@ def checkVehiclePedestrianRuns (legs : List FeasibilityLeg) (points : List Feasi
       let fixes := fixesIn points l
       let mut runStart : Option Nat := none
       let mut worst : Option (Float × Float × Float) := none  -- (netM, durS, cadence)
-      for i in [1:fixes.size] do
-        let dt := fixes[i]!.ts - fixes[i-1]!.ts
-        let stepKmh := if decide (dt > 0) then (fixDistanceM fixes[i-1]! fixes[i]! / dt.toNat.toFloat) * 3.6 else 0
+      for hm_i : i in [1:fixes.size] do
+        have hb_i : i < fixes.size := hm_i.upper
+        let dt := fixes[i].ts - fixes[i - 1].ts
+        let stepKmh := if decide (dt > 0) then (fixDistanceM fixes[i - 1] fixes[i] / dt.toNat.toFloat) * 3.6 else 0
         if decide (stepKmh ≤ PEDESTRIAN_STEP_MAX_KMH) && decide (dt > 0) then
           if runStart.isNone then runStart := some (i-1)
           let rs := runStart.getD 0
-          let durS := Float.ofInt (fixes[i]!.ts - fixes[rs]!.ts)
-          let netM := fixDistanceM fixes[rs]! fixes[i]!
+          let durS := Float.ofInt (fixes[i].ts - fixes[rs]!.ts)
+          let netM := fixDistanceM fixes[rs]! fixes[i]
           if decide (durS ≥ PEDESTRIAN_MIN_RUN_S) && decide (netM ≥ PEDESTRIAN_MIN_RUN_NET_M)
               && (worst.isNone || decide (netM > (worst.getD (0,0,0)).1)) then
-            match meanCadenceSpm steps fixes[rs]!.ts fixes[i]!.ts with
+            match meanCadenceSpm steps fixes[rs]!.ts fixes[i].ts with
             | some cadence =>
               if decide (cadence ≥ PEDESTRIAN_MIN_CADENCE_SPM) then worst := some (netM, durS, cadence)
             | none => pure ()

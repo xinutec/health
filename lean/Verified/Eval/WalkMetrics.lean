@@ -121,8 +121,9 @@ private def posInf : Float := 1.0 / 0.0
 /-- Total drawn length (m). -/
 def pathLength (pts : Array LatLon) : Float := Id.run do
   let mut t := 0.0
-  for i in [1:pts.size] do
-    t := t + metersBetween pts[i-1]! pts[i]!
+  for hm_i : i in [1:pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
+    t := t + metersBetween pts[i - 1] pts[i]
   return t
 
 /-- Point on the segment `a→b` at fraction `f`. -/
@@ -146,9 +147,10 @@ network is empty. -/
 def distToNearestWay (p : LatLon) (roads : RoadGeometry) : Float := Id.run do
   let mut best := posInf
   for w in roads.ways do
-    for i in [1:w.coords.size] do
-      let a : LatLon := ⟨w.coords[i-1]!.1, w.coords[i-1]!.2⟩
-      let b : LatLon := ⟨w.coords[i]!.1, w.coords[i]!.2⟩
+    for hm_i : i in [1:w.coords.size] do
+      have hb_i : i < w.coords.size := hm_i.upper
+      let a : LatLon := ⟨w.coords[i - 1].1, w.coords[i - 1].2⟩
+      let b : LatLon := ⟨w.coords[i].1, w.coords[i].2⟩
       let d := distToSeg p a b
       if d < best then best := d
   return best
@@ -238,10 +240,10 @@ def offWalkableQuantile (drawn : Array LatLon) (walkable : RoadGeometry)
     (q : Float) (stepM : Float := 5) : Option Float := Id.run do
   if drawn.isEmpty then return none
   let mut samples : Array Float := #[]
-  for i in [0:drawn.size] do
-    samples := samples.push (distToNearestWay drawn[i]! walkable)
+  for hm_i : i in [0:drawn.size] do
+    samples := samples.push (distToNearestWay drawn[i] walkable)
     if i + 1 < drawn.size then
-      let a := drawn[i]!
+      let a := drawn[i]
       let b := drawn[i+1]!
       let chord := metersBetween a b
       let n := (Float.floor (chord / stepM)).toInt64.toInt.toNat
@@ -334,11 +336,13 @@ signal this exists to catch is unchanged. -/
 def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float := Id.run do
   if path.size < 2 || fixes.size < 2 then return 0
   let mut fArc : Array Float := #[0]
-  for i in [1:fixes.size] do
-    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i-1]! fixes[i]!)
+  for hm_i : i in [1:fixes.size] do
+    have hb_i : i < fixes.size := hm_i.upper
+    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i - 1] fixes[i])
   let mut pArc : Array Float := #[0]
-  for i in [1:path.size] do
-    pArc := pArc.push (pArc[i-1]! + metersBetween path[i-1]! path[i]!)
+  for hm_i : i in [1:path.size] do
+    have hb_i : i < path.size := hm_i.upper
+    pArc := pArc.push (pArc[i-1]! + metersBetween path[i - 1] path[i])
   let V := path.size
   let S := fixes.size - 1
   -- `dist` is each vertex's distance to each fix-segment; `arc` is where on the
@@ -484,8 +488,9 @@ def maxFixDistToLine (fixes drawn : Array LatLon) : Float := Id.run do
   let mut worst : Float := 0
   for p in fixes do
     let mut best := posInf
-    for i in [1:drawn.size] do
-      best := min best (distToSeg p drawn[i-1]! drawn[i]!)
+    for hm_i : i in [1:drawn.size] do
+      have hb_i : i < drawn.size := hm_i.upper
+      best := min best (distToSeg p drawn[i - 1] drawn[i])
     worst := max worst best
   return worst
 
@@ -512,8 +517,9 @@ def fixCoverage (fixes drawn : Array LatLon) (q radiusM : Float) : Float × Floa
   let mut ds : Array Float := #[]
   for p in fixes do
     let mut best := posInf
-    for i in [1:drawn.size] do
-      best := min best (distToSeg p drawn[i-1]! drawn[i]!)
+    for hm_i : i in [1:drawn.size] do
+      have hb_i : i < drawn.size := hm_i.upper
+      best := min best (distToSeg p drawn[i - 1] drawn[i])
     ds := ds.push best
   let far := (ds.filter (· > radiusM)).size
   let sorted := ds.qsort (· < ·)
@@ -548,9 +554,9 @@ def pointInRing (p : LatLon) (ring : Ring) : Bool := Id.run do
   if ring.size < 3 then return false
   let mut inside := false
   let mut j := ring.size - 1
-  for i in [0:ring.size] do
-    let yi := ring[i]!.lat
-    let xi := ring[i]!.lon
+  for hm_i : i in [0:ring.size] do
+    let yi := ring[i].lat
+    let xi := ring[i].lon
     let yj := ring[j]!.lat
     let xj := ring[j]!.lon
     let crosses := (decide (yi > p.lat) != decide (yj > p.lat))
@@ -614,9 +620,10 @@ def buildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
   -- used to ray-cast every footprint in the day's bbox.
   let boxed := buildings.map (fun r => (ringBox r, r))
   let mut crossed := 0.0
-  for i in [1:drawn.size] do
-    let a := drawn[i-1]!
-    let b := drawn[i]!
+  for hm_i : i in [1:drawn.size] do
+    have hb_i : i < drawn.size := hm_i.upper
+    let a := drawn[i - 1]
+    let b := drawn[i]
     let segLen := metersBetween a b
     if segLen == 0 then continue
     let steps := ceilSteps (segLen / stepM)
@@ -644,9 +651,10 @@ def offPathBuildingCrossingM (drawn : Array LatLon) (buildings : Array Ring)
   if drawn.size < 2 || buildings.isEmpty then return 0
   let boxed := buildings.map (fun r => (ringBox r, r))
   let mut crossed := 0.0
-  for i in [1:drawn.size] do
-    let a := drawn[i-1]!
-    let b := drawn[i]!
+  for hm_i : i in [1:drawn.size] do
+    have hb_i : i < drawn.size := hm_i.upper
+    let a := drawn[i - 1]
+    let b := drawn[i]
     let segLen := metersBetween a b
     if segLen == 0 then continue
     let steps := ceilSteps (segLen / stepM)
@@ -692,9 +700,10 @@ def nearestNamedWay (p : LatLon) (roads : RoadGeometry) (radiusM : Float) :
     match w.name with
     | none => pure ()
     | some nm =>
-      for i in [1:w.coords.size] do
-        let a : LatLon := ⟨w.coords[i-1]!.1, w.coords[i-1]!.2⟩
-        let b : LatLon := ⟨w.coords[i]!.1, w.coords[i]!.2⟩
+      for hm_i : i in [1:w.coords.size] do
+        have hb_i : i < w.coords.size := hm_i.upper
+        let a : LatLon := ⟨w.coords[i - 1].1, w.coords[i - 1].2⟩
+        let b : LatLon := ⟨w.coords[i].1, w.coords[i].2⟩
         let d := distToSeg p a b
         if d ≤ radiusM then
           match best with
@@ -715,9 +724,10 @@ def onNamedWayFraction (drawn : Array LatLon) (acceptedNames : Array String)
   let accepted := acceptedNames.map normaliseWayName
   let mut total := 0.0
   let mut onNamed := 0.0
-  for i in [1:drawn.size] do
-    let a := drawn[i-1]!
-    let b := drawn[i]!
+  for hm_i : i in [1:drawn.size] do
+    have hb_i : i < drawn.size := hm_i.upper
+    let a := drawn[i - 1]
+    let b := drawn[i]
     let segLen := metersBetween a b
     if segLen == 0 then continue
     let steps := ceilSteps (segLen / stepM)

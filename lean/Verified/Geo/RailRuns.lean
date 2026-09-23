@@ -154,8 +154,8 @@ def findBoardingPlatformFix (points : Array Fix) (startTs : Int) : Option Fix :=
   if windowFixes.isEmpty then return none
   -- Phase zero: the earliest train-speed fix in the window.
   let mut firstFastIdx : Option Nat := none
-  for i in [0:windowFixes.size] do
-    if firstFastIdx.isNone && windowFixes[i]!.speedKmh ≥ PLATFORM_TRAIN_KMH then
+  for hm_i : i in [0:windowFixes.size] do
+    if firstFastIdx.isNone && windowFixes[i].speedKmh ≥ PLATFORM_TRAIN_KMH then
       firstFastIdx := some i
   match firstFastIdx with
   | none => return none

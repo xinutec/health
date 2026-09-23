@@ -162,8 +162,8 @@ private def truthy (s : Option String) : Option String :=
 STARTED before the day end. `none` when every state starts at or after it. -/
 def anchorIndex (states : Array DayState) (dayEndTs : Int) : Option Nat := Id.run do
   let mut best : Option Nat := none
-  for i in [0:states.size] do
-    let s := states[i]!
+  for hm_i : i in [0:states.size] do
+    let s := states[i]
     if s.startTs ≥ dayEndTs then continue
     match best with
     | some b => if s.endTs > states[b]!.endTs then best := some i
