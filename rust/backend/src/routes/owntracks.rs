@@ -4,7 +4,12 @@
 //! carries a configuration patch telling it how hard to look for itself next
 //! time. PhoneTrack stays the source of truth for location history — nothing is
 //! duplicated here — but sitting in the path lets the decision use context the
-//! phone cannot have: the user's mined places, and their recent trajectory.
+//! phone cannot have: the user's recent trajectory, and the local hour.
+//!
+//! ⚠ IT NEVER DEMOTES. Pippijn's decision, 2026-09-23: the phone stays in Move
+//! mode and this only chooses how often it locates — hourly at night when
+//! still, every 30 s by day, faster in a vehicle. He puts the phone in Move
+//! himself each morning; the one thing this must never do is take it out.
 //!
 //! ⚠ THE FORWARD HAPPENS FIRST, AND ITS FAILURE IS FATAL TO THE REQUEST. Losing
 //! a fix loses a piece of the timeline permanently; getting the config patch
@@ -33,7 +38,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::Row;
 
 use crate::lean;
 use crate::state::AppState;
@@ -41,14 +45,6 @@ use crate::state::AppState;
 /// Owntracks payloads are tiny — a batched fix is well under 1 KB. Cap at 32 KB
 /// so a misconfigured client cannot stream megabytes into the proxy.
 const MAX_BODY_BYTES: usize = 32 * 1024;
-
-/// How long a manual push pins the phone in Move mode.
-///
-/// ⚠ Ten minutes, and the reason is a specific day: 2026-06-07, home three
-/// hours → demoted to Significant → a 14-minute gap walking out. The hold is
-/// what stops stale "been here for hours" history overriding the one explicit
-/// instruction the system ever receives.
-const MANUAL_OVERRIDE_HOLD_SEC: i64 = 600;
 
 /// Most distinct `(token, device)` keys retained.
 ///
@@ -81,7 +77,6 @@ pub struct ProxyState {
 struct DeviceState {
     history: Vec<StoredFix>,
     last_profile: Option<String>,
-    manual_hold_until: i64,
 }
 
 #[derive(Clone)]
@@ -268,23 +263,13 @@ pub async fn proxy(
 
     // ⚠ A manual push stamps the hold BEFORE the decision reads it, so the very
     // fix that asks for high frequency is already protected from demotion.
-    if dev
-        .history
-        .last()
-        .and_then(|f| f.trigger.as_deref())
-        .is_some_and(|t| t == "u")
-    {
-        dev.manual_hold_until = now_ts + MANUAL_OVERRIDE_HOLD_SEC;
-    }
-    let manual_hold_active = dev.manual_hold_until > now_ts;
-
-    let places = load_gating_places(&st, &device).await.unwrap_or_else(|e| {
-        // ⚠ An empty list means "nowhere qualifies", so the gate refuses to
-        // demote. That is the safe direction: a little extra battery rather
-        // than a lost walk.
-        tracing::warn!(error = %format!("{e:#}"), %device, "owntracks: gating places unavailable — demotion is off this fix");
-        Vec::new()
-    });
+    // The hour where the phone is, in the user's home zone; a device name IS
+    // the user id here, as `persist_motion` reads it. Unresolvable reads as
+    // daytime, which is the frequent side.
+    let local_hour = match crate::sync_state::get(&st.pool, &device, "home_tz").await {
+        Ok(Some(tz)) => crate::timezone::local_hour_of(now_ts, &tz).ok(),
+        _ => None,
+    };
 
     let fixes: Vec<lean::OwntracksFix> = dev
         .history
@@ -299,12 +284,7 @@ pub async fn proxy(
         })
         .collect();
 
-    let decision = match lean::owntracks_config(
-        &fixes,
-        dev.last_profile.as_deref(),
-        &places,
-        manual_hold_active,
-    ) {
+    let decision = match lean::owntracks_config(&fixes, dev.last_profile.as_deref(), local_hour) {
         Ok(d) => d,
         Err(e) => {
             // The fix IS stored upstream, so this is not a lost fix — but we
@@ -318,12 +298,11 @@ pub async fn proxy(
     // One line per POST, so the proxy is debuggable from `kubectl logs` without
     // instrumenting the phone.
     tracing::info!(
-        "owntracks {}/{} hist={} longStayPlaces={} hold={} {}->{} monitoring={} interval={}",
+        "owntracks {}/{} hist={} hour={} {}->{} monitoring={} interval={}",
         &token[..token.len().min(6)],
         device,
         dev.history.len(),
-        places.len(),
-        if manual_hold_active { "y" } else { "n" },
+        local_hour.map_or("-".to_string(), |h| h.to_string()),
         dev.last_profile.as_deref().unwrap_or("init"),
         decision.profile,
         decision.monitoring,
@@ -414,39 +393,4 @@ async fn persist_motion(st: &AppState, device: &str, messages: &[Location]) {
             tracing::warn!(error = %e, "motion_log persist failed");
         }
     }
-}
-
-/// The user's mined places, in the shape the long-stay gate needs.
-///
-/// ⚠ `device` IS the user id, by Owntracks-config convention. A multi-user
-/// setup would need a token→user table; this is written down because the
-/// assumption is invisible at the call site.
-async fn load_gating_places(st: &AppState, device: &str) -> anyhow::Result<Vec<lean::GatingPlace>> {
-    let rows = sqlx::query(
-        "SELECT CAST(centroid_lat AS CHAR) AS lat_s, CAST(centroid_lon AS CHAR) AS lon_s, \
-         total_dwell_sec, visit_count, sleep_hours FROM focus_places WHERE user_id = ?",
-    )
-    .bind(device)
-    .fetch_all(&st.pool)
-    .await?;
-
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        let lat_s: String = r.try_get("lat_s")?;
-        let lon_s: String = r.try_get("lon_s")?;
-        let total: i64 = r.try_get("total_dwell_sec")?;
-        let visits: i64 = r.try_get("visit_count")?;
-        let sleep: Option<i64> = r.try_get("sleep_hours")?;
-        out.push(lean::GatingPlace {
-            lat: lat_s.parse()?,
-            lon: lon_s.parse()?,
-            avg_dwell_sec: if visits > 0 {
-                total as f64 / visits as f64
-            } else {
-                0.0
-            },
-            sleep_hours: sleep.unwrap_or(0) as f64,
-        });
-    }
-    Ok(out)
 }

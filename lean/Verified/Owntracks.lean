@@ -7,35 +7,33 @@ the response carries a configuration patch. So this decides, on every fix, how
 often that phone should take the next one — which is a direct trade of the
 user's battery against the fidelity of their timeline.
 
-⚠ BOTH DIRECTIONS OF ERROR COST THE USER SOMETHING REAL, and they are not
-symmetric. Staying in Move mode too long drains a battery. Dropping to
-Significant too early loses the walk that was about to start, and that walk
-cannot be recovered afterwards — a flat battery is an inconvenience, a missing
-journey is a hole in the record. Every threshold below leans accordingly.
+⚠ THIS NEVER DEMOTES. Pippijn's decision, 2026-09-23: a missing journey is a
+hole in the record and a flat battery is an inconvenience, and the two are not
+symmetric — so the phone is never told to drop to Significant. A demotion rule
+existed until that day, gated on sustained standstill at a place he lingers,
+and it still cost a walk: 2026-06-07 (three hours at home, a fourteen-minute
+gap walking out) and 2026-09-23 (a twelve-minute standstill on a walk, a
+fourteen-and-a-half-minute gap walking on). He sets Move mode himself each
+morning; this decides only how OFTEN to locate inside it, and escalates a
+phone that reports itself in Significant.
 
 ## The cascade, in priority order
 
 1. **High speed wins everywhere.** Boarding a train should not wait for history
    to accumulate; a single fix above the transit threshold escalates.
 2. **Significant → Move**, on any evidence of motion. Only fires when the phone
-   is actually in Significant — there is nothing to escalate from Move.
+   is actually in Significant — there is nothing to escalate from Move. With no
+   evidence the answer is still a Move profile, because every answer is one.
 3. **Refinement inside Move**, once there is enough trajectory to tell walking
    from a bus.
-4. **Move → Significant**, and ONLY after sustained evidence. This is the
-   expensive transition: the phone gives up its warm GPS.
+4. **Night.** Between `NIGHT_START_H` and `NIGHT_END_H` local time a phone
+   that is not moving locates once an hour — still Move mode, so a night walk
+   is seen at the next fix and escalates like any other. The interval is what
+   spares the unnecessary data, which is what it is for; it is not a battery
+   measure and it is not a pause.
 
-## Two guards on demotion that exist because of real days
-
-⚠ Demotion is gated on being at a place the user HISTORICALLY LINGERS. Without
-that, a thirty-minute supermarket visit flips the phone to Significant just as
-they are about to walk out, and the walk home is lost.
-
-⚠ A manual user-action push SUPPRESSES demotion for its hold window. The person
-has just said "I am about to do something" — reverting them on stale
-"been-here-for-hours" history contradicts the one explicit instruction the
-system ever gets from them.
-
-Pure and total. UNPROVEN; the thresholds are the TypeScript's.
+Pure and total. UNPROVEN; the thresholds are the TypeScript's, the night
+window Pippijn's (2026-09-23).
 -/
 namespace Verified.Owntracks
 
@@ -60,25 +58,19 @@ def HISTORY_MAX_AGE_SEC : Int := 600
 after escalation cannot support a confident profile. -/
 def MIN_HISTORY_SPAN_FOR_REFINE_SEC : Float := 120
 
-/-- Sustained low-speed evidence needed before demoting.
-
-⚠ MUST be strictly less than [`HISTORY_MAX_AGE_SEC`]. The pruner caps history at
-that age, so a threshold equal to it is unreachable in practice — the oldest
-surviving fix always sits a few seconds inside the window — and demotion would
-silently never happen. -/
-def MIN_STATIONARY_DEMOTE_SEC : Float := 540
-
 /-- In Significant mode Android schedules a fix roughly every 15 minutes and
 emits extras when its motion sensor fires. Two fixes closer together than this
 therefore MEAN motion, without any speed being reported. -/
 def SIGNIFICANT_MODE_MOTION_GAP_SEC : Float := 300
 
-/-- A coarse motion regime. `none` is "no opinion", not "stationary". -/
+/-- A motion regime inside Move mode: how often to locate. `none` is "no
+opinion". There is no stationary profile: the backend never demotes. -/
 inductive Profile where
   | transitFast
   | transit
   | walking
-  | stationary
+  /-- Not moving, at night: once an hour. -/
+  | night
   deriving Repr, BEq, DecidableEq
 
 /-- The wire name. These strings are the interface to the host. -/
@@ -86,7 +78,16 @@ def Profile.name : Profile → String
   | .transitFast => "transit-fast"
   | .transit => "transit"
   | .walking => "walking"
-  | .stationary => "stationary"
+  | .night => "night"
+
+/-- Local hours inside which a still phone locates hourly: from 23:00 up to
+    but not including 06:00. The window ends early on purpose — precision
+    should be back before he goes out, and the last hourly fix can land up to
+    an hour after the window closes. -/
+def NIGHT_START_H : Int := 23
+def NIGHT_END_H : Int := 6
+
+def isNightHour (h : Int) : Bool := h ≥ NIGHT_START_H || h < NIGHT_END_H
 
 /-- One retained fix. -/
 structure Fix where
@@ -109,6 +110,9 @@ structure Signals where
   historySpanSec : Float := 0
   trigger : Option String := none
   monitoringMode : Option Int := none
+  /-- The hour of the day where the phone is, 0–23 local; `none` when the host
+      could not resolve a zone, which reads as daytime. -/
+  localHour : Option Int := none
   deriving Inhabited, Repr
 
 /-- Drop fixes older than `nowSec - maxAgeSec`. Inclusive at the boundary. -/
@@ -177,12 +181,13 @@ def computeSignals (history : List Fix) : Signals :=
 
 ⚠ The phone's own `m` field is ground truth and beats our memory of what we last
 pushed — the phone may have been changed underneath us. Only when it says
-nothing do we fall back to the last profile we decided. -/
+nothing do we fall back to what we know: a device we have decided for was
+pushed a Move profile, a device we have never seen may be anywhere. -/
 def isPhoneInSignificant (monitoringMode : Option Int) (prev : Option Profile) : Bool :=
   match monitoringMode with
   | some 1 => true
   | some 2 => false
-  | _ => prev == some Profile.stationary || prev == none
+  | _ => prev == none
 
 /-- Predicate 1: a single fast reading escalates immediately.
 
@@ -236,50 +241,19 @@ def refineInMove (s : Signals) : Option Profile :=
   if s.historySpanSec < MIN_HISTORY_SPAN_FOR_REFINE_SEC then none
   else refineFromTrajectory s
 
-/-- Predicate 4: demote, but only on sustained evidence AND at a place the user
-lingers.
+/-- Predicate 4: at night, a still phone locates hourly; a moving one walks.
 
-⚠ Three independent guards, and each one exists because of a way this goes
-wrong. The manual hold honours an explicit instruction. The long-stay gate stops
-a supermarket visit from costing the walk home. The span and speed thresholds
-stop a tube tunnel or a ping message reading as a stop. -/
-def demoteAfterStop (s : Signals) (atLongStayLocation manualHoldActive : Bool) : Option Profile :=
-  if manualHoldActive then none
-  else if !atLongStayLocation then none
-  else if s.historySpanSec < MIN_STATIONARY_DEMOTE_SEC then none
-  else if s.effectiveSpeedKmh ≥ WALKING_MIN_KMH then none
-  else some .stationary
-
-/-! ## The long-stay gate
-
-Which places may a demotion happen at. See [`demoteAfterStop`] for why this
-exists at all: without it, a supermarket visit costs the walk home.
--/
-
-/-- Loose enough to absorb GPS jitter at a known centroid, tight enough that the
-cluster next door does not gate the user. -/
-def LONG_STAY_RADIUS_M : Float := 100
-/-- Captures workplaces and other day-spend locations. -/
-def LONG_STAY_AVG_DWELL_SEC : Float := 2 * 3600
-/-- Captures residences: anywhere they routinely sleep is somewhere they linger.
-
-⚠ EITHER signal qualifies a place, not both. A home may have a short average
-dwell because of many brief in-and-out visits, and a workplace is not slept at. -/
-def LONG_STAY_SLEEP_HOURS : Float := 4
-
-/-- A mined place, in the shape this gate needs. -/
-structure GatingPlace where
-  centroidLat : Float
-  centroidLon : Float
-  avgDwellSec : Float
-  sleepHours : Float
-  deriving Inhabited, Repr
-
-/-- Is this fix inside a place that historically holds the user for hours? -/
-def isLongStayLocation (lat lon : Float) (places : List GatingPlace) : Bool :=
-  places.any fun fp =>
-    haversineMeters lat lon fp.centroidLat fp.centroidLon ≤ LONG_STAY_RADIUS_M
-    && (fp.sleepHours ≥ LONG_STAY_SLEEP_HOURS || fp.avgDwellSec ≥ LONG_STAY_AVG_DWELL_SEC)
+⚠ Reads the max of every speed the signals carry, so a phone that omits `vel`
+still counts as moving on displacement, and a night walk seen at an hourly
+fix is answered with the walking cadence at once. -/
+def nightProfile (s : Signals) : Option Profile :=
+  match s.localHour with
+  | some h =>
+    if !isNightHour h then none
+    else
+      let speed := max (max s.reportedVelKmh s.computedVelKmh) s.effectiveSpeedKmh
+      if speed ≥ WALKING_MIN_KMH then some .walking else some .night
+  | none => none
 
 /-- The outcome of the cascade. `keep` means no transition this fix. -/
 inductive Transition where
@@ -287,9 +261,8 @@ inductive Transition where
   | keep
   deriving Repr, BEq
 
-/-- Run the cascade in priority order. -/
-def decideTransition (s : Signals) (prev : Option Profile)
-    (atLongStayLocation manualHoldActive : Bool) : Transition :=
+/-- Run the cascade in priority order. Nothing here ever demotes. -/
+def decideTransition (s : Signals) (prev : Option Profile) : Transition :=
   match escalateOnHighSpeed s with
   | some p => .to p
   | none =>
@@ -301,23 +274,26 @@ def decideTransition (s : Signals) (prev : Option Profile)
       match refineInMove s with
       | some p => .to p
       | none =>
-        match demoteAfterStop s atLongStayLocation manualHoldActive with
+        match nightProfile s with
         | some p => .to p
         | none => .keep
 
-/-- What we decide for a device we have never seen.
+/-- What we decide for a device we have never seen, or one with no evidence
+either way: the gentlest Move profile.
 
-⚠ Matches the phone's FACTORY DEFAULT, so the first fix's pushed config is a
-no-op on the phone rather than a change it did not need. -/
-def DEFAULT_PROFILE : Profile := .stationary
+⚠ Move, not the phone's factory default of Significant. Every answer is a
+push, so the first fix after a restart used to push Significant onto a phone
+that was walking (2026-09-23, after a deploy); now the first fix puts it in
+Move, which is where Pippijn wants it whenever it reports at all. -/
+def DEFAULT_PROFILE : Profile := .walking
 
-/-- The Owntracks settings for a profile: monitoring mode, and how often to
-locate while in Move. -/
+/-- The Owntracks settings for a profile: monitoring mode (always 2, Move), and
+how often to locate. -/
 def configFor : Profile → (Int × Option Int)
   | .transitFast => (2, some 10)
   | .transit => (2, some 15)
   | .walking => (2, some 30)
-  | .stationary => (1, none)
+  | .night => (2, some 3600)
 
 /-- The whole decision: signals in, a concrete profile out.
 
@@ -325,11 +301,17 @@ def configFor : Profile → (Int × Option Int)
 on every fix and the phone treats it as idempotent, which is what removes the
 need for an anti-flap timer, a per-device push memory, and any state that could
 be lost — a transient failure on either side recovers on the very next fix. -/
-def decideRemoteConfig (s : Signals) (prev : Option Profile)
-    (atLongStayLocation manualHoldActive : Bool) : Profile :=
-  match decideTransition s prev atLongStayLocation manualHoldActive with
+def decideRemoteConfig (s : Signals) (prev : Option Profile) : Profile :=
+  match decideTransition s prev with
   | .to p => p
-  | .keep => prev.getD DEFAULT_PROFILE
+  | .keep =>
+    match prev with
+    -- ⚠ Night EXPIRES WITH THE WINDOW, not with motion: the morning's cadence
+    -- comes back on the first fix after 06:00 whether or not anything moved,
+    -- because the hourly fix is the one that would otherwise miss him going out.
+    | some .night => if s.localHour.any isNightHour then .night else DEFAULT_PROFILE
+    | some p => p
+    | none => DEFAULT_PROFILE
 
 /-! ## Guards -/
 
@@ -349,8 +331,7 @@ private def fix (ts : Int) (lat lon : Float) : Fix := { ts, lat, lon }
 
 -- The phone's own report beats our memory.
 #guard isPhoneInSignificant (some 1) (some Profile.walking) == true
-#guard isPhoneInSignificant (some 2) (some Profile.stationary) == false
-#guard isPhoneInSignificant none (some Profile.stationary) == true
+#guard isPhoneInSignificant (some 2) (some Profile.walking) == false
 #guard isPhoneInSignificant none none == true
 #guard isPhoneInSignificant none (some Profile.walking) == false
 
@@ -378,45 +359,40 @@ private def fix (ts : Int) (lat lon : Float) : Fix := { ts, lat, lon }
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 50 } == some Profile.transit
 #guard refineInMove { historySpanSec := 200, effectiveSpeedKmh := 100 } == some Profile.transitFast
 
--- ⚠ Demotion needs BOTH sustained evidence AND a place they linger.
-#guard demoteAfterStop { historySpanSec := 600, effectiveSpeedKmh := 0 } true false
-       == some Profile.stationary
-#guard demoteAfterStop { historySpanSec := 600, effectiveSpeedKmh := 0 } false false == none
-#guard demoteAfterStop { historySpanSec := 100, effectiveSpeedKmh := 0 } true false == none
-#guard demoteAfterStop { historySpanSec := 600, effectiveSpeedKmh := 5 } true false == none
--- ⚠ A manual push suppresses it: the person just said what they want.
-#guard demoteAfterStop { historySpanSec := 600, effectiveSpeedKmh := 0 } true true == none
-
 -- The cascade's priority: speed beats everything.
-#guard decideTransition { reportedVelKmh := 100, monitoringMode := some 1 } none true false
+#guard decideTransition { reportedVelKmh := 100, monitoringMode := some 1 } none
        == Transition.to Profile.transitFast
 -- No evidence at all: keep whatever we had.
-#guard decideTransition { monitoringMode := some 1 } (some Profile.walking) false false
-       == Transition.keep
--- ⚠ A first-ever fix resolves to the factory default, so the pushed config is a
--- no-op on the phone.
-#guard decideRemoteConfig {} none false false == Profile.stationary
-#guard decideRemoteConfig { monitoringMode := some 2 } (some Profile.walking) false false
-       == Profile.walking
+#guard decideTransition { monitoringMode := some 1 } (some Profile.walking) == Transition.keep
+-- ⚠ A first-ever fix is put in Move, never left in Significant.
+#guard decideRemoteConfig {} none == Profile.walking
+#guard (configFor (decideRemoteConfig {} none)).1 == 2
+#guard decideRemoteConfig { monitoringMode := some 2 } (some Profile.walking) == Profile.walking
+-- ⚠ NEVER DEMOTES: ten minutes of standstill in Move, at any place, with any
+-- history, answers a Move profile.
+#guard decideRemoteConfig { historySpanSec := 600, effectiveSpeedKmh := 0, monitoringMode := some 2 }
+         (some Profile.walking) == Profile.walking
+-- A phone reporting itself in Significant with no motion evidence is still
+-- answered with Move: every answer is a push.
+#guard (configFor (decideRemoteConfig { monitoringMode := some 1, gapSinceLastFixSec := 900 } none)).1 == 2
 
--- The patches.
+-- The patches: monitoring is Move on every profile.
 #guard configFor Profile.transitFast == (2, some 10)
-#guard configFor Profile.stationary == (1, none)
+#guard (configFor Profile.walking).1 == 2
+#guard configFor Profile.night == (2, some 3600)
 
--- The long-stay gate: either signal qualifies, and distance rules first.
-private def home : GatingPlace :=
-  { centroidLat := 51.5, centroidLon := -0.1, avgDwellSec := 0, sleepHours := 8 }
-private def work : GatingPlace :=
-  { centroidLat := 51.5, centroidLon := -0.1, avgDwellSec := 3 * 3600, sleepHours := 0 }
-private def shop : GatingPlace :=
-  { centroidLat := 51.5, centroidLon := -0.1, avgDwellSec := 1800, sleepHours := 0 }
+-- Night: a still phone at 02:00 locates hourly; the same phone at 06:00 does
+-- not, and a night fix that shows motion is walking cadence at once.
+#guard isNightHour 23 && isNightHour 2 && !isNightHour 6 && !isNightHour 12
+#guard decideRemoteConfig { localHour := some 2, monitoringMode := some 2 } (some Profile.walking)
+       == Profile.night
+#guard decideRemoteConfig { localHour := some 6, monitoringMode := some 2 } (some Profile.night)
+       == Profile.walking   -- the window closed: the day's cadence, moving or not
+#guard decideRemoteConfig { localHour := some 2, monitoringMode := some 2, computedVelKmh := 4 }
+         (some Profile.night) == Profile.walking
+-- A train at night is still a train: speed wins everywhere.
+#guard decideRemoteConfig { localHour := some 2, monitoringMode := some 2, reportedVelKmh := 60 }
+         (some Profile.night) == Profile.transit
 
-#guard isLongStayLocation 51.5 (-0.1) [home] == true
-#guard isLongStayLocation 51.5 (-0.1) [work] == true
--- ⚠ A shop is NOT a long-stay place, which is the whole point of the gate.
-#guard isLongStayLocation 51.5 (-0.1) [shop] == false
-#guard isLongStayLocation 51.5 (-0.1) [] == false
--- Far away from a qualifying place does not qualify.
-#guard isLongStayLocation 52.0 (-0.1) [home] == false
 
 end Verified.Owntracks

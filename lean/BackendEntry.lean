@@ -446,37 +446,15 @@ def dispatch (j : Json) : Json :=
                  , trigger := str? e "trigger"
                  , monitoringMode := int? e "monitoringMode" }
           | _, _, _ => none
-    -- ⚠ The gate is evaluated HERE from the places, not passed in as a boolean.
-    -- A host that computed it would own the "which places may we demote at"
-    -- decision, which is exactly the one that costs a walk home when wrong.
-    let places : List Verified.Owntracks.GatingPlace :=
-      match j.getObjVal? "places" with
-      | .error _ => []
-      | .ok v =>
-        match v.getArr? with
-        | .error _ => []
-        | .ok arr => arr.toList.filterMap fun e =>
-          match str? e "latBits", str? e "lonBits", str? e "dwellBits", str? e "sleepBits" with
-          | some la, some lo, some dw, some sl =>
-            some { centroidLat := Float.ofBits la.toNat!.toUInt64
-                 , centroidLon := Float.ofBits lo.toNat!.toUInt64
-                 , avgDwellSec := Float.ofBits dw.toNat!.toUInt64
-                 , sleepHours := Float.ofBits sl.toNat!.toUInt64 }
-          | _, _, _, _ => none
-    let atLongStay :=
-      match fixes.getLast? with
-      | none => false
-      | some last => Verified.Owntracks.isLongStayLocation last.lat last.lon places
-    let manualHold := (j.getObjVal? "manualHoldActive" >>= (·.getBool?)).toOption == some true
     let prev : Option Verified.Owntracks.Profile :=
       match str? j "prevProfile" with
       | some "transit-fast" => some .transitFast
       | some "transit" => some .transit
       | some "walking" => some .walking
-      | some "stationary" => some .stationary
+      | some "night" => some .night
       | _ => none
-    let signals := Verified.Owntracks.computeSignals fixes
-    let profile := Verified.Owntracks.decideRemoteConfig signals prev atLongStay manualHold
+    let signals := { Verified.Owntracks.computeSignals fixes with localHour := int? j "localHour" }
+    let profile := Verified.Owntracks.decideRemoteConfig signals prev
     let (monitoring, interval) := Verified.Owntracks.configFor profile
     Json.mkObj
       [ ("profile", Json.str profile.name)

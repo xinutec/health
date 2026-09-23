@@ -1549,13 +1549,6 @@ pub struct OwntracksFix {
 /// ⚠ Passed in RAW so Lean decides whether the phone is somewhere it may be
 /// demoted. A host that computed the boolean itself would own the decision that
 /// costs a walk home when it is wrong.
-pub struct GatingPlace {
-    pub lat: f64,
-    pub lon: f64,
-    pub avg_dwell_sec: f64,
-    pub sleep_hours: f64,
-}
-
 /// What to tell the phone.
 pub struct OwntracksConfig {
     pub profile: String,
@@ -1569,11 +1562,13 @@ pub struct OwntracksConfig {
 /// fix. Coordinates cross as IEEE-754 bit patterns because the straightness
 /// ratio divides two haversine distances, and a re-rounded coordinate can move
 /// it across the walking threshold.
+/// `local_hour` is the hour of the day where the phone is, 0–23 in the user's
+/// home zone; `None` when no zone could be resolved, which the rules read as
+/// daytime.
 pub fn owntracks_config(
     history: &[OwntracksFix],
     prev_profile: Option<&str>,
-    places: &[GatingPlace],
-    manual_hold_active: bool,
+    local_hour: Option<u32>,
 ) -> Result<OwntracksConfig> {
     #[derive(Deserialize)]
     struct Wire {
@@ -1595,22 +1590,10 @@ pub fn owntracks_config(
             })
         })
         .collect();
-    let wire_places: Vec<serde_json::Value> = places
-        .iter()
-        .map(|p| {
-            serde_json::json!({
-                "latBits": p.lat.to_bits().to_string(),
-                "lonBits": p.lon.to_bits().to_string(),
-                "dwellBits": p.avg_dwell_sec.to_bits().to_string(),
-                "sleepBits": p.sleep_hours.to_bits().to_string(),
-            })
-        })
-        .collect();
     let mut req = serde_json::json!({
         "op": "owntracksConfig",
         "history": wire_history,
-        "places": wire_places,
-        "manualHoldActive": manual_hold_active,
+        "localHour": local_hour,
     });
     if let Some(p) = prev_profile {
         req["prevProfile"] = serde_json::json!(p);

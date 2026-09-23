@@ -1,11 +1,12 @@
-//! How hard a phone is told to look for itself (#982).
+//! How often a phone is told to look for itself (#982).
 //!
-//! ⚠ Both directions of error cost the user something real, and they are NOT
-//! symmetric. Staying in Move drains a battery. Demoting early loses the walk
-//! that was about to start, and that walk cannot be recovered afterwards. Every
-//! threshold leans that way, and these tests pin the lean.
+//! ⚠ It is NEVER told to stop looking. Pippijn's decision, 2026-09-23: a
+//! missing journey is a hole in the record and a flat battery is not, so the
+//! backend never pushes Significant mode. What it chooses is the locate
+//! interval inside Move — and the night, when a still phone is asked once an
+//! hour. These tests pin both halves.
 
-use backend::lean::{self, GatingPlace, OwntracksFix};
+use backend::lean::{self, OwntracksFix};
 
 fn init() {
     lean::init().expect("lean host");
@@ -22,24 +23,15 @@ fn fix(ts: i64, lat: f64, lon: f64) -> OwntracksFix {
     }
 }
 
-/// A place the user lingers at — the only kind demotion is allowed at.
-fn home() -> GatingPlace {
-    GatingPlace {
-        lat: 51.5,
-        lon: -0.1,
-        avg_dwell_sec: 0.0,
-        sleep_hours: 8.0,
-    }
-}
-
-/// A shop: visited often, never for long.
-fn shop() -> GatingPlace {
-    GatingPlace {
-        lat: 51.5,
-        lon: -0.1,
-        avg_dwell_sec: 1800.0,
-        sleep_hours: 0.0,
-    }
+/// Ten minutes of standing still, in Move mode.
+fn standstill() -> Vec<OwntracksFix> {
+    (0..11)
+        .map(|i| {
+            let mut f = fix(1000 + i * 60, 51.5, -0.1);
+            f.monitoring_mode = Some(2);
+            f
+        })
+        .collect()
 }
 
 /// ⚠ A single fast fix escalates with NO history. Boarding a train must not
@@ -50,92 +42,77 @@ fn high_speed_escalates_on_one_fix() {
     let mut f = fix(1000, 51.5, -0.1);
     f.vel = Some(100.0);
     f.monitoring_mode = Some(1);
-    let d = lean::owntracks_config(&[f], None, &[], false).expect("decide");
+    let d = lean::owntracks_config(&[f], None, Some(12)).expect("decide");
     assert_eq!(d.profile, "transit-fast");
     assert_eq!(d.monitoring, 2);
     assert_eq!(d.move_mode_locator_interval, Some(10));
 }
 
-/// ⚠ THE SUPERMARKET CASE. Sitting still for ten minutes at a place the user
-/// does NOT linger at must not demote — they are about to walk out, and the
-/// walk home is what would be lost.
+/// ⚠ THE STANDSTILL NEVER DEMOTES. Ten minutes still by day, with any
+/// history: the phone keeps its Move profile. The rule that used to answer
+/// "stationary" here cost a walk on 2026-06-07 and again on 2026-09-23.
 #[test]
-fn a_shop_does_not_earn_a_demotion() {
+fn a_standstill_by_day_keeps_move_mode() {
     init();
-    // Ten minutes of standing still, in Move mode.
-    let history: Vec<OwntracksFix> = (0..11)
-        .map(|i| {
-            let mut f = fix(1000 + i * 60, 51.5, -0.1);
-            f.monitoring_mode = Some(2);
-            f
-        })
-        .collect();
-
-    let at_shop =
-        lean::owntracks_config(&history, Some("walking"), &[shop()], false).expect("decide");
-    assert_eq!(
-        at_shop.profile, "walking",
-        "a shop must not earn a demotion — the walk out would be lost"
-    );
-
-    let at_home =
-        lean::owntracks_config(&history, Some("walking"), &[home()], false).expect("decide");
-    assert_eq!(
-        at_home.profile, "stationary",
-        "at a place they linger, the same evidence SHOULD demote"
-    );
-}
-
-/// ⚠ A manual push suppresses demotion. The person has just said what they
-/// want; stale "been here for hours" history must not override the one explicit
-/// instruction the system ever gets.
-#[test]
-fn a_manual_push_suppresses_demotion() {
-    init();
-    let history: Vec<OwntracksFix> = (0..11)
-        .map(|i| {
-            let mut f = fix(1000 + i * 60, 51.5, -0.1);
-            f.monitoring_mode = Some(2);
-            f
-        })
-        .collect();
-    let held = lean::owntracks_config(&history, Some("walking"), &[home()], true).expect("decide");
-    assert_eq!(
-        held.profile, "walking",
-        "the hold must beat the demotion evidence"
-    );
-}
-
-/// ⚠ With NO places loaded, nothing qualifies and demotion is off. That is the
-/// safe direction when the database is unavailable: a little battery rather
-/// than a lost journey.
-#[test]
-fn no_places_means_no_demotion() {
-    init();
-    let history: Vec<OwntracksFix> = (0..11)
-        .map(|i| {
-            let mut f = fix(1000 + i * 60, 51.5, -0.1);
-            f.monitoring_mode = Some(2);
-            f
-        })
-        .collect();
-    let d = lean::owntracks_config(&history, Some("walking"), &[], false).expect("decide");
+    let d = lean::owntracks_config(&standstill(), Some("walking"), Some(12)).expect("decide");
     assert_eq!(d.profile, "walking");
+    assert_eq!(d.monitoring, 2, "monitoring must stay Move");
 }
 
-/// The first fix for an unknown device resolves to the phone's factory default,
-/// so the pushed config is a no-op rather than a change it did not need.
+/// ⚠ THE FIRST FIX PUTS THE PHONE IN MOVE. Every answer is a push, and the
+/// old factory-default answer pushed Significant onto a walking phone after
+/// every deploy.
 #[test]
-fn a_first_fix_pushes_the_factory_default() {
+fn a_first_fix_pushes_move_mode() {
     init();
-    let d = lean::owntracks_config(&[], None, &[], false).expect("decide");
-    assert_eq!(d.profile, "stationary");
-    assert_eq!(d.monitoring, 1);
-    assert_eq!(d.move_mode_locator_interval, None);
+    let d = lean::owntracks_config(&[], None, None).expect("decide");
+    assert_eq!(d.profile, "walking");
+    assert_eq!(d.monitoring, 2);
+    assert_eq!(d.move_mode_locator_interval, Some(30));
+}
+
+/// At night a still phone locates once an hour — still in Move mode.
+#[test]
+fn a_still_phone_at_night_locates_hourly() {
+    init();
+    let d = lean::owntracks_config(&standstill(), Some("walking"), Some(2)).expect("decide");
+    assert_eq!(d.profile, "night");
+    assert_eq!(d.monitoring, 2, "night is an interval, not a pause");
+    assert_eq!(d.move_mode_locator_interval, Some(3600));
+}
+
+/// The window ends at 06:00 local: the same standstill at six is answered
+/// with the day's cadence on the next fix that shows anything, and never
+/// with another hour of silence.
+#[test]
+fn six_in_the_morning_is_not_night() {
+    init();
+    let mut history = standstill();
+    history.push({
+        let mut f = fix(1000 + 11 * 60, 51.5002, -0.1);
+        f.monitoring_mode = Some(2);
+        f
+    });
+    let d = lean::owntracks_config(&history, Some("night"), Some(6)).expect("decide");
+    assert_ne!(d.move_mode_locator_interval, Some(3600));
+}
+
+/// A night walk seen at the hourly fix is answered with the walking cadence
+/// at once: displacement counts as motion when `vel` is missing.
+#[test]
+fn motion_at_night_returns_to_walking_cadence() {
+    init();
+    let mut a = fix(1000, 51.5, -0.1);
+    a.monitoring_mode = Some(2);
+    let mut b = fix(1000 + 3600, 51.53, -0.1);
+    b.monitoring_mode = Some(2);
+    let d = lean::owntracks_config(&[a, b], Some("night"), Some(3)).expect("decide");
+    assert_eq!(d.profile, "walking");
+    assert_eq!(d.move_mode_locator_interval, Some(30));
 }
 
 /// ⚠ Walking pace WITHOUT straightness is a stationary phone's GPS noise, not a
-/// walk. Escalating on it would burn battery at a desk.
+/// walk: the profile is refined to nothing, so whatever was decided last holds.
 #[test]
 fn wandering_at_walking_pace_is_not_walking() {
     init();
@@ -151,6 +128,6 @@ fn wandering_at_walking_pace_is_not_walking() {
         f.monitoring_mode = Some(2);
         history.push(f);
     }
-    let d = lean::owntracks_config(&history, Some("stationary"), &[], false).expect("decide");
-    assert_eq!(d.profile, "stationary", "jitter must not read as a walk");
+    let d = lean::owntracks_config(&history, Some("transit"), Some(12)).expect("decide");
+    assert_eq!(d.profile, "transit", "jitter must not read as a walk");
 }
