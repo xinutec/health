@@ -12,9 +12,11 @@ follow-on that consumes these windows.
 
 The TS is heavily imperative (tag array + in-place bracketed-displacement pass +
 while-loop window extraction), so this uses `Id.run do` (mutable arrays, `for`)
-and `partial def` scans to mirror it directly. `haversine` makes the velocity
-tests ULP-close, but they compare against thresholds far from the boundary in the
-tested cases, so the windows are exact. UNPROVEN; pinned by the `#guard`s.
+for the passes. The scans are total: each one walks towards an edge of the
+tensor and Lean checks that the distance to that edge shrinks. `haversine` makes
+the velocity tests ULP-close, but they compare against thresholds far from the
+boundary in the tested cases, so the windows are exact. Correctness UNPROVEN;
+pinned by the `#guard`s.
 -/
 
 namespace Verified.Hsmm.TrainWindows
@@ -33,28 +35,55 @@ inductive Tag | train | unknown | notTrain
 
 private def fge (a b : Float) : Bool := decide (a ≥ b)
 
-/-- Scan from `t` in direction `dir` for the first GPS-observed minute; `none`
-    if the scan leaves `[0, T)` without one. -/
-partial def scanFix (obs : Array ObsRow) (T : Nat) (t : Int) (dir : Int) : Option (Float × Float × Int) :=
-  if decide (t < 0) || decide (t ≥ (T : Int)) then none
-  else match obs[t.toNat]!.gps with
-    | some g => some (g.lat, g.lon, obs[t.toNat]!.ts)
-    | none => scanFix obs T (t + dir) dir
+/-- Which way a boundary scan walks from a window's edge. -/
+inductive Side | back | fwd
 
-/-- Last/first observed fix at/beyond `idx` on side `dir`, falling back to the
-    prev/next-fix bookend recorded on the (clamped) edge minute. -/
-def boundaryFix (obs : Array ObsRow) (idx : Int) (dir : Int) : Option (Float × Float × Int) :=
-  match scanFix obs obs.size idx dir with
+/-- The fix recorded at minute `t`, if the minute was GPS-observed. -/
+private def fixAt (obs : Array ObsRow) (t : Nat) (h : t < obs.size) : Option (Float × Float × Int) :=
+  obs[t].gps.map fun g => (g.lat, g.lon, obs[t].ts)
+
+/-- Scan forward from `t` for the first GPS-observed minute; `none` if the scan
+    runs off the end of the tensor first. -/
+def scanFwd (obs : Array ObsRow) (t : Nat) : Option (Float × Float × Int) :=
+  if h : t < obs.size then
+    match fixAt obs t h with
+    | some r => some r
+    | none => scanFwd obs (t + 1)
+  else none
+termination_by obs.size - t
+
+/-- Scan backward from `t` for the last GPS-observed minute; `none` if the scan
+    runs off the start of the tensor first. A `t` at or past the end finds nothing. -/
+def scanBack (obs : Array ObsRow) (t : Nat) : Option (Float × Float × Int) :=
+  if h : t < obs.size then
+    match fixAt obs t h with
+    | some r => some r
+    | none => if h0 : t = 0 then none else scanBack obs (t - 1)
+  else none
+termination_by t
+
+/-- Last/first observed fix at/beyond `idx` on `side`, falling back to the
+    prev/next-fix bookend recorded on the (clamped) edge minute. `idx` is an
+    `Int` because a window at the tensor's start asks for minute `-1`, which
+    scans nothing and goes straight to the bookend. -/
+def boundaryFix (obs : Array ObsRow) (idx : Int) (side : Side) : Option (Float × Float × Int) :=
+  let scanned := if decide (idx < 0) then none else
+    match side with
+    | .fwd => scanFwd obs idx.toNat
+    | .back => scanBack obs idx.toNat
+  match scanned with
   | some r => some r
   | none =>
     let clamped := (max 0 (min ((obs.size : Int) - 1) idx)).toNat
-    let book := if dir == -1 then obs[clamped]!.prevGpsFix else obs[clamped]!.nextGpsFix
+    let book := match side with
+      | .back => obs[clamped]!.prevGpsFix
+      | .fwd => obs[clamped]!.nextGpsFix
     book.map (fun f => (f.lat, f.lon, f.ts))
 
 /-- Whether a sub-floor run carries the one-stop-hop reacquisition signature:
     the bracketing fixes show ≥`STATION_HOP_MIN_DISPLACEMENT_M` at train speed. -/
 def bracketedStationHop (obs : Array ObsRow) (start endN : Nat) : Bool :=
-  match boundaryFix obs ((start : Int) - 1) (-1), boundaryFix obs ((endN : Int) + 1) 1 with
+  match boundaryFix obs ((start : Int) - 1) .back, boundaryFix obs ((endN : Int) + 1) .fwd with
   | some (blat, blon, bts), some (alat, alon, ats) =>
     let distM := haversineMeters blat blon alat alon
     if distM < STATION_HOP_MIN_DISPLACEMENT_M then false
@@ -63,17 +92,32 @@ def bracketedStationHop (obs : Array ObsRow) (start endN : Nat) : Bool :=
       fge (distM / 1000 / max hrs (1.0 / 3600)) V_TRAIN_AVG_KMH
   | _, _ => false
 
-/-- First index `≥ i` (`< T`) tagged `notTrain`, else `T`. -/
-partial def scanEnd (tag : Array Tag) (T i : Nat) : Nat :=
-  if i ≥ T then T else if tag[i]! == Tag.notTrain then i else scanEnd tag T (i + 1)
+/-- Length of the run of not-`notTrain` minutes starting at `i` (`0` at the end
+    of the tensor). `i + runLen tag i` is the first `notTrain` index at or after
+    `i`, or `tag.size`; it is written as a length so a caller stepping past the
+    run can show its index grew. -/
+def runLen (tag : Array Tag) (i : Nat) : Nat :=
+  if h : i < tag.size then
+    if tag[i] == Tag.notTrain then 0 else runLen tag (i + 1) + 1
+  else 0
+termination_by tag.size - i
 
-/-- Advance past leading `unknown` minutes. -/
-partial def trimLead (tag : Array Tag) (start endI : Nat) : Nat :=
-  if decide (start ≤ endI) && tag[start]! == Tag.unknown then trimLead tag (start + 1) endI else start
+/-- Advance past leading `unknown` minutes, not beyond `endI`. -/
+def trimLead (tag : Array Tag) (start endI : Nat) : Nat :=
+  if h : start ≤ endI ∧ start < tag.size then
+    if tag[start] == Tag.unknown then trimLead tag (start + 1) endI else start
+  else start
+termination_by endI + 1 - start
 
-/-- Retreat past trailing `unknown` minutes (Int end may drop below start). -/
-partial def trimTrail (tag : Array Tag) (start : Nat) (e : Int) : Int :=
-  if decide (e ≥ (start : Int)) && tag[e.toNat]! == Tag.unknown then trimTrail tag start (e - 1) else e
+/-- Retreat from `e` past trailing `unknown` minutes, not below `start`; `none`
+    when every minute back to `start` is `unknown`, so the window is empty. -/
+def trimTrail (tag : Array Tag) (start e : Nat) : Option Nat :=
+  if h : start ≤ e ∧ e < tag.size then
+    if tag[e] == Tag.unknown then
+      if h0 : e = 0 then none else trimTrail tag start (e - 1)
+    else some e
+  else if e < start then none else some e
+termination_by e
 
 /-- Verify a trimmed `[start, endN]` window meets the train-velocity thresholds
     (observed peak/avg OR implied inter-fix displacement), returning the emitted
@@ -120,20 +164,24 @@ def windowIfValid (obs : Array ObsRow) (start endN : Nat) : Option (Nat × Nat) 
     return some (start, start + windowLen - 1)
   return none
 
-/-- Outer window-extraction loop (the TS `while (i < T)`). -/
-partial def extractWindows (obs : Array ObsRow) (tag : Array Tag) (T i : Nat) : Array (Nat × Nat) :=
-  if i ≥ T then #[]
-  else if tag[i]! == Tag.notTrain then extractWindows obs tag T (i + 1)
-  else
-    let j := scanEnd tag T i
-    let start := trimLead tag i (j - 1)
-    let endI := trimTrail tag start ((j : Int) - 1)
-    let rest := extractWindows obs tag T (j + 1)
-    if (start : Int) ≤ endI then
-      match windowIfValid obs start endI.toNat with
-      | some w => #[w] ++ rest
+/-- Outer window-extraction loop (the TS `while (i < T)`): each candidate run
+    `[i, j)` of not-`notTrain` minutes is trimmed of `unknown` at both ends and
+    validated; the loop resumes after the run. -/
+def extractWindows (obs : Array ObsRow) (tag : Array Tag) (i : Nat) : Array (Nat × Nat) :=
+  if h : i < tag.size then
+    if tag[i] == Tag.notTrain then extractWindows obs tag (i + 1)
+    else
+      let j := i + runLen tag i
+      let start := trimLead tag i (j - 1)
+      let rest := extractWindows obs tag (j + 1)
+      match trimTrail tag start (j - 1) with
+      | some endI =>
+        match windowIfValid obs start endI with
+        | some w => #[w] ++ rest
+        | none => rest
       | none => rest
-    else rest
+  else #[]
+termination_by tag.size - i
 
 /-- Disjoint train windows over the observation tensor. -/
 def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
@@ -162,7 +210,7 @@ def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
           if fge (distKm / max elapsedH (1.0 / 3600)) V_TRAIN_AVG_KMH then
             for k in [lastObs.toNat:t + 1] do tag := tag.set! k Tag.train
           lastObs := (t : Int)
-  return extractWindows obs tag T 0
+  return extractWindows obs tag 0
 
 -- Parity with the real `findTrainWindows` (windows from Node/V8).
 private def mk (i : Nat) (lat lon : Float) (spd : Option Float) : ObsRow :=

@@ -96,15 +96,23 @@ def haversineKm (a b : Pt) : Float :=
 /-- `find` with path halving, over a mutable parent array.
 
 Returns the root AND the updated array: the halving is a write, and dropping it
-would turn an O(n²) pass into something quadratic per lookup on a long chain. -/
-private partial def findRoot (parent : Array Nat) (i : Nat) : Nat × Array Nat :=
-  let rec go (par : Array Nat) (r : Nat) : Nat × Array Nat :=
-    let p := par[r]!
-    if p == r then (r, par)
-    else
-      let gp := par[p]!
-      go (par.set! r gp) gp
-  go parent i
+would turn an O(n²) pass into something quadratic per lookup on a long chain.
+
+Total by fuel: a forest's longest chain has fewer links than the array has
+entries and halving only shortens chains, so the budget of `parent.size` steps
+is never spent on a forest. It is there so the function needs no invariant
+about the array to be accepted. -/
+private def findRoot (parent : Array Nat) (i : Nat) : Nat × Array Nat :=
+  go parent i parent.size
+where
+  go (par : Array Nat) (r : Nat) : Nat → Nat × Array Nat
+    | 0 => (r, par)
+    | fuel + 1 =>
+      let p := par[r]!
+      if p == r then (r, par)
+      else
+        let gp := par[p]!
+        go (par.set! r gp) gp fuel
 
 /-- Group points into metropolitan regions: a connected component under
 "within `maxGapKm` of each other". O(n²), which is nothing for the few hundred

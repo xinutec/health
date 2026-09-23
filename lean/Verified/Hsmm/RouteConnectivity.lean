@@ -7,7 +7,9 @@ Route-rail's `connected` fact: does a path of edges ALL carrying line `L` join
 the fixes near the boarding platform to those near the alighting platform? A BFS
 in the subgraph of `L`-only edges, over the node adjacency the route graph
 already indexes (two edges share a node iff their endpoints collapse to the same
-`nodeKey`). Capped at `MAX_BFS_EDGES` to bound cost.
+`nodeKey`). Capped at `MAX_BFS_EDGES` dequeues to bound cost — and that cap is
+also the termination argument, so the search is total without a lemma about
+the graph.
 
 Pure graph traversal — no floats, so EXACT. The adjacency (node ids, incident
 edges) is resolved by the graph builder and passed in; the BFS is opaque over
@@ -21,7 +23,8 @@ namespace Verified.Hsmm.RouteConnectivity
 
 open Std (HashMap HashSet)
 
-/-- Cap on BFS exploration (matches the TS `MAX_BFS_EDGES`). -/
+/-- Cap on BFS exploration: the number of edges the search may dequeue before
+    it gives up and answers "not connected". -/
 def MAX_BFS_EDGES : Nat := 1000
 
 /-- The `L`-only reachability view of the route graph: per-edge endpoint node
@@ -33,23 +36,23 @@ structure Graph where
 
 /-- BFS worklist step: process the queue front, enqueuing unvisited `L`-edges
     reachable through its endpoints; short-circuit on reaching a goal edge.
-    Bounded by the visited cap. -/
-partial def bfs (g : Graph) (line : String) (goal : HashSet String) :
-    List String → HashSet String → Bool
-  | [], _ => false
-  | edgeId :: rest, visited =>
-    if visited.size ≥ MAX_BFS_EDGES then false
-    else
-      let neighbors := (g.endpoints.getD edgeId []).flatMap (fun n => g.nodeEdges.getD n [])
-      let step := neighbors.foldl (fun (acc : Bool × List String × HashSet String) adjId =>
-        let (found, q, vis) := acc
-        if found then acc
-        else if vis.contains adjId then acc
-        else if !(g.lines.getD adjId []).contains line then acc
-        else if goal.contains adjId then (true, q, vis)
-        else (false, q ++ [adjId], vis.insert adjId)) (false, [], visited)
-      let (found, additions, visited') := step
-      if found then true else bfs g line goal (rest ++ additions) visited'
+    `fuel` is the dequeue budget; when it is spent the answer is `false`, which
+    is what makes the search total on any graph. -/
+def bfs (g : Graph) (line : String) (goal : HashSet String) :
+    Nat → List String → HashSet String → Bool
+  | _, [], _ => false
+  | 0, _ :: _, _ => false
+  | fuel + 1, edgeId :: rest, visited =>
+    let neighbors := (g.endpoints.getD edgeId []).flatMap (fun n => g.nodeEdges.getD n [])
+    let step := neighbors.foldl (fun (acc : Bool × List String × HashSet String) adjId =>
+      let (found, q, vis) := acc
+      if found then acc
+      else if vis.contains adjId then acc
+      else if !(g.lines.getD adjId []).contains line then acc
+      else if goal.contains adjId then (true, q, vis)
+      else (false, q ++ [adjId], vis.insert adjId)) (false, [], visited)
+    let (found, additions, visited') := step
+    if found then true else bfs g line goal fuel (rest ++ additions) visited'
 
 /-- True iff some path of `line`-only edges joins `startEdges` to `goalEdges`. -/
 def pathExistsOnLine (g : Graph) (line : String) (startEdges goalEdges : List String) : Bool :=
@@ -57,7 +60,7 @@ def pathExistsOnLine (g : Graph) (line : String) (startEdges goalEdges : List St
   else
     let goal : HashSet String := goalEdges.foldl (·.insert ·) {}
     if startEdges.any (goal.contains ·) then true
-    else bfs g line goal startEdges (startEdges.foldl (·.insert ·) {})
+    else bfs g line goal MAX_BFS_EDGES startEdges (startEdges.foldl (·.insert ·) {})
 
 private def mkMap {α : Type} (pairs : List (String × α)) : HashMap String α :=
   pairs.foldl (fun m (k, v) => m.insert k v) {}

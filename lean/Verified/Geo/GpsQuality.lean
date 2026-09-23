@@ -61,30 +61,42 @@ def isGarbage (anchor cand : GpsPoint) : Bool := speedUnreachable anchor cand ||
 def trustworthy (p : GpsPoint) : Bool :=
   match p.accuracy with | some acc => decide (acc ≤ ACCURACY_CEILING_M) | none => true
 
+/-- An index into `points` at or after `j`: what a bridge scan from `j` finds.
+    Carrying both bounds is what lets the walk resume after the bridge and
+    still be seen to move forward. -/
+abbrev BridgeAt (points : Array GpsPoint) (j : Nat) := { b : Nat // j ≤ b ∧ b < points.size }
+
 /-- First fix `≥ j` that can bridge the garbage run: reachable, trustworthy, and
     the start of a coherent run (its own successor reachable). Stops at the
     `BRIDGE_WINDOW_S` horizon. -/
-partial def findBridge (points : Array GpsPoint) (anchor : GpsPoint) (j : Nat) : Option Nat :=
-  if j ≥ points.size then none
-  else if decide (points[j]!.ts - anchor.ts > BRIDGE_WINDOW_S) then none
-  else if isGarbage anchor points[j]! || !trustworthy points[j]! then findBridge points anchor (j + 1)
-  else
-    let coherentSuccessor := j + 1 ≥ points.size || decide (impliedSpeedKmh points[j]! points[j+1]! ≤ SPEED_CEILING_KMH)
-    if coherentSuccessor then some j else findBridge points anchor (j + 1)
+def findBridge (points : Array GpsPoint) (anchor : GpsPoint) (j : Nat) : Option (BridgeAt points j) :=
+  if h : j < points.size then
+    if decide (points[j].ts - anchor.ts > BRIDGE_WINDOW_S) then none
+    else if isGarbage anchor points[j] || !trustworthy points[j] then
+      (findBridge points anchor (j + 1)).map fun ⟨b, hb⟩ => ⟨b, by omega⟩
+    else
+      let coherentSuccessor :=
+        if h1 : j + 1 < points.size then decide (impliedSpeedKmh points[j] points[j + 1] ≤ SPEED_CEILING_KMH)
+        else true
+      if coherentSuccessor then some ⟨j, by omega⟩
+      else (findBridge points anchor (j + 1)).map fun ⟨b, hb⟩ => ⟨b, by omega⟩
+  else none
+termination_by points.size - j
 
-/-- The anchor walk over the remaining track. -/
-partial def walk (points : Array GpsPoint) (kept : Array GpsPoint) (i : Nat) : Array GpsPoint :=
-  if i ≥ points.size then kept
-  else
-    let anchor := kept[kept.size - 1]!
-    let cand := points[i]!
-    if !isGarbage anchor cand then walk points (kept.push cand) (i + 1)
+/-- The anchor walk over the remaining track. `anchor` is the last fix kept. -/
+def walk (points : Array GpsPoint) (anchor : GpsPoint) (kept : Array GpsPoint) (i : Nat) : Array GpsPoint :=
+  if h : i < points.size then
+    let cand := points[i]
+    if !isGarbage anchor cand then walk points cand (kept.push cand) (i + 1)
     else match findBridge points anchor (i + 1) with
-      | some b =>
-        let travelled := decide (distanceM anchor points[b]! > MIN_TRANSIT_DISPLACEMENT_M)
-        if speedUnreachable anchor cand || travelled then walk points (kept.push points[b]!) (b + 1)
-        else walk points (kept.push cand) (i + 1)
-      | none => walk points (kept.push cand) (i + 1)
+      | some ⟨b, hb⟩ =>
+        let bridge := points[b]
+        let travelled := decide (distanceM anchor bridge > MIN_TRANSIT_DISPLACEMENT_M)
+        if speedUnreachable anchor cand || travelled then walk points bridge (kept.push bridge) (b + 1)
+        else walk points cand (kept.push cand) (i + 1)
+      | none => walk points cand (kept.push cand) (i + 1)
+  else kept
+termination_by points.size - i
 
 /-- Drop incoherent GPS runs; surviving fixes in input order. Fixes the phone
 itself disclaims go first, before anything reasons from them — including before
@@ -93,7 +105,7 @@ the walk can make one an anchor, a bridge, or the thing a later fix is judged
 def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
   let points := input.filter fun p =>
     match p.accuracy with | some acc => decide (acc ≤ ACCURACY_UNINFORMATIVE_M) | none => true
-  if points.size ≤ 2 then points else walk points #[points[0]!] 1
+  if h : points.size ≤ 2 then points else walk points points[0] #[points[0]] 1
 
 -- Parity with the real `qualityFilterGps` (kept-set ts from Node/V8): teleport
 -- (t=20) and a poor-accuracy tube run (t=100) dropped; poor-accuracy jitter

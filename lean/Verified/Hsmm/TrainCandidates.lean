@@ -57,22 +57,23 @@ structure Candidate where
 private def appendDistinct (xs : List String) (x : String) : List String :=
   if xs.contains x then xs else xs ++ [x]
 
-/-- GPS context at minute `t`: the fix there, else the nearest observed fix in
-    time, else the prev/next-fix bookend. -/
-partial def scanOutward (obs : Array ObsRow) (t d : Nat) : Option (Float × Float) :=
-  if d ≥ obs.size then none
-  else
-    let left : Int := (t : Int) - d
-    let leftHit := if decide (left ≥ 0) then
-      (match obs[left.toNat]!.gps with | some g => some (g.lat, g.lon) | none => none) else none
+/-- The nearest observed fix to minute `t` at distance `≥ d`, the earlier side
+    first; `none` once `d` reaches the tensor's size, by which point both sides
+    have run out. -/
+def scanOutward (obs : Array ObsRow) (t d : Nat) : Option (Float × Float) :=
+  if h : d < obs.size then
+    let leftHit := if hl : d ≤ t ∧ t - d < obs.size then
+      obs[t - d].gps.map (fun g => (g.lat, g.lon)) else none
     match leftHit with
     | some r => some r
     | none =>
-      if t + d < obs.size then
-        match obs[t + d]!.gps with
+      if hr : t + d < obs.size then
+        match obs[t + d].gps with
         | some g => some (g.lat, g.lon)
         | none => scanOutward obs t (d + 1)
       else scanOutward obs t (d + 1)
+  else none
+termination_by obs.size - d
 
 def gpsContextAt (obs : Array ObsRow) (t : Int) : Option (Float × Float) :=
   if decide (t < 0) || decide (t ≥ (obs.size : Int)) then none
@@ -115,34 +116,36 @@ def stationFootprintNodes (g : StationGraph) (station : StationNode) : List Stri
                 then appendDistinct acc e.endNode else acc
     | none => acc) [station.id]
 
-/-- BFS on `line`'s node subgraph: any path from a `start` node to a `goal` node. -/
-partial def bfsNodes (g : StationGraph) (line : String) (goal : Std.HashSet String) :
-    List String → Std.HashSet String → Bool
-  | [], _ => false
-  | nodeId :: rest, visited =>
-    if visited.size ≥ MAX_EXPAND then false
-    else match g.nodeById.get? nodeId with
-      | none => bfsNodes g line goal rest visited
-      | some node =>
-        let step := node.edgeIds.foldl (fun (acc : Bool × List String × Std.HashSet String) eid =>
-          if acc.1 then acc
-          else match g.edgeById.get? eid with
-            | none => acc
-            | some e =>
-              if !e.lineMemberships.contains line then acc
-              else [e.startNode, e.endNode].foldl (fun (a : Bool × List String × Std.HashSet String) nid =>
-                if a.1 then a
-                else if a.2.2.contains nid then a
-                else if goal.contains nid then (true, a.2.1, a.2.2)
-                else (false, a.2.1 ++ [nid], a.2.2.insert nid)) acc) (false, [], visited)
-        if step.1 then true else bfsNodes g line goal (rest ++ step.2.1) step.2.2
+/-- BFS on `line`'s node subgraph: any path from a `start` node to a `goal` node.
+    `fuel` is the dequeue budget (`MAX_EXPAND` from `nodesConnectedOnLine`); a
+    spent budget answers `false`, and is the termination argument. -/
+def bfsNodes (g : StationGraph) (line : String) (goal : Std.HashSet String) :
+    Nat → List String → Std.HashSet String → Bool
+  | _, [], _ => false
+  | 0, _ :: _, _ => false
+  | fuel + 1, nodeId :: rest, visited =>
+    match g.nodeById.get? nodeId with
+    | none => bfsNodes g line goal fuel rest visited
+    | some node =>
+      let step := node.edgeIds.foldl (fun (acc : Bool × List String × Std.HashSet String) eid =>
+        if acc.1 then acc
+        else match g.edgeById.get? eid with
+          | none => acc
+          | some e =>
+            if !e.lineMemberships.contains line then acc
+            else [e.startNode, e.endNode].foldl (fun (a : Bool × List String × Std.HashSet String) nid =>
+              if a.1 then a
+              else if a.2.2.contains nid then a
+              else if goal.contains nid then (true, a.2.1, a.2.2)
+              else (false, a.2.1 ++ [nid], a.2.2.insert nid)) acc) (false, [], visited)
+      if step.1 then true else bfsNodes g line goal fuel (rest ++ step.2.1) step.2.2
 
 def nodesConnectedOnLine (g : StationGraph) (line : String) (startIds goalIds : List String) : Bool :=
   if startIds.isEmpty || goalIds.isEmpty then false
   else
     let goal : Std.HashSet String := goalIds.foldl (·.insert ·) {}
     if startIds.any (goal.contains ·) then true
-    else bfsNodes g line goal startIds (startIds.foldl (·.insert ·) {})
+    else bfsNodes g line goal MAX_EXPAND startIds (startIds.foldl (·.insert ·) {})
 
 /-- Enumerate valid `(board, line, alight)` train candidates over the windows. -/
 def enumerateTrainCandidates (g : StationGraph) (obs : Array ObsRow) (knownLines : List String) :
