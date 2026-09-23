@@ -94,7 +94,7 @@
         "rust/Cargo.toml",
         "--workspace",
         "-E",
-        "not (binary(=corpus_gate) | binary(=hsmm_decode_corpus))"
+        "not (binary(=corpus_gate) | binary(=hsmm_decode_corpus) | test(feasibility_corpus))"
       ],
       "artifacts": [],
       "cwd": ".",

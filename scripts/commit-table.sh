@@ -18,6 +18,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 DEPLOY_ONLY=(
 	"reset the mode trace"
 	"corpus replay gates (release)"
+	"feasibility ceiling over the corpus"
 	"every dispatched Lean mode is executed by something"
 	"the verified CLI packages (what the production image consumes)"
 )

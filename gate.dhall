@@ -229,7 +229,7 @@ in  { name = "health"
               , "rust/Cargo.toml"
               , "--workspace"
               , "-E"
-              , "not (binary(=corpus_gate) | binary(=hsmm_decode_corpus))"
+              , "not (binary(=corpus_gate) | binary(=hsmm_decode_corpus) | test(feasibility_corpus))"
               ]
         , timeout_s = 1800
         }
@@ -296,6 +296,43 @@ in  { name = "health"
               , "corpus_gate"
               , "--test"
               , "hsmm_decode_corpus"
+              ]
+        , timeout_s = 1800
+        }
+      , {-  The feasibility ceiling, out of the debug row for the reason the
+            corpus replays left it: EXECUTION-bound. It folds all 45 golden days
+            in debug and was the whole of that row's wall time — measured
+            2026-09-23 from the runner's log, the row's median was 91 s and this
+            one test took 90–126 s of it; every other test in the suite is
+            seconds. So the commit path paid ~90 s per commit for a check whose
+            ceiling only the corpus can move.
+
+            Debug, unlike its neighbour: the time is in the Lean fold, which is
+            the same `verified_cli` either way (measured 2026-09-23: 146 s in
+            release, 90–126 s in debug), so `--release` would only add a second
+            compile of the suite binary that the row above already built. Out
+            of the commit projection (`scripts/commit-table.sh`): deploy.sh
+            runs the full table, so nothing reaches the pod without it.
+            `test(…)` is a substring match on `feasibility_corpus::…`, and the
+            row above negates the same term, so the two stay disjoint and
+            exhaustive. Measured the same day, the debug row without it: 19 s of
+            tests, 47 s wall, against a 91 s median before. -}
+        G.Check::{
+        , name = "feasibility ceiling over the corpus"
+        , env = toMap { HEALTH_MODE_TRACE = "1" }
+        , argv =
+            dev
+              [ "cargo"
+              , "nextest"
+              , "run"
+              , "--manifest-path"
+              , "rust/Cargo.toml"
+              , "-p"
+              , "backend"
+              , "--test"
+              , "suite"
+              , "-E"
+              , "test(feasibility_corpus)"
               ]
         , timeout_s = 1800
         }
