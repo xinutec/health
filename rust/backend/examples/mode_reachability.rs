@@ -39,9 +39,9 @@
 //!
 //! # Why the exception list is checked in both directions
 //!
-//! `noop`, `echo`, `gqdecode`, `daydecode` and `dayresp` are ablation modes that
-//! must NEVER have a caller — they exist to be subtracted from a real one. So
-//! the check cannot be a bare gate; it needs a list of modes allowed to have no
+//! Some modes must NEVER have a caller — an ablation exists to be subtracted
+//! from a real mode, `ceilingbless` rewrites the oracle a gate judges against.
+//! So the check cannot be a bare gate; it needs a list of modes allowed to have no
 //! caller, and a list like that is a baseline that rots.
 //!
 //! It is held exact instead, which is the whole design. An entry whose mode has
@@ -51,8 +51,7 @@
 //!
 //! ⚠ AND THE TWO KINDS OF EXCUSE MEAN OPPOSITE THINGS WHEN THEY BREAK, so the
 //! file names which one each line is. An `ablation` mode gaining a caller is a
-//! DEFECT — something in the tree is calling `noop` or `echo` as if it computed
-//! something. A `dead` mode gaining one is the repair this task wants, and the
+//! DEFECT — something in the tree is treating an empty reply as an answer. A `dead` mode gaining one is the repair this task wants, and the
 //! line just has to go. Both are red, because both mean the file is now wrong;
 //! a reader of the failure should not have to guess which they are looking at.
 //!

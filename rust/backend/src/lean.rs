@@ -33,12 +33,16 @@ pub fn init() -> Result<()> {
 /// One decision: the request object goes out as `{"mode":"backend","req":…}`,
 /// the reply body comes back as text.
 ///
+/// Through [`serve`], so the `backend` mode is recorded in a traced run like
+/// every other (#1003's second hop). A direct `lean_worker` call here left the
+/// busiest arm in the table reading as executed by nothing.
+///
 /// ⚠ WRAPPED, not merged. Some ops carry a `mode` of their own (`mayRebuild`'s
 /// is `bus`/`rail`), and merging the routing key into the payload overwrote it
 /// — the first run of the suite over the pipe failed exactly there.
 fn call_raw(request: &Value) -> Result<String> {
     let req = serde_json::json!({ "mode": "backend", "req": request });
-    crate::lean_worker::call_plain(&req.to_string())
+    serve(&req.to_string())
 }
 
 /// A dispatch that failed inside Lean reports `{"error": …}`; surface it as one.

@@ -39,11 +39,6 @@
 
 # ── by design: a caller here is a defect ──────────────────────────────────────
 
-noop	ablation	#405's floor: accept the request, do nothing, reply empty. `real - noop` is what consulting Lean costs at all.
-echo	ablation	The response half of the same floor -- ships the input rows back so a real-sized reply crosses with no work behind it.
-gqdecode	ablation	Layer 3 for gpsquality: runs its parse and stops, so `real - gqdecode` is the filter plus its encode.
-daydecode	ablation	Layer 3 for the day mode (#433), the counterpart of gqdecode.
-dayresp	ablation	Layer 2 for the day mode (#433): the chain with no row encoding.
 ceilingbless	bless	feasibility_corpus:278 reaches it only under FEASIBILITY_BLESS. A gate run that got here would be rewriting the ceiling it is judged against.
 
 # ── spare: deliberately host-reachable, no caller expected. NOT a backlog ─────
