@@ -117,18 +117,19 @@ one. -/
 def splitTransitRoute (s : String) : Option (String × String × Option String) := Id.run do
   let cs := s.toList
   let n := cs.length
+  let wsAt := fun (k : Nat) => (cs[k]?.map Char.isWhitespace).getD false
   for i in [0:n] do
-    if cs[i]! != '→' then continue
+    if cs[i]? != some '→' then continue
     -- `\s+` before, and `.+?` needs ≥1 char ahead of that whitespace run.
-    if i == 0 || !cs[i-1]!.isWhitespace then continue
+    if i == 0 || !wsAt (i-1) then continue
     let mut wsStart := i
-    while wsStart > 0 && cs[wsStart-1]!.isWhitespace do
+    while wsStart > 0 && wsAt (wsStart-1) do
       wsStart := wsStart - 1
     if wsStart == 0 then continue
-    -- `\s+` after.
-    if i + 1 ≥ n || !cs[i+1]!.isWhitespace then continue
+    -- `\s+` after (off the end reads as not whitespace).
+    if !wsAt (i+1) then continue
     let mut r := i + 1
-    while r < n && cs[r]!.isWhitespace do
+    while wsAt r do
       r := r + 1
     let tail := cs.drop r
     let from_ := String.ofList (cs.take wsStart) |>.trimAscii.toString
@@ -280,7 +281,7 @@ def stateIdxAt (states : Array StateWindow) (startTs endTs : Int) : Option Nat :
   states.findIdx? (fun s => 2 * s.startTs ≤ mid2 && mid2 < 2 * s.endTs)
 
 def stateAt (states : Array StateWindow) (startTs endTs : Int) : Option StateWindow :=
-  (stateIdxAt states startTs endTs).map (states[·]!)
+  (stateIdxAt states startTs endTs).bind (states[·]?)
 
 structure DayResult where
   verdicts : Array Verdict

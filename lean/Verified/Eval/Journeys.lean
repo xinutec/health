@@ -84,6 +84,12 @@ def lineOf (m : Mode) (lineName : Option String) : Option String :=
   | "train" | "bus" => lineName
   | _ => none
 
+/-- The journey a run of legs spans, or `none` for no legs. -/
+private def closeRun (current : Array Leg) : Option Journey :=
+  match current[0]?, current.back? with
+  | some f, some l => some ⟨f.startTs, l.endTs, current⟩
+  | _, _ => none
+
 /-- Build the ground-truth leg and journey structure from resolved audit rows.
 
 ⚠ SIX RULES, and each exists because something went wrong without it:
@@ -111,31 +117,30 @@ def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
   let mut hasDefinite := false
   for row in rows do
     -- Rule 1: unaudited time between rows.
-    if current.size > 0 then
-      let prevEnd := current[current.size - 1]!.endTs
+    if let some prev := current.back? then
+      let prevEnd := prev.endTs
       if row.startTs - prevEnd > JOURNEY_PAUSE_MAX_S then
         if hasDefinite then
-          journeys := journeys.push
-            ⟨current[0]!.startTs, current[current.size - 1]!.endTs, current⟩
+          if let some j := closeRun current then journeys := journeys.push j
         current := #[]
         hasDefinite := false
     match row.truth with
     | none =>
       -- Rule 2, the unparsed half.
-      if hasDefinite && current.size > 0 then
-        journeys := journeys.push ⟨current[0]!.startTs, current[current.size-1]!.endTs, current⟩
+      if hasDefinite then
+        if let some j := closeRun current then journeys := journeys.push j
       current := #[]; hasDefinite := false
     | some b =>
       if row.status == .unclear then
         -- Rule 2, the unclear half.
-        if hasDefinite && current.size > 0 then
-          journeys := journeys.push ⟨current[0]!.startTs, current[current.size-1]!.endTs, current⟩
+        if hasDefinite then
+          if let some j := closeRun current then journeys := journeys.push j
         current := #[]; hasDefinite := false
       else if !isMovementMode b.mode then
         -- Rule 3.
         if row.endTs - row.startTs ≥ JOURNEY_PAUSE_MAX_S then
-          if hasDefinite && current.size > 0 then
-            journeys := journeys.push ⟨current[0]!.startTs, current[current.size-1]!.endTs, current⟩
+          if hasDefinite then
+            if let some j := closeRun current then journeys := journeys.push j
           current := #[]; hasDefinite := false
       else
         let definite := row.status == .correct || row.status == .wrong
@@ -145,22 +150,22 @@ def groundTruthJourneys (rows : Array JRow) : Array Journey := Id.run do
         let cline := lineOf b.mode b.lineName
         -- Rule 5.
         let extend :=
-          if current.size > 0 then
-            let last := current[current.size - 1]!
+          match current.back? with
+          | some last =>
             row.startTs - last.endTs ≥ 0 && row.startTs - last.endTs ≤ 60
               && cmode == last.mode && cline == last.line
               && from_.isSome && from_ == last.board && to == last.alight
-          else false
+          | none => false
         if extend then
-          let i := current.size - 1
-          current := current.set! i { current[i]! with endTs := row.endTs }
+          if let some last := current.back? then
+            current := current.pop.push { last with endTs := row.endTs }
         else
           current := current.push
             ⟨row.startTs, row.endTs, cmode, cline, from_, to⟩
         if definite then hasDefinite := true
   -- Rule 6, at the end.
-  if hasDefinite && current.size > 0 then
-    journeys := journeys.push ⟨current[0]!.startTs, current[current.size-1]!.endTs, current⟩
+  if hasDefinite then
+    if let some j := closeRun current then journeys := journeys.push j
   return journeys
 
 /-! ## Witnesses

@@ -168,7 +168,7 @@ def splitTrailingParen (s : String) : String × Option String := Id.run do
   let mut i := body.length
   let mut found := none
   while i > 0 do
-    let c := body[i-1]!
+    let some c := body[i-1]? | break
     if c == ')' then break
     if c == '(' then
       found := some (i-1)
@@ -313,10 +313,10 @@ unreachable disagreement. Do not "simplify" it away (it is what the original
 did) and do not add a witness for it (there cannot be one). -/
 def splitTableRow (line : String) : Array String := Id.run do
   let mut parts := (line.splitOn "|").toArray
-  if parts.size > 0 && parts[0]!.trimAscii.toString.isEmpty then
+  if (parts[0]?.map (·.trimAscii.toString.isEmpty)).getD false then
     parts := parts.extract 1 parts.size
-  if line.trimRight.endsWith "|" && parts.size > 0
-     && parts[parts.size - 1]!.trimAscii.toString.isEmpty then
+  if line.trimRight.endsWith "|"
+     && (parts.back?.map (·.trimAscii.toString.isEmpty)).getD false then
     parts := parts.extract 0 (parts.size - 1)
   return parts
 
@@ -337,12 +337,12 @@ def parseWindow (t : String) : Option (Nat × Nat × Nat × Nat) := Id.run do
   if cs[2]? != some ':' then return none
   let some sm := two cs 3 | return none
   let mut i := 5
-  while i < cs.length && cs[i]!.isWhitespace do i := i + 1
+  while (cs[i]?.map Char.isWhitespace).getD false do i := i + 1
   match cs[i]? with
   | some c => if c != '–' && c != '-' then return none
   | none => return none
   i := i + 1
-  while i < cs.length && cs[i]!.isWhitespace do i := i + 1
+  while (cs[i]?.map Char.isWhitespace).getD false do i := i + 1
   let some eh := two cs i | return none
   if cs[i+2]? != some ':' then return none
   let some em := two cs (i+3) | return none
@@ -361,7 +361,7 @@ def declaredTz (markdown : String) : Option String := Id.run do
   return none
 
 private def isHeaderRow (cells : Array String) : Bool :=
-  cells.size > 0 && (cells[0]!.toLower.splitOn "window").length > 1
+  (cells[0]?.map fun c => decide ((c.toLower.splitOn "window").length > 1)).getD false
 
 private def isSeparatorRow (cells : Array String) : Bool :=
   cells.all fun c =>
@@ -396,10 +396,14 @@ def parseGroundTruth (markdown : String) (date : String) (tz : String) : Day := 
     if cells.size < 3 then continue
     if isHeaderRow cells then continue
     if isSeparatorRow cells then continue
-    let windowText := cells[0]!.trimAscii.toString
+    -- Three cells at least, checked above.
+    let some c0 := cells[0]? | continue
+    let some c1 := cells[1]? | continue
+    let some c2 := cells[2]? | continue
+    let windowText := c0.trimAscii.toString
     let some (sh, sm, eh, em) := parseWindow windowText | continue
-    let truthText := cells[1]!.trimAscii.toString
-    let statusText := cells[2]!.trimAscii.toString
+    let truthText := c1.trimAscii.toString
+    let statusText := c2.trimAscii.toString
     let correct :=
       if cells.size >= 4 then
         (String.intercalate "|" (cells.extract 3 cells.size).toList).trimAscii.toString

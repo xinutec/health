@@ -242,9 +242,9 @@ def offWalkableQuantile (drawn : Array LatLon) (walkable : RoadGeometry)
   let mut samples : Array Float := #[]
   for hm_i : i in [0:drawn.size] do
     samples := samples.push (distToNearestWay drawn[i] walkable)
-    if i + 1 < drawn.size then
+    if hi1 : i + 1 < drawn.size then
       let a := drawn[i]
-      let b := drawn[i+1]!
+      let b := drawn[i+1]
       let chord := metersBetween a b
       let n := (Float.floor (chord / stepM)).toInt64.toInt.toNat
       for k in [1:n] do
@@ -253,7 +253,8 @@ def offWalkableQuantile (drawn : Array LatLon) (walkable : RoadGeometry)
   if samples.isEmpty then return none
   let sorted := (samples.toList.mergeSort (· ≤ ·)).toArray
   let idx := (Float.floor (sorted.size.toFloat * q)).toInt64.toInt.toNat
-  return some sorted[min (sorted.size - 1) idx]!
+  -- `samples` is not empty, so neither is `sorted`.
+  return sorted[min (sorted.size - 1) idx]?
 
 /-- Score a drawn walk. `opennessRadiusM` excludes vertices with no nearby path
 (open ground) from the off-walkable MEAN — but deliberately not from the p90,
@@ -263,7 +264,8 @@ def scoreWalk (drawn : Array LatLon) (startTs endTs : Float)
     (strideM : Float := 0.72) (opennessRadiusM : Float := 35)
     (wantP90 : Bool := true) : WalkScore := Id.run do
   let drawnLengthM := pathLength drawn
-  let straight := if drawn.size ≥ 2 then metersBetween drawn[0]! drawn[drawn.size-1]! else 0
+  let straight := if h2 : drawn.size ≥ 2
+    then metersBetween (drawn[0]'(by omega)) (drawn[drawn.size-1]'(by omega)) else 0
   let tortuosity := if straight > 1 then drawnLengthM / straight else 1
   let ped := if steps.isEmpty then none
              else some (pedometerDistanceM steps startTs endTs strideM)
@@ -335,25 +337,27 @@ still cannot advance, because there are no nearby fixes ahead of it, so the
 signal this exists to catch is unchanged. -/
 def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float := Id.run do
   if path.size < 2 || fixes.size < 2 then return 0
-  let mut fArc : Array Float := #[0]
-  for hm_i : i in [1:fixes.size] do
-    have hb_i : i < fixes.size := hm_i.upper
-    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i - 1] fixes[i])
-  let mut pArc : Array Float := #[0]
-  for hm_i : i in [1:path.size] do
-    have hb_i : i < path.size := hm_i.upper
-    pArc := pArc.push (pArc[i-1]! + metersBetween path[i - 1] path[i])
+  -- ⚠ THE GRIDS ARE FLAT, `k * S + i`, and every index below is in range by
+  -- construction (`k < V`, `i < S`, a rank `< S`) — a product no index tactic can
+  -- bound, so the reads say their default instead: `0`, the neutral value a
+  -- `!` read would have produced, and `-1` (no parent) for `parent`. The twin
+  -- in `Geo.CorridorStall` reads the same way; this copy is the walk floor.
+  let fArc : Array Float := (fixes.zip (fixes.extract 1 fixes.size)).foldl
+    (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + metersBetween a b)
+  let pArc : Array Float := (path.zip (path.extract 1 path.size)).foldl
+    (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + metersBetween a b)
   let V := path.size
   let S := fixes.size - 1
   -- `dist` is each vertex's distance to each fix-segment; `arc` is where on the
   -- corridor that projection lands.
   let mut dist : Array Float := Array.replicate (V * S) 0
   let mut arc : Array Float := Array.replicate (V * S) 0
-  for k in [0:V] do
-    let v := path[k]!
-    for i in [0:S] do
-      let a := fixes[i]!
-      let b := fixes[i+1]!
+  for hk : k in [0:V] do
+    let v := path[k]'hk.upper
+    for hi : i in [0:S] do
+      have hs : i < fixes.size - 1 := hi.upper
+      let a := fixes[i]'(by omega)
+      let b := fixes[i+1]'(by omega)
       let cosLat := Float.cos (((a.lat + b.lat) / 2) * pi / 180)
       let bx := (b.lon - a.lon) * 111320.0 * cosLat
       let byM := (b.lat - a.lat) * 111320.0
@@ -366,31 +370,33 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
       let l2 := if l2raw == 0 || l2raw.isNaN then 1e-9 else l2raw
       let t := clamp01 ((px * bx + py * byM) / l2)
       dist := dist.set! (k * S + i) (hyp (px - t * bx) (py - t * byM))
-      arc := arc.set! (k * S + i) (fArc[i]! + t * (fArc[i+1]! - fArc[i]!))
+      let f0 := fArc[i]?.getD 0
+      arc := arc.set! (k * S + i) (f0 + t * (fArc[i+1]?.getD 0 - f0))
   -- DP over (vertex, fix-segment): cost = own projection distance + cheapest
   -- predecessor whose arc position is ≤ ours + 1 m (a backtrack tolerance).
   -- Prefix-min over predecessors sorted by arc makes each step O(S log S).
   let mut prevCost : Array Float := Array.replicate S 0
   let mut cost : Array Float := Array.replicate S 0
   let mut parent : Array Int := Array.replicate (V * S) (-1)
-  for i in [0:S] do prevCost := prevCost.set! i dist[i]!
+  for i in [0:S] do prevCost := prevCost.set! i (dist[i]?.getD 0)
   for k in [1:V] do
     let prevBase := (k - 1) * S
     -- Stable ascending by predecessor arc, matching V8's sort.
     let order := (((List.range S).mergeSort
-      (fun x y => arc[prevBase + x]! ≤ arc[prevBase + y]!))).toArray
+      (fun x y => arc[prevBase + x]?.getD 0 ≤ arc[prevBase + y]?.getD 0))).toArray
     let mut prefixMinCost : Array Float := Array.replicate S 0
     let mut prefixMinIdx : Array Nat := Array.replicate S 0
     for r in [0:S] do
-      let c := prevCost[order[r]!]!
-      if r == 0 || c < prefixMinCost[r-1]! then
+      let o := order[r]?.getD 0
+      let c := prevCost[o]?.getD 0
+      if r == 0 || c < prefixMinCost[r-1]?.getD 0 then
         prefixMinCost := prefixMinCost.set! r c
-        prefixMinIdx := prefixMinIdx.set! r order[r]!
+        prefixMinIdx := prefixMinIdx.set! r o
       else
-        prefixMinCost := prefixMinCost.set! r prefixMinCost[r-1]!
-        prefixMinIdx := prefixMinIdx.set! r prefixMinIdx[r-1]!
+        prefixMinCost := prefixMinCost.set! r (prefixMinCost[r-1]?.getD 0)
+        prefixMinIdx := prefixMinIdx.set! r (prefixMinIdx[r-1]?.getD 0)
     for i in [0:S] do
-      let sMax := arc[k * S + i]! + 1
+      let sMax := arc[k * S + i]?.getD 0 + 1
       -- Last rank whose predecessor arc ≤ sMax. Bounded binary search: 64
       -- halvings cover any S a day of fixes can produce, and the bound makes
       -- the loop total rather than partial.
@@ -400,7 +406,7 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
       for _ in [0:64] do
         if lo ≤ hi then
           let mid := (lo + hi) / 2
-          if arc[prevBase + order[mid.toNat]!]! ≤ sMax then
+          if arc[prevBase + order[mid.toNat]?.getD 0]?.getD 0 ≤ sMax then
             r := mid
             lo := mid + 1
           else
@@ -408,30 +414,30 @@ def maxCorridorStall (fixes path : Array LatLon) (tolM : Float := 15) : Float :=
       if r < 0 then
         cost := cost.set! i posInf
       else
-        cost := cost.set! i (dist[k * S + i]! + prefixMinCost[r.toNat]!)
-        parent := parent.set! (k * S + i) (prefixMinIdx[r.toNat]! : Int)
+        cost := cost.set! i (dist[k * S + i]?.getD 0 + prefixMinCost[r.toNat]?.getD 0)
+        parent := parent.set! (k * S + i) (prefixMinIdx[r.toNat]?.getD 0 : Int)
     let swap := prevCost
     prevCost := cost
     cost := swap
   -- Backtrack the optimal assignment into per-vertex corridor positions.
   let mut bestI := 0
   for i in [1:S] do
-    if prevCost[i]! < prevCost[bestI]! then bestI := i
+    if prevCost[i]?.getD 0 < prevCost[bestI]?.getD 0 then bestI := i
   let mut cp : Array Float := Array.replicate V 0
   for kk in [0:V] do
     let k := V - 1 - kk
-    cp := cp.set! k arc[k * S + bestI]!
+    cp := cp.set! k (arc[k * S + bestI]?.getD 0)
     if k > 0 then
-      let p := parent[k * S + bestI]!
+      let p := parent[k * S + bestI]?.getD (-1)
       if p ≥ 0 then bestI := p.toNat
   -- The stall itself: the widest window of drawn length spanned while the
   -- corridor position advanced by no more than `tolM`.
   let mut j := 0
   let mut worst := 0.0
   for k in [0:V] do
-    while cp[k]! - cp[j]! > tolM do
+    while cp[k]?.getD 0 - cp[j]?.getD 0 > tolM do
       j := j + 1
-    worst := max worst (pArc[k]! - pArc[j]!)
+    worst := max worst (pArc[k]?.getD 0 - pArc[j]?.getD 0)
   return worst
 
 /-! ## The full per-walk verdict -/
@@ -524,7 +530,9 @@ def fixCoverage (fixes drawn : Array LatLon) (q radiusM : Float) : Float × Floa
   let far := (ds.filter (· > radiusM)).size
   let sorted := ds.qsort (· < ·)
   let idx := min (sorted.size - 1) (ceilSteps (q * Float.ofNat sorted.size) - 1)
-  return (sorted[idx]!, Float.ofNat far / Float.ofNat ds.size)
+  -- One distance per fix and `fixes` is not empty, so `idx` lands.
+  let some at_ := sorted[idx]? | return (0, 0)
+  return (at_, Float.ofNat far / Float.ofNat ds.size)
 
 /--
 How far the drawn line's two ENDS sit from the raw track's two ends (m), as
@@ -537,9 +545,9 @@ for exactly this reason. A bar here has to clear that, which is what makes the
 distribution over the blessed corpus the only way to place one.
 -/
 def endpointGapsM (fixes drawn : Array LatLon) : Float × Float :=
-  if fixes.isEmpty || drawn.isEmpty then (0, 0)
-  else (metersBetween fixes[0]! drawn[0]!,
-        metersBetween fixes[fixes.size - 1]! drawn[drawn.size - 1]!)
+  match fixes[0]?, fixes.back?, drawn[0]?, drawn.back? with
+  | some f0, some fl, some d0, some dl => (metersBetween f0 d0, metersBetween fl dl)
+  | _, _, _, _ => (0, 0)
 
 /-! ## Buildings -/
 
@@ -553,16 +561,18 @@ size, not by a whole crossing. -/
 def pointInRing (p : LatLon) (ring : Ring) : Bool := Id.run do
   if ring.size < 3 then return false
   let mut inside := false
-  let mut j := ring.size - 1
-  for hm_i : i in [0:ring.size] do
-    let yi := ring[i].lat
-    let xi := ring[i].lon
-    let yj := ring[j]!.lat
-    let xj := ring[j]!.lon
+  -- `j` is the previous vertex, starting from the last: the ring is closed.
+  let some last := ring.back? | return false
+  let mut pj := last
+  for pi in ring do
+    let yi := pi.lat
+    let xi := pi.lon
+    let yj := pj.lat
+    let xj := pj.lon
     let crosses := (decide (yi > p.lat) != decide (yj > p.lat))
                    && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi
     if crosses then inside := !inside
-    j := i
+    pj := pi
   return inside
 
 private def inAnyBuilding (p : LatLon) (buildings : Array Ring) : Bool :=
@@ -578,9 +588,8 @@ private structure Box where
   deriving Inhabited
 
 private def ringBox (ring : Ring) : Box := Id.run do
-  if ring.isEmpty then
-    return { minLat := 1.0, maxLat := 0.0, minLon := 1.0, maxLon := 0.0 }
-  let p0 := ring[0]!
+  let some p0 := ring[0]?
+    | return { minLat := 1.0, maxLat := 0.0, minLon := 1.0, maxLon := 0.0 }
   let mut b : Box := { minLat := p0.lat, maxLat := p0.lat, minLon := p0.lon, maxLon := p0.lon }
   for q in ring do
     b := { minLat := min b.minLat q.lat, maxLat := max b.maxLat q.lat,

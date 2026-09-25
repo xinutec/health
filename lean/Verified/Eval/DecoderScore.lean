@@ -119,24 +119,26 @@ def decoderJourneys (minutes : Array DecoderMinute)
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
   for leg in legs do
-    match current.back? with
-    | some last =>
+    match current[0]?, current.back? with
+    | some first, some last =>
       if leg.startTs - last.endTs > gapToleranceS then
         journeys := journeys.push
-          { startTs := current[0]!.startTs, endTs := last.endTs, legs := current }
+          { startTs := first.startTs, endTs := last.endTs, legs := current }
         current := #[]
-    | none => pure ()
+    | _, _ => pure ()
     current := current.push leg
-  if current.size > 0 then
+  match current[0]?, current.back? with
+  | some first, some last =>
     journeys := journeys.push
-      { startTs := current[0]!.startTs, endTs := current.back!.endTs, legs := current }
+      { startTs := first.startTs, endTs := last.endTs, legs := current }
+  | _, _ => pure ()
   return journeys
 
 /-- Insertion-ordered tally bump — mirrors JS `Map` iteration order, which is
 what breaks `argmax` ties in the TS. -/
 private def bump (tally : Array (String × Nat)) (k : String) : Array (String × Nat) :=
-  match tally.findIdx? (·.1 == k) with
-  | some i => tally.set! i (k, tally[i]!.2 + 1)
+  match tally.findFinIdx? (·.1 == k) with
+  | some i => tally.set i (k, tally[i].2 + 1)
   | none => tally.push (k, 1)
 
 /-- Key with the strictly highest count; first insertion wins a tie. -/
@@ -177,11 +179,12 @@ def modeShape (j : Journey) : Array String := Id.run do
   for hm_i : i in [0:legs.size] do
     have hb_i : i < legs.size := hm_i.upper
     let m := legs[i].mode
-    if m == "walking" && i > 0 && i + 1 < legs.size then
-      let prev := legs[i - 1].mode
-      let next := legs[i+1]!.mode
-      if prev == next && (prev == "train" || prev == "bus") then
-        continue
+    if m == "walking" && i > 0 then
+      if hn : i + 1 < legs.size then
+        let prev := legs[i - 1].mode
+        let next := legs[i+1].mode
+        if prev == next && (prev == "train" || prev == "bus") then
+          continue
     kept := kept.push m
   let mut shape : Array String := #[]
   for m in kept do

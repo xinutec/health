@@ -216,8 +216,8 @@ the segmentation move this exists to absorb, not a competition. -/
 def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
   let mut candidates : Array (Nat × Nat × Nat) := #[]
   for hm_b : b in [0:base.size] do
-    for c in [0:cur.size] do
-      let d := (base[b].startTs - cur[c]!.startTs).natAbs
+    for hm_c : c in [0:cur.size] do
+      let d := (base[b].startTs - cur[c].startTs).natAbs
       if d ≤ START_TS_TOLERANCE_S then
         candidates := candidates.push (b, c, d)
   -- Stable ascending by distance: ties keep generation order (base-major),
@@ -226,13 +226,17 @@ def pairWalks (base cur : Array WalkEntry) : Pairing := Id.run do
   let mut usedB : Array Bool := Array.replicate base.size false
   let mut usedC : Array Bool := Array.replicate cur.size false
   let mut pairs : Array (WalkEntry × WalkEntry) := #[]
+  -- Every `b`/`c` came from the candidate scan over both arrays, so the masks
+  -- and the entries are there; an index off them reads as unused / absent.
   for (b, c, _) in sorted do
-    if usedB[b]! || usedC[c]! then continue
+    if usedB[b]?.getD false || usedC[c]?.getD false then continue
+    let some eb := base[b]? | continue
+    let some ec := cur[c]? | continue
     usedB := usedB.set! b true
     usedC := usedC.set! c true
-    pairs := pairs.push (base[b]!, cur[c]!)
-  let lostBase := (base.zipIdx.filter (fun p => !usedB[p.2]!)).map Prod.fst
-  let newCur := (cur.zipIdx.filter (fun p => !usedC[p.2]!)).map Prod.fst
+    pairs := pairs.push (eb, ec)
+  let lostBase := (base.zipIdx.filter (fun p => !(usedB[p.2]?.getD false))).map Prod.fst
+  let newCur := (cur.zipIdx.filter (fun p => !(usedC[p.2]?.getD false))).map Prod.fst
   return { pairs, lostBase, newCur }
 
 /-! ## The verdict -/

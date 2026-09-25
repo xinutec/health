@@ -155,6 +155,8 @@ it. Measuring a mode and asserting on it are different decisions; only the
 second has to be zero-false-positive. -/
 def worstVehiclePacedRun (fixes : Array Fix) : Option PacedRun := Id.run do
   let mut runStart : Int := -1
+  -- The run's first fix, carried with its index so the read needs no bound.
+  let mut runFirst : Option Fix := none
   let mut runSteps : Nat := 0
   let mut worst : Option PacedRun := none
   let mut peakKmh : Float := 0
@@ -166,16 +168,20 @@ def worstVehiclePacedRun (fixes : Array Fix) : Option PacedRun := Id.run do
     if stepKmh ≥ KINEMATIC_VEHICLE_STEP_KMH then
       if runStart < 0 then
         runStart := Int.ofNat (i - 1)
+        runFirst := some fixes[i - 1]
         runSteps := 0
         peakKmh := 0
       runSteps := runSteps + 1
       peakKmh := max peakKmh stepKmh
-      let netM := fixDistanceM fixes[runStart.toNat]! fixes[i]
+      -- Set on the branch above whenever `runStart` is; the default is the
+      -- same fix that branch stores.
+      let netM := fixDistanceM (runFirst.getD fixes[i - 1]) fixes[i]
       if runSteps ≥ KINEMATIC_MIN_RUN_STEPS && netM ≥ KINEMATIC_MIN_RUN_NET_M
           && (match worst with | none => true | some w => netM > w.netM) then
         worst := some { netM, steps := runSteps, peakKmh }
     else
       runStart := -1
+      runFirst := none
   return worst
 
 private def fixesIn (points : Array Fix) (a b : Int) : Array Fix :=
@@ -226,24 +232,28 @@ def checkVehiclePedestrianRuns (legs : Array Leg) (points : Array Fix)
     if l.mode != "train" then none else Id.run do
       let fixes := fixesIn points l.startTs l.endTs
       let mut runStart : Int := -1
+      let mut runFirst : Option Fix := none
       let mut worst : Option (Float × Float × Float) := none
       for hm_i : i in [1:fixes.size] do
         have hb_i : i < fixes.size := hm_i.upper
         let dt := fixes[i].ts - fixes[i - 1].ts
         let stepKmh := if dt > 0 then fixDistanceM fixes[i - 1] fixes[i] / Float.ofInt dt * 3.6 else 0
         if stepKmh ≤ PEDESTRIAN_STEP_MAX_KMH && dt > 0 then
-          if runStart < 0 then runStart := Int.ofNat (i - 1)
-          let rs := runStart.toNat
-          let durS := Float.ofInt (fixes[i].ts - fixes[rs]!.ts)
-          let netM := fixDistanceM fixes[rs]! fixes[i]
+          if runStart < 0 then
+            runStart := Int.ofNat (i - 1)
+            runFirst := some fixes[i - 1]
+          let rs := runFirst.getD fixes[i - 1]
+          let durS := Float.ofInt (fixes[i].ts - rs.ts)
+          let netM := fixDistanceM rs fixes[i]
           if durS ≥ PEDESTRIAN_MIN_RUN_S && netM ≥ PEDESTRIAN_MIN_RUN_NET_M
               && (match worst with | none => true | some (wn, _, _) => netM > wn) then
-            match meanCadenceSpm steps fixes[rs]!.ts fixes[i].ts with
+            match meanCadenceSpm steps rs.ts fixes[i].ts with
             | some cadence => if cadence ≥ PEDESTRIAN_MIN_CADENCE_SPM then
                 worst := some (netM, durS, cadence)
             | none => pure ()
         else
           runStart := -1
+          runFirst := none
       match worst with
       | none => return none
       | some (netM, durS, cadence) => return some {

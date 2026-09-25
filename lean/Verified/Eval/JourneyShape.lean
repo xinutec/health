@@ -143,25 +143,26 @@ def statesToJourneys (states : Array (Int × Int × String))
     if !isMovementModeStr m then continue
     let mode := canonicalModeStr m
     let mut merged := false
-    if legs.size > 0 then
-      let last := legs[legs.size - 1]!
+    if let some last := legs.back? then
       if last.mode == mode && startTs ≤ last.endTs + 1 then
-        legs := legs.set! (legs.size - 1) { last with endTs }
+        legs := legs.pop.push { last with endTs }
         merged := true
     if !merged then
       legs := legs.push { startTs, endTs, mode, line := none, board := none, alight := none }
   let mut journeys : Array Journey := #[]
   let mut current : Array Leg := #[]
   for leg in legs do
-    if current.size > 0 then
-      let last := current[current.size - 1]!
+    match current[0]?, current.back? with
+    | some first, some last =>
       if leg.startTs - last.endTs > pauseMaxS then
-        journeys := journeys.push { startTs := current[0]!.startTs, endTs := last.endTs, legs := current }
+        journeys := journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
         current := #[]
+    | _, _ => pure ()
     current := current.push leg
-  if current.size > 0 then
-    journeys := journeys.push
-      { startTs := current[0]!.startTs, endTs := current[current.size - 1]!.endTs, legs := current }
+  match current[0]?, current.back? with
+  | some first, some last =>
+    journeys := journeys.push { startTs := first.startTs, endTs := last.endTs, legs := current }
+  | _, _ => pure ()
   return journeys
 
 /-- The trip's deduped mode shape.
@@ -175,14 +176,15 @@ def modeShape (j : Journey) : Array String := Id.run do
   for hm_i : i in [0:legs.size] do
     have hb_i : i < legs.size := hm_i.upper
     let m := legs[i].mode
-    if m == "walking" && i > 0 && i < legs.size - 1 then
-      let prev := legs[i - 1].mode
-      let next := legs[i+1]!.mode
-      if prev == next && (prev == "train" || prev == "bus") then continue
+    if m == "walking" && i > 0 then
+      if hn : i + 1 < legs.size then
+        let prev := legs[i - 1].mode
+        let next := legs[i+1].mode
+        if prev == next && (prev == "train" || prev == "bus") then continue
     kept := kept.push m
   let mut shape : Array String := #[]
   for m in kept do
-    if shape.size == 0 || shape[shape.size - 1]! != m then shape := shape.push m
+    if (shape.back?.map (· != m)).getD true then shape := shape.push m
   return shape
 
 /-- The pipeline journey with the most temporal overlap, or none.
@@ -239,9 +241,10 @@ def journeyShapeResults (gtJourneys pipelineJourneys : Array Journey) : Array Re
       let inSpan := m.legs.filter (fun l => overlapOf l.startTs l.endTs > 0)
       let mut lo := 0
       let mut hi := inSpan.size
-      while lo < hi && overlapOf inSpan[lo]!.startTs inSpan[lo]!.endTs < SHAPE_MIN_LEG_OVERLAP_S do
+      let thin := fun (l : Leg) => decide (overlapOf l.startTs l.endTs < SHAPE_MIN_LEG_OVERLAP_S)
+      while lo < hi && (inSpan[lo]?.map thin).getD false do
         lo := lo + 1
-      while hi > lo && overlapOf inSpan[hi-1]!.startTs inSpan[hi-1]!.endTs < SHAPE_MIN_LEG_OVERLAP_S do
+      while hi > lo && (inSpan[hi-1]?.map thin).getD false do
         hi := hi - 1
       return (inSpan.extract lo hi)
     let actualShape : Option (Array String) :=
