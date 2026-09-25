@@ -12,6 +12,17 @@
 //! had wanted; the fold now says so on the pipe and gets the row back before it
 //! moves on.
 
+// The ledgered shape (standards.md §3): the one `unsafe` in this module is the
+// glibc `malloc_trim` call in `trim_heap`. Conditional, because the block only
+// exists on Linux/glibc and an `expect` with nothing to expect is itself a lint.
+#![cfg_attr(
+    all(target_os = "linux", target_env = "gnu"),
+    expect(
+        unsafe_code,
+        reason = "glibc's malloc_trim: an FFI call with no preconditions"
+    )
+)]
+
 use anyhow::{Context, Result};
 use serde_json::Value;
 
