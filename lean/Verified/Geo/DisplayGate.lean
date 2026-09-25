@@ -126,7 +126,7 @@ def NearGrid.ofChords (chords : Array Chord) (cellM refLat : Float) : NearGrid :
       if lastKey == some key then continue
       lastKey := some key
       match buckets[key]? with
-      | some b2 => if b2[b2.size - 1]! != i then buckets := buckets.insert key (b2.push i)
+      | some b2 => if b2.back? != some i then buckets := buckets.insert key (b2.push i)
       | none => buckets := buckets.insert key #[i]
   return { chords, buckets, cellM, cellLat, cellLon, minCy, maxCy, minCx, maxCx }
 
@@ -138,8 +138,8 @@ def NearGrid.ofWays (ways : Ways) (cellM : Float) : Option NearGrid := Id.run do
     for hm_i : i in [1:w.size] do
       have hb_i : i < w.size := hm_i.upper
       chords := chords.push ⟨w[i - 1], w[i]⟩
-  if chords.isEmpty then return none
-  return some (NearGrid.ofChords chords cellM chords[0]!.a.lat)
+  let some c0 := chords[0]? | return none
+  return some (NearGrid.ofChords chords cellM c0.a.lat)
 
 /-- From an ordered track polyline — consecutive point pairs become chords. -/
 def NearGrid.ofTrack (pts : Array Pt) (cellM : Float) : Option NearGrid := Id.run do
@@ -148,7 +148,8 @@ def NearGrid.ofTrack (pts : Array Pt) (cellM : Float) : Option NearGrid := Id.ru
   for hm_i : i in [1:pts.size] do
     have hb_i : i < pts.size := hm_i.upper
     chords := chords.push ⟨pts[i - 1], pts[i]⟩
-  return some (NearGrid.ofChords chords cellM pts[0]!.lat)
+  let some p0 := pts[0]? | return none
+  return some (NearGrid.ofChords chords cellM p0.lat)
 
 /-- Probe one cell: the min over its not-yet-seen chords, and the updated seen
     set. -/
@@ -162,8 +163,12 @@ private def NearGrid.probe (g : NearGrid) (key : Nat) (p : Pt) (best : Float)
     for i in bucket do
       if seen.contains i then continue
       seen := seen.insert i
-      let d := segmentDistM p g.chords[i]!.a g.chords[i]!.b
-      if d < best then best := d
+      -- A bucket holds chord indices; one off the end (unreachable) is skipped.
+      match g.chords[i]? with
+      | some c =>
+        let d := segmentDistM p c.a c.b
+        if d < best then best := d
+      | none => pure ()
     return (best, seen)
 
 /-- Exact `min(distance to nearest chord, clampM)`. Rings are scanned outward
@@ -272,9 +277,9 @@ def maxPolylineOffRoad (path : Array Pt) (ways : Ways) (stepM : Float := 15)
   for hm_i : i in [0:path.size] do
     let d := nearestRoadDist path[i] ways idx
     if d > worst then worst := d
-    if i + 1 < path.size then
+    if h1 : i + 1 < path.size then
       let a := path[i]
-      let b := path[i + 1]!
+      let b := path[i + 1]
       let chord := metersBetween a b
       let n := Float.floor (chord / stepM)
       let nN := n.toInt64.toInt.toNat
@@ -288,7 +293,9 @@ def maxPolylineOffRoad (path : Array Pt) (ways : Ways) (stepM : Float := 15)
 /-- Distance from a single point to the nearest segment of `path`. -/
 def pointDistToPolyline (p : Pt) (path : Array Pt) : Float := Id.run do
   if path.isEmpty then return posInf
-  if path.size == 1 then return metersBetween p path[0]!
+  if h1 : path.size = 1 then
+    have h0 : 0 < path.size := by omega
+    return metersBetween p path[0]
   let mut best := posInf
   for hm_i : i in [1:path.size] do
     have hb_i : i < path.size := hm_i.upper
@@ -308,7 +315,9 @@ def quantilePointDistToPolyline (pts : Array Pt) (path : Array Pt) (q : Float) :
     let dists := (pts.map (pointDistToPolyline · path)).qsort (· < ·)
     let idxF := Float.floor (Float.ofNat dists.size * q)
     let idx := min (dists.size - 1) idxF.toInt64.toInt.toNat
-    return dists[idx]!
+    -- `idx < dists.size` whenever `pts` is non-empty (checked above); the
+    -- `getD 0` is the `!` default said out loud.
+    return dists[idx]?.getD 0
 
 /-! ## The gate -/
 
@@ -436,7 +445,11 @@ private def projectToPolylineArc (p : Pt) (path : Array MPt) (cum : Array Float)
     let proj := projectPointToSegment p path[i - 1].pt path[i].pt
     if proj.distM < distM then
       distM := proj.distM
-      arcM := cum[i - 1]! + (cum[i]! - cum[i - 1]!) * proj.t
+      -- `cum` has one entry per vertex by construction; `getD 0` is the `!`
+      -- default said out loud.
+      let c0 := cum[i - 1]?.getD 0
+      let c1 := cum[i]?.getD 0
+      arcM := c0 + (c1 - c0) * proj.t
   return (distM, arcM)
 
 /-- The vertex at arc position `s`, interpolated within its segment (position
@@ -446,20 +459,23 @@ private def projectToPolylineArc (p : Pt) (path : Array MPt) (cum : Array Float)
 private def sliceAt (path : Array MPt) (cum : Array Float) (s : Float) : MPt := Id.run do
   for hm_i : i in [1:path.size] do
     have hb_i : i < path.size := hm_i.upper
-    if s ≤ cum[i]! || i == path.size - 1 then
-      let span := cum[i]! - cum[i - 1]!
-      let t := if span > 0 then min 1 (max 0 ((s - cum[i - 1]!) / span)) else 0
+    let c0 := cum[i - 1]?.getD 0
+    let c1 := cum[i]?.getD 0
+    if s ≤ c1 || i == path.size - 1 then
+      let span := c1 - c0
+      let t := if span > 0 then min 1 (max 0 ((s - c0) / span)) else 0
       let a := path[i - 1]
       let b := path[i]
       return ⟨a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t, a.ts + (b.ts - a.ts) * t⟩
-  return path[path.size - 1]!
+  return path.back?.getD default
 
 /-- The sub-polyline between arc positions `s0 ≤ s1`, endpoints interpolated. -/
 private def slicePathByArc (path : Array MPt) (cum : Array Float) (s0 s1 : Float) :
     Array MPt := Id.run do
   let mut out : Array MPt := #[sliceAt path cum s0]
   for hm_i : i in [0:path.size] do
-    if cum[i]! > s0 && cum[i]! < s1 then out := out.push path[i]
+    let c := cum[i]?.getD 0
+    if c > s0 && c < s1 then out := out.push path[i]
   if s1 > s0 then out := out.push (sliceAt path cum s1)
   return out
 
@@ -480,35 +496,44 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
   let mut cum : Array Float := #[0]
   for hm_i : i in [1:matchedPath.size] do
     have hb_i : i < matchedPath.size := hm_i.upper
-    cum := cum.push (cum[i - 1]! + metersBetween matchedPath[i - 1].pt matchedPath[i].pt)
+    cum := cum.push ((cum.back?.getD 0) + metersBetween matchedPath[i - 1].pt matchedPath[i].pt)
   let proj := fixes.map (fun fx => projectToPolylineArc fx.pt matchedPath cum)
+  have hp : proj.size = fixes.size := by simp [proj]
   let divergent : Array Bool := proj.map (fun pr => (pr.1 > maxStrayM : Bool))
+  have hd : divergent.size = fixes.size := by simp [divergent, hp]
   let nDivergent := divergent.foldl (fun acc d => if d then acc + 1 else acc) 0
   if nDivergent == 0 then return none
   if Float.ofNat (fixes.size - nDivergent) / Float.ofNat fixes.size < spliceMinSupportedFraction then
     return none
   -- Forecourt signature only: the divergence must be NEAR the network (not a
   -- teleport smear) and coherent (few contiguous runs, not jitter).
-  for k in [0:fixes.size] do
-    if divergent[k]! && proj[k]!.1 > spliceMaxDivergenceM then return none
+  for hm_k : k in [0:fixes.size] do
+    have hk : k < fixes.size := hm_k.upper
+    if divergent[k] && proj[k].1 > spliceMaxDivergenceM then return none
   let mut nRuns : Nat := 0
-  for k in [0:fixes.size] do
-    if divergent[k]! && (k == 0 || !divergent[k - 1]!) then nRuns := nRuns + 1
+  for hm_k : k in [0:fixes.size] do
+    have hk : k < fixes.size := hm_k.upper
+    if divergent[k] && (k == 0 || !divergent[k - 1]) then nRuns := nRuns + 1
   if nRuns > spliceMaxDivergentRuns then return none
 
   let mut out : Array MPt := #[]
   let mut i : Nat := 0
   while i < fixes.size do
     let mut j := i
-    while j + 1 < fixes.size && divergent[j + 1]! == divergent[i]! do
+    -- `i` and `j` stay below `fixes.size`; the `?`-reads say what the `!`
+    -- assumed, with its defaults (`false`, 0) out loud.
+    while (match divergent[j + 1]?, divergent[i]? with
+           | some dj, some di => dj == di
+           | _, _ => false) do
       j := j + 1
-    if divergent[i]! then
+    if divergent[i]?.getD false then
       -- Divergent run: the honest line is the raw fixes themselves.
       for k in [i:j + 1] do
-        out := out.push ⟨fixes[k]!.lat, fixes[k]!.lon, fixes[k]!.ts⟩
+        if hk : k < fixes.size then
+          out := out.push ⟨fixes[k].lat, fixes[k].lon, fixes[k].ts⟩
     else
-      let s0 := proj[i]!.2
-      let s1 := proj[j]!.2
+      let s0 := (proj[i]?.map (·.2)).getD 0
+      let s1 := (proj[j]?.map (·.2)).getD 0
       -- A supported run that walks BACKWARD along the path is not a clean local
       -- divergence — bail rather than draw a scrambled line.
       if s1 < s0 then return none
@@ -518,10 +543,9 @@ def spliceMatchedWithDivergentRuns (fixes matchedPath : Array MPt) (maxStrayM : 
   let mut deduped : Array MPt := #[]
   for p in out do
     let skip :=
-      if deduped.size > 0 then
-        let last := deduped[deduped.size - 1]!
-        Float.abs (last.lat - p.lat) < 1e-9 && Float.abs (last.lon - p.lon) < 1e-9
-      else false
+      match deduped.back? with
+      | some last => Float.abs (last.lat - p.lat) < 1e-9 && Float.abs (last.lon - p.lon) < 1e-9
+      | none => false
     if !skip then deduped := deduped.push p
   if deduped.size < 2 then return none
   -- Length-honesty guard: refuse when the splice draws meaningfully more line
