@@ -147,12 +147,11 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   `qHoldSpeed`/`qRejectSpikes`/`qDedupe`/`qRemoveSpurs`/`qDespike`/
   `qTrim` — the last three via `qPerp`, the ≥140° turn test as an exact
   squared comparison, and `qArcPos`), so the pass theorems specialise
-  for free. Representation chosen by corpus probe
-  (`experiments/quant-probe.mjs`), and pinned at scale by
-  `pnpm run compare-geo`: every golden walking leg through
-  `verified_cli geo` vs the twin — 173/173 legs bit-EXACT, float↔quant
-  flips zero everywhere except one near-threshold tie at the 1.5 m
-  display tolerance.
+  for free. Representation chosen by a corpus probe (2026-07-19,
+  `experiments/quant-probe.mjs`, deleted with the TypeScript it replayed):
+  every golden walking leg through `verified_cli geo` vs the twin —
+  173/173 legs bit-EXACT, float↔quant flips zero everywhere except one
+  near-threshold tie at the 1.5 m display tolerance.
 - `Verified/Geo/Clean.lean` — part 4, the small cleaning passes:
   `dedupeConsecutive` (with the no-adjacent-near chain theorem),
   `removeSpurs` (the splice loop as recursion over the mutated suffix;
@@ -216,11 +215,9 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   default; the named verbs are `rail` (V3 shortest path), `geo` (V4 display
   passes over quantised points), `match` (walk map-matcher), `kalman`,
   `gpsquality`, `biolabels`, `assemble`, `assembledecode` and `coverage`.
-  `verified_cli serve` is the persistent NDJSON loop the TS bridge drives —
-  one long-lived process instead of a spawn per call.
-- `experiments/compare.mjs` — TS↔Lean parity harness over seeded random
-  problems (run `pnpm run build` first, then
-  `nix develop -c node lean/experiments/compare.mjs` from the repo root).
+  `verified_cli serve` is the persistent NDJSON loop `rust/backend`'s
+  `lean_worker` drives — one long-lived process per worker, asks answered
+  mid-request on its stdin.
 
 ⚠ **THE `*-refs.mts` HARNESSES ARE GONE, and the `#guard` values they produced
 cannot be regenerated.** 104 of them imported `src/`, deleted with the
@@ -236,9 +233,9 @@ false. What is false now, and worth knowing before touching those values: they
 are transcribed history. Re-blessing a `#guard` against a reimplementation is
 not corroboration.
 
-Seven harnesses survive because they never imported `src/`: `compare.mjs`,
-`quant-probe.mjs`, `connection-refs.mts`, `focus-mutation-sweep.mts`,
-`locationtail-refs.mts`, `osm-lines-refs.mts`, `tofixed-refs.mts`.
+The seven that never imported `src/` went on 2026-09-25 for the same
+reason: each derived its values from V8 or from `dist/`, so none could run.
+`experiments/` now holds one refuted patch and nothing runnable.
 
 ## Conventions
 

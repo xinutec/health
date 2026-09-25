@@ -1,5 +1,4 @@
-//! Render the twelve table endpoints' rows against production, for diffing
-//! against the TypeScript (#982).
+//! Render the twelve table endpoints' rows against production (#982).
 //!
 //! ⚠ THIS IS THE ONLY THING THAT CHECKS THE DECODE. `tests/row_json.rs` pins the
 //! rules — which SQL type takes which JSON shape, and that the host's ISO
@@ -8,18 +7,18 @@
 //! is not theoretical: running this is what found sqlx refusing `NaiveDateTime`
 //! for a TIMESTAMP column, which no amount of reading had suggested.
 //!
-//! `scripts/rows-check-ts.mjs` prints the same rows through the TypeScript's
-//! driver and `JSON.stringify`. The two outputs are meant to be `diff`ed;
-//! reading either alone proves nothing.
+//! It was written to be `diff`ed against `scripts/rows-check-ts.mjs`, the
+//! TypeScript's rendering of the same rows; that half went with the TypeScript
+//! (#975, the script on 2026-09-25) and the parity it established is history.
+//! What this still does is put real DECIMAL, DATETIME and ENUM rows through
+//! the decoder, which no test can.
 //!
 //! ```text
-//! scripts/prod-db.sh node scripts/rows-check-ts.mjs <user> <since> <date> > /tmp/ts.txt
 //! scripts/prod-db.sh backend rows-check <user> <since> <date> > /tmp/rs.txt
-//! diff /tmp/ts.txt /tmp/rs.txt
 //! ```
 //!
 //! ⚠ `prod-db.sh` forwards a port and `kubectl` writes its own chatter to
-//! stdout, so filter both files to the endpoint lines before diffing.
+//! stdout, so filter the file to the endpoint lines before reading it.
 //!
 //! ⚠ CAPTURE BOTH SIDES IN ONE TUNNEL SESSION. The window has no upper bound,
 //! so it includes today, and today's rows are still being written: a sync

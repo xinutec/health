@@ -8,20 +8,10 @@
   },
   "scripts": {
     "test:frontend": "cd frontend && pnpm test",
-    "typecheck:frontend": "cd frontend && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.e2e.json",
+    "typecheck:frontend": "cd frontend && pnpm exec tsc --noEmit -p tsconfig.app.json && pnpm exec tsc --noEmit -p tsconfig.e2e.json",
     "lint:frontend": "cd frontend && pnpm run lint",
     "verify": "scripts/dev nix run ../dev-lint#gate -- . gate-commit.json",
     "lean-check": "scripts/lean-check.sh",
     "verify:deploy": "scripts/dev nix run ../dev-lint#gate -- . gate.json"
-  },
-  "dependencies": {
-    "mariadb": "^3.4.0"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
-    "@types/node": "^24.13.6",
-    "tsx": "^4.23.12",
-    "typescript": "~6.0.3",
-    "vitest": "^4.1.11"
   }
 }
