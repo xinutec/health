@@ -126,18 +126,21 @@ def sideWayName (points : Array Shed.PointF) (startTs endTs : Int) (mode : Strin
     (waysLookup : Float → Float → Array NearbyWay) : Option String :=
   let inPiece := ((points.filter fun p => p.ts ≥ startTs && p.ts ≤ endTs).toList.mergeSort
     fun a b => a.ts ≤ b.ts).toArray
-  if inPiece.isEmpty then none else
+  if h0 : inPiece.size = 0 then none else
   let n := inPiece.size
   let sampleCount := min SIDE_WAY_SAMPLES n
+  -- Every sample index is below `n` by `sampleIdxs`'s construction; one that
+  -- is not contributes nothing rather than a default fix.
   let byKey := Verified.Geo.RefineMode.dedupNearestWays
-    ((Verified.Geo.RefineMode.sampleIdxs n sampleCount).map fun i =>
-      let p := inPiece[i]!
-      waysLookup p.lat p.lon)
+    ((Verified.Geo.RefineMode.sampleIdxs n sampleCount).filterMap fun i =>
+      inPiece[i]?.map fun p => waysLookup p.lat p.lon)
   if byKey.isEmpty then none else
   -- The PIECE's own pace. The host's average is the tunnel's, and a walk handed
   -- a train's speed is refined as one.
   let speeds := (inPiece.toList.mergeSort fun a b => a.speedKmh ≤ b.speedKmh).toArray
-  let medianKmh := speeds[speeds.size / 2]!.speedKmh
+  have hs : speeds.size = inPiece.size := by simp [speeds]
+  have hm : speeds.size / 2 < speeds.size := by omega
+  let medianKmh := speeds[speeds.size / 2].speedKmh
   (Verified.Geo.RefineMode.refineModeLegacyCascade mode medianKmh byKey).wayName
 
 /-- Whether a segment is already an annotated rail run (its label carries the
@@ -187,8 +190,10 @@ module already calls a journey rather than a platform wait, and
 `UNDERGROUND_STATION_RADIUS_M` is what it already calls one station. -/
 private def heardTravelling (good : Array CoarseFix) (fromTs toTs : Int) : Bool :=
   let between := good.filter fun f => f.ts > fromTs && f.ts < toTs
-  between.any fun f =>
-    equirectMeters between[0]!.lat between[0]!.lon f.lat f.lon > UNDERGROUND_STATION_RADIUS_M
+  match between[0]? with
+  | none => false
+  | some b0 => between.any fun f =>
+    equirectMeters b0.lat b0.lon f.lat f.lon > UNDERGROUND_STATION_RADIUS_M
 
 private def sameBlackout (prev next : CoarseFix) (good : Array CoarseFix) : Bool :=
   let gap := next.ts - prev.ts
@@ -201,14 +206,18 @@ private def sameBlackout (prev next : CoarseFix) (good : Array CoarseFix) : Bool
 stopped being the same blackout (see `sameBlackout`). -/
 private def clusterRuns (fixes good : Array CoarseFix) : Array (Array CoarseFix) :=
   fixes.foldl (init := #[]) fun runs f =>
-    match runs.back? with
-    | some cur =>
-      if sameBlackout cur[cur.size - 1]! f good
-      then runs.set! (runs.size - 1) (cur.push f)
+    match runs.back?, runs.back?.bind (·.back?) with
+    | some cur, some last =>
+      -- Replacing the last run: pop it and push the grown one.
+      if sameBlackout last f good
+      then runs.pop.push (cur.push f)
       else runs.push #[f]
-    | none => runs.push #[f]
+    | _, _ => runs.push #[f]
 
-private def spanOf (r : Array CoarseFix) : Int := r[r.size - 1]!.ts - r[0]!.ts
+private def spanOf (r : Array CoarseFix) : Int :=
+  match r.back?, r[0]? with
+  | some last, some first => last.ts - first.ts
+  | _, _ => 0
 
 /-- How long good GPS has to hold, inside a gap between two dark fixes, to count
 as the phone genuinely having come back rather than blinking. -/
@@ -235,8 +244,14 @@ def growThroughDarkness (run all good : Array CoarseFix) : Array CoarseFix :=
   -- Did GPS genuinely come back between these two dark fixes?
   let recovered (fromTs toTs : Int) : Bool :=
     let between := good.filter fun f => f.ts > fromTs && f.ts < toTs
-    !between.isEmpty && between[between.size - 1]!.ts - between[0]!.ts ≥ RECOVERY_SPAN_S
-  match all.findIdx? (fun f => f.ts ≥ run[0]!.ts) with
+    match between.back?, between[0]? with
+    | some last, some first => last.ts - first.ts ≥ RECOVERY_SPAN_S
+    | _, _ => false
+  match run[0]?, run.back? with
+  -- An empty run has nothing to grow.
+  | none, _ | _, none => run
+  | some r0, some rLast =>
+  match all.findIdx? (fun f => f.ts ≥ r0.ts) with
   -- The run's fixes are not in `all` — nothing to grow into.
   | none => run
   | some lo0 => Id.run do
@@ -244,14 +259,25 @@ def growThroughDarkness (run all good : Array CoarseFix) : Array CoarseFix :=
     let mut hi := all.size - 1
     -- Each loop moves its index one step and never turns back, so `all.size`
     -- bounds the iterations exactly. Not a fuel cap: it is the trip count.
+    -- Every read is guarded by the index it is about to use; the guards
+    -- cannot fail (`lo` and `hi` stay inside `all`), they are what makes the
+    -- reads total.
     for _ in [0:all.size] do
-      if hi > lo && all[hi]!.ts > run[run.size - 1]!.ts then hi := hi - 1 else break
+      if hh : hi < all.size then
+        if hi > lo && all[hi].ts > rLast.ts then hi := hi - 1 else break
+      else break
     for _ in [0:all.size] do
-      if lo > 0 && all[lo]!.ts - all[lo - 1]!.ts ≤ MAX_COARSE_GAP_S
-          && !recovered all[lo - 1]!.ts all[lo]!.ts then lo := lo - 1 else break
+      if hl : lo < all.size then
+        have hl1 : lo - 1 < all.size := by omega
+        if lo > 0 && all[lo].ts - all[lo - 1].ts ≤ MAX_COARSE_GAP_S
+            && !recovered all[lo - 1].ts all[lo].ts then lo := lo - 1 else break
+      else break
     for _ in [0:all.size] do
-      if hi < all.size - 1 && all[hi + 1]!.ts - all[hi]!.ts ≤ MAX_COARSE_GAP_S
-          && !recovered all[hi]!.ts all[hi + 1]!.ts then hi := hi + 1 else break
+      if hh : hi + 1 < all.size then
+        have hh0 : hi < all.size := by omega
+        if all[hi + 1].ts - all[hi].ts ≤ MAX_COARSE_GAP_S
+            && !recovered all[hi].ts all[hi + 1].ts then hi := hi + 1 else break
+      else break
     return all.extract lo (hi + 1)
 
 /-- How close in time and space a well-located fix has to be, on BOTH sides of a
@@ -311,11 +337,93 @@ def trimBlipTail (run good : Array CoarseFix) : Array CoarseFix :=
     let mut «end» := run.size
     -- `end` only ever decreases, so `run.size` is the exact trip count.
     for _ in [0:run.size] do
-      if «end» > 1 && isAccuracyBlip run[«end» - 1]! good
-          && equirectMeters run[«end» - 1]!.lat run[«end» - 1]!.lon
-               run[«end» - 2]!.lat run[«end» - 2]!.lon > UNDERGROUND_STATION_RADIUS_M
-      then «end» := «end» - 1 else break
+      -- `end` starts at `run.size` and only decreases, so both reads are in
+      -- range; the guard says so where the tactic looks.
+      if he : «end» ≤ run.size ∧ 1 < «end» then
+        have h1 : «end» - 1 < run.size := by omega
+        have h2 : «end» - 2 < run.size := by omega
+        if isAccuracyBlip run[«end» - 1] good
+            && equirectMeters run[«end» - 1].lat run[«end» - 1].lon
+                 run[«end» - 2].lat run[«end» - 2].lon > UNDERGROUND_STATION_RADIUS_M
+        then «end» := «end» - 1 else break
+      else break
     return run.extract 0 «end»
+
+/-- One segment per reconstructed leg, with the changeovers between them, pushed
+onto `acc0`.
+
+⚠ `legs` is a PARAMETER on purpose. The same code inside `annotateUndergroundRuns`
+sent every index tactic into whnf on the whole builder — a 200k-heartbeat
+timeout at the `def` (2026-09-25). As a parameter its size is an atom, and the
+`Fin` indices below make every leg, changeover and boundary read total. -/
+private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart trainEnd : Int)
+    (speedKmh : Float) (coarseCount : Nat) (points : Array Shed.PointF)
+    (waysLookup : Float → Float → Array NearbyWay) (acc0 : Array Seg) : Array Seg :=
+  -- Indices are `Fin`, so every leg, changeover and boundary read below is
+  -- total by type; `ofFn` fixes the sizes the tactics need.
+  let changeovers : Array (Option (Int × Int)) := Array.ofFn (n := legs.size - 1) fun li =>
+    have h1 : li.val + 1 < legs.size := by omega
+    let from_ := legs[li.val].endTs
+    let to_ := legs[li.val + 1].startTs
+    if to_ - from_ ≥ MIN_SIDE_DURATION_S then some (from_, to_) else none
+  have hc : changeovers.size = legs.size - 1 := by simp [changeovers]
+  let boundaries : Array Int := Array.ofFn (n := legs.size - 1) fun li =>
+    have h1 : li.val + 1 < legs.size := by omega
+    have h2 : li.val < changeovers.size := by omega
+    match changeovers[li.val] with
+    | some (from_, _) => from_
+    | none =>
+      (jsRound (Float.ofInt (legs[li.val].endTs + legs[li.val + 1].startTs) / 2)).toInt64.toInt
+  have hb : boundaries.size = legs.size - 1 := by simp [boundaries]
+  (Array.ofFn (n := legs.size) id).foldl (init := acc0) fun acc (li : Fin legs.size) =>
+    let leg := legs[li]
+    have hli := li.isLt
+    let prevChange : Option (Int × Int) :=
+      if h0 : li.val = 0 then none
+      else
+        have : li.val - 1 < changeovers.size := by omega
+        changeovers[li.val - 1]
+    let segStart :=
+      if h0 : li.val = 0 then trainStart
+      else match prevChange with
+        | some (_, to_) => to_
+        | none =>
+          have : li.val - 1 < boundaries.size := by omega
+          boundaries[li.val - 1]
+    let segEnd :=
+      if hl : li.val = legs.size - 1 then trainEnd
+      else
+        have : li.val < boundaries.size := by omega
+        boundaries[li.val]
+    let reason :=
+      if legs.size > 1 then
+        s!"underground reconstruction (interchange leg {li.val + 1}/{legs.size} on {leg.line})"
+      else
+        s!"underground reconstruction ({coarseCount} coarse fixes on {leg.line})"
+    let withLeg := acc.push { host with
+      startTs := segStart, endTs := segEnd
+      mode := "train", refinedMode := some "train"
+      confidence := 0.6, confidenceMargin := 1.5
+      avgSpeed := speedKmh, maxSpeed := speedKmh
+      linearity := 1, pointCount := 0
+      place := none, city := none
+      wayName := some s!"{leg.boardingStation} → {leg.alightingStation} · {leg.line}"
+      refinedReason := some reason }
+    match (if hl : li.val < legs.size - 1 then
+             have : li.val < changeovers.size := by omega
+             changeovers[li.val]
+           else none) with
+    | some (from_, to_) =>
+      -- `excludeStart`: a train ends at `from_`, so the boundary fix carries
+      -- the train's arrival speed.
+      let st := statsOverWindow points from_ to_ (excludeStart := true)
+      withLeg.push { host with
+        startTs := from_, endTs := to_
+        wayName := sideWayName points from_ to_ host.mode waysLookup
+        avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
+        linearity := st.linearity, pointCount := st.pointCount
+        refinedReason := some s!"underground reconstruction (change of trains at {leg.alightingStation})" }
+    | none => withLeg
 
 /--
 Find underground runs hiding inside the day's segments and carve them out as
@@ -358,8 +466,12 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
       let runFixes := trimBlipTail (growThroughDarkness hostRun darkFixes good) good
       if runFixes.size < MIN_COARSE_FIXES || spanOf runFixes < MIN_RUN_DURATION_S
       then result.push host else
-      let runStart := runFixes[0]!.ts
-      let runEnd := runFixes[runFixes.size - 1]!.ts
+      -- `MIN_COARSE_FIXES ≥ 1`, so both ends exist; the `getD 0` is the `!`
+      -- default said out loud. ⚠ No tactic here on purpose: a `by omega` on
+      -- `runFixes.size` inside this term makes Lean unfold the whole builder
+      -- (200k-heartbeat timeout at whnf, 2026-09-25).
+      let runStart := (runFixes[0]?.map (·.ts)).getD 0
+      let runEnd := (runFixes.back?.map (·.ts)).getD 0
       -- Array order, not time order: the TS scans `good` as given.
       let boarding? := (good.filter fun f => f.ts ≤ runStart).back?
       let alighting? := (good.filter fun f => f.ts ≥ runEnd)[0]?
@@ -406,15 +518,6 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
         -- `checkModeKinematics` rejects. A changeover long enough to stand alone
         -- becomes its own segment in the host's mode; below MIN_SIDE_DURATION_S
         -- the midpoint split stands, because the rides have to meet somewhere.
-        let changeovers : Array (Option (Int × Int)) := (Array.range (legs.size - 1)).map fun li =>
-          let from_ := legs[li]!.endTs
-          let to_ := legs[li + 1]!.startTs
-          if to_ - from_ ≥ MIN_SIDE_DURATION_S then some (from_, to_) else none
-        let boundaries : Array Int := (Array.range (legs.size - 1)).map fun li =>
-          match changeovers[li]! with
-          | some (from_, _) => from_
-          | none =>
-            (jsRound (Float.ofInt (legs[li]!.endTs + legs[li + 1]!.startTs) / 2)).toInt64.toInt
         let withPre :=
           if keepPre then
             let st := statsOverWindow points host.startTs trainStart
@@ -423,41 +526,8 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
               avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
               linearity := st.linearity, pointCount := st.pointCount }
           else result
-        let withLegs := (Array.range legs.size).foldl (init := withPre) fun acc li =>
-          let leg := legs[li]!
-          let prevChange := if li == 0 then none else changeovers[li - 1]!
-          let segStart :=
-            if li == 0 then trainStart
-            else match prevChange with
-              | some (_, to_) => to_
-              | none => boundaries[li - 1]!
-          let segEnd := if li == legs.size - 1 then trainEnd else boundaries[li]!
-          let reason :=
-            if legs.size > 1 then
-              s!"underground reconstruction (interchange leg {li + 1}/{legs.size} on {leg.line})"
-            else
-              s!"underground reconstruction ({runFixes.size} coarse fixes on {leg.line})"
-          let withLeg := acc.push { host with
-            startTs := segStart, endTs := segEnd
-            mode := "train", refinedMode := some "train"
-            confidence := 0.6, confidenceMargin := 1.5
-            avgSpeed := speedKmh, maxSpeed := speedKmh
-            linearity := 1, pointCount := 0
-            place := none, city := none
-            wayName := some s!"{leg.boardingStation} → {leg.alightingStation} · {leg.line}"
-            refinedReason := some reason }
-          match (if li < legs.size - 1 then changeovers[li]! else none) with
-          | some (from_, to_) =>
-            -- `excludeStart`: a train ends at `from_`, so the boundary fix carries
-            -- the train's arrival speed.
-            let st := statsOverWindow points from_ to_ (excludeStart := true)
-            withLeg.push { host with
-              startTs := from_, endTs := to_
-              wayName := sideWayName points from_ to_ host.mode waysLookup
-              avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
-              linearity := st.linearity, pointCount := st.pointCount
-              refinedReason := some s!"underground reconstruction (change of trains at {leg.alightingStation})" }
-          | none => withLeg
+        let withLegs := legSegments host legs trainStart trainEnd speedKmh runFixes.size
+          points waysLookup withPre
         if keepPost then
           -- `excludeStart` again: the tube ride ends at `trainEnd`.
           let st := statsOverWindow points trainEnd host.endTs (excludeStart := true)
