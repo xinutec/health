@@ -247,15 +247,25 @@ def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List
     stateForInterval start finish (findCovering segments mid) (findCoveringSleep sleeps mid))
   stripPartialMinutesAsleep (mergeAdjacent states) sleeps
 
+/-- The least an inferred stay may have behind `now` to be shown at all: one
+    whole minute, the timeline's unit. Under it there are zero minutes of no
+    data to infer anything from, and the row would read `0m · no data
+    (inferred)` — asserting a stay that has not yet had a minute to exist. -/
+def MIN_INFERRED_SHOWN_S : Int := 60
+
 /-- Never assert the future. An inferred state may run to a survival horizon or
     the day end that lies ahead of now; clip it. Observed states are untouched
     (real data cannot be in the future). Presentation-layer only — the pipeline
-    still fills to the horizon, so goldens replaying past days are unaffected. -/
+    still fills to the horizon, so goldens replaying past days are unaffected.
+
+    A stay that straddles `now` is truncated to it — unless less than
+    `MIN_INFERRED_SHOWN_S` of it has happened, in which case it is dropped like a
+    wholly-future one: it will appear once a minute of it has. -/
 def clipInferredFuture (states : List DayState) (nowTs : Int) : List DayState :=
   states.filterMap (fun s =>
     if s.inferred != some true || s.endTs ≤ nowTs then some s
-    else if s.startTs ≥ nowTs then none          -- wholly future: drop
-    else some { s with endTs := nowTs })         -- straddles now: truncate
+    else if s.startTs + MIN_INFERRED_SHOWN_S > nowTs then none  -- nothing yet: drop
+    else some { s with endTs := nowTs })                        -- straddles now: truncate
 
 /-! ## Sleep-place attribution -/
 
@@ -615,6 +625,10 @@ private def inf (a b : Int) : DayState :=
 -- Starting exactly at now is wholly future.
 #guard clipInferredFuture [inf NOW (T0+7200)] NOW == []
 #guard clipInferredFuture [inf (NOW+60) (T0+7200)] NOW == []
+-- Under a minute behind now is nothing yet: dropped rather than shown as `0m`.
+#guard clipInferredFuture [inf (NOW-59) (T0+7200)] NOW == []
+-- A whole minute behind now is the first thing worth showing.
+#guard clipInferredFuture [inf (NOW-60) (T0+7200)] NOW == [inf (NOW-60) NOW]
 
 /-! ### `derivePlaceForSleep` -/
 

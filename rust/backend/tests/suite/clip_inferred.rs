@@ -93,6 +93,11 @@ fn an_inferred_state_is_truncated_or_dropped_and_an_observed_one_is_not() {
     let got = lean::clip_inferred_future(&[state(2_000, 3_000, Some(true))], now).unwrap();
     assert!(got.is_empty());
 
+    // Straddles now by under a minute: nothing has happened yet, so it is
+    // dropped rather than shown as a zero-minute inferred stay.
+    let got = lean::clip_inferred_future(&[state(950, 3_000, Some(true))], now).unwrap();
+    assert!(got.is_empty());
+
     // Straddles now: truncated to now, everything else intact.
     let got = lean::clip_inferred_future(&[state(500, 3_000, Some(true))], now).unwrap();
     assert_eq!(got.len(), 1);

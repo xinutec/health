@@ -2198,6 +2198,10 @@ corpus, which replays past days where `nowTs` is already past the day end, is
 unaffected. A caller applies this PER REQUEST, after the cache, because `now`
 advances while a cached result does not.
 
+A stay that straddles `now` by less than a minute is dropped rather than
+truncated: the timeline would show it as `0m · no data (inferred)`, a stay
+asserted before a minute of it has happened (`MIN_INFERRED_SHOWN_S`).
+
 ⚠ Observed states are untouched. Real data cannot be in the future, so a state
 without `inferred` is passed through whatever its timestamps say. -/
 private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DayState := do
