@@ -85,7 +85,10 @@ def mkChainGraph (edges : Array RouteEdge) (nodes : Array ChainNode) : ChainGrap
     all the caller tests, so the result order is not read. -/
 def stationLineMemberships (g : ChainGraph) (n : ChainNode) : List String :=
   (edgesNearIdx g.model n.lat n.lon STATION_LINE_RADIUS_M).foldl (fun acc i =>
-    g.model.edges[i]!.lineMemberships.foldl (fun acc l =>
+    -- `edgesNearIdx` answers edge indices; one off the end contributes nothing.
+    match g.model.edges[i]? with
+    | none => acc
+    | some e => e.lineMemberships.foldl (fun acc l =>
       if acc.contains l then acc else acc ++ [l]) acc) []
 
 /-- Station nodes within `radiusM`, paired with their distance, IN GRAPH ORDER.
@@ -104,15 +107,17 @@ def stationsNear (g : ChainGraph) (lat lon radiusM : Float) : Array (ChainNode �
     membership is read. -/
 def stationFootprintNodes (g : ChainGraph) (station : ChainNode) : Std.HashSet String :=
   (edgesNearIdx g.model station.lat station.lon STATION_FOOTPRINT_M).foldl (fun acc i =>
-    let e := g.model.edges[i]!
-    let acc := match e.geometry.head? with
+    match g.model.edges[i]? with
+    | none => acc
+    | some e =>
+      let acc := match e.geometry.head? with
+        | some p => if haversineMeters station.lat station.lon p.lat p.lon ≤ STATION_FOOTPRINT_M
+                    then acc.insert e.startNode else acc
+        | none => acc
+      match e.geometry.getLast? with
       | some p => if haversineMeters station.lat station.lon p.lat p.lon ≤ STATION_FOOTPRINT_M
-                  then acc.insert e.startNode else acc
-      | none => acc
-    match e.geometry.getLast? with
-    | some p => if haversineMeters station.lat station.lon p.lat p.lon ≤ STATION_FOOTPRINT_M
-                then acc.insert e.endNode else acc
-    | none => acc) (Std.HashSet.emptyWithCapacity.insert station.id)
+                  then acc.insert e.endNode else acc
+      | none => acc) (Std.HashSet.emptyWithCapacity.insert station.id)
 
 /-- Dijkstra state modelled on the TS `Map`: `order` reproduces JS insertion
     order, which the min-extraction scan reads and which decides ties. Updating
@@ -272,10 +277,10 @@ structure Fit where
     divergence, and unreachable here: the empty case is guarded for `v`, and `c`
     and `madM` are only reached with at least `TRAJ_MIN_FIXES` points. -/
 def theilSen (pts : Array (Float × Float)) : Fit :=
-  let slopes := (List.range pts.size).foldl (fun acc i =>
-    (List.range pts.size).foldl (fun acc j =>
-      if j > i && pts[j]!.1 != pts[i]!.1
-      then acc ++ [(pts[j]!.2 - pts[i]!.2) / (pts[j]!.1 - pts[i]!.1)]
+  let slopes := (List.finRange pts.size).foldl (fun acc (i : Fin pts.size) =>
+    (List.finRange pts.size).foldl (fun acc (j : Fin pts.size) =>
+      if j.val > i.val && pts[j].1 != pts[i].1
+      then acc ++ [(pts[j].2 - pts[i].2) / (pts[j].1 - pts[i].1)]
       else acc) acc) []
   let v := if slopes.isEmpty then 0 else Verified.Hsmm.Observation.median slopes
   let c := Verified.Hsmm.Observation.median (pts.toList.map (fun p => p.2 - v * p.1))
@@ -495,10 +500,11 @@ def projectFixesToLine (g : ChainGraph) (line : String) (fixes : Array InLegFix)
   let scanEdge (f : InLegFix) (st : Option TrackFix × Float) (e : RouteEdge) :
       Option TrackFix × Float :=
     let geom := e.geometry.toArray
-    let r := (List.range (geom.size - 1)).foldl
-      (fun (acc : Option TrackFix × Float × Float) i =>
-        let a := geom[i]!
-        let b := geom[i + 1]!
+    -- Consecutive pairs by `zip`, so no index is read at all.
+    let r := (geom.zip (geom.extract 1 geom.size)).foldl
+      (fun (acc : Option TrackFix × Float × Float) (ab : _ × _) =>
+        let a := ab.1
+        let b := ab.2
         let segLen := haversineMeters a.lat a.lon b.lat b.lon
         let proj := Verified.Geo.WalkableRoute.projectPointToSegment
           ⟨f.lat, f.lon⟩ ⟨a.lat, a.lon⟩ ⟨b.lat, b.lon⟩
@@ -715,24 +721,32 @@ private def forwardPass (chain : Array ChainLeg) : Array (Array Float) :=
         let gapMin := mins leg.startTs prevLeg.endTs
         leg.pairs.map (fun p =>
           p.legScore + (List.range prevRow.size).foldl (fun b q =>
-            let via := prevRow[q]! + chainPenalty prevLeg.pairs[q]!.alight.node p.board.node gapMin
-            if via > b then via else b) NEG_INF)
+            -- The row and the pairs are one length by construction (`map`).
+            match prevRow[q]?, prevLeg.pairs[q]? with
+            | some r, some pp =>
+              let via := r + chainPenalty pp.alight.node p.board.node gapMin
+              if via > b then via else b
+            | _, _ => b) NEG_INF)
       | _, _ => leg.pairs.map (fun p => p.legScore)
     acc.push row) #[]
 
 /-- Backward Viterbi — `forwardPass` mirrored, built right to left then flipped
     so the result indexes the same way. -/
 private def backwardPass (chain : Array ChainLeg) : Array (Array Float) :=
-  let rev := (List.range chain.size).foldl (fun acc k =>
-    let i := chain.size - 1 - k
-    let leg := chain[i]!
+  let rev := (List.finRange chain.size).foldl (fun acc (k : Fin chain.size) =>
+    let i := chain.size - 1 - k.val
+    have hi : chain.size - 1 - k.val < chain.size := by omega
+    let leg := chain[chain.size - 1 - k.val]
     let row := match acc.back?, chain[i + 1]? with
       | some nextRow, some nextLeg =>
         let gapMin := mins nextLeg.startTs leg.endTs
         leg.pairs.map (fun p =>
           p.legScore + (List.range nextRow.size).foldl (fun b q =>
-            let via := nextRow[q]! + chainPenalty p.alight.node nextLeg.pairs[q]!.board.node gapMin
-            if via > b then via else b) NEG_INF)
+            match nextRow[q]?, nextLeg.pairs[q]? with
+            | some r, some np =>
+              let via := r + chainPenalty p.alight.node np.board.node gapMin
+              if via > b then via else b
+            | _, _ => b) NEG_INF)
       | _, _ => leg.pairs.map (fun p => p.legScore)
     acc.push row) #[]
   rev.reverse
@@ -756,15 +770,22 @@ private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × Re
     -- First-wins argmax (strict `>`), so the cross product's board-major order
     -- decides a tie.
     let bestP := (List.range through.size).foldl (fun b p =>
-      if through[p]! > through[b]! then p else b) 0
+      match through[p]?, through[b]? with
+      | some tp, some tb => if tp > tb then p else b
+      | _, _ => b) 0
     let best := leg.pairs[bestP]?.getD p0
-    let bestAlt := (List.range leg.pairs.size).foldl (fun (acc : Float × Float) p =>
-      let pr := leg.pairs[p]!
-      let t := through[p]!
+    -- `through` has one entry per pair by construction; a pair without one
+    -- (unreachable) takes no part in the alternatives.
+    let bestAlt := (List.finRange leg.pairs.size).foldl (fun (acc : Float × Float) (p : Fin leg.pairs.size) =>
+      let pr := leg.pairs[p]
+      match through[p.val]? with
+      | none => acc
+      | some t =>
       ( if pr.board.node.stationName != best.board.node.stationName && t > acc.1 then t else acc.1
       , if pr.alight.node.stationName != best.alight.node.stationName && t > acc.2 then t else acc.2 ))
       (NEG_INF, NEG_INF)
-    let clears (alt : Float) := alt == NEG_INF || through[bestP]! - alt ≥ MARGIN_NATS
+    let clears (alt : Float) := alt == NEG_INF ||
+      (match through[bestP]? with | some tb => tb - alt ≥ MARGIN_NATS | none => false)
     let board := if clears bestAlt.1 && sidePlausible best.board then best.board.node.stationName else none
     let alight := if clears bestAlt.2 && sidePlausible best.alight then best.alight.node.stationName else none
     if board.isNone && alight.isNone then none else some (leg.segIndex, { board, alight })
@@ -816,12 +837,16 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
   chains.foldl (fun out chain =>
     let fwd := forwardPass chain
     let bwd := backwardPass chain
-    (List.range chain.size).foldl (fun out i =>
-      let leg := chain[i]!
+    (List.finRange chain.size).foldl (fun out (i : Fin chain.size) =>
+      let leg := chain[i]
       -- Max-marginal: the best chain total passing THROUGH this pair. The
-      -- subtraction is because `legScore` is counted by both passes.
-      let through := (List.range leg.pairs.size).foldl (fun acc p =>
-        acc.push (fwd[i]![p]! + bwd[i]![p]! - leg.pairs[p]!.legScore)) #[]
+      -- subtraction is because `legScore` is counted by both passes. The two
+      -- passes have one row per leg and one entry per pair by construction; a
+      -- missing one (unreachable) reads as the `!` default did, 0.
+      let through := (List.finRange leg.pairs.size).foldl (fun acc (p : Fin leg.pairs.size) =>
+        let f := (fwd[i.val]?.bind (·[p.val]?)).getD 0
+        let b := (bwd[i.val]?.bind (·[p.val]?)).getD 0
+        acc.push (f + b - leg.pairs[p].legScore)) #[]
       match emitLeg leg through with
       | none => out
       | some r => out.push r) out) #[]
