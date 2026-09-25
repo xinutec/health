@@ -118,15 +118,24 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
           adj := adj.push #[]
           index := index.insert key id
           ids := ids.push id
-      let a := ids[0]!
-      let b := ids[1]!
-      if a != b then
-        -- The FUSED node coordinates, not the way's raw ones.
-        let d := metersBetween nodes[a]! nodes[b]!
-        if d ≥ 1e-3 then
-          -- Dedupe: ways can overlap on a shared stretch.
-          if !(adj[a]!.any (fun e => e.1 == b)) then adj := adj.set! a (adj[a]!.push (b, d))
-          if !(adj[b]!.any (fun e => e.1 == a)) then adj := adj.set! b (adj[b]!.push (a, d))
+      -- `ids` holds the two endpoint ids just fused; both are node indices and
+      -- `adj` has one row per node. The guards say so where the tactic looks.
+      if h : 1 < ids.size then
+        let a := ids[0]
+        let b := ids[1]
+        if a != b then
+          if hn : a < nodes.size ∧ b < nodes.size ∧ a < adj.size ∧ b < adj.size then
+            have hna := hn.1
+            have hnb := hn.2.1
+            have haa := hn.2.2.1
+            have hab := hn.2.2.2
+            -- The FUSED node coordinates, not the way's raw ones.
+            let d := metersBetween nodes[a] nodes[b]
+            if d ≥ 1e-3 then
+              -- Dedupe: ways can overlap on a shared stretch.
+              if !(adj[a].any (fun e => e.1 == b)) then adj := adj.set a (adj[a].push (b, d)) haa
+              if hab' : b < adj.size then
+                if !(adj[b].any (fun e => e.1 == a)) then adj := adj.set b (adj[b].push (a, d)) hab'
   return { nodes, adj }
 
 /-- Where an endpoint splices into the network. -/
@@ -176,56 +185,65 @@ Dijkstra relaxes on STRICT improvement, so among equal-cost routes the winner
 is decided by which node the heap pops first. A different heap would pick a
 different — equally short but visibly different — path. -/
 
+/-- Node id and key travel together, so one bound covers both reads — the two
+parallel arrays this used to hold shared a length only by discipline. -/
 private structure Heap where
-  ids : Array Nat := #[]
-  keys : Array Float := #[]
+  items : Array (Nat × Float) := #[]
   deriving Inhabited
 
-private def Heap.size (h : Heap) : Nat := h.ids.size
+private def Heap.size (h : Heap) : Nat := h.items.size
 
 private def Heap.push (h : Heap) (id : Nat) (key : Float) : Heap := Id.run do
-  let mut ids := h.ids.push id
-  let mut keys := h.keys.push key
-  let mut i := ids.size - 1
+  let mut items := h.items.push (id, key)
+  let mut i := items.size - 1
   while i > 0 do
     let parent := (i - 1) / 2
-    if keys[parent]! ≤ keys[i]! then break
-    let ti := ids[i]!
-    let tp := ids[parent]!
-    ids := (ids.set! i tp).set! parent ti
-    let ki := keys[i]!
-    let kp := keys[parent]!
-    keys := (keys.set! i kp).set! parent ki
-    i := parent
-  return { ids := ids, keys := keys }
+    -- `i` starts at the last index and only moves to a parent, so it stays in
+    -- range; the guard is the form the tactic accepts.
+    if hi : i < items.size then
+      have hp : parent < items.size := by omega
+      let cur := items[i]
+      let par := items[parent]
+      -- The swap sits in the `else`, not after a `break`: a statement that can
+      -- exit rebinds every mutable variable after it in `do` notation, and a
+      -- bound on the old `items` no longer names the new one.
+      if par.2 ≤ cur.2 then
+        break
+      else
+        items := (items.set i par hi).set parent cur (by rw [Array.size_set]; exact hp)
+        i := parent
+    else break
+  return { items }
 
-private def Heap.pop (h : Heap) : Option (Nat × Float) × Heap := Id.run do
-  if h.ids.isEmpty then return (none, h)
-  let topId := h.ids[0]!
-  let topKey := h.keys[0]!
-  let lastId := h.ids[h.ids.size - 1]!
-  let lastKey := h.keys[h.keys.size - 1]!
-  let mut ids := h.ids.pop
-  let mut keys := h.keys.pop
-  if ids.size > 0 then
-    ids := ids.set! 0 lastId
-    keys := keys.set! 0 lastKey
+private def Heap.pop (h : Heap) : Option (Nat × Float) × Heap :=
+  if h0 : h.items.size = 0 then (none, h) else Id.run do
+  let top := h.items[0]'(by omega)
+  let last := h.items[h.items.size - 1]'(by omega)
+  let mut items := h.items.pop
+  if hs : 0 < items.size then
+    items := items.set 0 last hs
     let mut i := 0
     while true do
       let l := 2 * i + 1
       let r := l + 1
       let mut smallest := i
-      if l < ids.size && keys[l]! < keys[smallest]! then smallest := l
-      if r < ids.size && keys[r]! < keys[smallest]! then smallest := r
+      if hl : l < items.size then
+        if hs' : smallest < items.size then
+          if items[l].2 < items[smallest].2 then smallest := l
+      if hr : r < items.size then
+        if hs' : smallest < items.size then
+          if items[r].2 < items[smallest].2 then smallest := r
       if smallest == i then break
-      let ti := ids[i]!
-      let ts := ids[smallest]!
-      ids := (ids.set! i ts).set! smallest ti
-      let ki := keys[i]!
-      let ks := keys[smallest]!
-      keys := (keys.set! i ks).set! smallest ki
-      i := smallest
-  return (some (topId, topKey), { ids := ids, keys := keys })
+      if hi : i < items.size then
+        if hs2 : smallest < items.size then
+          let cur := items[i]
+          let sv := items[smallest]
+          items := (items.set i sv hi).set smallest cur (by rw [Array.size_set]; exact hs2)
+          i := smallest
+        else break
+      else break
+    return (some top, { items })
+  return (some top, { items })
 
 /-! ## Routing -/
 
@@ -269,8 +287,8 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
   let mut prev : Array Int := Array.replicate n (-1)
   let mut settled : Array Bool := Array.replicate n false
   let mut heap : Heap := {}
-  if from_.nodeA < n then dist := dist.set! from_.nodeA from_.toA
-  if from_.nodeB < n then dist := dist.set! from_.nodeB from_.toB
+  if hA : from_.nodeA < dist.size then dist := dist.set from_.nodeA from_.toA hA
+  if hB : from_.nodeB < dist.size then dist := dist.set from_.nodeB from_.toB hB
   heap := heap.push from_.nodeA from_.toA
   heap := heap.push from_.nodeB from_.toB
 
@@ -280,9 +298,13 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
     match top with
     | none => break
     | some (id, key) =>
-      if settled[id]! then
-        continue
-      settled := settled.set! id true
+      -- A node id is below `n` by construction (the heap only ever holds the
+      -- splice nodes and edge targets); one that is not is skipped rather than
+      -- read off the end.
+      if hid : id < settled.size ∧ id < graph.adj.size then
+      -- Nested rather than `continue`d — see the heap's note.
+      if !(settled[id]'hid.1) then
+      settled := settled.set id true hid.1
       -- Frontier past the bound: STOP searching, but keep what is already
       -- settled. Answering `none` here reported "no walkable path exists" for a
       -- destination whose route was already known and admissible — the far
@@ -295,17 +317,21 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
       -- K is popped has final distance ≥ K > maxRouteM, and the total check
       -- rejects it.
       if key > opts.maxRouteM then break
-      if settled[to.nodeA]! && settled[to.nodeB]! then break
-      for (toId, w) in graph.adj[id]! do
+      if (settled[to.nodeA]?.getD false) && (settled[to.nodeB]?.getD false) then break
+      for (toId, w) in graph.adj[id]'hid.2 do
         let nd := key + w
-        if nd < dist[toId]! then
-          dist := dist.set! toId nd
-          prev := prev.set! toId (Int.ofNat id)
-          heap := heap.push toId nd
+        if ht : toId < dist.size ∧ toId < prev.size then
+          if nd < dist[toId]'ht.1 then
+            dist := dist.set toId nd ht.1
+            prev := prev.set toId (Int.ofNat id) ht.2
+            heap := heap.push toId nd
 
   -- Total cost of arriving at `to`'s edge via either of its splice nodes.
-  let viaA := dist[to.nodeA]! + to.toA
-  let viaB := dist[to.nodeB]! + to.toB
+  -- An off-range splice node read `posInf` through the `!` default of 0.0?
+  -- No: the `!` default is 0, which would have made a phantom route of cost
+  -- `to.toA`. `getD posInf` is the honest reading — no node, no route.
+  let viaA := (dist[to.nodeA]?.getD posInf) + to.toA
+  let viaB := (dist[to.nodeB]?.getD posInf) + to.toB
   if !viaA.isFinite && !viaB.isFinite then return none
   let last := if viaA ≤ viaB then to.nodeA else to.nodeB
   let total := min viaA viaB
@@ -320,12 +346,16 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
     if chain.size > n then
       cycled := true
       break
-    cur := prev[cur.toNat]!
+    match prev[cur.toNat]? with
+    | some pv => cur := pv
+    | none => break
   if cycled then return none
 
   let mut path : Array Pt := #[from_.point]
   for id in chain.reverse do
-    path := path.push graph.nodes[id]!
+    match graph.nodes[id]? with
+    | some node => path := path.push node
+    | none => pure ()
   path := path.push to.point
 
   -- Drop degenerate duplicates (a snap point coinciding with a node).
