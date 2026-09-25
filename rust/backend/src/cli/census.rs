@@ -1,5 +1,5 @@
 //! Read-only censuses over the database: `freshness`, `tz-census`, `focus-
-//! audit`, `zones-census`, `column-fill`, `coverage`.
+//! audit`, `zones-census`, `column-fill`, `coverage`, `owntracks-log`.
 
 use anyhow::{Context, Result};
 use backend::db;
@@ -606,5 +606,57 @@ pub(crate) async fn coverage() -> Result<()> {
             (Some(lo), Some(hi)) => println!("{t:<22} {n:>10}  {lo} → {hi}"),
         }
     }
+    Ok(())
+}
+
+/// The OwnTracks proxy's decisions, newest last (#1730).
+///
+/// The same fields as the `owntracks …` log line, read from the table the
+/// route writes beside it, so the answer survives a rollout. ⚠ `CAST(... AS
+/// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
+/// INT decoding as a Rust integer fails on real rows in ways an empty table
+/// never shows.
+pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let rows = sqlx::query(
+        "SELECT CAST(ts AS CHAR) AS ts, CAST(fixes AS CHAR) AS fixes, \
+                CAST(local_hour AS CHAR) AS local_hour, CAST(phone_mode AS CHAR) AS phone_mode, \
+                prev_profile, profile, CAST(monitoring AS CHAR) AS monitoring, \
+                CAST(interval_s AS CHAR) AS interval_s, CAST(recorded_at AS CHAR) AS recorded_at \
+         FROM (SELECT * FROM owntracks_decisions WHERE user_id = ? ORDER BY id DESC LIMIT ?) d \
+         ORDER BY id ASC",
+    )
+    .bind(user)
+    .bind(limit)
+    .fetch_all(&pool)
+    .await
+    .context("reading owntracks_decisions")?;
+    pool.close().await;
+    let dash = |v: Option<String>| v.unwrap_or_else(|| "-".to_string());
+    println!(
+        "recorded_at          ts          hist hour phone prev->profile          monitoring interval"
+    );
+    for r in &rows {
+        println!(
+            "{:<20} {:<11} {:>4} {:>4} {:>5} {:<22} {:>10} {:>8}",
+            r.get::<String, _>("recorded_at"),
+            r.get::<String, _>("ts"),
+            r.get::<String, _>("fixes"),
+            dash(r.get::<Option<String>, _>("local_hour")),
+            dash(r.get::<Option<String>, _>("phone_mode")),
+            format!(
+                "{}->{}",
+                dash(r.get::<Option<String>, _>("prev_profile")),
+                r.get::<String, _>("profile")
+            ),
+            r.get::<String, _>("monitoring"),
+            dash(r.get::<Option<String>, _>("interval_s")),
+        );
+    }
+    eprintln!("{} row(s)", rows.len());
     Ok(())
 }

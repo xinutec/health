@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 80] = [
+    let migrations: [&str; 81] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -637,6 +637,27 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     last_seen   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (kind, fetch_key),
     INDEX idx_ofq_due (kind, attempts, last_seen)
+  )"#,
+        // ⚠ The OwnTracks proxy's decision, one row per POST (#1730). It used
+        // to live only in the pod's stdout, and a rollout deletes that: the
+        // three rollouts of 2026-09-23 erased the lines that would have shown
+        // why the phone was demoted that morning. No coordinates here — those
+        // are `motion_log`'s; this is what the phone REPORTED and what it was
+        // TOLD.
+        r#"CREATE TABLE IF NOT EXISTS owntracks_decisions (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id      VARCHAR(64) NOT NULL,
+    ts           INT UNSIGNED NOT NULL,
+    fixes        SMALLINT NOT NULL,
+    local_hour   TINYINT NULL,
+    phone_mode   TINYINT NULL,
+    prev_profile VARCHAR(16) NULL,
+    profile      VARCHAR(16) NOT NULL,
+    monitoring   TINYINT NOT NULL,
+    interval_s   INT NULL,
+    recorded_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    INDEX idx_od_user_ts (user_id, ts)
   )"#,
     ];
 

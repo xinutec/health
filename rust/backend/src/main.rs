@@ -438,6 +438,22 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
+        // #1730: the decision line survives the pod.
+        "owntracks-log" => {
+            let (user, limit) = match flags {
+                [user] => (user, 200),
+                [user, n] => (
+                    user,
+                    n.parse()
+                        .with_context(|| format!("limit {n:?} is not a number"))?,
+                ),
+                _ => {
+                    eprintln!("usage: backend owntracks-log <user> [limit]");
+                    std::process::exit(64);
+                }
+            };
+            owntracks_log(user, limit).await
+        }
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
         "column-fill" => column_fill().await,

@@ -163,6 +163,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "compare stored rows against a date",
     ),
     (
+        "owntracks-log",
+        "<user> [limit]",
+        "the OwnTracks proxy's decisions, the durable copy of its log line; READ-ONLY",
+    ),
+    (
         "inputs",
         "<user> <date> [tz]",
         "the classification inputs for one day",

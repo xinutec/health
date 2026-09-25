@@ -10,6 +10,11 @@
 //! how often it locates — hourly at night when still, every 30 s by day,
 //! faster in a vehicle — and must never take it out.
 //!
+//! Every decision is written to `owntracks_decisions` as well as logged
+//! (#1730): a rollout replaces the pod and its stdout with it, and the one
+//! line that says WHY the phone was told something is the line a diagnosis
+//! needs. `backend owntracks-log <user>` reads it back.
+//!
 //! ⚠ THE FORWARD HAPPENS FIRST, AND ITS FAILURE IS FATAL TO THE REQUEST. Losing
 //! a fix loses a piece of the timeline permanently; getting the config patch
 //! wrong costs battery until the next fix, seconds later. So the proxy refuses
@@ -293,7 +298,23 @@ pub async fn proxy(
     };
 
     // One line per POST, so the proxy is debuggable from `kubectl logs` without
-    // instrumenting the phone.
+    // instrumenting the phone — and one row, so it survives the pod.
+    let phone_mode = dev.history.last().and_then(|f| f.monitoring_mode);
+    persist_decision(
+        &st,
+        &device,
+        Decision {
+            ts: now_ts,
+            fixes: dev.history.len(),
+            local_hour,
+            phone_mode,
+            prev_profile: dev.last_profile.clone(),
+            profile: decision.profile.clone(),
+            monitoring: decision.monitoring,
+            interval_s: decision.move_mode_locator_interval,
+        },
+    )
+    .await;
     tracing::info!(
         "owntracks {}/{} hist={} hour={} {}->{} monitoring={} interval={}",
         &token[..token.len().min(6)],
@@ -333,6 +354,42 @@ pub async fn proxy(
         "configuration": Value::Object(configuration),
     }));
     Json(out).into_response()
+}
+
+/// What the phone reported and what it was told, for `owntracks_decisions`.
+struct Decision {
+    ts: i64,
+    fixes: usize,
+    local_hour: Option<u32>,
+    phone_mode: Option<i64>,
+    prev_profile: Option<String>,
+    profile: String,
+    monitoring: i64,
+    interval_s: Option<i64>,
+}
+
+/// Best-effort, like `persist_motion`: a database hiccup must not cost the
+/// answer to the phone. The row is the durable copy of the log line above it.
+async fn persist_decision(st: &AppState, device: &str, d: Decision) {
+    if let Err(e) = sqlx::query(
+        "INSERT INTO owntracks_decisions \
+         (user_id, ts, fixes, local_hour, phone_mode, prev_profile, profile, monitoring, interval_s) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(device)
+    .bind(d.ts)
+    .bind(i64::try_from(d.fixes).unwrap_or(i64::MAX))
+    .bind(d.local_hour.map(i64::from))
+    .bind(d.phone_mode)
+    .bind(d.prev_profile)
+    .bind(d.profile)
+    .bind(d.monitoring)
+    .bind(d.interval_s)
+    .execute(&st.pool)
+    .await
+    {
+        tracing::warn!(error = %e, "owntracks_decisions persist failed");
+    }
 }
 
 /// One motion witness row.
