@@ -75,25 +75,28 @@ signal this exists to catch is unchanged. -/
 def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.run do
   if path.size < 2 || fixes.size < 2 then return 0
   if path.size * (fixes.size - 1) > maxCorridorStallCap then return 0
-  let mut fArc : Array Float := #[0]
-  for hm_i : i in [1:fixes.size] do
-    have hb_i : i < fixes.size := hm_i.upper
-    fArc := fArc.push (fArc[i-1]! + metersBetween fixes[i - 1] fixes[i])
-  let mut pArc : Array Float := #[0]
-  for hm_i : i in [1:path.size] do
-    have hb_i : i < path.size := hm_i.upper
-    pArc := pArc.push (pArc[i-1]! + metersBetween path[i - 1] path[i])
+  -- ⚠ THE GRIDS ARE FLAT, `k * S + i`, and every index below is in range by
+  -- construction (`k < V`, `i < S`, a rank `< S`) — a product no index tactic can
+  -- bound, so the reads say their default instead: `0`, the neutral value a
+  -- `!` read would have produced, and `-1` (no parent) for `parent`. No day
+  -- can take those branches; the corpus is what says so.
+  -- Prefix arc lengths: `fArc[i]` is the corridor distance to fix `i`.
+  let fArc : Array Float := (fixes.zip (fixes.extract 1 fixes.size)).foldl
+    (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + metersBetween a b)
+  let pArc : Array Float := (path.zip (path.extract 1 path.size)).foldl
+    (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + metersBetween a b)
   let V := path.size
   let S := fixes.size - 1
   -- `dist` is each vertex's distance to each fix-segment; `arc` is where on the
   -- corridor that projection lands.
   let mut dist : Array Float := Array.replicate (V * S) 0
   let mut arc : Array Float := Array.replicate (V * S) 0
-  for k in [0:V] do
-    let v := path[k]!
-    for i in [0:S] do
-      let a := fixes[i]!
-      let b := fixes[i+1]!
+  for hk : k in [0:V] do
+    let v := path[k]'hk.upper
+    for hi : i in [0:S] do
+      have hs : i < fixes.size - 1 := hi.upper
+      let a := fixes[i]'(by omega)
+      let b := fixes[i+1]'(by omega)
       let cosLat := Float.cos (((a.lat + b.lat) / 2) * pi / 180)
       let bx := (b.lon - a.lon) * 111320.0 * cosLat
       let byM := (b.lat - a.lat) * 111320.0
@@ -106,31 +109,33 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
       let l2 := if l2raw == 0 || l2raw.isNaN then 1e-9 else l2raw
       let t := clamp01 ((px * bx + py * byM) / l2)
       dist := dist.set! (k * S + i) (hyp (px - t * bx) (py - t * byM))
-      arc := arc.set! (k * S + i) (fArc[i]! + t * (fArc[i+1]! - fArc[i]!))
+      let f0 := fArc[i]?.getD 0
+      arc := arc.set! (k * S + i) (f0 + t * (fArc[i+1]?.getD 0 - f0))
   -- DP over (vertex, fix-segment): cost = own projection distance + cheapest
   -- predecessor whose arc position is ≤ ours + 1 m (a backtrack tolerance).
   -- Prefix-min over predecessors sorted by arc makes each step O(S log S).
   let mut prevCost : Array Float := Array.replicate S 0
   let mut cost : Array Float := Array.replicate S 0
   let mut parent : Array Int := Array.replicate (V * S) (-1)
-  for i in [0:S] do prevCost := prevCost.set! i dist[i]!
+  for i in [0:S] do prevCost := prevCost.set! i (dist[i]?.getD 0)
   for k in [1:V] do
     let prevBase := (k - 1) * S
     -- Stable ascending by predecessor arc, matching V8's sort.
     let order := (((List.range S).mergeSort
-      (fun x y => arc[prevBase + x]! ≤ arc[prevBase + y]!))).toArray
+      (fun x y => arc[prevBase + x]?.getD 0 ≤ arc[prevBase + y]?.getD 0))).toArray
     let mut prefixMinCost : Array Float := Array.replicate S 0
     let mut prefixMinIdx : Array Nat := Array.replicate S 0
     for r in [0:S] do
-      let c := prevCost[order[r]!]!
-      if r == 0 || c < prefixMinCost[r-1]! then
+      let o := order[r]?.getD 0
+      let c := prevCost[o]?.getD 0
+      if r == 0 || c < prefixMinCost[r-1]?.getD 0 then
         prefixMinCost := prefixMinCost.set! r c
-        prefixMinIdx := prefixMinIdx.set! r order[r]!
+        prefixMinIdx := prefixMinIdx.set! r o
       else
-        prefixMinCost := prefixMinCost.set! r prefixMinCost[r-1]!
-        prefixMinIdx := prefixMinIdx.set! r prefixMinIdx[r-1]!
+        prefixMinCost := prefixMinCost.set! r (prefixMinCost[r-1]?.getD 0)
+        prefixMinIdx := prefixMinIdx.set! r (prefixMinIdx[r-1]?.getD 0)
     for i in [0:S] do
-      let sMax := arc[k * S + i]! + 1
+      let sMax := arc[k * S + i]?.getD 0 + 1
       -- Last rank whose predecessor arc ≤ sMax. Bounded binary search: 64
       -- halvings cover any S a day of fixes can produce, and the bound makes
       -- the loop total rather than partial.
@@ -140,7 +145,7 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
       for _ in [0:64] do
         if lo ≤ hi then
           let mid := (lo + hi) / 2
-          if arc[prevBase + order[mid.toNat]!]! ≤ sMax then
+          if arc[prevBase + order[mid.toNat]?.getD 0]?.getD 0 ≤ sMax then
             r := mid
             lo := mid + 1
           else
@@ -148,30 +153,30 @@ def maxCorridorStall (fixes path : Array Pt) (tolM : Float := 15) : Float := Id.
       if r < 0 then
         cost := cost.set! i posInf
       else
-        cost := cost.set! i (dist[k * S + i]! + prefixMinCost[r.toNat]!)
-        parent := parent.set! (k * S + i) (prefixMinIdx[r.toNat]! : Int)
+        cost := cost.set! i (dist[k * S + i]?.getD 0 + prefixMinCost[r.toNat]?.getD 0)
+        parent := parent.set! (k * S + i) (prefixMinIdx[r.toNat]?.getD 0 : Int)
     let swap := prevCost
     prevCost := cost
     cost := swap
   -- Backtrack the optimal assignment into per-vertex corridor positions.
   let mut bestI := 0
   for i in [1:S] do
-    if prevCost[i]! < prevCost[bestI]! then bestI := i
+    if prevCost[i]?.getD 0 < prevCost[bestI]?.getD 0 then bestI := i
   let mut cp : Array Float := Array.replicate V 0
   for kk in [0:V] do
     let k := V - 1 - kk
-    cp := cp.set! k arc[k * S + bestI]!
+    cp := cp.set! k (arc[k * S + bestI]?.getD 0)
     if k > 0 then
-      let p := parent[k * S + bestI]!
+      let p := parent[k * S + bestI]?.getD (-1)
       if p ≥ 0 then bestI := p.toNat
   -- The stall itself: the widest window of drawn length spanned while the
   -- corridor position advanced by no more than `tolM`.
   let mut j := 0
   let mut worst := 0.0
   for k in [0:V] do
-    while cp[k]! - cp[j]! > tolM do
+    while cp[k]?.getD 0 - cp[j]?.getD 0 > tolM do
       j := j + 1
-    worst := max worst (pArc[k]! - pArc[j]!)
+    worst := max worst (pArc[k]?.getD 0 - pArc[j]?.getD 0)
   return worst
 
 end Verified.Geo.CorridorStall
