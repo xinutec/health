@@ -233,9 +233,9 @@ private def growRun (points : Array Fix) (segments : Array Seg) :
     Nat → Nat → Array Nat → Nat × Array Nat
   | 0, j, absorbed => (j, absorbed)
   | remaining + 1, j, absorbed =>
-    if j ≥ segments.size then (j, absorbed)
+    if hj : j ≥ segments.size then (j, absorbed)
     else
-      let sj := segments[j]!
+      let sj := segments[j]'(by omega)
       -- A run may not grow across a turnaround: what follows is the ride BACK,
       -- not more of this ride. Read the split pass's tag rather than re-deriving
       -- it — the cut lands on the platform, and from there the approach and the
@@ -245,8 +245,8 @@ private def growRun (points : Array Fix) (segments : Array Seg) :
       -- Absorb a short stationary IFF a rail-like segment FOLLOWS it. Without
       -- that condition the trailing stationary at the end of a journey — the
       -- arrival home — would be swallowed too.
-      else if couldBeTrainPause points sj && j + 1 < segments.size
-          && isRailLike segments[j + 1]! then
+      else if couldBeTrainPause points sj
+          && (match segments[j + 1]? with | some n => isRailLike n | none => false) then
         growRun points segments remaining (j + 2) (absorbed.push j)
       else (j, absorbed)
 
@@ -255,8 +255,8 @@ private def scanRuns (points : Array Fix) (segments : Array Seg) :
     Nat → Nat → Array RailRun → Array RailRun
   | 0, _, acc => acc
   | remaining + 1, i, acc =>
-    if i ≥ segments.size then acc
-    else if !isRailLike segments[i]! then scanRuns points segments remaining (i + 1) acc
+    if hi : i ≥ segments.size then acc
+    else if !isRailLike (segments[i]'(by omega)) then scanRuns points segments remaining (i + 1) acc
     else
       let (j, absorbed) := growRun points segments segments.size (i + 1) #[]
       scanRuns points segments remaining j (acc.push ⟨i, j, absorbed⟩)
@@ -352,7 +352,7 @@ def lineUnderTheTrack (env : Env) (candidates : Array String) (points : Array Fi
   | none => return none
   | some top =>
     if top.2 == 0 then return none                                -- nothing discriminating
-    else if ranked.size > 1 && (ranked[1]!).2 > 0 then return none -- the track backs more than one
+    else if (match ranked[1]? with | some r1 => decide (r1.2 > 0) | none => false) then return none -- the track backs more than one
     else return some top.1
 
 /-! ## `resolveRailRunLabel` -/
@@ -374,8 +374,8 @@ or not it resolves. -/
 private def findStayCandidate (env : Env) (segments : Array Seg) (points : Array Fix) :
     Nat → TraceM (Option StayCandidate)
   | 0 => return none
-  | i + 1 =>
-    let s := segments[i]!
+  | i + 1 => do
+    let some s := segments[i]? | return none
     if s.mode == "stationary" then do
       let segPoints := samplesInWindowExclusiveEnd points s
       match segPoints[segPoints.size - 1]? with
@@ -458,7 +458,9 @@ private def sweepAlight (env : Env) (startRetry : Array String) (endCanon : Arra
           fallback rest
       else
         let pair := s!"{startStation} → {c.name}"
-        if retry.size == 1 then return s!"{pair} · {retry[0]!}"
+        if h1 : retry.size = 1 then
+          have h0 : 0 < retry.size := by omega
+          return s!"{pair} · {retry[0]}"
         else suffixFor env pair retry points boardTs alightTs startStation c.name railStops
 
 /-- The station-pair (and optional line) label for one rail run, or `none`.
@@ -468,8 +470,8 @@ failure degrades to a bare station pair rather than losing the annotation, while
 a station failure returns nothing at all. -/
 def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
     (points : Array Fix) (railStops : Array RailStopRelation) : TraceM (Option String) := do
-  let first := segments[run.from_]!
-  let last := segments[run.toExclusive - 1]!
+  let some first := segments[run.from_]? | return none
+  let some last := segments[run.toExclusive - 1]? | return none
   let slowBefore := findRunBoardingFix points first.startTs (hasRefinedKind first "turnaround-board")
   let after := findRunAlightFix points last.endTs (hasRefinedKind last "turnaround-alight")
   match slowBefore, after with
@@ -520,7 +522,9 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
         let startCanon := canonicalLines (← fetchLines env b.lookupLat b.lookupLon)
         let endCanon := canonicalLines (← fetchLines env after.lat after.lon)
         let inter := intersect startCanon endCanon
-        if inter.size == 1 then return some s!"{base} · {inter[0]!}"
+        if h1 : inter.size = 1 then
+          have h0 : 0 < inter.size := by omega
+          return some s!"{base} · {inter[0]}"
         else if inter.size > 1 then
           return some (← suffixFor env base inter points slowBefore.ts after.ts
             startStation bestEnd.name railStops)
@@ -585,8 +589,9 @@ private def collapse (segments : Array Seg) (run : RailRun) (label : Option Stri
   let last := segments[run.toExclusive - 1]!
   let railSegs := ((List.range (run.toExclusive - run.from_)).map (· + run.from_)).foldl
     (init := #[]) fun acc k =>
-      let s := segments[k]!
-      if s.mode != "stationary" then acc.push s else acc
+      match segments[k]? with
+      | some s => if s.mode != "stationary" then acc.push s else acc
+      | none => acc
   let weightOf (s : Seg) : Float := if s.pointCount == 0 then 1.0 else Float.ofInt s.pointCount
   let totalWeight :=
     let t := railSegs.foldl (fun a s => a + weightOf s) 0.0
@@ -603,7 +608,7 @@ private def collapse (segments : Array Seg) (run : RailRun) (label : Option Stri
     confidence := weighted (·.confidence) 2
     confidenceMargin := weighted (·.confidenceMargin) 2
     avgSpeed := weighted (·.avgSpeed) 1
-    maxSpeed := railSegs.foldl (fun a s => max a s.maxSpeed) (railSegs[0]!).maxSpeed
+    maxSpeed := railSegs.foldl (fun a s => max a s.maxSpeed) ((railSegs[0]?.map (·.maxSpeed)).getD 0)
     linearity := weighted (·.linearity) 2
     pointCount := railSegs.foldl (fun a s => a + s.pointCount) 0 }
 
@@ -634,16 +639,20 @@ private def applyFrom (segments : Array Seg) (runs : Array RailRun) (labels : Ar
     Nat → Nat → Array Seg → Array Seg
   | 0, _, acc => acc
   | remaining + 1, i, acc =>
-    if i ≥ segments.size then acc
+    if hi : i ≥ segments.size then acc
     else
-      match (List.range runs.size).find? (fun r => (runs[r]!).from_ == i) with
-      | none => applyFrom segments runs labels remaining (i + 1) (acc.push segments[i]!)
+      have hi' : i < segments.size := by omega
+      match (List.finRange runs.size).find? (fun r => runs[r].from_ == i) with
+      | none => applyFrom segments runs labels remaining (i + 1) (acc.push segments[i])
       | some r =>
-        let run := runs[r]!
-        let label := labels[r]!
+        let run := runs[r]
+        -- `labels` has one entry per run by construction; a run's label missing
+        -- (unreachable) leaves the run unlabelled rather than mislabelled.
+        let label := (labels[r.val]?).getD none
         let out :=
           if run.toExclusive - run.from_ == 1 && run.absorbedStationary.isEmpty then
-            upgradeSingle segments[run.from_]! label
+            -- `run.from_ == i` by the `find?` above.
+            upgradeSingle segments[i] label
           else collapse segments run label
         applyFrom segments runs labels remaining run.toExclusive (acc.push out)
 
