@@ -149,7 +149,11 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
         .velocity
         .get_or_compute(&key, now_ms, policy, || async {
             let _slot = fold_slot().await;
-            compute_with(st, &session.user_id, &date, tz, walk_match).await
+            let out = compute_with(st, &session.user_id, &date, tz, walk_match).await;
+            // The fold's working set — inputs, OSM answers, the Lean payload — is
+            // dropped by now; only the day's answer is still held. See `trim_heap`.
+            crate::fold::trim_heap();
+            out
         })
         .await?;
 

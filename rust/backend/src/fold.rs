@@ -130,6 +130,33 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
 ///
 /// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER (#1071): the
 /// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
+/// Give the heap a fold freed back to the kernel, and say what that moved.
+///
+/// ⚠ Measured from the node, 2026-09-25, with folds already running ONE AT A
+/// TIME: a fresh pod folded two heavy days and the backend kept 191–389 MiB of
+/// anonymous memory at idle — glibc's arenas hold what a fold freed — and the
+/// third fold was OOM-killed at 403 MiB backend plus a 100 MiB Lean worker
+/// (#1071). `malloc_trim(0)` walks every arena and returns the free top and
+/// every wholly free page; it costs milliseconds against a fold that costs
+/// seconds. Linux/glibc only: no pod runs anywhere else, and macOS's allocator
+/// has no equivalent — there this logs the same figure twice.
+pub fn trim_heap() {
+    let before = rss_mib();
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        // SAFETY: glibc's `malloc_trim` has no preconditions; it releases only
+        // memory the allocator already holds as free.
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+    let after = rss_mib();
+    tracing::info!(before_mib = before, after_mib = after, "fold heap trimmed");
+}
+
 /// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
 /// the macOS fallback.
 pub fn rss_mib() -> u64 {
