@@ -279,23 +279,36 @@ impl Worker {
         // plus a nested Lean scoring, which is what this spares; the ask is
         // still RECORDED, because how often the fold asks is a fact about the
         // fold, not about the cache.
-        let mut memo: std::collections::HashMap<Ask, Option<Value>> = Default::default();
+        //
+        // ⚠ MEMOISED AS THE REPLY LINE, NOT THE TREE. A walkable-roads answer
+        // over a London walk is 20,000 ways as a `Value` — every vertex a
+        // two-element array of bit strings, an order of magnitude over its
+        // text — and a day asks for several. Holding those trees for the whole
+        // call, plus the clone each insert took, WAS the fold's working set
+        // (#1071: 200 MiB a fold, the third fold OOM-killed the pod). The tree
+        // lives only until it is serialised; what the memo keeps is the line
+        // Lean is sent, shared, never copied.
+        let mut memo: std::collections::HashMap<Ask, (std::sync::Arc<str>, bool)> =
+            Default::default();
         loop {
             let line = self.next_line(timeout)?;
             if let Some(ask) = parse_ask(&line)? {
-                let answer = match memo.get(&ask) {
-                    Some(v) => v.clone(),
+                let (reply, answered) = match memo.get(&ask) {
+                    Some((r, ok)) => (std::sync::Arc::clone(r), *ok),
                     None => {
-                        let v = answerer
+                        let answer = answerer
                             .answer(&ask)
                             .with_context(|| format!("answering {}({})", ask.what, ask.key))?;
-                        memo.insert(ask.clone(), v.clone());
-                        v
+                        let answered = answer.is_some();
+                        let reply: std::sync::Arc<str> =
+                            serde_json::json!({ "answer": answer.unwrap_or(Value::Null) })
+                                .to_string()
+                                .into();
+                        memo.insert(ask.clone(), (std::sync::Arc::clone(&reply), answered));
+                        (reply, answered)
                     }
                 };
-                let answered = answer.is_some();
-                let reply = serde_json::json!({ "answer": answer.unwrap_or(Value::Null) });
-                self.send(&reply.to_string())?;
+                self.send(&reply)?;
                 asks.push((ask, answered));
                 continue;
             }
