@@ -118,12 +118,13 @@ Underpass legs match onto the surface streets, so "zero metres on the route"
 cannot separate a phantom pick from a blind route). What survived is in
 `WalkAnnotate.drawMatcher`: the report names a leg only when THIS cascade
 named it nothing. The full ledger is on #445. -/
-private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float) : NearbyWay :=
+private def pickBestHighway (highways : Array NearbyWay) (speedKmh : Float)
+    (h : highways.size > 0) : NearbyWay :=
   if speedKmh > 30 then
     match highways.find? (fun h => !(PEDESTRIAN_HIGHWAY_SUBTYPES.contains h.subtype)) with
     | some d => d
-    | none => highways[0]!
-  else highways[0]!
+    | none => highways[0]
+  else highways[0]
 
 /-- Name a walk after the street its pavement belongs to.
 
@@ -175,20 +176,19 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
   let hwyMinM := if majorHighways.isEmpty then posInf else minDist majorHighways
   let haveDistanceInfo := railMinM.isFinite || hwyMinM.isFinite
   let preferRail := if haveDistanceInfo then railMinM ≤ hwyMinM else majorHighways.isEmpty
-  if railways.size > 0 && speedKmh > 30 && preferRail then
-    let rail := railways[0]!
+  let railPick := if speedKmh > 30 && preferRail then railways[0]? else none
+  if let some rail := railPick then
     { mode := "train", confidence := "high", reason := s!"on {rail.subtype}", wayName := rail.name }
   else
   -- The classifier said "train" with no rail in any sample: almost certainly
   -- motorway cruise control, whose linearity and steady pace match the profile.
   if originalMode == "train" && railways.isEmpty then
-    if majorHighways.size > 0 then
-      let hw := majorHighways[0]!
+    if let some hw := majorHighways[0]? then
       { mode := "driving", confidence := "high", reason := s!"on {hw.subtype}", wayName := hw.name }
     else { mode := "driving", confidence := "medium", reason := "no rail evidence" }
   else
-  if highways.size > 0 then
-    let hw := pickBestHighway highways speedKmh
+  if hh : highways.size > 0 then
+    let hw := pickBestHighway highways speedKmh hh
     -- The SAME distance bar applies whether or not the pick is named. The bar is
     -- about the DISTANCE, not about how the name was obtained, so a named pick
     -- past it is exactly as wrong — and without this the code is stricter about
@@ -215,8 +215,8 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
   else
   -- A navigable waterway, which excludes drains, ditches and streams.
   let navigable := waterways.filter fun w => ["river", "canal", "fairway"].contains w.subtype
-  if navigable.size > 0 && speedKmh > 3 && speedKmh < 50 then
-    let ww := navigable[0]!
+  let waterPick := if speedKmh > 3 && speedKmh < 50 then navigable[0]? else none
+  if let some ww := waterPick then
     { mode := "boat", confidence := "medium", reason := s!"on {ww.subtype}", wayName := ww.name }
   else
     { mode := originalMode, confidence := "low", reason := "no OSM context" }
@@ -240,8 +240,8 @@ only its value is replaced. Load-bearing — the deduped ways are handed to the
 cascade in this order, and `pickBestHighway` reads the FIRST driveable one. -/
 private def upsert (m : Array (String × NearbyWay)) (k : String) (v : NearbyWay)
     : Array (String × NearbyWay) :=
-  match m.findIdx? (fun p => p.1 == k) with
-  | some i => if dist v < dist m[i]!.2 then m.set! i (k, v) else m
+  match m.findFinIdx? (fun p => p.1 == k) with
+  | some i => if dist v < dist m[i].2 then m.set i (k, v) else m
   | none => m.push (k, v)
 
 /-- The union of every sample's ways, deduped on `(type, subtype, name)` keeping

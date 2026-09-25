@@ -191,15 +191,15 @@ private def spliceOne (seg : Seg) (points : Array Fix) (steps : List StepPoint)
   else match (seg.wayName.filter (· != "")).map (·.splitOn " → ") with
   | some [boardName, alightName] =>
     let inLeg := samplesInWindow points seg.startTs seg.endTs
-    if inLeg.size < 2 then #[seg]
+    if hl : inLeg.size < 2 then #[seg]
     else
       -- Burst first: it is free (pure step data) and most train legs have none.
       -- Those make NO lookup calls at all.
       match findInterchangeBurst steps seg.startTs seg.endTs with
       | none => #[seg]
       | some burst =>
-        let boardFix := inLeg[0]!
-        let alightFix := inLeg[inLeg.size - 1]!
+        let boardFix := inLeg[0]'(by omega)
+        let alightFix := inLeg[inLeg.size - 1]'(by omega)
         let linesA := linesAtPoint boardFix.lat boardFix.lon ENDPOINT_LINES_RADIUS_M
         let linesB := linesAtPoint alightFix.lat alightFix.lon ENDPOINT_LINES_RADIUS_M
         -- A shared line means the triple is valid — not ours to split. No line
@@ -262,10 +262,12 @@ def TAIL_RIDE_RESUMES_KMH : Float := 25
 /-- Leave a real ride behind; below this the leg is something else mislabelled. -/
 def TAIL_MIN_REMAINING_RIDE_S : Int := 3 * 60
 
-private def tailStepKmh (fixes : Array Fix) (i : Nat) : Float :=
-  let dt := fixes[i]!.ts - fixes[i-1]!.ts
+private def tailStepKmh (fixes : Array Fix) (i : Nat) (hi : i < fixes.size) : Float :=
+  let b := fixes[i]
+  let a := fixes[i-1]'(by omega)
+  let dt := b.ts - a.ts
   if dt > 0 then
-    haversineMeters fixes[i-1]!.lat fixes[i-1]!.lon fixes[i]!.lat fixes[i]!.lon / Float.ofInt dt * 3.6
+    haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6
   else 0
 
 /-- Trim a train leg drawn past its alight, and re-home the trimmed time.
@@ -294,12 +296,12 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
       if inLeg.size < 3 then return out.push seg
       let mut resumes := false
       for hm_i : i in [1:inLeg.size] do
-        if inLeg[i].ts > burst.endTs && tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then
+        if inLeg[i].ts > burst.endTs && tailStepKmh inLeg i hm_i.upper ≥ TAIL_RIDE_RESUMES_KMH then
           resumes := true
       if resumes then return out.push seg
       let mut alightTs := seg.startTs
       for hm_i : i in [1:inLeg.size] do
-        if tailStepKmh inLeg i ≥ TAIL_RIDE_RESUMES_KMH then alightTs := inLeg[i].ts
+        if tailStepKmh inLeg i hm_i.upper ≥ TAIL_RIDE_RESUMES_KMH then alightTs := inLeg[i].ts
       if alightTs - seg.startTs < TAIL_MIN_REMAINING_RIDE_S || alightTs ≥ seg.endTs then
         return out.push seg
       let trimmedS := seg.endTs - alightTs
@@ -326,10 +328,14 @@ def trimRideTailAtWalk (segments : Array Seg) (points : Array Fix)
         let d := haversineMeters tail[i - 1].lat tail[i - 1].lon tail[i].lat tail[i].lon
         path := path + d
         if dt > 0 then speeds := speeds.push (d / Float.ofInt dt * 3.6)
-      let net : Float := if tail.size ≥ 2 then
-        haversineMeters tail[0]!.lat tail[0]!.lon tail[tail.size-1]!.lat tail[tail.size-1]!.lon else 0
+      let net : Float := if h2 : tail.size ≥ 2 then
+        let t0 := tail[0]'(by omega)
+        let tl := tail[tail.size-1]'(by omega)
+        haversineMeters t0.lat t0.lon tl.lat tl.lon else 0
       let avg : Float := if speeds.isEmpty then 0 else (speeds.foldl (· + ·) 0) / Float.ofNat speeds.size
-      let mx : Float := if speeds.isEmpty then 0 else speeds.foldl max speeds[0]!
+      let mx : Float := match speeds[0]? with
+        | some s0 => speeds.foldl max s0
+        | none => 0
       let lin : Float := if path > 0 then min (net / path) 1.0 else 0
       let walk := { seg with startTs := alightTs, mode := "walking", refinedMode := none, wayName := none, pointCount := Int.ofNat tail.size, avgSpeed := jsRound (avg * 10) / 10, maxSpeed := jsRound (mx * 10) / 10, linearity := jsRound (lin * 100) / 100, refinedReason := some walkWhy }
       return (out.push ride).push walk

@@ -112,29 +112,35 @@ A zero-length track segment is SKIPPED ENTIRELY — the TS `continue` jumps the
 `acc += segLen` too, which is harmless only because the length it skips is zero.
 -/
 def resamplePolyline (track : Array Pt) (stepM : Float) (maxSamples : Nat := MAX_SAMPLES) :
-    Array Pt := Id.run do
-  if track.isEmpty then return #[]
-  if track.size == 1 then return #[⟨track[0]!.lat, track[0]!.lon⟩]
+    Array Pt :=
+  if h0 : track.size = 0 then #[] else Id.run do
+  have hne : 0 < track.size := by omega
+  let first := track[0]
+  if track.size == 1 then return #[⟨first.lat, first.lon⟩]
 
   let mut total : Float := 0
-  for i in [1 : track.size] do
-    total := total + metersBetween track[i - 1]! track[i]!
+  for hm_i : i in [1 : track.size] do
+    have hb_i : i < track.size := hm_i.upper
+    total := total + metersBetween track[i - 1] track[i]
   let step := max stepM (total / (Float.ofNat maxSamples - 1))
 
-  let mut out : Array Pt := #[⟨track[0]!.lat, track[0]!.lon⟩]
+  let mut out : Array Pt := #[⟨first.lat, first.lon⟩]
   let mut acc : Float := 0
   let mut nextAt := step
-  for i in [1 : track.size] do
-    let a := track[i - 1]!
-    let b := track[i]!
+  for hm_i : i in [1 : track.size] do
+    have hb_i : i < track.size := hm_i.upper
+    let a := track[i - 1]
+    let b := track[i]
     let segLen := metersBetween a b
     if segLen > 0 then
       let (out', nextAt') := sampleRun a b segLen acc step maxSamples nextAt out
       out := out'
       nextAt := nextAt'
       acc := acc + segLen
-  let last := track[track.size - 1]!
-  if metersBetween out[out.size - 1]! last > 1 then
+  let last := track[track.size - 1]
+  -- `out` starts at `first` and only grows, so its back is always there.
+  let tailPt := out.back?.getD ⟨first.lat, first.lon⟩
+  if metersBetween tailPt last > 1 then
     out := out.push ⟨last.lat, last.lon⟩
   return out
 
@@ -221,11 +227,11 @@ private def approx (a b : Float) : Bool := Float.abs (a - b) < 1e-9
 private def p (la lo : Float) : Pt := ⟨la, lo⟩
 private def approxPt (a b : Pt) : Bool := approx a.lat b.lat && approx a.lon b.lon
 private def approxPts (a b : Array Pt) : Bool :=
-  a.size == b.size && (Array.range a.size).all fun i => approxPt a[i]! b[i]!
+  a.size == b.size && (a.zip b).all fun (x, y) => approxPt x y
 private def approxRead (a b : Read) : Bool :=
   approx a.lat b.lat && approx a.lon b.lon && approx a.radiusM b.radiusM
 private def approxReads (a b : Array Read) : Bool :=
-  a.size == b.size && (Array.range a.size).all fun i => approxRead a[i]! b[i]!
+  a.size == b.size && (a.zip b).all fun (x, y) => approxRead x y
 private def r (la lo rad : Float) : Read := ⟨la, lo, rad⟩
 
 /-! ### `resamplePolyline` -/

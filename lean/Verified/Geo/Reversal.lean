@@ -219,9 +219,10 @@ so a boundary exactly between two fixes keeps the EARLIER one — which is what 
 first-wins fold here reproduces.
 -/
 def reversesAt (points : Array PointF) (runStartTs boundaryTs lookAheadTs : Int) : Bool :=
-  if points.isEmpty then false
-  else
-    let pivot := points.foldl (init := points[0]!) fun best p =>
+  match points[0]? with
+  | none => false
+  | some p0 =>
+    let pivot := points.foldl (init := p0) fun best p =>
       if (p.ts - boundaryTs).natAbs < (best.ts - boundaryTs).natAbs then p else best
     reversesAtPoint points ⟨pivot.ts, pivot.lat, pivot.lon⟩ runStartTs lookAheadTs
 
@@ -248,15 +249,15 @@ def turnaroundOf (seg : Seg) (points : Array PointF) : Option PointF :=
   if effectiveMode seg == "stationary" || seg.maxSpeed < REVERSAL_MIN_PEAK_KMH then none
   else
     let fixes := samplesInWindow points seg.startTs seg.endTs
-    if fixes.size < 4 then none
+    if hf : fixes.size < 4 then none
     else
-      let origin := fixes[0]!
-      let (far, maxD) := fixes.foldl (init := (fixes[0]!, (0 : Float))) fun (bestP, bestD) p =>
+      let origin := fixes[0]'(by omega)
+      let (far, maxD) := fixes.foldl (init := (origin, (0 : Float))) fun (bestP, bestD) p =>
         let d := haversineMeters p.lat p.lon origin.lat origin.lon
         if d > bestD then (p, d) else (bestP, bestD)
       if maxD < REVERSAL_MIN_SPAN_M then none
       else
-        let last := fixes[fixes.size - 1]!
+        let last := fixes[fixes.size - 1]'(by omega)
         let endD := haversineMeters last.lat last.lon origin.lat origin.lon
         if endD ≥ maxD * REVERSAL_RETURN_FRACTION then none
         else if far.ts - seg.startTs < REVERSAL_MIN_HALF_S
@@ -281,11 +282,12 @@ structure Stats where
 array, which is why the TS returns zeros first. -/
 def statsOver (points : Array PointF) (startTs endTs : Int) : Stats :=
   let fixes := samplesInWindow points startTs endTs
-  if fixes.isEmpty then ⟨0, 0, 0⟩
-  else
+  match fixes[0]? with
+  | none => ⟨0, 0, 0⟩
+  | some f0 =>
     let n := Float.ofNat fixes.size
     let sum := fixes.foldl (init := (0 : Float)) (· + ·.speedKmh)
-    let peak := fixes.foldl (init := fixes[0]!.speedKmh) fun m p => max m p.speedKmh
+    let peak := fixes.foldl (init := f0.speedKmh) fun m p => max m p.speedKmh
     ⟨Int.ofNat fixes.size, jsRound (sum / n * 10) / 10, jsRound (peak * 10) / 10⟩
 
 /-- Moved to `Verified.Geo.SegmentMerge`, beside the record whose field it

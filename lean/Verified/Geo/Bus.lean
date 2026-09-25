@@ -142,8 +142,9 @@ def pointToSegmentMeters (p a b : LatLon) : Float :=
     as it is within `passM` (mirrors the TS `break`). -/
 private def nearestOnTrace (trace : Array LatLon) (stop : LatLon) (passM : Float) : Float := Id.run do
   let mut nearest := INF
-  for i in [0 : trace.size - 1] do
-    nearest := min nearest (pointToSegmentMeters stop trace[i]! trace[i + 1]!)
+  for hm_i : i in [0 : trace.size - 1] do
+    have hb_i : i + 1 < trace.size := by have hu := hm_i.upper; dsimp only at hu; omega
+    nearest := min nearest (pointToSegmentMeters stop trace[i] trace[i + 1])
     if decide (nearest ≤ passM) then break
   return nearest
 
@@ -303,16 +304,25 @@ def detectBoardingWait (fixes : List Fix) (segStartTs : Int) : Option (Int × Fl
   -- fixes after the vehicle actually moved off. Only pairs within the trim
   -- window may be skipped — beyond it, fast motion means a rolling approach.
   let trimFloor := segStartTs - BOARDING_PULLAWAY_TRIM_S
+  -- The pair ending at `i`; a cursor that has walked off the array (it starts
+  -- at the last index and only decrements) reads as no pair.
+  let pairAt (i : Nat) : Option (Fix × Fix) :=
+    match pre[i - 1]?, pre[i]? with
+    | some a, some b => some (a, b)
+    | _, _ => none
   let mut last := pre.size - 1
-  while last > 0 && decide (pre[last]!.ts ≥ trimFloor)
-        && decide (pairSpeedKmh pre[last - 1]! pre[last]! ≥ DWELL_MAX_SPEED_KMH) do
+  while last > 0 && (pairAt last).any (fun (a, b) =>
+        decide (b.ts ≥ trimFloor) && decide (pairSpeedKmh a b ≥ DWELL_MAX_SPEED_KMH)) do
     last := last - 1
   let mut fromIdx := last
-  while fromIdx > 0 && decide (pairSpeedKmh pre[fromIdx - 1]! pre[fromIdx]! < DWELL_MAX_SPEED_KMH) do
+  while fromIdx > 0 && (pairAt fromIdx).any (fun (a, b) =>
+        decide (pairSpeedKmh a b < DWELL_MAX_SPEED_KMH)) do
     fromIdx := fromIdx - 1
   let still := pre.extract fromIdx (last + 1)
   if still.size < 2 then return none
-  let durationS := still[still.size - 1]!.ts - still[0]!.ts
+  let some stillFirst := still[0]? | return none
+  let some stillLast := still.back? | return none
+  let durationS := stillLast.ts - stillFirst.ts
   if decide (durationS < BOARDING_WAIT_MIN_S) then return none
   let (lat, lon) := centroid still
   return some (durationS, lat, lon)
@@ -329,7 +339,10 @@ def detectVehicleDwells (fixes : List Fix) (startTs endTs : Int) : List VehicleD
   let mut dwells : Array VehicleDwell := #[]
   let mut runStart : Option Nat := none
   for i in [1 : inLeg.size + 1] do
-    let slow := i < inLeg.size && decide (pairSpeedKmh inLeg[i - 1]! inLeg[i]! < DWELL_MAX_SPEED_KMH)
+    -- At `i = inLeg.size` there is no pair, which closes an open run.
+    let slow := match inLeg[i - 1]?, inLeg[i]? with
+      | some a, some b => decide (pairSpeedKmh a b < DWELL_MAX_SPEED_KMH)
+      | _, _ => false
     if slow then
       if runStart.isNone then runStart := some (i - 1)
     else
@@ -337,10 +350,14 @@ def detectVehicleDwells (fixes : List Fix) (startTs endTs : Int) : List VehicleD
       | none => pure ()
       | some rs =>
         let run := inLeg.extract rs i
-        let durationS := run[run.size - 1]!.ts - run[0]!.ts
-        if decide (durationS ≥ DWELL_MIN_S) then
-          let (lat, lon) := centroid run
-          dwells := dwells.push ⟨run[0]!.ts, run[run.size - 1]!.ts, durationS, lat, lon⟩
+        -- `rs < i`, so the run has at least one fix.
+        match run[0]?, run.back? with
+        | some r0, some rl =>
+          let durationS := rl.ts - r0.ts
+          if decide (durationS ≥ DWELL_MIN_S) then
+            let (lat, lon) := centroid run
+            dwells := dwells.push ⟨r0.ts, rl.ts, durationS, lat, lon⟩
+        | _, _ => pure ()
         runStart := none
   return dwells.toList
 

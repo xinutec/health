@@ -125,15 +125,20 @@ private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.is
 /-- `emission(s, obs[t])` — the full composed emission, with `isCovered` resolved
     from the coverage map at the minute's ts. -/
 def emitAt (c : ModelContext) (t s : Nat) : Float :=
-  let o := c.obs[t]!
-  EmissionFull.emissionLogProbFull c.model c.connGraph c.modeledLines c.placeCoords
-    c.reacquireRobust (coveredAt c o.ts) c.continuity c.states[s]! o
+  -- A minute or state off the model is impossible, hence `−∞` — the tensors
+  -- are built over exactly `obs.size × states.size`, so it is never asked.
+  match c.obs[t]?, c.states[s]? with
+  | some o, some st =>
+    EmissionFull.emissionLogProbFull c.model c.connGraph c.modeledLines c.placeCoords
+      c.reacquireRobust (coveredAt c o.ts) c.continuity st o
+  | _, _ => negInf
 
 /-- `entry(s, obs[t])` — base entry prior + train-generator entry, with the
     hour profile / visit weight / coverage verdict resolved for the state. -/
 def entryAt (c : ModelContext) (t s : Nat) : Float :=
-  let o := c.obs[t]!
-  let st := c.states[s]!
+  match c.obs[t]?, c.states[s]? with
+  | none, _ | _, none => negInf
+  | some o, some st =>
   let covered := coveredAt c o.ts
   let lineValid := match st.lineName with
     | some l => (TrainCandidates.linesAt c.coverage o.ts).contains l
@@ -143,12 +148,17 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
 
 /-- `initial(s)` — uniform 0. -/
-def initAt (c : ModelContext) (s : Nat) : Float := Assembly.initialLogProbFull c.states[s]!
+def initAt (c : ModelContext) (s : Nat) : Float :=
+  match c.states[s]? with
+  | some st => Assembly.initialLogProbFull st
+  | none => negInf
 
 /-- `duration(s, d, segEnd)` — train-hop-aware duration prior + segment evidence,
     with `covered` resolved at the segment's end minute. -/
 def durAt (c : ModelContext) (s d e : Nat) : Float :=
-  let st := c.states[s]!
+  match c.states[s]? with
+  | none => negInf
+  | some st =>
   let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
   Assembly.durationLogProbFull c.obs c.stepPref st d e covered
     (baselineFit st.mode) (Duration.minDurationByMode st.mode) (Duration.minDurationByMode .train)
@@ -157,12 +167,14 @@ def durAt (c : ModelContext) (s d e : Nat) : Float :=
 /-- `transition(a, b, obs[t])` — static prior + chain context (with the `−∞`
     short-circuit), chain penalty resolved over the model + place coords. -/
 def transAt (c : ModelContext) (a b t : Nat) : Float :=
-  let src := c.states[a]!
-  let dst := c.states[b]!
+  match c.states[a]?, c.states[b]? with
+  | none, _ | _, none => negInf
+  | some src, some dst =>
   let chainVal :=
     if c.chainOn then
-      let o := c.obs[t]!
-      RouteModel.chainContext c.edgesByLine c.placeCoords src dst o (coveredAt c o.ts)
+      match c.obs[t]? with
+      | some o => RouteModel.chainContext c.edgesByLine c.placeCoords src dst o (coveredAt c o.ts)
+      | none => negInf
     else 0.0
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
   Assembly.transitionLogProbFull placeNear c.states.toList c.selfLoop src dst c.chainOn chainVal

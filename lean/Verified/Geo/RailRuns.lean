@@ -153,43 +153,45 @@ def findBoardingPlatformFix (points : Array Fix) (startTs : Int) : Option Fix :=
       fun a b => a.ts ≤ b.ts).toArray
   if windowFixes.isEmpty then return none
   -- Phase zero: the earliest train-speed fix in the window.
-  let mut firstFastIdx : Option Nat := none
+  let mut firstFastIdx : Option (Fin windowFixes.size) := none
   for hm_i : i in [0:windowFixes.size] do
     if firstFastIdx.isNone && windowFixes[i].speedKmh ≥ PLATFORM_TRAIN_KMH then
-      firstFastIdx := some i
+      firstFastIdx := some ⟨i, hm_i.upper⟩
   match firstFastIdx with
   | none => return none
   | some fastIdx =>
+    let fast := windowFixes[fastIdx]
     let isStill (p : Fix) : Bool := p.speedKmh < BOARDING_STILL_KMH
-    -- Phase one: walk back to the anchor, past the accelerating fixes.
-    let mut anchorIdx : Option Nat := none
-    let mut k := fastIdx
+    -- Phase one: walk back to the anchor, past the accelerating fixes. The
+    -- cursor only ever steps down from `fastIdx`, so every read lands; the
+    -- fix is carried with its index so no read is repeated later.
+    let mut anchor : Option (Nat × Fix) := none
+    let mut k := fastIdx.val
     while k > 0 do
       let i := k - 1
-      let p := windowFixes[i]!
-      if windowFixes[fastIdx]!.ts - p.ts > PLATFORM_PATTERN_WALKBACK_S then break
+      let some p := windowFixes[i]? | break
+      if fast.ts - p.ts > PLATFORM_PATTERN_WALKBACK_S then break
       if isStill p then
-        anchorIdx := some i
+        anchor := some (i, p)
         break
       k := i
-    match anchorIdx with
+    match anchor with
     | none => return none
-    | some aIdx =>
+    | some (aIdx, anchorFix) =>
       -- Phase two: extend back through the cluster.
-      let anchor := windowFixes[aIdx]!
-      let mut earliestIdx := aIdx
-      let mut prevChainTs := anchor.ts
+      let mut earliest := anchorFix
+      let mut prevChainTs := anchorFix.ts
       let mut j := aIdx
       while j > 0 do
         let i := j - 1
-        let p := windowFixes[i]!
+        let some p := windowFixes[i]? | break
         if !isStill p then break
         if prevChainTs - p.ts > PLATFORM_MAX_GAP_S then break
-        if haversineMeters p.lat p.lon anchor.lat anchor.lon > PLATFORM_MAX_SPREAD_M then break
-        earliestIdx := i
+        if haversineMeters p.lat p.lon anchorFix.lat anchorFix.lon > PLATFORM_MAX_SPREAD_M then break
+        earliest := p
         prevChainTs := p.ts
         j := i
-      return some windowFixes[earliestIdx]!
+      return some earliest
 
 /-! ## `findRunAlightFix` -/
 
@@ -214,7 +216,7 @@ pass decided this boundary from the whole leg's geometry; take it.
 carried in the key rather than relying on `List.mergeSort` being left-biased, so
 the order is total and matching V8's stable sort is a fact about the comparator. -/
 def nearestByTs (points : Array Fix) (t : Int) : Option Fix :=
-  let keyed := (Array.range points.size).map fun i => (points[i]!, i)
+  let keyed := points.mapIdx fun i p => (p, i)
   ((keyed.toList.mergeSort fun a b =>
     let da := (a.1.ts - t).natAbs
     let db := (b.1.ts - t).natAbs

@@ -131,7 +131,6 @@ Insertion order is the arrival order, which is distance order from
 `queryPoints`; the final sort is by distance again, so the map's iteration order
 only shows through on exact ties. -/
 def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := Id.run do
-  let mut names : Array String := #[]
   let mut best : Array NearbyStation := #[]
   for s in scored do
     match s.row.name with
@@ -140,18 +139,17 @@ def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := I
       let cand : NearbyStation :=
         { name := nm, subtype := deriveStationSubtype s.row, distanceM := s.distanceM
           lat := s.row.lat, lon := s.row.lon }
-      match names.findIdx? (· == nm) with
+      match best.findFinIdx? (·.name == nm) with
       | none =>
-        names := names.push nm
         best := best.push cand
       | some i =>
-        let cur := best[i]!
+        let cur := best[i]
         let curIsEntrance := cur.subtype == "subway_entrance"
         let candIsEntrance := cand.subtype == "subway_entrance"
         if curIsEntrance && !candIsEntrance then
-          best := best.set! i cand
+          best := best.set i cand
         else if curIsEntrance == candIsEntrance && cand.distanceM < cur.distanceM then
-          best := best.set! i cand
+          best := best.set i cand
   return (best.toList.mergeSort fun a b => a.distanceM ≤ b.distanceM).toArray
 
 /-- `nearbyStations` end to end, over a pushed row table. -/
@@ -359,26 +357,24 @@ def segDistDeg (px py ax ay bx by_ : Float) : Float :=
 /-- `ST_Distance(linestring, point)` — the minimum over the way's segments. A
 one-vertex way degenerates to the distance to that vertex. -/
 def lineDistDeg (coords : Array (Float × Float)) (lat lon : Float) : Float :=
-  if coords.isEmpty then (1.0 / 0.0)
-  else if coords.size == 1 then
-    let c := coords[0]!
-    Float.sqrt ((lon - c.2) * (lon - c.2) + (lat - c.1) * (lat - c.1))
-  else
-    (Array.range (coords.size - 1)).foldl (init := (1.0 / 0.0)) fun best i =>
-      let a := coords[i]!
-      let b := coords[i + 1]!
-      min best (segDistDeg lon lat a.2 a.1 b.2 b.1)
+  match coords[0]? with
+  | none => (1.0 / 0.0)
+  | some c =>
+    if coords.size == 1 then
+      Float.sqrt ((lon - c.2) * (lon - c.2) + (lat - c.1) * (lat - c.1))
+    else
+      (coords.zip (coords.extract 1 coords.size)).foldl (init := (1.0 / 0.0)) fun best (a, b) =>
+        min best (segDistDeg lon lat a.2 a.1 b.2 b.1)
 
 /-- `MBRContains(linestring, point)` — boundary-inclusive, and true for a
 zero-extent bbox the point lies on. -/
 def mbrContainsPoint (coords : Array (Float × Float)) (lat lon : Float) : Bool :=
-  if coords.isEmpty then false
-  else
-    let lats := coords.map (·.1)
-    let lons := coords.map (·.2)
-    let mn := fun (a : Array Float) => a.foldl min a[0]!
-    let mx := fun (a : Array Float) => a.foldl max a[0]!
-    lat ≥ mn lats && lat ≤ mx lats && lon ≥ mn lons && lon ≤ mx lons
+  match coords[0]? with
+  | none => false
+  | some c0 =>
+    let mn (f : Float × Float → Float) : Float := coords.foldl (fun m p => min m (f p)) (f c0)
+    let mx (f : Float × Float → Float) : Float := coords.foldl (fun m p => max m (f p)) (f c0)
+    lat ≥ mn (·.1) && lat ≤ mx (·.1) && lon ≥ mn (·.2) && lon ≤ mx (·.2)
 
 /-- A line with its distance and enclosure resolved. -/
 structure ScoredLine where
