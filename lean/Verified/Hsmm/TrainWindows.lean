@@ -75,9 +75,10 @@ def boundaryFix (obs : Array ObsRow) (idx : Int) (side : Side) : Option (Float �
   | some r => some r
   | none =>
     let clamped := (max 0 (min ((obs.size : Int) - 1) idx)).toNat
-    let book := match side with
-      | .back => obs[clamped]!.prevGpsFix
-      | .fwd => obs[clamped]!.nextGpsFix
+    -- An empty tensor has no bookend to read.
+    let book := (obs[clamped]?).bind fun row => match side with
+      | .back => row.prevGpsFix
+      | .fwd => row.nextGpsFix
     book.map (fun f => (f.lat, f.lon, f.ts))
 
 /-- Whether a sub-floor run carries the one-stop-hop reacquisition signature:
@@ -132,7 +133,8 @@ def windowIfValid (obs : Array ObsRow) (start endN : Nat) : Option (Nat × Nat) 
   let mut firstObs : Option (Float × Float × Nat) := none
   let mut lastObs : Option (Float × Float × Nat) := none
   for t in [start:endN + 1] do
-    match obs[t]!.gps with
+    -- A minute off the tensor has no fix.
+    match (obs[t]?).bind (·.gps) with
     | none => pure ()
     | some g =>
       if g.speedKmh > peak then peak := g.speedKmh
@@ -149,7 +151,7 @@ def windowIfValid (obs : Array ObsRow) (start endN : Nat) : Option (Nat × Nat) 
       let hrs := ((lt : Nat).toFloat - (ft : Nat).toFloat) / 60
       implicitKmh := distKm / max hrs (1.0 / 3600)
   | none, _ =>
-    match obs[start]!.prevGpsFix, obs[endN]!.nextGpsFix with
+    match (obs[start]?).bind (·.prevGpsFix), (obs[endN]?).bind (·.nextGpsFix) with
     | some sp, some en =>
       if en.ts > sp.ts then
         let distKm := haversineMeters sp.lat sp.lon en.lat en.lon / 1000
@@ -188,21 +190,22 @@ def findTrainWindows (obs : Array ObsRow) : Array (Nat × Nat) := Id.run do
   let T := obs.size
   if T == 0 then return #[]
   let mut tag : Array Tag := (List.replicate T Tag.unknown).toArray
-  for t in [0:T] do
-    match obs[t]!.gps with
+  for ht : t in [0:T] do
+    match obs[t]'ht.upper |>.gps with
     | none => pure ()
     | some g => tag := tag.set! t (if g.speedKmh ≥ V_TRAIN_AVG_KMH then Tag.train else Tag.notTrain)
   -- Bracketed-displacement pass: a gap between observed fixes implying train
   -- velocity marks the whole gap (and its boundaries) as train.
   let mut lastObs : Int := -1
-  for t in [0:T] do
-    match obs[t]!.gps with
+  for ht : t in [0:T] do
+    match obs[t]'ht.upper |>.gps with
     | none => pure ()
     | some right =>
       if lastObs == -1 || lastObs == (t : Int) - 1 then
         lastObs := (t : Int)
       else
-        match obs[lastObs.toNat]!.gps with
+        -- `lastObs` was a visited `t`, so it is on the tensor; off it, restart.
+        match (obs[lastObs.toNat]?).bind (·.gps) with
         | none => lastObs := (t : Int)
         | some left =>
           let elapsedH := (t.toFloat - lastObs.toNat.toFloat) / 60

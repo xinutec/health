@@ -79,18 +79,21 @@ def gpsContextAt (obs : Array ObsRow) (t : Int) : Option (Float × Float) :=
   if decide (t < 0) || decide (t ≥ (obs.size : Int)) then none
   else
     let tn := t.toNat
-    match obs[tn]!.gps with
+    match obs[tn]? with
+    | none => none
+    | some row =>
+    match row.gps with
     | some g => some (g.lat, g.lon)
     | none => match scanOutward obs tn 1 with
       | some r => some r
-      | none => match obs[tn]!.prevGpsFix with
+      | none => match row.prevGpsFix with
         | some f => some (f.lat, f.lon)
-        | none => obs[tn]!.nextGpsFix.map (fun f => (f.lat, f.lon))
+        | none => row.nextGpsFix.map (fun f => (f.lat, f.lon))
 
 /-- Lines with an edge within `STATION_LINE_RADIUS_M` of a node. -/
 def stationLineMemberships (g : StationGraph) (lat lon : Float) : List String :=
   (edgesNearIdx g.model lat lon STATION_LINE_RADIUS_M).foldl (fun acc i =>
-    g.model.edges[i]!.lineMemberships.foldl appendDistinct acc) []
+    g.model.edges[i].lineMemberships.foldl appendDistinct acc) []
 
 /-- Station nodes within `radiusM` of `(lat, lon)` (only nodes with a station
     name), paired with their distance. -/
@@ -106,7 +109,7 @@ def stationsNear (g : StationGraph) (lat lon radiusM : Float) : List (StationNod
     for starting/ending the connectivity BFS. -/
 def stationFootprintNodes (g : StationGraph) (station : StationNode) : List String :=
   (edgesNearIdx g.model station.lat station.lon STATION_FOOTPRINT_M).foldl (fun acc i =>
-    let e := g.model.edges[i]!
+    let e := g.model.edges[i]
     let acc := match e.geometry.head? with
       | some p => if decide (haversineMeters station.lat station.lon p.lat p.lon ≤ STATION_FOOTPRINT_M)
                   then appendDistinct acc e.startNode else acc
@@ -179,8 +182,8 @@ def buildCoverage (candidates : List Candidate) (obs : Array ObsRow) : Std.HashM
   let mut cov : Std.HashMap Int (List String) := {}
   for c in candidates do
     for m in [c.startMin:c.endMin + 1] do
-      if m < obs.size then
-        let ts := obs[m]!.ts
+      if hm : m < obs.size then
+        let ts := obs[m].ts
         cov := cov.insert ts (appendDistinct (cov.getD ts []) c.line)
   return cov
 

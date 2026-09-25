@@ -72,16 +72,17 @@ def expandBbox (b : Bbox) (marginM : Float) : Bbox :=
 /-- The bbox enclosing `pts`, expanded by `marginM` metres. `none` on no input —
 the mirrors treat that as "nothing to do" rather than as an error. -/
 def bboxFromFixes (pts : Array Pt) (marginM : Float := 1500.0) : Option Bbox :=
-  if pts.isEmpty then none
-  else
+  match pts[0]? with
+  | none => none
+  | some p0 =>
     let b := pts.foldl
       (fun (acc : Bbox) p =>
         { minLat := min acc.minLat p.lat
         , maxLat := max acc.maxLat p.lat
         , minLon := min acc.minLon p.lon
         , maxLon := max acc.maxLon p.lon })
-      { minLat := pts[0]!.lat, maxLat := pts[0]!.lat
-      , minLon := pts[0]!.lon, maxLon := pts[0]!.lon }
+      { minLat := p0.lat, maxLat := p0.lat
+      , minLon := p0.lon, maxLon := p0.lon }
     some (expandBbox b marginM)
 
 /-- Great-circle distance in km. -/
@@ -108,25 +109,28 @@ where
   go (par : Array Nat) (r : Nat) : Nat → Nat × Array Nat
     | 0 => (r, par)
     | fuel + 1 =>
-      let p := par[r]!
-      if p == r then (r, par)
-      else
-        let gp := par[p]!
-        go (par.set! r gp) gp fuel
+      -- Every entry is an index into the forest, so a cursor off it is not
+      -- constructible; were it, it would be its own root.
+      match par[r]? with
+      | none => (r, par)
+      | some p =>
+        if p == r then (r, par)
+        else match par[p]? with
+          | none => (p, par)
+          | some gp => go (par.set! r gp) gp fuel
 
 /-- Group points into metropolitan regions: a connected component under
 "within `maxGapKm` of each other". O(n²), which is nothing for the few hundred
 focus places a user has.
 
-⚠ Returns INDEX groups, not points. The mirrors carry payloads alongside the
-coordinates and re-associate by index; returning points would force every caller
-to match on floats. -/
-def clusterIntoRegionIndices (pts : Array Pt) (maxGapKm : Float) : Array (Array Nat) := Id.run do
-  let n := pts.size
-  let mut parent : Array Nat := Array.ofFn (n := n) (fun i => i.val)
-  for i in [0:n] do
-    for j in [i+1:n] do
-      if decide (haversineKm pts[i]! pts[j]! ≤ maxGapKm) then
+⚠ Returns INDEX groups, not points — typed to `pts`. The mirrors carry payloads
+alongside the coordinates and re-associate by index; returning points would force
+every caller to match on floats. -/
+def clusterIntoRegionIndices (pts : Array Pt) (maxGapKm : Float) : Array (Array (Fin pts.size)) := Id.run do
+  let mut parent : Array Nat := Array.ofFn (n := pts.size) (fun i => i.val)
+  for hi : i in [0:pts.size] do
+    for hj : j in [i+1:pts.size] do
+      if decide (haversineKm (pts[i]'hi.upper) (pts[j]'hj.upper) ≤ maxGapKm) then
         let (ri, p1) := findRoot parent i
         let (rj, p2) := findRoot p1 j
         -- ⚠ i's root points at j's root, never the other way. The TypeScript
@@ -134,21 +138,18 @@ def clusterIntoRegionIndices (pts : Array Pt) (maxGapKm : Float) : Array (Array 
         -- ends up as the root and therefore the order groups come back in.
         parent := p2.set! ri rj
   -- Groups in order of each root's FIRST appearance, members ascending.
-  let mut roots : Array Nat := #[]
-  let mut groups : Array (Array Nat) := #[]
-  for i in [0:n] do
+  let mut groups : Array (Nat × Array (Fin pts.size)) := #[]
+  for hi : i in [0:pts.size] do
     let (r, p) := findRoot parent i
     parent := p
-    match roots.findIdx? (· == r) with
-    | some k => groups := groups.set! k (groups[k]!.push i)
-    | none =>
-      roots := roots.push r
-      groups := groups.push #[i]
-  return groups
+    match groups.findFinIdx? (·.1 == r) with
+    | some k => groups := groups.set k (r, groups[k].2.push ⟨i, hi.upper⟩)
+    | none => groups := groups.push (r, #[⟨i, hi.upper⟩])
+  return groups.map (·.2)
 
 /-- The largest region, keeping the FIRST on a tie — `reduce((a, b) => b.length >
 a.length ? b : a)` is a strict `>`, so equal sizes keep the earlier one. -/
-def largestRegion (groups : Array (Array Nat)) : Option (Array Nat) :=
+def largestRegion {α : Type} (groups : Array (Array α)) : Option (Array α) :=
   groups.foldl (fun acc g =>
     match acc with
     | none => some g
@@ -163,7 +164,7 @@ def homeRegionBbox (pts : Array Pt) (maxGapKm : Float) (marginM : Float := 1500.
     : Option Bbox := do
   let groups := clusterIntoRegionIndices pts maxGapKm
   let home ← largestRegion groups
-  bboxFromFixes (home.map (pts[·]!)) marginM
+  bboxFromFixes (home.map (pts[·])) marginM
 
 /-- Split a bbox into a grid of cells no larger than `maxCellDeg` a side. Cells
 tile the box exactly, with no overlap; a box already smaller than a cell comes
@@ -207,23 +208,23 @@ private def SFO : Pt := { lat := 37.7749, lon := -122.4194 }
 
 -- Three metros, 80 km gap: three regions, in first-appearance order.
 #guard (clusterIntoRegionIndices #[LDN, AMS, SFO] 80.0).size == 3
-#guard (clusterIntoRegionIndices #[LDN, AMS, SFO] 80.0) == #[#[0], #[1], #[2]]
+#guard (clusterIntoRegionIndices #[LDN, AMS, SFO] 80.0).map (·.map Fin.val) == #[#[0], #[1], #[2]]
 
 -- The two London points join; Amsterdam does not. The London group keeps index
 -- order, and it comes first because index 0 is in it.
-#guard (clusterIntoRegionIndices #[LDN, AMS, LDN2] 80.0) == #[#[0, 2], #[1]]
+#guard (clusterIntoRegionIndices #[LDN, AMS, LDN2] 80.0).map (·.map Fin.val) == #[#[0, 2], #[1]]
 
 -- ⚠ The home metro is the LARGEST region, not the first. Amsterdam is index 0
 -- here and still loses to the two London points.
-#guard (largestRegion (clusterIntoRegionIndices #[AMS, LDN, LDN2] 80.0)) == some #[1, 2]
+#guard (largestRegion (clusterIntoRegionIndices #[AMS, LDN, LDN2] 80.0)).map (·.map Fin.val) == some #[1, 2]
 
 -- ⚠ FIRST WINS ON A TIE — `b.length > a.length` is strict. Swapping to `>=`
 -- would mirror Amsterdam instead of London here, and nothing else would change.
 #guard (largestRegion #[#[0, 1], #[2, 3]]) == some #[0, 1]
 
 -- A gap wide enough to swallow the North Sea makes one region of everything.
-#guard (clusterIntoRegionIndices #[LDN, AMS] 400.0) == #[#[0, 1]]
-#guard (clusterIntoRegionIndices #[LDN, AMS] 100.0) == #[#[0], #[1]]
+#guard (clusterIntoRegionIndices #[LDN, AMS] 400.0).map (·.map Fin.val) == #[#[0, 1]]
+#guard (clusterIntoRegionIndices #[LDN, AMS] 100.0).map (·.map Fin.val) == #[#[0], #[1]]
 
 -- London to Amsterdam is ~357 km; the haversine must agree to within a km.
 #guard decide (Float.abs (haversineKm LDN AMS - 357.0) < 5.0)

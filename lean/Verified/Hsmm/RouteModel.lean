@@ -48,7 +48,8 @@ structure RouteEdge where
 
 structure RouteGraphModel where
   edges : Array RouteEdge
-  cellIndex : Std.HashMap (Int × Int) (Array Nat)
+  /-- Edge indices per cell, typed to `edges` so a lookup needs no bound check. -/
+  cellIndex : Std.HashMap (Int × Int) (Array (Fin edges.size))
   nodeEdges : Std.HashMap String (List String)
 
 private def appendDistinct (xs : List String) (x : String) : List String :=
@@ -62,21 +63,21 @@ def edgeCells (e : RouteEdge) : List (Int × Int) :=
 
 /-- Build the spatial (cell) + adjacency (node→edges) indices from parsed edges. -/
 def buildRouteGraphModel (edges : Array RouteEdge) : RouteGraphModel :=
-  let cellIndex := (List.range edges.size).foldl (fun idx i =>
-    (edgeCells edges[i]!).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i)) idx) {}
-  let nodeEdges := (List.range edges.size).foldl (fun ne i =>
-    let e := edges[i]!
+  let cellIndex := (List.finRange edges.size).foldl (fun idx i =>
+    (edgeCells edges[i]).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i)) idx) {}
+  let nodeEdges := (List.finRange edges.size).foldl (fun ne i =>
+    let e := edges[i]
     let ne := ne.insert e.startNode (appendDistinct (ne.getD e.startNode []) e.id)
     ne.insert e.endNode (appendDistinct (ne.getD e.endNode []) e.id)) {}
   { edges, cellIndex, nodeEdges }
 
 /-- Edge indices whose geometry passes within `radiusM` of `(lat, lon)` (grid
     scan, dedup, first-seen order — same as `RouteGraph.edgesNear`). -/
-def edgesNearIdx (g : RouteGraphModel) (lat lon radiusM : Float) : Array Nat :=
-  ((neighborCells lat lon).foldl (fun (st : Array Nat × Array Nat) c =>
-    (g.cellIndex.getD c #[]).foldl (fun (st : Array Nat × Array Nat) i =>
+def edgesNearIdx (g : RouteGraphModel) (lat lon radiusM : Float) : Array (Fin g.edges.size) :=
+  ((neighborCells lat lon).foldl (fun (st : Array (Fin g.edges.size) × Array (Fin g.edges.size)) c =>
+    (g.cellIndex.getD c #[]).foldl (fun (st : Array (Fin g.edges.size) × Array (Fin g.edges.size)) i =>
       if st.2.contains i then st
-      else if pointToPolylineMeters lat lon g.edges[i]!.geometry ≤ radiusM then (st.1.push i, st.2.push i)
+      else if pointToPolylineMeters lat lon g.edges[i].geometry ≤ radiusM then (st.1.push i, st.2.push i)
       else (st.1, st.2.push i)) st) (#[], #[])).1
 
 /-- Lines present near a fix, and which of them have an underground edge there. -/
@@ -86,7 +87,7 @@ structure FixLineEvidence where
 
 def computeFixLineEvidence (g : RouteGraphModel) (lat lon : Float) : FixLineEvidence :=
   (edgesNearIdx g lat lon EDGE_PROXIMITY_M).foldl (fun ev i =>
-    let e := g.edges[i]!
+    let e := g.edges[i]
     e.lineMemberships.foldl (fun ev line =>
       { linesPresent := appendDistinct ev.linesPresent line,
         linesUnderground := if e.underground then appendDistinct ev.linesUnderground line
@@ -96,15 +97,13 @@ def computeFixLineEvidence (g : RouteGraphModel) (lat lon : Float) : FixLineEvid
 /-- Ids of edges near a fix that carry `line` (BFS start/goal sets). -/
 def edgesNearOnLine (g : RouteGraphModel) (line : String) (lat lon : Float) : List String :=
   (edgesNearIdx g lat lon EDGE_PROXIMITY_M).toList.filterMap (fun i =>
-    let e := g.edges[i]!
+    let e := g.edges[i]
     if e.lineMemberships.contains line then some e.id else none)
 
 /-- The BFS view of the model (edge endpoints + memberships + node adjacency). -/
 def toConnGraph (g : RouteGraphModel) : RouteConnectivity.Graph :=
-  let endpoints := (List.range g.edges.size).foldl (fun m i =>
-    let e := g.edges[i]!; m.insert e.id [e.startNode, e.endNode]) {}
-  let lines := (List.range g.edges.size).foldl (fun m i =>
-    let e := g.edges[i]!; m.insert e.id e.lineMemberships) {}
+  let endpoints := g.edges.foldl (fun m e => m.insert e.id [e.startNode, e.endNode]) {}
+  let lines := g.edges.foldl (fun m e => m.insert e.id e.lineMemberships) {}
   { endpoints, lines, nodeEdges := g.nodeEdges }
 
 /-- `buildRouteRailEvidence`'s per-state verdict, with the route-graph facts
@@ -189,7 +188,7 @@ def linesInGraph (g : RouteGraphModel) : List String :=
 /-- Lines with at least one edge within `radiusM` of the fix. -/
 def linesWithinRadius (g : RouteGraphModel) (lat lon radiusM : Float) : List String :=
   (edgesNearIdx g lat lon radiusM).foldl (fun acc i =>
-    g.edges[i]!.lineMemberships.foldl appendDistinct acc) []
+    g.edges[i].lineMemberships.foldl appendDistinct acc) []
 
 /-- `buildLineProximityFactor`'s per-state verdict, with `lineModeled`/`lineNear`
     computed in Lean. `modeledLines` is `linesInGraph g` (computed once). -/

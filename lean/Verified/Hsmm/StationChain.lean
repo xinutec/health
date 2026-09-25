@@ -85,10 +85,7 @@ def mkChainGraph (edges : Array RouteEdge) (nodes : Array ChainNode) : ChainGrap
     all the caller tests, so the result order is not read. -/
 def stationLineMemberships (g : ChainGraph) (n : ChainNode) : List String :=
   (edgesNearIdx g.model n.lat n.lon STATION_LINE_RADIUS_M).foldl (fun acc i =>
-    -- `edgesNearIdx` answers edge indices; one off the end contributes nothing.
-    match g.model.edges[i]? with
-    | none => acc
-    | some e => e.lineMemberships.foldl (fun acc l =>
+    g.model.edges[i].lineMemberships.foldl (fun acc l =>
       if acc.contains l then acc else acc ++ [l]) acc) []
 
 /-- Station nodes within `radiusM`, paired with their distance, IN GRAPH ORDER.
@@ -107,9 +104,7 @@ def stationsNear (g : ChainGraph) (lat lon radiusM : Float) : Array (ChainNode Ã
     membership is read. -/
 def stationFootprintNodes (g : ChainGraph) (station : ChainNode) : Std.HashSet String :=
   (edgesNearIdx g.model station.lat station.lon STATION_FOOTPRINT_M).foldl (fun acc i =>
-    match g.model.edges[i]? with
-    | none => acc
-    | some e =>
+      let e := g.model.edges[i]
       let acc := match e.geometry.head? with
         | some p => if haversineMeters station.lat station.lon p.lat p.lon â‰¤ STATION_FOOTPRINT_M
                     then acc.insert e.startNode else acc
