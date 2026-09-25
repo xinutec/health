@@ -15,7 +15,7 @@ export type PointKind = EpisodeGeometry["kind"] | "live";
  *  draws itself and which has no backend episode). `Record<…>` rather than
  *  `Record<string, …>` so a new kind is a build error here instead of a popup
  *  that shows the raw slug — the kinds themselves are held to the backend union
- *  by scripts/check-frontend-unions.mjs (#337). */
+ *  by rust/backend/tests/frontend_unions.rs (#337). */
 export const SOURCE_LABEL: Record<PointKind, string> = {
 	raw: "raw GPS fix",
 	matched: "map-matched to road/path",

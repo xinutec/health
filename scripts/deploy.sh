@@ -118,26 +118,28 @@ trap cleanup EXIT
 # The Angular 22 frontend build needs Node >= 24.15; the flake devShell
 # pins it (24.18 at the current lock). Sourced per-command via `nix
 # develop` so it layers over — not shadows — the shebang's gh. HEALTH_DEVSHELL=1
-# tells any nested health script (pnpm run golden -> golden.sh) it is already
+# tells any nested health script it is already
 # inside the devShell, so it skips its own re-exec.
 DEV="nix develop $HEALTH_DIR -c env HEALTH_DEVSHELL=1"
-# Eight replay gates died with the TypeScript backend (#975); three came back in
-# Rust against Lean and run in the full table. The rest is coverage LOST, not
-# waived — #1048 holds it — and a deploy says so at the start and at the end,
-# because a check that goes quiet is worse than one that goes red.
+# The replay gates that compared two arms died with the TypeScript backend
+# (#975) and have no successor by construction. The single-arm ones came back
+# in Rust against Lean and run in the full table. What is gone is coverage
+# LOST, not waived — #1048 holds it — and a deploy says so at the start and at
+# the end, because a check that goes quiet is worse than one that goes red.
 dead_gates_banner() {
 	cat >&2 <<-BANNER
 
 	================================================================
-	  ⚠  FIVE GATES NO LONGER EXIST — coverage lost, not skipped
+	  ⚠  REPLAY GATES WITH NO SUCCESSOR — coverage lost, not skipped
 	================================================================
-	    golden with tenants ON    golden-hsmm
-	    day gate                  decoder scoreboard
+	    day gate (Lean vs the TypeScript it ported)
 	    focus gate                compare-match
+	    golden with tenants ON
 	================================================================
 	  deleted with the TS backend, #975 (06346bd, 2026-08-26)
 	  held at health #1048 — do not treat this deploy as gated by them
-	  THREE came back 2026-08-31/09-01 and run in the full gate (gate.json).
+	  walks, truth, journeys, day, the decoder scoreboard and the
+	  re-decode run in the full gate (gate.json).
 	================================================================
 
 	BANNER
@@ -242,9 +244,10 @@ ssh root@isis.xinutec.org \
 if [[ -n "${DEAD_GATES:-}" ]]; then
 	cat >&2 <<-BANNER
 
-	⚠ FOUR GATES DID NOT RUN AND NO LONGER EXIST — #975 deleted them with the
-	   TypeScript backend: the golden corpus (both passes), the day gate and
-	   golden-hsmm. This deploy was NOT checked against them. Held at #1048.
+	⚠ THE TWO-ARM REPLAY GATES NO LONGER EXIST — #975 deleted them with the
+	   TypeScript backend: the day gate, the focus gate, compare-match and the
+	   golden pass with tenants on. This deploy was NOT checked against them.
+	   Held at #1048.
 	BANNER
 fi
 if [[ -n "${SKIPPED_GOLDEN:-}" ]]; then

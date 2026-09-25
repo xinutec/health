@@ -11,17 +11,23 @@ browser chrome. Build & install steps: [`android/README.md`](android/README.md).
 ## Layout
 
 ```
-src/                            backend (Hono + Kysely + MariaDB)
+rust/                           the backend: `bin/backend` (axum + sqlx), its
+                                tests, and the corpus gates
+lean/                           the verified core: every rule the timeline
+                                depends on, served by `verified_cli`
 frontend/                       Angular SPA (Material)
-tests/                          backend tests (vitest)
-scripts/                        utility scripts (deploy.sh, golden.sh, prod-db.sh)
+tests/golden/                   the replay corpora (gitignored: real days)
+scripts/                        deploy.sh, prod-db.sh, the gate helpers
 docs/                           cross-cutting docs and proposals
 ├── ideas.md                    Small future-considerations: heuristic
 │                               refinements and UX tweaks that aren't
 │                               substantial enough for a full proposal
 ├── design/                     System-as-shipped: current architecture
 │   ├── overview.md               Top-level architecture diagram + module map
-│   └── timezone.md               Per-row tz handling rules and rationale
+│   ├── lean-and-rust.md          What goes in Lean, what goes in Rust, the seam
+│   ├── probabilistic-principles.md   The rules behind every factor and constraint
+│   ├── episode-geometry.md, rail-snap.md, timezone.md, google-health.md, …
+│   └── privacy-in-tests-and-commits.md
 └── proposals/                  Design proposals (active work)
     ├── README.md                 Index + status of each proposal
     ├── decoder-roadmap.md        The forward plan: one joint decoder
@@ -39,17 +45,16 @@ log (see `docs/proposals/README.md`).
 | `pnpm run verify:deploy` | The FULL gate: `gate.json`, every row — the commit table plus the 42-day corpus replay, the mode-reachability pair and the sandboxed CLI build. `deploy.sh` runs this once; nothing reaches the pod without it. `scripts/commit-table.sh` names the rows that differ. |
 | `cargo nextest run` | The backend test suite, from `rust/`. (`pnpm test` is gone with the TypeScript backend.) |
 | `bin/backend <sub>` | The CLI. Run it with no subcommand for the list — `check`, `sync`, `serve`, `coverage`, `freshness`, `zones-census`, `decode-day`, the `compare-*` pairs, and the rest. |
-| `cargo test -p backend --release --test corpus_gate --test decoder_scoreboard --test hsmm_decode_corpus` | The replay gates, from `rust/`. `corpus_gate` replays each golden day ONCE and grades it four ways — walks, truth, journeys, day (#1359). They replay the gitignored `tests/golden/` corpora against committed floors a human blessed from the TypeScript: 238 walks, 312 confirmed ground-truth rows, 80 of 92 journeys, 11 days of decoder-scoreboard counts, and the same 11 days RE-DECODED from raw materials against their blessed segments. Each ANNOUNCES A SKIP when the corpus is absent rather than passing quietly. ⚠ `pnpm run compare-gps-outliers` used to be listed here as "the one replay gate left"; it had not run since 2026-08-26 (#1301). |
+| `cargo test -p backend --release --test corpus_gate --test decoder_scoreboard --test hsmm_decode_corpus` | The replay gates, from `rust/`. `corpus_gate` replays each golden day ONCE and grades it four ways — walks, truth, journeys, day (#1359). They replay the gitignored `tests/golden/` corpora against committed floors blessed from Lean's own output (`DAY_BLESS`, `WALK_BLESS`, `TRUTH_BLESS`, `FEASIBILITY_BLESS`): the walks, the confirmed ground-truth rows, the journeys, the decoder scoreboard, and the same days RE-DECODED from raw materials against their blessed segments. Read the counts off the baselines, not from here. Each ANNOUNCES A SKIP when the corpus is absent rather than passing quietly. |
 | `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
 | `bash scripts/deploy.sh -m "msg"` | Full deploy: the full gate once → commit (the hook is skipped: its table is a subset of what just ran) → push this repo → wait for CI (capped at 30 min; a build is 20-23) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
 
-⚠ **`pnpm run golden`, `walk-gate`, `score-decoder`, `focus-gate`, `day-gate`,
-`golden-hsmm` and `compare-match` ARE GONE.** All eight replay gates ran
-`node dist/cli/*.js` against the TypeScript backend, deleted 2026-08-26 (#975);
-the scripts themselves went on 2026-08-29 (#1225). That coverage is LOST, not
-waived — health #1048 holds what replaces it. Do not read `pnpm run verify` as
-covering it: `verify` is the static gate, and the replay gates were the ones that
-replayed real days.
+⚠ The TypeScript-era replay scripts went with the backend (#975, #1225).
+What they measured is carried by the corpus gates above, except the ones
+that had two arms to compare — the day gate (Lean against the TypeScript it
+ported), the focus gate and `compare-match` — which have no successor by
+construction; health #1048 holds that. `pnpm run verify` is the static gate;
+the corpus gates are what replay real days.
 
 ## Deployment
 
@@ -73,10 +78,10 @@ ssh root@isis.xinutec.org \
 
 ## Linters
 
-- **Biome** — backend (`src/`, `tests/`). Format + general TS lint.
+- **rustfmt + clippy** — `rust/`, as gate rows.
 - **ESLint + angular-eslint** — `frontend/src/`. Angular semantics
-  (inline-template ban, template a11y, etc.) that Biome can't see.
-  Both run as part of `pnpm run verify`.
+  (inline-template ban, template a11y, etc.).
+  All run as part of `pnpm run verify`.
 
 ## Documentation conventions
 

@@ -19,12 +19,12 @@
  * now fails the frontend build until it is given an icon, a colour and a name —
  * which is exactly the reminder we want.
  *
- * Mirrors the backend `DayStateMode` (src/sleep/day-state.ts) = `TransportMode`
+ * Mirrors the backend `DayStateMode` (lean/Verified/Geo/DayState.lean) = `TransportMode`
  * plus `sleeping` (from the Fitbit windows, not GPS) and `bus` (which rides on a
  * segment as `vehicleKind`, not as a mode).
  *
- * The mirror is enforced: scripts/check-frontend-unions.mjs flattens both unions
- * and fails the gate when they disagree, so a mode added server-side cannot
+ * The mirror is enforced: rust/backend/tests/frontend_unions.rs flattens both
+ * unions and fails the gate when they disagree, so a mode added server-side cannot
  * reach production with the UI silently unaware of it (#337).
  */
 
