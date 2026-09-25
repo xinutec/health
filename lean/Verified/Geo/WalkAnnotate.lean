@@ -222,8 +222,9 @@ def metersBetween (aLat aLon bLat bLon : Float) : Float :=
 /-- Total drawn length (m) of a polyline. -/
 def pathLenM (pts : Array TPt) : Float := Id.run do
   let mut total := 0.0
-  for i in [1 : pts.size] do
-    total := total + metersBetween pts[i - 1]!.lat pts[i - 1]!.lon pts[i]!.lat pts[i]!.lon
+  for hm_i : i in [1 : pts.size] do
+    have hb_i : i < pts.size := hm_i.upper
+    total := total + metersBetween pts[i - 1].lat pts[i - 1].lon pts[i].lat pts[i].lon
   return total
 
 open Verified.JsNum (jsRound)
@@ -312,8 +313,7 @@ def evidenceFor (segments : Array Seg) (si : Nat) (stepsWalked : Option Float) :
 or any vertex moved. Position only — the TS compares `lat`/`lon` and not `ts`. -/
 private def changed (before after : Array TPt) : Bool :=
   after.size != before.size
-    || (List.range after.size).any fun k =>
-         after[k]!.lat != before[k]!.lat || after[k]!.lon != before[k]!.lon
+    || (after.zip before).any fun (a, b) => a.lat != b.lat || a.lon != b.lon
 
 /-- One leg's drawn line under the reconstruction-primary arm. -/
 private def drawRecon (env : Env) (ways : Ways) (buildings : Array Ring)
@@ -525,8 +525,8 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
   -- share is the wall METRIC, so the segment carries whether the read answered
   -- (`walkBuildingsMeasured`, #1501/#1678) and the referee scores walls only
   -- where it did.
-  let buildingsOf := (Array.range prep.size).map fun i =>
-    match prep[i]!, waysOf[i]! with
+  let buildingsOf := (prep.zip waysOf).map fun (p?, w?) =>
+    match p?, w? with
     | some p, some w =>
       if w.isEmpty then some (#[], false)
       else match env.buildingsNear p.cLat p.cLon p.discRadiusM with
@@ -534,9 +534,10 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
         | none => some (#[], false)
     | _, _ => none
   let mut out : Array Seg := #[]
-  for si in [0 : segments.size] do
-    let seg := segments[si]!
-    match prep[si]!, waysOf[si]!, buildingsOf[si]! with
+  for hs : si in [0 : segments.size] do
+    let seg := segments[si]'hs.upper
+    -- The three tables are maps of `segments`; an entry missing reads as `none`.
+    match (prep[si]?).bind id, (waysOf[si]?).bind id, (buildingsOf[si]?).bind id with
     | some p, some ways, some (buildings, measured) =>
       if ways.isEmpty then
         out := out.push seg

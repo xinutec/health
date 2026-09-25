@@ -330,15 +330,15 @@ a leg refined to walking keeps the stationary branch. -/
 def displayTz (e : Env) (segs : Array Seg) : Array Seg :=
   segs.map fun s =>
     let pts := inWindow e s
-    if pts.isEmpty then { s with displayTz := some e.homeTz }
-    else
+    -- No fixes, no midpoint: the home zone.
+    match pts[pts.size / 2]? with
+    | none => { s with displayTz := some e.homeTz }
+    | some mid =>
       let (lat, lon) :=
         if s.mode == "stationary" then
           let n := Float.ofNat pts.size
           ((pts.foldl (fun a p => a + p.lat) 0) / n, (pts.foldl (fun a p => a + p.lon) 0) / n)
-        else
-          let mid := pts[pts.size / 2]!
-          (mid.lat, mid.lon)
+        else (mid.lat, mid.lon)
       { s with displayTz := some (e.tzAt lat lon) }
 
 /-- Name a train-bracketed stay after its station.
@@ -356,7 +356,7 @@ in place, and it is load-bearing for a run of two changes. -/
 def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   let mut out := segs
   for i in [0 : out.size] do
-    let s := out[i]!
+    let some s := out[i]? | continue
     if s.mode != "stationary" then continue
     let pts := inWindow e s
     if pts.isEmpty then continue

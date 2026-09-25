@@ -74,17 +74,19 @@ private structure CandidatePair where
   newIndex : Nat
   distanceM : Float
   firstSeenTs : Int
+  /-- The existing place's id, carried so an accepted pair needs no second read. -/
+  oldId : Int
   deriving Inhabited, BEq, Repr
 
 def matchClusters (oldClusters : Array ExistingPlace) (newClusters : Array NewCluster) : MatchResult :=
   -- Every (old, new) within radius, generated old-outer / new-inner.
   let pairs : List CandidatePair :=
-    (List.range oldClusters.size).flatMap fun i =>
-      (List.range newClusters.size).filterMap fun j =>
-        let o := oldClusters[i]!
-        let n := newClusters[j]!
+    (List.finRange oldClusters.size).flatMap fun i =>
+      (List.finRange newClusters.size).filterMap fun j =>
+        let o := oldClusters[i]
+        let n := newClusters[j]
         let d := haversineMeters o.centroidLat o.centroidLon n.centroidLat n.centroidLon
-        if d ≤ MATCH_RADIUS_M then some ⟨i, j, d, o.firstSeenTs⟩ else none
+        if d ≤ MATCH_RADIUS_M then some ⟨i.val, j.val, d, o.firstSeenTs, o.id⟩ else none
   -- Closest first, older existing place as tiebreaker. Ties on both keys keep
   -- generation order (stable merge).
   let sorted := pairs.mergeSort fun a b =>
@@ -93,11 +95,11 @@ def matchClusters (oldClusters : Array ExistingPlace) (newClusters : Array NewCl
   let (assignedOld, assignedNew) :=
     sorted.foldl (init := (([] : List Nat), ([] : List (Nat × Int)))) fun (aOld, aNew) p =>
       if aOld.contains p.oldIndex || aNew.any (·.1 == p.newIndex) then (aOld, aNew)
-      else (p.oldIndex :: aOld, (p.newIndex, oldClusters[p.oldIndex]!.id) :: aNew)
+      else (p.oldIndex :: aOld, (p.newIndex, p.oldId) :: aNew)
   { assignments := (Array.range newClusters.size).map fun j =>
       ⟨j, (assignedNew.find? (·.1 == j)).map (·.2)⟩
-    deletedOldIds := (Array.range oldClusters.size).filterMap fun i =>
-      if assignedOld.contains i then none else some oldClusters[i]!.id }
+    deletedOldIds := (oldClusters.mapIdx fun i o => (i, o)).filterMap fun (i, o) =>
+      if assignedOld.contains i then none else some o.id }
 
 /-! ## Guards (V8 reference values) -/
 

@@ -57,15 +57,20 @@ def groupStates (states : Array State) (timestamps : Array Int) : Option (Array 
     let mut out : Array Segment := #[]
     let mut runStart := 0
     for i in [1 : states.size + 1] do
-      -- The run ends at the array's end, or where the state changes.
-      let ended := i == states.size || !(sameState states[i]! states[runStart]!)
+      -- The run ends at the array's end (no state at `i`), or where the state changes.
+      let ended := match states[i]?, states[runStart]? with
+        | some a, some b => !(sameState a b)
+        | _, _ => true
       if ended then
-        let s := states[runStart]!
-        out := out.push
-          { startTs := timestamps[runStart]!
-            -- ⚠ The LAST MINUTE of this run plus 60, never the next run's start.
-            endTs := timestamps[i - 1]! + 60
-            mode := s.mode, placeId := s.placeId, lineName := s.lineName }
+        -- `runStart < i ≤ size` and the two arrays are the same length.
+        match states[runStart]?, timestamps[runStart]?, timestamps[i - 1]? with
+        | some s, some t0, some t1 =>
+          out := out.push
+            { startTs := t0
+              -- ⚠ The LAST MINUTE of this run plus 60, never the next run's start.
+              endTs := t1 + 60
+              mode := s.mode, placeId := s.placeId, lineName := s.lineName }
+        | _, _, _ => pure ()
         runStart := i
     return some out
 

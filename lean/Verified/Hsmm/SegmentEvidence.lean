@@ -112,24 +112,22 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- Prefix sums of MEASURED cadence: `pref[i] = Σ_{k<i} cadence(k)` (absent → 0),
     so a segment's step total is one subtraction. -/
-def stepPrefix (obs : Array ObsRow) : Array Float := Id.run do
-  let mut a := Array.replicate (obs.size + 1) 0.0
-  for hm_i : i in [0:obs.size] do
-    a := a.set! (i + 1) (a[i]! + obs[i].cadence.getD 0)
-  return a
+def stepPrefix (obs : Array ObsRow) : Array Float :=
+  -- Starts at one entry and only grows, so the running total is always there.
+  obs.foldl (init := #[0.0]) fun a o => a.push (a.back?.getD 0 + o.cadence.getD 0)
 
 /-- The caller-side `Window` for `[startIndex, segEnd]`, or `none` ("assert
     nothing") when a bracketing fix is missing or non-advancing. `startIndex` may
     be negative for early segments; it is clamped for the `first`/step lookups
     exactly as the TS `Math.max(0, startIndex)`. -/
 def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int) : Option Window :=
-  if decide (segEnd < 0) || decide (segEnd ≥ (obs.size : Int)) then none
+  if hse : segEnd < 0 ∨ segEnd ≥ (obs.size : Int) then none
   else
     let loIdx := (max 0 startIndex).toNat
-    if decide (loIdx ≥ obs.size) then none
+    if hlo : loIdx ≥ obs.size then none
     else
-      let first := obs[loIdx]!
-      let last := obs[segEnd.toNat]!
+      let first := obs[loIdx]
+      let last := obs[segEnd.toNat]'(by omega)
       match first.prevGpsFix, last.nextGpsFix with
       | some before, some after =>
         if decide (after.ts ≤ before.ts) then none
@@ -140,8 +138,10 @@ def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int
                         + (max 0 (after.ts - segEndTs)).toNat.toFloat) / 60
           let sl := SLOP_SPEED_M_PER_MIN * slopMin
           let hiIdx := (min (obs.size : Int) (segEnd + 1)).toNat
+          -- `pref` is `stepPrefix obs`, one longer than the tensor; a shorter
+          -- table (not constructible) asserts no steps.
           some ⟨haversineMeters before.lat before.lon after.lat after.lon,
-                sl * sl, pref[hiIdx]! - pref[loIdx]!⟩
+                sl * sl, (pref[hiIdx]?).getD 0 - (pref[loIdx]?).getD 0⟩
       | _, _ => none
 
 /-- Segment-evidence resolved over the observation tensor: the caller supplies

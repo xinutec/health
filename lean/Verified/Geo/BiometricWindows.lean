@@ -227,7 +227,7 @@ def bridgeStayRuns (segments : List Seg) (centroids : List (Option (Float × Flo
   let mut runs : Array (Nat × Nat) := #[]
   let mut i := 0
   while i < segs.size do
-    let cur := segs[i]!
+    let some cur := segs[i]? | break
     if cur.mode != "stationary" then
       runs := runs.push (i, i + 1)
       i := i + 1
@@ -235,9 +235,11 @@ def bridgeStayRuns (segments : List Seg) (centroids : List (Option (Float × Flo
     -- Walk forward over the maximal co-located stationary run starting at i.
     let mut j := i + 1
     let mut extendedEnd := cur.endTs
-    while j < segs.size && segs[j]!.mode == "stationary" do
-      let next := segs[j]!
-      match cents[i]!, cents[j]! with
+    while j < segs.size do
+      let some next := segs[j]? | break
+      if next.mode != "stationary" then break
+      -- `centroids` is one per segment; a missing entry reads as no centroid.
+      match (cents[i]?).bind id, (cents[j]?).bind id with
       | some (aLat, aLon), some (bLat, bLon) =>
         if decide (haversineMeters aLat aLon bLat bLon > COLOCATION_RADIUS_M) then break
         let gapStart := extendedEnd

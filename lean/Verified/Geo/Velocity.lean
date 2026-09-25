@@ -126,7 +126,9 @@ def batterySeries (points : List (Int × Option Int)) : List BatterySample := Id
     have hb_i : i < read.size := hm_i.upper
     let s := read[i]
     let prevDiff := i == 0 || s.2 != (read[i - 1]).2
-    let nextDiff := i + 1 ≥ read.size || s.2 != (read[i+1]!).2
+    let nextDiff := match read[i+1]? with
+      | none => true
+      | some nx => s.2 != nx.2
     if prevDiff || nextDiff then out := out ++ [s]
   return out
 
@@ -339,10 +341,10 @@ def stationaryCoherence (segs : Array Seg) (points : Array Fix) : Array Seg :=
     if effectiveMode seg != "stationary" then seg
     else
       let segPoints := inWindow points seg
-      if segPoints.size < 2 then seg
+      if hs : segPoints.size < 2 then seg
       else
-        let first := segPoints[0]!
-        let last := segPoints[segPoints.size - 1]!
+        let first := segPoints[0]'(by omega)
+        let last := segPoints[segPoints.size - 1]'(by omega)
         let netDisplacementM := haversineMeters first.lat first.lon last.lat last.lon
         let coreDisplacementM :=
           pedestrianCoreDisplacementM (segPoints.map fun p => ({ ts := p.ts, lat := p.lat, lon := p.lon } : PedFix))

@@ -105,10 +105,11 @@ private def mod360 (x : Float) : Float := x - Float.floor (x / 360) * 360
 private def roundHalfUp (x : Float) : Float := Float.floor (x + 0.5)
 
 /-- Filter a raw GPS track into position + velocity fixes. -/
-def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
+def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint :=
+  if h0 : points.size = 0 then #[] else Id.run do
   let n := points.size
-  if n == 0 then return #[]
-  let p0 := points[0]!
+  have hne : 0 < points.size := by omega
+  let p0 := points[0]
   if n == 1 then
     return #[⟨p0.ts, p0.lat, p0.lon, 0, 0⟩]
   let acc0 := p0.accuracy.getD defaultAccuracy
@@ -120,9 +121,10 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
   let mut consecutiveRejects : Nat := 0
   -- The last measurement the filter actually took in (accepted update or reset).
   let mut lastAccepted : GpsPoint := p0
-  for i in [1:n] do
-    let p := points[i]!
-    let prev := points[i-1]!
+  for hm_i : i in [1:n] do
+    have hb_i : i < points.size := hm_i.upper
+    let p := points[i]
+    let prev := points[i-1]
     let dtI := p.ts - prev.ts
     if decide (dtI ≤ 0) then pure ()   -- duplicate timestamp
     else
@@ -145,8 +147,8 @@ def filterGpsTrack (points : Array GpsPoint) : Array FilteredPoint := Id.run do
         let mut initialBearing : Float := 0
         let mut vLatPerSec : Float := 0
         let mut vLonPerSec : Float := 0
-        if i + 1 < n then
-          let next := points[i+1]!
+        if hn : i + 1 < n then
+          let next := points[i+1]
           let dt2I := next.ts - p.ts
           if decide (dt2I > 0) && decide (dt2I < 600) then
             let dt2 := dt2I.toNat.toFloat

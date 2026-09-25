@@ -256,24 +256,25 @@ sharing a timestamp keep their input order in both.
 def stopBounds (points : Array FilteredPoint) (boardTs alightTs : Int) : Option StopBounds :=
   let ride := ((points.toList.filter fun p => p.ts >= boardTs && p.ts <= alightTs).mergeSort
     fun a b => a.ts ≤ b.ts).toArray
-  match ride.findIdx? (fun p => p.speedKmh >= RUNNING_KMH) with
+  match ride.findFinIdx? (fun p => p.speedKmh >= RUNNING_KMH) with
   | none => none
   | some first =>
     -- The `while` in the TS cannot run past `first`, which qualifies by construction.
-    let last := ((List.range ride.size).reverse.find? fun i =>
-      ride[i]!.speedKmh >= RUNNING_KMH).getD first
+    let last := ((List.finRange ride.size).reverse.find? fun i =>
+      ride[i].speedKmh >= RUNNING_KMH).getD first
     if last == first then none  -- one running fix is a glimpse, not a ride
     else
-      let span := ((ride.toList.drop first).take (last + 1 - first))
+      have hne : 0 < ride.size := by have := first.isLt; omega
+      let span := ((ride.toList.drop first.val).take (last.val + 1 - first.val))
       let atLeast := (span.foldl (init := ((0 : Nat), false)) fun acc p =>
         let isStanding := p.speedKmh <= DWELL_KMH
         (if isStanding && !acc.2 then acc.1 + 1 else acc.1, isStanding)).1
-      let p0 := ride[0]!
-      let lastFix := ride[ride.size - 1]!
+      let p0 := ride[0]
+      let lastFix := ride[ride.size - 1]
       let seed := hiddenBetween (Float.ofInt (p0.ts - boardTs)) p0 p0
         + hiddenBetween (Float.ofInt (alightTs - lastFix.ts)) lastFix lastFix
-      let hidden := (List.range (ride.size - 1)).foldl (init := seed) fun acc i =>
-        acc + hiddenBetween (Float.ofInt (ride[i + 1]!.ts - ride[i]!.ts)) ride[i]! ride[i + 1]!
+      let hidden := (ride.zip (ride.extract 1 ride.size)).foldl (init := seed) fun acc (a, b) =>
+        acc + hiddenBetween (Float.ofInt (b.ts - a.ts)) a b
       some { atLeast := Float.ofNat atLeast, atMost := Float.ofNat atLeast + hidden }
 
 /-! ## `pickLineByStoppingPattern` -/
@@ -304,7 +305,9 @@ def pickLineByStoppingPattern (candidates : Array String) (board alight : String
         match c.2 with
         | none => false
         | some v => v >= bounds.atLeast && v <= bounds.atMost
-      if possible.size == 1 then some possible[0]!.1 else none
+      match possible with
+      | #[only] => some only.1
+      | _ => none
 
 /-! ## Guards -/
 

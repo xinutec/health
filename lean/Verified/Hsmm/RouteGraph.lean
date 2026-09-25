@@ -100,8 +100,8 @@ def pointToSegmentMeters (lat lon : Float) (a b : LatLon) : Float :=
 /-- Min distance (m) from a point to a polyline: the minimum over its segments.
     Empty / single-vertex geometry has no segment → `+∞` (as in TS). -/
 def pointToPolylineMeters (lat lon : Float) (geometry : List LatLon) : Float :=
-  ((List.range (geometry.length - 1)).foldl (fun best i =>
-    let d := pointToSegmentMeters lat lon geometry[i]! geometry[i+1]!
+  ((geometry.zip (geometry.drop 1)).foldl (fun best (a, b) =>
+    let d := pointToSegmentMeters lat lon a b
     if d < best then d else best) (1.0 / 0.0))
 
 /-- ULP tolerance for the `hypot` / `cos` wobble (see module header). -/
@@ -155,8 +155,8 @@ def edgeCells (e : Edge) : List (Int × Int) :=
 
 /-- Bucket every edge (by index) into each cell it touches, in edge order. -/
 def buildCellIndex (edges : Array Edge) : Std.HashMap (Int × Int) (Array Nat) :=
-  (List.range edges.size).foldl (fun idx i =>
-    (edgeCells edges[i]!).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i)) idx)
+  (List.finRange edges.size).foldl (fun idx i =>
+    (edgeCells edges[i]).foldl (fun idx c => idx.insert c ((idx.getD c #[]).push i.val)) idx)
     {}
 
 /-- Edges whose geometry passes within `radiusM` of `(lat, lon)`. Scans the 3×3
@@ -167,10 +167,12 @@ def edgesNear (edges : Array Edge) (idx : Std.HashMap (Int × Int) (Array Nat))
   ((neighborCells lat lon).foldl (fun (st : Array Edge × Array Nat) c =>
     (idx.getD c #[]).foldl (fun (st : Array Edge × Array Nat) i =>
       if st.2.contains i then st
-      else
-        let e := edges[i]!
-        let d := pointToPolylineMeters lat lon e.geometry
-        if d ≤ radiusM then (st.1.push e, st.2.push i) else (st.1, st.2.push i))
+      else match edges[i]? with
+        -- The index was built from `edges`; an entry off it is not near.
+        | none => (st.1, st.2.push i)
+        | some e =>
+          let d := pointToPolylineMeters lat lon e.geometry
+          if d ≤ radiusM then (st.1.push e, st.2.push i) else (st.1, st.2.push i))
       st) (#[], #[])).1
 
 -- Parity with the real `edgesNear` (ids + order from Node/V8's `buildRouteGraph`).
@@ -233,8 +235,8 @@ with fewer than two vertices has no leg and measures 0 — unreachable through
 `buildRouteGraph`, which drops such a way before building an edge at all, so
 that arm is stated by the definition rather than pinned against V8. -/
 def geometryLengthM (geom : List LatLon) : Float :=
-  (List.range (geom.length - 1)).foldl
-    (fun total i => total + haversineMeters geom[i]!.lat geom[i]!.lon geom[i+1]!.lat geom[i+1]!.lon) 0
+  (geom.zip (geom.drop 1)).foldl
+    (fun total (a, b) => total + haversineMeters a.lat a.lon b.lat b.lon) 0
 
 -- Parity via `buildRouteGraph`'s published `attrs` (Node/V8).
 private def undergroundOf (tunnel layer covered subway subtype : Option String) : Bool :=
@@ -376,8 +378,9 @@ def buildWireGraph (ways : List RawWay) (stops : List RawStop) :
       for (k, p) in [(sk, first), (ek, last)] do
         match idx[k]? with
         | some i =>
-          let (kk, la, lo, ids) := nodes[i]!
-          if !ids.contains w.id then nodes := nodes.set! i (kk, la, lo, ids.push w.id)
+          -- `idx` only ever holds positions `nodes` was pushed at.
+          if let some (kk, la, lo, ids) := nodes[i]? then
+            if !ids.contains w.id then nodes := nodes.set! i (kk, la, lo, ids.push w.id)
         | none =>
           idx := idx.insert k nodes.size
           nodes := nodes.push (k, p.lat, p.lon, #[w.id])

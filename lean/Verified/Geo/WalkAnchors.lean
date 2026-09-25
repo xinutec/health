@@ -77,12 +77,12 @@ def neighborAnchor (n? : Option Seg) (side : Side) (walkTs : Int) : Option WalkA
       | "stationary", some la, some lo => some ⟨la, lo, STAY_ANCHOR_SIGMA_M⟩
       | _, _, _ =>
         let track := n.snappedPath.getD #[]
-        if mode == "train" && track.size ≥ 2 then
-          let p := match side with
-            | .«end» => track[track.size - 1]!
-            | .start => track[0]!
-          some ⟨p.lat, p.lon, STATION_ANCHOR_SIGMA_M⟩
-        else none
+        let p? := if mode == "train" && track.size ≥ 2 then
+            (match side with
+              | .«end» => track.back?
+              | .start => track[0]?)
+          else none
+        p?.map fun p => ⟨p.lat, p.lon, STATION_ANCHOR_SIGMA_M⟩
 
 /-- Both endpoint anchors for the walking segment at index `i`. -/
 def walkEndpointAnchors (segments : Array Seg) (i : Nat) : Option WalkAnchor × Option WalkAnchor :=
@@ -94,8 +94,11 @@ def walkEndpointAnchors (segments : Array Seg) (i : Nat) : Option WalkAnchor × 
   -- guard is kept because the equivalence depends on the caller, not on this
   -- function.
   let prev? := if i == 0 then none else segments[i - 1]?
-  (neighborAnchor prev? .«end» segments[i]!.startTs,
-   neighborAnchor segments[i + 1]? .start segments[i]!.endTs)
+  match segments[i]? with
+  | none => (none, none)  -- no walk, no anchors
+  | some walk =>
+    (neighborAnchor prev? .«end» walk.startTs,
+     neighborAnchor segments[i + 1]? .start walk.endTs)
 
 /-! ## Guards (V8 reference values) -/
 
