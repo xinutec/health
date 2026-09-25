@@ -11,56 +11,13 @@
 //! gate list: a decoder change that shifts any day's segments fails HERE, and
 //! one that degrades journey structure fails the scoreboard.
 //!
-//! # The chain is `decode_one`'s, re-sourced
-//!
-//! Every request field comes from the fixture the way `decode_one` builds it
-//! from the DB (main.rs) — same cleaners, same wire shapes, same flags
-//! semantics (`decodeFlags` recorded per fixture; all eleven are v2). The
-//! boxes are NOT re-applied: the captured row sets already carry exactly what
-//! fed the blessed decode.
+//! The request each day replays is `backend::decode_fixture::request` — the
+//! same one `decode-bench` times, so the decoder that is measured is the
+//! decoder that is gated.
 //!
 //! ⚠ Announces a skip when the corpus is absent rather than passing quietly.
 
-use std::path::Path;
-
-use serde_json::{Value, json};
-
-const DECODED: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../tests/golden/decoded_days"
-);
-
-/// `LINESTRING(lon lat, …)` → `[[latBits, lonBits], …]` — main.rs's parser,
-/// which is private to the binary.
-fn linestring_bits(wkt: &str) -> Vec<Value> {
-    let Some(inner) = wkt
-        .trim()
-        .strip_prefix("LINESTRING(")
-        .and_then(|s| s.strip_suffix(')'))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .filter_map(|pair| {
-            let mut it = pair.split_whitespace();
-            let lon: f64 = it.next()?.parse().ok()?;
-            let lat: f64 = it.next()?.parse().ok()?;
-            Some(json!([
-                backend::fold_payload::bits(lat),
-                backend::fold_payload::bits(lon)
-            ]))
-        })
-        .collect()
-}
-
-fn tag_pairs(v: Option<&Value>) -> Vec<Value> {
-    v.and_then(Value::as_object).map_or_else(Vec::new, |m| {
-        m.iter()
-            .filter_map(|(k, val)| val.as_str().map(|s| json!([k, s])))
-            .collect()
-    })
-}
+use serde_json::Value;
 
 #[test]
 fn every_frozen_decode_still_decodes() {
@@ -77,158 +34,19 @@ fn every_frozen_decode_still_decodes() {
 }
 
 fn run_corpus() {
-    if !Path::new(DECODED).is_dir() {
-        eprintln!("SKIPPED: no golden corpus at {DECODED}; see this file's header.");
+    let Some(names) = backend::decode_fixture::fixture_names().expect("corpus dir readable") else {
+        eprintln!(
+            "SKIPPED: no golden corpus at {}; see this file's header.",
+            backend::decode_fixture::corpus_dir().display()
+        );
         return;
-    }
-    let mut names: Vec<String> = std::fs::read_dir(DECODED)
-        .expect("decoded dir readable")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".json"))
-        .collect();
-    names.sort();
+    };
     assert!(!names.is_empty(), "the decoded corpus is empty");
 
     let mut failures: Vec<String> = Vec::new();
     for name in &names {
-        let fx: Value = serde_json::from_str(
-            &std::fs::read_to_string(format!("{DECODED}/{name}")).expect("fixture readable"),
-        )
-        .expect("fixture parses");
-        let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
-        let (date, tz) = (
-            meta["date"].as_str().expect("date"),
-            meta["tz"].as_str().expect("tz"),
-        );
-        let bounds = backend::timezone::date_bounds_utc(date, Some(tz)).expect("bounds");
-
-        // The day's fixes, cleaned ONCE like the serving path.
-        let fixes: Vec<backend::lean::GpsFix> = inputs["points"]
-            .as_array()
-            .expect("points")
-            .iter()
-            .map(|p| backend::lean::GpsFix {
-                ts: p["ts"].as_i64().expect("ts"),
-                lat: p["lat"].as_f64().expect("lat"),
-                lon: p["lon"].as_f64().expect("lon"),
-                speed_kmh: p["speed_kmh"].as_f64().expect("speed_kmh"),
-            })
-            .collect();
-        let cleaned = backend::lean::drop_gps_outliers(&fixes).expect("outlier drop");
-
-        // The route graph, from the captured raw rows.
-        let ways: Vec<Value> = inputs["rawOsmLines"]
-            .as_array()
-            .expect("rawOsmLines")
-            .iter()
-            .filter_map(|l| {
-                let geom = linestring_bits(l["geom"].as_str()?);
-                if geom.len() < 2 {
-                    return None;
-                }
-                Some(json!({
-                    "id": format!("{}:{}", l["osm_type"].as_str()?, l["osm_id"].as_str()?),
-                    "geometry": geom,
-                    "name": l.get("name").cloned().unwrap_or(Value::Null),
-                    "subtype": l.get("subtype").cloned().unwrap_or(Value::Null),
-                    "tags": tag_pairs(l.get("tags_json")),
-                }))
-            })
-            .collect();
-        let stops: Vec<Value> = inputs["rawOsmPoints"]
-            .as_array()
-            .expect("rawOsmPoints")
-            .iter()
-            .filter_map(|p| {
-                Some(json!({
-                    "latBits": backend::fold_payload::bits(p["lat"].as_f64()?),
-                    "lonBits": backend::fold_payload::bits(p["lon"].as_f64()?),
-                    "name": p.get("name").cloned().unwrap_or(Value::Null),
-                    "tags": tag_pairs(p.get("tags_json")),
-                }))
-            })
-            .collect();
-        let (edges, nodes) = backend::lean::build_wire_graph(&ways, &stops).expect("wire graph");
-
-        // Sparse proximity: fixture `[ts, {railDistM, roadDistM}]` →
-        // wire `[ts, road, rail]` — the ORDER the parser documents.
-        let proximity: Vec<Value> = inputs["proximityByMinute"]
-            .as_array()
-            .expect("proximityByMinute")
-            .iter()
-            .map(|e| {
-                let (ts, d) = (&e[0], &e[1]);
-                json!([ts, d["roadDistM"], d["railDistM"]])
-            })
-            .collect();
-
-        // Continuity: object coord + long field name → array coord + wire name.
-        let continuity = match &inputs["continuityContext"] {
-            Value::Null => Value::Null,
-            c => {
-                let coord = match c.get("priorPlaceCoord") {
-                    Some(Value::Object(o)) => {
-                        let f = |k: &str| -> f64 {
-                            o.get(k)
-                                .and_then(|v| {
-                                    v.as_f64()
-                                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                                })
-                                .expect("coord component")
-                        };
-                        json!([f("lat"), f("lon")])
-                    }
-                    _ => Value::Null,
-                };
-                json!({
-                    "priorPlaceId": c["priorPlaceId"],
-                    "priorPlaceCoord": coord,
-                    "hoursSince": c["hoursSinceLastConfirmedFix"],
-                    "priorPosterior": c["priorPosterior"],
-                })
-            }
-        };
-
-        let flags = &inputs["decodeFlags"];
-        assert!(
-            flags.is_object(),
-            "{name}: a v1 fixture with no recorded decodeFlags — decide its flags before gating it"
-        );
-
-        let req = json!({
-            "observation": {
-                "startUtc": bounds.start_utc,
-                "points": cleaned.iter().map(|p| json!({
-                    "ts": p.ts, "lat": p.lat, "lon": p.lon, "speedKmh": p.speed_kmh
-                })).collect::<Vec<_>>(),
-                "hr": inputs["hr"],
-                "steps": inputs["steps"],
-                "sleep": inputs["sleep"],
-                "localCtx": backend::timezone::local_ctx_table(bounds.start_utc, tz).expect("localCtx"),
-                "proximity": proximity,
-                "imputeCadence": flags["imputeCadence"],
-            },
-            "edges": edges,
-            "nodes": nodes,
-            // Captured rows name the COLUMNS; the wire names the CONCEPTS —
-            // the same mapping decode_places does for the serving path.
-            "places": inputs["places"].as_array().expect("places").iter().map(|p| json!({
-                "id": p["id"], "name": p["displayName"], "lat": p["lat"], "lon": p["lon"],
-                "hourProfile": p.get("hourProfile").cloned().unwrap_or(Value::Null),
-                "dwell": p["totalDwellSec"],
-            })).collect::<Vec<_>>(),
-            "placeNearLine": inputs["placeNearLine"],
-            "railStopRelations": inputs.get("railStopRelations").cloned().unwrap_or(Value::Null),
-            "continuity": continuity,
-            "flags": {
-                "reacquireRobust": flags["reacquireRobustSpeed"],
-                "segEvidence": flags["segmentEvidence"],
-                "chainContext": flags["chainContext"],
-            },
-            "date": date,
-            "tz": tz,
-        });
+        let fx: Value = backend::decode_fixture::read(name).expect("fixture parses");
+        let req = backend::decode_fixture::request(&fx).unwrap_or_else(|e| panic!("{name}: {e:#}"));
 
         let Some(segments) = backend::lean::assemble_segments(&req).expect("assemble answers")
         else {

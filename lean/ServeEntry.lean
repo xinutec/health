@@ -1030,6 +1030,51 @@ private def assembleDecodeResult (j : Json) : Json :=
           ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
           ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
+/-- `verified_cli decodeprof` — the decoder's cost on one day, apart from its
+model build. Reads an `assemblesegments` request plus `"runs"` (default 5),
+builds the `PData` once, then times `pDecodeFast` that many times on it; each
+`IO.lazyPure` pins one decode between two timestamps. The reply is the trellis
+shape, `buildMs`, every `decodeMs`, and the best score — which every run must
+agree on, so a timing never comes from a decode that changed its answer.
+
+⚠ THIS IS THE INSTRUMENT FOR A CHANGE TO THE TRELLIS. `hsmm_decode_corpus`
+proves a decode still exact; its wall (fixture parse, Rust and Lean together)
+swings 2× run to run and cannot tell a 10% decoder change from noise. -/
+private def decodeProfMain (input : String) : IO UInt32 := do
+  match Json.parse input with
+  | .error e => IO.eprintln s!"error: {e}"; return 1
+  | .ok j =>
+    let runs := (j.getObjVal? "runs" >>= (·.getNat?)).toOption.getD 5
+    match parseAssemble j with
+    | .error e => IO.eprintln s!"error: {e}"; return 1
+    | .ok (c, maxD) =>
+      let t0 ← IO.monoMsNow
+      let built ← IO.lazyPure fun _ => buildPData c maxD
+      let t1 ← IO.monoMsNow
+      match built with
+      | .error e => IO.eprintln s!"error: {e}"; return 1
+      | .ok pd =>
+        let mut times : Array Nat := #[]
+        let mut bests : Array String := #[]
+        for _ in [0:runs] do
+          let a ← IO.monoMsNow
+          let r ← IO.lazyPure fun _ => pDecodeFast pd ckptStride
+          let b ← IO.monoMsNow
+          times := times.push (b - a)
+          bests := bests.push (match r with
+            | none => "degenerate"
+            | some r => match r.best with | .val v => toString v | .negInf => "null")
+        let best := bests.getD 0 "degenerate"
+        if bests.any (· != best) then
+          IO.eprintln s!"error: the runs disagree on the best score: {bests}"
+          return 1
+        IO.println (Json.mkObj [
+          ("T", Lean.toJson pd.T), ("S", Lean.toJson pd.S), ("maxD", Lean.toJson pd.maxD),
+          ("buildMs", Lean.toJson (t1 - t0)),
+          ("decodeMs", Json.arr (times.map Lean.toJson)),
+          ("best", Json.str best)]).compress
+        return 0
+
 /-! ## `assemblesegments` — assemble, decode, and return SEGMENTS
 
 ⚠ `assembledecode` above returns a path of STATE INDICES and nothing else, which
@@ -3367,6 +3412,7 @@ def cliMain (args : List String) : IO UInt32 := do
   if args.contains "rail" then return ← railMain input
   if args.contains "geo" then return ← geoMain input
   if args.contains "matchprof" then return ← matchProfMain input
+  if args.contains "decodeprof" then return ← decodeProfMain input
   if args.contains "match" then return ← matchMain input
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input

@@ -259,7 +259,7 @@ def pCol0 (m : PModel) : Array Nat :=
 /-- Packed `closeRowF`. -/
 def pCloseRow (m : PModel) (t : Nat) (prev : Array Nat) : Array Nat :=
   Array.ofFn (n := m.S) fun sp =>
-    pRangeMax (fun τ0 => pAdd prev[sp.val * m.maxD + τ0]! (m.dur sp.val (τ0 + 1) t)) m.maxD
+    pRangeMax (fun τ0 => pAdd (prev.getD (sp.val * m.maxD + τ0) 0) (m.dur sp.val (τ0 + 1) t)) m.maxD
 
 /-- Packed `colStepF`. -/
 def pColStep (m : PModel) (t : Nat) (prev : Array Nat) : Array Nat :=
@@ -270,18 +270,18 @@ def pColStep (m : PModel) (t : Nat) (prev : Array Nat) : Array Nat :=
     let s := i.val / m.maxD
     if i.val % m.maxD = 0 then
       pAdd (pAdd
-        (pRangeMax (fun sp => if sp == s then 0 else pAdd closeA[sp]! (m.trans sp s (t + 1)))
+        (pRangeMax (fun sp => if sp == s then 0 else pAdd (closeA.getD sp 0) (m.trans sp s (t + 1)))
           m.S)
-        entryR[s]!) emitR[s]!
-    else pAdd prev[i.val - 1]! emitR[s]!
+        (entryR.getD s 0)) (emitR.getD s 0)
+    else pAdd (prev.getD (i.val - 1) 0) (emitR.getD s 0)
 
 theorem pCol0_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     {s τ : Nat} (hs : s < P.S) (hτ1 : 1 ≤ τ) (hτm : τ ≤ P.maxD) :
-    (pCol0 m)[s * P.maxD + (τ - 1)]! = enc (col P 0 s τ) := by
+    ((pCol0 m).getD (s * P.maxD + (τ - 1)) 0) = enc (col P 0 s τ) := by
   have hτ0 : τ - 1 < P.maxD := by omega
   have hi : s * P.maxD + (τ - 1) < m.S * m.maxD := by
     rw [hag.S, hag.maxD]; exact idx_lt hs hτ0
-  rw [pCol0, getElem!_pos (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
+  rw [pCol0, getD_of_lt (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
   simp only [hag.maxD, idx_div hτ0, idx_mod hτ0, col]
   by_cases h1 : τ = 1
   · subst h1
@@ -296,12 +296,12 @@ theorem pCol0_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds 
 theorem pCloseRow_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (t : Nat) (ht : t < pTMax) (pprev : Array Nat)
     (hprev : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-      pprev[s' * P.maxD + (τ' - 1)]! = enc (col P t s' τ'))
+      (pprev.getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P t s' τ'))
     {sp : Nat} (hsp : sp < P.S) :
-    (pCloseRow m t pprev)[sp]!
+    ((pCloseRow m t pprev).getD sp 0)
       = enc (Score.listMax ((List.range P.maxD).map fun τ0 =>
           col P t sp (τ0 + 1) + P.dur sp (τ0 + 1) t)) := by
-  rw [pCloseRow, getElem!_pos (Array.ofFn _) _ (by rw [← hag.S] at hsp; simpa using hsp),
+  rw [pCloseRow, getD_of_lt (Array.ofFn _) _ (by rw [← hag.S] at hsp; simpa using hsp),
     Array.getElem_ofFn]
   simp only [hag.maxD]
   rw [← rangeMax_eq]
@@ -317,20 +317,20 @@ theorem pCloseRow_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBou
 theorem pColStep_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (t : Nat) (ht : t + 1 < pTMax) (pprev : Array Nat)
     (hprev : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-      pprev[s' * P.maxD + (τ' - 1)]! = enc (col P t s' τ'))
+      (pprev.getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P t s' τ'))
     {s τ : Nat} (hs : s < P.S) (hτ1 : 1 ≤ τ) (hτm : τ ≤ P.maxD) :
-    (pColStep m t pprev)[s * P.maxD + (τ - 1)]! = enc (col P (t + 1) s τ) := by
+    ((pColStep m t pprev).getD (s * P.maxD + (τ - 1)) 0) = enc (col P (t + 1) s τ) := by
   have hτ0 : τ - 1 < P.maxD := by omega
   have hi : s * P.maxD + (τ - 1) < m.S * m.maxD := by
     rw [hag.S, hag.maxD]; exact idx_lt hs hτ0
-  rw [pColStep, getElem!_pos (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
+  rw [pColStep, getD_of_lt (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
   simp only [hag.maxD, idx_div hτ0, idx_mod hτ0]
-  have hemitR : (Array.ofFn (n := m.S) fun s' => m.emit (t + 1) s'.val)[s]!
+  have hemitR : ((Array.ofFn (n := m.S) fun s' => m.emit (t + 1) s'.val).getD s 0)
       = enc (P.emit (t + 1) s) := by
-    rw [getElem!_pos _ _ (by rw [← hag.S] at hs; simpa using hs), Array.getElem_ofFn, hag.emit]
-  have hentryR : (Array.ofFn (n := m.S) fun s' => m.entry s'.val (t + 1))[s]!
+    rw [getD_of_lt _ _ (by rw [← hag.S] at hs; simpa using hs), Array.getElem_ofFn, hag.emit]
+  have hentryR : ((Array.ofFn (n := m.S) fun s' => m.entry s'.val (t + 1)).getD s 0)
       = enc (P.entry s (t + 1)) := by
-    rw [getElem!_pos _ _ (by rw [← hag.S] at hs; simpa using hs), Array.getElem_ofFn, hag.entry]
+    rw [getD_of_lt _ _ (by rw [← hag.S] at hs; simpa using hs), Array.getElem_ofFn, hag.entry]
   -- bound for the inner close-of-run maximum
   have hcb : ∀ sp, Bounded (colB t + pOB)
       (Score.listMax ((List.range P.maxD).map fun τ0 =>
@@ -400,7 +400,7 @@ def pBuildCkpt (m : PModel) (K : Nat) : Nat → Array (Nat × Array Nat) × Arra
 theorem pBuildCkpt_snd {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (K : Nat) :
     ∀ t, t < pTMax → ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      ((pBuildCkpt m K t).2)[s * P.maxD + (τ - 1)]! = enc (col P t s τ)
+      (((pBuildCkpt m K t).2).getD (s * P.maxD + (τ - 1)) 0) = enc (col P t s τ)
   | 0 => by
     intro _ s τ hs h1 hm
     have h0 : (pBuildCkpt m K 0).2 = pCol0 m := rfl
@@ -418,22 +418,22 @@ theorem pBuildCkpt_snd {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
 theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (K : Nat) :
     ∀ t, t < pTMax → ∀ i, i < ((pBuildCkpt m K t).1).size →
-      (((pBuildCkpt m K t).1)[i]!).1 < pTMax ∧
+      (((pBuildCkpt m K t).1).getD i (0, #[])).1 < pTMax ∧
       ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-        ((((pBuildCkpt m K t).1)[i]!).2)[s * P.maxD + (τ - 1)]!
-          = enc (col P (((pBuildCkpt m K t).1)[i]!).1 s τ)
+        (((((pBuildCkpt m K t).1).getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0)
+          = enc (col P (((pBuildCkpt m K t).1).getD i (0, #[])).1 s τ)
   | 0 => by
     intro ht i hi
     have hsz : ((pBuildCkpt m K 0).1).size = 1 := rfl
     have hi0 : i = 0 := by omega
     subst hi0
-    have hread : ((pBuildCkpt m K 0).1)[0]! = (0, pCol0 m) := rfl
+    have hread : (((pBuildCkpt m K 0).1).getD 0 (0, #[])) = (0, pCol0 m) := rfl
     rw [hread]
     exact ⟨ht, fun s τ hs h1 hm => pCol0_get hag hin hs h1 hm⟩
   | t + 1 => by
     intro ht i hi
     have hsnd : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-        ((pBuildCkpt m K (t + 1)).2)[s' * P.maxD + (τ' - 1)]! = enc (col P (t + 1) s' τ') :=
+        (((pBuildCkpt m K (t + 1)).2).getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P (t + 1) s' τ') :=
       fun s' τ' hs' h1' hm' => pBuildCkpt_snd hag hin K (t + 1) ht s' τ' hs' h1' hm'
     have hfst : (pBuildCkpt m K (t + 1)).1
         = if (t + 1) % K = 0
@@ -449,16 +449,16 @@ theorem pBuildCkpt_fst {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBo
       rw [if_pos hc] at hi ⊢
       rw [Array.size_push] at hi
       by_cases hlt : i < ((pBuildCkpt m K t).1).size
-      · have hread : (((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2))[i]!
-            = ((pBuildCkpt m K t).1)[i]! := by
-          rw [getElem!_pos _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
+      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
+            = (((pBuildCkpt m K t).1).getD i (0, #[])) := by
+          rw [getD_of_lt _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
             dif_pos hlt]
-          exact (getElem!_pos _ _ (by omega)).symm
+          exact (getD_of_lt _ _ (by omega)).symm
         rw [hread]
         exact pBuildCkpt_fst hag hin K t (by omega) i hlt
-      · have hread : (((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2))[i]!
+      · have hread : ((((pBuildCkpt m K t).1).push (t + 1, (pBuildCkpt m K (t + 1)).2)).getD i (0, #[]))
             = (t + 1, (pBuildCkpt m K (t + 1)).2) := by
-          rw [getElem!_pos _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
+          rw [getD_of_lt _ _ (by rw [Array.size_push]; omega), Array.getElem_push,
             dif_neg (by omega)]
         rw [hread]
         exact ⟨ht, fun s τ hs h1 hm => hsnd s τ hs h1 hm⟩
@@ -471,9 +471,9 @@ def pColFrom (m : PModel) (b : Nat) (c : Array Nat) : Nat → Array Nat
 theorem pColFrom_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (b : Nat) (c : Array Nat)
     (hc : ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      c[s * P.maxD + (τ - 1)]! = enc (col P b s τ)) :
+      (c.getD (s * P.maxD + (τ - 1)) 0) = enc (col P b s τ)) :
     ∀ k, b + k < pTMax → ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      (pColFrom m b c k)[s * P.maxD + (τ - 1)]! = enc (col P (b + k) s τ)
+      ((pColFrom m b c k).getD (s * P.maxD + (τ - 1)) 0) = enc (col P (b + k) s τ)
   | 0 => fun _ => hc
   | k + 1 => by
     intro hbk s τ hs h1 hm
@@ -491,11 +491,11 @@ def pColAt (m : PModel) (cks : Array (Nat × Array Nat)) (t : Nat) : Array Nat :
 theorem pColAt_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (cks : Array (Nat × Array Nat))
     (hcks : ∀ i, i < cks.size →
-      (cks[i]!).1 < pTMax ∧
+      (cks.getD i (0, #[])).1 < pTMax ∧
       ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-        ((cks[i]!).2)[s * P.maxD + (τ - 1)]! = enc (col P ((cks[i]!).1) s τ))
+        (((cks.getD i (0, #[])).2).getD (s * P.maxD + (τ - 1)) 0) = enc (col P ((cks.getD i (0, #[])).1) s τ))
     (t : Nat) (ht : t < pTMax) : ∀ s τ, s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      (pColAt m cks t)[s * P.maxD + (τ - 1)]! = enc (col P t s τ) := by
+      ((pColAt m cks t).getD (s * P.maxD + (τ - 1)) 0) = enc (col P t s τ) := by
   intro s τ hs h1 hm
   rw [pColAt]
   cases hf : findCk cks t cks.size with
@@ -508,10 +508,12 @@ theorem pColAt_get {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds
     obtain ⟨b, c⟩ := e
     obtain ⟨⟨i, hi, hie⟩, hbt⟩ := findCk_spec cks t cks.size (Nat.le_refl _) (b, c) hf
     have hc : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-        c[s' * P.maxD + (τ' - 1)]! = enc (col P b s' τ') := by
+        (c.getD (s' * P.maxD + (τ' - 1)) 0) = enc (col P b s' τ') := by
       intro s' τ' hs' h1' hm'
       have := (hcks i hi).2 s' τ' hs' h1' hm'
-      rw [hie] at this
+      -- `findCk_spec` is generic in the column, so it speaks `default`; here that is `(0, #[])`.
+      have hie' : cks.getD i (0, #[]) = (b, c) := hie
+      rw [hie'] at this
       exact this
     have := pColFrom_get hag hin b c hc (t - b)
       (by omega) s τ hs h1 hm
@@ -527,7 +529,7 @@ def pWalk (m : PModel) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Opt
       let c := pColAt m cks (t + 1 - τ - 1)
       match pickBest
           (fun p : Nat × Nat =>
-            dec c[p.1 * m.maxD + (p.2 - 1)]! + dec (m.dur p.1 p.2 (t + 1 - τ - 1))
+            dec (c.getD (p.1 * m.maxD + (p.2 - 1)) 0) + dec (m.dur p.1 p.2 (t + 1 - τ - 1))
               + dec (m.trans p.1 s (t + 1 - τ - 1 + 1)))
           ((List.range m.S).flatMap fun sp =>
             if sp == s then []
@@ -540,7 +542,7 @@ def pWalk (m : PModel) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Opt
 theorem pWalk_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P)
     (cks : Array (Nat × Array Nat))
     (hcols : ∀ t s τ, t < pTMax → s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      (pColAt m cks t)[s * P.maxD + (τ - 1)]! = enc (col P t s τ)) :
+      ((pColAt m cks t).getD (s * P.maxD + (τ - 1)) 0) = enc (col P t s τ)) :
     ∀ (t s τ : Nat), t < pTMax → pWalk m cks t s τ = walk P t s τ
   | t, s, τ => by
     intro ht
@@ -556,7 +558,7 @@ theorem pWalk_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds P
         have hpick :
             pickBest
                 (fun p : Nat × Nat =>
-                  dec (pColAt m cks (t + 1 - τ - 1))[p.1 * P.maxD + (p.2 - 1)]!
+                  dec ((pColAt m cks (t + 1 - τ - 1)).getD (p.1 * P.maxD + (p.2 - 1)) 0)
                     + dec (m.dur p.1 p.2 (t + 1 - τ - 1))
                     + dec (m.trans p.1 s (t + 1 - τ - 1 + 1)))
                 ((List.range P.S).flatMap fun sp =>
@@ -614,7 +616,7 @@ def pDecode (m : PModel) (K : Nat) : Option DecodeResult :=
     let bc := pBuildCkpt m K (m.T - 1)
     match pickBest
         (fun p : Nat × Nat =>
-          dec (bc.2)[p.1 * m.maxD + (p.2 - 1)]! + dec (m.dur p.1 p.2 (m.T - 1)))
+          dec ((bc.2).getD (p.1 * m.maxD + (p.2 - 1)) 0) + dec (m.dur p.1 p.2 (m.T - 1)))
         ((List.range m.S).flatMap fun s =>
           (List.range m.maxD).map fun τ0 => (s, τ0 + 1)) with
     | none => none
@@ -633,14 +635,14 @@ theorem pDecode_eq {m : PModel} {P : Problem} (hag : Agrees m P) (hin : InBounds
       simp only [pTMax] at hT ⊢; omega
     have hcks := fun i hi => pBuildCkpt_fst hag hin K (P.T - 1) hT1 i hi
     have hcols : ∀ t s τ, t < pTMax → s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-        (pColAt m (pBuildCkpt m K (P.T - 1)).1 t)[s * P.maxD + (τ - 1)]!
+        ((pColAt m (pBuildCkpt m K (P.T - 1)).1 t).getD (s * P.maxD + (τ - 1)) 0)
           = enc (col P t s τ) :=
       fun t s τ ht hs h1 hm =>
         pColAt_get hag hin (pBuildCkpt m K (P.T - 1)).1 hcks t ht s τ hs h1 hm
     have hpick :
         pickBest
             (fun p : Nat × Nat =>
-              dec ((pBuildCkpt m K (P.T - 1)).2)[p.1 * P.maxD + (p.2 - 1)]!
+              dec (((pBuildCkpt m K (P.T - 1)).2).getD (p.1 * P.maxD + (p.2 - 1)) 0)
                 + dec (m.dur p.1 p.2 (P.T - 1)))
             ((List.range P.S).flatMap fun s =>
               (List.range P.maxD).map fun τ0 => (s, τ0 + 1))
@@ -787,7 +789,7 @@ def pCol0D (d : PData) : Array Nat :=
 /-- Fast `pCloseRow`. -/
 def pCloseRowD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
   Array.ofFn (n := d.S) fun sp =>
-    pRangeMax (fun τ0 => pAdd prev[sp.val * d.maxD + τ0]! (d.durAt sp.val (τ0 + 1) t)) d.maxD
+    pRangeMax (fun τ0 => pAdd (prev.getD (sp.val * d.maxD + τ0) 0) (d.durAt sp.val (τ0 + 1) t)) d.maxD
 
 /-- Fast `pColStep`. -/
 def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
@@ -798,10 +800,10 @@ def pColStepD (d : PData) (t : Nat) (prev : Array Nat) : Array Nat :=
     let s := i.val / d.maxD
     if i.val % d.maxD = 0 then
       pAdd (pAdd
-        (pRangeMax (fun sp => if sp == s then 0 else pAdd closeA[sp]! (d.transAt sp s (t + 1)))
+        (pRangeMax (fun sp => if sp == s then 0 else pAdd (closeA.getD sp 0) (d.transAt sp s (t + 1)))
           d.S)
-        entryR[s]!) emitR[s]!
-    else pAdd prev[i.val - 1]! emitR[s]!
+        (entryR.getD s 0)) (emitR.getD s 0)
+    else pAdd (prev.getD (i.val - 1) 0) (emitR.getD s 0)
 
 /-- Fast `pBuildCkpt`. -/
 def pBuildCkptD (d : PData) (K : Nat) : Nat → Array (Nat × Array Nat) × Array Nat
@@ -857,7 +859,7 @@ def pWalkD (d : PData) (cks : Array (Nat × Array Nat)) : (t s τ : Nat) → Opt
       let c := pColAtD d cks (t + 1 - τ - 1)
       match pickBest
           (fun p : Nat × Nat =>
-            dec c[p.1 * d.maxD + (p.2 - 1)]! + dec (d.durAt p.1 p.2 (t + 1 - τ - 1))
+            dec (c.getD (p.1 * d.maxD + (p.2 - 1)) 0) + dec (d.durAt p.1 p.2 (t + 1 - τ - 1))
               + dec (d.transAt p.1 s (t + 1 - τ - 1 + 1)))
           ((List.range d.S).flatMap fun sp =>
             if sp == s then []
@@ -892,7 +894,7 @@ def pDecodeFast (d : PData) (K : Nat) : Option DecodeResult :=
     let bc := pBuildCkptD d K (d.T - 1)
     match pickBest
         (fun p : Nat × Nat =>
-          dec (bc.2)[p.1 * d.maxD + (p.2 - 1)]! + dec (d.durAt p.1 p.2 (d.T - 1)))
+          dec ((bc.2).getD (p.1 * d.maxD + (p.2 - 1)) 0) + dec (d.durAt p.1 p.2 (d.T - 1)))
         ((List.range d.S).flatMap fun s =>
           (List.range d.maxD).map fun τ0 => (s, τ0 + 1)) with
     | none => none

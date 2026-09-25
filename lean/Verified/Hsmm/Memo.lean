@@ -18,6 +18,13 @@ is the production-grade verified decoder.
 
 namespace Verified.Hsmm
 
+/-- A `getD` inside the array is the element. Every trellis read below is one:
+the index is in range by construction, and the default is `0 = enc -∞` for a
+read that never happens, said rather than panicked. -/
+theorem getD_of_lt {α : Type} (a : Array α) (i : Nat) {d : α} (h : i < a.size) :
+    a.getD i d = a[i] :=
+  (Array.getElem_eq_getD (h := h) d).symm
+
 /-- `pickBest` only looks at values on members. -/
 theorem pickBest_congr {α : Type} {f g : α → Score} :
     ∀ (l : List α), (∀ x ∈ l, f x = g x) → pickBest f l = pickBest g l := by
@@ -54,7 +61,7 @@ def col0 (P : Problem) : Array Score :=
 def closeRow (P : Problem) (t : Nat) (prev : Array Score) : Array Score :=
   Array.ofFn (n := P.S) fun sp =>
     Score.listMax ((List.range P.maxD).map fun τ0 =>
-      prev[sp.val * P.maxD + τ0]! + P.dur sp.val (τ0 + 1) t)
+      (prev.getD (sp.val * P.maxD + τ0) .negInf) + P.dur sp.val (τ0 + 1) t)
 
 /-- Column `t + 1` from column `t`. -/
 def colStep (P : Problem) (t : Nat) (prev : Array Score) : Array Score :=
@@ -63,23 +70,23 @@ def colStep (P : Problem) (t : Nat) (prev : Array Score) : Array Score :=
     let s := i.val / P.maxD
     if i.val % P.maxD = 0 then
       Score.listMax ((List.range P.S).flatMap fun sp =>
-        if sp == s then [] else [closeA[sp]! + P.trans sp s (t + 1)])
+        if sp == s then [] else [(closeA.getD sp .negInf) + P.trans sp s (t + 1)])
         + P.entry s (t + 1) + P.emit (t + 1) s
-    else prev[i.val - 1]! + P.emit (t + 1) s
+    else (prev.getD (i.val - 1) .negInf) + P.emit (t + 1) s
 
 /-- Columns `0 .. t`, in order. -/
 def buildCols (P : Problem) : Nat → Array (Array Score)
   | 0 => #[col0 P]
   | t + 1 =>
     let cs := buildCols P t
-    cs.push (colStep P t cs[t]!)
+    cs.push (colStep P t (cs.getD t #[]))
 
 theorem col0_get (P : Problem) {s τ : Nat}
     (hs : s < P.S) (hτ1 : 1 ≤ τ) (hτm : τ ≤ P.maxD) :
-    (col0 P)[s * P.maxD + (τ - 1)]! = col P 0 s τ := by
+    ((col0 P).getD (s * P.maxD + (τ - 1)) .negInf) = col P 0 s τ := by
   have hτ0 : τ - 1 < P.maxD := by omega
   have hi : s * P.maxD + (τ - 1) < P.S * P.maxD := idx_lt hs hτ0
-  rw [col0, getElem!_pos (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
+  rw [col0, getD_of_lt (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
   simp only [idx_div hτ0, idx_mod hτ0, col]
   by_cases h1 : τ = 1
   · subst h1
@@ -88,12 +95,12 @@ theorem col0_get (P : Problem) {s τ : Nat}
 
 theorem closeRow_get (P : Problem) (t : Nat) (prev : Array Score)
     (hprev : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-      prev[s' * P.maxD + (τ' - 1)]! = col P t s' τ')
+      (prev.getD (s' * P.maxD + (τ' - 1)) .negInf) = col P t s' τ')
     {sp : Nat} (hsp : sp < P.S) :
-    (closeRow P t prev)[sp]!
+    ((closeRow P t prev).getD sp .negInf)
       = Score.listMax ((List.range P.maxD).map fun τ0 =>
           col P t sp (τ0 + 1) + P.dur sp (τ0 + 1) t) := by
-  rw [closeRow, getElem!_pos (Array.ofFn _) _ (by simpa using hsp), Array.getElem_ofFn]
+  rw [closeRow, getD_of_lt (Array.ofFn _) _ (by simpa using hsp), Array.getElem_ofFn]
   congr 1
   apply List.map_congr_left
   intro τ0 hτ0
@@ -104,12 +111,12 @@ theorem closeRow_get (P : Problem) (t : Nat) (prev : Array Score)
 
 theorem colStep_get (P : Problem) (t : Nat) (prev : Array Score)
     (hprev : ∀ s' τ', s' < P.S → 1 ≤ τ' → τ' ≤ P.maxD →
-      prev[s' * P.maxD + (τ' - 1)]! = col P t s' τ')
+      (prev.getD (s' * P.maxD + (τ' - 1)) .negInf) = col P t s' τ')
     {s τ : Nat} (hs : s < P.S) (hτ1 : 1 ≤ τ) (hτm : τ ≤ P.maxD) :
-    (colStep P t prev)[s * P.maxD + (τ - 1)]! = col P (t + 1) s τ := by
+    ((colStep P t prev).getD (s * P.maxD + (τ - 1)) .negInf) = col P (t + 1) s τ := by
   have hτ0 : τ - 1 < P.maxD := by omega
   have hi : s * P.maxD + (τ - 1) < P.S * P.maxD := idx_lt hs hτ0
-  rw [colStep, getElem!_pos (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
+  rw [colStep, getD_of_lt (Array.ofFn _) _ (by simpa using hi), Array.getElem_ofFn]
   simp only [idx_div hτ0, idx_mod hτ0]
   by_cases h1 : τ = 1
   · subst h1
@@ -139,14 +146,14 @@ theorem buildCols_size (P : Problem) : ∀ t, (buildCols P t).size = t + 1
 /-- Every stored cell is the corresponding `col` value. -/
 theorem buildCols_get (P : Problem) :
     ∀ (tmax t : Nat), t ≤ tmax → ∀ (s τ : Nat), s < P.S → 1 ≤ τ → τ ≤ P.maxD →
-      ((buildCols P tmax)[t]!)[s * P.maxD + (τ - 1)]! = col P t s τ := by
+      (((buildCols P tmax).getD t #[]).getD (s * P.maxD + (τ - 1)) .negInf) = col P t s τ := by
   intro tmax
   induction tmax with
   | zero =>
     intro t ht s τ hs hτ1 hτm
     have ht0 : t = 0 := by omega
     subst ht0
-    have h0 : (buildCols P 0)[0]! = col0 P := rfl
+    have h0 : ((buildCols P 0).getD 0 #[]) = col0 P := rfl
     rw [h0]
     exact col0_get P hs hτ1 hτm
   | succ tmax ih =>
@@ -155,27 +162,27 @@ theorem buildCols_get (P : Problem) :
     by_cases htt : t = tmax + 1
     · subst htt
       have hread :
-          ((buildCols P (tmax + 1)))[tmax + 1]!
-            = colStep P tmax (buildCols P tmax)[tmax]! := by
+          ((buildCols P (tmax + 1)).getD (tmax + 1) #[])
+            = colStep P tmax ((buildCols P tmax).getD tmax #[]) := by
         simp only [buildCols]
-        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+        rw [getD_of_lt _ _ (by simp only [Array.size_push, hsz]; omega),
           Array.getElem_push, dif_neg (by omega)]
       rw [hread]
       exact colStep_get P tmax _
         (fun s' τ' hs' h1' hm' => ih tmax (Nat.le_refl _) s' τ' hs' h1' hm')
         hs hτ1 hτm
     · have htle : t ≤ tmax := by omega
-      have hread : ((buildCols P (tmax + 1)))[t]! = (buildCols P tmax)[t]! := by
+      have hread : ((buildCols P (tmax + 1)).getD t #[]) = ((buildCols P tmax).getD t #[]) := by
         simp only [buildCols]
-        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+        rw [getD_of_lt _ _ (by simp only [Array.size_push, hsz]; omega),
           Array.getElem_push, dif_pos (by omega)]
-        exact (getElem!_pos _ _ (by omega)).symm
+        exact (getD_of_lt _ _ (by omega)).symm
       rw [hread]
       exact ih t htle s τ hs hτ1 hτm
 
 /-- Cell lookup in the prebuilt columns. -/
 def lookupCol (P : Problem) (cols : Array (Array Score)) (t s τ : Nat) : Score :=
-  (cols[t]!)[s * P.maxD + (τ - 1)]!
+  ((cols.getD t #[]).getD (s * P.maxD + (τ - 1)) .negInf)
 
 /-- `walk`, reading the prebuilt columns instead of recomputing `col`. -/
 def walkFast (P : Problem) (cols : Array (Array Score)) : (t s τ : Nat) → Option (List Seg)

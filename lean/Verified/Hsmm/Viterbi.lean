@@ -76,7 +76,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
       let mut bestScore : Score := .negInf
       let mut bestTau : Nat := 0
       for tau in [1:maxD+1] do
-        let sc := prev[idx maxD sp tau]!
+        let sc := (prev.getD (idx maxD sp tau) .negInf)
         if sc != Score.negInf then
           let dlp := P.dur sp tau (t - 1)
           if dlp != Score.negInf then
@@ -92,7 +92,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
       if emit != Score.negInf then
         -- Continue the running segment: τ ≥ 2.
         for tau in [2:maxD+1] do
-          let ps := prev[idx maxD s (tau - 1)]!
+          let ps := (prev.getD (idx maxD s (tau - 1)) .negInf)
           if ps != Score.negInf then
             cur := cur.set! (idx maxD s tau) (ps + emit)
 
@@ -102,7 +102,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
         let mut bestPrevTau : Nat := 0
         for sp in [0:S] do
           if sp != s then
-            let cb := closeBestScore[sp]!
+            let cb := (closeBestScore.getD sp .negInf)
             if cb != Score.negInf then
               let trans := P.trans sp s t
               if trans != Score.negInf then
@@ -110,7 +110,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
                 if bestNew.blt sc then
                   bestNew := sc
                   bestPrevState := sp
-                  bestPrevTau := closeBestTau[sp]!
+                  bestPrevTau := (closeBestTau.getD sp 0)
         if bestNew != Score.negInf then
           cur := cur.set! (idx maxD s 1) (bestNew + P.entry s t + emit)
           backPrev := backPrev.set! (t * S + s) bestPrevState
@@ -124,7 +124,7 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
   let mut bestFinalTau : Nat := 1
   for s in [0:S] do
     for tau in [1:maxD+1] do
-      let sc := prev[idx maxD s tau]!
+      let sc := (prev.getD (idx maxD s tau) .negInf)
       if sc != Score.negInf then
         let dlp := P.dur s tau (T - 1)
         if dlp != Score.negInf then
@@ -156,12 +156,12 @@ def viterbi (P : Problem) : Option DecodeResult := Id.run do
         if segStart == 0 then
           done := true
         else
-          let bp := backPrev[segStart * S + curState]!
+          let bp := (backPrev.getD (segStart * S + curState) 0)
           if bp == S then
             bad := true
             done := true
           else
-            curTau := backTau[segStart * S + curState]!
+            curTau := (backTau.getD (segStart * S + curState) 0)
             curState := bp
             segEnd := segStart - 1
   if bad || !done then return none

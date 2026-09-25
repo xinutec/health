@@ -578,6 +578,23 @@ async fn main() -> Result<()> {
             };
             capture_day(user, date, tz, out).await
         }
+        // #1714: the decoder's cost, apart from its model build.
+        "decode-bench" => {
+            let mut runs = 5usize;
+            let mut days = Vec::new();
+            let mut it = flags.iter();
+            while let Some(f) = it.next() {
+                if f == "--runs" {
+                    runs = it.next().and_then(|n| n.parse().ok()).unwrap_or_else(|| {
+                        eprintln!("usage: backend decode-bench [--runs N] [DAY…]");
+                        std::process::exit(64);
+                    });
+                } else {
+                    days.push(f.clone());
+                }
+            }
+            decode_bench(runs, &days)
+        }
         sub @ ("day-live" | "day-mirror") => {
             let (user, date, tz) = match flags {
                 [user, date] => (user, date, None),

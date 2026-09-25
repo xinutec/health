@@ -3,7 +3,7 @@
 
 use super::refresh::*;
 use anyhow::{Context, Result};
-use backend::db;
+use backend::{db, decode_fixture};
 
 /// Persist a day's HSMM decode, overwriting any existing row.
 ///
@@ -715,3 +715,89 @@ pub(crate) fn tag_pairs(raw: Option<&str>) -> Vec<serde_json::Value> {
 pub(crate) const ROUTE_GRAPH_MARGIN_M: f64 = 1500.0;
 /// The TypeScript's `--days N` default for the warm-cache cron.
 pub(crate) const DECODE_DEFAULT_DAYS: i64 = 14;
+
+/// `backend decode-bench [--runs N] [DAY…]` — the HSMM decoder's cost per
+/// frozen day, apart from its model build (#1714).
+///
+/// ⚠ THIS IS THE INSTRUMENT FOR A CHANGE TO THE TRELLIS. `hsmm_decode_corpus`
+/// proves a decode still exact; its wall — fixture parse, Rust and Lean
+/// together, ~170 s — swings 2× run to run and cannot tell a 10% decoder change
+/// from noise. This runs `verified_cli decodeprof` on each fixture's request,
+/// the request the gate replays, which builds the `PData` once and times
+/// `pDecodeFast` N times on it. The MIN is the decoder's cost; the spread is
+/// the machine's. Compare two arms by swapping `VERIFIED_CLI`, and interleave
+/// them (A/B/A): a neighbour session's build biases both.
+///
+/// Prints the day, the trellis shape, the build time and the decode
+/// min/median/max, never a coordinate.
+pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
+    let Some(mut names) = decode_fixture::fixture_names()? else {
+        anyhow::bail!(
+            "no decode corpus at {}",
+            decode_fixture::corpus_dir().display()
+        );
+    };
+    if !days.is_empty() {
+        names.retain(|n| days.iter().any(|d| n.starts_with(d.as_str())));
+        anyhow::ensure!(!names.is_empty(), "no fixture matches {days:?}");
+    }
+    let cli = backend::lean_worker::verified_cli_path()?;
+    println!(
+        "{:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9}",
+        "day", "T", "S", "maxD", "build ms", "min ms", "med ms", "max ms"
+    );
+    let mut sum_min = 0u64;
+    for name in &names {
+        let mut req = decode_fixture::request(&decode_fixture::read(name)?)?;
+        req["runs"] = serde_json::json!(runs);
+        let mut child = std::process::Command::new(cli)
+            .arg("decodeprof")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("spawning {}", cli.display()))?;
+        {
+            use std::io::Write;
+            let mut stdin = child.stdin.take().context("the child has no stdin")?;
+            stdin.write_all(serde_json::to_string(&req)?.as_bytes())?;
+        }
+        let out = child.wait_with_output()?;
+        anyhow::ensure!(
+            out.status.success(),
+            "{name}: decodeprof exited {}",
+            out.status
+        );
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .with_context(|| format!("{name}: decodeprof answer is not JSON"))?;
+        let mut ms: Vec<u64> = v["decodeMs"]
+            .as_array()
+            .context("decodeMs")?
+            .iter()
+            .filter_map(serde_json::Value::as_u64)
+            .collect();
+        anyhow::ensure!(
+            ms.len() == runs,
+            "{name}: {} timings for {runs} runs",
+            ms.len()
+        );
+        ms.sort_unstable();
+        let day = name.trim_end_matches(".json");
+        println!(
+            "{day:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9}",
+            v["T"],
+            v["S"],
+            v["maxD"],
+            v["buildMs"],
+            ms[0],
+            ms[ms.len() / 2],
+            ms[ms.len() - 1]
+        );
+        sum_min += ms[0];
+    }
+    println!(
+        "{} day(s), {runs} run(s) each, sum of per-day minima {sum_min} ms",
+        names.len()
+    );
+    Ok(())
+}

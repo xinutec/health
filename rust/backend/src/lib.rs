@@ -48,6 +48,7 @@ pub mod backfill;
 pub mod classification_inputs;
 pub mod config;
 pub mod db;
+pub mod decode_fixture;
 pub mod error;
 pub mod fetch_queue;
 pub mod fitbit;
@@ -203,6 +204,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "capture-day",
         "<user> <date> <out.json> [tz]",
         "write a golden fixture for one day from the live mirror (#1660)",
+    ),
+    (
+        "decode-bench",
+        "[--runs N] [DAY…]",
+        "time the HSMM decoder per frozen day, model build excluded (#1714)",
     ),
     (
         "mirror-check",
