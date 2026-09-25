@@ -197,3 +197,25 @@ async fn different_keys_do_not_block_each_other() {
         started.elapsed()
     );
 }
+
+/// ⚠ An expired entry is released by ANY traffic, not only by a read of its own
+/// key. Thirty-two parsed days pinned the serving pod at its memory limit
+/// (2026-09-25) while every one of them was long past its window.
+#[tokio::test]
+async fn expired_entries_are_swept_by_traffic_on_other_keys() {
+    backend::lean::init().expect("lean host");
+    let c = VelocityCache::new();
+    let p = policy(32);
+    put(&c, "a", 1_000, p, json!({"day": "a"})).await;
+    put(&c, "b", 1_000, p, json!({"day": "b"})).await;
+    assert_eq!(c.len(), 2);
+    // A read of a THIRD key, past both windows: both are gone, and the miss
+    // that seats "c" leaves only "c".
+    let v = put(&c, "c", 1_000 + TTL + 1, p, json!({"day": "c"})).await;
+    assert_eq!(v, json!({"day": "c"}));
+    assert_eq!(
+        c.len(),
+        1,
+        "the two expired days must not outlive their window"
+    );
+}

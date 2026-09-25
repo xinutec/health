@@ -13,6 +13,17 @@
 //! concurrency, not policy. [`Policy`] is what the caller carries across from
 //! Lean; it is never computed in this file.
 //!
+//! # Held as bytes, and swept
+//!
+//! An entry is the day SERIALISED, not the parsed tree. A day is ~5 MB of JSON
+//! and several times that as a `Value` (one allocation per number, string and
+//! object); thirty-two such trees pinned the serving pod at its 512 MiB limit
+//! (2026-09-25) while the entries were long past their five-minute window,
+//! because nothing dropped an entry until its key was read again or the bound
+//! was hit. Every read and every seat now sweeps the stale ones out, so what
+//! is held is what was viewed inside the window, and the parse on a hit is
+//! milliseconds against the seconds it saves.
+//!
 //! # Per-pod, cleared by restart
 //!
 //! No schema-version tag and no invalidation hook: a deploy restarts the pod
@@ -29,7 +40,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 
 /// What Lean decided for this request. Carried, never computed here.
@@ -43,8 +54,12 @@ pub struct Policy {
 
 struct Entry {
     key: String,
-    result: Value,
+    /// The day as JSON text. See the module note.
+    body: Vec<u8>,
     cached_at_ms: i64,
+    /// The window this entry was seated under: a live day's is shorter than a
+    /// settled day's, and the sweep must judge each by its own.
+    ttl_ms: i64,
 }
 
 /// The cache. One per process; `AppState` holds it behind an `Arc`.
@@ -64,43 +79,62 @@ impl VelocityCache {
         Self::default()
     }
 
-    /// A fresh entry for `key`, bumped to most-recent. `None` on miss or stale.
+    /// Drop every entry past its own window.
     ///
     /// ⚠ Freshness is Lean's — including the rule that an entry stamped in the
     /// FUTURE is stale. Plain `now - cached_at < ttl` reads a far-future entry
     /// as eternally fresh, which is the one staleness failure that never expires
     /// by itself.
-    fn take_fresh(&self, key: &str, now_ms: i64, ttl_ms: i64) -> Result<Option<Value>> {
+    fn sweep(entries: &mut Vec<Entry>, now_ms: i64) -> Result<()> {
+        let mut i = 0;
+        while i < entries.len() {
+            if crate::lean::velocity_cache_fresh(
+                entries[i].cached_at_ms,
+                now_ms,
+                entries[i].ttl_ms,
+            )? {
+                i += 1;
+            } else {
+                entries.remove(i);
+            }
+        }
+        Ok(())
+    }
+
+    /// A fresh entry for `key`, bumped to most-recent. `None` on miss or stale.
+    /// Sweeps first, so a read of one day releases every other day that has
+    /// expired.
+    fn take_fresh(&self, key: &str, now_ms: i64) -> Result<Option<Value>> {
         let mut entries = self.entries.lock().expect("velocity cache mutex");
+        Self::sweep(&mut entries, now_ms)?;
         let Some(i) = entries.iter().position(|e| e.key == key) else {
             return Ok(None);
         };
-        if !crate::lean::velocity_cache_fresh(entries[i].cached_at_ms, now_ms, ttl_ms)? {
-            // Drop it rather than leave it to be re-tested on every request.
-            entries.remove(i);
-            return Ok(None);
-        }
         // LRU bump: move to the end, so this key is now the most recent.
         let e = entries.remove(i);
-        let result = e.result.clone();
+        let result = serde_json::from_slice(&e.body).context("cached day is not JSON")?;
         entries.push(e);
         Ok(Some(result))
     }
 
-    fn seat(&self, key: &str, result: &Value, now_ms: i64, max_entries: usize) {
+    fn seat(&self, key: &str, result: &Value, now_ms: i64, policy: Policy) -> Result<()> {
+        let body = serde_json::to_vec(result).context("serialise the day for the cache")?;
         let mut entries = self.entries.lock().expect("velocity cache mutex");
+        Self::sweep(&mut entries, now_ms)?;
         if let Some(i) = entries.iter().position(|e| e.key == key) {
             entries.remove(i);
         }
         // Evict from the front — oldest first — until there is room.
-        while entries.len() >= max_entries.max(1) {
+        while entries.len() >= policy.max_entries.max(1) {
             entries.remove(0);
         }
         entries.push(Entry {
             key: key.to_string(),
-            result: result.clone(),
+            body,
             cached_at_ms: now_ms,
+            ttl_ms: policy.ttl_ms,
         });
+        Ok(())
     }
 
     /// Read `key`, or compute it and seat the result.
@@ -129,7 +163,7 @@ impl VelocityCache {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<Value>>,
     {
-        if let Some(hit) = self.take_fresh(key, now_ms, policy.ttl_ms)? {
+        if let Some(hit) = self.take_fresh(key, now_ms)? {
             tracing::debug!(key, "velocity-cache HIT");
             return Ok(hit);
         }
@@ -143,7 +177,7 @@ impl VelocityCache {
         // ⚠ RE-READ under the lock. The holder we just queued behind may have
         // seated exactly what this request wanted, and computing again would be
         // the parallel run the lock exists to prevent, merely serialised.
-        let out = match self.take_fresh(key, now_ms, policy.ttl_ms)? {
+        let out = match self.take_fresh(key, now_ms)? {
             Some(hit) => {
                 tracing::debug!(key, "velocity-cache JOIN");
                 Ok(hit)
@@ -152,7 +186,7 @@ impl VelocityCache {
                 tracing::debug!(key, "velocity-cache MISS");
                 match compute().await {
                     Ok(result) => {
-                        self.seat(key, &result, now_ms, policy.max_entries);
+                        self.seat(key, &result, now_ms, policy)?;
                         Ok(result)
                     }
                     // ⚠ A failed compute seats NOTHING. Caching an error would
