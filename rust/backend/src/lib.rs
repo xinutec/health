@@ -200,6 +200,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "the day fold against the OSM mirror",
     ),
     (
+        "capture-day",
+        "<user> <date> <out.json> [tz]",
+        "write a golden fixture for one day from the live mirror (#1660)",
+    ),
+    (
         "mirror-check",
         "<fixture.json>",
         "the OSM mirror against a fixture",

@@ -566,6 +566,18 @@ async fn main() -> Result<()> {
             };
             mirror_check(fixture).await
         }
+        // #1660: the golden-day writer.
+        "capture-day" => {
+            let (user, date, out, tz) = match flags {
+                [user, date, out] => (user, date, out, None),
+                [user, date, out, tz] => (user, date, out, Some(tz.as_str())),
+                _ => {
+                    eprintln!("usage: backend capture-day <user> <date> <out.json> [display-tz]");
+                    std::process::exit(64);
+                }
+            };
+            capture_day(user, date, tz, out).await
+        }
         sub @ ("day-live" | "day-mirror") => {
             let (user, date, tz) = match flags {
                 [user, date] => (user, date, None),

@@ -200,6 +200,24 @@ impl Recorded {
 }
 
 impl<S: RowSource> RowSource for RecordingSource<S> {
+    // ⚠ THE THREE MATCHER READS FORWARD. The trait defaults them to a decline
+    // because a ROW SET has no arm for them, and a recorder that inherited that
+    // default asked the mirror nothing: the 2026-08-06 re-capture came back
+    // with every walkable-roads read declined and a moved timeline (#1660). The
+    // answers are recorded by the `RecordingAnswerer` above as `osmTrace`
+    // sections; a `None` here is a decline the replay reproduces by absence.
+    fn walkable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        self.inner.walkable_roads(lat, lon, radius_m)
+    }
+
+    fn drivable_roads(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        self.inner.drivable_roads(lat, lon, radius_m)
+    }
+
+    fn buildings_near(&mut self, lat: f64, lon: f64, radius_m: f64) -> Result<Option<Value>> {
+        self.inner.buildings_near(lat, lon, radius_m)
+    }
+
     fn line_rows(
         &mut self,
         bucket: &str,

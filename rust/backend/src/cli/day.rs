@@ -682,6 +682,110 @@ pub(crate) async fn locations_check(user: &str, date: &str) -> Result<()> {
 ///
 /// ⚠ Repeat a day at the END to prove the ratchet: if the high-water tracked
 /// the CURRENT day it would fall back on a light one. It does not.
+/// Write a golden fixture for one day from the live database and the OSM
+/// mirror — `{meta, inputs, expected}` in the shape `tests/golden/days` holds.
+///
+/// The inputs are what `day-live` loads. The fold runs against the mirror with
+/// every answer RECORDED: the three matcher reads become `osmTrace`, the rows
+/// the answerer served its other tables from become `osmRowSet`, the declines
+/// ride with them (#1660), and the timeline the fold produced becomes
+/// `expected.statesOut` — the oracle the day corpus replays against. Nothing
+/// had written a fixture since the TypeScript went (#975); this is the writer.
+///
+/// ⚠ REAL LOCATION DATA in the file. `tests/golden` is gitignored and its inner
+/// repository has no remote — commit there BEFORE overwriting a day, so a
+/// re-capture is revertable (its README). Nothing here prints a coordinate.
+pub(crate) async fn capture_day(
+    user: &str,
+    date: &str,
+    display_tz: Option<&str>,
+    out: &str,
+) -> Result<()> {
+    backend::lean::init().context("starting the Lean runtime")?;
+    // `from_env_batch`: the database and nothing else, as `velocity-many`.
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let home_tz = sync_state::get(&pool, user, "home_tz")
+        .await?
+        .unwrap_or_else(|| "Europe/Amsterdam".into());
+    let display_tz = display_tz.unwrap_or(&home_tz).to_string();
+    let bounds = backend::timezone::date_bounds_utc(date, Some(&display_tz))
+        .with_context(|| format!("bounding {date} in {display_tz}"))?;
+    let base_url = cfg
+        .nextcloud_base_url
+        .clone()
+        .unwrap_or_else(|| classification_inputs::DAY_NEXTCLOUD_BASE_URL.to_string());
+    let mut inputs = classification_inputs::load(
+        &pool,
+        &reqwest::Client::new(),
+        &base_url,
+        &classification_inputs::DayIdentity {
+            user_id: user,
+            date,
+            display_tz: &display_tz,
+        },
+        bounds,
+        Some(&home_tz),
+    )
+    .await?;
+    let cap = backend::head::capture(&inputs, date, user)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (folded, row_set, mut trace, geocodes) =
+        backend::mirror_source::fold_from_mirror_recording(
+            pool.clone(),
+            cap,
+            inputs.clone(),
+            now_ms,
+        )
+        .await?;
+    pool.close().await;
+    if let (Some(g), Some(t)) = (geocodes, trace.as_object_mut()) {
+        t.insert("reverseGeocode".into(), g);
+    }
+    let answer: serde_json::Value =
+        serde_json::from_str(&folded.out).context("the fold's answer is not JSON")?;
+    let states = answer
+        .get("states")
+        .cloned()
+        .context("the fold's answer has no states")?;
+    let n_states = states.as_array().map_or(0, Vec::len);
+    let by_table = folded.declined_by_table();
+    let o = inputs
+        .as_object_mut()
+        .context("the inputs are not an object")?;
+    o.insert("osmTrace".into(), trace);
+    o.insert("osmRowSet".into(), row_set);
+    let fixture = serde_json::json!({
+        "meta": {
+            "fixtureFormatVersion": 1,
+            "capturedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "capturedAtCodeSha": std::env::var("GIT_SHA").unwrap_or_else(|_| "unknown".into()),
+            "date": date,
+            "user": user,
+            "tz": display_tz,
+            "description": "",
+        },
+        "inputs": inputs,
+        // `velocity` is the same timeline: the corpus judges `statesOut`, and
+        // `backend day` prints against `velocity`.
+        "expected": { "statesOut": states.clone(), "velocity": states },
+    });
+    let text = fixture.to_string();
+    std::fs::write(out, &text).with_context(|| format!("writing {out}"))?;
+    eprintln!(
+        "captured {date} for {user}: {} ask(s), {} answered, {n_states} state(s), {} MiB -> {out}",
+        folded.asks.len(),
+        folded.answered(),
+        text.len() / (1024 * 1024)
+    );
+    for (table, n) in &by_table {
+        eprintln!("  declined {table}: {n}");
+    }
+    Ok(())
+}
+
 pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     backend::lean::init().context("starting the Lean runtime")?;
     // ⚠ `from_env_batch`, NOT `from_env`. The fold needs the DATABASE and
