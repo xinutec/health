@@ -181,10 +181,9 @@ private def parseModel (j : Json) : Except String PData := do
   -- Flatten the override rows likewise (read per open cell: S²·T probes).
   let transFlat : Array Nat := Id.run do
     let mut a := Array.replicate (transRows.size * T) 0
-    for i in [0:transRows.size] do
-      let r := transRows[i]!
-      for t in [0:min T r.size] do
-        a := a.set! (i * T + t) r[t]!
+    for (r, i) in transRows.zipIdx do
+      for (v, t) in r.zipIdx do
+        if t < T then a := a.set! (i * T + t) v
     return a
   -- Class-factorised per-segEnd duration deltas (segment evidence). When
   -- present, the base matrix and the deltas each get half the envelope so
@@ -211,14 +210,14 @@ private def parseModel (j : Json) : Except String PData := do
   let durDeltaFlat : Array Nat := Id.run do
     let nC := durDelta.size
     let mut a := Array.replicate (nC * maxD * T) halfOB
-    for c in [0:nC] do
-      let cls := durDelta[c]!
-      for d0 in [0:min maxD cls.size] do
-        let mut e := 0
-        for (v, len) in cls[d0]! do
-          for _ in [0:len] do
-            if e < T then a := a.set! ((c * maxD + d0) * T + e) v
-            e := e + 1
+    for (cls, c) in durDelta.zipIdx do
+      for (runs, d0) in cls.zipIdx do
+        if d0 < maxD then
+          let mut e := 0
+          for (v, len) in runs do
+            for _ in [0:len] do
+              if e < T then a := a.set! ((c * maxD + d0) * T + e) v
+              e := e + 1
     return a
   let durOv : Std.HashMap Nat Nat ←
     match j.getObjVal? "durOverrides" with
@@ -790,7 +789,7 @@ private def parseObservationInput (v : Json)
     proxPairs.foldl (fun m (t, r, l) => m.insert t (r, l)) {}
   return Verified.Hsmm.Observation.buildObservationTensor startUtc
     points.toList hr.toList steps.toList sleep.toList
-    (fun m => ctxArr[m]!)
+    (fun m => ctxArr.getD m (0, 0))
     (fun ts => proxMap.getD ts (none, none))
     imputeCadence
 
@@ -945,14 +944,16 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
   -- for the eligible pairs only — vs a T·S³ dense build.
   let placeNear := fun (pid : Int) (line : String) => c.placeNearLine.contains s!"{pid}|{line}"
   let statesL := c.states.toList
-  let weightSum : Array Float := (Array.range S).map fun a =>
-    Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL c.states[a]!
-  let baseTransF := fun (a b : Nat) =>
-    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop weightSum[a]! c.states[a]! c.states[b]!
+  -- Each state with its weight sum and its index, so the pair loops below read
+  -- nothing by index: the state comes from the iteration itself.
+  let weighted : Array ((Verified.Hsmm.Emissions.State × Float) × Nat) :=
+    (c.states.map fun s => (s, Verified.Hsmm.Transitions.crossWeightSumP placeNear statesL s)).zipIdx
+  let baseTransF := fun (src dst : Verified.Hsmm.Emissions.State) (ws : Float) =>
+    Verified.Hsmm.Transitions.transitionLogProbPre placeNear c.selfLoop ws src dst
   let mut transBase : Array Nat := Array.replicate (S * S) 0
-  for a in [0:S] do
-    for b in [0:S] do
-      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF a b)))
+  for ((src, ws), a) in weighted do
+    for ((dst, _), b) in weighted do
+      transBase := transBase.set! (a * S + b) (← encScore pOB (quant (baseTransF src dst ws)))
   -- Override rows for chain-eligible, non-hard-zero pairs (superset of the pairs
   -- whose chain term can be non-zero — hard-zeros keep their −∞, chain not added).
   let chainEligible := fun (src dst : Verified.Hsmm.Emissions.State) =>
@@ -962,15 +963,12 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
   let mut ovPairs : Array (Nat × Nat) := #[]
   let mut transRows : Array (Array Nat) := #[]
   if c.chainOn then
-    for a in [0:S] do
-      for b in [0:S] do
-        let src := c.states[a]!
-        let dst := c.states[b]!
+    for ((src, ws), a) in weighted do
+      for ((dst, _), b) in weighted do
         if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
-          let base := baseTransF a b
+          let base := baseTransF src dst ws
           let mut rowr : Array Nat := Array.replicate T 0
-          for t in [0:T] do
-            let o := c.obs[t]!
+          for (o, t) in c.obs.zipIdx do
             let cv := Verified.Hsmm.RouteModel.chainContext c.edgesByLine c.placeCoords src dst o
               (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
             rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
@@ -979,13 +977,11 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
   let nRows := transRows.size
   let transFlat : Array Nat := Id.run do
     let mut a := Array.replicate (nRows * T) 0
-    for i in [0:nRows] do
-      let r := transRows[i]!
-      for t in [0:T] do a := a.set! (i * T + t) r[t]!
+    for (r, i) in transRows.zipIdx do
+      for (v, t) in r.zipIdx do a := a.set! (i * T + t) v
     return a
   let mut transIdx : Array Nat := Array.replicate (S * S) nRows  -- sentinel = nRows ⇒ use base
-  for i in [0:ovPairs.size] do
-    let (a, b) := ovPairs[i]!
+  for ((a, b), i) in ovPairs.zipIdx do
     transIdx := transIdx.set! (a * S + b) i
   -- Duration: EXACT class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
@@ -999,8 +995,7 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
       durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durAt c s (d0 + 1) assembleRefE)))
   let qiOf := fun (x : Float) => (Float.toInt64 x).toInt   -- dur is finite
   let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
-  for cls in [0:nC] do
-    let rep := reps[cls]!
+  for (rep, cls) in reps.zipIdx do
     for d0 in [0:maxD] do
       let qRef := match quant (Verified.Hsmm.Assemble.durAt c rep (d0 + 1) assembleRefE) with
         | some v => qiOf v | none => 0

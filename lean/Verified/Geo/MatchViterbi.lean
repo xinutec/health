@@ -402,7 +402,7 @@ trellis* (via `pickBest_congr`), so `decodeFast_argmax` and
 `Memo.lean` playbook, one dimension simpler (no `τ` duration index). It is the
 decoder the production matcher instantiates and runs. -/
 
-open Verified.Hsmm (pickBest_congr)
+open Verified.Hsmm (pickBest_congr getD_of_lt)
 
 /-- Row `0`: the layer-0 emissions. -/
 def row0 (Tr : Trellis) : Array Score :=
@@ -411,7 +411,7 @@ def row0 (Tr : Trellis) : Array Score :=
 /-- Row `t + 1` from row `t`: the forward DP recurrence, reading `prev`. -/
 def rowStep (Tr : Trellis) (t : Nat) (prev : Array Score) : Array Score :=
   Array.ofFn (n := Tr.width (t + 1)) fun j =>
-    Score.listMax ((List.range (Tr.width t)).map fun i => prev[i]! + Tr.step (t + 1) i j)
+    Score.listMax ((List.range (Tr.width t)).map fun i => (prev.getD i .negInf) + Tr.step (t + 1) i j)
       + emitG Tr (t + 1) j
 
 /-- Rows `0 … t`, in order. -/
@@ -419,19 +419,19 @@ def buildRows (Tr : Trellis) : Nat → Array (Array Score)
   | 0 => #[row0 Tr]
   | t + 1 =>
     let cs := buildRows Tr t
-    cs.push (rowStep Tr t cs[t]!)
+    cs.push (rowStep Tr t (cs.getD t #[]))
 
 theorem row0_get (Tr : Trellis) {j : Nat} (hj : j < Tr.width 0) :
-    (row0 Tr)[j]! = cell Tr 0 j := by
-  rw [row0, getElem!_pos (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
+    ((row0 Tr).getD j .negInf) = cell Tr 0 j := by
+  rw [row0, getD_of_lt (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
   rfl
 
 theorem rowStep_get (Tr : Trellis) (t : Nat) (prev : Array Score)
-    (hprev : ∀ i, i < Tr.width t → prev[i]! = cell Tr t i)
+    (hprev : ∀ i, i < Tr.width t → (prev.getD i .negInf) = cell Tr t i)
     {j : Nat} (hj : j < Tr.width (t + 1)) :
-    (rowStep Tr t prev)[j]! = cell Tr (t + 1) j := by
-  rw [rowStep, getElem!_pos (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
-  show Score.listMax ((List.range (Tr.width t)).map (fun i => prev[i]! + Tr.step (t + 1) i j))
+    ((rowStep Tr t prev).getD j .negInf) = cell Tr (t + 1) j := by
+  rw [rowStep, getD_of_lt (Array.ofFn _) _ (by simpa using hj), Array.getElem_ofFn]
+  show Score.listMax ((List.range (Tr.width t)).map (fun i => (prev.getD i .negInf) + Tr.step (t + 1) i j))
         + emitG Tr (t + 1) j = cell Tr (t + 1) j
   rw [cell]
   congr 1
@@ -448,14 +448,14 @@ theorem buildRows_size (Tr : Trellis) : ∀ t, (buildRows Tr t).size = t + 1
 /-- Every stored cell is the corresponding `cell` value. -/
 theorem buildRows_get (Tr : Trellis) :
     ∀ (tmax t : Nat), t ≤ tmax → ∀ (j : Nat), j < Tr.width t →
-      ((buildRows Tr tmax)[t]!)[j]! = cell Tr t j := by
+      (((buildRows Tr tmax).getD t #[]).getD j .negInf) = cell Tr t j := by
   intro tmax
   induction tmax with
   | zero =>
     intro t ht j hj
     have ht0 : t = 0 := Nat.le_zero.mp ht
     subst ht0
-    have h0 : (buildRows Tr 0)[0]! = row0 Tr := rfl
+    have h0 : ((buildRows Tr 0).getD 0 #[]) = row0 Tr := rfl
     rw [h0]
     exact row0_get Tr hj
   | succ tmax ih =>
@@ -463,26 +463,26 @@ theorem buildRows_get (Tr : Trellis) :
     have hsz : (buildRows Tr tmax).size = tmax + 1 := buildRows_size Tr tmax
     by_cases htt : t = tmax + 1
     · subst htt
-      have hread : (buildRows Tr (tmax + 1))[tmax + 1]!
-          = rowStep Tr tmax (buildRows Tr tmax)[tmax]! := by
+      have hread : ((buildRows Tr (tmax + 1)).getD (tmax + 1) #[])
+          = rowStep Tr tmax ((buildRows Tr tmax).getD tmax #[]) := by
         simp only [buildRows]
-        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+        rw [getD_of_lt _ _ (by simp only [Array.size_push, hsz]; omega),
           Array.getElem_push, dif_neg (by omega)]
       rw [hread]
       exact rowStep_get Tr tmax _ (fun i hi => ih tmax (Nat.le_refl _) i hi) hj
     · have htle : t ≤ tmax := by omega
-      have hread : (buildRows Tr (tmax + 1))[t]! = (buildRows Tr tmax)[t]! := by
+      have hread : ((buildRows Tr (tmax + 1)).getD t #[]) = ((buildRows Tr tmax).getD t #[]) := by
         simp only [buildRows]
-        rw [getElem!_pos _ _ (by simp only [Array.size_push, hsz]; omega),
+        rw [getD_of_lt _ _ (by simp only [Array.size_push, hsz]; omega),
           Array.getElem_push, dif_pos (by omega)]
-        exact (getElem!_pos _ _ (by omega)).symm
+        exact (getD_of_lt _ _ (by omega)).symm
       rw [hread]
       exact ih t htle j hj
 
 /-- Cell lookup in the prebuilt rows. The `Trellis` is carried for call-site
 symmetry with `cell`/`step` (the lookup itself needs only the row array). -/
 def lookupRow (_Tr : Trellis) (rows : Array (Array Score)) (t j : Nat) : Score :=
-  (rows[t]!)[j]!
+  ((rows.getD t #[]).getD j .negInf)
 
 /-- `decodeTo`, reading the prebuilt rows instead of recomputing `cell`. -/
 def decodeToFast (Tr : Trellis) (rows : Array (Array Score)) :
