@@ -20,7 +20,7 @@ accuracy but sit a kilometre off, and coarse cell-tower scatter each
 defeat a different route-fit metric. What *is* reliable for a confident
 train run is its `<board> → <alight>` station-pair label.
 
-`src/geo/rail-snap.ts` (`snapTrainSegment`, pure) therefore:
+`lean/Verified/Geo/RailSnap.lean` (`snapTrainSegment`, pure) therefore:
 
 1. parses the boarding and alighting station names from the label;
 2. resolves their coordinates from the local OSM station mirror;
@@ -75,20 +75,19 @@ recordings that predate the coordinate fields skip the retry.
 The frontend renders a `snappedPath` as a distinct dashed polyline so
 it reads as inferred, not measured.
 
-A verified Lean port of the shortest-path core (V3 of
-[`../proposals/2026-07-verified-core-lean.md`](../proposals/2026-07-verified-core-lean.md))
-is in progress under `lean/Verified/Rail/`; production behaviour is
-unchanged until that lands.
+The shortest-path core is `lean/Verified/Rail/`, with a certified checker
+(`dijkstraC_correct`): a returned path attains the oracle minimum, and a
+certification failure is an honest `none`.
 
 ## Testing
 
-`tests/railsnap-e2e.test.ts` runs the snapper against a captured
+`rust/backend/tests/rail_snap.rs` runs the snapper against a captured
 real-day fixture (`tests/fixtures/railsnap/`, gitignored — real
 coordinates) and asserts outcome properties a synthetic test cannot:
 the path spans the journey, sits on the rail network, is monotonic,
 and is a sane length. It is `skipIf`-absent, so CI without the fixture
-skips it; locally it is the verdict. The capture tool is
-`src/cli/capture-railsnap-fixture.ts`.
+skips it; locally it is the verdict. ⚠ The capture tool went with the
+TypeScript, so the fixture cannot be regenerated (see the table below).
 
 ## Rejected approaches
 

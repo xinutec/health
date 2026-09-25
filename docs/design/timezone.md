@@ -22,15 +22,6 @@ whatever zone the watch was in at recording time.**
   them in UTC.
 - Timestamp interpretation is unambiguous — no tz needed at read time.
 
-> Note for implementers: a stale test at `tests/timezone.test.ts:27-61`
-> documents the opposite claim ("PhoneTrack stores timestamps as unix
-> epoch but the values represent LOCAL time"). That comment is wrong.
-> Empirical verification: PhoneTrack fixes fetched live during a real
-> trip have ISO-Z timestamps that match true UTC moments
-> (e.g. `20:00:31Z` at lat 51.54, lon -0.13 = central London arrival
-> at 21:00 BST). The downstream `dateBoundsUtc(date, tz)` consumer also
-> treats them as true UTC and produces correct segments. Delete that
-> test as part of implementation.
 
 ### Fitbit
 
@@ -55,8 +46,8 @@ These were conflated by older code. They are distinct:
 
 1. **Display / day-boundary tz** — the browser's tz, sent as a query
    parameter on each API request. Used to compute "what UTC range does
-   'today' cover for this user." Drives `dateBoundsUtc(date, tz)` in
-   `src/geo/timezone.ts`.
+   'today' cover for this user." Drives `date_bounds_utc(date, tz)` in
+   `rust/backend/src/timezone.rs`.
 
 2. **Recording tz** — the watch's tz at the moment of recording.
    Property of an individual Fitbit row. Must be known to convert that
@@ -95,28 +86,27 @@ Deferred — explicitly listed so future work knows the gap:
 Three forward-sync functions write rows with wall-clock timestamps
 that need per-row tz:
 
-- `syncSleep` (`sync.ts:215`) — populates the `tz` column on both
+- the sleep writer (`fitbit/sync/sleep.rs`) — populates the `tz` column on both
   the parent `sleep` row (via `parseSleepLog`) and the per-stage
   `sleep_stages` rows (via `parseSleepStages`). Both derive `tz`
   from the user's TzSource at the sleep start's wall-clock.
-- `syncHeartRateIntraday` (`sync.ts:220-221`) — writes
+- the HR intraday writer (`fitbit/sync/heartrate.rs`) — writes
   `heart_rate_intraday`.
-- `syncStepsIntraday` (`sync.ts:223-224`) — writes `steps_intraday`.
+- the steps intraday writer (`fitbit/sync/steps.rs`) — writes `steps_intraday`.
 
-Other forward-sync calls in `sync.ts:213-233` (`syncDevices`,
-`syncActivity`, `syncBody`, `syncSpO2Daily`, `syncHrv`,
-`syncBreathingRate`, `syncTemperature`, `syncHeartRateZones`) write
+The other forward-sync writers (devices, activity, body, SpO2, HRV,
+breathing rate, temperature, heart-rate zones) write
 either date-only rows or rows whose timestamps are not affected by
 the bug. They get no `TzSource` parameter.
 
 These same three functions are called from inside the
-backward-backfill stream callback (`sync.ts:249, 257, 265`). They
+backward-backfill stream callback. They
 cannot distinguish caller intent from their parameter list. The
 split is therefore plumbed via an explicit `tzSource` parameter on
 each:
 
 ```ts
-// src/geo/fitbit-tz.ts (new module)
+// the shape as first sketched; today rust/backend/src/fitbit/tz_source.rs
 export interface TzSource {
     /** Given a Fitbit wall-clock row, return the inferred recording tz
      *  or null if no signal is available. */
@@ -138,25 +128,17 @@ Each of the three sync functions gains a final parameter (default
 `NULL_TZ_SOURCE` so existing test fixtures don't break). Row-shape
 construction differs across the three:
 
-- **Steps**: `parseStepsDataset` at `src/fitbit/sync/steps.ts:18-31`
+- **Steps**: the steps dataset parser (`rust/backend/src/fitbit/sync/`)
   exists as a pure function returning `Array<[string, string, number]>`.
   Extend the return type to a 4-tuple
   `[userId, ts, value, tz | null]` (tz in the last position so
   existing tests need only one minor signature change). Add a
   `tzSource: TzSource` parameter; for each row, call
   `tzSource.forWallClock(date, time)` and append the result.
-- **HR intraday**: `heartrate.ts:43-74` constructs rows inline at
-  `:66` (`dataset.map((d) => [userId, ..., d.value])`). Lift this
-  into a new `parseHRDataset` helper for testability and symmetry
-  with steps. Same 4-tuple shape.
-- **Sleep stages**: `sleep.ts:65-73` builds rows inline inside a
-  `for (const stage of log.levels.data)` loop, currently writing one
-  `conn.query` per stage (not batched). Lift this into a
-  `parseSleepStages` helper that returns the row tuples for the
-  whole sleep log, then switch the call site to `conn.batch` (same
-  pattern as `steps.ts`). Note this is *not* a pure refactor — the
-  insert-call shape changes from N queries to one batched call.
-  4-tuple shape: `[userId, logId, ts, stage, duration_seconds, tz]`
+- **HR intraday**: `heartrate.rs` builds the rows, tz appended per row.
+- **Sleep stages**: `sleep.rs` builds the per-stage rows for a whole log,
+  each carrying the log's tz.
+  Row shape: `[userId, logId, ts, stage, duration_seconds, tz]`
   — sleep_stages already has `sleep_log_id` so the row tuple is
   6 fields, not 4. (4-tuple shape applies to steps and HR.)
 
@@ -202,9 +184,9 @@ fix's tz by ±2h, the ±6h fix-search window absorbs the error.
 
 ### Forward-vs-backward orchestration
 
-In `src/sync.ts`:
+In the sync orchestration (`rust/backend/src/fitbit/run.rs`):
 
-- **Forward sync** (line ~205 onwards): before calling the four
+- **Forward sync**: before calling the four
   sync*Intraday functions, fetch PhoneTrack fixes for the
   `lastSyncDate → today` window, fetch `/1/user/-/profile.json`, build
   a `TzSource` once, pass it to each sync call.
@@ -225,8 +207,8 @@ In `src/sync.ts`:
   later fetches per-week PhoneTrack history for those dates and
   resolves correctly.
 - **`lastSyncDate = daysAgo(30)` on first link.** Forward sync's
-  PhoneTrack fetch is 30 days, not 1–7. `refresh-focus-places.ts:80-90`
-  already chunks per-week — reuse the same chunking helper to keep
+  PhoneTrack fetch is 30 days, not 1–7. The focus-place refresh already
+  chunks per week — the same chunking keeps
   the Nextcloud API hit reasonable. Days within the 30-day window
   that fall outside the PhoneTrack-available range get `profileTz` or
   NULL via the resolution chain above.
@@ -252,7 +234,7 @@ the row; the backfill CLI does that.
 
 MariaDB 11.8 supports `VALUES()` in `ON DUPLICATE KEY UPDATE` — verified
 in `k8s/02-db.yaml` and used throughout the existing sync modules
-(`fitbit/sync/devices.ts`, `spo2.ts`, `hrv.ts`, `body.ts`, `sleep.ts`).
+(`rust/backend/src/fitbit/sync/`).
 
 ## Storage: the three-tier model
 
@@ -276,7 +258,7 @@ This is "persist algorithmic outputs, but keep the inputs" applied to time:
 
 ## Read path
 
-`loadBiometrics` in `src/geo/velocity.ts` range-filters directly on `ts_utc`
+The biometric reader (`rust/backend/src/classification_inputs.rs`) range-filters directly on `ts_utc`
 against the `(user_id, ts_utc)` index — no per-row conversion in the hot path:
 
 ```ts
@@ -311,7 +293,7 @@ straggler row reads identically whether or not its `ts_utc` is populated yet.
 
 ## `home_tz` derivation
 
-`assignDisplayNames` (`src/geo/focus-places.ts`) returns
+`assignDisplayNames` (`lean/Verified/Geo/FocusPlaces.lean`) returns
 `Map<number, string>` mapping cluster id → human-readable name
 (e.g. `"Home"`, `"Work"`). After it runs, the
 `refresh-focus-places` CLI iterates the clusters and inserts
@@ -344,13 +326,11 @@ No reverse-geocode (Nominatim) is involved. `tz-lookup` operates
 directly on the centroid coordinates — coordinates → IANA tz in one
 offline call.
 
-`setSyncState` / `getSyncState` are currently private helpers in
-`src/sync.ts:39-55`. Extract them to a new shared module
-`src/db/sync-state.ts` so both `sync.ts` and `refresh-focus-places.ts`
-can import them.
+`sync_state::set` / `sync_state::get` (`rust/backend/src/sync_state.rs`) are
+the shared helpers, used by the sync and the focus-place refresh alike.
 
 **Important — connection scoping.** The current implementation uses
-`db()` (the Kysely pool), which checks out a *new* connection on
+the pool, which checks out a *new* connection on
 every call. A `setSyncState` call inside a `withConnection` block
 will therefore commit independently of the surrounding
 `BEGIN/COMMIT` block. The home_tz write needs to participate in the
@@ -358,7 +338,7 @@ focus-places transaction. Extend the extracted helpers with an
 optional connection arg:
 
 ```ts
-// src/db/sync-state.ts
+// the shape as first sketched; today rust/backend/src/sync_state.rs
 export async function setSyncState(
     userId: string, key: string, value: string,
     conn?: mariadb.Connection,
@@ -379,15 +359,13 @@ export async function setSyncState(
 }
 ```
 
-Existing callers in `sync.ts` continue to call without the conn
-argument (using the pool). The new home_tz write site in
-`refresh-focus-places.ts` passes the transaction's `conn` so the
-write is rolled back together with the focus_places inserts on
-failure.
+The sync calls it with the pool; the focus-place refresh writes `home_tz`
+inside its own transaction, so the write rolls back together with the
+focus_places inserts on failure.
 
 ## Historical backfill (one-shot CLI)
 
-New CLI: `src/cli/backfill-fitbit-tz.ts`. Walks rows where `tz IS NULL`,
+The one-shot backfill (`rust/backend/src/fitbit/backfill_runner.rs`) walks rows where `tz IS NULL`,
 oldest first, per user. Per row:
 
 1. Find nearest PhoneTrack GPS fix in time (±6h). If found: tz =
@@ -399,7 +377,7 @@ oldest first, per user. Per row:
 4. Otherwise: tz = `home_tz`.
 
 PhoneTrack fetches are batched per (user, week) to amortise the
-Nextcloud API cost — same pattern as `refresh-focus-places.ts`.
+Nextcloud API cost — the same pattern as the focus-place refresh.
 
 `tz-lookup` lookups cached in-memory by rounded coordinates (same as
 the sync path).
@@ -422,56 +400,9 @@ filesystem-lazy-load is brittle under our build.
 
 ## Tests
 
-Unit:
-
-- `fitbitTsToUnix` across CEST↔CET transition (March + October dates).
-  Verify the fall-back's doubly-occurring 02:30 wall-clock resolves to
-  the first occurrence per `Intl.DateTimeFormat` behaviour.
-- `fitbitTsToUnix` with both `string` and `Date` input — the mariadb
-  driver returns DATETIMEs as `Date` objects in some code paths and as
-  strings in the aggregated `DATE_FORMAT` query in
-  `loadBiometrics` (`src/geo/velocity.ts`).
-- `tz-lookup` boundary cases: points near NL/BE/FR/UK border polygons.
-
-UPSERT correctness:
-
-- INSERT row with `tz=NULL`; re-INSERT same key with `tz='Europe/Amsterdam'`
-  — verify the row's tz is upgraded to Amsterdam.
-- Re-INSERT same key with `tz='Europe/London'` — verify the row's tz
-  stays Amsterdam (COALESCE preserves first non-NULL value).
-- Regression test: catches any "simplification" to `tz = VALUES(tz)`.
-
-Read fallback chain:
-
-- row.tz set → used. row.tz NULL + home_tz set → home_tz used. Both
-  NULL → request tz used.
-- Determinism test for the backfill CLI: same synthesised travel-day
-  fixtures produce the same per-row tz assignment regardless of batch
-  ordering.
-
-Integration:
-
-- `loadBiometrics` on a synthesised travel-day dataset (Amsterdam
-  morning rows, London afternoon rows) returns step ts that align with
-  PhoneTrack segments. Across a London-tz API request, the morning
-  walks remain walking, not driving.
-- The exact pre-fix regression: same data viewed with `tz=Europe/London`
-  in the API request → walking segments stay walking.
-- `runIntradayBackfill` invoked on a fixture 2024-date writes `tz=NULL`
-  to each row (and specifically NOT today's `profile.timezone`). This
-  is the regression that prevents the "stale profileTz stamped onto
-  ancient data" anti-pattern.
-- `TzSource.forWallClock` determinism: given a fixed PhoneTrack-fix
-  set and a fixed wall-clock input, every invocation returns the same
-  tz. Verify the memo cache doesn't introduce ordering effects.
-- `setSyncState`/`getSyncState` post-extraction: existing sync flows
-  (in particular `migrateLegacyBackfillKeys` and the backfill
-  cursor updates) continue to behave identically after the helpers
-  move to `src/db/sync-state.ts`.
-- `refresh-focus-places.ts` end-to-end: given a fixture with a Home
-  cluster, after the run completes, `sync_state.home_tz` equals
-  `tzLookup(homeCentroidLat, homeCentroidLon)`. Given a fixture
-  without a Home cluster, `sync_state.home_tz` is untouched.
+`rust/backend/tests/suite/{timezone,tz_source,backfill,backfill_walk}.rs`.
+The test plan this section carried was written for the TypeScript and is in
+git history.
 
 ## Risks and known limitations
 
@@ -495,21 +426,17 @@ Integration:
 4. **`home_tz` derivation assumes a stable residence.** Users moving
    house is rare; the next `refresh-focus-places` run catches it.
 
-5. **`tzFormatterCache` in `timezone.ts:101` grows unboundedly with
-   distinct tz values.** Bounded in practice to the small set of IANA
-   names a user passes through. Flag for the multi-user future.
-
-6. **Cross-midnight sleep across tz transitions.** `sleep.dateOfSleep`
+5. **Cross-midnight sleep across tz transitions.** `sleep.dateOfSleep`
    uses Fitbit's view of which date a night belongs to. A night that
    spans an Amsterdam → London transition could land on different dates
    in our system vs the user's mental model. Not in scope; deferred
    with the rest of the `sleep` parent-row work.
 
-7. **`/api/heartrate/intraday` returns the row unchanged.** The route
-   at `src/routes/api.ts:125-137` uses `selectAll()` so the new `tz`
-   column will be visible to frontend consumers. The dashboard
+6. **`/api/heartrate/intraday` returns the row unchanged.** The route
+   (`rust/backend/src/routes/tables.rs`) returns the row whole, so the `tz`
+   column is visible to frontend consumers. The dashboard
    currently uses `getUTCHours` on the wall-clock string for display
-   (per `time-utils.ts`), which continues to work — display does not
+   (in the frontend), which continues to work — display does not
    need tz interpretation. Listed here so a future frontend update
    that *does* convert these timestamps to instants knows to read the
    row's tz, not the browser's.

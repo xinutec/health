@@ -1,6 +1,6 @@
 ---
 created: 2026-07
-status: active — partly shipped; the body names which parts
+status: the port finished 2026-08-26 (#975). Kept because the Lean HSMM modules cite its reasoning; the seam it describes is superseded by docs/design/lean-and-rust.md
 references:
   - docs/proposals/2026-07-lean-port-roadmap.md
 ---

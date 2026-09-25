@@ -1,6 +1,6 @@
 ---
 created: 2026-07
-status: design — the body records no shipped phase
+status: superseded 2026-09-22 (#1709) — Lean asks for rows mid-request and Rust answers from the mirror (docs/design/lean-and-rust.md). Kept for the measurements OsmSpatial.lean and mirror_source.rs cite
 references:
   - docs/proposals/2026-07-verified-core-lean.md
 ---

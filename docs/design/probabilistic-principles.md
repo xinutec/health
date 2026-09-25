@@ -388,6 +388,9 @@ Scorer factors (graduated preference among valid candidates):
   draw from a hyper-prior so rare-data places aren't
   unconstrained. Already partly implemented (hyper-prior for
   unfitted places); needs the full hierarchical model.
+- **Learned per-mode emissions**: a `learned_hmm_models` table exists and
+  nothing reads it. Fitting waits on a load path, or it is an unmeasurable
+  change by construction (#366; #208 closed, its proposal retired).
 
 ## Audit and verification
 

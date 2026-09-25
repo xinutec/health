@@ -1,7 +1,7 @@
 # Verified core (Lean 4)
 
-The provable half of the backend's decision logic, being ported from
-TypeScript one component at a time. Design, rationale, and roadmap:
+The decision half of the backend. The port from TypeScript finished when the
+TypeScript went (#975); the argument for it is
 [`docs/proposals/2026-07-verified-core-lean.md`](../docs/proposals/2026-07-verified-core-lean.md).
 
 ⚠ **What belongs here rather than in Rust** —
@@ -78,7 +78,7 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   `shortestPath` (binary heap tie behaviour included) with honest-`none`
   contract deltas; `#guard`-pinned against the oracle in
   `Verified/Rail/Tests.lean`, and pinned against production on real
-  corridors by `pnpm run compare-rail` (via `verified_cli rail`).
+  corridors by `verified_cli rail` while the TypeScript arm existed.
 - `Verified/Rail/HeapInv.lean` — binary-heap invariants, both halves:
   `IsHeapA`, `root_le` (the root is a minimum), sift-up repair
   (`siftUp_isHeap` via `UpOK`) with the `push` theorems, and sift-down
@@ -264,5 +264,4 @@ reason: each derived its values from V8 or from `dist/`, so none could run.
   - The long-term exit is fixed-point or rational metre↔degree scaling, which
     would agree across runtimes AND admit proof. Until then, every
     transcendental in the served path is a place the port is tested, not
-    proved. See
-    [`../docs/proposals/2026-07-lean-port-roadmap.md`](../docs/proposals/2026-07-lean-port-roadmap.md).
+    proved.

@@ -103,20 +103,41 @@ it as one would be worse than having no check at all.
 
 ## The seam itself
 
-Four functions, all passing JSON strings:
+Lean is a process. `rust/backend/src/lean_worker.rs` spawns `verified_cli
+serve` and talks NDJSON over its pipes: one request line, one reply line, and
+between them the day fold may write `{"ask":{"what","key"}}` lines that Rust
+answers on stdin with `{"answer": row}` or `{"answer": null}`, a decline. Every
+`Env` lookup the fold makes is an ask; no lookup table rides in the request.
+Lean's stderr is the parent's stderr.
 
-```rust
-fn health_backend_init() -> i32;
-fn health_backend_json(input: *const c_char) -> *mut c_char;
-fn health_serve_json(input: *const c_char) -> *mut c_char;
-fn health_backend_free(p: *mut c_char);
-```
+Three things the protocol needs, none of them guessable:
 
-No struct crosses the boundary, which is why the seam has never been the source
-of a memory fault. ⚠ The faults came from LINKING: four separately-built Lean
-archives, each baking in the field offsets of the datatypes it compiled against.
-A rebuilt `Verified.a` beside a stale `ServeEntry.a` means one archive
-constructs a `DayState` with the old field count while another reads a field
-that object does not have. `rust/*/build.rs` now builds the archives itself, so
-an unbuilt subset cannot reach the linker — see the comment there for what was
-ruled out and why.
+- **Wrap, don't merge.** Backend ops go as `{"mode":"backend","req":{…}}`,
+  because some payloads carry their own `mode`.
+- **A pool, because asks nest.** Answering an ask can call Lean again while the
+  asking worker is blocked on the pipe, so a call takes a worker out of the
+  pool and a nested call takes another. Workers are recycled after a number of
+  calls; that is the only memory reset known to work for the fold.
+- **Copy the reply body; do not re-serialise it.** The bytes are what tests
+  compare against `verified_cli`'s own output.
+
+⚠ Before 2026-09-22 (#1709) the archives were linked into the binary through a
+C shim. That worked and cost a converge loop that re-sent a 1.5 MiB request
+several times per day, a redirected fd 2 for unanswered keys, two build scripts
+parsing lake's link line, and a class of silent SIGSEGV when Lean was reached
+before its runtime was up. The pipe removed all of it. The two proposals that
+argued the port (`2026-07-verified-core-lean.md`, `2026-07-lean-port-roadmap.md`,
+the latter deleted 2026-09-25) are in git history; the port itself finished
+when the TypeScript went (#975).
+
+## Landmines, kept from the port
+
+- **Floats.** Never port float arithmetic and hope. Either integer-scale at the
+  boundary or prove over exact structures with explicit error margins.
+  "Byte-identical" claims need only same-ops-same-order and survive floats;
+  anything using arithmetic facts does not.
+- **Toolchain drift.** `nix flake update` can bump Lean, and Lean minor
+  releases break proofs routinely. The flake pin makes that a reviewed event;
+  fix the proofs in the commit that bumps the pin.
+- **`#guard` cost.** Guards run on every `lake build`; keep their instances
+  tiny. A guard is a snapshot of the value at porting time, not a proof.

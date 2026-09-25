@@ -1,5 +1,5 @@
-# Verified Lean decoder for the in-cron shadow (V2 of
-# docs/proposals/2026-07-verified-core-lean.md). Built via nix so the
+# The Lean verified core (`verified_cli`), which `bin/backend` drives over a
+# pipe (docs/design/lean-and-rust.md). Built via nix so the
 # toolchain is the exact flake-pinned Lean the proofs are written against;
 # `lake build` runs every #guard spec check, so this stage is also a proof
 # gate. The runtime closure (glibc/gmp from /nix/store) is staged for the

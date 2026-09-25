@@ -26,15 +26,16 @@ to the Rust or Lean symbol that does the work (#919).
    │ (per-user    │                           ▼       ▼
    │  tables +    │                  ┌─────────────────────┐
    │  osm_cache + │◄────── SQL ──────│  health-auth        │
-   │  focus_places│  (Kysely typed)  │  (Hono + Kysely)    │
-   │ )            │                  │   server.ts         │
+   │  focus_places│  (sqlx)          │  (Rust axum + sqlx) │
+   │ )            │                  │  bin/backend serve  │
    └──────────────┘                  └─────────┬───────────┘
                                                │
                               ┌────────────────┴───────────────┐
                               │ Velocity pipeline:             │
                               │  PhoneTrack → Kalman → segment │
                               │  classify → OSM enrich → join  │
-                              │  with Fitbit biometrics        │
+                              │  with the biometrics — decided │
+                              │  in Lean (verified_cli serve)  │
                               └────────────────┬───────────────┘
                                                │
                                                ▼
@@ -50,28 +51,37 @@ to the Rust or Lean symbol that does the work (#919).
 
 ## Components
 
-### Backend (`src/`)
+### Backend (`rust/backend` and `lean/`)
 
-TypeScript on Hono (lightweight HTTP framework). Two entry points:
+One Rust binary, `bin/backend`, and one Lean binary, `verified_cli`, which it
+spawns and drives over a pipe (`lean-and-rust.md`). Rust does the IO: HTTP
+(axum), MariaDB (sqlx), OAuth, and the Fitbit, Google Health, Nextcloud,
+Overpass and Nominatim clients. Lean makes every decision the timeline
+depends on. The entry points are subcommands of `bin/backend`; the list is
+`rust/backend/src/main.rs`:
 
-- **`server.ts`** — HTTP server for the dashboard and OAuth flows.
-  Serves the Angular SPA, API endpoints, and handles Nextcloud SSO +
-  Fitbit OAuth.
-- **`sync.ts`** — CronJob entry point. Iterates over all users with
-  linked Fitbit accounts and syncs their data.
+- **`serve`** — the dashboard: the Angular build, the `/api/*` endpoints,
+  Nextcloud SSO, Fitbit OAuth, the OwnTracks proxy.
+- **`sync`** — the CronJob: every user with a linked account, every stream,
+  each written by the one API that owns it (`google/source.rs`).
+- the refresh jobs (`decode-day`, `refresh-focus-places`, `refresh-rail-*`,
+  `refresh-bus-routes`, `fetch-osm`, `fetch-geocodes`) and the operator tools
+  (`day`, `velocity`, `census`, `mirror-check`, `rows-check`, the
+  `google-compare*` family).
 
 ### Frontend (`frontend/`)
 
 Angular SPA (currently v22 — see `frontend/package.json`). Zoneless,
 standalone components, signals, Chart.js for visualization, Leaflet for
-the map. Built to static files, served by the backend from `public/`.
+the map. Built to static files, served by the backend (`routes/site.rs`).
 
 ### Infrastructure (`k8s/`)
 
 Deployed on isis's k3s cluster in the `health` namespace:
-- MariaDB 11.8 (Deployment + headless Service + PVC)
-- health-auth (Deployment + Service running `server.ts`)
-- health-sync (CronJob running `sync.ts` hourly)
+- MariaDB (Deployment + headless Service + PVC)
+- health-auth (Deployment + Service running `bin/backend serve`)
+- health-sync (CronJob running `bin/backend sync` every 15 minutes), and the
+  refresh CronJobs in `04-cronjobs.yaml` — count them there
 - Ingress with cert-manager TLS at `health.xinutec.org`
 
 Docker image built by GitHub Actions, pushed to `xinutec/health-sync`
@@ -102,72 +112,43 @@ own data. The sync job iterates over all users in the `tokens` table.
 ## Module structure
 
 ```
-src/
-├── server.ts               # Hono app + HTTP server + request-timing + /health
-├── sync.ts                 # CronJob: sync all users
-├── config.ts               # Validated env config (zod)
-├── types.ts                # Shared types (DB rows, API responses)
-├── env.ts                  # AppEnv (Hono context types)
-├── db/
-│   ├── pool.ts             # MariaDB pool + Kysely instance (typed builder)
-│   ├── schema.ts           # Numbered migrations, tracked in schema_migrations
-│   └── tables.ts           # Kysely table type definitions
-├── middleware/
-│   ├── session.ts          # Session store, cookie signing, middleware
-│   └── auth.ts             # requireAuth middleware
-├── routes/
-│   ├── api.ts              # /api/* data endpoints (incl. /api/velocity)
-│   ├── nextcloud-oauth.ts  # /login, /auth/callback, /logout
-│   └── fitbit-oauth.ts     # /fitbit/auth, /fitbit/auth?code=...
-├── fitbit/
-│   ├── client.ts           # HTTP client with rate limiting + refresh
-│   └── sync/               # one module per Fitbit metric (activity, sleep,
-│       └── …                 heartrate, body, spo2, hrv, breathing,
-│                             temperature, devices)
-├── nextcloud/
-│   ├── client.ts           # Nextcloud OAuth + per-user-token client
-│   ├── phonetrack.ts       # GPS point fetch + visualisation-filter sync
-│   └── phonetrack-prefs.ts # per-user preference storage in NC user_prefs
-├── geo/
-│   ├── velocity.ts         # the orchestrator: PhoneTrack → Kalman →
-│   │                         segments → the refinement pass cascade →
-│   │                         episodes. The `passes` array in this file is
-│   │                         the authoritative, ordered list of the ~40
-│   │                         refinement passes — order is load-bearing and
-│   │                         each entry's comment says why it sits there.
-│   ├── timezone.ts         # tz-aware date bounds + Fitbit ts → unix
-│   ├── kalman.ts           # gap-aware Kalman filter for raw GPS
-│   ├── segments.ts         # first-pass mode classifier: fixed 5-minute
-│   │                         windows → per-mode feature scores → merge.
-│   │                         Windows score on median speed, so a window
-│   │                         straddling a mode change goes wholesale to the
-│   │                         majority mode — boundary defects from this are
-│   │                         corrected (not always successfully, #348) by
-│   │                         later passes, see episode-geometry.md
-│   ├── passes/             # extracted refinement passes (rail absorbers /
-│   │                         reconcile / tube-hop, …) — wired in velocity.ts
-│   ├── episode-geometry.ts # display geometry per DayState (episode-geometry.md)
-│   ├── pedestrian-match*.ts, walk-*.ts, road-match*.ts, rail-snap.ts
-│   │                       # per-mode drawn-path machinery (geometry-roadmap.md)
-│   ├── place-snap.ts / focus-places.ts / place-prior.ts / venue-*.ts
-│   │                       # stay place attribution
-│   ├── osm.ts / osm-local.ts  # Overpass/Nominatim + local OSM mirror
-│   └── biometrics.ts       # segment HR / cadence / sleep enrichment
-├── hmm/                    # HSMM decoder (shadow; place-override is live) —
-│                             see proposals/decoder-roadmap.md
-└── cli/                    # capture (capture-golden, capture-day), replay
-                              (golden-check, analyze-day, decode-day), scoring
-                              (score-walk-match, score-decoder-golden, …) and
-                              probe tools — one file per job, see src/cli/
+rust/backend/src/
+├── main.rs                 # the subcommand table: serve, sync, check, jobs, tools
+├── routes/                 # axum handlers: velocity, tables, locations, share,
+│                             owntracks, oauth, nextcloud_connect, me, site, …
+├── auth/                   # sessions, cookie signing
+├── fitbit/  google/  nextcloud/   # the clients and the sync writers
+├── classification_inputs.rs, head.rs, fold.rs, fold_payload.rs
+│                           # a day: load the inputs, run the head, drive the fold
+├── lean.rs, lean_worker.rs # the pipe to verified_cli and the worker pool
+├── osm_mirror.rs, overpass.rs, nominatim.rs, mirror_source.rs, osm_trace.rs,
+│   rowset_answerer.rs, rowset_capture.rs   # the OSM mirror and how asks are answered
+├── velocity_cache.rs, location_cache.rs, schema.rs, sync_state.rs, timezone.rs
+└── cli/                    # census, day, decode, google, mirror, refresh, session
+
+lean/
+├── Verified/Geo/           # the day: quality filter, Kalman, segments, the
+│                             PassFold cascade, walks, rail, venues, episodes
+├── Verified/Hsmm/          # the decoder: state space, emissions, trellis, chains
+├── Verified/Rail/          # rail-snap and its certified shortest path
+├── Verified/*.lean         # the rest of the rules: sessions, sync, backfill,
+│                             OwnTracks, the velocity cache policy, …
+├── DayEntry/, DayEntry.lean, ServeEntry.lean, BackendEntry.lean
+│                           # the three entry surfaces verified_cli serves
+└── experiments/            # refuted patches only
 ```
 
 ## Testing and gates
 
-Vitest across `tests/` (~160 test files; auth, timezone math, the full
-geo pipeline, OSM cache mechanics, HSMM decode, and scenario tests that
-run synthetic days end-to-end). Tests share the same strict type
-checking as production code, so a stale call into a refactored
-signature surfaces immediately.
+`cargo nextest run` in `rust/` is the suite: auth, timezone math, the pipeline
+head, the OwnTracks rules, the caches, row rendering, and the Lean host. Count
+it rather than quote a number. `lake build` in `lean/` runs every `#guard`, so
+a value that drifts fails the build. The frontend has its own Vitest suite.
+The fixtures a corpus test replays are `tests/golden/days/<date>-<user>.json`
+(`meta`, `inputs`, `expected`) and `tests/golden/decoded_days/` for the
+decoder; every unbounded source (OSM, the mirror) is recorded into `inputs`
+at capture and answered from there on replay, so a replay touches no
+database.
 
 Beyond the unit suite, a set of replay gates guards behaviour on **real
 captured days** (fixtures gitignored — see
@@ -187,69 +168,16 @@ one working gate behind it never ran at all.
   the README for long enough to be quoted.
 - `rust/backend/tests/corpus_gate.rs` with `tests/corpus/{walk,truth,journey,day}.rs` — the
   replay gates, restored 2026-08-31 and 2026-09-01. Rust replays the gitignored
-  corpora and Lean judges; each gates a committed floor blessed from the
-  TypeScript before it went, and each announces a SKIP when the corpus is
-  absent rather than passing quietly.
+  corpora and Lean judges; each gates a committed floor, re-blessed from Lean's
+  own output (`DAY_BLESS`, `WALK_BLESS`, `TRUTH_BLESS`), and each announces a
+  SKIP when the corpus is absent rather than passing quietly.
 
-⚠ **THE FIVE REPLAY GATES BELOW NO LONGER EXIST.** Every one ran
-`node dist/cli/*.js` against the TypeScript backend, deleted 2026-08-26 (#975);
-their scripts went on 2026-08-29 (#1225). They are recorded here as LOST
-COVERAGE and as the specification for what replaces them (health #1048) — not as
-things to run.
-
-⚠ **AND `compare-gps-outliers` WAS LISTED HERE AS A SURVIVOR UNTIL 2026-09-01,
-when it had not run since 2026-08-26.** It exits 1 on a deleted `src/` import —
-one layer past the `pnpm run build` failure the 08-29 pass checked for. A
-"survivor" identified by anything short of RUNNING it is a guess (#1301).
-
-⚠ And they did not fail where anyone was looking: each began
-`pnpm run build >/dev/null`, and there has been no `build` script since 06346bd,
-so they died a line before reaching `dist/` and printed `==> building` and
-nothing else. `deploy.sh`'s step 2 therefore aborted at the first of them and had
-not completed since that commit.
-
-- `golden.sh` — replayed the golden day corpus (`tests/golden/days/`)
-  byte-identically, then applied four gates on top of the snapshot diff. Two were
-  ratcheted FLOORS over confirmed testimony, which can only grow: the truth
-  ratchet (`truth-baseline.json`) and the journey ratchet. Two were physical
-  invariants, which trend toward zero — the rail invariants hard-zero already,
-  the kinematic and rail-triple ones carrying standing per-day counts
-  (`feasibility-baseline.json`, `rail-triple-baseline.json`) that could only
-  shrink. **The distinction is the part worth keeping: testimony is evidence and
-  gets revised; physical impossibility is not.** The same feasibility check still
-  runs on every *served* day inside the velocity fold, logging `INFEASIBLE` — so
-  that half of it is alive.
-- `walk-gate.sh` — the walk-geometry referee (`score-walk-match`) against the
-  per-metric ratchet floor in `tests/golden/walk-baseline.json` (still tracked in
-  git, moved only by an explicit re-bless).
-- `score-decoder.sh` — the real `decodeHsmm` against ground truth, ratcheted per
-  day in `tests/golden/decoder-scoreboard.json`.
-- `day-gate.sh` — the ONLY check that asked whether the Lean port had drifted
-  from the TS it ports. Absolute bar, no baseline. ⚠ **This one cannot come back
-  in the same form: there is no TS arm left to compare against, so porting it
-  would make it compare Lean with itself. #1048 records that; #943's per-pass
-  witnesses are the Lean-native replacement.**
-- `focus-gate.sh` — the same question at the other end of the pipeline, for the
-  weekly focus-place miner, which no day replay reaches.
-- `golden` a second time with the Lean tenants turned up, and `golden-hsmm.sh` —
-  the only places the verified core was actually EXECUTED by a gate. ⚠ That
-  concern is now moot from the other direction: with every tenant `solo` there is
-  no second arm, so the verified core is not "consulted" by a gate — it IS the
-  implementation, and `pnpm run verify`'s "Lean verified core + decode parity"
-  row is what exercises it.
-- `compare-match.sh` — the three-arm bit-exact matcher comparison (#9).
-
-  **Not ALL of them, and the count moves — read `deploy.sh` rather than a number
-  here.** As of 2026-08-15 it sets seven `on` (`LEAN_KALMAN`, `LEAN_GPSQUALITY`,
-  `LEAN_BIOLABELS`, `LEAN_HSMM`, `LEAN_RAIL`, `LEAN_MATCH`, `LEAN_PASSES`) plus
-  `LEAN_STATIONCHAIN=shadow`. There are NINE flags: `LEAN_DAY` is absent from
-  this run entirely, and is covered instead by `day-gate.sh` above. This line
-  said "all seven" while nine existed — a phrase that reads as *every tenant*
-  and had stopped meaning it.
-
-All of these replay the gitignored `tests/golden/` corpus, so **CI can never run
-any of them**. Every script enters the pinned nix devshell itself
-(`scripts/_devshell.sh`) — run them directly, no wrapper needed.
+The TypeScript-era replay scripts (`golden.sh`, `walk-gate.sh`,
+`score-decoder.sh`, `day-gate.sh`, `focus-gate.sh`, `golden-hsmm.sh`,
+`compare-match.sh`) went with the backend (#975, #1225). What they measured is
+carried by the corpus gates above; `day-gate.sh`, Lean against the TypeScript
+it ported, has no successor by construction (#1048), and #943's per-pass
+witnesses are the Lean-native replacement.
 
 **They gate less than this section used to claim, and the difference matters.**
 `deploy.sh` builds nothing: `.github/workflows/build.yml` pushes
@@ -284,7 +212,7 @@ red gate as "this needs looking at", not as "this cannot ship".
 
 ## Schema evolution
 
-Migrations are numbered SQL statements in `src/db/schema.ts`. A
+Migrations are numbered SQL statements in `rust/backend/src/schema.rs`. A
 `schema_migrations` table tracks which have been applied. To change the
 schema, append a new migration — never modify or remove existing ones.
 This means data is never dropped during deployment.
@@ -335,37 +263,38 @@ fast enough.
 The dashboard's centerpiece. Per request: take a date + tz, return a
 list of typed segments (stay / walk / cycle / drive / rail / plane)
 with human-readable place / route names and per-segment biometric
-overlays. Owned by `src/geo/velocity.ts`; orchestrates the rest of
-`src/geo/` plus the Nextcloud and DB layers.
+overlays. Owned by `rust/backend/src/routes/velocity.rs`, which loads the
+inputs and runs the head and then the fold; the passes themselves are Lean
+(`lean/Verified/Geo/PassFold.lean`).
 
 ```
-fetchTrackPoints (Nextcloud, live)
+PhoneTrack fixes (Nextcloud, live) — classification_inputs.rs
        │
        ▼
-filter to date bounds in user's tz (timezone.ts)
+filter to date bounds in the user's tz (timezone.rs)
        │
        ▼
 snapToPlace ← focus_places (DB)
        │
        ▼
-filterGpsTrack (kalman.ts) — gap-aware Kalman
+GPS quality filter, gap-aware Kalman (Verified/Geo/GpsQuality.lean, Kalman.lean)
        │
        ▼
-classifySegments (segments.ts) — window features → mode score
+classifySegments (Verified/Geo/Segments.lean) — window features → mode score
        │
        ▼
-per segment, in parallel:
-   bestPlace / placeLabel / nearbyWays (osm.ts)  ──► osm_cache (DB)
-   enrichSegmentWithBiometrics (biometrics.ts)   ──► fitbit tables (DB)
+the fold (DayEntry, driven by fold.rs): every place, way and biometric
+lookup is an ask, answered from the OSM mirror and the DB
        │
        ▼
-refinement pass cascade (velocity.ts `passes` — rail runs, underground
-reconstruction, boarding/alight anchors, journey assembly, vehicle
-splits, walk/road/rail drawn paths, HSMM place override, …)
+the refinement pass cascade (Verified/Geo/PassFold.lean — rail runs,
+underground reconstruction, boarding/alight anchors, journey assembly,
+vehicle splits, the dwell pass, walk/road/rail drawn paths, the HSMM
+place override, …)
        │
        ▼
-EnrichedSegment[] → DayState[] (day-state.ts) + EpisodeGeometry[]
-(episode-geometry.ts) → API response (Angular timeline + map)
+DayState[] (DayState.lean) + EpisodeGeometry[] (EpisodeGeometry.lean)
+→ API response (Angular timeline + map)
 ```
 
 ### Caches and their purpose
@@ -374,7 +303,8 @@ Three caches sit in front of the slow parts. Each is a *cache*, not a
 source of truth — wiping any of them is safe; the next request rebuilds.
 
 - **`focus_places`** (per-user) — clusters of overnight + frequent
-  presence, computed offline by `refresh-focus-places.ts` (full
+  presence, computed offline by `backend refresh-focus-places` (the rule in
+  `Verified/Geo/FocusMining.lean`; full
   DELETE+recompute over a rolling window; **median** stay centroids).
   Used by `place-snap` to pull noisy GPS to a stable centroid, and by
   velocity to short-circuit OSM lookups for Home/Work. Carries an
@@ -394,35 +324,22 @@ source of truth — wiping any of them is safe; the next request rebuilds.
 - **`osm_cache`** (global) — keyed Overpass/Nominatim query → response.
   Stores both successful results and a sentinel `{_err, _at}` for
   failures, with a TTL so transient 429s and timeouts don't stick.
-  In-flight requests are deduped via a `Map<key, Promise>`.
 - **`place_snap` decisions** — not a DB table; the `snapToPlace`
   function is pure given `focus_places`.
 
 ### Performance and observability
 
-- **Per-step timing.** `computeVelocity` instruments each stage and
-  emits one summary line on completion: `velocity 2026-05-10
-  user=pippijn: total=4200ms phonetrack=820ms loadPlaces=15ms
-  kalman=22ms segments=8ms osm=3100ms biomLoad=180ms biomEnrich=12ms
-  segments=14`. Surfaces which stage dominates without ad-hoc logging.
-- **Request-timing middleware.** Hono middleware logs any request
-  ≥100ms with method, path, status, duration. Quieter than logging
-  everything, surfaces real bottlenecks immediately in `kubectl logs`.
 - **`/health` endpoint.** Bare `GET /health` returns `ok` (k8s
   liveness friendly). `GET /health?detail=1` returns JSON with DB
   latency, focus-places count, osm-cache size, last-sync date, and
   process uptime.
-- **OSM mirror fallback.** Each Overpass call is wrapped in
-  `AbortController` with a 4s timeout. On primary failure or timeout,
-  falls through to the kumi.systems mirror within 4s rather than
-  hanging on the kernel TCP timeout (was minutes before).
+- **OSM mirror fallback.** `overpass.rs`: overpass-api.de first, kumi.systems
+  second, and a retry goes to the primary alone.
 - **HR per-minute aggregation.** Fitbit stores 1-second-resolution
   HR (~21k rows/day). For segment-level mean/std the per-minute
   average loses essentially no precision and is ~60× cheaper to
-  load + parse. Done in SQL via Kysely's typed builder with `sql\`...\``
-  for the `GROUP BY DATE_FORMAT(...)` aggregate.
-- **Cached `Intl.DateTimeFormat`.** One formatter per tz, module-level
-  `Map`. Was a 90s+ hot loop hit when called once per Fitbit timestamp.
+  load + parse. Done in SQL (`classification_inputs.rs`, a
+  `DATE_FORMAT` per-minute average).
 
 ### Graceful degradation
 
@@ -443,11 +360,11 @@ must keep going. Concretely:
 
 ## Classification system
 
-The per-segment mode classification in `segments.ts` is the
+The per-segment mode classification in `Verified/Geo/Segments.lean` is the
 heuristic that has shipped since day one. A **probabilistic
 constraint solver** (HMM → HSMM with learned emissions, posterior
 marginals, sleep-conditional factors) is being built alongside it
-under `src/hmm/`. The two coexist:
+under `lean/Verified/Hsmm/`. The two coexist:
 
 - The heuristic still produces `velResult.segments` consumed by
   the frontend.
@@ -456,8 +373,8 @@ under `src/hmm/`. The two coexist:
   posterior marginals exposing model uncertainty.
 
 The HSMM's **place** decode is live in the user-facing path: when a
-decode exists in `decoded_days`, `place-override.ts` overrides the
-heuristic's place attribution in `velocity.ts`. **Mode** and **line**
+decode exists in `decoded_days`, `Verified/Geo/PlaceOverride.lean` overrides
+the heuristic's place attribution in the fold. **Mode** and **line**
 are still heuristic-owned; the full cutover (the decoder owning mode
 in the timeline) is gated on the measurement and phases tracked in
 `docs/proposals/decoder-roadmap.md`. The `compare-hmm-vs-heuristic`
@@ -477,8 +394,9 @@ so it owns the day — lives in one place:
 
 - `docs/proposals/decoder-roadmap.md` — the consolidated decoder plan
   (vision, generator/scorer architecture, measurement, Phases 0–5)
-- `2026-05-hmm-learned-emissions.md` — supervised MLE per-mode +
-  per-place emission distributions (#208)
+- learned per-mode emissions: #208 is closed and its proposal retired. A
+  `learned_hmm_models` table exists and nothing reads it; fitting waits on a
+  load path (#366).
 
 ## Future extensions
 

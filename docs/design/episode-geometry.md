@@ -83,7 +83,7 @@ EpisodeGeometry = {
 needs — solid for `raw`/`matched`, dashed for `snapped`/`tentative`, a
 dot for `anchor`. There is deliberately **no** `confidence` field: the
 only confidence upstream is `EnrichedSegment.confidence`, which is
-*mode-classification* confidence (`segments.ts`), not *geometry* trust.
+*mode-classification* confidence (`Verified/Geo/Segments.lean`), not *geometry* trust.
 A `snapped` train can be classified with high confidence while its drawn
 line is a guess; styling opacity off classification confidence would
 paint a fabricated connector boldly because the *mode* was certain — the
@@ -104,10 +104,10 @@ map-only and not present in `states`, so this is not a meaningful
 duplication.
 
 > **Naming.** This is the *display* layer. It is deliberately **not**
-> called "journey" — `src/hmm/tube-journey-assembler.ts` already owns
-> `TubeJourney`, the HSMM per-minute composition concept. This layer is
+> called "journey": `TubeJourney` was the HSMM per-minute composition concept
+> in the TypeScript, and nothing in the tree spells it today. This layer is
 > `EpisodeGeometry`, built by `buildEpisodes` in
-> `src/geo/episode-geometry.ts`. The two never touch.
+> `lean/Verified/Geo/EpisodeGeometry.lean`.
 
 ### Resolving geometry for a state
 
@@ -135,14 +135,14 @@ naive "bucket points by window" does not cover them:
 
 - **Synthesized sleeping states are definitionally empty.**
   `segmentsToDayStates` emits a sleeping state from a `SleepWindow` with
-  *no covering segment* (`day-state.ts`, the morning-sleep-before-first-
+  *no covering segment* (`DayState.lean`, the morning-sleep-before-first-
   fix case). There are zero fixes in that window by construction, so the
   episode has empty `points` and the map draws nothing — the same as
   today.
 - **A merged moving state has one covering segment per leg.** Adjacent
   same-mode segments merge into one `DayState`, but train legs do *not*
   merge: `mergeAdjacent` only joins states `sameState` deems equal, and
-  `sameState` compares `wayName` (`day-state.ts`), so two legs with
+  `sameState` compares `wayName` (`DayState.lean`), so two legs with
   distinct `<board>→<alight>·line` labels stay separate. A `train` state
   therefore maps to exactly one train segment and its `snappedPath` is
   unambiguous. A merged `walking` state is resolved from the union of
@@ -164,9 +164,9 @@ off the rails.
 The fix is to drop, from a raw episode's geometry, fixes whose speed
 exceeds the **physical ceiling for that episode's mode** — for
 `walking`, the 12 km/h ceiling that is already coded as a hard limit in
-this system: `V_WALK_MAX_KMH = 12` (`mode-class-lock.ts`, the HSMM
+this system: `V_WALK_MAX_KMH = 12` (`Verified/Hsmm/`, the HSMM
 emission constraint) and `MAX_SPEED_FOR_MODE.walking = 12`
-(`mode-biometrics.ts`, the mode-flip gate). `probabilistic-principles.md`
+(`ModeBiometrics.lean`, the mode-flip gate). `probabilistic-principles.md`
 constraint C2 is the formal statement of that already-coded fact. A
 60 km/h fix in a walking episode is not slow GPS — it is a
 neighbouring fast mode bleeding across the boundary, and it is *not
@@ -193,14 +193,15 @@ stops being mis-coloured green.
 ### Pavement-matched walks (`walkMatchedPath`)
 
 On a house-lined residential street the raw GPS sits ~10–30 m off the pavement,
-clipping the houses. `src/geo/pedestrian-match.ts` map-matches the walk onto the
-OSM **walkable** network (footway / path / pedestrian / residential…) the same
-way `road-match.ts` matches driving onto roads — both are thin profiles over the
-shared Newson-Krumm core `map-match-core.ts`. The walk profile drops the road
+clipping the houses. `lean/Verified/Geo/WalkAnnotate.lean` map-matches the walk
+onto the OSM **walkable** network (footway / path / pedestrian / residential…)
+the same way `RoadMatchAnnotate.lean` matches driving onto roads — both are
+thin profiles over the
+shared Newson-Krumm core `Verified/Geo/Match.lean`. The walk profile drops the road
 turn-prior (`wayContinuityNats: 0` — walkers change ways at every crossing),
 tightens the candidate radius (walk GPS is closer to truth) and the length bail
 (a 2× detour is a blunder), and widens the gap-bridge (the pedestrian network is
-more fragmented). `pedestrian-match-annotate.ts` runs it per walk and attaches
+more fragmented). `WalkAnnotate.lean` runs it per walk and attaches
 `walkMatchedPath` only when the display gate (`matchImprovesDisplay`, judged on
 the drawn chords vs the walkable surface) confirms it both follows the pavement
 better than the raw line AND stays faithful to the fixes. `episode-geometry`
@@ -229,11 +230,11 @@ map-constrained positioning, shipped as a display layer.
 ### Reconstructed walks (`walkSmoothedPath`, behind `WALK_RECON`)
 
 A second, evidence-fused walk drawer exists alongside the matcher:
-`reconstructWalk` (`walk-smooth-map.ts`) computes the walk as the MAP
+`reconstructWalk` (`WalkSmooth.lean`) computes the walk as the MAP
 estimate of one robust energy — redescending Geman–McClure GPS emission
 under a deterministic graduated-non-convexity anneal, accuracy as a weak
 clamped prior, L2 smoothness, soft walkable attraction, building clearance
-field. `pedestrian-match-annotate.ts` swaps it in for a leg **only when the
+field. `WalkAnnotate.lean` swaps it in for a leg **only when the
 reconstruction is ≥25 % and ≥150 m shorter** than the matched/raw line —
 the signature of a dissolved phantom (an isolated out-and-back spur, or a
 coherent reacquire smear collapsed by the independent-evidence factors:
@@ -283,9 +284,9 @@ state→segment join, fix bucketing, spike rejection, the per-mode
 speed-plausibility filter, centroid, the `unknown` cap, and `kind`.
 
 It is computed **inside `computeVelocityFromInputs`**, which is the
-closure that the route memoises: `api.ts` wraps `computeVelocity`
-(→ `computeVelocityFromInputs`) in `getVelocityCached`
-(`src/routes/velocity-cache.ts`, 5-min per-pod TTL). So the whole
+closure that the route memoises: `routes/velocity.rs` seats the computed day
+in `velocity_cache.rs` (5-min per-pod TTL, the policy in
+`Verified/VelocityCache.lean`). So the whole
 `VelocityResult` including `episodes` is cached as one unit, and
 `buildEpisodes` runs once per cache miss — no separate geometry cache.
 
@@ -323,7 +324,7 @@ explicit `tentative` episodes backend-side so provenance stays visible.
 ## Invariants (enforced, not hoped)
 
 1. **Narrative-freeze.** `segmentsToDayStates` output is byte-identical
-   before and after any geometry work. Already guarded: `golden-check.ts`
+   before and after any geometry work. Already guarded: the corpus gate (`rust/backend/tests/corpus_gate.rs`)
    diffs `normalizeStates(states)` against a frozen baseline, and
    `normalizeStates` reads only state fields, never geometry — so
    geometry work *cannot* perturb the baseline. Geometry is downstream of
@@ -347,7 +348,7 @@ explicit `tentative` episodes backend-side so provenance stays visible.
    mis-attribute a span (#349, above).
 4. **Determinism.** `buildEpisodes` is a pure function of its inputs, so
    replaying a golden fixture reproduces its geometry exactly. *Note:*
-   adding *golden geometry baselines* is not free — `golden-check.ts`
+   adding *golden geometry baselines* is not free — the corpus gate (`rust/backend/tests/corpus_gate.rs`)
    today diffs only `expected.velocity` states; a geometry baseline needs
    the fixture schema and the diff extended. Phase 1 instead asserts
    geometry **properties** in a unit / real-data test (below); the full
@@ -394,7 +395,7 @@ stranded tail (kilometres, not ~90 s) landed in the following walk.
 Replay showed why every layer of defence declined it, each locally
 reasonable:
 
-1. **`segments.ts` scores fixed 5-minute windows by *median* speed.** A
+1. **`Verified/Geo/Segments.lean` scores fixed 5-minute windows by *median* speed.** A
    window straddling the alight holds ~1.5 min of ride and ~3.5 min of
    genuine walk; the median is walking pace, so the whole window scores
    `walking` (a vehicle-paced `maxSpeed` only dampens the score — it is
@@ -465,10 +466,10 @@ office afternoon whose tail held the departure:
   reconstructed journeys and moved an alight to the wrong station.
 
 Full rationale and constants live on the pass doc-comments
-(`passes/stays.ts`, `biometrics.ts`, `segments.ts`). The residual —
+(`SegmentMerge.lean`, `BiometricLabels.lean`, `Verified/Geo/Segments.lean`). The residual —
 the ride's true head (the pre-boarding fixes) staying inside the stay,
 so the ride started late and the station walk never drew — is claimed
-by `claimRideHeadFromStay` (`stay-split.ts`, #355): a stay followed by
+by `claimRideHeadFromStay` (`StaySplit.lean`, #355): a stay followed by
 a train leg is scanned for a departing pedestrian march (the shed
 pass's four-signal bar, judged over the march only — the platform wait
 would dilute a whole-tail cadence mean), an optional standing wait, and
@@ -496,7 +497,7 @@ not assert. First measured sweep found six such legs on 29 days — three
 tails (the stolen arrival walk), one head behind a reacquire blip, two
 mid-leg (hidden interchanges / over-claimed rides).
 
-The repair, `shedVehiclePedestrianEdges` (`stay-split.ts`, the mirror
+The repair, `shedVehiclePedestrianEdges` (`StaySplit.lean`, the mirror
 of `reassignVehicleArrivalWalk`): when the qualifying run sits at a
 train leg's *edge* and an adjacent **walking** segment exists to
 receive it, move the boundary — the ride keeps the fix it arrived on /
@@ -601,6 +602,6 @@ symbol survives a move, a line number does not (#919, #1205).
 | `src/geo/episode-geometry.ts` — `buildEpisodes` | `lean/Verified/Geo/EpisodeGeometry.lean` — `buildEpisodes` |
 | `src/geo/pedestrian-match.ts` — the walk profile | `lean/Verified/Geo/WalkAnnotate.lean` — `annotateWalkMatches` (the pass). The matcher is injected as `Env.matcher` and supplied by `lean/Verified/Geo/WalkMatchAdapt.lean` |
 | `src/geo/road-match.ts` — the driving profile | `lean/Verified/Geo/RoadMatchAnnotate.lean`, matcher from `RoadMatchAdapt.lean` — the same shape as the walk side |
-| `map-match-core.ts` — the shared Newson-Krumm core | `lean/Verified/Geo/Match.lean`, Viterbi pass in `MatchViterbi.lean` |
+| `Verified/Geo/Match.lean` — the shared Newson-Krumm core | `lean/Verified/Geo/Match.lean`, Viterbi pass in `MatchViterbi.lean` |
 | `src/routes/velocity-cache.ts` — `getVelocityCached` | `rust/backend/src/velocity_cache.rs`, keyed `(user, date, tz, walkMatch)` |
 | `src/hmm/tube-journey-assembler.ts` — `TubeJourney` | ⚠ **NO SUCCESSOR — the name and the concept are both gone.** Nothing in the tree spells `TubeJourney`. The paragraph above cites it only to say what `EpisodeGeometry` is NOT, and that contrast still holds against today's nearest thing, `lean/Verified/Geo/RailJourney.lean` — `assembleRailJourney`. Do not read it as a live module |
