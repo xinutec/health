@@ -181,12 +181,21 @@ const SUPERSET_MARGIN: f64 = 1.05;
 
 /// A backstop, not a cap the queries may spend.
 ///
-/// The radii these tables are asked with are 50–200 m
+/// The point buckets are asked with 50–200 m radii
 /// (`fold_payload::default_radius_m`), so a bucket inside one box is tens of
-/// rows in the densest city. Reaching this many means the box is not the box
-/// this module thinks it is, and the run ERRORS rather than answering from a
+/// rows in the densest city, and reaching this many means the box is not the
+/// box this module thinks it is: the run ERRORS rather than answering from a
 /// truncated set — a silently truncated candidate list scores as "the nearest
 /// way is 40 m away" with no way to tell it from the truth.
+///
+/// ⚠ THE MATCHER READS ARE NOT THAT SHAPE, and they DECLINE here instead of
+/// erroring. A walk's disc is its own extent plus 120 m — routinely 500–1800 m
+/// (measured over the golden corpus 2026-09-25: 14 walkable-roads asks over
+/// 1 km, three within 300 rows of this cap, one AT it) — and the corridor box
+/// adds 400 m a side, so a central-London walk asks for 10,000–20,000 highway
+/// rows. Two production days (a 1.4 km and a 4.3 km disc) answered 400 for the
+/// whole day because one leg crossed this line. A declined leg draws as a raw
+/// chord and the day SAYS so (`declined_by_table`); a failed day draws nothing.
 pub const CANDIDATE_LIMIT: i64 = 20_000;
 
 /// SQL statements this source has issued, process-wide.
@@ -476,6 +485,23 @@ impl MirrorSource {
         Self::check_limit_at(n, table, bucket, CANDIDATE_LIMIT)
     }
 
+    /// The matcher reads' backstop: `true` means DECLINE this ask. Loud, so a
+    /// day drawn on a raw chord is never a silent one. See [`CANDIDATE_LIMIT`].
+    fn matcher_backstop(n: usize, table: &str, bucket: &str, radius_m: f64) -> bool {
+        if (n as i64) < CANDIDATE_LIMIT {
+            return false;
+        }
+        tracing::warn!(
+            table,
+            bucket,
+            radius_m,
+            rows = n,
+            cap = CANDIDATE_LIMIT,
+            "at the backstop — the ask is declined and the leg draws raw"
+        );
+        true
+    }
+
     /// As [`check_limit`](Self::check_limit) with the cap stated, because the
     /// batched read shares one cap across several buckets.
     fn check_limit_at(n: usize, table: &str, bucket: &str, cap: i64) -> Result<()> {
@@ -529,7 +555,9 @@ impl MirrorSource {
         let rows = self
             .block(q.fetch_all(&self.pool))
             .context("reading osm_lines for a matcher corridor")?;
-        Self::check_limit(rows.len(), "osm_lines", "highway corridor")?;
+        if Self::matcher_backstop(rows.len(), "osm_lines", "highway corridor", radius_m) {
+            return Ok(None);
+        }
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;
@@ -586,7 +614,9 @@ impl RowSource for MirrorSource {
         let rows = self
             .block(q.fetch_all(&self.pool))
             .context("reading osm_lines for buildings")?;
-        Self::check_limit(rows.len(), "osm_lines", "building")?;
+        if Self::matcher_backstop(rows.len(), "osm_lines", "building", radius_m) {
+            return Ok(None);
+        }
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let wkt: String = r.try_get("wkt").context("osm_lines.geom has no WKT")?;

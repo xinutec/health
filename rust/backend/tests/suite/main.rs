@@ -68,6 +68,7 @@ mod focus_mining;
 mod focus_places;
 mod fold_env;
 mod fold_payload;
+mod fold_slot;
 mod freshness;
 mod geocode_wire;
 mod google_payload_helpers;

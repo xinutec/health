@@ -39,6 +39,35 @@ pub struct Params {
 }
 
 /// `YYYY-MM-DD`, and nothing else. The TypeScript's `dateParam` regex.
+/// Folds run ONE AT A TIME per process.
+///
+/// ⚠ Measured from the node, 2026-09-25: a fourteen-day browse at fourteen
+/// seconds a day stacked three folds, and the kernel killed the backend at
+/// 428 MiB anonymous memory (the 512 MiB pod limit, three Lean children beside
+/// it), then again at 472 MiB with two in flight once the arenas of the first
+/// burst were resident. A fold's working set is its OSM answers as JSON trees —
+/// 10,000–20,000 ways per walkable-roads ask over a London walk — and two of
+/// those do not fit beside what the previous one leaves behind (#1071).
+///
+/// Requests QUEUE here rather than stack. The permit is taken inside the
+/// cache-miss path, so a day already seated is served while another folds, and
+/// two requests for the same day still share one fold through the cache's
+/// per-key lock.
+static FOLD_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// Take the fold slot. `pub` for the test that proves there is exactly one.
+pub async fn fold_slot() -> tokio::sync::SemaphorePermit<'static> {
+    FOLD_SLOT
+        .acquire()
+        .await
+        .expect("the fold semaphore is never closed")
+}
+
+/// Whether a fold could start right now without waiting.
+pub fn fold_slot_free() -> bool {
+    FOLD_SLOT.available_permits() > 0
+}
+
 fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
@@ -118,8 +147,9 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 
     let cached = st
         .velocity
-        .get_or_compute(&key, now_ms, policy, || {
-            compute_with(st, &session.user_id, &date, tz, walk_match)
+        .get_or_compute(&key, now_ms, policy, || async {
+            let _slot = fold_slot().await;
+            compute_with(st, &session.user_id, &date, tz, walk_match).await
         })
         .await?;
 

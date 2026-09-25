@@ -169,33 +169,39 @@ async fn different_keys_do_not_block_each_other() {
     backend::lean::init().expect("the Lean runtime must start");
     let c = Arc::new(VelocityCache::new());
 
-    // Both sleep 120 ms. Serialised that is 240 ms; in parallel it is ~120.
-    // The bound is generous because this asserts "not serialised", not a
-    // latency figure — a slow machine must not make it red.
-    let started = std::time::Instant::now();
-    let tasks: Vec<_> = ["x", "y"]
-        .iter()
-        .map(|k| {
-            let c = Arc::clone(&c);
-            let k = k.to_string();
-            tokio::spawn(async move {
-                c.get_or_compute(&k, 1_000, policy(8), || async {
-                    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                    Ok(json!("done"))
-                })
-                .await
-                .unwrap()
+    // By CONSTRUCTION, not by the clock: x's compute waits for a signal that
+    // only y's compute sends. If a per-key lock serialised different days, y
+    // could not start until x returned, x could not return until y ran, and
+    // the join below would time out. The bound is a hang guard, not a latency
+    // figure — a loaded machine cannot make it red.
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let x = {
+        let (c, gate) = (Arc::clone(&c), Arc::clone(&gate));
+        tokio::spawn(async move {
+            c.get_or_compute("x", 1_000, policy(8), || async {
+                gate.notified().await;
+                Ok(json!("x done"))
             })
+            .await
+            .unwrap()
         })
-        .collect();
-    for t in tasks {
-        t.await.unwrap();
-    }
-    assert!(
-        started.elapsed() < std::time::Duration::from_millis(220),
-        "a per-key lock must not serialise DIFFERENT days; took {:?}",
-        started.elapsed()
-    );
+    };
+    let y = {
+        let (c, gate) = (Arc::clone(&c), Arc::clone(&gate));
+        tokio::spawn(async move {
+            c.get_or_compute("y", 1_000, policy(8), || async {
+                gate.notify_one();
+                Ok(json!("y done"))
+            })
+            .await
+            .unwrap()
+        })
+    };
+    let both = async { (x.await.unwrap(), y.await.unwrap()) };
+    let (vx, vy) = tokio::time::timeout(std::time::Duration::from_secs(5), both)
+        .await
+        .expect("a per-key lock must not serialise DIFFERENT days: x never got y's signal");
+    assert_eq!((vx, vy), (json!("x done"), json!("y done")));
 }
 
 /// ⚠ An expired entry is released by ANY traffic, not only by a read of its own
