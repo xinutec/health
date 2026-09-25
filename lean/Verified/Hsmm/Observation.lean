@@ -72,11 +72,15 @@ structure ObsRow where
 /-- `median` — JS `sort((a,b)=>a-b)` then middle (even length averages the two
     central values, in ascending order, exactly as TS does). Empty → 0. -/
 def median (values : List Float) : Float :=
-  if values.isEmpty then 0 else
+  if h0 : values.length = 0 then 0 else
   let sorted := (values.mergeSort (fun a b => decide (a ≤ b))).toArray
-  let n := sorted.size
-  let mid := n / 2
-  if n % 2 == 0 then (sorted[mid-1]! + sorted[mid]!) / 2 else sorted[mid]!
+  have hs : sorted.size = values.length := by simp [sorted]
+  let mid := sorted.size / 2
+  have hmid : mid < sorted.size := by omega
+  if h2 : sorted.size % 2 = 0 then
+    have hm1 : mid - 1 < sorted.size := by omega
+    (sorted[mid-1] + sorted[mid]) / 2
+  else sorted[mid]
 
 /-- `mean` — sum in original (insertion) order / length. Empty → 0. Order is
     load-bearing: float addition is not associative. -/
@@ -117,14 +121,14 @@ def markInBed (startUtc : Int) (sleep : List SleepRec) : Array Bool :=
 private def prevAliveDist (alive : Array Bool) : Array (Option Nat) :=
   (List.range MINUTES_PER_DAY).foldl
     (fun (st : (Option Nat) × Array (Option Nat)) m =>
-      let last := if alive[m]! then some m else st.1
+      let last := if alive[m]?.getD false then some m else st.1
       (last, st.2.push (last.map (fun l => m - l))))
     (none, #[]) |>.2
 
 private def nextAliveDist (alive : Array Bool) : Array (Option Nat) :=
   ((List.range MINUTES_PER_DAY).reverse.foldl
     (fun (st : (Option Nat) × Array (Option Nat)) m =>
-      let next := if alive[m]! then some m else st.1
+      let next := if alive[m]?.getD false then some m else st.1
       (next, st.2.push (next.map (fun nx => nx - m))))
     (none, #[]) |>.2).reverse
 
@@ -135,7 +139,7 @@ def reacquireAges (gpsPresent : Array Bool) : Array (Option Int) :=
   (List.range MINUTES_PER_DAY).foldl
     (fun (st : (Nat × Bool × Nat) × Array (Option Int)) m =>
       let (gapLen, runQualifies, ageInRun) := st.1
-      if !gpsPresent[m]! then
+      if !(gpsPresent[m]?.getD false) then
         ((gapLen + 1, runQualifies, ageInRun), st.2.push none)
       else if gapLen > 0 then
         let q := gapLen ≥ REACQUIRE_GAP_MIN
@@ -162,29 +166,30 @@ def buildObservationTensor
   let inBed := markInBed startUtc sleep
   -- Pass 1: per-minute aggregates.
   let gpsArr : Array (Option GpsAgg) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
-    let rows := gpsB[m]!
+    let rows := gpsB[m]?.getD #[]
     a.push (if rows.isEmpty then none else
       some ⟨median (rows.toList.map GpsPoint.lat), median (rows.toList.map GpsPoint.lon),
             mean (rows.toList.map GpsPoint.speedKmh)⟩)) #[]
   let hrArr : Array (Option Float) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
-    let rows := hrB[m]!
+    let rows := hrB[m]?.getD #[]
     a.push (if rows.isEmpty then none else some (mean (rows.toList.map HrPoint.bpm)))) #[]
   let cad0 : Array (Option Float) := (List.range MINUTES_PER_DAY).foldl (fun a m =>
-    let rows := stepB[m]!
+    let rows := stepB[m]?.getD #[]
     a.push (if rows.isEmpty then none else some (rows.foldl (fun s x => s + x.steps) 0.0))) #[]
   -- Pass 2: watch-liveness cadence imputation.
   let alive : Array Bool := (List.range MINUTES_PER_DAY).foldl (fun a m =>
-    a.push (!stepB[m]!.isEmpty || !hrB[m]!.isEmpty)) #[]
-  let dayHasStepRows := (List.range MINUTES_PER_DAY).any (fun m => !stepB[m]!.isEmpty)
+    a.push (!(stepB[m]?.getD #[]).isEmpty || !(hrB[m]?.getD #[]).isEmpty)) #[]
+  let dayHasStepRows := (List.range MINUTES_PER_DAY).any (fun m => !(stepB[m]?.getD #[]).isEmpty)
   let cad : Array (Option Float) :=
     if imputeCadence && dayHasStepRows then
       let pd := prevAliveDist alive
       let nd := nextAliveDist alive
       (List.range MINUTES_PER_DAY).foldl (fun a m =>
-        let impute := cad0[m]!.isNone
-          && (match pd[m]! with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
-          && (match nd[m]! with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
-        a.push (if impute then some 0 else cad0[m]!)) #[]
+        let c0 := cad0[m]?.getD none
+        let impute := c0.isNone
+          && (match pd[m]?.getD none with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
+          && (match nd[m]?.getD none with | some d => d ≤ WATCH_LIVENESS_WINDOW_MIN | none => false)
+        a.push (if impute then some 0 else c0)) #[]
     else cad0
   -- Pass 3: reacquire age.
   let gpsPresent : Array Bool := gpsArr.map Option.isSome
@@ -193,12 +198,12 @@ def buildObservationTensor
   let prevArr : Array (Option Fix) := (List.range MINUTES_PER_DAY).foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
       let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
-      let running := match gpsArr[m]! with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
+      let running := match gpsArr[m]?.getD none with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
       (running, st.2.push running)) (none, #[]) |>.2
   let nextArr : Array (Option Fix) := ((List.range MINUTES_PER_DAY).reverse.foldl
     (fun (st : (Option Fix) × Array (Option Fix)) m =>
       let ts := startUtc + (Int.ofNat m) * SECONDS_PER_MINUTE
-      let running := match gpsArr[m]! with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
+      let running := match gpsArr[m]?.getD none with | some g => some ⟨ts, g.lat, g.lon⟩ | none => st.1
       (running, st.2.push running)) (none, #[]) |>.2).reverse
   -- Assemble.
   (List.range MINUTES_PER_DAY).foldl (fun a m =>
@@ -206,10 +211,10 @@ def buildObservationTensor
     let (hour, dow) := localCtx m
     let (road, rail) := proximityAt ts
     a.push {
-      ts, gps := gpsArr[m]!, hr := hrArr[m]!, cadence := cad[m]!,
-      hourLocal := hour, dayOfWeekLocal := dow, inBed := inBed[m]!,
-      roadDistM := road, railDistM := rail, reacquireAgeMin := reacq[m]!,
-      prevGpsFix := prevArr[m]!, nextGpsFix := nextArr[m]! }) #[]
+      ts, gps := gpsArr[m]?.getD none, hr := hrArr[m]?.getD none, cadence := cad[m]?.getD none,
+      hourLocal := hour, dayOfWeekLocal := dow, inBed := inBed[m]?.getD false,
+      roadDistM := road, railDistM := rail, reacquireAgeMin := reacq[m]?.getD none,
+      prevGpsFix := prevArr[m]?.getD none, nextGpsFix := nextArr[m]?.getD none }) #[]
 
 -- Parity with the real `buildObservationTensor` (values from Node/V8).
 private def gp (relTs : Int) (lat lon spd : Float) : GpsPoint := ⟨1784156400 + relTs, lat, lon, spd⟩
