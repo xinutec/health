@@ -253,8 +253,8 @@ private def addContribution (m : Array (String × Float)) (name : Option String)
   | none => m
   | some n =>
     if !(durationS > 0) then m
-    else match m.findIdx? (·.1 == n) with
-      | some i => m.set! i (n, m[i]!.2 + durationS)
+    else match m.findFinIdx? (·.1 == n) with
+      | some i => m.set i (n, m[i].2 + durationS) i.isLt
       | none => m.push (n, durationS)
 
 /-- Coalesce adjacent same-mode MOVING legs.
@@ -472,29 +472,32 @@ def absorbFarFocusPlacePhantom (segments : Array Seg) (knownPlaces : Array Known
       match knownPlaces.find? (·.id == fid) with
       | none => none
       | some fp => (stayCentroid fixes s).map fun (la, lo) => haversineMeters la lo fp.centroidLat fp.centroidLon
-  let stayIdxs := (List.range segments.size).filter fun i =>
-    effectiveMode segments[i]! == "stationary" && segments[i]!.focusPlaceId.isSome
-  let noStayBetween (i j : Nat) : Bool :=
-    let lo := min i j
-    let hi := max i j
+  -- Indices are `Fin segments.size`, so every read below is total by type.
+  let stayIdxs := (List.finRange segments.size).filter fun i =>
+    effectiveMode segments[i] == "stationary" && segments[i].focusPlaceId.isSome
+  let noStayBetween (i j : Fin segments.size) : Bool :=
+    let lo := min i.val j.val
+    let hi := max i.val j.val
     (List.range (hi - lo)).all fun k =>
       let idx := lo + 1 + k
-      idx ≥ hi || effectiveMode segments[idx]! != "stationary"
+      if h : idx < segments.size then
+        idx ≥ hi || effectiveMode segments[idx] != "stationary"
+      else true
   let phantoms := stayIdxs.filter fun far =>
-    match distToFocus segments[far]! with
+    match distToFocus segments[far] with
     | none => false
     | some df =>
       if df < FOCUS_PHANTOM_MIN_M then false
       else stayIdxs.any fun near =>
         near != far
-          && segments[near]!.focusPlaceId == segments[far]!.focusPlaceId
-          && (match distToFocus segments[near]! with
+          && segments[near].focusPlaceId == segments[far].focusPlaceId
+          && (match distToFocus segments[near] with
               | none => false
               | some dn => !(dn > FOCUS_AT_PLACE_M))
           && noStayBetween far near
   if phantoms.isEmpty then segments
   else segments.mapIdx fun i s =>
-    if !(phantoms.contains i) then s
+    if !(phantoms.any (·.val == i)) then s
     else
       let reason := "far focus-place phantom (label over-reach) — swallowed into the arrival, not a separate visit"
       { s with
@@ -540,7 +543,10 @@ def planJitterStayRuns (segments : Array Seg) : Array (Nat × Nat) := Id.run do
               break
             j := j + 1
           | _, _ => break
-        if j > i && (List.range (j - i + 1)).any (fun k => hasRefinedKind segments[i + k]! "gps-jitter") then
+        -- `j < segments.size` is the inner loop's exit condition; the guard
+        -- restates it where the tactic can see it.
+        if j > i && (List.range (j - i + 1)).any (fun k =>
+            if hk : i + k < segments.size then hasRefinedKind segments[i + k] "gps-jitter" else false) then
           runs := runs.push (i, j)
         i := j + 1
     | _, _ => i := i + 1
@@ -971,7 +977,10 @@ def consolidateJitterStays (segments : Array Seg)
   let mut merged : Array (Nat × Seg) := #[]
   let mut drop : Array Nat := #[]
   for (start, stop) in runs do
-    let run := (List.range (stop - start + 1)).map fun k => segments[start + k]!
+    -- `stop < segments.size` by `planJitterStayRuns`'s construction; an index
+    -- past the end contributes nothing rather than a default segment.
+    let run := (List.range (stop - start + 1)).filterMap fun k =>
+      if hk : start + k < segments.size then some segments[start + k] else none
     let first := run.head!
     let last := run.getLast!
     -- Point-count-weighted, falling back to the UNWEIGHTED mean when every
@@ -1015,10 +1024,10 @@ def consolidateJitterStays (segments : Array Seg)
     -- (!drop.has(i))`), so the redundancy is faithful, not introduced here.
     for k in [start + 1 : stop + 1] do drop := drop.push k
   let mut out : Array Seg := #[]
-  for i in [0 : segments.size] do
+  for h : i in [0 : segments.size] do
     match merged.find? (·.1 == i) with
     | some (_, m) => out := out.push m
-    | none => if !drop.contains i then out := out.push segments[i]!
+    | none => if !drop.contains i then out := out.push segments[i]
   return out
 
 /-! ### Parity with Node/V8 (`lean/experiments/consolidate-jitter-stays-refs.mts`) -/
