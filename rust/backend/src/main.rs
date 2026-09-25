@@ -456,6 +456,21 @@ async fn main() -> Result<()> {
         }
         "google-probe" => backend::google::probe::run().await,
         "coverage" => coverage().await,
+        // #1733: the case file's heart-rate pages read these through prod-db.sh.
+        "hr-trend" => match flags {
+            [a, from, boundary] if *a == "--averages" => hr_trend_averages(from, boundary).await,
+            [] => hr_trend("2026-06-03", false).await,
+            [since] if *since != "--json" => hr_trend(since, false).await,
+            [j] if *j == "--json" => hr_trend("2026-06-03", true).await,
+            [j, since] | [since, j] if *j == "--json" => hr_trend(since, true).await,
+            _ => {
+                eprintln!(
+                    "usage: backend hr-trend [--json] [SINCE] | --averages <FROM> <BOUNDARY>"
+                );
+                std::process::exit(64);
+            }
+        },
+        "hrv-history" => hrv_history().await,
         "column-fill" => column_fill().await,
         "zones-census" => zones_census().await,
         "focus-audit" => focus_audit().await,

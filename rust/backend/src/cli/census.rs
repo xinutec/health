@@ -616,6 +616,206 @@ pub(crate) async fn coverage() -> Result<()> {
 /// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
 /// INT decoding as a Rust integer fails on real rows in ways an empty table
 /// never shows.
+/// The three daily-summary series the heart-rate trend reads: `(table, metric
+/// column, key)`. Every table dates its rows in a `date DATE` column.
+const HR_TREND_SOURCES: [(&str, &str, &str); 3] = [
+    ("daily_activity", "resting_heart_rate", "rhr"),
+    ("hrv_daily", "daily_rmssd", "rmssd"),
+    ("breathing_rate", "full_sleep_rate", "resp"),
+];
+
+fn is_iso_date(s: &str) -> bool {
+    s.len() == 10
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            _ => b.is_ascii_digit(),
+        })
+}
+
+/// Recent resting HR / HRV / breathing rate, one row per date since `since`.
+///
+/// `backend hr-trend [--json] [SINCE]` — a table, or with `--json` the array
+/// `[{"date", "rhr", "rmssd", "resp"}]` a key present only where that table
+/// has a row for the day, `null` where the row holds no value. Replaces the
+/// Node probe deleted in 045bcbe; `~/Code/dicom-scan/refresh_hr_data.py` reads
+/// it through `scripts/prod-db.sh` (#1733).
+///
+/// ⚠ DECIMAL columns are read as CHAR and parsed here — sqlx refuses them on a
+/// real row ([[reference_sqlx_mysql_type_traps]]).
+pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
+    use sqlx::Row as _;
+    if !is_iso_date(since) {
+        anyhow::bail!("SINCE must be YYYY-MM-DD, got {since:?}");
+    }
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let mut by_date: std::collections::BTreeMap<
+        String,
+        serde_json::Map<String, serde_json::Value>,
+    > = Default::default();
+    for (table, metric, key) in HR_TREND_SOURCES {
+        // `AssertSqlSafe`: the table and column are constants from `HR_TREND_SOURCES`;
+        // `since` is BOUND.
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, CAST({metric} AS CHAR) AS v              FROM {table} WHERE date >= ? ORDER BY d"
+        )))
+        .bind(since)
+        .fetch_all(&pool)
+        .await
+        .with_context(|| format!("reading {table}.{metric}"))?;
+        for r in &rows {
+            let d: String = r.get("d");
+            let v: Option<String> = r.get("v");
+            let v = v
+                .and_then(|s| s.parse::<f64>().ok())
+                .map_or(serde_json::Value::Null, |n| serde_json::json!(n));
+            let e = by_date.entry(d.clone()).or_default();
+            e.insert("date".into(), serde_json::json!(d));
+            e.insert(key.into(), v);
+        }
+    }
+    pool.close().await;
+    let out: Vec<serde_json::Value> = by_date
+        .into_values()
+        .map(serde_json::Value::Object)
+        .collect();
+    if json {
+        println!("{}", serde_json::to_string(&out)?);
+        return Ok(());
+    }
+    println!("date        RHR   RMSSD  resp");
+    let cell = |o: &serde_json::Value, k: &str| match o.get(k).and_then(serde_json::Value::as_f64) {
+        Some(n) => format!("{n:>5}"),
+        None => "  -  ".to_string(),
+    };
+    for o in &out {
+        println!(
+            "{}  {} {} {}",
+            o["date"].as_str().unwrap_or("-"),
+            cell(o, "rhr"),
+            cell(o, "rmssd"),
+            cell(o, "resp")
+        );
+    }
+    Ok(())
+}
+
+/// Window means of the same three series, computed in SQL so they are
+/// reproducible rather than hand-tallied.
+///
+/// `backend hr-trend --averages <FROM> <BOUNDARY>` — `{"windows", "preop",
+/// "postop"}` where `preop` covers `[FROM, BOUNDARY)` and `postop`
+/// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. The dates are the CALLER's:
+/// this repository is public, and which day divides the two windows belongs
+/// to the case file that asks, not here.
+pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> {
+    use sqlx::Row as _;
+    if !is_iso_date(from) || !is_iso_date(boundary) {
+        anyhow::bail!("windows are YYYY-MM-DD, got {from:?} and {boundary:?}");
+    }
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let group = |lo: &str, hi: Option<&str>| {
+        let lo = lo.to_string();
+        let hi = hi.map(str::to_string);
+        let pool = pool.clone();
+        async move {
+            let mut o = serde_json::Map::new();
+            for (table, metric, key) in HR_TREND_SOURCES {
+                let sql = match &hi {
+                    Some(_) => format!(
+                        "SELECT CAST(AVG({metric}) AS CHAR) AS a, CAST(COUNT({metric}) AS CHAR) AS n                          FROM {table} WHERE date >= ? AND date < ?"
+                    ),
+                    None => format!(
+                        "SELECT CAST(AVG({metric}) AS CHAR) AS a, CAST(COUNT({metric}) AS CHAR) AS n                          FROM {table} WHERE date >= ?"
+                    ),
+                };
+                // Table and column come from the constant list above; the dates are BOUND.
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(lo.clone());
+                if let Some(h) = &hi {
+                    q = q.bind(h.clone());
+                }
+                let r = q
+                    .fetch_one(&pool)
+                    .await
+                    .with_context(|| format!("averaging {table}.{metric}"))?;
+                let a: Option<String> = r.get("a");
+                let n: String = r.get("n");
+                o.insert(
+                    key.into(),
+                    serde_json::json!({
+                        "avg": a.and_then(|s| s.parse::<f64>().ok()),
+                        "n": n.parse::<u64>().unwrap_or(0),
+                    }),
+                );
+            }
+            Ok::<_, anyhow::Error>(serde_json::Value::Object(o))
+        }
+    };
+    let preop = group(from, Some(boundary)).await?;
+    let postop = group(boundary, None).await?;
+    pool.close().await;
+    println!(
+        "{}",
+        serde_json::json!({
+            "windows": { "preop": [from, boundary], "postop": [boundary, "now"] },
+            "preop": preop,
+            "postop": postop,
+        })
+    );
+    Ok(())
+}
+
+/// The full HRV + resting-HR history as CSV, `date,hrv,rhr`, one row per day
+/// present in either table, ascending; an empty cell is a missing reading.
+///
+/// `backend hrv-history` replaces the Node probe deleted in 045bcbe; it backs
+/// the long-term chart in the case file (#1733). ⚠ A recorded ZERO counts as
+/// missing: an RMSSD of 0 ms is a failed reading, not a measurement. Dropped
+/// here and not at ingest — `hrv_daily` keeps what Fitbit recorded, verbatim.
+pub(crate) async fn hrv_history() -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let mut by_date: std::collections::BTreeMap<String, (Option<f64>, Option<f64>)> =
+        Default::default();
+    for (table, metric, is_hrv) in [
+        ("hrv_daily", "daily_rmssd", true),
+        ("daily_activity", "resting_heart_rate", false),
+    ] {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, CAST({metric} AS CHAR) AS v FROM {table} ORDER BY d"
+        )))
+        .fetch_all(&pool)
+        .await
+        .with_context(|| format!("reading {table}.{metric}"))?;
+        for r in &rows {
+            let d: String = r.get("d");
+            let v: Option<String> = r.get("v");
+            let v = v.and_then(|s| s.parse::<f64>().ok()).filter(|n| *n > 0.0);
+            let e = by_date.entry(d).or_default();
+            if is_hrv {
+                e.0 = v;
+            } else {
+                e.1 = v;
+            }
+        }
+    }
+    pool.close().await;
+    let cell = |v: Option<f64>| v.map(|n| n.to_string()).unwrap_or_default();
+    println!("date,hrv,rhr");
+    for (d, (hrv, rhr)) in &by_date {
+        println!("{d},{},{}", cell(*hrv), cell(*rhr));
+    }
+    Ok(())
+}
+
 pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;

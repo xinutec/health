@@ -102,6 +102,16 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("coverage", "", "rows and date span per biometric table"),
     (
+        "hr-trend",
+        "[--json] [SINCE] | --averages <FROM> <BOUNDARY>",
+        "resting HR / HRV / breathing rate by day, or two window means (#1733)",
+    ),
+    (
+        "hrv-history",
+        "",
+        "the full HRV + resting-HR history as CSV (#1733)",
+    ),
+    (
         "column-fill",
         "",
         "which daily_activity columns hold data (#260)",
