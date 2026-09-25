@@ -300,7 +300,7 @@ fn ride_request(relations: serde_json::Value) -> serde_json::Value {
     const RIDE_MIN: i64 = 8;
     let points: Vec<_> = (0..=RIDE_MIN)
         .map(|m| {
-            #[allow(clippy::cast_precision_loss)]
+            #[allow(clippy::cast_precision_loss, reason = "RIDE_MIN is 8; exact")]
             let frac = m as f64 / RIDE_MIN as f64;
             serde_json::json!({
                 "ts": T0 + m * 60 + 30, "lat": 51.5,

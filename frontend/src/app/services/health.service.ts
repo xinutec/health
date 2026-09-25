@@ -487,7 +487,7 @@ export class HealthService {
       const body = await HealthService.body<unknown>(res);
       // Same trust as body<T>, taken after a real check that it is a list
       // at all — a non-array tail would otherwise be drawn as one point.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- checked to be a list on the next line; same trust as body<T> (above)
       return Array.isArray(body) ? (body as TrackTailPoint[]) : [];
     } catch {
       return [];

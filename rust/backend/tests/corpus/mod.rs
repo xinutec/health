@@ -37,7 +37,7 @@ pub mod walk;
 /// ⚠ `dead_code` is allowed because **the graders use different subsets** —
 /// `day` reads `rounds` and `unanswerable`, `walk` reads `request`, the others
 /// read neither.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "the graders use different subsets (doc above)")]
 pub struct Replay {
     /// The fixture, AFTER any priors injection — so a grader reads the same
     /// inputs the fold saw rather than what was on disk.
@@ -251,7 +251,7 @@ pub fn replay(name: &str, fx: Value, trace: Option<&TraceAnswerer>) -> Result<Re
 /// the cost the move exists to remove, and it deliberately does NOT load the
 /// trace: a grader still on this path must keep replaying the arm it was
 /// blessed against until it moves and is re-blessed together with the flip.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "kept for graders still on this path (doc above)")]
 pub fn replay_own(golden: &str, name: &str, priors: Option<&Value>) -> Result<Replay, String> {
     let fx = read_fixture(golden, name)?;
     replay(name, with_priors(&fx, priors), None)

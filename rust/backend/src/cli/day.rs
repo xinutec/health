@@ -413,7 +413,10 @@ pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
 
     let mut agree = 0usize;
     let mut declined = 0usize;
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "a map from source to the rows that differ, built once here"
+    )]
     let mut differ: std::collections::BTreeMap<&str, Vec<(usize, usize, Vec<String>)>> =
         Default::default();
     for ((m, want), got) in asks.iter().zip(&from_rows).zip(&from_mirror) {

@@ -89,7 +89,10 @@ pub struct DayStream<'a> {
     /// a long run of skips terminates the walk exactly as a long run of empty
     /// fetches does. ⚠ Without that, a permanently-true condition walks the
     /// cursor backward forever; it is the bug the floor was added for.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the skip predicate's full shape, boxed (doc above)"
+    )]
     pub skip_if: Option<Box<dyn Fn(String) -> BoxFut<'a, Result<bool>> + Send + Sync + 'a>>,
 }
 
@@ -99,7 +102,10 @@ pub struct RangeStream<'a> {
     pub name: String,
     pub max_empty_windows: i64,
     /// As [`DayStream::fetch`], over a window rather than a day.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "a window fetch's full shape, boxed (doc above)"
+    )]
     pub fetch: Box<
         dyn Fn(String, String) -> BoxFut<'a, Result<DayResult, RateLimitExhausted>>
             + Send

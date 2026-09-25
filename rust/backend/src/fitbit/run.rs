@@ -150,7 +150,10 @@ pub async fn run(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one user's sync, every input named"
+)]
 async fn sync_one_user(
     pool: &MySqlPool,
     client: &FitbitClient,
@@ -711,7 +714,10 @@ async fn migrate_legacy_backfill_keys(pool: &MySqlPool, user_id: &str) -> Result
 /// `None` when BOTH are missing, which makes the forward pass write `tz=NULL`
 /// exactly as the backfill does. That is the honest answer for a first link
 /// where nothing is known yet.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every source a timezone can come from (doc above)"
+)]
 async fn build_tz_source<'a>(
     pool: &MySqlPool,
     client: &FitbitClient,
