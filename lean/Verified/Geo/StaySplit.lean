@@ -2094,10 +2094,12 @@ def MIN_GAP_TO_EVALUATE_S : Int := 15 * 60
 /-- Walk the fixes in time order, accumulating into sub-runs; close a run when
 the gap to the next fix scores above `SPLIT_THRESHOLD_NATS`. -/
 def splitByEvidence (fixes : Array PointF) (ctx : SplitContext) : Array (Array PointF) := Id.run do
-  let mut runs : Array (Array PointF) := #[#[fixes[0]!]]
+  -- No fixes, no runs.
+  let some f0 := fixes[0]? | return #[]
+  let mut runs : Array (Array PointF) := #[#[f0]]
   let mut priorGaps : Array Float := #[]
-  let mut cLat := fixes[0]!.lat
-  let mut cLon := fixes[0]!.lon
+  let mut cLat := f0.lat
+  let mut cLon := f0.lon
   for hm_i : i in [1:fixes.size] do
     have hb_i : i < fixes.size := hm_i.upper
     let prev := fixes[i - 1]
@@ -2113,7 +2115,7 @@ def splitByEvidence (fixes : Array PointF) (ctx : SplitContext) : Array (Array P
         let score := scoreSplitEvidence
           { gapDurationS := Float.ofInt gapS
             medianPriorGapS := if priorGaps.isEmpty then 0 else median priorGaps
-            preGapFixCount := Int.ofNat runs[runs.size - 1]!.size
+            preGapFixCount := Int.ofNat ((runs.back?.map (·.size)).getD 0)
             stepsInGap
             hrMeanInGap :=
               if hrInGap.isEmpty then none
@@ -2128,7 +2130,9 @@ def splitByEvidence (fixes : Array PointF) (ctx : SplitContext) : Array (Array P
       cLon := cur.lon
     else
       -- Joined: the gap enters the run's rhythm whether it was scored or not.
-      let run := runs[runs.size - 1]!.push cur
+      -- `runs` is never empty here (it opens with the first fix); `getD #[]`
+      -- is the `!` default said out loud.
+      let run := (runs.back?.getD #[]).push cur
       runs := runs.set! (runs.size - 1) run
       priorGaps := priorGaps.push (Float.ofInt gapS)
       cLat := cLat + (cur.lat - cLat) / Float.ofNat run.size
@@ -2152,11 +2156,13 @@ def splitStaysOnEvidence (segments : Array Seg) (points : Array PointF)
         let run := subRuns[i]
         out := out.push
           { seg with
-            startTs := run[0]!.ts, endTs := run[run.size - 1]!.ts
+            startTs := (run[0]?.map (·.ts)).getD 0, endTs := (run.back?.map (·.ts)).getD 0
             pointCount := Int.ofNat run.size }
         if i < subRuns.size - 1 then
-          let gapStart := run[run.size - 1]!.ts
-          let gapEnd := subRuns[i + 1]![0]!.ts
+          -- Sub-runs are non-empty by construction; a `?`-read says what the
+          -- `!` assumed, with its default (0) out loud.
+          let gapStart := (run.back?.map (·.ts)).getD 0
+          let gapEnd := ((subRuns[i + 1]?.bind (·[0]?)).map (·.ts)).getD 0
           let mins := toString (jsRound (Float.ofInt (gapEnd - gapStart) / 60)).toInt64.toInt
           out := out.push
             { startTs := gapStart, endTs := gapEnd, mode := "unknown"
@@ -2433,14 +2439,14 @@ def splitWalksOnEvidence (segments : Array Seg) (points : Array PointF)
           cadence := cadence.modify k.toNat (· + s.steps)
       let meanOf (from_ to : Nat) : Float :=
         if to ≤ from_ then 0
-        else ((Array.range (to - from_)).foldl (fun s j => s + cadence[from_ + j]!) 0)
+        else ((Array.range (to - from_)).foldl (fun s j => s + (cadence[from_ + j]?.getD 0)) 0)
           / Float.ofNat (to - from_)
       let minSitMin := ((MIN_SIT_S + 59) / 60).toNat
       -- Prefix: the FIRST minute that both steps and opens a walking window,
       -- with everything before it averaging at sitting level.
       let mut prefixMin : Nat := 0
       for b in [minSitMin:totalMin] do
-        if cadence[b]! ≥ ONSET_MIN_CADENCE
+        if (cadence[b]?.getD 0) ≥ ONSET_MIN_CADENCE
             && meanOf b (min totalMin (b + ONSET_WINDOW_MIN)) ≥ CORE_MIN_CADENCE
             && meanOf 0 b ≤ SIT_MEAN_MAX then
           prefixMin := b
@@ -2459,7 +2465,7 @@ def splitWalksOnEvidence (segments : Array Seg) (points : Array PointF)
         -- kept as the TS has it, and it would refuse via `coreS` regardless.
         if e ≤ prefixMin then break
         -- `e - ONSET_WINDOW_MIN` is Nat subtraction, i.e. the TS `Math.max(0, …)`.
-        if cadence[e - 1]! ≥ ONSET_MIN_CADENCE
+        if (cadence[e - 1]?.getD 0) ≥ ONSET_MIN_CADENCE
             && meanOf (e - ONSET_WINDOW_MIN) e ≥ CORE_MIN_CADENCE
             && meanOf e totalMin ≤ SIT_MEAN_MAX then
           suffixMin := totalMin - e
