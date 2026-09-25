@@ -32,3 +32,8 @@ overrides:
   undici: ^7.28.0
   esbuild: ^0.28.2
   "@babel/core": ^7.29.6
+
+# The catalog names only versions a day old (dev-lint tables/deps.dhall);
+# strict, so a younger install fails instead of writing itself an exclusion.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
