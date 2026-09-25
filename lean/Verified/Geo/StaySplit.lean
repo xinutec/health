@@ -1896,7 +1896,7 @@ private def footArrival (cur next : Seg) (points : Array PointF) : Option (Seg Ã
       if fixes.size < 4 then return none
       let k := arrivalIdx fixes
       let run := fixes.extract k fixes.size
-      if hr : run.size < 2 then return none
+      if run.size < 2 then return none
       let some first := run[0]? | return none
       let some last := run.back? | return none
       let arrivalTs := first.ts

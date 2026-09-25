@@ -584,9 +584,10 @@ Averages are weighted by `pointCount`, with a zero count counting as ONE so a
 fix-less segment still carries a vote. The emitted `pointCount` is the raw sum
 though, NOT the same `|| 1` correction — a subtlety worth stating because the
 two expressions sit two lines apart in the TS. -/
-private def collapse (segments : Array Seg) (run : RailRun) (label : Option String) : Seg :=
-  let first := segments[run.from_]!
-  let last := segments[run.toExclusive - 1]!
+private def collapse (segments : Array Seg) (run : RailRun) (first : Seg) (label : Option String) : Seg :=
+  -- `first` is the caller's `segments[run.from_]`, read under its own bound. A
+  -- run whose end lies past the array (not constructible) ends where it starts.
+  let last := (segments[run.toExclusive - 1]?).getD first
   let railSegs := ((List.range (run.toExclusive - run.from_)).map (· + run.from_)).foldl
     (init := #[]) fun acc k =>
       match segments[k]? with
@@ -653,7 +654,7 @@ private def applyFrom (segments : Array Seg) (runs : Array RailRun) (labels : Ar
           if run.toExclusive - run.from_ == 1 && run.absorbedStationary.isEmpty then
             -- `run.from_ == i` by the `find?` above.
             upgradeSingle segments[i] label
-          else collapse segments run label
+          else collapse segments run segments[i] label
         applyFrom segments runs labels remaining run.toExclusive (acc.push out)
 
 def applyRailRuns (segments : Array Seg) (runs : Array RailRun)

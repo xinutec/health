@@ -418,9 +418,9 @@ One step of the sub-run loop: offer `c` to the prefix built so far and either
 accept it or stop. Stopping matters beyond the result — a gate that stops the
 prefix means the later gates, two of which read OSM, are never consulted. -/
 
-private structure PrefixState where
+private structure PrefixState (n : Nat) where
   /-- Positions accepted so far, in order. Never empty after the first step. -/
-  acc : Array Nat
+  acc : Array (Fin n)
   /-- Physical lines still compatible with every LABEL seen, or `none` while no
   fragment has carried a label. -/
   allowed : Option (Array String)
@@ -429,10 +429,10 @@ private structure PrefixState where
   deriving Inhabited, Repr
 
 private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint) (runBoard : String) :
-    List Nat → PrefixState → MemoM PrefixState
+    List (Fin segments.size) → PrefixState segments.size → MemoM (PrefixState segments.size)
   | [], st => return st
   | c :: rest, st => do
-    let seg := segments[c]!
+    let seg := segments[c]
     let fragLabel := parseRailWayName seg.wayName
     let fragLine := fragLabel.bind RailTriple.line
     -- Gate 2 — labels are expanded to PHYSICAL lines first, so a shared-track
@@ -452,17 +452,17 @@ private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix)
       match st.acc.back? with
       | none => false
       | some prev =>
-        hasInterchangeWalkBetween segments prev c steps &&
+        hasInterchangeWalkBetween segments prev.val c.val steps &&
           !(fragLine.isSome && st.allowed.isSome)
     if brokenByWalk then return st
     -- Gate 1 — a single line serves every station the prefix would touch.
-    let sub := (st.acc.push c).map fun i => segments[i]!
+    let sub := (st.acc.push c).map fun i => segments[i]
     let ln ← findThroughLine env sub (stationsOf sub) points
     match ln with
     | none => return st
     | some ln =>
       let onLine ← peekStations ln
-      let first := segments[st.acc.getD 0 c]!
+      let first := segments[st.acc.getD 0 c]
       -- Gates 4 and 5 are only asked once a SECOND fragment is on the table: a
       -- lone fragment is not being merged with anything.
       let joining := !st.acc.isEmpty
@@ -480,17 +480,17 @@ private def extendPrefix (env : Env) (segments : Array Seg) (points : Array Fix)
 /-- Collapse `[firstPos..lastPos]` into one leg, absorbing the intervening
 slivers. `snappedPath` is dropped for the later rail-snap pass to re-attach from
 the merged route key. -/
-private def mergedLeg (segments : Array Seg) (firstPos lastPos : Nat) (fragments : Nat)
+private def mergedLeg (segments : Array Seg) (firstPos lastPos : Fin segments.size) (fragments : Nat)
     (groupLine : String) (first : RailTriple) (alight : String) : Seg :=
-  let span := (idxRange firstPos (lastPos - firstPos + 1)).toArray
-  let pointCount := span.foldl (init := (0 : Int)) fun a m => a + segments[m]!.pointCount
-  let maxSpeed := span.foldl (init := 0.0) fun a m => max a segments[m]!.maxSpeed
+  let span := segments.extract firstPos.val (lastPos.val + 1)
+  let pointCount := span.foldl (init := (0 : Int)) fun a s => a + s.pointCount
+  let maxSpeed := span.foldl (init := 0.0) fun a s => max a s.maxSpeed
   let reason := s!"rail-journey assembly: {fragments} fragments on {groupLine} (GPS surfaced mid-ride) merged into one continuous ride"
-  let base := segments[firstPos]!
+  let base := segments[firstPos]
   { base with
     mode := "train"
     refinedMode := some "train"
-    endTs := segments[lastPos]!.endTs
+    endTs := segments[lastPos].endTs
     wayName := some s!"{first.board}{RAIL_STATION_SEP}{alight}{RAIL_LINE_SEP}{groupLine}"
     snappedPath := none
     pointCount := pointCount
@@ -506,27 +506,25 @@ on its own, passing through anything between them.
 it starts at exactly `positions.size` and every step consumes at least the
 position it just emitted, so it is a genuine well-founded measure. -/
 private def subRuns (env : Env) (segments : Array Seg) (points : Array Fix) (steps : List Verified.Geo.BiometricWindows.StepPoint)
-    (positions : Array Nat) : Nat → Nat → Nat → Array Seg → MemoM (Array Seg)
+    (positions : Array (Fin segments.size)) : Nat → Nat → Nat → Array Seg → MemoM (Array Seg)
   | 0, _, _, out => return out
   | remaining + 1, p, cursor, out => do
     if h : p < positions.size then
       let firstPos := positions[p]
-      let runBoard := ((parseRailWayName segments[firstPos]!.wayName).map RailTriple.board).getD ""
+      let runBoard := ((parseRailWayName segments[firstPos].wayName).map RailTriple.board).getD ""
       let st ← extendPrefix env segments points steps runBoard
         ((positions.toList.drop p)) { acc := #[], allowed := none, groupLine := none }
       -- `extendPrefix` accepts at least the first offered position unless gate 1
       -- or 2 rejects it outright, in which case the lone leg passes through.
       let e := p + (if st.acc.isEmpty then 0 else st.acc.size - 1)
-      let lastPos := positions[min e (positions.size - 1)]!
+      let lastPos := positions[min e (positions.size - 1)]'(by omega)
       -- Emit everything before this sub-run unchanged (the interchange slivers).
-      let out := (idxRange cursor (firstPos - cursor)).foldl
-        (init := out) fun acc m => acc.push segments[m]!
+      let out := out ++ segments.extract cursor firstPos.val
       -- A lone leg, or an unresolvable line: pass the train leg(s) through
       -- unchanged rather than fabricate a merge.
-      let passthrough := (idxRange firstPos (lastPos - firstPos + 1)).foldl
-        (init := out) fun acc m => acc.push segments[m]!
-      let out ← match st.groupLine, parseRailWayName segments[firstPos]!.wayName,
-                      parseRailWayName segments[lastPos]!.wayName with
+      let passthrough := out ++ segments.extract firstPos.val (lastPos.val + 1)
+      let out ← match st.groupLine, parseRailWayName segments[firstPos].wayName,
+                      parseRailWayName segments[lastPos].wayName with
         | some gl, some f, some l =>
           if firstPos == lastPos then pure passthrough
           else do
@@ -534,12 +532,12 @@ private def subRuns (env : Env) (segments : Array Seg) (points : Array Fix) (ste
             -- The ride's alight, resolved from the ride's own end — never
             -- collapsing to a degenerate "X → X", in which case the last
             -- fragment's own label stands.
-            let alight := match resolveJourneyAlight points segments[lastPos]!.endTs onLine with
+            let alight := match resolveJourneyAlight points segments[lastPos].endTs onLine with
               | some r => if r != f.board then r else l.alight
               | none => l.alight
             pure (out.push (mergedLeg segments firstPos lastPos (e - p + 1) gl f alight))
         | _, _, _ => pure passthrough
-      subRuns env segments points steps positions (remaining - (e - p)) (e + 1) (lastPos + 1) out
+      subRuns env segments points steps positions (remaining - (e - p)) (e + 1) (lastPos.val + 1) out
     else return out
 
 /-- Assemble fragmented single-line rail journeys into one ride.
@@ -580,10 +578,8 @@ private def scan (env : Env) (segments : Array Seg) (points : Array Fix) (steps 
         if lastTrain == i then
           scan env segments points steps remaining (i + 1) (out.push segments[i])
         else
-          let positions := (idxRange i (lastTrain - i + 1)).toArray.filter fun m =>
-            match segments[m]? with
-            | some s => isStationPairTrain s
-            | none => false
+          let positions := (List.finRange segments.size).toArray.filter fun m =>
+            i ≤ m.val && m.val ≤ lastTrain && isStationPairTrain segments[m]
           let out ← subRuns env segments points steps positions positions.size 0 i out
           -- Anything between the last sub-run and `lastTrain` has already been
           -- emitted by `subRuns`; resume after the run.

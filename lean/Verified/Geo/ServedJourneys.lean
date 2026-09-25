@@ -84,7 +84,7 @@ def servedJourneys (states : Array DayState) : Array Journey := Id.run do
   let mut lastCity : Option String := none
   let close : Array Leg → Array Journey → Array Journey := fun r acc =>
     if h : r.size ≥ 2 then
-      acc.push { startTs := r[0]!.startTs, endTs := r[r.size - 1]!.endTs, legs := r }
+      acc.push { startTs := (r[0]'(by omega)).startTs, endTs := (r[r.size - 1]'(by omega)).endTs, legs := r }
     else acc
   for s in states do
     -- ⚠ A CITY HEADER ENDS A RUN, because in the client it is a ROW and any
