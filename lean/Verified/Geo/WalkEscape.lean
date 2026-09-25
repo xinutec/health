@@ -72,13 +72,17 @@ def pointInRing (p : Pt) (ring : Ring) : Bool := Id.run do
   if n < 3 then return false
   let mut inside := false
   let mut j := n - 1
-  for i in [0:n] do
-    let yi := ring[i]!.lat
-    let xi := ring[i]!.lon
-    let yj := ring[j]!.lat
-    let xj := ring[j]!.lon
-    if ((yi > p.lat) != (yj > p.lat)) && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi then
-      inside := !inside
+  for hm_i : i in [0:n] do
+    have hi : i < ring.size := hm_i.upper
+    -- `j` is `n - 1` or a previous `i`, so it is in range; the guard is the
+    -- form the tactic accepts.
+    if hj : j < ring.size then
+      let yi := ring[i].lat
+      let xi := ring[i].lon
+      let yj := ring[j].lat
+      let xj := ring[j].lon
+      if ((yi > p.lat) != (yj > p.lat)) && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi then
+        inside := !inside
     j := i
   return inside
 
@@ -89,12 +93,14 @@ def nearestOnRing (p : Pt) (ring : Ring) : Option NearPt := Id.run do
   if n == 0 then return none
   let mut best : Option NearPt := none
   let mut j := n - 1
-  for i in [0:n] do
-    let proj := projectPointToSegment p ring[j]! ring[i]!
-    let better := match best with
-      | none => true
-      | some b => proj.distM < b.distM
-    if better then best := some ⟨proj.lat, proj.lon, proj.distM⟩
+  for hm_i : i in [0:n] do
+    have hi : i < ring.size := hm_i.upper
+    if hj : j < ring.size then
+      let proj := projectPointToSegment p ring[j] ring[i]
+      let better := match best with
+        | none => true
+        | some b => proj.distM < b.distM
+      if better then best := some ⟨proj.lat, proj.lon, proj.distM⟩
     j := i
   return best
 
@@ -375,18 +381,20 @@ def segRingCrossingTs (a b : Pt) (ring : Ring) : Array Float := Id.run do
   if n == 0 then return #[]
   let mut ts : Array Float := #[]
   let mut j := n - 1
-  for i in [0:n] do
-    let p := ring[j]!
-    let q := ring[i]!
-    let d1x := b.lon - a.lon
-    let d1y := b.lat - a.lat
-    let d2x := q.lon - p.lon
-    let d2y := q.lat - p.lat
-    let denom := d1x * d2y - d1y * d2x
-    if Float.abs denom ≥ 1e-18 then
-      let t := ((p.lon - a.lon) * d2y - (p.lat - a.lat) * d2x) / denom
-      let u := ((p.lon - a.lon) * d1y - (p.lat - a.lat) * d1x) / denom
-      if t > 1e-9 && t < 1 - 1e-9 && u ≥ 0 && u ≤ 1 then ts := ts.push t
+  for hm_i : i in [0:n] do
+    have hi : i < ring.size := hm_i.upper
+    if hj : j < ring.size then
+      let p := ring[j]
+      let q := ring[i]
+      let d1x := b.lon - a.lon
+      let d1y := b.lat - a.lat
+      let d2x := q.lon - p.lon
+      let d2y := q.lat - p.lat
+      let denom := d1x * d2y - d1y * d2x
+      if Float.abs denom ≥ 1e-18 then
+        let t := ((p.lon - a.lon) * d2y - (p.lat - a.lat) * d2x) / denom
+        let u := ((p.lon - a.lon) * d1y - (p.lat - a.lat) * d1x) / denom
+        if t > 1e-9 && t < 1 - 1e-9 && u ≥ 0 && u ≤ 1 then ts := ts.push t
     j := i
   return ts.qsort (· < ·)
 
@@ -400,9 +408,11 @@ def ringCornersBetween (a b : Pt) (ring : Ring) (forward : Bool) : Array Pt := I
   let mut exitEdge : Int := -1
   let mut tEntry := posInf
   let mut tExit := negInf
-  for k in [0:n] do
-    let p := ring[k]!
-    let q := ring[(k + 1) % n]!
+  for hm_k : k in [0:n] do
+    have hk : k < ring.size := hm_k.upper
+    have hk1 : (k + 1) % ring.size < ring.size := Nat.mod_lt _ (by omega)
+    let p := ring[k]
+    let q := ring[(k + 1) % ring.size]
     let d1x := b.lon - a.lon
     let d1y := b.lat - a.lat
     let d2x := q.lon - p.lon
@@ -433,7 +443,12 @@ def ringCornersBetween (a b : Pt) (ring : Ring) (forward : Bool) : Array Pt := I
     let mut k := (entry + 1) % n
     let mut go := true
     while go do
-      corners := corners.push ring[k]!
+      -- `k` is always `_ % n`; if it were not, stop as an overrun rather than
+      -- push a default corner.
+      if hk : k < ring.size then corners := corners.push ring[k]
+      else
+        overrun := true
+        go := false
       if k == exitE then go := false
       else if corners.size > n then
         overrun := true
@@ -443,7 +458,12 @@ def ringCornersBetween (a b : Pt) (ring : Ring) (forward : Bool) : Array Pt := I
     let mut k := entry
     let mut go := true
     while go do
-      corners := corners.push ring[k]!
+      -- `k` is always `_ % n`; if it were not, stop as an overrun rather than
+      -- push a default corner.
+      if hk : k < ring.size then corners := corners.push ring[k]
+      else
+        overrun := true
+        go := false
       if k == (exitE + 1) % n then go := false
       else if corners.size > n then
         overrun := true
@@ -512,7 +532,8 @@ private def timedAlong (pts : Array Pt) (cum : Array Float) (total tsA tsB : Flo
     Array TPt := Id.run do
   let mut out : Array TPt := #[]
   for hm_k : k in [0:pts.size] do
-    let f := if total > 0 then cum[k]! / total else 0
+    -- `cum` has one entry per point; a missing one reads as the `!` default, 0.
+    let f := if total > 0 then (cum[k]?.getD 0) / total else 0
     out := out.push ⟨pts[k].lat, pts[k].lon, tsA + (tsB - tsA) * f⟩
   return out
 
@@ -654,29 +675,34 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
         runStart := Int.ofNat s
         break
     if runStart == -1 then
-      for k in [i:pts.size] do out := out.push pts[k]!
+      for h : k in [i:pts.size] do out := out.push pts[k]
       i := pts.size
     else
       let rs := runStart.toNat
       let mut runEnd := rs
-      while runEnd + 1 < segCross.size && segCross[runEnd+1]! > 0 do
+      while runEnd + 1 < segCross.size && (segCross[runEnd+1]?.getD 0) > 0 do
         runEnd := runEnd + 1
 
       -- Anchors: the nearest vertices OUTSIDE any building bracketing the run —
       -- routing from inside a footprint would start the path dishonestly.
       let mut a := rs
-      while a > i && (containingBuilding pts[a]!.pt buildings).isSome do
+      let inBuilding (k : Nat) : Bool := match pts[k]? with
+        | some x => (containingBuilding x.pt buildings).isSome
+        | none => false
+      while a > i && inBuilding a do
         a := a - 1
       let mut b := runEnd + 1
-      while b < pts.size - 1 && (containingBuilding pts[b]!.pt buildings).isSome do
+      while b < pts.size - 1 && inBuilding b do
         b := b + 1
 
       -- Copy the clean prefix up to (and including) the start anchor.
-      for k in [i:a+1] do out := out.push pts[k]!
+      for k in [i:a+1] do if hk : k < pts.size then out := out.push pts[k]
       i := a + 1
 
-      let anchorA := pts[a]!
-      let anchorB := pts[b]!
+      -- Both anchors are vertices of `pts` by the scans above; the `break`
+      -- is the unreachable case said out loud.
+      let some anchorA := pts[a]? | break
+      let some anchorB := pts[b]? | break
       let mut runBadM := 0.0
       for s in [a:b] do runBadM := runBadM + (segCross[s]?.getD 0)
 
@@ -775,7 +801,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
             { outcome := .trustGPS, straightM := dStraightM, runBadM,
               routeFound := dRouteFound, routeBadM := dRouteBadM, addedM := dRouteAddedM,
               budgetM, anchorASnapM := dAnchorASnapM, anchorBSnapM := dAnchorBSnapM }
-        for k in [1:b-a+1] do out := out.push kept[k]!
+        for k in [1:b-a+1] do if hk : k < kept.size then out := out.push kept[k]
 
       -- Continue after the end anchor (already in `out`).
       i := b + 1
@@ -827,9 +853,10 @@ def snapWithWay (q : Pt) (ways : Ways) : Option SnapWay := Id.run do
   let mut best : Option SnapWay := none
   for hm_w : w in [0:ways.size] do
     let coords := ways[w]
-    for i in [1:coords.size] do
-      let a := coords[i-1]!
-      let b := coords[i]!
+    for hm_i : i in [1:coords.size] do
+      have hi : i < coords.size := hm_i.upper
+      let a := coords[i-1]
+      let b := coords[i]
       let proj := projectPointToSegment q a b
       let better := match best with
         | none => true
