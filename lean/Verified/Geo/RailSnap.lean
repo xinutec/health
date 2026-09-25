@@ -223,9 +223,9 @@ structure RailGraph where
     coarse grid hash, so this stays linear in vertex count. -/
 private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud : FixCloud) :
     Array (Array Edge) := Id.run do
-  if vertices.isEmpty then return adj
+  let some v0 := vertices[0]? | return adj
   let cellLat := gapBridgeM / 111320.0
-  let midLat := vertices[0]!.lat
+  let midLat := v0.lat
   let cellLon := gapBridgeM / (111320.0 * Float.cos (midLat * pi / 180))
   let cellOf := fun (v : Pt) => (floorInt (v.lat / cellLat), floorInt (v.lon / cellLon))
   let mut buckets : Std.HashMap (Int × Int) (Array Nat) := {}
@@ -247,12 +247,22 @@ private def bridgeGaps (vertices : Array Pt) (adj : Array (Array Edge)) (cloud :
           for j in b do
             -- Each unordered pair once; skip vertices already adjacent.
             if j ≤ i then continue
-            let gap := metersBetween v vertices[j]!
-            if gap > gapBridgeM then continue
-            if adj[i]!.any (fun e => e.to == j) then continue
-            let w := edgeWeight v vertices[j]! cloud
-            adj := adj.set! i (adj[i]!.push ⟨j, w⟩)
-            adj := adj.set! j (adj[j]!.push ⟨i, w⟩)
+            -- `j` came out of a bucket this function filled with vertex
+            -- indices, and `adj` has one row per vertex; the guard is where
+            -- the tactic sees that.
+            -- ⚠ No `continue` between the guard and the writes: in `do`
+            -- notation a statement that can exit rebinds every mutable
+            -- variable after it, and a bound on the old `adj` no longer names
+            -- the new one.
+            if h : j < vertices.size ∧ i < adj.size ∧ j < adj.size then
+              let gap := metersBetween v (vertices[j]'h.1)
+              if !(gap > gapBridgeM) && !((adj[i]'h.2.1).any (fun e => e.to == j)) then
+                let w := edgeWeight v (vertices[j]'h.1) cloud
+                -- `i < j`, so the two rows are distinct and may be read before
+                -- either is written.
+                let rowI := (adj[i]'h.2.1).push ⟨j, w⟩
+                let rowJ := (adj[j]'h.2.2).push ⟨i, w⟩
+                adj := (adj.set i rowI h.2.1).set j rowJ (by rw [Array.size_set]; exact h.2.2)
   return adj
 
 /-- Build the undirected rail graph. Vertices are way nodes deduplicated by
@@ -283,8 +293,13 @@ def buildRailGraph (lines : Array RailWay) (cloud : FixCloud) : RailGraph := Id.
         adj := adj.push #[]
       if prev ≥ 0 && prev.toNat != id then
         let w := edgeWeight prevPt c cloud
-        adj := adj.set! prev.toNat (adj[prev.toNat]!.push ⟨id, w⟩)
-        adj := adj.set! id (adj[id]!.push ⟨prev.toNat, w⟩)
+        if h : prev.toNat < adj.size ∧ id < adj.size then
+          have hp := h.1
+          have hid := h.2
+          -- `prev.toNat != id` above: distinct rows, read before written.
+          let rowP := adj[prev.toNat].push ⟨id, w⟩
+          let rowId := adj[id].push ⟨prev.toNat, w⟩
+          adj := (adj.set prev.toNat rowP hp).set id rowId (by rw [Array.size_set]; exact hid)
       prev := Int.ofNat id
       prevPt := c
   return { vertices, adj := bridgeGaps vertices adj cloud }
@@ -296,57 +311,63 @@ The binary min-heap is reproduced element-for-element — the same shape as
 on STRICT improvement, so among equal-cost routes the winner is decided by
 which vertex the heap pops first. -/
 
+/-- Priority and vertex travel together, so one bound covers both reads —
+the two parallel arrays this used to hold shared a length only by discipline. -/
 private structure Heap where
-  ps : Array Float := #[]
-  vs : Array Nat := #[]
+  items : Array (Float × Nat) := #[]
   deriving Inhabited
 
-private def Heap.size (h : Heap) : Nat := h.vs.size
+private def Heap.size (h : Heap) : Nat := h.items.size
 
 private def Heap.push (h : Heap) (p : Float) (v : Nat) : Heap := Id.run do
-  let mut ps := h.ps.push p
-  let mut vs := h.vs.push v
-  let mut i := vs.size - 1
+  let mut items := h.items.push (p, v)
+  let mut i := items.size - 1
   while i > 0 do
     let parent := (i - 1) / 2
-    if ps[parent]! ≤ ps[i]! then break
-    let pi' := ps[i]!
-    let pp := ps[parent]!
-    ps := (ps.set! i pp).set! parent pi'
-    let vi := vs[i]!
-    let vp := vs[parent]!
-    vs := (vs.set! i vp).set! parent vi
-    i := parent
-  return { ps, vs }
+    -- `i` starts at the last index and only moves to a parent, so it stays in
+    -- range; the guard is the form the tactic accepts.
+    if hi : i < items.size then
+      have hp : parent < items.size := by omega
+      let cur := items[i]
+      let par := items[parent]
+      -- The swap sits in the `else`, not after a `break`: see `bridgeGaps`.
+      if par.1 ≤ cur.1 then
+        break
+      else
+        items := (items.set i par hi).set parent cur (by rw [Array.size_set]; exact hp)
+        i := parent
+    else break
+  return { items }
 
-private def Heap.pop (h : Heap) : Option (Float × Nat) × Heap := Id.run do
-  if h.vs.isEmpty then return (none, h)
-  let topP := h.ps[0]!
-  let topV := h.vs[0]!
-  let lastP := h.ps[h.ps.size - 1]!
-  let lastV := h.vs[h.vs.size - 1]!
-  let mut ps := h.ps.pop
-  let mut vs := h.vs.pop
-  if vs.size > 0 then
-    ps := ps.set! 0 lastP
-    vs := vs.set! 0 lastV
+private def Heap.pop (h : Heap) : Option (Float × Nat) × Heap :=
+  if h0 : h.items.size = 0 then (none, h) else Id.run do
+  let top := h.items[0]'(by omega)
+  let last := h.items[h.items.size - 1]'(by omega)
+  let mut items := h.items.pop
+  if hs : 0 < items.size then
+    items := items.set 0 last hs
     let mut i := 0
     while true do
       let l := 2 * i + 1
       let r := l + 1
       let mut s := i
-      if l < vs.size && ps[l]! < ps[s]! then s := l
-      if r < vs.size && ps[r]! < ps[s]! then s := r
+      if hl : l < items.size then
+        if hs' : s < items.size then
+          if items[l].1 < items[s].1 then s := l
+      if hr : r < items.size then
+        if hs' : s < items.size then
+          if items[r].1 < items[s].1 then s := r
       if s == i then break
-      let pi' := ps[i]!
-      let psv := ps[s]!
-      ps := (ps.set! i psv).set! s pi'
-      let vi := vs[i]!
-      let vsv := vs[s]!
-      vs := (vs.set! i vsv).set! s vi
-      i := s
-    return (some (topP, topV), { ps, vs })
-  return (some (topP, topV), { ps, vs })
+      if hi : i < items.size then
+        if hs2 : s < items.size then
+          let cur := items[i]
+          let sv := items[s]
+          items := (items.set i sv hi).set s cur (by rw [Array.size_set]; exact hs2)
+          i := s
+        else break
+      else break
+    return (some top, { items })
+  return (some top, { items })
 
 /-- Dijkstra shortest path between two vertices — the vertex-id sequence from
     `src` to `dst`, or `none` when they are disconnected. -/
@@ -355,7 +376,7 @@ def shortestPath (graph : RailGraph) (src dst : Nat) : Option (Array Nat) := Id.
   let mut dist : Array Float := Array.replicate n posInf
   let mut prev : Array Int := Array.replicate n (-1)
   let mut done : Array Bool := Array.replicate n false
-  dist := dist.set! src 0
+  if hsrc : src < dist.size then dist := dist.set src 0 hsrc
   let mut heap : Heap := {}
   heap := heap.push 0 src
   while heap.size > 0 do
@@ -364,22 +385,31 @@ def shortestPath (graph : RailGraph) (src dst : Nat) : Option (Array Nat) := Id.
     match cur with
     | none => break
     | some (p, u) =>
-      if done[u]! then continue
-      done := done.set! u true
-      if u == dst then break
-      for e in graph.adj[u]! do
-        let nd := p + e.w
-        if nd < dist[e.to]! then
-          dist := dist.set! e.to nd
-          prev := prev.set! e.to (Int.ofNat u)
-          heap := heap.push nd e.to
-  if !dist[dst]!.isFinite then return none
+      -- A vertex id is below `n` by construction (the heap only ever holds
+      -- `src` and edge targets); an id that is not is skipped rather than
+      -- read off the end.
+      if hu : u < done.size ∧ u < graph.adj.size then
+        -- Nested rather than `continue`d: see `bridgeGaps`.
+        if !(done[u]'hu.1) then
+          done := done.set u true hu.1
+          if u == dst then break
+          for e in graph.adj[u]'hu.2 do
+            let nd := p + e.w
+            if ht : e.to < dist.size ∧ e.to < prev.size then
+              if nd < dist[e.to]'ht.1 then
+                dist := dist.set e.to nd ht.1
+                prev := prev.set e.to (Int.ofNat u) ht.2
+                heap := heap.push nd e.to
+  let some dDst := dist[dst]? | return none
+  if !dDst.isFinite then return none
   let mut path : Array Nat := #[]
   let mut v : Int := Int.ofNat dst
   for _ in [0:n + 1] do
     if v == -1 then break
     path := path.push v.toNat
-    v := prev[v.toNat]!
+    match prev[v.toNat]? with
+    | some pv => v := pv
+    | none => break
   return some path.reverse
 
 /-- The rail-graph vertex nearest a point. -/
@@ -420,12 +450,16 @@ def interpolateTimes (coords : Array Pt) (startTs endTs : Float) : Array Snapped
   let mut cum : Array Float := #[0]
   for hm_i : i in [1:coords.size] do
     have hb_i : i < coords.size := hm_i.upper
-    cum := cum.push (cum[i - 1]! + metersBetween coords[i - 1] coords[i])
-  let total := if cum.size > 0 then cum[cum.size - 1]! else 0
+    let d := metersBetween coords[i - 1] coords[i]
+    -- `cum` has `i` entries here; its last is the sum so far.
+    cum := cum.push ((cum.back?.getD 0) + d)
+  let total := cum.back?.getD 0
   let mut out : Array SnappedPoint := #[]
   for hm_i : i in [0:coords.size] do
     let c := coords[i]
-    let ts := if total > 0 then jsRound (startTs + (endTs - startTs) * (cum[i]! / total)) else startTs
+    -- `cum.size = coords.size` by the loop above; an index past it would have
+    -- read the `!` default of 0, which is what `getD 0` says out loud.
+    let ts := if total > 0 then jsRound (startTs + (endTs - startTs) * ((cum[i]?.getD 0) / total)) else startTs
     out := out.push ⟨c.lat, c.lon, ts⟩
   return out
 
@@ -446,7 +480,9 @@ private def routeBetweenStations (seg : TrainSegment) (lines : Array RailWay) (c
     | none => return none
     | some idPath =>
       if idPath.size < 2 then return none
-      let coords := idPath.map (fun i => graph.vertices[i]!)
+      -- Every id on the path is a vertex; `filterMap` states the bound the
+      -- `!` assumed.
+      let coords := idPath.filterMap (fun i => graph.vertices[i]?)
       return some ⟨board, alight, line, interpolateTimes coords seg.startTs seg.endTs⟩
   | _, _ => return none
 
