@@ -260,8 +260,6 @@ pub async fn proxy(
     let cutoff = now_ts - lean::owntracks_history_max_age_sec();
     dev.history.retain(|f| f.ts >= cutoff);
 
-    // ⚠ A manual push stamps the hold BEFORE the decision reads it, so the very
-    // fix that asks for high frequency is already protected from demotion.
     // The hour where the phone is, in the user's home zone; a device name IS
     // the user id here, as `persist_motion` reads it. Unresolvable reads as
     // daytime, which is the frequent side.

@@ -1548,11 +1548,6 @@ pub struct OwntracksFix {
     pub monitoring_mode: Option<i64>,
 }
 
-/// A mined place, as the long-stay gate reads it.
-///
-/// ⚠ Passed in RAW so Lean decides whether the phone is somewhere it may be
-/// demoted. A host that computed the boolean itself would own the decision that
-/// costs a walk home when it is wrong.
 /// What to tell the phone.
 pub struct OwntracksConfig {
     pub profile: String,
