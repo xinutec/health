@@ -192,10 +192,12 @@ private def mergeCluster (into other : Cluster) : Cluster :=
 /-- The first `(i, j)` pair of clusters within `CLUSTER_RADIUS_M`, scanning in
     the TS's order (the `break outer` restarts the whole scan after a merge). -/
 private def firstMergeablePair (cs : Array Cluster) : Option (Nat × Nat) := Id.run do
-  for i in [0 : cs.size] do
-    for j in [i + 1 : cs.size] do
-      let a := cs[i]!
-      let b := cs[j]!
+  for hm_i : i in [0 : cs.size] do
+    for hm_j : j in [i + 1 : cs.size] do
+      have hi : i < cs.size := hm_i.upper
+      have hj : j < cs.size := hm_j.upper
+      let a := cs[i]
+      let b := cs[j]
       if decide (haversineMeters a.centroidLat a.centroidLon b.centroidLat b.centroidLon ≤ CLUSTER_RADIUS_M) then
         return some (i, j)
   return none
@@ -210,14 +212,19 @@ def clusterStays (stays : List Stay) : List Cluster := Id.run do
   for stay in stays do
     let mut bestIdx : Option Nat := none
     let mut bestDist := (1.0 / 0.0 : Float)
-    for i in [0 : clusters.size] do
-      let c := clusters[i]!
+    for hm_i : i in [0 : clusters.size] do
+      have hi : i < clusters.size := hm_i.upper
+      let c := clusters[i]
       let d := haversineMeters c.centroidLat c.centroidLon stay.centroidLat stay.centroidLon
       if decide (d < bestDist) && decide (d ≤ CLUSTER_RADIUS_M) then
         bestIdx := some i
         bestDist := d
     match bestIdx with
-    | some i => clusters := clusters.set! i (addStayToCluster clusters[i]! stay)
+    | some i =>
+      -- `i` came out of the scan above; the read says so.
+      match clusters[i]? with
+      | some c => clusters := clusters.set! i (addStayToCluster c stay)
+      | none => pure ()
     | none =>
       clusters := clusters.push
         ⟨Int.ofNat clusters.size + 1, stay.centroidLat, stay.centroidLon, [stay], stay.durationSec⟩
@@ -225,8 +232,11 @@ def clusterStays (stays : List Stay) : List Cluster := Id.run do
     match firstMergeablePair clusters with
     | none => break
     | some (i, j) =>
-      clusters := clusters.set! i (mergeCluster clusters[i]! clusters[j]!)
-      clusters := clusters.eraseIdx! j
+      match clusters[i]?, clusters[j]? with
+      | some ci, some cj =>
+        clusters := clusters.set! i (mergeCluster ci cj)
+        clusters := clusters.eraseIdx! j
+      | _, _ => break
   return clusters.toList
 
 /-! ## Hour profiles -/
@@ -243,7 +253,7 @@ def hourHistogram (ranges : List (Int × Int)) (lon : Float) : List Float := Id.
     let mut t := startTs
     while t ≤ endTs do
       let h := hourIdx t lon
-      buckets := buckets.set! h (buckets[h]! + 1)
+      buckets := buckets.set! h ((buckets[h]?.getD 0) + 1)
       t := t + HOUR_PROFILE_STEP_SEC
   let total := buckets.foldl (fun s b => s + b) 0
   if total == 0 then return buckets.toList
@@ -503,11 +513,13 @@ private def meanVec (pts : Array (Float × Float)) (assign : Array Nat) (label :
   let mut s1 : Float := 0
   let mut s2 : Float := 0
   let mut count : Nat := 0
-  for i in [0 : pts.size] do
-    if assign[i]! != label then continue
+  for hm_i : i in [0 : pts.size] do
+    have hi : i < pts.size := hm_i.upper
+    -- `assign` is one label per point by construction; a missing one is skipped.
+    if assign[i]? != some label then continue
     count := count + 1
-    s1 := s1 + pts[i]!.1
-    s2 := s2 + pts[i]!.2
+    s1 := s1 + pts[i].1
+    s2 := s2 + pts[i].2
   if count == 0 then return fallback
   return (s1 / Float.ofNat count, s2 / Float.ofNat count)
 
@@ -518,21 +530,28 @@ private def kmeans2 (pts : Array (Float × Float)) : Array Nat := Id.run do
   let mut iA := 0
   let mut iB := 1
   let mut far : Float := -1
-  for i in [0 : n] do
-    for j in [i + 1 : n] do
-      let d := sqDist pts[i]! pts[j]!
+  for hm_i : i in [0 : n] do
+    for hm_j : j in [i + 1 : n] do
+      have hi : i < pts.size := hm_i.upper
+      have hj : j < pts.size := hm_j.upper
+      let d := sqDist pts[i] pts[j]
       if decide (d > far) then
         far := d
         iA := i
         iB := j
-  let mut cA := pts[iA]!
-  let mut cB := pts[iB]!
+  -- Both are indices the scan above found (or 0 on a single point); on an
+  -- empty input there is nothing to cluster.
+  let some cA0 := pts[iA]? | return Array.replicate n 0
+  let some cB0 := pts[iB]? | return Array.replicate n 0
+  let mut cA := cA0
+  let mut cB := cB0
   let mut assign : Array Nat := Array.replicate n 0
   for _ in [0 : KMEANS_MAX_ITERS] do
     let mut changed := false
-    for i in [0 : n] do
-      let a := if decide (sqDist pts[i]! cA ≤ sqDist pts[i]! cB) then 0 else 1
-      if a != assign[i]! then
+    for hm_i : i in [0 : n] do
+      have hi : i < pts.size := hm_i.upper
+      let a := if decide (sqDist pts[i] cA ≤ sqDist pts[i] cB) then 0 else 1
+      if assign[i]? != some a then
         assign := assign.set! i a
         changed := true
     cA := meanVec pts assign 0 cA
@@ -549,9 +568,11 @@ private def minBetweenLobeGapHours (stays : List Stay) (assign : Array Nat) (lon
     (fun a b => decide (a.1 ≤ b.1))
   let arr := order.toArray
   let mut minGap : Float := 24
-  for i in [0 : arr.size] do
-    let cur := arr[i]!
-    let nxt := arr[(i + 1) % arr.size]!
+  for hm_i : i in [0 : arr.size] do
+    have hi : i < arr.size := hm_i.upper
+    have hn : (i + 1) % arr.size < arr.size := Nat.mod_lt _ (by omega)
+    let cur := arr[i]
+    let nxt := arr[(i + 1) % arr.size]
     if cur.2 == nxt.2 then continue
     let gap := wrapTo (nxt.1 - cur.1) 24
     if decide (gap < minGap) then minGap := gap
@@ -582,8 +603,8 @@ def splitCluster (cluster : Cluster) : List Cluster := Id.run do
                * 2 * 3.141592653589793
     (Float.cos ang, Float.sin ang))).toArray
   let assign := kmeans2 tfeats
-  let lobeA := (stays.zipIdx.filter (fun (_, i) => assign[i]! == 0)).map (·.1)
-  let lobeB := (stays.zipIdx.filter (fun (_, i) => assign[i]! == 1)).map (·.1)
+  let lobeA := (stays.zipIdx.filter (fun (_, i) => assign[i]? == some 0)).map (·.1)
+  let lobeB := (stays.zipIdx.filter (fun (_, i) => assign[i]? == some 1)).map (·.1)
   if lobeA.isEmpty || lobeB.isEmpty then return [cluster]
   let a := clusterFromStays lobeA
   let b := clusterFromStays lobeB
