@@ -178,27 +178,34 @@ private def driveStopsPass (steps : Array StepPoint) (input : Array Seg) : Array
   let mut i := 0
   while h : i < input.size do
     let seg := input[i]
-    if effectiveMode seg != "driving" || i + 2 ≥ input.size then
-      out := out.push seg
-      i := i + 1
-    else
-      let middle := input[i + 1]!
-      let next := input[i + 2]!
-      let isPhantomStop :=
-        effectiveMode middle == "stationary"
-          && effectiveMode next == "driving"
-          && middle.endTs - middle.startTs ≤ DRIVE_STOP_ABSORB_MAX_S
-          && stepsBetween steps middle.startTs middle.endTs ≤ DRIVE_STOP_ABSORB_MAX_STEPS
-      if isPhantomStop then
-        out := out.push
-          { seg with
-            endTs := next.endTs
-            pointCount := seg.pointCount + middle.pointCount + next.pointCount }
-        i := i + 3
-        changed := true
-      else
+    -- The sandwich needs two segments after this one; the guard is the bound
+    -- the two reads below use.
+    if h2 : i + 2 < input.size then
+      if effectiveMode seg != "driving" then
         out := out.push seg
         i := i + 1
+      else
+        have h1 : i + 1 < input.size := by omega
+        let middle := input[i + 1]
+        let next := input[i + 2]
+        let isPhantomStop :=
+          effectiveMode middle == "stationary"
+            && effectiveMode next == "driving"
+            && middle.endTs - middle.startTs ≤ DRIVE_STOP_ABSORB_MAX_S
+            && stepsBetween steps middle.startTs middle.endTs ≤ DRIVE_STOP_ABSORB_MAX_STEPS
+        if isPhantomStop then
+          out := out.push
+            { seg with
+              endTs := next.endTs
+              pointCount := seg.pointCount + middle.pointCount + next.pointCount }
+          i := i + 3
+          changed := true
+        else
+          out := out.push seg
+          i := i + 1
+    else
+      out := out.push seg
+      i := i + 1
   return (out, changed)
 
 /-- Absorb a phantom in-car stop into the drive around it.
@@ -253,15 +260,24 @@ def absorbInterchanges (segments : Array Seg) : Array Seg := Id.run do
         let s := segments[runEnd]
         if effectiveMode s != "stationary" || s.endTs - s.startTs > INTERCHANGE_SEGMENT_MAX_S then break
         runEnd := runEnd + 1
-      let continues := runEnd < segments.size && effectiveMode segments[runEnd]! != "stationary"
+      let continues := match segments[runEnd]? with
+        | some s => effectiveMode s != "stationary"
+        | none => false
       -- `runEnd > i + 1` (a NON-EMPTY run) rather than `≥`. The two are in fact
       -- equivalent — at `runEnd == i + 1` the absorb branch sets
       -- `endTs := segments[i].endTs`, which is `seg`'s own, and advances by one,
       -- exactly what the else branch does — so no guard can tell them apart.
       -- Kept as the TS has it; noted so nobody "simplifies" it later.
-      if runEnd > i + 1 && continues then
-        out := out.push { seg with endTs := segments[runEnd - 1]!.endTs }
-        i := runEnd
+      -- `runEnd ≤ segments.size` from the scan above, so `runEnd - 1` is in
+      -- range whenever the run is non-empty; the guard is where the tactic
+      -- sees it.
+      if hre : runEnd - 1 < segments.size then
+        if runEnd > i + 1 && continues then
+          out := out.push { seg with endTs := segments[runEnd - 1].endTs }
+          i := runEnd
+        else
+          out := out.push seg
+          i := i + 1
       else
         out := out.push seg
         i := i + 1
@@ -330,13 +346,14 @@ The point window is EXCLUSIVE at the closing end: the fix sitting exactly on the
 platform centroid drags the query off the station. -/
 private def platformStart (segments : Array Seg) (points : Array Fix)
     (stationsLookup : Float → Float → Array NearbyStation) (k : Nat) : Option Int :=
-  let train := segments[k]!
+  -- Both segments by `bind`: off the end there is no train and no platform.
+  (segments[k]?).bind fun train =>
+  (segments[k - 1]?).bind fun prev =>
   -- RAW `mode`, not `effectiveMode` — see the module header.
   if train.mode != "train" then none
   else match splitFirst (train.wayName.getD "") RAIL_STATION_SEP with
   | none => none
   | some (boardingStation, _) =>
-    let prev := segments[k - 1]!
     if prev.mode != "stationary" then none
     else if prev.endTs - prev.startTs > PLATFORM_WAIT_MAX_S then none
     else
@@ -377,12 +394,12 @@ def absorbBoardingPlatform (segments : Array Seg) (points : Array Fix)
   -- is not observable here, and no caller mutates it.) Kept to mirror the TS.
   if extendTo.isEmpty then return segments
   let mut out : Array Seg := #[]
-  for idx in [0 : segments.size] do
+  for h : idx in [0 : segments.size] do
     -- The platform wait for the train at `idx + 1` is this segment: it goes.
     if extendTo.any (·.1 == idx + 1) then continue
     match extendTo.find? (·.1 == idx) with
-    | some (_, ts) => out := out.push { segments[idx]! with startTs := ts }
-    | none => out := out.push segments[idx]!
+    | some (_, ts) => out := out.push { segments[idx] with startTs := ts }
+    | none => out := out.push segments[idx]
   return out
 
 /-! ## The two walk-anchored re-anchors
@@ -477,8 +494,9 @@ private def boardingHop (fixes : Array Fix) : Int × Nat := Id.run do
   let mut split : Int := -1
   let mut hopRunSteps : Nat := 0
   let mut runStart : Int := -1
-  for i in [1 : fixes.size] do
-    if stepKmh fixes[i - 1]! fixes[i]! ≥ BOARDING_HOP_MIN_KMH then
+  for hm_i : i in [1 : fixes.size] do
+    have hi : i < fixes.size := hm_i.upper
+    if stepKmh fixes[i - 1] fixes[i] ≥ BOARDING_HOP_MIN_KMH then
       if runStart < 0 then runStart := Int.ofNat i - 1
       let rs := runStart.toNat
       -- `split < 0` is UNPINNABLE, and doubly so: within one run `runStart` is
@@ -486,7 +504,9 @@ private def boardingHop (fixes : Array Fix) : Int × Nat := Id.run do
       -- `break` below means a SECOND run is never reached. The two guards are
       -- mutually redundant; the break is the one with observable consequences
       -- (it also freezes `hopRunSteps`), and it is guarded.
-      if split < 0 && fixDist fixes[rs]! fixes[i]! ≥ BOARDING_HOP_MIN_DIST_M then split := runStart + 1
+      -- `rs` is an earlier `i - 1`, so it is in range; the guard says so.
+      if hrs : rs < fixes.size then
+        if split < 0 && fixDist fixes[rs] fixes[i] ≥ BOARDING_HOP_MIN_DIST_M then split := runStart + 1
       if split ≥ 0 then hopRunSteps := i - rs
     else
       -- The qualifying run has ended; nothing later can be the departure.
@@ -518,12 +538,14 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
     (pairVeto : String → String → Bool := fun _ _ => false) : Array Seg := Id.run do
   let mut out := segments
   for k in [1 : out.size] do
-    let train := out[k]!
+    -- `out` is rewritten inside the loop, so the range's bound is not a bound
+    -- on the current array; `let some … | continue` reads what is there.
+    let some train := out[k]? | continue
     if effectiveMode train != "train" then continue
     match parseRailWayName train.wayName with
     | none => continue
     | some rail =>
-      let walk := out[k - 1]!
+      let some walk := out[k - 1]? | continue
       if effectiveMode walk != "walking" then continue
       -- Continuity guard (2026-06-24 Wembley Park → Euston Square): a walk
       -- bracketed by a preceding train is an underground-reconstruction
@@ -531,7 +553,7 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
       -- continuing, so re-anchoring here would invent a rail discontinuity —
       -- which also defeats `assembleRailJourney`'s single-line merge. Boarding
       -- continuity there is owned by the journey assembler, not by this pass.
-      if k ≥ 2 && effectiveMode out[k - 2]! == "train" then continue
+      if k ≥ 2 && (match out[k - 2]? with | some s => effectiveMode s == "train" | none => false) then continue
       let fixes := samplesInWindow points walk
       if fixes.size < 4 then continue
       let (split, hopRunSteps) := boardingHop fixes
@@ -539,10 +561,11 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
       -- `runStart + 1` for a non-negative `runStart`, so 0 never occurs. The
       -- form is the TS's, and it reads as "there is a fix BEFORE the run".
       if split < 1 then continue
-      let boardFix := fixes[split.toNat - 1]!
+      let some boardFix := fixes[split.toNat - 1]? | continue
+      let some lastFix := fixes.back? | continue
       -- A lone GPS spike that returns is not a relocation onto the tube: the
       -- walk must actually END away from the boarding fix.
-      let tailDist := fixDist boardFix fixes[fixes.size - 1]!
+      let tailDist := fixDist boardFix lastFix
       if tailDist < BOARDING_HOP_MIN_DIST_M then continue
       match pickBestStation (stationsLookup boardFix.lat boardFix.lon) with
       | none => continue
@@ -606,13 +629,15 @@ private def alightSettle (fixes : Array Fix) : Int × Nat := Id.run do
   let mut settle : Int := -1
   let mut settleRunSteps : Nat := 0
   let mut runStart : Int := -1
-  for i in [1 : fixes.size] do
-    if stepKmh fixes[i - 1]! fixes[i]! ≥ ALIGHT_HOP_MIN_KMH then
+  for hm_i : i in [1 : fixes.size] do
+    have hi : i < fixes.size := hm_i.upper
+    if stepKmh fixes[i - 1] fixes[i] ≥ ALIGHT_HOP_MIN_KMH then
       if runStart < 0 then runStart := Int.ofNat i - 1
       let rs := runStart.toNat
-      if fixDist fixes[rs]! fixes[i]! ≥ ALIGHT_HOP_MIN_DIST_M then
-        settle := Int.ofNat i
-        settleRunSteps := i - rs
+      if hrs : rs < fixes.size then
+        if fixDist fixes[rs] fixes[i] ≥ ALIGHT_HOP_MIN_DIST_M then
+          settle := Int.ofNat i
+          settleRunSteps := i - rs
     else
       runStart := -1
   return (settle, settleRunSteps)
@@ -643,24 +668,24 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
   let mut out := segments
   if out.isEmpty then return out
   for k in [0 : out.size - 1] do
-    let train := out[k]!
+    let some train := out[k]? | continue
     if effectiveMode train != "train" then continue
     match parseRailWayName train.wayName with
     | none => continue
     | some rail =>
-      let walk := out[k + 1]!
+      let some walk := out[k + 1]? | continue
       if effectiveMode walk != "walking" then continue
       -- Interchange guard, the mirror of the boarding side: train → walk →
       -- train is a sliver, and its leading hop is the NEXT train pulling out,
       -- not this one riding in.
-      if k + 2 < out.size && effectiveMode out[k + 2]! == "train" then continue
+      if k + 2 < out.size && (match out[k + 2]? with | some s => effectiveMode s == "train" | none => false) then continue
       let fixes := samplesInWindow points walk
       if fixes.size < 3 then continue
       let (settle, settleRunSteps) := alightSettle fixes
       -- Same vacuity as the boarding side: `settle` is -1 or an `i ≥ 1`.
       if settle < 1 then continue
-      let alightFix := fixes[settle.toNat]!
-      let surfaced := fixes[0]!
+      let some alightFix := fixes[settle.toNat]? | continue
+      let some surfaced := fixes[0]? | continue
       if fixDist surfaced alightFix < ALIGHT_HOP_MIN_DIST_M then continue
       match pickBestStation (stationsLookup alightFix.lat alightFix.lon) with
       | none => continue
