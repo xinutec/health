@@ -238,7 +238,7 @@ def cityForState (segments : List Seg) (s : DayState) : Option String :=
 def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List DayState :=
   let bs := collectBoundaries segments sleeps
   if bs.length < 2 then [] else
-  let pairs := (List.range (bs.length - 1)).map (fun i => (bs[i]!, bs[i+1]!))
+  let pairs := bs.zip (bs.drop 1)
   let states := pairs.filterMap (fun (start, finish) =>
     -- The TS probes at `start + (end - start) / 2` in FLOAT arithmetic. For
     -- integer timestamps the midpoint of a non-empty interval always lies in

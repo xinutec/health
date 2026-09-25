@@ -157,13 +157,13 @@ def enrichMovingSegment
     (waysLookup : Float → Float → Array NearbyWay)
     (geocode : Float → Float → Int → Option Address)
     (seg : Seg) (segPoints : Array Pt) : Option Seg :=
-  if segPoints.size == 0 then none else
+  if h0 : segPoints.size = 0 then none else
   let n := segPoints.size
   let sampleCount := min N_SAMPLES n
-  -- Asked ONCE per sample, read twice below. The TS's `wayResults`.
-  let wayResults := (sampleIdxs n sampleCount).map fun i =>
-    let p := segPoints[i]!
-    waysLookup p.lat p.lon
+  -- Asked ONCE per sample, read twice below. The TS's `wayResults`. Every
+  -- sample index is below `n` by construction; one that is not asks nothing.
+  let wayResults := (sampleIdxs n sampleCount).filterMap fun i =>
+    (segPoints[i]?).map fun p => waysLookup p.lat p.lon
   let aggregated := dedupNearestWays wayResults
   -- `computeRoadNearestFraction` reads only distance/type/subtype, so the ways
   -- narrow to its record. Per SAMPLE, not per deduped way: the fraction counts
@@ -172,8 +172,8 @@ def enrichMovingSegment
     (wayResults.toList.map fun ways => ways.toList.map fun w =>
       ({ distanceM := w.distanceM, type := w.type, subtype := w.subtype } :
         Verified.Geo.RailRoadProximity.NearbyWay))
-  let first := segPoints[0]!
-  let last := segPoints[n - 1]!
+  let first := segPoints[0]'(by omega)
+  let last := segPoints[segPoints.size - 1]'(by omega)
   let startPlace := geocode (cityGrid first.lat) (cityGrid first.lon) CITY_ZOOM
   let endPlace := geocode (cityGrid last.lat) (cityGrid last.lon) CITY_ZOOM
   let refined := refineModeLegacyCascade seg.mode seg.avgSpeed aggregated

@@ -160,14 +160,14 @@ private def truthy (s : Option String) : Option String :=
 
 /-- The index of the state to continue from: the latest-ENDING state that
 STARTED before the day end. `none` when every state starts at or after it. -/
-def anchorIndex (states : Array DayState) (dayEndTs : Int) : Option Nat := Id.run do
-  let mut best : Option Nat := none
+def anchorIndex (states : Array DayState) (dayEndTs : Int) : Option (Fin states.size) := Id.run do
+  let mut best : Option (Fin states.size) := none
   for hm_i : i in [0:states.size] do
     let s := states[i]
     if s.startTs ≥ dayEndTs then continue
     match best with
-    | some b => if s.endTs > states[b]!.endTs then best := some i
-    | none => best := some i
+    | some b => if s.endTs > states[b].endTs then best := some ⟨i, hm_i.upper⟩
+    | none => best := some ⟨i, hm_i.upper⟩
   return best
 
 /-- The day's last observed stay centroid — the LAST segment carrying one. -/
@@ -207,7 +207,7 @@ def applyDwellContinuation
   else match anchorIndex states dayEndTs with
   | none => states
   | some ai =>
-    let anchor := states[ai]!
+    let anchor := states[ai]
     if anchor.mode ≠ "stationary" && anchor.mode ≠ "sleeping" then states
     else if anchor.endTs ≥ dayEndTs then states
     else match lastCentroid segments with

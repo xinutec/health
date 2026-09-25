@@ -79,12 +79,13 @@ which carries `sumLat`/`sumLon` alongside.
 def clusterByGap (fixes : Array CoarseFix) : Array (Array CoarseFix) :=
   (fixes.foldl (init := ((#[] : Array (Array CoarseFix)), (0.0 : Float), (0.0 : Float)))
     fun (clusters, sumLat, sumLon) f =>
-      match clusters.back? with
-      | some cur =>
+      -- Every cluster is opened with a fix, so an open cluster has a last fix.
+      match clusters.back?.bind (fun cur => cur.back?.map (cur, ·)) with
+      | some (cur, curLast) =>
         let n := Float.ofNat cur.size
         let nearCentroid :=
           equirectMeters f.lat f.lon (sumLat / n) (sumLon / n) ≤ UNDERGROUND_STATION_RADIUS_M
-        if f.ts - cur[cur.size - 1]!.ts ≤ MAX_COARSE_GAP_S && nearCentroid then
+        if f.ts - curLast.ts ≤ MAX_COARSE_GAP_S && nearCentroid then
           (clusters.pop.push (cur.push f), sumLat + f.lat, sumLon + f.lon)
         else (clusters.push #[f], f.lat, f.lon)
       | none => (clusters.push #[f], f.lat, f.lon)).1
@@ -116,15 +117,22 @@ def reconstructUndergroundJourney (fixes interchangeFixes : Array CoarseFix)
     let coarse := ((fixes.filter isCoarse).toList.mergeSort fun a b => a.ts ≤ b.ts).toArray
     -- Fewer than two legs' worth of coarse fixes cannot make two real legs.
     if coarse.size < 2 * MIN_COARSE_FIXES then #[] else
+    match coarse[0]?, coarse.back? with
+    | none, _ | _, none => #[]
+    | some coarseFirst, some coarseLast =>
     let boardLines := linesLookup boardingFix.lat boardingFix.lon
     let alightLines := linesLookup alightingFix.lat alightingFix.lon
     -- Candidate interchanges: good-fix clusters STRICTLY inside the coarse span.
     let mid := ((interchangeFixes.filter fun f =>
-      f.ts > coarse[0]!.ts && f.ts < coarse[coarse.size - 1]!.ts).toList.mergeSort
+      f.ts > coarseFirst.ts && f.ts < coarseLast.ts).toList.mergeSort
       fun a b => a.ts ≤ b.ts).toArray
     let clusters := clusterByGap mid
     let tryCluster (cluster : Array CoarseFix) : Option (Array UndergroundRun) :=
-      let ixTs := cluster[cluster.size / 2]!.ts
+      -- `clusterByGap` opens every cluster with a fix, so the middle one is there.
+      match cluster[cluster.size / 2]? with
+      | none => none
+      | some ixFix =>
+      let ixTs := ixFix.ts
       let n := Float.ofNat cluster.size
       let ixPt : LatLon :=
         ⟨cluster.foldl (· + ·.lat) 0 / n, cluster.foldl (· + ·.lon) 0 / n⟩

@@ -46,7 +46,10 @@ def lanczosC : Array Float :=
 /-- Lanczos approximation to `log Γ(z)` for `z ≥ 0.5`. -/
 def logGammaLanczos (z : Float) : Float :=
   let zm1 := z - 1
-  let x := (List.range' 1 8).foldl (fun acc i => acc + lanczosC[i]! / (zm1 + i.toFloat)) lanczosC[0]!
+  -- `c₀ + Σ_(i=1..8) cᵢ / (z - 1 + i)`, walking the table once.
+  let x := match lanczosC.toList with
+    | c0 :: rest => (rest.zipIdx 1).foldl (fun acc (c, i) => acc + c / (zm1 + i.toFloat)) c0
+    | [] => 0
   let t := zm1 + 7 + 0.5
   0.5 * Float.log (2 * pi) + (zm1 + 0.5) * Float.log t - t + Float.log x
 

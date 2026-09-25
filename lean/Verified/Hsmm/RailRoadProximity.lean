@@ -119,8 +119,8 @@ def minuteMedians (startUtc endUtc : Int) (points : List GpsPoint) : Array Minut
       match bucketIndex startUtc endUtc p.ts with
       | none => pure ()
       | some m =>
-        match acc.findIdx? (fun q => q.1 == m) with
-        | some k => acc := acc.set! k (m, acc[k]!.2.push p)
+        match acc.findFinIdx? (fun q => q.1 == m) with
+        | some k => acc := acc.set k (m, acc[k].2.push p)
         | none => acc := acc.push (m, #[p])
     return acc.map (fun (m, ps) =>
       { minuteTs := startUtc + Int.ofNat m * 60
@@ -189,10 +189,10 @@ def proximityTable (ms : Array MinuteFix) (answers : Array WayAnswer)
   let mut rows : Array (Int × Proximity) := #[]
   let mut unanswered : Nat := 0
   for m in ms do
-    match byKey.findIdx? (fun q => q.1 == coordKey m.lat m.lon) with
+    match byKey.findFinIdx? (fun q => q.1 == coordKey m.lat m.lon) with
     | none => unanswered := unanswered + 1
     | some i =>
-      let p := byKey[i]!.2
+      let p := byKey[i].2
       -- Omit a minute that carries no distance at all: see the note above.
       if p.railDistM.isSome || p.roadDistM.isSome then
         rows := rows.push (m.minuteTs, p)

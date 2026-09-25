@@ -640,9 +640,9 @@ private def stations : Array OsmStation :=
 
 -- buildRailGraph: adjacency rows, in the TS's per-vertex insertion order.
 private def adjOk (g : RailGraph) (i : Nat) (expect : Array (Nat × Float)) : Bool :=
-  g.adj[i]!.size == expect.size &&
-    (Array.range expect.size).all (fun k =>
-      g.adj[i]![k]!.to == expect[k]!.1 && approx g.adj[i]![k]!.w expect[k]!.2)
+  let row := (g.adj[i]?).getD #[]
+  row.size == expect.size &&
+    (row.zip expect).all (fun (x, e) => x.to == e.1 && approx x.w e.2)
 
 private def gAll : RailGraph := buildRailGraph allLines cMain
 #guard gAll.vertices.size == 12

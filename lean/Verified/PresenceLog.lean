@@ -84,8 +84,8 @@ def tally (segs : List Segment) : Array (Option Int × Int) × Int :=
       else
         let k := keyOf s
         let total := acc.2 + m
-        match acc.1.findIdx? (fun p => p.1 == k) with
-        | some i => (acc.1.set! i (k, acc.1[i]!.2 + m), total)
+        match acc.1.findFinIdx? (fun p => p.1 == k) with
+        | some i => (acc.1.set i (k, acc.1[i].2 + m), total)
         | none => (acc.1.push (k, m), total))
     (#[], 0)
 

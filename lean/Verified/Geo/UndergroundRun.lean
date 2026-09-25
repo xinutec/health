@@ -174,8 +174,11 @@ def reconstructUndergroundRun (fixes : Array CoarseFix) (boardingFix alightingFi
         && !Verified.Geo.LineMembership.lineCannotServe c alight.name servedLookup with
     | none => none
     | some line =>
-      some { line, boardingStation := board.name, alightingStation := alight.name,
-             startTs := coarse[0]!.ts, endTs := coarse[coarse.size - 1]!.ts }
+      match coarse[0]?, coarse.back? with
+      | some c0, some cl =>
+        some { line, boardingStation := board.name, alightingStation := alight.name,
+               startTs := c0.ts, endTs := cl.ts }
+      | _, _ => none
   | _, _ => none
 
 /-! ## Guards (V8 reference values) -/

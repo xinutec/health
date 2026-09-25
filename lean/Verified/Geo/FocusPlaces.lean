@@ -563,8 +563,9 @@ private def kmeans2 (pts : Array (Float × Float)) : Array Nat := Id.run do
     lobes around the 24-hour circle. Large for a genuine daytime/evening
     bimodality; near zero when k-means has merely cut one continuous spread. -/
 private def minBetweenLobeGapHours (stays : List Stay) (assign : Array Nat) (lon : Float) : Float := Id.run do
-  let order := (stays.zipIdx.map (fun (s, i) =>
-    (localSolarHourFractional ((s.startTs + s.endTs) / 2) lon, assign[i]!))).mergeSort
+  -- `assign` has one lobe per stay.
+  let order := ((stays.zip assign.toList).map (fun (s, a) =>
+    (localSolarHourFractional ((s.startTs + s.endTs) / 2) lon, a))).mergeSort
     (fun a b => decide (a.1 ≤ b.1))
   let arr := order.toArray
   let mut minGap : Float := 24

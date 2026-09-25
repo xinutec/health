@@ -98,7 +98,7 @@ def enrichFold (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
           place := fun lat lon pref withStay =>
             reads.place lat lon pref
               (if withStay then some (seg.startTs, seg.endTs, reads.tzAt lat lon) else none) }
-        biom places (if i == 0 then none else some segs[i - 1]!) seg cLat cLon
+        biom places (if i == 0 then none else segs[i - 1]?) seg cLat cLon
     else
       (Verified.Geo.Enrich.enrichMovingSegment reads.ways reads.geocode seg
         (segPoints.map fun p =>

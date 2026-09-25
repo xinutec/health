@@ -199,9 +199,9 @@ make every degenerate way match every station. -/
 def pointToLineDistanceM (pLat pLon : Float) (coords : Array (Float × Float)) : Float :=
   if coords.size < 2 then (1.0 / 0.0)
   else
-    (List.range (coords.size - 1)).foldl
-      (fun acc i =>
-        let d := pointToSegmentM pLat pLon coords[i]! coords[i + 1]!
+    (coords.zip (coords.extract 1 coords.size)).foldl
+      (fun acc (a, b) =>
+        let d := pointToSegmentM pLat pLon a b
         if d < acc then d else acc)
       (1.0 / 0.0)
 
@@ -214,9 +214,9 @@ private structure ParsedWay where
   maxLon : Float
 
 private def parseWay (w : WayGeometry) : Option ParsedWay :=
-  if w.coords.size < 2 then none
+  if h : w.coords.size < 2 then none
   else
-    let f := w.coords[0]!
+    let f := w.coords[0]'(by omega)
     some (w.coords.foldl
       (fun acc c =>
         { acc with

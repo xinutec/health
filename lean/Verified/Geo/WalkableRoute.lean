@@ -420,12 +420,11 @@ private def blockWays : Ways := #[#[n0, n1], #[n0, n2], #[n2, n3], #[n1, n3]]
 
 private def graphEq (g : WalkGraph) (h : WalkGraph) : Bool :=
   g.nodes.size == h.nodes.size && g.adj.size == h.adj.size
-    && (Array.range g.nodes.size).all (fun i =>
-        approx g.nodes[i]!.lat h.nodes[i]!.lat && approx g.nodes[i]!.lon h.nodes[i]!.lon)
-    && (Array.range g.adj.size).all (fun i =>
-        g.adj[i]!.size == h.adj[i]!.size
-          && (Array.range g.adj[i]!.size).all (fun k =>
-              g.adj[i]![k]!.1 == h.adj[i]![k]!.1 && approx g.adj[i]![k]!.2 h.adj[i]![k]!.2))
+    && (g.nodes.zip h.nodes).all (fun (a, b) =>
+        approx a.lat b.lat && approx a.lon b.lon)
+    && (g.adj.zip h.adj).all (fun (ra, rb) =>
+        ra.size == rb.size
+          && (ra.zip rb).all (fun (x, y) => x.1 == y.1 && approx x.2 y.2))
 
 #guard graphEq (buildWalkGraph blockWays) blockGraph
 -- A way repeated shares every node, and the edge dedupe keeps the adjacency

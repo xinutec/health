@@ -416,9 +416,9 @@ def rebuildWalkThrough (segments : List LabelSeg) (plan : WalkThroughPlan) : Arr
     | .keep => s
     | flip => { applyDecision s flip with place := none, city := none }).toArray
   (plan.runs.map fun (start, stop) => Id.run do
-    let mut first := decided[start]!
-    for i in [start + 1 : stop] do
-      let seg := decided[i]!
+    -- A run spans `decided`; a start off it (not constructible) merges a blank.
+    let mut first := (decided[start]?).getD default
+    for seg in decided.extract (start + 1) stop do
       first := { first with
         endTs := seg.endTs
         pointCount := first.pointCount + seg.pointCount

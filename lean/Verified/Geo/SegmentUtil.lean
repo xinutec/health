@@ -60,12 +60,16 @@ def statsOverWindow (points : Array Shed.PointF) (startTs endTs : Int)
     let speeds := fixes.map (·.speedKmh)
     let sorted := speeds.mergeSort (· ≤ ·)
     let mid := sorted.length / 2
+    -- `sorted` is non-empty (`first` exists), so `mid` lands; on an even
+    -- length `mid ≥ 1`, so `mid - 1` lands too.
     let med :=
-      if sorted.length % 2 == 0 then (sorted[mid - 1]! + sorted[mid]!) / 2 else sorted[mid]!
-    let pathDist := (List.range (arr.size - 1)).foldl (init := (0 : Float)) fun acc k =>
-      acc + Verified.Hsmm.FloatScore.haversineMeters
-        arr[k]!.lat arr[k]!.lon arr[k + 1]!.lat arr[k + 1]!.lon
-    let last := arr[arr.size - 1]!
+      match sorted[mid]?, sorted[mid - 1]? with
+      | some hi, some lo => if sorted.length % 2 == 0 then (lo + hi) / 2 else hi
+      | some hi, none => hi
+      | none, _ => 0
+    let pathDist := (arr.zip (arr.extract 1 arr.size)).foldl (init := (0 : Float)) fun acc (a, b) =>
+      acc + Verified.Hsmm.FloatScore.haversineMeters a.lat a.lon b.lat b.lon
+    let last := arr.back?.getD first
     let straight := Verified.Hsmm.FloatScore.haversineMeters first.lat first.lon last.lat last.lon
     { pointCount := Int.ofNat arr.size
       avgSpeed := Float.floor (med * 10 + 0.5) / 10

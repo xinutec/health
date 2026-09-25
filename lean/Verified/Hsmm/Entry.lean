@@ -35,7 +35,8 @@ def entryLogProb (s : State) (hourLocal : Nat) (useHourProfiles : Bool)
         match profile with
         | some pr =>
           if pr.size == 24 then
-            let v := pr[hourLocal]!
+            -- Hours are 0–23; one off the profile reads as never visited.
+            let v := (pr[hourLocal]?).getD 0.0
             let f := if v > HOUR_PROFILE_FLOOR then v else HOUR_PROFILE_FLOOR
             Float.log (24 * f)
           else 0.0

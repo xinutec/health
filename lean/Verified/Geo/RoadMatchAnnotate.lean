@@ -223,19 +223,19 @@ private def sg (a b : Int) (mode : Mode) (refined : Option Mode := none) : Seg :
 private def approxRead (a b : Verified.Geo.OsmCorridor.Read) : Bool :=
   approx a.lat b.lat && approx a.lon b.lon && approx a.radiusM b.radiusM
 private def approxReads (a b : Array Verified.Geo.OsmCorridor.Read) : Bool :=
-  a.size == b.size && (Array.range a.size).all fun i => approxRead a[i]! b[i]!
+  a.size == b.size && (a.zip b).all fun (x, y) => approxRead x y
 private def r (la lo rad : Float) : Verified.Geo.OsmCorridor.Read := ⟨la, lo, rad⟩
 private def approxM (a b : MPt) : Bool :=
   approx a.lat b.lat && approx a.lon b.lon && approx a.ts b.ts
 private def approxPath : Option (Array MPt) → Option (Array MPt) → Bool
   | none, none => true
-  | some a, some b => a.size == b.size && (Array.range a.size).all fun i => approxM a[i]! b[i]!
+  | some a, some b => a.size == b.size && (a.zip b).all fun (x, y) => approxM x y
   | _, _ => false
 private def approxOut (a b : Array Seg) : Bool :=
-  a.size == b.size && (Array.range a.size).all fun i =>
-    a[i]!.startTs == b[i]!.startTs && a[i]!.endTs == b[i]!.endTs
-      && a[i]!.mode == b[i]!.mode && a[i]!.refinedMode == b[i]!.refinedMode
-      && approxPath a[i]!.matchedPath b[i]!.matchedPath
+  a.size == b.size && (a.zip b).all fun (x, y) =>
+    x.startTs == y.startTs && x.endTs == y.endTs
+      && x.mode == y.mode && x.refinedMode == y.refinedMode
+      && approxPath x.matchedPath y.matchedPath
 
 private def wy (id : Int) (name subtype : String) (cs : Array Pt) : Way :=
   { osmId := id, name := some name, subtype := some subtype, coords := cs }

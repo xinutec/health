@@ -169,7 +169,8 @@ def bridgeStaysWithBiometrics (segments : Array Seg)
       if h : j < segments.size then
         let next := segments[j]
         if next.mode != "stationary" then (extended, j)
-        else if absorbs extended next (centroids[i]!) (centroids[j]!) hr steps then
+        -- `centroids` is one per segment; an entry missing reads as no centroid.
+        else if absorbs extended next ((centroids[i]?).bind id) ((centroids[j]?).bind id) hr steps then
           extend i { extended with endTs := next.endTs,
                                    pointCount := extended.pointCount + next.pointCount } (j + 1) fuel
         else (extended, j)
