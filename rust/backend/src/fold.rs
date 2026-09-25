@@ -168,6 +168,29 @@ pub fn trim_heap() {
     tracing::info!(before_mib = before, after_mib = after, "fold heap trimmed");
 }
 
+/// This process's own cgroup, as the kernel accounts it: `(peak MiB, oom kills)`
+/// from `/sys/fs/cgroup/memory.peak` and `memory.events`. `None` off cgroup v2
+/// (macOS, a bare shell). In a pod this is the container's cgroup, i.e. the
+/// number the OOM killer judges — `rss_mib` is one process's share of it and
+/// misses the Lean workers beside it (#1071).
+pub fn cgroup_memory() -> Option<(u64, u64)> {
+    let peak = std::fs::read_to_string("/sys/fs/cgroup/memory.peak")
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        / (1024 * 1024);
+    let oom = std::fs::read_to_string("/sys/fs/cgroup/memory.events")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("oom_kill "))
+                .and_then(|n| n.trim().parse::<u64>().ok())
+        })
+        .unwrap_or(0);
+    Some((peak, oom))
+}
+
 /// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
 /// the macOS fallback.
 pub fn rss_mib() -> u64 {

@@ -68,6 +68,24 @@ pub fn fold_slot_free() -> bool {
     FOLD_SLOT.available_permits() > 0
 }
 
+/// One day's fold AS PRODUCTION RUNS IT: the slot, the compute, the heap
+/// handed back. The route's cache-miss path and `backend velocity-many` both
+/// come through here, so what the smoke job measures is what serves (#1071).
+pub async fn fold_day(
+    st: &AppState,
+    user_id: &str,
+    date: &str,
+    tz: Option<&str>,
+    walk_match: bool,
+) -> Result<Value> {
+    let _slot = fold_slot().await;
+    let out = compute_with(st, user_id, date, tz, walk_match).await;
+    // The fold's working set — inputs, OSM answers, the Lean payload — is
+    // dropped by now; only the day's answer is still held. See `trim_heap`.
+    crate::fold::trim_heap();
+    out
+}
+
 fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
@@ -147,13 +165,8 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
 
     let cached = st
         .velocity
-        .get_or_compute(&key, now_ms, policy, || async {
-            let _slot = fold_slot().await;
-            let out = compute_with(st, &session.user_id, &date, tz, walk_match).await;
-            // The fold's working set — inputs, OSM answers, the Lean payload — is
-            // dropped by now; only the day's answer is still held. See `trim_heap`.
-            crate::fold::trim_heap();
-            out
+        .get_or_compute(&key, now_ms, policy, || {
+            fold_day(st, &session.user_id, &date, tz, walk_match)
         })
         .await?;
 

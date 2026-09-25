@@ -701,11 +701,12 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     for (i, date) in dates.iter().enumerate() {
         let before = rss_mib();
         let t0 = std::time::Instant::now();
-        // ⚠ The SAME entry point the HTTP route uses. Anything cheaper would
-        // measure a path production does not take — and the walk matcher, the
-        // term most likely to be ratcheting, is exactly what a cheaper harness
-        // switches off.
-        let body = backend::routes::velocity::compute_with(&st, user, date, None, true).await?;
+        // ⚠ The SAME entry point the HTTP route uses — slot, fold, heap handed
+        // back. Anything cheaper would measure a path production does not
+        // take: the walk matcher, the term most likely to be ratcheting, is
+        // exactly what a cheaper harness switches off, and `compute_with` alone
+        // would skip the trim the route runs (#1071).
+        let body = backend::routes::velocity::fold_day(&st, user, date, None, true).await?;
         let ms = t0.elapsed().as_millis();
         let after = rss_mib();
         let states = body
@@ -727,5 +728,12 @@ pub(crate) async fn velocity_many(user: &str, dates: &[String]) -> Result<()> {
     }
     pool.close().await;
     println!("high-water            {high:>5} MiB");
+    // ⚠ THE CONTAINER'S number, not this process's: the Lean workers sit beside
+    // it in the same cgroup, and the OOM killer judges the sum. The deploy's
+    // smoke step reads this line.
+    match backend::fold::cgroup_memory() {
+        Some((peak, oom)) => println!("cgroup peak           {peak:>5} MiB  oom_kill {oom}"),
+        None => println!("cgroup peak               - MiB  (no cgroup v2 here)"),
+    }
     Ok(())
 }

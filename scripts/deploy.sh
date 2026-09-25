@@ -147,7 +147,7 @@ dead_gates_banner() {
 
 cd "$HEALTH_DIR"
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [1/6] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
+	echo "==> [1/7] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
 	dead_gates_banner
 	DEAD_GATES=1
 	$DEV pnpm run verify:deploy
@@ -155,7 +155,7 @@ else
 	# ⚠ The COMMIT table only: everything but the corpus replay, the host/CLI
 	# equivalence, the mode-reachability pair and the sandboxed CLI build —
 	# `scripts/commit-table.sh` is the list. Announced here and again at the end.
-	echo "==> [1/6] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
+	echo "==> [1/7] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
 	cat >&2 <<-BANNER
 
 	================================================================
@@ -173,7 +173,7 @@ fi
 
 
 # --- stage + commit ------------------------------------------------------
-echo "==> [2/6] staging changes"
+echo "==> [2/7] staging changes"
 cd "$HEALTH_DIR"
 git add -A
 
@@ -184,16 +184,16 @@ git add -A
 # 5ef3517 walk fix sat committed and unshippable until this was fixed. Skip the
 # commit, deploy what HEAD already says.
 if git diff --cached --quiet; then
-	echo "==> [3/6] git commit — nothing staged; deploying the existing HEAD"
+	echo "==> [3/7] git commit — nothing staged; deploying the existing HEAD"
 else
-	echo "==> [3/6] git commit (--no-verify: the hook's table is a subset of step 1)"
+	echo "==> [3/7] git commit (--no-verify: the hook's table is a subset of step 1)"
 	git commit --no-verify -F "$MSG_FILE"
 fi
 
 COMMIT_SHA=$(git rev-parse HEAD)
 echo "    HEAD is now $COMMIT_SHA"
 
-echo "==> [4/6] git push origin main"
+echo "==> [4/7] git push origin main"
 git push origin main
 
 # --- wait for CI ---------------------------------------------------------
@@ -202,7 +202,7 @@ git push origin main
 # still the freshest, and gh run watch on an already-completed run exits
 # in ~0 ms, which then rolls out the stale image. Poll until a run for
 # our specific SHA shows up (Actions usually queues within a few seconds).
-echo "==> [5/6] watching CI for $COMMIT_SHA"
+echo "==> [5/7] watching CI for $COMMIT_SHA"
 cd "$HEALTH_DIR"
 RUN_ID=""
 for attempt in $(seq 1 30); do
@@ -237,9 +237,49 @@ if [[ $ci_status -ne 0 ]]; then
 fi
 
 # --- rollout -------------------------------------------------------------
-echo "==> [6/6] rollout on isis"
+echo "==> [6/7] rollout on isis"
 ssh root@isis.xinutec.org \
 	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
+
+# --- memory smoke -----------------------------------------------------------
+# ⚠ AFTER the rollout, as a loud red rather than a block: the policy is roll
+# forward and the smoke needs the image that just rolled. It creates a Job from
+# the suspended `health-velocity-smoke` CronJob (kubes: dhall/apps/health.dhall),
+# which folds the heaviest golden days one after another under the SERVING pod's
+# memory limit — one fold at a time, heap handed back, as the route does — and
+# prints the container's cgroup peak and OOM count. A fourteen-day browse
+# OOM-killed production twice on 2026-09-25 and nothing before that rollout could
+# have said so (#1071). The Job's OOM, if any, kills the Job, not the pod.
+echo "==> [7/7] memory smoke: the heaviest days under the serving limit"
+SMOKE_NAME="velocity-smoke-$(git rev-parse --short HEAD)-$(date +%H%M%S)"
+SMOKE_BUDGET_MIB=460   # 90% of the 512 MiB serving limit
+smoke_rc=0
+ssh root@isis.xinutec.org "bash -s" > /tmp/velocity-smoke.log 2>&1 <<-REMOTE || smoke_rc=\$?
+	set -euo pipefail
+	kubectl -n health create job --from=cronjob/health-velocity-smoke $SMOKE_NAME >/dev/null
+	if ! kubectl -n health wait --for=condition=complete --timeout=1500s job/$SMOKE_NAME >/dev/null 2>&1; then
+		echo "smoke: the job did not complete"
+		kubectl -n health get pods -l job-name=$SMOKE_NAME -o custom-columns=POD:.metadata.name,STATE:.status.containerStatuses[0].state.terminated.reason,LAST:.status.containerStatuses[0].lastState.terminated.reason
+		kubectl -n health logs job/$SMOKE_NAME --tail=20 || true
+		kubectl -n health delete job $SMOKE_NAME >/dev/null || true
+		exit 1
+	fi
+	kubectl -n health logs job/$SMOKE_NAME | grep -E '^(fold|high-water|cgroup peak)'
+	kubectl -n health delete job $SMOKE_NAME >/dev/null
+REMOTE
+cat /tmp/velocity-smoke.log
+smoke_peak=$(sed -nE 's/^cgroup peak +([0-9]+) MiB.*/\1/p' /tmp/velocity-smoke.log | tail -1)
+smoke_oom=$(sed -nE 's/^cgroup peak .*oom_kill ([0-9]+).*/\1/p' /tmp/velocity-smoke.log | tail -1)
+if [[ $smoke_rc -ne 0 || -z "${smoke_peak:-}" || "${smoke_oom:-0}" -ne 0 || "$smoke_peak" -gt "$SMOKE_BUDGET_MIB" ]]; then
+	cat >&2 <<-BANNER
+
+	⚠ MEMORY SMOKE FAILED — the rollout is LIVE and this build may not fit the pod.
+	   peak ${smoke_peak:-?} MiB (budget $SMOKE_BUDGET_MIB), oom_kill ${smoke_oom:-?}, job rc $smoke_rc.
+	   Read the node before browsing heavy days; roll forward with a fix (#1071).
+	BANNER
+	exit 1
+fi
+echo "    smoke: peak $smoke_peak MiB of $SMOKE_BUDGET_MIB, no OOM kill"
 
 if [[ -n "${DEAD_GATES:-}" ]]; then
 	cat >&2 <<-BANNER
