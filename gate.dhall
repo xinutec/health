@@ -78,6 +78,7 @@ in  { name = "health"
     , checks =
       [ G.Check::{
         , name = "frontend deps match the lockfile"
+        , lane = Some "frontend"
         , cwd = "frontend"
         , argv = devBelow [ "pnpm", "install", "--frozen-lockfile" ]
         , env = G.nonInteractive
@@ -85,6 +86,7 @@ in  { name = "health"
         }
       , G.Check::{
         , name = "typecheck (frontend app + e2e)"
+        , lane = Some "frontend"
         , argv = dev [ "pnpm", "run", "typecheck:frontend" ]
         , env = G.nonInteractive
         , timeout_s = 900
@@ -412,12 +414,14 @@ in  { name = "health"
           with argv = devBelow [ "cargo", "doc", "--no-deps", "--workspace" ]
       , G.Check::{
         , name = "lint (eslint, frontend)"
+        , lane = Some "frontend"
         , argv = dev [ "pnpm", "run", "lint:frontend" ]
         , env = G.nonInteractive
         , timeout_s = 900
         }
       , G.Check::{
         , name = "frontend unit tests"
+        , lane = Some "frontend"
         , argv = dev [ "pnpm", "run", "test:frontend" ]
         , env = G.nonInteractive # G.oneAngularWorker
         , timeout_s = 1800
@@ -449,6 +453,7 @@ in  { name = "health"
         }
       , G.Check::{
         , name = "frontend build"
+        , lane = Some "frontend"
         , cwd = "frontend"
         , argv =
             G.ngBuild "../../" [ "dist/frontend/browser" ] [ "pnpm", "run", "build" ]
@@ -460,6 +465,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "frontend ui-check (phone-width layout harness)"
+        , lane = Some "frontend"
         , cwd = "frontend"
         , argv = devBelow [ "pnpm", "run", "ui-check" ]
         , {-  Playwright DELETES this at the start of every run, so the run made
@@ -478,6 +484,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "dev-lint (baselined)"
+        , lane = Some "lint"
         , argv =
           [ "nix"
           , "run"
@@ -583,6 +590,7 @@ in  { name = "health"
         -}
         G.Check::{
         , name = "the cargo vendor hash matches rust/Cargo.lock"
+        , lane = Some "nix"
         , argv =
             [ "scripts/vendor-hash-check.sh" ]
         , timeout_s = 1800

@@ -12,6 +12,7 @@
       "env": {
         "CI": "true"
       },
+      "lane": "frontend",
       "name": "frontend deps match the lockfile",
       "timeout_s": 900
     },
@@ -27,6 +28,7 @@
       "env": {
         "CI": "true"
       },
+      "lane": "frontend",
       "name": "typecheck (frontend app + e2e)",
       "timeout_s": 900
     },
@@ -226,6 +228,7 @@
       "env": {
         "CI": "true"
       },
+      "lane": "frontend",
       "name": "lint (eslint, frontend)",
       "timeout_s": 900
     },
@@ -242,6 +245,7 @@
         "CI": "true",
         "NG_BUILD_MAX_WORKERS": "1"
       },
+      "lane": "frontend",
       "name": "frontend unit tests",
       "timeout_s": 1800
     },
@@ -282,6 +286,7 @@
       "env": {
         "CI": "true"
       },
+      "lane": "frontend",
       "name": "frontend build",
       "timeout_s": 1800
     },
@@ -299,6 +304,7 @@
       "env": {
         "CI": "true"
       },
+      "lane": "frontend",
       "name": "frontend ui-check (phone-width layout harness)",
       "timeout_s": 1800
     },
@@ -315,6 +321,7 @@
       "artifacts": [],
       "cwd": ".",
       "env": {},
+      "lane": "lint",
       "name": "dev-lint (baselined)",
       "timeout_s": 900
     },
@@ -339,6 +346,7 @@
       "artifacts": [],
       "cwd": ".",
       "env": {},
+      "lane": "nix",
       "name": "the cargo vendor hash matches rust/Cargo.lock",
       "timeout_s": 1800
     },
