@@ -269,12 +269,13 @@ def smoothWalkMap (fixes : Array WalkFix) (walkable : Ways)
 def countSharpTurns (pts : Array Pt) (thresholdDeg : Float := 50) : Nat := Id.run do
   if pts.size < 3 then return 0
   let mut count := 0
-  for i in [1:pts.size - 1] do
-    let cl := Float.cos (pts[i]!.lat * pi / 180)
-    let ux := (pts[i]!.lon - pts[i-1]!.lon) * cl
-    let uy := pts[i]!.lat - pts[i-1]!.lat
-    let vx := (pts[i+1]!.lon - pts[i]!.lon) * cl
-    let vy := pts[i+1]!.lat - pts[i]!.lat
+  for hm_i : i in [1:pts.size - 1] do
+    have hb_i : i + 1 < pts.size := by have hu := hm_i.upper; dsimp only at hu; omega
+    let cl := Float.cos (pts[i].lat * pi / 180)
+    let ux := (pts[i].lon - pts[i-1].lon) * cl
+    let uy := pts[i].lat - pts[i-1].lat
+    let vx := (pts[i+1].lon - pts[i].lon) * cl
+    let vy := pts[i+1].lat - pts[i].lat
     let un := hyp ux uy
     let vn := hyp vx vy
     if un ≥ 1e-12 && vn ≥ 1e-12 then
@@ -284,13 +285,13 @@ def countSharpTurns (pts : Array Pt) (thresholdDeg : Float := 50) : Nat := Id.ru
 
 /-- Straight-line-normalised path length (drawn ÷ end-to-end) — the smoother's
     headline effect is a lower tortuosity. -/
-def tortuosity (pts : Array Pt) : Float := Id.run do
-  if pts.size < 2 then return 1
+def tortuosity (pts : Array Pt) : Float :=
+  if h2 : pts.size < 2 then 1 else Id.run do
   let mut len := 0.0
   for hm_i : i in [1:pts.size] do
     have hb_i : i < pts.size := hm_i.upper
     len := len + metersBetween pts[i - 1] pts[i]
-  let straight := metersBetween pts[0]! pts[pts.size - 1]!
+  let straight := metersBetween (pts[0]'(by omega)) (pts[pts.size - 1]'(by omega))
   return if straight > 1 then len / straight else 1
 
 /-! ## `refineMatchedPath` -/
@@ -326,23 +327,25 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
     (profile : MapSmoothProfile := REFINE_MATCHED_PROFILE)
     (maxDeviationM : Float := 12) : Option (Array SmoothedPoint) := Id.run do
   if matchedPath.size < 2 then return none
+  let some mp0 := matchedPath[0]? | return none
   let corridor : Ways := #[matchedPath]
   let some smoothed := smoothWalkMap fixes corridor profile | return none
 
   -- The refinement's mandate is the STAIRCASE ARTIFACT, so its licence to leave
   -- the matched line is LOCAL: the full budget within reach of a CLUSTERED sharp
   -- corner, tapering to a tight budget everywhere else.
-  let cl := Float.cos (matchedPath[0]!.lat * pi / 180)
+  let cl := Float.cos (mp0.lat * pi / 180)
   let distM := fun (a b : Pt) => hyp ((a.lat - b.lat) * 111320.0) ((a.lon - b.lon) * 111320.0 * cl)
   let mut corners : Array Pt := #[]
   for i in [1:matchedPath.size - 1] do
+    let some c := matchedPath[i]? | continue
     if countSharpTurns (matchedPath.extract (i-1) (i+2)) > 0 then
-      corners := corners.push matchedPath[i]!
+      corners := corners.push c
   let mut artifactCorners : Array Pt := #[]
   for hm_i : i in [0:corners.size] do
     let mut near := 0
-    for j in [0:corners.size] do
-      if j != i && distM corners[i] corners[j]! ≤ REFINE_STAIRCASE_NEIGHBOR_M then
+    for hm_j : j in [0:corners.size] do
+      if j != i && distM corners[i] corners[j] ≤ REFINE_STAIRCASE_NEIGHBOR_M then
         near := near + 1
     if near ≥ REFINE_STAIRCASE_MIN_NEIGHBORS then artifactCorners := artifactCorners.push corners[i]
   let budgetAt := fun (p : Pt) => Id.run do
@@ -370,11 +373,10 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
   -- chord cuts the block — a defect the per-vertex clamp is structurally blind to
   -- (every VERTEX is on-route; the EDGE shortcuts).
   let toXY := fun (p : Pt) =>
-    ((p.lon - matchedPath[0]!.lon) * 111320.0 * cl, (p.lat - matchedPath[0]!.lat) * 111320.0)
-  let mut cum : Array Float := #[0.0]
-  for hm_i : i in [1:matchedPath.size] do
-    have hb_i : i < matchedPath.size := hm_i.upper
-    cum := cum.push (cum[i-1]! + distM matchedPath[i - 1] matchedPath[i])
+    ((p.lon - mp0.lon) * 111320.0 * cl, (p.lat - mp0.lat) * 111320.0)
+  -- `cum[k]` is the arclength of matched vertex `k`: one entry per vertex.
+  let cum : Array Float := (matchedPath.zip (matchedPath.extract 1 matchedPath.size)).foldl
+    (init := #[0.0]) fun acc (a, b) => acc.push (acc.back?.getD 0 + distM a b)
   -- Arclength of the nearest point on the matched line to `p`.
   let arcOf := fun (p : Pt) => Id.run do
     let (px, py) := toXY p
@@ -391,7 +393,7 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
       let dd := hyp (px - (ax + t * dx)) (py - (ay + t * dy))
       if dd < bestD then
         bestD := dd
-        bestS := cum[i-1]! + Float.sqrt len2 * t
+        bestS := cum[i-1]?.getD 0 + Float.sqrt len2 * t
     return bestS
   let chordDistM := fun (v a b : Pt) =>
     let (px, py) := toXY v
@@ -410,24 +412,27 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
   let mut inserts : Array (Array Nat) := Array.replicate clamped.size #[]
   let mut snapToRoute : Std.HashSet Nat := {}
   for hm_i : i in [0:clamped.size] do
-    if i + 1 < clamped.size then
-      let sA := arcs[i]!
-      let sB := arcs[i+1]!
+    if hi1 : i + 1 < clamped.size then
+      -- `arcs` is one per clamped point; a pair off it has no arc to splice on.
+      let some sA := arcs[i]? | continue
+      let some sB := arcs[i+1]? | continue
       -- Forward progress only — never splice across a backtracking pair.
       if sB > sA then
         let mut gap : Array Nat := #[]
-        for k in [0:matchedPath.size] do
-          if cum[k]! > sA && cum[k]! < sB
-             && chordDistM matchedPath[k]! clamped[i].pt clamped[i+1]!.pt > budgetAt matchedPath[k]! then
+        for hm_k : k in [0:matchedPath.size] do
+          let ck := cum[k]?.getD 0
+          if ck > sA && ck < sB
+             && chordDistM matchedPath[k] clamped[i].pt clamped[i+1].pt > budgetAt matchedPath[k] then
             gap := gap.push k
         if !gap.isEmpty then
           let mut chain : Array Pt := #[clamped[i].pt]
-          for k in gap do chain := chain.push matchedPath[k]!
-          chain := chain.push clamped[i+1]!.pt
-          let mut pathLen := 0.0
-          for k in [1:chain.size] do
-            pathLen := pathLen + distM chain[k-1]! chain[k]!
-          let chord := max 1 (distM clamped[i].pt clamped[i+1]!.pt)
+          for k in gap do
+            let some v := matchedPath[k]? | continue
+            chain := chain.push v
+          chain := chain.push clamped[i+1].pt
+          let pathLen := (chain.zip (chain.extract 1 chain.size)).foldl (init := 0.0)
+            fun acc (a, b) => acc + distM a b
+          let chord := max 1 (distM clamped[i].pt clamped[i+1].pt)
           -- BOUNDED DETOUR ONLY: past both bounds this is a route spur, not a
           -- skipped corner, and reinstating one measured a leg 11→300 m.
           if !(pathLen > chord * SPLICE_MAX_LEN_RATIO && pathLen - chord > SPLICE_MAX_EXTRA_M) then
@@ -440,15 +445,17 @@ def refineMatchedPath (fixes : Array WalkFix) (matchedPath : Array Pt)
     else match nearestWalkable p.pt corridor with
       | some near => ⟨near.lat, near.lon, p.ts⟩
       | none => p
-  let mut out : Array SmoothedPoint := #[positioned[0]!]
+  -- No points, nothing to splice: the clamped line as it is.
+  let some p0 := positioned[0]? | return some clamped
+  let mut out : Array SmoothedPoint := #[p0]
   for hm_i : i in [0:positioned.size] do
-    if i + 1 < positioned.size then
+    if hi1 : i + 1 < positioned.size then
       let a := positioned[i]
-      let b := positioned[i+1]!
-      for k in inserts[i]! do
-        let frac := (cum[k]! - arcs[i]!) / (arcs[i+1]! - arcs[i]!)
-        out := out.push ⟨matchedPath[k]!.lat, matchedPath[k]!.lon,
-                         jsRound (a.ts + (b.ts - a.ts) * frac)⟩
+      let b := positioned[i+1]
+      for k in inserts[i]?.getD #[] do
+        let some v := matchedPath[k]? | continue
+        let frac := (cum[k]?.getD 0 - arcs[i]?.getD 0) / (arcs[i+1]?.getD 0 - arcs[i]?.getD 0)
+        out := out.push ⟨v.lat, v.lon, jsRound (a.ts + (b.ts - a.ts) * frac)⟩
       out := out.push b
   return some out
 
@@ -621,17 +628,29 @@ private def insertBox (m : Std.HashMap Int (Array Nat)) (cell : Float) (id : Nat
     cx := cx + 1
   return m
 
+/-- A flat `[x0,y0,x1,y1,…]` ring as points; a trailing odd coordinate (not a
+    point) is dropped. -/
+private def flatPairs (pts : Array Float) : Array (Float × Float) :=
+  Array.ofFn (n := pts.size / 2) fun i => (pts[2 * i.val]'(by omega), pts[2 * i.val + 1]'(by omega))
+
+/-- Segment `i` of the flat `seg` table, or `none` off it. -/
+private def WalkGrid.segAt (g : WalkGrid) (i : Nat) : Option (Float × Float × Float × Float) :=
+  match g.seg[i*4]?, g.seg[i*4+1]?, g.seg[i*4+2]?, g.seg[i*4+3]? with
+  | some ax, some ay, some bx, some by' => some (ax, ay, bx, by')
+  | _, _, _, _ => none
+
 def mkWalkGrid (segs : Array (Array Float)) (ringPts : Array (Array Float)) (cell : Float) : WalkGrid := Id.run do
   let mut seg := Array.replicate (segs.size * 4) 0.0
   let mut segCells : Std.HashMap Int (Array Nat) := {}
   for hm_i : i in [0:segs.size] do
-    let s := segs[i]
-    seg := seg.set! (i*4) s[0]!
-    seg := seg.set! (i*4+1) s[1]!
-    seg := seg.set! (i*4+2) s[2]!
-    seg := seg.set! (i*4+3) s[3]!
+    -- A segment is four numbers on the wire; anything else is not indexed.
+    let #[x1, y1, x2, y2] := segs[i] | continue
+    seg := seg.set! (i*4) x1
+    seg := seg.set! (i*4+1) y1
+    seg := seg.set! (i*4+2) x2
+    seg := seg.set! (i*4+3) y2
     segCells := insertBox segCells cell i
-      (min s[0]! s[2]!) (min s[1]! s[3]!) (max s[0]! s[2]!) (max s[1]! s[3]!)
+      (min x1 x2) (min y1 y2) (max x1 x2) (max y1 y2)
   let mut rings : Array MetricRing := #[]
   let mut ringCells : Std.HashMap Int (Array Nat) := {}
   for hm_r : r in [0:ringPts.size] do
@@ -640,13 +659,11 @@ def mkWalkGrid (segs : Array (Array Float)) (ringPts : Array (Array Float)) (cel
     let mut miny := posInf
     let mut maxx := negInf
     let mut maxy := negInf
-    let mut k := 0
-    while k < pts.size do
-      minx := min minx pts[k]!
-      maxx := max maxx pts[k]!
-      miny := min miny pts[k+1]!
-      maxy := max maxy pts[k+1]!
-      k := k + 2
+    for (x, y) in flatPairs pts do
+      minx := min minx x
+      maxx := max maxx x
+      miny := min miny y
+      maxy := max maxy y
     rings := rings.push { pts, minx, miny, maxx, maxy }
     ringCells := insertBox ringCells cell r minx miny maxx maxy
   return { cell, seg, segCells, rings, ringCells }
@@ -671,6 +688,8 @@ def WalkGrid.nearest (g : WalkGrid) (px py maxR : Float) : Option NearSeg := Id.
   let mut bx := 0.0
   let mut by' := 0.0
   let mut bestSeg : Int := -1
+  -- The winning segment's endpoints, carried so the tangent needs no re-read.
+  let mut bestQuad := (0.0, 0.0, 0.0, 0.0)
   let mut seen : Std.HashSet Nat := {}
   let mut cx := cx0 - R
   while cx ≤ cx0 + R do
@@ -679,18 +698,21 @@ def WalkGrid.nearest (g : WalkGrid) (px py maxR : Float) : Option NearSeg := Id.
       for i in g.segCells.getD (gridKey cx cy) #[] do
         if !seen.contains i then
           seen := seen.insert i
-          let p := projMetric px py g.seg[i*4]! g.seg[i*4+1]! g.seg[i*4+2]! g.seg[i*4+3]!
+          -- The cell index holds only segments the table has.
+          let some q@(ax, ay, qbx, qby) := g.segAt i | continue
+          let p := projMetric px py ax ay qbx qby
           if p.d2 < best then
             best := p.d2
             bx := p.x
             by' := p.y
             bestSeg := Int.ofNat i
+            bestQuad := q
       cy := cy + 1
     cx := cx + 1
   if bestSeg < 0 then return none
-  let i := bestSeg.toNat
-  let dx := g.seg[i*4+2]! - g.seg[i*4]!
-  let dy := g.seg[i*4+3]! - g.seg[i*4+1]!
+  let (ax, ay, qbx, qby) := bestQuad
+  let dx := qbx - ax
+  let dy := qby - ay
   let len := orOne (hyp dx dy)
   return some ⟨bx, by', Float.sqrt best, dx / len, dy / len⟩
 
@@ -704,18 +726,17 @@ structure Clearance where
 
 /-- Even-odd ray cast against a flat metric ring. -/
 private def ringContains (pts : Array Float) (px py : Float) : Bool := Id.run do
-  let n := pts.size / 2
-  if n == 0 then return false
+  let ps := flatPairs pts
+  -- `j` is the previous vertex, starting from the last: the ring is closed.
+  let some last := ps.back? | return false
   let mut ins := false
-  let mut j := n - 1
-  for i in [0:n] do
-    let yi := pts[i*2+1]!
-    let xi := pts[i*2]!
-    let yj := pts[j*2+1]!
-    let xj := pts[j*2]!
+  let mut pj := last
+  for pi in ps do
+    let (xi, yi) := pi
+    let (xj, yj) := pj
     if ((yi > py) != (yj > py)) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi then
       ins := !ins
-    j := i
+    pj := pi
   return ins
 
 def WalkGrid.clearanceTarget (g : WalkGrid) (px py clearM : Float) : Option Clearance := Id.run do
@@ -735,20 +756,23 @@ def WalkGrid.clearanceTarget (g : WalkGrid) (px py clearM : Float) : Option Clea
       for r in g.ringCells.getD (gridKey cx cy) #[] do
         if !seen.contains r then
           seen := seen.insert r
-          let ring := g.rings[r]!
+          -- The cell index holds only rings the table has.
+          let some ring := g.rings[r]? | continue
           let pts := ring.pts
-          let n := pts.size / 2
           if px ≥ ring.minx && px ≤ ring.maxx && py ≥ ring.miny && py ≤ ring.maxy then
             if ringContains pts px py then inside := true
-          let mut j := n - 1
-          for i in [0:n] do
-            let p := projMetric px py pts[j*2]! pts[j*2+1]! pts[i*2]! pts[i*2+1]!
+          -- Every edge, from the last vertex round to the first.
+          let ps := flatPairs pts
+          let some last := ps.back? | continue
+          let mut pj := last
+          for pi in ps do
+            let p := projMetric px py pj.1 pj.2 pi.1 pi.2
             if p.d2 < bestD2 then
               bestD2 := p.d2
               wx := p.x
               wy := p.y
               found := true
-            j := i
+            pj := pi
       cy := cy + 1
     cx := cx + 1
   if !found then return none
@@ -775,7 +799,7 @@ def WalkGrid.ringContaining (g : WalkGrid) (px py : Float) : Int := Id.run do
       for r in g.ringCells.getD (gridKey cx cy) #[] do
         if !seen.contains r then
           seen := seen.insert r
-          let ring := g.rings[r]!
+          let some ring := g.rings[r]? | continue
           if !(px < ring.minx || px > ring.maxx || py < ring.miny || py > ring.maxy) then
             if ringContains ring.pts px py then return Int.ofNat r
       cy := cy + 1
@@ -874,9 +898,9 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
   let m := chain.size
   let mut exempt := Array.replicate m false
   let some g := grid | return exempt
-  let mut obsIdx : Array Nat := #[]
+  let mut obsIdx : Array (Fin chain.size) := #[]
   for h : i in [0:m] do
-    if chain[i].obsW > 0 then obsIdx := obsIdx.push i
+    if chain[i].obsW > 0 then obsIdx := obsIdx.push ⟨i, h.upper⟩
   let mut runStart := 0
   let mut runRing : Int := -2
   -- from/to index into obsIdx, inclusive; exempt every STATE between the run's
@@ -884,12 +908,16 @@ def presenceExempt (chain : StateChain) (grid : Option WalkGrid) (minFixes : Nat
   let markRun := fun (ex : Array Bool) (from_ to : Nat) => Id.run do
     let mut ex := ex
     if to + 1 ≥ from_ + minFixes then
-      for s in [obsIdx[from_]!:obsIdx[to]! + 1] do
-        ex := ex.set! s true
+      -- Both ranks are observed states this pass visited.
+      match obsIdx[from_]?, obsIdx[to]? with
+      | some a, some b =>
+        for s in [a.val:b.val + 1] do
+          ex := ex.set! s true
+      | _, _ => pure ()
     return ex
   for hm_k : k in [0:obsIdx.size] do
     let i := obsIdx[k]
-    let ring := g.ringContaining chain[i]!.seedE chain[i]!.seedN
+    let ring := g.ringContaining chain[i].seedE chain[i].seedN
     if ring != runRing || ring == -1 then
       if runRing ≥ 0 && k ≥ 1 then exempt := markRun exempt runStart (k-1)
       runStart := k
@@ -912,13 +940,15 @@ def chainLenM {n : Nat} (e nn : Vector Float n) : Float := Id.run do
 def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
     (exempt : Array Bool) (fr : Frame) : Array SmoothedPoint := Id.run do
   let CORNER_DETOUR_MAX_RATIO := 2.5
-  let m := out.size
-  let mut repaired : Array SmoothedPoint := #[out[0]!]
-  for i in [0:m] do
-    if i + 1 < m then
-      let a := out[i]!
-      let b := out[i+1]!
-      if !exempt[i]! && !exempt[i+1]! then
+  -- No points, nothing to splice.
+  let some o0 := out[0]? | return out
+  let mut repaired : Array SmoothedPoint := #[o0]
+  for hm_i : i in [0:out.size] do
+    if hi1 : i + 1 < out.size then
+      let a := out[i]
+      let b := out[i+1]
+      -- `exempt` is one per state; a state without an entry is not exempt.
+      if !(exempt[i]?.getD false) && !(exempt[i+1]?.getD false) then
         let chordM := hyp (fr.toE b.lon - fr.toE a.lon) (fr.toN b.lat - fr.toN a.lat)
         let path := if chordM > 1 then routeChordAroundBuildings a.pt b.pt buildings else none
         match path with
@@ -1068,7 +1098,7 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
                 bn := bn.set i (bn[i] + wN * ny * ny * near.y)
               -- Building clearance field. Presence-exempt states are genuinely
               -- indoors: no pull at all.
-              if !exempt[i]! then
+              if !(exempt[i]?.getD false) then
                 match g.clearanceTarget px py profile.buildingClearM with
                 | none => pure ()
                 | some esc =>
@@ -1108,7 +1138,7 @@ private def solveChain {m : Nat} (cv : Vector ChainState m) (exempt : Array Bool
             | some g =>
               for h : i in [1:m-1] do
                 have hi : i < m := by have hu := Membership.mem.upper h; dsimp only at hu; omega
-                if !exempt[i]! then
+                if !(exempt[i]?.getD false) then
                   match g.clearanceTarget e[i] nn[i] profile.buildingClearM with
                   | none => pure ()
                   | some esc =>
@@ -1124,8 +1154,10 @@ def reconstructWalk (fixes : Array WalkFix) (ways : Ways) (buildings : Array Rin
     (profile : ReconstructProfile := {}) (evidence : WalkEvidence := {}) :
     Option (Array SmoothedPoint) := Id.run do
   if fixes.size < profile.minFixes then return none
+  -- No fixes, no walk — whatever the profile's minimum says.
+  let some f0 := fixes[0]? | return none
 
-  let fr := Frame.of fixes[0]!.lat fixes[0]!.lon
+  let fr := Frame.of f0.lat f0.lon
   let chain := buildStateChain fixes fr profile
   let grid := buildLegGrid ways buildings fr (max profile.networkRadiusM 15)
   let exempt := presenceExempt chain grid profile.indoorPresenceMinFixes
