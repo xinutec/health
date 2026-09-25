@@ -234,7 +234,12 @@ def pedestrianCoreDisplacementM (fixes : Array PedFix) : Float := Id.run do
     bestStart := runStart
     bestEnd := fixes.size - 1
   if bestEnd ≤ bestStart then return 0
-  return haversineMeters fixes[bestStart]!.lat fixes[bestStart]!.lon fixes[bestEnd]!.lat fixes[bestEnd]!.lon
+  -- Both ends are indices the loop assigned (`i - 1`, `runStart := i`, or
+  -- `fixes.size - 1`), so the guard cannot fail; it is what makes the read
+  -- total without a `!`.
+  if h : bestStart < fixes.size ∧ bestEnd < fixes.size then
+    return haversineMeters fixes[bestStart].lat fixes[bestStart].lon fixes[bestEnd].lat fixes[bestEnd].lon
+  return 0
 
 /-- Physical-impossibility mode override: driving above the driving speed limit
     is high-speed rail; a train above the train limit is a plane. Returns the
@@ -329,10 +334,15 @@ open Verified.JsNum (jsRound)
 /-- The TS module's OWN `median` — ascending sort, mean of the middle pair when
 even, `0` when empty. A private copy in the TS, so a private copy here. -/
 private def median (xs : Array Float) : Float :=
-  if xs.isEmpty then 0 else
+  if h0 : xs.size = 0 then 0 else
   let s := (xs.toList.mergeSort (· ≤ ·)).toArray
+  have hs : s.size = xs.size := by simp [s]
   let mid := s.size / 2
-  if s.size % 2 == 0 then (s[mid-1]! + s[mid]!) / 2 else s[mid]!
+  have hmid : mid < s.size := by omega
+  if h2 : s.size % 2 = 0 then
+    have hm1 : mid - 1 < s.size := by omega
+    (s[mid-1] + s[mid]) / 2
+  else s[mid]
 
 /-- SAMPLE variance (`n-1`), not population. Under two values → 0. -/
 private def variance (xs : Array Float) : Float :=
@@ -351,7 +361,9 @@ private def orOneSec (d : Int) : Float := if d == 0 then 1 else Float.ofInt d
 disqualify it, and one good fix in a bad window should not rescue it. -/
 private def medianAccuracyM (wp : Array FilteredPoint) : Option Float :=
   let accs := (wp.toList.filterMap (·.accuracyM)).toArray.qsort (· < ·)
-  if accs.isEmpty then none else some accs[accs.size / 2]!
+  if h : accs.size = 0 then none else
+  have hm : accs.size / 2 < accs.size := by omega
+  some accs[accs.size / 2]
 
 /-- ⚠ **REFUTED AS A SOURCE-LEVEL FIX — NOT WIRED IN. Read this before trying it
 again (#185).**
@@ -396,32 +408,47 @@ private def linearityOf (wp : Array FilteredPoint) (straightLine pathDistance : 
     | some acc => if straightLine ≤ acc then 0 else min (straightLine / pathDistance) 1
     | none => min (straightLine / pathDistance) 1
 
-/-- Features of one window's points. Requires `wp.size ≥ 2` (the caller skips
-shorter windows), which is what makes the `[0]!` / `[size-1]!` reads total. -/
-private def featuresOf (wp : Array FilteredPoint) : WindowFeatures :=
+/-- Features of one window's points. `wp.size ≥ 2` is a parameter, not a
+caller's promise: it is what makes every read below total. -/
+private def featuresOf (wp : Array FilteredPoint) (h2 : 2 ≤ wp.size) : WindowFeatures :=
   let speeds := wp.map (·.speed_kmh)
+  have hsp : speeds.size = wp.size := by simp [speeds]
   let n := wp.size
-  let idx := List.range (n - 1)
-  -- Heading change: absolute successive difference, wrapped into [0,180].
-  let totalHeadingChange := idx.foldl (fun acc i =>
-    let d := Float.abs (wp[i+1]!.bearing - wp[i]!.bearing)
-    acc + (if d > 180 then 360 - d else d)) 0.0
-  let duration := orOneSec (wp[n-1]!.ts - wp[0]!.ts)
-  let straightLine := haversineMeters wp[0]!.lat wp[0]!.lon wp[n-1]!.lat wp[n-1]!.lon
-  let pathDistance := idx.foldl (fun acc i =>
-    acc + haversineMeters wp[i]!.lat wp[i]!.lon wp[i+1]!.lat wp[i+1]!.lon) 0.0
-  let accelBursts := idx.foldl (fun acc i =>
-    let dt := orOneSec (wp[i+1]!.ts - wp[i]!.ts)
-    if Float.abs (speeds[i+1]! - speeds[i]!) / dt > 5.0 / 3.6 then acc + 1 else acc) 0
+  -- Successive-pair folds, in index order — the same left fold as before, so
+  -- the floats sum in the same order.
+  let pairs := Id.run do
+    let mut heading := 0.0
+    let mut path := 0.0
+    let mut bursts : Nat := 0
+    for hm_i : i in [0:wp.size - 1] do
+      have hi : i + 1 < wp.size := by have hu := hm_i.upper; dsimp only at hu; omega
+      have hi0 : i < wp.size := by omega
+      have hs1 : i + 1 < speeds.size := by omega
+      have hs0 : i < speeds.size := by omega
+      let d := Float.abs (wp[i+1].bearing - wp[i].bearing)
+      heading := heading + (if d > 180 then 360 - d else d)
+      path := path + haversineMeters wp[i].lat wp[i].lon wp[i+1].lat wp[i+1].lon
+      let dt := orOneSec (wp[i+1].ts - wp[i].ts)
+      if Float.abs (speeds[i+1] - speeds[i]) / dt > 5.0 / 3.6 then
+        bursts := bursts + 1
+    return (heading, path, bursts)
+  let totalHeadingChange := pairs.1
+  let pathDistance := pairs.2.1
+  let accelBursts := pairs.2.2
+  have h0 : 0 < wp.size := by omega
+  have hl : wp.size - 1 < wp.size := by omega
+  have hs0 : 0 < speeds.size := by omega
+  let duration := orOneSec (wp[wp.size-1].ts - wp[0].ts)
+  let straightLine := haversineMeters wp[0].lat wp[0].lon wp[wp.size-1].lat wp[wp.size-1].lon
   let stops := speeds.foldl (fun acc s => if s < 1 then acc + 1 else acc) 0
   let centroidLat := wp.foldl (fun s p => s + p.lat) 0.0 / n.toFloat
   let centroidLon := wp.foldl (fun s p => s + p.lon) 0.0 / n.toFloat
-  { startTs := wp[0]!.ts
-    endTs := wp[n-1]!.ts
+  { startTs := wp[0].ts
+    endTs := wp[wp.size-1].ts
     centroidLat := centroidLat
     centroidLon := centroidLon
     medianSpeed := median speeds
-    maxSpeed := speeds.foldl (fun m s => max m s) speeds[0]!
+    maxSpeed := speeds.foldl (fun m s => max m s) speeds[0]
     speedVariance := variance speeds
     headingChangeRate := totalHeadingChange / duration
     linearity := if pathDistance > 0 then min (straightLine / pathDistance) 1 else 0
@@ -440,7 +467,10 @@ window. Fuelled rather than `partial`: the fuel is the point count, which bounds
 the scan. -/
 private def scanWindowEnd (points : Array FilteredPoint) (endTs : Int) : Nat → Nat → Nat
   | 0, i => i
-  | fuel+1, i => if i < points.size && points[i]!.ts < endTs then scanWindowEnd points endTs fuel (i+1) else i
+  | fuel+1, i =>
+    if h : i < points.size then
+      if points[i].ts < endTs then scanWindowEnd points endTs fuel (i+1) else i
+    else i
 
 /-- Fixed-width tumbling windows, each starting at the first fix not yet
 consumed. A window holding fewer than two fixes is DROPPED, not emitted.
@@ -454,11 +484,11 @@ private def extractLoop (points : Array FilteredPoint) (windowSec : Int) :
     Nat → Nat → Array WindowFeatures → Array WindowFeatures
   | 0, _, acc => acc
   | fuel+1, windowStart, acc =>
-    if windowStart < points.size then
-      let startTs := points[windowStart]!.ts
+    if h : windowStart < points.size then
+      let startTs := points[windowStart].ts
       let windowEnd := scanWindowEnd points (startTs + windowSec) points.size windowStart
       let wp := (points.toList.drop windowStart).take (windowEnd - windowStart) |>.toArray
-      let acc := if wp.size < 2 then acc else acc.push (featuresOf wp)
+      let acc := if h2 : wp.size < 2 then acc else acc.push (featuresOf wp (by omega))
       extractLoop points windowSec fuel windowEnd acc
     else acc
 
@@ -469,20 +499,22 @@ def extractFeatures (points : Array FilteredPoint) (windowSec : Int) : Array Win
 per-window posteriors AVERAGED (the TS calls this "close enough for a
 heuristic"); `avgSpeed` is the MEDIAN of the per-window medians, not a mean. -/
 private def flushSeg (windows : Array WindowFeatures) (scores : Array (List ModeScore))
-    (segStart endIdx : Nat) (mode : String) : TrackSegment :=
+    (segStart endIdx : Nat) (mode : String)
+    (hlt : segStart < endIdx) (hend : endIdx ≤ windows.size) : TrackSegment :=
   let segW := ((windows.toList.drop segStart).take (endIdx - segStart)).toArray
   let segS := ((scores.toList.drop segStart).take (endIdx - segStart)).toArray
   let norms := segS.map normalizeScores
   let avgConfidence := norms.foldl (fun s n => s + n.2.1) 0.0 / norms.size.toFloat
   let avgMargin := norms.foldl (fun s n => s + n.2.2) 0.0 / norms.size.toFloat
   let avgLinearity := segW.foldl (fun s w => s + w.linearity) 0.0 / segW.size.toFloat
-  { startTs := segW[0]!.startTs
-    endTs := segW[segW.size-1]!.endTs
+  have hw : 0 < segW.size := by simp [segW]; omega
+  { startTs := segW[0].startTs
+    endTs := segW[segW.size-1].endTs
     mode := mode
     confidence := jsRound (avgConfidence * 100) / 100
     confidenceMargin := jsRound (avgMargin * 100) / 100
     avgSpeed := jsRound (median (segW.map (·.medianSpeed)) * 10) / 10
-    maxSpeed := jsRound ((segW.foldl (fun m w => max m w.maxSpeed) segW[0]!.maxSpeed) * 10) / 10
+    maxSpeed := jsRound ((segW.foldl (fun m w => max m w.maxSpeed) segW[0].maxSpeed) * 10) / 10
     linearity := jsRound (avgLinearity * 100) / 100
     pointCount := segW.foldl (fun s w => s + w.pointCount) 0
     -- ⚠ ANY, not ALL. A segment whose direction was measurable in even one of
@@ -498,26 +530,38 @@ Two things force a cut: a mode change, and — for stationary runs only — a ne
 window whose centroid is more than `STATIONARY_SPLIT_DIST_M` from the run's
 POINT-WEIGHTED running centroid. Without the second, "stationary at A, then
 stationary at B 280 m away" collapses into one stay. -/
-def mergeWindows (windows : Array WindowFeatures) (scores : Array (List ModeScore)) : Array TrackSegment :=
-  if windows.isEmpty then #[] else Id.run do
+def mergeWindows (windows : Array WindowFeatures) (scores : Array (List ModeScore))
+    (hsz : scores.size = windows.size) : Array TrackSegment :=
+  if h0 : windows.size = 0 then #[] else Id.run do
     let mut segments : Array TrackSegment := #[]
-    let mut currentMode := (scores[0]!).head!.mode
+    have hsc0 : 0 < scores.size := by omega
+    let mut currentMode := scores[0].head!.mode
     let mut segStart := 0
-    for i in [1:windows.size+1] do
-      let newMode : Option String := if i < windows.size then some (scores[i]!).head!.mode else none
+    for hm_i : i in [1:windows.size+1] do
+      have hi1 : i < windows.size + 1 := hm_i.upper
+      let newMode : Option String :=
+        if hi : i < windows.size then
+          have : i < scores.size := by omega
+          some scores[i].head!.mode
+        else none
       let mut locationSplit := false
-      if i < windows.size && currentMode == "stationary" && newMode == some "stationary" then
-        let segW := ((windows.toList.drop segStart).take (i - segStart)).toArray
-        let totalPts := Float.ofNat (segW.foldl (fun s w => s + w.pointCount) 0)
-        let cLat := segW.foldl (fun s w => s + w.centroidLat * Float.ofNat w.pointCount) 0.0 / totalPts
-        let cLon := segW.foldl (fun s w => s + w.centroidLon * Float.ofNat w.pointCount) 0.0 / totalPts
-        let next := windows[i]!
-        if haversineMeters cLat cLon next.centroidLat next.centroidLon > STATIONARY_SPLIT_DIST_M then
-          locationSplit := true
+      if hi : i < windows.size then
+        if currentMode == "stationary" && newMode == some "stationary" then
+          let segW := ((windows.toList.drop segStart).take (i - segStart)).toArray
+          let totalPts := Float.ofNat (segW.foldl (fun s w => s + w.pointCount) 0)
+          let cLat := segW.foldl (fun s w => s + w.centroidLat * Float.ofNat w.pointCount) 0.0 / totalPts
+          let cLon := segW.foldl (fun s w => s + w.centroidLon * Float.ofNat w.pointCount) 0.0 / totalPts
+          let next := windows[i]
+          if haversineMeters cLat cLon next.centroidLat next.centroidLon > STATIONARY_SPLIT_DIST_M then
+            locationSplit := true
       if newMode != some currentMode || locationSplit || i == windows.size then
-        segments := segments.push (flushSeg windows scores segStart i currentMode)
-        if i < windows.size then
-          currentMode := (scores[i]!).head!.mode
+        -- `segStart < i` holds by construction: `segStart` is only ever set to
+        -- an `i` this loop has passed. The guard is what makes the flush total.
+        if hlt : segStart < i then
+          segments := segments.push (flushSeg windows scores segStart i currentMode hlt (by omega))
+        if hi : i < windows.size then
+          have : i < scores.size := by omega
+          currentMode := scores[i].head!.mode
           segStart := i
     return segments
 
@@ -528,17 +572,22 @@ The TS mutates the last kept element in place and copies everything else, so the
 absorbed segment's mode, confidence and linearity are DISCARDED — only its end,
 point count and peak speed survive. -/
 def smoothSegments (segments : Array TrackSegment) (minDurationSec : Int) : Array TrackSegment :=
-  if segments.size ≤ 1 then segments else Id.run do
-    let mut result : Array TrackSegment := #[segments[0]!]
+  if h1 : segments.size ≤ 1 then segments else Id.run do
+    have hs0 : 0 < segments.size := by omega
+    let mut result : Array TrackSegment := #[segments[0]]
     for hm_i : i in [1:segments.size] do
       let seg := segments[i]
-      if seg.endTs - seg.startTs < minDurationSec && result.size > 0 then
-        let j := result.size - 1
-        let prev := result[j]!
-        result := result.set! j { prev with
-          endTs := seg.endTs
-          pointCount := prev.pointCount + seg.pointCount
-          maxSpeed := max prev.maxSpeed seg.maxSpeed }
+      if hr : 0 < result.size then
+        if seg.endTs - seg.startTs < minDurationSec then
+          let j := result.size - 1
+          have hj : j < result.size := by omega
+          let prev := result[j]
+          result := result.set j { prev with
+            endTs := seg.endTs
+            pointCount := prev.pointCount + seg.pointCount
+            maxSpeed := max prev.maxSpeed seg.maxSpeed }
+        else
+          result := result.push seg
       else
         result := result.push seg
     return result
@@ -551,10 +600,13 @@ private def stayPointsInWindow (pts : Array StayPoint) (s e : Int) : Array StayP
 duration. A lone outlier fix therefore evaporates instead of splitting the stay
 around it. -/
 private def emitStay (cluster : Array StayPoint) : Option TrackSegment :=
-  if cluster.size < 2 then none else
+  if h2 : cluster.size < 2 then none else
   let sc := (cluster.toList.mergeSort (fun a b => a.ts ≤ b.ts)).toArray
-  let first := sc[0]!
-  let last := sc[sc.size-1]!
+  have hs : sc.size = cluster.size := by simp [sc]
+  have hs0 : 0 < sc.size := by omega
+  have hsl : sc.size - 1 < sc.size := by omega
+  let first := sc[0]
+  let last := sc[sc.size-1]
   if last.ts - first.ts < SEGMENT_STAY_MIN_S then none else
   some { startTs := first.ts, endTs := last.ts, mode := "stationary"
          confidence := 0.9, confidenceMargin := MARGIN_MAX_FINITE
@@ -568,21 +620,27 @@ The centroid is a RUNNING MEAN updated per join, so a slow drift stays one
 cluster — the reason this replaced a day-wide median that collapsed multi-stop
 days into a single phantom stay. -/
 def findStays (points : Array StayPoint) (existing : Array TrackSegment) : Array TrackSegment :=
-  if points.isEmpty then #[] else Id.run do
+  if h0 : points.size = 0 then #[] else Id.run do
     let sorted := (existing.toList.mergeSort (fun a b => a.startTs ≤ b.startTs)).toArray
-    let firstTs := points[0]!.ts
-    let lastTs := points[points.size-1]!.ts
+    have hp0 : 0 < points.size := by omega
+    have hpl : points.size - 1 < points.size := by omega
+    let firstTs := points[0].ts
+    let lastTs := points[points.size-1].ts
     let mut gaps : Array (Int × Int) := #[]
-    if sorted.isEmpty then
+    if hs0 : sorted.size = 0 then
       gaps := #[(firstTs, lastTs)]
     else
-      if sorted[0]!.startTs - firstTs ≥ SEGMENT_STAY_MIN_S then
-        gaps := gaps.push (firstTs, sorted[0]!.startTs)
-      for i in [0:sorted.size-1] do
-        let gapStart := sorted[i]!.endTs
-        let gapEnd := sorted[i+1]!.startTs
+      have hs0' : 0 < sorted.size := by omega
+      have hsl : sorted.size - 1 < sorted.size := by omega
+      if sorted[0].startTs - firstTs ≥ SEGMENT_STAY_MIN_S then
+        gaps := gaps.push (firstTs, sorted[0].startTs)
+      for hm_i : i in [0:sorted.size-1] do
+        have hi : i + 1 < sorted.size := by have hu := hm_i.upper; dsimp only at hu; omega
+        have hi0 : i < sorted.size := by omega
+        let gapStart := sorted[i].endTs
+        let gapEnd := sorted[i+1].startTs
         if gapEnd - gapStart ≥ SEGMENT_STAY_MIN_S then gaps := gaps.push (gapStart, gapEnd)
-      let lastSegEnd := sorted[sorted.size-1]!.endTs
+      let lastSegEnd := sorted[sorted.size-1].endTs
       if lastTs - lastSegEnd ≥ SEGMENT_STAY_MIN_S then gaps := gaps.push (lastSegEnd, lastTs)
     let mut stays : Array TrackSegment := #[]
     for (gs, ge) in gaps do
@@ -629,8 +687,8 @@ def inferTransitGaps (segments : Array TrackSegment) (points : Array FilteredPoi
     for hm_i : i in [0:segments.size] do
       let seg := segments[i]
       result := result.push seg
-      if i + 1 < segments.size then
-        let next := segments[i+1]!
+      if hn : i + 1 < segments.size then
+        let next := segments[i+1]
         let gapDuration := next.startTs - seg.endTs
         if gapDuration ≥ TRANSIT_GAP_MIN_DURATION_S then
           match lastPointAtOrBefore points seg.endTs, firstPointAtOrAfter points next.startTs with
@@ -680,7 +738,7 @@ def classifySegments (points : Array FilteredPoint)
   let windows := extractFeatures points WINDOW_SEC
   let classified :=
     if windows.isEmpty then #[]
-    else smoothSegments (mergeWindows windows (windows.map scoreWindow)) MIN_SEGMENT_SEC
+    else smoothSegments (mergeWindows windows (windows.map scoreWindow) (by simp)) MIN_SEGMENT_SEC
   let sps := stayPoints.getD (points.map (fun p => ⟨p.ts, p.lat, p.lon⟩))
   let stays := findStays sps classified
   let ordered := (((classified ++ stays).toList).mergeSort (fun a b => a.startTs ≤ b.startTs)).toArray
