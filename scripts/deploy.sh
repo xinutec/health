@@ -230,6 +230,14 @@ if [[ $ci_status -ne 0 ]]; then
 	if [[ $ci_status -eq 124 ]]; then
 		echo "deploy: CI run $RUN_ID did not finish within 30 min — aborting before rollout." >&2
 		echo "        Inspect or cancel it: gh run view $RUN_ID  |  gh run cancel $RUN_ID" >&2
+	elif [[ "$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)" == "cancelled" ]]; then
+		# ⚠ NOT A BUILD FAULT. build.yml runs with `cancel-in-progress`, so a
+		# newer push to main cancels the run this deploy was watching (seen
+		# 2026-09-25: a follow-up commit pushed mid-watch read as "CI failed").
+		# The newer head's run carries this commit; deploy from that head, and
+		# do not push while a deploy is watching CI.
+		echo "deploy: CI run $RUN_ID was CANCELLED — a newer push to main superseded it." >&2
+		echo "        Nothing is wrong with $COMMIT_SHA; re-run this script at the new head." >&2
 	else
 		echo "deploy: CI run $RUN_ID failed (exit $ci_status) — aborting before rollout." >&2
 	fi
