@@ -130,7 +130,7 @@ the index, not as `≠` then `<`. That is deliberate: it makes a NaN distance ke
 input order, which is what V8 does (a comparator returning NaN is read as 0). -/
 def rankStations (stations : Array NearbyStation) (prefer : Option String := none) :
     Array NearbyStation :=
-  let keyed := (Array.range stations.size).map fun i => (stations[i]!, i)
+  let keyed := stations.mapIdx fun i s => (s, i)
   (keyed.toList.mergeSort fun a b =>
     let ta := stationTier a.1 prefer
     let tb := stationTier b.1 prefer
@@ -174,15 +174,16 @@ and can resolve to the wrong station.
 
 A zero-duration hop (duplicate timestamps) is still a teleport, so its implied
 speed is `+∞` rather than a division by zero. -/
-def findBlackoutHop (fixes : Array Fix) : Option (Nat × Nat) := Id.run do
-  if fixes.isEmpty then return none
-  let first := fixes[0]!
-  let last := fixes[fixes.size - 1]!
+def findBlackoutHop (fixes : Array Fix) : Option (Fin fixes.size × Fin fixes.size) :=
+  if h0 : fixes.size = 0 then none else Id.run do
+  have hne : 0 < fixes.size := by omega
+  let first := fixes[0]
+  let last := fixes[fixes.size - 1]
   let netM := haversineMeters first.lat first.lon last.lat last.lon
   if netM ≤ 0 then return none
   let mut bestM : Float := 0
   let mut bestS : Int := 0
-  let mut bestEnd : Nat := 0
+  let mut bestEnd : Fin fixes.size := ⟨0, hne⟩
   let mut totalM : Float := 0
   for hm_i : i in [1:fixes.size] do
     have hb_i : i < fixes.size := hm_i.upper
@@ -191,13 +192,13 @@ def findBlackoutHop (fixes : Array Fix) : Option (Nat × Nat) := Id.run do
     if d > bestM then
       bestM := d
       bestS := fixes[i].ts - fixes[i - 1].ts
-      bestEnd := i
+      bestEnd := ⟨i, hb_i⟩
   if bestM / netM < TUBE_HOP_BLACKOUT_MIN_SHARE then return none
   let impliedKmh := if bestS > 0 then bestM / Float.ofInt bestS * 3.6 else (1.0 / 0.0)
   if impliedKmh < TUBE_HOP_BLACKOUT_MIN_KMH then return none
   let surfaceS := last.ts - first.ts - bestS
   let surfaceKmh := if surfaceS > 0 then (totalM - bestM) / Float.ofInt surfaceS * 3.6 else 0
-  return if surfaceKmh ≤ TUBE_HOP_SURFACE_MAX_KMH then some (bestEnd - 1, bestEnd) else none
+  return if surfaceKmh ≤ TUBE_HOP_SURFACE_MAX_KMH then some (⟨bestEnd.val - 1, by omega⟩, bestEnd) else none
 
 /-! ## `upgradeTubeHops` -/
 
@@ -221,18 +222,18 @@ def upgradeTubeHops (segments : Array Seg) (points : Array Fix)
       if prevIsTrain || nextIsTrain then seg
       else
         let fixes := samplesInWindow points seg.startTs seg.endTs
-        if fixes.size < 2 then seg
+        if hf : fixes.size < 2 then seg
         else
           let slow := seg.avgSpeed < TUBE_HOP_MIN_AVG_KMH
           let blackout := if slow then findBlackoutHop fixes else none
           if slow && blackout.isNone then seg
           else
             let board := match blackout with
-              | some (s, _) => fixes[s]!
-              | none => fixes[0]!
+              | some (s, _) => fixes[s]
+              | none => fixes[0]'(by omega)
             let alight := match blackout with
-              | some (_, e) => fixes[e]!
-              | none => fixes[fixes.size - 1]!
+              | some (_, e) => fixes[e]
+              | none => fixes[fixes.size - 1]'(by omega)
             match pickBestStation (stationsLookup board.lat board.lon),
                   pickBestStation (stationsLookup alight.lat alight.lon) with
             | some boardStation, some alightStation =>
@@ -253,7 +254,7 @@ def upgradeTubeHops (segments : Array Seg) (points : Array Fix)
                   { seg with
                     mode := "train"
                     refinedMode := some "train"
-                    wayName := some (if shared.size == 1 then s!"{base} · {shared[0]!}" else base)
+                    wayName := some (if h1 : shared.size = 1 then s!"{base} · {shared[0]'(by omega)}" else base)
                     refinedReason := some
                       (s!"tube hop {if blackout.isSome then "blackout" else "station-pair"}"
                         ++ (match seg.refinedReason with

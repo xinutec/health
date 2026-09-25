@@ -229,31 +229,46 @@ private def appendReason (existing : Option String) (add : String) : String :=
   | some r => if r == "" then add else s!"{r}; {add}"
   | none => add
 
+/-- Step k joins fixes[k] and fixes[k+1]; `ride[k]` is that step at train pace. -/
+private def rideSteps (fixes : Array Fix) : Array Bool :=
+  Array.ofFn (n := fixes.size - 1) fun k =>
+    let a := fixes[k.val]'(by omega)
+    let b := fixes[k.val + 1]'(by omega)
+    let dt := b.ts - a.ts
+    dt > 0 && haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 ≥ CHANGEOVER_RIDE_MIN_KMH
+
+private theorem rideSteps_size (fixes : Array Fix) : (rideSteps fixes).size = fixes.size - 1 := by
+  simp [rideSteps]
+
 /-- The maximal runs of consecutive non-ride steps, as `(from, to)` index pairs
 into the FIX array: `ride[from] … ride[to-1]` are all false, so the run spans
 fix `from` through fix `to`. A run still open at the end closes at `ride.size`,
-which is the last fix — so `to` indexes a fix in every case. -/
-private def stillRuns (ride : Array Bool) : Array (Nat × Nat) :=
-  let (runs, opened) := (List.range ride.size).foldl
-    (init := ((#[] : Array (Nat × Nat)), (none : Option Nat)))
+which is the last fix — so `to` indexes a fix in every case, which the bound
+`ride.size + 1` carries to the reader. -/
+private def stillRuns (ride : Array Bool) : Array (Fin (ride.size + 1) × Fin (ride.size + 1)) :=
+  let (runs, opened) := (List.finRange ride.size).foldl
+    (init := ((#[] : Array (Fin (ride.size + 1) × Fin (ride.size + 1))), (none : Option (Fin (ride.size + 1)))))
     fun (runs, opened) k =>
-      if ride[k]! then
+      if ride[k] then
         match opened with
-        | some s => (runs.push (s, k), none)
+        | some s => (runs.push (s, ⟨k, by omega⟩), none)
         | none => (runs, none)
       else
         match opened with
         | some _ => (runs, opened)
-        | none => (runs, some k)
+        | none => (runs, some ⟨k, by omega⟩)
   match opened with
-  | some s => runs.push (s, ride.size)
+  | some s => runs.push (s, ⟨ride.size, by omega⟩)
   | none => runs
 
 /-- The platform walk: the LONGEST still run BY DURATION, with its span.
 First-wins on a tie, mirroring the TS's strict `>` against a `-1` seed. -/
-private def platformRun (fixes : Array Fix) (ride : Array Bool) : Option (Nat × Nat × Int) :=
+private def platformRun (fixes : Array Fix) (ride : Array Bool) (h : ride.size < fixes.size) :
+    Option (Fin fixes.size × Fin fixes.size × Int) :=
   (stillRuns ride).foldl (init := none) fun best (f, t) =>
-    let span := fixes[t]!.ts - fixes[f]!.ts
+    let f : Fin fixes.size := ⟨f, by omega⟩
+    let t : Fin fixes.size := ⟨t, by omega⟩
+    let span := fixes[t].ts - fixes[f].ts
     match best with
     | some (_, _, bs) => if span > bs then some (f, t, span) else best
     | none => if span > -1 then some (f, t, span) else none
@@ -264,36 +279,33 @@ Sequential by construction: the head branch moves the NEXT leg's start, and that
 leg is the `prev` of a window two indices on, so each step reads the array the
 previous ones left. Hence a fold over indices rather than a map. -/
 private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Array Seg :=
-  let walk := out[i]!
-  let prev := out[i-1]!
-  let next := out[i+1]!
+  -- A window off either end of the array is not this shape: declined.
+  match out[i-1]?, out[i]?, out[i+1]? with
+  | some prev, some walk, some next =>
   if effectiveMode walk != "walking" then out
   else if !isStationPairTrain prev || !isStationPairTrain next then out
   else
     -- `samplesInWindow`, inclusive at both ends — spelled out because the shared
     -- one is typed to `SegmentMerge.Fix` and this pass reads the absorbers'.
     let fixes := points.filter fun p => p.ts ≥ walk.startTs && p.ts ≤ walk.endTs
-    if fixes.size < 4 then out else
-    -- Step k joins fixes[k] and fixes[k+1]. `ride[k]` is that step at train pace.
-    let ride : Array Bool := (Array.range (fixes.size - 1)).map fun k =>
-      let a := fixes[k]!
-      let b := fixes[k+1]!
-      let dt := b.ts - a.ts
-      dt > 0 && haversineMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6 ≥ CHANGEOVER_RIDE_MIN_KMH
+    if hf : fixes.size < 4 then out else
+    let ride := rideSteps fixes
     if !ride.any id then out else -- nothing stranded — an honest walk
-    match platformRun fixes ride with
+    have hr : (rideSteps fixes).size < fixes.size := by rw [rideSteps_size]; omega
+    match platformRun fixes (rideSteps fixes) hr with
     | none => out
     | some (bestFrom, bestTo, bestS) =>
       if bestS < CHANGEOVER_PLATFORM_MIN_S then out else
-      let net (a b : Nat) : Float :=
-        haversineMeters fixes[a]!.lat fixes[a]!.lon fixes[b]!.lat fixes[b]!.lon
-      let tailM := if bestFrom > 0 then net 0 bestFrom else 0
-      let headM := if bestTo < fixes.size - 1 then net bestTo (fixes.size - 1) else 0
+      let net (a b : Fin fixes.size) : Float :=
+        haversineMeters fixes[a].lat fixes[a].lon fixes[b].lat fixes[b].lon
+      let lastFix : Fin fixes.size := ⟨fixes.size - 1, by omega⟩
+      let tailM := if bestFrom.val > 0 then net ⟨0, by omega⟩ bestFrom else 0
+      let headM := if bestTo.val < fixes.size - 1 then net bestTo lastFix else 0
       let takeTail := tailM ≥ CHANGEOVER_RIDE_MIN_M
       let takeHead := headM ≥ CHANGEOVER_RIDE_MIN_M
       if !takeTail && !takeHead then out else
-      let walkStart := if takeTail then fixes[bestFrom]!.ts else walk.startTs
-      let walkEnd := if takeHead then fixes[bestTo]!.ts else walk.endTs
+      let walkStart := if takeTail then fixes[bestFrom].ts else walk.startTs
+      let walkEnd := if takeHead then fixes[bestTo].ts else walk.endTs
       if walkEnd - walkStart < CHANGEOVER_PLATFORM_MIN_S then out else
       -- EXCLUSIVE upper bound, unlike the `samplesInWindow` that read the fixes:
       -- the recount is `>= from && < to`, so a boundary point falls to one side
@@ -332,6 +344,7 @@ private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Ar
             refinedReason := some (appendReason walk.refinedReason
               "changeover window: trimmed to the platform change (#444)") }
           (Verified.Geo.RailAbsorbers.windowStats points walkStart walkEnd (excludeStart := true)))
+  | _, _, _ => out
 
 /-- A changeover window is `[ride tail][platform walk][ride head]`, and only the
 middle is a walk (#444).
