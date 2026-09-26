@@ -67,6 +67,21 @@ def durationLogProbFull (obs : Array ObsRow) (pref : Array Float)
   TrainHopDuration.trainHopDurationLogProb s d.toFloat covered fit minForMode trainMin
     + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
 
+/-- `durationLogProbFull` with the per-mode prior handed in as `base` — see
+    `TrainHopDuration.trainHopDurationLogProbFrom`. -/
+def durationLogProbFrom (obs : Array ObsRow) (pref : Array Float)
+    (s : State) (d segEnd : Nat) (covered : Bool) (trainMin base : Float)
+    (segEvidenceOn : Bool) : Float :=
+  TrainHopDuration.trainHopDurationLogProbFrom s d.toFloat covered trainMin base
+    + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
+
+theorem durationLogProbFull_eq (obs : Array ObsRow) (pref : Array Float)
+    (s : State) (d segEnd : Nat) (covered : Bool)
+    (fit : GammaFit) (minForMode trainMin : Float) (segEvidenceOn : Bool) :
+    durationLogProbFull obs pref s d segEnd covered fit minForMode trainMin segEvidenceOn
+      = durationLogProbFrom obs pref s d segEnd covered trainMin
+          (Duration.logDurationProb d.toFloat fit minForMode) segEvidenceOn := rfl
+
 /-- `transitionLogProb = transition(from,to) (+ chainContext)`, with the
     `t === −∞ ⇒ −∞` short-circuit (a hard-zero transition stays hard-zero; the
     chain penalty is never added to it). The base transition carries the

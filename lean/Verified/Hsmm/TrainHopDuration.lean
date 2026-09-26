@@ -38,6 +38,22 @@ def trainHopDurationLogProb (s : State) (d : Float) (covered : Bool)
   if s.mode == .train && lineIsNamed s.lineName && d < trainMin && covered then 0.0
   else logDurationProb d fit minForMode
 
+/-- `trainHopDurationLogProb` with the per-mode prior handed in. Everything but
+    the relaxation is independent of the segment END, so a caller walking `e`
+    computes `base = logDurationProb d fit minForMode` once per `(s, d)` and
+    finishes each `e` from it (#1774: the duration tensor was ~60 % of the model
+    build, one gamma log-pdf per cell). `trainHopDurationLogProb_eq` is the
+    exactness: the two are the same term. -/
+def trainHopDurationLogProbFrom (s : State) (d : Float) (covered : Bool)
+    (trainMin base : Float) : Float :=
+  if s.mode == .train && lineIsNamed s.lineName && d < trainMin && covered then 0.0
+  else base
+
+theorem trainHopDurationLogProb_eq (s : State) (d : Float) (covered : Bool)
+    (fit : GammaFit) (minForMode trainMin : Float) :
+    trainHopDurationLogProb s d covered fit minForMode trainMin
+      = trainHopDurationLogProbFrom s d covered trainMin (logDurationProb d fit minForMode) := rfl
+
 -- Parity with the real closure (fall-through values are the pinned `logDurationProb`).
 private def tr (line : Option String) : State := ⟨.train, none, line⟩
 private def gf (a b : Float) : GammaFit := ⟨a, b, 10⟩

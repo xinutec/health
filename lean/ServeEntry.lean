@@ -1005,10 +1005,13 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
   let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
   for (rep, cls) in reps.zipIdx do
     for d0 in [0:maxD] do
-      let qRef := match quant (Verified.Hsmm.Assemble.durAt c rep (d0 + 1) assembleRefE) with
+      -- The gamma prior once per (class, d); each `e` adds only the relaxation
+      -- and the segment evidence (`durAt_eq_durAtFrom`, #1774).
+      let base := Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
+      let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
         | some v => qiOf v | none => 0
       for e in [0:T] do
-        let qE := match quant (Verified.Hsmm.Assemble.durAt c rep (d0 + 1) e) with
+        let qE := match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) e base) with
           | some v => qiOf v | none => 0
         let delta := qE - qRef
         if delta.natAbs > halfOB then throw s!"dur delta {delta} exceeds halfOB {halfOB}"

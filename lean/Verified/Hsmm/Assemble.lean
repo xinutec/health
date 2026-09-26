@@ -164,6 +164,30 @@ def durAt (c : ModelContext) (s d e : Nat) : Float :=
     (baselineFit st.mode) (Duration.minDurationByMode st.mode) (Duration.minDurationByMode .train)
     c.segEvidenceOn
 
+/-- The half of `durAt` that does not depend on the segment end: the state
+    mode's duration prior at `d`. One per `(s, d)`; `durAtFrom` finishes each
+    `e` from it. `durAt_eq_durAtFrom` says the split is exact (#1774). -/
+def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
+  match c.states[s]? with
+  | none => negInf
+  | some st =>
+    Duration.logDurationProb d.toFloat (baselineFit st.mode) (Duration.minDurationByMode st.mode)
+
+/-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
+    segment evidence are resolved at `e`. -/
+def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
+  match c.states[s]? with
+  | none => negInf
+  | some st =>
+  let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
+  Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
+    (Duration.minDurationByMode .train) base c.segEvidenceOn
+
+theorem durAt_eq_durAtFrom (c : ModelContext) (s d e : Nat) :
+    durAt c s d e = durAtFrom c s d e (durPriorBase c s d) := by
+  unfold durAt durAtFrom durPriorBase
+  cases c.states[s]? <;> rfl
+
 /-- `transition(a, b, obs[t])` — static prior + chain context (with the `−∞`
     short-circuit), chain penalty resolved over the model + place coords. -/
 def transAt (c : ModelContext) (a b t : Nat) : Float :=
