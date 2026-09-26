@@ -56,6 +56,7 @@ open Verified.Geo.TubeHop (NearbyStation)
 open Verified.Geo.SegmentMerge (Seg)
 open Verified.Geo.Factors (NearbyWay)
 open Verified.Geo.SegmentUtil (WindowStats statsOverWindow)
+open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm)
 
 /-- Shortest underground run worth carving out (s). Below this, a stray pair of
 coarse fixes in an ordinary walk is just noise. -/
@@ -425,6 +426,75 @@ private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart t
         refinedReason := some s!"underground reconstruction (change of trains at {leg.alightingStation})" }
     | none => withLeg
 
+/-! ## Network stills — a position the phone kept while the person moved
+
+Underground, a phone with no sky can still answer a location request from a
+stored Wi-Fi fingerprint, and it reports that position with GPS-grade accuracy.
+On 2026-05-15 the Jubilee ride Baker Street → Green Park spent six minutes at one
+spot 38 m from a Bond Street entrance, accuracy 23–27, moving 1–8 m a minute;
+the same spot, to the metre, recurs on 2026-06-16 for 100 s. Accuracy cannot
+tell it from a stay. Its arrival and departure can: the fix before it is 1.7 km
+away 100 s earlier and the fix after it 1.2 km away a minute later. Nobody
+stands still somewhere they reached and left at 60 km/h — the person was on a
+train and the phone was not measuring.
+
+Such a cluster is GPS-dark for this pass whatever it claims, and it is
+`MIN_RUN_DURATION_S` or longer by construction — shorter ones sit inside a
+moving host that the accuracy-based window already carves, and the corpus
+holds two dozen of those inside reconstructed rides today. -/
+
+/-- A still cluster's extent: every fix within this of its first. -/
+def NETWORK_STILL_RADIUS_M : Float := 60
+/-- The step into and out of the cluster must cover this much ground… -/
+def NETWORK_STILL_TELEPORT_M : Float := 500
+/-- …at a pace no walk explains: `TubeHop`'s blackout floor. -/
+def NETWORK_STILL_TELEPORT_KMH : Float := Verified.Geo.TubeHop.TUBE_HOP_BLACKOUT_MIN_KMH
+/-- Cadence at or above which the still was STOOD IN, not ridden through. A
+    phone in a tunnel counts no steps; a person at a café counter inside the
+    station counts some (2026-07-16 14:47 local: coffee inside King's Cross
+    between two rides read 10–40 steps a minute, and the first cut of this
+    predicate swallowed it into the train). No step data reads as none taken. -/
+def NETWORK_STILL_MAX_SPM : Float := 5
+
+private def pairKmh (a b : CoarseFix) : Float :=
+  let dt := b.ts - a.ts
+  if decide (dt ≤ 0) then 1.0 / 0.0 else equirectMeters a.lat a.lon b.lat b.lon / Float.ofInt dt * 3.6
+
+private def isTeleport (a b : CoarseFix) : Bool :=
+  decide (equirectMeters a.lat a.lon b.lat b.lon ≥ NETWORK_STILL_TELEPORT_M)
+    && decide (pairKmh a b ≥ NETWORK_STILL_TELEPORT_KMH)
+
+/-- The fixes of every network still in the day: a run of `MIN_RUN_DURATION_S`
+    or more within `NETWORK_STILL_RADIUS_M` of its first fix, entered by a
+    teleport and left by one. Time order; each fix belongs to at most one run. -/
+def networkStillFixes (fixes : Array CoarseFix) (steps : List FeasibilityStepPoint) :
+    Array CoarseFix := Id.run do
+  let sorted := (fixes.toList.mergeSort fun a b => a.ts ≤ b.ts).toArray
+  let mut out : Array CoarseFix := #[]
+  let mut i := 0
+  -- `i` only ever advances, so `sorted.size` is the exact trip count.
+  for _ in [0:sorted.size] do
+    if hi : i < sorted.size then
+      let a := sorted[i]
+      let mut j := i
+      for _ in [0:sorted.size] do
+        if hj : j + 1 < sorted.size then
+          if decide (equirectMeters a.lat a.lon sorted[j + 1].lat sorted[j + 1].lon ≤ NETWORK_STILL_RADIUS_M)
+          then j := j + 1 else break
+        else break
+      if hj : j < sorted.size then
+        let last := sorted[j]
+        let enteredBy := if h0 : 0 < i then isTeleport (sorted[i - 1]'(by omega)) a else false
+        let leftBy := if h1 : j + 1 < sorted.size then isTeleport last sorted[j + 1] else false
+        let stoodIn := match meanCadenceSpm steps a.ts last.ts with
+          | some c => decide (c ≥ NETWORK_STILL_MAX_SPM)
+          | none => false
+        if j > i && decide (last.ts - a.ts ≥ MIN_RUN_DURATION_S) && enteredBy && leftBy && !stoodIn then
+          out := out ++ sorted.extract i (j + 1)
+      i := j + 1
+    else break
+  return out
+
 /--
 Find underground runs hiding inside the day's segments and carve them out as
 their own `train` segments.
@@ -437,20 +507,36 @@ shorter than `MIN_SIDE_DURATION_S` are absorbed so the train covers the host's
 full span with no slivers.
 -/
 def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
-    (points : Array Shed.PointF)
+    (points : Array Shed.PointF) (steps : List FeasibilityStepPoint)
     (stationsLookup : Float → Float → Array NearbyStation)
     (linesLookup : Float → Float → Array String)
     (waysLookup : Float → Float → Array NearbyWay)
     (servedLookup : String → Array Verified.Geo.LineMembership.ServedStation) : Array Seg :=
-  let good := rawFixes.filter isGood
+  -- A network still is dark whatever accuracy it claims (see the section above):
+  -- out of `good`, into the dark stream, and coarse for the reconstruction so
+  -- the station it sits at can corroborate the line.
+  let stills := networkStillFixes rawFixes steps
+  let isStill (f : CoarseFix) : Bool := stills.any fun s => s.ts == f.ts
+  let isDark (f : CoarseFix) : Bool := isUndergroundSignal f || isStill f
+  let asCoarse (f : CoarseFix) : CoarseFix :=
+    if isStill f then { f with accuracy := some COARSE_ACCURACY_M } else f
+  let good := rawFixes.filter fun f => isGood f && !isStill f
   -- Every GPS-dark fix of the day, in order — the stream a host's run is grown
   -- back out into once the host has established there IS a ride.
-  let darkFixes := ((rawFixes.filter isUndergroundSignal).toList.mergeSort
+  let darkFixes := (((rawFixes.filter isDark).map asCoarse).toList.mergeSort
     fun a b => a.ts ≤ b.ts).toArray
   segments.foldl (init := #[]) fun result host =>
-    if host.mode == "stationary" || alreadyRail host then result.push host else
-    let hostDark := ((rawFixes.filter fun f =>
-      f.ts ≥ host.startTs && f.ts ≤ host.endTs && isUndergroundSignal f).toList.mergeSort
+    -- A stay is left alone — unless it holds a network still. Then the
+    -- segmenter cut a stationary out of six minutes of a phone reporting one
+    -- stored position from a tunnel, and the stay is the phantom (2026-05-15's
+    -- hotel where the Jubilee hop belongs). What the stay held BEFORE the still
+    -- may be real — 2026-07-16's coffee inside King's Cross, then the platform,
+    -- then the ride — so the side pieces survive, unnamed (below).
+    let hostIsStill := host.mode == "stationary"
+      && stills.any fun f => f.ts ≥ host.startTs && f.ts ≤ host.endTs
+    if (host.mode == "stationary" && !hostIsStill) || alreadyRail host then result.push host else
+    let hostDark := (((rawFixes.filter fun f =>
+      f.ts ≥ host.startTs && f.ts ≤ host.endTs && isDark f).map asCoarse).toList.mergeSort
         fun a b => a.ts ≤ b.ts).toArray
     let runs := clusterRuns hostDark good
     -- The journey is the longest-spanning run that clears the bar.
@@ -518,23 +604,36 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
         -- `checkModeKinematics` rejects. A changeover long enough to stand alone
         -- becomes its own segment in the host's mode; below MIN_SIDE_DURATION_S
         -- the midpoint split stands, because the rides have to meet somewhere.
+        -- A still host's side pieces are what the stay was before and after
+        -- the tunnel — the coffee inside the station, the platform — and they
+        -- keep nothing the phantom was named from: no place, no way, and a
+        -- centroid of their OWN fixes (the host's sat in the tunnel). The
+        -- passes that own platform waits and stay names take them from here.
+        let ownPiece (a b : Int) (piece : Seg) : Seg :=
+          if !hostIsStill then piece else
+          let inside := points.filter fun q => q.ts ≥ a && q.ts ≤ b
+          let n := Float.ofNat inside.size
+          { piece with
+              place := none, city := none, wayName := none
+              centroidLat := if inside.isEmpty then none else some ((inside.foldl (fun acc q => acc + q.lat) 0) / n)
+              centroidLon := if inside.isEmpty then none else some ((inside.foldl (fun acc q => acc + q.lon) 0) / n) }
         let withPre :=
           if keepPre then
             let st := statsOverWindow points host.startTs trainStart
-            result.push { host with
+            result.push (ownPiece host.startTs trainStart { host with
               endTs := trainStart, wayName := sideWayName points host.startTs trainStart host.mode waysLookup
               avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
-              linearity := st.linearity, pointCount := st.pointCount }
+              linearity := st.linearity, pointCount := st.pointCount })
           else result
         let withLegs := legSegments host legs trainStart trainEnd speedKmh runFixes.size
           points waysLookup withPre
         if keepPost then
           -- `excludeStart` again: the tube ride ends at `trainEnd`.
           let st := statsOverWindow points trainEnd host.endTs (excludeStart := true)
-          withLegs.push { host with
+          withLegs.push (ownPiece trainEnd host.endTs { host with
             startTs := trainEnd, wayName := sideWayName points trainEnd host.endTs host.mode waysLookup
             avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
-            linearity := st.linearity, pointCount := st.pointCount }
+            linearity := st.linearity, pointCount := st.pointCount })
         else withLegs
       | _, _ => result.push host
 
@@ -650,7 +749,7 @@ private def servedNothing (_line : String) : Array Verified.Geo.LineMembership.S
 private def run (segments : Array Seg) (fixes : Array CoarseFix)
     (lines : Float → Float → Array String := oneLine)
     (w : Float → Float → Array NearbyWay := ways) : Array Row :=
-  vw (annotateUndergroundRuns segments fixes (track fixes) stations lines w servedNothing)
+  vw (annotateUndergroundRuns segments fixes (track fixes) [] stations lines w servedNothing)
 
 /-- The host untouched. -/
 private def PASS : Array Row := vw #[HOST]
@@ -964,5 +1063,60 @@ private def afterWalk : Seg :=
 #guard run #[] #[] == #[]
 
 end Guards
+
+/-! ### Network stills (2026-05-15) -/
+
+-- The still: 240 s at 2000 m, accuracy 20, entered from 300 m a hundred seconds
+-- earlier (61 km/h) and left for 3600 m (52 km/h). The segmenter cut a stay from
+-- it and named the stay; it is mined as the tunnel, whole.
+private def STILL : Array CoarseFix :=
+  #[fx 1200 2000 (some 20), fx 1260 2005 (some 20), fx 1320 1995 (some 20),
+    fx 1380 2010 (some 20), fx 1440 2000 (some 20)]
+private def STILL_DARK : Array CoarseFix := #[fx 1100 300 (some 200), fx 1550 3600 (some 200)]
+private def STILL_GOOD : Array CoarseFix :=
+  #[fx 500 0 (some 10), fx 700 100 (some 12), fx 900 200 (some 15),
+    fx 1700 3900 (some 15), fx 1900 4000 (some 12), fx 2100 4050 none]
+private def STILL_HOST : Seg :=
+  { HOST with startTs := 1150, endTs := 1550, mode := "stationary", place := some "Phantom Hotel" }
+private def preHost : Seg := { HOST with startTs := 500, endTs := 1150 }
+private def postHost : Seg := { HOST with startTs := 1550, endTs := 2100 }
+
+#guard (networkStillFixes (STILL_GOOD ++ STILL_DARK ++ STILL) []).map (·.ts) == STILL.map (·.ts)
+-- Stood in — steps counted through it — it is a stay inside the station, not the tunnel.
+#guard networkStillFixes (STILL_GOOD ++ STILL_DARK ++ STILL) [⟨1200, 40⟩, ⟨1260, 30⟩, ⟨1320, 20⟩] == #[]
+-- A handful of steps, as a platform wait shows, does not make it one.
+#guard (networkStillFixes (STILL_GOOD ++ STILL_DARK ++ STILL) [⟨1200, 9⟩]).map (·.ts) == STILL.map (·.ts)
+-- Approached at walking pace it is a stay, whatever its exit looked like.
+#guard networkStillFixes (STILL_GOOD ++ #[fx 1100 1950 (some 200), fx 1550 3600 (some 200)] ++ STILL) [] == #[]
+-- Shorter than a run, it is a platform stop inside a ride, not this pass's.
+#guard networkStillFixes (STILL_GOOD ++ STILL_DARK ++ STILL.extract 0 3) [] == #[]
+
+private def stillRide : Row :=
+  { startTs := 1150, endTs := 1550, mode := "train", refinedMode := "train"
+    wayName := "Highbury & Islington → Wembley Park · Victoria Line", place := "", city := ""
+    avgSpeed := 33.3, maxSpeed := 33.3, confidence := 0.6, confidenceMargin := 1.5
+    linearity := 1, pointCount := 0
+    reason := "underground reconstruction (7 coarse fixes on Victoria Line)" }
+#guard run #[preHost, STILL_HOST, postHost] (STILL_GOOD ++ STILL_DARK ++ STILL)
+  == vw #[preHost] ++ #[stillRide] ++ vw #[postHost]
+-- The stay held a real six-minute stop BEFORE the still: the piece before the
+-- tunnel survives as a stay, its name gone with the phantom's (the passes that
+-- name stays and absorb platform waits take it from here).
+private def STAY_THEN_STILL_GOOD : Array CoarseFix :=
+  #[fx 500 0 (some 10), fx 700 100 (some 12), fx 900 200 (some 15),
+    fx 1000 200 (some 15), fx 1040 205 (some 15), fx 1080 200 (some 15),
+    fx 1700 3900 (some 15), fx 1900 4000 (some 12), fx 2100 4050 none]
+private def STAY_HOST : Seg :=
+  { HOST with startTs := 1000, endTs := 1550, mode := "stationary", place := some "Phantom Hotel" }
+private def prePlus : Seg := { HOST with startTs := 500, endTs := 1000 }
+#guard (annotateUndergroundRuns #[prePlus, STAY_HOST, postHost]
+    (STAY_THEN_STILL_GOOD ++ STILL_DARK ++ STILL) (track (STAY_THEN_STILL_GOOD ++ STILL_DARK ++ STILL))
+    [] stations oneLine ways servedNothing).map (fun s => (s.mode, s.startTs, s.endTs, s.place))
+  == #[("walking", 500, 1000, none), ("stationary", 1000, 1080, none), ("train", 1080, 1550, none),
+       ("walking", 1550, 2100, none)]
+-- The same stay, walked into: untouched, place and all.
+#guard run #[preHost, STILL_HOST, postHost]
+    (STILL_GOOD ++ #[fx 1100 1950 (some 200), fx 1550 3600 (some 200)] ++ STILL)
+  == vw #[preHost, STILL_HOST, postHost]
 
 end Verified.Geo.UndergroundAnnotate

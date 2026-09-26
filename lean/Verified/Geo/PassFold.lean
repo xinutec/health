@@ -423,7 +423,7 @@ def passes (e : Env) : Array Pass := #[
   -- SMOOTHED track by the enricher's rule, while the tunnel window is still
   -- mined from the raw one. Two different series, two different questions.
   ("undergroundRail", fun segs =>
-    Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points
+    Verified.Geo.UndergroundAnnotate.annotateUndergroundRuns segs e.rawFixes e.points e.feasSteps
       (fun lat lon => e.nearbyStations lat lon UNDERGROUND_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon UNDERGROUND_LINES_RADIUS_M)
       e.nearbyWays e.servedStations),
