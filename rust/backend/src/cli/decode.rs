@@ -716,6 +716,65 @@ pub(crate) const ROUTE_GRAPH_MARGIN_M: f64 = 1500.0;
 /// The TypeScript's `--days N` default for the warm-cache cron.
 pub(crate) const DECODE_DEFAULT_DAYS: i64 = 14;
 
+/// One `verified_cli decodeprof` child on one request, wrapped in BSD
+/// `time -l` where it exists so the child's CPU time comes back beside its
+/// answer: `(answer, user+sys ms)`. `None` where the wrapper is absent or
+/// prints another shape (GNU `time`), never a guess.
+fn decodeprof(
+    cli: &std::path::Path,
+    req: &serde_json::Value,
+    runs: usize,
+) -> Result<(serde_json::Value, Option<u64>)> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut req = req.clone();
+    req["runs"] = serde_json::json!(runs);
+    let wrapper = std::path::Path::new("/usr/bin/time");
+    let mut cmd = if wrapper.is_file() {
+        let mut c = Command::new(wrapper);
+        c.arg("-l").arg(cli);
+        c
+    } else {
+        Command::new(cli)
+    };
+    let mut child = cmd
+        .arg("decodeprof")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawning {}", cli.display()))?;
+    {
+        let mut stdin = child.stdin.take().context("the child has no stdin")?;
+        stdin.write_all(serde_json::to_string(&req)?.as_bytes())?;
+    }
+    let out = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    anyhow::ensure!(
+        out.status.success(),
+        "decodeprof exited {}:\n{stderr}",
+        out.status
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("decodeprof answer is not JSON")?;
+    // BSD `time`: "        1.23 real         1.10 user         0.05 sys"
+    let cpu = stderr
+        .lines()
+        .find(|l| l.contains(" real ") && l.contains(" user "))
+        .and_then(|l| {
+            let t: Vec<&str> = l.split_whitespace().collect();
+            let field = |k: &str| {
+                t.iter()
+                    .position(|w| *w == k)
+                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|i| t.get(i))
+                    .and_then(|s| s.parse::<f64>().ok())
+            };
+            Some(((field("user")? + field("sys")?) * 1000.0).round() as u64)
+        });
+    Ok((v, cpu))
+}
+
 /// `backend decode-bench [--runs N] [DAY…]` — the HSMM decoder's cost per
 /// frozen day, apart from its model build (#1714).
 ///
@@ -724,13 +783,20 @@ pub(crate) const DECODE_DEFAULT_DAYS: i64 = 14;
 /// together, ~170 s — swings 2× run to run and cannot tell a 10% decoder change
 /// from noise. This runs `verified_cli decodeprof` on each fixture's request,
 /// the request the gate replays, which builds the `PData` once and times
-/// `pDecodeFast` N times on it. The MIN is the decoder's cost; the spread is
-/// the machine's. Compare two arms by swapping `VERIFIED_CLI`, and interleave
-/// them (A/B/A): a neighbour session's build biases both.
+/// `pDecodeFast` N times on it.
 ///
-/// Prints the day, the trellis shape, the build time and the decode
-/// min/median/max, never a coordinate.
+/// Two numbers per day, because the machine is rarely quiet:
+/// * WALL min/median/max of the N decodes — the decoder's cost when nothing
+///   else runs; the spread is the machine's.
+/// * CPU per decode — the child's user+sys with N decodes minus the same child
+///   with none, over N. The build, the parse and the read cancel, and CPU time
+///   barely moves with a neighbour's build where wall doubles (2026-09-25:
+///   load 150 made wall useless and this column is the answer to that).
+///
+/// Compare two arms by swapping `VERIFIED_CLI`, and interleave them (A/B/A).
+/// Prints the day, the trellis shape and the times, never a coordinate.
 pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
+    anyhow::ensure!(runs > 0, "decode-bench needs at least one run");
     let Some(mut names) = decode_fixture::fixture_names()? else {
         anyhow::bail!(
             "no decode corpus at {}",
@@ -743,33 +809,16 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
     }
     let cli = backend::lean_worker::verified_cli_path()?;
     println!(
-        "{:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9}",
-        "day", "T", "S", "maxD", "build ms", "min ms", "med ms", "max ms"
+        "{:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9} {:>11}",
+        "day", "T", "S", "maxD", "build ms", "min ms", "med ms", "max ms", "cpu/dec ms"
     );
-    let mut sum_min = 0u64;
+    let (mut sum_min, mut sum_cpu, mut cpu_days) = (0u64, 0u64, 0usize);
     for name in &names {
-        let mut req = decode_fixture::request(&decode_fixture::read(name)?)?;
-        req["runs"] = serde_json::json!(runs);
-        let mut child = std::process::Command::new(cli)
-            .arg("decodeprof")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-            .with_context(|| format!("spawning {}", cli.display()))?;
-        {
-            use std::io::Write;
-            let mut stdin = child.stdin.take().context("the child has no stdin")?;
-            stdin.write_all(serde_json::to_string(&req)?.as_bytes())?;
-        }
-        let out = child.wait_with_output()?;
-        anyhow::ensure!(
-            out.status.success(),
-            "{name}: decodeprof exited {}",
-            out.status
-        );
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
-            .with_context(|| format!("{name}: decodeprof answer is not JSON"))?;
+        let req = decode_fixture::request(&decode_fixture::read(name)?)?;
+        let (_, cpu0) =
+            decodeprof(cli, &req, 0).with_context(|| format!("{name}: build-only child"))?;
+        let (v, cpu_n) =
+            decodeprof(cli, &req, runs).with_context(|| format!("{name}: {runs}-run child"))?;
         let mut ms: Vec<u64> = v["decodeMs"]
             .as_array()
             .context("decodeMs")?
@@ -782,21 +831,30 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
             ms.len()
         );
         ms.sort_unstable();
+        let cpu = match (cpu0, cpu_n) {
+            (Some(a), Some(b)) => Some(b.saturating_sub(a) / runs as u64),
+            _ => None,
+        };
         let day = name.trim_end_matches(".json");
         println!(
-            "{day:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9}",
+            "{day:<22} {:>5} {:>4} {:>5} {:>9} {:>9} {:>9} {:>9} {:>11}",
             v["T"],
             v["S"],
             v["maxD"],
             v["buildMs"],
             ms[0],
             ms[ms.len() / 2],
-            ms[ms.len() - 1]
+            ms[ms.len() - 1],
+            cpu.map_or_else(|| "n/a".to_string(), |c| c.to_string())
         );
         sum_min += ms[0];
+        if let Some(c) = cpu {
+            sum_cpu += c;
+            cpu_days += 1;
+        }
     }
     println!(
-        "{} day(s), {runs} run(s) each, sum of per-day minima {sum_min} ms",
+        "{} day(s), {runs} run(s) each, sum of per-day wall minima {sum_min} ms, sum of per-day cpu/decode {sum_cpu} ms over {cpu_days} day(s)",
         names.len()
     );
     Ok(())
