@@ -2700,7 +2700,14 @@ abbrev Namer := Float → Float → Int → Int → Option ResolvedPlace
 /-- A held position must last this long to be a stop rather than a crossing. -/
 def DWELL_MIN_S : Int := 240
 /-- How far a fix may sit from the run's mean and still be "here". Observed
-    foot arrivals hold within 1–9 m; a shop's aisles are wider than a kerb. -/
+    foot arrivals hold within 1–9 m; a shop's aisles are wider than a kerb.
+    ⚠ BOTH THRESHOLDS WERE SWEPT on the corpus (2026-09-26, health #1694).
+    40 m is inert: across 45 days it moves one stop's start by a minute on a
+    day with no narrative, and clears no confirmed row — so 30 stands. 180 s
+    is NOT free: with either radius it turns a confirmed walk into a shop stop
+    (2026-06-22 10:34Z) and breaks the 2026-07-06 Work stay, whose GPS wander
+    a later pass used to absorb as a walk and no longer can once a stop is
+    carved out of it. Four minutes stands. -/
 def DWELL_RADIUS_M : Float := 30
 /-- A dwell at a walk's edge is the arrival and departure passes' business. -/
 def DWELL_MIN_REMAINDER_S : Int := 60
