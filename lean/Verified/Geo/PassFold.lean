@@ -595,9 +595,10 @@ def passes (e : Env) : Array Pass := #[
   ("busEvidence", fun segs =>
     Verified.Geo.Bus.annotateBusEvidence segs e.busFixes e.transitStops),
 
-  -- Stronger than the dwell evidence above: anchor a leg's first and last fix
-  -- to a mirrored route's stops and, on a match, name the bus. Catches short
-  -- rides with too few dwells to score.
+  -- Stronger than the dwell evidence above: anchor a leg's boarding wait (or,
+  -- without one, its first fix) and its last fix to a mirrored route's stops
+  -- and, on a match, name the bus. Catches short rides with too few dwells to
+  -- score — a non-stopping bus can emit nothing else.
   ("busRoutes", fun segs =>
     Verified.Geo.Bus.annotateBusRoutes segs e.busFixes e.busRouteCache),
 

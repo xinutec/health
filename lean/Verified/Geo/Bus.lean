@@ -864,12 +864,23 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
         decide (p.ts ≥ seg.startTs) && decide (p.ts ≤ seg.endTs)
       if legFixes.length < 2 then seg
       else
-        let board := legFixes.head!
+        let first := legFixes.head!
         let alight := legFixes.getLast!
+        -- Board where he WAITED, not where the leg's first fix landed. A
+        -- segment's first fix is the pull-away, and on real rides it sits
+        -- 150–250 m past the stop (2026-06-12: 163 m, 06-09: 237 m) against an
+        -- anchor of 120 m — the same journey as 06-16 read `driving` for that
+        -- alone. The wait is the standstill `detectBoardingWait` already finds
+        -- for the evidence pass; it leads the trace so the pull-away stretch
+        -- can corroborate stops too. With no wait the first fix stands.
+        let (board, trace) : LatLon × List LatLon :=
+          match detectBoardingWait points seg.startTs with
+          | some (_, la, lo) => (⟨la, lo⟩, ⟨la, lo⟩ :: legFixes.map fun p => ⟨p.lat, p.lon⟩)
+          | none => (⟨first.lat, first.lon⟩, legFixes.map fun p => ⟨p.lat, p.lon⟩)
         let leg : VehicleLeg :=
-          { board := ⟨board.lat, board.lon⟩
+          { board := board
             alight := ⟨alight.lat, alight.lon⟩
-            trace := legFixes.map fun p => ⟨p.lat, p.lon⟩
+            trace := trace
             speedKmh := some seg.avgSpeed }
         match matchBusRoute leg routes anchorM stopPassM minCoverage with
         | none => seg
@@ -978,6 +989,16 @@ only thing between this fixture and a "bus" named off a single GPS point. -/
              (avgSpeed := 14)] busFixes' [route38]
        == #[{ startTs := 100, endTs := 900, mode := "driving", refinedMode := some "driving",
               vehicleKind := some "bus", wayName := some LABEL, avgSpeed := 14 }]
+
+-- The board end anchors at the BOARDING WAIT when there is one. The leg here
+-- starts one fix late, 250 m down the road from Green Park and past no stop, so
+-- its first fix anchors nothing; the standstill before it sits at the stop.
+private def waitAtStop : List Fix := [⟨0, bd.lat, bd.lon⟩, ⟨50, bd.lat, bd.lon⟩, ⟨95, bd.lat, bd.lon⟩]
+private def lateFixes : List Fix := (stamp traceOnRoute).drop 1
+#guard cells #[rdrive (startTs := 200)] (waitAtStop ++ lateFixes) [route38] == #[(some "bus", some LABEL)]
+-- …and the same leg approached rolling stays a taxi: the anchor came from the
+-- wait, not from a wider radius.
+#guard cells #[rdrive (startTs := 200)] lateFixes [route38] == #[(none, none)]
 
 end RouteAnnotateGuards
 
