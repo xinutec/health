@@ -847,6 +847,17 @@ pub(crate) fn decode_bench(runs: usize, days: &[String]) -> Result<()> {
             ms[ms.len() - 1],
             cpu.map_or_else(|| "n/a".to_string(), |c| c.to_string())
         );
+        // The build's phases, when the binary reports them (#1774): where the
+        // eleven seconds go, before anyone guesses.
+        if let Some(ph) = v
+            .get("buildPhasesMs")
+            .and_then(serde_json::Value::as_object)
+        {
+            println!(
+                "{:<22} build phases ms: emit+entry {} · transitions {} · durations {}",
+                "", ph["emitEntry"], ph["transitions"], ph["durations"]
+            );
+        }
         sum_min += ms[0];
         if let Some(c) = cpu {
             sum_cpu += c;

@@ -919,17 +919,11 @@ private def durClassKey (s : Verified.Hsmm.Emissions.State) : Nat :=
 /-- Reference `segEnd` for the duration baseline (matches TS `REF_E`). -/
 private def assembleRefE : Nat := 720
 
-/-- Build the packed `PData` directly from the assembled model — the in-process
-    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
-    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
-    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
-    (`durBase` at `REF_E` + `durDelta` per class), the compact form the decoder
-    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
-private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : Except String PData := do
-  let T := c.obs.size
-  let S := c.states.size
-  if T > pTMax then throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
-  let halfOB := pOB / 2
+/-- Phase one of the model build: the emission and entry tensors, `T·S` each.
+    The three phases are separate functions so `decodeprof` can time them one at
+    a time (#1774); `buildPData` composes them and nothing else calls them. -/
+private def buildEmitEntry (c : Verified.Hsmm.Assemble.ModelContext) (T S : Nat) :
+    Except String (Array Nat × Array Nat) := do
   let quant := Verified.Hsmm.Quantize.quantize
   let mut emit : Array Nat := Array.replicate (T * S) 0
   let mut entry : Array Nat := Array.replicate (T * S) 0
@@ -937,6 +931,13 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
     for s in [0:S] do
       emit := emit.set! (t * S + s) (← encScore pEB (quant (Verified.Hsmm.Assemble.emitAt c t s)))
       entry := entry.set! (t * S + s) (← encScore pOB (quant (Verified.Hsmm.Assemble.entryAt c t s)))
+  return (emit, entry)
+
+/-- Phase two: the transition base, the override index and the flat override
+    rows — `(transBase, transIdx, transFlat, nRows)`. -/
+private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Nat) :
+    Except String (Array Nat × Array Nat × Array Nat × Nat) := do
+  let quant := Verified.Hsmm.Quantize.quantize
   -- Transitions: the base matrix is time-constant; only chain-context makes a
   -- transition vary with t, and only for structurally chain-eligible pairs
   -- (stay into a place, leave a place into a move, board a named line). Build the
@@ -983,6 +984,13 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
   let mut transIdx : Array Nat := Array.replicate (S * S) nRows  -- sentinel = nRows ⇒ use base
   for ((a, b), i) in ovPairs.zipIdx do
     transIdx := transIdx.set! (a * S + b) i
+  return (transBase, transIdx, transFlat, nRows)
+
+/-- Phase three: the duration base and the per-class deltas —
+    `(durClass, durBase, durDelta)`. -/
+private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD halfOB : Nat) :
+    Except String (Array Nat × Array Nat × Array Nat) := do
+  let quant := Verified.Hsmm.Quantize.quantize
   -- Duration: EXACT class partition by (mode, isNamedTrain).
   let keys : Array Nat := c.states.foldl (fun acc s =>
     let k := durClassKey s; if acc.contains k then acc else acc.push k) #[]
@@ -1005,6 +1013,22 @@ private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : 
         let delta := qE - qRef
         if delta.natAbs > halfOB then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
         durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
+  return (durClass, durBase, durDelta)
+
+/-- Build the packed `PData` directly from the assembled model — the in-process
+    twin of `quantizeModel` + `parseModel`, so `verified_cli` goes raw-inputs →
+    trellis with NO marshalled tensor payload. Transitions are per-`t` dense
+    (`nTB = T`); durations use the `(mode, isNamedTrain)` class factorisation
+    (`durBase` at `REF_E` + `durDelta` per class), the compact form the decoder
+    reads. Scores are finite here (log-probabilities), so no -∞ path arises. -/
+private def buildPData (c : Verified.Hsmm.Assemble.ModelContext) (maxD : Nat) : Except String PData := do
+  let T := c.obs.size
+  let S := c.states.size
+  if T > pTMax then throw s!"T={T} exceeds the verified envelope (T ≤ 2048)"
+  let halfOB := pOB / 2
+  let (emit, entry) ← buildEmitEntry c T S
+  let (transBase, transIdx, transFlat, nRows) ← buildTransitions c T S
+  let (durClass, durBase, durDelta) ← buildDurations c T S maxD halfOB
   return {
     T, S, maxD, halfOB, emit, entry, init := #[]
     transBase, nTB := 1, transIdx, transFlat, nRows
@@ -1043,6 +1067,22 @@ private def decodeProfMain (input : String) : IO UInt32 := do
     match parseAssemble j with
     | .error e => IO.eprintln s!"error: {e}"; return 1
     | .ok (c, maxD) =>
+      -- The three build phases one at a time, then the whole build as the
+      -- decoder gets it; the phases are re-run inside the whole, so
+      -- `buildMs` stays the decoder's own number and the phases sum to it.
+      let (T, S, halfOB) := (c.obs.size, c.states.size, pOB / 2)
+      let p0 ← IO.monoMsNow
+      let ee ← IO.lazyPure fun _ => buildEmitEntry c T S
+      let p1 ← IO.monoMsNow
+      let tr ← IO.lazyPure fun _ => buildTransitions c T S
+      let p2 ← IO.monoMsNow
+      let du ← IO.lazyPure fun _ => buildDurations c T S maxD halfOB
+      let p3 ← IO.monoMsNow
+      -- Sizes, so the phase values are demanded and not merely thunked.
+      let phaseCells : Nat :=
+        (match ee with | .ok (e, _) => e.size | .error _ => 0)
+        + (match tr with | .ok (_, _, f, _) => f.size | .error _ => 0)
+        + (match du with | .ok (_, _, d) => d.size | .error _ => 0)
       let t0 ← IO.monoMsNow
       let built ← IO.lazyPure fun _ => buildPData c maxD
       let t1 ← IO.monoMsNow
@@ -1066,6 +1106,9 @@ private def decodeProfMain (input : String) : IO UInt32 := do
         IO.println (Json.mkObj [
           ("T", Lean.toJson pd.T), ("S", Lean.toJson pd.S), ("maxD", Lean.toJson pd.maxD),
           ("buildMs", Lean.toJson (t1 - t0)),
+          ("buildPhasesMs", Json.mkObj [("emitEntry", Lean.toJson (p1 - p0)),
+            ("transitions", Lean.toJson (p2 - p1)), ("durations", Lean.toJson (p3 - p2)),
+            ("phaseCells", Lean.toJson phaseCells)]),
           ("decodeMs", Json.arr (times.map Lean.toJson)),
           ("best", Json.str best)]).compress
         return 0
