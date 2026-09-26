@@ -968,10 +968,13 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
       for ((dst, _), b) in weighted do
         if chainEligible src dst && !Verified.Hsmm.Transitions.isHardZeroP placeNear src dst then
           let base := baseTransF src dst ws
+          -- The place-anchored boarding penalty once per pair; each minute adds
+          -- only what depends on it (`chainContext` is this composition, #1774).
+          let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           let mut rowr : Array Nat := Array.replicate T 0
           for (o, t) in c.obs.zipIdx do
-            let cv := Verified.Hsmm.RouteModel.chainContext c.edgesByLine c.placeCoords src dst o
-              (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+            let cv := Verified.Hsmm.RouteModel.chainContextFrom c.edgesByLine c.placeCoords src dst o
+              (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts) pb
             rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
           ovPairs := ovPairs.push (a, b)
           transRows := transRows.push rowr

@@ -279,12 +279,33 @@ def isMovingMode : Mode → Bool
   | .walking | .cycling | .driving | .train | .plane => true
   | _ => false
 
-/-- `buildChainContext`'s per-transition verdict, with the fix↔place and
-    anchor↔track distances computed in Lean. `placeCoords` (focus-place
-    centroids) and `isTrainCovered` stay caller-side. -/
-def chainContext (edgesByLine : Std.HashMap String (List LineEdge))
+/-- The place-anchored boarding penalty of a pair, when the pair has one: `toS`
+    a named train line with edges, `fromS` a place with coordinates. It does not
+    depend on the minute, so `buildTransitions` computes it once per pair and
+    hands it to `chainContextFrom` for every `t` (#1774: this distance over the
+    whole line was recomputed 1,440 times per pair). -/
+def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float)) (fromS toS : State) : Option Float :=
+  if toS.mode == .train then
+    match toS.lineName with
+    | some line =>
+      if line == "unknown_rail" then none
+      else match edgesByLine.get? line with
+        | none => none
+        | some lineEdges =>
+          match fromS.placeId, placeCoords.get? (fromS.placeId.getD 0) with
+          | some _, some (plat, plon) =>
+            some (ChainContext.boardingPenalty (minDistToLineM plat plon lineEdges) 0)
+          | _, _ => none
+    | none => none
+  else none
+
+/-- `chainContext` with the pair's place-anchored boarding penalty handed in
+    (`chainPlaceBoard`); `chainContext` is this composition, so the two cannot
+    disagree. -/
+def chainContextFrom (edgesByLine : Std.HashMap String (List LineEdge))
     (placeCoords : Std.HashMap Int (Float × Float))
-    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) : Float :=
+    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) (placeBoard : Option Float) : Float :=
   let slopMinOf := fun (fx : Fix) => (max 0 (o.ts - fx.ts)).toNat.toFloat / 60
   let stayPen := fun (placeId : Int) (fx : Fix) =>
     match placeCoords.get? placeId with
@@ -313,14 +334,23 @@ def chainContext (edgesByLine : Std.HashMap String (List LineEdge))
             | none => 0.0
             | some lineEdges =>
               if isTrainCovered then 0.0
-              else match fromS.placeId, placeCoords.get? (fromS.placeId.getD 0) with
-                | some _, some (plat, plon) => boardAt plat plon 0 lineEdges          -- place anchor
-                | _, _ => match o.prevGpsFix with                                     -- else fix anchor
+              else match placeBoard with
+                | some pb => pb                                                       -- place anchor
+                | none => match o.prevGpsFix with                                     -- else fix anchor
                   | some fx => boardAt fx.lat fx.lon (slopMinOf fx) lineEdges
                   | none => 0.0
         | none => 0.0
       else 0.0
     leaveTerm + boardTerm
+
+/-- `buildChainContext`'s per-transition verdict, with the fix↔place and
+    anchor↔track distances computed in Lean. `placeCoords` (focus-place
+    centroids) and `isTrainCovered` stay caller-side. -/
+def chainContext (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float))
+    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) : Float :=
+  chainContextFrom edgesByLine placeCoords fromS toS o isTrainCovered
+    (chainPlaceBoard edgesByLine placeCoords fromS toS)
 
 -- Parity with the real `buildChainContext` (decisions/values from Node/V8).
 private def ccModel : RouteGraphModel := buildRouteGraphModel #[
