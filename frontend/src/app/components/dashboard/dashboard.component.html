@@ -19,7 +19,7 @@
 		[busy]="dataLoading()"
 		(refresh)="reloadCurrent()"
 		(refreshingChange)="pullRefreshing.set($event)">
- <!-- dev-lint: allow-unstyled-class temporary adoption waiver -- decide: style, rename, or delete -->
+	<!-- dev-lint: allow-unstyled-class a unit-test hook — dashboard.component.spec.ts queries .view-tabs -->
 	<mat-tab-group
 		[selectedIndex]="tabIndex()"
 		(selectedIndexChange)="changeTab($event)"
