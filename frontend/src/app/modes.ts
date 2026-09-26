@@ -71,7 +71,7 @@ export const MODES: Record<DayStateMode, ModeStyle> = {
 	boat: { icon: "directions_boat", label: "Boat", verb: "On a boat", color: "#06b6d4", fill: "rgba(6, 182, 212, 0.25)" },
 	plane: { icon: "flight", label: "Plane", verb: "Flying", color: "#8b5cf6", fill: "rgba(236, 72, 153, 0.25)" },
 	// No observation at all — a GPS gap, not a leg.
-	unknown: { icon: "signal_disconnected", label: "No GPS signal", verb: "No GPS signal", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.12)" },
+	unknown: { icon: "gps_off", label: "No GPS signal", verb: "No GPS signal", color: "#94a3b8", fill: "rgba(120, 120, 120, 0.12)" },
 };
 
 const FALLBACK: ModeStyle = MODES.unknown;

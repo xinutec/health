@@ -54,6 +54,10 @@
               }
             ],
             "styles": [
+              "@fontsource/inter/400.css",
+              "@fontsource/inter/500.css",
+              "@fontsource/inter/600.css",
+              "material-icons/iconfont/filled.css",
               "node_modules/leaflet/dist/leaflet.css",
               "src/styles.scss"
             ],

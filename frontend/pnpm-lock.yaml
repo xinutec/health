@@ -43,6 +43,9 @@ importers:
       '@angular/service-worker':
         specifier: ^22.1.7
         version: 22.1.7(@angular/core@22.1.7(@angular/compiler@22.1.7)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@fontsource/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@types/leaflet':
         specifier: ^1.9.21
         version: 1.9.21
@@ -55,6 +58,9 @@ importers:
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
+      material-icons:
+        specifier: ^1.13.14
+        version: 1.13.14
       ng2-charts:
         specifier: ^10.0.0
         version: 10.0.0(dddd930a0f83a9d07a774ba8c229c158)
@@ -699,6 +705,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/inter@5.3.0':
+    resolution: {integrity: sha512-RofMylZmjlJEfELXeNHFWBRcSs75rGU/6bV2S2jfnvv/3rPXPGe0LgUJTklcHZ9lM4OZmAVFhcJPnACfb91A3g==}
 
   '@harperfast/extended-iterable@1.0.3':
     resolution: {integrity: sha512-sSAYhQca3rDWtQUHSAPeO7axFIUJOI6hn1gjRC5APVE1a90tuyT8f5WIgRsFhhWA7htNkju2veB9eWL6YHi/Lw==}
@@ -2599,6 +2608,9 @@ packages:
   magic-string@1.0.0:
     resolution: {integrity: sha512-CGvjzMN08iv6w1mm4/x3Gh1hLb4VnyRUA15FFpl6CsCIGGoe36k7kY5KNz9QDbSBN5I/fWHM6ZlIkUTa5xdUEA==}
 
+  material-icons@1.13.14:
+    resolution: {integrity: sha512-kZOfc7xCC0rAT8Q3DQixYAeT+tBqZnxkseQtp2bxBxz7q5pMAC+wmit7vJn1g/l7wRU+HEPq23gER4iPjGs5Cg==}
+
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
@@ -3882,6 +3894,8 @@ snapshots:
   '@exodus/bytes@1.15.0': {}
 
   '@exodus/bytes@1.15.2': {}
+
+  '@fontsource/inter@5.3.0': {}
 
   '@harperfast/extended-iterable@1.0.3':
     optional: true
@@ -5549,6 +5563,8 @@ snapshots:
   magic-string@1.0.0:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  material-icons@1.13.14: {}
 
   math-intrinsics@1.1.0: {}
 
