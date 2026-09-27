@@ -6,6 +6,7 @@ import {
 	expectNoHorizontalOverflow,
 	expectViewportIsPhone,
 	expectIconFontLoaded,
+	expectRecoversFromMissingBundle,
 } from "@xinutec/ui-harness";
 
 /**
@@ -160,6 +161,14 @@ test("the suite really runs at phone geometry", async ({ page }) => {
 	await mockApi(page);
 	await page.goto("/");
 	await expectViewportIsPhone(page);
+});
+
+// A service worker can serve an index naming a bundle a later deploy removed, and
+// the app's own recovery is inside that bundle (#1820). The recovery is inline in
+// `src/index.html`; this is the check that it is there and works.
+test("a bundle a deploy removed reloads into the app, not a blank screen", async ({ page }) => {
+	await mockApi(page);
+	await expectRecoversFromMissingBundle(page, "/", "text=Your Day");
 });
 
 test("dashboard Day tab — summary cards + charts: lays out cleanly @ phone width", async ({ page }, testInfo) => {

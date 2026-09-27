@@ -25,7 +25,7 @@
     "@angular/service-worker": "^22.1.7",
     "@fontsource/inter": "^5.3.0",
     "@types/leaflet": "^1.9.21",
-    "@xinutec/ui-harness": "github:xinutec/ui-harness#c57aca71aa6064adefb87263f3c4ce6f74e48606",
+    "@xinutec/ui-harness": "github:xinutec/ui-harness#78efdc56ece941008ee69e810176479c427ce29f",
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",
     "material-icons": "^1.13.14",
