@@ -395,6 +395,8 @@ private structure Boarding where
   lookupLat : Float
   lookupLon : Float
   coord : Option (Float × Float)
+  /-- The boarding node's OSM subtype, when a node named it. -/
+  subtype : Option String
 
 /-- The line suffix for a resolved station pair, or the bare pair.
 
@@ -493,9 +495,9 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
         -- being wrong.
         let apparentKmh := (dM / Float.ofInt dt) * 3.6
         if apparentKmh > BOARDING_NOISE_SPEED_KMH then
-          ⟨some st.name, st.lat, st.lon, stationCoord (some st.station)⟩
-        else ⟨none, slowBefore.lat, slowBefore.lon, none⟩
-      | none => ⟨none, slowBefore.lat, slowBefore.lon, none⟩
+          ⟨some st.name, st.lat, st.lon, stationCoord (some st.station), some st.station.subtype⟩
+        else ⟨none, slowBefore.lat, slowBefore.lon, none, none⟩
+      | none => ⟨none, slowBefore.lat, slowBefore.lon, none, none⟩
     -- Both reads are issued in source order: the boarding one is SKIPPED
     -- outright when the stay already answered.
     let startStationsSlow ← if b0.station.isSome then pure #[]
@@ -503,14 +505,21 @@ def resolveRailRunLabel (env : Env) (run : RailRun) (segments : Array Seg)
     let endStations ← fetchStations env after.lat after.lon
     let b1 : Boarding := if b0.station.isSome then b0 else
       let bestSlow := pickBestStation startStationsSlow
-      ⟨bestSlow.map (·.name), b0.lookupLat, b0.lookupLon, stationCoord bestSlow⟩
+      ⟨bestSlow.map (·.name), b0.lookupLat, b0.lookupLon, stationCoord bestSlow,
+        bestSlow.map (·.subtype)⟩
     -- Back-compat: `slowBefore` resolved to nothing but a preceding stay did.
     -- Covers the original "rider noisy at the platform" case from before the
     -- velocity gate existed.
     let b : Boarding := match b1.station, stay with
-      | none, some st => ⟨some st.name, st.lat, st.lon, stationCoord (some st.station)⟩
+      | none, some st =>
+        ⟨some st.name, st.lat, st.lon, stationCoord (some st.station), some st.station.subtype⟩
       | _, _ => b1
-    let bestEnd := pickBestStation endStations
+    -- A ride boarded at a tube node alights at one: at a shared site the
+    -- mainline node can be nearer (2026-08-13, "London King's Cross" 19 m
+    -- against the King's Cross St Pancras tube node) and on distance alone it
+    -- names a Victoria line ride after a terminus that line does not reach.
+    let preferEnd := b.subtype.filter (· == "subway")
+    let bestEnd := pickBestStation endStations preferEnd
     match b.station, bestEnd with
     | some startStation, some bestEnd =>
       -- Same station at both ends: probably hanging around one station rather
@@ -1018,7 +1027,10 @@ private def segsS23 : Array Seg := #[
   { startTs := 1100, endTs := 1300, mode := "train", refinedMode := none, refinedReason := none, refinedKinds := #[], wayName := none, confidence := 0.8, confidenceMargin := 2.0, avgSpeed := 40.0, maxSpeed := 60.0, linearity := 0.9, pointCount := 10 }]
 private def fixesS23 : Array Fix := #[⟨1000, 51.5, (-38.1), 2.0⟩, ⟨1060, 51.5, (-38.1), 2.0⟩, ⟨1120, 51.505, (-38.1), 45.0⟩, ⟨1180, 51.515, (-38.1), 50.0⟩, ⟨1240, 51.53, (-38.1), 50.0⟩, ⟨1300, 51.5395, (-38.1), 20.0⟩, ⟨1360, 51.5404, (-38.0975), 2.0⟩, ⟨1420, 51.5404, (-38.0975), 2.0⟩]
 #guard outOf segsS23 fixesS23 == #[(1100, 1300, "Ayton → Ceeford · Alpha Line", "train", "", "", #[], 0.8, 2.0, 40.0, 60.0, 0.9, 10)]
-#guard traceOf segsS23 fixesS23 == #[.stations 51.5 (-38.1), .stations 51.5404 (-38.0975), .lines 51.5 (-38.1), .lines 51.5404 (-38.0975), .lines 51.5 (-38.1), .lines 51.5405 (-38.096), .lines 51.54 (-38.1)]
+-- Boarded at a tube node, the alight prefers one: the sweep still runs (the
+-- reacquire fix is off-corridor) but tries Ceeford first and never asks about
+-- the mainline node.
+#guard traceOf segsS23 fixesS23 == #[.stations 51.5 (-38.1), .stations 51.5404 (-38.0975), .lines 51.5 (-38.1), .lines 51.5404 (-38.0975), .lines 51.5 (-38.1), .lines 51.54 (-38.1)]
 
 -- A run with NO fix at or before its start resolves nothing — no boarding
 -- fix, no label, and the segment still collapses to train.

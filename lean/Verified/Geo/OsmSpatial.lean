@@ -98,11 +98,16 @@ def STATION_SUBTYPES : Array String := #["station", "subway_entrance", "halt", "
 private def tag (r : PointRow) (k : String) : Option String :=
   (r.tags.find? fun kv => kv.1 == k).map (·.2)
 
-/-- `deriveStationSubtype`. An entrance keeps its own subtype so the picker can
-deprioritise it — OSM labels entrance nodes "A", "B", "C", and one would
+/-- `deriveStationSubtype`. An entrance and a platform stop keep their own
+subtypes so the picker can deprioritise them — OSM labels entrance nodes "A", "B", "C", and one would
 otherwise beat the real station node on distance for a passing fix. -/
 def deriveStationSubtype (r : PointRow) : String :=
   if r.subtype == "subway_entrance" then "subway_entrance"
+  -- A `railway=stop` is a platform position, not the station: `stationTier`
+  -- ranks it below every station node. Read as "rail" it was a mainline
+  -- station, and at King's Cross a platform 19 m off outranked the tube
+  -- station 119 m off (2026-08-13, "Victoria → London King's Cross").
+  else if r.subtype == "stop" then "stop_position"
   else if tag r "station" == some "subway" then "subway"
   else if tag r "station" == some "light_rail" then "light_rail"
   else if tag r "tram" == some "yes" || r.subtype == "tram_stop" then "tram"
@@ -123,7 +128,8 @@ sharing one name, so a naive keep-closest picks the ENTRANCE — and the caller
 then filters that out as entrance-like, deleting the station from the result
 entirely and letting a further-away station win by default. Hence the asymmetry:
 a station-typed record beats an entrance-typed one REGARDLESS of distance, and
-distance only decides between records of the same kind.
+distance only decides between records of the same kind. Two STATION records of
+different subtypes are both kept.
 
 Unnamed features are dropped outright.
 
@@ -139,7 +145,13 @@ def dedupeStationsByName (scored : Array ScoredPoint) : Array NearbyStation := I
       let cand : NearbyStation :=
         { name := nm, subtype := deriveStationSubtype s.row, distanceM := s.distanceM
           lat := s.row.lat, lon := s.row.lon }
-      match best.findFinIdx? (·.name == nm) with
+      -- Same name AND same kind collapse. Two station records of different
+      -- subtypes are two stations at one site — King's Cross St Pancras is a
+      -- tube node and a mainline node — and keeping only the nearer lost the
+      -- tube one, so a tube ride could not prefer it (2026-08-13).
+      let entrance := fun (x : NearbyStation) => x.subtype == "subway_entrance"
+      match best.findFinIdx? (fun b => b.name == nm &&
+          (b.subtype == cand.subtype || entrance b || entrance cand)) with
       | none =>
         best := best.push cand
       | some i =>
@@ -240,6 +252,20 @@ private def NAMED : Array (String × String × Float) :=
 -- the same-kind distance rule, which only shows through where no station
 -- outranks the entrances.
 #guard approxD NAMED[0]!.2.2 9.002446540603552
+
+-- The King's Cross shape: a mainline platform stop nearest, a tube platform stop
+-- next, the tube station and the mainline station further out. Platforms come
+-- back as `stop_position` beside their stations, not in place of them, so the
+-- picker's platform tier can rank them below both.
+private def SHARED : Array PointRow :=
+  #[pr 20 "stop" (some "Main Cross") (QLAT + 19 / MDEG) QLON,
+    pr 21 "stop" (some "Cross Tube") (QLAT + 32 / MDEG) QLON,
+    pr 22 "station" (some "Cross Tube") (QLAT + 119 / MDEG) QLON #[("station", "subway")],
+    pr 23 "station" (some "Main Cross") (QLAT + 129 / MDEG) QLON]
+private def SHARED_NAMED : Array (String × String) :=
+  (nearbyStations SHARED QLAT QLON 400).map fun s => (s.name, s.subtype)
+#guard SHARED_NAMED == #[("Main Cross", "stop_position"), ("Cross Tube", "stop_position"),
+  ("Cross Tube", "subway"), ("Main Cross", "rail")]
 
 end SpatialGuards
 
