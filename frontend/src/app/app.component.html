@@ -1,6 +1,7 @@
-<mat-toolbar color="primary" class="toolbar">
-	<span class="title">Health@if (mode() === "share") { (shared) }</span>
-	<span class="spacer"></span>
+<!-- The bar every app draws (`@xinutec/ui-scaffold`): the app's name at the root,
+     an arrow up and the screen's name below it, from the route. What it holds is
+     on every screen. -->
+<ui-scaffold [title]="mode() === 'share' ? 'Health (shared)' : 'Health'">
 	@if (health.user(); as user) {
 		<span class="user-name">{{ user.displayName }}</span>
 		@if (mode() !== "share") {
@@ -23,7 +24,7 @@
 			</form>
 		}
 	}
-</mat-toolbar>
+</ui-scaffold>
 
 @if (mode() !== "share") {
 	<app-reauth-banner></app-reauth-banner>

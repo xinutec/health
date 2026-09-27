@@ -24,7 +24,8 @@ import { SettingsComponent } from "./components/settings/settings.component";
  */
 export const routes: Routes = [
 	{ path: "", pathMatch: "full", component: DashboardComponent },
-	{ path: "share/:token", component: DashboardComponent },
-	{ path: "settings", component: SettingsComponent },
+	// The dashboard a share link opens: a main screen of its own, with no parent.
+	{ path: "share/:token", component: DashboardComponent, data: { top: true } },
+	{ path: "settings", component: SettingsComponent, data: { up: { path: "/", label: "Back to dashboard" } } },
 	{ path: "**", redirectTo: "" },
 ];

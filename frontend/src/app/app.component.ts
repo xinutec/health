@@ -6,8 +6,8 @@ import { SwUpdates } from "./sw-updates";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
-import { MatToolbarModule } from "@angular/material/toolbar";
 import { MatTooltipModule } from "@angular/material/tooltip";
+import { Scaffold } from "@xinutec/ui-scaffold";
 import { ReauthBannerComponent } from "./components/reauth-banner/reauth-banner.component";
 import { HealthService } from "./services/health.service";
 import { installErrorReporting } from "./client-diagnostics";
@@ -23,7 +23,7 @@ type AppMode = "dashboard" | "settings" | "share";
 	selector: "app-root",
 	standalone: true,
 	imports: [
-		MatToolbarModule,
+		Scaffold,
 		MatButtonModule,
 		MatIconModule,
 		MatSnackBarModule,

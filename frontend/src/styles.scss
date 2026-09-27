@@ -110,3 +110,13 @@ button.danger {
 mat-icon {
 	flex-shrink: 0;
 }
+
+// The scaffold's bar (`@xinutec/ui-scaffold`), edge-to-edge (viewport-fit=cover):
+// its surface fills the status-bar strip and its content drops below it.
+// height:auto overrides mat-toolbar's fixed height; min-height folds in the inset
+// so the content keeps its full height below the status bar.
+ui-scaffold mat-toolbar {
+	height: auto;
+	min-height: calc(64px + var(--safe-top, 0px));
+	padding-top: var(--safe-top, 0px);
+}

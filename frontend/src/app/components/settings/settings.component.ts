@@ -9,7 +9,7 @@ import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
 import { MatSlideToggleModule } from "@angular/material/slide-toggle";
 import { MatSnackBar, MatSnackBarModule } from "@angular/material/snack-bar";
 import { MatTooltipModule } from "@angular/material/tooltip";
-import { RouterLink } from "@angular/router";
+import { scaffoldTitle } from "@xinutec/ui-scaffold";
 import { errorText } from "../../narrow";
 import { HealthService } from "../../services/health.service";
 
@@ -41,7 +41,6 @@ import { HealthService } from "../../services/health.service";
 		MatSlideToggleModule,
 		MatSnackBarModule,
 		MatTooltipModule,
-		RouterLink,
 	],
 	templateUrl: "./settings.component.html",
 	changeDetection: ChangeDetectionStrategy.OnPush,
@@ -56,6 +55,11 @@ export class SettingsComponent implements OnInit {
 	/** Editable day-window for an ALREADY-active share — seeded from the
 	 *  loaded status so "Update days" can change it without rotating. */
 	readonly editDays = signal(7);
+
+	constructor() {
+		// The bar names the screen and draws the arrow up (the route declares it).
+		scaffoldTitle(() => "Settings");
+	}
 
 	ngOnInit(): void {
 		// Angular calls the hook expecting void: an async ngOnInit is never

@@ -7,6 +7,7 @@ import {
 	expectViewportIsPhone,
 	expectIconFontLoaded,
 	expectRecoversFromMissingBundle,
+	expectUpInTheBar,
 } from "@xinutec/ui-harness";
 
 /**
@@ -161,6 +162,17 @@ test("the suite really runs at phone geometry", async ({ page }) => {
 	await mockApi(page);
 	await page.goto("/");
 	await expectViewportIsPhone(page);
+});
+
+// Settings is drilled into from the dashboard: the scaffold's bar draws its arrow
+// up, from the route's declaration, rather than the page drawing its own.
+test("settings has its arrow up in the bar", async ({ page }) => {
+	await mockApi(page);
+	await page.goto("/");
+	await page.getByText("Your Day").waitFor();
+	await page.getByRole("link", { name: "Settings" }).click();
+	await page.waitForURL("**/settings");
+	await expectUpInTheBar(page);
 });
 
 // A service worker can serve an index naming a bundle a later deploy removed, and
