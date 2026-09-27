@@ -237,7 +237,23 @@ def interchangeWalkIsWalked (walk : Seg) (steps : List Verified.Geo.BiometricWin
   if durationSec < 30 then true
   else match Verified.Geo.BiometricWindows.stepsInWindow steps walk.startTs walk.endTs with
     | none => true
-    | some total => (total / Float.ofInt durationSec) * 60 ≥ INTERCHANGE_WALK_MIN_CADENCE_SPM
+    | some _ =>
+      -- A per-minute row covers the minute FROM its stamp, so a row overlapping
+      -- the window counts — the rule `Worldline.meanCadenceSpm` uses. Counting
+      -- only rows stamped inside dropped 2026-07-16's 07:43 minute (104 steps)
+      -- from a Baker Street change that began at 07:43:04, and read 37 spm.
+      let total := steps.foldl (init := 0) fun a sp =>
+        if sp.ts + 60 > walk.startTs && sp.ts < walk.endTs then a + sp.steps else a
+      (total / Float.ofInt durationSec) * 60 ≥ INTERCHANGE_WALK_MIN_CADENCE_SPM
+
+-- 2026-07-16's shape: a change from 64 to 215 s, walked through the minute
+-- stamped 60 (104 steps) and the one stamped 120 (92), then boarded. Overlap
+-- counts both, 78 spm; counting only rows stamped inside read 37 and merged it.
+#guard interchangeWalkIsWalked { startTs := 64, endTs := 215, mode := "walking" }
+  [⟨60, 104⟩, ⟨120, 92⟩, ⟨180, 0⟩, ⟨240, 0⟩]
+-- The 13 spm Swiss Cottage shape stays unwalked.
+#guard !interchangeWalkIsWalked { startTs := 0, endTs := 120, mode := "walking" }
+  [⟨0, 19⟩, ⟨60, 7⟩]
 
 /-- Is there a platform-to-platform interchange walk strictly between two
 positions? Such a walk is positive evidence of a train change — but only when

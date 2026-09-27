@@ -646,21 +646,23 @@ private def alightSettle (fixes : Array Fix)
   for hm_i : i in [1 : fixes.size] do
     have hi : i < fixes.size := hm_i.upper
     if stepKmh fixes[i - 1] fixes[i] ≥ ALIGHT_HOP_MIN_KMH then
-      if runStart < 0 then
-        -- A new run after a qualifying one: was the stretch between them walked?
-        if hs : 0 ≤ settle ∧ settle.toNat < fixes.size then
-          let fromTs := fixes[settle.toNat].ts
-          let toTs := fixes[i - 1].ts
-          let walked := match Verified.Geo.Worldline.meanCadenceSpm steps fromTs toTs with
-            | some c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
-            | none => false
-          if toTs - fromTs ≥ CHANGE_MIN_S && walked then
-            change := some (i - 1)
-            break
-        runStart := Int.ofNat i - 1
+      if runStart < 0 then runStart := Int.ofNat i - 1
       let rs := runStart.toNat
       if hrs : rs < fixes.size then
         if fixDist fixes[rs] fixes[i] ≥ ALIGHT_HOP_MIN_DIST_M then
+          -- A NEW qualifying run after an earlier one: was the stretch between
+          -- them walked? Judged only once the run covers a hop — a jog along
+          -- the platform is fast for a step or two and goes nowhere, and cutting
+          -- there started 07-16's second ride while he was still walking.
+          if hs : 0 ≤ settle ∧ settle.toNat < rs then
+            let fromTs := fixes[settle.toNat].ts
+            let toTs := fixes[rs].ts
+            let walked := match Verified.Geo.Worldline.meanCadenceSpm steps fromTs toTs with
+              | some c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
+              | none => false
+            if toTs - fromTs ≥ CHANGE_MIN_S && walked then
+              change := some rs
+              break
           settle := Int.ofNat i
           settleRunSteps := i - rs
     else
@@ -692,7 +694,11 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
     (pairVeto : String → String → Bool := fun _ _ => false) : Array Seg := Id.run do
   let mut out := segments
   if out.isEmpty then return out
-  for k in [0 : out.size - 1] do
+  -- The bound is taken once, and a walked change INSERTS two segments, so it
+  -- covers three times the input: each train adds at most two. Taken as
+  -- `out.size - 1` it stopped two short and 2026-07-16's afternoon ride was never
+  -- anchored. Indices past the end fall out at the `out[k]?` reads.
+  for k in [0 : 3 * out.size] do
     let some train := out[k]? | continue
     if effectiveMode train != "train" then continue
     match parseRailWayName train.wayName with
@@ -1489,6 +1495,22 @@ private def walkedSteps : List Verified.Geo.Worldline.FeasibilityStepPoint :=
   == #[(0, 320, some "Wembley Park → Great Portland Street",
         some "alight re-anchored to Great Portland Street (walk's leading hop reached it) — reclaimed a 311 m hop the GPS blackout left in the walk (was alighting Nowhere)"),
        (320, 600, none, none)]
+-- A LATER train on the same day is still anchored after a change inserted two
+-- segments ahead of it: its walk's leading hop reaches Euston Square.
+#guard (alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600,
+    aseg 600 650 "stationary", atrain 650 700 (some "Nowhere → Baker Street"), awalk 700 900]
+    (changeWalk ++ #[f 700 51.5059, f 760 51.5006, f 820 51.5007, f 880 51.5008]) walkedSteps).map
+    (fun (a, b, n, _) => (a, b, n))
+  == #[(0, 160, some "Wembley Park → Baker Street"), (160, 280, some "Baker Street (interchange)"),
+       (280, 320, some "Baker Street → Great Portland Street"), (320, 600, none), (600, 650, none),
+       (650, 760, some "Nowhere → Euston Square"), (760, 900, none)]
+-- A jog along the platform inside the stop is fast for one step and goes
+-- nowhere: the second ride boards where the real hop starts, not at the jog.
+#guard (alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600]
+    #[f 100 51.5, f 160 51.5059, f 220 51.506, f 230 51.50665, f 280 51.5067, f 320 51.5028, f 400 51.5029, f 500 51.503]
+    walkedSteps).map (fun (a, b, n, _) => (a, b, n))
+  == #[(0, 160, some "Wembley Park → Baker Street"), (160, 280, some "Baker Street (interchange)"),
+       (280, 320, some "Baker Street → Great Portland Street"), (320, 600, none)]
 -- Walked, but under a minute: a stroll along the platform, not a change.
 #guard (alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600]
     #[f 100 51.5, f 160 51.5059, f 190 51.506, f 210 51.5061, f 250 51.5028, f 400 51.5029, f 500 51.503]
