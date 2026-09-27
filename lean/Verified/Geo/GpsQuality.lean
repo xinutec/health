@@ -99,13 +99,69 @@ def walk (points : Array GpsPoint) (anchor : GpsPoint) (kept : Array GpsPoint) (
   else kept
 termination_by points.size - i
 
+/-! ### Frozen fixes — a position the phone kept while the person moved
+
+Underground, a phone with no sky re-reports its LAST position, identical to
+centimetres, while the accuracy it attaches to it swings. 2026-07-16 07:41: five
+fixes 270 m from Finchley Road, 20 → 122 m accuracy, entered from 1.5 km away a
+hundred seconds earlier and left for Baker Street 3.2 km away a minute later;
+read as positions they surfaced a Jubilee ride at Finchley Road and invented an
+alight there. Accuracy cannot tell the run from a stay — an indoor sit reports
+the same shape — but the jumps can: nobody is still somewhere they reached and
+left at 60 km/h. Indoor frozen runs (measured across 45 days: the library, Work,
+the hospital) are entered and left by metres.
+
+The run is dropped BEFORE the anchor walk, with the accuracy-disclaimed fixes:
+kept, it would anchor the walk itself. Identity of coordinates is the test here,
+not a still radius — a café stop varies by metres, a re-report does not — so no
+cadence is needed at this stage. -/
+
+/-- Fixes within this of the run's first fix are the same re-reported position. -/
+def FROZEN_RADIUS_M : Float := 2
+/-- A run this long or longer; two fixes half a minute apart already say it. -/
+def FROZEN_MIN_S : Int := 30
+/-- The step into and out of the run: this far… -/
+def FROZEN_JUMP_M : Float := 500
+/-- …at least this fast. The tube-hop blackout floor, restated here so this
+    module judges by its own constants ([[TubeHop]] is downstream of it). -/
+def FROZEN_JUMP_KMH : Float := 25
+
+private def isJump (a b : GpsPoint) : Bool :=
+  decide (distanceM a b ≥ FROZEN_JUMP_M) && decide (impliedSpeedKmh a b ≥ FROZEN_JUMP_KMH)
+
+/-- Timestamps of every frozen run entered and left by a jump. Time order is
+    taken from the input, as the walk takes it. -/
+def frozenJumpRunTs (points : Array GpsPoint) : Array Int := Id.run do
+  let mut out : Array Int := #[]
+  let mut i := 0
+  -- `i` only advances, so `points.size` is the exact trip count.
+  for _ in [0:points.size] do
+    if hi : i < points.size then
+      let a := points[i]
+      let mut j := i
+      for _ in [0:points.size] do
+        if hj : j + 1 < points.size then
+          if decide (distanceM a points[j + 1] ≤ FROZEN_RADIUS_M) then j := j + 1 else break
+        else break
+      if hj : j < points.size then
+        let last := points[j]
+        let enteredBy := if h0 : 0 < i then isJump (points[i - 1]'(by omega)) a else false
+        let leftBy := if h1 : j + 1 < points.size then isJump last points[j + 1] else false
+        if j > i && decide (last.ts - a.ts ≥ FROZEN_MIN_S) && enteredBy && leftBy then
+          out := out ++ (points.extract i (j + 1)).map (·.ts)
+      i := j + 1
+    else break
+  return out
+
 /-- Drop incoherent GPS runs; surviving fixes in input order. Fixes the phone
 itself disclaims go first, before anything reasons from them — including before
 the walk can make one an anchor, a bridge, or the thing a later fix is judged
-"unreachable" from. -/
+"unreachable" from; then the frozen runs it kept while moving (above). -/
 def qualityFilterGps (input : Array GpsPoint) : Array GpsPoint :=
-  let points := input.filter fun p =>
+  let informative := input.filter fun p =>
     match p.accuracy with | some acc => decide (acc ≤ ACCURACY_UNINFORMATIVE_M) | none => true
+  let frozen := frozenJumpRunTs informative
+  let points := informative.filter fun p => !frozen.contains p.ts
   if h : points.size ≤ 2 then points else walk points points[0] #[points[0]] 1
 
 /-! ### What the filter can never do
@@ -153,12 +209,12 @@ theorem mem_of_mem_qualityFilterGps {input : Array GpsPoint} {p : GpsPoint}
   unfold qualityFilterGps at hp
   simp only at hp
   split at hp
-  · exact (Array.mem_filter.1 hp).1
+  · exact (Array.mem_filter.1 (Array.mem_filter.1 hp).1).1
   · rcases mem_of_mem_walk hp with hk | hpts
     · simp only [Array.mem_singleton] at hk
       subst hk
-      exact (Array.mem_filter.1 (Array.getElem_mem _)).1
-    · exact (Array.mem_filter.1 hpts).1
+      exact (Array.mem_filter.1 (Array.mem_filter.1 (Array.getElem_mem _)).1).1
+    · exact (Array.mem_filter.1 (Array.mem_filter.1 hpts).1).1
 
 -- Parity with the real `qualityFilterGps` (kept-set ts from Node/V8): teleport
 -- (t=20) and a poor-accuracy tube run (t=100) dropped; poor-accuracy jitter
@@ -175,6 +231,30 @@ private def track : Array GpsPoint := #[
 
 #guard (qualityFilterGps track).map (·.ts) == #[0, 10, 30, 40, 160, 170, 180, 190]
 #guard (qualityFilterGps #[gp 0 51.5 (-38.1) 20, gp 10 51.5 (-38.1) 20]).size == 2  -- ≤2 pass through
+
+-- A frozen run — three identical fixes over 60 s, accuracy 20 → 122 — entered
+-- from 1.7 km away in 100 s and left for 2.2 km away in 40 s: not a position.
+private def frozenBracketed : Array GpsPoint := #[
+  gp 0 51.5 (-38.1) 10, gp 100 51.505 (-38.1) 15,
+  gp 200 51.52 (-38.1) 20, gp 230 51.52 (-38.1) 60, gp 260 51.52 (-38.1) 122,
+  gp 300 51.54 (-38.1) 30, gp 400 51.541 (-38.1) 20]
+#guard frozenJumpRunTs frozenBracketed == #[200, 230, 260]
+#guard (qualityFilterGps frozenBracketed).map (·.ts) == #[0, 100, 300, 400]
+-- The same run walked into (110 m in the 100 s before it) is a stop: kept whole.
+private def frozenWalkedInto : Array GpsPoint :=
+  frozenBracketed.set! 1 (gp 100 51.519 (-38.1) 15)
+#guard frozenJumpRunTs frozenWalkedInto == #[]
+-- (the exit jump at t=300 is still the walk's own teleport to condemn; what this
+-- pins is that the run itself is kept)
+#guard [200, 230, 260].all fun t => ((qualityFilterGps frozenWalkedInto).map (·.ts)).contains t
+-- Indoors: identical fixes with swinging accuracy and no jump either side — a sit.
+private def frozenIndoors : Array GpsPoint := #[
+  gp 0 51.52 (-38.1) 10, gp 200 51.52 (-38.1) 20, gp 230 51.52 (-38.1) 60, gp 260 51.52 (-38.1) 122,
+  gp 300 51.5201 (-38.1) 30]
+#guard frozenJumpRunTs frozenIndoors == #[]
+-- Two identical fixes 30 s apart already say it; one alone never does.
+#guard frozenJumpRunTs (frozenBracketed.eraseIdx! 4) == #[200, 230]
+#guard frozenJumpRunTs ((frozenBracketed.eraseIdx! 4).eraseIdx! 3) == #[]
 
 /-! ### Branch guards
 

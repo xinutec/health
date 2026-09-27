@@ -595,8 +595,12 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
         -- Mirror of the alight side: the reclaimed hop belongs to the ride now,
         -- so it must stop counting toward the walk's peak. No `excludeStart` —
         -- nothing precedes this walk's start, only its END moved.
+        -- Re-anchored to another station, the walk no longer ends where its name
+        -- was read, so the pass renames it from its own fixes. Extended to the
+        -- same station it keeps the name: renaming every trimmed walk swapped the
+        -- path walked for the main road beside it on six confirmed rows.
         out := out.set! (k - 1)
-          (applyStats { walk with endTs := boardFix.ts }
+          (applyStats { walk with endTs := boardFix.ts, needsRename := !sameBoard }
             (windowStats points walk.startTs boardFix.ts))
         out := out.set! k
           { train with
@@ -744,8 +748,11 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
         -- peak — the reclaimed blackout hop — long after the fix that produced
         -- it had been handed to the train. `excludeStart` because the ride owns
         -- its arrival fix.
+        -- Re-anchored, the name goes too (the boarding side says why only then):
+        -- 2026-07-16's walk to UCLH kept "Acacia Gardens", read off the St John's
+        -- Wood end of the window this took into the ride.
         out := out.set! (k + 1)
-          (applyStats { walk with startTs := alightFix.ts }
+          (applyStats { walk with startTs := alightFix.ts, needsRename := !sameAlight }
             (windowStats points alightFix.ts walk.endTs (excludeStart := true)))
   return out
 

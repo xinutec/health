@@ -384,6 +384,12 @@ and the rewrite. Named because a divergence is reported against a pass, and an
 index would not survive an insertion. -/
 abbrev Pass := String × (Array Seg → Array Seg)
 
+/-- A segment flagged `needsRename` takes the name its own window derives, and
+nothing else; no name derived means unnamed, never the stale one. -/
+def renameFlagged (e : Env) (s : Seg) : Seg :=
+  if !s.needsRename then s
+  else { s with needsRename := false, wayName := (e.reenrich s).bind (·.wayName) }
+
 /-- The cascade, in execution order. -/
 def passes (e : Env) : Array Pass := #[
   -- A "stay" whose fixes march in a directed line is slow locomotion, not
@@ -545,15 +551,17 @@ def passes (e : Env) : Array Pass := #[
     if !segs.any (fun s => s.needsReenrich || s.needsRename) then segs
     else segs.map fun s =>
       if s.needsReenrich then { (e.reenrich s).getD s with needsReenrich := false }
-      else if !s.needsRename then s
-      else { s with needsRename := false, wayName := (e.reenrich s).bind (·.wayName) }),
+      else renameFlagged e s),
 
   -- When GPS surfaces a stop or two into a tunnel, the reconstruction boards at
   -- the first snappable fix and the walk keeps the stranded first hop — so the
   -- walk line bleeds on to the next station. Re-anchor the boarding to the
   -- station the walk actually reached. Before railJourney, so the corrected
   -- boarding feeds the merge.
-  ("boardingAnchor", fun segs =>
+  --
+  -- Both anchors run after `reenrichSplitWalks`, so each renames the walk it
+  -- trimmed itself.
+  ("boardingAnchor", fun segs => Array.map (renameFlagged e) <|
     Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.absorberFixes
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
@@ -562,7 +570,7 @@ def passes (e : Env) : Array Pass := #[
   -- The mirror on the disembark side: the train closes at the surfaced station
   -- and the ride on to the true alight is stranded as the FAST leading fixes of
   -- the next walk. Extend the train forward and trim the walk.
-  ("alightAnchor", fun segs =>
+  ("alightAnchor", fun segs => Array.map (renameFlagged e) <|
     Verified.Geo.RailAbsorbers.anchorTrainAlightToWalkedStation segs e.absorberFixes e.feasSteps
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
@@ -1123,6 +1131,14 @@ private def flipped (a b : Int) : Seg :=
 #guard !(runNamed MIX "reenrichSplitWalks" #[{ wk 0 600 with needsReenrich := true }])[0]!.needsReenrich
 -- A day with nothing flagged is returned untouched.
 #guard !fires MIX "reenrichSplitWalks" #[wk 0 600]
+
+-- `renameFlagged`: a flagged walk takes its own window's name; a derivation with
+-- no name leaves it unnamed, not holding the stale one; an unflagged walk keeps it.
+private def OWN : Env := { MIX with reenrich := fun s => some { s with wayName := some "Own" } }
+#guard (renameFlagged OWN { wk 0 600 with wayName := some "Stale", needsRename := true }).wayName == some "Own"
+#guard !(renameFlagged OWN { wk 0 600 with wayName := some "Stale", needsRename := true }).needsRename
+#guard (renameFlagged MIX { wk 0 600 with wayName := some "Stale", needsRename := true }).wayName == none
+#guard (renameFlagged OWN { wk 0 600 with wayName := some "Stale" }).wayName == some "Stale"
 
 -- A train run whose route is in the cache gets the track drawn on it.
 #guard fires MIX "railSnap" #[tr 1000 2000 (some "A → B")]

@@ -102,20 +102,24 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// of a walk is a new stay, and a new stay DERIVES a `reverseGeocode` key at
 /// its centroid that the capture never asked — 04-30 and 08-08 each gained
 /// one. The pass and these two entries move together.
-const UNANSWERED_BY_DAY: [(&str, usize); 13] = [
+///
+/// Re-blessed 2026-09-27 with the frozen-fix filter and the anchor rename
+/// (#327): dropped fixes move walk boundaries, and a walk re-anchored to another
+/// station is renamed from its own window — both DERIVE geocode keys the capture
+/// never asked. 05-22, 06-15, 07-17 rose and 08-05, 08-13 joined; the six days
+/// that had already fallen were ratcheted down with them.
+const UNANSWERED_BY_DAY: [(&str, usize); 11] = [
     ("2026-04-30", 1),
-    ("2026-05-11", 2),
-    ("2026-05-22", 1),
-    ("2026-05-25", 1),
-    ("2026-06-09", 2),
-    ("2026-06-12", 1),
-    ("2026-06-15", 1),
+    ("2026-05-11", 1),
+    ("2026-05-22", 2),
+    ("2026-06-15", 3),
     ("2026-06-18", 2),
-    ("2026-06-24", 2),
+    ("2026-06-24", 1),
     ("2026-07-10", 1),
-    ("2026-07-17", 1),
-    ("2026-08-06", 1),
+    ("2026-07-17", 3),
+    ("2026-08-05", 1),
     ("2026-08-08", 2),
+    ("2026-08-13", 1),
 ];
 
 fn ceiling_for(date: &str) -> usize {
