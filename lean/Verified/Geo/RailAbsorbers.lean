@@ -622,21 +622,42 @@ def ALIGHT_HOP_MIN_KMH : Float := 15
 /-- The leading fast run must cover a real inter-station distance. -/
 def ALIGHT_HOP_MIN_DIST_M : Float := 250
 
+/-- A slow stretch between two fast runs this long or longer, walked at
+pedestrian cadence, is a change of trains. -/
+def CHANGE_MIN_S : Int := 60
+
 /-- The index of the fix the train should close at, plus how many consecutive
 fast steps backed it.
 
-The LAST qualifying run — never the first — because GPS routinely "sticks" at an
-intermediate surfaced station (a slow cluster) while the train keeps going. Note
-there is no `break` here and no `split < 0` test on the update: every qualifying
-run overwrites the previous one. -/
-private def alightSettle (fixes : Array Fix) : Int × Nat := Id.run do
+The LAST qualifying run, not the first, because GPS routinely "sticks" at an
+intermediate surfaced station (a slow cluster) while the train keeps going: every
+qualifying run overwrites the previous one — until a slow stretch between two
+runs was WALKED. A stick is sat through on the train; a change of trains is
+walked between platforms. 2026-07-16's Baker Street: 171 s at 92–104 steps a
+minute, then on to Euston Square. 2026-06-29's Met through Baker Street and Great
+Portland Street: a two-minute stick with no steps at all. No step data at all
+reads as no change. -/
+private def alightSettle (fixes : Array Fix)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint) : Int × Nat × Option Nat := Id.run do
   let mut settle : Int := -1
   let mut settleRunSteps : Nat := 0
   let mut runStart : Int := -1
+  let mut change : Option Nat := none
   for hm_i : i in [1 : fixes.size] do
     have hi : i < fixes.size := hm_i.upper
     if stepKmh fixes[i - 1] fixes[i] ≥ ALIGHT_HOP_MIN_KMH then
-      if runStart < 0 then runStart := Int.ofNat i - 1
+      if runStart < 0 then
+        -- A new run after a qualifying one: was the stretch between them walked?
+        if hs : 0 ≤ settle ∧ settle.toNat < fixes.size then
+          let fromTs := fixes[settle.toNat].ts
+          let toTs := fixes[i - 1].ts
+          let walked := match Verified.Geo.Worldline.meanCadenceSpm steps fromTs toTs with
+            | some c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM)
+            | none => false
+          if toTs - fromTs ≥ CHANGE_MIN_S && walked then
+            change := some (i - 1)
+            break
+        runStart := Int.ofNat i - 1
       let rs := runStart.toNat
       if hrs : rs < fixes.size then
         if fixDist fixes[rs] fixes[i] ≥ ALIGHT_HOP_MIN_DIST_M then
@@ -644,7 +665,7 @@ private def alightSettle (fixes : Array Fix) : Int × Nat := Id.run do
           settleRunSteps := i - rs
     else
       runStart := -1
-  return (settle, settleRunSteps)
+  return (settle, settleRunSteps, change)
 
 /-- Re-anchor an underground train's ALIGHT to the station the following walk's
 leading hop reached — the mirror of `anchorTrainBoardingToWalkedStation`.
@@ -685,7 +706,7 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
       if k + 2 < out.size && (match out[k + 2]? with | some s => effectiveMode s == "train" | none => false) then continue
       let fixes := samplesInWindow points walk
       if fixes.size < 3 then continue
-      let (settle, settleRunSteps) := alightSettle fixes
+      let (settle, settleRunSteps, change) := alightSettle fixes steps
       -- Same vacuity as the boarding side: `settle` is -1 or an `i ≥ 1`.
       if settle < 1 then continue
       let some alightFix := fixes[settle.toNat]? | continue
@@ -754,6 +775,41 @@ def anchorTrainAlightToWalkedStation (segments : Array Seg) (points : Array Fix)
         out := out.set! (k + 1)
           (applyStats { walk with startTs := alightFix.ts, needsRename := !sameAlight }
             (windowStats points alightFix.ts walk.endTs (excludeStart := true)))
+        -- A walked change (`alightSettle`): the fast run after it is the next
+        -- ride, boarded where the walking ended and alighted where that run
+        -- settles. The walk splits in three: the change, the ride, the rest.
+        -- Unlabelled by line — which of the lines at the pair ran is not
+        -- evidenced here. The change walk carries `railJourney`'s interchange
+        -- name, the evidence that keeps it from welding the two rides back into
+        -- one on a line serving all three stations; the rest is renamed.
+        match change with
+        | none => pure ()
+        | some j =>
+          let rest := fixes.extract j fixes.size
+          let (s2, _, _) := alightSettle rest steps
+          match rest[s2.toNat]?, rest[0]? with
+          | some alight2, some board2 =>
+            if s2 ≥ 1 then
+              match pickBestStation (stationsLookup alight2.lat alight2.lon) with
+              | some st2 =>
+                if st2.name != station.name then
+                  let dwell := board2.ts - alightFix.ts
+                  let changeWalk := applyStats
+                    { walk with startTs := alightFix.ts, endTs := board2.ts, needsRename := false
+                                wayName := some s!"{station.name} (interchange)" }  -- `RailJourney.INTERCHANGE_WALK_SUFFIX`, which imports this module
+                    (windowStats points alightFix.ts board2.ts (excludeStart := true))
+                  let ride2 := applyStats
+                    { train with
+                        startTs := board2.ts, endTs := alight2.ts
+                        wayName := some s!"{station.name} → {st2.name}"
+                        refinedReason := some s!"change of trains at {station.name}: {dwell} s walked between two rides" }
+                    (windowStats points board2.ts alight2.ts)
+                  let tail := applyStats
+                    { walk with startTs := alight2.ts, needsRename := true }
+                    (windowStats points alight2.ts walk.endTs (excludeStart := true))
+                  out := ((out.set! (k + 1) changeWalk).insertIdx! (k + 2) ride2).insertIdx! (k + 3) tail
+              | none => pure ()
+          | _, _ => pure ()
   return out
 
 /-! ## Guards (V8 reference values) -/
@@ -1408,5 +1464,34 @@ live arm. -/
 #guard alight #[atrain (-600) 0 (WP "Euston Square" ""), awalk 0 180] alightWalk
     (pairVeto := fun _ _ => true)
   == #[(-600, 0, some "Wembley Park → Euston Square", none), (0, 180, none, none)]
+
+
+/-! ### A walked change of trains (`alightSettle`'s `change`) -/
+
+-- Surfaced, a fast hop to Baker Street, two minutes there, a fast hop on to
+-- Great Portland Street, then walking.
+private def changeWalk : Array Fix :=
+  #[f 100 51.5, f 160 51.5059, f 220 51.506, f 280 51.5061, f 320 51.5028, f 400 51.5029, f 500 51.503]
+private def walkedSteps : List Verified.Geo.Worldline.FeasibilityStepPoint :=
+  [⟨180, 100⟩, ⟨240, 100⟩]
+-- Walked at 100 steps a minute: the first ride ends at Baker Street, the stop is
+-- an interchange walk, and the second hop is its own ride.
+#guard alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600] changeWalk walkedSteps
+  == #[(0, 160, some "Wembley Park → Baker Street",
+        some "alight re-anchored to Baker Street (walk's leading hop reached it) — reclaimed a 656 m hop the GPS blackout left in the walk (was alighting Nowhere)"),
+       (160, 280, some "Baker Street (interchange)", none),
+       (280, 320, some "Baker Street → Great Portland Street",
+        some "change of trains at Baker Street: 120 s walked between two rides"),
+       (320, 600, none, none)]
+-- No steps in the stop — sat through on the train, or no pedometer — and the
+-- last run wins as before: one ride to Great Portland Street.
+#guard alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600] changeWalk
+  == #[(0, 320, some "Wembley Park → Great Portland Street",
+        some "alight re-anchored to Great Portland Street (walk's leading hop reached it) — reclaimed a 311 m hop the GPS blackout left in the walk (was alighting Nowhere)"),
+       (320, 600, none, none)]
+-- Walked, but under a minute: a stroll along the platform, not a change.
+#guard (alight #[atrain 0 100 (some "Wembley Park → Nowhere"), awalk 100 600]
+    #[f 100 51.5, f 160 51.5059, f 190 51.506, f 210 51.5061, f 250 51.5028, f 400 51.5029, f 500 51.503]
+    [⟨170, 100⟩]).size == 2
 
 end Verified.Geo.RailAbsorbers
