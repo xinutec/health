@@ -381,6 +381,10 @@ def attachStayCentroids (segments : Array Seg) (fixes : Array Fix) : Array Seg :
 def INTRA_PLACE_WALK_MAX_S : Int := 12 * 60
 def INTRA_PLACE_SAME_SPOT_M : Float := 75
 def INTRA_PLACE_FOOTPRINT_M : Float := 120
+/-- Two stays at the same NAMED place this far apart are two parts of it — a
+hospital's clinic and its radiotherapy, 149 m apart on 2026-07-16 — when the
+walk between them never leaves `INTRA_PLACE_FOOTPRINT_M` of one or the other. -/
+def INTRA_PLACE_TWO_PARTS_M : Float := 2 * INTRA_PLACE_FOOTPRINT_M
 
 /-- A stay's canonical centre: its attached centroid, else the mean of its
 in-window fixes. -/
@@ -408,12 +412,18 @@ def absorbIntraPlaceWalk (segments : Array Seg) (fixes : Array Fix) : Array Seg 
         else if !(prev.place.any (· != "")) || prev.place != next.place then seg
         else match stayCentroid fixes prev, stayCentroid fixes next with
           | some (pLat, pLon), some (nLat, nLon) =>
-            if haversineMeters pLat pLon nLat nLon > INTRA_PLACE_SAME_SPOT_M then seg
+            let apart := haversineMeters pLat pLon nLat nLon
+            if apart > INTRA_PLACE_TWO_PARTS_M then seg
             else
               let win := samplesInWindow fixes seg.startTs seg.endTs
               if win.isEmpty then seg
               else
-                let maxD := win.foldl (fun acc p => max acc (haversineMeters pLat pLon p.lat p.lon)) 0
+                -- The same spot: never beyond the footprint of the stay it
+                -- returns to. Two parts: never beyond the footprint of either.
+                let fromStay (p : Fix) : Float :=
+                  if apart ≤ INTRA_PLACE_SAME_SPOT_M then haversineMeters pLat pLon p.lat p.lon
+                  else min (haversineMeters pLat pLon p.lat p.lon) (haversineMeters nLat nLon p.lat p.lon)
+                let maxD := win.foldl (fun acc p => max acc (fromStay p)) 0
                 if maxD > INTRA_PLACE_FOOTPRINT_M then seg
                 else
                   let rounded := (Verified.JsNum.toFixed (jsRound maxD) 0).getD "?"
@@ -802,11 +812,16 @@ private def REASON_120 : String :=
 #guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 2 0)) #[⟨650, under120.1, under120.2⟩])[1]!.refinedReason
   == some REASON_120
 #guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 2 0)) #[⟨650, over120.1, over120.2⟩])[1]!.refinedMode == none
--- The SAME-SPOT bar from both sides (`> 75` rejects), plus a clearly-different
--- building at 200 m.
-#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 0 200)) insideFixes)[1]!.refinedMode == none
+-- Past the same spot (`> 75`) the stays are two parts of one place: the walk is
+-- still absorbed while it stays within the footprint of one or the other…
 #guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) under75) insideFixes)[1]!.refinedMode == some "stationary"
-#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) over75) insideFixes)[1]!.refinedMode == none
+#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) over75) insideFixes)[1]!.refinedMode == some "stationary"
+#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 0 200)) insideFixes)[1]!.refinedMode == some "stationary"
+-- …and past `INTRA_PLACE_TWO_PARTS_M` (240 m) they are two places that share a name.
+#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 0 250)) insideFixes)[1]!.refinedMode == none
+-- Two parts, but the walk strays beyond the footprint of both: an excursion.
+#guard (absorbIntraPlaceWalk (intraCase blank (pt 0 0) (pt 0 200))
+    #[⟨650, (pt 0 30).1, (pt 0 30).2⟩, ⟨750, (pt 130 100).1, (pt 130 100).2⟩])[1]!.refinedMode == none
 -- Different places, no place at all, too long, or no fixes: left alone.
 #guard (absorbIntraPlaceWalk
     #[{ blank with
