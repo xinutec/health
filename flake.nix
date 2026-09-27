@@ -62,11 +62,12 @@
 
         # The production Rust binary. It does not link Lean: it spawns the
         # `verified_cli` the image carries beside it (`rust/backend/src/lean_worker.rs`),
-        # so the `lake build` below exists only because `build.rs` runs one to keep
-        # a dev tree honest — an incremental no-op here.
+        # so it builds from `rust/` alone and `build.rs` is told to skip its
+        # dev-tree `lake build` — in a fresh sandbox that was a second full Lean
+        # build, not an incremental no-op. A Lean edit no longer rebuilds this.
         health-bins = pkgs.stdenv.mkDerivation (finalAttrs: {
           name = "health-bins";
-          src = ./.;
+          src = ./rust;
           # Cargo cannot reach the network inside a nix build, so the crates are
           # vendored from rust/Cargo.lock. Bump the hash when a dependency
           # changes; nix prints the correct one on mismatch.
@@ -74,21 +75,18 @@
             src = ./rust;
             hash = "sha256-0eImuzts2VdvP186HWtQPIkCHkQ+8Orscef3YzqgzKg=";
           };
-          cargoRoot = "rust";
           nativeBuildInputs = [
-            pkgs.lean4
             pkgs.cargo
             pkgs.rustc
             pkgs.rustPlatform.cargoSetupHook
           ];
           buildPhase = ''
-            export HOME=$TMPDIR
-            (cd lean && lake build verified_cli)
-            (cd rust && cargo build --release --offline -p backend)
+            export HOME=$TMPDIR HEALTH_BUILD_SKIP_LEAN=1
+            cargo build --release --offline -p backend
           '';
           installPhase = ''
             mkdir -p $out/bin
-            cp rust/target/release/backend $out/bin/
+            cp target/release/backend $out/bin/
           '';
         });
       });

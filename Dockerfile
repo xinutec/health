@@ -8,31 +8,28 @@ FROM nixos/nix:latest AS lean-build
 WORKDIR /src
 COPY flake.nix flake.lock ./
 COPY lean/ lean/
-# ⚠ `verified-cli` BEFORE `COPY rust/`, and that ordering is the whole point of
-# splitting this in two. Its `src = ./lean` (see the flake), so it does not
-# depend on the Rust tree at all — but while it sat under `COPY rust/` every
-# Rust commit invalidated the layer and rebuilt Lean from scratch — a fifth of
-# the stage, paid on nearly every push, for a derivation whose inputs had not
-# changed.
-#
+# `.#verified-cli` takes `src = ./lean` (see the flake), so this stage sees
+# nothing else and a Rust commit leaves its layers cached.
 # Verified rather than assumed: `.#verified-cli` evaluates AND builds with only
 # `flake.nix`, `flake.lock` and `lean/` in the context.
-RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli
-# rust/ AFTER it: `.#health-bins` takes `src = ./.`, so it needs the Rust
-# tree. Its `build.rs` runs `lake build verified_cli` in this tree too, which is
-# an incremental no-op after the stage above.
+RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/vc .#verified-cli && \
+    mkdir -p /export/nix/store /export/bin && \
+    cp -a $(nix-store -qR /tmp/vc) /export/nix/store/ && \
+    install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli
+
+# The Rust backend, in its OWN stage: BuildKit runs it beside `lean-build`, and
+# a Lean commit leaves it cached. `.#health-bins` takes `src = ./rust` and tells
+# `build.rs` to skip its dev-tree `lake build` (`HEALTH_BUILD_SKIP_LEAN`). While
+# the two shared a stage, every Lean change rebuilt the Rust from scratch, after
+# the Lean, and paid a second full Lean build inside it — measured on bebd700:
+# 5.2 min of Lean, then ~10 min for the Rust step.
+FROM nixos/nix:latest AS rust-build
+WORKDIR /src
+COPY flake.nix flake.lock ./
 COPY rust/ rust/
-# Both binaries, and their closures copied ONCE as a union.
-#
-# ⚠ Not two `cp -a $(nix-store -qR result)` calls. The two closures overlap
-# heavily — glibc, gmp, the Lean runtime — and `cp -a` of a store path that is
-# already in the destination descends into a read-only directory instead of
-# skipping it. `nix-store -qR` over both roots already returns each path once,
-# so asking the question once is both correct and cheaper.
 RUN nix --extra-experimental-features 'nix-command flakes' build --out-link /tmp/bins .#health-bins && \
     mkdir -p /export/nix/store /export/bin && \
-    cp -a $(nix-store -qR /tmp/vc /tmp/bins) /export/nix/store/ && \
-    install -m755 /tmp/vc/bin/verified_cli /export/bin/verified_cli && \
+    cp -a $(nix-store -qR /tmp/bins) /export/nix/store/ && \
     install -m755 /tmp/bins/bin/backend /export/bin/backend
 
 FROM node:24-alpine AS frontend-build
@@ -56,12 +53,15 @@ COPY --from=frontend-build /app/dist/frontend/browser public/
 # The verified core + its /nix/store runtime closure. `bin/backend` SPAWNS it
 # (`verified_cli serve`, one NDJSON request per line) and every Lean decision
 # crosses that pipe; `VERIFIED_CLI` is how the backend finds it (#1709).
+# Both closures into one store. They overlap (glibc and friends): a path
+# present in both arrives twice with identical content, which COPY overwrites.
 COPY --from=lean-build /export/nix/store /nix/store/
+COPY --from=rust-build /export/nix/store /nix/store/
 COPY --from=lean-build /export/bin/verified_cli lean/verified_cli
 ENV VERIFIED_CLI=/app/lean/verified_cli
 # The Rust HTTP server (#982), and the ONLY server — there is no
 # `dist/server.js` beside it, so a rollback means building one first.
-COPY --from=lean-build /export/bin/backend bin/backend
+COPY --from=rust-build /export/bin/backend bin/backend
 # Commit stamp, surfaced at /api/version and in the UI footer so a stale
 # client/deploy is visible at a glance. Injected by .github/workflows/docker.yml.
 ARG GIT_SHA=dev

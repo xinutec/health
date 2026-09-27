@@ -7,14 +7,20 @@
 //! today's Rust. Production sets `VERIFIED_CLI` and never reaches the path
 //! baked here.
 //!
-//! ⚠ Works inside the nix sandbox: `health-bins` has `pkgs.lean4` in
-//! `nativeBuildInputs` and runs the same `lake build` in its `buildPhase`, so
-//! this is an incremental no-op there rather than a second build.
+//! ⚠ SKIPPED in the image build: `health-bins` sets `HEALTH_BUILD_SKIP_LEAN`.
+//! A nix sandbox starts empty, so the `lake build` here was not an incremental
+//! no-op there but a second full Lean build — about five minutes of every
+//! Lean-changing CI run — for a path production never reads (the image ships
+//! the separate `verified-cli` package and sets `VERIFIED_CLI`).
 
 use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=HEALTH_BUILD_SKIP_LEAN");
+    if std::env::var_os("HEALTH_BUILD_SKIP_LEAN").is_some() {
+        return;
+    }
     let lean_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lean");
     let out = Command::new("lake")
         .args(["build", "verified_cli"])
