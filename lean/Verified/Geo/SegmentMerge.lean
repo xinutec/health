@@ -715,6 +715,23 @@ private def steps (from_ to_ : Int) (perMin : Float) : Array StepPoint :=
 -- A stay with NO place never merges — `prev.place` must be truthy.
 #guard (mergeAdjacentStays
     #[{ home 0 600 with place := none }, { home 660 1200 with place := none }]).size == 2
+-- 09-06's cinema visit (#185 A, verified 2026-09-28): the classifier cuts it
+-- into a 36-min stay, a 4.5-min "walk" the biometric pass reclassifies to
+-- stationary, and a 168-min stay. Both halves resolve to the same venue and the
+-- direct-adjacency merge — which needs EQUAL names — heals it in one pass. The
+-- same shape with the halves named differently, or unnamed, stays cut: that is
+-- where the carve remnant still bites, and why naming a stay heals its split.
+private def cinemaHalf (a b : Int) (name : Option String) : Seg :=
+  { blank with startTs := a, endTs := b, mode := "stationary", place := name, pointCount := 10 }
+private def cinemaJog : Seg :=
+  { blank with startTs := 2160, endTs := 2430, mode := "walking", refinedMode := some "stationary", pointCount := 5 }
+private def cinemaDay (first second : Option String) : Array Seg :=
+  #[cinemaHalf 0 2160 first, cinemaJog, cinemaHalf 2430 12500 second]
+#guard sview (mergeAdjacentStays (cinemaDay (some "YO! Sushi") (some "YO! Sushi")))
+  == #[(0, 12500, "stationary", some "YO! Sushi", 25)]
+#guard (mergeAdjacentStays (cinemaDay (some "YO! Sushi") (some "Cineworld"))).size == 3
+#guard (mergeAdjacentStays (cinemaDay none none)).size == 3
+
 -- effectiveMode: a walk reclassified to stationary merges with its neighbour.
 #guard (mergeAdjacentStays
     #[home 0 600, { home 660 1200 with mode := "walking", refinedMode := some "stationary" }]).size == 1
