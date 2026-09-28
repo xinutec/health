@@ -177,6 +177,9 @@ pub struct Truth {
     /// indistinguishable from having lost everything (#408). Excluded by name.
     reported: BTreeSet<String>,
     ab_rows: BTreeMap<String, Vec<Value>>,
+    /// `TRUTH_ROWS_OUT`: every narrative row with its resolved window, one
+    /// JSON line per date, APPENDED so the shards do not clobber each other.
+    rows_out: Option<String>,
     failures: Vec<String>,
     /// ⚠ INJECTION MAKES THE RUN REPORT-ONLY: a floor graded on injected priors
     /// would enforce against an arm nobody blessed.
@@ -212,6 +215,7 @@ impl Truth {
             standing: BTreeMap::new(),
             reported: BTreeSet::new(),
             ab_rows: BTreeMap::new(),
+            rows_out: std::env::var("TRUTH_ROWS_OUT").ok(),
             failures: Vec::new(),
             report_only,
             tally_v: 0,
@@ -264,6 +268,16 @@ impl Truth {
             "{name}: the verdict list must be positional"
         );
         self.reported.insert(date.to_string());
+        if let Some(path) = &self.rows_out {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .expect("TRUTH_ROWS_OUT opens");
+            writeln!(f, "{}", json!({ "date": date, "rows": narrative.rows }))
+                .expect("TRUTH_ROWS_OUT writes");
+        }
         if std::env::var("VENUE_AB_OUT").is_ok() {
             self.ab_rows.insert(
                 date.to_string(),

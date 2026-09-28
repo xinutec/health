@@ -131,6 +131,9 @@ def CATEGORY_VISIT_CAP : Float := 12
 def BASE_RATE_PSEUDO : Float := 0.5
 def BASE_RATE_MIN_TYPES : Nat := 8
 def NEAR_FIELD_DECISIVE_M : Float := 12
+/-- Near-field dominance needs the candidate's own summed evidence to be at
+    least this — neutral. See the note at `nearField` in `rankVenues`. -/
+def NEAR_FIELD_MIN_NATS : Float := 0
 def ATTRIBUTION_MAX_DIST_M : Float := 30
 def ATTRIBUTION_MARGIN_M : Float := 20
 /-- Honest-label floor: below this no nearby candidate is a plausible
@@ -255,9 +258,9 @@ def blendedBinP (st cat : Option VenueTypeStats) (pick : VenueTypeStats → Floa
                  | none => 0
   (stMass + catMass + pseudo * u) / (stN + catN + pseudo)
 
-/-- The mined visit-shape prior for a subtype: base rate + dwell shape + hour
-    shape, each as a clamped log-ratio against uniform. -/
-def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float :=
+/-- The three log-ratios against uniform that `shapeScore` clamps and sums:
+    base rate, dwell shape, hour shape — UNCLAMPED. -/
+def shapeParts (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float × Float × Float :=
   let st := lookupStats priors.bySubtype subtype
   let cat := lookupStats priors.byCategory (categoryOfSubtype subtype)
   let bucket := dwellBucket (Float.ofInt (stay.endUnix - stay.startUnix))
@@ -267,9 +270,13 @@ def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Fl
   let kTypes := Float.ofNat (max priors.bySubtype.length BASE_RATE_MIN_TYPES)
   let stVisits := match st with | some s => s.visits | none => 0
   let baseP := (stVisits + BASE_RATE_PSEUDO) / (priors.totalVisits + BASE_RATE_PSEUDO * kTypes)
-  clamp (Float.log (baseP * kTypes)) (-2) 1.5
-  + clamp (Float.log (dwellP * Float.ofNat DWELL_BUCKETS)) (-2) 1.2
-  + clamp (Float.log (hourP * 24)) (-1.5) 1.2
+  (Float.log (baseP * kTypes), Float.log (dwellP * Float.ofNat DWELL_BUCKETS), Float.log (hourP * 24))
+
+/-- The mined visit-shape prior for a subtype: base rate + dwell shape + hour
+    shape, each as a clamped log-ratio against uniform. -/
+def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float :=
+  let (b, d, h) := shapeParts subtype stay priors
+  clamp b (-2) 1.5 + clamp d (-2) 1.2 + clamp h (-1.5) 1.2
 
 /-- Opening-hours evidence from an already-resolved open fraction: fully open
     is mild support, fully closed is strong but out-votable counter-evidence.
@@ -372,10 +379,17 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
                  | some s, some p => if PRIOR_TYPES.contains l.type then some (shapeScore l.subtype s p) else none
                  | _, _ => none
     let hours := if stay.isSome then hoursScore l.openFraction else none
+    let total := distance + venue + shape.getD 0 + hours.getD 0
     ({ landmark := l,
-       total := distance + venue + shape.getD 0 + hours.getD 0,
+       total := total,
        parts := ⟨distance, venue, shape, hours⟩,
-       nearField := isNearField l } : VenueCandidateScore))
+       -- ⚠ Near-field dominance is a VETO over the summed evidence, so it may
+       -- only go to a candidate whose own evidence is at least neutral. A
+       -- bookmaker at 10.9 m with −1.09 nats (never visited, wrong dwell,
+       -- wrong hour) used to out-rank the restaurant at 13.4 m with +2.79
+       -- (09-06 18:20 local, #325). Fitted 2026-09-28 on the 56 confirmed
+       -- corpus stays: 48 → 49 right, nothing lost.
+       nearField := isNearField l && decide (total ≥ NEAR_FIELD_MIN_NATS) } : VenueCandidateScore))
   sortStable (fun a b =>
     let ea := a.landmark.enclosing
     let eb := b.landmark.enclosing
@@ -716,6 +730,21 @@ candidate's open fraction (1 = open throughout, 0 = closed throughout). -/
 private def stayEve : StayShape := ⟨1778688000, 1778692440, 19⟩
 private def LMH (name type subtype : String) (d : Float) (frac : Option Float) : Landmark :=
   ⟨name, type, subtype, d, frac, false, false⟩
+
+-- Near-field is a VETO over the summed evidence, so it goes only to a candidate
+-- whose own evidence is at least neutral (#325, 2026-09-28). 09-06 18:20 local:
+-- a bookmaker at 10.9 m the user never visits (base rate −2) against the
+-- restaurant at 13.4 m his history is full of. With no priors at all the
+-- bookmaker's evidence is neutral-plus and near-field still decides.
+private def restoStats : VenueTypeStats :=
+  ⟨40, [0, 10, 30, 0], (List.range 24).map (fun h => if h == 19 then 40 else 0)⟩
+private def restoPriors : VenuePriors := ⟨[("restaurant", restoStats)], [("food", restoStats)], 50⟩
+private def bookieVsResto : List Landmark :=
+  [LM "Paddy Power" "shop" "bookmaker" 10.9, LM "L'artista" "amenity" "restaurant" 13.4]
+#guard names (rankVenues bookieVsResto (some stayEve) (some restoPriors)) == ["L'artista", "Paddy Power"]
+#guard (rankVenues bookieVsResto (some stayEve) (some restoPriors)).head!.nearField == false
+#guard names (rankVenues bookieVsResto (some stayEve) none) == ["Paddy Power", "L'artista"]
+#guard (rankVenues bookieVsResto (some stayEve) none).head!.nearField == true
 
 #guard names (rankVenues [LMH "OpenResto" "amenity" "restaurant" 32 (some 1),
                           LMH "ClosedPharm" "amenity" "pharmacy" 18 (some 0)] (some stayEve) none)

@@ -418,7 +418,14 @@ where
   the run never made. -/
   afterLodging (bestLandmark : Option Landmark) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool) : Option Result :=
-    if preferResidential && detailed.any hasResidentialAddress then detailed
+    -- ⚠ A geocode that names a VENUE is not the neutral address this arm is
+    -- for. A venueless mined cluster asks for an address so that a
+    -- low-confidence nearby venue does not name it — and the zoom-18 result at
+    -- 09-06 18:20 local was `Fireaway Pizza, 47, The Parade`: a house number, a
+    -- road, and the wrong restaurant, which `placeLabel` prints amenity-first.
+    -- So the shortcut takes only a venue-free address; a venue-bearing one
+    -- falls through to the ranked landmark like any other (#325, 2026-09-28).
+    if preferResidential && detailed.any (fun d => hasResidentialAddress d && !hasSpecificVenue d) then detailed
     else match bestLandmark with
     | some bl => some (withAddressFrom (landmarkToResult bl) detailed)
     | none =>
@@ -605,6 +612,26 @@ private def residential : Result :=
 private def lodgingReads : Reads := { landmarks := [nearerCafe, guesthouse], geocode := geo (some residential) none }
 #guard (bestPlace lodgingReads none none true).map placeLabel == some "Sea View"
 #guard (bestPlace lodgingReads none none false).map placeLabel == some "Beach Cafe"
+
+-- The residential shortcut takes only a VENUE-FREE address (#325, 2026-09-28).
+-- 09-06 18:20 local, in shape: a stay, the restaurant at 13 m, the pizza place
+-- at 57 m ALSO among the landmarks (so the geocode's venue candidate is
+-- skipped, as in `bestPlace`), and a venueless cluster preferring an address.
+-- The zoom-18 geocode is `Fireaway Pizza, 47, The Parade` — a house number, a
+-- road, and a venue: the ranked landmark names the stay. The same address
+-- without the venue is taken, and labels as its road.
+private def trattoria : Poi := { name := "L'artista", type := "amenity", subtype := "restaurant", distanceM := 13 }
+private def pizzaPlace : Poi := { name := "Fireaway Pizza", type := "amenity", subtype := "fast_food", distanceM := 57 }
+private def eveningStay : StayShape := ⟨1788715200, 1788719520, 18⟩
+private def venueAddress : Result :=
+  res "fast_food" "amenity" { A with amenity := some "Fireaway Pizza", houseNumber := some "47", road := some "The Parade" }
+private def plainAddress : Result :=
+  res "house" "building" { A with houseNumber := some "47", road := some "The Parade" }
+private def paradeReads (r : Result) : Reads := { landmarks := [trattoria, pizzaPlace], geocode := geo (some r) none }
+#guard (bestPlace (paradeReads venueAddress) (some eveningStay) none true).map placeLabel == some "L'artista"
+#guard (bestPlace (paradeReads plainAddress) (some eveningStay) none true).map placeLabel == some "The Parade"
+-- Without the flag the ranking named it anyway; the flag used to override that.
+#guard (bestPlace (paradeReads venueAddress) (some eveningStay) none false).map placeLabel == some "L'artista"
 
 /-! ### Hours resolution -/
 
