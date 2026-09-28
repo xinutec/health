@@ -73,6 +73,15 @@ structure ModelContext where
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
   segEvidenceOn : Bool
+  /-- #366's two arm knobs, carried in the request's `flags` and absent from
+      every production request (defaults 1 and 0 = the shipped model): the
+      per-minute mode prior's scale, and the scale of `modeEntryLog`, the
+      per-segment entry prior derived from it. -/
+  modeMinuteScale : Float := 1.0
+  modeEntryScale : Float := 0.0
+  /-- The per-minute scale at minutes WITH a GPS fix; `modeMinuteScale` is
+      then the scale at minutes without one — the no-evidence fallback. -/
+  modeMinuteScaleWithGps : Float := 1.0
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float
@@ -97,7 +106,9 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (places : List (FocusPlaceRef × Float × Float × Option (Array Float) × Float))
     (coverage : Std.HashMap Int (List String)) (placeNearLine : Std.HashSet String)
     (continuity : Option Continuity.ContinuityContext)
-    (reacquireRobust segEvidenceOn chainOn : Bool) : ModelContext :=
+    (reacquireRobust segEvidenceOn chainOn : Bool)
+    (modeMinuteScale : Float := 1.0) (modeEntryScale : Float := 0.0)
+    (modeMinuteScaleWithGps : Float := 1.0) : ModelContext :=
   let totalDwell := places.foldl (fun a (_, _, _, _, dwell) => a + dwell) 0.0
   let nPlaces := places.length
   let placeCoords := places.foldl (fun m (p, lat, lon, _, _) => m.insert p.id (lat, lon))
@@ -115,7 +126,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
-    reacquireRobust, segEvidenceOn, chainOn
+    reacquireRobust, segEvidenceOn, chainOn, modeMinuteScale, modeEntryScale, modeMinuteScaleWithGps
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop }
 
@@ -131,7 +142,25 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
   | some o, some st =>
     EmissionFull.emissionLogProbFull c.model c.connGraph c.modeledLines c.placeCoords
       c.reacquireRobust (coveredAt c o.ts) c.continuity st o
+    -- The per-minute mode prior is inside the sum above at scale 1; the arm
+    -- knob adds the difference, so the shipped model is untouched at 1.
+    + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
+        * Emissions.modePriorLog st.mode
   | _, _ => negInf
+
+/-- The per-SEGMENT entry log-prior by mode (#366): the entry rate that, with
+    the mode's typical duration, reproduces the per-minute occupancy prior —
+    `rate_m ∝ P(m) / D̄_m`, `D̄_m` the mode's Gamma mean (α/β), normalised over
+    the modes. "Entering a ride is rare" charged ONCE, where the per-minute
+    prior charges it every minute and so grows without bound with a true ride's
+    length (05-25's crawl: 35.6 of a 37.6-nat margin against the true state). -/
+def modeEntryLog (m : Mode) : Float :=
+  let rate := fun (x : Mode) =>
+    let f := baselineFit x
+    Float.exp (Emissions.modePriorLog x) / (f.alpha / f.beta)
+  let modes : List Mode := [.stationary, .walking, .cycling, .driving, .train, .plane, .unknown]
+  let total := modes.foldl (fun a x => a + rate x) 0.0
+  Float.log (rate m / total)
 
 /-- `entry(s, obs[t])` — base entry prior + train-generator entry, with the
     hour profile / visit weight / coverage verdict resolved for the state. -/
@@ -146,6 +175,7 @@ def entryAt (c : ModelContext) (t s : Nat) : Float :=
   let profile := match st.placeId with | some pid => c.hourProfiles.get? pid | none => none
   let weight := match st.placeId with | some pid => c.visitWeights.get? pid | none => none
   Assembly.entryLogProbFull st o.hourLocal true profile c.nPlaces weight covered lineValid
+    + c.modeEntryScale * modeEntryLog st.mode
 
 /-- `initial(s)` — uniform 0. -/
 def initAt (c : ModelContext) (s : Nat) : Float :=

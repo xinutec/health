@@ -836,11 +836,19 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
   let maxD ← match j.getObjVal? "maxD" with
     | .ok v => if v.isNull then pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION else v.getNat?
     | .error _ => pure Verified.Hsmm.Assemble.DEFAULT_MAX_DURATION
+  -- #366's arm knobs: absent from every production request, so the defaults
+  -- are the shipped model.
+  let knob (name : String) (dflt : Float) : Float :=
+    match flags.getObjVal? name with
+    | .ok v => match v.getNum? with | .ok n => n.toFloat | .error _ => dflt
+    | .error _ => dflt
   return (Verified.Hsmm.Assemble.buildContext obs model
     places.toList coverage placeNearLine continuity
     (← (← flags.getObjVal? "reacquireRobust").getBool?)
     (← (← flags.getObjVal? "segEvidence").getBool?)
-    (← (← flags.getObjVal? "chainContext").getBool?), maxD)
+    (← (← flags.getObjVal? "chainContext").getBool?)
+    (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
+    (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0)), maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json

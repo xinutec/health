@@ -55,6 +55,49 @@ fn run_corpus() {
         };
         let got = backend::row_json::render_segments(&segments).expect("segments render");
         let got = got.as_array().cloned().unwrap_or_default();
+        // `DECODE_BLESS=1`: the fixture's `expected` becomes TODAY'S decode, the
+        // compared fields only — for landing a decoder change the scoreboard's
+        // live arm has already judged (#366). Tab-indented like the capture.
+        if std::env::var("DECODE_BLESS").is_ok() {
+            let mut fx = fx.clone();
+            fx["expected"] = Value::Array(
+                got.iter()
+                    .map(|g| {
+                        let mut o = serde_json::Map::new();
+                        for f in [
+                            "startTs",
+                            "endTs",
+                            "mode",
+                            "placeId",
+                            "lineName",
+                            "boardStation",
+                            "alightStation",
+                        ] {
+                            // `placeId` and `lineName` are written even when null: the
+                            // frozen fixtures carry them explicitly.
+                            if let Some(v) = g.get(f)
+                                && (!v.is_null() || f == "placeId" || f == "lineName")
+                            {
+                                o.insert(f.into(), v.clone());
+                            }
+                        }
+                        Value::Object(o)
+                    })
+                    .collect(),
+            );
+            let mut buf = Vec::new();
+            let fmt = serde_json::ser::PrettyFormatter::with_indent(b"\t");
+            let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);
+            serde::Serialize::serialize(&fx, &mut ser).expect("the fixture serialises");
+            buf.push(b'\n');
+            std::fs::write(backend::decode_fixture::corpus_dir().join(name), buf)
+                .expect("the fixture is writable");
+            eprintln!(
+                "BLESSED  {name}: expected rewritten from the Lean decode ({} segments)",
+                got.len()
+            );
+            continue;
+        }
         let want = fx["expected"].as_array().expect("expected").clone();
 
         if got.len() != want.len() {

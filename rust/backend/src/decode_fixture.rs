@@ -66,6 +66,14 @@ fn tag_pairs(v: Option<&Value>) -> Vec<Value> {
 }
 
 /// The `assemblesegments` request the fixture's day was decoded from.
+/// A numeric knob from the environment, or `null` (absent) — see `flags`.
+fn arm_knob(var: &str) -> Value {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map_or(Value::Null, |f| json!(f))
+}
+
 pub fn request(fx: &Value) -> Result<Value> {
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
     let date = meta["date"].as_str().context("meta.date")?;
@@ -213,6 +221,11 @@ pub fn request(fx: &Value) -> Result<Value> {
             "reacquireRobust": flags["reacquireRobustSpeed"],
             "segEvidence": flags["segmentEvidence"],
             "chainContext": flags["chainContext"],
+            // ⚠ ARM KNOBS (#366), harness-only: absent unless the environment
+            // sets them, and production never builds its request here.
+            "modeMinuteScale": arm_knob("HSMM_MODE_MINUTE_SCALE"),
+            "modeEntryScale": arm_knob("HSMM_MODE_ENTRY_SCALE"),
+            "modeMinuteScaleWithGps": arm_knob("HSMM_MODE_MINUTE_SCALE_GPS"),
         },
         "date": date,
         "tz": tz,
