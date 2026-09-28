@@ -363,14 +363,27 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
     let n := Float.ofNat pts.size
     let cLat := (pts.foldl (fun a p => a + p.lat) 0) / n
     let cLon := (pts.foldl (fun a p => a + p.lon) 0) / n
-    match Verified.Geo.TransitPlace.stationAtTransitInterchange out (Int.ofNat i) cLat cLon
-            e.nearbyStations (stayFocusDays := s.focusPlaceId.bind e.focusPlaceDays) with
+    -- Bracketed by trains: a change of trains. Otherwise the ALIGHT rule the
+    -- early enrichment applies — a stay at the station right after a train —
+    -- deferred to here, because an Underground ride is raw `driving` when the
+    -- enrichment runs and only becomes a train in this cascade: 05-22's
+    -- 19-minute wait at Finchley Road after the Met was named "O2 Centre", the
+    -- shop next door, for that alone (2026-09-28, #185).
+    let named : Option (String × String) :=
+      match Verified.Geo.TransitPlace.stationAtTransitInterchange out (Int.ofNat i) cLat cLon
+              e.nearbyStations (stayFocusDays := s.focusPlaceId.bind e.focusPlaceDays) with
+      | some station => some (station, "transit interchange → named station")
+      | none =>
+        let prev := if i == 0 then none else out[i - 1]?
+        (Verified.Geo.TransitPlace.stationAtTrainAlight prev cLat cLon e.nearbyStations).map
+          fun station => (station, "alighted here → named station")
+    match named with
     | none => pure ()
-    | some station =>
+    | some (station, why) =>
       if some station != s.place then
         let reason := match s.refinedReason with
-          | some r => s!"{r}; transit interchange → named station"
-          | none => "transit interchange → named station"
+          | some r => s!"{r}; {why}"
+          | none => why
         out := out.set! i { s with place := some station, refinedReason := some reason }
   return out
 
@@ -1195,6 +1208,13 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 -- A stay at a station with a train either side is a change of trains.
 #guard fires MIX "interchangeStayLabel"
   #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")]
+-- A stay at the station with a train BEFORE it only — alighted and waited,
+-- however long — takes the station's name too; after a walk it does not
+-- (05-22's ambulance wait at Finchley Road, 2026-09-28).
+#guard fires MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400]
+#guard (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400])[1]!.place
+  == (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")])[1]!.place
+#guard !(fires MIX "interchangeStayLabel" #[wk 0 600, st 600 1800, dr 1800 2400])
 -- The ride on to the true alight, stranded as the fast head of the next walk.
 #guard fires MIX "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 -- Two legs of one Metropolitan ride, split by a sliver, are one ride.
