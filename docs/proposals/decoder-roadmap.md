@@ -10,7 +10,7 @@ references:
 
 ⚠ **Its `*.ts` names are HISTORICAL** — the TypeScript backend was deleted whole
 (#975), recoverable at `06346bd^:<path>`. `worldline-feasibility.ts` is now
-`lean/Verified/Eval/Feasibility.lean`, graded by the `feasibility_corpus` test;
+`lean/Verified/Eval/Feasibility.lean`, graded by `corpus_gate`'s feasibility grader;
 the journey/leg shapes and scoreboard are `lean/Verified/Eval/Journeys.lean` and
 `DecoderScore.lean`, gated by `journey_corpus` and `decoder_scoreboard`.
 

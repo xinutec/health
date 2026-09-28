@@ -28,6 +28,7 @@ use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 
 pub mod day;
+pub mod feasibility;
 pub mod journey;
 pub mod truth;
 pub mod walk;

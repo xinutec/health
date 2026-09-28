@@ -348,7 +348,7 @@ def checkWorldlineFeasibility (legs : Array Leg) (points : Array Fix)
 are Greek letters, so nothing here carries a real place.
 
 Checked differentially against the recovered TypeScript over the real corpus by
-`rust/backend/tests/feasibility_corpus.rs`: 42 days, perturbed into 295 cases so
+`rust/backend/tests/corpus/feasibility.rs` (then a test of its own): 42 days, perturbed into 295 cases so
 every invariant fires — **924 violations, 3,696 field comparisons, 0
 disagreements**. Seven ablations, all seven moving that count.
 -/

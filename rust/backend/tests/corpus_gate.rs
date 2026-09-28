@@ -4,7 +4,8 @@
 //!   fixture → trace → fold ─┬→ day      (the last blessed timeline, state by state)
 //!                               ├→ truth    (confirmed rows, a ratchet)
 //!                               ├→ journeys (the story, a floor)
-//!                               └→ walks    (the walk referee's four axes)
+//!                               ├→ walks    (the walk referee's four axes)
+//!                               └→ feasibility (impossible legs, a ceiling — #1654)
 //! ```
 //!
 //! ⚠ **THE REPLAY IS PAID ONCE, NOT ONCE PER HARNESS.** With the walk matcher
@@ -30,9 +31,9 @@
 //!
 //! By day, index modulo, so no shard draws one contiguous stretch. Every
 //! grader is sound under it: `day` is per-day outright, and `truth`,
-//! `journeys` and `walks` each filter their floor to the days the run actually
-//! reported and announce the rest as unchecked (#408). Between the shards every
-//! floor key is checked exactly once.
+//! `journeys`, `walks` and `feasibility` each filter their floor (or ceiling)
+//! to the days the run actually reported and announce the rest as unchecked
+//! (#408). Between the shards every key is checked exactly once.
 //!
 //! ⚠ A BLESS IS SINGLE-SHARD. Each grader's bless path measures ALL days from
 //! shard 0 and stands the others down — a floor written from half the corpus
@@ -135,9 +136,14 @@ fn run(shard: usize, of: usize) {
     // as complete. `day` writes per-fixture and would survive sharding, but the
     // rule is uniform because getting it wrong is silent in exactly one
     // direction: the half that was not measured looks blessed.
-    let blessing = ["DAY_BLESS", "TRUTH_BLESS", "WALK_BLESS"]
-        .iter()
-        .any(|k| std::env::var(k).is_ok());
+    let blessing = [
+        "DAY_BLESS",
+        "TRUTH_BLESS",
+        "WALK_BLESS",
+        "FEASIBILITY_BLESS",
+    ]
+    .iter()
+    .any(|k| std::env::var(k).is_ok());
     let names = if blessing {
         if shard != 0 {
             eprintln!("corpus: a bless is single-shard — shard {shard} stands down");
@@ -181,6 +187,7 @@ fn run(shard: usize, of: usize) {
     if journey.is_none() || truth.is_none() {
         eprintln!("truth/journeys: SKIPPED — no ground-truth narratives.");
     }
+    let mut feasibility = corpus::feasibility::Feasibility::new();
 
     let mut failures: Vec<String> = Vec::new();
     let mut replayed = 0usize;
@@ -250,6 +257,7 @@ fn run(shard: usize, of: usize) {
         if let Some(j) = journey.as_mut() {
             j.grade(name, &clean);
         }
+        feasibility.grade(name, &clean);
     }
 
     eprintln!(
@@ -270,5 +278,6 @@ fn run(shard: usize, of: usize) {
     if let Some(j) = journey {
         failures.extend(j.finish());
     }
+    failures.extend(feasibility.finish());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
