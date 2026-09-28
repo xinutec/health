@@ -1,0 +1,167 @@
+# Shrink a mined place's hour profile by its visit-days before scoring it — the #325 arm for 06-24, measured 2026-09-28 and NOT SHIPPED.
+# Apply with: git apply lean/experiments/place-hour-profile-shrink.patch   (against 4806583)
+# What it fixes: a place seen on two evenings no longer scores +2.4 nats at 19:00 and out-elects a place 20 m away; 06-24's shop stay elects the near cluster.
+# Verdict: 06-18 loses a confirmed walk (the Proton-centre stay then elects the 36-day hospital cluster, shares the first stay's name, and the intra-place absorber merges them) and a journey; 04-30 renames. See task #325.
+
+diff --git a/lean/Verified/Geo/PlacePrior.lean b/lean/Verified/Geo/PlacePrior.lean
+index 274bb63..17861f9 100644
+--- a/lean/Verified/Geo/PlacePrior.lean
++++ b/lean/Verified/Geo/PlacePrior.lean
+@@ -15,7 +15,10 @@ segment belongs to. `pickBestPlace` combines, in log-space:
+   can still outweigh.
+ * **time of day** — the stay's hour profile scored against the place's mined
+   one, re-centred so a uniform (or un-mined `none`) profile scores exactly 0.
+-  This separates co-located candidates a distance term cannot.
++  This separates co-located candidates a distance term cannot. The mined
++  profile is shrunk toward uniform by `HOUR_PROFILE_PSEUDO_DAYS` before it is
++  scored, so a place seen on two days is not certain about its hours
++  (2026-09-28; the guards below carry the values from that day, not the TS's).
+ * **magnetic anchoring** — inside a place's magnet radius AND with positive
+   biometric coherence, a boost proportional to its magnet strength.
+ 
+@@ -71,6 +74,19 @@ def MAGNET_VETO_RELAX_MAX : Float := 2.0
+ /-- Smoothing floor for the time-of-day term, so an hour absent from a
+     place's profile takes a bounded penalty rather than `log 0`. -/
+ def HOUR_PROFILE_EPS : Float := 0.02
++/-- Pseudo-days that shrink a place's mined hour profile toward uniform before
++    it is scored, so the term's weight grows with how often the place has been
++    seen. Same size as the venue prior's `HOUR_PSEUDO_VISITS`, for the same
++    reason: two visits are two samples of a 24-bin histogram.
++
++    ⚠ ADDED 2026-09-28 (#325, 06-24). The profile used to be scored as if it
++    were exact whatever its support. A place seen on TWO evenings therefore
++    scored +2.4 nats at 19:00 and a place seen on two mornings −1.1, a 3.5-nat
++    swing from four visits — enough to elect a cluster 77 m away (three place
++    radii, 1.7 σ) over one 20 m from a tight 21 m stay, and the stay was then
++    named from the wrong coordinate. Shrunk by 8 pseudo-days the same two
++    profiles score +1.1 and −0.15, and the geometry decides. -/
++def HOUR_PROFILE_PSEUDO_DAYS : Float := 8
+ 
+ /-- One mined long-term cluster. -/
+ structure PlaceCandidate where
+@@ -98,14 +114,20 @@ def effectiveSigmaM (c : PlaceCandidate) : Float :=
+     `Σ stay[h]·log(place[h]+ε)` re-centred by the uniform baseline, so a
+     uniform — or `none` — place scores 0, concentration on the stay's hours
+     scores positive, and avoidance scores negative. -/
+-def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Float) : Float :=
++def hourProfileMatch (placeProfile : Option (List Float)) (stayProfile : List Float)
++    (days : Float) : Float :=
+   match placeProfile with
+   | none => 0
+   | some pp =>
+-    let uniformLog := Float.log (1 / Float.ofNat stayProfile.length + HOUR_PROFILE_EPS)
++    let bins := Float.ofNat stayProfile.length
++    let uniformLog := Float.log (1 / bins + HOUR_PROFILE_EPS)
++    -- Dirichlet shrinkage: `days` observations of the profile against
++    -- `HOUR_PROFILE_PSEUDO_DAYS` of uniform.
++    let shrunk := fun (p : Float) =>
++      (days * p + HOUR_PROFILE_PSEUDO_DAYS / bins) / (days + HOUR_PROFILE_PSEUDO_DAYS)
+     let (raw, stayTotal) := stayProfile.zipIdx.foldl (fun (raw, tot) (w, h) =>
+       if w == 0 then (raw, tot)
+-      else (raw + w * Float.log (pp.getD h 0 + HOUR_PROFILE_EPS), tot + w)) (0, 0)
++      else (raw + w * Float.log (shrunk (pp.getD h 0) + HOUR_PROFILE_EPS), tot + w)) (0, 0)
+     if stayTotal == 0 then 0 else raw - stayTotal * uniformLog
+ 
+ /-- Magnet strength: bounded so Home does not drown out everything else. -/
+@@ -138,7 +160,7 @@ def scorePlaceForSegment (c : PlaceCandidate) (segLat segLon : Float)
+   let sigma := effectiveSigmaM c
+   let logLikelihood := -(distM * distM) / (2 * sigma * sigma)
+   let logPriorFreq := Float.log (c.uniqueDays + 1)
+-  let logPriorTimeOfDay := hourProfileMatch c.hourProfile stayHourProfile
++  let logPriorTimeOfDay := hourProfileMatch c.hourProfile stayHourProfile c.uniqueDays
+   let bs := biometricCoherence.getD 0
+   let magnetBoost := if decide (distM ≤ magnetRadiusM c) then magnetStrength c * bs else 0
+   logLikelihood + logPriorFreq + logPriorTimeOfDay + magnetBoost
+@@ -292,39 +314,60 @@ private def farEstablished : PlaceCandidate := C 2 (north 205) LON 25 31 (some D
+ 
+ -- THE FIX, stated as an invariance: the far place is outside its magnet, so
+ -- biometric coherence cannot move its score by any amount.
+-#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0)) 1.9924056837212474
+-#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 1)) 1.9924056837212474
++#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0)) 1.8773893517582620
++#guard approx (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 1)) 1.8773893517582620
+ -- The near place is inside its magnet, so coherence does move it.
+-#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0)) 2.2706214960936260
+-#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 1)) 3.8800594085277265
+--- At the real stay's measured coherence the near building wins by 1.71 nats.
++#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0)) 1.8350465865140912
++#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 1)) 3.4444844989481913
++-- At the real stay's measured coherence the near building wins by 1.39 nats
++-- (1.71 before the hour profile was shrunk by visit-days, 2026-09-28).
+ -- Under the old 224 m magnet the far one won by 0.0056.
+-#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0.886842487040252)) 3.6979394170935551
++#guard approx (scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0.886842487040252)) 3.2623645075140200
+ #guard decide (scorePlaceForSegment farEstablished LAT LON DAYTIME (some 0.886842487040252)
+              < scorePlaceForSegment nearSparse LAT LON DAYTIME (some 0.886842487040252))
+ 
++/-! ### `hourProfileMatch` — the weight of the hour term grows with visit-days -/
++
++-- 06-24's shape: a place seen on two evenings (2/3 at 18, 1/3 at 19) against
++-- an 18:00 stay. Unshrunk it scored +2.4; two days of evidence are worth ~1.1.
++private def TWO_EVENINGS : List Float := (List.range 24).map (fun h => if h == 18 then 2 / 3 else if h == 19 then 1 / 3 else 0)
++private def AT_18 : List Float := profile [18]
++#guard decide (0.9 < hourProfileMatch (some TWO_EVENINGS) AT_18 2 && hourProfileMatch (some TWO_EVENINGS) AT_18 2 < 1.3)
++-- More days, more weight — monotone in `days` and bounded by the unshrunk value.
++#guard decide (hourProfileMatch (some TWO_EVENINGS) AT_18 2 < hourProfileMatch (some TWO_EVENINGS) AT_18 20)
++#guard decide (hourProfileMatch (some TWO_EVENINGS) AT_18 20 < hourProfileMatch (some TWO_EVENINGS) AT_18 2000)
++#guard decide (hourProfileMatch (some TWO_EVENINGS) AT_18 2000 < 2.5)
++-- The two-morning neighbour at the same hour: a mild penalty, not −1.1.
++#guard decide (hourProfileMatch (some (profile [11])) AT_18 2 > -0.2)
++#guard decide (hourProfileMatch (some (profile [11])) AT_18 2 < 0)
++-- No days at all: the profile carries no weight and the term is 0.
++#guard hourProfileMatch (some TWO_EVENINGS) AT_18 0 == 0
++-- Uniform and `none` are still exactly 0 whatever the days.
++#guard hourProfileMatch (some UNIFORM) AT_18 50 == 0
++#guard hourProfileMatch none AT_18 50 == 0
++
+ /-! ### `scorePlaceForSegment` -/
+ 
+-#guard approx (scorePlaceForSegment work LAT LON DAYTIME) 5.5500921493100179
+-#guard approx (scorePlaceForSegment work (north 100) LON DAYTIME) 5.0512110009393520
+-#guard approx (scorePlaceForSegment work (north 300) LON DAYTIME) 1.0601618139977029
++#guard approx (scorePlaceForSegment work LAT LON DAYTIME) 5.5164280037002626
++#guard approx (scorePlaceForSegment work (north 100) LON DAYTIME) 5.0175468553295968
++#guard approx (scorePlaceForSegment work (north 300) LON DAYTIME) 1.0264976683879476
+ -- The same place scores lower for an evening stay: the mined profile is the
+ -- only thing separating these two.
+-#guard approx (scorePlaceForSegment work LAT LON EVENING) 3.6697792827405173
+-#guard approx (scorePlaceForSegment work LAT LON UNIFORM) 4.3748966077040778
+-#guard approx (scorePlaceForSegment oneOff LAT LON EVENING) 2.1698256031481051
+-#guard approx (scorePlaceForSegment oneOff (north 100) LON EVENING) (-0.94815616718320106)
++#guard approx (scorePlaceForSegment work LAT LON EVENING) 3.7921812642531951
++#guard approx (scorePlaceForSegment work LAT LON UNIFORM) 4.4387737915458452
++#guard approx (scorePlaceForSegment oneOff LAT LON EVENING) 1.0118738746936864
++#guard approx (scorePlaceForSegment oneOff (north 100) LON EVENING) (-2.1061078956376198)
+ -- An un-mined profile and a uniform one both contribute exactly 0 on time.
+ #guard approx (scorePlaceForSegment (C 3 LAT LON 25 30 none) LAT LON DAYTIME) 3.4339872044851463
+ #guard approx (scorePlaceForSegment (C 4 LAT LON 25 30 (some UNIFORM)) LAT LON DAYTIME) 3.4339872044851472
+ -- A stay profile of all zeros contributes nothing rather than dividing by it.
+ #guard approx (scorePlaceForSegment work LAT LON ((List.range 24).map (fun _ => 0))) 4.7957905455967413
+ -- Magnet boost needs positive coherence AND being inside the radius (230 m here).
+-#guard approx (scorePlaceForSegment work LAT LON DAYTIME (some 1)) 10.345882694906759
+-#guard approx (scorePlaceForSegment work (north 100) LON DAYTIME (some 1)) 9.8470015465360934
+-#guard approx (scorePlaceForSegment work (north 400) LON DAYTIME (some 1)) (-2.4320062245890641)
+-#guard approx (scorePlaceForSegment work LAT LON DAYTIME (some 0.5)) 7.9479874221083886
+-#guard approx (scorePlaceForSegment oneOff LAT LON EVENING (some 1)) 2.8629727837080505
++#guard approx (scorePlaceForSegment work LAT LON DAYTIME (some 1)) 10.3122185492970040
++#guard approx (scorePlaceForSegment work (north 100) LON DAYTIME (some 1)) 9.8133374009263381
++#guard approx (scorePlaceForSegment work (north 400) LON DAYTIME (some 1)) (-2.4656703701988194)
++#guard approx (scorePlaceForSegment work LAT LON DAYTIME (some 0.5)) 7.9143232764986333
++#guard approx (scorePlaceForSegment oneOff LAT LON EVENING (some 1)) 1.7050210552536318
+ -- A large empirical radius overrides the earned floor.
+ #guard approx (scorePlaceForSegment (C 5 LAT LON 300 50 none) (north 200) LON UNIFORM) 3.7101024846118773
+ 
+@@ -356,7 +399,7 @@ private def pickId (r : Option (PlaceCandidate × Float)) : Option Int := r.map
+ -- Posterior floor: a distant, low-history place is rejected outright.
+ #guard (pickBestPlace [C 10 LAT LON 25 1 none] (north 200) LON UNIFORM).isNone
+ #guard match pickBestPlace [work] LAT LON DAYTIME with
+-       | some (_, s) => approx s 5.5500921493100179
++       | some (_, s) => approx s 5.5164280037002626
+        | none => false
+ 
+ /-! ### `snapToPlace` -/
+@@ -388,3 +431,4 @@ private def cafe60 : KnownPlace := ⟨north 60, LON, some 15, some "cafe"⟩
+               && (r.snapDistanceM.map (approx · 14.983146780700512)).getD false
+ 
+ end Verified.Geo.PlacePrior
++
