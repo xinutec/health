@@ -359,7 +359,8 @@ timeout at the `def` (2026-09-25). As a parameter its size is an atom, and the
 `Fin` indices below make every leg, changeover and boundary read total. -/
 private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart trainEnd : Int)
     (speedKmh : Float) (coarseCount : Nat) (points : Array Shed.PointF)
-    (waysLookup : Float → Float → Array NearbyWay) (acc0 : Array Seg) : Array Seg :=
+    (waysLookup : Float → Float → Array NearbyWay) (acc0 : Array Seg)
+    (evidence : Option String := none) : Array Seg :=
   -- Indices are `Fin`, so every leg, changeover and boundary read below is
   -- total by type; `ofFn` fixes the sizes the tactics need.
   let changeovers : Array (Option (Int × Int)) := Array.ofFn (n := legs.size - 1) fun li =>
@@ -400,7 +401,7 @@ private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart t
       if legs.size > 1 then
         s!"underground reconstruction (interchange leg {li.val + 1}/{legs.size} on {leg.line})"
       else
-        s!"underground reconstruction ({coarseCount} coarse fixes on {leg.line})"
+        s!"underground reconstruction ({evidence.getD s!"{coarseCount} coarse fixes"} on {leg.line})"
     let withLeg := acc.push { host with
       startTs := segStart, endTs := segEnd
       mode := "train", refinedMode := some "train"
@@ -495,6 +496,83 @@ def networkStillFixes (fixes : Array CoarseFix) (steps : List FeasibilityStepPoi
     else break
   return out
 
+/-- A good fix at the edge of a gap must sit this close to it to count as the
+    gap's own end — the last thing the phone saw before the tunnel, the first
+    thing after. -/
+def BLACKOUT_EDGE_SLACK_S : Int := 60
+/-- Step minutes running up to a blackout's end at this cadence are the walk
+    off the platform, not the ride. The interchange walk's own bar. -/
+def BLACKOUT_TAIL_MIN_CADENCE_SPM : Float := 40
+
+/-- A ride ACROSS A TOTAL BLACKOUT (#327 item 2, 2026-09-28).
+
+The miner above needs dark fixes inside its host; a deep ride can produce
+NONE — 2026-06-12's Victoria → King's Cross is 15 minutes of `unknown` with
+zero points, not even a kilometre-scale one. The evidence is then the gap's
+ENDS: the good fix the phone lost at one station and the one it regained at
+another, on a line that serves both, over a span the line can cover. The
+reconstruction takes those two edge fixes (plus any dark fix the gap did hold)
+as its run, and its own bars decide — `MIN_JOURNEY_M` refuses the walk between
+King's Cross and St Pancras, a shared station name refuses a gap that never
+left, no common line refuses the rest. Corpus survey the day this was built:
+14 station-to-station gaps ≥ 4 min, 8 already rides from edge fixes, 5 walks
+or stays inside a complex that these bars refuse, and 06-12.
+
+Step minutes running up to the gap's end are the walk off the platform (06-12:
+330 steps at 14:55–14:59Z inside the blackout, the Victoria → Met interchange)
+and become a walking tail the rail passes may name; the ride ends where they
+start. Same shape as the bus alight read from the route and the stay that
+follows (#328): inferred from the neighbours when the fixes cannot show it,
+which Pippijn accepted the same day. -/
+private def blackoutRide (host : Seg) (good hostDark : Array CoarseFix)
+    (steps : List FeasibilityStepPoint) (points : Array Shed.PointF)
+    (stationsLookup : Float → Float → Array NearbyStation)
+    (linesLookup : Float → Float → Array String)
+    (waysLookup : Float → Float → Array NearbyWay)
+    (servedLookup : String → Array Verified.Geo.LineMembership.ServedStation) :
+    Option (Array Seg) := do
+  guard (host.mode == "unknown" && host.pointCount == 0)
+  guard (host.endTs - host.startTs ≥ MIN_RUN_DURATION_S)
+  let boarding ← (good.filter fun f => f.ts ≤ host.startTs).back?
+  let alighting ← (good.filter fun f => f.ts ≥ host.endTs)[0]?
+  guard (host.startTs - boarding.ts ≤ BLACKOUT_EDGE_SLACK_S
+    && alighting.ts - host.endTs ≤ BLACKOUT_EDGE_SLACK_S)
+  -- The stepped tail: the minutes with steps that run, without a break of more
+  -- than one minute, up to the gap's end.
+  let inside := ((steps.filter fun s => s.ts ≥ host.startTs && s.ts < host.endTs).mergeSort
+    fun a b => a.ts ≤ b.ts).toArray
+  let tailStart : Int := Id.run do
+    let mut t := host.endTs
+    let mut cur := host.endTs
+    for s in inside.reverse do
+      -- A step row covers the minute from `ts`; the gap may end up to a minute
+      -- past the last stepped minute's END (06-12: 14:59 → 15:01:40).
+      if s.steps > 0 && cur - (s.ts + 60) ≤ 120 then
+        t := s.ts
+        cur := s.ts
+      else break
+    return t
+  let tailWalked := host.endTs - tailStart ≥ MIN_SIDE_DURATION_S
+    && (meanCadenceSpm steps tailStart host.endTs).any (· ≥ BLACKOUT_TAIL_MIN_CADENCE_SPM)
+  let trainEnd := if tailWalked then tailStart else host.endTs
+  guard (trainEnd - host.startTs ≥ MIN_RUN_DURATION_S)
+  let asCoarse (f : CoarseFix) (ts : Int) : CoarseFix := { f with ts, accuracy := some COARSE_ACCURACY_M }
+  let runFixes := #[asCoarse boarding host.startTs] ++ hostDark ++ #[asCoarse alighting trainEnd]
+  let legs := reconstructUndergroundJourney runFixes #[] ⟨boarding.lat, boarding.lon⟩
+    ⟨alighting.lat, alighting.lon⟩ stationsLookup linesLookup servedLookup
+  guard (!legs.isEmpty)
+  let distM := equirectMeters boarding.lat boarding.lon alighting.lat alighting.lon
+  let speedKmh := jsRound (distM / Float.ofInt (max 1 (trainEnd - host.startTs)) * 3.6 * 10) / 10
+  let withLegs := legSegments host legs host.startTs trainEnd speedKmh 0 points waysLookup #[]
+    (evidence := some "no fixes; the gap runs from one station to the next")
+  if tailWalked then
+    some (withLegs.push { host with
+      startTs := trainEnd, mode := "walking", refinedMode := none
+      wayName := none, place := none, city := none
+      avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 0
+      refinedReason := some "the blackout's stepped tail: walked off the platform" })
+  else some withLegs
+
 /--
 Find underground runs hiding inside the day's segments and carve them out as
 their own `train` segments.
@@ -542,7 +620,11 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
     -- The journey is the longest-spanning run that clears the bar.
     let qualifying := runs.filter fun r => r.size ≥ MIN_COARSE_FIXES && spanOf r ≥ MIN_RUN_DURATION_S
     match (qualifying.toList.mergeSort fun a b => spanOf b ≤ spanOf a).head? with
-    | none => result.push host
+    | none =>
+      match blackoutRide host good hostDark steps points stationsLookup linesLookup waysLookup
+          servedLookup with
+      | some pieces => result ++ pieces
+      | none => result.push host
     | some hostRun =>
       -- Grow the run to the tunnel's own ends, then trim a tail that outlived
       -- the ride. Trimmed AFTER growing, so a blip is caught whichever side
@@ -781,6 +863,44 @@ private def trainLeg (nFixes : Nat) : Row :=
 -- The whole pass, happy path: walk / train / walk, each side piece carrying its
 -- OWN way label rather than the host's composed-across-everything one.
 #guard run #[HOST] (GOOD ++ COARSE) == #[preWalk, trainLeg 4, postWalk]
+
+/-! ### A ride across a total blackout -/
+
+/-- The gap the segmenter cut where the phone saw nothing: `unknown`, no points,
+from the last good fix at one station to the first at the next. -/
+private def BLACKOUT : Seg :=
+  { HOST with
+    startTs := 900, endTs := 1700, mode := "unknown", wayName := none
+    avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 0 }
+
+private def runS (segments : Array Seg) (fixes : Array CoarseFix) (steps : List FeasibilityStepPoint) : Array Row :=
+  vw (annotateUndergroundRuns segments fixes (track fixes) steps stations oneLine ways servedNothing)
+
+private def blackoutLeg : Row :=
+  { (trainLeg 0) with reason := "underground reconstruction (no fixes; the gap runs from one station to the next on Victoria Line)" }
+
+-- No fixes inside, a station at each end, one line through both: the ride.
+#guard run #[BLACKOUT] GOOD == #[blackoutLeg]
+-- Steps running up to the gap's end are the walk off the platform: the ride
+-- ends where they start, and the tail is a walk of its own.
+private def tailSteps : List FeasibilityStepPoint :=
+  [⟨1460, 90⟩, ⟨1520, 95⟩, ⟨1580, 80⟩, ⟨1640, 70⟩]
+#guard (runS #[BLACKOUT] GOOD tailSteps).map (fun r => (r.startTs, r.endTs, r.mode))
+  == #[(900, 1460, "train"), (1460, 1700, "walking")]
+-- Steps that stop well before the gap's end are not a tail: the ride keeps its span.
+#guard (runS #[BLACKOUT] GOOD [⟨1000, 90⟩, ⟨1060, 95⟩]).map (·.endTs) == #[1700]
+-- The slack is measured from the last stepped MINUTE'S END: a gap ending 120 s
+-- after it still has a tail (06-12's 14:59 row against a 15:01:40 end), 180 s
+-- does not.
+#guard (runS #[BLACKOUT] GOOD [⟨1400, 90⟩, ⟨1460, 90⟩, ⟨1520, 90⟩]).map (fun r => (r.endTs, r.mode))
+  == #[(1400, "train"), (1700, "walking")]
+#guard (runS #[BLACKOUT] GOOD [⟨1400, 90⟩, ⟨1460, 90⟩]).map (·.endTs) == #[1700]
+-- Both ends at ONE station (the walk between two platforms): refused.
+#guard run #[BLACKOUT] #[fx 900 200 (some 10), fx 1700 600 (some 10)] == vw #[BLACKOUT]
+-- An edge fix a long way from the gap is not the gap's end: refused.
+#guard run #[BLACKOUT] #[fx 700 200 (some 10), fx 1700 3900 (some 10)] == vw #[BLACKOUT]
+-- Only an `unknown` host: a walk with no points is not a blackout.
+#guard run #[{ BLACKOUT with mode := "walking" }] GOOD == vw #[{ BLACKOUT with mode := "walking" }]
 
 private def legOne : Row :=
   { startTs := 900, endTs := 1100, mode := "train", refinedMode := "train"
