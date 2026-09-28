@@ -566,9 +566,11 @@ private def blackoutRide (host : Seg) (good hostDark : Array CoarseFix)
   let withLegs := legSegments host legs host.startTs trainEnd speedKmh 0 points waysLookup #[]
     (evidence := some "no fixes; the gap runs from one station to the next")
   if tailWalked then
+    -- The tail is walked inside the station the ride ends at, so it carries
+    -- that station's name; a train after it lets the interchange pass suffix it.
     some (withLegs.push { host with
       startTs := trainEnd, mode := "walking", refinedMode := none
-      wayName := none, place := none, city := none
+      wayName := legs.back?.map (·.alightingStation), place := none, city := none
       avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := 0
       refinedReason := some "the blackout's stepped tail: walked off the platform" })
   else some withLegs
@@ -885,8 +887,8 @@ private def blackoutLeg : Row :=
 -- ends where they start, and the tail is a walk of its own.
 private def tailSteps : List FeasibilityStepPoint :=
   [⟨1460, 90⟩, ⟨1520, 95⟩, ⟨1580, 80⟩, ⟨1640, 70⟩]
-#guard (runS #[BLACKOUT] GOOD tailSteps).map (fun r => (r.startTs, r.endTs, r.mode))
-  == #[(900, 1460, "train"), (1460, 1700, "walking")]
+#guard (runS #[BLACKOUT] GOOD tailSteps).map (fun r => (r.startTs, r.endTs, r.mode, r.wayName))
+  == #[(900, 1460, "train", "Highbury & Islington → Wembley Park · Victoria Line"), (1460, 1700, "walking", "Wembley Park")]
 -- Steps that stop well before the gap's end are not a tail: the ride keeps its span.
 #guard (runS #[BLACKOUT] GOOD [⟨1000, 90⟩, ⟨1060, 95⟩]).map (·.endTs) == #[1700]
 -- The slack is measured from the last stepped MINUTE'S END: a gap ending 120 s
