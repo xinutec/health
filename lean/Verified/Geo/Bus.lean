@@ -98,6 +98,14 @@ structure BusRouteMatch where
 
 /-- A board/alight coord must fall within this of a stop to anchor to it. -/
 def BUS_STOP_ANCHOR_M : Float := 120
+/-- How far the STAY after a ride may lie from a stop of the route for that
+    stop to be read as the alight when the fixes cannot show one: about four
+    minutes' walk, the stretch from the stop to the door that a sparse trace
+    loses into the ride. 06-09 (2026): the last precise fix is mid-ride, the
+    next 13 minutes carry three fixes at 160–640 m, and the clinic sits 170 m
+    from Wilton Street. Pippijn, 2026-09-28: the app may name the stop from
+    the route and the stay that follows. -/
+def BUS_STAY_ALIGHT_M : Float := 300
 /-- An intermediate stop counts as passed within this of the trace polyline. -/
 def BUS_STOP_PASS_M : Float := 120
 /-- Minimum bus-evidence score (coverage × speed-plausibility) to name a bus. -/
@@ -180,10 +188,11 @@ def anchorsNear (coord : LatLon) (route : BusRoute) (anchorM : Float) : List Anc
     evidence clears `minScore`, or `none`. Direction is enforced by
     `alight.idx > board.idx`, so a leg ridden the other way matches the
     opposite-direction relation and equal endpoints never match. -/
-private def bestPairFor (leg : VehicleLeg) (route : BusRoute) (anchorM stopPassM minScore speedPlausibility : Float) :
+private def bestPairFor (leg : VehicleLeg) (route : BusRoute)
+    (anchorM alightAnchorM stopPassM minScore speedPlausibility : Float) :
     Option (Anchor × Anchor) := Id.run do
   let boardCands := anchorsNear leg.board route anchorM
-  let alightCands := anchorsNear leg.alight route anchorM
+  let alightCands := anchorsNear leg.alight route alightAnchorM
   if boardCands.isEmpty || alightCands.isEmpty then return none
   let mut best : Option (Anchor × Anchor) := none
   for board in boardCands do
@@ -208,11 +217,12 @@ private def bestPairFor (leg : VehicleLeg) (route : BusRoute) (anchorM stopPassM
     driving (taxi/car) — never forced onto a route it did not ride. -/
 def matchBusRoute (leg : VehicleLeg) (routes : List BusRoute)
     (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
-    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE) : Option BusRouteMatch := Id.run do
+    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE)
+    (alightAnchorM : Float := anchorM) : Option BusRouteMatch := Id.run do
   let speedPlausibility := busSpeedPlausibility leg.speedKmh
   let mut best : Option BusRouteMatch := none
   for route in routes do
-    match bestPairFor leg route anchorM stopPassM minCoverage speedPlausibility with
+    match bestPairFor leg route anchorM alightAnchorM stopPassM minCoverage speedPlausibility with
     | none => continue
     | some (b, a) =>
       let cand : BusRouteMatch :=
@@ -850,12 +860,21 @@ abbrev BusRouteSeg := Verified.Geo.SegmentMerge.Seg
 /-- Name the bus route each road-vehicle leg rode. Purely additive: a leg that
 anchors and corroborates gets `vehicleKind := "bus"` and the route label, and
 everything else — wrong mode, too few fixes, no route matched — passes through
-untouched, so an empty route set makes the pass a no-op. -/
+untouched, so an empty route set makes the pass a no-op.
+
+⚠ THE ALIGHT HAS A SECOND READING WHEN THE FIXES CANNOT SHOW ONE. A ride
+whose last fix anchors to no stop is tried again with the centroid of the STAY
+that follows it as the alight, within `BUS_STAY_ALIGHT_M` of a stop: the bus
+passed that stop and he was next seen a short walk from it. The observed
+alight is always tried first, so a leg the fixes do anchor is never re-read
+from its destination. The ride keeps its extent — the walk from the stop is
+the part of the record the trace lost, and nothing here invents it. -/
 def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes : List BusRoute)
     (anchorM : Float := BUS_STOP_ANCHOR_M) (stopPassM : Float := BUS_STOP_PASS_M)
-    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE) : Array BusRouteSeg :=
+    (minCoverage : Float := BUS_MIN_INTERMEDIATE_COVERAGE)
+    (stayAlightM : Float := BUS_STAY_ALIGHT_M) : Array BusRouteSeg :=
   if routes.isEmpty then segments
-  else segments.map fun seg =>
+  else segments.mapIdx fun i seg =>
     if seg.refinedMode.getD seg.mode ≠ "driving" then seg
     else
       -- `samplesInWindow`: inclusive at both ends, the pipeline's dominant
@@ -882,12 +901,28 @@ def annotateBusRoutes (segments : Array BusRouteSeg) (points : List Fix) (routes
             alight := ⟨alight.lat, alight.lon⟩
             trace := trace
             speedKmh := some seg.avgSpeed }
-        match matchBusRoute leg routes anchorM stopPassM minCoverage with
-        | none => seg
-        | some m =>
+        let labelled (m : BusRouteMatch) : BusRouteSeg :=
           { seg with
               vehicleKind := some "bus"
               wayName := some (busRouteLabel m) }
+        match matchBusRoute leg routes anchorM stopPassM minCoverage with
+        | some m => labelled m
+        | none =>
+          -- The stay that follows, if there is one: the mean of its fixes.
+          let nextStay : Option LatLon := do
+            let next ← segments[i + 1]?
+            guard (next.refinedMode.getD next.mode == "stationary")
+            let inside := points.filter fun p =>
+              decide (p.ts ≥ next.startTs) && decide (p.ts ≤ next.endTs)
+            guard (!inside.isEmpty)
+            let n := Float.ofNat inside.length
+            pure ⟨(inside.foldl (fun a p => a + p.lat) 0) / n, (inside.foldl (fun a p => a + p.lon) 0) / n⟩
+          match nextStay with
+          | none => seg
+          | some c =>
+            match matchBusRoute { leg with alight := c } routes anchorM stopPassM minCoverage stayAlightM with
+            | none => seg
+            | some m => labelled m
 
 /-! ### Parity with Node/V8 (`lean/experiments/annotate-bus-routes-refs.mts`) -/
 
@@ -928,6 +963,29 @@ private def cells (segs : Array BusRouteSeg) (fixes : List Fix) (routes : List B
     fun s => (s.vehicleKind, s.wayName)
 
 #guard cells #[rdrive] busFixes' [route38] == #[(some "bus", some LABEL)]
+
+-- The alight the fixes cannot show. The trace loses its tail: the last fix
+-- lands 430 m off the road and anchors to nothing, so on its own the leg stays
+-- driving. With a stay following it 220 m from Victoria Station — 300+ m from
+-- Wilton Street before it and 400 m from Vauxhall Bridge Road after — the ride
+-- is read to Victoria Station.
+private def traceLostTail : List LatLon := (traceOnRoute.take 7) ++ [⟨51.4971, -0.1380⟩]
+private def lostTailFixes : List Fix := stamp traceLostTail
+private def clinicFixes : List Fix :=
+  [⟨900, 51.4975, -0.1420⟩, ⟨1000, 51.4975, -0.1420⟩, ⟨1100, 51.4975, -0.1420⟩]
+private def rstay : BusRouteSeg := rdrive (mode := "stationary") (startTs := 900) (endTs := 1100) (avgSpeed := 0)
+#guard cells #[rdrive (endTs := 800)] lostTailFixes [route38] == #[(none, none)]
+#guard cells #[rdrive (endTs := 800), rstay] (lostTailFixes ++ clinicFixes) [route38]
+  == #[(some "bus", some LABEL), (none, none)]
+-- A stay 380 m from the nearest stop is not a short walk from it: unchanged.
+private def farStayFixes : List Fix :=
+  [⟨900, 51.4905, -0.1420⟩, ⟨1000, 51.4905, -0.1420⟩, ⟨1100, 51.4905, -0.1420⟩]
+#guard cells #[rdrive (endTs := 800), rstay] (lostTailFixes ++ farStayFixes) [route38] == #[(none, none), (none, none)]
+-- What follows must be a STAY; a walk from the same point says nothing about where he alighted.
+private def rwalk : BusRouteSeg := rdrive (mode := "walking") (startTs := 900) (endTs := 1100) (avgSpeed := 4)
+#guard cells #[rdrive (endTs := 800), rwalk] (lostTailFixes ++ clinicFixes) [route38] == #[(none, none), (none, none)]
+-- And a leg the fixes DO anchor is never re-read from its destination.
+#guard cells #[rdrive, rstay] (busFixes' ++ clinicFixes) [route38] == #[(some "bus", some LABEL), (none, none)]
 -- No routes loaded, and a taxi on the direct road, are the same answer.
 #guard cells #[rdrive] busFixes' [] == #[(none, none)]
 #guard cells #[rdrive] taxiFixes [route38] == #[(none, none)]

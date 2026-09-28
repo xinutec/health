@@ -66,9 +66,9 @@
 		"legModeMatching": 6,
 		"legLineScorable": 0,
 		"legLineMatching": 0,
-		"stationsAsserted": 3,
+		"stationsAsserted": 4,
 		"stationsMatching": 0,
-		"stationsMissing": 3,
+		"stationsMissing": 4,
 		"phantomRides": 1
 	},
 	"2026-06-12": {
