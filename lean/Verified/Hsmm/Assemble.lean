@@ -73,15 +73,14 @@ structure ModelContext where
   continuity : Option Continuity.ContinuityContext
   reacquireRobust : Bool
   segEvidenceOn : Bool
-  /-- #366's two arm knobs, carried in the request's `flags` and absent from
-      every production request (defaults 1 and 0 = the shipped model): the
-      per-minute mode prior's scale, and the scale of `modeEntryLog`, the
-      per-segment entry prior derived from it. -/
+  /-- #366's three arm knobs, carried in the request's `flags` and absent from
+      every production request, so the defaults are the shipped model: the
+      per-minute mode prior's scale at minutes without a GPS fix (the
+      no-evidence fallback) and at minutes with one, and the scale of
+      `modeEntryLog`, the per-segment entry prior derived from it. -/
   modeMinuteScale : Float := 1.0
-  modeEntryScale : Float := 0.0
-  /-- The per-minute scale at minutes WITH a GPS fix; `modeMinuteScale` is
-      then the scale at minutes without one — the no-evidence fallback. -/
   modeMinuteScaleWithGps : Float := 1.0
+  modeEntryScale : Float := 0.0
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float

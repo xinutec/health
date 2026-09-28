@@ -358,9 +358,8 @@ sent every index tactic into whnf on the whole builder — a 200k-heartbeat
 timeout at the `def` (2026-09-25). As a parameter its size is an atom, and the
 `Fin` indices below make every leg, changeover and boundary read total. -/
 private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart trainEnd : Int)
-    (speedKmh : Float) (coarseCount : Nat) (points : Array Shed.PointF)
-    (waysLookup : Float → Float → Array NearbyWay) (acc0 : Array Seg)
-    (evidence : Option String := none) : Array Seg :=
+    (speedKmh : Float) (evidence : String) (points : Array Shed.PointF)
+    (waysLookup : Float → Float → Array NearbyWay) (acc0 : Array Seg) : Array Seg :=
   -- Indices are `Fin`, so every leg, changeover and boundary read below is
   -- total by type; `ofFn` fixes the sizes the tactics need.
   let changeovers : Array (Option (Int × Int)) := Array.ofFn (n := legs.size - 1) fun li =>
@@ -401,7 +400,7 @@ private def legSegments (host : Seg) (legs : Array UndergroundRun) (trainStart t
       if legs.size > 1 then
         s!"underground reconstruction (interchange leg {li.val + 1}/{legs.size} on {leg.line})"
       else
-        s!"underground reconstruction ({evidence.getD s!"{coarseCount} coarse fixes"} on {leg.line})"
+        s!"underground reconstruction ({evidence} on {leg.line})"
     let withLeg := acc.push { host with
       startTs := segStart, endTs := segEnd
       mode := "train", refinedMode := some "train"
@@ -543,14 +542,10 @@ private def blackoutRide (host : Seg) (good hostDark : Array CoarseFix)
     fun a b => a.ts ≤ b.ts).toArray
   let tailStart : Int := Id.run do
     let mut t := host.endTs
-    let mut cur := host.endTs
     for s in inside.reverse do
       -- A step row covers the minute from `ts`; the gap may end up to a minute
       -- past the last stepped minute's END (06-12: 14:59 → 15:01:40).
-      if s.steps > 0 && cur - (s.ts + 60) ≤ 120 then
-        t := s.ts
-        cur := s.ts
-      else break
+      if s.steps > 0 && t - (s.ts + 60) ≤ 120 then t := s.ts else break
     return t
   let tailWalked := host.endTs - tailStart ≥ MIN_SIDE_DURATION_S
     && (meanCadenceSpm steps tailStart host.endTs).any (· ≥ BLACKOUT_TAIL_MIN_CADENCE_SPM)
@@ -563,8 +558,8 @@ private def blackoutRide (host : Seg) (good hostDark : Array CoarseFix)
   guard (!legs.isEmpty)
   let distM := equirectMeters boarding.lat boarding.lon alighting.lat alighting.lon
   let speedKmh := jsRound (distM / Float.ofInt (max 1 (trainEnd - host.startTs)) * 3.6 * 10) / 10
-  let withLegs := legSegments host legs host.startTs trainEnd speedKmh 0 points waysLookup #[]
-    (evidence := some "no fixes; the gap runs from one station to the next")
+  let withLegs := legSegments host legs host.startTs trainEnd speedKmh
+    "no fixes; the gap runs from one station to the next" points waysLookup #[]
   if tailWalked then
     -- The tail is walked inside the station the ride ends at, so it carries
     -- that station's name; a train after it lets the interchange pass suffix it.
@@ -709,8 +704,8 @@ def annotateUndergroundRuns (segments : Array Seg) (rawFixes : Array CoarseFix)
               avgSpeed := st.avgSpeed, maxSpeed := st.maxSpeed
               linearity := st.linearity, pointCount := st.pointCount })
           else result
-        let withLegs := legSegments host legs trainStart trainEnd speedKmh runFixes.size
-          points waysLookup withPre
+        let withLegs := legSegments host legs trainStart trainEnd speedKmh
+          s!"{runFixes.size} coarse fixes" points waysLookup withPre
         if keepPost then
           -- `excludeStart` again: the tube ride ends at `trainEnd`.
           let st := statsOverWindow points trainEnd host.endTs (excludeStart := true)

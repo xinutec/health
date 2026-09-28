@@ -65,8 +65,7 @@ fn tag_pairs(v: Option<&Value>) -> Vec<Value> {
     })
 }
 
-/// The `assemblesegments` request the fixture's day was decoded from.
-/// A numeric knob from the environment, or `null` (absent) — see `flags`.
+/// A numeric arm knob from the environment, or `null` (absent) — see `flags`.
 fn arm_knob(var: &str) -> Value {
     std::env::var(var)
         .ok()
@@ -74,6 +73,7 @@ fn arm_knob(var: &str) -> Value {
         .map_or(Value::Null, |f| json!(f))
 }
 
+/// The `assemblesegments` request the fixture's day was decoded from.
 pub fn request(fx: &Value) -> Result<Value> {
     let (meta, inputs) = (&fx["meta"], &fx["inputs"]);
     let date = meta["date"].as_str().context("meta.date")?;
