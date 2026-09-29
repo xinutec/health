@@ -75,7 +75,7 @@ def label_for(stay, rows):
 class P:
     def __init__(self, sigma=40.0, venue=1.5, open_=0.7, closed=-2.5, base_lo=-2.0, base_hi=1.5,
                  dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5, nf_min=0.0,
-                 pseudo=None, global_pool=False, footprint=0.0):
+                 pseudo=None, global_pool=False, footprint=0.0, short_neutral=False):
         self.__dict__.update(locals()); del self.__dict__['self']
     def __repr__(self):
         return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g} pseudo={self.pseudo} global={self.global_pool} footprint={self.footprint:g}"
@@ -117,7 +117,7 @@ def pooled(mass, n, pseudo, dims):
 
 def rank(stay, p):
     cands = []
-    gpool, is_point = day_info(stay) if (p.global_pool or p.footprint) else (None, {})
+    gpool, is_point = day_info(stay) if (p.global_pool or p.footprint or p.short_neutral) else (None, {})
     for c in stay['c']:
         isv = c['t'] in VENUE_TYPES
         d_eff = c['d']
@@ -133,6 +133,11 @@ def rank(stay, p):
             if p.pseudo is not None and 'sv' in c:
                 b = math.log((c['sv'] + p.pseudo) / (c['tv'] + p.pseudo * c['k']) * c['k'])
             dw, hr = c['dw'], c['hr']
+            # A stay in a dwell bucket the mined pool has NEVER filled says nothing about the
+            # venue's kind: the miner attributes no visit that short, so every candidate's dwell
+            # term is the same artefact. Neutral for all.
+            if p.short_neutral and gpool and gpool['dwell'][dwell_bucket(stay['e'] - stay['s'])] == 0:
+                dw = 0.0
             # An unseen subtype with no category pool reads 0 for dwell and hour — "no evidence" —
             # while a visited one carries its (negative) profile. The global-pool arm backs such a
             # candidate off to ALL his visits instead of to uniform.
@@ -192,6 +197,10 @@ if __name__ == '__main__':
         for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
             r, w = evaluate(data, P(nf_min=m))
             print(f"   nf_min={m:g}: {r}/{len(data)} right   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:600])
+    if len(sys.argv) > 1 and sys.argv[1] == 'short':
+        for sn in (False, True):
+            r, w = evaluate(data, P(pseudo=2, short_neutral=sn))
+            print(f"   short_neutral={sn}: {r}/{len(data)}   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:420])
     if len(sys.argv) > 1 and sys.argv[1] == 'dense':
         best = []
         for gp, fp in itertools.product([False, True], [0, 4, 6, 8, 12]):
