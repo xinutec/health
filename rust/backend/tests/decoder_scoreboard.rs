@@ -131,6 +131,32 @@ fn live_arm() {
             tz,
             scoreboard_segs(rendered.as_array().map_or(&[][..], Vec::as_slice)),
         );
+        // `SCOREBOARD_JOURNEYS=1`: every truth journey the live decode misses,
+        // with both mode shapes — which journeys fail, not only how many.
+        if std::env::var("SCOREBOARD_JOURNEYS").is_ok() {
+            for jv in live["journeys"].as_array().map_or(&[][..], Vec::as_slice) {
+                if jv["matched"].as_bool() == Some(false) {
+                    let shape = |v: &Value| {
+                        v.as_array().map_or_else(
+                            || "-".to_string(),
+                            |a| {
+                                a.iter()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(">")
+                            },
+                        )
+                    };
+                    eprintln!(
+                        "scoreboard-miss: {date} {}..{}  truth {}  decoder {}",
+                        jv["startTs"],
+                        jv["endTs"],
+                        shape(&jv["truth"]),
+                        shape(&jv["decoder"])
+                    );
+                }
+            }
+        }
         let g = |v: &Value, f: &str| v.get(f).and_then(Value::as_i64).unwrap_or(0);
         for f in FIELDS {
             *tot_live.entry(f).or_default() += g(&live, f);

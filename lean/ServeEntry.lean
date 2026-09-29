@@ -3039,7 +3039,18 @@ def decoderScoreResult (j : Json) : Json :=
       ("stationsAsserted", Lean.toJson st.stationsAsserted),
       ("stationsMatching", Lean.toJson st.stationsMatching),
       ("stationsMissing", Lean.toJson st.stationsMissing),
-      ("phantomRides", Lean.toJson phantoms)]
+      ("phantomRides", Lean.toJson phantoms),
+      -- Per truth journey, for reading WHICH journeys fail and how: the scorer's
+      -- own `bestOverlap` and `modeShape`, so the detail cannot disagree with
+      -- the count (2026-09-30).
+      ("journeys", Json.arr (gtJ.map fun g =>
+        let d := bestOverlap g decJ
+        let shp := fun (x : Verified.Eval.Journeys.Journey) => Json.arr ((modeShape x).map Json.str)
+        Json.mkObj [
+          ("startTs", Lean.toJson g.startTs), ("endTs", Lean.toJson g.endTs),
+          ("truth", shp g),
+          ("decoder", match d with | some x => shp x | none => Json.null),
+          ("matched", Json.bool (match d with | some x => modeShape x == modeShape g | none => false))]))]
   match parsed with
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
