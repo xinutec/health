@@ -27,7 +27,7 @@ open Verified.Hsmm.Duration (GammaFit logDurationProb)
     `unknown_rail` graceful-degradation fallback. -/
 def lineIsNamed : Option String → Bool
   | none => false
-  | some l => l != "unknown_rail"
+  | some l => !Verified.Hsmm.Emissions.isPlaceholderLine l
 
 /-- `buildDurationLogProb`'s per-segment verdict. `covered` folds the caller's
     `tsAt(segEndIndex)` defined ∧ `isTrainCovered(ts)`; `fit`/`minForMode` are

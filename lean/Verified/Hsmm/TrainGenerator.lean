@@ -38,7 +38,7 @@ def trainEntryPrior (s : State) (covered lineValid : Bool) : Float :=
   else match s.lineName with
     | none => 0.0
     | some line =>
-      if line == "unknown_rail" then 0.0
+      if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
       else if !covered then 0.0            -- generator silent here
       else if lineValid then VALID_LINE_BOOST else -INVALID_LINE_PENALTY
 

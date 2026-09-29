@@ -50,8 +50,8 @@ def isHardZero (src dst : State) : Bool :=
   -- A ride's head (#366) is followed by its ride and by nothing else, and a
   -- ride under way does not grow a head.
   || (Verified.Hsmm.Emissions.isRideHead src
-        && !(dst.mode == .driving && !Verified.Hsmm.Emissions.isRideHead dst))
-  || (Verified.Hsmm.Emissions.isRideHead dst && src.mode == .driving)
+        && !(dst.mode == src.mode && !Verified.Hsmm.Emissions.isRideHead dst))
+  || (Verified.Hsmm.Emissions.isRideHead dst && src.mode == dst.mode)
 
 private def HEAD : State := ⟨.driving, none, some "head"⟩
 #guard isHardZero HEAD ⟨.driving, none, none⟩ == false
@@ -60,6 +60,14 @@ private def HEAD : State := ⟨.driving, none, some "head"⟩
 #guard isHardZero ⟨.driving, none, none⟩ HEAD == true
 #guard isHardZero ⟨.walking, none, none⟩ HEAD == false
 #guard isHardZero ⟨.stationary, some 5, none⟩ HEAD == false
+-- The train's head: into any line's train and nothing else; no train grows one.
+private def THEAD : State := ⟨.train, none, some "head"⟩
+#guard isHardZero THEAD ⟨.train, none, some "Jubilee Line"⟩ == false
+#guard isHardZero THEAD ⟨.train, none, some "unknown_rail"⟩ == false
+#guard isHardZero THEAD ⟨.driving, none, none⟩ == true
+#guard isHardZero THEAD ⟨.walking, none, none⟩ == true
+#guard isHardZero ⟨.train, none, some "Jubilee Line"⟩ THEAD == true
+#guard isHardZero ⟨.walking, none, none⟩ THEAD == false
 
 /-- Per-`src` cross-weight sum over the state space: total `transitionWeight` of
     the valid (not same, not hard-zero) cross destinations. -/
@@ -87,10 +95,10 @@ def transitionLogProb (states : List State) (selfLoop : Float) (src dst : State)
 def isHardZeroP (placeNear : Int → String → Bool) (src dst : State) : Bool :=
   isHardZero src dst
   || (match src.mode, dst.mode, src.lineName, dst.placeId with
-      | .train, .stationary, some line, some pid => line != "unknown_rail" && !placeNear pid line
+      | .train, .stationary, some line, some pid => !Verified.Hsmm.Emissions.isPlaceholderLine line && !placeNear pid line
       | _, _, _, _ => false)
   || (match src.mode, dst.mode, src.placeId, dst.lineName with
-      | .stationary, .train, some pid, some line => line != "unknown_rail" && !placeNear pid line
+      | .stationary, .train, some pid, some line => !Verified.Hsmm.Emissions.isPlaceholderLine line && !placeNear pid line
       | _, _, _, _ => false)
 
 /-- `crossWeightSum` under the station-graph hard-zero. -/
@@ -147,6 +155,8 @@ private def noneNear : Int → String → Bool := fun _ _ => false
 #guard isHardZeroP noneNear space[3]! space[0]! == true                 -- train@Central → stat@5 (symmetric)
 #guard transitionLogProbP noneNear space defaultSelfLoop space[0]! space[3]! == negInf
 #guard isHardZeroP noneNear space[0]! space[2]! == false                -- stat@5 → walk unaffected
+-- …and a head is a placeholder line: no station-graph veto at a place no line serves.
+#guard isHardZeroP noneNear space[0]! THEAD == false
 
 -- Precomputed-weight-sum matches the full recompute (base matrix build).
 #guard transitionLogProbPre allNear defaultSelfLoop (crossWeightSumP allNear space space[0]!) space[0]! space[2]!

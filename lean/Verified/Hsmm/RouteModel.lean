@@ -115,7 +115,7 @@ def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
   else match s.lineName with
     | none => 0.0
     | some line =>
-      if line == "unknown_rail" then 0.0
+      if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
       else if o.gps.isSome then 0.0
       else match o.prevGpsFix, o.nextGpsFix with
         | some prev, some next =>
@@ -279,6 +279,18 @@ def isMovingMode : Mode → Bool
   | .walking | .cycling | .driving | .train | .plane => true
   | _ => false
 
+/-- The boarding penalty at `(lat, lon)` for the NEAREST modeled line — what a
+    ride's head pays (#366): a platform wait can only be where some line runs,
+    and a head that paid nothing let a ten-minute wait at Home board a
+    one-minute stub (2026-09-30, phantoms 5 → 12). `none` with no lines. -/
+def nearestLineBoarding (edgesByLine : Std.HashMap String (List LineEdge))
+    (lat lon slopMin : Float) : Option Float :=
+  edgesByLine.fold (fun (acc : Option Float) _ lineEdges =>
+    let pen := ChainContext.boardingPenalty (minDistToLineM lat lon lineEdges) slopMin
+    match acc with
+    | none => some pen
+    | some a => some (max a pen)) none
+
 /-- The place-anchored boarding penalty of a pair, when the pair has one: `toS`
     a named train line with edges, `fromS` a place with coordinates. It does not
     depend on the minute, so `buildTransitions` computes it once per pair and
@@ -289,7 +301,11 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
   if toS.mode == .train then
     match toS.lineName with
     | some line =>
-      if line == "unknown_rail" then none
+      if Verified.Hsmm.Emissions.isRideHead toS then
+        match fromS.placeId, placeCoords.get? (fromS.placeId.getD 0) with
+        | some _, some (plat, plon) => nearestLineBoarding edgesByLine plat plon 0
+        | _, _ => none
+      else if Verified.Hsmm.Emissions.isPlaceholderLine line then none
       else match edgesByLine.get? line with
         | none => none
         | some lineEdges =>
@@ -329,7 +345,15 @@ def chainContextFrom (edgesByLine : Std.HashMap String (List LineEdge))
       if toS.mode == .train then
         match toS.lineName with
         | some line =>
-          if line == "unknown_rail" then 0.0
+          if Verified.Hsmm.Emissions.isRideHead toS then
+            -- The head boards the nearest line (#366).
+            if isTrainCovered then 0.0
+            else match placeBoard with
+              | some pb => pb
+              | none => match o.prevGpsFix with
+                | some fx => (nearestLineBoarding edgesByLine fx.lat fx.lon (slopMinOf fx)).getD 0.0
+                | none => 0.0
+          else if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
           else match edgesByLine.get? line with
             | none => 0.0
             | some lineEdges =>

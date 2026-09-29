@@ -130,17 +130,24 @@ def RIDE_HEAD_CRAWL_MEAN_KMH : Float := 3
 def RIDE_HEAD_CRAWL_STD_KMH : Float := 3
 def RIDE_HEAD_CRAWL_WEIGHT : Float := 0.5
 
-/-- A `driving` state that is a ride's head — the same mode, told apart in
-    the `lineName` slot, which no road state uses. -/
-def isRideHead (s : State) : Bool := s.mode == .driving && s.lineName == some "head"
+/-- A line-name slot that names no line: the generator's `unknown_rail`
+    fallback and a ride's head. Every reader of a train state's line treats
+    both as "no line". -/
+def isPlaceholderLine (l : String) : Bool := l == "unknown_rail" || l == "head"
+
+/-- A ride's head: `driving` or `train` with the head mark in the `lineName`
+    slot. For a train it is the platform wait before the ride, which is part
+    of the ride by his convention (2026-09-27). -/
+def isRideHead (s : State) : Bool :=
+  (s.mode == .driving || s.mode == .train) && s.lineName == some "head"
 
 /-- What the head adds to `driving`'s per-minute emission: the log of the crawl
     mixture over the cruising prior. 0 without a fix. -/
-def rideHeadSpeedAdjust (speedKmh : Option Float) : Float :=
+def rideHeadSpeedAdjust (mode : Mode) (speedKmh : Option Float) : Float :=
   match speedKmh with
   | none => 0.0
   | some v =>
-    let p := modePriors .driving
+    let p := modePriors mode
     let cruise := logNormalPdf v p.speedMean p.speedStd
     let crawl := logNormalPdf v RIDE_HEAD_CRAWL_MEAN_KMH RIDE_HEAD_CRAWL_STD_KMH
     Float.log ((1 - RIDE_HEAD_CRAWL_WEIGHT) * Float.exp cruise
@@ -148,12 +155,17 @@ def rideHeadSpeedAdjust (speedKmh : Option Float) : Float :=
 
 -- A crawling minute gains most of the 4 nats it lost; a cruising minute pays
 -- the mixture's halving; no fix, nothing.
-#guard (let a := rideHeadSpeedAdjust (some 1.2); a > 2.8 && a < 3.0)
-#guard Float.abs (rideHeadSpeedAdjust (some 40) - Float.log 0.5) < 1e-6
-#guard rideHeadSpeedAdjust none == 0.0
+#guard (let a := rideHeadSpeedAdjust .driving (some 1.2); a > 2.8 && a < 3.0)
+#guard Float.abs (rideHeadSpeedAdjust .driving (some 40) - Float.log 0.5) < 1e-6
+#guard rideHeadSpeedAdjust .driving none == 0.0
+-- A train's head at a standstill on the platform: most of the 50 ± 30 prior's
+-- cost at 0 km/h comes back.
+#guard (rideHeadSpeedAdjust .train (some 0)) > 1.5
 #guard isRideHead ⟨.driving, none, some "head"⟩ == true
 #guard isRideHead ⟨.driving, none, none⟩ == false
-#guard isRideHead ⟨.train, none, some "head"⟩ == false
+#guard isRideHead ⟨.train, none, some "head"⟩ == true
+#guard isRideHead ⟨.train, none, some "Jubilee Line"⟩ == false
+#guard isPlaceholderLine "head" && isPlaceholderLine "unknown_rail" && !isPlaceholderLine "Jubilee Line"
 
 /-- Speed / GPS-null-plane term. -/
 private def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=

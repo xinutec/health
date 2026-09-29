@@ -38,7 +38,7 @@ def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
   else match s.lineName with
     | none => 0.0
     | some line =>
-      if line == "unknown_rail" then
+      if Verified.Hsmm.Emissions.isPlaceholderLine line then
         if !gpsPresent then 0.0
         else match roadDistM, railDistM with
           | some rd, some rl => if rd < rl then ROAD_NEARER_PENALTY else 0.0

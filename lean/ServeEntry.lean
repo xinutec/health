@@ -849,7 +849,7 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (← (← flags.getObjVal? "chainContext").getBool?)
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
     (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
-    (knob "rideHeadMin" 0).toUInt64.toNat, maxD)
+    (knob "rideHeadMin" 0).toUInt64.toNat (knob "rideHeadCredit" 1.0), maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json

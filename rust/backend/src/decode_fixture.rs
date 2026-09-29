@@ -227,6 +227,7 @@ pub fn request(fx: &Value) -> Result<Value> {
             "modeEntryScale": arm_knob("HSMM_MODE_ENTRY_SCALE"),
             "modeMinuteScaleWithGps": arm_knob("HSMM_MODE_MINUTE_SCALE_GPS"),
             "rideHeadMin": arm_knob("HSMM_RIDE_HEAD_MIN"),
+            "rideHeadCredit": arm_knob("HSMM_RIDE_HEAD_CREDIT"),
         },
         "date": date,
         "tz": tz,

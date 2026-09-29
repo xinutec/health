@@ -83,6 +83,9 @@ structure ModelContext where
   modeEntryScale : Float := 0.0
   /-- Longest ride's head, in minutes; 0 = no head state in the space (#366). -/
   rideHeadMin : Nat := 0
+  /-- How much of the stay–ride gap in the per-minute mode prior a head minute
+      is credited: 1 prices it like a stay, 0 like its ride. -/
+  rideHeadCredit : Float := 1.0
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float
@@ -109,7 +112,8 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (continuity : Option Continuity.ContinuityContext)
     (reacquireRobust segEvidenceOn chainOn : Bool)
     (modeMinuteScale : Float := 1.0) (modeEntryScale : Float := 0.0)
-    (modeMinuteScaleWithGps : Float := 1.0) (rideHeadMin : Nat := 0) : ModelContext :=
+    (modeMinuteScaleWithGps : Float := 1.0) (rideHeadMin : Nat := 0)
+    (rideHeadCredit : Float := 1.0) : ModelContext :=
   let totalDwell := places.foldl (fun a (_, _, _, _, dwell) => a + dwell) 0.0
   let nPlaces := places.length
   let placeCoords := places.foldl (fun m (p, lat, lon, _, _) => m.insert p.id (lat, lon))
@@ -122,14 +126,14 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     ({} : Std.HashMap Int Float)
   { obs
     states := (buildStateSpace (places.map (·.1)) KNOWN_LINES
-      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE] else [])).toArray
+      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE, StateSpace.RIDE_HEAD_TRAIN_STATE] else [])).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn, modeMinuteScale, modeEntryScale, modeMinuteScaleWithGps
-    rideHeadMin
+    rideHeadMin, rideHeadCredit
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop }
 
@@ -156,8 +160,8 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
     -- crawling minute and the head never decodes (measured 2026-09-29: the
     -- eleven frozen days re-decoded identically with it in the space).
     + (if Emissions.isRideHead st then
-         Emissions.rideHeadSpeedAdjust (o.gps.map (·.speedKmh))
-           + (Emissions.modePriorLog .stationary - Emissions.modePriorLog .driving)
+         Emissions.rideHeadSpeedAdjust st.mode (o.gps.map (·.speedKmh))
+           + c.rideHeadCredit * (Emissions.modePriorLog .stationary - Emissions.modePriorLog st.mode)
        else 0.0)
   | _, _ => negInf
 
@@ -303,7 +307,7 @@ private def ctxH : ModelContext :=
 private def headIdx : Nat := (ctxH.states.findIdx? Emissions.isRideHead).getD 0
 private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving && !Emissions.isRideHead s)).getD 0
 #guard ctxU.states.any Emissions.isRideHead == false
-#guard ctxH.states.any Emissions.isRideHead == true
+#guard (ctxH.states.filter Emissions.isRideHead).size == 2
 -- No fix on `obsTrain`, so the head differs from `driving` by the prior swap alone.
 #guard Float.abs (emitAt ctxH 0 headIdx - emitAt ctxH 0 drvIdx
   - (Emissions.modePriorLog .stationary - Emissions.modePriorLog .driving)) < 1e-9
