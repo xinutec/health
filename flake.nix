@@ -11,6 +11,10 @@
     in {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
+          # Playwright's browsers come from the lock, not ~/Library/Caches: the
+          # driver's version must match @playwright/test's (tables/deps.dhall).
+          PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "1";
           # The single source of truth for every script's toolchain — see
           # scripts/_devshell.sh. Pinned via flake.lock so it never drifts
           # to a too-old Node (the ambient nix channel does; that broke the
