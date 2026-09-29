@@ -281,6 +281,10 @@ impl Truth {
             let line = format!("{}\n", json!({ "date": date, "rows": narrative.rows }));
             f.write_all(line.as_bytes()).expect("TRUTH_ROWS_OUT writes");
         }
+        // ⚠ ONE FILE PER PROCESS: the shards run in parallel and each writes
+        // the whole file at `finish`, so a run over several shards keeps only
+        // the last shard's days. For per-row verdicts over many days, run
+        // them one `CORPUS_DAYS` at a time (2026-09-29).
         if std::env::var("VENUE_AB_OUT").is_ok() {
             self.ab_rows.insert(
                 date.to_string(),

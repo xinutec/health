@@ -1,48 +1,13 @@
-# VENUEFIT / VENUETOP — every candidate's raw features and the ranking's own pick, one line per ranked stay, for fitting the venue ranking offline (#325, 2026-09-28).
-# Apply with: git apply lean/experiments/venue-fit-trace.patch   (against a90849a; shapeParts is already in the tree)
-# Then: TRUTH_ROWS_OUT=/tmp/truth-rows.jsonl cargo nextest run --release -p backend --test corpus_gate --no-capture 2>&1 | grep 'VENUEFIT\|VENUETOP' > /tmp/venuefit.log ; python3 lean/experiments/venue-fit.py grid
-# Verdict 2026-09-28: 139 stays, 56 with a confirmed venue among the candidates; the copy reproduces the Lean ranking 139/139; no σ/hours/base-rate grid beats the shipped 48/56; near-field gated on total ≥ 0 gives 49/56 (shipped). Three of the remaining five are the naming COORDINATE, one is a 4-min stop's prior vs geometry.
-
 diff --git a/lean/Verified/Geo/VenuePrior.lean b/lean/Verified/Geo/VenuePrior.lean
-index 7d702dc..fa1efb7 100644
+index aa40a33..78b0817 100644
 --- a/lean/Verified/Geo/VenuePrior.lean
 +++ b/lean/Verified/Geo/VenuePrior.lean
-@@ -255,9 +255,9 @@ def blendedBinP (st cat : Option VenueTypeStats) (pick : VenueTypeStats → Floa
-                  | none => 0
-   (stMass + catMass + pseudo * u) / (stN + catN + pseudo)
- 
--/-- The mined visit-shape prior for a subtype: base rate + dwell shape + hour
--    shape, each as a clamped log-ratio against uniform. -/
--def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float :=
-+/-- The three log-ratios against uniform that `shapeScore` clamps and sums:
-+    base rate, dwell shape, hour shape — UNCLAMPED. -/
-+def shapeParts (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float × Float × Float :=
-   let st := lookupStats priors.bySubtype subtype
-   let cat := lookupStats priors.byCategory (categoryOfSubtype subtype)
-   let bucket := dwellBucket (Float.ofInt (stay.endUnix - stay.startUnix))
-@@ -267,9 +267,13 @@ def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Fl
-   let kTypes := Float.ofNat (max priors.bySubtype.length BASE_RATE_MIN_TYPES)
-   let stVisits := match st with | some s => s.visits | none => 0
-   let baseP := (stVisits + BASE_RATE_PSEUDO) / (priors.totalVisits + BASE_RATE_PSEUDO * kTypes)
--  clamp (Float.log (baseP * kTypes)) (-2) 1.5
--  + clamp (Float.log (dwellP * Float.ofNat DWELL_BUCKETS)) (-2) 1.2
--  + clamp (Float.log (hourP * 24)) (-1.5) 1.2
-+  (Float.log (baseP * kTypes), Float.log (dwellP * Float.ofNat DWELL_BUCKETS), Float.log (hourP * 24))
-+
-+/-- The mined visit-shape prior for a subtype: base rate + dwell shape + hour
-+    shape, each as a clamped log-ratio against uniform. -/
-+def shapeScore (subtype : String) (stay : StayShape) (priors : VenuePriors) : Float :=
-+  let (b, d, h) := shapeParts subtype stay priors
-+  clamp b (-2) 1.5 + clamp d (-2) 1.2 + clamp h (-1.5) 1.2
- 
- /-- Opening-hours evidence from an already-resolved open fraction: fully open
-     is mild support, fully closed is strong but out-votable counter-evidence.
-@@ -345,6 +349,17 @@ private def sortStable (before : VenueCandidateScore → VenueCandidateScore →
+@@ -352,6 +352,17 @@ private def sortStable (before : VenueCandidateScore → VenueCandidateScore →
      (xs : List VenueCandidateScore) : List VenueCandidateScore :=
    xs.foldl (fun acc x => insertBy before x acc) []
  
 +/-- VENUEFIT — one line per ranked stay with every candidate's RAW features,
-+    for fitting the constants offline (#325, 2026-09-28). Dev instrument. -/
++    for fitting the constants offline (#325). Dev instrument, never committed. -/
 +private def venueFitLine (s : StayShape) (priors : Option VenuePriors) (pool : List Landmark) : String :=
 +  let c := pool.map fun l =>
 +    let (b, d, h) := match priors with
@@ -55,7 +20,7 @@ index 7d702dc..fa1efb7 100644
  /--
  Rank landmark candidates for a stay by summed log-evidence, best first.
  `stay` and `priors` are optional — without them the ranking degrades to
-@@ -360,6 +375,13 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
+@@ -367,6 +378,13 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
    -- Degenerate input (everything is street furniture): better to rank the
    -- furniture than to return nothing — callers rely on non-empty in.
    let pool := if eligible.isEmpty then landmarks else eligible
@@ -64,15 +29,15 @@ index 7d702dc..fa1efb7 100644
 +    | none => pool
 +  let traceTop := fun (ranked : List VenueCandidateScore) => match stay, ranked.head? with
 +    | some s, some top =>
-+      if (dbgTrace s!"VENUETOP \{\"s\":{s.startUnix},\"e\":{s.endUnix},\"n\":{top.landmark.name.quote},\"tot\":{top.total},\"nf\":{top.nearField},\"enc\":{top.landmark.enclosing},\"acc\":{top.landmark.enclosing || decide (top.total ≥ VENUE_RANK_FLOOR_NATS)}}" fun _ => false : Bool) then [] else ranked
++      if (dbgTrace s!"VENUETOP \{\"s\":{s.startUnix},\"e\":{s.endUnix},\"n\":{top.landmark.name.quote},\"tot\":{top.total},\"nf\":{top.nearField},\"enc\":{top.landmark.enclosing}}" fun _ => false : Bool) then [] else ranked
 +    | _, _ => ranked
    let isNearField := fun (l : Landmark) =>
      if l.reverseGeocoded || !isVenueType l || decide (l.distanceM > NEAR_FIELD_DECISIVE_M) then false
      else match (if stay.isSome then hoursScore l.openFraction else none) with
-@@ -376,7 +398,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
-        total := distance + venue + shape.getD 0 + hours.getD 0,
-        parts := ⟨distance, venue, shape, hours⟩,
-        nearField := isNearField l } : VenueCandidateScore))
+@@ -390,7 +408,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
+        -- (09-06 18:20 local, #325). Fitted 2026-09-28 on the 56 confirmed
+        -- corpus stays: 48 → 49 right, nothing lost.
+        nearField := isNearField l && decide (total ≥ NEAR_FIELD_MIN_NATS) } : VenueCandidateScore))
 -  sortStable (fun a b =>
 +  traceTop <| sortStable (fun a b =>
      let ea := a.landmark.enclosing
