@@ -22,13 +22,17 @@ def load_stays():
         if i >= 0:
             j = json.loads(l[i+9:].strip())
             key = (j['s'], j['e'])
-            if key in seen: continue   # the same stay ranked twice (two arms / re-enrich)
+            # The same window is ranked more than once (a re-resolution later in the
+            # fold); the LAST ranking is the one the served state carries. Keeping the
+            # first (until 2026-09-29) made 06-28 read as right when the pod said otherwise.
+            if key in seen:
+                stays[stays.index(seen[key])] = j; seen[key] = j; continue
             seen[key] = j; stays.append(j); continue
         i = l.find('VENUETOP ')
         if i >= 0:
             j = json.loads(l[i+9:].strip())
             st = seen.get((j['s'], j['e']))
-            if st is not None and 'top' not in st: st['top'] = j
+            if st is not None: st['top'] = j
     return stays
 
 def parity(data_all, p):
@@ -71,18 +75,55 @@ def label_for(stay, rows):
 class P:
     def __init__(self, sigma=40.0, venue=1.5, open_=0.7, closed=-2.5, base_lo=-2.0, base_hi=1.5,
                  dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5, nf_min=0.0,
-                 pseudo=None):
+                 pseudo=None, global_pool=False, footprint=0.0):
         self.__dict__.update(locals()); del self.__dict__['self']
     def __repr__(self):
-        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g} pseudo={self.pseudo}"
+        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g} pseudo={self.pseudo} global={self.global_pool} footprint={self.footprint:g}"
 
 def clamp(x, lo, hi): return min(hi, max(lo, x))
 
+_DAY = {}
+def day_info(stay):
+    """(global pool, name->isPoint) for the stay's day, from its fixture."""
+    d = date_of(stay['s'])
+    if d not in _DAY:
+        import glob as _g
+        paths = _g.glob(f"{os.path.dirname(__file__)}/../../tests/golden/days/{d}-*.json")
+        if not paths: _DAY[d] = (None, {}); return _DAY[d]
+        fx = json.load(open(paths[0]))
+        blob = fx['inputs'].get('venuePriors') or {}
+        n = 0.0; hours = [0.0]*24; dwell = [0.0]*4
+        for v in (blob.get('byCategory') or {}).values():
+            n += v['visits']; hours = [a+b for a,b in zip(hours, v['hours'])]; dwell = [a+b for a,b in zip(dwell, v['dwell'])]
+        pts = {}
+        for r in fx['inputs']['osmRowSet']['points']:
+            if r.get('name'): pts.setdefault(norm(r['name']), True)
+        for r in fx['inputs']['osmRowSet']['lines']:
+            if r.get('name'): pts[norm(r['name'])] = pts.get(norm(r['name']), False) and False
+        _DAY[d] = ({'n': n, 'hours': hours, 'dwell': dwell}, pts)
+    return _DAY[d]
+
+DWELL_BOUNDS = [10, 40, 150]
+def dwell_bucket(sec):
+    m = sec / 60
+    for i, b in enumerate(DWELL_BOUNDS):
+        if m < b: return i
+    return len(DWELL_BOUNDS)
+
+def pooled(mass, n, pseudo, dims):
+    """blendedBinP with only a pool and the uniform pseudo-count: log-ratio against uniform."""
+    u = 1.0 / dims
+    return math.log(((mass + pseudo * u) / (n + pseudo)) * dims)
+
 def rank(stay, p):
     cands = []
+    gpool, is_point = day_info(stay) if (p.global_pool or p.footprint) else (None, {})
     for c in stay['c']:
         isv = c['t'] in VENUE_TYPES
-        dist = -0.5 * (c['d'] / p.sigma) ** 2
+        d_eff = c['d']
+        if p.footprint and is_point.get(norm(c['n']), False):
+            d_eff = max(0.0, c['d'] - p.footprint)
+        dist = -0.5 * (d_eff / p.sigma) ** 2
         venue = p.venue if isv else 0.0
         shape = None
         if c['t'] in PRIOR_TYPES and not (c['b'] == 0 and c['dw'] == 0 and c['hr'] == 0):
@@ -91,16 +132,23 @@ def rank(stay, p):
             # the blob's `tv` and `k`, so the base log-ratio can be recomputed for any pseudo-count.
             if p.pseudo is not None and 'sv' in c:
                 b = math.log((c['sv'] + p.pseudo) / (c['tv'] + p.pseudo * c['k']) * c['k'])
-            shape = clamp(b, p.base_lo, p.base_hi) + clamp(c['dw'], p.dwell_lo, p.dwell_hi) + clamp(c['hr'], p.hour_lo, p.hour_hi)
+            dw, hr = c['dw'], c['hr']
+            # An unseen subtype with no category pool reads 0 for dwell and hour — "no evidence" —
+            # while a visited one carries its (negative) profile. The global-pool arm backs such a
+            # candidate off to ALL his visits instead of to uniform.
+            if p.global_pool and gpool and c.get('sv', 0) == 0 and dw == 0 and hr == 0 and gpool['n'] > 0:
+                dw = pooled(gpool['dwell'][dwell_bucket(stay['e'] - stay['s'])], gpool['n'], 4.0, 4)
+                hr = pooled(gpool['hours'][stay['h'] % 24], gpool['n'], 8.0, 24)
+            shape = clamp(b, p.base_lo, p.base_hi) + clamp(dw, p.dwell_lo, p.dwell_hi) + clamp(hr, p.hour_lo, p.hour_hi)
         hours = None
         if c['of'] is not None:
             hours = p.closed + c['of'] * (p.open_ - p.closed)
         total = dist + venue + (shape or 0.0) + (hours or 0.0)
         # NEAR_FIELD_MIN_NATS (2026-09-28): the veto goes only to a candidate whose own total is at least neutral.
-        nf = isv and not c['rg'] and c['d'] <= p.near and (hours is None or hours >= 0) and total >= p.nf_min
-        cands.append(dict(c, total=total, nf=nf))
+        nf = isv and not c['rg'] and d_eff <= p.near and (hours is None or hours >= 0) and total >= p.nf_min
+        cands.append(dict(c, total=total, nf=nf, d_eff=d_eff))
     def key(c):
-        return (0 if c['enc'] else 1, 0 if c['nf'] else 1, c['d'] if c['nf'] else 0.0, -c['total'], c['d'], c['n'].lower())
+        return (0 if c['enc'] else 1, 0 if c['nf'] else 1, c['d_eff'] if c['nf'] else 0.0, -c['total'], c['d_eff'], c['n'].lower())
     cands.sort(key=key)
     # stable sort in Lean is insertion by `before`; ties keep input order — close enough.
     return cands
@@ -144,6 +192,29 @@ if __name__ == '__main__':
         for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
             r, w = evaluate(data, P(nf_min=m))
             print(f"   nf_min={m:g}: {r}/{len(data)} right   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:600])
+    if len(sys.argv) > 1 and sys.argv[1] == 'dense':
+        best = []
+        for gp, fp in itertools.product([False, True], [0, 4, 6, 8, 12]):
+            p = P(pseudo=2, global_pool=gp, footprint=fp)
+            r, w = evaluate(data, p)
+            best.append((r, f"global_pool={gp} footprint={fp:g}", w))
+        best.sort(key=lambda x: -x[0])
+        print("\nDENSE GRID:")
+        for r, desc, w in best:
+            print(f"   {r}/{len(data)}  {desc}   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:420])
+    if len(sys.argv) > 1 and sys.argv[1] == 'show':
+        # show <YYYY-MM-DD> <HH:MM>Z: the ranked candidates for one stay under the shipped constants.
+        want_d, want_t = sys.argv[2], sys.argv[3]
+        p = P(pseudo=2, global_pool=bool(os.environ.get('FIT_GLOBAL')), footprint=float(os.environ.get('FIT_FOOTPRINT', 0)))
+        for st in stays:
+            if date_of(st['s']) != want_d or time.strftime('%H:%M', time.gmtime(st['s'])) != want_t: continue
+            r = rank(st, p)
+            gp, _ = day_info(st)
+            print(f"{want_d} {want_t}Z–{time.strftime('%H:%M', time.gmtime(st['e']))}Z h={st['h']} dur={st['e']-st['s']}s bucket={dwell_bucket(st['e']-st['s'])} pool={gp and (gp['n'], gp['hours'][st['h']%24], gp['dwell'][dwell_bucket(st['e']-st['s'])])}")
+            for c in r[:10]:
+                dist = -0.5 * (c['d'] / p.sigma) ** 2
+                b = math.log((c['sv'] + p.pseudo) / (c['tv'] + p.pseudo * c['k']) * c['k']) if 'sv' in c else c['b']
+                print(f"   {'NF' if c['nf'] else '  '} {'ENC' if c['enc'] else '   '} {c['n'][:26]:26} {c['st'][:14]:14} d={c['d']:5.1f} tot={c['total']:6.2f}  dist={dist:5.2f} b={clamp(b,p.base_lo,p.base_hi):5.2f} dw(trace)={c['dw']:5.2f} hr(trace)={c['hr']:5.2f} of={c['of']} sv={c.get('sv')}")
     if len(sys.argv) > 1 and sys.argv[1] == 'pseudo':
         best = []
         for pseudo, base_lo in itertools.product([0.5, 1, 2, 4, 8, 16], [-2, -1.5, -1, -0.5]):
