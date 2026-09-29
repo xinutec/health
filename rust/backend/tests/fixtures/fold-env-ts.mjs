@@ -120,7 +120,8 @@ for (const f of readdirSync(CAP).sort()) {
                 "morningFixes", "prevEveningFixes", "rawSleep", "dayEndTs", "modeStats"];
   const env = {};
   for (const k of keep) env[k] = req.env[k];
-  out.push({ day: f.replace(/\.json$/, ""), cap, env });
+  // The date only: a golden file is named `<date>-<account>.json`.
+  out.push({ day: f.slice(0, 10), cap, env });
 }
 writeFileSync(new URL("./fold-env-ts.json", import.meta.url), JSON.stringify(out, null, 1));
 console.error(`${out.length} days`);
