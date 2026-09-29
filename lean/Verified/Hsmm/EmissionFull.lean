@@ -82,6 +82,8 @@ def emissionLogProbFull
   baseEmissionWithReacquire s o placeCoord reacquireRobust
     + Geometric.geometricFeasibility s o.ts.toNat.toFloat
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
+    + Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
+        (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix)
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
     + routeRailEvidence model connGraph s o false
     + lineProximityFactor model modeledLines s o false
