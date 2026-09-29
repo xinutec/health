@@ -108,18 +108,54 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// station is renamed from its own window — both DERIVE geocode keys the capture
 /// never asked. 05-22, 06-15, 07-17 rose and 08-05, 08-13 joined; the six days
 /// that had already fallen were ratcheted down with them.
-const UNANSWERED_BY_DAY: [(&str, usize); 11] = [
-    ("2026-04-30", 1),
-    ("2026-05-11", 1),
-    ("2026-05-22", 2),
-    ("2026-06-15", 3),
-    ("2026-06-18", 2),
-    ("2026-06-24", 1),
-    ("2026-07-10", 1),
-    ("2026-07-17", 3),
-    ("2026-08-05", 1),
-    ("2026-08-08", 2),
-    ("2026-08-13", 1),
+///
+/// Re-blessed 2026-09-29 with the naming coordinate (#325): a stay that
+/// elected a mined place is now named where its own fixes put it, so nearly
+/// every such stay DERIVES a `reverseGeocode` key the capture (which asked at
+/// the stored centroid) never recorded — 40 days carry holes and every moved
+/// stay reads `city: null` in its blessed states. The holes close when the
+/// days are re-captured (#1076); the fold is right to ask.
+const UNANSWERED_BY_DAY: [(&str, usize); 40] = [
+    ("2026-04-30", 3),
+    ("2026-05-11", 2),
+    ("2026-05-12", 1),
+    ("2026-05-14", 1),
+    ("2026-05-15", 1),
+    ("2026-05-18", 3),
+    ("2026-05-20", 4),
+    ("2026-05-22", 4),
+    ("2026-05-25", 4),
+    ("2026-06-02", 1),
+    ("2026-06-09", 5),
+    ("2026-06-12", 2),
+    ("2026-06-15", 8),
+    ("2026-06-16", 2),
+    ("2026-06-17", 2),
+    ("2026-06-18", 5),
+    ("2026-06-22", 2),
+    ("2026-06-23", 3),
+    ("2026-06-24", 4),
+    ("2026-06-28", 2),
+    ("2026-06-29", 2),
+    ("2026-07-01", 3),
+    ("2026-07-02", 2),
+    ("2026-07-06", 2),
+    ("2026-07-07", 1),
+    ("2026-07-10", 2),
+    ("2026-07-12", 2),
+    ("2026-07-14", 2),
+    ("2026-07-15", 1),
+    ("2026-07-16", 3),
+    ("2026-07-17", 6),
+    ("2026-07-30", 2),
+    ("2026-08-05", 2),
+    ("2026-08-06", 2),
+    ("2026-08-07", 3),
+    ("2026-08-08", 10),
+    ("2026-08-09", 2),
+    ("2026-08-13", 3),
+    ("2026-09-06", 5),
+    ("2026-09-15", 2),
 ];
 
 fn ceiling_for(date: &str) -> usize {
