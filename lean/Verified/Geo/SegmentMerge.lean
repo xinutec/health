@@ -314,11 +314,20 @@ is fidget-level; a browse-heavy errand defeats the avg-speed guard (sub-walking
 median fix speed inside a shop) yet steps 50+/min throughout. Steps are the only
 DIRECT movement evidence, so a middle that steps like a walk survives as one. -/
 def STAY_BRIDGE_MAX_CADENCE : Float := 20
+/-- A step record this close on either side of a segment says the watch was
+counting through it, so a zero inside is a count and not an absence. -/
+def STEPS_LIVE_MARGIN_S : Int := 15 * 60
 
 private def meanCadence (steps : Array StepPoint) (s : Seg) : Float :=
   let durMin := Float.ofInt (s.endTs - s.startTs) / 60
   if durMin ≤ 0 then 0
   else (steps.foldl (fun acc p => if p.ts ≥ s.startTs && p.ts < s.endTs then acc + p.steps else acc) 0) / durMin
+
+/-- The step stream was reporting around `s`: a record within the margin on
+either side. Zero-step minutes are not recorded, so the window itself cannot
+say whether the watch was on. -/
+private def stepsLiveAround (steps : Array StepPoint) (s : Seg) : Bool :=
+  steps.any fun p => p.ts ≥ s.startTs - STEPS_LIVE_MARGIN_S && p.ts < s.endTs + STEPS_LIVE_MARGIN_S
 
 /-- Two stays are at the same place when they carry the same non-empty name.
 
@@ -363,11 +372,20 @@ def mergeAdjacentStays (segments : Array Seg) (steps : Array StepPoint := #[]) :
             && prev.avgSpeed ≤ STAY_BRIDGE_MAX_AVG_KMH
             && meanCadence steps prev < STAY_BRIDGE_MAX_CADENCE
         let isBlackoutGap := prev.mode == "unknown" && prev.pointCount == 0
+        -- A brief slow move with NO steps while the watch was counting. Nobody
+        -- changes place at walking speed without a footstep (a vehicle is
+        -- excluded by the speed cap), so the stays it separates are one place
+        -- whatever each was named: 2026-05-22 20:26–20:31 local, five minutes
+        -- of GPS drift inside a station wait, 0 steps between records at
+        -- 20:16 and 20:35, the halves named Subway and O2 Centre by two reads
+        -- of the same spot (#185, 2026-09-29).
+        let isSteplessBridge :=
+          isBriefPhantomMove && stepsLiveAround steps prev && meanCadence steps prev == 0
         match prevPrev? with
         | some prevPrev =>
           if effectiveMode seg == "stationary" && effectiveMode prevPrev == "stationary"
-              && samePlace prevPrev seg
-              && (isBriefPhantomMove || isBlackoutGap) then
+              && ((samePlace prevPrev seg && (isBriefPhantomMove || isBlackoutGap))
+                  || isSteplessBridge) then
             out.pop.pop.push
               { prevPrev with
                 endTs := seg.endTs
@@ -778,10 +796,23 @@ private def cinemaDay (first second : Option String) : Array Seg :=
     #[home 0 600,
       { blank with startTs := 600, endTs := 900, mode := "walking", refinedMode := some "stationary", avgSpeed := 1.5, pointCount := 4 },
       home 900 1800]).size == 1
--- Brackets at DIFFERENT places do not bridge.
+-- Brackets at DIFFERENT places do not bridge…
 #guard (mergeAdjacentStays
     #[home 0 600, { blank with startTs := 600, endTs := 900, mode := "walking", avgSpeed := 1.5, pointCount := 4 },
       { home 900 1800 with place := some "Work" }]).size == 3
+-- …unless the middle took NO steps while the watch was counting either side of
+-- it: then it is drift, and the first stay's name stands.
+private def drift : Seg := { blank with startTs := 600, endTs := 900, mode := "walking", avgSpeed := 1.5, pointCount := 4 }
+#guard sview (mergeAdjacentStays #[home 0 600, drift, { home 900 1800 with place := some "Work" }]
+    #[⟨300, 12⟩, ⟨1000, 9⟩])
+  == #[(0, 1800, "stationary", some "Home", 24)]
+-- A single step record inside the middle, and it is a walk between two places.
+#guard (mergeAdjacentStays #[home 0 600, drift, { home 900 1800 with place := some "Work" }]
+    #[⟨300, 12⟩, ⟨700, 6⟩, ⟨1000, 9⟩]).size == 3
+-- No record within fifteen minutes on either side: the watch may have been
+-- off, and a zero that is an absence bridges nothing.
+#guard (mergeAdjacentStays #[home 0 600, drift, { home 900 1800 with place := some "Work" }]
+    #[⟨-2000, 12⟩, ⟨3000, 9⟩]).size == 3
 #guard mergeAdjacentStays #[] == #[]
 
 /-! ### `attachStayCentroids` -/
