@@ -474,6 +474,13 @@ async fn main() -> Result<()> {
         "column-fill" => column_fill().await,
         "zones-census" => zones_census().await,
         "focus-audit" => focus_audit().await,
+        "venue-prior-snapshots" => {
+            let [user, out] = flags else {
+                eprintln!("usage: backend venue-prior-snapshots <user> <out-dir>");
+                std::process::exit(64);
+            };
+            venue_prior_snapshots(user, out).await
+        }
         "tz-census" => tz_census().await,
         "freshness" => freshness().await,
         "google-compare" => google_compare().await,

@@ -124,6 +124,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "id gaps in focus_places — were places mass-deleted? (#1140)",
     ),
     (
+        "venue-prior-snapshots",
+        "<user> <out-dir>",
+        "every venue-prior snapshot and the current blob, as the serving path resolves them (#1845)",
+    ),
+    (
         "tz-census",
         "",
         "which timezones are stored, and could inference change them? (#1037)",

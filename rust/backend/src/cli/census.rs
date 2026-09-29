@@ -860,3 +860,59 @@ pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     eprintln!("{} row(s)", rows.len());
     Ok(())
 }
+
+/// `venue-prior-snapshots <user> <out-dir>`: every `venue_type_prior_snapshots`
+/// row as `<as_of>.json`, and the current `venue_type_priors` row as
+/// `current.json` — the inputs the serving path resolves `venuePriors` from
+/// (`classification_inputs::venue_priors`: the newest snapshot at or before the
+/// day, else the current row). Read-only. The corpus harness reads the directory
+/// back through `VENUE_PRIORS_DIR` and resolves per fixture date by the same
+/// rule, so a replay under it names a day the way the pod does (#1845).
+///
+/// Prints one line per file: the anchor, the mined stay count and the size.
+/// A prior is subtype statistics — no place, no coordinate.
+pub(crate) async fn venue_prior_snapshots(user: &str, out_dir: &str) -> Result<()> {
+    use sqlx::Row as _;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    std::fs::create_dir_all(out_dir).with_context(|| format!("creating {out_dir}"))?;
+
+    let rows = sqlx::query(
+        "SELECT CAST(as_of AS CHAR) AS as_of, priors_json, mined_stays \
+         FROM venue_type_prior_snapshots WHERE user_id = ? ORDER BY as_of",
+    )
+    .bind(user)
+    .fetch_all(&pool)
+    .await
+    .context("reading venue_type_prior_snapshots")?;
+    for r in &rows {
+        let as_of: String = r.try_get("as_of").context("as_of")?;
+        let blob: String = r.try_get("priors_json").context("priors_json")?;
+        let mined: i64 = r.try_get("mined_stays").context("mined_stays")?;
+        let path = format!("{out_dir}/{as_of}.json");
+        std::fs::write(&path, &blob).with_context(|| format!("writing {path}"))?;
+        println!("{as_of}  {mined:>5} stay(s)  {:>7} bytes", blob.len());
+    }
+    let current = sqlx::query("SELECT priors_json FROM venue_type_priors WHERE user_id = ?")
+        .bind(user)
+        .fetch_optional(&pool)
+        .await
+        .context("reading venue_type_priors")?;
+    match current {
+        Some(r) => {
+            let blob: String = r.try_get("priors_json").context("priors_json")?;
+            let path = format!("{out_dir}/current.json");
+            std::fs::write(&path, &blob).with_context(|| format!("writing {path}"))?;
+            println!(
+                "current     {:>13} bytes  (the fall-through for a day before the first snapshot)",
+                blob.len()
+            );
+        }
+        None => println!("current     (no venue_type_priors row)"),
+    }
+    println!("{} snapshot(s) -> {out_dir}", rows.len());
+    pool.close().await;
+    Ok(())
+}

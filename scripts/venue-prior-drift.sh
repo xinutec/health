@@ -27,12 +27,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # knows which rows the user CONFIRMED; a label diff would flag the 94% of stays no
 # narrative describes. A row going `verified` -> anything else is the finding.
 #
-#   scripts/venue-prior-drift.sh [lookback-days]   # default 180, prod's own
+#   scripts/venue-prior-drift.sh
 #
 # Exit 0 when no confirmed row moves, 1 when one does, 2 when the corpus is
 # absent (the same SKIP contract the other corpus tooling uses).
 
-DAYS="${1:-180}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORPUS="$ROOT/tests/golden/days"
 WORK="$(mktemp -d)"
@@ -50,25 +49,28 @@ BIN="$(cargo metadata --manifest-path "$ROOT/rust/Cargo.toml" --format-version 1
 	(cd "$ROOT" && cargo build --manifest-path rust/Cargo.toml --release --bin backend)
 }
 
-echo "==> mining ${DAYS}d of priors from prod (--dry: nothing is written)" >&2
-"$ROOT/scripts/prod-db.sh" "$BIN" refresh-focus-places "${HEALTH_USER:-$USER}" "$DAYS" \
-	--dry --hard-out "$WORK/fresh.json" >&2
-
+# ⚠ THE ARM IS WHAT THE POD RESOLVES, NOT A FRESH MINE (2026-09-29, #1845).
+# Since #1405 the serving path takes the newest prior SNAPSHOT at or before the
+# day and only then the current row, so one fresh blob injected for every day
+# reproduced the anachronism that ticket removed and reported drift the pod
+# never served. `venue-prior-snapshots` dumps the snapshots and the current
+# row; `VENUE_PRIORS_DIR` resolves per fixture date by the serving rule.
+echo "==> reading the prior snapshots from prod (read-only)" >&2
+"$ROOT/scripts/prod-db.sh" "$BIN" venue-prior-snapshots "${HEALTH_USER:-$USER}" "$WORK/snap" >&2
 echo "==> baseline: the corpus against its OWN captured priors" >&2
 (cd "$ROOT" && VENUE_AB_OUT="$WORK/before.json" \
 	cargo test --manifest-path rust/Cargo.toml -p backend --release \
 	--test corpus_gate -- --nocapture) >&2
-
-echo "==> arm: the same corpus against the FRESH blob" >&2
-(cd "$ROOT" && VENUE_PRIORS_FILE="$WORK/fresh.json" VENUE_AB_OUT="$WORK/after.json" \
+echo "==> arm: the same corpus under the priors the pod resolves for each day" >&2
+(cd "$ROOT" && VENUE_PRIORS_DIR="$WORK/snap" VENUE_AB_OUT="$WORK/after.json" \
 	cargo test --manifest-path rust/Cargo.toml -p backend --release \
 	--test corpus_gate -- --nocapture) >&2
 
-node - "$WORK/before.json" "$WORK/after.json" "$DAYS" <<'NODEEOF'
+node - "$WORK/before.json" "$WORK/after.json" <<'NODEEOF'
 // ⚠ node, not python3: /usr/bin/python3 is an Xcode shim that dies inside the
 // devShell ("tool 'python3' not found"), and `_devshell.sh` pins node anyway.
 const fs = require("node:fs");
-const [beforeP, afterP, days] = process.argv.slice(2);
+const [beforeP, afterP] = process.argv.slice(2);
 // One JSON line per date, appended by every shard (see `VENUE_AB_OUT` in
 // tests/corpus/truth.rs) — merged here into date -> rows.
 const readLines = (p) => Object.fromEntries(
@@ -97,14 +99,14 @@ for (const date of Object.keys(before).sort()) {
 	}
 }
 const days_n = Object.keys(before).length;
-console.log(`\nvenue-prior-drift: ${checked} row(s) compared over ${days_n} day(s), ${days}d lookback`);
+console.log(`\nvenue-prior-drift: ${checked} row(s) compared over ${days_n} day(s)`);
 if (moved.length === 0) {
-	console.log("venue-prior-drift: no confirmed row moves under a fresh mine.");
+	console.log("venue-prior-drift: every confirmed row the corpus holds also holds under the priors the pod resolves.");
 	process.exit(0);
 }
-console.log(`\n⚠ ${moved.length} CONFIRMED row(s) change under a fresh mine:\n`);
+console.log(`\n⚠ ${moved.length} CONFIRMED row(s) the corpus holds do NOT hold under the pod's priors:\n`);
 for (const [date, ts, va, vb] of moved) console.log(`      ${date} @${ts}  ${va} -> ${vb}`);
-console.log("\nA row the user confirmed is named from evidence mined AFTER the day it");
-console.log("describes. See #1405 — do not fix this by weakening the prior.");
+console.log("\nThe fixture carries the priors current at CAPTURE; the pod serves the snapshot");
+console.log("at or before the day (#1405). See #1845 — do not fix this by weakening the prior.");
 process.exit(1);
 NODEEOF

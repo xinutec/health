@@ -47,8 +47,6 @@
 
 use std::path::Path;
 
-use serde_json::Value;
-
 mod corpus;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
@@ -158,11 +156,7 @@ fn run(shard: usize, of: usize) {
     // #343's A/B. Unset in the gate, so the two arms coincide and one replay
     // serves every grader — see the header on why they must not be merged when
     // it IS set.
-    let injected: Option<Value> = std::env::var("VENUE_PRIORS_FILE").ok().map(|path| {
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
-        serde_json::from_str(&text).unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"))
-    });
+    let injected: Option<corpus::Injection> = corpus::Injection::from_env();
 
     // ⚠ AN ABLATION ARM STANDS THE OTHER GRADERS DOWN. `WALK_TRACE` withholds
     // trace sections ON PURPOSE, so the fold's geometry is ablated — and `day`,
@@ -232,8 +226,9 @@ fn run(shard: usize, of: usize) {
         // that is this same replay and no second fold is paid.
         let injected_rep = match injected.as_ref() {
             None => None,
-            Some(p) => {
-                match corpus::replay(name, corpus::with_priors(&fx, Some(p)), traced.as_ref()) {
+            Some(inj) => {
+                let p = inj.for_fixture(name);
+                match corpus::replay(name, corpus::with_priors(&fx, Some(&p)), traced.as_ref()) {
                     Ok(r) => Some(r),
                     Err(e) => {
                         failures.push(e);

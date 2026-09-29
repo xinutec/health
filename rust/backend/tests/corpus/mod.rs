@@ -145,6 +145,72 @@ pub fn read_fixture(golden: &str, name: &str) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("{name}: parsing: {e}"))
 }
 
+/// Which venue priors an A/B arm replays under (#343, #1845).
+///
+/// `VENUE_PRIORS_FILE=<blob.json>` is one blob for every day — the anachronism
+/// the serving path removed in #1405, kept for arms that want it on purpose.
+/// `VENUE_PRIORS_DIR=<dir>` holds `<as_of>.json` snapshots and `current.json`
+/// (what `backend venue-prior-snapshots` writes), and each fixture takes the
+/// newest snapshot at or before its date, else `current.json` — the rule
+/// `classification_inputs::venue_priors` serves by, so the arm names a day the
+/// way the pod does.
+pub enum Injection {
+    File(Value),
+    Dir(std::path::PathBuf),
+}
+
+impl Injection {
+    pub fn from_env() -> Option<Self> {
+        if let Ok(path) = std::env::var("VENUE_PRIORS_FILE") {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
+            let blob = serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("VENUE_PRIORS_FILE {path}: {e}"));
+            return Some(Self::File(blob));
+        }
+        std::env::var("VENUE_PRIORS_DIR")
+            .ok()
+            .map(|d| Self::Dir(std::path::PathBuf::from(d)))
+    }
+
+    /// The blob for a fixture named `YYYY-MM-DD-….json`.
+    pub fn for_fixture(&self, name: &str) -> Value {
+        match self {
+            Self::File(v) => v.clone(),
+            Self::Dir(dir) => {
+                let date = &name[..10.min(name.len())];
+                let mut best: Option<String> = None;
+                for entry in std::fs::read_dir(dir)
+                    .unwrap_or_else(|e| panic!("VENUE_PRIORS_DIR {}: {e}", dir.display()))
+                {
+                    let file = entry
+                        .expect("a directory entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned();
+                    let Some(as_of) = file.strip_suffix(".json") else {
+                        continue;
+                    };
+                    // ⚠ `<=` on the ISO date string, and never a LATER snapshot:
+                    // a day before the first one falls through to `current`.
+                    if as_of.len() == 10
+                        && as_of <= date
+                        && best.as_deref().is_none_or(|b| as_of > b)
+                    {
+                        best = Some(as_of.to_string());
+                    }
+                }
+                let file = best.unwrap_or_else(|| "current".to_string());
+                let path = dir.join(format!("{file}.json"));
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("VENUE_PRIORS_DIR {}: {e}", path.display()));
+                serde_json::from_str(&text)
+                    .unwrap_or_else(|e| panic!("VENUE_PRIORS_DIR {}: {e}", path.display()))
+            }
+        }
+    }
+}
+
 /// The fixture with `priors` injected, or a plain clone when `None`.
 pub fn with_priors(fx: &Value, priors: Option<&Value>) -> Value {
     let mut fx = fx.clone();
