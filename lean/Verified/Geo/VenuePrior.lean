@@ -128,7 +128,16 @@ def HOURS_CLOSED_NATS : Float := -2.5
 def DWELL_PSEUDO_VISITS : Float := 4
 def HOUR_PSEUDO_VISITS : Float := 8
 def CATEGORY_VISIT_CAP : Float := 12
-def BASE_RATE_PSEUDO : Float := 0.5
+/-- The Dirichlet pseudo-count behind the base-rate term — how many visits of
+    every subtype the mined counts are assumed to sit on. It sets how fast
+    "never seen" becomes evidence: at 0.5 an unseen subtype already costs 1.4
+    nats after 20 mined stays and the −2 clamp binds by 47, so a thin period
+    prior spoke like a year's. Fitted 2026-09-29 on the 56 confirmed corpus
+    stays under each day's own prior snapshot (20–47 stays, #1845): 0.5 →
+    49 right, 1 → 53, 2 → 54, 4 → 54, and the two that stay wrong are
+    geometry (04-29) and a dry cleaner beside a restaurant (06-09). At 2 an
+    unseen subtype costs 0.6 nats at 20 stays, 1.0 at 47, the clamp at ~400. -/
+def BASE_RATE_PSEUDO : Float := 2
 def BASE_RATE_MIN_TYPES : Nat := 8
 def NEAR_FIELD_DECISIVE_M : Float := 12
 /-- Near-field dominance needs the candidate's own summed evidence to be at
@@ -738,7 +747,11 @@ private def LMH (name type subtype : String) (d : Float) (frac : Option Float) :
 -- bookmaker's evidence is neutral-plus and near-field still decides.
 private def restoStats : VenueTypeStats :=
   ⟨40, [0, 10, 30, 0], (List.range 24).map (fun h => if h == 19 then 40 else 0)⟩
-private def restoPriors : VenuePriors := ⟨[("restaurant", restoStats)], [("food", restoStats)], 50⟩
+-- A YEAR's prior (400 visits): there "never visited" pays the full −2 clamp.
+-- With `BASE_RATE_PSEUDO` at 2 a 50-visit prior is thin, an unseen subtype
+-- costs 1.4, and this synthetic bookmaker — no category pool, so no dwell or
+-- hour evidence against it, unlike the real one — would cross the veto's floor.
+private def restoPriors : VenuePriors := ⟨[("restaurant", restoStats)], [("food", restoStats)], 400⟩
 private def bookieVsResto : List Landmark :=
   [LM "Paddy Power" "shop" "bookmaker" 10.9, LM "L'artista" "amenity" "restaurant" 13.4]
 #guard names (rankVenues bookieVsResto (some stayEve) (some restoPriors)) == ["L'artista", "Paddy Power"]
@@ -833,15 +846,15 @@ nothing downstream may be switched over to the event path. -/
               (some stayEve) (some priors)) == ["Resto", "Pharm"]
 #guard match rankVenues [LM "Resto" "amenity" "restaurant" 32, LM "Pharm" "amenity" "pharmacy" 30]
                         (some stayEve) (some priors) with
-       | r :: p :: [] => approx r.total 4.0074564179367780 && approxO r.parts.shape (some 2.8274564179367783)
-                         && approx p.total 0.67715271756725559
-                         && approxO p.parts.shape (some (-0.54159728243274441))
+       | r :: p :: [] => approx r.total 3.626532418744731 && approxO r.parts.shape (some 2.4465324187447317)
+                         && approx p.total 0.6327009549964218
+                         && approxO p.parts.shape (some (-0.5860490450035782))
        | _ => false
 -- An unseen subtype backs off to its category pool; a categoryless one to uniform.
 #guard match rankVenues [LM "Bar" "amenity" "bar" 30, LM "Wormhole" "amenity" "wormhole" 30]
                         (some stayEve) (some priors) with
-       | b :: w :: [] => approxO b.parts.shape (some 0.46454977856327173)
-                         && approxO w.parts.shape (some (-1.0116009116784799))
+       | b :: w :: [] => approxO b.parts.shape (some 1.113245196552383)
+                         && approxO w.parts.shape (some (-0.3629054936893685))
        | _ => false
 -- THE load-bearing property: empty priors contribute exactly 0, everywhere.
 #guard match rankVenues [LM "Resto" "amenity" "restaurant" 30] (some stayEve) (some ⟨[], [], 0⟩) with
@@ -851,7 +864,7 @@ nothing downstream may be switched over to the event path. -/
 #guard match rankVenues [LM "Park" "leisure" "park" 30, LM "Square" "place" "square" 30]
                         (some stayEve) (some priors) with
        | s :: p :: [] => s.landmark.name == "Square" && s.parts.shape == none
-                         && p.landmark.name == "Park" && approxO p.parts.shape (some (-1.0116009116784799))
+                         && p.landmark.name == "Park" && approxO p.parts.shape (some (-0.3629054936893685))
        | _ => false
 
 /-! ### `attributeStayVenue` -/

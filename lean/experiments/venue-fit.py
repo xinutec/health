@@ -70,10 +70,11 @@ def label_for(stay, rows):
 
 class P:
     def __init__(self, sigma=40.0, venue=1.5, open_=0.7, closed=-2.5, base_lo=-2.0, base_hi=1.5,
-                 dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5, nf_min=0.0):
+                 dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5, nf_min=0.0,
+                 pseudo=None):
         self.__dict__.update(locals()); del self.__dict__['self']
     def __repr__(self):
-        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g}"
+        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g} pseudo={self.pseudo}"
 
 def clamp(x, lo, hi): return min(hi, max(lo, x))
 
@@ -85,7 +86,12 @@ def rank(stay, p):
         venue = p.venue if isv else 0.0
         shape = None
         if c['t'] in PRIOR_TYPES and not (c['b'] == 0 and c['dw'] == 0 and c['hr'] == 0):
-            shape = clamp(c['b'], p.base_lo, p.base_hi) + clamp(c['dw'], p.dwell_lo, p.dwell_hi) + clamp(c['hr'], p.hour_lo, p.hour_hi)
+            b = c['b']
+            # BASE_RATE_PSEUDO swept offline: the trace carries the subtype's visits `sv`,
+            # the blob's `tv` and `k`, so the base log-ratio can be recomputed for any pseudo-count.
+            if p.pseudo is not None and 'sv' in c:
+                b = math.log((c['sv'] + p.pseudo) / (c['tv'] + p.pseudo * c['k']) * c['k'])
+            shape = clamp(b, p.base_lo, p.base_hi) + clamp(c['dw'], p.dwell_lo, p.dwell_hi) + clamp(c['hr'], p.hour_lo, p.hour_hi)
         hours = None
         if c['of'] is not None:
             hours = p.closed + c['of'] * (p.open_ - p.closed)
@@ -138,6 +144,16 @@ if __name__ == '__main__':
         for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
             r, w = evaluate(data, P(nf_min=m))
             print(f"   nf_min={m:g}: {r}/{len(data)} right   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:600])
+    if len(sys.argv) > 1 and sys.argv[1] == 'pseudo':
+        best = []
+        for pseudo, base_lo in itertools.product([0.5, 1, 2, 4, 8, 16], [-2, -1.5, -1, -0.5]):
+            p = P(pseudo=pseudo, base_lo=base_lo)
+            r, w = evaluate(data, p)
+            best.append((r, f"pseudo={pseudo:g} base_lo={base_lo:g}", w))
+        best.sort(key=lambda x: -x[0])
+        print("\nPSEUDO GRID (top 10):")
+        for r, desc, w in best[:10]:
+            print(f"   {r}/{len(data)}  {desc}   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:420])
     if len(sys.argv) > 1 and sys.argv[1] == 'shape':
         best = []
         for hour_lo, dwell_lo, base_lo, nf_min in itertools.product([-1.5, -1.0, -0.5, 0], [-2, -1, -0.5, 0], [-2, -1, -0.5], [0, -0.5]):

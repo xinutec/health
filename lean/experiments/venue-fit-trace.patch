@@ -1,8 +1,8 @@
 diff --git a/lean/Verified/Geo/VenuePrior.lean b/lean/Verified/Geo/VenuePrior.lean
-index aa40a33..78b0817 100644
+index aa40a33..577fae7 100644
 --- a/lean/Verified/Geo/VenuePrior.lean
 +++ b/lean/Verified/Geo/VenuePrior.lean
-@@ -352,6 +352,17 @@ private def sortStable (before : VenueCandidateScore → VenueCandidateScore →
+@@ -352,6 +352,24 @@ private def sortStable (before : VenueCandidateScore → VenueCandidateScore →
      (xs : List VenueCandidateScore) : List VenueCandidateScore :=
    xs.foldl (fun acc x => insertBy before x acc) []
  
@@ -14,13 +14,20 @@ index aa40a33..78b0817 100644
 +      | some p => if PRIOR_TYPES.contains l.type then shapeParts l.subtype s p else (0, 0, 0)
 +      | none => (0, 0, 0)
 +    let of := match l.openFraction with | some f => toString f | none => "null"
-+    s!"\{\"n\":{l.name.quote},\"t\":{l.type.quote},\"st\":{l.subtype.quote},\"d\":{l.distanceM},\"of\":{of},\"enc\":{l.enclosing},\"rg\":{l.reverseGeocoded},\"b\":{b},\"dw\":{d},\"hr\":{h}}"
++    -- The base rate's inputs too (subtype visits, total visits, kTypes), so a
++    -- pseudo-count can be swept offline.
++    let (sv, tv, k) := match priors with
++      | some p =>
++        let sv := match lookupStats p.bySubtype l.subtype with | some s => s.visits | none => 0
++        (sv, p.totalVisits, Float.ofNat (max p.bySubtype.length BASE_RATE_MIN_TYPES))
++      | none => (0, 0, 0)
++    s!"\{\"n\":{l.name.quote},\"t\":{l.type.quote},\"st\":{l.subtype.quote},\"d\":{l.distanceM},\"of\":{of},\"enc\":{l.enclosing},\"rg\":{l.reverseGeocoded},\"b\":{b},\"dw\":{d},\"hr\":{h},\"sv\":{sv},\"tv\":{tv},\"k\":{k}}"
 +  s!"VENUEFIT \{\"s\":{s.startUnix},\"e\":{s.endUnix},\"h\":{s.localHour},\"c\":[{String.intercalate "," c}]}"
 +
  /--
  Rank landmark candidates for a stay by summed log-evidence, best first.
  `stay` and `priors` are optional — without them the ranking degrades to
-@@ -367,6 +378,13 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
+@@ -367,6 +385,13 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
    -- Degenerate input (everything is street furniture): better to rank the
    -- furniture than to return nothing — callers rely on non-empty in.
    let pool := if eligible.isEmpty then landmarks else eligible
@@ -34,7 +41,7 @@ index aa40a33..78b0817 100644
    let isNearField := fun (l : Landmark) =>
      if l.reverseGeocoded || !isVenueType l || decide (l.distanceM > NEAR_FIELD_DECISIVE_M) then false
      else match (if stay.isSome then hoursScore l.openFraction else none) with
-@@ -390,7 +408,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
+@@ -390,7 +415,7 @@ def rankVenues (landmarks : List Landmark) (stay : Option StayShape) (priors : O
         -- (09-06 18:20 local, #325). Fitted 2026-09-28 on the 56 confirmed
         -- corpus stays: 48 → 49 right, nothing lost.
         nearField := isNearField l && decide (total ≥ NEAR_FIELD_MIN_NATS) } : VenueCandidateScore))
