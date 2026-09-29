@@ -7,7 +7,7 @@
 //!
 //! # ⚠ The SQL is a PRE-FILTER. It is not allowed to score.
 //!
-//! `src/geo/osm-local.ts`'s `queryPoints`/`queryLines` compute the distance,
+//! `osm-local.ts`'s `queryPoints`/`queryLines` compute the distance,
 //! order by it and `LIMIT 50`, all inside MariaDB. **None of that is copied
 //! here**, and the omission is the point rather than an oversight:
 //!
@@ -165,7 +165,7 @@ fn margin_box_wkt(lat: f64, lon: f64, radius_m: f64, margin_m: f64) -> String {
 ///     `radiusM / (111320·cos lat)`, and 111320/111000 is the same 1.0029.
 ///
 /// **Measured, not reasoned:** shrinking the box by 1% loses rows on the corpus
-/// (`tests/mirror_source.rs`, ablated 2026-08-22 — 4 of 7 ways at one query
+/// (`tests/suite/mirror_source.rs`, ablated 2026-08-22 — 4 of 7 ways at one query
 /// point); shrinking it by 0.1% does not. So the corpus sits inside that margin,
 /// and a change to any one of those three constants would silently start
 /// dropping the nearest way.
@@ -286,7 +286,7 @@ impl MirrorSource {
     ///
     /// Half-width `radiusM / min(METERS_PER_DEG_LAT, metersPerDegLon(lat))` in
     /// BOTH axes — the TypeScript's own. See the module note for why this
-    /// contains Lean's scoring window; `tests/mirror_source.rs` checks that claim
+    /// contains Lean's scoring window; `tests/suite/mirror_source.rs` checks that claim
     /// against the corpus by comparing answers rather than trusting it.
     ///
     /// Public because that test needs the predicate the SQL applies, and a test
@@ -701,7 +701,7 @@ impl RowSource for MirrorSource {
     ///
     /// ⚠ `ST_X` is LONGITUDE and `ST_Y` is latitude: the geometry was built from
     /// `POINT(lon lat)` WKT. The row set the fixtures carry is extracted with
-    /// this same pair of expressions (`src/geo/osm-rowset.ts`).
+    /// this same pair of expressions (`osm-rowset.ts`).
     ///
     /// That leaves one worry, and it is now MEASURED rather than argued: the
     /// capture read those doubles through the TypeScript driver's TEXT rendering

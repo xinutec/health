@@ -104,7 +104,7 @@ impl<T: Clone> LocationCache<T> {
 ///
 /// ⚠ Mirrors `Verified.LocationTail.tailAfter`, and is NOT a host call:
 /// a tail buffer is thousands of points and shipping all of them across the FFI
-/// per poll would cost more than the fetch it saves. `tests/location_tail.rs`
+/// per poll would cost more than the fetch it saves. `tests/suite/location_tail.rs`
 /// holds this against Lean's over a corpus, which is the only thing stopping
 /// the two drifting.
 ///

@@ -148,7 +148,7 @@ pub async fn html_must_revalidate(
 /// reason — *"a typo'd .css or .js must still 404"* — and that decision was
 /// correct; what defeated it was the thing it fell through to.
 ///
-/// ⚠ **THE ROOT MUST STAY 200.** `tests/compression.rs` uses this body as the
+/// ⚠ **THE ROOT MUST STAY 200.** `tests/suite/compression.rs` uses this body as the
 /// largest the router produces without a database and asserts 200 on `/`, and a
 /// build-less deployment still has to account for itself to whoever opens it.
 pub async fn fallback_page(uri: axum::http::Uri) -> Response {

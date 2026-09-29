@@ -1,7 +1,7 @@
 //! The base OSM mirror's WRITE half — the Overpass fetch that fills
 //! `osm_lines`, `osm_points` and `osm_coverage` (#1658).
 //!
-//! Port of `src/geo/osm-local.ts`'s `fetchAndStore` half. The READ half is
+//! Port of the retired TypeScript `osm-local.ts`'s `fetchAndStore` half. The READ half is
 //! [`crate::mirror_source`], which has been here since the port and says in its
 //! own header that the write half "is separate work and is not in this module".
 //! Until this existed nothing in the tree wrote those three tables at all: the

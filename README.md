@@ -92,10 +92,6 @@ Reading order for a new contributor:
 3. `docs/proposals/README.md` — what we're considering changing.
 4. Specific proposal docs as needed.
 
-Archived proposals are kept for context — `docs/archive/2025-model-hmm.md` is
-explicitly referenced by the active 2026-05 roadmap. They should be read only
-after the active proposal that supersedes/pauses them.
-
 ### Proposal status conventions
 
 Every proposal carries a YAML frontmatter block with:

@@ -1,6 +1,6 @@
 //! Google OAuth 2.0: a stored refresh token for a short-lived access token.
 //!
-//! Port of `src/google/oauth.ts`.
+//! Port of the retired TypeScript `oauth.ts`.
 //!
 //! The refresh token is obtained once through user consent and stored as a
 //! secret; this mints access tokens server-side with no phone in the loop.

@@ -1,4 +1,4 @@
-//! Google Health API v4 — the weight feed. Port of `src/google/health.ts`.
+//! Google Health API v4 — the weight feed. Port of the retired TypeScript `health.ts`.
 //!
 //! Unified data model: `GET /v4/users/me/dataTypes/{type}/dataPoints`, paged.
 

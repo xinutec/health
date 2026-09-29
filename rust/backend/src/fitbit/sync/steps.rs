@@ -1,4 +1,4 @@
-//! Intraday steps. Port of `src/fitbit/sync/steps.ts`.
+//! Intraday steps. Port of the retired TypeScript `steps.ts`.
 //!
 //! # Why this one does NOT go to Lean, stated rather than assumed
 //!

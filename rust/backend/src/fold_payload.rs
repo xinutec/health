@@ -17,7 +17,7 @@
 //!
 //! # Verified against the TypeScript's own output, not against my reading
 //!
-//! `tests/fold_payload.rs` compares this to `dist/lean/fold-payload.js`'s
+//! `tests/suite/fold_payload.rs` compares this to `fold-payload.js`'s
 //! encoding of the same captured day, byte for byte. That matters more here
 //! than in most ports: the shape is 25 keys of mostly-pass-through data where a
 //! wrong field name produces a well-formed request the fold answers anyway.
@@ -721,7 +721,7 @@ pub fn encode_venue_priors(v: Option<&Value>) -> Value {
     })
 }
 
-/// `DEFAULT_RADIUS_M` from `src/geo/osm.ts`, in metres.
+/// `DEFAULT_RADIUS_M` from `osm.ts`, in metres.
 ///
 /// ⚠ These are the EFFECTIVE arguments of the lookups whose callers omit a
 /// radius, so they decide whether a recorded answer is found or missed. They

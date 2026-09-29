@@ -1,4 +1,4 @@
-//! The daily activity summary. Port of `src/fitbit/sync/activity.ts`.
+//! The daily activity summary. Port of the retired TypeScript `activity.ts`.
 //!
 //! # One call per day, and the budget check comes AFTER the write
 //!

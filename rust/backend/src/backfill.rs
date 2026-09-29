@@ -43,7 +43,7 @@ pub enum DayResult {
 /// of stopping where its history stops it walks to the 2010 floor, spending
 /// shared API budget on days Fitbit holds nothing for.
 ///
-/// `src/sync.ts` gets this right, but by the shape of its branches rather than
+/// `sync.ts` gets this right, but by the shape of its branches rather than
 /// by saying so — `if (advance) ++; else if (result.ok) = 0;` with no final
 /// `else`. Naming the third case is what stops the next port dropping it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

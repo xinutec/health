@@ -1,4 +1,4 @@
-//! PhoneTrack GPS fixes. Port of `src/nextcloud/phonetrack.ts`.
+//! PhoneTrack GPS fixes. Port of the retired TypeScript `phonetrack.ts`.
 //!
 //! One Nextcloud user has sessions, each session has devices, and each device
 //! has points. There is no endpoint that returns points across devices, so a

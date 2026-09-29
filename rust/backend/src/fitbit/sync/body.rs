@@ -1,4 +1,4 @@
-//! Weight, BMI and body fat. Port of `src/fitbit/sync/body.ts`.
+//! Weight, BMI and body fat. Port of the retired TypeScript `body.ts`.
 //!
 //! # The TIME-SERIES, not the weight log
 //!
@@ -16,13 +16,13 @@
 //!
 //! # ⚠ THE NIGHTLY SYNC DOES NOT CALL THIS, AND MUST NOT
 //!
-//! `src/sync.ts` omits body from both the forward pass and the range backfill,
+//! `sync.ts` omits body from both the forward pass and the range backfill,
 //! deliberately: the Fitbit weight feed froze in April 2026 when the scale
 //! started reporting through Health Connect to Google instead, so the values
 //! here are forward-filled staleness. Running it nightly would re-clobber the
 //! real figures the Google Health sync writes (#260).
 //!
-//! Its one caller is `src/cli/backfill-body.ts`, a manual historical fill. The
+//! Its one caller is `backfill-body.ts`, a manual historical fill. The
 //! port keeps that shape — this module is called by hand or not at all.
 
 use anyhow::{Context, Result};

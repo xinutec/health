@@ -358,7 +358,7 @@ struct OptIndex {
 /// ⚠ THE SPECIFICATION, NOT THE PRODUCTION PATH. It is a linear scan and the
 /// backend binary-searches instead — 86 400 rows a day of 1-second heart rate
 /// makes a JSON round trip per row untenable. This exists so
-/// `tests/tz_source.rs` can drive both over the same inputs and compare.
+/// `tests/suite/tz_source.rs` can drive both over the same inputs and compare.
 pub fn nearest_fix_spec(times: &[i64], target: i64) -> Result<Option<usize>> {
     let r: OptIndex = call_json(&serde_json::json!({
         "op": "nearestFix", "times": times, "target": target,
@@ -1099,7 +1099,7 @@ pub fn next_day(date: &str) -> Result<String> {
 ///
 /// ⚠ Restated here as consts rather than fetched per request: they are compile
 /// time constants in Lean too, and a host call per poll would cost more than the
-/// value is worth. `tests/location_tail.rs` asserts each against Lean, so a
+/// value is worth. `tests/suite/location_tail.rs` asserts each against Lean, so a
 /// change there fails a test rather than silently disagreeing.
 pub const TAIL_MAX_POINTS: i64 = 2000;
 pub const LATEST_FIX_TTL_MS: i64 = 10_000;

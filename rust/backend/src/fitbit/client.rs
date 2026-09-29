@@ -1,4 +1,4 @@
-//! Thin Fitbit HTTP client. Port of `src/fitbit/client.ts`.
+//! Thin Fitbit HTTP client. Port of the retired TypeScript `client.ts`.
 //!
 //! Token management lives in [`super::tokens`]; rate-limit state lives here
 //! because it is a per-PROCESS concern, not a per-user one — the budget is

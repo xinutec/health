@@ -355,7 +355,7 @@ pub(crate) fn mirror_coverage_line(succeeded: usize, total: usize) -> String {
     format!("coverage {succeeded}/{total} tiles ({pct:.0}% of the area)")
 }
 
-/// Tier 2 of #982 — the node cron is `src/cli/refresh-rail-stops.ts`.
+/// Tier 2 of #982 — the node cron is `refresh-rail-stops.ts`.
 ///
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED — rail now carries the
 /// `tile_key` bus has had all along, added 2026-08-25 once the port's parity was

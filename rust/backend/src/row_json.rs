@@ -8,7 +8,7 @@
 //! invisible here and loud three layers away.
 //!
 //! ⚠ The TypeScript's own type declarations are NOT the contract.
-//! `src/db/tables.ts` declares `daily_rmssd: number | null` eleven lines below a
+//! `tables.ts` declares `daily_rmssd: number | null` eleven lines below a
 //! comment saying DECIMAL columns arrive as strings. The mapping this module
 //! implements was MEASURED against production instead —
 //! `scripts/prod-db.sh node scripts/probe-row-shapes.mjs` — and the rule itself
@@ -44,7 +44,7 @@
 //! Which JSON shape a SQL type takes is a decision, and it is Lean's: this asks
 //! [`crate::lean::row_shapes`] once per column and then only moves bytes. The
 //! ISO formatting is inline rather than a host call per value — a day of
-//! intraday heart rate is thousands of values — and `tests/row_json.rs` holds
+//! intraday heart rate is thousands of values — and `tests/suite/row_json.rs` holds
 //! it against Lean's over a corpus so the two cannot drift.
 
 use anyhow::{Context, Result, bail};
@@ -135,7 +135,7 @@ fn encode_value(row: &MySqlRow, i: usize, col: &ColumnPlan) -> Result<Value> {
         }
         // ⚠ A STRING on the wire. `bigIntAsNumber: false` exists because Fitbit
         // sleep log ids are 64-bit, and the `BigInt.prototype.toJSON` patch in
-        // `src/bigint-json.ts` is what turns them into these strings.
+        // `bigint-json.ts` is what turns them into these strings.
         RowShape::BigintStr => {
             if col.unsigned {
                 Value::from(row.try_get::<u64, _>(i)?.to_string())

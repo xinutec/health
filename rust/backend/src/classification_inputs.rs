@@ -1,6 +1,6 @@
 //! The day's inputs, read from the database (#982).
 //!
-//! Port of the DB half of `src/geo/load-classification-inputs.ts`. That file
+//! Port of the DB half of the retired TypeScript `load-classification-inputs.ts`. That file
 //! loads twelve things in parallel plus four PhoneTrack range fetches; this is
 //! the nine whose shape is pure SQL and whose output is a fixture field.
 //!
@@ -317,7 +317,7 @@ pub fn parse_hour_profile(raw: Option<&str>) -> Value {
     Value::Array(out)
 }
 
-/// `HOUR_BUCKETS` from `src/geo/focus-places.ts` — hours in a day, and the
+/// `HOUR_BUCKETS` from `focus-places.ts` — hours in a day, and the
 /// exact length a stored profile must have.
 const HOUR_BUCKETS: usize = 24;
 
@@ -635,7 +635,7 @@ pub async fn hsmm_decode(pool: &MySqlPool, user_id: &str, date: &str) -> Result<
     serde_json::from_str(&raw).context("decoded_days.segments_json is not JSON")
 }
 
-/// `CLASSIFIER_VERSION` from `src/hmm/persist.ts`.
+/// `CLASSIFIER_VERSION` from `persist.ts`.
 ///
 /// ⚠ THE ONE DECLARATION. Bumped when the classifier output for a typical day
 /// would meaningfully change; a mismatch makes every consumer treat the row as
@@ -761,7 +761,7 @@ pub fn next_date_string(date: &str) -> Result<String> {
 
 /// The day's Fitbit streams: per-minute HR, sleep stages, and stepped minutes.
 ///
-/// Port of `loadBiometrics` in `src/geo/velocity.ts`. SIX queries, not three:
+/// Port of `loadBiometrics` in `velocity.ts`. SIX queries, not three:
 /// each stream has a primary read on the derived `ts_utc` column and a fallback
 /// for the stragglers where `ts_utc IS NULL`.
 ///
@@ -1141,7 +1141,7 @@ pub fn decode_places(known: Option<&Value>) -> Result<Value> {
 
 /// The default decode window: `n` days ending YESTERDAY, most recent first.
 ///
-/// ⚠ STARTS AT YESTERDAY, never today, and `src/cli/decode-day.ts` loops
+/// ⚠ STARTS AT YESTERDAY, never today, and `decode-day.ts` loops
 /// `d = 1; d <= days` for the same reason. At the cron's 06:00 today is a
 /// six-hour stub, and `save_decode` stamps whatever it writes with the current
 /// `CLASSIFIER_VERSION` — so a stub row does not read as stale to a consumer,
@@ -1298,7 +1298,7 @@ fn fixes_json(points: &[crate::nextcloud::phonetrack::RawTrackPoint]) -> Value {
     )
 }
 
-/// `BATTERY_TAIL_LOOKAHEAD_H` from `src/geo/load-classification-inputs.ts`.
+/// `BATTERY_TAIL_LOOKAHEAD_H` from `load-classification-inputs.ts`.
 const BATTERY_TAIL_LOOKAHEAD_H: i64 = 18;
 
 /// The day-path default for the Nextcloud base URL.

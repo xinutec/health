@@ -1,6 +1,6 @@
 //! Per-user key/value persistence in the `sync_state` table.
 //!
-//! The port of `src/db/sync-state.ts`. This is where every backfill cursor
+//! The port of the retired TypeScript `sync-state.ts`. This is where every backfill cursor
 //! lives, so it is the first DB surface any scheduled work needs: "how far did
 //! the last run get" is the only state a sync job carries between invocations.
 //!

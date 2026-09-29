@@ -41,7 +41,7 @@ use crate::classification_inputs::CLASSIFIER_VERSION;
 
 /// Decode a day's HSMM and persist it to `decoded_days`.
 ///
-/// Tier 2 of #982 — the node cron is `src/cli/decode-day.ts`, daily at 06:00.
+/// Tier 2 of #982 — the node cron is `decode-day.ts`, daily at 06:00.
 ///
 /// ⚠ THE WHOLE MODEL IS BUILT AND DECODED IN LEAN. `assemblesegments` takes raw
 /// `edges`/`nodes`/`obs`/`places`, builds the route-graph model, the coverage
@@ -263,7 +263,7 @@ pub(crate) async fn decode_one(
         // ⚠ ONE SEGMENT PER LINE, in exactly the form `segments_json` would hold
         // — same field order, same encodings, same absent-versus-null. That is
         // the point: it makes the parity check `diff` against
-        // the deleted `scripts/dump-decoded-segments.mjs`, which printed node's row the same
+        // the deleted `dump-decoded-segments.mjs`, which printed node's row the same
         // way, instead of a structural comparison nothing can quite trust.
         for seg in segments.as_array().unwrap_or(&Vec::new()) {
             println!("{}", serde_json::to_string(seg)?);

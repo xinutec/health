@@ -1,4 +1,4 @@
-//! The Nextcloud app-password store. Port of `src/nextcloud/credentials.ts`.
+//! The Nextcloud app-password store. Port of the retired TypeScript `credentials.ts`.
 //!
 //! # Why there is no refresh here, and no lock either
 //!

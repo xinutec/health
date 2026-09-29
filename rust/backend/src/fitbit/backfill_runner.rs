@@ -1,5 +1,5 @@
 //! The two backward walks. Port of `runIntradayBackfill` / `runRangeBackfill`
-//! in `src/sync.ts`.
+//! in `sync.ts`.
 //!
 //! # What is left here after Lean took the rules
 //!

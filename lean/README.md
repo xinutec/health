@@ -148,7 +148,7 @@ knowing about from outside. `find lean -name '*.lean'` is the index.
   `qTrim` — the last three via `qPerp`, the ≥140° turn test as an exact
   squared comparison, and `qArcPos`), so the pass theorems specialise
   for free. Representation chosen by a corpus probe (2026-07-19,
-  `experiments/quant-probe.mjs`, deleted with the TypeScript it replayed):
+  `quant-probe.mjs`, deleted with the TypeScript it replayed):
   every golden walking leg through `verified_cli geo` vs the twin —
   173/173 legs bit-EXACT, float↔quant flips zero everywhere except one
   near-threshold tie at the 1.5 m display tolerance.

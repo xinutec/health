@@ -38,7 +38,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #
 # Two of the reachable ones WRITE: `refresh-presence-log.js` and
 # `refresh-focus-places.js` both contain INSERT/UPDATE/DELETE, and
-# `scripts/ab-validate.sh` pipes the first through this script. So on this one
+# `ab-validate.sh` pipes the first through this script. So on this one
 # machine, a wired command would have run the DELETED TypeScript against the
 # production database — including whatever bugs it had when it was retired
 # (see #1140 for one that deletes real focus places).

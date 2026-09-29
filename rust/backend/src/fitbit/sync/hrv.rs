@@ -1,6 +1,6 @@
 //! Heart-rate variability: the daily RMSSD pair and the 5-minute series.
 //!
-//! Port of `src/fitbit/sync/hrv.ts`.
+//! Port of the retired TypeScript `hrv.ts`.
 //!
 //! # The intraday series stores a wall clock with NO tz, unlike its neighbours
 //!

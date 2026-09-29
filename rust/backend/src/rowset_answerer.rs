@@ -200,7 +200,7 @@ pub struct RowSetSource<'a> {
     rail: Option<&'a serde_json::Map<String, Value>>,
     /// Whether to drop rows that cannot be in range before shipping them.
     ///
-    /// ⚠ Off only for `tests/rowset_prefilter.rs`, which exists to prove the
+    /// ⚠ Off only for `tests/suite/rowset_prefilter.rs`, which exists to prove the
     /// filter changes no answer. There is no production reason to disable it,
     /// and a caller reaching for `new_unfiltered` outside that test is asking
     /// for 157,489 coordinate pairs per question.
@@ -299,7 +299,7 @@ impl<S: RowSource> OsmAnswerer<S> {
 impl<S: RowSource> OsmAnswerer<S> {
     /// Answer from any source. The row-set constructor is
     /// [`RowSetAnswerer::new`]; this is what a live mirror uses, and what
-    /// `tests/row_source.rs` uses to reach the decline path a fixture's
+    /// `tests/suite/row_source.rs` uses to reach the decline path a fixture's
     /// complete row set can never produce.
     pub fn with_source(source: S) -> Self {
         Self {
@@ -361,7 +361,7 @@ impl<'a> RowSetSource<'a> {
         // distance — against `radiusM / mPerDegAt(lat)`, so a way whose own
         // bounding box misses that same degree-space box cannot contain a point
         // inside the radius. Filtering here therefore drops only rows Lean would
-        // have scored out, and `tests/rowset_prefilter.rs` checks that claim by
+        // have scored out, and `tests/suite/rowset_prefilter.rs` checks that claim by
         // comparing answers rather than trusting this paragraph.
         //
         // It exists because the unfiltered version ships an entire bucket per

@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
             drop_session(cookie).await
         }
         // Tier 2 of #982: the first CronJob logic to move off node. Mirrors
-        // `src/cli/refresh-presence-log.ts`.
+        // `refresh-presence-log.ts`.
         "refresh-presence-log" => {
             // ⚠ The CronJob passes `90`; the TypeScript defaults to 30 when the
             // argument is absent, and that default is part of the contract for
@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
-        // `src/cli/refresh-focus-places.ts` — the weekly place miner.
+        // `refresh-focus-places.ts` — the weekly place miner.
         //
         //   backend refresh-focus-places                 all linked users, 180d
         //   backend refresh-focus-places <user>          one user, 180d
@@ -284,7 +284,7 @@ async fn main() -> Result<()> {
             pool.close().await;
             r
         }
-        // `src/cli/refresh-rail-routes.ts` — the nightly rail corridor miner.
+        // `refresh-rail-routes.ts` — the nightly rail corridor miner.
         "refresh-rail-routes" => {
             let window: i64 = match flags {
                 [] => RAIL_DEFAULT_WINDOW_DAYS,
@@ -302,7 +302,7 @@ async fn main() -> Result<()> {
             };
             refresh_rail_routes(window).await
         }
-        // `src/cli/decode-day.ts` — the nightly HSMM decoder.
+        // `decode-day.ts` — the nightly HSMM decoder.
         //
         //   backend decode-day                     all users, last 14 days
         //   backend decode-day <user>              one user, last 14 days
@@ -336,7 +336,7 @@ async fn main() -> Result<()> {
                 };
             decode_day(user, &dates, days, dry_run).await
         }
-        // `src/cli/refresh-rail-stops.ts` — the nightly rail-relation mirror.
+        // `refresh-rail-stops.ts` — the nightly rail-relation mirror.
         //
         //   backend refresh-rail-stops              mirror and rebuild the cache
         //   backend refresh-rail-stops --dry-run    fetch and report, write nothing
@@ -416,7 +416,7 @@ async fn main() -> Result<()> {
                 std::process::exit(64);
             }
         },
-        // `src/cli/refresh-bus-routes.ts` — the nightly bus-route mirror.
+        // `refresh-bus-routes.ts` — the nightly bus-route mirror.
         "refresh-bus-routes" => match flags {
             [] => refresh_bus_routes(false).await,
             [f] if f == "--dry-run" => refresh_bus_routes(true).await,
@@ -695,7 +695,7 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
 /// Serve the HTTP surface.
 ///
 /// ⚠ THIS IS PRODUCTION'S SERVER. It answers `health.xinutec.org`, and there is
-/// no TypeScript server left beside it — `src/server.ts` went with the TS arm
+/// no TypeScript server left beside it — `server.ts` went with the TS arm
 /// (#975).
 ///
 /// It binds `AUTH_PORT`, which is what the manifest sets; see the note in the

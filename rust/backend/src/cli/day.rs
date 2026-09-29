@@ -75,8 +75,8 @@ pub(crate) async fn inputs(user: &str, date: &str, display_tz: Option<&str>) -> 
 ///
 /// ⚠ DIFF THE TEXT, NOT THROUGH `jq`. jq parses both sides to doubles, so
 /// `25.0 == 25` and it calls a rendering difference clean — which is how three
-/// wrong fields survived the loaders' first parity pass. `tests/head_corpus.rs`
-/// does this over the whole corpus; this is for looking at one day.
+/// wrong fields survived the loaders' first parity pass. This is for looking at
+/// one day.
 pub(crate) fn head(fixture: &str) -> Result<()> {
     let text = std::fs::read_to_string(fixture).with_context(|| format!("reading {fixture}"))?;
     let parsed: serde_json::Value =
@@ -160,7 +160,7 @@ pub(crate) fn day(fixture: &str) -> Result<()> {
 /// # ⚠ What this covers, and what it does not
 ///
 /// The route's GATE — auth, the share window, parameter validation — is
-/// `tests/velocity_route.rs`, and none of it runs here: this calls the handler's
+/// `tests/suite/velocity_route.rs`, and none of it runs here: this calls the handler's
 /// assembly directly with no session. What it covers is the half no test can,
 /// because it needs a database and the OSM mirror: that the day actually
 /// assembles into a response, with every key the frontend reads present and
@@ -601,7 +601,7 @@ pub(crate) async fn day_live(
 /// equal timestamps expose the device-walk order: a `HashMap` iteration in Rust
 /// against a JSON object's insertion order in TypeScript.
 ///
-/// Its TypeScript twin (`scripts/locations-check-ts.mjs`) is deleted with the
+/// Its TypeScript twin (`locations-check-ts.mjs`) is deleted with the
 /// rest of the `dist/` callers (#1225); this is the only arm now.
 pub(crate) async fn locations_check(user: &str, date: &str) -> Result<()> {
     let cfg = Config::from_env().context("reading configuration")?;

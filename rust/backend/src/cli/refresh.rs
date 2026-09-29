@@ -7,7 +7,7 @@ use backend::db;
 
 /// Rebuild `focus_places` and `venue_type_priors` from PhoneTrack history.
 ///
-/// Tier 2 of #982 — the node cron is `src/cli/refresh-focus-places.ts`, which
+/// Tier 2 of #982 — the node cron is `refresh-focus-places.ts`, which
 /// runs Sundays 04:00. The geometry (stays, clusters, splitting, hour profiles,
 /// identity) is `ServeEntry`'s `focus` mode; the amenity vote is
 /// `Verified.Geo.FocusMining.mineCluster`; everything here is the IO around
@@ -693,7 +693,7 @@ pub(crate) const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 /// Pool each rail route's historic GPS corridor and snap it, filling
 /// `rail_route_cache`.
 ///
-/// Tier 2 of #982 — the node cron is `src/cli/refresh-rail-routes.ts`, nightly
+/// Tier 2 of #982 — the node cron is `refresh-rail-routes.ts`, nightly
 /// at 05:00. Two passes, as there: walk the window pooling every train leg's
 /// fixes per route key, then snap each pooled cloud once.
 ///
@@ -1431,7 +1431,7 @@ pub(crate) async fn retire_unplannable(
     Ok(())
 }
 
-/// Tier 2 of #982 — the node cron is `src/cli/refresh-bus-routes.ts`.
+/// Tier 2 of #982 — the node cron is `refresh-bus-routes.ts`.
 ///
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
 /// lossless, and it is why the refusal can be as narrow as "every tile failed".

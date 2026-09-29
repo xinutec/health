@@ -1,6 +1,6 @@
 //! The Overpass HTTP client — IO glue for the two OSM mirrors (#982 Tier 2).
 //!
-//! Port of the transport half of `src/geo/osm-overpass.ts`. The DECISIONS this
+//! Port of the transport half of the retired TypeScript `osm-overpass.ts`. The DECISIONS this
 //! file appears to make are not made here: whether the breaker is open, and what
 //! a failure does to it, live in `Verified.Geo.OverpassBreaker`. What is left is
 //! genuinely IO — which URL, what timeout, which status codes are worth a

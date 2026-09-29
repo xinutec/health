@@ -106,7 +106,7 @@ for (const f of readdirSync(CAP).sort()) {
       v.slice(0, 3).map((x, j) => ({ ...x, name: scrubName(x.name, j) }))])),
     linesAtPoint: take(tr.linesAtPoint, 2),
     reverseGeocode: Object.fromEntries(Object.entries(take(tr.reverseGeocode, 2)).map(([k, v]) => [k,
-      v == null ? null : { ...v, displayName: "display", address: { ...v.address, road: v.address?.road == null ? v.address?.road : "road" } }])),
+      v == null ? null : { ...v, displayName: "display", address: { ...v.address, road: v.address?.road == null ? v.address?.road : "road", ...(v.address?.postcode == null ? {} : { postcode: "ZZ1 1ZZ" }) } }])),
     stationsOnLine: Object.fromEntries(Object.entries(take(tr.stationsOnLine, 2)).map(([k, v]) => [k,
       v.slice(0, 3).map((x, j) => ({ ...x, name: scrubName(x.name, j) }))])),
   };

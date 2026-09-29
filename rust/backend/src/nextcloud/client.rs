@@ -1,4 +1,4 @@
-//! Thin Nextcloud HTTP client. Port of `src/nextcloud/client.ts`.
+//! Thin Nextcloud HTTP client. Port of the retired TypeScript `client.ts`.
 //!
 //! Basic Auth with the stored app password on every request, plus the
 //! `OCS-APIRequest` header Nextcloud requires for its OCS endpoints.

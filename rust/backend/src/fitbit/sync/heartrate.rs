@@ -1,6 +1,6 @@
 //! Heart rate: daily zone summaries and the 1-second intraday series.
 //!
-//! Port of `src/fitbit/sync/heartrate.ts`.
+//! Port of the retired TypeScript `heartrate.ts`.
 //!
 //! # Nothing here decides; the one rule it had went to Lean
 //!

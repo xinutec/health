@@ -1,7 +1,7 @@
 //! Runtime configuration, read from the environment at startup.
 //!
 //! The Rust backend is a DROP-IN for the TypeScript one, so it reads the
-//! variables `src/config.ts` reads and the k8s manifests already set —
+//! variables `config.ts` reads and the k8s manifests already set —
 //! `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`, and the
 //! Fitbit client pair.
 //!
@@ -22,7 +22,7 @@
 
 use anyhow::{Context, Result};
 
-/// What the sync job needs. Mirrors `loadSyncConfig` in `src/config.ts` — the
+/// What the sync job needs. Mirrors `loadSyncConfig` in `config.ts` — the
 /// entrypoint this replaces first — rather than the fuller `loadConfig` the
 /// HTTP server uses. The server's own fields (session secret, service tokens,
 /// allowed Owntracks tokens) arrive with the server, not before it.
@@ -66,7 +66,7 @@ pub struct Config {
     pub owntracks_tokens: Vec<String>,
     /// Where the dashboard is served from, for building share URLs.
     ///
-    /// ⚠ Has a DEFAULT rather than being an Option, matching `src/config.ts`.
+    /// ⚠ Has a DEFAULT rather than being an Option, matching `config.ts`.
     /// `PUBLIC_BASE_URL` is UNSET on the serving pod (measured 2026-08-22), so
     /// every share link production has ever issued came from this default. A
     /// host without one would hand the user a link to nowhere.

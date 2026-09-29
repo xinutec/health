@@ -1,6 +1,6 @@
 //! Wall-clock ↔ UTC conversion for Fitbit timestamps.
 //!
-//! Port of the two functions in `src/geo/timezone.ts` that every stream parser
+//! Port of the two functions in `timezone.ts` that every stream parser
 //! depends on. See `docs/design/timezone.md` for the three-tier storage
 //! contract this serves.
 //!
@@ -193,7 +193,7 @@ pub fn date_bounds_utc(date: &str, tz: Option<&str>) -> Result<DayBounds> {
 
 /// The local hour of an instant in a zone, `0..=23`.
 ///
-/// Port of `localHourOf` in `src/geo/venue-prior.ts`. ⚠ The TypeScript maps an
+/// Port of `localHourOf` in `venue-prior.ts`. ⚠ The TypeScript maps an
 /// hour of 24 to 0 because some `Intl` locales render midnight that way; that
 /// cannot arise from `chrono`, so there is no branch for it here and the result
 /// is the same.
@@ -208,7 +208,7 @@ pub fn local_hour_of(ts_unix: i64, tz: &str) -> Result<u32> {
 
 /// The civil date at an instant, in a zone — `YYYY-MM-DD`.
 ///
-/// The tzdata half of `isLiveDay` (`src/routes/velocity-cache.ts`), which the
+/// The tzdata half of `isLiveDay` (`velocity-cache.ts`), which the
 /// TypeScript gets from `Intl.DateTimeFormat("en-CA", { timeZone })`. The
 /// DECISION that follows — is this the day in progress, and how long may its
 /// result be reused — is `Verified.VelocityCache`; this only answers what day it
@@ -270,7 +270,7 @@ pub const MINUTES_PER_DAY: u32 = 1440;
 /// every minute of `[start, end)`, or the single instant at `start` for a
 /// zero-length window.
 ///
-/// Port of `localStaySamples` in `src/geo/opening-hours.ts`, which exists for
+/// Port of `localStaySamples` in `opening-hours.ts`, which exists for
 /// exactly the reason this does: `Verified.Geo.OpeningHours` decides
 /// open-versus-closed, but instant → local `(weekday, minute)` is tzdata, so
 /// the shell resolves the pairs and puts them on the wire.

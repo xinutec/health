@@ -1,6 +1,6 @@
 //! The sync run: what `dist/sync.js` does, per user, top to bottom.
 //!
-//! Port of the module body of `src/sync.ts`. Every stream fetcher, both
+//! Port of the module body of the retired TypeScript `sync.ts`. Every stream fetcher, both
 //! backfill walks and the rate-limit policy already exist; this is the order
 //! they happen in and the error handling between them.
 //!

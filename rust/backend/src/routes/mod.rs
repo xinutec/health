@@ -2,7 +2,7 @@
 //!
 //! ⚠ THIS IS PRODUCTION. It serves `health.xinutec.org` — the SPA shell, the
 //! static build and every `/api` route — and there is no TypeScript server
-//! left to fall back to — `src/server.ts` went with the TS arm (#975). Treat a
+//! left to fall back to — `server.ts` went with the TS arm (#975). Treat a
 //! change here as a change to the live site.
 //!
 //! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
@@ -62,7 +62,7 @@ pub fn router(state: AppState) -> Router {
     // That guard exists because the previous protection did not work: flipping
     // these two on 2026-08-22 failed ZERO of the eleven tests that covered this,
     // since each mirrored the stack instead of importing it.
-    // `tests/share_route.rs` now asserts it through THIS router.
+    // `tests/suite/share_route.rs` now asserts it through THIS router.
     let api = Router::new()
         .route("/me", get(me::handler))
         .route("/velocity", get(velocity::handler))

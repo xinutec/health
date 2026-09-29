@@ -1,8 +1,8 @@
 //! Dump the fold request for one golden day, as the fold receives it (#975).
 //!
 //! ⚠ THIS REPLACES `DAY_REQ_DUMP=… pnpm run day-gate`. That was the only way to
-//! get the request `scripts/rust-host-check.sh` feeds to both arms, and it ran
-//! `src/cli/compare-day.ts` to do it — so deleting the TypeScript backend would
+//! get the request `rust-host-check.sh` feeds to both arms, and it ran
+//! `compare-day.ts` to do it — so deleting the TypeScript backend would
 //! have taken the host-equivalence check down with it, silently, by turning it
 //! into a permanent SKIP.
 //!

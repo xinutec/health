@@ -29,7 +29,7 @@
 //! # The Lean/Rust line, drawn by example
 //!
 //! The user, 2026-08-17: *"anything that can be in Lean should be in Lean."*
-//! `src/share/token.ts` is the worked example and the shape to copy. Four
+//! `token.ts` is the worked example and the shape to copy. Four
 //! functions; the split is not 50/50 and was not a judgement call:
 //!
 //!   * `generateShareToken` reads the CSPRNG → **Rust**. There is nothing to

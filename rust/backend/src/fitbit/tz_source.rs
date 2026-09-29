@@ -1,5 +1,5 @@
 //! Which zone a Fitbit wall clock was recorded in. Port of
-//! `src/geo/fitbit-tz.ts`.
+//! `fitbit-tz.ts`.
 //!
 //! # ⚠ THIS IS THE RUST HALF OF A PAIR, AND LEAN HOLDS THE SPECIFICATION
 //!
@@ -10,7 +10,7 @@
 //! can hold thousands of fixes.
 //!
 //! So this searches instead, and the two are checked against each other rather
-//! than trusted separately: `tests/tz_source.rs` drives both over the same
+//! than trusted separately: `tests/suite/tz_source.rs` drives both over the same
 //! inputs through the FFI. The specification is the arbiter. The failure being
 //! guarded against is an off-by-one at the tie, which is exactly where a
 //! hand-written binary search goes wrong and exactly what reading it will not
@@ -187,7 +187,7 @@ impl<'a> ForwardTzSource<'a> {
 /// made: `tzf-rs` with its bundled polygon set, so the image needs no data file
 /// alongside the binary.
 ///
-/// ⚠ **IT IS NOT THE SAME DATASET THE TYPESCRIPT USED.** `src/geo/fitbit-tz.ts`
+/// ⚠ **IT IS NOT THE SAME DATASET THE TYPESCRIPT USED.** `fitbit-tz.ts`
 /// calls the npm `tz-lookup`, which ships a deliberately coarsened
 /// approximation of the tz shapefile; `tzf` carries the fuller polygons. They
 /// agree in the interior of a zone and can disagree within a few kilometres of a

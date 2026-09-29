@@ -2,7 +2,7 @@
 //!
 //! Eight are "the last N days of one table", two are "one day of one table",
 //! and two are a whole table with no window at all.
-//! Each is a single line in `src/routes/api.ts` — `selectAll()`, `c.json(rows)`
+//! Each is a single line in `api.ts` — `selectAll()`, `c.json(rows)`
 //! — and the port is almost entirely about not changing the response. See
 //! [`crate::row_json`] for what the driver and `JSON.stringify` were measured to
 //! produce; nothing about the rendering is decided here.
@@ -53,7 +53,7 @@ pub struct DateParams {
 
 /// `Number(s)`, as `z.coerce.number()` calls it.
 ///
-/// ⚠ `pub` so `tests/row_json.rs` can hold it against the zod outputs measured
+/// ⚠ `pub` so `tests/suite/row_json.rs` can hold it against the zod outputs measured
 /// in `lean/experiments/apiwindow-refs.mts`. Integration tests are a separate
 /// crate, so `pub(crate)` would be invisible to them.
 ///
@@ -248,7 +248,7 @@ days_back_handler!(
 // shows.
 //
 // ⚠ THE REPAIR IS A NET, NOT A PATH. Measured against production 2026-09-12
-// (`scripts/probe-served-instants.mjs`): all 1,270 sleep rows, all 37,780 stage
+// (`probe-served-instants.mjs`): all 1,270 sleep rows, all 37,780 stage
 // rows and all 32,587,081 intraday heart-rate rows already carry a stored
 // `_utc`, so the COALESCE reaches its second arm zero times today. It is here
 // for a legacy row the backfill never touched, and for the case where it cannot

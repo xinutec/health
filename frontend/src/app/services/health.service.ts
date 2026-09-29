@@ -92,7 +92,7 @@ export interface BatterySample {
  *
  *  The speed chart used to colour its bands off `seg.mode` alone, so the same
  *  screen showed a tube ride as "train" in the timeline and as a car in the
- *  chart. The backend has the identical helper (`src/geo/segment-util.ts`) with
+ *  chart. The backend has the identical helper (`segment-util.ts`) with
  *  the identical warning; this is its client-side twin. */
 export function effectiveMode(seg: TrackSegment): string {
   if (seg.vehicleKind === "bus") return "bus";

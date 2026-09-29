@@ -1,6 +1,6 @@
 //! Fitbit OAuth tokens: load, refresh, persist.
 //!
-//! Port of `src/fitbit/token-manager.ts`.
+//! Port of the retired TypeScript `token-manager.ts`.
 //!
 //! # The refresh must be serialised per user, and here that is a lock
 //!

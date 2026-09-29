@@ -36,7 +36,7 @@ const BRIDGE_JOIN_MAX_M = 120;
  * different stories. All point geometry — fix bucketing, spike rejection,
  * the per-mode speed-plausibility filter that stops a mis-segmented train
  * tail being drawn as a 60 km/h "walk" on the rails, stay centroids — is
- * resolved server-side in `buildEpisodes` (`src/geo/episode-geometry.ts`,
+ * resolved server-side in `buildEpisodes` (`episode-geometry.ts`,
  * `docs/design/episode-geometry.md`). This component only plumbs Leaflet:
  * one polyline per episode (dashed when the geometry is inferred — snapped
  * rail or a tentative gap), a marker per stay, the live "current position"

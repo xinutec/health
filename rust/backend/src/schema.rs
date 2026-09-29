@@ -10,7 +10,7 @@
 //! "schema is up to date" — nothing fails and nothing is logged. See the repeat
 //! at index 77 for a case this rule already cost.
 //!
-//! ⚠ Transcribed from `src/db/schema.ts` MECHANICALLY — its template literals
+//! ⚠ Transcribed from `schema.ts` MECHANICALLY — its template literals
 //! extracted in order, with a check that nothing but commas sat between them.
 //! A hand copy of 67 statements is a transcription error waiting to happen, and
 //! the failure would be a column that quietly exists in one implementation and
@@ -48,7 +48,7 @@ pub async fn migrate(pool: &MySqlPool) -> Result<()> {
     // rollback deadlocked (node would not start until Rust exited, Rust would
     // not be terminated until node was ready) and needed manual intervention.
     //
-    // `src/db/schema.ts` gets this right with `withConnection`; this did not.
+    // `schema.ts` gets this right with `withConnection`; this did not.
     let mut conn = pool
         .acquire()
         .await

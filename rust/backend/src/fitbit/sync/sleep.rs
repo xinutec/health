@@ -1,4 +1,4 @@
-//! Sleep logs and their stage series. Port of `src/fitbit/sync/sleep.ts`.
+//! Sleep logs and their stage series. Port of the retired TypeScript `sleep.ts`.
 //!
 //! # The `logId` precision bug does not come across, and that is the fix
 //!

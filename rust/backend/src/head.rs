@@ -4,7 +4,7 @@
 //! GPS quality control, place-snap, the Kalman smoother, segmentation — has a
 //! `#guard`-pinned Lean twin reachable through `lean::serve`. What was missing
 //! was the sequencing: which fixes each stage is handed, in what order, and
-//! with which filter between them. That lived in `src/geo/velocity.ts` and is
+//! with which filter between them. That lived in `velocity.ts` and is
 //! what this module ports (#982).
 //!
 //! ```text
@@ -81,7 +81,7 @@ const KALMAN_ADMIT_ACCURACY_M: f64 = 200.0;
 ///
 /// JSON cannot carry a Float unrounded — Lean's printer emits six decimals and
 /// JS `JSON.parse` re-rounds past 2^53 — and the Kalman recursion moves on the
-/// seventh decimal of a fix. The TS twin is `src/lean/float-bits.ts`.
+/// seventh decimal of a fix. The TS twin is `float-bits.ts`.
 fn bits(v: f64) -> Value {
     Value::String(v.to_bits().to_string())
 }

@@ -125,7 +125,7 @@ async fn outside_window(session: &UserSession, date: &str) -> anyhow::Result<boo
 async fn open(st: &AppState, user_id: &str) -> Result<PhoneTrack, NcError> {
     // ⚠ AN UNSET `NC_BASE_URL` FALLS BACK TO THE DEFAULT — it does NOT mean
     // "not linked". `NC_BASE_URL` is in fact EMPTY on the serving pod today
-    // (measured, 2026-08-22), and `src/config.ts` answers that with
+    // (measured, 2026-08-22), and `config.ts` answers that with
     // `.default("https://dash.xinutec.org")` on the API path, which is why the
     // live map works in production.
     //
