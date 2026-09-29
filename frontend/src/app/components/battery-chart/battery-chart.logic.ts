@@ -17,14 +17,6 @@ export interface BatteryXRange {
 	totalDuration: number;
 }
 
-/** The chart's horizontal span, or null when there is nothing to draw. */
-export function batteryXRange(battery: readonly BatterySample[]): BatteryXRange | null {
-	if (battery.length === 0) return null;
-	const firstTs = battery[0].ts;
-	const lastTs = battery[battery.length - 1].ts;
-	return { firstTs, lastTs, totalDuration: lastTs - firstTs || 1 };
-}
-
 /**
  * The horizontal span covering ALL series (phone + watch), so both plot on a
  * shared time axis. Empty series are ignored; null when every series is empty.

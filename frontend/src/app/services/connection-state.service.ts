@@ -32,10 +32,6 @@ export class ConnectionStateService {
 		this.nextcloudStatus.set(s);
 	}
 
-	setFitbitStatus(s: ConnectionStatus): void {
-		this.fitbitStatus.set(s);
-	}
-
 	/** Wrap `fetch` to intercept connection-state signals from the API.
 	 *  Any 409 carrying `error: "nextcloud_reauth_required"` flips the
 	 *  Nextcloud status to `needs_reauth`; the global banner then renders.

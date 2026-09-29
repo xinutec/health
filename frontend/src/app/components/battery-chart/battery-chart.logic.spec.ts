@@ -1,25 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { batteryMarker, batteryTimeLabels, batteryXRange, batteryXRangeMulti } from "./battery-chart.logic";
+import { batteryMarker, batteryTimeLabels, batteryXRangeMulti } from "./battery-chart.logic";
 
 const sample = (ts: number, level: number) => ({ ts, level });
-
-describe("batteryXRange", () => {
-	it("returns null for an empty series (nothing to draw)", () => {
-		expect(batteryXRange([])).toBeNull();
-	});
-
-	it("spans the first to the last sample", () => {
-		expect(batteryXRange([sample(100, 90), sample(400, 60), sample(700, 30)])).toEqual({
-			firstTs: 100,
-			lastTs: 700,
-			totalDuration: 600,
-		});
-	});
-
-	it("floors a single-sample duration to 1 so the x-mapping never divides by zero", () => {
-		expect(batteryXRange([sample(500, 42)])).toEqual({ firstTs: 500, lastTs: 500, totalDuration: 1 });
-	});
-});
 
 describe("batteryXRangeMulti (phone + watch share one axis)", () => {
 	it("returns null when every series is empty", () => {
