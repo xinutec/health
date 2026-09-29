@@ -114,22 +114,24 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// every such stay DERIVES a `reverseGeocode` key the capture (which asked at
 /// the stored centroid) never recorded — 40 days carry holes and every moved
 /// stay reads `city: null` in its blessed states. The holes close when the
-/// days are re-captured (#1076); the fold is right to ask.
-const UNANSWERED_BY_DAY: [(&str, usize); 40] = [
-    ("2026-04-30", 3),
+/// days are re-captured (#1076); the fold is right to ask. Raised again the
+/// same evening when daytime stays at a residence joined the rule.
+const UNANSWERED_BY_DAY: [(&str, usize); 41] = [
+    ("2026-04-29", 7),
+    ("2026-04-30", 6),
     ("2026-05-11", 2),
     ("2026-05-12", 1),
     ("2026-05-14", 1),
-    ("2026-05-15", 1),
+    ("2026-05-15", 2),
     ("2026-05-18", 3),
-    ("2026-05-20", 4),
-    ("2026-05-22", 4),
-    ("2026-05-25", 4),
-    ("2026-06-02", 1),
+    ("2026-05-20", 5),
+    ("2026-05-22", 5),
+    ("2026-05-25", 5),
+    ("2026-06-02", 3),
     ("2026-06-09", 5),
-    ("2026-06-12", 2),
-    ("2026-06-15", 8),
-    ("2026-06-16", 2),
+    ("2026-06-12", 5),
+    ("2026-06-15", 9),
+    ("2026-06-16", 4),
     ("2026-06-17", 2),
     ("2026-06-18", 5),
     ("2026-06-22", 2),
@@ -141,12 +143,12 @@ const UNANSWERED_BY_DAY: [(&str, usize); 40] = [
     ("2026-07-02", 2),
     ("2026-07-06", 2),
     ("2026-07-07", 1),
-    ("2026-07-10", 2),
+    ("2026-07-10", 3),
     ("2026-07-12", 2),
     ("2026-07-14", 2),
     ("2026-07-15", 1),
     ("2026-07-16", 3),
-    ("2026-07-17", 6),
+    ("2026-07-17", 7),
     ("2026-07-30", 2),
     ("2026-08-05", 2),
     ("2026-08-06", 2),
