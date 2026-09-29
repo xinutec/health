@@ -101,6 +101,60 @@ structure State where
   lineName : Option String := none
   deriving Inhabited
 
+/-! ## A ride's head (#366)
+
+The first minutes of a road ride can crawl — out of a car park, a queue at a
+junction, a taxi in traffic. Per minute such a fix reads like standing still
+(1.2 km/h scores 4 nats against `driving`), and the per-minute charge grows
+with the crawl, so a ten-minute crawl decodes as a stay however clearly a
+ride follows (2026-05-25 12:40 local). The head state carries `driving`'s
+emission with its speed term widened to a mixture: half the cruising prior,
+half a crawl. It is a separate STATE, not a τ-dependent emission, so the
+proved trellis is untouched; the transitions confine it to the front of a
+ride ({@link Verified.Hsmm.Transitions.isHardZero}) and the duration prior caps
+it ({@link Verified.Hsmm.Assemble.durPriorBase}). Off unless the context asks
+for it.
+
+⚠ MEASURED 2026-09-29 AND NOT SHIPPED (`HSMM_RIDE_HEAD_MIN=10`, the live
+scoreboard over the eleven frozen days). Priced per minute like `driving` the
+head never decodes — the eleven days re-decode identically. Priced like a
+stay it takes the 05-25 crawl (journeys 0 → 1) and undercuts every TRAIN
+start: 05-15's Bakerloo and Jubilee hops and 06-16's line legs come out
+`driving`, legLine 9 → 6, journeys 18 → 17, one more phantom. No pricing
+between the two serves both: 05-25 needs at least 0.36 of the stay–driving
+gap credited per minute and any credit above 0.25 beats `train`'s own prior.
+What would restore fairness is a head for every ride mode (a platform wait
+for `train`), so that the line evidence decides between them; not built. -/
+
+def RIDE_HEAD_CRAWL_MEAN_KMH : Float := 3
+def RIDE_HEAD_CRAWL_STD_KMH : Float := 3
+def RIDE_HEAD_CRAWL_WEIGHT : Float := 0.5
+
+/-- A `driving` state that is a ride's head — the same mode, told apart in
+    the `lineName` slot, which no road state uses. -/
+def isRideHead (s : State) : Bool := s.mode == .driving && s.lineName == some "head"
+
+/-- What the head adds to `driving`'s per-minute emission: the log of the crawl
+    mixture over the cruising prior. 0 without a fix. -/
+def rideHeadSpeedAdjust (speedKmh : Option Float) : Float :=
+  match speedKmh with
+  | none => 0.0
+  | some v =>
+    let p := modePriors .driving
+    let cruise := logNormalPdf v p.speedMean p.speedStd
+    let crawl := logNormalPdf v RIDE_HEAD_CRAWL_MEAN_KMH RIDE_HEAD_CRAWL_STD_KMH
+    Float.log ((1 - RIDE_HEAD_CRAWL_WEIGHT) * Float.exp cruise
+      + RIDE_HEAD_CRAWL_WEIGHT * Float.exp crawl) - cruise
+
+-- A crawling minute gains most of the 4 nats it lost; a cruising minute pays
+-- the mixture's halving; no fix, nothing.
+#guard (let a := rideHeadSpeedAdjust (some 1.2); a > 2.8 && a < 3.0)
+#guard Float.abs (rideHeadSpeedAdjust (some 40) - Float.log 0.5) < 1e-6
+#guard rideHeadSpeedAdjust none == 0.0
+#guard isRideHead ⟨.driving, none, some "head"⟩ == true
+#guard isRideHead ⟨.driving, none, none⟩ == false
+#guard isRideHead ⟨.train, none, some "head"⟩ == false
+
 /-- Speed / GPS-null-plane term. -/
 private def speedTerm (s : State) (o : Observation) (prior : ModePrior) : Float :=
   match o.gps with

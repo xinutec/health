@@ -81,6 +81,8 @@ structure ModelContext where
   modeMinuteScale : Float := 1.0
   modeMinuteScaleWithGps : Float := 1.0
   modeEntryScale : Float := 0.0
+  /-- Longest ride's head, in minutes; 0 = no head state in the space (#366). -/
+  rideHeadMin : Nat := 0
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float
@@ -107,7 +109,7 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     (continuity : Option Continuity.ContinuityContext)
     (reacquireRobust segEvidenceOn chainOn : Bool)
     (modeMinuteScale : Float := 1.0) (modeEntryScale : Float := 0.0)
-    (modeMinuteScaleWithGps : Float := 1.0) : ModelContext :=
+    (modeMinuteScaleWithGps : Float := 1.0) (rideHeadMin : Nat := 0) : ModelContext :=
   let totalDwell := places.foldl (fun a (_, _, _, _, dwell) => a + dwell) 0.0
   let nPlaces := places.length
   let placeCoords := places.foldl (fun m (p, lat, lon, _, _) => m.insert p.id (lat, lon))
@@ -119,13 +121,15 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     m.insert p.id (if totalDwell > 0 then dwell / totalDwell else 1.0 / nPlaces.toFloat))
     ({} : Std.HashMap Int Float)
   { obs
-    states := (buildStateSpace (places.map (·.1)) KNOWN_LINES).toArray
+    states := (buildStateSpace (places.map (·.1)) KNOWN_LINES
+      ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_STATE] else [])).toArray
     model
     connGraph := RouteModel.toConnGraph model
     modeledLines := RouteModel.linesInGraph model
     edgesByLine := RouteModel.buildEdgesByLine model
     placeCoords, hourProfiles, visitWeights, nPlaces, coverage, placeNearLine, continuity
     reacquireRobust, segEvidenceOn, chainOn, modeMinuteScale, modeEntryScale, modeMinuteScaleWithGps
+    rideHeadMin
     stepPref := SegmentEvidence.stepPrefix obs
     selfLoop := Transitions.defaultSelfLoop }
 
@@ -145,6 +149,16 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
     -- knob adds the difference, so the shipped model is untouched at 1.
     + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
         * Emissions.modePriorLog st.mode
+    -- The ride's head is `driving` with the crawl mixture, priced per minute
+    -- like a stay rather than like a ride (#366): the per-minute mode prior
+    -- is the no-evidence fallback, and a crawling fix IS evidence — charged
+    -- at driving's −3.9 a minute it outweighs the mixture's +2.9 on every
+    -- crawling minute and the head never decodes (measured 2026-09-29: the
+    -- eleven frozen days re-decoded identically with it in the space).
+    + (if Emissions.isRideHead st then
+         Emissions.rideHeadSpeedAdjust (o.gps.map (·.speedKmh))
+           + (Emissions.modePriorLog .stationary - Emissions.modePriorLog .driving)
+       else 0.0)
   | _, _ => negInf
 
 /-- The per-SEGMENT entry log-prior by mode (#366): the entry rate that, with
@@ -182,17 +196,6 @@ def initAt (c : ModelContext) (s : Nat) : Float :=
   | some st => Assembly.initialLogProbFull st
   | none => negInf
 
-/-- `duration(s, d, segEnd)` — train-hop-aware duration prior + segment evidence,
-    with `covered` resolved at the segment's end minute. -/
-def durAt (c : ModelContext) (s d e : Nat) : Float :=
-  match c.states[s]? with
-  | none => negInf
-  | some st =>
-  let covered := match c.obs[e]? with | some o => coveredAt c o.ts | none => false
-  Assembly.durationLogProbFull c.obs c.stepPref st d e covered
-    (baselineFit st.mode) (Duration.minDurationByMode st.mode) (Duration.minDurationByMode .train)
-    c.segEvidenceOn
-
 /-- The half of `durAt` that does not depend on the segment end: the state
     mode's duration prior at `d`. One per `(s, d)`; `durAtFrom` finishes each
     `e` from it. `durAt_eq_durAtFrom` says the split is exact (#1774). -/
@@ -200,7 +203,9 @@ def durPriorBase (c : ModelContext) (s d : Nat) : Float :=
   match c.states[s]? with
   | none => negInf
   | some st =>
-    Duration.logDurationProb d.toFloat (baselineFit st.mode) (Duration.minDurationByMode st.mode)
+    -- A ride's head lasts at most `rideHeadMin` minutes (#366).
+    if Emissions.isRideHead st && d > c.rideHeadMin then negInf
+    else Duration.logDurationProb d.toFloat (baselineFit st.mode) (Duration.minDurationByMode st.mode)
 
 /-- `durAt` given `durPriorBase c s d`: only the train-hop relaxation and the
     segment evidence are resolved at `e`. -/
@@ -212,10 +217,15 @@ def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
   Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
     (Duration.minDurationByMode .train) base c.segEvidenceOn
 
+/-- `duration(s, d, obs[e])` — the mode's duration prior at `d`, the train-hop
+    relaxation and the segment evidence at `e`. DEFINED as the split
+    (`durPriorBase` then `durAtFrom`) since 2026-09-29, so the hoisted decoder
+    and this reference cannot drift. -/
+def durAt (c : ModelContext) (s d e : Nat) : Float :=
+  durAtFrom c s d e (durPriorBase c s d)
+
 theorem durAt_eq_durAtFrom (c : ModelContext) (s d e : Nat) :
-    durAt c s d e = durAtFrom c s d e (durPriorBase c s d) := by
-  unfold durAt durAtFrom durPriorBase
-  cases c.states[s]? <;> rfl
+    durAt c s d e = durAtFrom c s d e (durPriorBase c s d) := rfl
 
 /-- `transition(a, b, obs[t])` — static prior + chain context (with the `−∞`
     short-circuit), chain penalty resolved over the model + place coords. -/
@@ -286,6 +296,20 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 -- entryAt: covered + line-valid → the +3 generator boost (train state ⇒ base entry 0).
 #guard entryAt ctxC 0 jubIdx == 3
 #guard entryAt ctxU 0 jubIdx == 0                          -- uncovered → generator silent
+
+-- The ride's head (#366): absent at 0, present when asked, crawl-adjusted, capped.
+private def ctxH : ModelContext :=
+  buildContext #[obsTrain] jm places {} {} none false false false 1.0 0.0 1.0 10
+private def headIdx : Nat := (ctxH.states.findIdx? Emissions.isRideHead).getD 0
+private def drvIdx : Nat := (ctxH.states.findIdx? (fun s => s.mode == .driving && !Emissions.isRideHead s)).getD 0
+#guard ctxU.states.any Emissions.isRideHead == false
+#guard ctxH.states.any Emissions.isRideHead == true
+-- No fix on `obsTrain`, so the head differs from `driving` by the prior swap alone.
+#guard Float.abs (emitAt ctxH 0 headIdx - emitAt ctxH 0 drvIdx
+  - (Emissions.modePriorLog .stationary - Emissions.modePriorLog .driving)) < 1e-9
+#guard durPriorBase ctxH headIdx 10 == durPriorBase ctxH drvIdx 10
+#guard durPriorBase ctxH headIdx 11 == negInf
+#guard durPriorBase ctxH drvIdx 11 != negInf
 
 -- durAt: coverage resolution drives the one-stop-hop relaxation of the sub-floor.
 #guard durAt ctxC jubIdx 1 0 == 0                          -- covered sub-floor hop → relaxed

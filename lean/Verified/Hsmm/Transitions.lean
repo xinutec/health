@@ -46,7 +46,20 @@ def transitionWeight (src dst : State) : Float :=
 /-- `isHardZero`, base path (no `placeNearLine`): stationary→stationary between
     distinct places is impossible without a moving state between. -/
 def isHardZero (src dst : State) : Bool :=
-  src.mode == .stationary && dst.mode == .stationary && src.placeId != dst.placeId
+  (src.mode == .stationary && dst.mode == .stationary && src.placeId != dst.placeId)
+  -- A ride's head (#366) is followed by its ride and by nothing else, and a
+  -- ride under way does not grow a head.
+  || (Verified.Hsmm.Emissions.isRideHead src
+        && !(dst.mode == .driving && !Verified.Hsmm.Emissions.isRideHead dst))
+  || (Verified.Hsmm.Emissions.isRideHead dst && src.mode == .driving)
+
+private def HEAD : State := ⟨.driving, none, some "head"⟩
+#guard isHardZero HEAD ⟨.driving, none, none⟩ == false
+#guard isHardZero HEAD ⟨.walking, none, none⟩ == true
+#guard isHardZero HEAD ⟨.stationary, some 5, none⟩ == true
+#guard isHardZero ⟨.driving, none, none⟩ HEAD == true
+#guard isHardZero ⟨.walking, none, none⟩ HEAD == false
+#guard isHardZero ⟨.stationary, some 5, none⟩ HEAD == false
 
 /-- Per-`src` cross-weight sum over the state space: total `transitionWeight` of
     the valid (not same, not hard-zero) cross destinations. -/

@@ -848,7 +848,8 @@ private def parseAssemble (j : Json) : Except String (Verified.Hsmm.Assemble.Mod
     (← (← flags.getObjVal? "segEvidence").getBool?)
     (← (← flags.getObjVal? "chainContext").getBool?)
     (knob "modeMinuteScale" 1.0) (knob "modeEntryScale" 0.0)
-    (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0)), maxD)
+    (knob "modeMinuteScaleWithGps" (knob "modeMinuteScale" 1.0))
+    (knob "rideHeadMin" 0).toUInt64.toNat, maxD)
 
 /-- A quantised cell as JSON: integer-valued `Float` → `Int`; `none` → `null`. -/
 private def qCell : Option Float → Json
@@ -1167,7 +1168,9 @@ private def assembleSegmentsResult (j : Json) : Json :=
             | some s => pure (acc.push
                 { mode := Verified.Hsmm.StateSpace.modeName s.mode
                 , placeId := s.placeId
-                , lineName := s.lineName })) #[]
+                  -- A ride's head IS the ride: it leaves as plain `driving`
+                  -- and `groupStates` joins it to the minutes that follow.
+                , lineName := if Verified.Hsmm.Emissions.isRideHead s then none else s.lineName })) #[]
         match states with
         | .error e => Json.mkObj [("error", Json.str e)]
         | .ok sts =>

@@ -58,6 +58,20 @@ fn run_corpus() {
         // `DECODE_BLESS=1`: the fixture's `expected` becomes TODAY'S decode, the
         // compared fields only — for landing a decoder change the scoreboard's
         // live arm has already judged (#366). Tab-indented like the capture.
+        // `DECODE_DUMP_OUT=<path>`: the Lean decode per day, one JSON line each,
+        // APPENDED — for laying an arm's segments against the narrative without
+        // blessing anything (2026-09-29, #366).
+        if let Ok(path) = std::env::var("DECODE_DUMP_OUT") {
+            use std::io::Write;
+            let line = format!("{}\n", serde_json::json!({ "name": name, "segments": got }));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .expect("DECODE_DUMP_OUT opens")
+                .write_all(line.as_bytes())
+                .expect("DECODE_DUMP_OUT writes");
+        }
         if std::env::var("DECODE_BLESS").is_ok() {
             let mut fx = fx.clone();
             fx["expected"] = Value::Array(
