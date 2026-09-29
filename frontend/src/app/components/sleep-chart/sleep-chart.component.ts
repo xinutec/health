@@ -11,7 +11,6 @@ import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme"
   imports: [MatCardModule, BaseChartDirective],
   templateUrl: './sleep-chart.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: './sleep-chart.component.scss',
 })
 export class SleepChartComponent {
   readonly sleep = input<SleepLog[]>([]);

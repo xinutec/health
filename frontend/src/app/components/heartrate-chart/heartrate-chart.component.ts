@@ -11,7 +11,6 @@ import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme"
   imports: [MatCardModule, BaseChartDirective],
   templateUrl: './heartrate-chart.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: './heartrate-chart.component.scss',
 })
 export class HeartrateChartComponent {
   readonly activity = input<ActivityDay[]>([]);

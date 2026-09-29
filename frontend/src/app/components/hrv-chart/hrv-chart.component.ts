@@ -11,7 +11,6 @@ import { chartColors, gridColor, tickColor, formatDay } from "../../chart-theme"
   imports: [MatCardModule, BaseChartDirective],
   templateUrl: "./hrv-chart.component.html",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: "./hrv-chart.component.scss",
 })
 export class HrvChartComponent {
   readonly hrv = input<HrvDay[]>([]);

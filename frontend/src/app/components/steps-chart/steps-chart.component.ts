@@ -11,7 +11,6 @@ import { chartColors, gridColor, tickColor } from "../../chart-theme";
   imports: [MatCardModule, BaseChartDirective],
   templateUrl: './steps-chart.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: './steps-chart.component.scss',
 })
 export class StepsChartComponent {
   readonly activity = input<ActivityDay[]>([]);

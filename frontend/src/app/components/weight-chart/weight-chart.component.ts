@@ -11,7 +11,6 @@ import type { BodyDay } from "../../services/health.service";
   imports: [MatCardModule, BaseChartDirective],
   templateUrl: "./weight-chart.component.html",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  styleUrl: "./weight-chart.component.scss",
 })
 export class WeightChartComponent {
   readonly body = input<BodyDay[]>([]);
