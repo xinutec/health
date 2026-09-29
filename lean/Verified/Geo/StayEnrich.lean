@@ -52,7 +52,9 @@ already and only the city is read there.
 
 Step 5 with a winner asks at {@link namingCoordinate}: the day's centroid and
 the place's stored centroid blended by precision — the day's fixes weighted by
-their own scatter, the place by its {@link Verified.Geo.PlacePrior.effectiveSigmaM}.
+their own scatter and by how much of the stay they observed
+({@link Verified.Geo.EnrichFold.nameStay}), the place by its
+{@link Verified.Geo.PlacePrior.effectiveSigmaM}.
 The TS snapped to the stored centroid outright, on the reading that the day's
 aggregate is noisy and the place's is true. Measured over the corpus (#325,
 2026-09-29) the opposite holds for a tight stay: on the days whose name was
@@ -61,10 +63,18 @@ centroid, which averages a cluster wider than its nominal radius, so the
 resolver was asked about a neighbour's doorstep. A smeared stay (scatter of
 50–110 m) still leans on the place.
 
-A RESIDENCE keeps the stored centroid. Where he sleeps is identified by the
-place, not by today's fixes, and the resolver's lodging override reads within
-50 m of the coordinate it is asked about — the 2026-04-29 hotel's midday stay
-sits 118 m from the hotel node on its own fixes and 40 m on the place's.
+A NIGHT at a residence keeps the stored centroid; a daytime stay there is
+named like any other. Where he sleeps is identified by the place, and a
+night's fixes indoors scatter — 2026-06-02's night at the clinic spreads
+85 m and its centroid lands on a sandwich shop (measured 2026-09-29, two
+confirmed rows lost when every residence stay took its fixes). A daytime
+stay at a residence is a visit like any other: the 2026-04-29 midday stay
+whose fixes sit 118 m from the hotel and 7 m from a café was the café (his
+word), and a hospital cluster that has counted fourteen sleep hours over
+forty-two days was naming every visit at its stored centroid, where a
+neighbouring building's footprint answered (#325). The lodging override
+still runs for every residence stay (`preferResidential`), from whichever
+coordinate is asked.
 
 ## No new shell
 
@@ -251,13 +261,12 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         -- settled the same day by the bare-label policy in `BestPlace.named`.
         -- ⚠ `venueless` below still reads the FIELD (`amenityLabel.isNone`),
         -- exactly as before — see the trap note above.
-        -- 5a. Named where he stood — a residence at the place's own
-        -- centroid, anything else at the blend (see the header). `venueless`
-        -- sends an amenity-less cluster to the address rather than to
-        -- whatever low-confidence venue happens to be near.
+        -- 5a. Named where he stood (see the header). `venueless` sends an
+        -- amenity-less cluster to the address rather than to whatever
+        -- low-confidence venue happens to be near.
         let venueless := wp.amenityLabel.isNone
         let (askLat, askLon) :=
-          if isResidential then (placeLat, placeLon)
+          if isResidential && isSleepWindow then (placeLat, placeLon)
           else namingCoordinate cLat cLon spreadM wp.cand
         match reads.place askLat askLon (isResidential || venueless) true with
         | none => seg
@@ -426,10 +435,13 @@ private def cafeNorth : NamedPlace := { cafe with cand := cand 7 (LAT + 0.002) L
 #guard (run spy [cafeNorth]).place == some "51.520|-0.130|false|true"
 -- …the same cafe under a smeared stay is asked about at the place…
 #guard (enrichStay spy {} [cafeNorth] none stay LAT LON 1000).place == some "51.522|-0.130|false|true"
--- …and a RESIDENCE that far away is asked about at the place however tight the
--- fixes: the lodging override must find the hotel from there.
+-- …and a RESIDENCE by day is asked about at the fixes like any other winner,
+-- with `preferResidential` so the lodging override still runs from there…
 private def residNorth : NamedPlace := { resid with cand := cand 8 (LAT + 0.002) LON 40 }
-#guard (run spy [residNorth]).place == some "51.522|-0.130|true|true"
+#guard (run spy [residNorth]).place == some "51.520|-0.130|true|true"
+-- …while a NIGHT at it is asked about at the place, however tight the fixes.
+#guard (enrichStay spy {} [residNorth] none { stay with startTs := 0, endTs := 6 * 3600 } LAT LON 10).place
+  == some "51.522|-0.130|true|true"
 
 /-! ### The naming coordinate itself -/
 

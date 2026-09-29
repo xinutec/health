@@ -5,16 +5,19 @@ and /tmp/truth-rows.jsonl (TRUTH_ROWS_OUT from the corpus gate's truth grader).
 `grid` sweeps σ, the open-hours support, the base-rate clamp and the near-field radius.
 A Python copy of `rankVenues`; PARITY against the Lean pick is printed first and must be total
 before any number below it means anything (2026-09-28: 139/139)."""
-import json, re, math, sys, itertools, time, collections
+import json, re, math, sys, itertools, time, collections, os
 
 VENUE_TYPES = {"amenity", "tourism", "shop"}
 PRIOR_TYPES = {"amenity", "tourism", "shop", "leisure"}
 NEVER_DEST = set()  # already filtered in the dump
 
+LOG = os.environ.get('VENUEFIT_LOG', '/tmp/venuefit.log')
+ROWS = os.environ.get('TRUTH_ROWS', '/tmp/truth-rows.jsonl')
+
 def load_stays():
     stays = []
     seen = {}
-    for l in open('/tmp/venuefit.log'):
+    for l in open(LOG):
         i = l.find('VENUEFIT ')
         if i >= 0:
             j = json.loads(l[i+9:].strip())
@@ -41,7 +44,7 @@ def parity(data_all, p):
 
 def load_rows():
     rows = collections.defaultdict(list)
-    for l in open('/tmp/truth-rows.jsonl'):
+    for l in open(ROWS):
         j = json.loads(l)
         rows[j['date']].extend(j['rows'])
     return rows
@@ -67,10 +70,10 @@ def label_for(stay, rows):
 
 class P:
     def __init__(self, sigma=40.0, venue=1.5, open_=0.7, closed=-2.5, base_lo=-2.0, base_hi=1.5,
-                 dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5):
+                 dwell_lo=-2.0, dwell_hi=1.2, hour_lo=-1.5, hour_hi=1.2, near=12.0, floor=-1.5, nf_min=0.0):
         self.__dict__.update(locals()); del self.__dict__['self']
     def __repr__(self):
-        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} venue={self.venue:g}"
+        return f"σ={self.sigma:g} open={self.open_:g} base=[{self.base_lo:g},{self.base_hi:g}] near={self.near:g} nf_min={self.nf_min:g} venue={self.venue:g}"
 
 def clamp(x, lo, hi): return min(hi, max(lo, x))
 
@@ -87,7 +90,8 @@ def rank(stay, p):
         if c['of'] is not None:
             hours = p.closed + c['of'] * (p.open_ - p.closed)
         total = dist + venue + (shape or 0.0) + (hours or 0.0)
-        nf = isv and not c['rg'] and c['d'] <= p.near and (hours is None or hours >= 0)
+        # NEAR_FIELD_MIN_NATS (2026-09-28): the veto goes only to a candidate whose own total is at least neutral.
+        nf = isv and not c['rg'] and c['d'] <= p.near and (hours is None or hours >= 0) and total >= p.nf_min
         cands.append(dict(c, total=total, nf=nf))
     def key(c):
         return (0 if c['enc'] else 1, 0 if c['nf'] else 1, c['d'] if c['nf'] else 0.0, -c['total'], c['d'], c['n'].lower())
@@ -130,6 +134,10 @@ if __name__ == '__main__':
     right, wrong = evaluate(data, base)
     print(f"\nAS SHIPPED {base}: {right}/{len(data)} right")
     for w in wrong: print('   ✗', w)
+    if len(sys.argv) > 1 and sys.argv[1] == 'nfmin':
+        for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
+            r, w = evaluate(data, P(nf_min=m))
+            print(f"   nf_min={m:g}: {r}/{len(data)} right   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:600])
     if len(sys.argv) > 1 and sys.argv[1] == 'grid':
         best = []
         for sigma, open_, base_lo, near, venue in itertools.product([15,20,25,30,40,60],[0,0.35,0.7],[-2,-1,-0.5,0],[8,12,20,30],[1.5]):

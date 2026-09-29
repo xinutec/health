@@ -93,12 +93,22 @@ def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
   let n := Float.ofNat segPoints.size
   let cLat := (segPoints.foldl (fun acc p => acc + p.lat) 0) / n
   let cLon := (segPoints.foldl (fun acc p => acc + p.lon) 0) / n
-  -- RMS scatter of the fixes about their mean: how precisely the day's fixes
-  -- locate him, which the naming coordinate weighs against the elected
-  -- place's own σ.
-  let spreadM := Float.sqrt ((segPoints.foldl (fun acc p =>
+  -- How precisely the day's fixes locate him, which the naming coordinate
+  -- weighs against the elected place's own σ: the RMS scatter of the fixes
+  -- about their mean, inflated by how little of the stay they observed. A
+  -- six-hour stay indoors with three fixes (2026-06-02 at the clinic) is
+  -- three moments GPS got through, near a window or a door, not where he sat;
+  -- their scatter (34 m) says nothing about the other 368 minutes. Dividing
+  -- by √(observed fraction) leaves a stay with a fix a minute at its scatter
+  -- and sends a sparse one back to the place.
+  let scatterM := Float.sqrt ((segPoints.foldl (fun acc p =>
     let d := haversineMeters cLat cLon p.lat p.lon
     acc + d * d) 0) / n)
+  let minutes := max 1.0 (Float.ofInt (seg.endTs - seg.startTs) / 60)
+  let observed := min 1.0 (n / minutes)
+  -- Floored BEFORE the inflation: three coincident fixes have no scatter and
+  -- would otherwise inflate to nothing.
+  let spreadM := max scatterM Verified.Geo.StayEnrich.SPREAD_FLOOR_M / Float.sqrt observed
   Verified.Geo.StayEnrich.enrichStay
     { stations := reads.stations
       -- The window and the zone are the SEGMENT's, so they are bound here
@@ -203,6 +213,12 @@ private def cafeNorth : Verified.Geo.StayEnrich.NamedPlace :=
 -- The same centroid from fixes a kilometre apart: the blend goes to the place.
 private def WIDE : Array PointF := #[pt 0 (LAT + 0.01) LON, pt 60 LAT LON, pt 120 (LAT - 0.01) LON]
 #guard (enrichFold spy {} [cafeNorth] WIDE #[stay])[0]!.place == some "51.502|-0.500|false|true"
+-- Three fixes on one spot over six hours: the scatter is nil but they saw a
+-- hundredth of the stay, so the floor inflates to ~110 m and the blend sits
+-- past the midpoint towards the place (≈ 51.5011).
+private def SPARSE : Array PointF := #[pt 0 LAT LON, pt 7200 LAT LON, pt 14400 LAT LON]
+#guard (enrichFold spy {} [cafeNorth] SPARSE #[{ stay with endTs := 6 * 3600 }])[0]!.place
+  == some "51.501|-0.500|false|true"
 
 /-! ### The branch, and where `prev` comes from -/
 
