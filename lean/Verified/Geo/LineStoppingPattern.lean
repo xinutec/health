@@ -168,9 +168,13 @@ def railRelationsForLine (relations : Array RailStopRelation) (lineName : String
     Array RailStopRelation :=
   let base := (lineBaseToken lineName).toLower
   if base.isEmpty then #[] else
+  -- Exact, like `Verified.Hsmm.ServedStations.railRelationsForLine` since
+  -- 2026-09-30 (#238): the ref IS the token, or the relation's own name has it
+  -- as base token. Containment let every Southern service terminating at London
+  -- Victoria stand in for the Victoria line — 38 relations for a line with 16.
   relations.filter fun r =>
-    (match r.lineRef with | none => false | some s => containsSub s.toLower base) ||
-    (match r.lineName with | none => false | some s => containsSub s.toLower base)
+    (match r.lineRef with | none => false | some s => s.toLower == base) ||
+    (match r.lineName with | none => false | some s => (lineBaseToken s).toLower == base)
 
 /-- Where a station sits in a relation's ordered stop list, or `-1`. -/
 private def indexOfStop (rel : RailStopRelation) (station : String) : Int :=

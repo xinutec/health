@@ -259,6 +259,81 @@ def Env.noLineConnects (e : Env) (a b : String) : Bool :=
   else if !(e.railStops.any fun r => stops r nb) then false
   else !(e.railStops.any fun r => stops r na && stops r nb)
 
+/-- The tube-style lines whose relations stop at BOTH stations, in the label
+form the cascade writes (`"<ref> Line"`). Tube-style: the relation's ref is its
+own name's base token (`Victoria` / `Victoria line: …`), which a Southern
+operator code (`SN7.2`) is not — so a mainline service terminating at London
+Victoria is not a candidate for a tube pair (#238). -/
+def Env.linesServingPair (e : Env) (a b : String) : Array String :=
+  let norm := Verified.Geo.LineStoppingPattern.normalizeStationName
+  let na := norm a
+  let nb := norm b
+  let stops (r : Verified.Geo.LineStoppingPattern.RailStopRelation) (t : String) : Bool :=
+    r.stops.any fun st =>
+      match st.name with
+      | none => false
+      | some n => norm n == t
+  e.railStops.foldl (fun acc r =>
+    match r.lineRef, r.lineName with
+    | some ref, some name =>
+      if (Verified.Geo.LineStoppingPattern.lineBaseToken name).toLower == ref.toLower
+          && stops r na && stops r nb then
+        let label := s!"{ref} Line"
+        if acc.contains label then acc else acc.push label
+      else acc
+    | _, _ => acc) #[]
+
+/-- A rail leg whose LINE cannot serve its own station pair carries the line that
+can (#238's handle 2). Read from the mirror's relations, present in every
+fixture: when the labelled line's relations stop at neither/one of the pair and
+some tube line's relations stop at both, the leg takes that line — the sole
+candidate outright, several by the ride's stopping pattern, and when the pattern
+cannot choose the bare pair, which is honest where the wrong line was not
+(2026-08-07: `Euston Square → King's Cross St Pancras · Victoria Line`; all four
+Victoria relations stop at Euston, three other lines hold that pair). A line the
+relations do not know, or a pair no tube line holds by these names, is left
+alone: unknown is not evidence, and a mainline name (`London King's Cross`) is
+not a tube stop's. The earlier arm that VETOED such a leg to `driving` was
+measured worse (2026-09-11); this one relabels and never demotes. -/
+def substituteLines (e : Env) (segs : Array Seg) : Array Seg :=
+  segs.map fun s =>
+    if Verified.Geo.RailReconcile.effectiveMode s != "train" then s else
+    match s.wayName with
+    | none => s
+    | some w =>
+      match w.splitOn Verified.Geo.RailAbsorbers.RAIL_LINE_SEP with
+      | [pair, line] =>
+        match pair.splitOn "→" with
+        | [a0, b0] =>
+          let a := a0.trimAscii.toString
+          let b := b0.trimAscii.toString
+          let line := line.trimAscii.toString
+          let known := !(Verified.Geo.LineStoppingPattern.railRelationsForLine e.railStops line).isEmpty
+          let serving := e.linesServingPair a b
+          -- By base token, so a direction suffix (`Victoria Line Northbound`)
+          -- neither hides the line nor gets stripped.
+          let tok := fun (l : String) => (Verified.Geo.LineStoppingPattern.lineBaseToken l).toLower
+          if !known || serving.isEmpty || serving.any (fun l => tok l == tok line) then s
+          else
+            let chosen : Option String := match serving with
+              | #[only] => some only
+              | many =>
+                let ride := e.points.map fun p =>
+                  ({ ts := p.ts, lat := p.lat, lon := p.lon, speedKmh := p.speedKmh, bearing := 0 } :
+                    Verified.Geo.LineStoppingPattern.FilteredPoint)
+                Verified.Geo.LineStoppingPattern.pickLineByStoppingPattern many a b e.railStops
+                  ride s.startTs s.endTs
+            let label := match chosen with
+              | some l => s!"{a} → {b} · {l}"
+              | none => s!"{a} → {b}"
+            let why := s!"{line} stops at neither/one of the pair; {serving.size} line(s) hold both"
+            { s with wayName := some label
+                     refinedReason := some (match s.refinedReason with
+                       | some r => s!"{r}; line substituted: {why}"
+                       | none => s!"line substituted: {why}") }
+        | _ => s
+      | _ => s
+
 /-- Name only: what the anchors' served-station test compares.
 
 ⚠ PROXIMITY, and measured WRONG IN BOTH DIRECTIONS — left in place anyway,
@@ -692,6 +767,10 @@ def passes (e : Env) : Array Pass := #[
   -- it is not an invariant.
   ("railReconcile2", fun segs => Verified.Geo.RailReconcile.reconcileAdjacentRailLegs segs),
 
+  -- A leg's line must be able to serve its own pair; the relations say which
+  -- can (#238). After the labels are final, before the changeover reads them.
+  ("lineSubstitute", fun segs => substituteLines e segs),
+
   -- The changeover window between two rides contains the RIDE, not just a
   -- platform walk. HERE and not earlier: after `railReconcile2`, so both
   -- neighbours carry their final station-pair labels, and after the anchors,
@@ -808,7 +887,7 @@ private def PAIR_MIRROR : Env :=
     "rideHeadClaim", "stayArrivalClaim", "walkDwell",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
-    "repairHandoff", "railReconcile2", "changeoverWindow", "interchangeStayLabel",
+    "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
     "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
@@ -829,15 +908,16 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
-  -- `walkDwell` is Lean-only (#1694); it sits here so the containment check
+  -- `walkDwell` and `lineSubstitute` are Lean-only (#1694, #238); they sit
+  -- here so the containment check
   -- keeps holding for the order the TS had.
   "walkDwell",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
+  "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 42
+#guard TS_CASCADE.size == 43
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -924,6 +1004,43 @@ private def swapped (segs : Array Seg) : Array Seg :=
 
 -- An empty day survives every pass.
 #guard runPasses env #[] == #[]
+
+/-! ### `substituteLines` -/
+
+private def relOf (ref name : String) (stops : List String) :
+    Verified.Geo.LineStoppingPattern.RailStopRelation :=
+  { stops := (stops.map fun n => ({ name := some n } : Verified.Geo.LineStoppingPattern.RouteStop)).toArray
+    lineRef := some ref, lineName := some name }
+private def SUB : Env := { NO_LOOKUPS with railStops := #[
+  relOf "Victoria" "Victoria line: Brixton → Walthamstow Central" ["Euston", "King's Cross St. Pancras", "Highbury & Islington"],
+  relOf "Circle" "Circle line: Edgware Road → Hammersmith" ["Euston Square", "King's Cross St. Pancras", "Farringdon"],
+  relOf "SN1" "Southern: Brighton → London Victoria" ["Euston Square", "King's Cross St. Pancras"] ] }
+private def metRelSub : Verified.Geo.LineStoppingPattern.RailStopRelation :=
+  relOf "Metropolitan" "Metropolitan line: Aldgate → Amersham" ["Euston Square", "King's Cross St. Pancras", "Baker Street"]
+private def SUB2 : Env := { SUB with railStops := SUB.railStops.push metRelSub }
+private def leg (w : String) : Seg := { startTs := 0, endTs := 600, mode := "train", wayName := some w }
+private def wayOf (e : Env) (w : String) : Option String := (substituteLines e #[leg w])[0]!.wayName
+-- The wrong line, one tube line holding the pair: substituted. The Southern
+-- relation holding both is not tube-style and is not a candidate.
+#guard wayOf SUB "Euston Square → King's Cross St Pancras · Victoria Line"
+  == some "Euston Square → King's Cross St Pancras · Circle Line"
+-- Two tube lines hold the pair and there are no fixes to choose by: the bare pair.
+#guard wayOf SUB2 "Euston Square → King's Cross St Pancras · Victoria Line"
+  == some "Euston Square → King's Cross St Pancras"
+-- The line serves the pair: untouched, direction suffix and all.
+#guard wayOf SUB "Euston → King's Cross St Pancras · Victoria Line"
+  == some "Euston → King's Cross St Pancras · Victoria Line"
+#guard wayOf SUB "Euston → King's Cross St Pancras · Victoria Line Northbound"
+  == some "Euston → King's Cross St Pancras · Victoria Line Northbound"
+-- A line the relations do not know, and a pair no tube line holds: untouched.
+#guard wayOf SUB "Euston Square → King's Cross St Pancras · Elizabeth Line"
+  == some "Euston Square → King's Cross St Pancras · Elizabeth Line"
+#guard wayOf SUB "Victoria → London King's Cross · Victoria Line"
+  == some "Victoria → London King's Cross · Victoria Line"
+-- Not a train, or no line suffix: untouched.
+#guard (substituteLines SUB #[{ leg "Euston Square → King's Cross St Pancras · Victoria Line" with mode := "driving" }])[0]!.wayName
+  == some "Euston Square → King's Cross St Pancras · Victoria Line"
+#guard wayOf SUB "Euston Square → King's Cross St Pancras" == some "Euston Square → King's Cross St Pancras"
 
 end FoldGuards
 
@@ -1633,7 +1750,9 @@ def unwitnessed : Array String :=
 def witnessed : Array String :=
   (passNames NO_LOOKUPS).filter fun n => !unwitnessed.contains n
 
-#guard witnessed.size == 42
+-- `lineSubstitute` fires on a leg whose line the relations rule out.
+#guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
+#guard witnessed.size == 43
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
