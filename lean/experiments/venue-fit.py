@@ -138,6 +138,16 @@ if __name__ == '__main__':
         for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
             r, w = evaluate(data, P(nf_min=m))
             print(f"   nf_min={m:g}: {r}/{len(data)} right   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:600])
+    if len(sys.argv) > 1 and sys.argv[1] == 'shape':
+        best = []
+        for hour_lo, dwell_lo, base_lo, nf_min in itertools.product([-1.5, -1.0, -0.5, 0], [-2, -1, -0.5, 0], [-2, -1, -0.5], [0, -0.5]):
+            p = P(hour_lo=hour_lo, dwell_lo=dwell_lo, base_lo=base_lo, nf_min=nf_min)
+            r, w = evaluate(data, p)
+            best.append((r, f"hour_lo={hour_lo:g} dwell_lo={dwell_lo:g} base_lo={base_lo:g} nf_min={nf_min:g}", w))
+        best.sort(key=lambda x: -x[0])
+        print("\nSHAPE GRID (top 10):")
+        for r, desc, w in best[:10]:
+            print(f"   {r}/{len(data)}  {desc}   wrong: {[(d,t,l,pr) for d,t,l,pr in w]}"[:420])
     if len(sys.argv) > 1 and sys.argv[1] == 'grid':
         best = []
         for sigma, open_, base_lo, near, venue in itertools.product([15,20,25,30,40,60],[0,0.35,0.7],[-2,-1,-0.5,0],[8,12,20,30],[1.5]):
