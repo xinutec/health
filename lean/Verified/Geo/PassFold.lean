@@ -88,6 +88,11 @@ structure Env where
   /-- SHELL: re-resolve a merged stay's venue from its combined centre. An OSM
   call in the TS, injected here so the pass around it ports whole. -/
   bestPlace : Float → Float → Int → Int → String → Option Verified.Geo.SegmentMerge.ResolvedPlace
+  /-- Name a stay the way the enrichment stage names every stay — election of
+  a mined place included — from the fixes in its window
+  ({@link Verified.Geo.EnrichFold.nameStay}). `walkDwell` hands its carved
+  stops to this; the identity default leaves them unnamed. -/
+  nameStay : Seg → Seg := id
   /-- SHELL: the IANA zone at a coordinate. tzdata, not arithmetic.
 
   The TS wraps this in a `try`/`catch` and falls back to `homeTz`. Total here,
@@ -540,8 +545,7 @@ def passes (e : Env) : Array Pass := #[
   -- taken for one. The remainders keep the walk's name, so the re-enrichment
   -- that follows leaves them alone. Lean-only: the TS had no pass here.
   ("walkDwell", fun segs =>
-    Dwell.splitWalksOnDwell segs e.points e.feasSteps
-      (fun la lo s en => e.bestPlace la lo s en (e.tzAt la lo))),
+    Dwell.splitWalksOnDwell segs e.points e.feasSteps e.nameStay),
 
   -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
   -- ran ~30 passes ago, on segments not yet split, so everything it concluded

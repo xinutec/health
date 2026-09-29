@@ -56,6 +56,7 @@ namespace Verified.Geo.EnrichFold
 open Verified.Geo.SegmentMerge (Seg ResolvedPlace)
 -- `Shed` is TOP-LEVEL, not nested under `StaySplit` — see `StaySplit.lean:109`.
 open Shed (PointF)
+open Verified.Hsmm.FloatScore (haversineMeters)
 
 /-- What the loop asks the world. All five are the caller's, and all five are
 already answered somewhere in the fold's `Env` — this record exists to name the
@@ -77,6 +78,37 @@ structure Reads where
   stored coordinates and resolves the zone there too. -/
   tzAt : Float → Float → String
 
+/-- Name ONE stay from its own fixes: the stationary branch with the window's
+centroid and scatter computed here. The loop below calls it per stay, and
+`walkDwell` calls it for a stop carved out of a walk — so a carved stop is
+elected and named by the same rules as every other stay (Home and Work
+outright, a residence at its place, the rest at the naming coordinate) and
+carries its `focusPlaceId`. A window with no fixes comes back unchanged, as
+the loop's own exit does. -/
+def nameStay (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
+    (places : List Verified.Geo.StayEnrich.NamedPlace)
+    (points : Array PointF) (prev : Option Seg) (seg : Seg) : Seg :=
+  let segPoints := points.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs
+  if segPoints.isEmpty then seg else
+  let n := Float.ofNat segPoints.size
+  let cLat := (segPoints.foldl (fun acc p => acc + p.lat) 0) / n
+  let cLon := (segPoints.foldl (fun acc p => acc + p.lon) 0) / n
+  -- RMS scatter of the fixes about their mean: how precisely the day's fixes
+  -- locate him, which the naming coordinate weighs against the elected
+  -- place's own σ.
+  let spreadM := Float.sqrt ((segPoints.foldl (fun acc p =>
+    let d := haversineMeters cLat cLon p.lat p.lon
+    acc + d * d) 0) / n)
+  Verified.Geo.StayEnrich.enrichStay
+    { stations := reads.stations
+      -- The window and the zone are the SEGMENT's, so they are bound here
+      -- rather than passed through the cascade: which coordinate to ask about
+      -- is the cascade's decision, and the zone follows the coordinate.
+      place := fun lat lon pref withStay =>
+        reads.place lat lon pref
+          (if withStay then some (seg.startTs, seg.endTs, reads.tzAt lat lon) else none) }
+    biom places prev seg cLat cLon spreadM
+
 /-- Run the enrichment stage over one day's segments. -/
 def enrichFold (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
     (places : List Verified.Geo.StayEnrich.NamedPlace)
@@ -86,19 +118,7 @@ def enrichFold (reads : Reads) (biom : Verified.Geo.StayEnrich.Biom)
     let segPoints := points.filter fun p => p.ts ≥ seg.startTs && p.ts ≤ seg.endTs
     if segPoints.isEmpty then seg else
     if seg.mode == "stationary" then
-      let n := Float.ofNat segPoints.size
-      let cLat := (segPoints.foldl (fun acc p => acc + p.lat) 0) / n
-      let cLon := (segPoints.foldl (fun acc p => acc + p.lon) 0) / n
-      Verified.Geo.StayEnrich.enrichStay
-        { stations := reads.stations
-          -- The window and the zone are the SEGMENT's, so they are bound here
-          -- rather than passed through the cascade: which coordinate to ask
-          -- about is the cascade's decision, and the zone follows the
-          -- coordinate.
-          place := fun lat lon pref withStay =>
-            reads.place lat lon pref
-              (if withStay then some (seg.startTs, seg.endTs, reads.tzAt lat lon) else none) }
-        biom places (if i == 0 then none else segs[i - 1]?) seg cLat cLon
+      nameStay reads biom places points (if i == 0 then none else segs[i - 1]?) seg
     else
       (Verified.Geo.Enrich.enrichMovingSegment reads.ways reads.geocode seg
         (segPoints.map fun p =>
@@ -168,6 +188,21 @@ private def SPILL : Array PointF := OFFSET.push (pt 600 52.0 0.0)
 -- ... and a resolver with no answer leaves the stay unnamed rather than
 -- naming it nothing.
 #guard (enrichFold { spy with place := fun _ _ _ _ => none } {} [] POINTS #[stay])[0]!.place == none
+
+/-! ### The scatter reaches the branch -/
+
+/-- A cafe 0.002° (≈220 m) north of the fixes, established enough that the
+election accepts it from there. -/
+private def cafeNorth : Verified.Geo.StayEnrich.NamedPlace :=
+  { cand := { id := 1, centroidLat := LAT + 0.002, centroidLon := LON, radiusM := 50,
+              uniqueDays := 40, hourProfile := none }
+    displayName := some "Stay", amenityLabel := some "Cafe" }
+
+-- Fixes on one spot: the resolver is asked at the fixes, not at the place.
+#guard (enrichFold spy {} [cafeNorth] POINTS #[stay])[0]!.place == some "51.500|-0.500|false|true"
+-- The same centroid from fixes a kilometre apart: the blend goes to the place.
+private def WIDE : Array PointF := #[pt 0 (LAT + 0.01) LON, pt 60 LAT LON, pt 120 (LAT - 0.01) LON]
+#guard (enrichFold spy {} [cafeNorth] WIDE #[stay])[0]!.place == some "51.502|-0.500|false|true"
 
 /-! ### The branch, and where `prev` comes from -/
 

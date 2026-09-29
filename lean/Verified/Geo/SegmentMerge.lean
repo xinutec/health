@@ -320,6 +320,16 @@ private def meanCadence (steps : Array StepPoint) (s : Seg) : Float :=
   if durMin ≤ 0 then 0
   else (steps.foldl (fun acc p => if p.ts ≥ s.startTs && p.ts < s.endTs then acc + p.steps else acc) 0) / durMin
 
+/-- Two stays are at the same place when they carry the same non-empty name.
+
+⚠ NOT the same mined place. Tried 2026-09-29 for the carved stop that comes
+out `Subway` beside a stay the same election named `O2 Centre` (05-22): the
+identity test also merged Currys and Lidl, 57 m apart under one mined cluster
+on 06-24, and lost a confirmed row. A mined cluster is wider than a venue, so
+its id cannot say two stays are one visit; the name still can. -/
+def samePlace (a b : Seg) : Bool :=
+  a.place.any (· != "") && a.place == b.place
+
 /-- Collapse same-place stays and bridge over a spurious middle.
 
 Two independent merges, in order:
@@ -343,7 +353,7 @@ def mergeAdjacentStays (segments : Array Seg) (steps : Array StepPoint := #[]) :
     | none => out.push seg
     | some prev =>
       if effectiveMode prev == "stationary" && effectiveMode seg == "stationary"
-          && prev.place.any (· != "") && prev.place == seg.place
+          && samePlace prev seg
           && seg.startTs - prev.endTs ≤ STAY_MERGE_MAX_GAP_S then
         out.pop.push { prev with endTs := seg.endTs, pointCount := prev.pointCount + seg.pointCount }
       else
@@ -356,7 +366,7 @@ def mergeAdjacentStays (segments : Array Seg) (steps : Array StepPoint := #[]) :
         match prevPrev? with
         | some prevPrev =>
           if effectiveMode seg == "stationary" && effectiveMode prevPrev == "stationary"
-              && prevPrev.place.any (· != "") && prevPrev.place == seg.place
+              && samePlace prevPrev seg
               && (isBriefPhantomMove || isBlackoutGap) then
             out.pop.pop.push
               { prevPrev with
@@ -409,7 +419,7 @@ def absorbIntraPlaceWalk (segments : Array Seg) (fixes : Array Fix) : Array Seg 
         -- `i - 1` truncates to 0 on `Nat`, so at index 0 `prev` is the walk
         -- itself; the stationary test below rejects it, as the TS's `!prev` does.
         if i == 0 || effectiveMode prev != "stationary" || effectiveMode next != "stationary" then seg
-        else if !(prev.place.any (· != "")) || prev.place != next.place then seg
+        else if !(samePlace prev next) then seg
         else match stayCentroid fixes prev, stayCentroid fixes next with
           | some (pLat, pLon), some (nLat, nLon) =>
             let apart := haversineMeters pLat pLon nLat nLon
@@ -790,6 +800,21 @@ private def cfixes : Array Fix := #[
 #guard (attachStayCentroids
     #[{ blank with startTs := 100, endTs := 400, mode := "walking", refinedMode := some "stationary" }] cfixes)[0]!.centroidLat
   == some 51.520134746676256
+
+/-! ### `samePlace` -/
+
+private def named (n : String) (id : Option Int := none) : Seg :=
+  { blank with mode := "stationary", place := some n, focusPlaceId := id }
+-- The same name is the same place, with or without an election.
+#guard samePlace (named "Costa") (named "Costa") == true
+#guard samePlace (named "Costa" (some 3)) (named "Costa" (some 4)) == true
+-- The same mined place under two names is NOT — see the doc: Currys and Lidl
+-- share a cluster.
+#guard samePlace (named "Subway" (some 9)) (named "O2 Centre" (some 9)) == false
+-- Two unnamed stays are not the same place either: an absent name never
+-- matches an absent name.
+#guard samePlace { blank with mode := "stationary" } { blank with mode := "stationary" } == false
+#guard samePlace { blank with mode := "stationary", place := some "" } { blank with mode := "stationary", place := some "" } == false
 
 /-! ### `absorbIntraPlaceWalk` -/
 

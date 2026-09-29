@@ -44,27 +44,18 @@ Lean decides WHAT.
 
 ## Which arm the golden corpus actually reaches
 
-MEASURED, not assumed, and the answer is uncomfortable enough to write down:
+Both, on every day. The stationary branch of the enrichment loop
+({@link Verified.Geo.StayEnrich.enrichStay}) asks the **stay** arm — the
+venue-plausibility ranking, with the mined priors and the opening-hours paths —
+for every stay it names, at the coordinate that module chooses; the corpus's
+truth floor grades the names that come back. The **no-stay** arm answers
+`DayChain`'s sleep-place attribution and the alight and Home/Work arms of that
+cascade, which read only the city from it.
 
-* the **no-stay** arm runs on 5 of 33 days — 13 questions in total, all through
-  `DayChain`'s sleep-place attribution (2026-04-29, 04-30, 05-14, 05-25, 06-15);
-* the **stay** arm — the venue-plausibility ranking, and with it the mined
-  priors and every opening-hours path — runs on ONE day: 2026-08-09, whose
-  jitter-demoted run reaches it through `consolidateJitterStays`. That single
-  execution adjudicated the corpus's last divergence (near-field-first answered
-  Morr where the TS oracle said KFC, and Morr was confirmed right, #1054).
-  This section previously said "NO day" — written before 08-09's run was
-  recognised as exercising this arm.
-
-So `rankVenues`, `shapeScore` and `parseOpeningHours` are IMPORTED by the gate
-and executed by nothing in it. The `#guard`s below are their only executable
-check, which is a weaker claim than the fold's and is why it is stated here
-rather than left to be inferred from a green run.
-
-This also means replacing the shell changed no golden output: the tables the
-shell used to answer from were empty on every day, because the question was
-never asked. A green corpus is therefore evidence about the no-stay arm and
-about nothing else.
+Until the stationary branch was ported (2026-09) the stay arm ran on one
+corpus day — 2026-08-09, through `consolidateJitterStays` — and the `#guard`s
+below were its only executable check. They are kept for the parts a corpus
+name cannot localise: which term moved a candidate, not only who won.
 
 ## Truthiness, twice, and they disagree
 

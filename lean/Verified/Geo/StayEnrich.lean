@@ -44,13 +44,27 @@ Worth stating because they are easy to read as one rule:
   at must show a neutral address rather than a low-confidence nearby park;
 * the no-winner arm passes `isSleepWindow`, the per-stay overnight check.
 
-## The centroid is the DAY's, and the lookup coordinate may not be
+## Which coordinate names the stay
 
 Steps 1, 2 and 5-without-a-winner ask about the mean of the stay's own fixes.
-Steps 3-5 WITH a winner ask about the winner's stored centroid instead — the
-snap exists so the OSM naming runs at the place's true coordinates rather than
-the day's noisy aggregate. Two coordinates, and which one is asked about is part
-of what this port has to get right: a recorded lookup table panics on the other.
+Step 3 (Home/Work) asks at the winner's stored centroid; the label is decided
+already and only the city is read there.
+
+Step 5 with a winner asks at {@link namingCoordinate}: the day's centroid and
+the place's stored centroid blended by precision — the day's fixes weighted by
+their own scatter, the place by its {@link Verified.Geo.PlacePrior.effectiveSigmaM}.
+The TS snapped to the stored centroid outright, on the reading that the day's
+aggregate is noisy and the place's is true. Measured over the corpus (#325,
+2026-09-29) the opposite holds for a tight stay: on the days whose name was
+wrong the stay's fixes scattered 8–14 m and sat 79–90 m from the stored
+centroid, which averages a cluster wider than its nominal radius, so the
+resolver was asked about a neighbour's doorstep. A smeared stay (scatter of
+50–110 m) still leans on the place.
+
+A RESIDENCE keeps the stored centroid. Where he sleeps is identified by the
+place, not by today's fixes, and the resolver's lodging override reads within
+50 m of the coordinate it is asked about — the 2026-04-29 hotel's midday stay
+sits 118 m from the hotel node on its own fixes and 40 m on the place's.
 
 ## No new shell
 
@@ -118,6 +132,26 @@ def hasOvernightPresence (startTs endTs : Int) (lon : Float) : Bool := Id.run do
     t := t + HOUR_PROFILE_STEP_SEC
   return overnight ≥ 1
 
+/-! ## The naming coordinate -/
+
+/-- The least scatter a stay's fixes are credited with. A stay of two
+coincident fixes has not located the phone to a metre; below this the day's
+weight in {@link namingCoordinate} stops growing. -/
+def SPREAD_FLOOR_M : Float := 10
+
+/-- Where to ask the resolver about a stay that elected a mined place: the
+precision-weighted mean of the day's centroid (`cLat, cLon`, scatter
+`spreadM`) and the place's stored centroid (its σ, the same one the election
+scored distance with). Two Gaussian beliefs about one position, combined the
+usual way. -/
+def namingCoordinate (cLat cLon spreadM : Float)
+    (c : Verified.Geo.PlacePrior.PlaceCandidate) : Float × Float :=
+  let sd := max spreadM SPREAD_FLOOR_M
+  let sp := Verified.Geo.PlacePrior.effectiveSigmaM c
+  let wd := 1 / (sd * sd)
+  let wp := 1 / (sp * sp)
+  ((cLat * wd + c.centroidLat * wp) / (wd + wp), (cLon * wd + c.centroidLon * wp) / (wd + wp))
+
 /-! ## Inputs -/
 
 /-- Sleep hours at or above which a mined cluster is a RESIDENCE, and its
@@ -178,7 +212,7 @@ structure Biom where
 resolver has no answer — the TS's `if (!place) return seg`, which is a refusal
 to name rather than a name of nothing. -/
 def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
-    (prev : Option Seg) (seg : Seg) (cLat cLon : Float) : Seg :=
+    (prev : Option Seg) (seg : Seg) (cLat cLon : Float) (spreadM : Float := 0) : Seg :=
   let withCity (s : Seg) (p : Option ResolvedPlace) : Seg :=
     match p.bind (·.city) with
     | some c => { s with city := some c }
@@ -217,11 +251,15 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         -- settled the same day by the bare-label policy in `BestPlace.named`.
         -- ⚠ `venueless` below still reads the FIELD (`amenityLabel.isNone`),
         -- exactly as before — see the trap note above.
-        -- 5a. Named at the SNAPPED centroid. `venueless` sends an
-        -- amenity-less cluster to the address rather than to whatever
-        -- low-confidence venue happens to be near.
+        -- 5a. Named where he stood — a residence at the place's own
+        -- centroid, anything else at the blend (see the header). `venueless`
+        -- sends an amenity-less cluster to the address rather than to
+        -- whatever low-confidence venue happens to be near.
         let venueless := wp.amenityLabel.isNone
-        match reads.place placeLat placeLon (isResidential || venueless) true with
+        let (askLat, askLon) :=
+          if isResidential then (placeLat, placeLon)
+          else namingCoordinate cLat cLon spreadM wp.cand
+        match reads.place askLat askLon (isResidential || venueless) true with
         | none => seg
         | some p =>
           withCity
@@ -331,7 +369,7 @@ about, so a guard can pin the question rather than only the answer. -/
 private def spy : Reads :=
   { stations := fun _ _ _ => #[]
     place := fun lat lon pref withStay =>
-      some { label := s!"{fx lat 2}|{fx lon 2}|{pref}|{withStay}", city := some "London" } }
+      some { label := s!"{fx lat 3}|{fx lon 3}|{pref}|{withStay}", city := some "London" } }
   where fx (x : Float) (n : Nat) : String := (Verified.JsNum.toFixed x n).getD "?"
 
 private def STATION : NearbyStation :=
@@ -364,10 +402,10 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 -- `preferResidential=false` — while the venueless guard below asks with
 -- `true`. Folding that field-read into some new gate verdict is the
 -- plausible-looking change that diverges (see the trap note in the cascade).
-#guard (run spy [cafe]).place == some "51.52|-0.13|false|true"
+#guard (run spy [cafe]).place == some "51.520|-0.130|false|true"
 #guard (run spy [cafe]).focusPlaceId == some 2
-#guard (run spy [cafe2day]).place == some "51.52|-0.13|false|true"
-#guard (run spy [cafe1day]).place == some "51.52|-0.13|false|true"
+#guard (run spy [cafe2day]).place == some "51.520|-0.130|false|true"
+#guard (run spy [cafe1day]).place == some "51.520|-0.130|false|true"
 -- And note WHICH question the one-day cluster asks: `preferResidential=false`.
 -- A cluster that fails the day bar still carries an `amenityLabel`, so it is
 -- NOT `venueless` — contrast the venueless guard below, which asks with `true`.
@@ -377,18 +415,43 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 -- ... and a RESIDENTIAL one does not, even carrying the same label: it falls
 -- through to the resolver, which the spy answers with its arguments —
 -- `preferResidential=true` (residential) and a stay.
-#guard (run spy [resid]).place == some "51.52|-0.13|true|true"
+#guard (run spy [resid]).place == some "51.520|-0.130|true|true"
 #guard (run spy [resid]).focusPlaceId == some 3
 -- 5a. Venue-less and non-residential still prefers the address, which is the
 -- `venueless` disjunct doing the work rather than `isResidential`.
-#guard (run spy [venueless]).place == some "51.52|-0.13|true|true"
+#guard (run spy [venueless]).place == some "51.520|-0.130|true|true"
+-- 5a asks at the BLEND: a cafe 0.002° north of a tight stay is asked about at
+-- the fixes (the place's σ ≈ 99 m against a 10 m floor moves it a metre)…
+private def cafeNorth : NamedPlace := { cafe with cand := cand 7 (LAT + 0.002) LON 40 }
+#guard (run spy [cafeNorth]).place == some "51.520|-0.130|false|true"
+-- …the same cafe under a smeared stay is asked about at the place…
+#guard (enrichStay spy {} [cafeNorth] none stay LAT LON 1000).place == some "51.522|-0.130|false|true"
+-- …and a RESIDENCE that far away is asked about at the place however tight the
+-- fixes: the lodging override must find the hotel from there.
+private def residNorth : NamedPlace := { resid with cand := cand 8 (LAT + 0.002) LON 40 }
+#guard (run spy [residNorth]).place == some "51.522|-0.130|true|true"
+
+/-! ### The naming coordinate itself -/
+
+private def northM (m : Float) : Float := LAT + m / 111320
+private def metresNorth (lat : Float) : Float := (lat - LAT) * 111320
+private def placeNorth (m : Float) : PlaceCandidate := cand 9 (northM m) LON 40
+-- A tight stay 100 m from an established place (σ ≈ 99 m) stays within two
+-- metres of its own fixes.
+#guard (let la := (namingCoordinate LAT LON 10 (placeNorth 100)).1
+        metresNorth la > 0 && metresNorth la < 2)
+-- A smeared stay (scatter 200 m) leans on the place: past the midpoint.
+#guard metresNorth (namingCoordinate LAT LON 200 (placeNorth 100)).1 > 50
+-- The scatter is floored: two coincident fixes are not an exact position.
+#guard namingCoordinate LAT LON 0 (placeNorth 100) == namingCoordinate LAT LON SPREAD_FLOOR_M (placeNorth 100)
+
 -- 5b. No mined place at all: the DAY's centroid, and `preferResidential` is the
 -- overnight check — false for this midday stay.
-#guard (run spy []).place == some "51.52|-0.13|false|true"
+#guard (run spy []).place == some "51.520|-0.130|false|true"
 #guard (run spy []).focusPlaceId == none
 -- The same stay overnight flips that flag.
 #guard (enrichStay spy {} [] none { stay with startTs := 0, endTs := 3600 } LAT LON).place
-  == some "51.52|-0.13|true|true"
+  == some "51.520|-0.130|true|true"
 
 -- A resolver with no answer leaves the segment unnamed rather than naming it
 -- something empty.

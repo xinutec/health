@@ -275,8 +275,11 @@ impl Truth {
                 .append(true)
                 .open(path)
                 .expect("TRUTH_ROWS_OUT opens");
-            writeln!(f, "{}", json!({ "date": date, "rows": narrative.rows }))
-                .expect("TRUTH_ROWS_OUT writes");
+            // One buffer, one write: the shards append concurrently and a
+            // `writeln!` lands in pieces, which interleaved two dates into one
+            // unparseable line (2026-09-29).
+            let line = format!("{}\n", json!({ "date": date, "rows": narrative.rows }));
+            f.write_all(line.as_bytes()).expect("TRUTH_ROWS_OUT writes");
         }
         if std::env::var("VENUE_AB_OUT").is_ok() {
             self.ab_rows.insert(

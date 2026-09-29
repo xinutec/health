@@ -2676,8 +2676,9 @@ stage (measured 2026-09-23) a held position next to a train was the platform
 wait, and carving it moved the train's edge and lost four confirmed rail
 rows. A walk with a train on either side is left alone.
 
-The stay is named through the same venue resolver the jitter consolidation
-uses, from the run's centroid; the remainders are `walkRemainder`s, rebuilt
+The stay is named the way the enrichment stage names every stay — a mined
+place elected from the run's own fixes, then the venue resolver at the naming
+coordinate; the remainders are `walkRemainder`s, rebuilt
 over their own windows but keeping the walk's name and refinement — a stop
 taken out of a walk does not change which street it was. A boundary fix
 belongs to the stay on both sides. The second remainder is
@@ -2694,8 +2695,11 @@ open Verified.Hsmm.FloatScore (haversineMeters)
 open Shed (PointF segMode sortedIn walkRemainder)
 open Verified.JsNum (jsRound)
 
-/-- The venue at a centroid over a window: `(lat, lon, startTs, endTs)`. -/
-abbrev Namer := Float → Float → Int → Int → Option ResolvedPlace
+/-- Names a carved stop: the segment goes in with its window, centroid and
+kinematics and comes back with `place`, `city` and `focusPlaceId` — the
+enrichment stage's own stationary branch, so the stop is elected and named
+like any other stay. -/
+abbrev Namer := Seg → Seg
 
 /-- A held position must last this long to be a stop rather than a crossing. -/
 def DWELL_MIN_S : Int := 240
@@ -2764,12 +2768,10 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
       let cLat := (run.foldl (fun s p => s + p.lat) 0) / Float.ofNat run.size
       let cLon := (run.foldl (fun s p => s + p.lon) 0) / Float.ofNat run.size
       let spreadM := run.foldl (fun m p => max m (haversineMeters cLat cLon p.lat p.lon)) 0
-      let venue := name cLat cLon ds de
-      let stay : Seg :=
+      let stay : Seg := name
         { startTs := ds, endTs := de, mode := "stationary"
           confidence := 0.9, confidenceMargin := 1000
           avgSpeed := 0, maxSpeed := 0, linearity := 0, pointCount := Int.ofNat (b.val + 1 - a.val)
-          place := venue.map (·.label), city := venue.bind (·.city)
           centroidLat := some cLat, centroidLon := some cLon
           displayTz := seg.displayTz
           refinedReason := some s!"stop inside a walk: held position within {toString (jsRound spreadM).toInt64.toInt} m for {de - ds} s"
@@ -2823,7 +2825,7 @@ private def STOP : Array PointF :=
   (Array.range 11).map (fun i => dfx (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++
   (Array.range 20).map (fun i => dfx (630 + Int.ofNat i * 30) (495 + Float.ofNat i * 45))
 private def WALK : Seg := { startTs := 0, endTs := 1200, mode := "walking" }
-private def unnamed : Namer := fun _ _ _ _ => none
+private def unnamed : Namer := id
 private def cut := splitWalksOnDwell #[WALK] STOP [] unnamed
 #guard cut.map (fun s => (s.mode, s.startTs, s.endTs)) ==
   #[("walking", 0, 300), ("stationary", 300, 600), ("walking", 600, 1200)]
@@ -2835,9 +2837,13 @@ private def marching : Array Verified.Geo.Worldline.FeasibilityStepPoint :=
   (Array.range 20).map fun i => { ts := Int.ofNat i * 60, steps := 60 }
 #guard (splitWalksOnDwell #[WALK] STOP marching.toList unnamed).size == 1
 
--- The stop is named from its centroid through the injected resolver.
-#guard ((splitWalksOnDwell #[WALK] STOP [] fun _ _ _ _ => some { label := "Shop Alpha", city := some "Townsville" })[1]!).place
-  == some "Shop Alpha"
+-- The stop is named through the injected namer, which sees the carved stay
+-- itself — window and centroid — and hands back its place and identity.
+private def shopAlpha : Namer := fun s =>
+  { s with place := some "Shop Alpha", city := some "Townsville", focusPlaceId := some 7 }
+#guard ((splitWalksOnDwell #[WALK] STOP [] shopAlpha)[1]!).place == some "Shop Alpha"
+#guard ((splitWalksOnDwell #[WALK] STOP [] shopAlpha)[1]!).focusPlaceId == some 7
+#guard ((splitWalksOnDwell #[WALK] STOP [] shopAlpha)[1]!).startTs == 300
 
 -- A walk with a train on either side is left alone: its held position is a
 -- platform wait, and the rail absorbers own it.

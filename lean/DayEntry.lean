@@ -855,6 +855,14 @@ def dayResult (j : Json) : Json :=
     -- attribution. Absent it runs them all, which is every caller but the
     -- ablation harness. A truncated cascade is a WRONG day on purpose — passes
     -- undo one another — so its output is for reading RSS and nothing else.
+    -- The carved-stop namer is the enrichment stage's own stationary branch,
+    -- bound over the same reads and mined places the stage ran with.
+    let env := { env with
+      nameStay := fun seg =>
+        Verified.Geo.EnrichFold.nameStay enrichReads
+          { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
+            steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
+          enrichPlaces env.points none seg }
     let allPasses := Verified.Geo.PassFold.passes env
     let chosen := match ← optInt envJson "passLimit" with
       | some n =>
