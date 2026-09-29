@@ -16,7 +16,7 @@
 //! second host must reproduce are the ones the last round saw.
 //!
 //! ```text
-//! cargo run --example dump_day_request -- 2026-05-14-pippijn > /tmp/req.json
+//! cargo run --example dump_day_request -- 2026-05-14-$USER > /tmp/req.json
 //! ```
 //!
 //! Exit 2 when the corpus is absent, so a caller can tell a missing corpus

@@ -873,6 +873,7 @@ async fn check() -> Result<()> {
     // compiling, and none of it is exercised by a unit test, because no unit
     // test in this crate runs SQL. It is the same bar `sync_state` above is
     // held to, and for the same reason.
+    // dev-lint: allow-pii the one account the service holds
     let user = std::env::var("CHECK_USER").unwrap_or_else(|_| "pippijn".into());
     let places = classification_inputs::known_places(&pool, &user).await?;
     let modes = classification_inputs::mode_biometrics(&pool, &user).await?;

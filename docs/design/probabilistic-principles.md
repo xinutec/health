@@ -119,7 +119,7 @@ encoding of what we know about how the world works.
 
 A single soft factor isn't enough — the framework requires that
 factors compose to express graduated, jointly-conditional
-beliefs. Pippijn's concrete example:
+beliefs. The user's concrete example:
 
 | Scenario                       | Plausibility | Why                          |
 |--------------------------------|--------------|------------------------------|

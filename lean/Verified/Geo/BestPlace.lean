@@ -235,7 +235,7 @@ def pickLodgingOverride (landmarks : List Landmark) : Option Landmark :=
 
 /-! ## `placeLabel` -/
 
-/-- The bare venue name — Pippijn's choice for the timeline (#344). The type
+/-- The bare venue name — the user's choice for the timeline (#344). The type
 still rides beside the label in the data for anything that needs it. -/
 private def named (name _type : String) : String := name
 
@@ -247,10 +247,10 @@ modelled. An empty `displayName` yields `""` in both arms. -/
 private def firstPart (s : String) : String :=
   (s.splitOn ",").headD ""
 
-/-- OSM types that must never NAME a stay (Pippijn, 2026-09-18).
+/-- OSM types that must never NAME a stay (the user, 2026-09-18).
 
 ⚠ **The `"{type} on {road}"` fallback below produces a CATEGORY, not an
-identity** — "Wagamama" says where he was, "waste_basket on Barn Hill" says a bin
+identity** — "Wagamama" says where they were, "waste_basket on Barn Hill" says a bin
 exists nearby. Two kinds of type reach it and neither denotes somewhere a person
 visits:
 
@@ -272,7 +272,7 @@ def UNNAMEABLE_TYPES : List String :=
 
 /-- OSM highway classes. A stay that resolves to one of these is ON a street,
 which is worth saying — but `secondary` is OSM's vocabulary, not a person's
-(Pippijn, 2026-09-18).
+(the user, 2026-09-18).
 
 ⚠ **DIFFERENT TREATMENT FROM `UNNAMEABLE_TYPES`, deliberately.** A bin names a
 stay by accident of proximity and carries no information, so it is dropped
@@ -289,7 +289,7 @@ def HIGHWAY_CLASSES : List String :=
     "residential", "service", "living_street", "pedestrian", "track", "road",
     "footway", "path", "cycleway", "bridleway", "steps" ]
 
-/-- ⚠ **A HOUSE NUMBER IS PRECISION A STAY CENTROID CANNOT SUPPORT** (Pippijn,
+/-- ⚠ **A HOUSE NUMBER IS PRECISION A STAY CENTROID CANNOT SUPPORT** (the user,
 2026-09-18: "area by default, street when confident").
 
 The geocode locates a POINT; the stay is a cloud of fixes, and the label claims
@@ -471,7 +471,7 @@ private def poi (n t s : String) (d : Float) : Poi :=
 #guard placeLabel (res "office" "building" { A with building := some "Kings Place" }) == "Kings Place"
 private def buildingNoType : Address :=
   { A with building := some "Kings Place", houseNumber := some "90", road := some "York Way" }
--- ⚠ CHANGED 2026-09-19 from "York Way 90" (Pippijn's call). The number is
+-- ⚠ CHANGED 2026-09-19 from "York Way 90" (the user's call). The number is
 -- precision a stay centroid cannot support; the road survives. See `placeLabel`.
 #guard placeLabel (res "" "building" buildingNoType) == "York Way"
 -- ⚠ CHANGED 2026-09-19 from "Elm Street 161". `161` is the parents' real flat
@@ -484,8 +484,8 @@ private def buildingNoType : Address :=
   == "Somewhere"
 #guard placeLabel (res "square" "place" { A with pedestrian := some "Granary Square" })
   == "Granary Square"
--- ⚠ CHANGED 2026-09-18 from "residential on Caledonian Road" (Pippijn's call).
--- The class is OSM's word, not a person's; the street is what locates him. See
+-- ⚠ CHANGED 2026-09-18 from "residential on Caledonian Road" (the user's call).
+-- The class is OSM's word, not a person's; the street is what locates them. See
 -- `HIGHWAY_CLASSES`.
 #guard placeLabel (res "residential" "highway" { A with road := some "Caledonian Road" })
   == "Caledonian Road"

@@ -16,7 +16,7 @@
 //! real place he was; the output is fractions and counts only.
 //!
 //! ```text
-//! scripts/prod-db.sh cargo run --release --example day_coverage -- pippijn 2026-09-06
+//! scripts/prod-db.sh cargo run --release --example day_coverage -- "$USER" 2026-09-06
 //! ```
 
 use anyhow::{Context, Result};

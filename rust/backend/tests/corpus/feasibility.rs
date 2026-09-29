@@ -5,7 +5,7 @@
 //!   fixture.osmTrace.stationsOnLine ──┴→ feasibility → ceilinggate
 //! ```
 //!
-//! Pippijn's standing requirement, 2026-09-01: *"Correct or at least viable
+//! The user's standing requirement, 2026-09-01: *"Correct or at least viable
 //! trajectory is important. It shouldn't show definitely-wrong interpretations
 //! that can't be right given the data."* A model-independent assertion on the
 //! OUTPUT: a real worldline is one continuous path through space-time, so some

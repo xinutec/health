@@ -42,7 +42,7 @@
 //! is a real place he stood (#860): counts and consumer names only.
 //!
 //! ```text
-//! cargo run --release --example geocode_gap -- /tmp/2026-09-15-pippijn.json
+//! cargo run --release --example geocode_gap -- /tmp/2026-09-15-$USER.json
 //! ```
 
 use anyhow::{Context, Result};
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
     let date = inputs["identity"]["date"].as_str().unwrap_or_default();
     let user = inputs["identity"]["userId"]
         .as_str()
-        .unwrap_or("pippijn")
+        .context("the fixture names its user")?
         .to_string();
     let rows = inputs
         .get("osmRowSet")

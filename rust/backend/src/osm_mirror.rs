@@ -6,7 +6,7 @@
 //! own header that the write half "is separate work and is not in this module".
 //! Until this existed nothing in the tree wrote those three tables at all: the
 //! mirror was a dead snapshot of whatever the TypeScript left, so every place
-//! Pippijn went that it had never fetched was blank permanently.
+//! the user went that it had never fetched was blank permanently.
 //!
 //! # Recovered, not reinvented
 //!

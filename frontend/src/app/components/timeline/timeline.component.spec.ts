@@ -73,7 +73,7 @@ function commuteDay(): DayState[] {
 	return [
 		state("sleeping", 7 * 60, { place: "Home" }),
 		state("stationary", 20, { place: "Home" }),
-		state("walking", 10, { wayName: "Barn Rise" }),
+		state("walking", 10, { wayName: "Example Rise" }),
 		state("train", 20, { wayName: "Wembley Park → Euston Square · Metropolitan Line" }),
 		state("walking", 10),
 		state("stationary", 90, { place: "University College Hospital" }),
@@ -135,17 +135,17 @@ describe("TimelineComponent journey grouping", () => {
 		const fixture = setup(commuteDay(), [[2, 4]]);
 		const c = fixture.componentInstance;
 
-		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Barn Rise");
+		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Example Rise");
 
 		c.toggleJourney(0);
 		fixture.detectChanges();
 		const text = (fixture.nativeElement as HTMLElement).textContent ?? "";
-		expect(text).toContain("Barn Rise");
+		expect(text).toContain("Example Rise");
 		expect(text).toContain("Metropolitan Line");
 
 		c.toggleJourney(0);
 		fixture.detectChanges();
-		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Barn Rise");
+		expect((fixture.nativeElement as HTMLElement).textContent).not.toContain("Example Rise");
 	});
 
 	it("expandAll / collapseAll flip every journey", () => {

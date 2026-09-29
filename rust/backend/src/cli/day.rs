@@ -17,8 +17,8 @@ use backend::{classification_inputs, config::Config, db, lean, sync_state};
 /// Compare against a golden fixture's `inputs`, which IS the TypeScript
 /// loader's output for that day:
 ///
-///   scripts/prod-db.sh backend inputs pippijn 2026-08-13 > /tmp/rust.json
-///   jq -S '{sleepWindows, hsmmDecode}' tests/golden/days/2026-08-13-pippijn.json
+///   scripts/prod-db.sh backend inputs "$USER" 2026-08-13 > /tmp/rust.json
+///   jq -S '{sleepWindows, hsmmDecode}' tests/golden/days/2026-08-13-$USER.json
 ///
 /// ⚠ ONLY THE PER-DAY FIELDS COMPARE CLEANLY. `busRouteCache`,
 /// `railStopsCache`, `railRouteCache`, `knownPlaces` and `venuePriors` are
@@ -669,7 +669,7 @@ pub(crate) async fn locations_check(user: &str, date: &str) -> Result<()> {
 ///
 /// ⚠ **IT HAS TO BE THIS BINARY.** A debug image would measure a different
 /// artefact than production serves, which for a memory question gives up the
-/// one thing worth having. Pippijn's call, 2026-09-20: "We should be allowed to
+/// one thing worth having. The user's call, 2026-09-20: "We should be allowed to
 /// debug the one running in prod." The image already ships thirteen read-only
 /// diagnostic verbs; this is the fourteenth.
 ///

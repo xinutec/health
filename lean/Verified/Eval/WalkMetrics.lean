@@ -681,8 +681,8 @@ down the next street over; the ground-truth narrative can, but only where it
 confirmed a street, which is why this metric is `none` far more often than it
 is a number. -/
 
-/-- Lowercase, collapse internal whitespace, trim. `"  Barn   Rise "` and
-`"barn rise"` compare equal. See the ASCII caveat in the module header. -/
+/-- Lowercase, collapse internal whitespace, trim. `"  Example   Rise "` and
+`"example rise"` compare equal. See the ASCII caveat in the module header. -/
 def normaliseWayName (name : String) : String := Id.run do
   let mut out : String := ""
   let mut pendingSpace := false
@@ -792,7 +792,7 @@ private def detour : Array LatLon :=
 
 private def ways : RoadGeometry :=
   { ways := #[
-      { name := some "Barn Rise", coords := #[(51.5, -0.12), (51.5008, -0.12)] },
+      { name := some "Example Rise", coords := #[(51.5, -0.12), (51.5008, -0.12)] },
       -- ⚠ Deliberately mis-spaced: the normaliser is exercised through the
       -- metric, not only in isolation.
       { name := some "  Elm   Way ", coords := #[(51.5008, -0.12), (51.5008, -0.1188)] },
@@ -951,27 +951,27 @@ private def spiked : Array LatLon := fixes.push (P 51.6 (-0.12))
 
 /-! ### Route correctness -/
 
-#guard normaliseWayName "  Barn   Rise " == "barn rise"
+#guard normaliseWayName "  Example   Rise " == "example rise"
 
 -- Both streets accepted: the whole line is on confirmed ground. Note "elm way"
 -- is accepted in its already-normalised spelling and matches the way whose OSM
 -- name is "  Elm   Way ", so the normaliser is doing work on both sides.
 #guard
-  match onNamedWayFraction line #["Barn Rise", "elm way"] ways with
+  match onNamedWayFraction line #["Example Rise", "elm way"] ways with
   | some v => approx v 1.0
   | none => false
 
 -- Only the first street accepted: the fraction is the first leg's share of the
 -- length, and the unnamed way between them changed nothing.
 #guard
-  match onNamedWayFraction line #["Barn Rise"] ways with
+  match onNamedWayFraction line #["Example Rise"] ways with
   | some v => approx v 0.51712844096583976
   | none => false
 
 -- ⚠ `none`, NOT 0. Nothing to score against is not a score of zero — it is the
 -- metric declining to answer, and the gate treats the two differently.
 #guard (onNamedWayFraction line #[] ways).isNone
-#guard (onNamedWayFraction line #["Barn Rise"] { ways := #[] }).isNone
+#guard (onNamedWayFraction line #["Example Rise"] { ways := #[] }).isNone
 
 
 /-! ### Step budget

@@ -1,6 +1,6 @@
 //! How often a phone is told to look for itself (#982).
 //!
-//! ⚠ It is NEVER told to stop looking. Pippijn's decision, 2026-09-23: a
+//! ⚠ It is NEVER told to stop looking. The user's decision, 2026-09-23: a
 //! missing journey is a hole in the record and a flat battery is not, so the
 //! backend never pushes Significant mode. What it chooses is the locate
 //! interval inside Move — and the night, when a still phone is asked once an

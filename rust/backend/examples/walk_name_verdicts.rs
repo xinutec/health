@@ -15,7 +15,7 @@
 //! fixtures is the wrong shape.
 //!
 //! ```text
-//! cargo run --example walk_name_verdicts -- 2026-06-16-pippijn /tmp/out.json
+//! cargo run --example walk_name_verdicts -- 2026-06-16-$USER /tmp/out.json
 //! ```
 //!
 //! Prints one JSON row per enforceable named-walk truth window: the window,

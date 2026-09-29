@@ -8,7 +8,7 @@ regardless of how the cascade produced them. This checks the impossibilities the
 pipeline has actually emitted, on the final drawn legs, with no dependency on
 the model that built them.
 
-Pippijn's requirement, 2026-09-01, is exactly this module's subject: *"Correct
+The user's requirement, 2026-09-01, is exactly this module's subject: *"Correct
 or at least viable trajectory is important. It shouldn't show definitely-wrong
 interpretations that can't be right given the data."*
 

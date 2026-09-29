@@ -90,8 +90,8 @@ async fn get(app: axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
 
 fn viewer() -> UserSession {
     UserSession {
-        user_id: "pippijn".into(),
-        display_name: "pippijn".into(),
+        user_id: "user".into(),
+        display_name: "user".into(),
         share_viewer: Some(("2026-08-11".into(), "2026-08-17".into())),
     }
 }
@@ -243,8 +243,8 @@ async fn a_share_viewers_write_is_refused_only_because_the_session_is_establishe
     // The owner through the same stack, so the refusal above is about the share
     // window and not about the stack refusing everything.
     let owner = UserSession {
-        user_id: "pippijn".into(),
-        display_name: "pippijn".into(),
+        user_id: "user".into(),
+        display_name: "user".into(),
         share_viewer: None,
     };
     let res = api_stack_with_a_write_route(owner)

@@ -115,6 +115,7 @@ fn live_arm() {
         "scoreboard-live: date        journeys  legMode  legLine  stations  phantom   (live | blessed)"
     );
     for (date, want) in &blessed {
+        // dev-lint: allow-pii the golden corpus is filed under the account
         let name = format!("{date}-pippijn.json");
         let fx = backend::decode_fixture::read(&name).expect("fixture parses");
         let tz = fx["meta"]["tz"].as_str().unwrap_or("Europe/London");
@@ -219,6 +220,7 @@ fn the_blessed_scoreboard_reproduces_from_the_frozen_decodes() {
     let mut failures: Vec<String> = Vec::new();
     let mut scored = 0usize;
     for (date, want) in &blessed {
+        // dev-lint: allow-pii the golden corpus is filed under the account
         let path = format!("{DECODED}/{date}-pippijn.json");
         let Ok(text) = std::fs::read_to_string(&path) else {
             failures.push(format!("{date}: blessed but no decoded fixture at {path}"));

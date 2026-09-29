@@ -126,7 +126,7 @@ the scoreboard (`USE_CADENCE_IMPUTATION=1 pnpm run score-decoder`):
   real slow walk with measured positive cadence gets swallowed into the
   adjacent stay on a thin margin — the step-budget entry term is the
   counter-pressure. (c) The hidden-stop days need narrative adjudication
-  (ground truth comes only from Pippijn).
+  (ground truth comes only from the user).
 - **Refuted en route**: a global heavy-tailed drift mixture on the
   stationary speed emission (0.9·N(0,2) + 0.1·N(0,12)). It fixed the
   drift phantom but reshaped marginal boundaries corpus-wide — on

@@ -775,16 +775,16 @@ private def gen (ways : Array NearbyWay) (original : String := "walking")
 #guard gen #[W "highway" "footway" none (some 2)] "walking" == "walking|-|footway|2  walking|-|-|-"
 
 -- Named/unnamed dedup, per mode.
-private def barnRise : NearbyWay := W "highway" "residential" (some "Barn Rise") (some 8)
-#guard gen #[barnRise, W "highway" "footway" none (some 2)]
-  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
+private def exampleRise : NearbyWay := W "highway" "residential" (some "Example Rise") (some 8)
+#guard gen #[exampleRise, W "highway" "footway" none (some 2)]
+  == "driving|Example Rise|residential|8  walking|Example Rise|residential|8  cycling|Example Rise|residential|8  walking|-|-|-"
 #guard gen #[W "highway" "footway" none (some 2), W "highway" "path" none (some 3)]
   == "walking|-|footway|2  walking|-|path|3  walking|-|-|-"
 #guard gen #[W "highway" "cycleway" (some "Canal Path") (some 4), W "highway" "footway" none (some 2)]
   == "cycling|Canal Path|cycleway|4  walking|-|footway|2  walking|-|-|-"
--- An empty-string name is unnamed, so the `""` residential loses to Barn Rise.
-#guard gen #[W "highway" "residential" (some "") (some 8), W "highway" "residential" (some "Barn Rise") (some 9)]
-  == "driving|Barn Rise|residential|9  walking|Barn Rise|residential|9  cycling|Barn Rise|residential|9  walking|-|-|-"
+-- An empty-string name is unnamed, so the `""` residential loses to Example Rise.
+#guard gen #[W "highway" "residential" (some "") (some 8), W "highway" "residential" (some "Example Rise") (some 9)]
+  == "driving|Example Rise|residential|9  walking|Example Rise|residential|9  cycling|Example Rise|residential|9  walking|-|-|-"
 
 -- The cadence veto.
 private def vetoStats : List Verified.Geo.ModeBiometrics.ModeStats :=
@@ -797,19 +797,19 @@ private def vetoStats : List Verified.Geo.ModeBiometrics.ModeStats :=
 private def bioAt (cadence speed : Option Float) : Option BiometricContext :=
   some { obs := { hr := some 90, cadence, speed }, stats := vetoStats }
 
-#guard gen #[barnRise] "walking" (bioAt (some 105) (some 4))
-  == "walking|Barn Rise|residential|8  walking|-|-|-"
+#guard gen #[exampleRise] "walking" (bioAt (some 105) (some 4))
+  == "walking|Example Rise|residential|8  walking|-|-|-"
 -- Above the speed ceiling the veto premise fails and nothing is dropped.
-#guard gen #[barnRise] "walking" (bioAt (some 105) (some 40))
-  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
-#guard gen #[barnRise] "walking" (bioAt none (some 4))
-  == "driving|Barn Rise|residential|8  walking|Barn Rise|residential|8  cycling|Barn Rise|residential|8  walking|-|-|-"
+#guard gen #[exampleRise] "walking" (bioAt (some 105) (some 40))
+  == "driving|Example Rise|residential|8  walking|Example Rise|residential|8  cycling|Example Rise|residential|8  walking|-|-|-"
+#guard gen #[exampleRise] "walking" (bioAt none (some 4))
+  == "driving|Example Rise|residential|8  walking|Example Rise|residential|8  cycling|Example Rise|residential|8  walking|-|-|-"
 -- The fallback survives a veto of its own mode.
-#guard gen #[barnRise] "driving" (bioAt (some 105) (some 4))
-  == "walking|Barn Rise|residential|8  driving|-|-|-"
+#guard gen #[exampleRise] "driving" (bioAt (some 105) (some 4))
+  == "walking|Example Rise|residential|8  driving|-|-|-"
 -- Both filters together.
-#guard gen #[barnRise, W "highway" "cycleway" none (some 2)] "walking" (bioAt (some 105) (some 4))
-  == "walking|Barn Rise|residential|8  walking|-|-|-"
+#guard gen #[exampleRise, W "highway" "cycleway" none (some 2)] "walking" (bioAt (some 105) (some 4))
+  == "walking|Example Rise|residential|8  walking|-|-|-"
 
 end CandidateGuards
 

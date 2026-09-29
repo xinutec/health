@@ -157,16 +157,16 @@ fn proceed_app(session: Option<UserSession>) -> Router {
 
 fn share_viewer() -> UserSession {
     UserSession {
-        user_id: "pippijn".into(),
-        display_name: "pippijn".into(),
+        user_id: "user".into(),
+        display_name: "user".into(),
         share_viewer: Some(("2026-08-11".into(), "2026-08-17".into())),
     }
 }
 
 fn owner() -> UserSession {
     UserSession {
-        user_id: "pippijn".into(),
-        display_name: "pippijn".into(),
+        user_id: "user".into(),
+        display_name: "user".into(),
         share_viewer: None,
     }
 }

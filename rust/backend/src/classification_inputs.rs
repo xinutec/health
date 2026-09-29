@@ -1215,8 +1215,8 @@ async fn phonetrack_windows(
     //
     // ⚠ MEASURED: on 2026-09-13 the last fix was at 00:00:12 and sat 7 m from
     // Home. The window opened twelve hours later, `detectKnownPlaceStays` had
-    // nothing to mine, and the night was attributed to the first place he
-    // reached after waking — Work, 11.3 km away. Pippijn: "it is extremely
+    // nothing to mine, and the night was attributed to the first place they
+    // reached after waking — Work, 11.3 km away. The user: "it is extremely
     // likely that I sleep where my phone went to sleep."
     //
     // ⚠ THE CORPUS CANNOT GRADE THIS. The golden fixtures carry a CAPTURED

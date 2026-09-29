@@ -189,12 +189,12 @@ def parsePipelineState : Option StateWindow → Option Live
 A live `wayName` is not a road, it is a display label: `composeWayName` emits up
 to three road names joined by ", " for one merged moving leg, duration-weighted,
 each covering at least 15% of it, capped at 30 characters so the timeline stays
-one line. A walk crossing two roads is labelled "Barn Rise, <second road>".
+one line. A walk crossing two roads is labelled "Example Rise, <second road>".
 
 ⚠ String EQUALITY against that label contradicts this module's own rule — extra
 attribution on the live side is not a contradiction — and it cost a real row:
-2026-07-16 @07:13Z, confirmed "walking on Barn Rise", failed for eleven days
-against a live leg with IDENTICAL BOUNDS whose label was "Barn Rise" plus one
+2026-07-16 @07:13Z, confirmed "walking on Example Rise", failed for eleven days
+against a live leg with IDENTICAL BOUNDS whose label was "Example Rise" plus one
 more road — the confirmed road was right there in it, as the first component.
 
 So ask membership, not equality. Still a real test in the direction that
@@ -209,7 +209,7 @@ def wayNameCovers (truthWay : String) (liveWay : Option String) : Bool :=
 
 ⚠ DELIBERATELY ASYMMETRIC: the truth cell asserts only what it NAMES, so extra
 attribution on the live side is not a contradiction — a truth of plain "walking"
-is satisfied by "walking on Barn Rise" (the narrative only vetted the mode), and
+is satisfied by "walking on Example Rise" (the narrative only vetted the mode), and
 a truth of "train A → B" without a `· Line` is satisfied by any line. But every
 assertion the truth DOES make must hold. The trailing `(qualifier)` is ignored:
 "Hospital W (hospital)" and "Hospital W" are the same place, and a wrong

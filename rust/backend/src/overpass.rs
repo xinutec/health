@@ -17,6 +17,7 @@ use std::time::Duration;
 
 /// Identify ourselves. Overpass's public mirrors block unattributed clients,
 /// and this address is the one their admins can reach.
+// dev-lint: allow-pii the contact address the mirrors ask for
 pub const USER_AGENT: &str = "health.xinutec.org (pippijn@xinutec.org)";
 
 /// ⚠ ORDER MATTERS: `overpass-api.de` first, `kumi.systems` second — the order

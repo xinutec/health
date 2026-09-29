@@ -25,7 +25,7 @@
 //!
 //! ```text
 //! cargo run --release --example vehicle_legs               # every golden day
-//! cargo run --release --example vehicle_legs -- 2026-06-16-pippijn
+//! cargo run --release --example vehicle_legs -- 2026-06-16-$USER
 //! ```
 //!
 //! Exit 2 when the corpus is absent.

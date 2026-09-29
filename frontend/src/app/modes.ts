@@ -46,7 +46,7 @@ export interface ModeStyle {
 	icon: string;
 	/** Human-readable name, as a label ("Still", "In a vehicle"). */
 	label: string;
-	/** Verb phrase for the timeline's primary line ("Walking on Barn Rise"). */
+	/** Verb phrase for the timeline's primary line ("Walking on Example Rise"). */
 	verb: string;
 	/** Solid line colour for the map track. */
 	color: string;

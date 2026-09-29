@@ -21,7 +21,7 @@
 //! allocator's own accounting is not.
 //!
 //! ```text
-//! cargo run --release --example time_day -- 2026-05-14-pippijn
+//! cargo run --release --example time_day -- 2026-05-14-$USER
 //! ```
 
 use anyhow::{Context, Result};

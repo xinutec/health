@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # claim can be checked against it.
 #
 # ⚠ IT READS THE GITIGNORED CORPUS and prints real places and times, so its
-# output is Pippijn's own data — do not paste it into a tracked file or a
+# output is the user's own data — do not paste it into a tracked file or a
 # commit message (#860). A task is fine; those already carry place names.
 #
 #   scripts/replay-corpus-states.sh              # every day

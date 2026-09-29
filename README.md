@@ -61,7 +61,7 @@ the corpus gates are what replay real days.
 Production runs as `deploy/health-auth` in the `health` namespace of the
 isis k3s cluster. The Docker image (`xinutec/health-sync:latest`) is built by
 this repo's GitHub Actions on every push to `main` and pulled by the cluster on
-rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn`
+rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn` <!-- dev-lint: allow-pii the repository's name -->
 `code/kubes/health/k8s/`).
 
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:

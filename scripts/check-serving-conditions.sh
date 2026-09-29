@@ -170,7 +170,7 @@ fi
 echo "==> minting a session"
 export SESSION_SECRET=$(ssh "root@$HOST" "kubectl -n $NS get pod $POD -o jsonpath='{.spec.containers[0].env}'" >/dev/null 2>&1; \
   ssh "root@$HOST" "kubectl -n $NS exec $POD -- printenv SESSION_SECRET" 2>/dev/null | tr -d '\r')
-COOKIE=$("$BIN" mint-session pippijn 2>/dev/null || true)
+COOKIE=$("$BIN" mint-session "${HEALTH_USER:-$USER}" 2>/dev/null || true)
 if [ -z "$COOKIE" ]; then bad "mint a session" "could not"; exit 1; fi
 
 # Driven from INSIDE the pod: there is no Service in front of it, and putting one

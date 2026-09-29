@@ -36,7 +36,7 @@
 //! appearing, vanishing or changing what it asserts must be DELIBERATE.
 //!
 //! ⚠ **THE NUMBERS ARE A TRIPWIRE, NOT A CROSS-CHECK.** There is no second
-//! implementation to re-derive them from (Pippijn, 2026-09-20: "End TS
+//! implementation to re-derive them from (the user, 2026-09-20: "End TS
 //! comparison everywhere"), so moving one is an assertion by whoever moves it.
 //! Adjust a constant ONLY with the narrative edit that caused it, in the same
 //! commit, and say in the message which rows moved and why. A constant nudged
@@ -94,7 +94,7 @@ const POST_TS: &[&str] = &[
 /// `shop dwell(s)` over a ~10-minute window — was replaced by FOUR: the two
 /// walking halves of the out-and-back, and the two dwells between them, which
 /// the day's own GPS and step series resolve into two separate stops 49 m
-/// apart. Pippijn confirmed the count; he had not remembered it when the
+/// apart. The user confirmed the count; they had not remembered it when the
 /// original row was written.
 ///
 /// So: rows +3, enforceable +3 (all four carry `{user}`), one more walking leg

@@ -27,6 +27,7 @@ use serde_json::Value;
 
 const DAY: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
+    // dev-lint: allow-pii the golden corpus is filed under the account
     "/../../tests/golden/days/2026-05-22-pippijn.json"
 );
 

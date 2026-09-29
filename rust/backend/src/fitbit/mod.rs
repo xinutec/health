@@ -2,7 +2,7 @@
 //!
 //! # Why the CURRENT API and not Google Health
 //!
-//! Pippijn, 2026-08-17: *"Keep the current Fitbit web API and rewrite it in
+//! The user, 2026-08-17: *"Keep the current Fitbit web API and rewrite it in
 //! Rust. We'll migrate afterwards."*
 //!
 //! Fitbit's Web API is decommissioned in September 2026 (#260), so there was a

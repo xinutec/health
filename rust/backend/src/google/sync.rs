@@ -478,7 +478,7 @@ struct Activity {
 ///
 /// Measured 2026-08-28: Google's step counts are SYSTEMATICALLY LOWER — 570 of
 /// 642 differing days, median 6 fewer, p90 517, p99 3346. Rewriting 1229 days of
-/// existing history with them would change four years of a record Pippijn has
+/// existing history with them would change four years of a record the user has
 /// already read. Decided: keep Fitbit's history, write only from the cutover.
 ///
 /// ```text

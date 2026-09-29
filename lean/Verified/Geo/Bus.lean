@@ -103,7 +103,7 @@ def BUS_STOP_ANCHOR_M : Float := 120
     minutes' walk, the stretch from the stop to the door that a sparse trace
     loses into the ride. 06-09 (2026): the last precise fix is mid-ride, the
     next 13 minutes carry three fixes at 160–640 m, and the clinic sits 170 m
-    from Wilton Street. Pippijn, 2026-09-28: the app may name the stop from
+    from Wilton Street. The user, 2026-09-28: the app may name the stop from
     the route and the stay that follows. -/
 def BUS_STAY_ALIGHT_M : Float := 300
 /-- An intermediate stop counts as passed within this of the trace polyline. -/

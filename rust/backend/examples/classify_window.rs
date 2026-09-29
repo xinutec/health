@@ -15,8 +15,8 @@
 //! Same classifier, same points, fewer of them.
 //!
 //! ```text
-//! cargo run --example classify_window -- 2026-06-24-pippijn 18:40 19:10
-//! cargo run --example classify_window -- 2026-06-24-pippijn          # whole day
+//! cargo run --example classify_window -- 2026-06-24-$USER 18:40 19:10
+//! cargo run --example classify_window -- 2026-06-24-$USER          # whole day
 //! ```
 //!
 //! ⚠ **A SLICE IS NOT A SUB-DAY.** `extractFeatures` tumbles its 300 s windows

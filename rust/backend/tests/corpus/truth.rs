@@ -96,8 +96,8 @@ const BASELINE: &str = concat!(
 /// 75 s, then 1023 m in the next 35), and the points this pass receives are
 /// `[ts, lat, lon, speedKmh]` — there is no accuracy field in them to test.
 ///
-/// The narrative row claimed the ride ran 11:09–11:13; the fixes put him at
-/// walking pace until 11:11:09. Pippijn re-cut it to start 11:11 on 2026-09-01
+/// The narrative row claimed the ride ran 11:09–11:13; the fixes put them at
+/// walking pace until 11:11:09. The user re-cut it to start 11:11 on 2026-09-01
 /// ("moving them a bit isn't damage"), the floor key moved with it, and the row
 /// verifies. ⚠ THE JUSTIFICATION IS THE FIXES, NOT THE PIPELINE — re-cutting a
 /// row to whatever the pipeline drew would make this corpus self-referential,
@@ -359,7 +359,7 @@ impl Truth {
                     // a status outside {correct, wrong} is one cause, an
                     // untrusted provenance the other, and they want different
                     // repairs — the first is a malformed cell, the second is a
-                    // question only Pippijn can answer.
+                    // question only the user can answer.
                     let row = &narrative.rows[i];
                     let st = row["status"].as_str().unwrap_or("");
                     let e = self.ungraded.entry(date.to_string()).or_default();
@@ -486,7 +486,7 @@ impl Truth {
         //
         // It is printed because a refusal should be VISIBLE, not because it is
         // wrong. ⚠ Do NOT "fix" an untrusted row by writing `{user}` on it —
-        // that asserts Pippijn confirmed it, which is the exact claim the guard
+        // that asserts the user confirmed it, which is the exact claim the guard
         // is refusing to take on trust (#1669).
         if !self.ungraded.is_empty() {
             let n: usize = self.ungraded.values().map(|(a, b)| a + b).sum();

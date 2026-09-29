@@ -481,7 +481,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
        == some { mode := .stationary, place := some "Riverside General", placeQualifier := some "hospital" }
 
 -- Ways. ⚠ A way name may contain a comma and stays whole.
-#guard cell "walking on Barn Rise" == some { mode := .walking, wayName := some "Barn Rise" }
+#guard cell "walking on Example Rise" == some { mode := .walking, wayName := some "Example Rise" }
 #guard cell "walking on Hofweg, Molenstraat"
        == some { mode := .walking, wayName := some "Hofweg, Molenstraat" }
 #guard cell "driving on Market Street" == some { mode := .driving, wayName := some "Market Street" }
@@ -521,7 +521,7 @@ private def cell (s : String) : Option Truth := parseTruthCell s
 #guard (cell "buses replaced the service").isNone
 
 -- Emphasis is presentation and is stripped before anything else.
-#guard cell "**walking on Barn Rise**" == some { mode := .walking, wayName := some "Barn Rise" }
+#guard cell "**walking on Example Rise**" == some { mode := .walking, wayName := some "Example Rise" }
 
 /-! ### Status and provenance -/
 

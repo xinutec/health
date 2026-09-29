@@ -8,7 +8,7 @@
 //! "A London wall clock differs from UTC by 0 or 60 minutes, so anything else is
 //! a defect" reports 12% of every intraday table as broken. It is not: the other
 //! offsets are −420, +600, −480, −240, +120 — Pacific, Australia, Eastern,
-//! Europe. Pippijn travels, and an offset is not evidence of anything on its
+//! Europe. The user travels, and an offset is not evidence of anything on its
 //! own. That instrument was measuring the itinerary.
 //!
 //! So each pair is graded against something that cannot encode a guess about

@@ -500,7 +500,7 @@ in  { name = "health"
             What is genuinely lost: the sandboxed build can break while the dev
             build is fine ("either can break without the other", above), and
             that is now found ~10 minutes after a push rather than before the
-            commit. That is the trade, taken deliberately by Pippijn.
+            commit. That is the trade, taken deliberately by the user.
 
             ⚠ `.#verified-cli` STAYS, and cheaply: its `src = ./lean`, so it is
             a cache hit unless Lean changed, and BUILDING IT IS THE PROOF GATE

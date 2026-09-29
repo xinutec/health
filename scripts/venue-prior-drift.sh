@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
-# Does re-mining the venue priors REWRITE a day Pippijn already confirmed?
+# Does re-mining the venue priors REWRITE a day the user already confirmed?
 #
 # WHY THIS EXISTS. On 2026-09-04 a dinner confirmed as `Pizza Union` was being
 # served as `Honest Burgers`, because `fast_food.visits` fell from 5 to 3 in a
@@ -24,7 +24,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # `venue_type_priors` or `focus_places`.
 #
 # ⚠ IT COMPARES VERDICTS, NOT LABELS. The truth referee is the only thing that
-# knows which rows Pippijn CONFIRMED; a label diff would flag the 94% of stays no
+# knows which rows the user CONFIRMED; a label diff would flag the 94% of stays no
 # narrative describes. A row going `verified` -> anything else is the finding.
 #
 #   scripts/venue-prior-drift.sh [lookback-days]   # default 180, prod's own
@@ -51,7 +51,7 @@ BIN="$(cargo metadata --manifest-path "$ROOT/rust/Cargo.toml" --format-version 1
 }
 
 echo "==> mining ${DAYS}d of priors from prod (--dry: nothing is written)" >&2
-"$ROOT/scripts/prod-db.sh" "$BIN" refresh-focus-places pippijn "$DAYS" \
+"$ROOT/scripts/prod-db.sh" "$BIN" refresh-focus-places "${HEALTH_USER:-$USER}" "$DAYS" \
 	--dry --hard-out "$WORK/fresh.json" >&2
 
 echo "==> baseline: the corpus against its OWN captured priors" >&2
@@ -97,7 +97,7 @@ if (moved.length === 0) {
 }
 console.log(`\n⚠ ${moved.length} CONFIRMED row(s) change under a fresh mine:\n`);
 for (const [date, ts, va, vb] of moved) console.log(`      ${date} @${ts}  ${va} -> ${vb}`);
-console.log("\nA row Pippijn confirmed is named from evidence mined AFTER the day it");
+console.log("\nA row the user confirmed is named from evidence mined AFTER the day it");
 console.log("describes. See #1405 — do not fix this by weakening the prior.");
 process.exit(1);
 NODEEOF

@@ -2,7 +2,7 @@
 //!
 //! # What this is, and what it is NOT
 //!
-//! Pippijn, 2026-08-17: *"We want no TS backend. Logic should be in Lean. A bit
+//! The user, 2026-08-17: *"We want no TS backend. Logic should be in Lean. A bit
 //! of IO glue needs to be in Rust."* This crate is the IO glue — configuration,
 //! a connection pool, the cursor store, and the entrypoint that ties them
 //! together. **Nothing here decides anything.** If a module in this crate grows
@@ -28,7 +28,7 @@
 //!
 //! # The Lean/Rust line, drawn by example
 //!
-//! Pippijn, 2026-08-17: *"anything that can be in Lean should be in Lean."*
+//! The user, 2026-08-17: *"anything that can be in Lean should be in Lean."*
 //! `src/share/token.ts` is the worked example and the shape to copy. Four
 //! functions; the split is not 50/50 and was not a judgement call:
 //!

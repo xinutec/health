@@ -21,7 +21,7 @@
 //! capture wrote is not the key the lookup forms.
 //!
 //! ```text
-//! scripts/prod-db.sh cargo run --release --example capture_trace -- pippijn 2026-09-15 /tmp/trace.json
+//! scripts/prod-db.sh cargo run --release --example capture_trace -- "$USER" 2026-09-15 /tmp/trace.json
 //! ```
 
 use anyhow::{Context, Result};

@@ -522,7 +522,7 @@ Step minutes running up to the gap's end are the walk off the platform (06-12:
 and become a walking tail the rail passes may name; the ride ends where they
 start. Same shape as the bus alight read from the route and the stay that
 follows (#328): inferred from the neighbours when the fixes cannot show it,
-which Pippijn accepted the same day. -/
+which the user accepted the same day. -/
 private def blackoutRide (host : Seg) (good hostDark : Array CoarseFix)
     (steps : List FeasibilityStepPoint) (points : Array Shed.PointF)
     (stationsLookup : Float → Float → Array NearbyStation)
