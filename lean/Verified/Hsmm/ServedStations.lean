@@ -67,19 +67,28 @@ structure RailStopRelation where
   stops : Array RailStop
   deriving Inhabited, Repr
 
-/-- Relations whose ref or name contains the line's base token,
-    case-insensitively (`rail-stops-cache.ts`).
+/-- Relations that ARE the line: the ref equals the line's base token, or the
+    relation's own name has that base token, case-insensitively.
+
+    Until 2026-09-30 this was CONTAINMENT of the token in the ref or the name
+    (`rail-stops-cache.ts`), and for the Victoria line the token `victoria`
+    matched every Southern service terminating at London Victoria: 38 relations
+    and 147 stations for a line with 16 (#238). Measured on a fixture's cache:
+    Victoria 38 → 4, Northern 41 → 26, Central 32 → 12; Jubilee, Circle and
+    Metropolitan unchanged. The tube carries its designation in the ref
+    (`Victoria`); National Rail carries an operator code (`SN7.2`), so a
+    Southern relation no longer looks like the tube line its terminus shares a
+    name with.
 
     An empty base matches NOTHING, mirroring `lineNamesMatching`: a `'%%'` LIKE
-    would have matched every relation in the mirror. That guard is also what
-    makes `getD ""` below safe — an absent ref is `false` in the TS via `?? false`,
-    and `""` can only contain an empty needle, which cannot reach here. -/
+    would have matched every relation in the mirror. -/
 def railRelationsForLine (relations : Array RailStopRelation) (lineName : String) :
     Array RailStopRelation :=
   let base := (lineBaseToken lineName).toLower
   if base.isEmpty then #[]
   else relations.filter (fun r =>
-    containsSub (r.lineRef.getD "").toLower base || containsSub (r.lineName.getD "").toLower base)
+    (r.lineRef.getD "").toLower == base
+      || (lineBaseToken (r.lineName.getD "")).toLower == base)
 
 /-- The normalised names of the stations a line's mirrored relations stop at, or
     `none` when the mirror has no trustworthy data for the line. -/
