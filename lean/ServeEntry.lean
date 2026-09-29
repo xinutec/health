@@ -1064,6 +1064,59 @@ private def assembleDecodeResult (j : Json) : Json :=
           ("path", Json.arr (r.path.map fun s => Lean.toJson s)),
           ("best", match r.best with | .val v => Lean.toJson v | .negInf => Json.null)]
 
+/-- `verified_cli decodetrace` — the per-minute line evidence over a window,
+for reading WHY a ride took the line it took (#238). An `assemblesegments`
+request plus `"window": [tsFrom, tsTo]`; for every minute inside it: the
+generator's coverage, and for each state but the place stays
+the emission, the entry prior, and the transition INTO it from `walking` and
+from `stationary` (the boarding chain term, station hard-zero included). -/
+private def decodeTraceResult (j : Json) : Json :=
+  match parseAssemble j with
+  | .error e => Json.mkObj [("error", Json.str e)]
+  | .ok (c, _) =>
+    let bound (i : Nat) : Option Int :=
+      match j.getObjVal? "window" >>= (·.getArr?) with
+      | .ok a => a[i]?.bind fun x => (x.getInt?).toOption
+      | .error _ => none
+    match bound 0, bound 1 with
+    | some t0, some t1 =>
+      let fl (v : Float) : Json := if v == Verified.Hsmm.FloatScore.negInf then Json.null else Lean.toJson v
+      let idxOf (p : Verified.Hsmm.Emissions.State → Bool) : Option Nat :=
+        (List.range c.states.size).find? fun i => match c.states[i]? with
+          | some s => p s | none => false
+      let walkIdx := idxOf fun s => s.mode == .walking
+      let statIdx := idxOf fun s => s.mode == .stationary && s.placeId.isNone
+      let rows := (List.range c.obs.size).filterMap fun t =>
+        match c.obs[t]? with
+        | none => none
+        | some o =>
+          if o.ts < t0 || o.ts > t1 then none else
+          let states := (List.range c.states.size).filterMap fun si =>
+            match c.states[si]? with
+            | none => none
+            | some st =>
+              -- Every state but the place stays: the rides, the walk, and
+              -- the placeless stay a platform wait decodes as.
+              if st.mode == .stationary && st.placeId.isSome then none
+              else
+                let from_ (a : Option Nat) : Json := match a with
+                  | some ai => fl (Verified.Hsmm.Assemble.transAt c ai si t)
+                  | none => Json.null
+                some (Json.mkObj [
+                  ("key", Json.str (Verified.Hsmm.StateSpace.stateKey st)),
+                  ("emit", fl (Verified.Hsmm.Assemble.emitAt c t si)),
+                  ("entry", fl (Verified.Hsmm.Assemble.entryAt c t si)),
+                  ("fromWalk", from_ walkIdx),
+                  ("fromStat", from_ statIdx)])
+          some (Json.mkObj [
+            ("ts", Lean.toJson o.ts),
+            ("gps", Json.bool o.gps.isSome),
+            ("covered", Json.bool (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)),
+            ("lines", Json.arr ((Verified.Hsmm.TrainCandidates.linesAt c.coverage o.ts).map Json.str).toArray),
+            ("states", Json.arr states.toArray)])
+      Json.mkObj [("minutes", Json.arr rows.toArray)]
+    | _, _ => Json.mkObj [("error", Json.str "window: [tsFrom, tsTo] required")]
+
 /-- `verified_cli decodeprof` — the decoder's cost on one day, apart from its
 model build. Reads an `assemblesegments` request plus `"runs"` (default 5),
 builds the `PData` once, then times `pDecodeFast` that many times on it; each
@@ -3468,6 +3521,7 @@ def cliMain (args : List String) : IO UInt32 := do
   if args.contains "geo" then return ← geoMain input
   if args.contains "matchprof" then return ← matchProfMain input
   if args.contains "decodeprof" then return ← decodeProfMain input
+  if args.contains "decodetrace" then return ← runOne decodeTraceResult input
   if args.contains "match" then return ← matchMain input
   if args.contains "assembledecode" then return ← runOne assembleDecodeResult input
   if args.contains "coverage" then return ← runOne coverageResult input

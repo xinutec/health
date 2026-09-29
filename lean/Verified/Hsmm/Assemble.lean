@@ -140,15 +140,16 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
 /-- Whether the train generator vouches a ride at `ts`. -/
 private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.isCovered c.coverage ts
 
-/-- `emission(s, obs[t])` — the full composed emission, with `isCovered` resolved
-    from the coverage map at the minute's ts. -/
+/-- `emission(s, obs[t])` — the full composed emission. Coverage does not reach
+    it (#238, 2026-09-29): the per-minute line factors stay live on a
+    generator-covered minute; see `EmissionFull`. -/
 def emitAt (c : ModelContext) (t s : Nat) : Float :=
   -- A minute or state off the model is impossible, hence `−∞` — the tensors
   -- are built over exactly `obs.size × states.size`, so it is never asked.
   match c.obs[t]?, c.states[s]? with
   | some o, some st =>
     EmissionFull.emissionLogProbFull c.model c.connGraph c.modeledLines c.placeCoords
-      c.reacquireRobust (coveredAt c o.ts) c.continuity st o
+      c.reacquireRobust c.continuity st o
     -- The per-minute mode prior is inside the sum above at scale 1; the arm
     -- knob adds the difference, so the shipped model is untouched at 1.
     + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)
@@ -286,16 +287,12 @@ private def approxG (a b : Float) : Bool := Float.abs (a - b) < 1e-6
 #guard ctxU.states.size == 19          -- 5 movement + 2 stationary + 11 lines + unknown_rail
 #guard ctxU.nPlaces == 1
 
--- emitAt: `isCovered` resolved from the coverage map flips the route-rail term.
--- RHS uses the LITERAL verdict, so a mis-resolution would diverge; the composed
--- value itself is EmissionFull's V8-pinned emission.
+-- emitAt: the composed value is EmissionFull's V8-pinned emission, and coverage
+-- does not reach it — it flows through the entry and duration terms (below).
 #guard approxG (emitAt ctxU 0 jubIdx)
   (EmissionFull.emissionLogProbFull jm (RouteModel.toConnGraph jm) (RouteModel.linesInGraph jm)
-    ctxU.placeCoords false false none jub obsTrain)     -- uncovered → route-rail active
-#guard approxG (emitAt ctxC 0 jubIdx)
-  (EmissionFull.emissionLogProbFull jm (RouteModel.toConnGraph jm) (RouteModel.linesInGraph jm)
-    ctxC.placeCoords false true none jub obsTrain)       -- covered → route-rail gated off
-#guard (emitAt ctxU 0 jubIdx) != (emitAt ctxC 0 jubIdx)  -- coverage genuinely flows through
+    ctxU.placeCoords false none jub obsTrain)
+#guard (emitAt ctxU 0 jubIdx) == (emitAt ctxC 0 jubIdx)
 
 -- entryAt: covered + line-valid → the +3 generator boost (train state ⇒ base entry 0).
 #guard entryAt ctxC 0 jubIdx == 3

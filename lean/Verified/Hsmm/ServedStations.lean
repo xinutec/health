@@ -70,7 +70,7 @@ structure RailStopRelation where
 /-- Relations that ARE the line: the ref equals the line's base token, or the
     relation's own name has that base token, case-insensitively.
 
-    Until 2026-09-30 this was CONTAINMENT of the token in the ref or the name
+    Until 2026-09-29 this was CONTAINMENT of the token in the ref or the name
     (`rail-stops-cache.ts`), and for the Victoria line the token `victoria`
     matched every Southern service terminating at London Victoria: 38 relations
     and 147 stations for a line with 16 (#238). Measured on a fixture's cache:

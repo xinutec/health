@@ -47,6 +47,15 @@ fn run_corpus() {
     for name in &names {
         let fx: Value = backend::decode_fixture::read(name).expect("fixture parses");
         let req = backend::decode_fixture::request(&fx).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        // `DECODE_REQUEST_OUT=<dir>`: the request itself, one file per day —
+        // what `verified_cli decodetrace` reads by hand (2026-09-29, #238).
+        if let Ok(dir) = std::env::var("DECODE_REQUEST_OUT") {
+            std::fs::write(
+                std::path::Path::new(&dir).join(name),
+                serde_json::to_vec(&req).expect("request serialises"),
+            )
+            .expect("DECODE_REQUEST_OUT writes");
+        }
 
         let Some(segments) = backend::lean::assemble_segments(&req).expect("assemble answers")
         else {

@@ -330,7 +330,7 @@ constraint — all are calibrated graduated preferences.
 | Transition   | Self-loop (HSMM duration-aware) | log(0.95) cross-mass split        | Wired    |
 | Transition   | Hour-of-day entry boost      | `focus_places.hour_profile`         | Wired    |
 | Segment      | Per-mode duration Gamma      | Hand-tuned from empirical histograms | Wired    |
-| Pre-process  | GPS outlier filter           | Cluster-median 2km deviation        | Wired    |
+| Pre-process  | GPS outlier filter           | Cluster-median 2 km deviation, speed-rescued | Wired |
 | Pre-process  | GPS QC (anchor walk)         | Velocity pipeline `qualityFilterGps`| Wired    |
 
 ### Scorer factors being retired

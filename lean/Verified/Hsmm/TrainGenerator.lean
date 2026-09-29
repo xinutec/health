@@ -6,9 +6,10 @@ A per-segment entry prior over `train @ L` states: the structural
 `(board, line, alight)` candidate generator vouches, for each covered minute, a
 set of lines that form a valid station-to-station ride there. Entering `train @ L`
 on a covered minute is boosted when L is one of those lines and penalised when it
-is not (on covered minutes the per-minute line factors are gated off, so this is
-the only line signal); off-window it asserts nothing and the minute falls through
-to the per-minute factors.
+is not; off-window it asserts nothing. The per-minute line factors run on covered
+minutes too (since 2026-09-29, #238 — the TypeScript gated them off there and
+left this entry term as the only line signal, charged once, so a line the
+generator stopped vouching mid-ride was never charged).
 
 The candidate enumeration and the ts→line-set coverage map are the structural
 resolution and stay caller-side; this module is the pure entry decision over two

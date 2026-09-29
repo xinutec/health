@@ -200,7 +200,12 @@ def lineProximityFactor (g : RouteGraphModel) (modeledLines : List String)
   let lineNear := match o.gps, s.lineName with
     | some gps, some line => (linesWithinRadius g gps.lat gps.lon NEAR_M).contains line
     | _, _ => false
-  LineProximity.lineProximityFactor s isCovered o.gps.isSome lineModeled lineNear o.roadDistM o.railDistM
+  -- Any railway edge near the fix, named or not (the graph holds every
+  -- railway way, memberships only for the named lines).
+  let railNear := match o.gps with
+    | some gps => !(edgesNearIdx g gps.lat gps.lon NEAR_M).isEmpty
+    | none => false
+  LineProximity.lineProximityFactor s isCovered o.gps.isSome lineModeled lineNear o.roadDistM o.railDistM railNear
 
 -- Parity with the real `buildLineProximityFactor` (decisions from Node/V8).
 private def lpModel : RouteGraphModel := buildRouteGraphModel #[
@@ -221,6 +226,7 @@ private def lpNullObs : ObsRow := { lpObs 51.50 (-0.10) none none with gps := no
 #guard lineProximityFactor lpModel lpLines train (lpObs 51.50 (-0.10) none none) false == 1.5               -- near, no prox
 #guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 100) (some 300)) false == -2.5  -- unknown, road nearer
 #guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 51.50 (-0.10) (some 300) (some 100)) false == 0     -- unknown, rail nearer
+#guard lineProximityFactor lpModel lpLines ⟨.train, none, some "unknown_rail"⟩ (lpObs 52.0 0.5 none none) false == -2.5             -- unknown, no railway near
 #guard lineProximityFactor lpModel lpLines train lpNullObs false == 0                                       -- gps null
 
 /-! ## Chain-context routing over the model
@@ -282,7 +288,7 @@ def isMovingMode : Mode → Bool
 /-- The boarding penalty at `(lat, lon)` for the NEAREST modeled line — what a
     ride's head pays (#366): a platform wait can only be where some line runs,
     and a head that paid nothing let a ten-minute wait at Home board a
-    one-minute stub (2026-09-30, phantoms 5 → 12). `none` with no lines. -/
+    one-minute stub (2026-09-29, phantoms 5 → 12). `none` with no lines. -/
 def nearestLineBoarding (edgesByLine : Std.HashMap String (List LineEdge))
     (lat lon slopMin : Float) : Option Float :=
   edgesByLine.fold (fun (acc : Option Float) _ lineEdges =>

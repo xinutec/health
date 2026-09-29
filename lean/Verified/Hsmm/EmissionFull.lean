@@ -13,9 +13,17 @@ compose end-to-end: base emission (+ the reacquire-robust speed correction),
 geometric feasibility, and the two route-graph factors all consume one `ObsRow`
 and the shared model.
 
-Mirrors `buildHsmmModel`'s parameterisation (the caller passes `reacquireRobust`
-and per-minute `isCovered`), so it is faithful for whatever flag combination the
-served decode runs. Continuity (`continuityContext`) is a further optional additive
+Mirrors `buildHsmmModel`'s parameterisation (the caller passes `reacquireRobust`),
+so it is faithful for whatever flag combination the served decode runs. The
+TypeScript also passed the generator's per-minute `isCovered` here and switched
+the two line factors OFF on a covered minute, leaving the entry prior as the
+only line signal. Since 2026-09-29 (#238) the factors stay live there: measured
+on the eleven decoder days, a covered fix-less ride earned nothing per minute
+and lost to `stationary` on the mode prior (06-12's Victoria ride shrank to one
+minute), and every line the generator vouched at entry scored identically
+afterwards, so a line it stopped vouching mid-ride was never charged (05-18,
+07-14: the Metropolitan leg came out Hammersmith & City on a tie). Coverage
+still reaches the entry and duration terms. Continuity (`continuityContext`) is a further optional additive
 term, ported only if the served path enables it. UNPROVEN; pinned by the `#guard`s
 (values from Node/V8's factor builders, summed as `buildHsmmModel` does). Route-
 graph/geometric factors flow through `haversine`/`pointToPolyline`, so sums are
@@ -60,7 +68,7 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
 
 /-- Full per-cell emission log-probability over the model — the TS
     `buildEmissionFn` closure plus the geometric/rail/line-proximity terms the
-    model sums onto it. `placeCoords` resolves `s.placeId`; `isCovered`
+    model sums onto it. `placeCoords` resolves `s.placeId`; `reacquireRobust`
     (train-generator) and `reacquireRobust` are caller flags, matching the TS
     `buildHsmmModel`. `continuity` is the presence-continuity seed; the
     production caller always supplies it, and the `none` arm is the chain-start
@@ -68,14 +76,15 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
 def emissionLogProbFull
     (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
     (placeCoords : Std.HashMap Int (Float × Float))
-    (reacquireRobust isCovered : Bool) (continuity : Option Continuity.ContinuityContext)
+    (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
     (s : State) (o : ObsRow) : Float :=
   let placeCoord := match s.placeId with | some pid => placeCoords.get? pid | none => none
   baseEmissionWithReacquire s o placeCoord reacquireRobust
     + Geometric.geometricFeasibility s o.ts.toNat.toFloat
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix) placeCoord
-    + routeRailEvidence model connGraph s o isCovered
-    + lineProximityFactor model modeledLines s o isCovered
+    -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
+    + routeRailEvidence model connGraph s o false
+    + lineProximityFactor model modeledLines s o false
     + Continuity.continuityLogLikelihood s o.gps.isSome
         (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
 
@@ -111,10 +120,10 @@ private def obsCont : ObsRow :=
     inBed := false, roadDistM := none, railDistM := none, reacquireAgeMin := none,
     prevGpsFix := some ⟨900, 51.521, -0.131⟩, nextGpsFix := some ⟨900, 51.521, -0.131⟩ }
 
-#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.train, none, some "Test Line"⟩ obsTrain) (-1.3928522584398717)
-#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
-#guard approxF (emissionLogProbFull m cg ml pc false false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
-#guard approxF (emissionLogProbFull m cg ml pc true false none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
-#guard approxF (emissionLogProbFull m cg ml pc false false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.173287216286719)
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.train, none, some "Test Line"⟩ obsTrain) (-1.3928522584398717)
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.stationary, some 5, none⟩ obsStat) (-814.4852866803162)
+#guard approxF (emissionLogProbFull m cg ml pc false none ⟨.walking, none, none⟩ obsWalk) (-12.180968195475526)
+#guard approxF (emissionLogProbFull m cg ml pc true none ⟨.stationary, some 5, none⟩ obsReacq) (-7.8254058300548115)
+#guard approxF (emissionLogProbFull m cg ml pc false (some contCtx) ⟨.stationary, some 5, none⟩ obsCont) (-2.173287216286719)
 
 end Verified.Hsmm.EmissionFull

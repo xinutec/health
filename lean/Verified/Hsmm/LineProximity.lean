@@ -29,10 +29,13 @@ def scoreLineProximity (lineModeled lineNear : Bool) (roadDistM railDistM : Opti
 
 /-- `buildLineProximityFactor`'s per-state verdict. Facts resolved by the caller:
     `isCovered` (train-generator window), `gpsPresent`, and — for a named line —
-    `lineModeled` / `lineNear` from the route graph. `unknown_rail` scores only
-    the line-agnostic road-nearer signal. -/
+    `lineModeled` / `lineNear` from the route graph. A placeholder line
+    (`unknown_rail`, a ride's head) scores the line-agnostic signals: no railway
+    near the fix at all (`railNear`, any edge of the graph), else road nearer
+    than rail. -/
 def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
-    (lineModeled lineNear : Bool) (roadDistM railDistM : Option Float) : Float :=
+    (lineModeled lineNear : Bool) (roadDistM railDistM : Option Float)
+    (railNear : Bool := true) : Float :=
   if s.mode != .train then 0.0
   else if isCovered then 0.0
   else match s.lineName with
@@ -40,6 +43,12 @@ def lineProximityFactor (s : State) (isCovered gpsPresent : Bool)
     | some line =>
       if Verified.Hsmm.Emissions.isPlaceholderLine line then
         if !gpsPresent then 0.0
+        -- No railway of any kind within `NEAR_M` of the fix: the unnamed train
+        -- is as far from its track as a named line is from its own, and pays
+        -- the same. Left at 0 it rode a taxi for free — 05-25's 30-minute
+        -- drive decoded as `unknown_rail`, cheaper per minute than `driving`
+        -- on the mode prior alone (2026-09-29, #238).
+        else if !railNear then FAR_PENALTY
         else match roadDistM, railDistM with
           | some rd, some rl => if rd < rl then ROAD_NEARER_PENALTY else 0.0
           | _, _ => 0.0
@@ -62,6 +71,9 @@ private def tr (line : Option String) : State := ⟨.train, none, line⟩
 #guard lineProximityFactor (tr none) false true true false none none == 0                   -- no line
 #guard lineProximityFactor (tr (some "unknown_rail")) false true false false (some 100) (some 200) == -2.5 -- road-nearer
 #guard lineProximityFactor (tr (some "unknown_rail")) false true false false (some 200) (some 100) == 0    -- rail-nearer
+#guard lineProximityFactor (tr (some "unknown_rail")) false true false false none none false == -2.5      -- no railway near
+#guard lineProximityFactor (tr (some "unknown_rail")) false true false false (some 200) (some 100) false == -2.5
+#guard lineProximityFactor (tr (some "Jubilee")) false true true true none none false == 1.5                -- named: its own track decides
 #guard lineProximityFactor (tr (some "Jubilee")) false false true false none none == 0       -- gps null
 
 end Verified.Hsmm.LineProximity
