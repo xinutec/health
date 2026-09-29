@@ -44,10 +44,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 BIN="$(cargo metadata --manifest-path "$ROOT/rust/Cargo.toml" --format-version 1 |
 	jq -r .target_directory)/release/backend"
-[ -x "$BIN" ] || {
-	echo "venue-prior-drift: building the backend binary first…" >&2
-	(cd "$ROOT" && cargo build --manifest-path rust/Cargo.toml --release --bin backend)
-}
+# Always: an existing binary may predate a subcommand this script calls
+# (2026-09-29 — a stale one answered `venue-prior-snapshots` with the usage).
+echo "venue-prior-drift: building the backend binary…" >&2
+(cd "$ROOT" && cargo build --manifest-path rust/Cargo.toml --release --bin backend) >&2
 
 # ⚠ THE ARM IS WHAT THE POD RESOLVES, NOT A FRESH MINE (2026-09-29, #1845).
 # Since #1405 the serving path takes the newest prior SNAPSHOT at or before the
