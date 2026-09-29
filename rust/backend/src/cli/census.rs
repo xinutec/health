@@ -546,22 +546,14 @@ pub(crate) async fn coverage() -> Result<()> {
         .await
         .context("connecting to the database")?;
 
-    // ⚠ ONE STATIC QUERY, NOT A LOOP OVER A TABLE LIST.
+    // ⚠ ONE STATIC QUERY, INLINE: not a loop over a table list, and not a
+    // `const` bound above.
     //
-    // Two reasons, and the first is enforced: the crate refuses a dynamically
-    // built SQL string (`dynamic SQL strings should be audited for possible
-    // injections`), so a `format!`-ed table name will not compile. The second
-    // is that the prod tunnel is latency-bound — eleven round trips over it
-    // cost far more than eleven arms of one.
-    // ⚠ THE LITERAL IS INLINE, not a `const` bound above.
-    //
-    // Two guards want this and they want slightly different things. The crate
-    // refuses a dynamically built SQL string, so a `format!`-ed table name will
-    // not compile; dev-lint's DL-SQLX-SCHEMA-TRUTH then refuses even a `const`
-    // held in a variable, because schema checking reads the argument at the
-    // call site. Inline satisfies both, and one static query is also one round
-    // trip — the prod tunnel is latency-bound, so eleven separate reads over it
-    // would cost far more than eleven arms of this.
+    // Two guards want this. The crate refuses a dynamically built SQL string, so
+    // a `format!`-ed table name will not compile; dev-lint's DL-SQLX-SCHEMA-TRUTH
+    // then refuses even a `const` held in a variable, because schema checking
+    // reads the argument at the call site. And the prod tunnel is latency-bound:
+    // eleven separate reads over it would cost far more than eleven arms of one.
     let rows = sqlx::query(
         "\
          SELECT 'body' AS t, COUNT(*) AS n, CAST(MIN(date) AS CHAR) AS lo, \

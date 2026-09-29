@@ -271,11 +271,6 @@ async fn main() -> Result<()> {
     // 59 coverage gaps answered as "nothing is there" instead of "nobody
     // knows". That is the erasure #1658 is about, and comparing days alone
     // reports it as no difference at all.
-    // ⚠ `abs_diff`, and the DIRECTION is named. These are `usize`, and the
-    // subtraction was written assuming the control can only ever answer MORE —
-    // it underflowed to 18446744073709551602 the first time the replay arm
-    // gained an answer the control lacked, printing a number rather than
-    // failing.
     // ⚠ THE DIRECTION IS NAMED, because only one of the two is ordinary.
     // Stripping `declined` can only turn an UNKNOWN into an empty answer, so the
     // control must have FEWER unanswerable, never more. The other way round means
