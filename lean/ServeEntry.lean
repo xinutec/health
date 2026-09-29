@@ -661,7 +661,11 @@ NAMES are read — the coordinates in `stops_json` answer a different question. 
 private def parseRelation (j : Json) :
     Except String Verified.Hsmm.ServedStations.RailStopRelation := do
   let stops ← (← (← j.getObjVal? "stops").getArr?).mapM fun t => do
-    pure (⟨← optStr t "name"⟩ : Verified.Hsmm.ServedStations.RailStop)
+    -- Coordinates are plain numbers in the cache's `stops_json`; absent or
+    -- unreadable reads as unknown, which only silences the pass term (#238).
+    let coord := fun (k : String) => (t.getObjVal? k).toOption.bind (fun x => (jFloat x).toOption)
+    pure ({ name := ← optStr t "name", lat := coord "lat", lon := coord "lon" }
+      : Verified.Hsmm.ServedStations.RailStop)
   return ⟨← optStr j "lineRef", ← optStr j "lineName", stops⟩
 
 private def parseEdge (j : Json) : Except String Verified.Hsmm.RouteModel.RouteEdge := do

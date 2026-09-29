@@ -59,6 +59,9 @@ def normalizeStationName (name : String) : String :=
 
 structure RailStop where
   name : Option String
+  /-- Where the stop is, when the cache says (#238: the chain's pass term). -/
+  lat : Option Float := none
+  lon : Option Float := none
   deriving Inhabited, Repr
 
 structure RailStopRelation where
@@ -117,10 +120,43 @@ def stationNameServed (served : Std.HashSet String) (stationName : String) : Boo
       else if min s.length norm.length < MIN_CONTAINMENT_CHARS then false
       else containsSub s norm || containsSub norm s) false
 
+/-- Where a relation calls at a station, by the `stationNameServed` rule (exact
+    normalised name, or guarded containment), first match. -/
+def stopIndexOf (rel : RailStopRelation) (stationName : String) : Option Nat :=
+  let one := fun (n : String) => stationNameServed ((∅ : Std.HashSet String).insert (normalizeStationName n)) stationName
+  (List.range rel.stops.size).find? fun i =>
+    match rel.stops[i]? with
+    | some s => match s.name with | some n => one n | none => false
+    | none => false
+
+/-- The stations `line` calls at BETWEEN two named ones, over its relations
+    (either direction; the FEWEST hops wins, since a semi-fast variant is still
+    the line). `none` when no relation of the line calls at both. The decoder's
+    twin of `LineStoppingPattern.intermediateStopCount`, over this module's
+    relation type and name rule (#238). -/
+def intermediateCalls (relations : Array RailStopRelation) (line a b : String) :
+    Option (Array RailStop) :=
+  (railRelationsForLine relations line).foldl (init := (none : Option (Array RailStop))) fun acc rel =>
+    match stopIndexOf rel a, stopIndexOf rel b with
+    | some i, some j =>
+      let lo := min i j
+      let hi := max i j
+      if hi == lo then acc
+      else
+        let between := rel.stops.extract (lo + 1) hi
+        match acc with
+        | none => some between
+        | some f => if between.size < f.size then some between else acc
+    | _, _ => acc
+
+/-- `intermediateCalls`, counted. -/
+def intermediateStops (relations : Array RailStopRelation) (line a b : String) : Option Nat :=
+  (intermediateCalls relations line a b).map (·.size)
+
 /-! ## Guards — V8 values from `experiments/served-stations-refs.mts` -/
 
 private def rel (lineRef lineName : Option String) (stops : List String) : RailStopRelation :=
-  ⟨lineRef, lineName, (stops.map (fun n => (⟨some n⟩ : RailStop))).toArray⟩
+  ⟨lineRef, lineName, (stops.map (fun n => ({ name := some n } : RailStop))).toArray⟩
 
 -- Five stops is exactly MIN_SERVED_STOPS; four is one short. The floor is pinned
 -- from BOTH sides, because `≥ 5` and `> 5` agree everywhere except this pair.
@@ -181,5 +217,14 @@ private def probe : Std.HashSet String :=
 -- cleanly it contains it. This is the case that pins `min` rather than `norm`.
 #guard stationNameServed probe "Barbican Station" == false
 #guard stationNameServed probe "Kings Cross" == false
+
+-- The calls BETWEEN a pair, either direction, fewest hops (#238).
+private def metFive : RailStopRelation := rel (some "Metropolitan") none FIVE
+#guard (intermediateCalls #[metFive] "Metropolitan Line" "Aldgate" "Euston Square").map
+  (·.toList.map (·.name)) == some [some "Barbican", some "Baker Street"]
+#guard intermediateStops #[metFive] "Metropolitan Line" "Euston Square" "Aldgate" == some 2
+#guard intermediateStops #[metFive] "Metropolitan Line" "Aldgate" "Barbican" == some 0
+#guard intermediateStops #[metFive] "Metropolitan Line" "Aldgate" "Aldgate" == none
+#guard intermediateStops #[metFive] "Jubilee Line" "Aldgate" "Euston Square" == none
 
 end Verified.Hsmm.ServedStations

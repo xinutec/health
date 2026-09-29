@@ -242,6 +242,41 @@ def TRAJ_ADMIT_WINDOW_MIN : Float := 6
 def TRAJ_ADMIT_SPEED_M_PER_MIN : Float := 1000
 def DWELL_DISQUALIFY : Float := -3
 def NOT_SERVED_PENALTY : Float := -3
+/-- The ride-time model when the relations know how many stations the line
+    calls at between the pair (#238): `pathKm / RIDE_RUN_KMH` hours of running,
+    `RIDE_STOP_MIN` per intermediate call, `RIDE_FIXED_MIN` once. Fitted
+    2026-09-29 to the 53 confirmed tube rides of the narratives (lower quartile,
+    because a window includes the platform wait by his convention), on the
+    along-track path this module measures: Metropolitan Wembley Park → Baker
+    Street 10.1 min (observed 9–10), Jubilee over the same pair 17.0 (observed
+    17). The flat `TUBE_SPEED_KMH` gave 20.1 and 20.7 — an all-stations average,
+    twice too slow for a line that runs non-stop, which is why the chain could
+    not tell those two lines apart. `lean/experiments/ride-time-fit.py`. -/
+def RIDE_RUN_KMH : Float := 86
+/-- The pass term (#238). A minute whose mean speed is at least
+    `PASS_MIN_KMH` cannot contain a call: braking from line speed, the shortest
+    dwell and pulling away already hold a minute's mean under 35 km/h. A
+    station inside the stretch that minute covered was therefore passed
+    without stopping. The stretch is the median fix ± half a minute's travel;
+    `PASS_SPAN_FRAC` of that half-width keeps inside it. The minute must sit in
+    a SUSTAINED run — it and both neighbours carry a fix at that speed: a phone
+    reacquiring after a tunnel computes its speed from the jump, and a single
+    fast minute between slow ones is that artefact (measured on the same day's
+    corpus: 56 km/h at Euston Square between 8 and 23, 57 at Great Portland
+    Street between 2 and 7 — each would have charged the Metropolitan for a
+    station it calls at). Each station the
+    candidate line CALLS AT between the pair and passed so costs
+    `PASS_PENALTY`, clamped at `PASS_CLAMP`. Measured 2026-09-29 on 05-20: the
+    Wembley Park → Baker Street ride runs through Neasden, Dollis Hill,
+    Willesden Green and Kilburn at 60–85 km/h and stops at Finchley Road — the
+    Metropolitan's pattern, not the Jubilee's, which timing alone could not
+    tell apart on the decoder's 13-minute leg. -/
+def PASS_MIN_KMH : Float := 50
+def PASS_SPAN_FRAC : Float := 0.6
+def PASS_PENALTY : Float := -2
+def PASS_CLAMP : Float := -6
+def RIDE_STOP_MIN : Float := 0.95
+def RIDE_FIXED_MIN : Float := 2
 /-- Shortest leg (minutes) the chain may re-line (#238). Below it the duration
     term cannot tell lines apart: its sigma floors at `DURATION_SIGMA_MIN`, so a
     leg shorter than two of those plus a stop fits a one- or two-stop hop on
@@ -295,8 +330,11 @@ def theilSen (pts : Array (Float × Float)) : Fit :=
     A boundary lost in a blackout means the ride extends past the observed
     window, so the term goes ONE-SIDED: a pair expecting LONGER than observed is
     consistent, only a pair expecting shorter contradicts. -/
-def durationPenalty (observedMin pathM : Float) (boundaryUnobserved : Bool) : Float :=
-  let expectedMin := (pathM / 1000 / TUBE_SPEED_KMH) * 60 + STOP_OVERHEAD_MIN
+def durationPenalty (observedMin pathM : Float) (boundaryUnobserved : Bool)
+    (stops : Option Nat := none) : Float :=
+  let expectedMin := match stops with
+    | some k => (pathM / 1000 / RIDE_RUN_KMH) * 60 + RIDE_STOP_MIN * k.toFloat + RIDE_FIXED_MIN
+    | none => (pathM / 1000 / TUBE_SPEED_KMH) * 60 + STOP_OVERHEAD_MIN
   let sigma := max DURATION_SIGMA_MIN (DURATION_SIGMA_FRAC * expectedMin)
   if boundaryUnobserved && expectedMin ≥ observedMin then 0
   else
@@ -308,6 +346,41 @@ structure InLegFix where
   lat : Float
   lon : Float
   deriving Inhabited
+
+/-- The pass term over a pair's intermediate calls; see `PASS_MIN_KMH`. `moving`
+    is the leg's minutes in order, `(lat, lon, mean km/h)` or `none` without a
+    fix. A call without coordinates asserts nothing. -/
+def passPenalty (moving : Array (Option (Float × Float × Float)))
+    (calls : Array Verified.Hsmm.ServedStations.RailStop) : Float :=
+  let fast : Nat → Bool := fun k => match moving[k]?.getD none with
+    | some (_, _, v) => decide (v ≥ PASS_MIN_KMH)
+    | none => false
+  let passed := calls.foldl (fun n st =>
+    match st.lat, st.lon with
+    | some la, some lo =>
+      if (List.range moving.size).any (fun k =>
+          decide (k > 0) && fast (k - 1) && fast (k + 1) &&
+          (match moving[k]?.getD none with
+            | some (mlat, mlon, v) =>
+              v ≥ PASS_MIN_KMH && haversineMeters mlat mlon la lo ≤ PASS_SPAN_FRAC * (v / 3.6) * 30
+            | none => false)) then n + 1 else n
+    | _, _ => n) 0
+  max PASS_CLAMP (PASS_PENALTY * passed.toFloat)
+
+-- A station the line calls at, passed at 60 km/h inside a three-minute run;
+-- the same minute alone (a reacquisition jump); a stop without coordinates.
+private def stopAt (lat lon : Float) : Verified.Hsmm.ServedStations.RailStop :=
+  { name := some "S", lat := some lat, lon := some lon }
+private def run3 : Array (Option (Float × Float × Float)) :=
+  #[some (51.500, -0.10, 60), some (51.505, -0.10, 60), some (51.510, -0.10, 60)]
+#guard passPenalty run3 #[stopAt 51.5051 (-0.10)] == PASS_PENALTY
+#guard passPenalty #[none, some (51.505, -0.10, 60), none] #[stopAt 51.5051 (-0.10)] == 0
+#guard passPenalty run3 #[{ name := some "S" }] == 0
+-- Slow minutes: a call, not a pass.
+#guard passPenalty (run3.map (·.map fun (a, b, _) => (a, b, 20))) #[stopAt 51.5051 (-0.10)] == 0
+-- Four passes clamp.
+#guard passPenalty run3 #[stopAt 51.5051 (-0.10), stopAt 51.5050 (-0.10),
+  stopAt 51.5052 (-0.10), stopAt 51.5049 (-0.10)] == PASS_CLAMP
 
 private def dwellZ (excessMin : Float) : Float :=
   if excessMin ≤ 0 then 0
@@ -682,6 +755,7 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
 /-- Build one resolvable leg: its candidates on both sides, and the cross product
     of pairs that survive the same-station and minimum-path filters. -/
 private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (Std.HashSet String))
+    (callsBetween : String → String → Option (Array Verified.Hsmm.ServedStations.RailStop))
     (segIndex : Nat) (seg : ChainSeg) (line : String) (firstIdx lastIdx : Nat) : ChainLeg :=
   let bAnchor := boardAnchor obs firstIdx seg.startTs
   let aAnchor := alightAnchor obs lastIdx seg.endTs
@@ -699,6 +773,9 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
         | none => acc
         | some gp => acc.push ⟨o.ts, gp.lat, gp.lon⟩) #[]
   let trackFixes := projectFixesToLine g line inLegFixes
+  let moving : Array (Option (Float × Float × Float)) :=
+    (List.range (lastIdx + 1 - firstIdx)).foldl (fun acc k =>
+      acc.push ((obs[firstIdx + k]?).bind fun o => o.gps.map fun gp => (gp.lat, gp.lon, gp.speedKmh))) #[]
   let boards := sideCandidates g line bAnchor
     (trajectoryAdmits g line trackFixes seg.startTs seg.endTs .board)
   let alights := sideCandidates g line aAnchor
@@ -719,19 +796,25 @@ private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (S
             { board := b, alight := a, line
               legScore := b.anchorPen + b.dwellPen + (b.trajPen.getD 0) + b.servedPen
                 + a.anchorPen + a.dwellPen + (a.trajPen.getD 0) + a.servedPen
-                + durationPenalty observedMin pathM boundaryUnobserved }) acc) #[]
+                + (let calls := match b.node.stationName, a.node.stationName with
+                      | some bn, some an => callsBetween bn an
+                      | _, _ => none
+                   durationPenalty observedMin pathM boundaryUnobserved (calls.map (·.size))
+                     + (calls.map (passPenalty moving)).getD 0) }) acc) #[]
   { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line }
 
 /-- `buildLegOn` for the decoded line, then for each alternative in order — the
     decoded line's pairs FIRST, so the first-wins argmax keeps it on a tie. -/
 private def buildLeg (g : ChainGraph) (obs : Array ObsRow)
-    (servedFor : String → Option (Std.HashSet String)) (segIndex : Nat) (seg : ChainSeg)
+    (servedFor : String → Option (Std.HashSet String))
+    (stopsFor : String → String → String → Option (Array Verified.Hsmm.ServedStations.RailStop))
+    (segIndex : Nat) (seg : ChainSeg)
     (line : String) (altLines : List String) (firstIdx lastIdx : Nat) : ChainLeg :=
-  let own := buildLegOn g obs (servedFor line) segIndex seg line firstIdx lastIdx
+  let own := buildLegOn g obs (servedFor line) (stopsFor line) segIndex seg line firstIdx lastIdx
   altLines.foldl (fun leg alt =>
     if alt == line then leg
     else { leg with pairs := leg.pairs ++
-      (buildLegOn g obs (servedFor alt) segIndex seg alt firstIdx lastIdx).pairs }) own
+      (buildLegOn g obs (servedFor alt) (stopsFor alt) segIndex seg alt firstIdx lastIdx).pairs }) own
 
 /-- Forward Viterbi over pairs. `best = 0` at the chain head is NOT a neutral
     element standing in for an empty max — it is the TS's own initialisation,
@@ -879,6 +962,10 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
     match railStopRelations with
     | none => none
     | some rels => servedStationSet rels line
+  let stopsFor := fun (line a b : String) =>
+    match railStopRelations with
+    | none => none
+    | some rels => Verified.Hsmm.ServedStations.intermediateCalls rels line a b
   let legs : Array ChainLeg := (segs.foldl (fun (acc : Array ChainLeg × Nat) seg =>
     let i := acc.2
     let skip := (acc.1, i + 1)
@@ -889,7 +976,7 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
         if line == "unknown_rail" then skip
         else match idxByTs.get? seg.startTs, idxByTs.get? (seg.endTs - 60) with
           | some firstIdx, some lastIdx =>
-            (acc.1.push (buildLeg g obs servedFor i seg line altLines firstIdx lastIdx), i + 1)
+            (acc.1.push (buildLeg g obs servedFor stopsFor i seg line altLines firstIdx lastIdx), i + 1)
           | _, _ => skip) (#[], 0)).1
   -- A leg with no valid pair stays unresolved AND breaks the chain: its
   -- neighbours must not hand over across an opaque ride.
