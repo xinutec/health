@@ -69,8 +69,15 @@ node - "$WORK/before.json" "$WORK/after.json" "$DAYS" <<'NODEEOF'
 // devShell ("tool 'python3' not found"), and `_devshell.sh` pins node anyway.
 const fs = require("node:fs");
 const [beforeP, afterP, days] = process.argv.slice(2);
-const before = JSON.parse(fs.readFileSync(beforeP, "utf8"));
-const after = JSON.parse(fs.readFileSync(afterP, "utf8"));
+// One JSON line per date, appended by every shard (see `VENUE_AB_OUT` in
+// tests/corpus/truth.rs) — merged here into date -> rows.
+const readLines = (p) => Object.fromEntries(
+	fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => {
+		const j = JSON.parse(l);
+		return [j.date, j.rows];
+	}));
+const before = readLines(beforeP);
+const after = readLines(afterP);
 const moved = [];
 let checked = 0;
 for (const date of Object.keys(before).sort()) {

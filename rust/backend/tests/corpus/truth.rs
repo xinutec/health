@@ -176,7 +176,6 @@ pub struct Truth {
     /// whose narrative is gone measured NOTHING, and to a floor gate that is
     /// indistinguishable from having lost everything (#408). Excluded by name.
     reported: BTreeSet<String>,
-    ab_rows: BTreeMap<String, Vec<Value>>,
     /// `TRUTH_ROWS_OUT`: every narrative row with its resolved window, one
     /// JSON line per date, APPENDED so the shards do not clobber each other.
     rows_out: Option<String>,
@@ -214,7 +213,6 @@ impl Truth {
             described: BTreeMap::new(),
             standing: BTreeMap::new(),
             reported: BTreeSet::new(),
-            ab_rows: BTreeMap::new(),
             rows_out: std::env::var("TRUTH_ROWS_OUT").ok(),
             failures: Vec::new(),
             report_only,
@@ -281,19 +279,26 @@ impl Truth {
             let line = format!("{}\n", json!({ "date": date, "rows": narrative.rows }));
             f.write_all(line.as_bytes()).expect("TRUTH_ROWS_OUT writes");
         }
-        // ⚠ ONE FILE PER PROCESS: the shards run in parallel and each writes
-        // the whole file at `finish`, so a run over several shards keeps only
-        // the last shard's days. For per-row verdicts over many days, run
-        // them one `CORPUS_DAYS` at a time (2026-09-29).
-        if std::env::var("VENUE_AB_OUT").is_ok() {
-            self.ab_rows.insert(
-                date.to_string(),
-                verdicts
-                    .iter()
-                    .zip(&narrative.starts)
-                    .map(|(v, ts)| json!([ts, v.as_str().unwrap_or("?")]))
-                    .collect::<Vec<_>>(),
-            );
+        // `VENUE_AB_OUT`: one JSON line per date, `{"date", "rows": [[ts, verdict]…]}`,
+        // APPENDED in one write like `TRUTH_ROWS_OUT`. It used to be one map
+        // written whole at `finish`, which four shards in one process
+        // overwrote in turn — `venue-prior-drift.sh` had been diffing the last
+        // shard's days only since the shards arrived (found 2026-09-29).
+        if let Ok(path) = std::env::var("VENUE_AB_OUT") {
+            use std::io::Write;
+            let rows = verdicts
+                .iter()
+                .zip(&narrative.starts)
+                .map(|(v, ts)| json!([ts, v.as_str().unwrap_or("?")]))
+                .collect::<Vec<_>>();
+            let line = format!("{}\n", json!({ "date": date, "rows": rows }));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .expect("VENUE_AB_OUT opens")
+                .write_all(line.as_bytes())
+                .expect("VENUE_AB_OUT writes");
         }
         // ⚠ WHY THIS DIAGNOSTIC EXISTS: a regressed row names what BROKE and
         // never what the pipeline said instead, so attributing one meant a hand
@@ -442,12 +447,7 @@ impl Truth {
             self.reported.len()
         );
         if let Ok(out) = std::env::var("VENUE_AB_OUT") {
-            std::fs::write(
-                &out,
-                serde_json::to_string_pretty(&self.ab_rows).expect("the A/B rows serialise"),
-            )
-            .expect("writing VENUE_AB_OUT");
-            eprintln!("truth: per-row verdicts -> {out}");
+            eprintln!("truth: per-row verdicts appended -> {out}");
         }
         if self.report_only {
             eprintln!(
