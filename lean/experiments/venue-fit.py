@@ -5,7 +5,7 @@ and /tmp/truth-rows.jsonl (TRUTH_ROWS_OUT from the corpus gate's truth grader).
 `grid` sweeps σ, the open-hours support, the base-rate clamp and the near-field radius.
 A Python copy of `rankVenues`; PARITY against the Lean pick is printed first and must be total
 before any number below it means anything (2026-09-28: 139/139)."""
-import json, re, math, sys, itertools, time, collections, os
+import json, re, math, sys, itertools, time, collections, os, glob
 
 VENUE_TYPES = {"amenity", "tourism", "shop"}
 PRIOR_TYPES = {"amenity", "tourism", "shop", "leisure"}
@@ -115,6 +115,103 @@ def pooled(mass, n, pseudo, dims):
     u = 1.0 / dims
     return math.log(((mass + pseudo * u) / (n + pseudo)) * dims)
 
+# ── Peer opening hours (2026-09-30) ────────────────────────────────────────────────
+# ~70% of venue POIs carry no opening_hours tag, so the hours term is silent for them —
+# a pub at 10:17 on a Sunday is as "open" as a café. The looked-up evidence is its
+# PEERS: the venues of the same subtype in the corpus's map rows that DO carry a tag.
+# For an untagged candidate the arm scores log E[exp(hoursScore)] over those peers
+# at the stay's local weekday and window — the expected likelihood, not a guessed table.
+DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+def _days(spec):
+    out = set()
+    for part in spec.split(','):
+        part = part.strip()
+        if '-' in part:
+            a, b = part.split('-', 1)
+            if a in DAYS and b in DAYS:
+                i, j = DAYS.index(a), DAYS.index(b)
+                k = i
+                while True:
+                    out.add(k)
+                    if k == j: break
+                    k = (k + 1) % 7
+        elif part in DAYS:
+            out.add(DAYS.index(part))
+    return out
+def _mins(t):
+    m = re.match(r'^(\d{1,2}):(\d{2})$', t.strip())
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+def parse_oh(txt):
+    """{weekday: [(from, to)]} minutes, or None outside the subset. Later rules override."""
+    txt = txt.strip()
+    if txt == '24/7': return {d: [(0, 1440)] for d in range(7)}
+    week = {}
+    for rule in txt.split(';'):
+        rule = rule.strip()
+        if not rule: continue
+        m = re.match(r'^((?:(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?\s*,?\s*)+)?\s*(.*)$', rule)
+        dayspec, rest = (m.group(1) or '').strip().rstrip(','), m.group(2).strip()
+        if rest.startswith('PH') or 'PH' in dayspec or re.search(r'[A-Za-z]{3,}', rest.replace('off', '').replace('closed', '')):
+            continue
+        days = _days(dayspec) if dayspec else set(range(7))
+        if not days: return None
+        if rest in ('off', 'closed'):
+            for d in days: week[d] = []
+            continue
+        spans = []
+        for sp in rest.split(','):
+            if '-' not in sp: return None
+            a, b = sp.split('-', 1)
+            b = b.rstrip('+')
+            fa, fb = _mins(a), _mins(b)
+            if fa is None or fb is None: return None
+            if fb <= fa: fb += 1440   # past midnight: open to the end of the day
+            spans.append((fa, min(fb, 1440)))
+        for d in days: week[d] = spans
+    return week if week else None
+def open_fraction(week, wd, a, b):
+    """Fraction of [a, b) (minutes of day `wd`, b may pass midnight) the week says open."""
+    total = 0; openm = 0
+    for m in range(a, b):
+        d, mm = (wd + m // 1440) % 7, m % 1440
+        total += 1
+        if any(f <= mm < t for f, t in week.get(d, [])): openm += 1
+    return openm / total if total else None
+_PEERS = None
+def peers():
+    global _PEERS
+    if _PEERS is None:
+        _PEERS = collections.defaultdict(list); seen = set()
+        for f in glob.glob(os.path.join(os.path.dirname(__file__), '../../tests/golden/days/*.json')):
+            fx = json.load(open(f))
+            for r in fx['inputs']['osmRowSet']['points']:
+                t = r.get('tags') or {}
+                sub = t.get('amenity') or t.get('shop') or t.get('tourism')
+                key = (r.get('name'), r.get('lat'), r.get('lon'))
+                if not sub or 'opening_hours' not in t or key in seen: continue
+                seen.add(key)
+                w = parse_oh(t['opening_hours'])
+                if w: _PEERS[sub].append(w)
+    return _PEERS
+PEER_MIN = 10
+_PH = {}
+def peer_hours(stay, sub, p):
+    key = (stay['s'], stay['e'], sub)
+    if key in _PH: return _PH[key]
+    ws = peers().get(sub, [])
+    val = None
+    if len(ws) >= PEER_MIN:
+        off_h = (stay['h'] - time.gmtime(stay['s']).tm_hour) % 24
+        loc = stay['s'] + off_h * 3600
+        lt = time.gmtime(loc)
+        a = lt.tm_hour * 60 + lt.tm_min
+        b = a + max(1, (stay['e'] - stay['s']) // 60)
+        wd = lt.tm_wday
+        lik = [math.exp(p.closed + open_fraction(w, wd, a, b) * (p.open_ - p.closed)) for w in ws]
+        val = math.log(sum(lik) / len(lik))
+    _PH[key] = val
+    return val
+
 def rank(stay, p):
     cands = []
     gpool, is_point = day_info(stay) if (p.global_pool or p.footprint or p.short_neutral) else (None, {})
@@ -148,6 +245,9 @@ def rank(stay, p):
         hours = None
         if c['of'] is not None:
             hours = p.closed + c['of'] * (p.open_ - p.closed)
+        elif getattr(p, 'peer_hours', 0) and isv:
+            ph = peer_hours(stay, c['st'], p)
+            if ph is not None: hours = p.peer_hours * ph
         total = dist + venue + (shape or 0.0) + (hours or 0.0)
         # NEAR_FIELD_MIN_NATS (2026-09-28): the veto goes only to a candidate whose own total is at least neutral.
         nf = isv and not c['rg'] and d_eff <= p.near and (hours is None or hours >= 0) and total >= p.nf_min
@@ -193,6 +293,14 @@ if __name__ == '__main__':
     right, wrong = evaluate(data, base)
     print(f"\nAS SHIPPED {base}: {right}/{len(data)} right")
     for w in wrong: print('   ✗', w)
+    if len(sys.argv) > 1 and sys.argv[1] == 'peerhours':
+        print('peers per subtype:', {k: len(v) for k, v in sorted(peers().items(), key=lambda kv: -len(kv[1]))[:12]})
+        for w in (0.0, 0.5, 1.0):
+            q = P(); q.peer_hours = w
+            r, wrong = evaluate(data, q)
+            print(f"peer hours × {w}: {r}/{len(data)} right")
+            for x in wrong: print('   ✗', x)
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == 'nfmin':
         for m in [0.5, 0.25, 0, -0.25, -0.5, -0.75, -1.0, -1.5]:
             r, w = evaluate(data, P(nf_min=m))
