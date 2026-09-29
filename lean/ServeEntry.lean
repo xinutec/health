@@ -1267,7 +1267,8 @@ private def assembleSegmentsResult (j : Json) : Json :=
                   { mode := s.mode, lineName := s.lineName
                   , startTs := s.startTs, endTs := s.endTs })
               let byIdx : Std.HashMap Nat Verified.Hsmm.StationChain.ResolvedStations :=
-                (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels).foldl
+                (Verified.Hsmm.StationChain.resolveStationChain g chainSegs c.obs rels
+                    Verified.Hsmm.Assemble.KNOWN_LINES).foldl
                   (fun m (i, res) => m.insert i res) {}
               pure (segs.mapIdx (fun i s =>
                 let base : List (String × Json) :=
@@ -1276,8 +1277,11 @@ private def assembleSegmentsResult (j : Json) : Json :=
                   , ("mode", Json.str s.mode)
                   , ("placeId", match s.placeId with
                       | none => Json.null | some p => Lean.toJson p)
-                  , ("lineName", match s.lineName with
-                      | none => Json.null | some l => Json.str l) ]
+                  -- The chain's line when it re-lined the leg (#238).
+                  , ("lineName", match (byIdx.get? i).bind (·.line), s.lineName with
+                      | some l, _ => Json.str l
+                      | none, none => Json.null
+                      | none, some l => Json.str l) ]
                 -- ⚠ ABSENT, NOT NULL, ON A SEGMENT THE RESOLVER DID NOT REACH.
                 -- The TypeScript ASSIGNS these two fields only at the indices
                 -- `resolveStationsServed` returned, and `JSON.stringify` omits an

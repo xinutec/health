@@ -242,6 +242,13 @@ def TRAJ_ADMIT_WINDOW_MIN : Float := 6
 def TRAJ_ADMIT_SPEED_M_PER_MIN : Float := 1000
 def DWELL_DISQUALIFY : Float := -3
 def NOT_SERVED_PENALTY : Float := -3
+/-- Shortest leg (minutes) the chain may re-line (#238). Below it the duration
+    term cannot tell lines apart: its sigma floors at `DURATION_SIGMA_MIN`, so a
+    leg shorter than two of those plus a stop fits a one- or two-stop hop on
+    any line through its station. Measured 2026-09-29: 05-15's Jubilee ride,
+    cut by the decoder into fragments of 3 and 2 minutes, re-lined to the
+    Bakerloo on each. -/
+def RELINE_MIN_MINUTES : Float := 2 * DURATION_SIGMA_MIN + 1
 
 inductive Side where
   | board
@@ -621,6 +628,10 @@ structure PairCandidate where
   board : SideEval
   alight : SideEval
   legScore : Float
+  /-- The line this pair rides. A leg carries pairs on its decoded line and,
+      when the caller offers alternatives, on every other line that connects
+      a board candidate to an alight candidate (#238). -/
+  line : String := ""
   deriving Inhabited, Repr
 
 structure ChainLeg where
@@ -628,11 +639,16 @@ structure ChainLeg where
   startTs : Int
   endTs : Int
   pairs : Array PairCandidate
+  /-- The line the decoder labelled this leg with. -/
+  decodedLine : String := ""
   deriving Inhabited, Repr
 
 structure ResolvedStations where
   board : Option String
   alight : Option String
+  /-- `some l` when the chain re-lines the leg: the best pair on `l` beats the
+      best on the decoded line by `MARGIN_NATS`. `none` keeps the decoded line. -/
+  line : Option String := none
   deriving Inhabited, Repr, BEq
 
 private def NEG_INF : Float := -1.0 / 0.0
@@ -665,7 +681,7 @@ private def evalSide (g : ChainGraph) (line : String) (served : Option (Std.Hash
 
 /-- Build one resolvable leg: its candidates on both sides, and the cross product
     of pairs that survive the same-station and minimum-path filters. -/
-private def buildLeg (g : ChainGraph) (obs : Array ObsRow) (served : Option (Std.HashSet String))
+private def buildLegOn (g : ChainGraph) (obs : Array ObsRow) (served : Option (Std.HashSet String))
     (segIndex : Nat) (seg : ChainSeg) (line : String) (firstIdx lastIdx : Nat) : ChainLeg :=
   let bAnchor := boardAnchor obs firstIdx seg.startTs
   let aAnchor := alightAnchor obs lastIdx seg.endTs
@@ -700,11 +716,22 @@ private def buildLeg (g : ChainGraph) (obs : Array ObsRow) (served : Option (Std
         | some pathM =>
           if pathM < MIN_PATH_M then acc
           else acc.push
-            { board := b, alight := a
+            { board := b, alight := a, line
               legScore := b.anchorPen + b.dwellPen + (b.trajPen.getD 0) + b.servedPen
                 + a.anchorPen + a.dwellPen + (a.trajPen.getD 0) + a.servedPen
                 + durationPenalty observedMin pathM boundaryUnobserved }) acc) #[]
-  { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs }
+  { segIndex, startTs := seg.startTs, endTs := seg.endTs, pairs, decodedLine := line }
+
+/-- `buildLegOn` for the decoded line, then for each alternative in order — the
+    decoded line's pairs FIRST, so the first-wins argmax keeps it on a tie. -/
+private def buildLeg (g : ChainGraph) (obs : Array ObsRow)
+    (servedFor : String → Option (Std.HashSet String)) (segIndex : Nat) (seg : ChainSeg)
+    (line : String) (altLines : List String) (firstIdx lastIdx : Nat) : ChainLeg :=
+  let own := buildLegOn g obs (servedFor line) segIndex seg line firstIdx lastIdx
+  altLines.foldl (fun leg alt =>
+    if alt == line then leg
+    else { leg with pairs := leg.pairs ++
+      (buildLegOn g obs (servedFor alt) segIndex seg alt firstIdx lastIdx).pairs }) own
 
 /-- Forward Viterbi over pairs. `best = 0` at the chain head is NOT a neutral
     element standing in for an empty max — it is the TS's own initialisation,
@@ -758,7 +785,7 @@ private def sidePlausible (s : SideEval) : Bool :=
   && s.dwellPen > DWELL_DISQUALIFY
 
 /-- Emit for one leg of a chain, given its max-marginals. -/
-private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × ResolvedStations) :=
+private def emitLegOn (leg : ChainLeg) (through : Array Float) : Option (Nat × ResolvedStations) :=
   match leg.pairs[0]? with
   | none => none
   | some p0 =>
@@ -785,6 +812,42 @@ private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × Re
     let alight := if clears bestAlt.2 && sidePlausible best.alight then best.alight.node.stationName else none
     if board.isNone && alight.isNone then none else some (leg.segIndex, { board, alight })
 
+/-- Emit for one leg: first its LINE, then its stations on that line.
+
+    The line is the best pair's when that pair beats every pair on the decoded
+    line by `MARGIN_NATS` (the same bar a station must clear), the leg lasts at
+    least `RELINE_MIN_MINUTES`, and on the new line at least one station
+    resolves; otherwise the decoded line stands. A re-line the chain cannot
+    place on its own line asserts nothing (06-09's evening leg, District with no
+    station, 2026-09-29). Stations are chosen among the chosen line's pairs
+    only, with their max-marginals, exactly as for a leg with one line. -/
+private def emitLeg (leg : ChainLeg) (through : Array Float) : Option (Nat × ResolvedStations) :=
+  let idx := List.range leg.pairs.size
+  let bestOf (keep : PairCandidate → Bool) : Option (Nat × Float) :=
+    idx.foldl (fun acc p =>
+      match leg.pairs[p]?, through[p]? with
+      | some pr, some t => if !keep pr then acc else (match acc with
+          | none => some (p, t)
+          | some (_, tb) => if t > tb then some (p, t) else acc)
+      | _, _ => acc) none
+  let decodedBest := bestOf (·.line == leg.decodedLine)
+  let longEnough := mins leg.endTs leg.startTs ≥ RELINE_MIN_MINUTES
+  let candidate : String := if !longEnough then leg.decodedLine else
+    match bestOf (fun _ => true), decodedBest with
+    | some (p, t), some (_, td) =>
+      let l := (leg.pairs[p]?.map (·.line)).getD leg.decodedLine
+      if l != leg.decodedLine && t - td ≥ MARGIN_NATS then l else leg.decodedLine
+    | some (p, _), none => (leg.pairs[p]?.map (·.line)).getD leg.decodedLine
+    | none, _ => leg.decodedLine
+  let on (l : String) : Option (Nat × ResolvedStations) :=
+    let keepIdx := idx.filter (fun p => (leg.pairs[p]?.map (·.line)) == some l)
+    emitLegOn { leg with pairs := (keepIdx.filterMap (leg.pairs[·]?)).toArray }
+      (keepIdx.filterMap (through[·]?)).toArray
+  if candidate == leg.decodedLine then on leg.decodedLine
+  else match on candidate with
+    | some (i, r) => some (i, { r with line := some candidate })
+    | none => on leg.decodedLine
+
 /--
 Resolve stations for every named-line train leg in `segs`.
 
@@ -792,13 +855,22 @@ Returns segment index → resolved pair, in segment order; a side that cannot be
 resolved confidently is `none`, and a leg with neither side resolved is absent
 entirely.
 
+`altLines` (#238, 2026-09-29): lines a leg may be re-lined to. Each leg then
+carries candidate pairs on every one of them that connects its two sides, the
+chain Viterbi runs over all of them, and the leg takes the best pair's line when
+it clears `MARGIN_NATS` over its decoded line (`emitLeg`). The decoder picks a
+ride's line minute by minute from proximity; this is where the ride's TIMING
+against each line's path, its anchors and the transfer to the next leg get a
+say. Empty = the decoded line only, the behaviour before.
+
 The TS memoises `servedStationSet`, `linePathMeters` and the footprint SSSP.
 Those caches are pure memoisation of pure functions, so omitting them is exact
 rather than approximate — they buy speed on a real day's cross product and
 carry no semantics.
 -/
 def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array ObsRow)
-    (railStopRelations : Option (Array RailStopRelation)) : Array (Nat × ResolvedStations) :=
+    (railStopRelations : Option (Array RailStopRelation))
+    (altLines : List String := []) : Array (Nat × ResolvedStations) :=
   if obs.isEmpty then #[] else
   -- Later duplicates win, as `Map.set` does.
   let idxByTs : Std.HashMap Int Nat :=
@@ -817,7 +889,7 @@ def resolveStationChain (g : ChainGraph) (segs : Array ChainSeg) (obs : Array Ob
         if line == "unknown_rail" then skip
         else match idxByTs.get? seg.startTs, idxByTs.get? (seg.endTs - 60) with
           | some firstIdx, some lastIdx =>
-            (acc.1.push (buildLeg g obs (servedFor line) i seg line firstIdx lastIdx), i + 1)
+            (acc.1.push (buildLeg g obs servedFor i seg line altLines firstIdx lastIdx), i + 1)
           | _, _ => skip) (#[], 0)).1
   -- A leg with no valid pair stays unresolved AND breaks the chain: its
   -- neighbours must not hand over across an opaque ride.
@@ -987,7 +1059,20 @@ private def cleanObs : Array ObsRow := #[
   ob 6 (some 0.03787970106354472), ob 7 (some 0.045455641276253664),
   ob 8 (some 0.053031581488962615), ob 9 (some 0.06060752170167155),
   ob 10 (some 0.06493663039464809), ob 11 (some 0.06493663039464809)]
-#guard run #[tseg 2 11] cleanObs == #[(0, ⟨some "Alpha", some "Delta"⟩)]
+#guard run #[tseg 2 11] cleanObs == #[(0, ⟨some "Alpha", some "Delta", none⟩)]
+
+-- Re-lining (#238). A leg decoded on a line with no track, offered the real one:
+-- the chain places it Alpha → Delta on Test Line and says so.
+private def ghost (a b : Nat) : ChainSeg :=
+  ⟨"train", some "Ghost Line", T0 + (a : Int) * 60, T0 + (b : Int) * 60⟩
+#guard resolveStationChain testGraph #[ghost 2 11] cleanObs none ["Test Line"]
+  == #[(0, ⟨some "Alpha", some "Delta", some "Test Line"⟩)]
+-- Offering a leg its own line changes nothing.
+#guard resolveStationChain testGraph #[tseg 2 11] cleanObs none ["Test Line"]
+  == run #[tseg 2 11] cleanObs
+-- Under `RELINE_MIN_MINUTES` the offer is declined: three minutes of ride fit a
+-- short hop on any line, so the decoded line stands (here: no pair, nothing).
+#guard resolveStationChain testGraph #[ghost 2 5] cleanObs none ["Test Line"] == #[]
 
 -- 2. Duration DECIDES. The alight anchor sits midway between Bravo and Charlie,
 --    750 m from each, so the anchor term is INDIFFERENT; one minute of staleness
@@ -997,7 +1082,7 @@ private def cleanObs : Array ObsRow := #[
 --    picks Bravo.
 private def durationObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0)] ++ dark 2 5 ++ #[ob 6 (some 0.032468315197324044)]
-#guard run #[tseg 2 5] durationObs == #[(0, ⟨some "Alpha", some "Bravo"⟩)]
+#guard run #[tseg 2 5] durationObs == #[(0, ⟨some "Alpha", some "Bravo", none⟩)]
 
 -- 3. Terminal dwell DISQUALIFIES. The fixes sit on Delta from minute 4 to the
 --    leg's end at 13 — the ride passed it mid-leg and stopped, which a real
@@ -1007,7 +1092,7 @@ private def dwellObs : Array ObsRow :=
   #[ob 0 (some 0), ob 1 (some 0),
     ob 2 (some 0.021645543464882695), ob 3 (some 0.04329108692976539)]
   ++ ((List.range 10).map (fun k => ob (4 + k) (some 0.06493663039464809))).toArray
-#guard run #[tseg 2 13] dwellObs == #[(0, ⟨some "Alpha", none⟩)]
+#guard run #[tseg 2 13] dwellObs == #[(0, ⟨some "Alpha", none, none⟩)]
 
 -- 4. No evidence at all: no in-leg fix, no anchor either side, no bookend. The
 --    leg has no admissible pair, so it is absent from the result entirely —
@@ -1022,7 +1107,7 @@ private def chainObs : Array ObsRow :=
   ++ #[ob 9 (some 0.04329108692976539), ob 10 (some 0.05411385866220674)]
   ++ dark 11 16 ++ #[ob 17 (some 0.08658217385953078)]
 #guard run #[tseg 2 8, tseg 11 17] chainObs
-  == #[(0, ⟨some "Alpha", some "Charlie"⟩), (1, ⟨some "Charlie", some "Echo"⟩)]
+  == #[(0, ⟨some "Alpha", some "Charlie", none⟩), (1, ⟨some "Charlie", some "Echo", none⟩)]
 
 -- 6. The same two legs, 13 minutes apart instead of 3: past CHAIN_GAP_MAX_S, so
 --    they are SEPARATE chains and no handover term crosses the gap. Leg 1's
@@ -1033,7 +1118,7 @@ private def splitObs : Array ObsRow :=
   ++ #[ob 20 (some 0.05411385866220674)] ++ dark 21 26
   ++ #[ob 27 (some 0.08658217385953078)]
 #guard run #[tseg 2 8, tseg 21 27] splitObs
-  == #[(0, ⟨some "Alpha", some "Charlie"⟩), (1, ⟨none, some "Echo"⟩)]
+  == #[(0, ⟨some "Alpha", some "Charlie", none⟩), (1, ⟨none, some "Echo", none⟩)]
 
 -- 7. Three ways to be out of scope, each on its own so no case can pass by
 --    satisfying a different guard than the one it names. All run the CLEAN
