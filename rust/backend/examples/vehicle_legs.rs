@@ -133,12 +133,19 @@ fn one(name: &str) -> Result<usize> {
     Ok(n)
 }
 
+/// Every vehicle leg the fold serves, per golden day.
+#[derive(clap::Parser)]
+struct Args {
+    /// one day's stem (or file); all days when absent
+    day: Option<String>,
+}
+
 fn main() -> Result<()> {
     if !std::path::Path::new(GOLDEN).exists() {
         eprintln!("vehicle_legs: no corpus at {GOLDEN}");
         std::process::exit(2);
     }
-    let arg = std::env::args().nth(1);
+    let Args { day: arg } = backend::argv::parse_or_exit();
     let mut names: Vec<String> = match &arg {
         Some(a) => vec![if a.ends_with(".json") {
             a.clone()

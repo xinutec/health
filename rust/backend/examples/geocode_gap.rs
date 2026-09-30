@@ -96,12 +96,15 @@ fn consumer(key: &str) -> &'static str {
     }
 }
 
+/// Which of a fixture's reverse geocodes the mirror cannot answer.
+#[derive(clap::Parser)]
+struct Args {
+    /// fixture.json
+    path: String,
+}
+
 fn main() -> Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_default();
-    if path.is_empty() {
-        eprintln!("usage: geocode_gap <fixture.json>");
-        std::process::exit(64);
-    }
+    let Args { path } = backend::argv::parse_or_exit();
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     let fx: serde_json::Value = serde_json::from_str(&text).context("the fixture parses")?;
     let inputs = &fx["inputs"];

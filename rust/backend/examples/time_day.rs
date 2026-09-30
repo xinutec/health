@@ -84,13 +84,23 @@ fn serve_only(path: &str, mode: &str) -> Result<()> {
     Ok(())
 }
 
+/// Time one golden day's fold, or serve prepared requests.
+#[derive(clap::Parser)]
+#[command(group(clap::ArgGroup::new("what").required(true).args(["serve_only", "serve_many", "name"])))]
+struct Args {
+    /// serve one request in a given mode
+    #[arg(long, num_args = 2, value_names = ["REQUEST", "MODE"])]
+    serve_only: Option<Vec<String>>,
+    /// fold several requests in ONE process
+    #[arg(long, num_args = 1..)]
+    serve_many: Option<Vec<String>>,
+    /// a golden day's stem, YYYY-MM-DD-user
+    name: Option<String>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).is_some_and(|a| a == "--serve-only") {
-        let (Some(path), Some(mode)) = (args.get(2), args.get(3)) else {
-            eprintln!("usage: time_day --serve-only <request.json> <mode>");
-            std::process::exit(64);
-        };
+    let args: Args = backend::argv::parse_or_exit();
+    if let Some([path, mode]) = args.serve_only.as_deref() {
         return serve_only(path, mode);
     }
     // ⚠ SEVERAL FOLDS IN ONE PROCESS — the question the pod's OOM turns on.
@@ -98,10 +108,10 @@ fn main() -> Result<()> {
     // if it ACCUMULATES, each fold adds and the second one is what dies. One
     // fold in isolation cannot tell those apart, and predicting it from a
     // single fold is how this was got wrong once already.
-    if args.get(1).is_some_and(|a| a == "--serve-many") {
+    if let Some(paths) = &args.serve_many {
         let rss0 = rss_mib();
         println!("RSS cold          {rss0:>8} MiB");
-        for (i, path) in args[2..].iter().enumerate() {
+        for (i, path) in paths.iter().enumerate() {
             let body = std::fs::read_to_string(path).context("reading the request")?;
             let wrapped = format!("{{\"mode\":\"day\",{}", &body[1..]);
             let before = rss_mib();
@@ -118,11 +128,7 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let name = std::env::args().nth(1).unwrap_or_default();
-    if name.is_empty() {
-        eprintln!("usage: cargo run --example time_day -- <YYYY-MM-DD-user>");
-        std::process::exit(64);
-    }
+    let name = args.name.unwrap_or_default();
     let path = format!("{GOLDEN}/{name}.json");
     if !std::path::Path::new(&path).exists() {
         eprintln!("no corpus at {path}");

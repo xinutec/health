@@ -88,9 +88,17 @@ fn show(rows: &[sqlx::mysql::MySqlRow]) {
 // symmetry the code does not have. The pairing is now stated by the OUTPUT —
 // both columns are counted on every run, including the dry one, so a column
 // left out is visible before anything is written rather than four days after.
+/// Repair sleep rows whose UTC instant disagrees with their wall clock.
+#[derive(clap::Parser)]
+struct Args {
+    /// write the repair; without it, report only
+    #[arg(long)]
+    write: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let write = std::env::args().any(|a| a == "--write");
+    let Args { write } = backend::argv::parse_or_exit();
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url()).await.context("connecting")?;
 

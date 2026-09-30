@@ -1,6 +1,6 @@
 //! The backend entrypoint.
 //!
-//! `backend <subcommand>` — run it with none for the list. The dispatch is
+//! `backend <subcommand>` — `backend --help` for the list (`argv.rs`). The dispatch is
 //! here; what each subcommand does lives under `cli/`, grouped by what it
 //! touches. The three that carry production:
 //!
@@ -46,122 +46,41 @@ async fn main() -> Result<()> {
     // nobody bounded. Refusing to start is the safe failure; limping is not.
     lean::init().context("starting the Lean runtime")?;
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let cmd = args.first().map(String::as_str).unwrap_or_default();
-    let flags = &args[args.len().min(1)..];
-    match cmd {
-        "check" => check().await,
-        "serve" => serve().await,
-        "sync" => {
-            // ⚠ An UNRECOGNISED flag is refused, never ignored. The one flag
-            // here selects whether durable backfill state is written, so a
-            // typo silently falling through to the full run is the one outcome
-            // this must not have.
-            let passes = match flags {
-                [] => fitbit::run::Passes::All,
-                [f] if f == "--forward-only" => fitbit::run::Passes::Forward,
-                _ => {
-                    eprintln!("usage: backend sync [--forward-only]");
-                    std::process::exit(64);
-                }
-            };
-            sync(passes).await
+    use backend::argv::Command as C;
+    match backend::argv::parse().command {
+        C::Check => check().await,
+        C::Serve => serve().await,
+        // ⚠ An unrecognised flag is refused (clap), never ignored: this one
+        // selects whether durable backfill state is written.
+        C::Sync { forward_only } => {
+            sync(if forward_only {
+                fitbit::run::Passes::Forward
+            } else {
+                fitbit::run::Passes::All
+            })
+            .await
         }
-        "inputs" => {
-            // ⚠ The tz is the DISPLAY tz and it is a separate thing from
-            // `home_tz`: it bounds the local day, and a fixture captured for a
-            // trip abroad carries the zone the day was LIVED in, not the one the
-            // profile stores. They coincide for a user at home, which is exactly
-            // why passing one for the other would go unnoticed.
-            let (user, date, tz) = match flags {
-                [user, date] => (user, date, None),
-                [user, date, tz] => (user, date, Some(tz.as_str())),
-                _ => {
-                    eprintln!("usage: backend inputs <user> <date> [display-tz]");
-                    std::process::exit(64);
-                }
-            };
-            inputs(user, date, tz).await
-        }
-        "head" => {
-            // Reads a golden fixture rather than the database on purpose: the
-            // head's oracle is the frozen `expected.tsArm.capture` sitting in
-            // the same file as the `inputs` it was computed from, so the whole
-            // chain is checkable with no DB, no network and no Node.
-            let [fixture] = flags else {
-                eprintln!("usage: backend head <fixture.json>");
-                std::process::exit(64);
-            };
-            head(fixture)
-        }
-        "day" => {
-            let [fixture] = flags else {
-                eprintln!("usage: backend day <fixture.json>");
-                std::process::exit(64);
-            };
-            day(fixture)
-        }
-        "velocity" => {
-            // ⚠ THE CLI MUST BE ABLE TO ASK FOR THE RAW ARM. `?walkMatch=0` is
-            // the map's A/B baseline, and without a way to reach it from here
-            // the only way to exercise it is a live session against the HTTP
-            // route — which is why it went unnoticed that the parameter reached
-            // nothing at all (#1619).
-            let rest: Vec<&String> = flags.iter().filter(|f| *f != "--no-walk-match").collect();
-            let walk_match = !flags.iter().any(|f| f == "--no-walk-match");
-            let (user, date, tz) = match rest.as_slice() {
-                [user, date] => (*user, *date, None),
-                [user, date, tz] => (*user, *date, Some(tz.as_str())),
-                _ => {
-                    eprintln!(
-                        "usage: backend velocity <user> <date> [display-tz] [--no-walk-match]"
-                    );
-                    std::process::exit(64);
-                }
-            };
-            velocity(user, date, tz, walk_match).await
-        }
-        "locations-check" => {
-            let [user, date] = flags else {
-                eprintln!("usage: backend locations-check <user> <date>");
-                std::process::exit(64);
-            };
-            locations_check(user, date).await
-        }
-        "mint-session" => {
-            let [user] = flags else {
-                eprintln!("usage: backend mint-session <user>");
-                std::process::exit(64);
-            };
-            mint_session(user).await
-        }
-        "drop-session" => {
-            let [cookie] = flags else {
-                eprintln!("usage: backend drop-session <cookie>");
-                std::process::exit(64);
-            };
-            drop_session(cookie).await
-        }
-        // Tier 2 of #982: the first CronJob logic to move off node. Mirrors
-        // `refresh-presence-log.ts`.
-        "refresh-presence-log" => {
-            // ⚠ The CronJob passes `90`; the TypeScript defaults to 30 when the
-            // argument is absent, and that default is part of the contract for
-            // anyone running it by hand.
-            let lookback: i64 = match flags {
-                [] => 30,
-                [n] => match n.parse::<i64>() {
-                    Ok(v) if v > 0 => v,
-                    _ => {
-                        eprintln!("refresh-presence-log: invalid lookback {n:?}");
-                        std::process::exit(2);
-                    }
-                },
-                _ => {
-                    eprintln!("usage: backend refresh-presence-log [lookback-days]");
-                    std::process::exit(64);
-                }
-            };
+        // ⚠ The tz is the DISPLAY tz and it is a separate thing from `home_tz`:
+        // it bounds the local day, and a fixture captured for a trip abroad
+        // carries the zone the day was LIVED in, not the one the profile stores.
+        C::Inputs(d) => inputs(&d.user, &d.date, d.display_tz.as_deref()).await,
+        // Reads a golden fixture rather than the database on purpose: the head's
+        // oracle is the frozen capture in the same file as its `inputs`.
+        C::Head { fixture } => head(&fixture),
+        C::Day { fixture } => day(&fixture),
+        // ⚠ THE CLI MUST BE ABLE TO ASK FOR THE RAW ARM. `?walkMatch=0` is the
+        // map's A/B baseline, and unreachable from here it went unnoticed that
+        // the parameter reached nothing at all (#1619).
+        C::Velocity {
+            day: d,
+            no_walk_match,
+        } => velocity(&d.user, &d.date, d.display_tz.as_deref(), !no_walk_match).await,
+        C::LocationsCheck { user, date } => locations_check(&user, &date).await,
+        C::MintSession { user } => mint_session(&user).await,
+        C::DropSession { cookie } => drop_session(&cookie).await,
+        // The CronJob passes `90`; the default of 30 is part of the contract for
+        // anyone running it by hand.
+        C::RefreshPresenceLog { lookback_days } => {
             // ⚠ `DbConfig::from_env`, NOT `Config::from_env`: this touches only
             // the database, and the batch CronJobs do not set the Fitbit
             // credentials the full config requires.
@@ -170,491 +89,141 @@ async fn main() -> Result<()> {
             let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
-            let r = refresh_presence_log(&pool, lookback).await;
+            let r = refresh_presence_log(&pool, lookback_days).await;
             pool.close().await;
             r
         }
-        // `refresh-focus-places.ts` — the weekly place miner.
-        //
-        //   backend refresh-focus-places                 all linked users, 180d
-        //   backend refresh-focus-places <user>          one user, 180d
-        //   backend refresh-focus-places <user> <days>   one user, explicit
-        //
-        // #343 P0 measurement flags (single user only — the files are per-user):
-        //   --hard-out <file>   also write the hard-gate priors blob to a file
-        //   --soft-out <file>   also mine the SOFT blob (`stayResponsibilities`
-        //                       → `minePriorsSoft`) to a file, printing the
-        //                       effective sample size beside the hard count
-        //   --dry               mine but skip the venue_type_priors and
-        //                       focus_places writes
-        "refresh-focus-places" => {
-            let mut soft_out: Option<String> = None;
-            let mut hard_out: Option<String> = None;
-            let mut dry = false;
-            let mut as_of: Option<chrono::DateTime<chrono::Utc>> = None;
-            let mut pos: Vec<&String> = Vec::new();
-            let mut it = flags.iter();
-            while let Some(f) = it.next() {
-                match f.as_str() {
-                    "--soft-out" | "--hard-out" => {
-                        let Some(path) = it.next() else {
-                            eprintln!("refresh-focus-places: {f} needs a path");
-                            std::process::exit(2);
-                        };
-                        if f == "--soft-out" {
-                            soft_out = Some(path.clone());
-                        } else {
-                            hard_out = Some(path.clone());
-                        }
-                    }
-                    "--dry" => dry = true,
-                    "--as-of" => {
-                        let Some(d) = it.next() else {
-                            eprintln!("refresh-focus-places: --as-of needs a YYYY-MM-DD");
-                            std::process::exit(2);
-                        };
-                        // End of that civil day in UTC, so the day itself is
-                        // inside the window rather than cut off at its start.
-                        match chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d") {
-                            Ok(nd) => {
-                                as_of = Some(
-                                    nd.and_hms_opt(23, 59, 59)
-                                        .expect("23:59:59 is a time")
-                                        .and_utc(),
-                                )
-                            }
-                            Err(e) => {
-                                eprintln!("refresh-focus-places: --as-of {d:?}: {e}");
-                                std::process::exit(2);
-                            }
-                        }
-                    }
-                    _ => pos.push(f),
-                }
-            }
-            let (user, lookback): (Option<&str>, i64) = match pos.as_slice() {
-                [] => (None, FOCUS_DEFAULT_LOOKBACK_DAYS),
-                [u] => (Some(u.as_str()), FOCUS_DEFAULT_LOOKBACK_DAYS),
-                [u, n] => match n.parse::<i64>() {
-                    Ok(v) if v > 0 => (Some(u.as_str()), v),
-                    _ => {
-                        eprintln!("refresh-focus-places: invalid lookback {n:?}");
-                        std::process::exit(2);
-                    }
-                },
-                _ => {
-                    eprintln!(
-                        "usage: backend refresh-focus-places [user] [lookback-days] \
-                         [--hard-out <file>] [--soft-out <file>] [--dry] \
-                         [--as-of YYYY-MM-DD]"
-                    );
-                    std::process::exit(64);
-                }
-            };
+        // The weekly place miner. `--hard-out`/`--soft-out`/`--dry` are #343's
+        // measurement flags, single user only (the files are per-user).
+        C::RefreshFocusPlaces {
+            user,
+            lookback_days,
+            hard_out,
+            soft_out,
+            dry,
+            as_of,
+        } => {
             let sinks = MineSinks {
                 soft_out,
                 hard_out,
                 dry,
-                as_of,
+                // End of that civil day in UTC, so the day itself is inside the
+                // window rather than cut off at its start.
+                as_of: as_of.map(|d| {
+                    d.and_hms_opt(23, 59, 59)
+                        .expect("23:59:59 is a time")
+                        .and_utc()
+                }),
             };
-            if sinks.active() && user.is_none() {
-                eprintln!(
-                    "refresh-focus-places: --hard-out/--soft-out/--dry need an explicit user"
-                );
-                std::process::exit(2);
-            }
-            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`. The full config
-            // demands FITBIT_CLIENT_ID and this pod does not set it — the focus
-            // CronJob's env is DB_* plus NC_CLIENT_ID/NC_CLIENT_SECRET and
-            // nothing else. Using the full config here failed in production on
-            // 2026-08-24 with "missing required env var FITBIT_CLIENT_ID",
-            // which is the SECOND time that has happened (see the note on
-            // `DbConfig::from_env`); the first cost twelve minutes of
-            // decode-day's work.
-            //
-            // The only thing this needs beyond the database is the Nextcloud
-            // base URL, and that is one `std::env::var` — the NC credentials
-            // are read from the database by `nextcloud::credentials`.
+            // ⚠ `DbConfig::from_env`, NOT `Config::from_env`. The focus
+            // CronJob's env is DB_* plus NC_CLIENT_ID/NC_CLIENT_SECRET; the full
+            // config failed in production on 2026-08-24 demanding
+            // FITBIT_CLIENT_ID, the second time that happened.
             let dbcfg =
                 backend::config::DbConfig::from_env().context("reading database configuration")?;
             let pool = db::connect(&dbcfg.url())
                 .await
                 .context("connecting to the database")?;
-            let r = refresh_focus_places(&pool, user, lookback, &sinks).await;
+            let r = refresh_focus_places(
+                &pool,
+                user.as_deref(),
+                lookback_days.unwrap_or(FOCUS_DEFAULT_LOOKBACK_DAYS),
+                &sinks,
+            )
+            .await;
             pool.close().await;
             r
         }
-        // `refresh-rail-routes.ts` — the nightly rail corridor miner.
-        "refresh-rail-routes" => {
-            let window: i64 = match flags {
-                [] => RAIL_DEFAULT_WINDOW_DAYS,
-                [n] => match n.parse::<i64>() {
-                    Ok(v) if v > 0 => v,
-                    _ => {
-                        eprintln!("refresh-rail-routes: invalid window {n:?}");
-                        std::process::exit(2);
-                    }
-                },
-                _ => {
-                    eprintln!("usage: backend refresh-rail-routes [window-days]");
-                    std::process::exit(64);
-                }
-            };
-            refresh_rail_routes(window).await
+        C::RefreshRailRoutes { window_days } => {
+            refresh_rail_routes(window_days.unwrap_or(RAIL_DEFAULT_WINDOW_DAYS)).await
         }
-        // `decode-day.ts` — the nightly HSMM decoder.
+        // The nightly HSMM decoder.
         //
-        //   backend decode-day                     all users, last 14 days
-        //   backend decode-day <user>              one user, last 14 days
-        //   backend decode-day <user> <days>       one user, explicit window
-        //   backend decode-day <user> <YYYY-MM-DD> one user, one day
-        //   … plus --dry-run anywhere              decode and print, write nothing
-        //
-        // ⚠ THE DATE IS POSITIONAL, not `--date <ymd>`: a numeric second
-        // argument is a day COUNT and anything else is a date. Nothing enforces
-        // the label, so a wrong one here misleads before anybody types.
+        // ⚠ THE DATE IS POSITIONAL: a numeric second argument is a day COUNT and
+        // anything else is a date.
         //
         // ⚠ `--dry-run` DECODES AND PRINTS, writing nothing. `decoded_days` is
         // keyed `(user_id, date)` and the write is an OVERWRITE, so a run made to
-        // check the port would destroy the node row it is being checked against.
-        // The two Overpass mirrors grew the same flag for the same reason.
-        "decode-day" => {
-            let dry_run = flags.iter().any(|f| f == "--dry-run");
-            let rest: Vec<&String> = flags.iter().filter(|f| *f != "--dry-run").collect();
-            let (user, dates, days): (Option<&str>, Vec<String>, Option<i64>) =
-                match rest.as_slice() {
-                    [] => (None, Vec::new(), None),
-                    [u] => (Some(u.as_str()), Vec::new(), None),
-                    [u, d] if d.parse::<i64>().is_ok() => {
-                        (Some(u.as_str()), Vec::new(), d.parse::<i64>().ok())
-                    }
-                    [u, d] => (Some(u.as_str()), vec![(*d).clone()], None),
-                    _ => {
-                        eprintln!("usage: backend decode-day [user] [days|YYYY-MM-DD] [--dry-run]");
-                        std::process::exit(64);
-                    }
-                };
-            decode_day(user, &dates, days, dry_run).await
-        }
-        // `refresh-rail-stops.ts` — the nightly rail-relation mirror.
-        //
-        //   backend refresh-rail-stops              mirror and rebuild the cache
-        //   backend refresh-rail-stops --dry-run    fetch and report, write nothing
-        // The deferred half of the geocode port (#1076): the serving path RECORDS
-        // what it could not answer, this FETCHES it. Never inline — a Nominatim
-        // round trip on the serving path is what this design exists to avoid.
-        "fetch-geocodes" => {
-            let mut dry = false;
-            let mut limit: i64 = 200;
-            let mut rest = flags.iter();
-            while let Some(f) = rest.next() {
-                match f.as_str() {
-                    "--dry-run" => dry = true,
-                    "--limit" => {
-                        limit = rest
-                            .next()
-                            .and_then(|v| v.parse().ok())
-                            .context("--limit takes a number")?;
-                    }
-                    _ => {
-                        eprintln!("usage: backend fetch-geocodes [--dry-run] [--limit N]");
-                        std::process::exit(64);
-                    }
-                }
-            }
-            fetch_geocodes(dry, limit).await
-        }
-        // The Overpass half of the same queue (#1658). The base OSM mirror had
-        // no writer at all until this: `osm_lines`, `osm_points` and
-        // `osm_coverage` were a dead snapshot of whatever the TypeScript left,
-        // so every place he went that it never fetched was blank permanently.
-        //
-        // ⚠ The default limit is LOWER than the geocode drain's 200. These are
-        // ~5 MB Overpass requests against a two-slot public endpoint, not
-        // one-second Nominatim points; the skip in `fetch_osm` means one box
-        // usually clears many keys, so a small number still drains a day.
-        "fetch-osm" => {
-            let mut dry = false;
-            let mut limit: i64 = 40;
-            let mut rest = flags.iter();
-            while let Some(f) = rest.next() {
-                match f.as_str() {
-                    "--dry-run" => dry = true,
-                    "--limit" => {
-                        limit = rest
-                            .next()
-                            .and_then(|v| v.parse().ok())
-                            .context("--limit takes a number")?;
-                    }
-                    _ => {
-                        eprintln!("usage: backend fetch-osm [--dry-run] [--limit N]");
-                        std::process::exit(64);
-                    }
-                }
-            }
-            fetch_osm(dry, limit).await
-        }
-        // #1071's instrument. Several days in ONE process, so the arena's
-        // high-water is visible; `velocity` restarts the process each time and
-        // therefore cannot see it.
-        "velocity-many" => {
-            let [user, dates @ ..] = flags else {
-                eprintln!("usage: backend velocity-many <user> <YYYY-MM-DD>...");
-                std::process::exit(64);
+        // check the port would destroy the row it is being checked against.
+        C::DecodeDay {
+            user,
+            when,
+            dry_run,
+        } => {
+            let (dates, days) = match when {
+                None => (Vec::new(), None),
+                Some(w) => match w.parse::<i64>() {
+                    Ok(n) => (Vec::new(), Some(n)),
+                    Err(_) => (vec![w], None),
+                },
             };
-            if dates.is_empty() {
-                eprintln!("usage: backend velocity-many <user> <YYYY-MM-DD>...  (>=1 date)");
-                std::process::exit(64);
-            }
-            velocity_many(user, dates).await
+            decode_day(user.as_deref(), &dates, days, dry_run).await
         }
-        "refresh-rail-stops" => match flags {
-            [] => refresh_rail_stops(false).await,
-            [f] if f == "--dry-run" => refresh_rail_stops(true).await,
-            _ => {
-                eprintln!("usage: backend refresh-rail-stops [--dry-run]");
-                std::process::exit(64);
-            }
-        },
-        // `refresh-bus-routes.ts` — the nightly bus-route mirror.
-        "refresh-bus-routes" => match flags {
-            [] => refresh_bus_routes(false).await,
-            [f] if f == "--dry-run" => refresh_bus_routes(true).await,
-            _ => {
-                eprintln!("usage: backend refresh-bus-routes [--dry-run]");
-                std::process::exit(64);
-            }
-        },
-        "rows-check" => {
-            let [user, since, date] = flags else {
-                eprintln!("usage: backend rows-check <user> <since-date> <date>");
-                std::process::exit(64);
-            };
+        // The deferred half of the geocode port (#1076): the serving path
+        // RECORDS what it could not answer, this FETCHES it. Never inline.
+        C::FetchGeocodes { dry_run, limit } => fetch_geocodes(dry_run, limit).await,
+        // The Overpass half of the same queue (#1658). ⚠ The default limit is
+        // LOWER than the geocode drain's: ~5 MB requests against a two-slot
+        // public endpoint, and one box usually clears many keys.
+        C::FetchOsm { dry_run, limit } => fetch_osm(dry_run, limit).await,
+        // #1071's instrument: several days in ONE process, so the arena's
+        // high-water is visible; `velocity` restarts the process each time.
+        C::VelocityMany { user, dates } => velocity_many(&user, &dates).await,
+        C::RefreshRailStops { dry_run } => refresh_rail_stops(dry_run).await,
+        C::RefreshBusRoutes { dry_run } => refresh_bus_routes(dry_run).await,
+        C::RowsCheck { user, since, date } => {
             let cfg = Config::from_env().context("reading configuration")?;
             let pool = db::connect(&cfg.db.url())
                 .await
                 .context("connecting to the database")?;
-            let r = backend::rows_check::run(&pool, user, since, date).await;
+            let r = backend::rows_check::run(&pool, &user, &since, &date).await;
             pool.close().await;
             r
         }
         // #1730: the decision line survives the pod.
-        "owntracks-log" => {
-            let (user, limit) = match flags {
-                [user] => (user, 200),
-                [user, n] => (
-                    user,
-                    n.parse()
-                        .with_context(|| format!("limit {n:?} is not a number"))?,
-                ),
-                _ => {
-                    eprintln!("usage: backend owntracks-log <user> [limit]");
-                    std::process::exit(64);
-                }
-            };
-            owntracks_log(user, limit).await
-        }
-        "google-probe" => backend::google::probe::run().await,
-        "coverage" => coverage().await,
+        C::OwntracksLog { user, limit } => owntracks_log(&user, limit).await,
+        C::GoogleProbe => backend::google::probe::run().await,
+        C::Coverage => coverage().await,
         // #1733: the case file's heart-rate pages read these through prod-db.sh.
-        "hr-trend" => match flags {
-            [a, from, boundary] if *a == "--averages" => hr_trend_averages(from, boundary).await,
-            [] => hr_trend("2026-06-03", false).await,
-            [since] if *since != "--json" => hr_trend(since, false).await,
-            [j] if *j == "--json" => hr_trend("2026-06-03", true).await,
-            [j, since] | [since, j] if *j == "--json" => hr_trend(since, true).await,
-            _ => {
-                eprintln!(
-                    "usage: backend hr-trend [--json] [SINCE] | --averages <FROM> <BOUNDARY>"
-                );
-                std::process::exit(64);
-            }
+        C::HrTrend {
+            json,
+            since,
+            averages,
+        } => match averages.as_deref() {
+            Some([from, boundary]) => hr_trend_averages(from, boundary).await,
+            _ => hr_trend(since.as_deref().unwrap_or("2026-06-03"), json).await,
         },
-        "hrv-history" => hrv_history().await,
-        "column-fill" => column_fill().await,
-        "zones-census" => zones_census().await,
-        "focus-audit" => focus_audit().await,
-        "venue-prior-snapshots" => {
-            let [user, out] = flags else {
-                eprintln!("usage: backend venue-prior-snapshots <user> <out-dir>");
-                std::process::exit(64);
-            };
-            venue_prior_snapshots(user, out).await
-        }
-        "tz-census" => tz_census().await,
-        "freshness" => freshness().await,
-        "google-compare" => google_compare().await,
-        "google-compare-hrv" => {
-            let days = match flags {
-                [] => 7,
-                [d] => d
-                    .parse()
-                    .with_context(|| format!("days {d:?} is not a number"))?,
-                _ => {
-                    eprintln!("usage: backend google-compare-hrv [days]");
-                    std::process::exit(64);
-                }
-            };
-            google_compare_hrv(days).await
-        }
-        "google-compare-zones" => {
-            let days = match flags {
-                [] => 7,
-                [d] => d
-                    .parse()
-                    .with_context(|| format!("days {d:?} is not a number"))?,
-                _ => {
-                    eprintln!("usage: backend google-compare-zones [days]");
-                    std::process::exit(64);
-                }
-            };
-            google_compare_zones(days).await
-        }
-        "google-compare-steps" => {
-            let days = match flags {
-                [] => 7,
-                [d] => d
-                    .parse()
-                    .with_context(|| format!("days {d:?} is not a number"))?,
-                _ => {
-                    eprintln!("usage: backend google-compare-steps [days]");
-                    std::process::exit(64);
-                }
-            };
-            google_compare_steps(days).await
-        }
-        "google-backfill-sleep" => {
-            let (days, write, allow_shrink) = match flags {
-                [d] => (d, false, false),
-                [d, w] if w == "--write" => (d, true, false),
-                [d, w, a] if w == "--write" && a == "--allow-shrink" => (d, true, true),
-                _ => {
-                    eprintln!(
-                        "usage: backend google-backfill-sleep <days> [--write [--allow-shrink]]"
-                    );
-                    std::process::exit(64);
-                }
-            };
-            let days = days
-                .parse()
-                .with_context(|| format!("days {days:?} is not a number"))?;
-            google_backfill_sleep(days, write, allow_shrink).await
-        }
-        "google-backfill-steps" => {
-            let (days, write) = match flags {
-                [d] => (d, false),
-                [d, w] if w == "--write" => (d, true),
-                _ => {
-                    eprintln!("usage: backend google-backfill-steps <days> [--write]");
-                    std::process::exit(64);
-                }
-            };
-            let days = days
-                .parse()
-                .with_context(|| format!("days {days:?} is not a number"))?;
-            google_backfill_steps(days, write).await
-        }
-        "google-compare-sleep" => {
-            let days = match flags {
-                [] => 7,
-                [d] => d
-                    .parse()
-                    .with_context(|| format!("days {d:?} is not a number"))?,
-                _ => {
-                    eprintln!("usage: backend google-compare-sleep [days]");
-                    std::process::exit(64);
-                }
-            };
-            google_compare_sleep(days).await
-        }
-        "google-compare-intraday" => {
-            let days = match flags {
-                [] => 7,
-                [d] => d
-                    .parse()
-                    .with_context(|| format!("days {d:?} is not a number"))?,
-                _ => {
-                    eprintln!("usage: backend google-compare-intraday [days]");
-                    std::process::exit(64);
-                }
-            };
-            google_compare_intraday(days).await
-        }
-        "mirror-check" => {
-            let [fixture] = flags else {
-                eprintln!("usage: backend mirror-check <fixture.json>");
-                std::process::exit(64);
-            };
-            mirror_check(fixture).await
-        }
+        C::HrvHistory => hrv_history().await,
+        C::ColumnFill => column_fill().await,
+        C::ZonesCensus => zones_census().await,
+        C::FocusAudit => focus_audit().await,
+        C::VenuePriorSnapshots { user, out_dir } => venue_prior_snapshots(&user, &out_dir).await,
+        C::TzCensus => tz_census().await,
+        C::Freshness => freshness().await,
+        C::GoogleCompare => google_compare().await,
+        C::GoogleCompareHrv { days } => google_compare_hrv(days).await,
+        C::GoogleCompareZones { days } => google_compare_zones(days).await,
+        C::GoogleCompareSteps { days } => google_compare_steps(days).await,
+        C::GoogleBackfillSleep {
+            days,
+            write,
+            allow_shrink,
+        } => google_backfill_sleep(days, write, allow_shrink).await,
+        C::GoogleBackfillSteps { days, write } => google_backfill_steps(days, write).await,
+        C::GoogleCompareSleep { days } => google_compare_sleep(days).await,
+        C::GoogleCompareIntraday { days } => google_compare_intraday(days).await,
+        C::MirrorCheck { fixture } => mirror_check(&fixture).await,
         // #1660: the golden-day writer.
-        "capture-day" => {
-            let (user, date, out, tz) = match flags {
-                [user, date, out] => (user, date, out, None),
-                [user, date, out, tz] => (user, date, out, Some(tz.as_str())),
-                _ => {
-                    eprintln!("usage: backend capture-day <user> <date> <out.json> [display-tz]");
-                    std::process::exit(64);
-                }
-            };
-            capture_day(user, date, tz, out).await
-        }
+        C::CaptureDay {
+            user,
+            date,
+            out,
+            display_tz,
+        } => capture_day(&user, &date, display_tz.as_deref(), &out).await,
         // #1714: the decoder's cost, apart from its model build.
-        "decode-bench" => {
-            let mut runs = 5usize;
-            let mut days = Vec::new();
-            let mut it = flags.iter();
-            while let Some(f) = it.next() {
-                if f == "--runs" {
-                    runs = it.next().and_then(|n| n.parse().ok()).unwrap_or_else(|| {
-                        eprintln!("usage: backend decode-bench [--runs N] [DAY…]");
-                        std::process::exit(64);
-                    });
-                } else {
-                    days.push(f.clone());
-                }
-            }
-            decode_bench(runs, &days)
-        }
-        sub @ ("day-live" | "day-mirror") => {
-            let (user, date, tz) = match flags {
-                [user, date] => (user, date, None),
-                [user, date, tz] => (user, date, Some(tz.as_str())),
-                _ => {
-                    eprintln!("usage: backend {sub} <user> <date> [display-tz]");
-                    std::process::exit(64);
-                }
-            };
-            day_live(user, date, tz, sub == "day-mirror").await
-        }
-        "" => {
-            // ⚠ EVERY DISPATCHED SUBCOMMAND, and `usage_lists_every_subcommand`
-            // fails if one is added without a line here. The list had drifted to
-            // 19 of 29 before that test existed — including four this file added
-            // in one day — and the README points a reader at this output, so an
-            // incomplete list is a wrong answer rather than a thin one.
-            eprintln!("usage: backend <subcommand> [args]\n");
-            for (name, args, what) in backend::SUBCOMMANDS {
-                eprintln!("  {name:<22}{args:<26}{what}");
-            }
-            std::process::exit(64);
-        }
-        other => {
-            // ⚠ RENDERED FROM `SUBCOMMANDS`, never spelled out here. A prose
-            // list rots: it omits the nightly `refresh-*` crons and
-            // `mint-session`, so a typo is answered with
-            // a list that denied half the CLI existed.
-            //
-            // `usage_lists_every_subcommand` guards the table against the match
-            // arms below, but it could not see a SECOND copy of the list. That
-            // is the same rot its own note describes ("the printed list had 19
-            // of 29"), surviving in the one place the fix did not reach.
-            eprintln!("backend: unknown subcommand {other:?} — expected one of:\n");
-            for (name, args, what) in backend::SUBCOMMANDS {
-                eprintln!("  {name:<22}{args:<26}{what}");
-            }
-            std::process::exit(64);
-        }
+        C::DecodeBench { runs, days } => decode_bench(runs, &days),
+        C::DayLive(d) => day_live(&d.user, &d.date, d.display_tz.as_deref(), false).await,
+        C::DayMirror(d) => day_live(&d.user, &d.date, d.display_tz.as_deref(), true).await,
     }
 }
 

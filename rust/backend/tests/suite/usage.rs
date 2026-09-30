@@ -1,96 +1,152 @@
-//! `backend` with no subcommand must list every subcommand it dispatches.
+//! `backend`'s command line (`backend::argv`).
 //!
-//! ⚠ THE LIST HAD DRIFTED TO 19 OF 29 before this existed, four of them added in
-//! a single day, while `README.md` told the reader to run it "with no subcommand
-//! for the list". An incomplete list is a WRONG answer rather than a thin one:
-//! it is the same shape as every other control retired this week, one that reads
-//! authoritative and is not.
-//!
-//! ⚠ IT READS THE SOURCE, deliberately. Comparing `SUBCOMMANDS` against a second
-//! hand-written list would test its own copy; the only thing that can contradict
-//! the table is the `match` that actually dispatches.
+//! The listing is clap's, rendered from the same enum the dispatch matches on,
+//! so the drift the old hand-kept table suffered (19 of 29 listed) cannot recur.
+//! What is left to pin is that every subcommand says what it does, and that the
+//! argv production actually runs still parses to what it meant.
 
-/// The match arms in `main.rs` that dispatch a subcommand.
-///
-/// Two shapes are dispatched and both are matched here: a plain `"name" =>` arm,
-/// and `sub @ ("day-live" | "day-mirror")`, which handles two at once.
-fn dispatched() -> std::collections::BTreeSet<String> {
-    let src = include_str!("../../src/main.rs");
-    // ⚠ BOUNDED TO THE DISPATCH `match`, not the whole file. An unbounded scan
-    // picked up `"bus" =>` from the Overpass mirror's mode match and reported it
-    // as an undocumented subcommand — the test's first run, and its own parser
-    // was the fault rather than the list. The arms of `match cmd` are the only
-    // ones at this indentation inside it.
-    let body = src
-        .split_once("\n    match cmd {")
-        .expect("main.rs dispatches on `match cmd`")
-        .1;
-    let mut out = std::collections::BTreeSet::new();
-    let mut depth = 0i32;
-    for line in body.lines() {
-        // Stop at the end of the match: the first line that closes back past it.
-        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
-        if depth < 0 {
-            break;
-        }
-        // Arms of THIS match sit at exactly two levels of indent.
-        if !line.starts_with("        ") || line.starts_with("         ") {
-            continue;
-        }
-        let t = line.trim();
-        // `"name" => …` — the arm shape. Excludes `"" =>`, the usage arm itself.
-        if let Some(rest) = t.strip_prefix('"')
-            && let Some((name, tail)) = rest.split_once('"')
-            && tail.trim_start().starts_with("=>")
-            && !name.is_empty()
-            && name.chars().all(|c| c.is_ascii_lowercase() || c == '-')
-        {
-            out.insert(name.to_string());
-        }
-        // `sub @ ("day-live" | "day-mirror") => …`
-        if t.starts_with("sub @ (") {
-            for part in t.split('"').skip(1).step_by(2) {
-                if part.chars().all(|c| c.is_ascii_lowercase() || c == '-') && !part.is_empty() {
-                    out.insert(part.to_string());
-                }
-            }
-        }
-    }
-    out
+use backend::argv::{Cli, Command};
+use clap::{CommandFactory, Parser};
+
+fn parse(argv: &[&str]) -> Result<Command, clap::Error> {
+    Cli::try_parse_from(std::iter::once("backend").chain(argv.iter().copied())).map(|c| c.command)
 }
 
 #[test]
-fn usage_lists_every_subcommand() {
-    let dispatched = dispatched();
-    assert!(
-        dispatched.len() > 20,
-        "the source scan found only {} arms — the parser has broken, not the list",
-        dispatched.len()
-    );
-    let listed: std::collections::BTreeSet<String> = backend::SUBCOMMANDS
-        .iter()
-        .map(|(name, _, _)| (*name).to_string())
-        .collect();
-
-    let undocumented: Vec<_> = dispatched.difference(&listed).collect();
-    assert!(
-        undocumented.is_empty(),
-        "dispatched but absent from SUBCOMMANDS, so `backend` with no argument \
-         would not name them: {undocumented:?}"
-    );
-    let phantom: Vec<_> = listed.difference(&dispatched).collect();
-    assert!(
-        phantom.is_empty(),
-        "listed in SUBCOMMANDS but not dispatched — the usage text offers something \
-         that does not run: {phantom:?}"
-    );
+fn the_definition_is_well_formed() {
+    Cli::command().debug_assert();
 }
 
-/// Every entry says what it does. A blank description is a line that looks like
-/// documentation and is not.
+/// A subcommand with no line in `--help` is undocumented, not just thin.
 #[test]
 fn every_subcommand_says_what_it_does() {
-    for (name, _, what) in backend::SUBCOMMANDS {
-        assert!(!what.trim().is_empty(), "{name} has no description");
+    for sub in Cli::command().get_subcommands() {
+        let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
+        assert!(
+            !about.trim().is_empty(),
+            "{} has no description",
+            sub.get_name()
+        );
     }
+}
+
+/// Every argv the cluster runs (the CronJobs and `health-auth`, read from the
+/// live namespace on 2026-09-30), parsed to what it meant before clap.
+#[test]
+fn every_production_argv_parses_as_it_did() {
+    assert!(matches!(parse(&["serve"]), Ok(Command::Serve)));
+    assert!(matches!(
+        parse(&["sync"]),
+        Ok(Command::Sync {
+            forward_only: false
+        })
+    ));
+    assert!(matches!(parse(&["freshness"]), Ok(Command::Freshness)));
+    assert!(matches!(
+        parse(&["refresh-bus-routes"]),
+        Ok(Command::RefreshBusRoutes { dry_run: false })
+    ));
+    assert!(matches!(
+        parse(&["refresh-rail-stops"]),
+        Ok(Command::RefreshRailStops { dry_run: false })
+    ));
+    assert!(matches!(
+        parse(&["refresh-rail-routes"]),
+        Ok(Command::RefreshRailRoutes { window_days: None })
+    ));
+    assert!(matches!(
+        parse(&["refresh-presence-log", "90"]),
+        Ok(Command::RefreshPresenceLog { lookback_days: 90 })
+    ));
+    assert!(matches!(
+        parse(&["fetch-geocodes", "--limit", "200"]),
+        Ok(Command::FetchGeocodes {
+            dry_run: false,
+            limit: 200
+        })
+    ));
+    match parse(&["refresh-focus-places"]) {
+        Ok(Command::RefreshFocusPlaces {
+            user: None,
+            lookback_days: None,
+            dry: false,
+            ..
+        }) => {}
+        other => panic!("refresh-focus-places: {other:?}"),
+    }
+    match parse(&["decode-day", "someone", "7"]) {
+        Ok(Command::DecodeDay {
+            user: Some(u),
+            when: Some(w),
+            dry_run: false,
+        }) => {
+            assert_eq!((u.as_str(), w.as_str()), ("someone", "7"));
+        }
+        other => panic!("decode-day: {other:?}"),
+    }
+    match parse(&["velocity-many", "someone", "2026-09-21", "2026-09-12"]) {
+        Ok(Command::VelocityMany { user, dates }) => {
+            assert_eq!(user, "someone");
+            assert_eq!(dates, ["2026-09-21", "2026-09-12"]);
+        }
+        other => panic!("velocity-many: {other:?}"),
+    }
+}
+
+/// The by-hand forms whose shape was irregular before clap.
+#[test]
+fn the_irregular_forms_keep_their_meaning() {
+    match parse(&["hr-trend", "--averages", "2026-06-01", "2026-07-01"]) {
+        Ok(Command::HrTrend {
+            json: false,
+            since: None,
+            averages: Some(a),
+        }) => {
+            assert_eq!(a, ["2026-06-01", "2026-07-01"]);
+        }
+        other => panic!("hr-trend --averages: {other:?}"),
+    }
+    assert!(matches!(
+        parse(&["hr-trend", "2026-06-10", "--json"]),
+        Ok(Command::HrTrend {
+            json: true,
+            since: Some(_),
+            averages: None
+        })
+    ));
+    assert!(matches!(
+        parse(&["velocity", "u", "2026-09-30", "--no-walk-match"]),
+        Ok(Command::Velocity {
+            no_walk_match: true,
+            ..
+        })
+    ));
+    assert!(matches!(
+        parse(&["day-mirror", "u", "2026-09-30"]),
+        Ok(Command::DayMirror(_))
+    ));
+    assert!(matches!(
+        parse(&["decode-bench", "--runs", "3", "2026-05-12"]),
+        Ok(Command::DecodeBench { runs: 3, .. })
+    ));
+}
+
+/// A typo is refused, never ignored: `sync`'s one flag decides whether durable
+/// backfill state is written, and the hand parser's reason for existing was
+/// that a misspelling must not fall through to the full run.
+#[test]
+fn what_it_cannot_parse_it_refuses() {
+    assert!(parse(&["sync", "--forwrd-only"]).is_err());
+    assert!(parse(&["refresh-presence-log", "0"]).is_err());
+    assert!(
+        parse(&["refresh-focus-places", "--dry"]).is_err(),
+        "sinks need a user"
+    );
+    assert!(parse(&["google-backfill-sleep", "7", "--allow-shrink"]).is_err());
+    assert!(parse(&["hr-trend", "--json", "--averages", "a", "b"]).is_err());
+    assert!(
+        parse(&["velocity-many", "someone"]).is_err(),
+        "at least one date"
+    );
+    assert!(parse(&["no-such-command"]).is_err());
 }

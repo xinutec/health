@@ -43,13 +43,22 @@ impl Bbox {
     }
 }
 
+/// How much of one day the mirror covers.
+#[derive(clap::Parser)]
+struct Args {
+    user: String,
+    date: String,
+    display_tz: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let (Some(user), Some(date)) = (args.get(1), args.get(2)) else {
-        eprintln!("usage: day_coverage <user> <date> [display-tz]");
-        std::process::exit(64);
-    };
+    let Args {
+        user,
+        date,
+        display_tz,
+    } = backend::argv::parse_or_exit();
+    let (user, date) = (&user, &date);
 
     // ⚠ The timezone helpers are Lean, so the runtime has to be up before the
     // first `date_bounds_utc` — the binary does this in `main`, an example must
@@ -62,7 +71,7 @@ async fn main() -> Result<()> {
     let home_tz = sync_state::get(&pool, user, "home_tz")
         .await?
         .unwrap_or_else(|| "Europe/Amsterdam".into());
-    let display_tz = args.get(3).map_or(home_tz.as_str(), String::as_str);
+    let display_tz = display_tz.as_deref().unwrap_or(home_tz.as_str());
     let bounds = backend::timezone::date_bounds_utc(date, Some(display_tz))
         .with_context(|| format!("bounding {date}"))?;
     let base_url = cfg

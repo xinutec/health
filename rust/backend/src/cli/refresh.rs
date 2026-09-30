@@ -39,12 +39,6 @@ pub(crate) struct MineSinks {
     pub(crate) as_of: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl MineSinks {
-    pub(crate) fn active(&self) -> bool {
-        self.soft_out.is_some() || self.hard_out.is_some() || self.dry
-    }
-}
-
 pub(crate) async fn refresh_focus_places(
     pool: &sqlx::MySqlPool,
     only_user: Option<&str>,

@@ -29,13 +29,23 @@ use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 use serde_json::{Value, json};
 
+/// Capture one day's OSM trace from the live database.
+#[derive(clap::Parser)]
+struct Args {
+    user: String,
+    date: String,
+    /// write here instead of stdout
+    out: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let (Some(user), Some(date)) = (args.get(1), args.get(2)) else {
-        eprintln!("usage: capture_trace <user> <date> [out.json]");
-        std::process::exit(64);
-    };
+    let Args {
+        user,
+        date,
+        out: out_path,
+    } = backend::argv::parse_or_exit();
+    let (user, date) = (&user, &date);
     backend::lean::init().context("starting the Lean runtime")?;
 
     let cfg = backend::config::Config::from_env().context("reading configuration")?;
@@ -347,7 +357,7 @@ async fn main() -> Result<()> {
         out["expected"]["statesOut"].as_array().map_or(0, Vec::len),
         backend::osm_trace::capture_inputs(),
     );
-    match args.get(3) {
+    match &out_path {
         Some(path) => {
             std::fs::write(path, serde_json::to_string(&out)?)?;
             eprintln!("wrote {path}");

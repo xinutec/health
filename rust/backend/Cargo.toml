@@ -101,6 +101,7 @@ tzf-rs = { version = "1.3.7", default-features = false, features = ["bundled"] }
 # `cargo update` breaks the build. A direct `=` pin is what cargo unifies the
 # transitive range with; lift it when tzf-rs releases against `-d`.
 tzf-dist = "=0.0.2026-c-fix1"
+clap = { version = "4.6.7", features = ["derive"] }
 
 [lints]
 workspace = true

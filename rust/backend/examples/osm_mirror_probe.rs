@@ -20,19 +20,30 @@
 //! queue holds; this reports what one fetch would yield. Neither touches the
 //! mirror, and this one does not even open the database.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use backend::osm_mirror;
 use std::collections::BTreeMap;
 
+/// One Overpass fetch the mirror would make, for a bucket around a point.
+#[derive(clap::Parser)]
+struct Args {
+    bucket: String,
+    #[arg(allow_hyphen_values = true)]
+    lat: f64,
+    #[arg(allow_hyphen_values = true)]
+    lon: f64,
+    radius_m: f64,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let [bucket, lat, lon, radius] = args.as_slice() else {
-        bail!("usage: osm_mirror_probe <bucket> <lat> <lon> <radius-m>");
-    };
-    let lat: f64 = lat.parse().context("lat is not a number")?;
-    let lon: f64 = lon.parse().context("lon is not a number")?;
-    let radius_m: f64 = radius.parse().context("radius is not a number")?;
+    let Args {
+        bucket,
+        lat,
+        lon,
+        radius_m,
+    } = backend::argv::parse_or_exit();
+    let bucket = bucket.as_str();
 
     let half_width_m = osm_mirror::half_width_for(bucket, radius_m)?;
     let bbox = osm_mirror::fetch_bbox_around(lat, lon, half_width_m);

@@ -26,12 +26,15 @@ use anyhow::{Context, Result};
 use backend::osm_trace::{Sections, TraceAnswerer};
 use backend::rowset_answerer::RowSetAnswerer;
 
+/// Print the day request a golden day builds.
+#[derive(clap::Parser)]
+struct Args {
+    /// a golden day's stem, YYYY-MM-DD-user
+    name: String,
+}
+
 fn main() -> Result<()> {
-    let name = std::env::args().nth(1).unwrap_or_default();
-    if name.is_empty() {
-        eprintln!("usage: dump_day_request <YYYY-MM-DD-user>   (a golden day's stem)");
-        std::process::exit(64);
-    }
+    let Args { name } = backend::argv::parse_or_exit();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
     let path = format!("{root}/{name}.json");
 

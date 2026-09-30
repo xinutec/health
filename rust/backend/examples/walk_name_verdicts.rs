@@ -22,7 +22,7 @@
 //! every overlapping walking leg, and whether the DOMINANT (largest-overlap)
 //! leg's `wayName` equals the truth's. Exit 2 when the corpus is absent.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
 /// `corpus::walk::named_walk_windows`, duplicated deliberately: an example cannot
@@ -69,12 +69,19 @@ fn named_walk_windows(date: &str, tz: &str) -> Result<Vec<(i64, i64, String)>> {
     Ok(out)
 }
 
+/// Grade a served timeline's walk names against a golden day's narrative.
+#[derive(clap::Parser)]
+struct Args {
+    /// a golden day's stem, YYYY-MM-DD-user
+    stem: String,
+    timeline_path: String,
+}
+
 fn main() -> Result<()> {
-    let stem = std::env::args().nth(1).unwrap_or_default();
-    let timeline_path = std::env::args().nth(2).unwrap_or_default();
-    if stem.is_empty() || timeline_path.is_empty() {
-        bail!("usage: walk_name_verdicts <YYYY-MM-DD-user> <timeline.json>");
-    }
+    let Args {
+        stem,
+        timeline_path,
+    } = backend::argv::parse_or_exit();
     let fixture_path = format!(
         "{}/../../tests/golden/days/{stem}.json",
         env!("CARGO_MANIFEST_DIR")

@@ -66,12 +66,28 @@ fn near(a: &Dwell, b: &Dwell) -> bool {
     (a.0 - b.0).abs() < 150
 }
 
+/// Run the classifier over a window of a golden day.
+#[derive(clap::Parser)]
+struct Args {
+    /// a golden day's stem
+    name: String,
+    /// HH:MM
+    #[arg(requires = "to")]
+    from: Option<String>,
+    /// HH:MM
+    to: Option<String>,
+    /// re-phase the grid N ways
+    #[arg(long)]
+    sweep: Option<usize>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(name) = args.first() else {
-        eprintln!("usage: classify_window <DAY> [FROM_HH:MM TO_HH:MM] [--sweep N]");
-        std::process::exit(64);
-    };
+    let Args {
+        name,
+        from,
+        to,
+        sweep,
+    } = backend::argv::parse_or_exit();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/days");
     let path = format!("{root}/{name}.json");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -97,12 +113,7 @@ fn main() -> Result<()> {
     // first gap: on 2026-06-24 a 123-minute gap (16:30:43 -> 18:33:48) anchors
     // the whole evening on the instant he left the house, and a day-wide sweep
     // moved nothing after it.
-    if let Some(n) = args
-        .iter()
-        .position(|a| a == "--sweep")
-        .and_then(|i| args.get(i + 1))
-    {
-        let n: usize = n.parse().context("--sweep takes a count")?;
+    if let Some(n) = sweep {
         let mut runs: Vec<Vec<backend::head::Smoothed>> = vec![Vec::new()];
         for p in &head.points {
             if let Some(last) = runs.last().and_then(|r| r.last())
@@ -149,7 +160,7 @@ fn main() -> Result<()> {
         .points
         .first()
         .map_or(0, |p| p.ts - p.ts.rem_euclid(86_400));
-    let (from, to) = match (args.get(1), args.get(2)) {
+    let (from, to) = match (&from, &to) {
         (Some(a), Some(b)) => (at(day_start, a)?, at(day_start, b)?),
         _ => (i64::MIN, i64::MAX),
     };
