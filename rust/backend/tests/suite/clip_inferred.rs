@@ -78,7 +78,9 @@ fn a_settled_day_round_trips_through_the_clip_unchanged() {
 fn state(start: i64, end: i64, inferred: Option<bool>) -> Value {
     json!({
         "startTs": start, "endTs": end, "mode": "stationary",
-        "place": "somewhere", "city": null, "placeSource": "ranked", "placeConfidence": 0.5,
+        // A source no naming rule produces: the table reads it as unknown, 0.5,
+        // so this fixture does not move when a measured rate does (#325).
+        "place": "somewhere", "city": null, "placeSource": "unmeasured", "placeConfidence": 0.5,
         "wayName": "a way", "asleep": false,
         "tz": "Europe/London", "minutesAsleep": 42,
         "inferred": inferred,
