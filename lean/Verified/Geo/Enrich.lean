@@ -142,6 +142,36 @@ structure Pt where
   lon : Float
   deriving Inhabited, BEq, Repr
 
+/-- A railway names a train leg only when it lies near at least half the leg's
+    sampled points (#238, 2026-09-30). The pick is the nearest railway merged
+    across the samples, so on a long ride that leaves the mapped network one
+    sample's railway named the whole leg: the Eurostar on 2026-09-30, 2 h 19 m
+    from St Pancras, read "Circle, Hammersmith & City and Metropolitan Lines" —
+    the tube under King's Cross, near its first sample only. A tube ride's
+    samples all sit on its line and keep their name; the unsupported name is
+    dropped, not replaced, and the leg stays a train. Any other pick passes. -/
+def railNameSupported (r : Verified.Geo.RefineMode.ModeRefinement) (wayResults : Array (Array NearbyWay)) :
+    Option String :=
+  match r.wayName with
+  | none => none
+  | some n =>
+    if r.mode != "train" then some n
+    else
+      let support := wayResults.foldl (fun c ws =>
+        if ws.any (fun w => w.type == "railway" && w.name == some n) then c + 1 else c) 0
+      if support * 2 ≥ wayResults.size then some n else none
+
+-- One sample in five near the named line: a long ride that left the mapped
+-- network keeps its train mode and loses the name. Three in five keep it; a
+-- non-train pick is not this rule's.
+private def rw (n : String) : NearbyWay := { type := "railway", subtype := "subway", name := some n }
+private def trainPick : Verified.Geo.RefineMode.ModeRefinement :=
+  { mode := "train", confidence := "high", reason := "on subway", wayName := some "Circle Line" }
+#guard railNameSupported trainPick #[#[rw "Circle Line"], #[], #[], #[], #[]] == none
+#guard railNameSupported trainPick
+  #[#[rw "Circle Line"], #[rw "Circle Line"], #[rw "Circle Line"], #[], #[]] == some "Circle Line"
+#guard railNameSupported { trainPick with mode := "driving" } #[#[], #[], #[]] == some "Circle Line"
+
 /-- Enrich one moving segment from its OWN geometry.
 
 `none` when the leg has no points. The TS's caller guards that case before
@@ -176,7 +206,8 @@ def enrichMovingSegment
   let last := segPoints[segPoints.size - 1]'(by omega)
   let startPlace := geocode (cityGrid first.lat) (cityGrid first.lon) CITY_ZOOM
   let endPlace := geocode (cityGrid last.lat) (cityGrid last.lon) CITY_ZOOM
-  let refined := refineModeLegacyCascade seg.mode seg.avgSpeed aggregated
+  let refined0 := refineModeLegacyCascade seg.mode seg.avgSpeed aggregated
+  let refined := { refined0 with wayName := railNameSupported refined0 wayResults }
   let plausible := rejectImplausibleDriving
     ({ mode := refined.mode, wayName := refined.wayName } : Plausible) seg.maxSpeed aggregated
   let movingCity := commonCity startPlace endPlace
