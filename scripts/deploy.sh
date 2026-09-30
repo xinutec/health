@@ -114,6 +114,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Every line carries the wall clock, and each step says how long the one before
+# it took, so a slow deploy shows where its time went. stderr is folded in so
+# the two streams stay in one timeline.
+exec > >(while IFS= read -r line; do printf '%(%H:%M:%S)T %s\n' -1 "$line"; done) 2>&1
+TS_PID=$!
+DEPLOY_T0=$SECONDS
+STEP_T0=$SECONDS
+STEP_NAME=""
+dur() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
+step() {
+	if [[ -n "$STEP_NAME" ]]; then
+		echo "    ${STEP_NAME} took $(dur $((SECONDS - STEP_T0)))"
+	fi
+	STEP_NAME="${1%% *}"
+	STEP_T0=$SECONDS
+	echo "==> $1"
+}
+
 # --- verify --------------------------------------------------------------
 # The Angular 22 frontend build needs Node >= 24.15; the flake devShell
 # pins it (24.18 at the current lock). Sourced per-command via `nix
@@ -147,7 +165,7 @@ dead_gates_banner() {
 
 cd "$HEALTH_DIR"
 if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
-	echo "==> [1/7] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
+	step "[1/7] the full gate: pnpm run verify:deploy (gate.json, corpus replay included)"
 	dead_gates_banner
 	DEAD_GATES=1
 	$DEV pnpm run verify:deploy
@@ -155,7 +173,7 @@ else
 	# ⚠ The COMMIT table only: everything but the corpus replay, the host/CLI
 	# equivalence, the mode-reachability pair and the sandboxed CLI build —
 	# `scripts/commit-table.sh` is the list. Announced here and again at the end.
-	echo "==> [1/7] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
+	step "[1/7] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
 	cat >&2 <<-BANNER
 
 	================================================================
@@ -173,7 +191,7 @@ fi
 
 
 # --- stage + commit ------------------------------------------------------
-echo "==> [2/7] staging changes"
+step "[2/7] staging changes"
 cd "$HEALTH_DIR"
 git add -A
 
@@ -184,16 +202,16 @@ git add -A
 # 5ef3517 walk fix sat committed and unshippable until this was fixed. Skip the
 # commit, deploy what HEAD already says.
 if git diff --cached --quiet; then
-	echo "==> [3/7] git commit — nothing staged; deploying the existing HEAD"
+	step "[3/7] git commit — nothing staged; deploying the existing HEAD"
 else
-	echo "==> [3/7] git commit (--no-verify: the hook's table is a subset of step 1)"
+	step "[3/7] git commit (--no-verify: the hook's table is a subset of step 1)"
 	git commit --no-verify -F "$MSG_FILE"
 fi
 
 COMMIT_SHA=$(git rev-parse HEAD)
 echo "    HEAD is now $COMMIT_SHA"
 
-echo "==> [4/7] git push origin main"
+step "[4/7] git push origin main"
 git push origin main
 
 # --- wait for CI ---------------------------------------------------------
@@ -202,7 +220,7 @@ git push origin main
 # still the freshest, and gh run watch on an already-completed run exits
 # in ~0 ms, which then rolls out the stale image. Poll until a run for
 # our specific SHA shows up (Actions usually queues within a few seconds).
-echo "==> [5/7] watching CI for $COMMIT_SHA"
+step "[5/7] watching CI for $COMMIT_SHA"
 cd "$HEALTH_DIR"
 RUN_ID=""
 for attempt in $(seq 1 30); do
@@ -245,7 +263,7 @@ if [[ $ci_status -ne 0 ]]; then
 fi
 
 # --- rollout -------------------------------------------------------------
-echo "==> [6/7] rollout on isis"
+step "[6/7] rollout on isis"
 ssh root@isis.xinutec.org \
 	'kubectl -n health rollout restart deploy/health-auth && kubectl -n health rollout status deploy/health-auth --timeout=180s'
 
@@ -258,7 +276,7 @@ ssh root@isis.xinutec.org \
 # prints the container's cgroup peak and OOM count. A fourteen-day browse
 # OOM-killed production twice on 2026-09-25 and nothing before that rollout could
 # have said so (#1071). The Job's OOM, if any, kills the Job, not the pod.
-echo "==> [7/7] memory smoke: the heaviest days under the serving limit"
+step "[7/7] memory smoke: the heaviest days under the serving limit"
 SMOKE_NAME="velocity-smoke-$(git rev-parse --short HEAD)-$(date +%H%M%S)"
 SMOKE_BUDGET_MIB=460   # 90% of the 512 MiB serving limit
 smoke_rc=0
@@ -307,4 +325,4 @@ if [[ -n "${SKIPPED_GOLDEN:-}" ]]; then
 	   The day gate, the golden corpus and the walk ratchet did NOT run.
 	BANNER
 fi
-echo "==> done."
+step "done in $(dur $((SECONDS - DEPLOY_T0)))"
