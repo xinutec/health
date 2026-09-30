@@ -19,21 +19,47 @@
 
 use serde_json::Value;
 
+/// How many ways the decoded days are split (2026-09-30, #1654). This test
+/// decoded its days one after another and was the SLOWEST test of the deploy
+/// gate's corpus row (~140 s against 50–85 s for the fold shards beside it), so
+/// it alone set that row's wall. Days are independent and each decode holds
+/// its own model; by index modulo, like `corpus_gate`'s shards.
+const SHARDS: usize = 4;
+
 #[test]
-fn every_frozen_decode_still_decodes() {
+fn every_frozen_decode_still_decodes_a() {
+    on_big_stack(0);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_b() {
+    on_big_stack(1);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_c() {
+    on_big_stack(2);
+}
+
+#[test]
+fn every_frozen_decode_still_decodes_d() {
+    on_big_stack(3);
+}
+
+fn on_big_stack(shard: usize) {
     // ⚠ The trellis decode of a full 1440-minute day overflows the 2 MiB
     // default test-thread stack; production decodes on the binary's main
     // thread. Same work, roomier stack.
     std::thread::Builder::new()
-        .name("hsmm-decode-corpus".into())
+        .name(format!("hsmm-decode-corpus-{shard}"))
         .stack_size(256 * 1024 * 1024)
-        .spawn(run_corpus)
+        .spawn(move || run_corpus(shard))
         .expect("spawn")
         .join()
         .expect("the corpus thread must not panic");
 }
 
-fn run_corpus() {
+fn run_corpus(shard: usize) {
     let Some(names) = backend::decode_fixture::fixture_names().expect("corpus dir readable") else {
         eprintln!(
             "SKIPPED: no golden corpus at {}; see this file's header.",
@@ -42,6 +68,12 @@ fn run_corpus() {
         return;
     };
     assert!(!names.is_empty(), "the decoded corpus is empty");
+    let names: Vec<String> = names
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % SHARDS == shard)
+        .map(|(_, n)| n)
+        .collect();
 
     let mut failures: Vec<String> = Vec::new();
     for name in &names {
@@ -158,7 +190,7 @@ fn run_corpus() {
     }
 
     eprintln!(
-        "{} decoded day(s) replayed, {} failure(s)",
+        "shard {shard}/{SHARDS}: {} decoded day(s) replayed, {} failure(s)",
         names.len(),
         failures.len()
     );

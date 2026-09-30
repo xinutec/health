@@ -648,7 +648,12 @@ impl Walk {
             );
         }
         let seen = self.graded + self.no_walk_capture.len();
-        if self.no_walk_capture.len() * 10 >= seen {
+        // A THIRD of the shard's days, not a tenth: the failure this catches is
+        // SYSTEMIC (the pass never asked, so most days draw raw), and a tenth
+        // was set when a shard held ~20 days. At six shards of ~7 days one
+        // day the capture genuinely lacks (08-12) is a seventh of a shard and
+        // tripped it with nothing wrong (#1654, 2026-09-30).
+        if self.no_walk_capture.len() * 3 > seen {
             out.push(format!(
                 "walks: {} of {seen} days have no walkable capture — the matcher is running on \
                  too little of the corpus for this gate to mean what it says",

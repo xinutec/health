@@ -53,12 +53,14 @@ const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/da
 
 /// How many ways the corpus is split.
 ///
-/// ⚠ FOUR, AND FOUR IS NOT ARBITRARY. This row's wall clock is its SLOWEST
-/// SINGLE TEST, not its total work — the shards run concurrently and the
-/// machine is not saturated during the replay (it is during the compile). At
-/// two shards the corpus was 21 days each, ~340 s, while `hsmm_decode_corpus`
-/// beside it took 244 s. Splitting to four puts the corpus at ~170 s, under
-/// that floor, so a fifth shard buys nothing until `hsmm` is the one that moves.
+/// ⚠ This row's wall clock is its SLOWEST SINGLE TEST, not its total work — the
+/// shards run concurrently beside `hsmm_decode_corpus`'s. Measured 2026-09-30
+/// (#1654): with the decoder replay split four ways (it had been one ~140 s
+/// test and the row's whole critical path), the row's slowest test fell to
+/// 76–90 s. Six fold shards against four, two alternating runs each: 84 and 76 s
+/// against 84 and 90 — within noise, since ten tests now share ten cores; six
+/// never lost. Six fold and four decode shards peak near 7.7 GB of 32.
+/// Re-measure before raising it: the row is CPU-bound now, not shard-bound.
 ///
 /// ⚠ It was stuck at two because two shards in one process CORRUPTED each
 /// other — the trace was a process global and the replays interleaved
@@ -66,9 +68,8 @@ const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/da
 /// scheduling choice rather than a correctness one.
 ///
 /// ⚠ The ceiling is MEMORY, not cores. The walk referee is ~1.6 GB per
-/// process, so four is ~6.4 GB of the 32 available, alongside the rest of the
-/// gate. Raise it only with that measured, not by taste.
-const SHARDS: usize = 4;
+/// process; measure the sum before adding shards, not by taste.
+const SHARDS: usize = 6;
 
 #[test]
 fn every_golden_day_grades_shard_a() {
@@ -88,6 +89,16 @@ fn every_golden_day_grades_shard_c() {
 #[test]
 fn every_golden_day_grades_shard_d() {
     run(3, SHARDS);
+}
+
+#[test]
+fn every_golden_day_grades_shard_e() {
+    run(4, SHARDS);
+}
+
+#[test]
+fn every_golden_day_grades_shard_f() {
+    run(5, SHARDS);
 }
 
 /// ⚠ TWO SHARDS IN ONE PROCESS USED TO REGRADE THE CORPUS SILENTLY (#1560).
