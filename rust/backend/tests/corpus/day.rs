@@ -133,7 +133,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     ("2026-04-29", 7),
     ("2026-04-30", 6),
     ("2026-05-11", 2),
-    ("2026-05-12", 2),
+    ("2026-05-12", 3),
     ("2026-05-14", 1),
     ("2026-05-15", 2),
     ("2026-05-18", 3),
@@ -170,7 +170,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     ("2026-08-09", 2),
     ("2026-08-13", 3),
     ("2026-09-06", 5),
-    ("2026-09-15", 2),
+    ("2026-09-15", 3),
     // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
     // mirror's ground in France and under the Channel.
     ("2026-09-30", 12),

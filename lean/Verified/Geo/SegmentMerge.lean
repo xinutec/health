@@ -561,7 +561,7 @@ def JITTER_STAY_MERGE_RADIUS_M : Float := 75
 /-- Index ranges `[start, end]` of adjacent stationary fragments that should
 collapse into one stay: every segment in the run is stationary, has a centroid,
 and sits within 75 m of the run's FIRST segment — the anchor, not its neighbour,
-so slow drift cannot chain a run across a city.
+so slow drift cannot chain a run across a city — or carries the anchor's name.
 
 The run must also contain at least one jitter-demoted leg. That guard is
 deliberate: it confines the pass to days where indoor GPS fragmented a sit, so
@@ -581,8 +581,12 @@ def planJitterStayRuns (segments : Array Seg) : Array (Nat × Nat) := Id.run do
           let next := segments[j + 1]
           match next.centroidLat, next.centroidLon with
           | some nLat, some nLon =>
+            -- A fragment NAMED as the anchor is the same stay however far its
+            -- centroid wandered; stopping there strands it for the phantom
+            -- swallow (2026-09-15's Work, once a jitter walk joined the run).
+            let sameNamed := anchor.place.isSome && next.place == anchor.place
             if effectiveMode next != "stationary"
-                || haversineMeters aLat aLon nLat nLon > JITTER_STAY_MERGE_RADIUS_M then
+                || (haversineMeters aLat aLon nLat nLon > JITTER_STAY_MERGE_RADIUS_M && !sameNamed) then
               break
             j := j + 1
           | _, _ => break
@@ -999,6 +1003,11 @@ private def jstay (a b : Int) (offsetM : Float) (jitter : Bool := false) : Seg :
 -- The merge radius from both sides (`> 75` breaks the run).
 #guard planJitterStayRuns #[jstay 0 600 0 true, jstayAt 600 1200 under75] == #[(0, 1)]
 #guard planJitterStayRuns #[jstay 0 600 0 true, jstayAt 600 1200 over75] == #[]
+-- A fragment named as the anchor joins however far its centroid sits (09-15's
+-- Work); an unnamed one past 75 m still ends the run.
+#guard planJitterStayRuns #[{ jstay 0 600 0 with place := some "Work" }, jstay 600 1200 20 true,
+  { jstay 1200 1800 200 with place := some "Work" }] == #[(0, 2)]
+#guard planJitterStayRuns #[jstay 0 600 0, jstay 600 1200 20 true, jstay 1200 1800 200] == #[(0, 1)]
 -- A moving segment, or a stay with no centroid, breaks the run.
 #guard planJitterStayRuns
   #[jstay 0 600 0 true, { blank with startTs := 600, endTs := 700, mode := "walking" }, jstay 700 1300 20 true] == #[]

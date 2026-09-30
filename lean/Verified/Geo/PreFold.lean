@@ -114,8 +114,14 @@ def applyBiometricSignature (hr steps : List (Int × Float)) (stats : List ModeS
              refinedReason := some s!"cycling demoted to {gMode} — no hard cycling evidence" }
   else if !rChanged then s
   else
+    -- A walk the body says was a sit is the GPS wandering: tagged, so the
+    -- jitter consolidation can rejoin the stays it split (2026-09-30).
     { s with refinedMode := some rMode
-             refinedReason := some s!"re-classified as {rMode} by biometric signature" }
+             refinedReason := some s!"re-classified as {rMode} by biometric signature"
+             refinedKinds :=
+               if currentMode == "walking" && rMode == "stationary" then
+                 Verified.Geo.SegmentMerge.addRefinedKind s.refinedKinds "gps-jitter"
+               else s.refinedKinds }
 
 /--
 `physicalConstraints` — the hard-impossibility override, whole.
@@ -201,6 +207,18 @@ private def seg : Seg :=
 #guard (applyBiometricSignature [] [] [] { seg with mode := "cycling" }).refinedMode == some "driving"
 #guard (applyBiometricSignature [] [] [] { seg with mode := "cycling" }).refinedReason
   == some "cycling demoted to driving — no hard cycling evidence"
+
+-- A walk the body scores as a sit is GPS jitter, and says so for the jitter
+-- consolidation (2026-09-30).
+private def sitStats : List ModeStats :=
+  [⟨"stationary", some 65, some 10, 100, some 0, some 5, 100, some 0.5, some 1, 100, 100⟩,
+   ⟨"walking", some 95, some 10, 100, some 105, some 10, 100, some 5, some 1, 100, 100⟩]
+private def driftWalk : Seg :=
+  { seg with mode := "walking", avgSpeed := 1.7, maxSpeed := 6 }
+#guard (applyBiometricSignature [(0, 64), (300, 66)] [(0, 2)] sitStats driftWalk).refinedMode
+  == some "stationary"
+#guard (applyBiometricSignature [(0, 64), (300, 66)] [(0, 2)] sitStats driftWalk).refinedKinds
+  == #["gps-jitter"]
 
 /-! ### `meanInWindow` -/
 
