@@ -1237,6 +1237,67 @@ pub async fn sync_heart_rate_zones(
     Ok(written)
 }
 
+/// Google's step intervals as one count per UTC minute, WATCH-FIRST, each
+/// carrying the wall clock it is filed under — and how many were unreadable.
+/// The key is the INSTANT, so one minute served under two offsets is one entry.
+pub fn merge_step_points(points: &[serde_json::Value]) -> (BTreeMap<String, (String, i64)>, usize) {
+    // Keyed by the UTC minute; the value carries the wall clock it is filed under.
+    let mut watch: BTreeMap<String, (String, i64)> = BTreeMap::new();
+    let mut phone: BTreeMap<String, (String, i64)> = BTreeMap::new();
+    let mut skipped = 0usize;
+    for pt in points {
+        let platform = pt
+            .pointer("/dataSource/platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        if platform != "FITBIT" {
+            continue;
+        }
+        let is_phone = pt
+            .pointer("/dataSource/device/displayName")
+            .and_then(|v| v.as_str())
+            .is_none_or(|d| d == "MobileTrack");
+        let Some(st) = pt.get("steps") else {
+            skipped += 1;
+            continue;
+        };
+        let (Some(count), Some(sp), Some(so)) = (
+            st.get("count").and_then(crate::google::health::numeric),
+            st.pointer("/interval/startTime").and_then(|v| v.as_str()),
+            st.pointer("/interval/startUtcOffset")
+                .and_then(|v| v.as_str()),
+        ) else {
+            skipped += 1;
+            continue;
+        };
+        let (Some(cs), Some(us)) = (
+            crate::google::health::wall_clock_from_physical(sp, so),
+            crate::google::health::rfc3339_to_utc_datetime(sp),
+        ) else {
+            skipped += 1;
+            continue;
+        };
+        let minute = format!("{}:00", &cs[..16]);
+        let instant = format!("{}:00", &us[..16]);
+        let c = count.round() as i64;
+        let m = if is_phone { &mut phone } else { &mut watch };
+        // Two same-source intervals in one minute keep the larger — a re-served
+        // correction, not an addition.
+        m.entry(instant)
+            .and_modify(|v| {
+                if c > v.1 {
+                    *v = (minute.clone(), c);
+                }
+            })
+            .or_insert((minute, c));
+    }
+    let mut merged = watch;
+    for (m, c) in phone {
+        merged.entry(m).or_insert(c);
+    }
+    (merged, skipped)
+}
+
 /// `steps_intraday` from Google's `steps` interval type, WATCH-FIRST per
 /// minute. (#260)
 ///
@@ -1263,11 +1324,24 @@ pub async fn sync_heart_rate_zones(
 /// ⚠ Zero-count minutes are not written — the stored series has never held
 /// zero rows, and a `(user_id, ts)` row saying 0 would read as measured
 /// stillness where the convention is absence.
+///
+/// # ⚠ THE INSTANT IS STORED, NOT ONLY THE WALL CLOCK
+///
+/// `ts` is the wall clock and the table's key, so the same minute served under
+/// two offsets lands as two rows. It happened crossing into Paris
+/// (2026-09-30): the walk was stored at 14:37 London and again at 15:37 once the
+/// watch took the new zone, and with `ts_utc` NULL the reader took both as
+/// London — a copy of the walk an hour late, stepping through a lie-down. So
+/// minutes are merged by INSTANT, each is written with its `ts_utc`, and a row
+/// already holding that instant under another wall clock is removed.
+///
+/// `days` widens the fetch past the high-water mark, for the backfill.
 pub async fn sync_steps_intraday(
     pool: &MySqlPool,
     http: &reqwest::Client,
     access_token: &str,
     user_id: &str,
+    days: Option<i64>,
 ) -> Result<usize> {
     let high: Option<String> =
         sqlx::query_scalar("SELECT CAST(MAX(ts) AS CHAR) FROM steps_intraday WHERE user_id = ?")
@@ -1275,15 +1349,18 @@ pub async fn sync_steps_intraday(
             .fetch_one(pool)
             .await
             .context("reading the steps_intraday high-water mark")?;
-    let since = match &high {
-        Some(ts) => {
+    let since = match (days, &high) {
+        (Some(days), _) => (chrono::Utc::now() - chrono::Duration::days(days))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        (None, Some(ts)) => {
             let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
                 .with_context(|| format!("unreadable steps high-water mark {ts:?}"))?;
             (parsed - chrono::Duration::days(1))
                 .format("%Y-%m-%dT%H:%M:%SZ")
                 .to_string()
         }
-        None => (chrono::Utc::now() - chrono::Duration::days(7))
+        (None, None) => (chrono::Utc::now() - chrono::Duration::days(7))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string(),
     };
@@ -1292,69 +1369,42 @@ pub async fn sync_steps_intraday(
         .await
         .context("fetching step intervals")?;
 
-    let mut watch: BTreeMap<String, i64> = BTreeMap::new();
-    let mut phone: BTreeMap<String, i64> = BTreeMap::new();
-    let mut skipped = 0usize;
-    for pt in &points {
-        let platform = pt
-            .pointer("/dataSource/platform")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        if platform != "FITBIT" {
-            continue;
-        }
-        let is_phone = pt
-            .pointer("/dataSource/device/displayName")
-            .and_then(|v| v.as_str())
-            .is_none_or(|d| d == "MobileTrack");
-        let Some(st) = pt.get("steps") else {
-            skipped += 1;
-            continue;
-        };
-        let (Some(count), Some(sp), Some(so)) = (
-            st.get("count").and_then(crate::google::health::numeric),
-            st.pointer("/interval/startTime").and_then(|v| v.as_str()),
-            st.pointer("/interval/startUtcOffset")
-                .and_then(|v| v.as_str()),
-        ) else {
-            skipped += 1;
-            continue;
-        };
-        let Some(cs) = crate::google::health::wall_clock_from_physical(sp, so) else {
-            skipped += 1;
-            continue;
-        };
-        let minute = format!("{}:00", &cs[..16]);
-        let c = count.round() as i64;
-        let m = if is_phone { &mut phone } else { &mut watch };
-        // Two same-source intervals in one minute keep the larger — a re-served
-        // correction, not an addition.
-        m.entry(minute)
-            .and_modify(|v| *v = (*v).max(c))
-            .or_insert(c);
-    }
-    let mut merged = watch;
-    for (m, c) in phone {
-        merged.entry(m).or_insert(c);
-    }
+    let (merged, skipped) = merge_step_points(&points);
 
+    // One transaction: the DELETE of a relabelled copy and the INSERT that
+    // replaces it land together or not at all.
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the steps transaction")?;
     let mut written = 0usize;
-    for (ts, steps) in &merged {
+    for (ts_utc, (ts, steps)) in &merged {
         if *steps <= 0 {
             continue;
         }
+        sqlx::query("DELETE FROM steps_intraday WHERE user_id = ? AND ts_utc = ? AND ts <> ?")
+            .bind(user_id)
+            .bind(ts_utc)
+            .bind(ts)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("removing a relabelled copy of {ts_utc}"))?;
         sqlx::query(
-            "INSERT INTO steps_intraday (user_id, ts, steps) VALUES (?, ?, ?) \
-             ON DUPLICATE KEY UPDATE steps=VALUES(steps)",
+            "INSERT INTO steps_intraday (user_id, ts, steps, ts_utc) VALUES (?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE steps=VALUES(steps), ts_utc=VALUES(ts_utc)",
         )
         .bind(user_id)
         .bind(ts)
         .bind(steps)
-        .execute(pool)
+        .bind(ts_utc)
+        .execute(&mut *tx)
         .await
         .with_context(|| format!("writing steps_intraday at {ts}"))?;
         written += 1;
     }
+    tx.commit()
+        .await
+        .context("committing the steps transaction")?;
     tracing::info!(
         "[{user_id}] google steps_intraday: {written} minute(s) from {} point(s), {skipped} unreadable",
         points.len()

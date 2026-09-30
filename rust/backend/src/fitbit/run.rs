@@ -321,7 +321,7 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
         }
     }
     if !crate::google::source::fitbit_still_owns("steps_intraday") {
-        match crate::google::sync::sync_steps_intraday(pool, http, &token, &user_id).await {
+        match crate::google::sync::sync_steps_intraday(pool, http, &token, &user_id, None).await {
             Ok(n) => tracing::info!("[{user_id}] google steps_intraday: {n} minute(s)"),
             Err(e) => tracing::error!("[{user_id}] google steps_intraday failed: {e:#}"),
         }

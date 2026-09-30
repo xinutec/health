@@ -910,6 +910,41 @@ pub(crate) async fn google_backfill_sleep(
     Ok(())
 }
 
+/// Re-fetch `days` of step minutes through the routine writer, so rows written
+/// before it stored instants get their `ts_utc` and a minute filed under two
+/// wall clocks keeps one.
+///
+/// ⚠ **DRY RUN UNLESS `--write`**, as the sleep backfill.
+pub(crate) async fn google_backfill_steps(days: i64, write: bool) -> Result<()> {
+    anyhow::ensure!(days > 0, "a backfill window must be at least a day");
+    let user_id = std::env::var("GH_USER_ID")
+        .context("GH_USER_ID names the Google-configured user and must be set")?;
+    if !write {
+        println!(
+            "DRY RUN — would re-fetch {days} day(s) of step minutes for {user_id} and upsert \
+             every one, with its instant, through the routine writer.\n\
+             Then apply:  backend google-backfill-steps {days} --write"
+        );
+        return Ok(());
+    }
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let n = backend::google::sync::sync_steps_intraday(&pool, &http, &token, &user_id, Some(days))
+        .await
+        .context("backfilling steps")?;
+    println!("backfilled {n} step minute(s) over {days} day(s) for {user_id}");
+    Ok(())
+}
+
 pub(crate) async fn google_compare_sleep(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
 

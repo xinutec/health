@@ -295,3 +295,40 @@ mod the_two_writers_partition_daily_activity {
         }
     }
 }
+
+/// One step minute served under two offsets — the watch's zone changed mid-day
+/// (London → Paris, 2026-09-30) — is ONE minute, at its instant.
+mod step_minutes {
+    use backend::google::sync::merge_step_points;
+    use serde_json::json;
+
+    fn point(device: &str, start: &str, offset: &str, count: i64) -> serde_json::Value {
+        json!({
+            "dataSource": {"platform": "FITBIT", "device": {"displayName": device}},
+            "steps": {"count": count, "interval": {"startTime": start, "startUtcOffset": offset}}
+        })
+    }
+
+    #[test]
+    fn a_minute_served_under_two_offsets_is_one_minute_at_its_instant() {
+        let (m, skipped) = merge_step_points(&[
+            point("Pixel Watch", "2026-09-30T13:50:00Z", "3600s", 90),
+            point("Pixel Watch", "2026-09-30T13:50:00Z", "7200s", 98),
+        ]);
+        assert_eq!(skipped, 0);
+        assert_eq!(m.len(), 1);
+        let (wall, steps) = &m["2026-09-30 13:50:00"];
+        assert_eq!((wall.as_str(), *steps), ("2026-09-30 15:50:00", 98));
+    }
+
+    #[test]
+    fn the_watch_wins_a_minute_the_phone_also_counted() {
+        let (m, _) = merge_step_points(&[
+            point("MobileTrack", "2026-09-30T13:50:00Z", "7200s", 40),
+            point("Pixel Watch", "2026-09-30T13:50:00Z", "7200s", 30),
+            point("MobileTrack", "2026-09-30T13:51:00Z", "7200s", 12),
+        ]);
+        assert_eq!(m["2026-09-30 13:50:00"].1, 30);
+        assert_eq!(m["2026-09-30 13:51:00"].1, 12);
+    }
+}

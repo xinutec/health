@@ -952,7 +952,11 @@ pub async fn biometrics(
         }
         steps.push((ts, num(r, "steps")?));
     }
+    // One minute per instant. A wall clock written under two offsets is two
+    // rows (the table keys on `ts`); the stable sort keeps the `ts_utc` row,
+    // pushed first, over a zone-less copy that resolves to the same instant.
     steps.sort_by_key(|&(ts, _)| ts);
+    steps.dedup_by_key(|&mut (ts, _)| ts);
 
     Ok(json!({
         "hr": hr.iter().map(|&(ts, bpm)| json!({"ts": ts, "bpm": bpm as i64})).collect::<Vec<_>>(),

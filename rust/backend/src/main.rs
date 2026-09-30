@@ -540,6 +540,20 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("days {days:?} is not a number"))?;
             google_backfill_sleep(days, write, allow_shrink).await
         }
+        "google-backfill-steps" => {
+            let (days, write) = match flags {
+                [d] => (d, false),
+                [d, w] if w == "--write" => (d, true),
+                _ => {
+                    eprintln!("usage: backend google-backfill-steps <days> [--write]");
+                    std::process::exit(64);
+                }
+            };
+            let days = days
+                .parse()
+                .with_context(|| format!("days {days:?} is not a number"))?;
+            google_backfill_steps(days, write).await
+        }
         "google-compare-sleep" => {
             let days = match flags {
                 [] => 7,

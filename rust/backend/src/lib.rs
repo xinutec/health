@@ -154,6 +154,11 @@ pub const SUBCOMMANDS: &[(&str, &str, &str)] = &[
         "re-fetch a wide sleep window through the routine writer (#1491)",
     ),
     (
+        "google-backfill-steps",
+        "<days> [--write]",
+        "re-fetch step minutes through the routine writer, storing each instant",
+    ),
+    (
         "google-compare-sleep",
         "[days]",
         "Google sleep sessions against sleep + sleep_stages (#260)",
