@@ -348,31 +348,61 @@ def chainPlaceBoard (edgesByLine : Std.HashMap String (List LineEdge))
     | none => none
   else none
 
-/-- `chainContext` with the pair's place-anchored boarding penalty handed in
-    (`chainPlaceBoard`); `chainContext` is this composition, so the two cannot
-    disagree. -/
-def chainContextFrom (edgesByLine : Std.HashMap String (List LineEdge))
-    (placeCoords : Std.HashMap Int (Float × Float))
-    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) (placeBoard : Option Float) : Float :=
+/-- What the chain term asks of one minute that does not depend on the pair
+    (#1774, 2026-09-30): the stay penalty from the minute's last fix to a place,
+    the fix-anchored boarding penalty for a line, and a ride head's nearest-line
+    boarding — each 0 without a previous fix. `chainMinute` computes them on
+    demand; the transition build tables them once per minute
+    (`chainMinuteTabled`) instead of once per pair per minute. -/
+structure ChainMinute where
+  stayAt : Int → Float
+  boardFixAt : String → Float
+  headFixAt : Float
+
+def chainMinute (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float)) (o : ObsRow) : ChainMinute :=
   let slopMinOf := fun (fx : Fix) => (max 0 (o.ts - fx.ts)).toNat.toFloat / 60
-  let stayPen := fun (placeId : Int) (fx : Fix) =>
-    match placeCoords.get? placeId with
-    | none => 0.0
-    | some (plat, plon) =>
-      ChainContext.stayPenalty (haversineMeters fx.lat fx.lon plat plon) (slopMinOf fx)
-  let boardAt := fun (lat lon slopMin : Float) (lineEdges : List LineEdge) =>
-    ChainContext.boardingPenalty (minDistToLineM lat lon lineEdges) slopMin
-  if toS.mode == .stationary then
-    match o.prevGpsFix, toS.placeId with
-    | some fx, some pid => stayPen pid fx
-    | _, _ => 0.0
-  else
-    let leaveTerm := match o.prevGpsFix with
-      | some fx =>
-        if fromS.mode == .stationary && isMovingMode toS.mode then
-          match fromS.placeId with | some pid => stayPen pid fx | none => 0.0
-        else 0.0
+  { stayAt := fun pid => match o.prevGpsFix with
       | none => 0.0
+      | some fx => match placeCoords.get? pid with
+        | none => 0.0
+        | some (plat, plon) =>
+          ChainContext.stayPenalty (haversineMeters fx.lat fx.lon plat plon) (slopMinOf fx)
+    boardFixAt := fun line => match o.prevGpsFix, edgesByLine.get? line with
+      | some fx, some lineEdges =>
+        ChainContext.boardingPenalty (minDistToLineM fx.lat fx.lon lineEdges) (slopMinOf fx)
+      | _, _ => 0.0
+    headFixAt := match o.prevGpsFix with
+      | some fx => (nearestLineBoarding edgesByLine fx.lat fx.lon (slopMinOf fx)).getD 0.0
+      | none => 0.0 }
+
+/-- `chainMinute` with its place and line answers computed once, for `places`
+    and `lines`; anything else falls through to the on-demand answer. -/
+def chainMinuteTabled (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float)) (places : List Int) (lines : List String)
+    (withHead : Bool) (o : ObsRow) : ChainMinute :=
+  let cm := chainMinute edgesByLine placeCoords o
+  let stays : Std.HashMap Int Float := places.foldl (fun m pid => m.insert pid (cm.stayAt pid)) {}
+  let boards : Std.HashMap String Float := lines.foldl (fun m l => m.insert l (cm.boardFixAt l)) {}
+  let head := if withHead then cm.headFixAt else 0.0
+  { stayAt := fun pid => (stays.get? pid).getD (cm.stayAt pid)
+    boardFixAt := fun l => (boards.get? l).getD (cm.boardFixAt l)
+    headFixAt := if withHead then head else cm.headFixAt }
+
+/-- The chain term given its minute's `ChainMinute` and the pair's
+    place-anchored boarding penalty (`chainPlaceBoard`). -/
+def chainContextWith (edgesByLine : Std.HashMap String (List LineEdge))
+    (fromS toS : State) (isTrainCovered : Bool) (placeBoard : Option Float)
+    (cm : ChainMinute) : Float :=
+  if toS.mode == .stationary then
+    match toS.placeId with
+    | some pid => cm.stayAt pid
+    | none => 0.0
+  else
+    let leaveTerm :=
+      if fromS.mode == .stationary && isMovingMode toS.mode then
+        match fromS.placeId with | some pid => cm.stayAt pid | none => 0.0
+      else 0.0
     let boardTerm :=
       if toS.mode == .train then
         match toS.lineName with
@@ -382,22 +412,27 @@ def chainContextFrom (edgesByLine : Std.HashMap String (List LineEdge))
             if isTrainCovered then 0.0
             else match placeBoard with
               | some pb => pb
-              | none => match o.prevGpsFix with
-                | some fx => (nearestLineBoarding edgesByLine fx.lat fx.lon (slopMinOf fx)).getD 0.0
-                | none => 0.0
+              | none => cm.headFixAt
           else if Verified.Hsmm.Emissions.isPlaceholderLine line then 0.0
           else match edgesByLine.get? line with
             | none => 0.0
-            | some lineEdges =>
+            | some _ =>
               if isTrainCovered then 0.0
               else match placeBoard with
                 | some pb => pb                                                       -- place anchor
-                | none => match o.prevGpsFix with                                     -- else fix anchor
-                  | some fx => boardAt fx.lat fx.lon (slopMinOf fx) lineEdges
-                  | none => 0.0
+                | none => cm.boardFixAt line                                          -- else fix anchor
         | none => 0.0
       else 0.0
     leaveTerm + boardTerm
+
+/-- `chainContext` with the pair's place-anchored boarding penalty handed in
+    (`chainPlaceBoard`); `chainContext` is this composition, so the two cannot
+    disagree. -/
+def chainContextFrom (edgesByLine : Std.HashMap String (List LineEdge))
+    (placeCoords : Std.HashMap Int (Float × Float))
+    (fromS toS : State) (o : ObsRow) (isTrainCovered : Bool) (placeBoard : Option Float) : Float :=
+  chainContextWith edgesByLine fromS toS isTrainCovered placeBoard
+    (chainMinute edgesByLine placeCoords o)
 
 /-- `buildChainContext`'s per-transition verdict, with the fix↔place and
     anchor↔track distances computed in Lean. `placeCoords` (focus-place

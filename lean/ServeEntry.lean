@@ -976,6 +976,17 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
     || (dst.mode == .train && (match dst.lineName with | some l => l != "unknown_rail" | none => false))
   let mut ovPairs : Array (Nat × Nat) := #[]
   let mut transRows : Array (Array Nat) := #[]
+  -- What the chain term asks of each minute regardless of the pair — a fix's
+  -- stay penalty to each place, its boarding penalty to each line — tabled once
+  -- per minute rather than once per pair per minute (#1774, 2026-09-30).
+  let placeIds := c.placeCoords.toList.map (·.1)
+  let lineNames := c.edgesByLine.toList.map (·.1)
+  let withHead := c.states.any Verified.Hsmm.Emissions.isRideHead
+  let minutes : Array (Verified.Hsmm.RouteModel.ChainMinute × Bool) :=
+    if c.chainOn then c.obs.map fun o =>
+      (Verified.Hsmm.RouteModel.chainMinuteTabled c.edgesByLine c.placeCoords placeIds lineNames withHead o,
+       Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts)
+    else #[]
   if c.chainOn then
     for ((src, ws), a) in weighted do
       for ((dst, _), b) in weighted do
@@ -985,9 +996,8 @@ private def buildTransitions (c : Verified.Hsmm.Assemble.ModelContext) (T S : Na
           -- only what depends on it (`chainContext` is this composition, #1774).
           let pb := Verified.Hsmm.RouteModel.chainPlaceBoard c.edgesByLine c.placeCoords src dst
           let mut rowr : Array Nat := Array.replicate T 0
-          for (o, t) in c.obs.zipIdx do
-            let cv := Verified.Hsmm.RouteModel.chainContextFrom c.edgesByLine c.placeCoords src dst o
-              (Verified.Hsmm.TrainCandidates.isCovered c.coverage o.ts) pb
+          for ((cm, covered), t) in minutes.zipIdx do
+            let cv := Verified.Hsmm.RouteModel.chainContextWith c.edgesByLine src dst covered pb cm
             rowr := rowr.set! t (← encScore pOB (quant (base + cv)))
           ovPairs := ovPairs.push (a, b)
           transRows := transRows.push rowr
