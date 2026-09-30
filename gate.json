@@ -304,31 +304,6 @@
     },
     {
       "argv": [
-        "nix",
-        "build",
-        "--no-warn-dirty",
-        "--no-link",
-        ".#verified-cli"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "name": "the verified CLI packages (what the production image consumes)",
-      "timeout_s": 3600
-    },
-    {
-      "argv": [
-        "scripts/vendor-hash-check.sh"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "lane": "nix",
-      "name": "the cargo vendor hash matches rust/Cargo.lock",
-      "timeout_s": 1800
-    },
-    {
-      "argv": [
         "scripts/rules-live-in-lean.sh"
       ],
       "artifacts": [],

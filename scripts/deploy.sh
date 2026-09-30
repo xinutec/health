@@ -171,7 +171,7 @@ if [[ -z "${DEPLOY_SKIP_GOLDEN:-}" ]]; then
 	$DEV pnpm run verify:deploy
 else
 	# ⚠ The COMMIT table only: everything but the corpus replay, the host/CLI
-	# equivalence, the mode-reachability pair and the sandboxed CLI build —
+	# equivalence and the mode-reachability pair —
 	# `scripts/commit-table.sh` is the list. Announced here and again at the end.
 	step "[1/7] the commit gate ONLY: pnpm run verify (gate-commit.json) — replay SKIPPED"
 	cat >&2 <<-BANNER
@@ -181,7 +181,7 @@ else
 	  reason: ${DEPLOY_SKIP_GOLDEN}
 	================================================================
 	    corpus_gate  hsmm_decode_corpus  (and the host/CLI equivalence,
-	    mode reachability, the sandboxed CLI build)
+	    mode reachability)
 	================================================================
 
 	BANNER

@@ -249,17 +249,6 @@
     },
     {
       "argv": [
-        "scripts/vendor-hash-check.sh"
-      ],
-      "artifacts": [],
-      "cwd": ".",
-      "env": {},
-      "lane": "nix",
-      "name": "the cargo vendor hash matches rust/Cargo.lock",
-      "timeout_s": 1800
-    },
-    {
-      "argv": [
         "scripts/rules-live-in-lean.sh"
       ],
       "artifacts": [],

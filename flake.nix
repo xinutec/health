@@ -45,54 +45,5 @@
           ];
         };
       });
-
-      packages = forAll (pkgs: {
-        # The verified decoder binary (lean/), for the production image's
-        # Lean-shadow (Dockerfile lean-build stage). `lake build` runs every
-        # #guard spec check, so building this package IS the proof gate.
-        verified-cli = pkgs.stdenv.mkDerivation {
-          name = "verified-cli";
-          src = ./lean;
-          nativeBuildInputs = [ pkgs.lean4 ];
-          buildPhase = ''
-            export HOME=$TMPDIR
-            lake build verified_cli
-          '';
-          installPhase = ''
-            mkdir -p $out/bin
-            cp .lake/build/bin/verified_cli $out/bin/
-          '';
-        };
-
-        # The production Rust binary. It does not link Lean: it spawns the
-        # `verified_cli` the image carries beside it (`rust/backend/src/lean_worker.rs`),
-        # so it builds from `rust/` alone and `build.rs` is told to skip its
-        # dev-tree `lake build` — in a fresh sandbox that was a second full Lean
-        # build, not an incremental no-op. A Lean edit no longer rebuilds this.
-        health-bins = pkgs.stdenv.mkDerivation (finalAttrs: {
-          name = "health-bins";
-          src = ./rust;
-          # Cargo cannot reach the network inside a nix build, so the crates are
-          # vendored from rust/Cargo.lock. Bump the hash when a dependency
-          # changes; nix prints the correct one on mismatch.
-          cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-            src = ./rust;
-            hash = "sha256-3MKsOnwSLRE+Oi48o5oXBtMonSrGJHJv4Q87NOj+j4M=";
-          };
-          nativeBuildInputs = [
-            pkgs.cargo
-            pkgs.rustc
-            pkgs.rustPlatform.cargoSetupHook
-          ];
-          buildPhase = ''
-            export HOME=$TMPDIR HEALTH_BUILD_SKIP_LEAN=1
-            cargo build --release --offline -p backend
-          '';
-          installPhase = ''
-            mkdir -p $out/bin
-            cp target/release/backend $out/bin/
-          '';
-        });
-      });
     };
 }

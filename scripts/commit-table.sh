@@ -19,7 +19,6 @@ DEPLOY_ONLY=(
 	"reset the mode trace"
 	"corpus replay gates (release)"
 	"every dispatched Lean mode is executed by something"
-	"the verified CLI packages (what the production image consumes)"
 )
 
 project() {

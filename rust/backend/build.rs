@@ -7,11 +7,10 @@
 //! today's Rust. Production sets `VERIFIED_CLI` and never reaches the path
 //! baked here.
 //!
-//! ⚠ SKIPPED in the image build: `health-bins` sets `HEALTH_BUILD_SKIP_LEAN`.
-//! A nix sandbox starts empty, so the `lake build` here was not an incremental
-//! no-op there but a second full Lean build — about five minutes of every
-//! Lean-changing CI run — for a path production never reads (the image ships
-//! the separate `verified-cli` package and sets `VERIFIED_CLI`).
+//! ⚠ SKIPPED in CI: the `rust` job sets `HEALTH_BUILD_SKIP_LEAN`. The image
+//! ships the `lean` job's `verified_cli` and sets `VERIFIED_CLI`, so a
+//! `lake build` here would be a second Lean build for a path production never
+//! reads (.github/workflows/build.yml).
 
 use std::path::PathBuf;
 use std::process::Command;

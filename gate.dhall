@@ -459,105 +459,6 @@ in  { name = "health"
           ]
         , timeout_s = 900
         }
-      , {-  A green gate has to mean the packages this repo PUBLISHES still build.
-
-            ⚠ NOT covered by `Lean verified core (#guards)` above, which
-            runs `pnpm run lean-check` in the dev shell. `packages.verified-cli`
-            is the derivation the production image's lean-build stage consumes,
-            and its own comment says `lake build` runs every #guard spec check,
-            so BUILDING IT IS THE PROOF GATE. Running the proof in a dev shell
-            and shipping a derivation nobody built is the gap this closes: the
-            thing production consumes is the thing that has to be green.
-
-            It is a DIFFERENT build from the dev-shell one the cargo rows
-            exercise: a sandboxed derivation with vendored crates. Either can
-            break without the other.
-
-            `.#backend` joined it when the image started carrying the HTTP
-            server (#982). Same argument once more, and it is the derivation
-            that will replace `node dist/server.js`: shipping a server nobody
-            built inside the sandbox is exactly the gap this check exists to
-            close.
-
-            ⚠ **`.#health-bins` LEFT THIS ROW ON 2026-09-13, and the argument
-            above for it is still TRUE — what changed is where it is paid.**
-            Measured over 251 recorded runs of this row: 1,356 CPU-MINUTES —
-            22.6 hours, a THIRD of every CPU-minute this gate has ever spent —
-            for ONE failure. For comparison, over the same window `clippy`
-            caught thirteen for 40 minutes and `rust formatting` twelve for six.
-
-            Two things make it that expensive. Its `src = ./.` is the WHOLE
-            REPOSITORY, so a markdown-only commit invalidates it exactly as a
-            Rust one does; and it rebuilds, in a sandbox with vendored crates,
-            the same code the cargo rows compiled minutes earlier.
-
-            ⚠ **AND CI ALREADY BUILDS IT.** The Dockerfile's stages run
-            `nix build .#verified-cli` and the Rust halves on every push, on
-            GitHub's runners. So this row was not the only thing standing
-            between a broken derivation and production — it was the SECOND
-            thing, paid on the slowest machine of the two.
-
-            What is genuinely lost: the sandboxed build can break while the dev
-            build is fine ("either can break without the other", above), and
-            that is now found ~10 minutes after a push rather than before the
-            commit. That is the trade, taken deliberately by the user.
-
-            ⚠ `.#verified-cli` STAYS, and cheaply: its `src = ./lean`, so it is
-            a cache hit unless Lean changed, and BUILDING IT IS THE PROOF GATE
-            per the paragraph above. Do not fold it in with the Rust halves
-            again — the two have completely different invalidation.
-        -}
-        G.Check::{
-        , name = "the verified CLI packages (what the production image consumes)"
-        , argv =
-            [ "nix"
-            , "build"
-            , "--no-warn-dirty"
-            , "--no-link"
-            , ".#verified-cli"
-            ]
-        , timeout_s = 3600
-        }
-      , {-  ⚠ THIS CHECKS THE VENDOR HASH. IT DOES NOT CHECK THAT THE IMAGE
-            BUILDS, and reading it as if it did is the way it turns negative.
-
-            `flake.nix` pins `cargoDeps.hash`, so any change to `rust/Cargo.lock`
-            — a dependency added, a version bumped — invalidates a fixed-output
-            derivation nothing else on the commit path builds. On 2026-09-21 that
-            broke `main`: a crate grew `anyhow` for #1667, every gate row was
-            green, and the image build failed 13 minutes after the push.
-
-            ⚠ **IT IS NOT THE SANDBOXED RUST BUILD THAT WAS REMOVED ABOVE.** That
-            one rebuilt the whole workspace from `src = ./.`, so a markdown commit
-            paid for it, and it was taken out deliberately. This builds the VENDOR
-            TREE alone: `vendorStaging`, the fixed-output derivation keyed on
-            the lockfile.
-
-            ⚠ **`--rebuild`, AND THE STAGING STAGE BY NAME — the first version
-            of this row was BLIND.** It built `.#health-bins.cargoDeps`, whose
-            fixed-output stage is addressed by its DECLARED hash: once an output
-            with that hash is in the local store, nix never recomputes it, for
-            ANY lockfile. So on 2026-09-22 a 409-line `Cargo.lock` change passed
-            this row green (2.6 s, "a store hit") and CI failed 11 minutes later
-            on the mismatch — the very failure the row was added the day before
-            to catch. `scripts/vendor-hash-check.sh` builds, then `--rebuild`s
-            — the first step is the only one that works on a hash not yet in
-            the store, the second the only one that recomputes a hash that is.
-            4 s on a warm store; a mismatch prints the hash to paste into
-            `flake.nix`.
-
-            ⚠ The other ways to break the image are still uncaught: the
-            Dockerfile, a flake input, anything Linux-specific (the gate runs on
-            darwin), a renamed binary in the image's `install -m755` lines. One
-            class, named.
-        -}
-        G.Check::{
-        , name = "the cargo vendor hash matches rust/Cargo.lock"
-        , lane = Some "nix"
-        , argv =
-            [ "scripts/vendor-hash-check.sh" ]
-        , timeout_s = 1800
-        }
       , {-  ⚠ A NAME DECLARED IN BOTH LANGUAGES IS A RULE WRITTEN TWICE. The
             decisions belong in Lean and Rust is IO glue, but nothing enforced
             that and the boundary has a gradient: a rule needed AT an IO site
@@ -597,7 +498,7 @@ in  { name = "health"
       , {-  THIS FILE IS THE FULL TABLE, and the commit hook runs a PROJECTION of
             it: `gate-commit.json` is `gate.json` minus the rows named in
             `scripts/commit-table.sh` — the 42-day corpus replay, the
-            mode-reachability pair around it, and the sandboxed CLI build. Those run in deploy.sh, before
+            and the mode-reachability pair around it. Those run in deploy.sh, before
             anything reaches the pod, and NOT on every commit.
 
             Why a projection and not a second Dhall table: `--check-table`
