@@ -89,6 +89,14 @@ structure ModelContext where
   chainOn : Bool
   stepPref : Array Float
   selfLoop : Float
+  /-- Per minute, what the line-proximity term asks of the graph
+      (`RouteModel.minuteLines`) — computed once per minute, not per state (#1774). -/
+  minuteLines : Array RouteModel.MinuteLines := #[]
+  /-- Per minute, each train state's rail gap evidence by `stateKey`, computed
+      once per bracketing pair (`RouteModel.railKey`) and shared by every minute
+      of it (#1774). A state absent from the map scores 0, as a non-train state
+      does in `routeRailEvidence`. -/
+  railByMinute : Array (Std.HashMap String Float) := #[]
 
 /-- The longest segment the HSMM will consider, in minutes.
 
@@ -135,7 +143,22 @@ def buildContext (obs : Array ObsRow) (model : RouteGraphModel)
     reacquireRobust, segEvidenceOn, chainOn, modeMinuteScale, modeEntryScale, modeMinuteScaleWithGps
     rideHeadMin, rideHeadCredit
     stepPref := SegmentEvidence.stepPrefix obs
-    selfLoop := Transitions.defaultSelfLoop }
+    selfLoop := Transitions.defaultSelfLoop
+    minuteLines := obs.map (RouteModel.minuteLines model)
+    railByMinute :=
+      let connGraph := RouteModel.toConnGraph model
+      let trainStates := (buildStateSpace (places.map (·.1)) KNOWN_LINES
+        ++ (if rideHeadMin > 0 then [StateSpace.RIDE_HEAD_TRAIN_STATE] else [])).filter (·.mode == .train)
+      (obs.foldl (fun (acc : Array (Std.HashMap String Float) ×
+            Std.HashMap (Bool × Option Int × Option Int) (Std.HashMap String Float)) o =>
+        let key := RouteModel.railKey o
+        match acc.2.get? key with
+        | some m => (acc.1.push m, acc.2)
+        | none =>
+          let m := trainStates.foldl (fun (m : Std.HashMap String Float) st =>
+            let v := RouteModel.routeRailEvidence model connGraph st o false
+            if v == 0 then m else m.insert (StateSpace.stateKey st) v) {}
+          (acc.1.push m, acc.2.insert key m)) (#[], {})).1 }
 
 /-- Whether the train generator vouches a ride at `ts`. -/
 private def coveredAt (c : ModelContext) (ts : Int) : Bool := TrainCandidates.isCovered c.coverage ts
@@ -148,8 +171,13 @@ def emitAt (c : ModelContext) (t s : Nat) : Float :=
   -- are built over exactly `obs.size × states.size`, so it is never asked.
   match c.obs[t]?, c.states[s]? with
   | some o, some st =>
-    EmissionFull.emissionLogProbFull c.model c.connGraph c.modeledLines c.placeCoords
-      c.reacquireRobust c.continuity st o
+    EmissionFull.emissionLogProbFullWith c.modeledLines
+      (c.minuteLines.getD t (RouteModel.minuteLines c.model o))
+      (if st.mode != .train then 0.0
+       else match c.railByMinute[t]? with
+         | some m => m.getD (StateSpace.stateKey st) 0.0
+         | none => RouteModel.routeRailEvidence c.model c.connGraph st o false)
+      c.placeCoords c.reacquireRobust c.continuity st o
     -- The per-minute mode prior is inside the sum above at scale 1; the arm
     -- knob adds the difference, so the shipped model is untouched at 1.
     + ((if o.gps.isSome then c.modeMinuteScaleWithGps else c.modeMinuteScale) - 1.0)

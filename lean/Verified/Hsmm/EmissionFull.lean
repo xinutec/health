@@ -73,8 +73,8 @@ def baseEmissionWithReacquire (s : State) (o : ObsRow) (placeCoord : Option (Flo
     `buildHsmmModel`. `continuity` is the presence-continuity seed; the
     production caller always supplies it, and the `none` arm is the chain-start
     and test shape rather than a flag being off (see `Continuity`). -/
-def emissionLogProbFull
-    (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
+def emissionLogProbFullWith
+    (modeledLines : List String) (minute : RouteModel.MinuteLines) (railEv : Float)
     (placeCoords : Std.HashMap Int (Float × Float))
     (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
     (s : State) (o : ObsRow) : Float :=
@@ -85,10 +85,22 @@ def emissionLogProbFull
     + Geometric.gapSpeedPenalty s o.gps.isSome (o.cadence.any (· > 0))
         (o.prevGpsFix.map toGeoFix) (o.nextGpsFix.map toGeoFix)
     -- The kernels' `isCovered` is the TypeScript gate, held open (see above).
-    + routeRailEvidence model connGraph s o false
-    + lineProximityFactor model modeledLines s o false
+    + railEv
+    + RouteModel.lineProximityFactorWith modeledLines minute s o false
     + Continuity.continuityLogLikelihood s o.gps.isSome
         (o.prevGpsFix.map (fun f => (f.lat, f.lon))) continuity
+
+/-- The per-cell emission with its per-minute facts computed in place — what
+    every caller read before #1774 hoisted them, and what the parity guards pin.
+    The model build computes `minuteLines` once per minute and the rail
+    evidence once per bracketing pair, then calls `emissionLogProbFullWith`. -/
+def emissionLogProbFull
+    (model : RouteGraphModel) (connGraph : RouteConnectivity.Graph) (modeledLines : List String)
+    (placeCoords : Std.HashMap Int (Float × Float))
+    (reacquireRobust : Bool) (continuity : Option Continuity.ContinuityContext)
+    (s : State) (o : ObsRow) : Float :=
+  emissionLogProbFullWith modeledLines (RouteModel.minuteLines model o)
+    (routeRailEvidence model connGraph s o false) placeCoords reacquireRobust continuity s o
 
 -- Parity with `buildHsmmModel`'s emission (base+geo+routeRail+lineProx; Node/V8).
 private def m : RouteGraphModel := buildRouteGraphModel #[

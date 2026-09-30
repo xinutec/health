@@ -106,6 +106,15 @@ def toConnGraph (g : RouteGraphModel) : RouteConnectivity.Graph :=
   let lines := g.edges.foldl (fun m e => m.insert e.id e.lineMemberships) {}
   { endpoints, lines, nodeEdges := g.nodeEdges }
 
+/-- The part of an observation `routeRailEvidence` reads: the fix present or
+    not, and the fixes bracketing the minute. Two minutes with the same key get
+    the same value for every state — every minute of one fix-less gap shares
+    it — so the model build memoises on it (#1774, 2026-09-30). -/
+def railKey (o : ObsRow) : Bool × Option Int × Option Int :=
+  -- A bracketing fix is the minute aggregate AT its timestamp, so the
+  -- timestamp names it.
+  (o.gps.isSome, o.prevGpsFix.map (·.ts), o.nextGpsFix.map (·.ts))
+
 /-- `buildRouteRailEvidence`'s per-state verdict, with the route-graph facts
     computed in Lean. `isCovered` (train-generator coverage) stays caller-side. -/
 def routeRailEvidence (g : RouteGraphModel) (cg : RouteConnectivity.Graph)
@@ -190,22 +199,39 @@ def linesWithinRadius (g : RouteGraphModel) (lat lon radiusM : Float) : List Str
   (edgesNearIdx g lat lon radiusM).foldl (fun acc i =>
     g.edges[i].lineMemberships.foldl appendDistinct acc) []
 
-/-- `buildLineProximityFactor`'s per-state verdict, with `lineModeled`/`lineNear`
-    computed in Lean. `modeledLines` is `linesInGraph g` (computed once). -/
-def lineProximityFactor (g : RouteGraphModel) (modeledLines : List String)
+/-- What `lineProximityFactor` asks of the graph at one minute, which is the
+    same for every state at that minute: the lines within `NEAR_M` of the fix,
+    and whether ANY railway edge is (the graph holds every railway way,
+    memberships only for the named lines). Empty and `false` without a fix.
+    Computed once per minute by the model build (#1774, 2026-09-30) instead of
+    once per state per minute. -/
+structure MinuteLines where
+  linesNear : List String
+  railNear : Bool
+  deriving Inhabited
+
+def minuteLines (g : RouteGraphModel) (o : ObsRow) : MinuteLines :=
+  match o.gps with
+  | some gps => { linesNear := linesWithinRadius g gps.lat gps.lon NEAR_M
+                , railNear := !(edgesNearIdx g gps.lat gps.lon NEAR_M).isEmpty }
+  | none => { linesNear := [], railNear := false }
+
+/-- `lineProximityFactor` given its minute's `MinuteLines`. -/
+def lineProximityFactorWith (modeledLines : List String) (m : MinuteLines)
     (s : State) (o : ObsRow) (isCovered : Bool) : Float :=
   let lineModeled := match s.lineName with
     | some line => modeledLines.contains line
     | none => false
-  let lineNear := match o.gps, s.lineName with
-    | some gps, some line => (linesWithinRadius g gps.lat gps.lon NEAR_M).contains line
-    | _, _ => false
-  -- Any railway edge near the fix, named or not (the graph holds every
-  -- railway way, memberships only for the named lines).
-  let railNear := match o.gps with
-    | some gps => !(edgesNearIdx g gps.lat gps.lon NEAR_M).isEmpty
+  let lineNear := match s.lineName with
+    | some line => m.linesNear.contains line
     | none => false
-  LineProximity.lineProximityFactor s isCovered o.gps.isSome lineModeled lineNear o.roadDistM o.railDistM railNear
+  LineProximity.lineProximityFactor s isCovered o.gps.isSome lineModeled lineNear o.roadDistM o.railDistM m.railNear
+
+/-- `buildLineProximityFactor`'s per-state verdict, with `lineModeled`/`lineNear`
+    computed in Lean. `modeledLines` is `linesInGraph g` (computed once). -/
+def lineProximityFactor (g : RouteGraphModel) (modeledLines : List String)
+    (s : State) (o : ObsRow) (isCovered : Bool) : Float :=
+  lineProximityFactorWith modeledLines (minuteLines g o) s o isCovered
 
 -- Parity with the real `buildLineProximityFactor` (decisions from Node/V8).
 private def lpModel : RouteGraphModel := buildRouteGraphModel #[
