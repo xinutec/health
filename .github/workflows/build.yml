@@ -36,8 +36,12 @@ jobs:
       - run: pnpm run lean-check
       - run: pnpm run test:frontend
 
+  # ⚠ NOT `needs: verify`. The image took ~15 min behind a ~5 min verify that
+  # repeats what the commit hook and deploy.sh's gate have already run on this
+  # tree (lean-check, frontend lint/typecheck/tests). deploy.sh still waits for
+  # the WHOLE run, so a red verify still blocks the rollout; what is given up is
+  # that `:latest` may be pushed from a tree verify later fails.
   image:
-    needs: verify
     runs-on: ubuntu-latest
     # Pushes to Docker Hub via DOCKERHUB_* secrets; the GITHUB_TOKEN only reads the repo.
     permissions:
@@ -57,4 +61,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
           cache-from: type=registry,ref=xinutec/health-sync:cache
-          cache-to: type=registry,ref=xinutec/health-sync:cache,mode=max
+          # zstd: exporting the cache spent ~4 min gzipping the nix-store
+          # layers (2026-09-30); mode=max keeps the frontend and unchanged
+          # nix stages reusable, which is what makes dependency-only pushes fast.
+          cache-to: type=registry,ref=xinutec/health-sync:cache,mode=max,compression=zstd,compression-level=3
