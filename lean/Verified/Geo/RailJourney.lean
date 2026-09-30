@@ -239,7 +239,8 @@ def interchangeWalkIsWalked (walk : Seg) (steps : List Verified.Geo.BiometricWin
     | none => true
     | some _ =>
       -- A per-minute row covers the minute FROM its stamp, so a row overlapping
-      -- the window counts — the rule `Worldline.meanCadenceSpm` uses. Counting
+      -- the window counts, WHOLE (`Worldline.meanCadenceSpm` prorates it by the
+      -- overlap since 2026-09-30; this rule was measured whole). Counting
       -- only rows stamped inside dropped 2026-07-16's 07:43 minute (104 steps)
       -- from a Baker Street change that began at 07:43:04, and read 37 spm.
       let total := steps.foldl (init := 0) fun a sp =>

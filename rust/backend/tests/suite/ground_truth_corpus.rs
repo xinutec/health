@@ -101,19 +101,24 @@ const POST_TS: &[&str] = &[
 /// and one more journey. Every other TS-era file is untouched and these numbers
 /// are still exact over them. The two dwells stand as known-error — they are
 /// #185 case C, still absorbed into a flat walk.
+///
+/// 2026-09-30: 06-18's `partial` walk home became three rows (walk, the
+/// pharmacy stop, walk) once #185 carved the stop — rows +2, enforceable +3
+/// (the `partial` row enforced nothing), one more journey and one more walking
+/// leg, since a stop of that length splits the walk home in the truth too.
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 398;
-const TS_ENFORCEABLE: usize = 370;
+const TS_ROWS: usize = 400;
+const TS_ENFORCEABLE: usize = 373;
 const TS_UNPARSEABLE: usize = 5;
 const TS_DECLARED_TZ: usize = 2;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
-const TS_JOURNEYS: usize = 92;
-const TS_LEGS: usize = 228;
-/// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. 228 legs could be reached with the
+const TS_JOURNEYS: usize = 93;
+const TS_LEGS: usize = 229;
+/// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 143)];
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 144)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {

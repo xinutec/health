@@ -122,7 +122,15 @@ def parseRailWayName (wayName : Option String) : Option RailTriple :=
       if b.isEmpty || a.isEmpty then none else some ⟨b, a, line⟩
 
 /-- Mean steps/min over `[startTs, endTs]` from per-minute buckets, or `none`
-    when no bucket overlaps (no data ≠ zero cadence). -/
+    when no bucket overlaps (no data ≠ zero cadence).
+
+    A bucket counts in proportion to its overlap with the window: its steps are
+    spread over its minute, so a bucket that shares one second with the window
+    brings a sixtieth of them. Counting edge buckets whole let the minute of
+    walking AWAY from a stop vote on the stop — 05-12's seven-minute shop stop
+    read 56 steps/min (the 93 of the arrival minute and the 100 of the
+    departure minute, each overlapping by seconds) and was vetoed as walked
+    through; prorated it reads 30 (#185, 2026-09-30). -/
 def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : Option Float := Id.run do
   let mut total : Float := 0
   let mut overlapped := false
@@ -130,7 +138,8 @@ def meanCadenceSpm (steps : List FeasibilityStepPoint) (startTs endTs : Int) : O
     if decide (s.ts + 60 ≤ startTs) || decide (s.ts ≥ endTs) then pure ()
     else
       overlapped := true
-      total := total + s.steps
+      let ov := min (s.ts + 60) endTs - max s.ts startTs
+      total := total + s.steps * Float.ofInt ov / 60
   if !overlapped then return none
   return some (total / max 1 (Float.ofInt (endTs - startTs) / 60))
 

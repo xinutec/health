@@ -445,10 +445,11 @@ private def HEAD_FIXES : Array PointF :=
     wayName := "", place := "", reenrich := true }]
 
 -- GAPS THE FIRST PROBE PASS EXPOSED.
--- Cadence EXACTLY at the bar: the window is 400 s, so 400 steps over the seven
--- buckets give a mean of exactly 60 and `≥` admits it.
+-- Cadence EXACTLY at the bar: the window is 400 s, and the seven buckets bring
+-- 400 steps into it — the last overlaps by 40 s, so its 87 count as 58 (edge
+-- buckets are prorated, #185) — a mean of exactly 60, which `≥` admits.
 #guard (run TAIL_SEGS TAIL_FIXES
-  ([(1200, 57), (1260, 57), (1320, 57), (1380, 57), (1440, 57), (1500, 57), (1560, 58)].map
+  ([(1200, 57), (1260, 57), (1320, 57), (1380, 57), (1440, 57), (1500, 57), (1560, 87)].map
     fun (t, v) => ({ ts := t, steps := v } : FeasibilityStepPoint)))[0]!.endTs == 1200
 -- Steps exist but NONE overlap the run: `meanCadenceSpm` is `none`, which means
 -- "no data", not "zero cadence" — and no data refuses.
@@ -2717,6 +2718,12 @@ def DWELL_RADIUS_M : Float := 30
 def DWELL_MIN_REMAINDER_S : Int := 60
 /-- Cadence at or above which the run was walked through, not stood in. -/
 def DWELL_WALKING_CADENCE : Float := 40
+/-- Next to a train, a stop is carved only when the stretch between it and the
+    train was itself WALKED — at least this long, at `PEDESTRIAN_MIN_CADENCE_SPM`.
+    A platform wait sits against its train; a shop is reached on foot. 05-12's
+    Lidl stop (#185, 2026-09-30) came after four minutes at ~100 steps/min from
+    the Wembley Park train and was refused by the old blanket rule. -/
+def DWELL_TRAIN_SIDE_WALK_S : Int := 120
 
 /-- End (exclusive) of the longest run from `i` whose fixes all stay within
     `DWELL_RADIUS_M` of the run's running mean. -/
@@ -2736,7 +2743,8 @@ private def runEnd (fixes : Array PointF) (i : Fin fixes.size) : Nat := Id.run d
 
 /-- The first dwell in a walk's fixes: `(first, last)` indices, inclusive. -/
 private def findDwell (fixes : Array PointF) (steps : List FeasibilityStepPoint)
-    (segStart segEnd : Int) : Option (Fin fixes.size × Fin fixes.size) := Id.run do
+    (segStart segEnd : Int) (admit : Int → Int → Bool) :
+    Option (Fin fixes.size × Fin fixes.size) := Id.run do
   for hm_i : i in [0:fixes.size] do
     let fi : Fin fixes.size := ⟨i, hm_i.upper⟩
     let e := runEnd fixes fi
@@ -2750,16 +2758,22 @@ private def findDwell (fixes : Array PointF) (steps : List FeasibilityStepPoint)
           let walked := match meanCadenceSpm steps ds de with
             | some c => c ≥ DWELL_WALKING_CADENCE
             | none => false
-          if !walked then return some (fi, last)
+          if !walked && admit ds de then return some (fi, last)
   return none
 
 /-- Cut one walk at its first dwell; the trailing remainder is cut again. -/
 private def cutWalk (seg : Seg) (points : Array PointF) (steps : List FeasibilityStepPoint)
-    (name : Namer) : Nat → Array Seg
+    (name : Namer) (trainBefore trainAfter : Bool) : Nat → Array Seg
   | 0 => #[seg]
   | fuel + 1 =>
     let fixes := sortedIn points seg.startTs seg.endTs
-    match findDwell fixes steps seg.startTs seg.endTs with
+    -- The stretch between a train and the stop must have been walked.
+    let walkedSide := fun (a b : Int) =>
+      decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
+        (meanCadenceSpm steps a b).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
+    let admit := fun (ds de : Int) =>
+      (!trainBefore || walkedSide seg.startTs ds) && (!trainAfter || walkedSide de seg.endTs)
+    match findDwell fixes steps seg.startTs seg.endTs admit with
     | none => #[seg]
     | some (a, b) =>
       let ds := fixes[a].ts
@@ -2786,11 +2800,12 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
                  needsReenrich := false, needsRename := false }
       let before := keep (walkRemainder seg seg.startTs ds points false)
       let after := keep (walkRemainder seg de seg.endTs points true)
-      #[before, stay] ++ cutWalk after points steps name fuel
+      #[before, stay] ++ cutWalk after points steps name false trainAfter fuel
 
 /-- Carve every held position of `DWELL_MIN_S` or more out of each walking
-    segment as a stay of its own — except a walk with a train on either side,
-    whose held positions are platform waits. -/
+    segment as a stay of its own. Next to a train only a stop REACHED ON FOOT
+    from it is carved (`DWELL_TRAIN_SIDE_WALK_S`): a held position against the
+    train is its platform wait, which the rail passes own. -/
 def splitWalksOnDwell (segments : Array Seg) (points : Array PointF)
     (steps : List FeasibilityStepPoint) (name : Namer) : Array Seg := Id.run do
   let mut out : Array Seg := #[]
@@ -2798,8 +2813,8 @@ def splitWalksOnDwell (segments : Array Seg) (points : Array PointF)
     let seg := segments[i]
     let nextTrain := if h1 : i + 1 < segments.size then segMode segments[i + 1] == "train" else false
     let prevTrain := if h0 : 0 < i then segMode (segments[i - 1]'(by have h1 : i < segments.size := hm_i.upper; omega)) == "train" else false
-    if segMode seg != "walking" || nextTrain || prevTrain then out := out.push seg
-    else out := out ++ cutWalk seg points steps name points.size
+    if segMode seg != "walking" then out := out.push seg
+    else out := out ++ cutWalk seg points steps name prevTrain nextTrain points.size
   return out
 
 end Dwell
