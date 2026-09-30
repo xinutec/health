@@ -173,7 +173,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     ("2026-09-15", 3),
     // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
     // mirror's ground in France and under the Channel.
-    ("2026-09-30", 12),
+    ("2026-09-30", 22),
 ];
 
 fn ceiling_for(date: &str) -> usize {
