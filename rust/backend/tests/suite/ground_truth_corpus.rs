@@ -87,6 +87,9 @@ const POST_TS: &[&str] = &[
     "2026-09-14.md",
     // The CONTROL: no known defects, which nothing else in the corpus offers.
     "2026-09-15.md",
+    // The first day off the mirror's ground: the Eurostar to Paris, two zones,
+    // the Channel Tunnel; one known miss (the St Pancras wait read as Work).
+    "2026-09-30.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note

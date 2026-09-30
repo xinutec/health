@@ -68,7 +68,19 @@ use super::Replay;
 const KNOWN_DIVERGENT: [&str; 0] = [];
 
 /// The tables an unanswered key may belong to. Anything else is a new gap.
-const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "transitStops"];
+///
+/// `nearbyWays` joined 2026-09-30 with the first day that leaves the mirror's
+/// ground: the Eurostar crosses Kent, the Channel and France, where the mirror
+/// holds no ways and DECLINES the ask — at capture and on the pod alike, so the
+/// blessed timeline was built from the same absence. It counts against the
+/// per-day ceiling like the others; every other day's ceiling is unchanged, so
+/// a `nearbyWays` miss anywhere else still fails.
+const UNANSWERED_KINDS: [&str; 4] = [
+    "reverseGeocode",
+    "nearbyLandmarks",
+    "transitStops",
+    "nearbyWays",
+];
 
 /// Keys the offline answerer cannot supply, BY DAY, beyond the blank-zone
 /// `bestPlace` asked before `tzAt` resolves.
@@ -117,7 +129,7 @@ const UNANSWERED_KINDS: [&str; 3] = ["reverseGeocode", "nearbyLandmarks", "trans
 /// days are re-captured (#1076); the fold is right to ask. Raised again the
 /// same evening when daytime stays at a residence joined the rule, and once
 /// more for the base-rate pseudo-count (06-09: a renamed stay, a new key).
-const UNANSWERED_BY_DAY: [(&str, usize); 41] = [
+const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     ("2026-04-29", 7),
     ("2026-04-30", 6),
     ("2026-05-11", 2),
@@ -159,6 +171,9 @@ const UNANSWERED_BY_DAY: [(&str, usize); 41] = [
     ("2026-08-13", 3),
     ("2026-09-06", 5),
     ("2026-09-15", 2),
+    // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
+    // mirror's ground in France and under the Channel.
+    ("2026-09-30", 12),
 ];
 
 fn ceiling_for(date: &str) -> usize {
