@@ -12,9 +12,20 @@ on:
       - "**/flake.lock"
   workflow_dispatch: {}
 
+# The toolchains the SHIPPED binaries are built with. Locally the flake pins
+# them (nix lean4 / rustc); `scripts/ci-toolchain-check.sh` fails the gate
+# when these drift from what the flake provides.
+env:
+  LEAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+  RUST_TOOLCHAIN: 1.98.1
+
+# The three artifacts build on the runner, each with its incremental state in
+# the Actions cache, and the image job only assembles them. Built inside Docker
+# they compiled from scratch every commit: ~10 of the image job's ~15 min
+# (2026-09-30).
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  frontend:
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -29,39 +40,132 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
             frontend/pnpm-lock.yaml
-      - uses: cachix/install-nix-action@v31
       - run: pnpm install --frozen-lockfile --dir frontend
       - run: pnpm run typecheck:frontend
       - run: pnpm run lint:frontend
-      - run: pnpm run lean-check
       - run: pnpm run test:frontend
+      - run: pnpm run build
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public
+          path: frontend/dist/frontend/browser/
+          retention-days: 1
 
-  # ⚠ NOT `needs: verify`. The image took ~15 min behind a ~5 min verify that
-  # repeats what the commit hook and deploy.sh's gate have already run on this
-  # tree (lean-check, frontend lint/typecheck/tests). deploy.sh still waits for
-  # the WHOLE run, so a red verify still blocks the rollout; what is given up is
-  # that `:latest` may be pushed from a tree verify later fails.
+  # `lake build` builds the default targets — the `Verified` library, whose
+  # `#guard`s are the spec checks, and `verified_cli` — so this job is also the
+  # proof gate for what ships. Lake keys its traces on content hashes, so a
+  # restored `.lake` rebuilds only the modules a commit touched.
+  lean:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Lean
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --no-modify-path --default-toolchain "$LEAN_TOOLCHAIN"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: lean/.lake
+          key: lake-${{ env.LEAN_TOOLCHAIN }}-${{ hashFiles('lean/**/*.lean') }}
+          restore-keys: lake-${{ env.LEAN_TOOLCHAIN }}-
+      - run: lake build
+        working-directory: lean
+      # What the binary needs at run time, in the log: the image must provide it.
+      - run: ldd lean/.lake/build/bin/verified_cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified_cli
+          path: lean/.lake/build/bin/verified_cli
+          retention-days: 1
+
+  rust:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      # rustup ships on the runner image.
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && rustup default "$RUST_TOOLCHAIN"
+      # Dependencies persist; the workspace crates recompile.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # `HEALTH_BUILD_SKIP_LEAN`: build.rs's dev-tree `lake build` is for local
+      # runs; the image carries the `lean` job's `verified_cli`.
+      - run: cargo build --release --locked -p backend
+        working-directory: rust
+        env:
+          HEALTH_BUILD_SKIP_LEAN: "1"
+      - run: ldd rust/target/release/backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend
+          path: rust/target/release/backend
+          retention-days: 1
+
   image:
-    runs-on: ubuntu-latest
+    needs: [frontend, lean, rust]
+    runs-on: ubuntu-24.04
     # Pushes to Docker Hub via DOCKERHUB_* secrets; the GITHUB_TOKEN only reads the repo.
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: public
+          path: image/public
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified_cli
+          path: image
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend
+          path: image
       - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      # Built, RUN, then pushed. The CronJobs pull `:latest` on every run, so an
+      # image whose binaries cannot start would break the next sync, not just
+      # the next deploy.
       - uses: docker/build-push-action@v7
         with:
-          context: .
+          context: image
+          file: Dockerfile
+          load: true
+          tags: health-sync:candidate
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          # Only the base and its apt layer are worth keeping now.
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+      - name: The binaries start in the image
+        run: |
+          set -euo pipefail
+          # The Lean runtime loads and answers over the pipe (an unknown mode
+          # still gets a JSON reply).
+          echo '{"mode":"ping"}' \
+            | docker run --rm -i --read-only --tmpfs /tmp --user 1000:1000 health-sync:candidate lean/verified_cli serve \
+            | tee /dev/stderr | grep -q '"result"'
+          # The backend starts its Lean worker before it parses argv.
+          # --read-only and a /tmp tmpfs: the pod's securityContext and mount.
+          docker run --rm --read-only --tmpfs /tmp --user 1000:1000 health-sync:candidate bin/backend --help > help.txt
+          head -3 help.txt
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: image
+          file: Dockerfile
           push: true
           tags: xinutec/health-sync:latest
           build-args: |
             GIT_SHA=${{ github.sha }}
-          cache-from: type=registry,ref=xinutec/health-sync:cache
-          # zstd: exporting the cache spent ~4 min gzipping the nix-store
-          # layers (2026-09-30); mode=max keeps the frontend and unchanged
-          # nix stages reusable, which is what makes dependency-only pushes fast.
-          cache-to: type=registry,ref=xinutec/health-sync:cache,mode=max,compression=zstd,compression-level=3
+          cache-from: type=gha

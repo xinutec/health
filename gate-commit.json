@@ -270,6 +270,16 @@
     },
     {
       "argv": [
+        "scripts/ci-toolchain-check.sh"
+      ],
+      "artifacts": [],
+      "cwd": ".",
+      "env": {},
+      "name": "CI builds with the flake's Lean and Rust",
+      "timeout_s": 120
+    },
+    {
+      "argv": [
         "nix",
         "run",
         "git+file:../dev-lint?ref=HEAD#gate",

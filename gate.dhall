@@ -584,6 +584,15 @@ in  { name = "health"
         , argv = [ "scripts/rules-live-in-lean.sh" ]
         , timeout_s = 120
         }
+      , {-  The image's binaries are compiled on the GitHub runner with the
+            toolchains pinned in .github/workflows/build.yml; everything here
+            runs the flake's. This fails when the two drift.
+        -}
+        G.Check::{
+        , name = "CI builds with the flake's Lean and Rust"
+        , argv = [ "scripts/ci-toolchain-check.sh" ]
+        , timeout_s = 120
+        }
       , G.checkTable "../dev-lint"
       , {-  THIS FILE IS THE FULL TABLE, and the commit hook runs a PROJECTION of
             it: `gate-commit.json` is `gate.json` minus the rows named in
