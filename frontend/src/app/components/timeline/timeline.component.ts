@@ -23,10 +23,17 @@ interface TimelineEntry {
   mode: string;
   icon: string;
   primary: string;
+  /** The name's certainty, e.g. "67%", when it is a real guess (#325). */
+  certainty?: string;
   secondary?: string;
   /** State was asserted from surrounding days, not observed. */
   inferred: boolean;
 }
+
+/** Below this the name is shown with its certainty. Home, Work and the sleep
+ *  place measure 97–98 %: printed on every row of every day they would drown
+ *  the names that are guesses (#325, 2026-09-30). */
+const CERTAINTY_SHOWN_BELOW = 0.95;
 
 /** A consecutive run of ≥2 moving legs between two visits, collapsed
  *  into one row by default. The individual legs are preserved and
@@ -279,6 +286,12 @@ export class TimelineComponent {
       secondary = parts.join(" · ");
     }
 
+    const c = state.placeConfidence;
+    const certainty =
+      (state.mode === "stationary" || state.mode === "sleeping") && state.place && c != null && c < CERTAINTY_SHOWN_BELOW
+        ? `${Math.round(c * 100)}%`
+        : undefined;
+
     // Honest marker: this state had no data of its own — it's asserted
     // from the surrounding days (same place before and after). Confident,
     // but not observed.
@@ -296,6 +309,7 @@ export class TimelineComponent {
       mode: state.mode,
       icon,
       primary,
+      certainty,
       secondary,
       inferred: !!state.inferred,
     };

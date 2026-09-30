@@ -230,7 +230,8 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
   -- 1. Transit continuity, ahead of every other rule.
   match Verified.Geo.TransitPlace.stationAtTrainAlight prev cLat cLon reads.stations with
   | some station =>
-    withCity { seg with place := some station } (reads.place cLat cLon false false)
+    withCity { seg with place := some station, placeSource := some (station, "station") }
+      (reads.place cLat cLon false false)
   | none =>
     let isSleepWindow := hasOvernightPresence seg.startTs seg.endTs cLon
     let stayHourProfile := hourProfileForRange seg.startTs seg.endTs cLon
@@ -249,7 +250,8 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       -- clustering bucket, so it is NOT here and falls through to naming.
       if wp.displayName == some "Home" || wp.displayName == some "Work" then
         withCity
-          { seg with place := wp.displayName, focusPlaceId := some wp.cand.id }
+          { seg with place := wp.displayName, focusPlaceId := some wp.cand.id
+                     placeSource := wp.displayName.map fun n => (n, n.toLower) }
           (reads.place placeLat placeLon true false)
       else
         let isResidential := wp.sleepHours ≥ RESIDENCE_SLEEP_THRESHOLD_H
@@ -272,14 +274,15 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         | none => seg
         | some p =>
           withCity
-            { seg with place := some p.label, focusPlaceId := some wp.cand.id }
+            { seg with place := some p.label, focusPlaceId := some wp.cand.id
+                       placeSource := some (p.label, p.source) }
             (some p)
     | none =>
       -- 5b. Somewhere new. The day's own centroid, and the overnight check
       -- decides whether an address beats a venue.
       match reads.place cLat cLon isSleepWindow true with
       | none => seg
-      | some p => withCity { seg with place := some p.label } (some p)
+      | some p => withCity { seg with place := some p.label, placeSource := some (p.label, p.source) } (some p)
 
 /-! ## Guards
 

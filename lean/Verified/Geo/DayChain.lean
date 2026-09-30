@@ -118,7 +118,7 @@ series: each drops fields the consumer does not read, none invents one. -/
 
 def stateSeg (s : Verified.Geo.SegmentMerge.Seg) : Verified.Geo.DayState.Seg :=
   { startTs := s.startTs, endTs := s.endTs, mode := s.mode, refinedMode := s.refinedMode
-    vehicleKind := s.vehicleKind, place := s.place, wayName := s.wayName
+    vehicleKind := s.vehicleKind, place := s.place, placeSource := s.placeSource, wayName := s.wayName
     displayTz := s.displayTz, city := s.city }
 
 /-- The drawn paths, `Option (Array PathPt)` on the shared segment record and
@@ -303,7 +303,7 @@ private def emptyEnv : Env :=
 -- Bracketed: one inferred stay spanning the whole local day.
 #guard (dayChain { emptyEnv with bracketPlace := some "St Elsewhere" }).1 ==
   #[{ startTs := 0, endTs := 86400, mode := "stationary", place := some "St Elsewhere",
-      tz := some "Europe/London", inferred := some true }]
+      placeSource := some "inferred", tz := some "Europe/London", inferred := some true }]
 
 -- ⚠ `inferred` must be `some true`, never `none`. Without it the renderer shows
 -- an ASSERTED day as an observed one, which is the failure this arm must not

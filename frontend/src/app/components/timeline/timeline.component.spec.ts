@@ -301,3 +301,34 @@ describe("TimelineComponent with a degraded day", () => {
 		expect(label(withNull)).toBe(label(withAbsent));
 	});
 });
+
+describe("TimelineComponent name certainty (#325)", () => {
+	const certaintyOf = (f: ReturnType<typeof setup>, i: number) => {
+		const r = f.componentInstance.rows()[i];
+		return r.kind === "entry" ? r.entry.certainty : "not an entry";
+	};
+
+	it("marks a guessed venue with its rule's hit rate, beside the name", () => {
+		reset();
+		const f = setup([state("stationary", 60, { place: "Olivomare", placeConfidence: 10 / 15 })]);
+		expect(certaintyOf(f, 0)).toBe("67%");
+		const el = (f.nativeElement as HTMLElement).querySelector(".primary .certainty");
+		expect(el?.textContent?.trim()).toBe("67%");
+	});
+
+	it("leaves Home unmarked: 97 % on every row would drown the guesses", () => {
+		reset();
+		const f = setup([state("sleeping", 7 * 60, { place: "Home", placeConfidence: 38 / 39 })]);
+		expect(certaintyOf(f, 0)).toBeUndefined();
+	});
+
+	it("says nothing when the name has no recorded rule", () => {
+		reset();
+		const f = setup([
+			state("stationary", 30, { place: "Morr", placeConfidence: null }),
+			state("walking", 10, { placeConfidence: 0.5 }),
+		]);
+		expect(certaintyOf(f, 0)).toBeUndefined();
+		expect(certaintyOf(f, 1)).toBeUndefined();
+	});
+});

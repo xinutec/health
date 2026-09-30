@@ -276,3 +276,44 @@ fn run(shard: usize, of: usize) {
     failures.extend(feasibility.finish());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The name-confidence table the app shows (`Verified.Geo.NameConfidence.COUNTS`)
+/// is the SUM of its blessed per-day measurement — two copies of one number
+/// must not drift (#325, 2026-09-30).
+#[test]
+fn the_name_confidence_table_is_its_measurement() {
+    let Ok(raw) = std::fs::read_to_string(corpus::truth::NAME_CONFIDENCE) else {
+        eprintln!("SKIPPED: no golden corpus");
+        return;
+    };
+    let mut sum: std::collections::BTreeMap<String, (u64, u64)> = std::collections::BTreeMap::new();
+    for line in raw.lines() {
+        let j: serde_json::Value =
+            serde_json::from_str(line).expect("a name-confidence line parses");
+        for (src, v) in j["counts"].as_object().expect("counts is an object") {
+            let e = sum.entry(src.clone()).or_default();
+            e.0 += v[0].as_u64().expect("right");
+            e.1 += v[1].as_u64().expect("graded");
+        }
+    }
+    let reply = backend::lean::serve(r#"{"mode":"nameconfidence"}"#).expect("the table answers");
+    let table: serde_json::Value = serde_json::from_str(&reply).expect("the table parses");
+    let lean: std::collections::BTreeMap<String, (u64, u64)> = table["counts"]
+        .as_array()
+        .expect("counts")
+        .iter()
+        .map(|r| {
+            (
+                r[0].as_str().expect("source").to_string(),
+                (
+                    r[1].as_u64().expect("right"),
+                    r[2].as_u64().expect("graded"),
+                ),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lean, sum,
+        "Verified.Geo.NameConfidence.COUNTS must equal the sum of tests/golden/name-confidence.jsonl"
+    );
+}

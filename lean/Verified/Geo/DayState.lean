@@ -65,6 +65,9 @@ structure DayState where
   endTs : Int
   mode : Mode
   place : Option String := none
+  /-- The rule that named `place`, when the name is still the one it named
+      (`Seg.placeSource`). Not part of `sameState`. -/
+  placeSource : Option String := none
   /-- The city header the timeline draws above this state. Served rather than
   re-derived by the client (#339); see `cityForState`. -/
   city : Option String := none
@@ -99,6 +102,8 @@ structure Seg where
   /-- `some "bus"` refines a driving leg into a bus for display. -/
   vehicleKind : Option String := none
   place : Option String := none
+  /-- `SegmentMerge.Seg.placeSource`, carried to the state (#325). -/
+  placeSource : Option (String × String) := none
   wayName : Option String := none
   displayTz : Option String := none
   /-- The metro area the leg sits in, where both its ends agree on one
@@ -128,6 +133,8 @@ private def makeStateFromSegment (seg : Seg) (startTs endTs : Int) (mode : Mode)
     (asleep : Bool) : DayState :=
   { startTs := startTs, endTs := endTs, mode := mode,
     place := seg.place,
+    placeSource := seg.placeSource.bind fun (n, src) =>
+      if seg.place == some n && src != "" then some src else none,
     wayName := seg.wayName,
     asleep := if asleep && mode != "sleeping" then some true else none,
     tz := seg.displayTz,
@@ -147,6 +154,7 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
     | none => none  -- overnight in transit: no place, nothing to synthesize
     | some p =>
       some { startTs := start, endTs := finish, mode := "sleeping", place := some p,
+             placeSource := some "sleep",
              tz := w.tz,
              minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
   | some s, sleepOpt =>
@@ -165,6 +173,8 @@ def stateForInterval (start finish : Int) (seg : Option Seg) (sleep : Option Sle
           -- string equality in `sameState` would stop the two halves of one
           -- sleep from merging into a single row.
           some { startTs := start, endTs := finish, mode := "sleeping", place := s.place,
+                 placeSource := s.placeSource.bind fun (n, src) =>
+                   if s.place == some n && src != "" then some src else none,
                  tz := if w.tz.isSome then w.tz else s.displayTz,
                  minutesAsleep := if w.minutesAsleep > 0 then some w.minutesAsleep else none }
         else
@@ -520,7 +530,7 @@ def bracketedStayPlaceId (prevEndOfDay nextDominant : Option Int) : Option Int :
 def buildInferredStayState (place : String) (tz : Option String) (startTs endTs : Int) :
     DayState :=
   { startTs := startTs, endTs := endTs, mode := "stationary",
-    place := some place, tz := tz, inferred := some true }
+    place := some place, placeSource := some "inferred", tz := tz, inferred := some true }
 
 /-! ## Parity with Node/V8 (`lean/experiments/day-state-refs.mts`) -/
 
@@ -558,7 +568,7 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
      (wayName := some "Rt 38")] []).head!.mode == "bus"
 -- A sleep window with no segment coverage synthesizes a sleeping state.
 #guard segmentsToDayStates [] [sw T0 (T0+3600) (some "Home") 55 (some "Europe/London")]
-  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home",
+  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home", placeSource := some "sleep",
         tz := some "Europe/London", minutesAsleep := some 55 }]
 -- Sleeping while moving has no place to synthesize from.
 #guard segmentsToDayStates [] [sw T0 (T0+3600) none 55] == []
@@ -585,12 +595,12 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
 #guard segmentsToDayStates
   [sg (T0+1800) (T0+3600) (place := some "Home") (displayTz := some "Europe/London")]
   [sw T0 (T0+3600) (some "Home") 55 (some "Europe/London")]
-  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home",
+  == [{ startTs := T0, endTs := T0+3600, mode := "sleeping", place := some "Home", placeSource := some "sleep",
         tz := some "Europe/London", minutesAsleep := some 55 }]
 -- A sleeping row covering only PART of its window loses minutesAsleep.
 #guard segmentsToDayStates [sg (T0+1800) (T0+3600) (place := some "Work")]
   [sw T0 (T0+3600) (some "Home") 55]
-  == [{ startTs := T0, endTs := T0+1800, mode := "sleeping", place := some "Home" },
+  == [{ startTs := T0, endTs := T0+1800, mode := "sleeping", place := some "Home", placeSource := some "sleep" },
       { startTs := T0+1800, endTs := T0+3600, mode := "stationary", place := some "Work" }]
 -- A hole between segments emits nothing for the hole itself.
 #guard segmentsToDayStates
@@ -777,10 +787,10 @@ private def ds (a b : Int) (mode : Mode) (place : Option String := none)
 -- Id 0 is a real id, not a falsy blank.
 #guard bracketedStayPlaceId (some 0) (some 0) == some 0
 #guard buildInferredStayState "Ward 12" (some "Europe/London") T0 (T0+86400)
-  == { startTs := T0, endTs := T0+86400, mode := "stationary", place := some "Ward 12",
+  == { startTs := T0, endTs := T0+86400, mode := "stationary", place := some "Ward 12", placeSource := some "inferred",
        tz := some "Europe/London", inferred := some true }
 #guard buildInferredStayState "Ward 12" none T0 (T0+86400)
   == { startTs := T0, endTs := T0+86400, mode := "stationary", place := some "Ward 12",
-       inferred := some true }
+       placeSource := some "inferred", inferred := some true }
 
 end Verified.Geo.DayState

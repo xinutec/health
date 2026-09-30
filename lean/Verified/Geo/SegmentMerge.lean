@@ -84,6 +84,11 @@ structure Seg where
   linearity : Float := 0.5
   pointCount : Int := 10
   place : Option String := none
+  /-- Which rule named the stay, WITH the name it named: `(name, source)`
+      (#325, 2026-09-30). A later pass that renames the stay leaves the pair
+      behind, and a name that no longer matches its pair has no source — so a
+      confidence can never outlive the name it was measured for. -/
+  placeSource : Option (String × String) := none
   city : Option String := none
   wayName : Option String := none
   refinedReason : Option String := none
@@ -1048,6 +1053,9 @@ here already derived. -/
 structure ResolvedPlace where
   label : String
   city : Option String := none
+  /-- The naming chain's branch (`BestPlace.Source.key`); empty from a reader
+      that does not say. -/
+  source : String := ""
   deriving Inhabited, BEq, Repr
 
 /-- Collapse each planned run into one stay, re-resolving its name from the

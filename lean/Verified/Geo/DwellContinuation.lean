@@ -232,6 +232,8 @@ def applyDwellContinuation
             let continuation : DayState :=
               { startTs := anchor.endTs, endTs, mode := "stationary",
                 place := truthy anchor.place, inferred := some true,
+                -- The anchor's name, so the anchor's source (#325).
+                placeSource := if (truthy anchor.place).isSome then anchor.placeSource else none,
                 tz := truthy anchor.tz }
             -- Insert directly after the anchor, preserving relative order.
             states.extract 0 (ai + 1) ++ #[continuation] ++ states.extract (ai + 1) states.size

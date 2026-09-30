@@ -464,7 +464,8 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
         let reason := match s.refinedReason with
           | some r => s!"{r}; {why}"
           | none => why
-        out := out.set! i { s with place := some station, refinedReason := some reason }
+        out := out.set! i { s with place := some station, refinedReason := some reason
+                                   placeSource := some (station, "station") }
   return out
 
 /-! ## The passes

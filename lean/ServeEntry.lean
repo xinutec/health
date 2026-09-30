@@ -2378,6 +2378,9 @@ private def parseDayState (j : Json) : Except String Verified.Geo.DayState.DaySt
          , endTs := ← (← j.getObjVal? "endTs").getInt?
          , mode := ← (← j.getObjVal? "mode").getStr?
          , place := ← optS "place", city := ← optS "city", wayName := ← optS "wayName"
+         -- The rule that named `place`; `placeConfidence` is derived from it on
+         -- the way back out, so it is not read (#325).
+         , placeSource := ← optS "placeSource"
          , asleep := ← optB "asleep", tz := ← optS "tz"
          , minutesAsleep := ← jOptInt j "minutesAsleep"
          , inferred := ← optB "inferred" }
@@ -3471,6 +3474,11 @@ def dispatch (j : Json) : Json :=
   | .ok "biolabels" => bioLabelsResult j
   | .ok "head" => headResult j
   | .ok "day" => Day.dayResult j
+  -- The name-confidence table, for the test that holds it to its blessed
+  -- measurement (`tests/golden/name-confidence.jsonl`, #325).
+  | .ok "nameconfidence" => Json.mkObj [("counts", Json.arr
+      (Verified.Geo.NameConfidence.COUNTS.map fun (src, r, n) =>
+        Json.arr #[Json.str src, Lean.toJson r, Lean.toJson n]).toArray)]
   | .ok "focus" => Focus.focusResult j
   | .ok "battery" => batteryResult j
   | .ok "osmspatial" => osmSpatialResult j

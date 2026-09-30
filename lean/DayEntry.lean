@@ -739,6 +739,11 @@ def stateJson (s : Verified.Geo.DayState.DayState) : Json :=
   Json.mkObj [
     ("startTs", Lean.toJson s.startTs), ("endTs", Lean.toJson s.endTs),
     ("mode", Json.str s.mode), ("place", jOptS s.place), ("city", jOptS s.city),
+    ("placeSource", jOptS s.placeSource),
+    -- How often the rule that named `place` has been right (#325).
+    ("placeConfidence", match s.placeSource with
+      | some src => Lean.toJson (Verified.Geo.NameConfidence.confidence src)
+      | none => Json.null),
     ("wayName", jOptS s.wayName),
     ("asleep", match s.asleep with | none => Json.null | some b => Json.bool b),
     ("tz", jOptS s.tz), ("minutesAsleep", jOptI s.minutesAsleep),

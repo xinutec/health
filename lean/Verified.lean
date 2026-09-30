@@ -86,6 +86,7 @@ import Verified.Geo.BiometricLabels
 import Verified.Geo.ServedJourneys
 import Verified.Geo.DayChain
 import Verified.Geo.DayState
+import Verified.Geo.NameConfidence
 import Verified.Geo.Factors
 import Verified.Geo.WalkableRoute
 import Verified.Geo.WalkEscape

@@ -346,8 +346,35 @@ def DETAIL_ZOOM : Int := 18
 /-- The fall-through zoom: a square, a park, a neighbourhood. -/
 def AREA_ZOOM : Int := 16
 
+/-- Which branch of the chain named the place (#325, 2026-09-30) — the fact
+the confidence beside a name is measured on: each branch's hit rate on the
+confirmed corpus stays is the number the app shows. -/
+inductive Source where
+  /-- The stay lies inside the venue's footprint. -/
+  | enclosing
+  /-- The venue the zoom-18 geocode names, when the ranking agreed. -/
+  | geocodeVenue
+  /-- A lodging among the landmarks, for an overnight stay. -/
+  | lodging
+  /-- A venue-free house address, for a residence or a venueless cluster. -/
+  | residential
+  /-- The ranked landmark, decided by near-field distance dominance. -/
+  | nearField
+  /-- The ranked landmark, decided by the summed evidence. -/
+  | ranked
+  /-- The ranked landmark with no stay to score against. -/
+  | landmark
+  /-- A geocoded address or area, with no venue behind it. -/
+  | address
+  deriving Inhabited, BEq, Repr
+
+def Source.key : Source → String
+  | .enclosing => "enclosing" | .geocodeVenue => "geocodeVenue" | .lodging => "lodging"
+  | .residential => "residential" | .nearField => "nearField" | .ranked => "ranked"
+  | .landmark => "landmark" | .address => "address"
+
 /--
-`bestPlace`, whole.
+`bestPlace`, whole, with the branch that answered (`Source`).
 
 Reads the two (or three) geocodes the shell already answered and returns the
 `NominatimResult` the TS would, or `none` when nothing names the place.
@@ -356,13 +383,14 @@ Reads the two (or three) geocodes the shell already answered and returns the
 `pickBestLandmark`, which is `rankVenues` with no context. `preferResidential`
 enables the two overrides an overnight stay needs.
 -/
-def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
-    (preferResidential : Bool) : Option Result :=
+def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
+    (preferResidential : Bool) : Option (Result × Source) :=
   let landmarks := reads.landmarks.map (toLandmark reads.samples stay.isSome)
   let detailed := reads.geocode DETAIL_ZOOM
   -- `bestLandmark` and `nominatimWon` are the two `let`s the TS threads through
-  -- the chain; they are computed here and read below.
-  let (bestLandmark, nominatimWon) : Option Landmark × Bool :=
+  -- the chain; they are computed here and read below. The third component says
+  -- whether near-field dominance decided the ranking.
+  let (bestLandmark, nominatimWon, byNearField) : Option Landmark × Bool × Bool :=
     match stay with
     | some _ =>
       let nomVenue := match detailed with
@@ -374,41 +402,42 @@ def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePr
         | some nv => if landmarks.any (fun l => l.name == nv.name) then landmarks
                      else landmarks ++ [nv]
         | none => landmarks
-      if candidates.isEmpty then (none, false) else
+      if candidates.isEmpty then (none, false, false) else
       match (rankVenues candidates stay priors).head? with
-      | none => (none, false)
+      | none => (none, false, false)
       | some top =>
         let accepted := top.landmark.enclosing || decide (top.total ≥ VENUE_RANK_FLOOR_NATS)
-        if !accepted then (none, false)
+        if !accepted then (none, false, false)
         else match nomVenue with
-          | some nv => if top.landmark.name == nv.name then (none, true) else (some top.landmark, false)
-          | none => (some top.landmark, false)
+          | some nv => if top.landmark.name == nv.name then (none, true, false) else (some top.landmark, false, top.nearField)
+          | none => (some top.landmark, false, top.nearField)
     | none =>
-      if landmarks.isEmpty then (none, false)
-      else ((rankVenues landmarks none none).head?.map (·.landmark), false)
-
+      if landmarks.isEmpty then (none, false, false)
+      else ((rankVenues landmarks none none).head?.map (·.landmark), false, false)
+  let rankedSource : Source :=
+    if stay.isNone then .landmark else if byNearField then .nearField else .ranked
   if bestLandmark.any (·.enclosing) then
-    some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed)
+    some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed, .enclosing)
   else if detailed.any (fun d => hasSpecificVenue d && (if stay.isSome then nominatimWon else true))
-    then detailed
-  else rest bestLandmark detailed reads.geocode preferResidential landmarks
+    then detailed.map (·, .geocodeVenue)
+  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks
 where
   /-- The tail of the chain. Split out only because Lean has no early `return`;
   the ORDER is the TS's and is load-bearing — the lodging override must beat the
   residential address, and both must beat the landmark. -/
-  rest (bestLandmark : Option Landmark) (detailed : Option Result)
+  rest (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool)
-      (landmarks : List Landmark) : Option Result :=
+      (landmarks : List Landmark) : Option (Result × Source) :=
     if preferResidential then
       match pickLodgingOverride landmarks with
-      | some lodging => some (withAddressFrom (landmarkToResult lodging) detailed)
-      | none => afterLodging bestLandmark detailed geocode preferResidential
-    else afterLodging bestLandmark detailed geocode preferResidential
+      | some lodging => some (withAddressFrom (landmarkToResult lodging) detailed, .lodging)
+      | none => afterLodging bestLandmark rankedSource detailed geocode preferResidential
+    else afterLodging bestLandmark rankedSource detailed geocode preferResidential
   /-- `geocode AREA_ZOOM` is applied HERE and nowhere earlier — this is the only
   branch the TS asks it on, and asking it sooner would put a request on the wire
   the run never made. -/
-  afterLodging (bestLandmark : Option Landmark) (detailed : Option Result)
-      (geocode : Int → Option Result) (preferResidential : Bool) : Option Result :=
+  afterLodging (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
+      (geocode : Int → Option Result) (preferResidential : Bool) : Option (Result × Source) :=
     -- ⚠ A geocode that names a VENUE is not the neutral address this arm is
     -- for. A venueless mined cluster asks for an address so that a
     -- low-confidence nearby venue does not name it — and the zoom-18 result at
@@ -416,24 +445,31 @@ where
     -- road, and the wrong restaurant, which `placeLabel` prints amenity-first.
     -- So the shortcut takes only a venue-free address; a venue-bearing one
     -- falls through to the ranked landmark like any other (#325, 2026-09-28).
-    if preferResidential && detailed.any (fun d => hasResidentialAddress d && !hasSpecificVenue d) then detailed
+    if preferResidential && detailed.any (fun d => hasResidentialAddress d && !hasSpecificVenue d)
+      then detailed.map (·, .residential)
     else match bestLandmark with
-    | some bl => some (withAddressFrom (landmarkToResult bl) detailed)
+    | some bl => some (withAddressFrom (landmarkToResult bl) detailed, rankedSource)
     | none =>
-      if detailed.any hasResidentialAddress then detailed
+      if detailed.any hasResidentialAddress then detailed.map (·, .residential)
       else
         let area := geocode AREA_ZOOM
         match area with
-        | some ar => if hasSpecificVenue ar || isLandmarkResult ar then some ar
-                     else detailed.orElse fun _ => area
-        | none => detailed
+        | some ar => if hasSpecificVenue ar || isLandmarkResult ar then some (ar, .address)
+                     else (detailed.orElse fun _ => area).map (·, .address)
+        | none => detailed.map (·, .address)
+
+/-- The chain's answer without its branch — what every caller before the
+confidence number read, and what the parity guards pin. -/
+def bestPlace (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
+    (preferResidential : Bool) : Option Result :=
+  (bestPlaceSourced reads stay priors preferResidential).map (·.1)
 
 /-- `bestPlace` composed with `placeLabel` and `extractCity` — the shape the
 fold's jitter pass and the sleep-place attribution both consume. -/
 def resolve (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
-  (bestPlace reads stay priors preferResidential).map fun r =>
-    { label := placeLabel r, city := extractCity (some r.address) }
+  (bestPlaceSourced reads stay priors preferResidential).map fun (r, src) =>
+    { label := placeLabel r, city := extractCity (some r.address), source := src.key }
 
 /-! ## Guards
 

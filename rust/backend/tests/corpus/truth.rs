@@ -71,6 +71,64 @@ const NARRATIVES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/golden/ground-truth"
 );
+/// The name-confidence measurement, one JSON line per date (#325): per naming
+/// rule, how many of the day's graded stay rows its names got right.
+pub const NAME_CONFIDENCE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/golden/name-confidence.jsonl"
+);
+
+/// Per naming rule, `(right, graded)` over one day's graded stay rows: each row
+/// that asserts a stationary or sleeping PLACE and carries a clean verdict is
+/// read against the stay state overlapping it most, and counted under the rule
+/// that named that state. A state with no rule, or no overlapping stay, counts
+/// nowhere — it shows no percentage, so it has no hit rate to keep.
+pub fn name_confidence_counts(
+    rows: &[Value],
+    verdicts: &[Value],
+    states: &[Value],
+) -> BTreeMap<String, (u64, u64)> {
+    let mut out: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    let stays: Vec<&Value> = states
+        .iter()
+        .filter(|s| matches!(s["mode"].as_str(), Some("stationary" | "sleeping")))
+        .collect();
+    for (row, v) in rows.iter().zip(verdicts) {
+        let t = &row["truth"];
+        if !matches!(t["mode"].as_str(), Some("stationary" | "sleeping"))
+            || t["place"].as_str().is_none()
+        {
+            continue;
+        }
+        let right = match v.as_str() {
+            Some("verified" | "cleared") => true,
+            Some("regressed" | "known-error") => false,
+            _ => continue,
+        };
+        let (a, b) = (
+            row["startTs"].as_i64().unwrap_or(0),
+            row["endTs"].as_i64().unwrap_or(0),
+        );
+        let overlap = |s: &Value| {
+            (b.min(s["endTs"].as_i64().unwrap_or(0)) - a.max(s["startTs"].as_i64().unwrap_or(0)))
+                .max(0)
+        };
+        let Some(best) = stays.iter().copied().max_by_key(|s| overlap(s)) else {
+            continue;
+        };
+        if overlap(best) == 0 {
+            continue;
+        }
+        let Some(src) = best["placeSource"].as_str() else {
+            continue;
+        };
+        let e = out.entry(src.to_string()).or_default();
+        e.0 += u64::from(right);
+        e.1 += 1;
+    }
+    out
+}
+
 const BASELINE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/golden/truth-baseline.json"
@@ -194,6 +252,8 @@ pub struct Truth {
     /// a static grep over the markdown produced "53 rows over 8 days" against
     /// the grader's 47 over 17. `(untrusted, unstatused)`.
     ungraded: BTreeMap<String, (usize, usize)>,
+    /// The blessed name-confidence counts by date (`NAME_CONFIDENCE`).
+    name_confidence: BTreeMap<String, BTreeMap<String, (u64, u64)>>,
 }
 
 impl Truth {
@@ -222,6 +282,26 @@ impl Truth {
             tally_c: 0,
             tally_u: 0,
             ungraded: BTreeMap::new(),
+            name_confidence: std::fs::read_to_string(NAME_CONFIDENCE)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .map(|j| {
+                    let counts = j["counts"]
+                        .as_object()
+                        .map(|m| {
+                            m.iter()
+                                .map(|(k, v)| {
+                                    let g =
+                                        |i: usize| v.get(i).and_then(Value::as_u64).unwrap_or(0);
+                                    (k.clone(), (g(0), g(1)))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (j["date"].as_str().unwrap_or_default().to_string(), counts)
+                })
+                .collect(),
         })
     }
 
@@ -266,6 +346,35 @@ impl Truth {
             "{name}: the verdict list must be positional"
         );
         self.reported.insert(date.to_string());
+        // The name-confidence counts: re-measured every run, day by day, against
+        // their blessed values — the percentage the app shows is this
+        // measurement, and a naming change that moves it must say so (#325).
+        let counts = name_confidence_counts(&narrative.rows, verdicts, &states);
+        if std::env::var("NAME_CONFIDENCE_BLESS").is_ok() {
+            use std::io::Write;
+            let obj: serde_json::Map<String, Value> = counts
+                .iter()
+                .map(|(k, (r, n))| (k.clone(), json!([r, n])))
+                .collect();
+            let line = format!("{}\n", json!({ "date": date, "counts": obj }));
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(NAME_CONFIDENCE)
+                .expect("NAME_CONFIDENCE opens")
+                .write_all(line.as_bytes())
+                .expect("NAME_CONFIDENCE writes");
+        } else if !self.report_only {
+            let blessed = self.name_confidence.get(date).cloned().unwrap_or_default();
+            if counts != blessed {
+                self.failures.push(format!(
+                    "{name}: name-confidence counts moved — now {counts:?}, blessed {blessed:?}; \
+                     if the naming change is intended, re-bless with NAME_CONFIDENCE_BLESS=1 \
+                     (after removing tests/golden/name-confidence.jsonl) and update \
+                     Verified.Geo.NameConfidence.COUNTS to the new sums"
+                ));
+            }
+        }
         if let Some(path) = &self.rows_out {
             use std::io::Write;
             let mut f = std::fs::OpenOptions::new()
@@ -276,7 +385,13 @@ impl Truth {
             // One buffer, one write: the shards append concurrently and a
             // `writeln!` lands in pieces, which interleaved two dates into one
             // unparseable line (2026-09-29).
-            let line = format!("{}\n", json!({ "date": date, "rows": narrative.rows }));
+            // The verdicts and the graded states ride along, so a row's served
+            // state — its name and the rule that named it — can be read beside
+            // its truth (the name-confidence measurement, #325, 2026-09-30).
+            let line = format!(
+                "{}\n",
+                json!({ "date": date, "rows": narrative.rows, "verdicts": verdicts, "states": states })
+            );
             f.write_all(line.as_bytes()).expect("TRUTH_ROWS_OUT writes");
         }
         // `VENUE_AB_OUT`: one JSON line per date, `{"date", "rows": [[ts, verdict]…]}`,

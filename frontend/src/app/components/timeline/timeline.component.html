@@ -93,7 +93,12 @@
       <div class="line"></div>
     </div>
     <div class="content">
-      <div class="primary">{{ entry.primary }}</div>
+      <div class="primary">
+        {{ entry.primary }}
+        @if (entry.certainty) {
+          <span class="certainty" title="How often this kind of name has been right on your confirmed days">{{ entry.certainty }}</span>
+        }
+      </div>
       @if (entry.secondary) {
         <div class="secondary">{{ entry.secondary }}</div>
       }
