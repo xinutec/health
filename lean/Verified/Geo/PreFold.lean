@@ -188,32 +188,76 @@ def planeInsideTrainRun (segs : Array Seg) : Array Seg :=
 /-- Adjacent: the next leg starts within this of the last one's end. -/
 def NO_STOP_GAP_S : Int := 60
 
+/-- A station stop inside a rail journey lasts at most this. -/
+def STATION_DWELL_MAX_S : Int := 15 * 60
+
+/-- A "driving" leg the map gave no POSITIVE evidence for: no ways near it at
+all (`NO_OSM_CONTEXT`), or a classifier train demoted only because no railway
+turned up (`NO_RAIL_EVIDENCE`, 16:00 on 2026-10-01, where the roads had been
+fetched and the railway had not). A leg the map put on a motorway is not this. -/
+def unmappedDriving (s : Seg) : Bool :=
+  let why := s.refinedReason.getD ""
+  effectiveMode s == "driving"
+    && (why.startsWith Verified.Geo.RefineMode.NO_OSM_CONTEXT
+        || why.startsWith Verified.Geo.RefineMode.NO_RAIL_EVIDENCE)
+
+/-- A pause with no steps, short enough to be a train standing at a station. -/
+def stillDwell (steps : List StepPoint) (s : Seg) : Bool :=
+  effectiveMode s == "stationary"
+    && decide (s.endTs - s.startTs ≤ STATION_DWELL_MAX_S)
+    && steps.all fun p => !(decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)) || p.steps == 0
+
 /--
-A "driving" leg the map could say nothing about (`NO_OSM_CONTEXT`: no ways near
-it at all) that starts where a train leg ended, with no stop between, is the
-train going on: nobody changes from a train to a car without stopping. The TGV
-south of Bordeaux (2026-10-01) ran 92 km/h on average, max 145, which reads as
-a motorway by speed alone, and the map mirror did not yet cover the line.
+The rail journey carried across what the map cannot see.
+
+* An unmapped "driving" leg (`unmappedDriving`) that starts where the journey's
+  last leg ended, with no stop between, is the train going on: nobody changes
+  from a train to a car without stopping. The TGV south of Bordeaux
+  (2026-10-01) ran 92 km/h on average, max 145, which reads as a motorway by
+  speed alone, and the map mirror did not cover the line.
+* A stop with no steps of at most `STATION_DWELL_MAX_S` between that journey and
+  more of it is the train standing at a station (Bordeaux, 7 minutes, every fix
+  within 4 m). It counts as the journey ONLY when the journey resumes after it:
+  a stop followed by a walk, or by a mapped road, is where he got off.
 
 Only without map evidence. Where the map has context the enrichment stage has
-already decided between road and rail, and that stands. Left to right, so a
-run of such legs continues the train leg by leg.
+already decided between road and rail, and that stands.
 -/
-def trainContinuesWithoutMap (segs : Array Seg) : Array Seg := Id.run do
+def trainContinuesWithoutMap (steps : List StepPoint) (segs : Array Seg) : Array Seg := Id.run do
+  let asTrain (s : Seg) (why : String) : Seg :=
+    { s with mode := "train", refinedMode := some "train", refinedReason := some why }
   let mut out : Array Seg := #[]
-  for s in segs do
-    let continues :=
-      effectiveMode s == "driving"
-        && s.refinedReason == some Verified.Geo.RefineMode.NO_OSM_CONTEXT
-        && (match out.back? with
-            | some p => movesLikeATrain p && decide (s.startTs - p.endTs ≤ NO_STOP_GAP_S)
-            | none => false)
-    out := out.push (if continues then
-      { s with
-        mode := "train"
-        refinedMode := some "train"
-        refinedReason := some "no map context, and no stop since the train — the same rail journey" }
-      else s)
+  let mut i := 0
+  while h : i < segs.size do
+    let s := segs[i]
+    let after (p : Option Seg) : Bool :=
+      match p with
+      | some q => movesLikeATrain q && decide (s.startTs - q.endTs ≤ NO_STOP_GAP_S)
+      | none => false
+    if unmappedDriving s && after out.back? then
+      out := out.push (asTrain s "no map context, and no stop since the train — the same rail journey")
+      i := i + 1
+    else if stillDwell steps s && after out.back? then
+      -- The run of dwells from here, and what follows it.
+      let mut j := i
+      while hj : j < segs.size do
+        if stillDwell steps segs[j] then j := j + 1 else break
+      let resumes : Bool := match segs[j]? with
+        | some n =>
+          let lastEnd := (segs[j - 1]?.map (·.endTs)).getD s.endTs
+          (movesLikeATrain n || unmappedDriving n) && decide (n.startTs - lastEnd ≤ NO_STOP_GAP_S)
+        | none => false
+      if resumes then
+        for k in [i : j] do
+          if hk : k < segs.size then
+            out := out.push (asTrain segs[k] "a stop with no steps between rail legs — the train at a station")
+        i := j
+      else
+        out := out.push s
+        i := i + 1
+    else
+      out := out.push s
+      i := i + 1
   return out
 
 /-- The five, in the TS's order. Each consumes what the last produced; the order
@@ -229,7 +273,7 @@ def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats
   let reverted := revertIsolatedCadenceDrivesApplied flipped.toList
   let corrected := reverted.map fun s => applyDecision s (demoteJitterWalkToStationary s steps)
   let biometric := corrected.map (applyBiometricSignature hrPairs stepPairs stats)
-  trainContinuesWithoutMap (planeInsideTrainRun (biometric.map enforcePhysicalConstraints))
+  trainContinuesWithoutMap steps (planeInsideTrainRun (biometric.map enforcePhysicalConstraints))
 
 /-! ## Guards
 
@@ -328,16 +372,32 @@ private def dr (a b : Int) (why : Option String := some Verified.Geo.RefineMode.
              refinedMode := some "driving", refinedReason := why }
 
 -- The TGV south of Bordeaux: unmapped "driving" straight after the train.
-#guard (trainContinuesWithoutMap #[tr 0 600, dr 600 1800, dr 1800 2400]).map effectiveMode
+#guard (trainContinuesWithoutMap [] #[tr 0 600, dr 600 1800, dr 1800 2400]).map effectiveMode
   == #["train", "train", "train"]
+-- Demoted only for want of a railway: still absence, the train goes on.
+#guard (trainContinuesWithoutMap [] #[tr 0 600, dr 600 1800 (some Verified.Geo.RefineMode.NO_RAIL_EVIDENCE)]).map effectiveMode
+  == #["train", "train"]
 -- The map said road: the enrichment's verdict stands.
-#guard (trainContinuesWithoutMap #[tr 0 600, dr 600 1800 (some "on motorway")]).map effectiveMode
+#guard (trainContinuesWithoutMap [] #[tr 0 600, dr 600 1800 (some "on motorway")]).map effectiveMode
   == #["train", "driving"]
 -- A stop between (a gap past a minute) is a change of vehicle.
-#guard (trainContinuesWithoutMap #[tr 0 600, dr 700 1800]).map effectiveMode
+#guard (trainContinuesWithoutMap [] #[tr 0 600, dr 700 1800]).map effectiveMode
   == #["train", "driving"]
+-- Bordeaux: a still stop between the train and an unmapped leg is the train.
+private def st (a b : Int) : Seg := { seg with startTs := a, endTs := b, mode := "stationary", avgSpeed := 0.3 }
+#guard (trainContinuesWithoutMap [] #[tr 0 600, st 600 1020, dr 1020 2400]).map effectiveMode
+  == #["train", "train", "train"]
+-- Steps during the stop: he moved, it is not a train at a station.
+#guard (trainContinuesWithoutMap [⟨700, 40⟩] #[tr 0 600, st 600 1020, dr 1020 2400]).map effectiveMode
+  == #["train", "stationary", "driving"]
+-- A stop followed by a mapped road is where he got off: the stop stays a stop.
+#guard (trainContinuesWithoutMap [] #[tr 0 600, st 600 1020, dr 1020 2400 (some "on motorway")]).map effectiveMode
+  == #["train", "stationary", "driving"]
+-- Longer than a station stop.
+#guard (trainContinuesWithoutMap [] #[tr 0 600, st 600 1600, dr 1600 2400]).map effectiveMode
+  == #["train", "stationary", "driving"]
 -- No train before it, nothing to continue.
-#guard (trainContinuesWithoutMap #[dr 0 600]).map effectiveMode == #["driving"]
+#guard (trainContinuesWithoutMap [] #[dr 0 600]).map effectiveMode == #["driving"]
 
 /-! ### `meanInWindow` -/
 

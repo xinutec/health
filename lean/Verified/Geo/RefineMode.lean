@@ -149,6 +149,11 @@ private def borrowStreetName (highways : Array NearbyWay) : Option String :=
 coverage, not a road. `PreFold.trainContinuesWithoutMap` reads it. -/
 def NO_OSM_CONTEXT : String := "no OSM context"
 
+/-- The reason a classifier "train" carries when demoted to driving for want of
+a railway in its samples, with no major road either: absence, not a road. Off
+the mirror's ground a road layer can be fetched before the railway one. -/
+def NO_RAIL_EVIDENCE : String := "no rail evidence"
+
 /--
 The cascade, in its own order. Each arm returns; falling through is what makes
 the next one reachable.
@@ -189,7 +194,7 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
   if originalMode == "train" && railways.isEmpty then
     if let some hw := majorHighways[0]? then
       { mode := "driving", confidence := "high", reason := s!"on {hw.subtype}", wayName := hw.name }
-    else { mode := "driving", confidence := "medium", reason := "no rail evidence" }
+    else { mode := "driving", confidence := "medium", reason := NO_RAIL_EVIDENCE }
   else
   if hh : highways.size > 0 then
     let hw := pickBestHighway highways speedKmh hh
