@@ -855,7 +855,7 @@ def dayResult (j : Json) : Json :=
     -- pass before it, so a shell that re-imposed the sequence would put the
     -- thing under test outside the test. Their observations are the fold's own
     -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
-    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched
+    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched env.rawFixes
     -- ⚠ `passLimit` RUNS A PREFIX OF THE CASCADE, for #1071's per-pass memory
     -- attribution. Absent it runs them all, which is every caller but the
     -- ablation harness. A truncated cascade is a WRONG day on purpose — passes

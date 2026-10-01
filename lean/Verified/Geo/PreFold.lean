@@ -4,6 +4,7 @@ import Verified.Geo.ModeBiometrics
 import Verified.Geo.Segments
 import Verified.Geo.RefineMode
 import Verified.JsNum
+import Verified.Geo.UndergroundRun
 /-!
 # The five corrections before the cascade (`src/geo/velocity.ts` 1063-1115)
 
@@ -191,15 +192,21 @@ def NO_STOP_GAP_S : Int := 60
 /-- A station stop inside a rail journey lasts at most this. -/
 def STATION_DWELL_MAX_S : Int := 15 * 60
 
+/-- The kind `movedIsNotStill` leaves on a sit it reopened as a ride. -/
+def STEPLESS_RIDE : String := "stepless-ride"
+
 /-- A "driving" leg the map gave no POSITIVE evidence for: no ways near it at
-all (`NO_OSM_CONTEXT`), or a classifier train demoted only because no railway
+all (`NO_OSM_CONTEXT`), a classifier train demoted only because no railway
 turned up (`NO_RAIL_EVIDENCE`, 16:00 on 2026-10-01, where the roads had been
-fetched and the railway had not). A leg the map put on a motorway is not this. -/
+fetched and the railway had not), or a sit reopened as a ride because it moved
+with no steps (`STEPLESS_RIDE`: the TGV slowing into Hendaye). A leg the map
+put on a motorway is not this. -/
 def unmappedDriving (s : Seg) : Bool :=
   let why := s.refinedReason.getD ""
   effectiveMode s == "driving"
     && (why.startsWith Verified.Geo.RefineMode.NO_OSM_CONTEXT
-        || why.startsWith Verified.Geo.RefineMode.NO_RAIL_EVIDENCE)
+        || why.startsWith Verified.Geo.RefineMode.NO_RAIL_EVIDENCE
+        || s.refinedKinds.contains STEPLESS_RIDE)
 
 /-- A pause with no steps, short enough to be a train standing at a station. -/
 def stillDwell (steps : List StepPoint) (s : Seg) : Bool :=
@@ -260,19 +267,90 @@ def trainContinuesWithoutMap (steps : List StepPoint) (segs : Array Seg) : Array
       i := i + 1
   return out
 
+/-- A leg must have got at least this far to have MOVED, whatever the
+accuracy says. -/
+def MOVED_MIN_M : Float := 500
+
+/-- …and further than this many times the worse accuracy of its two ends. -/
+def MOVED_ACCURACY_MULTIPLE : Float := 3
+
+/-- …and faster, end to end, than a pedestrian: a stepless 20-minute walk
+(2026-06-18, watch data missing) covers a kilometre and a half too, at 4.5 km/h. -/
+def MOVED_MIN_KMH : Float := Verified.Geo.BiometricLabels.CADENCE_REVERT_PEDESTRIAN_AVG_KMH
+
+/-- How many fixes stand for each end of a leg. -/
+def MOVED_END_FIXES : Nat := 3
+
+/-- How far a leg's last fixes lie from its first, and the worse median
+accuracy of the two ends. `none` with fewer than two ends' worth of fixes, or
+an end with no accuracy at all. -/
+def endsApart (raw : Array Verified.Geo.UndergroundRun.CoarseFix) (s : Seg) :
+    Option (Float × Float) := do
+  let w := raw.filter fun f => decide (f.ts ≥ s.startTs) && decide (f.ts ≤ s.endTs)
+  if w.size < 2 * MOVED_END_FIXES then none
+  let head := w.extract 0 MOVED_END_FIXES
+  let tail := w.extract (w.size - MOVED_END_FIXES) w.size
+  let mean (xs : Array Verified.Geo.UndergroundRun.CoarseFix) : Float × Float :=
+    let n := Float.ofNat xs.size
+    ((xs.foldl (fun a f => a + f.lat) 0) / n, (xs.foldl (fun a f => a + f.lon) 0) / n)
+  let median (xs : Array Verified.Geo.UndergroundRun.CoarseFix) : Option Float :=
+    let accs := (xs.filterMap (·.accuracy)).qsort (· < ·)
+    accs[accs.size / 2]?
+  let (aLat, aLon) := mean head
+  let (bLat, bLon) := mean tail
+  let acc := max (← median head) (← median tail)
+  return (Verified.Hsmm.FloatScore.haversineMeters aLat aLon bLat bLon, acc)
+
+/-- Fewer steps over the whole window than a walker takes a minute, per
+minute. A minute the watch counted nothing is absent from the stream, so this
+is the sum over the window's length, not the mean of what is present; and only
+minutes wholly inside the window count, because the minute a ride ends in holds
+the first steps of the walk off it (10:16 on 2026-10-01: 73). -/
+def stepless (steps : List (Int × Float)) (s : Seg) : Bool :=
+  let total := (steps.filter fun p => decide (p.1 ≥ s.startTs) && decide (p.1 + 60 ≤ s.endTs)).foldl
+    (fun a p => a + p.2) 0
+  let minutes := Float.ofInt (s.endTs - s.startTs) / 60
+  total < Verified.Geo.BiometricLabels.WALKING_MIN_CADENCE * minutes
+
+/-- A walk the body calls a sit, that GOT somewhere, was a ride.
+
+The biometric signature turns a stepless walk into a stay, which is right when
+the walk is GPS wander and wrong when it is a vehicle the segmenter read
+slowly. 2026-10-01: Métro 4 from Odéon to Montparnasse, five minutes on coarse
+station-to-station fixes averaging 5 km/h, served as a stay on Boulevard
+Saint-Germain. Its ends lie 1.3 km apart at under 100 m accuracy, 17 km/h
+end to end, one step in five minutes; wander does not cover that, and a walk
+takes steps. (2026-06-18's walk to Euston Square, flipped to a sit on a low
+average cadence, has hundreds and stays as the cascade reads it.) Such a leg goes to `driving`, the placeholder for an
+unidentified vehicle, where the rail passes can claim it. -/
+def movedIsNotStill (steps : List (Int × Float))
+    (raw : Array Verified.Geo.UndergroundRun.CoarseFix) (s : Seg) : Seg :=
+  if effectiveMode s != "stationary" || !s.refinedKinds.contains "gps-jitter" then s
+  else if !stepless steps s then s
+  else match endsApart raw s with
+    | some (d, acc) =>
+      let hours := Float.ofInt (s.endTs - s.startTs) / 3600
+      if d ≥ MOVED_MIN_M && d > MOVED_ACCURACY_MULTIPLE * acc && d / 1000 > MOVED_MIN_KMH * hours then
+        { s with refinedMode := some "driving"
+                 refinedReason := some s!"no steps, but its ends lie {fx d 0} m apart at {fx acc 0} m accuracy — a ride, not a sit"
+                 refinedKinds := (s.refinedKinds.filter (· != "gps-jitter")).push STEPLESS_RIDE }
+      else s
+    | none => s
+
 /-- The five, in the TS's order. Each consumes what the last produced; the order
 is load-bearing in the same way the cascade's is, and for the same reason the
 `revertIsolatedCadence` entry exists at all — it undoes the pass before it, so
 swapping the two makes both no-ops. `planeInsideTrainRun` and then
 `trainContinuesWithoutMap` read their result. -/
 def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats)
-    (segs : Array Seg) : Array Seg :=
+    (segs : Array Seg) (raw : Array Verified.Geo.UndergroundRun.CoarseFix := #[]) : Array Seg :=
   let stepPairs := steps.map fun p => (p.ts, p.steps)
   let hrPairs := hr.map fun p => (p.ts, p.bpm)
   let flipped := segs.map fun s => applyDecision s (correctModeFromCadence s steps)
   let reverted := revertIsolatedCadenceDrivesApplied flipped.toList
   let corrected := reverted.map fun s => applyDecision s (demoteJitterWalkToStationary s steps)
-  let biometric := corrected.map (applyBiometricSignature hrPairs stepPairs stats)
+  let biometric := corrected.map fun s =>
+    movedIsNotStill stepPairs raw (applyBiometricSignature hrPairs stepPairs stats s)
   trainContinuesWithoutMap steps (planeInsideTrainRun (biometric.map enforcePhysicalConstraints))
 
 /-! ## Guards
@@ -428,6 +506,47 @@ private def zeroSteps : List StepPoint :=
 -- other way — the pair is context-sensitive, not a no-op.
 private def drive : Seg := { seg with startTs := 700, endTs := 1300 }
 #guard ((preFold zeroSteps [] [] #[drive, walk, drive])[1]!).refinedMode == some "driving"
+
+/-! ### `movedIsNotStill` -/
+
+/-- A stay the biometric signature made out of a walk. -/
+private def sat : Seg :=
+  { walk with refinedMode := some "stationary", refinedKinds := #["gps-jitter"] }
+
+/-- Three fixes at the equator, then three `toLat` degrees north. -/
+private def track (toLat : Float) (acc : Float := 90) : Array Verified.Geo.UndergroundRun.CoarseFix :=
+  #[0, 60, 120].map (fun t => { ts := t, lat := 0, lon := 0, accuracy := some acc }) ++
+  #[480, 540, 600].map (fun t => { ts := t, lat := toLat, lon := 0, accuracy := some acc })
+
+#guard MOVED_MIN_M == 500 && MOVED_ACCURACY_MULTIPLE == 3 && MOVED_END_FIXES == 3
+#guard MOVED_MIN_KMH == 7
+-- 2.2 km in ten minutes at 90 m: it went somewhere.
+#guard (movedIsNotStill [] (track 0.02) sat).refinedMode == some "driving"
+#guard (movedIsNotStill [] (track 0.02) sat).refinedKinds == #[STEPLESS_RIDE]
+#guard unmappedDriving (movedIsNotStill [] (track 0.02) sat)
+-- The same 2.2 km over an hour is a walking pace.
+#guard (movedIsNotStill [] (track 0.02) { sat with endTs := 3600 }).refinedMode == some "stationary"
+-- 445 m is under the floor, however good the fixes and however fast: two
+-- minutes, 13 km/h.
+#guard (movedIsNotStill [] ((track 0.004 10).mapIdx (fun i f => { f with ts := 20 * Int.ofNat i }))
+  { sat with endTs := 100 }).refinedMode == some "stationary"
+-- …which is the floor's doing: the same two minutes over 2.2 km is a ride.
+#guard (movedIsNotStill [] ((track 0.02 10).mapIdx (fun i f => { f with ts := 20 * Int.ofNat i }))
+  { sat with endTs := 100 }).refinedMode == some "driving"
+-- 2.2 km at 800 m accuracy is inside three times the uncertainty.
+#guard (movedIsNotStill [] (track 0.02 800) sat).refinedMode == some "stationary"
+-- Only the biometric flip is reopened: a stay the segmenter saw is not.
+#guard movedIsNotStill [] (track 0.02) { sat with refinedKinds := #[] } == { sat with refinedKinds := #[] }
+-- A leg with steps is a walk, whatever its ends say: 60 in ten minutes is 6 a minute.
+#guard (movedIsNotStill [(0, 30), (300, 30)] (track 0.02) sat).refinedMode == some "stationary"
+#guard (movedIsNotStill [(0, 30), (300, 19)] (track 0.02) sat).refinedMode == some "driving"
+-- The minute the window ends in is not inside it: its steps are the walk after.
+#guard (movedIsNotStill [(0, 30), (300, 19), (580, 500)] (track 0.02) sat).refinedMode == some "driving"
+#guard (movedIsNotStill [(0, 30), (300, 19), (540, 500)] (track 0.02) sat).refinedMode == some "stationary"
+-- Too few fixes to have two ends: left alone.
+#guard movedIsNotStill [] ((track 0.02).extract 0 5) sat == sat
+-- No accuracy at either end: left alone.
+#guard movedIsNotStill [] ((track 0.02).map ({ · with accuracy := none })) sat == sat
 
 end Guards
 
