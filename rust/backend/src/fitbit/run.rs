@@ -76,15 +76,28 @@ pub enum Passes {
 /// Returns `Ok(())` when the run finished OR when the budget ran out — both are
 /// healthy endings for a scheduled job. It fails only when something structural
 /// did: the user list could not be read, or Lean could not answer.
+///
+/// ⚠ THE GOOGLE STREAMS DO NOT DEPEND ON FITBIT. They run first and
+/// unconditionally; only then does the run look for Fitbit credentials
+/// (`fitbit: None` is Google-only) and users in the Fitbit `tokens` table. The
+/// Fitbit Web API ends 2026-10-30 (#260), and until this the whole run, Google
+/// included, returned early when that table was empty.
 pub async fn run(
     pool: &MySqlPool,
     http: &reqwest::Client,
-    client_id: &str,
-    client_secret: &str,
+    fitbit: Option<&crate::config::FitbitConfig>,
     nextcloud_base_url: Option<&str>,
     lookup: Lookup<'_>,
     passes: Passes,
 ) -> Result<()> {
+    google_weight(pool, http).await;
+    google_streams(pool, http).await;
+
+    let Some(fb) = fitbit else {
+        tracing::info!("Fitbit not configured: Google streams only");
+        return Ok(());
+    };
+    let (client_id, client_secret) = (fb.client_id.as_str(), fb.client_secret.as_str());
     let users: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM tokens")
         .fetch_all(pool)
         .await
@@ -95,9 +108,6 @@ pub async fn run(
         return Ok(());
     }
     tracing::info!("Found {} user(s) with Fitbit tokens", users.len());
-
-    google_weight(pool, http).await;
-    google_streams(pool, http).await;
 
     // ⚠ ONE client and ONE token store for the whole run, not one per user. The
     // Fitbit budget is charged against the APPLICATION, so a per-user client

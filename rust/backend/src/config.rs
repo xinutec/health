@@ -290,7 +290,8 @@ impl Config {
     }
 
     /// Read every setting from the environment, REQUIRING the Fitbit
-    /// credentials. The serve and sync paths use them; a test pins the refusal.
+    /// credentials. The serve path uses them; a test pins the refusal. (`sync`
+    /// reads `from_env_batch` since 2026-10-01: without Fitbit it is Google-only.)
     pub fn from_env() -> Result<Self> {
         let c = Self::from_env_relaxed()?;
         let fb = c.fitbit.as_ref();
@@ -307,7 +308,7 @@ impl Config {
     /// absent rather than required.
     ///
     /// ⚠ `from_env` still REFUSES without them, and that is deliberate — the
-    /// serve and sync paths genuinely use them, and a test pins the refusal.
+    /// serve path genuinely uses them, and a test pins the refusal.
     /// This is for the CronJobs that need the day pipeline (and therefore an
     /// `AppState`, and therefore a `Config`) while touching no Fitbit API:
     /// `refresh-rail-routes`, `refresh-rail-stops`, `refresh-bus-routes`,

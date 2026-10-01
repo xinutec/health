@@ -254,27 +254,23 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
         )
         .init();
 
-    let cfg = Config::from_env()?;
+    // ⚠ `from_env_batch`: the Fitbit credentials are OPTIONAL here. Without
+    // them the run is Google-only, which is what it becomes when the Fitbit Web
+    // API ends (2026-10-30, #260).
+    let cfg = Config::from_env_batch()?;
     let pool = db::connect(&cfg.db.url()).await?;
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("building the HTTP client")?;
 
-    // ⚠ `sync` DOES call Fitbit, so a batch config here is a misconfiguration
-    // rather than something to work around.
-    let fb = cfg
-        .fitbit
-        .as_ref()
-        .context("sync needs FITBIT_CLIENT_ID and FITBIT_CLIENT_SECRET")?;
     let polygons = fitbit::tz_source::PolygonLookup::new();
     let lookup = |lat: f64, lon: f64| polygons.zone(lat, lon);
 
     fitbit::run::run(
         &pool,
         &http,
-        &fb.client_id,
-        &fb.client_secret,
+        cfg.fitbit.as_ref(),
         cfg.nextcloud_base_url.as_deref(),
         &lookup,
         passes,

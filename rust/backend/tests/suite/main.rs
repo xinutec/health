@@ -117,6 +117,7 @@ mod station_chain;
 mod stations_on_line;
 mod steps_parse;
 mod stream_parse;
+mod sync_without_fitbit;
 mod timezone;
 mod tz_source;
 mod usage;
