@@ -144,10 +144,50 @@ def enforcePhysicalConstraints (s : Seg) : Seg :=
         s!"physical-impossibility override (avg {fx s.avgSpeed 0} km/h exceeds train limit)"
     { s with mode := constrained, refinedMode := some constrained, refinedReason := some reason }
 
+/-- Neighbours further apart than this are not one ride. -/
+def TRAIN_RUN_MAX_GAP_S : Int := 10 * 60
+
+/-- Train, or any ground mode faster than a car can go. The second arm is for
+the enrichment stage's "no rail evidence" demotion, which off the map mirror's
+ground (France, 2026-10-01) turned a 291 km/h train window into "driving". -/
+def movesLikeATrain (s : Seg) : Bool :=
+  effectiveMode s == "train"
+    || (effectiveMode s != "plane"
+        && decide (s.maxSpeed > Verified.Geo.Segments.DRIVING_MAX_SPEED_KMH))
+
+/--
+A "plane" window flanked by train on both sides, at no more than a train can
+average, is the same train: nobody boards a flight in the middle of a rail
+journey. The raw classifier centres train on 120 km/h and plane on 500 km/h,
+so a TGV at ~290 km/h (Paris → Hendaye, 2026-10-01) scored as plane in two
+five-minute windows between train ones.
+
+Both neighbours must be train and close: a flight's slower climb and descent
+windows sit beside plane windows, not train ones, so a real flight is never
+rewritten. The speed bound is `TRAIN_MAX_AVG_SPEED_KMH`, the ceiling above which
+`enforcePhysicalConstraints` itself calls a train a plane.
+-/
+def planeInsideTrainRun (segs : Array Seg) : Array Seg :=
+  segs.mapIdx fun i s =>
+    let isTrainNear (o : Option Seg) (gap : Seg → Int) : Bool :=
+      match o with
+      | some n => movesLikeATrain n && decide (gap n ≤ TRAIN_RUN_MAX_GAP_S)
+      | none => false
+    if effectiveMode s != "plane"
+        || decide (s.avgSpeed > Verified.Geo.Segments.TRAIN_MAX_AVG_SPEED_KMH) then s
+    else if isTrainNear (if i == 0 then none else segs[i - 1]?) (fun p => s.startTs - p.endTs)
+        && isTrainNear segs[i + 1]? (fun n => n.startTs - s.endTs) then
+      { s with
+        mode := "train"
+        refinedMode := some "train"
+        refinedReason := some
+          s!"plane between train legs at train speed (avg {(Verified.JsNum.toFixed (Verified.JsNum.jsRound s.avgSpeed) 0).getD "?"} km/h) — one rail journey" }
+    else s
+
 /-- The five, in the TS's order. Each consumes what the last produced; the order
 is load-bearing in the same way the cascade's is, and for the same reason the
 `revertIsolatedCadence` entry exists at all — it undoes the pass before it, so
-swapping the two makes both no-ops. -/
+swapping the two makes both no-ops. `planeInsideTrainRun` reads their result. -/
 def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats)
     (segs : Array Seg) : Array Seg :=
   let stepPairs := steps.map fun p => (p.ts, p.steps)
@@ -156,7 +196,7 @@ def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats
   let reverted := revertIsolatedCadenceDrivesApplied flipped.toList
   let corrected := reverted.map fun s => applyDecision s (demoteJitterWalkToStationary s steps)
   let biometric := corrected.map (applyBiometricSignature hrPairs stepPairs stats)
-  biometric.map enforcePhysicalConstraints
+  planeInsideTrainRun (biometric.map enforcePhysicalConstraints)
 
 /-! ## Guards
 
@@ -219,6 +259,34 @@ private def driftWalk : Seg :=
   == some "stationary"
 #guard (applyBiometricSignature [(0, 64), (300, 66)] [(0, 2)] sitStats driftWalk).refinedKinds
   == #["gps-jitter"]
+
+/-! ### `planeInsideTrainRun` -/
+
+private def tr (a b : Int) (avg : Float := 290) : Seg :=
+  { seg with startTs := a, endTs := b, mode := "train", avgSpeed := avg }
+private def pl (a b : Int) (avg : Float := 290) : Seg :=
+  { seg with startTs := a, endTs := b, mode := "plane", avgSpeed := avg }
+
+-- The TGV: a plane window between train windows is the train.
+#guard (planeInsideTrainRun #[tr 0 600, pl 600 900, tr 900 1500]).map (·.mode)
+  == #["train", "train", "train"]
+-- A flight: the climb window sits beside cruise, not beside a train.
+#guard (planeInsideTrainRun #[tr 0 600, pl 600 900 290, pl 900 1500 800]).map (·.mode)
+  == #["train", "plane", "plane"]
+-- Above what a train can average it stays a plane, whatever its neighbours.
+#guard (planeInsideTrainRun #[tr 0 600, pl 600 900 450, tr 900 1500]).map (·.mode)
+  == #["train", "plane", "train"]
+-- A neighbour beyond the gap is a different journey.
+#guard (planeInsideTrainRun #[tr 0 600, pl 1300 1600, tr 1600 2200]).map (·.mode)
+  == #["train", "plane", "train"]
+-- A neighbour demoted to "driving" for want of map data still moves like a
+-- train when no car could match it (the second Hendaye window, 2026-10-01).
+#guard (planeInsideTrainRun #[{ tr 0 600 with refinedMode := some "driving", maxSpeed := 293 },
+    pl 600 900, tr 900 1500]).map effectiveMode == #["driving", "train", "train"]
+#guard (planeInsideTrainRun #[{ tr 0 600 with refinedMode := some "driving", maxSpeed := 120 },
+    pl 600 900, tr 900 1500]).map effectiveMode == #["driving", "plane", "train"]
+-- At the edges there is only one neighbour, which is not enough.
+#guard (planeInsideTrainRun #[pl 0 300, tr 300 900]).map (·.mode) == #["plane", "train"]
 
 /-! ### `meanInWindow` -/
 
