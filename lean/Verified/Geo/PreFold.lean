@@ -2,6 +2,7 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.BiometricLabels
 import Verified.Geo.ModeBiometrics
 import Verified.Geo.Segments
+import Verified.Geo.RefineMode
 import Verified.JsNum
 /-!
 # The five corrections before the cascade (`src/geo/velocity.ts` 1063-1115)
@@ -184,10 +185,42 @@ def planeInsideTrainRun (segs : Array Seg) : Array Seg :=
           s!"plane between train legs at train speed (avg {(Verified.JsNum.toFixed (Verified.JsNum.jsRound s.avgSpeed) 0).getD "?"} km/h) — one rail journey" }
     else s
 
+/-- Adjacent: the next leg starts within this of the last one's end. -/
+def NO_STOP_GAP_S : Int := 60
+
+/--
+A "driving" leg the map could say nothing about (`NO_OSM_CONTEXT`: no ways near
+it at all) that starts where a train leg ended, with no stop between, is the
+train going on: nobody changes from a train to a car without stopping. The TGV
+south of Bordeaux (2026-10-01) ran 92 km/h on average, max 145, which reads as
+a motorway by speed alone, and the map mirror did not yet cover the line.
+
+Only without map evidence. Where the map has context the enrichment stage has
+already decided between road and rail, and that stands. Left to right, so a
+run of such legs continues the train leg by leg.
+-/
+def trainContinuesWithoutMap (segs : Array Seg) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for s in segs do
+    let continues :=
+      effectiveMode s == "driving"
+        && s.refinedReason == some Verified.Geo.RefineMode.NO_OSM_CONTEXT
+        && (match out.back? with
+            | some p => movesLikeATrain p && decide (s.startTs - p.endTs ≤ NO_STOP_GAP_S)
+            | none => false)
+    out := out.push (if continues then
+      { s with
+        mode := "train"
+        refinedMode := some "train"
+        refinedReason := some "no map context, and no stop since the train — the same rail journey" }
+      else s)
+  return out
+
 /-- The five, in the TS's order. Each consumes what the last produced; the order
 is load-bearing in the same way the cascade's is, and for the same reason the
 `revertIsolatedCadence` entry exists at all — it undoes the pass before it, so
-swapping the two makes both no-ops. `planeInsideTrainRun` reads their result. -/
+swapping the two makes both no-ops. `planeInsideTrainRun` and then
+`trainContinuesWithoutMap` read their result. -/
 def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats)
     (segs : Array Seg) : Array Seg :=
   let stepPairs := steps.map fun p => (p.ts, p.steps)
@@ -196,7 +229,7 @@ def preFold (steps : List StepPoint) (hr : List HrPoint) (stats : List ModeStats
   let reverted := revertIsolatedCadenceDrivesApplied flipped.toList
   let corrected := reverted.map fun s => applyDecision s (demoteJitterWalkToStationary s steps)
   let biometric := corrected.map (applyBiometricSignature hrPairs stepPairs stats)
-  planeInsideTrainRun (biometric.map enforcePhysicalConstraints)
+  trainContinuesWithoutMap (planeInsideTrainRun (biometric.map enforcePhysicalConstraints))
 
 /-! ## Guards
 
@@ -287,6 +320,24 @@ private def pl (a b : Int) (avg : Float := 290) : Seg :=
     pl 600 900, tr 900 1500]).map effectiveMode == #["driving", "plane", "train"]
 -- At the edges there is only one neighbour, which is not enough.
 #guard (planeInsideTrainRun #[pl 0 300, tr 300 900]).map (·.mode) == #["plane", "train"]
+
+/-! ### `trainContinuesWithoutMap` -/
+
+private def dr (a b : Int) (why : Option String := some Verified.Geo.RefineMode.NO_OSM_CONTEXT) : Seg :=
+  { seg with startTs := a, endTs := b, mode := "driving", avgSpeed := 92, maxSpeed := 145,
+             refinedMode := some "driving", refinedReason := why }
+
+-- The TGV south of Bordeaux: unmapped "driving" straight after the train.
+#guard (trainContinuesWithoutMap #[tr 0 600, dr 600 1800, dr 1800 2400]).map effectiveMode
+  == #["train", "train", "train"]
+-- The map said road: the enrichment's verdict stands.
+#guard (trainContinuesWithoutMap #[tr 0 600, dr 600 1800 (some "on motorway")]).map effectiveMode
+  == #["train", "driving"]
+-- A stop between (a gap past a minute) is a change of vehicle.
+#guard (trainContinuesWithoutMap #[tr 0 600, dr 700 1800]).map effectiveMode
+  == #["train", "driving"]
+-- No train before it, nothing to continue.
+#guard (trainContinuesWithoutMap #[dr 0 600]).map effectiveMode == #["driving"]
 
 /-! ### `meanInWindow` -/
 

@@ -145,6 +145,10 @@ private def borrowStreetName (highways : Array NearbyWay) : Option String :=
   | some b => if dist b ≤ WALK_NAME_BORROW_MAX_M then b.name else none
   | none => none
 
+/-- The reason a leg carries when the map had NO ways near it at all — no
+coverage, not a road. `PreFold.trainContinuesWithoutMap` reads it. -/
+def NO_OSM_CONTEXT : String := "no OSM context"
+
 /--
 The cascade, in its own order. Each arm returns; falling through is what makes
 the next one reachable.
@@ -219,7 +223,7 @@ def refineModeLegacyCascade (originalMode : String) (speedKmh : Float)
   if let some ww := waterPick then
     { mode := "boat", confidence := "medium", reason := s!"on {ww.subtype}", wayName := ww.name }
   else
-    { mode := originalMode, confidence := "low", reason := "no OSM context" }
+    { mode := originalMode, confidence := "low", reason := NO_OSM_CONTEXT }
 
 /-! ## Sampling a leg's ways
 
