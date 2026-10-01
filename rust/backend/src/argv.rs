@@ -226,6 +226,9 @@ pub enum Command {
         dry_run: bool,
         #[arg(long, default_value_t = 40)]
         limit: i64,
+        /// only this queue kind (`osm_railway`, …); every kind when absent
+        #[arg(long)]
+        kind: Option<String>,
     },
     /// issue a session cookie
     MintSession { user: String },

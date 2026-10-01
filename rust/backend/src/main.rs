@@ -165,7 +165,11 @@ async fn main() -> Result<()> {
         // The Overpass half of the same queue (#1658). ⚠ The default limit is
         // LOWER than the geocode drain's: ~5 MB requests against a two-slot
         // public endpoint, and one box usually clears many keys.
-        C::FetchOsm { dry_run, limit } => fetch_osm(dry_run, limit).await,
+        C::FetchOsm {
+            dry_run,
+            limit,
+            kind,
+        } => fetch_osm(dry_run, limit, kind.as_deref()).await,
         // #1071's instrument: several days in ONE process, so the arena's
         // high-water is visible; `velocity` restarts the process each time.
         C::VelocityMany { user, dates } => velocity_many(&user, &dates).await,

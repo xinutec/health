@@ -529,7 +529,7 @@ pub(crate) async fn osm_coverage_rows(
 /// from what the serving path will conclude, because it IS that function.
 ///
 /// ⚠ A skipped key is `done`, not `failed`. It is answered now.
-pub(crate) async fn fetch_osm(dry_run: bool, limit: i64) -> Result<()> {
+pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())
         .await
@@ -553,7 +553,7 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64) -> Result<()> {
         .await?
         .into_iter()
         .filter_map(|(kind, waiting, _)| {
-            (waiting > 0)
+            (waiting > 0 && only.is_none_or(|o| o == kind))
                 .then(|| backend::osm_mirror::bucket_of(&kind).map(str::to_string))
                 .flatten()
         })
