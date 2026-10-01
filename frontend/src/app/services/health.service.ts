@@ -1,4 +1,5 @@
 import { Injectable, inject, signal } from "@angular/core";
+import { localDay } from "../chart-theme";
 import type { DayStateMode } from "../modes";
 import { ConnectionStateService } from "./connection-state.service";
 
@@ -349,13 +350,13 @@ export interface ShareStatus {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDay(new Date());
 }
 
 function yesterday(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localDay(d);
 }
 
 @Injectable({ providedIn: "root" })

@@ -2,7 +2,7 @@ import { Component, effect, input, ChangeDetectionStrategy, signal } from "@angu
 import { MatCardModule } from "@angular/material/card";
 import type { ChartConfiguration } from "chart.js";
 import { BaseChartDirective } from "ng2-charts";
-import { chartColors, formatDay, gridColor, tickColor } from "../../chart-theme";
+import { chartColors, formatDay, gridColor, localDay, tickColor } from "../../chart-theme";
 import type { BodyDay } from "../../services/health.service";
 
 @Component({
@@ -26,7 +26,7 @@ export class WeightChartComponent {
   // a multi-week gap reads as a gap and clustered daily weigh-ins bunch up.
   // (The other trend charts are daily/contiguous, so they use a category axis.)
   private buildOptions(min: number, max: number): ChartConfiguration<"line">["options"] {
-    const fmt = (ms: number) => formatDay(new Date(ms).toISOString().slice(0, 10));
+    const fmt = (ms: number) => formatDay(localDay(new Date(ms)));
     return {
       responsive: true,
       maintainAspectRatio: true,
