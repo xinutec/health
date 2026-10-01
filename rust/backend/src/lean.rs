@@ -1060,10 +1060,6 @@ pub fn format_date_iso(y: i64, m: i64, d: i64) -> Result<String> {
 
 /// `Verified.RowShape.formatDateTimeIso`. See [`format_date_iso`] on why this is
 /// not what serves.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "mirrors the Lean signature's argument list"
-)]
 pub fn format_date_time_iso(
     y: i64,
     m: i64,
@@ -2289,10 +2285,6 @@ pub fn focus_places(
 /// corridor, and the line form leans on the label instead.
 ///
 /// `Ok(None)` means LEAVE IT RAW. Never a guessed path.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the corridor's every parameter (doc above)"
-)]
 pub fn rail_snap(
     way_name: &str,
     start_ts: f64,

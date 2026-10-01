@@ -160,7 +160,7 @@ pub async fn run(
     Ok(())
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "one user's sync, every input named"
 )]
@@ -730,7 +730,7 @@ async fn migrate_legacy_backfill_keys(pool: &MySqlPool, user_id: &str) -> Result
 /// `None` when BOTH are missing, which makes the forward pass write `tz=NULL`
 /// exactly as the backfill does. That is the honest answer for a first link
 /// where nothing is known yet.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "every source a timezone can come from (doc above)"
 )]

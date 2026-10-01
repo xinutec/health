@@ -413,7 +413,7 @@ pub(crate) async fn mirror_check(fixture: &str) -> Result<()> {
 
     let mut agree = 0usize;
     let mut declined = 0usize;
-    #[allow(
+    #[expect(
         clippy::type_complexity,
         reason = "a map from source to the rows that differ, built once here"
     )]
