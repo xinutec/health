@@ -1411,3 +1411,101 @@ pub async fn sync_steps_intraday(
     );
     Ok(written)
 }
+
+/// One paired device's battery reading, as `users.pairedDevices` serves it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatteryReading {
+    /// The last path segment of `name` — the same id Fitbit's devices.json
+    /// carried (measured 2026-10-01: `…/pairedDevices/3065341880` is the
+    /// Inspire 3 stored under `3065341880`), so the history continues.
+    pub device_id: String,
+    pub device_version: Option<String>,
+    pub battery_level: i64,
+    /// The sync instant, UTC, as `YYYY-MM-DD HH:MM:SS`.
+    pub last_sync_utc: String,
+}
+
+/// The readings in a `pairedDevices` reply. A device without a numeric level or
+/// a sync time is skipped: the phone ("MobileTrack") reports a status and no
+/// level, and a row keyed on a missing time would collide with itself.
+pub fn battery_readings(reply: &serde_json::Value) -> Vec<BatteryReading> {
+    reply
+        .get("pairedDevices")
+        .and_then(|d| d.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|d| {
+            let device_id = d.get("name")?.as_str()?.rsplit('/').next()?.to_string();
+            let battery_level = d
+                .get("batteryLevel")
+                .and_then(crate::google::health::numeric)?;
+            let last_sync_utc = d
+                .get("lastSyncTime")
+                .and_then(|t| t.as_str())
+                .and_then(crate::google::health::rfc3339_to_utc_datetime)?;
+            Some(BatteryReading {
+                device_id,
+                device_version: d
+                    .get("deviceVersion")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                battery_level: battery_level.round() as i64,
+                last_sync_utc,
+            })
+        })
+        .collect()
+}
+
+/// The watch's battery from `users.pairedDevices`, Google's replacement for
+/// Fitbit's devices.json (#260; scope `googlehealth.settings.readonly`).
+///
+/// ⚠ THE INSTANT GOES IN `ts_utc`, and the reader prefers it. Fitbit's
+/// `last_sync_time` is the WATCH's wall clock, which the reader converts in the
+/// day's display zone; Google's is UTC. Writing Google's as a wall clock would
+/// be the step-minutes mistake again (47d2502). `last_sync_time` carries the
+/// UTC clock too, because it is the key.
+///
+/// Both this and Fitbit's device sync write until the Fitbit Web API ends
+/// (2026-10-30): different keys for the same reading at worst, one point each.
+pub async fn sync_paired_devices(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+) -> Result<usize> {
+    let res = http
+        .get("https://health.googleapis.com/v4/users/me/pairedDevices")
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .context("GET pairedDevices")?;
+    let status = res.status();
+    let body = res.text().await.context("body of pairedDevices")?;
+    if !status.is_success() {
+        anyhow::bail!(
+            "pairedDevices {}: {}",
+            status.as_u16(),
+            body.chars().take(400).collect::<String>()
+        );
+    }
+    let reply: serde_json::Value = serde_json::from_str(&body).context("decoding pairedDevices")?;
+    let readings = battery_readings(&reply);
+    for r in &readings {
+        sqlx::query(
+            "INSERT INTO device_battery_log (user_id, device_id, last_sync_time, battery_level, \
+             device_version, ts_utc) VALUES (?, ?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE battery_level=VALUES(battery_level), ts_utc=VALUES(ts_utc)",
+        )
+        .bind(user_id)
+        .bind(&r.device_id)
+        .bind(&r.last_sync_utc)
+        .bind(r.battery_level)
+        .bind(&r.device_version)
+        .bind(&r.last_sync_utc)
+        .execute(pool)
+        .await
+        .context("writing device_battery_log")?;
+    }
+    Ok(readings.len())
+}

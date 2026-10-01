@@ -336,6 +336,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google steps_intraday failed: {e:#}"),
         }
     }
+    // Not roster-gated: Fitbit's device sync writes the same log until the Web
+    // API ends (2026-10-30, #260), under different keys.
+    match crate::google::sync::sync_paired_devices(pool, http, &token, &user_id).await {
+        Ok(n) => tracing::info!("[{user_id}] google paired devices: {n} battery reading(s)"),
+        Err(e) => tracing::error!("[{user_id}] google paired devices failed: {e:#}"),
+    }
     // ⚠ NOT GATED ON THE ROSTER, and deliberately so. `daily_activity` is the
     // one table whose COLUMNS need different owners — Fitbit is the only source
     // there has ever been for `minutes_sedentary` and `active_score`, so

@@ -57,8 +57,8 @@ pub async fn load(
     // integer (unlike the `AS CHAR` a DECIMAL needs) and makes the Rust type
     // obvious rather than a fact about the column's declaration.
     let rows = sqlx::query(
-        "SELECT last_sync_time, CAST(battery_level AS SIGNED) AS battery_level, device_version \
-         FROM device_battery_log \
+        "SELECT last_sync_time, ts_utc, CAST(battery_level AS SIGNED) AS battery_level, \
+         device_version FROM device_battery_log \
          WHERE user_id = ? AND last_sync_time >= ? AND last_sync_time < ?",
     )
     .bind(user_id)
@@ -91,7 +91,15 @@ pub async fn load(
         // malformed row is a reading whose instant is unknown, and Lean drops
         // it; that is a fact about the data, where a failed decode is a fact
         // about this code.
-        let ts = wall_clock_to_unix(&wall.format("%Y-%m-%d %H:%M:%S").to_string(), tz);
+        // A row that carries its INSTANT (Google's, since 2026-10-01) needs no
+        // zone; only Fitbit's wall clock does.
+        let utc: Option<chrono::NaiveDateTime> = r
+            .try_get("ts_utc")
+            .context("device_battery_log.ts_utc does not decode")?;
+        let ts = match utc {
+            Some(u) => Some(u.and_utc().timestamp()),
+            None => wall_clock_to_unix(&wall.format("%Y-%m-%d %H:%M:%S").to_string(), tz),
+        };
         let level: i64 = r
             .try_get("battery_level")
             .context("device_battery_log.battery_level does not decode")?;

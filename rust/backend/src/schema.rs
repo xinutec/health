@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 81] = [
+    let migrations: [&str; 82] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -659,6 +659,10 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     PRIMARY KEY (id),
     INDEX idx_od_user_ts (user_id, ts)
   )"#,
+        // The battery reading's INSTANT, when the source gives one: Google's
+        // `pairedDevices` does (UTC), Fitbit's devices.json gave only the
+        // watch's wall clock. The reader prefers it (#260, 2026-10-01).
+        r#"ALTER TABLE device_battery_log ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
     ];
 
     sqlx::query(

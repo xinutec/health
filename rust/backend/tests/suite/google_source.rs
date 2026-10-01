@@ -332,3 +332,35 @@ mod step_minutes {
         assert_eq!(m["2026-09-30 13:51:00"].1, 12);
     }
 }
+
+/// `users.pairedDevices`, in the shape measured 2026-10-01 (ids invented).
+mod paired_devices {
+    use backend::google::sync::{BatteryReading, battery_readings};
+    use serde_json::json;
+
+    #[test]
+    fn the_watch_reads_and_the_phone_without_a_level_does_not() {
+        let reply = json!({"pairedDevices": [
+            {"name": "users/1/pairedDevices/111", "deviceType": "TRACKER",
+             "batteryStatus": "Medium", "batteryLevel": 66,
+             "lastSyncTime": "2026-10-01T10:25:49Z", "deviceVersion": "Inspire 3"},
+            {"name": "users/1/pairedDevices/222", "deviceType": "TRACKER",
+             "batteryStatus": "Empty", "lastSyncTime": "2026-10-01T10:10:49Z",
+             "deviceVersion": "MobileTrack"}
+        ]});
+        assert_eq!(
+            battery_readings(&reply),
+            [BatteryReading {
+                device_id: "111".into(),
+                device_version: Some("Inspire 3".into()),
+                battery_level: 66,
+                last_sync_utc: "2026-10-01 10:25:49".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn no_devices_is_no_readings() {
+        assert!(battery_readings(&json!({})).is_empty());
+    }
+}
