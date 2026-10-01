@@ -64,20 +64,15 @@ body {
 
 	// Data-visualisation accents for the timeline state icons — intentional
 	// domain colours (moving / stationary / overlay), not theme-derived.
-	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
 	--color-moving: #818cf8;
-	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
 	--color-stationary: #94a3b8;
-	// dev-lint: allow-hardcoded-color deliberate data-viz domain colour
 	--color-overlay: #c4b5fd;
 
 	// Material 3 has no "warning" colour role, so this app-level amber pair
 	// fills it (the re-auth banner needs attention but isn't a hard error).
 	// Tuned for the dark surface — deep amber container, light amber
 	// foreground — rather than the light-theme amber it used to hard-code.
-	// dev-lint: allow-hardcoded-color app-level warn pair — M3 has no warning role
 	--app-warn-container: #3a2e0a;
-	// dev-lint: allow-hardcoded-color app-level warn pair — M3 has no warning role
 	--app-on-warn-container: #ffd98a;
 }
 
