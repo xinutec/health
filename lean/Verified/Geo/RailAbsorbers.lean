@@ -4,6 +4,7 @@ import Verified.Geo.LineMembership
 -- For `meanCadenceSpm` / `PEDESTRIAN_MIN_CADENCE_SPM`: cadence is what decides a
 -- ride tail, and the pedestrian floor is the worldline module's to define.
 import Verified.Geo.Worldline
+import Verified.Geo.BiometricLabels
 -- For `statsOverWindow`: an anchor that moves a walk's boundary owes that walk a
 -- fresh summary, and the summary rule is shared with the other two passes that
 -- move boundaries (#424).
@@ -472,6 +473,22 @@ the evidence the invariant reports. -/
 private def samplesInWindow (points : Array Fix) (s : Seg) : Array Fix :=
   points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
 
+/-- A stretch a pass would hand to a ride reads as a WALK: walked (whole
+minutes inside it at a walker's least cadence) and no faster end to end than a
+pedestrian. 2026-10-01: an indoor GPS jump at Montparnasse-Bienvenüe was a fast
+first hop, and the 37 minutes after it, 598 m and about a thousand steps across
+Gare Montparnasse, went to the TGV, and 24 of them to the Métro before it. Either
+half alone is a ride: 2026-08-05's Met took 2.4 km in four minutes with a change
+of platform's steps in them, and a long wait on the platform takes none. No step
+data is no evidence of walking. -/
+def walkedAtFootPace (steps : List Verified.Geo.Worldline.FeasibilityStepPoint)
+    (fromTs toTs : Int) (netM : Float) : Bool :=
+  let span := Float.ofInt (toTs - fromTs)
+  let walkedSteps := (steps.filter fun p =>
+    decide (p.ts ≥ fromTs) && decide (p.ts + 60 ≤ toTs)).foldl (· + ·.steps) 0
+  walkedSteps ≥ Verified.Geo.BiometricLabels.WALKING_MIN_CADENCE * (span / 60)
+    && netM / 1000 ≤ Verified.Geo.BiometricLabels.CADENCE_REVERT_PEDESTRIAN_AVG_KMH * (span / 3600)
+
 /-! ### `anchorTrainBoardingToWalkedStation` -/
 
 /-- Min step speed for a walk-tail fix to count as the train pulling out rather
@@ -535,7 +552,8 @@ and extending there eats a real walk's tail. -/
 def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fix)
     (stationsLookup : Float → Float → Array NearbyStation)
     (servedLookup : String → Array LineMembership.ServedStation)
-    (pairVeto : String → String → Bool := fun _ _ => false) : Array Seg := Id.run do
+    (pairVeto : String → String → Bool := fun _ _ => false)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := []) : Array Seg := Id.run do
   let mut out := segments
   for k in [1 : out.size] do
     -- `out` is rewritten inside the loop, so the range's bound is not a bound
@@ -567,6 +585,9 @@ def anchorTrainBoardingToWalkedStation (segments : Array Seg) (points : Array Fi
       -- walk must actually END away from the boarding fix.
       let tailDist := fixDist boardFix lastFix
       if tailDist < BOARDING_HOP_MIN_DIST_M then continue
+      -- What is left of the walk after the hop goes to the train, so it must not
+      -- read as a walk (2026-10-01: 37 minutes across Gare Montparnasse).
+      if walkedAtFootPace steps boardFix.ts walk.endTs tailDist then continue
       match pickBestStation (stationsLookup boardFix.lat boardFix.lon) with
       | none => continue
       | some station =>
@@ -1136,8 +1157,9 @@ private def atrain (a b : Int) (wayName : Option String) (refinedMode : Option M
 private def aview (out : Array Seg) : Array (Int × Int × Option String × Option String) :=
   out.map fun s => (s.startTs, s.endTs, s.wayName, s.refinedReason)
 
-private def board (segs : Array Seg) (pts : Array Fix) :=
-  aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed)
+private def board (segs : Array Seg) (pts : Array Fix)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := []) :=
+  aview (anchorTrainBoardingToWalkedStation segs pts aStations aServed (steps := steps))
 private def alight (segs : Array Seg) (pts : Array Fix)
     (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := [])
     (stations : Float → Float → Array NearbyStation := aStations)
@@ -1167,6 +1189,24 @@ private def EUSTON (line : String := s!" · {METLINE}") : Option String := some 
 -- stranded either way; only the rename is a no-op.
 #guard board #[awalk 0 240, atrain 240 900 (EUSTON)] boardWalk
   == #[(0, 120, none, none), (120, 900, EUSTON, some SAME_467)]
+-- A stretch he WALKED at a pedestrian's pace is not a ride, however fast its
+-- first hop. `slowHop` is boardWalk with the hop taking 20 minutes: 467 m at
+-- 1.4 km/h. At a walker's least cadence (5 a minute, 100 over the 20 minutes
+-- reclaimed) it stays the walk's; one step fewer and it is reclaimed, and so it
+-- is at boardWalk's own pace (467 m in two minutes) whatever the steps.
+private def stp (ts : Int) (n : Float) : Verified.Geo.Worldline.FeasibilityStepPoint := { ts, steps := n }
+private def slowHop : Array Fix :=
+  #[f 0 51.5, f 60 51.5003, f 120 51.5006, f 150 51.502, f 180 51.5034, f 1320 51.5048]
+#guard board #[awalk 0 1320, atrain 1320 1900 (BAKER)] slowHop [stp 120 60, stp 600 40]
+  == #[(0, 1320, none, none), (1320, 1900, BAKER, none)]
+#guard (board #[awalk 0 1320, atrain 1320 1900 (BAKER)] slowHop [stp 120 60, stp 600 39])[1]!.1
+  == 120
+-- …a minute straddling the end is the next segment's…
+#guard (board #[awalk 0 1320, atrain 1320 1900 (BAKER)] slowHop [stp 120 60, stp 600 39, stp 1300 90])[1]!.1
+  == 120
+-- …and a FAST stretch is a ride whatever its steps.
+#guard board #[awalk 0 240, atrain 240 900 (BAKER)] boardWalk [stp 120 600, stp 180 600]
+  == #[(0, 120, none, none), (120, 900, EUSTON, some RENAME_467)]
 -- …but the same-station extension demands a run of at least TWO fast steps: a
 -- lone one landing back at the labelled board is the stuck-GPS signature.
 #guard board #[awalk 0 210, atrain 210 900 (EUSTON)] boardWalk1

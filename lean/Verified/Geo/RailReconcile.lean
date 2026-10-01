@@ -278,7 +278,8 @@ private def platformRun (fixes : Array Fix) (ride : Array Bool) (h : ride.size <
 Sequential by construction: the head branch moves the NEXT leg's start, and that
 leg is the `prev` of a window two indices on, so each step reads the array the
 previous ones left. Hence a fold over indices rather than a map. -/
-private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Array Seg :=
+private def splitOneWindow (points : Array Fix) (steps : List Verified.Geo.Worldline.FeasibilityStepPoint)
+    (out : Array Seg) (i : Nat) : Array Seg :=
   -- A window off either end of the array is not this shape: declined.
   match out[i-1]?, out[i]?, out[i+1]? with
   | some prev, some walk, some next =>
@@ -301,8 +302,12 @@ private def splitOneWindow (points : Array Fix) (out : Array Seg) (i : Nat) : Ar
       let lastFix : Fin fixes.size := ⟨fixes.size - 1, by omega⟩
       let tailM := if bestFrom.val > 0 then net ⟨0, by omega⟩ bestFrom else 0
       let headM := if bestTo.val < fixes.size - 1 then net bestTo lastFix else 0
-      let takeTail := tailM ≥ CHANGEOVER_RIDE_MIN_M
-      let takeHead := headM ≥ CHANGEOVER_RIDE_MIN_M
+      -- A side he walked at a pedestrian's pace stays the walk's
+      -- (`RailAbsorbers.walkedAtFootPace`).
+      let takeTail := tailM ≥ CHANGEOVER_RIDE_MIN_M &&
+        !Verified.Geo.RailAbsorbers.walkedAtFootPace steps walk.startTs fixes[bestFrom].ts tailM
+      let takeHead := headM ≥ CHANGEOVER_RIDE_MIN_M &&
+        !Verified.Geo.RailAbsorbers.walkedAtFootPace steps fixes[bestTo].ts walk.endTs headM
       if !takeTail && !takeHead then out else
       let walkStart := if takeTail then fixes[bestFrom].ts else walk.startTs
       let walkEnd := if takeHead then fixes[bestTo].ts else walk.endTs
@@ -380,9 +385,10 @@ distance, and leaves the walk alone unless a recognisable platform stretch
 survives. Any of those failing means the window is not this shape, and the pass
 declines rather than guessing — an unfixed impossible leg is a REPORTED defect,
 a wrongly moved boundary a silent one. -/
-def splitChangeoverWindows (segments : Array Seg) (points : Array Fix) : Array Seg :=
+def splitChangeoverWindows (segments : Array Seg) (points : Array Fix)
+    (steps : List Verified.Geo.Worldline.FeasibilityStepPoint := []) : Array Seg :=
   (List.range segments.size).foldl (init := segments) fun out i =>
-    if i == 0 || i + 1 ≥ segments.size then out else splitOneWindow points out i
+    if i == 0 || i + 1 ≥ segments.size then out else splitOneWindow points steps out i
 
 /-! ## Guards (V8 reference values) -/
 
@@ -575,6 +581,16 @@ private def INTER : Array Fix :=
        (1085, 1120, 1, some TRIMMED),
        (1120, 1450, 2, some (reclaim "499"))]
 
+-- A jump that is not a ride (2026-10-01, Montparnasse): one fast step early in
+-- a long slow walk. The tail before the platform stretch is 520 m in 330 s,
+-- under a pedestrian's 7 km/h. With the watch counting steps through it, it
+-- stays the walk's; with no step data it is reclaimed as before.
+private def JUMP : Array Fix :=
+  #[fx 1000 0, fx 1150 5, fx 1300 10, fx 1330 520, fx 1360 525, fx 1700 530]
+private def jumpSteps : List Verified.Geo.Worldline.FeasibilityStepPoint :=
+  [1000, 1060, 1120, 1180, 1240].map fun t => { ts := t, steps := 10 }
+#guard (splitChangeoverWindows (cwin JUMP) JUMP jumpSteps).map (·.startTs) == #[700, 1000, 1700]
+#guard (splitChangeoverWindows (cwin JUMP) JUMP).map (·.startTs) == #[700, 1330, 1700]
 -- An honest walk: no step at vehicle pace, so nothing is stranded.
 private def HONEST : Array Fix := #[fx 1000 0, fx 1030 20, fx 1060 40, fx 1120 70, fx 1150 90]
 #guard cview (splitChangeoverWindows (cwin HONEST) HONEST)

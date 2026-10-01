@@ -714,7 +714,7 @@ def passes (e : Env) : Array Pass := #[
     Verified.Geo.RailAbsorbers.anchorTrainBoardingToWalkedStation segs e.absorberFixes
       (fun lat lon =>
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
-      e.servedStations e.noLineConnects),
+      e.servedStations e.noLineConnects e.feasSteps),
 
   -- The mirror on the disembark side: the train closes at the surfaced station
   -- and the ride on to the true alight is stranded as the FAST leading fixes of
@@ -834,7 +834,7 @@ def passes (e : Env) : Array Pass := #[
   -- which decline this case by design because a hop between two rides can
   -- belong to either side and the window has to be read whole.
   ("changeoverWindow", fun segs =>
-    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.absorberFixes),
+    Verified.Geo.RailReconcile.splitChangeoverWindows segs e.absorberFixes e.feasSteps),
 
   -- A stay at a station bracketed by trains on BOTH sides is a change of
   -- trains, not a venue visit — name it the station so a co-located shop cannot
