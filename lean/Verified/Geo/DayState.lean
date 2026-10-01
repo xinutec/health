@@ -113,6 +113,29 @@ structure Seg where
 
 /-! ## `segmentsToDayStates` -/
 
+private def REST_MODES : List Mode := ["stationary", "sleeping"]
+
+/-- Two states are *contiguous* — no time to do anything between them — when
+    the gap is at most this. The adjacency laws fire only on contiguous pairs:
+    a real gap is unobserved time in which the user could legitimately have
+    travelled or alighted, so it is INCOMPLETE, not IMPOSSIBLE. Flagging it
+    would punish the honest "we didn't see this". -/
+private def CONTIGUITY_MAX_GAP_S : Int := 120
+
+/-- A gap no segment covers is a SEAM, not unobserved time, when it is
+    contiguous and touches a moving segment: nobody sleeps between getting up
+    and the walk out. Sleep is not synthesised there, which left two
+    half-minute "sleeping" rows either side of the walk to breakfast on
+    2026-10-01, where Fitbit's sleep ran half an hour past the getting up. -/
+def awakeSeam (segments : List Seg) (start finish : Int) : Bool :=
+  let moving (g : Seg) : Bool :=
+    let m := if g.vehicleKind == some "bus" then "bus" else g.refinedMode.getD g.mode
+    !REST_MODES.contains m
+  finish - start ≤ CONTIGUITY_MAX_GAP_S &&
+    segments.any fun g =>
+      moving g && ((g.endTs ≤ start && start - g.endTs ≤ CONTIGUITY_MAX_GAP_S)
+        || (g.startTs ≥ finish && g.startTs - finish ≤ CONTIGUITY_MAX_GAP_S))
+
 /-- Distinct boundary timestamps from segments and sleep windows, ascending.
     Mirrors the TS `Set` + numeric sort. -/
 def collectBoundaries (segments : List Seg) (sleeps : List SleepWindow) : List Int :=
@@ -254,7 +277,10 @@ def segmentsToDayStates (segments : List Seg) (sleeps : List SleepWindow) : List
     -- integer timestamps the midpoint of a non-empty interval always lies in
     -- `[start, end)`, so integer floor division picks the same segment.
     let mid := start + (finish - start) / 2
-    stateForInterval start finish (findCovering segments mid) (findCoveringSleep sleeps mid))
+    let seg := findCovering segments mid
+    let sleep := if seg.isNone && awakeSeam segments start finish then none
+      else findCoveringSleep sleeps mid
+    stateForInterval start finish seg sleep)
   stripPartialMinutesAsleep (mergeAdjacent states) sleeps
 
 /-- The least an inferred stay may have behind `now` to be shown at all: one
@@ -425,14 +451,7 @@ private def LINE_SEP : String := " · "
 /-- Modes in which you are aboard a vehicle: moving between two DIFFERENT ones
     requires alighting first. -/
 private def VEHICLE_MODES : List Mode := ["driving", "bus", "train", "cycling", "plane"]
-private def REST_MODES : List Mode := ["stationary", "sleeping"]
 
-/-- Two states are *contiguous* — no time to do anything between them — when
-    the gap is at most this. The adjacency laws fire only on contiguous pairs:
-    a real gap is unobserved time in which the user could legitimately have
-    travelled or alighted, so it is INCOMPLETE, not IMPOSSIBLE. Flagging it
-    would punish the honest "we didn't see this". -/
-private def CONTIGUITY_MAX_GAP_S : Int := 120
 
 /-- JS `split(sep, limit)` semantics: the result is TRUNCATED to `limit`
     parts, the remainder is NOT rejoined onto the last one. -/
@@ -590,6 +609,24 @@ private def sw (startTs endTs : Int) (place : Option String) (minutesAsleep : In
   [sw T0 (T0+3600) (some "Home") 55]) ==
   [{ startTs := T0, endTs := T0+3600, mode := "train", wayName := some "Night train",
      asleep := some true }]
+-- A seam beside a walk inside the window is the getting up, not sleep: no
+-- half-minute sleeping rows either side of the walk (2026-10-01).
+private def upAndOut : List Seg :=
+  [sg T0 (T0+1000) (place := some "Home"), sg (T0+1030) (T0+1600) "walking",
+   sg (T0+1630) (T0+3600) (place := some "Cafe")]
+#guard (segmentsToDayStates upAndOut [sw T0 (T0+3600) (some "Home") 55]).map (fun s => (s.startTs - T0, s.mode))
+  == [(0, "sleeping"), (1030, "walking"), (1630, "stationary")]
+-- A seam between two rests still sleeps, so one night stays one row.
+#guard (segmentsToDayStates
+  [sg T0 (T0+1000) (place := some "Home"), sg (T0+1030) (T0+3600) (place := some "Home")]
+  [sw T0 (T0+3600) (some "Home") 55]).length == 1
+-- A gap past the contiguity bar is unobserved time, and sleep is synthesised.
+#guard (segmentsToDayStates
+  [sg T0 (T0+1000) (place := some "Home"), sg (T0+1121) (T0+1600) "walking"]
+  [sw T0 (T0+3600) (some "Home") 55]).head!.endTs == T0+1121
+#guard (segmentsToDayStates
+  [sg T0 (T0+1000) (place := some "Home"), sg (T0+1120) (T0+1600) "walking"]
+  [sw T0 (T0+3600) (some "Home") 55]).head!.endTs == T0+1000
 -- The synthesized half and the rewritten half of ONE sleep merge into one row,
 -- and because the merged row spans the full window minutesAsleep survives.
 #guard segmentsToDayStates
