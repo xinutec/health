@@ -75,11 +75,16 @@ const KNOWN_DIVERGENT: [&str; 0] = [];
 /// blessed timeline was built from the same absence. It counts against the
 /// per-day ceiling like the others; every other day's ceiling is unchanged, so
 /// a `nearbyWays` miss anywhere else still fails.
-const UNANSWERED_KINDS: [&str; 4] = [
+///
+/// `nearbyStations` and `linesAtPoint` joined 2026-10-01 for the same reason:
+/// Paris to San Sebastián, where the mirror holds no stations or lines either.
+const UNANSWERED_KINDS: [&str; 6] = [
     "reverseGeocode",
     "nearbyLandmarks",
     "transitStops",
     "nearbyWays",
+    "nearbyStations",
+    "linesAtPoint",
 ];
 
 /// Keys the offline answerer cannot supply, BY DAY, beyond the blank-zone
@@ -129,7 +134,7 @@ const UNANSWERED_KINDS: [&str; 4] = [
 /// days are re-captured (#1076); the fold is right to ask. Raised again the
 /// same evening when daytime stays at a residence joined the rule, and once
 /// more for the base-rate pseudo-count (06-09: a renamed stay, a new key).
-const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
+const UNANSWERED_BY_DAY: [(&str, usize); 43] = [
     ("2026-04-29", 7),
     ("2026-04-30", 6),
     ("2026-05-11", 2),
@@ -174,6 +179,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
     // mirror's ground in France and under the Channel.
     ("2026-09-30", 22),
+    ("2026-10-01", 202),
 ];
 
 fn ceiling_for(date: &str) -> usize {

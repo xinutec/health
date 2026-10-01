@@ -492,6 +492,11 @@ pub struct Walk {
     graded: usize,
     osm_asked: u64,
     osm_missed: u64,
+    /// Misses on days the capture itself recorded the mirror DECLINING (no
+    /// coverage: the travel days off the mirror's ground, 09-30 and 10-01).
+    /// A coverage gap, not a key the fold spells and the capture lacks, so it
+    /// is reported beside the ratio rather than in it.
+    osm_missed_uncovered: u64,
 }
 
 impl Walk {
@@ -524,6 +529,7 @@ impl Walk {
             graded: 0,
             osm_asked: 0,
             osm_missed: 0,
+            osm_missed_uncovered: 0,
         })
     }
 
@@ -541,8 +547,15 @@ impl Walk {
         // fold never spells answers nothing and is indistinguishable from no
         // fixture at all — which is the exact failure #1418 was about.
         let (hits, misses) = rep.osm_counts();
-        self.osm_asked += hits + misses;
-        self.osm_missed += misses;
+        let declined = rep.fx["inputs"]["osmRowSet"]["declined"]
+            .as_array()
+            .is_some_and(|d| !d.is_empty());
+        if declined {
+            self.osm_missed_uncovered += misses;
+        } else {
+            self.osm_asked += hits + misses;
+            self.osm_missed += misses;
+        }
 
         let inputs = &rep.fx["inputs"];
         let tz = rep
@@ -667,6 +680,13 @@ impl Walk {
         // is ever reached — which is exactly what happened the first time the
         // arms were run, and it made every control look like a failure of the
         // harness.
+        if self.osm_missed_uncovered > 0 {
+            eprintln!(
+                "walks: {} OSM lookup(s) unanswered on days whose capture the mirror declined \
+                 (no coverage there) — not counted against the spelling ratio below",
+                self.osm_missed_uncovered
+            );
+        }
         if self.arm.walkable {
             if self.osm_asked == 0 {
                 out.push(

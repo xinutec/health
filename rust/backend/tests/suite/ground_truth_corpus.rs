@@ -90,6 +90,7 @@ const POST_TS: &[&str] = &[
     // The first day off the mirror's ground: the Eurostar to Paris, two zones,
     // the Channel Tunnel; one known miss (the St Pancras wait read as Work).
     "2026-09-30.md",
+    "2026-10-01.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
