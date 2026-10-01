@@ -3,7 +3,7 @@ import Verified.Geo.TubeHop
 /-!
 # Transit continuity for place-naming (port of `src/geo/transit-place.ts`)
 
-Two rules that give the place-picker the transit context it otherwise lacks.
+Three rules that give the place-picker the transit context it otherwise lacks.
 The venue scorer ranks what is mapped near a coordinate; it has no idea the
 user just got off a train, so a station forecourt resolves to whatever café,
 hotel or doughnut counter happens to be mapped inside the concourse.
@@ -18,8 +18,11 @@ hotel or doughnut counter happens to be mapped inside the concourse.
   Circle→Met platform change read "Krispy Kreme", a unit mapped 40 m away
   inside the station). The first rule cannot see this one: it bails the moment
   a walk sits between the train and the stay.
+* `stationsBeforeBoarding` — a stay that runs straight into a train, and the
+  stays before it at the same station, are the wait for it (2026-10-01: an
+  hour in Gare Montparnasse read as shop visits).
 
-Both are `async` in the TS only because the station lookup is injected
+The first two are `async` in the TS only because the station lookup is injected
 (`osm: Pick<OsmAdapter, "nearbyStations">`) — the TubeHop shape. Modelled here
 with the lookup as an ordinary function of `(lat, lon, radiusM)`, which is what
 reference-tests the private `bracketingTrain` and `isShortWalk` through the
@@ -82,6 +85,15 @@ private def nameWithin (stations : Array NearbyStation) (radiusM : Float) : Opti
   match nearestStation stations with
   | none => none
   | some n => if n.distanceM ≤ radiusM then some n.name else none
+
+/-- The stations within `radiusM` of a coordinate, by name, nearest first. The
+sort is stable, so a distance tie keeps the earlier station, as
+`nearestStation` does. -/
+def stationsWithin (lat lon : Float)
+    (stationsLookup : Float → Float → Float → Array NearbyStation)
+    (radiusM : Float := STATION_AT_ALIGHT_RADIUS_M) : Array String :=
+  ((stationsLookup lat lon radiusM).filter (·.distanceM ≤ radiusM)
+    |>.insertionSort (·.distanceM < ·.distanceM)).map (·.name)
 
 /-- Transit continuity: the station a stay sits at, having just alighted a
 train there. `none` when the preceding segment is not a train or no station is
@@ -171,6 +183,48 @@ def stationAtTransitInterchange
     else if !bracketingTrain segments (i - 1) (i - 2) then none
     else if !bracketingTrain segments (i + 1) (i + 2) then none
     else nameWithin (stationsLookup lat lon radiusM) radiusM
+
+/-- The longest wait before boarding that is still the wait for the train:
+2026-09-30's Eurostar check-in at St Pancras was 74 minutes. A stay longer
+than this is somewhere he went, and a train later is how he left it. -/
+def BOARDING_WAIT_MAX_S : Int := 90 * 60
+
+/-- Boarding continuity, the mirror of `stationAtTrainAlight`: a stay that runs
+straight into a train is the wait for it, and so is every stay before it at the
+SAME station, across short walks (2026-10-01: an hour inside Gare Montparnasse
+read "Maison du Chocolat", "McDonald's" and "Jardin Atlantique", the garden on
+the station roof).
+
+The anchor must touch the train, as the alight rule's must: dinner at Pizza
+Union and a walk to King's Cross for the train home (2026-05-22) is a meal, not
+a wait. Read right to left; a stay not in range of the chain's station closes
+the chain for everything earlier. `stationsAt i` is the caller's answer for the
+stay at `i`: the stations in range, nearest first, or none at all when the stay
+must keep its name (an established focus place). In range, not nearest: at
+Montparnasse a Métro entrance sits nearer the concourse than any node of the
+gare above it. -/
+def stationsBeforeBoarding (segments : Array Seg)
+    (stationsAt : Nat → Array String) : Array (Option String) := Id.run do
+  let mut out : Array (Option String) := Array.replicate segments.size none
+  -- `some none`: a train is directly to the right. `some (some st)`: the chain
+  -- is at `st`. `none`: closed.
+  let mut chain : Option (Option String) := none
+  for k in [0 : segments.size] do
+    let i := segments.size - 1 - k
+    let some s := segments[i]? | continue
+    let dur := s.endTs - s.startTs
+    chain := match effMode s, chain with
+      | "train", _ => some none
+      | "walking", some (some st) => if dur ≤ INTERCHANGE_WALK_MAX_S then some (some st) else none
+      | "stationary", some want =>
+        let here := if dur ≤ BOARDING_WAIT_MAX_S then stationsAt i else #[]
+        match want with
+        | none => here[0]?.map some
+        | some st => if here.contains st then some (some st) else none
+      | _, _ => none
+    if let some (some st) := chain then
+      if effMode s == "stationary" then out := out.set! i (some st)
+  return out
 
 /-! ## Reference guards
 
@@ -276,6 +330,55 @@ private def ix (segs : Array Seg) (i : Int)
 #guard ix direct 1 noStations == none
 #guard ix direct 1 tie == some "First"
 #guard ix direct 1 beyond == none
+
+/-! ### `stationsBeforeBoarding` -/
+
+/-- Every stay is in range of station "S" alone unless listed otherwise. -/
+private def board (segs : Array Seg) (others : List (Nat × Array String) := []) :
+    Array (Option String) :=
+  stationsBeforeBoarding segs fun i =>
+    match others.find? (·.1 == i) with
+    | some (_, sts) => sts
+    | none => #["S"]
+
+/-- `stay | walk | stay | walk | stay | train`: the Montparnasse hour. -/
+private def wait : Array Seg :=
+  #[sg "stationary" 0 300, sg "walking" 300 840, sg "stationary" 840 1100,
+    sg "walking" 1100 1300, sg "stationary" 1300 2100, sg "train" 2100 9000]
+
+private def S : Option String := some "S"
+
+#guard stationsWithin 0 0 two == #["Near", "Far"]
+#guard stationsWithin 0 0 tie == #["First", "Second"]
+#guard stationsWithin 0 0 beyond == #[]
+#guard stationsWithin 0 0 atRadius == #["Edge"]
+#guard BOARDING_WAIT_MAX_S == 5400
+#guard board wait == #[S, none, S, none, S, none]
+-- A walk between the stay and the train is going TO the train: no anchor.
+#guard board #[sg "stationary" 0 1900, sg "walking" 1900 2100, sg "train" 2100 9000]
+  == #[none, none, none]
+-- A stay AFTER a train is the alight rule's, not this one's.
+#guard board #[sg "train" 0 600, sg "stationary" 600 900] == #[none, none]
+#guard board #[sg "stationary" 0 300] == #[none]
+-- A stay at ANOTHER station, or at none, closes the chain for everything before.
+#guard board wait [(2, #["T"])] == #[none, none, none, none, S, none]
+#guard board wait [(2, #[])] == #[none, none, none, none, S, none]
+#guard board wait [(4, #[])] == #[none, none, none, none, none, none]
+-- The anchor takes its NEAREST station; earlier stays need it only in range.
+#guard board wait [(4, #["T", "S"])] == #[none, none, none, none, some "T", none]
+#guard board wait [(2, #["T", "S"])] == #[S, none, S, none, S, none]
+-- The walk bar is inclusive, and one second over closes the chain.
+#guard board (withAt wait 1 (sg "walking" 120 840)) == #[S, none, S, none, S, none]
+#guard board (withAt wait 1 (sg "walking" 119 840)) == #[none, none, S, none, S, none]
+-- So is the wait bar, on the anchor too.
+#guard board (withAt wait 2 (sg "stationary" 840 6240)) == #[S, none, S, none, S, none]
+#guard board (withAt wait 2 (sg "stationary" 839 6240)) == #[none, none, none, none, S, none]
+#guard board (withAt wait 4 (sg "stationary" 0 5400)) == #[S, none, S, none, S, none]
+#guard board (withAt wait 4 (sg "stationary" 0 5401)) == #[none, none, none, none, none, none]
+-- Any other mode closes it; the train is judged on its effective mode.
+#guard board (withAt wait 3 (sg "driving" 1100 1300)) == #[none, none, none, none, S, none]
+#guard board (withAt wait 5 (sg "driving" 2100 9000 (some "train"))) == board wait
+#guard board (withAt wait 5 (sg "train" 2100 9000 (some "walking"))) == #[none, none, none, none, none, none]
 
 end Guards
 

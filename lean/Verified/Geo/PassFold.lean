@@ -468,6 +468,62 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
                                    placeSource := some (station, "station") }
   return out
 
+private def isStationStay (s : Seg) : Bool :=
+  Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.2 == "station")
+
+/-- Name the waits before a train after their station
+(`TransitPlace.stationsBeforeBoarding`), then fold the walks between two waits
+at the SAME station into one wait when the walk never leaves that station's
+range: moving about inside Gare Montparnasse is being at Gare Montparnasse, not
+a journey. -/
+def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
+  let R := Verified.Geo.TransitPlace.STATION_AT_ALIGHT_RADIUS_M
+  let stationsAt (i : Nat) : Array String := Id.run do
+    let some s := segs[i]? | return #[]
+    if isStationStay s then return s.place.toArray
+    if (s.focusPlaceId.bind e.focusPlaceDays).any
+        (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
+    let pts := inWindow e s
+    if pts.isEmpty then return #[]
+    let n := Float.ofNat pts.size
+    return Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
+      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations
+  let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt
+  let mut out := segs
+  for i in [0 : out.size] do
+    let some s := out[i]? | continue
+    let some (some station) := names[i]? | continue
+    if isStationStay s then continue
+    let why := "the wait before boarding → named station"
+    out := out.set! i { s with place := some station, placeSource := some (station, "station")
+                               refinedReason := some (match s.refinedReason with
+                                 | some r => s!"{r}; {why}"
+                                 | none => why) }
+  let inStation (st : String) (p : Shed.PointF) : Bool :=
+    (e.nearbyStations p.lat p.lon R).any fun n => n.name == st && n.distanceM ≤ R
+  let absorbed := out.mapIdx fun i w =>
+    if Verified.Geo.SegmentMerge.effectiveMode w != "walking"
+        || w.endTs - w.startTs > Verified.Geo.TransitPlace.INTERCHANGE_WALK_MAX_S then w
+    else match (if i == 0 then none else out[i - 1]?), out[i + 1]? with
+      | some prev, some next =>
+        match prev.place with
+        | some st =>
+          if !isStationStay prev || !isStationStay next || next.place != some st then w
+          else
+            let pts := inWindow e w
+            if pts.isEmpty || !pts.all (inStation st) then w
+            else
+              let why := s!"moving about inside {st} — not a journey leg"
+              { w with refinedMode := some "stationary", place := prev.place
+                       placeSource := prev.placeSource, city := prev.city, wayName := none
+                       refinedReason := some (match w.refinedReason with
+                         | some r => s!"{r}; {why}"
+                         | none => why) }
+        | none => w
+      | _, _ => w
+  return if absorbed == out then out
+    else Verified.Geo.SegmentMerge.mergeAdjacentStays absorbed e.steps
+
 /-! ## The passes
 
 Order is execution order. Do not reorder without reading the rationale on the
@@ -785,6 +841,10 @@ def passes (e : Env) : Array Pass := #[
   -- surface as a destination.
   ("interchangeStayLabel", fun segs => interchangeStayLabels e segs),
 
+  -- The waits before a train are at the station, the mirror of the alight rule
+  -- above; after it, so a stay already named a station keeps the chain open.
+  ("boardingStayLabel", fun segs => boardingStayLabels e segs),
+
   -- LAST. `driving` is this cascade's placeholder for "a vehicle-speed run
   -- nobody has identified yet"; the rail and bus passes have now all had their
   -- chance to claim it, so a placeholder still wearing the name of a car must
@@ -889,7 +949,7 @@ private def PAIR_MIRROR : Env :=
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
-    "vehicleIdentity"]
+    "boardingStayLabel", "vehicleIdentity"]
 
 /-! ### The fold against the cascade it is replacing
 
@@ -909,16 +969,18 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
-  -- `walkDwell` and `lineSubstitute` are Lean-only (#1694, #238); they sit
+  -- `walkDwell`, `lineSubstitute` and `boardingStayLabel` are Lean-only
+  -- (#1694, #238, #325); they sit
   -- here so the containment check
   -- keeps holding for the order the TS had.
   "walkDwell",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
-  "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "vehicleIdentity"]
+  "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
+  "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 43
+#guard TS_CASCADE.size == 44
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1337,6 +1399,13 @@ private def farPhantomOut : Array Seg := runNamed MIX "finalMerge" farPhantomDay
 #guard (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 1800, dr 1800 2400])[1]!.place
   == (runNamed MIX "interchangeStayLabel" #[tr 0 600 (some "A → S"), st 600 900, tr 900 1500 (some "S → T")])[1]!.place
 #guard !(fires MIX "interchangeStayLabel" #[wk 0 600, st 600 1800, dr 1800 2400])
+-- The waits that lead to a train are at its station, across a short walk too;
+-- a stay longer than any wait for a train is somewhere he went.
+#guard fires MIX "boardingStayLabel" #[st 0 600, wk 600 900, st 900 1500, tr 1500 3000 (some "S → T")]
+#guard (runNamed MIX "boardingStayLabel" #[st 0 600, wk 600 900, st 900 1500, tr 1500 3000 (some "S → T")]).all
+  fun s => s.mode != "stationary" || s.placeSource.any (·.2 == "station")
+#guard !(fires MIX "boardingStayLabel" #[st 0 7200, tr 7200 9000 (some "S → T")])
+#guard !(fires MIX "boardingStayLabel" #[tr 0 600 (some "A → S"), st 600 900])
 -- The ride on to the true alight, stranded as the fast head of the next walk.
 #guard fires MIX "alightAnchor" #[tr 0 2400 (some "S → T · Metropolitan"), wk 2400 6000]
 -- Two legs of one Metropolitan ride, split by a sliver, are one ride.
@@ -1753,7 +1822,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 43
+#guard witnessed.size == 44
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
