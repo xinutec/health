@@ -20,7 +20,7 @@ import http from "node:http";
 
 const CLIENT_ID = process.env.GH_CLIENT_ID;
 const CLIENT_SECRET = process.env.GH_CLIENT_SECRET; // optional (PKCE public client)
-// ⚠ ALL THREE, IN ONE CONSENT. Measured 2026-08-27 (#260): with only the first,
+// ⚠ ALL OF THEM, IN ONE CONSENT. Measured 2026-08-27 (#260): with only the first,
 // eight data types answer 403 `MISSING_OAUTH_SCOPE` — steps, sleep, distance,
 // altitude, active-minutes, active-zone-minutes, active-energy-burned and
 // time-in-heart-rate-zone. Seven of the eight want one scope.
@@ -36,6 +36,9 @@ const SCOPES = [
 	"https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
 	"https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
 	"https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+	// The watch's battery: `users.pairedDevices` replaces Fitbit's devices.json
+	// and wants this scope (#260, 2026-10-01).
+	"https://www.googleapis.com/auth/googlehealth.settings.readonly",
 ];
 const SCOPE = SCOPES.join(" ");
 const PORT = 8765;
@@ -149,15 +152,19 @@ const checks = [
 	["sleep", "sleep.readonly"],
 	["steps", "activity_and_fitness.readonly"],
 	["weight", "health_metrics_and_measurements.readonly (the control)"],
+	["pairedDevices", "settings.readonly"],
 ];
 let bad = 0;
 for (const [type, why] of checks) {
-	const url = `https://health.googleapis.com/v4/users/me/dataTypes/${type}/dataPoints?pageSize=1`;
+	const url =
+		type === "pairedDevices"
+			? "https://health.googleapis.com/v4/users/me/pairedDevices"
+			: `https://health.googleapis.com/v4/users/me/dataTypes/${type}/dataPoints?pageSize=1`;
 	const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
 	const ok = res.ok;
 	if (!ok) bad++;
 	console.log(`${ok ? "OK  " : "FAIL"} ${type.padEnd(8)} HTTP ${res.status}   (${why})`);
 	if (!ok) console.log(`      ${(await res.text()).slice(0, 300)}`);
 }
-console.log(bad === 0 ? "\nAll three scopes are live." : `\n${bad} still refused — the consent did not widen.`);
+console.log(bad === 0 ? "\nAll four scopes are live." : `\n${bad} still refused — the consent did not widen.`);
 process.exit(bad === 0 ? 0 : 1);

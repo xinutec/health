@@ -17,7 +17,9 @@ value with whichever job ran last.
   not a day sum (`rust/backend/src/cli/google.rs`, `Source`).
 - OAuth 2.0 with PKCE and `access_type=offline`. Scope for body metrics:
   `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`;
-  sleep, activity and ECG have their own `googlehealth.*.readonly` scopes.
+  sleep, activity and ECG have their own `googlehealth.*.readonly` scopes, and the
+  paired devices (the watch's battery) want `googlehealth.settings.readonly`.
+  The token holds four since 2026-10-01: metrics, activity, sleep, settings.
 - Propagation lag: a weigh-in reaches the phone at once and the cloud API
   later, so a sync right after weighing can miss it. The next tick catches it.
 
