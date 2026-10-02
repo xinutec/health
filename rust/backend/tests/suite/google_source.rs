@@ -427,3 +427,67 @@ mod spo2_samples {
         assert!((pct - 96.5).abs() < 1e-9);
     }
 }
+
+/// Recorded workouts (#1886): one row per Google point, the summary typed and
+/// the whole point kept.
+mod exercise_sessions {
+    use backend::google::exercise::parse_exercise;
+    use serde_json::json;
+
+    fn walk() -> serde_json::Value {
+        json!({
+            "name": "users/1/dataTypes/exercise/dataPoints/4093039881136750928",
+            "dataSource": {"platform": "FITBIT", "device": {"displayName": "Inspire 3"}},
+            "exercise": {
+                "interval": {"startTime": "2026-10-02T11:35:37.761Z", "startUtcOffset": "7200s",
+                             "endTime": "2026-10-02T12:34:37.129Z", "endUtcOffset": "7200s"},
+                "exerciseType": "WALKING", "displayName": "Walk",
+                "metricsSummary": {"distanceMillimeters": 1337692, "steps": "1413",
+                                   "caloriesKcal": 98.5, "averageHeartRateBeatsPerMinute": "97"},
+                "exerciseMetadata": {"hasGps": true},
+                "activeDuration": "3539.368s",
+                "updateTime": "2026-10-02T12:35:29.862017Z"
+            }
+        })
+    }
+
+    #[test]
+    fn a_workout_reads_with_both_clocks_and_its_summary() {
+        let w = parse_exercise(&walk()).expect("a readable workout");
+        assert_eq!(w.point_id, "4093039881136750928");
+        assert_eq!(
+            (w.platform.as_deref(), w.source.as_deref()),
+            (Some("FITBIT"), Some("Inspire 3"))
+        );
+        assert_eq!(w.exercise_type.as_deref(), Some("WALKING"));
+        assert_eq!(
+            (w.start_utc.as_str(), w.start_ts.as_str()),
+            ("2026-10-02 11:35:37", "2026-10-02 13:35:37")
+        );
+        assert_eq!(
+            (w.end_utc.as_str(), w.end_ts.as_str()),
+            ("2026-10-02 12:34:37", "2026-10-02 14:34:37")
+        );
+        assert_eq!(w.active_s, Some(3539));
+        assert_eq!(w.steps, Some(1413));
+        assert!((w.distance_m.unwrap() - 1337.692).abs() < 1e-9);
+        assert_eq!(w.avg_hr, Some(97.0));
+        assert_eq!(w.has_gps, Some(true));
+        // The whole point is kept, not only what has a column.
+        let raw: serde_json::Value = serde_json::from_str(&w.raw).unwrap();
+        assert_eq!(raw, walk());
+    }
+
+    #[test]
+    fn an_app_workout_names_its_app_and_a_point_without_times_is_refused() {
+        let mut p = walk();
+        p["dataSource"] = json!({"platform": "HEALTH_CONNECT", "device": {},
+                                 "application": {"packageName": "com.google.android.apps.fitness"}});
+        assert_eq!(
+            parse_exercise(&p).unwrap().source.as_deref(),
+            Some("com.google.android.apps.fitness")
+        );
+        p["exercise"]["interval"] = json!({});
+        assert!(parse_exercise(&p).is_none());
+    }
+}

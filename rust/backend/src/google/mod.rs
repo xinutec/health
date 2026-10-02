@@ -14,6 +14,7 @@
 //! stale carry-forward, and the result would still look like data.
 
 pub mod body;
+pub mod exercise;
 pub mod health;
 pub mod oauth;
 pub mod probe;

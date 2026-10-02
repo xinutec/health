@@ -139,6 +139,13 @@ pub const STREAMS: &[Stream] = &[
               one-decimal percentage, roughly a minute apart through the night — back to the \
               watch's first month (2023-04), measured 2026-10-02 (#1886)",
     },
+    Stream {
+        name: "exercise_sessions",
+        owner: Owner::Google,
+        why: "Fitbit's history had no table for workouts. Google's `exercise` serves all 756 \
+              (2026-10-02): 396 from the watch since 2023 (walks, runs, rides, workouts) and 360 \
+              walks the Fit app detected in 2026, each with its summary, events and splits",
+    },
 ];
 
 /// True when the Fitbit sync should still fetch this stream.
@@ -176,6 +183,7 @@ pub fn at_risk() -> Vec<&'static Stream> {
 /// and the test compares them.
 pub const HAS_WRITER: &[&str] = &[
     "body",
+    "exercise_sessions",
     "breathing_rate",
     "heart_rate_intraday",
     "heart_rate_zones",

@@ -102,6 +102,8 @@ pub enum Command {
         #[arg(long)]
         write: bool,
     },
+    /// write every recorded workout Google holds (#1886)
+    GoogleSyncExercise,
     /// archive every SpO2 reading Google holds over a UTC date range (#1886)
     GoogleArchiveSpo2 {
         /// first day archived (YYYY-MM-DD, UTC)

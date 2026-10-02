@@ -950,6 +950,27 @@ pub(crate) async fn google_backfill_steps(
     Ok(())
 }
 
+pub(crate) async fn google_sync_exercise() -> Result<()> {
+    let user_id = std::env::var("GH_USER_ID")
+        .context("GH_USER_ID names the Google-configured user and must be set")?;
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let n = backend::google::exercise::sync_exercise(&pool, &http, &token, &user_id)
+        .await
+        .context("writing exercise_sessions")?;
+    println!("wrote {n} workout(s) for {user_id}");
+    Ok(())
+}
+
 pub(crate) async fn google_archive_spo2(
     from: chrono::NaiveDate,
     until: chrono::NaiveDate,

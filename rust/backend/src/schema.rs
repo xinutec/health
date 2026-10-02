@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 85] = [
+    let migrations: [&str; 86] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -673,6 +673,30 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // SpO2 readings carry their instant, as steps and heart rate do: a
         // reading served under two offsets is one reading (#1886, 2026-10-02).
         r#"ALTER TABLE spo2_intraday ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
+        // Recorded workouts from Google (#1886, 2026-10-02): typed summary plus
+        // the whole point in `raw`, keyed by Google's point id.
+        r#"CREATE TABLE IF NOT EXISTS exercise_sessions (
+    user_id       VARCHAR(64) NOT NULL,
+    point_id      VARCHAR(32) NOT NULL,
+    platform      VARCHAR(32) NULL,
+    source        VARCHAR(128) NULL,
+    exercise_type VARCHAR(48) NULL,
+    display_name  VARCHAR(128) NULL,
+    start_utc     DATETIME NOT NULL,
+    end_utc       DATETIME NOT NULL,
+    start_ts      DATETIME NOT NULL,
+    end_ts        DATETIME NOT NULL,
+    active_s      INT NULL,
+    steps         INT NULL,
+    distance_m    DOUBLE NULL,
+    calories_kcal DOUBLE NULL,
+    avg_hr        DOUBLE NULL,
+    has_gps       TINYINT(1) NULL,
+    update_time   VARCHAR(40) NULL,
+    raw           JSON NOT NULL,
+    PRIMARY KEY (user_id, point_id),
+    INDEX idx_exercise_start (user_id, start_utc)
+  )"#,
     ];
 
     sqlx::query(
