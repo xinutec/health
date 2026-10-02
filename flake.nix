@@ -23,6 +23,7 @@
             pkgs.nodejs_24 # backend (Hono) + Angular 22 frontend (needs >=24.15)
             pkgs.pnpm # the frontend's installer; node ships npm too, ignore it
             pkgs.openssh # prod-db / capture-golden / backtest tunnel to prod
+            pkgs.jq # prod-db reads the workloads' env from their specs
             pkgs.lean4 # verified core (lean/) — includes lake; toolchain comes from nix, not elan
             pkgs.dhall-json # re-render gate.json from gate.dhall, which the gate's own staleness message tells you to do
             # rust/ — the in-process host that is meant to delete the TS day arm

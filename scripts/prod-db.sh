@@ -5,8 +5,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 #
 # Opens an SSH-forwarded connection to the prod MariaDB and exports the
 # env a health-sync CLI needs — DB_HOST/PORT/USER/PASSWORD/NAME,
-# NC_CLIENT_ID/SECRET, NC_BASE_URL, TZ=UTC — pulled live from the
-# running pod. Then runs the given command and tears the tunnel down.
+# NC_CLIENT_ID/SECRET, NC_BASE_URL, TZ=UTC — read from the workloads'
+# specs and Secrets. Then runs the given command and tears the tunnel down.
 #
 # Usage:
 #   scripts/prod-db.sh bin/backend coverage
@@ -19,7 +19,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 # classification pipeline is not timezone-pure).
 #
 # Wrapper chatter goes to stderr, so the command's stdout stays clean.
-# ssh / node come from the flake devShell (see scripts/_devshell.sh),
+# ssh / jq / node come from the flake devShell (see scripts/_devshell.sh),
 # rev-pinned via flake.lock like every other script.
 
 [ "$#" -ge 1 ] || {
@@ -70,103 +70,72 @@ NS=health
 LOCAL_PORT=13306
 
 echo "==> fetching DB credentials from prod" >&2
-# ⚠ NEWEST RUNNING pod, not `items[0]`. During a rollout there are two, and
-# `items[0]` is as likely to be the one terminating — the same trap health #975
-# records for reading env off a pod. Credentials rarely differ between them, so
-# this fails silently when it fails at all, which is why it is sorted rather
-# than trusted.
-POD=$(ssh "$HEALTH_HOST" "kubectl -n $NS get pods -l app=health-auth \
-  --field-selector=status.phase=Running --sort-by=.metadata.creationTimestamp \
-  -o jsonpath='{.items[-1:].metadata.name}'")
-[ -n "$POD" ] || {
-	echo "could not find a health-auth pod" >&2
-	exit 1
+# The env a workload's container is GIVEN, resolved the way Kubernetes resolves
+# it: literal values, and `secretKeyRef` keys read from the Secrets the spec
+# names. Prints NAME=VALUE lines.
+#
+# ⚠ FROM THE SPEC, NOT `kubectl exec … printenv`. An exec runs inside the serving
+# pod and spends its memory limit, which has OOM-killed prod before; the spec
+# needs no running pod at all. That is also what the CronJob always needed: its
+# pods have Completed by the time anyone looks.
+#
+# ⚠ Secret values reach jq on STDIN, never in argv, where `ps` would show them.
+# Captured into shell vars by the caller, never echoed.
+workload_env() {
+	local spec names secrets
+	spec=$(ssh "$HEALTH_HOST" "kubectl -n $NS get $1 -o json")
+	names=$(printf '%s\n' "$spec" | jq -r '(.spec.template.spec // .spec.jobTemplate.spec.template.spec).containers[0]
+		| [.env[]?.valueFrom.secretKeyRef.name // empty] | unique | join(" ")')
+	secrets='{"items":[]}'
+	[ -z "$names" ] || secrets=$(ssh "$HEALTH_HOST" "kubectl -n $NS get secret $names -o json")
+	{
+		printf '%s\n' "$spec"
+		printf '%s\n' "$secrets"
+	} | jq -rs '.[0] as $w | (.[1] | if .kind == "List" or has("items") then .items else [.] end) as $s
+		| ($w.spec.template.spec // $w.spec.jobTemplate.spec.template.spec).containers[0].env[]?
+		| if .value != null then "\(.name)=\(.value)"
+		  elif .valueFrom.secretKeyRef then
+		    .valueFrom.secretKeyRef as $r
+		    | ($s[] | select(.metadata.name == $r.name) | .data[$r.key] // empty | @base64d) as $v
+		    | "\(.name)=\($v)"
+		  else empty end'
 }
-# One round-trip: dump the pod env, pick out the vars locally. Captured
-# into a shell var — never echoed.
-ENVDUMP=$(ssh "$HEALTH_HOST" "kubectl -n $NS exec $POD -- printenv")
+
+# The serving Deployment carries the database, Nextcloud and Fitbit credentials
+# and the pipeline flags; the sync CronJob adds Google's (#260). The first
+# definition of a name wins, so the Deployment's.
+#
+# ⚠ The CronJob is OPTIONAL: every other caller only touches the database, and
+# refusing to open a tunnel because an unrelated credential is missing would
+# break all of them.
+ENVDUMP=$(workload_env deployment/health-auth)
+ENVDUMP+=$'\n'$(workload_env cronjob/health-sync 2>/dev/null || true)
 get() { printf '%s\n' "$ENVDUMP" | grep "^$1=" | head -1 | cut -d= -f2- || true; }
-DB_USER=$(get DB_USER)
+
 DB_PASSWORD=$(get DB_PASSWORD)
-DB_NAME=$(get DB_NAME)
-NC_BASE_URL=$(get NC_BASE_URL)
-NC_CLIENT_ID=$(get NC_CLIENT_ID)
-NC_CLIENT_SECRET=$(get NC_CLIENT_SECRET)
-# The Rust backend's config layer REFUSES a missing required var by name rather
-# than defaulting it, so `backend check` cannot start without these even though
-# it only reads the database (health #982). Pulled from the same dump as the
-# rest; never echoed.
-FITBIT_CLIENT_ID=$(get FITBIT_CLIENT_ID)
-FITBIT_CLIENT_SECRET=$(get FITBIT_CLIENT_SECRET)
-# Google Health credentials, for `backend google-probe` and `google-compare`
-# (#260).
-#
-# ⚠ NOT FROM THE POD DUMP ABOVE. Every other credential here comes off a running
-# `health-auth` pod, and the Google ones are not on it — they are wired onto the
-# `health-sync` CronJob, whose pods are transient and have all Completed by the
-# time anyone looks. Reading them the same way returns empty, and because
-# `GoogleCreds::from_env` needs all three, the failure surfaces as
-# "must all be set" — which reads as "prod is not configured for Google" when
-# in fact prod is fine and the lookup was pointed at the wrong workload.
-#
-# So this reads the Secret the CronJob references. The name is resolved FROM the
-# CronJob rather than hardcoded, so a rename cannot leave this silently reading
-# nothing.
-#
-# ⚠ Optional, and deliberately so: every other caller of this script only
-# touches the database, and refusing to open a DB tunnel because an unrelated
-# credential is missing would break all of them.
-GH_SECRET=$(ssh "$HEALTH_HOST" "kubectl -n $NS get cronjob health-sync \
-  -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[?(@.name==\"GH_REFRESH_TOKEN\")].valueFrom.secretKeyRef.name}'" 2>/dev/null || true)
-if [ -n "$GH_SECRET" ]; then
-	# One round-trip for all three, decoded locally. Captured into shell vars,
-	# never echoed — same handling as DB_PASSWORD above.
-	GHDUMP=$(ssh "$HEALTH_HOST" "kubectl -n $NS get secret $GH_SECRET \
-	  -o go-template='{{range \$k, \$v := .data}}{{\$k}}={{\$v}}{{\"\\n\"}}{{end}}'" 2>/dev/null || true)
-	ghget() { printf '%s\n' "$GHDUMP" | grep "^$1=" | head -1 | cut -d= -f2- | base64 -d 2>/dev/null || true; }
-	GH_CLIENT_ID=$(ghget GH_CLIENT_ID)
-	GH_CLIENT_SECRET=$(ghget GH_CLIENT_SECRET)
-	GH_REFRESH_TOKEN=$(ghget GH_REFRESH_TOKEN)
-fi
-# Feature flags that gate which classification pipeline runs. Without
-# these the Mac falls back to defaults — silently testing the legacy
-# cascade while production runs the factor scorer, and goldens drift
-# out of sync with what users see. Mirror every gating env the pod
-# uses; just credentials isn't enough.
-USE_FACTOR_SCORER=$(get USE_FACTOR_SCORER)
-USE_BIOMETRIC_FACTOR=$(get USE_BIOMETRIC_FACTOR)
-# C4 continuity flags — these gate the HSMM decode itself, so a Mac
-# replay that misses them decodes a different day than the cron wrote
-# to decoded_days.
-USE_CADENCE_IMPUTATION=$(get USE_CADENCE_IMPUTATION)
-USE_SEGMENT_EVIDENCE=$(get USE_SEGMENT_EVIDENCE)
-USE_CHAIN_CONTEXT=$(get USE_CHAIN_CONTEXT)
-USE_REACQUIRE_ROBUST_SPEED=$(get USE_REACQUIRE_ROBUST_SPEED)
 [ -n "$DB_PASSWORD" ] || {
-	echo "DB_PASSWORD not found in pod env" >&2
+	echo "DB_PASSWORD not found in the health-auth spec" >&2
 	exit 1
 }
-export DB_USER DB_PASSWORD DB_NAME NC_CLIENT_ID NC_CLIENT_SECRET
-export FITBIT_CLIENT_ID FITBIT_CLIENT_SECRET
-# Only when prod has them: `GoogleCreds::from_env` treats an empty string as
-# present, so exporting a blank would turn "not configured" into a 401 at the
-# token endpoint — a much worse error to read than a missing-variable refusal.
-[ -n "$GH_CLIENT_ID" ] && export GH_CLIENT_ID || true
-[ -n "$GH_CLIENT_SECRET" ] && export GH_CLIENT_SECRET || true
-[ -n "$GH_REFRESH_TOKEN" ] && export GH_REFRESH_TOKEN || true
+# Always exported: the Rust config layer REFUSES a missing required var by name
+# rather than defaulting it, so `backend check` cannot start without the
+# Nextcloud and Fitbit ones even though it only reads the database (#982).
+for v in DB_USER DB_NAME NC_CLIENT_ID NC_CLIENT_SECRET FITBIT_CLIENT_ID FITBIT_CLIENT_SECRET; do
+	export "$v=$(get "$v")"
+done
+export DB_PASSWORD
+# Exported only when prod sets them, because empty is not unset: the Google
+# credentials read empty as PRESENT (a 401 at the token endpoint instead of a
+# missing-variable refusal), an empty NC_BASE_URL fails URL validation, and the
+# pipeline flags gate the HSMM decode, so a Mac run without them decodes a
+# different day than prod.
+for v in GH_CLIENT_ID GH_CLIENT_SECRET GH_REFRESH_TOKEN NC_BASE_URL \
+	USE_CADENCE_IMPUTATION USE_SEGMENT_EVIDENCE USE_CHAIN_CONTEXT USE_REACQUIRE_ROBUST_SPEED; do
+	val=$(get "$v")
+	[ -z "$val" ] || export "$v=$val"
+done
+unset val ENVDUMP
 export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
-# Only export feature flags when prod actually sets them — exporting
-# an empty string is not the same as unset (the code reads === "1").
-[ -n "$USE_FACTOR_SCORER" ] && export USE_FACTOR_SCORER || true
-[ -n "$USE_BIOMETRIC_FACTOR" ] && export USE_BIOMETRIC_FACTOR || true
-[ -n "$USE_CADENCE_IMPUTATION" ] && export USE_CADENCE_IMPUTATION || true
-[ -n "$USE_SEGMENT_EVIDENCE" ] && export USE_SEGMENT_EVIDENCE || true
-[ -n "$USE_CHAIN_CONTEXT" ] && export USE_CHAIN_CONTEXT || true
-[ -n "$USE_REACQUIRE_ROBUST_SPEED" ] && export USE_REACQUIRE_ROBUST_SPEED || true
-# NC_BASE_URL is usually unset in the pod (the app falls back to a
-# built-in default). Only export it when prod actually sets it —
-# exporting an empty string would fail URL validation.
-[ -n "$NC_BASE_URL" ] && export NC_BASE_URL || true
 
 echo "==> opening tunnel to prod health-db" >&2
 # The [k]ubectl bracket keeps this pattern from matching its own pkill
