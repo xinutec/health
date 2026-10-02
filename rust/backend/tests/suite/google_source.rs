@@ -590,3 +590,30 @@ mod google_points {
         );
     }
 }
+
+/// Active minutes per day from Google's `active-minutes` rollup (#260): the
+/// replacement for Fitbit's lightly/fairly/very active columns, which the
+/// summary card's "active minutes" reads. Measured 2026-10-02 against 1,253
+/// Fitbit days: moderate + vigorous equals fairly + very on EVERY day.
+mod active_minutes {
+    use backend::google::health::active_minutes_of_rollup_point;
+    use serde_json::json;
+
+    #[test]
+    fn the_three_levels_of_a_day_and_a_missing_level_is_zero() {
+        let p = json!({"civilStartTime": {"date": {"year": 2026, "month": 9, "day": 2}},
+            "activeMinutes": {"activeMinutesRollupByActivityLevel": [
+                {"activityLevel": "LIGHT", "activeMinutesSum": "144"},
+                {"activityLevel": "VIGOROUS", "activeMinutesSum": "48"}]}});
+        let d = active_minutes_of_rollup_point(&p).expect("a day");
+        assert_eq!(d.date, "2026-09-02");
+        assert_eq!((d.light, d.moderate, d.vigorous), (144.0, 0.0, 48.0));
+    }
+
+    #[test]
+    fn a_point_without_a_breakdown_is_no_reading() {
+        let p = json!({"civilStartTime": {"date": {"year": 2026, "month": 9, "day": 2}},
+            "activeMinutes": {}});
+        assert!(active_minutes_of_rollup_point(&p).is_none());
+    }
+}

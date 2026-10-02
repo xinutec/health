@@ -250,15 +250,8 @@ pub fn parse_activity_summary(body: &str) -> Result<ActivityRow> {
 /// `Owner::Fitbit` while five of its columns migrated. `minutes_sedentary` and
 /// `active_score` in particular stop when Fitbit does, and deriving them would
 /// be invention.
-pub const FITBIT_ONLY_COLUMNS: &[&str] = &[
-    "floors",
-    "elevation_m",
-    "minutes_sedentary",
-    "minutes_lightly_active",
-    "minutes_fairly_active",
-    "minutes_very_active",
-    "active_score",
-];
+pub const FITBIT_ONLY_COLUMNS: &[&str] =
+    &["floors", "elevation_m", "minutes_sedentary", "active_score"];
 
 /// `/1/user/-/activities/date/{date}.json`, one call per day.
 pub async fn sync_activity(
@@ -313,14 +306,10 @@ pub async fn sync_activity(
         if crate::google::sync::owned_by_google(date) {
             sqlx::query(
                 "INSERT INTO daily_activity (user_id, date, floors, elevation_m, \
-                 minutes_sedentary, minutes_lightly_active, minutes_fairly_active, \
-                 minutes_very_active, active_score) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 minutes_sedentary, active_score) \
+                 VALUES (?, ?, ?, ?, ?, ?) \
                  ON DUPLICATE KEY UPDATE floors=VALUES(floors), \
                  elevation_m=VALUES(elevation_m), minutes_sedentary=VALUES(minutes_sedentary), \
-                 minutes_lightly_active=VALUES(minutes_lightly_active), \
-                 minutes_fairly_active=VALUES(minutes_fairly_active), \
-                 minutes_very_active=VALUES(minutes_very_active), \
                  active_score=VALUES(active_score)",
             )
             .bind(user_id)
@@ -328,9 +317,6 @@ pub async fn sync_activity(
             .bind(s.floors)
             .bind(s.elevation_m)
             .bind(s.minutes_sedentary)
-            .bind(s.minutes_lightly_active)
-            .bind(s.minutes_fairly_active)
-            .bind(s.minutes_very_active)
             .bind(s.active_score)
             .execute(pool)
             .await

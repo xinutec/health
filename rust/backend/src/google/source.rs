@@ -109,7 +109,9 @@ pub const STREAMS: &[Stream] = &[
               source there has ever been for minutes_sedentary and active_score; flipping would stop \
               them while they still work. Measured: distance 1193/1226, calories_total 968/1246, \
               steps 587/1229 with google LOWER on 570 (history NOT rewritten, by decision), \
-              calories_active 111 days of 1246. floors and elevation_m are 0 rows in BOTH",
+              calories_active 111 days of 1246. floors and elevation_m are 0 rows in BOTH. \
+              Active minutes (lightly/fairly/very) moved to Google 2026-10-02 from the \
+              active-minutes rollup: moderate+vigorous = fairly+very on all 1,253 days, light 91 %",
     },
     Stream {
         name: "sleep",

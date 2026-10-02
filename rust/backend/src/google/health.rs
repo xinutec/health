@@ -220,6 +220,45 @@ pub fn day_of_rollup_point(pt: &serde_json::Value, sum_field: &str) -> Option<Da
     })
 }
 
+/// One day of the `active-minutes` rollup: minutes at each level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveMinutesDay {
+    pub date: String,
+    pub light: f64,
+    pub moderate: f64,
+    pub vigorous: f64,
+}
+
+/// Read one `active-minutes` rollup point. A level absent from the day's
+/// breakdown is ZERO minutes at it — the day exists, it just had none, and that
+/// reading matches Fitbit on every measured day (#260). A point with no
+/// breakdown at all is no reading.
+pub fn active_minutes_of_rollup_point(pt: &serde_json::Value) -> Option<ActiveMinutesDay> {
+    let date = pt.get("civilStartTime")?.get("date")?;
+    let (y, m, d) = (
+        date.get("year")?.as_i64()?,
+        date.get("month")?.as_i64()?,
+        date.get("day")?.as_i64()?,
+    );
+    let levels = pt
+        .pointer("/activeMinutes/activeMinutesRollupByActivityLevel")?
+        .as_array()?;
+    let at = |name: &str| {
+        levels
+            .iter()
+            .find(|l| l.get("activityLevel").and_then(|v| v.as_str()) == Some(name))
+            .and_then(|l| l.get("activeMinutesSum"))
+            .and_then(numeric)
+            .unwrap_or(0.0)
+    };
+    Some(ActiveMinutesDay {
+        date: format!("{y:04}-{m:02}-{d:02}"),
+        light: at("LIGHT"),
+        moderate: at("MODERATE"),
+        vigorous: at("VIGOROUS"),
+    })
+}
+
 /// Read `[start, end)` of one rollup type, in legal-width chunks.
 ///
 /// ⚠ HALF-OPEN, matching the API: "the inclusive start" and "the exclusive
@@ -232,6 +271,24 @@ pub async fn fetch_daily_rollup(
     end: chrono::NaiveDate,
     sum_field: &str,
 ) -> Result<Vec<DailyValue>> {
+    Ok(
+        fetch_daily_rollup_points(http, access_token, data_type, start, end)
+            .await?
+            .iter()
+            .filter_map(|pt| day_of_rollup_point(pt, sum_field))
+            .collect(),
+    )
+}
+
+/// The rollup points of `[start, end)`, whole: for a type whose day carries more
+/// than one sum (`active-minutes`, one per level).
+pub async fn fetch_daily_rollup_points(
+    http: &reqwest::Client,
+    access_token: &str,
+    data_type: &str,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+) -> Result<Vec<serde_json::Value>> {
     use chrono::Datelike as _;
 
     if start >= end {
@@ -281,9 +338,7 @@ pub async fn fetch_daily_rollup(
             .map(|v| v.as_slice())
             .unwrap_or_default()
         {
-            if let Some(v) = day_of_rollup_point(pt, sum_field) {
-                out.push(v);
-            }
+            out.push(pt.clone());
         }
         chunk_start = chunk_end;
     }

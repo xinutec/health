@@ -445,6 +445,12 @@ pub const GOOGLE_OWNED_COLUMNS: &[&str] = &[
     "calories_total",
     "calories_active",
     "resting_heart_rate",
+    // From `active-minutes` (2026-10-02, #260): moderate + vigorous equals
+    // Fitbit's fairly + very on all 1,253 days measured, the summary card's
+    // number; light agrees on 91 %.
+    "minutes_lightly_active",
+    "minutes_fairly_active",
+    "minutes_very_active",
 ];
 
 /// Is this day the Google writer's to write?
@@ -470,6 +476,9 @@ struct Activity {
     calories_total: Option<f64>,
     calories_active: Option<f64>,
     resting_hr: Option<f64>,
+    light: Option<f64>,
+    moderate: Option<f64>,
+    vigorous: Option<f64>,
 }
 
 /// `daily_activity`, from the cutover forward only.
@@ -655,6 +664,17 @@ pub async fn sync_daily_activity(
         }
     }
 
+    for pt in
+        super::health::fetch_daily_rollup_points(http, access_token, "active-minutes", start, end)
+            .await
+            .context("rolling up active-minutes")?
+    {
+        if let Some(d) = super::health::active_minutes_of_rollup_point(&pt) {
+            let e = by_day.entry(d.date).or_default();
+            (e.light, e.moderate, e.vigorous) = (Some(d.light), Some(d.moderate), Some(d.vigorous));
+        }
+    }
+
     for d in fetch_daily_series(
         http,
         access_token,
@@ -680,12 +700,16 @@ pub async fn sync_daily_activity(
         sqlx::query(
             "INSERT INTO daily_activity \
              (user_id, date, steps, distance_km, calories_total, calories_active, \
-             resting_heart_rate) VALUES (?, ?, ?, ?, ?, ?, ?) \
+             resting_heart_rate, minutes_lightly_active, minutes_fairly_active, \
+             minutes_very_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON DUPLICATE KEY UPDATE steps=COALESCE(VALUES(steps), steps), \
              distance_km=COALESCE(VALUES(distance_km), distance_km), \
              calories_total=COALESCE(VALUES(calories_total), calories_total), \
              calories_active=COALESCE(VALUES(calories_active), calories_active), \
-             resting_heart_rate=COALESCE(VALUES(resting_heart_rate), resting_heart_rate)",
+             resting_heart_rate=COALESCE(VALUES(resting_heart_rate), resting_heart_rate), \
+             minutes_lightly_active=COALESCE(VALUES(minutes_lightly_active), minutes_lightly_active), \
+             minutes_fairly_active=COALESCE(VALUES(minutes_fairly_active), minutes_fairly_active), \
+             minutes_very_active=COALESCE(VALUES(minutes_very_active), minutes_very_active)",
         )
         .bind(user_id)
         .bind(date)
@@ -694,6 +718,9 @@ pub async fn sync_daily_activity(
         .bind(a.calories_total)
         .bind(a.calories_active)
         .bind(a.resting_hr)
+        .bind(a.light.map(|v| v.round() as i64))
+        .bind(a.moderate.map(|v| v.round() as i64))
+        .bind(a.vigorous.map(|v| v.round() as i64))
         .execute(pool)
         .await
         .with_context(|| format!("writing daily_activity for {date}"))?;
