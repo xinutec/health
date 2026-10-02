@@ -13,6 +13,7 @@
 //! Re-adding it would overwrite these real measurements nightly with Fitbit's
 //! stale carry-forward, and the result would still look like data.
 
+pub mod archive;
 pub mod body;
 pub mod exercise;
 pub mod health;

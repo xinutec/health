@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 86] = [
+    let migrations: [&str; 87] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -696,6 +696,20 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     raw           JSON NOT NULL,
     PRIMARY KEY (user_id, point_id),
     INDEX idx_exercise_start (user_id, start_utc)
+  )"#,
+        // The raw archive of every Google type with no table of its own (#1886,
+        // 2026-10-02): time in columns, the rest of the point in `payload`.
+        r#"CREATE TABLE IF NOT EXISTS google_points (
+    user_id        VARCHAR(64) NOT NULL,
+    data_type      VARCHAR(48) NOT NULL,
+    start_utc      DATETIME(3) NOT NULL,
+    end_utc        DATETIME(3) NULL,
+    start_ts       DATETIME(3) NULL,
+    start_offset_s INT NULL,
+    end_offset_s   INT NULL,
+    source         VARCHAR(160) NOT NULL,
+    payload        JSON NOT NULL,
+    PRIMARY KEY (user_id, data_type, start_utc, source)
   )"#,
     ];
 

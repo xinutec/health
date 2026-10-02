@@ -102,6 +102,20 @@ pub enum Command {
         #[arg(long)]
         write: bool,
     },
+    /// archive Google's types with no table of their own into google_points (#1886)
+    GoogleArchivePoints {
+        /// first day archived (YYYY-MM-DD, UTC)
+        #[arg(long, value_parser = parse_date)]
+        from: chrono::NaiveDate,
+        /// first day NOT archived (YYYY-MM-DD, UTC)
+        #[arg(long, value_parser = parse_date)]
+        until: chrono::NaiveDate,
+        /// one type (e.g. sedentary-period); every archived type when absent
+        #[arg(long = "type")]
+        data_type: Option<String>,
+        #[arg(long)]
+        write: bool,
+    },
     /// write every recorded workout Google holds (#1886)
     GoogleSyncExercise,
     /// archive every SpO2 reading Google holds over a UTC date range (#1886)

@@ -146,6 +146,14 @@ pub const STREAMS: &[Stream] = &[
               (2026-10-02): 396 from the watch since 2023 (walks, runs, rides, workouts) and 360 \
               walks the Fit app detected in 2026, each with its summary, events and splits",
     },
+    Stream {
+        name: "google_points",
+        owner: Owner::Google,
+        why: "the raw archive of every type with no table of its own (google::archive::\
+              ARCHIVE_TYPES): activity-level 1.12M, distance 402k, active-zone-minutes 43k, \
+              swim-lengths 32k, sedentary-period 19k, respiratory-rate-sleep-summary 1.4k, \
+              nutrition-log 2, measured 2026-10-02; Fitbit's API never served most of them",
+    },
 ];
 
 /// True when the Fitbit sync should still fetch this stream.
@@ -184,6 +192,7 @@ pub fn at_risk() -> Vec<&'static Stream> {
 pub const HAS_WRITER: &[&str] = &[
     "body",
     "exercise_sessions",
+    "google_points",
     "breathing_rate",
     "heart_rate_intraday",
     "heart_rate_zones",

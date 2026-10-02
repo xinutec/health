@@ -950,6 +950,61 @@ pub(crate) async fn google_backfill_steps(
     Ok(())
 }
 
+pub(crate) async fn google_archive_points(
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    only: Option<&str>,
+    write: bool,
+) -> Result<()> {
+    anyhow::ensure!(from < until, "--from must be before --until");
+    let types: Vec<&str> = backend::google::archive::ARCHIVE_TYPES
+        .iter()
+        .map(|t| t.0)
+        .filter(|t| only.is_none_or(|o| o == *t))
+        .collect();
+    anyhow::ensure!(
+        !types.is_empty(),
+        "{} is not an archived type",
+        only.unwrap_or("")
+    );
+    let user_id = std::env::var("GH_USER_ID")
+        .context("GH_USER_ID names the Google-configured user and must be set")?;
+    if !write {
+        println!(
+            "DRY RUN — would archive {} for {user_id}, {from} → {until} (UTC), holes only.\n\
+             Then apply with --write.",
+            types.join(", ")
+        );
+        return Ok(());
+    }
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    for t in types {
+        // A token per type: the largest takes minutes, and a token lives an hour.
+        let token = backend::google::oauth::access_token(&http, &creds)
+            .await
+            .context("minting a Google access token")?;
+        let (fetched, written) = backend::google::archive::archive_points(
+            &pool,
+            &http,
+            &token,
+            &user_id,
+            t,
+            Some((from, until)),
+        )
+        .await
+        .with_context(|| format!("archiving {t}"))?;
+        println!("{t}: {written} new of {fetched} fetched");
+    }
+    Ok(())
+}
+
 pub(crate) async fn google_sync_exercise() -> Result<()> {
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;

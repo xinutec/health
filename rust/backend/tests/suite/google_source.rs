@@ -491,3 +491,60 @@ mod exercise_sessions {
         assert!(parse_exercise(&p).is_none());
     }
 }
+
+/// The raw archive (#1886): every remaining type as `google_points` rows, the
+/// time normalised into columns and the rest of the payload kept.
+mod google_points {
+    use backend::google::archive::parse_point;
+    use serde_json::json;
+
+    #[test]
+    fn an_interval_point_keeps_both_ends_its_offsets_and_its_payload() {
+        let p = json!({"dataSource": {"platform": "FITBIT", "device": {"displayName": "Inspire 3"}},
+            "activityLevel": {"interval": {"startTime": "2026-10-02T13:30:00Z", "startUtcOffset": "7200s",
+                                           "endTime": "2026-10-02T13:31:00Z", "endUtcOffset": "7200s"},
+                              "activityLevelType": "VERY_ACTIVE"}});
+        let r = parse_point(&p, "activityLevel").expect("readable");
+        assert_eq!(r.start_utc, "2026-10-02 13:30:00.000");
+        assert_eq!(r.end_utc.as_deref(), Some("2026-10-02 13:31:00.000"));
+        assert_eq!(r.start_ts.as_deref(), Some("2026-10-02 15:30:00.000"));
+        assert_eq!((r.start_offset_s, r.end_offset_s), (Some(7200), Some(7200)));
+        assert_eq!(r.source, "FITBIT|Inspire 3");
+        assert_eq!(r.payload, json!({"activityLevelType": "VERY_ACTIVE"}));
+    }
+
+    #[test]
+    fn a_sample_point_has_no_end_and_milliseconds_survive() {
+        let p = json!({"dataSource": {"platform": "HEALTH_CONNECT", "device": {},
+                                      "application": {"packageName": "com.example.app"}},
+            "respiratoryRateSleepSummary": {"sampleTime": {"physicalTime": "2026-10-02T08:59:00.250Z",
+                                                            "utcOffset": "7200s"},
+                                            "fullSleepStats": {"breathsPerMinute": 17.2}}});
+        let r = parse_point(&p, "respiratoryRateSleepSummary").expect("readable");
+        assert_eq!(r.start_utc, "2026-10-02 08:59:00.250");
+        assert_eq!(r.end_utc, None);
+        assert_eq!(r.start_ts.as_deref(), Some("2026-10-02 10:59:00.250"));
+        assert_eq!(r.source, "HEALTH_CONNECT|com.example.app");
+        assert_eq!(
+            r.payload,
+            json!({"fullSleepStats": {"breathsPerMinute": 17.2}})
+        );
+    }
+
+    #[test]
+    fn an_interval_without_offsets_has_no_wall_clock_and_no_time_is_refused() {
+        let p = json!({"dataSource": {"platform": "FITBIT", "device": {"displayName": "Inspire 3"}},
+            "swimLengthsData": {"interval": {"startTime": "2026-10-02T13:28:45Z", "endTime": "2026-10-02T13:29:05Z"},
+                                "strokeCount": "20"}});
+        let r = parse_point(&p, "swimLengthsData").expect("readable");
+        assert_eq!((r.start_ts, r.start_offset_s), (None, None));
+        assert_eq!(r.payload, json!({"strokeCount": "20"}));
+        assert!(
+            parse_point(
+                &json!({"swimLengthsData": {"strokeCount": "1"}}),
+                "swimLengthsData"
+            )
+            .is_none()
+        );
+    }
+}

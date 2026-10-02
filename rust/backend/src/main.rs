@@ -217,6 +217,12 @@ async fn main() -> Result<()> {
             google_backfill_steps(from, until, write).await
         }
         C::GoogleSyncExercise => google_sync_exercise().await,
+        C::GoogleArchivePoints {
+            from,
+            until,
+            data_type,
+            write,
+        } => google_archive_points(from, until, data_type.as_deref(), write).await,
         C::GoogleArchiveSpo2 { from, until, write } => {
             google_archive_spo2(from, until, write).await
         }

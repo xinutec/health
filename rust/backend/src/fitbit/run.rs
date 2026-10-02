@@ -318,6 +318,18 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google exercise_sessions failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("google_points") {
+        for (data_type, _, _) in crate::google::archive::ARCHIVE_TYPES {
+            match crate::google::archive::archive_points(
+                pool, http, &token, &user_id, data_type, None,
+            )
+            .await
+            {
+                Ok((_, n)) => tracing::info!("[{user_id}] google_points {data_type}: {n} new"),
+                Err(e) => tracing::error!("[{user_id}] google_points {data_type} failed: {e:#}"),
+            }
+        }
+    }
     if !crate::google::source::fitbit_still_owns("heart_rate_intraday") {
         match crate::google::sync::sync_heart_rate_intraday(pool, http, &token, &user_id).await {
             Ok(n) => tracing::info!("[{user_id}] google heart_rate_intraday: {n} sample(s)"),
