@@ -39,6 +39,15 @@ const SCOPES = [
 	// The watch's battery: `users.pairedDevices` replaces Fitbit's devices.json
 	// and wants this scope (#260, 2026-10-01).
 	"https://www.googleapis.com/auth/googlehealth.settings.readonly",
+	// The rest of the read-only set (https://developers.google.com/health/scopes),
+	// so the archive of everything Google holds needs no further consent (#1886,
+	// 2026-10-02): ECG and irregular-rhythm notifications for the medical
+	// record, nutrition, the GPS track of a recorded exercise, and the profile.
+	"https://www.googleapis.com/auth/googlehealth.ecg.readonly",
+	"https://www.googleapis.com/auth/googlehealth.irn.readonly",
+	"https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
+	"https://www.googleapis.com/auth/googlehealth.location.readonly",
+	"https://www.googleapis.com/auth/googlehealth.profile.readonly",
 ];
 const SCOPE = SCOPES.join(" ");
 const PORT = 8765;
