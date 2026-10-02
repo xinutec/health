@@ -1406,6 +1406,10 @@ pub async fn sync_steps_intraday(
     Ok(written)
 }
 
+/// Rows per archive INSERT: 1,000 × 4 binds stays far under MariaDB's 65,535
+/// placeholders and the packet limit.
+const ARCHIVE_BATCH_ROWS: usize = 1000;
+
 /// The archive's minutes: those whose WALL CLOCK date is in `[from, until)`,
 /// non-zero, as `(ts_utc, ts, steps)` in instant order.
 ///
@@ -1461,22 +1465,34 @@ pub async fn archive_steps_intraday(
     let (merged, skipped) = merge_step_points(&points);
     let minutes = archive_minutes(&merged, from, until);
 
+    tracing::info!(
+        "[{user_id}] google steps archive {from} → {until}: {} point(s) fetched, {} minute(s) in range",
+        points.len(),
+        minutes.len()
+    );
+
+    // ⚠ BATCHED. Over the prod tunnel every statement is a round trip, and nine
+    // months is ~10⁵ minutes: one INSERT each outlived its run (2026-10-02).
     let mut tx = pool
         .begin()
         .await
         .context("opening the steps archive transaction")?;
     let mut written = 0u64;
-    for (ts_utc, ts, steps) in &minutes {
-        let done = sqlx::query(
-            "INSERT IGNORE INTO steps_intraday (user_id, ts, steps, ts_utc) VALUES (?, ?, ?, ?)",
-        )
-        .bind(user_id)
-        .bind(ts)
-        .bind(steps)
-        .bind(ts_utc)
-        .execute(&mut *tx)
-        .await
-        .with_context(|| format!("archiving steps_intraday at {ts}"))?;
+    for batch in minutes.chunks(ARCHIVE_BATCH_ROWS) {
+        let mut qb: sqlx::QueryBuilder<sqlx::MySql> = sqlx::QueryBuilder::new(
+            "INSERT IGNORE INTO steps_intraday (user_id, ts, steps, ts_utc) ",
+        );
+        qb.push_values(batch, |mut row, (ts_utc, ts, steps)| {
+            row.push_bind(user_id)
+                .push_bind(ts)
+                .push_bind(steps)
+                .push_bind(ts_utc);
+        });
+        let done = qb
+            .build()
+            .execute(&mut *tx)
+            .await
+            .context("archiving a batch of steps_intraday")?;
         written += done.rows_affected();
     }
     tx.commit().await.context("committing the steps archive")?;
