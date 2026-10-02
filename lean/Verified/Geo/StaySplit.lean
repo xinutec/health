@@ -2793,8 +2793,16 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
     let walkedSide := fun (a b : Int) =>
       decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
         (meanCadenceSpm steps a b).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
+    -- Only the LAST stop before a train can be its platform wait. One with a
+    -- later stop between it and the train is not against the train at all, and
+    -- read to the train the later sits pulled the cadence under the bar: the
+    -- hour in Gare Montparnasse (2026-10-01) came out one 46-minute walk with no
+    -- stop in it.
+    let anotherStopAfter := fun (de : Int) =>
+      (findDwell (fixes.filter (·.ts > de)) steps de seg.endTs (fun _ _ => true)).isSome
     let admit := fun (ds de : Int) =>
-      (!trainBefore || walkedSide seg.startTs ds) && (!trainAfter || walkedSide de seg.endTs)
+      (!trainBefore || walkedSide seg.startTs ds)
+        && (!trainAfter || anotherStopAfter de || walkedSide de seg.endTs)
     match findDwell fixes steps seg.startTs seg.endTs admit with
     | none => #[seg]
     | some (a, b) =>
@@ -2886,6 +2894,29 @@ private def shopAlpha : Namer := fun s =>
 -- platform wait, and the rail absorbers own it.
 private def TRAIN : Seg := { startTs := 1200, endTs := 2400, mode := "train" }
 #guard (splitWalksOnDwell #[WALK, TRAIN] STOP [] unnamed).size == 2
+
+-- TWO stops before a train (2026-10-01, Gare Montparnasse): the first has the
+-- second between it and the train, so it is no platform wait and is carved
+-- however slow the walk on; the second is the last before the train and needs
+-- the stretch to it walked.
+private def TWO_STOPS : Array PointF :=
+  (Array.range 10).map (fun i => dfx (Int.ofNat i * 30) (Float.ofNat i * 45)) ++
+  (Array.range 11).map (fun i => dfx (300 + Int.ofNat i * 30) (450 + (if i % 2 == 0 then 0 else 3)) 0.5) ++
+  (Array.range 10).map (fun i => dfx (630 + Int.ofNat i * 30) (495 + Float.ofNat i * 45)) ++
+  (Array.range 11).map (fun i => dfx (930 + Int.ofNat i * 30) (945 + (if i % 2 == 0 then 0 else 3)) 0.5) ++
+  (Array.range 10).map (fun i => dfx (1260 + Int.ofNat i * 30) (990 + Float.ofNat i * 45))
+private def WALK2 : Seg := { startTs := 0, endTs := 1560, mode := "walking" }
+private def TRAIN2 : Seg := { startTs := 1560, endTs := 3000, mode := "train" }
+private def modes (segs : Array Seg) : Array (String × Int × Int) :=
+  segs.map fun s => (s.mode, s.startTs, s.endTs)
+#guard modes (splitWalksOnDwell #[WALK2, TRAIN2] TWO_STOPS [] unnamed) ==
+  #[("walking", 0, 300), ("stationary", 300, 600), ("walking", 600, 1560), ("train", 1560, 3000)]
+-- Walked from the second stop to the train: it is a stop too.
+private def toTrain : List Verified.Geo.Worldline.FeasibilityStepPoint :=
+  (List.range 5).map fun i => { ts := 1260 + Int.ofNat i * 60, steps := 100 }
+#guard modes (splitWalksOnDwell #[WALK2, TRAIN2] TWO_STOPS toTrain unnamed) ==
+  #[("walking", 0, 300), ("stationary", 300, 600), ("walking", 600, 930),
+    ("stationary", 930, 1230), ("walking", 1230, 1560), ("train", 1560, 3000)]
 
 -- A held position under four minutes is a crossing, not a stop.
 private def BRIEF : Array PointF :=
