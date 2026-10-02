@@ -79,8 +79,8 @@ echo "==> fetching DB credentials from prod" >&2
 # needs no running pod at all. That is also what the CronJob always needed: its
 # pods have Completed by the time anyone looks.
 #
-# ⚠ Secret values reach jq on STDIN, never in argv, where `ps` would show them.
-# Captured into shell vars by the caller, never echoed.
+# ⚠ Secret values reach jq on STDIN, never in argv, where `ps` would show them,
+# and go straight into the environment, never echoed.
 workload_env() {
 	local spec names secrets
 	spec=$(ssh "$HEALTH_HOST" "kubectl -n $NS get $1 -o json")
@@ -101,40 +101,35 @@ workload_env() {
 		  else empty end'
 }
 
-# The serving Deployment carries the database, Nextcloud and Fitbit credentials
-# and the pipeline flags; the sync CronJob adds Google's (#260). The first
-# definition of a name wins, so the Deployment's.
+# EVERY variable the workloads define is exported, not a chosen few: a curated
+# list is how a new pipeline flag went missing and a Mac run silently tested a
+# different cascade from prod (2026-05-23). The serving Deployment carries the
+# database, Nextcloud and Fitbit credentials and the flags; the sync CronJob adds
+# Google's (#260). The Deployment's value wins where both define a name, so it is
+# applied last.
 #
 # ⚠ The CronJob is OPTIONAL: every other caller only touches the database, and
 # refusing to open a tunnel because an unrelated credential is missing would
 # break all of them.
-ENVDUMP=$(workload_env deployment/health-auth)
-ENVDUMP+=$'\n'$(workload_env cronjob/health-sync 2>/dev/null || true)
-get() { printf '%s\n' "$ENVDUMP" | grep "^$1=" | head -1 | cut -d= -f2- || true; }
-
-DB_PASSWORD=$(get DB_PASSWORD)
-[ -n "$DB_PASSWORD" ] || {
+#
+# ⚠ EMPTY IS NOT EXPORTED. Empty is not unset: Google's credentials read empty as
+# present (a 401 at the token endpoint instead of a missing-variable refusal),
+# and an empty NC_BASE_URL fails URL validation.
+export_env() {
+	local line name
+	while IFS= read -r line; do
+		name=${line%%=*}
+		[[ $name =~ ^[A-Z_][A-Z0-9_]*$ && -n ${line#*=} ]] || continue
+		export "$name=${line#*=}"
+	done
+}
+export_env < <(workload_env cronjob/health-sync 2>/dev/null || true)
+export_env < <(workload_env deployment/health-auth)
+[ -n "${DB_PASSWORD:-}" ] || {
 	echo "DB_PASSWORD not found in the health-auth spec" >&2
 	exit 1
 }
-# Always exported: the Rust config layer REFUSES a missing required var by name
-# rather than defaulting it, so `backend check` cannot start without the
-# Nextcloud and Fitbit ones even though it only reads the database (#982).
-for v in DB_USER DB_NAME NC_CLIENT_ID NC_CLIENT_SECRET FITBIT_CLIENT_ID FITBIT_CLIENT_SECRET; do
-	export "$v=$(get "$v")"
-done
-export DB_PASSWORD
-# Exported only when prod sets them, because empty is not unset: the Google
-# credentials read empty as PRESENT (a 401 at the token endpoint instead of a
-# missing-variable refusal), an empty NC_BASE_URL fails URL validation, and the
-# pipeline flags gate the HSMM decode, so a Mac run without them decodes a
-# different day than prod.
-for v in GH_CLIENT_ID GH_CLIENT_SECRET GH_REFRESH_TOKEN NC_BASE_URL \
-	USE_CADENCE_IMPUTATION USE_SEGMENT_EVIDENCE USE_CHAIN_CONTEXT USE_REACQUIRE_ROBUST_SPEED; do
-	val=$(get "$v")
-	[ -z "$val" ] || export "$v=$val"
-done
-unset val ENVDUMP
+# The tunnel's end, not the in-cluster service the spec names.
 export DB_HOST=127.0.0.1 DB_PORT="$LOCAL_PORT" TZ=UTC
 
 echo "==> opening tunnel to prod health-db" >&2
