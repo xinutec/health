@@ -116,6 +116,52 @@ def mergeAdjacentSameRouteTrains (segments : Array Seg) : Array Seg :=
             snappedPath := if prev.snappedPath.isNone then seg.snappedPath else prev.snappedPath }
       else out.push seg
 
+/-! ## `joinThroughLegs` -/
+
+/-- Two train legs this close, with nothing between them, are one ride. -/
+def THROUGH_GAP_S : Int := 60
+
+/-- One ride labelled as two: back-to-back train legs where the first alights
+where the second boards, on the same named line, with no segment and under a
+minute between them, are joined into one leg `A → C · line` (2026-10-01:
+Hendaye to San Sebastián as "Irun Ficoba → Galtzaraborda" and "Galtzaraborda →
+Loiola", 16 s apart).
+
+⚠ NARROW ON PURPOSE. Re-running the journey assembler here also merged real
+changes of trains: on 2026-06-29 and 07-01 the platform wait at Baker Street
+between two Metropolitan rides was swallowed. A change has a wait or a walk
+between the legs; these two have nothing. -/
+def joinThroughLegs (segments : Array Seg) : Array Seg :=
+  segments.foldl (init := #[]) fun out seg =>
+    match out.back? with
+    | none => out.push seg
+    | some prev =>
+      let joined : Option Seg := do
+        if effectiveMode prev != "train" || effectiveMode seg != "train" then none
+        if seg.startTs - prev.endTs > THROUGH_GAP_S then none
+        let a ← parseRailWayName prev.wayName
+        let b ← parseRailWayName seg.wayName
+        let line ← a.line
+        if line == "" || b.line != some line || a.alight != b.board || a.board == b.alight then none
+        let w0 := Float.ofInt prev.pointCount
+        let w1 := Float.ofInt seg.pointCount
+        let wTot := if w0 + w1 == 0 then 1 else w0 + w1
+        let why := s!"one ride through {a.alight}: two legs on {line} with nothing between"
+        some { prev with
+          endTs := seg.endTs
+          pointCount := prev.pointCount + seg.pointCount
+          avgSpeed := jsRound ((prev.avgSpeed * w0 + seg.avgSpeed * w1) / wTot * 10) / 10
+          maxSpeed := jsRound (max prev.maxSpeed seg.maxSpeed * 10) / 10
+          linearity := jsRound ((prev.linearity * w0 + seg.linearity * w1) / wTot * 100) / 100
+          wayName := some s!"{a.board}{RAIL_STATION_SEP}{b.alight}{RAIL_LINE_SEP}{line}"
+          refinedReason := some (match prev.refinedReason with
+            | some r => if r == "" then why else s!"{r}; {why}"
+            | none => why)
+          snappedPath := none }
+      match joined with
+      | some j => out.pop.push j
+      | none => out.push seg
+
 /-! ## `reconcileAdjacentRailLegs` -/
 
 /-- Enforce the physical law that two back-to-back rail legs share a station.
@@ -629,5 +675,24 @@ private def BRIEF : Array Fix := #[fx 1000 0, fx 1030 500, fx 1045 505, fx 1060 
   == #[some s!"earlier note; {reclaim "499"}", some TRIMMED, some (reclaim "1004")]
 
 #guard splitChangeoverWindows #[] BOTH == #[]
+
+/-! ### `joinThroughLegs` -/
+
+private def ride (a b : Int) (w : String) : Seg := { tr a b (some w) with }
+private def through : Array Seg :=
+  #[ride 0 1200 "A → B · L1", ride 1216 1900 "B → C · L1"]
+#guard (joinThroughLegs through).map (fun s => (s.startTs, s.endTs, s.wayName)) ==
+  #[(0, 1900, some "A → C · L1")]
+-- A wait between them is a change of trains, however short the gap around it.
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", tr 1200 1260 none (mode := "stationary"),
+    ride 1260 1900 "B → C · L1"]).size == 3
+-- The gap bar is inclusive: 60 s joins, 61 s does not.
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", ride 1260 1900 "B → C · L1"]).size == 1
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", ride 1261 1900 "B → C · L1"]).size == 2
+-- Not the same station, not the same line, no line, or a round trip: apart.
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", ride 1216 1900 "X → C · L1"]).size == 2
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", ride 1216 1900 "B → C · L2"]).size == 2
+#guard (joinThroughLegs #[ride 0 1200 "A → B", ride 1216 1900 "B → C"]).size == 2
+#guard (joinThroughLegs #[ride 0 1200 "A → B · L1", ride 1216 1900 "B → A · L1"]).size == 2
 
 end Verified.Geo.RailReconcile

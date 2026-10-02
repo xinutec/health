@@ -79,6 +79,14 @@ answer is `false` — unknown is not evidence.
 def lineCannotServe (line station : String) (lookup : String → Array ServedStation) : Bool :=
   scan (normalizeStationName station) lookup (expandTubeLineNames line) false
 
+/-- Whether `line` is KNOWN to serve `station`: some component of it lists the
+station. The positive form, for a caller that rewrites a label on it, where
+`lineCannotServe`'s "unknown is not evidence" would let it rewrite blind. -/
+def lineServes (line station : String) (lookup : String → Array ServedStation) : Bool :=
+  let target := normalizeStationName station
+  (expandTubeLineNames line).any fun c =>
+    (lookup c).any fun s => normalizeStationName s.name == target
+
 /-! ## Guards
 
 A mirror that knows three lines and nothing else. The Jubilee's Finchley Road
@@ -111,5 +119,12 @@ private def mirror : String → Array ServedStation
 #guard lineCannotServe "Victoria and Piccadilly Lines" "Finchley Road" mirror == false
 -- A station no line in the mirror serves.
 #guard lineCannotServe "Metropolitan Line" "Stratford" mirror == true
+
+#guard lineServes "Metropolitan Line" "Baker Street" mirror
+#guard lineServes "Jubilee Line" "Finchley Road" mirror
+#guard !lineServes "Jubilee Line" "Baker Street" mirror
+-- Unknown is NOT serving, unlike the veto.
+#guard !lineServes "Northern Line" "Baker Street" mirror
+#guard !lineCannotServe "Northern Line" "Baker Street" mirror
 
 end Verified.Geo.LineMembership
