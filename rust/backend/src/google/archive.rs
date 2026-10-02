@@ -116,6 +116,33 @@ pub fn parse_point(pt: &serde_json::Value, key: &str) -> Option<PointRow> {
     })
 }
 
+/// Number the points that share a `(start, source)`: 0, 1, … in payload order.
+///
+/// ⚠ NOT SERVING ORDER. Mid-2024 Google serves up to three activity-level points
+/// for one minute from one watch, often with different levels, with nothing in
+/// them to tell them apart (measured 2026-10-02: 4,613 such minutes in July
+/// 2024 alone). Keeping all of them needs a key part; ordering by payload makes
+/// a re-fetch number them the same, so `INSERT IGNORE` stays idempotent.
+#[must_use]
+pub fn number_points(mut rows: Vec<PointRow>) -> Vec<(PointRow, i32)> {
+    rows.sort_by(|a, b| {
+        (&a.start_utc, &a.source, a.payload.to_string()).cmp(&(
+            &b.start_utc,
+            &b.source,
+            b.payload.to_string(),
+        ))
+    });
+    let mut out: Vec<(PointRow, i32)> = Vec::with_capacity(rows.len());
+    for r in rows {
+        let seq = match out.last() {
+            Some((p, n)) if p.start_utc == r.start_utc && p.source == r.source => n + 1,
+            _ => 0,
+        };
+        out.push((r, seq));
+    }
+    out
+}
+
 /// Rows per INSERT; the prod tunnel makes every statement a round trip.
 const BATCH_ROWS: usize = 1000;
 
@@ -129,7 +156,8 @@ const WINDOW_DAYS: i64 = 31;
 /// it, the routine sync: from a day before the type's newest stored start, or a
 /// week back when none is stored. A type with no filter field is read whole.
 ///
-/// ⚠ HOLES ONLY (`INSERT IGNORE` on user, type, start, source): a stored point
+/// ⚠ HOLES ONLY (`INSERT IGNORE` on user, type, start, source, seq — see
+/// `number_points`): a stored point
 /// keeps its row. The returned pair is `(fetched, written)`; a fetched point
 /// that wrote nothing was already stored, or collided on the key — the log
 /// says how many, rather than hiding it.
@@ -199,7 +227,7 @@ pub async fn archive_points(
             }
         }
         .with_context(|| format!("fetching {data_type}"))?;
-        let rows: Vec<PointRow> = points.iter().filter_map(|p| parse_point(p, key)).collect();
+        let rows = number_points(points.iter().filter_map(|p| parse_point(p, key)).collect());
         fetched += points.len();
         unreadable += points.len() - rows.len();
         let mut tx = pool
@@ -209,9 +237,9 @@ pub async fn archive_points(
         for batch in rows.chunks(BATCH_ROWS) {
             let mut qb: sqlx::QueryBuilder<sqlx::MySql> = sqlx::QueryBuilder::new(
                 "INSERT IGNORE INTO google_points (user_id, data_type, start_utc, end_utc, \
-                 start_ts, start_offset_s, end_offset_s, source, payload) ",
+                 start_ts, start_offset_s, end_offset_s, source, seq, payload) ",
             );
-            qb.push_values(batch, |mut row, r| {
+            qb.push_values(batch, |mut row, (r, seq)| {
                 row.push_bind(user_id)
                     .push_bind(data_type)
                     .push_bind(&r.start_utc)
@@ -220,6 +248,7 @@ pub async fn archive_points(
                     .push_bind(r.start_offset_s)
                     .push_bind(r.end_offset_s)
                     .push_bind(&r.source)
+                    .push_bind(seq)
                     .push_bind(r.payload.to_string());
             });
             written += qb

@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 87] = [
+    let migrations: [&str; 88] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -711,6 +711,10 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     payload        JSON NOT NULL,
     PRIMARY KEY (user_id, data_type, start_utc, source)
   )"#,
+        // Up to three points per minute from ONE source, differing (mid-2024
+        // activity-level): the key gains their number (`archive::number_points`).
+        r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
+   DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
     ];
 
     sqlx::query(

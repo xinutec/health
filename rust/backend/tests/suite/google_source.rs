@@ -531,6 +531,48 @@ mod google_points {
         );
     }
 
+    /// Mid-2024 Google serves up to three activity-level points for ONE minute
+    /// from one watch, often with different levels, and nothing in them tells
+    /// them apart. All are kept: each gets a sequence number within its
+    /// (start, source), ordered by payload so a re-fetch numbers them the same.
+    #[test]
+    fn points_sharing_a_start_and_source_are_numbered_by_payload() {
+        use backend::google::archive::number_points;
+        let p = |level: &str| {
+            json!({"dataSource": {"platform": "FITBIT", "device": {"displayName": "Inspire 3"}},
+            "activityLevel": {"interval": {"startTime": "2024-07-10T10:00:00Z", "startUtcOffset": "3600s",
+                                           "endTime": "2024-07-10T10:01:00Z", "endUtcOffset": "3600s"},
+                              "activityLevelType": level}})
+        };
+        let rows: Vec<_> = ["SEDENTARY", "LIGHTLY_ACTIVE", "SEDENTARY"]
+            .iter()
+            .map(|l| parse_point(&p(l), "activityLevel").unwrap())
+            .collect();
+        let mut reversed = rows.clone();
+        reversed.reverse();
+        let seqs = |rs: Vec<backend::google::archive::PointRow>| -> Vec<(i32, String)> {
+            let mut v: Vec<_> = number_points(rs)
+                .into_iter()
+                .map(|(r, n)| {
+                    (
+                        n,
+                        r.payload["activityLevelType"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let want = vec![
+            (0, "LIGHTLY_ACTIVE".to_string()),
+            (1, "SEDENTARY".to_string()),
+            (2, "SEDENTARY".to_string()),
+        ];
+        assert_eq!(seqs(rows), want);
+        // The serving order does not move a number.
+        assert_eq!(seqs(reversed), want);
+    }
+
     #[test]
     fn an_interval_without_offsets_has_no_wall_clock_and_no_time_is_refused() {
         let p = json!({"dataSource": {"platform": "FITBIT", "device": {"displayName": "Inspire 3"}},
