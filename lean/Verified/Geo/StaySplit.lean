@@ -2087,6 +2087,10 @@ structure HrPoint where
 structure SplitContext where
   hr : Array HrPoint := #[]
   steps : Array FeasibilityStepPoint := #[]
+  /-- The instant the step stream is complete to: the watch's last sync. A
+  minute after it with no step row is NOT a still minute, only one not synced
+  yet. `none` when unknown, which a finished day's capture is. -/
+  stepsThrough : Option Int := none
   deriving Inhabited
 
 /-- Shorter in-stay gaps are ordinary GPS jitter and are never scored. -/
@@ -2453,8 +2457,13 @@ def splitWalksOnEvidence (segments : Array Seg) (points : Array PointF)
           prefixMin := b
           break
       -- Suffix: mirrored — the LAST minute whose backward window still walks.
+      -- ⚠ Not past the watch's last sync: there the zeros are minutes not yet
+      -- synced, and a walk read in the meantime ended in a 20-minute "sit"
+      -- (2026-10-02, 15:15–15:34 by the river in San Sebastián). The prefix
+      -- needs no bar: its boundary minute carries steps, so it was synced.
+      let suffixKnown := ctx.stepsThrough.all (· ≥ seg.endTs)
       let mut suffixMin : Nat := 0
-      let eStart := totalMin - minSitMin
+      let eStart := if suffixKnown then totalMin - minSitMin else 0
       for k in [0:eStart] do
         let e := eStart - k
         -- Probed at zero, and I could not construct a case: a suffix boundary
@@ -2548,6 +2557,10 @@ private def wrun (segs : Array Seg) (pts : Array PointF)
     (steps : Array FeasibilityStepPoint) : Array WRow :=
   wv (splitWalksOnEvidence segs pts { steps })
 
+private def wrun' (segs : Array Seg) (pts : Array PointF)
+    (steps : Array FeasibilityStepPoint) (through : Option Int) : Array WRow :=
+  wv (splitWalksOnEvidence segs pts { steps, stepsThrough := through })
+
 private def sitReason (mins : String) : String :=
   s!"steps-aware walk split: ≤ 5 steps/min mean for {mins} min inside a walking segment — a sit, not a walk"
 /-- A carved sit: motion stats zeroed, place inherited. -/
@@ -2570,6 +2583,15 @@ private def CLINIC : Array Float := rep 20 0 ++ rep 10 60
 -- Both ends: three segments out.
 #guard wrun #[{ walk with endTs := 3000 }] (fixesEvery5 50) (perMin (rep 20 0 ++ rep 10 60 ++ rep 20 0))
   == #[sit 0 1200 4 "20", core 1200 1800 2, sit 1800 3000 4 "20"]
+-- NOT PAST THE WATCH'S LAST SYNC: the same trailing zeros, synced only to
+-- minute 10, are minutes not synced yet, and the walk stands. Synced through
+-- the walk's end, the sit is carved as before.
+#guard wrun' #[walk] (fixesEvery5 30) (perMin (rep 10 60 ++ rep 20 0)) (some 600) == wv #[walk]
+#guard wrun' #[walk] (fixesEvery5 30) (perMin (rep 10 60 ++ rep 20 0)) (some 1799) == wv #[walk]
+#guard wrun' #[walk] (fixesEvery5 30) (perMin (rep 10 60 ++ rep 20 0)) (some 1800)
+  == #[core 0 600 2, sit 600 1800 4 "20"]
+-- A leading sit is unaffected: its boundary minute was synced.
+#guard wrun' #[walk] (fixesEvery5 30) (perMin CLINIC) (some 1300) == #[sit 0 1200 4 "20", core 1200 1800 2]
 -- No sit at all: a walk right through is left alone.
 #guard wrun #[walk] (fixesEvery5 30) (perMin (rep 30 60)) == wv #[walk]
 

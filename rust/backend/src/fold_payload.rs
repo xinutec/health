@@ -253,6 +253,11 @@ pub fn encode_obs_and_tail(obs: &Value, tail: Option<&Value>) -> Map<String, Val
         "steps".into(),
         arr_map(g("steps"), |s| json!([raw(s, "ts"), num_bits(s, "steps")])),
     );
+    // The watch's last sync, Unix seconds or null (`StaySplit.SplitContext`).
+    m.insert(
+        "stepsThrough".into(),
+        g("stepsThrough").cloned().unwrap_or(Value::Null),
+    );
     m.insert(
         "hr".into(),
         arr_map(g("hr"), |h| json!([raw(h, "ts"), num_bits(h, "bpm")])),

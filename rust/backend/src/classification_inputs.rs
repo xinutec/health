@@ -321,6 +321,29 @@ pub fn parse_hour_profile(raw: Option<&str>) -> Value {
 /// exact length a stored profile must have.
 const HOUR_BUCKETS: usize = 24;
 
+/// The instant the step stream is complete to, as Unix seconds: the watch's
+/// last sync to Google, which `device_battery_log.ts_utc` records from the
+/// paired-devices answer (#260). A minute after it with no step row is one not
+/// synced yet, not a still one, and the walk splitter must not read it as a sit
+/// (2026-10-02). `null` when no row carries the instant.
+pub async fn steps_through(pool: &MySqlPool, user_id: &str) -> Result<Value> {
+    let newest: Option<String> = sqlx::query_scalar(
+        "SELECT CAST(MAX(ts_utc) AS CHAR) FROM device_battery_log WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("reading the newest watch sync for {user_id}"))?;
+    Ok(match newest {
+        Some(ts) => {
+            let t = chrono::NaiveDateTime::parse_from_str(&ts, "%Y-%m-%d %H:%M:%S")
+                .with_context(|| format!("unreadable watch sync instant {ts:?}"))?;
+            json!(t.and_utc().timestamp())
+        }
+        None => Value::Null,
+    })
+}
+
 /// `mode_biometrics` — the per-user, per-mode signatures the cadence and speed
 /// scorers read.
 ///
@@ -1363,10 +1386,11 @@ pub async fn load(
     m.insert("phonetrack".into(), phonetrack);
     m.insert("batteryTail".into(), battery_tail);
     m.insert("knownPlaces".into(), known_places(pool, user_id).await?);
-    m.insert(
-        "biometrics".into(),
-        biometrics(pool, user_id, start_utc, end_utc, home_tz, home_tz).await?,
-    );
+    let mut biom = biometrics(pool, user_id, start_utc, end_utc, home_tz, home_tz).await?;
+    if let Some(o) = biom.as_object_mut() {
+        o.insert("stepsThrough".into(), steps_through(pool, user_id).await?);
+    }
+    m.insert("biometrics".into(), biom);
     m.insert(
         "motionLog".into(),
         motion_log(pool, user_id, start_utc, end_utc).await?,

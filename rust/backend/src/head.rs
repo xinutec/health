@@ -637,6 +637,13 @@ pub fn capture(inputs: &Value, date: &str, user: &str) -> Result<Value> {
     obs.insert("rawFixes".into(), accuracy_rows(&head.in_day));
     obs.insert("displayFixes".into(), accuracy_rows(&head.display_fixes));
     obs.insert("steps".into(), pick(biom("steps"), ["ts", "steps"]));
+    obs.insert(
+        "stepsThrough".into(),
+        inputs
+            .pointer("/biometrics/stepsThrough")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
     obs.insert("hr".into(), pick(biom("hr"), ["ts", "bpm"]));
     obs.insert("sleep".into(), pick(biom("sleep"), ["startTs", "endTs"]));
 

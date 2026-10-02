@@ -807,9 +807,12 @@ def dayResult (j : Json) : Json :=
     -- carries the OSM enrichment stage that would otherwise split the chain in
     -- two and force the corrections to start from another arm's output.
     let segsRaw ← (← (← j.getObjVal? "segsRaw").getArr?).mapM parseSeg
+    -- The watch's last sync: the step stream is complete only up to it.
+    let stepsThrough ← optInt envJson "stepsThrough"
     let splitCtx : Stays.SplitContext :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
-        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩ }
+        steps := env.steps.map fun s => ⟨s.ts, s.steps⟩
+        stepsThrough }
     let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
     -- The OSM enrichment stage, chained on both sides so the two sub-chains
     -- meet here rather than through another arm's output (#430 B2).
