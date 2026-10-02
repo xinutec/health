@@ -1334,14 +1334,11 @@ pub fn merge_step_points(points: &[serde_json::Value]) -> (BTreeMap<String, (Str
 /// London — a copy of the walk an hour late, stepping through a lie-down. So
 /// minutes are merged by INSTANT, each is written with its `ts_utc`, and a row
 /// already holding that instant under another wall clock is removed.
-///
-/// `days` widens the fetch past the high-water mark, for the backfill.
 pub async fn sync_steps_intraday(
     pool: &MySqlPool,
     http: &reqwest::Client,
     access_token: &str,
     user_id: &str,
-    days: Option<i64>,
 ) -> Result<usize> {
     let high: Option<String> =
         sqlx::query_scalar("SELECT CAST(MAX(ts) AS CHAR) FROM steps_intraday WHERE user_id = ?")
@@ -1349,18 +1346,15 @@ pub async fn sync_steps_intraday(
             .fetch_one(pool)
             .await
             .context("reading the steps_intraday high-water mark")?;
-    let since = match (days, &high) {
-        (Some(days), _) => (chrono::Utc::now() - chrono::Duration::days(days))
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string(),
-        (None, Some(ts)) => {
+    let since = match &high {
+        Some(ts) => {
             let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
                 .with_context(|| format!("unreadable steps high-water mark {ts:?}"))?;
             (parsed - chrono::Duration::days(1))
                 .format("%Y-%m-%dT%H:%M:%SZ")
                 .to_string()
         }
-        (None, None) => (chrono::Utc::now() - chrono::Duration::days(7))
+        None => (chrono::Utc::now() - chrono::Duration::days(7))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string(),
     };
@@ -1410,6 +1404,88 @@ pub async fn sync_steps_intraday(
         points.len()
     );
     Ok(written)
+}
+
+/// The archive's minutes: those whose WALL CLOCK date is in `[from, until)`,
+/// non-zero, as `(ts_utc, ts, steps)` in instant order.
+///
+/// By wall clock because that is how the stored series is keyed: Fitbit's
+/// history begins at 2024-01-13 00:00 local, so an archive `until` that date
+/// meets it at exactly that minute whatever the offsets either side. (#1886)
+#[must_use]
+pub fn archive_minutes(
+    merged: &BTreeMap<String, (String, i64)>,
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+) -> Vec<(String, String, i64)> {
+    let (from, until) = (from.to_string(), until.to_string());
+    merged
+        .iter()
+        .filter(|(_, (ts, steps))| {
+            let day = ts.get(..10).unwrap_or("");
+            *steps > 0 && day >= from.as_str() && day < until.as_str()
+        })
+        .map(|(ts_utc, (ts, steps))| (ts_utc.clone(), ts.clone(), *steps))
+        .collect()
+}
+
+/// Archive Google's step minutes over `[from, until)` by wall clock into
+/// `steps_intraday`, for the stretch Fitbit's own history never covered
+/// (2023-04-15 → 2024-01-12). (#1886)
+///
+/// ⚠ HOLES ONLY. A minute already stored keeps its value and nothing is deleted:
+/// this fills history, it does not re-decide it, so even a range that strays
+/// into Fitbit's era cannot rewrite a row (decided against, #260). The fetch is
+/// a day wider than the range either side, so a minute near an edge is seen
+/// whatever its offset; `archive_minutes` keeps the range.
+pub async fn archive_steps_intraday(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+) -> Result<usize> {
+    anyhow::ensure!(
+        from < until,
+        "an archive range must not be empty ({from} → {until})"
+    );
+    let filter = format!(
+        "steps.interval.start_time >= \"{}T00:00:00Z\" AND steps.interval.start_time < \"{}T00:00:00Z\"",
+        from - chrono::Duration::days(1),
+        until + chrono::Duration::days(1),
+    );
+    let points = crate::google::health::fetch_points_filtered(http, access_token, "steps", &filter)
+        .await
+        .context("fetching step intervals")?;
+    let (merged, skipped) = merge_step_points(&points);
+    let minutes = archive_minutes(&merged, from, until);
+
+    let mut tx = pool
+        .begin()
+        .await
+        .context("opening the steps archive transaction")?;
+    let mut written = 0u64;
+    for (ts_utc, ts, steps) in &minutes {
+        let done = sqlx::query(
+            "INSERT IGNORE INTO steps_intraday (user_id, ts, steps, ts_utc) VALUES (?, ?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(ts)
+        .bind(steps)
+        .bind(ts_utc)
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("archiving steps_intraday at {ts}"))?;
+        written += done.rows_affected();
+    }
+    tx.commit().await.context("committing the steps archive")?;
+    tracing::info!(
+        "[{user_id}] google steps archive {from} → {until}: {written} new minute(s) of {} in range, from {} point(s), {skipped} unreadable",
+        minutes.len(),
+        points.len()
+    );
+    usize::try_from(written).context("minute count")
 }
 
 /// One paired device's battery reading, as `users.pairedDevices` serves it.

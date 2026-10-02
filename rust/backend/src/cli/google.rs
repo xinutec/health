@@ -915,15 +915,19 @@ pub(crate) async fn google_backfill_sleep(
 /// wall clocks keeps one.
 ///
 /// ⚠ **DRY RUN UNLESS `--write`**, as the sleep backfill.
-pub(crate) async fn google_backfill_steps(days: i64, write: bool) -> Result<()> {
-    anyhow::ensure!(days > 0, "a backfill window must be at least a day");
+pub(crate) async fn google_backfill_steps(
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    write: bool,
+) -> Result<()> {
+    anyhow::ensure!(from < until, "--from must be before --until");
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
     if !write {
         println!(
-            "DRY RUN — would re-fetch {days} day(s) of step minutes for {user_id} and upsert \
-             every one, with its instant, through the routine writer.\n\
-             Then apply:  backend google-backfill-steps {days} --write"
+            "DRY RUN — would archive Google's step minutes for {user_id} whose wall clock \
+             falls in {from} → {until}, filling holes only: a stored minute keeps its value.\n\
+             Then apply:  backend google-backfill-steps --from {from} --until {until} --write"
         );
         return Ok(());
     }
@@ -938,10 +942,11 @@ pub(crate) async fn google_backfill_steps(days: i64, write: bool) -> Result<()> 
     let token = backend::google::oauth::access_token(&http, &creds)
         .await
         .context("minting a Google access token")?;
-    let n = backend::google::sync::sync_steps_intraday(&pool, &http, &token, &user_id, Some(days))
-        .await
-        .context("backfilling steps")?;
-    println!("backfilled {n} step minute(s) over {days} day(s) for {user_id}");
+    let n =
+        backend::google::sync::archive_steps_intraday(&pool, &http, &token, &user_id, from, until)
+            .await
+            .context("archiving steps")?;
+    println!("archived {n} new step minute(s) for {user_id}, {from} → {until}");
     Ok(())
 }
 

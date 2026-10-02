@@ -331,6 +331,38 @@ mod step_minutes {
         assert_eq!(m["2026-09-30 13:50:00"].1, 30);
         assert_eq!(m["2026-09-30 13:51:00"].1, 12);
     }
+
+    /// The archive keeps the minutes whose WALL CLOCK falls in `[from, until)`,
+    /// the clock the stored series is keyed by, so it meets Fitbit's history at
+    /// exactly the stored first minute whatever the offsets around it. The fetch
+    /// is a day wider either side; those minutes are dropped here.
+    #[test]
+    fn the_archive_keeps_minutes_by_wall_clock_date() {
+        use backend::google::sync::archive_minutes;
+        use chrono::NaiveDate;
+        let (m, _) = merge_step_points(&[
+            // 23:30 UTC on the 12th is 00:30 on the 13th in Amsterdam: outside.
+            point("Inspire 3", "2024-01-12T23:30:00Z", "3600s", 7),
+            point("Inspire 3", "2024-01-12T22:59:00Z", "3600s", 5),
+            // The day before `from`, by wall clock: outside.
+            point("Inspire 3", "2023-04-14T21:59:00Z", "7200s", 9),
+            point("Inspire 3", "2023-04-14T22:00:00Z", "7200s", 4),
+            // Zero minutes are never written.
+            point("Inspire 3", "2023-06-01T10:00:00Z", "7200s", 0),
+        ]);
+        let d = |s| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let kept: Vec<_> = archive_minutes(&m, d("2023-04-15"), d("2024-01-13"))
+            .into_iter()
+            .map(|(_, wall, steps)| (wall, steps))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("2023-04-15 00:00:00".to_string(), 4),
+                ("2024-01-12 23:59:00".to_string(), 5),
+            ]
+        );
+    }
 }
 
 /// `users.pairedDevices`, in the shape measured 2026-10-01 (ids invented).

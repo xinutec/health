@@ -93,7 +93,12 @@ pub enum Command {
     },
     /// re-fetch step minutes through the routine writer, storing each instant
     GoogleBackfillSteps {
-        days: i64,
+        /// first day archived, by wall clock (YYYY-MM-DD)
+        #[arg(long, value_parser = parse_date)]
+        from: chrono::NaiveDate,
+        /// first day NOT archived, by wall clock (YYYY-MM-DD)
+        #[arg(long, value_parser = parse_date)]
+        until: chrono::NaiveDate,
         #[arg(long)]
         write: bool,
     },
