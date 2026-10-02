@@ -216,6 +216,9 @@ async fn main() -> Result<()> {
         C::GoogleBackfillSteps { from, until, write } => {
             google_backfill_steps(from, until, write).await
         }
+        C::GoogleArchiveSpo2 { from, until, write } => {
+            google_archive_spo2(from, until, write).await
+        }
         C::GoogleCompareSleep { days } => google_compare_sleep(days).await,
         C::GoogleCompareIntraday { days } => google_compare_intraday(days).await,
         C::MirrorCheck { fixture } => mirror_check(&fixture).await,

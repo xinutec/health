@@ -102,6 +102,17 @@ pub enum Command {
         #[arg(long)]
         write: bool,
     },
+    /// archive every SpO2 reading Google holds over a UTC date range (#1886)
+    GoogleArchiveSpo2 {
+        /// first day archived (YYYY-MM-DD, UTC)
+        #[arg(long, value_parser = parse_date)]
+        from: chrono::NaiveDate,
+        /// first day NOT archived (YYYY-MM-DD, UTC)
+        #[arg(long, value_parser = parse_date)]
+        until: chrono::NaiveDate,
+        #[arg(long)]
+        write: bool,
+    },
     /// Google sleep sessions against sleep + sleep_stages (#260)
     GoogleCompareSleep {
         #[arg(default_value_t = 7)]

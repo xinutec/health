@@ -1504,6 +1504,146 @@ pub async fn archive_steps_intraday(
     usize::try_from(written).context("minute count")
 }
 
+/// Blood-oxygen samples from Google's `oxygen-saturation` points, keyed by the
+/// UTC instant and carrying the wall clock Google serves beside it, with how
+/// many were unreadable. (#1886)
+///
+/// By INSTANT, as steps are: a reading served under two offsets is one reading,
+/// and the first served keeps its wall clock.
+#[must_use]
+pub fn spo2_samples(points: &[serde_json::Value]) -> (BTreeMap<String, (String, f64)>, usize) {
+    let mut out: BTreeMap<String, (String, f64)> = BTreeMap::new();
+    let mut skipped = 0usize;
+    for pt in points {
+        let o = pt.get("oxygenSaturation");
+        let pct = o
+            .and_then(|o| o.get("percentage"))
+            .and_then(crate::google::health::numeric);
+        let ts = o.and_then(|o| {
+            crate::google::health::civil_datetime(o.pointer("/sampleTime/civilTime"))
+        });
+        let ts_utc = o
+            .and_then(|o| o.pointer("/sampleTime/physicalTime"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::google::health::rfc3339_to_utc_datetime);
+        match (pct, ts, ts_utc) {
+            (Some(pct), Some(ts), Some(ts_utc)) => {
+                out.entry(ts_utc).or_insert((ts, pct));
+            }
+            _ => skipped += 1,
+        }
+    }
+    (out, skipped)
+}
+
+/// How long an SpO2 archive fetch spans: a month of nightly readings is a few
+/// pages, and a failed window costs one month, not three years.
+const SPO2_ARCHIVE_WINDOW_DAYS: i64 = 31;
+
+/// `spo2_intraday` from Google's `oxygen-saturation`: every reading the watch
+/// took, at full resolution. (#1886)
+///
+/// `archive` is `(from, until)` by UTC date, fetched a window at a time, for
+/// the history Fitbit's API never gave us (the table had no writer). Without
+/// it, the routine sync: from an hour before the newest stored instant, or a
+/// week back on an empty table.
+///
+/// ⚠ HOLES ONLY (`INSERT IGNORE`), as the steps archive: a stored reading keeps
+/// its value, and the routine overlap costs nothing.
+pub async fn sync_spo2_intraday(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    access_token: &str,
+    user_id: &str,
+    archive: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
+) -> Result<usize> {
+    let windows: Vec<(String, Option<String>)> = match archive {
+        Some((from, until)) => {
+            anyhow::ensure!(
+                from < until,
+                "an archive range must not be empty ({from} → {until})"
+            );
+            let mut out = Vec::new();
+            let mut a = from;
+            while a < until {
+                let b = (a + chrono::Duration::days(SPO2_ARCHIVE_WINDOW_DAYS)).min(until);
+                out.push((format!("{a}T00:00:00Z"), Some(format!("{b}T00:00:00Z"))));
+                a = b;
+            }
+            out
+        }
+        None => {
+            let high: Option<String> = sqlx::query_scalar(
+                "SELECT CAST(MAX(ts_utc) AS CHAR) FROM spo2_intraday WHERE user_id = ?",
+            )
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .context("reading the spo2_intraday high-water mark")?;
+            let since = match &high {
+                Some(ts) => {
+                    let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+                        .with_context(|| format!("unreadable spo2 high-water mark {ts:?}"))?;
+                    parsed - chrono::Duration::hours(1)
+                }
+                None => (chrono::Utc::now() - chrono::Duration::days(7)).naive_utc(),
+            };
+            vec![(since.format("%Y-%m-%dT%H:%M:%SZ").to_string(), None)]
+        }
+    };
+
+    let mut written = 0u64;
+    let (mut fetched, mut skipped) = (0usize, 0usize);
+    for (since, before) in &windows {
+        let field = "oxygen_saturation.sample_time.physical_time";
+        let filter = match before {
+            Some(b) => format!("{field} >= \"{since}\" AND {field} < \"{b}\""),
+            None => format!("{field} >= \"{since}\""),
+        };
+        let points = crate::google::health::fetch_points_filtered(
+            http,
+            access_token,
+            "oxygen-saturation",
+            &filter,
+        )
+        .await
+        .with_context(|| format!("fetching oxygen-saturation from {since}"))?;
+        let (samples, bad) = spo2_samples(&points);
+        fetched += points.len();
+        skipped += bad;
+        let rows: Vec<_> = samples.into_iter().collect();
+        let mut tx = pool.begin().await.context("opening the spo2 transaction")?;
+        for batch in rows.chunks(ARCHIVE_BATCH_ROWS) {
+            let mut qb: sqlx::QueryBuilder<sqlx::MySql> = sqlx::QueryBuilder::new(
+                "INSERT IGNORE INTO spo2_intraday (user_id, ts, value, ts_utc) ",
+            );
+            qb.push_values(batch, |mut row, (ts_utc, (ts, pct))| {
+                row.push_bind(user_id)
+                    .push_bind(ts)
+                    .push_bind((pct * 10.0).round() / 10.0)
+                    .push_bind(ts_utc);
+            });
+            written += qb
+                .build()
+                .execute(&mut *tx)
+                .await
+                .context("writing a batch of spo2_intraday")?
+                .rows_affected();
+        }
+        tx.commit().await.context("committing spo2_intraday")?;
+        if before.is_some() {
+            tracing::info!(
+                "[{user_id}] google spo2 archive {since}: {} reading(s)",
+                rows.len()
+            );
+        }
+    }
+    tracing::info!(
+        "[{user_id}] google spo2_intraday: {written} new reading(s) from {fetched} point(s), {skipped} unreadable"
+    );
+    usize::try_from(written).context("reading count")
+}
+
 /// One paired device's battery reading, as `users.pairedDevices` serves it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatteryReading {

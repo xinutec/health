@@ -131,6 +131,14 @@ pub const STREAMS: &[Stream] = &[
               2026-09-02: 1282/1297 stored minutes identical, sums within 0.5%, the 15 misses all \
               in device-transition windows. GAINS phone-only minutes a watchless window lost",
     },
+    Stream {
+        name: "spo2_intraday",
+        owner: Owner::Google,
+        why: "Fitbit's API never filled it (the table had no writer). Google's \
+              `oxygen-saturation` serves every watch reading — instant, civil time and a \
+              one-decimal percentage, roughly a minute apart through the night — back to the \
+              watch's first month (2023-04), measured 2026-10-02 (#1886)",
+    },
 ];
 
 /// True when the Fitbit sync should still fetch this stream.
@@ -176,6 +184,7 @@ pub const HAS_WRITER: &[&str] = &[
     "skin_temperature",
     "sleep",
     "spo2_daily",
+    "spo2_intraday",
     "steps_intraday",
 ];
 

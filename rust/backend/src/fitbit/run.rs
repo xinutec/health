@@ -306,6 +306,12 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Err(e) => tracing::error!("[{user_id}] google spo2_daily failed: {e:#}"),
         }
     }
+    if !crate::google::source::fitbit_still_owns("spo2_intraday") {
+        match crate::google::sync::sync_spo2_intraday(pool, http, &token, &user_id, None).await {
+            Ok(n) => tracing::info!("[{user_id}] google spo2_intraday: {n} reading(s)"),
+            Err(e) => tracing::error!("[{user_id}] google spo2_intraday failed: {e:#}"),
+        }
+    }
     if !crate::google::source::fitbit_still_owns("heart_rate_intraday") {
         match crate::google::sync::sync_heart_rate_intraday(pool, http, &token, &user_id).await {
             Ok(n) => tracing::info!("[{user_id}] google heart_rate_intraday: {n} sample(s)"),

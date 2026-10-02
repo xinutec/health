@@ -950,6 +950,46 @@ pub(crate) async fn google_backfill_steps(
     Ok(())
 }
 
+pub(crate) async fn google_archive_spo2(
+    from: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    write: bool,
+) -> Result<()> {
+    anyhow::ensure!(from < until, "--from must be before --until");
+    let user_id = std::env::var("GH_USER_ID")
+        .context("GH_USER_ID names the Google-configured user and must be set")?;
+    if !write {
+        println!(
+            "DRY RUN — would archive every SpO2 reading Google holds for {user_id} from \
+             {from} to {until} (UTC), filling holes only.\n\
+             Then apply:  backend google-archive-spo2 --from {from} --until {until} --write"
+        );
+        return Ok(());
+    }
+    let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
+    let pool = db::connect(&cfg.db.url())
+        .await
+        .context("connecting to the database")?;
+    let Some(creds) = backend::google::oauth::GoogleCreds::from_env() else {
+        anyhow::bail!("GH_CLIENT_ID, GH_CLIENT_SECRET and GH_REFRESH_TOKEN must all be set");
+    };
+    let http = reqwest::Client::new();
+    let token = backend::google::oauth::access_token(&http, &creds)
+        .await
+        .context("minting a Google access token")?;
+    let n = backend::google::sync::sync_spo2_intraday(
+        &pool,
+        &http,
+        &token,
+        &user_id,
+        Some((from, until)),
+    )
+    .await
+    .context("archiving SpO2")?;
+    println!("archived {n} new SpO2 reading(s) for {user_id}, {from} → {until}");
+    Ok(())
+}
+
 pub(crate) async fn google_compare_sleep(days: i64) -> Result<()> {
     use std::collections::BTreeMap;
 

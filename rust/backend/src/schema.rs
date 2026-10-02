@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 84] = [
+    let migrations: [&str; 85] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -670,6 +670,9 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
    WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
         r#"UPDATE osm_points SET feature_type = 'landmark'
    WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
+        // SpO2 readings carry their instant, as steps and heart rate do: a
+        // reading served under two offsets is one reading (#1886, 2026-10-02).
+        r#"ALTER TABLE spo2_intraday ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
     ];
 
     sqlx::query(

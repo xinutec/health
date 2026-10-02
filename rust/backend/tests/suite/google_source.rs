@@ -396,3 +396,34 @@ mod paired_devices {
         assert!(battery_readings(&json!({})).is_empty());
     }
 }
+
+/// Blood-oxygen samples (#1886): one per instant, filed under the wall clock
+/// Google serves beside it.
+mod spo2_samples {
+    use backend::google::sync::spo2_samples;
+    use serde_json::json;
+
+    fn sample(instant: &str, hour: i64, offset: &str, pct: serde_json::Value) -> serde_json::Value {
+        json!({"oxygenSaturation": {"sampleTime": {
+            "physicalTime": instant, "utcOffset": offset,
+            "civilTime": {"date": {"year": 2026, "month": 10, "day": 2},
+                          "time": {"hours": hour, "minutes": 46, "seconds": 33}}},
+            "percentage": pct}})
+    }
+
+    #[test]
+    fn one_reading_per_instant_under_its_wall_clock() {
+        let (m, skipped) = spo2_samples(&[
+            sample("2026-10-02T09:46:33Z", 11, "7200s", json!(96.5)),
+            // The same instant served again under another offset: one reading.
+            sample("2026-10-02T09:46:33Z", 10, "3600s", json!(96.5)),
+            // Unreadable: no percentage.
+            json!({"oxygenSaturation": {"sampleTime": {"physicalTime": "2026-10-02T09:47:33Z"}}}),
+        ]);
+        assert_eq!(skipped, 1);
+        assert_eq!(m.len(), 1);
+        let (wall, pct) = &m["2026-10-02 09:46:33"];
+        assert_eq!(wall.as_str(), "2026-10-02 11:46:33");
+        assert!((pct - 96.5).abs() < 1e-9);
+    }
+}
