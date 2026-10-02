@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 82] = [
+    let migrations: [&str; 84] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -663,6 +663,13 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // `pairedDevices` does (UTC), Fitbit's devices.json gave only the
         // watch's wall clock. The reader prefers it (#260, 2026-10-01).
         r#"ALTER TABLE device_battery_log ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
+        // A named `building=hotel` is a venue (`osm_mirror::VENUE_BUILDINGS`,
+        // 2026-10-02): the rows fetched before that rule move to the landmark
+        // bucket, as a refetch would put them.
+        r#"UPDATE osm_lines SET feature_type = 'landmark'
+   WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
+        r#"UPDATE osm_points SET feature_type = 'landmark'
+   WHERE feature_type = 'building' AND subtype = 'hotel' AND name IS NOT NULL"#,
     ];
 
     sqlx::query(

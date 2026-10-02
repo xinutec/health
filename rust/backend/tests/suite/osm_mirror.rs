@@ -55,6 +55,46 @@ fn a_shop_with_a_footprint_stays_a_landmark() {
     );
 }
 
+/// A NAMED hotel building is a venue even with no venue tag: 2026-10-01's hotel
+/// in San Sebastián is mapped as `building=hotel` + `name` and nothing else, so
+/// the stay inside it was named after the supermarket next door. Unnamed, or a
+/// named block of flats, it stays a footprint.
+#[test]
+fn a_named_hotel_building_is_a_landmark() {
+    let outline = [
+        json!({"lat": 43.3, "lon": -1.9}),
+        json!({"lat": 43.3, "lon": -1.91}),
+    ];
+    let el = |id: i64, tags: serde_json::Value| json!({"type": "way", "id": id, "tags": tags, "geometry": outline});
+    let hotel =
+        parse_element(&el(1, json!({"building": "hotel", "name": "The Hotel"}))).expect("hotel");
+    assert_eq!(hotel.feature_type, "landmark");
+    assert_eq!(hotel.subtype.as_deref(), Some("hotel"));
+    assert_eq!(hotel.name.as_deref(), Some("The Hotel"));
+    for tags in [
+        json!({"building": "hotel"}),
+        json!({"building": "apartments", "name": "Some Flats"}),
+    ] {
+        assert_eq!(
+            parse_element(&el(2, tags)).expect("building").feature_type,
+            "building"
+        );
+    }
+    // …and the landmark fetch asks for them, or a box fetched for places
+    // would never hold one.
+    let q = overpass_query(
+        "landmark",
+        &Bbox {
+            min_lat: 43.0,
+            min_lon: -2.0,
+            max_lat: 43.5,
+            max_lon: -1.5,
+        },
+    )
+    .expect("landmark query");
+    assert!(q.contains(r#"way["building"="hotel"]["name"]"#), "{q}");
+}
+
 /// ⚠ NODES ONLY. A way tagged `highway=bus_stop` is not a stop, and letting one
 /// into `transit_stop` would put a line in a bucket the bus/car discriminator
 /// reads as point evidence (#328).

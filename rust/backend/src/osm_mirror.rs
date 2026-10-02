@@ -147,6 +147,7 @@ fn filters_for(feature_type: &str) -> Option<&'static [&'static str]> {
             r#"way["shop"]"#,
             r#"way["tourism"]"#,
             r#"way["leisure"]"#,
+            r#"way["building"="hotel"]["name"]"#,
         ],
         "building" => &[r#"way["building"]"#],
         _ => return None,
@@ -210,6 +211,11 @@ const FEATURE_TYPE_RULES: [(&str, &str); 7] = [
 const FEATURE_TYPE_RULES_TAIL: [(&str, &str); 2] =
     [("leisure", "landmark"), ("building", "building")];
 
+/// `building=` values that make a NAMED building a venue in its own right. A
+/// hotel is often mapped as the building alone, with no `tourism=hotel`
+/// (2026-10-01, San Sebastián), and then no venue rule above catches it.
+const VENUE_BUILDINGS: [&str; 1] = ["hotel"];
+
 /// Highway-tagged NODES that are furniture rather than road.
 ///
 /// ⚠ Their own bucket, so a road-way lookup never mixes with them: a vehicle
@@ -263,7 +269,10 @@ pub fn parse_element(el: &Value) -> Option<Feature> {
             .iter()
             .chain(FEATURE_TYPE_RULES_TAIL.iter())
             .find(|(t, _)| tag(t).is_some())?;
-        (hit.1, tag(hit.0))
+        let venue_building = hit.1 == "building"
+            && tag("building").is_some_and(|b| VENUE_BUILDINGS.contains(&b))
+            && tag("name").is_some();
+        (if venue_building { "landmark" } else { hit.1 }, tag(hit.0))
     };
 
     let geom_wkt = match kind {
