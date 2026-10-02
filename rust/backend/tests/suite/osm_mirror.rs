@@ -12,6 +12,17 @@ use backend::osm_mirror::{
 };
 use serde_json::json;
 
+/// The list the fetch asks Lean for, asked the same way.
+fn venue() -> Vec<String> {
+    backend::lean::venue_buildings().expect("lean answers venuebuildings")
+}
+fn parse(el: &serde_json::Value) -> Option<backend::osm_mirror::Feature> {
+    parse_element(el, &venue())
+}
+fn query(bucket: &str, bbox: &Bbox) -> anyhow::Result<String> {
+    overpass_query(bucket, bbox, &venue())
+}
+
 /// ⚠ THE PRECEDENCE IS THE RULE. A way carrying both tags buckets under the
 /// FIRST match, and railway beats highway because the rail signal is rarer.
 #[test]
@@ -21,7 +32,7 @@ fn railway_wins_over_highway_on_an_element_carrying_both() {
         "tags": {"highway": "service", "railway": "rail"},
         "geometry": [{"lat": 51.5, "lon": -0.1}, {"lat": 51.6, "lon": -0.2}],
     });
-    let f = parse_element(&el).expect("bucketed");
+    let f = parse(&el).expect("bucketed");
     assert_eq!(f.feature_type, "railway");
     assert_eq!(f.subtype.as_deref(), Some("rail"));
 }
@@ -45,14 +56,8 @@ fn a_shop_with_a_footprint_stays_a_landmark() {
         "tags": {"building": "yes"},
         "geometry": outline,
     });
-    assert_eq!(
-        parse_element(&venue).expect("venue").feature_type,
-        "landmark"
-    );
-    assert_eq!(
-        parse_element(&plain).expect("plain").feature_type,
-        "building"
-    );
+    assert_eq!(parse(&venue).expect("venue").feature_type, "landmark");
+    assert_eq!(parse(&plain).expect("plain").feature_type, "building");
 }
 
 /// A NAMED hotel building is a venue even with no venue tag: 2026-10-01's hotel
@@ -66,8 +71,7 @@ fn a_named_hotel_building_is_a_landmark() {
         json!({"lat": 43.3, "lon": -1.91}),
     ];
     let el = |id: i64, tags: serde_json::Value| json!({"type": "way", "id": id, "tags": tags, "geometry": outline});
-    let hotel =
-        parse_element(&el(1, json!({"building": "hotel", "name": "The Hotel"}))).expect("hotel");
+    let hotel = parse(&el(1, json!({"building": "hotel", "name": "The Hotel"}))).expect("hotel");
     assert_eq!(hotel.feature_type, "landmark");
     assert_eq!(hotel.subtype.as_deref(), Some("hotel"));
     assert_eq!(hotel.name.as_deref(), Some("The Hotel"));
@@ -76,13 +80,13 @@ fn a_named_hotel_building_is_a_landmark() {
         json!({"building": "apartments", "name": "Some Flats"}),
     ] {
         assert_eq!(
-            parse_element(&el(2, tags)).expect("building").feature_type,
+            parse(&el(2, tags)).expect("building").feature_type,
             "building"
         );
     }
     // …and the landmark fetch asks for them, or a box fetched for places
     // would never hold one.
-    let q = overpass_query(
+    let q = query(
         "landmark",
         &Bbox {
             min_lat: 43.0,
@@ -92,7 +96,7 @@ fn a_named_hotel_building_is_a_landmark() {
         },
     )
     .expect("landmark query");
-    assert!(q.contains(r#"way["building"="hotel"]["name"]"#), "{q}");
+    assert!(q.contains(r#"way["building"~"^(hotel)$"]["name"]"#), "{q}");
 }
 
 /// ⚠ NODES ONLY. A way tagged `highway=bus_stop` is not a stop, and letting one
@@ -104,11 +108,8 @@ fn a_bus_stop_node_is_furniture_and_a_bus_stop_way_is_not() {
                       "tags": {"highway": "bus_stop"}});
     let way = json!({"type": "way", "id": 4, "tags": {"highway": "bus_stop"},
                      "geometry": [{"lat": 51.5, "lon": -0.1}, {"lat": 51.6, "lon": -0.2}]});
-    assert_eq!(
-        parse_element(&node).expect("node").feature_type,
-        "transit_stop"
-    );
-    assert_eq!(parse_element(&way).expect("way").feature_type, "highway");
+    assert_eq!(parse(&node).expect("node").feature_type, "transit_stop");
+    assert_eq!(parse(&way).expect("way").feature_type, "highway");
 }
 
 /// ⚠ `ref` IS THE FALLBACK AND IT NAMES THE MOTORWAYS. The A41 carries no
@@ -117,10 +118,7 @@ fn a_bus_stop_node_is_furniture_and_a_bus_stop_way_is_not() {
 fn a_way_with_only_a_ref_is_named_by_it() {
     let el = json!({"type": "way", "id": 5, "tags": {"highway": "trunk", "ref": "A41"},
                     "geometry": [{"lat": 51.5, "lon": -0.1}, {"lat": 51.6, "lon": -0.2}]});
-    assert_eq!(
-        parse_element(&el).expect("named").name.as_deref(),
-        Some("A41")
-    );
+    assert_eq!(parse(&el).expect("named").name.as_deref(), Some("A41"));
 }
 
 /// A one-vertex way is not a LINESTRING. MariaDB rejects the whole 500-row
@@ -129,7 +127,7 @@ fn a_way_with_only_a_ref_is_named_by_it() {
 fn a_way_with_one_vertex_is_dropped() {
     let el = json!({"type": "way", "id": 6, "tags": {"highway": "service"},
                     "geometry": [{"lat": 51.5, "lon": -0.1}]});
-    assert_eq!(parse_element(&el), None);
+    assert_eq!(parse(&el), None);
 }
 
 /// WKT is `lon lat`. Swapped, distances come out wrong and entirely plausible.
@@ -137,14 +135,11 @@ fn a_way_with_one_vertex_is_dropped() {
 fn wkt_is_written_longitude_first() {
     let node = json!({"type": "node", "id": 8, "lat": 51.5, "lon": -0.1,
                       "tags": {"amenity": "cafe"}});
-    assert_eq!(
-        parse_element(&node).expect("node").geom_wkt,
-        "POINT(-0.1 51.5)"
-    );
+    assert_eq!(parse(&node).expect("node").geom_wkt, "POINT(-0.1 51.5)");
     let way = json!({"type": "way", "id": 9, "tags": {"waterway": "river"},
                      "geometry": [{"lat": 51.5, "lon": -0.1}, {"lat": 51.6, "lon": -0.2}]});
     assert_eq!(
-        parse_element(&way).expect("way").geom_wkt,
+        parse(&way).expect("way").geom_wkt,
         "LINESTRING(-0.1 51.5,-0.2 51.6)"
     );
 }
@@ -153,11 +148,11 @@ fn wkt_is_written_longitude_first() {
 #[test]
 fn an_untagged_element_is_skipped_rather_than_failing() {
     assert_eq!(
-        parse_element(&json!({"type": "node", "id": 10, "lat": 1.0, "lon": 2.0})),
+        parse(&json!({"type": "node", "id": 10, "lat": 1.0, "lon": 2.0})),
         None
     );
     assert_eq!(
-        parse_element(&json!({"type": "relation", "id": 11, "tags": {"highway": "x"}})),
+        parse(&json!({"type": "relation", "id": 11, "tags": {"highway": "x"}})),
         None
     );
 }
@@ -172,7 +167,7 @@ fn the_query_bbox_is_south_west_north_east() {
         min_lon: -1.0,
         max_lon: 1.0,
     };
-    let q = overpass_query("highway", &b).expect("a known bucket");
+    let q = query("highway", &b).expect("a known bucket");
     assert!(q.contains("(51,-1,52,1)"), "{q}");
     assert!(q.starts_with("[out:json][timeout:25];"), "{q}");
     assert!(q.trim_end().ends_with("out tags geom;"), "{q}");
@@ -186,9 +181,9 @@ fn an_unknown_bucket_has_no_query_rather_than_an_empty_one() {
         min_lon: -1.0,
         max_lon: 1.0,
     };
-    assert!(overpass_query("not_a_bucket", &b).is_err());
+    assert!(query("not_a_bucket", &b).is_err());
     for bucket in BUCKETS {
-        assert!(overpass_query(bucket, &b).is_ok(), "{bucket} has no filter");
+        assert!(query(bucket, &b).is_ok(), "{bucket} has no filter");
     }
 }
 

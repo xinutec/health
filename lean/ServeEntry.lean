@@ -2189,6 +2189,16 @@ private def watchBatteryResult (j : Json) : Json :=
   | .error e => Json.mkObj [("error", Json.str e)]
   | .ok out => out
 
+/-! ## `venuebuildings` — which named buildings are venues (2026-10-02)
+
+`Verified.Geo.Landmarks.VENUE_BUILDINGS`, for the mirror's fetch: it files a
+named building of these types as a landmark and asks the landmark query for
+them. Declared once, here; the host asks rather than keeping a copy.
+
+  {} → { "buildings": ["hotel", …] } -/
+private def venueBuildingsResult (_ : Json) : Json :=
+  Json.mkObj [("buildings", Json.arr (Verified.Geo.Landmarks.VENUE_BUILDINGS.toArray.map Json.str))]
+
 /-! ## `osmcoverage` — can the local mirror answer here? (#982)
 
 `Verified.Geo.OsmCoverage.decideCoverage`. The gate a host must pass before
@@ -3493,6 +3503,7 @@ def dispatch (j : Json) : Json :=
   | .ok "battery" => batteryResult j
   | .ok "osmspatial" => osmSpatialResult j
   | .ok "osmcoverage" => osmCoverageResult j
+  | .ok "venuebuildings" => venueBuildingsResult j
   | .ok "railsnap" => railSnapResult j
   | .ok "railfill" => railFillResult j
   | .ok "clipinferred" => clipInferredResult j

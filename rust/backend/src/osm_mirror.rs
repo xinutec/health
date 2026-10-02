@@ -147,7 +147,6 @@ fn filters_for(feature_type: &str) -> Option<&'static [&'static str]> {
             r#"way["shop"]"#,
             r#"way["tourism"]"#,
             r#"way["leisure"]"#,
-            r#"way["building"="hotel"]["name"]"#,
         ],
         "building" => &[r#"way["building"]"#],
         _ => return None,
@@ -170,10 +169,25 @@ pub const BUCKETS: [&str; 7] = [
 /// ⚠ Overpass writes a bbox `(south, west, north, east)`, which is
 /// `(minLat, minLon, maxLat, maxLon)` — not the `(lon, lat)` order WKT uses
 /// three functions away in this same file.
-pub fn overpass_query(feature_type: &str, bbox: &Bbox) -> Result<String> {
+///
+/// `venue_buildings` is [`crate::lean::venue_buildings`]: the landmark fetch also
+/// asks for the NAMED buildings of those types, which [`parse_element`] files
+/// as landmarks.
+pub fn overpass_query(
+    feature_type: &str,
+    bbox: &Bbox,
+    venue_buildings: &[String],
+) -> Result<String> {
     let Some(filters) = filters_for(feature_type) else {
         bail!("no Overpass filter is defined for feature_type={feature_type}");
     };
+    let mut filters: Vec<String> = filters.iter().map(|f| (*f).to_string()).collect();
+    if feature_type == "landmark" && !venue_buildings.is_empty() {
+        filters.push(format!(
+            r#"way["building"~"^({})$"]["name"]"#,
+            venue_buildings.join("|")
+        ));
+    }
     let b = format!(
         "{},{},{},{}",
         bbox.min_lat, bbox.min_lon, bbox.max_lat, bbox.max_lon
@@ -211,11 +225,6 @@ const FEATURE_TYPE_RULES: [(&str, &str); 7] = [
 const FEATURE_TYPE_RULES_TAIL: [(&str, &str); 2] =
     [("leisure", "landmark"), ("building", "building")];
 
-/// `building=` values that make a NAMED building a venue in its own right. A
-/// hotel is often mapped as the building alone, with no `tourism=hotel`
-/// (2026-10-01, San Sebastián), and then no venue rule above catches it.
-const VENUE_BUILDINGS: [&str; 1] = ["hotel"];
-
 /// Highway-tagged NODES that are furniture rather than road.
 ///
 /// ⚠ Their own bucket, so a road-way lookup never mixes with them: a vehicle
@@ -251,7 +260,11 @@ impl Feature {
 /// neither geometry table can hold one; the TypeScript dropped them too, so a
 /// mirror written here matches the rows already in production.
 #[must_use]
-pub fn parse_element(el: &Value) -> Option<Feature> {
+///
+/// `venue_buildings` is [`crate::lean::venue_buildings`]: a NAMED building of one
+/// of those types, with no venue tag, is a landmark. A hotel is often mapped as
+/// the building alone (2026-10-01, San Sebastián).
+pub fn parse_element(el: &Value, venue_buildings: &[String]) -> Option<Feature> {
     let kind = el.get("type")?.as_str()?;
     let id = el.get("id")?.as_i64()?;
     let empty = Map::new();
@@ -270,7 +283,7 @@ pub fn parse_element(el: &Value) -> Option<Feature> {
             .chain(FEATURE_TYPE_RULES_TAIL.iter())
             .find(|(t, _)| tag(t).is_some())?;
         let venue_building = hit.1 == "building"
-            && tag("building").is_some_and(|b| VENUE_BUILDINGS.contains(&b))
+            && tag("building").is_some_and(|b| venue_buildings.iter().any(|v| v == b))
             && tag("name").is_some();
         (if venue_building { "landmark" } else { hit.1 }, tag(hit.0))
     };

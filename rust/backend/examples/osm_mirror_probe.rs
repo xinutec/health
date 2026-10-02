@@ -47,7 +47,8 @@ async fn main() -> Result<()> {
 
     let half_width_m = osm_mirror::half_width_for(bucket, radius_m)?;
     let bbox = osm_mirror::fetch_bbox_around(lat, lon, half_width_m);
-    let query = osm_mirror::overpass_query(bucket, &bbox)?;
+    let venue_buildings = backend::lean::venue_buildings()?;
+    let query = osm_mirror::overpass_query(bucket, &bbox, &venue_buildings)?;
     println!("{bucket}: question r={radius_m:.0} m -> box half-width {half_width_m:.0} m");
 
     let client = reqwest::Client::new();
@@ -72,7 +73,7 @@ async fn main() -> Result<()> {
     let elements = backend::overpass::elements(&body)?;
     let features: Vec<_> = elements
         .iter()
-        .filter_map(osm_mirror::parse_element)
+        .filter_map(|el| osm_mirror::parse_element(el, &venue_buildings))
         .collect();
 
     // ⚠ THE DROPPED COUNT IS THE INTERESTING ONE. Every element Overpass

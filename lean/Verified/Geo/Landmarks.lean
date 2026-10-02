@@ -50,6 +50,13 @@ def POI_MARKER_TOURISM : List String := ["artwork", "viewpoint", "picnic_site", 
 picker's tie-break; reordering it renames places. -/
 def LANDMARK_TAG_KEYS : List String := ["amenity", "tourism", "leisure", "shop", "place"]
 
+/-- `building=` values that make a named building the venue itself, read as the
+`tourism=` it stands for. The mirror's fetch asks for this list (`venuebuildings`)
+and files these as landmarks; without this they arrived and were dropped here, having no tag below to be read by (2026-10-01: a hotel in
+San Sebastián mapped as `building=hotel` alone, the stay named after the
+pizzeria next door). -/
+def VENUE_BUILDINGS : List String := ["hotel"]
+
 /-- One OSM feature near the query point. -/
 structure Feature where
   name : Option String
@@ -118,7 +125,16 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
           [{ name, type_ := "highway", subtype := "pedestrian", distanceM := f.distanceM
            , enclosing := false, openingHours := none }]
         else []
-      byTag ++ ped
+      -- Only when no venue tag spoke: a building that is also a shop is the shop.
+      let building :=
+        match tagOf f.tags "building" with
+        | some b =>
+          if byTag.isEmpty && VENUE_BUILDINGS.contains b then
+            [{ name, type_ := "tourism", subtype := b, distanceM := f.distanceM
+             , enclosing := false, openingHours := tagOf f.tags "opening_hours" }]
+          else []
+        | none => []
+      byTag ++ building ++ ped
   -- ⚠ STABLE, by distance only. Ties keep the order above, which is why points
   -- come first.
   filterLandmarks (out.mergeSort (fun a b => a.distanceM ≤ b.distanceM))
@@ -133,6 +149,15 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard (shapeLandmarks [feat "The Invented Arms" [("amenity", "restaurant")] 12] []).length == 1
 #guard ((shapeLandmarks [feat "The Invented Arms" [("amenity", "restaurant")] 12] []).head!).subtype
        == "restaurant"
+
+-- A named hotel BUILDING is the hotel, as `tourism=hotel` would say…
+#guard (shapeLandmarks [] [feat "The Hotel" [("building", "hotel")] 20 (isPoint := false)]).map
+    (fun l => (l.type_, l.subtype)) == [("tourism", "hotel")]
+-- …but a building that carries its own venue tag is that venue alone, and a
+-- block of flats is no venue.
+#guard (shapeLandmarks [] [feat "X" [("building", "hotel"), ("amenity", "bar")] 20 (isPoint := false)]).map
+    (fun l => (l.type_, l.subtype)) == [("amenity", "bar")]
+#guard shapeLandmarks [] [feat "Flats" [("building", "apartments")] 20 (isPoint := false)] == []
 
 -- ⚠ TWO tags, TWO landmarks — the picker resolves precedence, not this.
 #guard (shapeLandmarks [feat "X" [("amenity", "cafe"), ("tourism", "attraction")] 10] []).length == 2

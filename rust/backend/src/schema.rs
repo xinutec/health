@@ -663,7 +663,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // `pairedDevices` does (UTC), Fitbit's devices.json gave only the
         // watch's wall clock. The reader prefers it (#260, 2026-10-01).
         r#"ALTER TABLE device_battery_log ADD COLUMN IF NOT EXISTS ts_utc DATETIME NULL"#,
-        // A named `building=hotel` is a venue (`osm_mirror::VENUE_BUILDINGS`,
+        // A named `building=hotel` is a venue (`Landmarks.VENUE_BUILDINGS`,
         // 2026-10-02): the rows fetched before that rule move to the landmark
         // bucket, as a refetch would put them.
         r#"UPDATE osm_lines SET feature_type = 'landmark'
