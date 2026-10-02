@@ -70,7 +70,14 @@ pub(crate) async fn freshness() -> Result<()> {
          UNION ALL SELECT 'heart_rate_zones', DATEDIFF(CURDATE(), MAX(date)) FROM heart_rate_zones \
          UNION ALL SELECT 'heart_rate_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM heart_rate_intraday \
          UNION ALL SELECT 'hrv_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM hrv_intraday \
-         UNION ALL SELECT 'steps_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM steps_intraday",
+         UNION ALL SELECT 'steps_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM steps_intraday \
+         UNION ALL SELECT 'daily_activity.active_minutes', \
+          DATEDIFF(CURDATE(), MAX(CASE WHEN minutes_fairly_active IS NOT NULL THEN date END)) \
+          FROM daily_activity \
+         UNION ALL SELECT 'device_battery_log', DATEDIFF(CURDATE(), MAX(ts_utc)) FROM device_battery_log \
+         UNION ALL SELECT 'spo2_intraday', DATEDIFF(CURDATE(), MAX(ts)) FROM spo2_intraday \
+         UNION ALL SELECT 'google_points', DATEDIFF(CURDATE(), MAX(start_utc)) FROM google_points \
+         UNION ALL SELECT 'exercise_sessions', DATEDIFF(CURDATE(), MAX(start_ts)) FROM exercise_sessions",
     )
     .fetch_all(&pool)
     .await

@@ -88,6 +88,31 @@ pub const FRESHNESS: &[Freshness] = &[
         max_lag_days: 3,
         why: "continuous; same-day when measured",
     },
+    Freshness {
+        table: "daily_activity.active_minutes",
+        max_lag_days: 3,
+        why: "A COLUMN, as steps: from Google's active-minutes rollup since 2026-10-02 (#260), the summary card's number; same-day when measured. A Google failure leaves the row and loses the minutes",
+    },
+    Freshness {
+        table: "device_battery_log",
+        max_lag_days: 3,
+        why: "the watch's last sync from Google's pairedDevices (#260), and the walk splitter's stepsThrough; same-day when measured",
+    },
+    Freshness {
+        table: "spo2_intraday",
+        max_lag_days: 3,
+        why: "nightly readings from Google since 2026-10-02 (#1886); same-day when measured",
+    },
+    Freshness {
+        table: "google_points",
+        max_lag_days: 3,
+        why: "the raw archive's daily sync, activity level every minute (#1886); same-day when measured",
+    },
+    Freshness {
+        table: "exercise_sessions",
+        max_lag_days: 14,
+        why: "a session per recorded or detected workout (#1886): the Fit app logs most walks, but a still week is possible, so looser than the daily streams",
+    },
 ];
 
 /// Why this stream is not arriving, or `None` if it is fine.
