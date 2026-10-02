@@ -1,6 +1,8 @@
 import { test, type Page } from "@playwright/test";
 import { expectNoTextOverlaps } from "@xinutec/ui-harness";
 
+import type { LatestFix, ShareStatus, UserInfo } from "../src/app/services/health.service";
+
 /**
  * Render /settings at a phone viewport with the backend mocked, and assert
  * no rendered text collides. This is the page that repeatedly *read* fine
@@ -14,9 +16,10 @@ const USER = {
 	userId: "owner",
 	displayName: "Owner",
 	fitbitLinked: true,
+	nextcloudLinked: true,
 	connections: { nextcloud: { status: "active" }, fitbit: { status: "active" } },
 	shareWindow: null,
-};
+} satisfies UserInfo;
 
 const SHARE_ACTIVE = {
 	active: true,
@@ -25,17 +28,17 @@ const SHARE_ACTIVE = {
 	daysBack: 7,
 	createdAt: "2026-06-01T10:00:00.000Z",
 	lastAccessedAt: "2026-06-08T21:00:03.000Z",
-};
+} satisfies ShareStatus;
 
-const SHARE_NONE = { active: false };
+const SHARE_NONE = { active: false } satisfies ShareStatus;
 
 /** Mock every backend call the settings page (and the app shell it loads
  *  inside) makes, so it renders headlessly with no server or auth. */
-async function mockApi(page: Page, share: unknown): Promise<void> {
+async function mockApi(page: Page, share: ShareStatus): Promise<void> {
 	// Register the catch-all FIRST: Playwright runs route handlers
 	// last-registered-first, so the specific routes below take priority.
 	await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
-	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null }));
+	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null satisfies LatestFix | null }));
 	await page.route("**/api/me", (r) => r.fulfill({ json: USER }));
 	await page.route("**/api/share", (r) => r.fulfill({ json: share }));
 }

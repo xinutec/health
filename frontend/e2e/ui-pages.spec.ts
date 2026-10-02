@@ -10,6 +10,18 @@ import {
 	expectUpInTheBar,
 } from "@xinutec/ui-harness";
 
+import type {
+	ActivityDay,
+	BodyDay,
+	HeartRatePoint,
+	HrvDay,
+	LatestFix,
+	SleepLog,
+	SleepStage,
+	UserInfo,
+	VelocityData,
+} from "../src/app/services/health.service";
+
 /**
  * L2 phone-width layout harness for the health dashboard. Render the Day and
  * Trends tabs at a Pixel viewport with the backend mocked and BUSY data, and
@@ -33,16 +45,17 @@ const ME = {
 	userId: "u_test_1",
 	displayName: "Test User",
 	fitbitLinked: true,
+	nextcloudLinked: true,
 	connections: { nextcloud: { status: "active" }, fitbit: { status: "active" } },
 	shareWindow: null,
-};
+} satisfies UserInfo;
 
 const ACTIVITY = [
 	{ date: day(0), steps: 8421, calories_total: 2310, calories_active: 640, distance_km: 6.2,
 		minutes_sedentary: 620, minutes_lightly_active: 180, minutes_fairly_active: 25, minutes_very_active: 35, resting_heart_rate: 58 },
 	{ date: day(-1), steps: 10233, calories_total: 2455, calories_active: 720, distance_km: 7.4,
 		minutes_sedentary: 560, minutes_lightly_active: 210, minutes_fairly_active: 30, minutes_very_active: 45, resting_heart_rate: 57 },
-];
+] satisfies ActivityDay[];
 
 const SLEEP = [
 	{ log_id: "1234567890", date: day(0), start_time_utc: `${day(-1)}T22:10:00Z`, end_time_utc: `${day(0)}T06:05:00Z`, tz: "Europe/London",
@@ -51,17 +64,17 @@ const SLEEP = [
 	{ log_id: "1234567891", date: day(-1), start_time_utc: `${day(-2)}T22:30:00Z`, end_time_utc: `${day(-1)}T06:00:00Z`, tz: "Europe/London",
 		duration_ms: 27000000, efficiency: 91, minutes_asleep: 430, minutes_awake: 20, minutes_deep: 75,
 		minutes_light: 240, minutes_rem: 115, minutes_wake: 20, is_main_sleep: true },
-];
+] satisfies SleepLog[];
 
 const HRV = [
 	{ date: day(0), daily_rmssd: 42.5, deep_rmssd: 48.1 },
 	{ date: day(-1), daily_rmssd: 39.8, deep_rmssd: 45.0 },
-];
+] satisfies HrvDay[];
 
 const BODY = [
 	{ date: day(0), weight_kg: "74.2", bmi: "22.9", body_fat_pct: "18.5" },
 	{ date: day(-1), weight_kg: "74.5", bmi: "23.0", body_fat_pct: "18.7" },
-];
+] satisfies BodyDay[];
 
 // ⚠ THE INSTANT AND THE ZONE ARE THE WHOLE WIRE now (#1532): the route repairs
 // a missing instant and no longer serves the wall clock. This fixture carried
@@ -72,7 +85,7 @@ const STAGES = [
 	{ ts_utc: `${day(-1)}T23:40:00Z`, tz: "Europe/London", stage: "deep", duration_seconds: 2400 },
 	{ ts_utc: `${day(0)}T00:20:00Z`, tz: "Europe/London", stage: "rem", duration_seconds: 1500 },
 	{ ts_utc: `${day(0)}T00:45:00Z`, tz: "Europe/London", stage: "wake", duration_seconds: 300 },
-];
+] satisfies SleepStage[];
 
 // Instant + zone, like STAGES above and for the same reason: a fixture carrying
 // the wall clock exercises a path the API no longer has (#1532).
@@ -81,7 +94,7 @@ const STAGES = [
 // three-point fixture drew a single dot with one axis label — the #1551 shape,
 // where the card renders and the code under it is never run. Sixteen gives four
 // plotted points and four labels, one of which crosses the hour.
-const INTRADAY = Array.from({ length: 16 }, (_, i) => {
+const INTRADAY = Array.from({ length: 16 }, (_, i): HeartRatePoint => {
 	const at = new Date(Date.parse(`${day(0)}T07:50:00Z`) + i * 60_000);
 	return { ts_utc: at.toISOString(), tz: "Europe/London", bpm: 60 + (i % 7) };
 });
@@ -139,12 +152,10 @@ const VELOCITY = {
 			],
 		},
 	],
-};
+} satisfies VelocityData;
 
 async function mockApi(page: Page): Promise<void> {
-	await page.route("**/api/**", (r) =>
-		r.request().method() === "GET" ? r.fulfill({ json: [] }) : r.fulfill({ status: 204, body: "" }),
-	);
+	await page.route("**/api/**", (r) => r.fulfill({ status: 204, body: "" }));
 	await page.route("**/api/me", (r) => r.fulfill({ json: ME }));
 	await page.route("**/api/activity*", (r) => r.fulfill({ json: ACTIVITY }));
 	await page.route("**/api/hrv*", (r) => r.fulfill({ json: HRV }));
@@ -153,7 +164,7 @@ async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/sleep/stages*", (r) => r.fulfill({ json: STAGES }));
 	await page.route("**/api/heartrate/intraday*", (r) => r.fulfill({ json: INTRADAY }));
 	await page.route("**/api/velocity*", (r) => r.fulfill({ json: VELOCITY }));
-	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null }));
+	await page.route("**/api/location/latest", (r) => r.fulfill({ json: null satisfies LatestFix | null }));
 }
 
 // The checker-checker: fail loudly here if the device preset is ever lost and
