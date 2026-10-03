@@ -401,6 +401,14 @@ the pipeline's dominant reading. -/
 private def inWindow (e : Env) (s : Seg) : Array Shed.PointF :=
   e.points.filter fun p => decide (p.ts ≥ s.startTs) && decide (p.ts ≤ s.endTs)
 
+/-- The mean of the fixes in a segment's window; `none` when no fix falls in it. -/
+private def centroidOf (e : Env) (s : Seg) : Option (Float × Float) :=
+  let pts := inWindow e s
+  if pts.isEmpty then none
+  else
+    let n := Float.ofNat pts.size
+    some ((pts.foldl (fun a p => a + p.lat) 0) / n, (pts.foldl (fun a p => a + p.lon) 0) / n)
+
 /-- The zone the frontend renders this segment's clock in, so a travel day
 reads as it was lived — morning at parents in CEST, evening home in BST.
 
@@ -416,9 +424,7 @@ def displayTz (e : Env) (segs : Array Seg) : Array Seg :=
     | none => { s with displayTz := some e.homeTz }
     | some mid =>
       let (lat, lon) :=
-        if s.mode == "stationary" then
-          let n := Float.ofNat pts.size
-          ((pts.foldl (fun a p => a + p.lat) 0) / n, (pts.foldl (fun a p => a + p.lon) 0) / n)
+        if s.mode == "stationary" then (centroidOf e s).getD (mid.lat, mid.lon)
         else (mid.lat, mid.lon)
       { s with displayTz := some (e.tzAt lat lon) }
 
@@ -439,11 +445,7 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   for i in [0 : out.size] do
     let some s := out[i]? | continue
     if s.mode != "stationary" then continue
-    let pts := inWindow e s
-    if pts.isEmpty then continue
-    let n := Float.ofNat pts.size
-    let cLat := (pts.foldl (fun a p => a + p.lat) 0) / n
-    let cLon := (pts.foldl (fun a p => a + p.lon) 0) / n
+    let some (cLat, cLon) := centroidOf e s | continue
     -- Bracketed by trains: a change of trains. Otherwise the ALIGHT rule the
     -- early enrichment applies — a stay at the station right after a train —
     -- deferred to here, because an Underground ride is raw `driving` when the
@@ -472,6 +474,53 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
 private def isStationStay (s : Seg) : Bool :=
   Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.2 == "station")
 
+/-- Is `p` within station range of a node named `st`? -/
+private def inStation (e : Env) (st : String) (p : Shed.PointF) : Bool :=
+  let R := Verified.Geo.TransitPlace.STATION_AT_ALIGHT_RADIUS_M
+  (e.nearbyStations p.lat p.lon R).any fun n => n.name == st && n.distanceM ≤ R
+
+/-- The stations in range of a stay's centroid, nearest first — or none when the
+stay must keep its name: already a station stay (its own name), or an
+established focus place. -/
+private def stationsAround (e : Env) (s : Seg) : Array String := Id.run do
+  if isStationStay s then return s.place.toArray
+  if (s.focusPlaceId.bind e.focusPlaceDays).any
+      (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
+  let some (cLat, cLon) := centroidOf e s | return #[]
+  return Verified.Geo.TransitPlace.stationsWithin cLat cLon e.nearbyStations
+
+/-- Which station names each wait before a train, and why: the chain back from
+the train (`TransitPlace.stationsBeforeBoarding`) first, else the chain forward
+from a stay the station building encloses (`TransitPlace.stationsFromEnclosed`,
+read off `placeKind`). `none` where neither speaks. -/
+private def boardingNames (e : Env) (segs : Array Seg) : Array (Option (String × String)) :=
+  let stationsAt (i : Nat) : Array String := (segs[i]?.map (stationsAround e)).getD #[]
+  let trainBoard (i : Nat) : Option String := do
+    let s ← segs[i]?
+    let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
+    if rail.board.isEmpty then none else some rail.board
+  let walkWithin (i : Nat) (st : String) : Bool :=
+    match segs[i]? with
+    | some w => let pts := inWindow e w; !pts.isEmpty && pts.all (inStation e st)
+    | none => false
+  -- A stay the station BUILDING encloses (`placeKind`, written by the namer
+  -- with the name), given the station nodes in range of it.
+  let enclosedAt (i : Nat) : Array String := Id.run do
+    let some s := segs[i]? | return #[]
+    if Verified.Geo.SegmentMerge.effectiveMode s != "stationary" then return #[]
+    if !s.placeSource.any (·.2 == "enclosing") then return #[]
+    if s.placeKind != some Verified.Geo.Landmarks.STATION_BUILDING then return #[]
+    let some (cLat, cLon) := centroidOf e s | return #[]
+    return Verified.Geo.TransitPlace.stationsWithin cLat cLon e.nearbyStations
+  let back := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt trainBoard walkWithin
+  let inside := Verified.Geo.TransitPlace.stationsFromEnclosed segs enclosedAt stationsAt trainBoard
+  (Array.range segs.size).map fun i =>
+    match back[i]? with
+    | some (some st) => some (st, "the wait before boarding → named station")
+    | _ => match inside[i]? with
+      | some (some st) => some (st, "inside the station before boarding → named station")
+      | _ => none
+
 /-- Name the waits before a train after their station — the chain back from
 the train (`TransitPlace.stationsBeforeBoarding`, through a stay or a short
 walk inside the board station) and the chain forward from a stay the station
@@ -480,50 +529,11 @@ building encloses (`TransitPlace.stationsFromEnclosed`, read off `placeKind`)
 the walk never leaves that station's range: moving about inside Gare
 Montparnasse is being at Gare Montparnasse, not a journey. -/
 def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
-  let R := Verified.Geo.TransitPlace.STATION_AT_ALIGHT_RADIUS_M
-  let stationsAt (i : Nat) : Array String := Id.run do
-    let some s := segs[i]? | return #[]
-    if isStationStay s then return s.place.toArray
-    if (s.focusPlaceId.bind e.focusPlaceDays).any
-        (· ≥ Verified.Geo.TransitPlace.INTERCHANGE_FOCUS_GUARD_MIN_DAYS) then return #[]
-    let pts := inWindow e s
-    if pts.isEmpty then return #[]
-    let n := Float.ofNat pts.size
-    return Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
-      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations
-  let inStation (st : String) (p : Shed.PointF) : Bool :=
-    (e.nearbyStations p.lat p.lon R).any fun n => n.name == st && n.distanceM ≤ R
-  let trainBoard (i : Nat) : Option String := do
-    let s ← segs[i]?
-    let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
-    if rail.board.isEmpty then none else some rail.board
-  let walkWithin (i : Nat) (st : String) : Bool :=
-    match segs[i]? with
-    | some w => let pts := inWindow e w; !pts.isEmpty && pts.all (inStation st)
-    | none => false
-  let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt trainBoard walkWithin
-  -- A stay the station BUILDING encloses (`placeKind`, written by the namer
-  -- with the name), given the station node in range of it.
-  let enclosedAt (i : Nat) : Array String := Id.run do
-    let some s := segs[i]? | return #[]
-    if Verified.Geo.SegmentMerge.effectiveMode s != "stationary" then return #[]
-    if !s.placeSource.any (·.2 == "enclosing") then return #[]
-    if s.placeKind != some Verified.Geo.Landmarks.STATION_BUILDING then return #[]
-    let pts := inWindow e s
-    if pts.isEmpty then return #[]
-    let n := Float.ofNat pts.size
-    return Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
-      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations
-  let fromInside :=
-    Verified.Geo.TransitPlace.stationsFromEnclosed segs enclosedAt stationsAt trainBoard
+  let names := boardingNames e segs
   let mut out := segs
   for i in [0 : out.size] do
     let some s := out[i]? | continue
-    let (station, why) ← match names[i]? with
-      | some (some st) => pure (st, "the wait before boarding → named station")
-      | _ => match fromInside[i]? with
-        | some (some st) => pure (st, "inside the station before boarding → named station")
-        | _ => continue
+    let some (some (station, why)) := names[i]? | continue
     if isStationStay s then continue
     out := out.set! i { s with place := some station, placeSource := some (station, "station")
                                refinedReason := some (match s.refinedReason with
@@ -539,7 +549,7 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
           if !isStationStay prev || !isStationStay next || next.place != some st then w
           else
             let pts := inWindow e w
-            if pts.isEmpty || !pts.all (inStation st) then w
+            if pts.isEmpty || !pts.all (inStation e st) then w
             else
               let why := s!"moving about inside {st} — not a journey leg"
               { w with refinedMode := some "stationary", place := prev.place
