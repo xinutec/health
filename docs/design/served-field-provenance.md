@@ -33,13 +33,18 @@ at its MIDPOINT for a covering segment and sleep window, `stateForInterval`
 decides the state, then `mergeAdjacent` collapses touching identical runs and
 `stripPartialMinutesAsleep` clears a partial sleep figure.
 
-## The nine served state fields
+## The served state fields
+
+The list is `DayEntry.stateJson`; count them there.
 
 | field | decided by | notes |
 | --- | --- | --- |
 | `startTs` / `endTs` | `DayState.collectBoundaries` | sub-interval bounds, not copied from a segment |
 | `mode` | `DayState.stateForInterval` | `vehicleKind == "bus"` wins, else `refinedMode`, else `mode`; a sleep window can rewrite it to `sleeping` |
 | `place` | `Seg.place` via `makeStateFromSegment` | synthesized sleep takes `SleepWindow.place` instead |
+| `city` | `Seg.city` via `makeStateFromSegment` | the venue resolver's `extractCity`, attached by `StayEnrich.enrichStay`'s `withCity` |
+| `placeSource` | `Seg.placeSource` via `makeStateFromSegment` | `(name, rule)` — the rule that named `place`, kept with the name so a rename leaves it behind (#325); `Seg.placeKind` (the winning feature's OSM key and value) stays on the segment and is NOT served |
+| `placeConfidence` | `NameConfidence.confidence` at serialisation | the rule's measured hit rate over the corpus's graded rows, `(right + 1) / (graded + 2)`; `null` without a source |
 | `wayName` | `Seg.wayName` via `makeStateFromSegment` | the state layer only copies it; see below for who sets it on the segment |
 | `asleep` | `DayState.stateForInterval` | `some true` only when moving THROUGH a sleep window — never on `mode = "sleeping"`, where it would be redundant |
 | `tz` | `Seg.displayTz` via `makeStateFromSegment` | synthesized sleep takes `SleepWindow.tz`; the rewritten-stationary half prefers the window's and falls back to the segment's, deliberately, so both halves of one sleep can merge |
