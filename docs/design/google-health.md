@@ -19,7 +19,9 @@ value with whichever job ran last.
   `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`;
   sleep, activity and ECG have their own `googlehealth.*.readonly` scopes, and the
   paired devices (the watch's battery) want `googlehealth.settings.readonly`.
-  The token holds four since 2026-10-01: metrics, activity, sleep, settings.
+  The token holds all nine read-only scopes since 2026-10-02 (the list is
+  `SCOPES` in `scripts/ghealth-spike.mjs`); `location.readonly` is what the
+  workout route export (`exportExerciseTcx`) needed.
 - Propagation lag: a weigh-in reaches the phone at once and the cloud API
   later, so a sync right after weighing can miss it. The next tick catches it.
 
@@ -57,6 +59,9 @@ kubectl -n health create secret generic health-google --from-env-file=<file> \
 `daily_activity.minutes_sedentary` and `.active_score` have no Google source
 (the roster's at-risk test keeps them visible), and four stored-and-never-read
 columns NULL forward: `hrv_intraday.{coverage,hf,lf}`, `heart_rate_zones.calories`.
+Everything else Google holds of the Fitbit years is archived (#1886): the typed
+tables, `exercise_sessions` with `exercise_routes`, and `google_points` for the
+types with no table of their own (`google::archive::ARCHIVE_TYPES`).
 
 ⚠ The comparison instruments (`backend google-compare*`) read both APIs while
 both still answer; after the shutdown a discrepancy is permanent and invisible.

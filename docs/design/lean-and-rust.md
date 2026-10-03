@@ -120,6 +120,9 @@ Three things the protocol needs, none of them guessable:
   calls; that is the only memory reset known to work for the fold.
 - **Copy the reply body; do not re-serialise it.** The bytes are what tests
   compare against `verified_cli`'s own output.
+- **A constant Rust needs is asked for, never copied.** The mirror fetch asks
+  `{"mode":"venuetags"}` for `Landmarks.VENUE_TAGS`; the check below refuses a
+  second declaration.
 
 ⚠ Before 2026-09-22 (#1709) the archives were linked into the binary through a
 C shim. That worked and cost a converge loop that re-sent a 1.5 MiB request
