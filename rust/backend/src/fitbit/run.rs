@@ -1,8 +1,9 @@
-//! The sync run: what `dist/sync.js` does, per user, top to bottom.
+//! The sync run, per user, top to bottom: the Fitbit streams it still owns,
+//! then the Google ones (`google::source` says which is which).
 //!
-//! Port of the module body of the retired TypeScript `sync.ts`. Every stream fetcher, both
-//! backfill walks and the rate-limit policy already exist; this is the order
-//! they happen in and the error handling between them.
+//! Port of the module body of the retired TypeScript `sync.ts`. Every stream
+//! fetcher, both backfill walks and the rate-limit policy already exist; this
+//! is the order they happen in and the error handling between them.
 //!
 //! # Two passes, and they use DIFFERENT timezone sources
 //!

@@ -22,10 +22,11 @@ import Verified.Geo.Landmarks
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
 `computeVelocity` classifies a day's GPS into segments and then rewrites that
-list 38 times, each pass consuming what the last produced. The TS expresses the
-sequence as DATA — one array entry per pass, in execution order — because the
-order is load-bearing and several passes exist only to run after another. This
-is the same array, and the same reason.
+list once per pass, each consuming what the last produced (the count is
+`TS_CASCADE.size`, pinned below). The TS expressed the sequence as DATA — one
+array entry per pass, in execution order — because the order is load-bearing
+and several passes exist only to run after another. This is the same array,
+and the same reason.
 
 What arrives here is already segmented and enriched; what leaves is the day the
 API serves. Nothing in this module decides anything itself: it names passes and

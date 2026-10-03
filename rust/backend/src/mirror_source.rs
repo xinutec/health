@@ -21,19 +21,10 @@
 //! So the statements below select CANDIDATES inside a bounding box and hand
 //! every one of them to Lean.
 //!
-//! ⚠ HOW MUCH THIS CHANGES SERVED LABELS IS UNMEASURED, and an earlier version
-//! of this note claimed it moves them. #413 measured the opposite for the
-//! oracle swap alone — 2026-08-02, across every day where both oracles replay,
-//! **0 of 315 timeline states** carry a different `place` or `wayName`. What is
-//! predicted to move is narrower and comes from step 4 of
-//! `docs/proposals/2026-07-osm-into-lean.md`: landmark polygons shifting up to
-//! 17.67 m across `NEAR_FIELD_DECISIVE_M = 12`, **9 queries losing a named
-//! street to `LIMIT 50` displacement**, and 541 `nearbyWays` reorderings that
-//! are inert.
-//!
-//! This source drops `LIMIT 50`, so those 9 are the cases to look for — and
-//! whether they survive the 0-of-315 result is exactly what the re-bless
-//! answers. Do not assert a direction before it runs.
+//! Measured when the oracle swapped (#413, 2026-08-02): across every day both
+//! oracles replayed, 0 of 315 timeline states changed `place` or `wayName`.
+//! This source also drops the `LIMIT 50`; the corpus has been blessed against
+//! it since.
 //!
 //! # ⚠ The box must be a SUPERSET of Lean's scoring window
 //!
@@ -55,10 +46,10 @@
 //!
 //! # The coverage gate, and what a decline means here
 //!
-//! `ensureCovered` in the TypeScript FETCHES from Overpass when an area has not
+//! The TypeScript's `ensureCovered` fetched from Overpass when an area had not
 //! been filled. This source does not: it asks
 //! [`lean::osm_covered`](crate::lean::osm_covered), and where the TypeScript
-//! would fetch, this DECLINES. A decline is honest — the fold records the key as
+//! fetched, this DECLINES. A decline is honest — the fold records the key as
 //! unanswerable and the caller can see it — where an empty row list would be the
 //! claim that there are no roads there (#976).
 //!

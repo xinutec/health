@@ -2,10 +2,10 @@
 //!
 //! # Why this is a table and not a set of call sites
 //!
-//! The Fitbit Web API is decommissioned in September 2026; Google Health carries
-//! most of the same data and NOT all of it. The migration is therefore per
-//! stream and staged, which means that for a while the honest answer to "where
-//! does resting heart rate come from?" is different from the answer for sleep.
+//! The Fitbit Web API ends on 2026-10-30; Google Health carries most of the
+//! same data and NOT all of it. The migration is therefore per stream and
+//! staged, which means that for a while the honest answer to "where does
+//! resting heart rate come from?" is different from the answer for sleep.
 //!
 //! Spread across call sites that becomes unanswerable — a reader has to find
 //! every `if` to reconstruct it, and a stream quietly served by neither, or by
@@ -22,7 +22,7 @@
 pub enum Owner {
     /// Google Health carries it and we have proven so against the live account.
     Google,
-    /// Still the Fitbit Web API. ⚠ Every one of these stops in September 2026.
+    /// Still the Fitbit Web API. ⚠ Every one of these stops on 2026-10-30.
     Fitbit,
     /// Google does not carry it at all. Needs Health Connect on the phone,
     /// which is native Android work and not this task's port.
@@ -41,7 +41,8 @@ pub struct Stream {
     pub why: &'static str,
 }
 
-/// The roster. Measured 2026-08-27 against the live Google account and prod.
+/// The roster, first measured 2026-08-27 against the live Google account and
+/// prod; each `why` carries the date of its own measurement.
 pub const STREAMS: &[Stream] = &[
     Stream {
         name: "body",

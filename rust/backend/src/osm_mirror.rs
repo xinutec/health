@@ -1,12 +1,10 @@
 //! The base OSM mirror's WRITE half — the Overpass fetch that fills
 //! `osm_lines`, `osm_points` and `osm_coverage` (#1658).
 //!
-//! Port of the retired TypeScript `osm-local.ts`'s `fetchAndStore` half. The READ half is
-//! [`crate::mirror_source`], which has been here since the port and says in its
-//! own header that the write half "is separate work and is not in this module".
-//! Until this existed nothing in the tree wrote those three tables at all: the
-//! mirror was a dead snapshot of whatever the TypeScript left, so every place
-//! the user went that it had never fetched was blank permanently.
+//! Port of the retired TypeScript `osm-local.ts`'s `fetchAndStore` half; the
+//! READ half is [`crate::mirror_source`]. Until this existed nothing in the tree
+//! wrote those three tables: the mirror was a dead snapshot of whatever the
+//! TypeScript had left, and ground it had never fetched stayed blank for good.
 //!
 //! # Recovered, not reinvented
 //!
@@ -20,10 +18,10 @@
 //!
 //! `ensureCovered` fetched INSIDE the velocity request, in a 512 MiB pod, which
 //! is why buildings were pinned to a 500 m half-width — a 10 km box of London
-//! footprints was a volume bomb on the serving path (#255). This runs from a
-//! drain job with no request waiting on it, so the box may be sized to the
-//! QUESTION instead. See [`half_width_for`], which is the one deliberate
-//! departure from the TypeScript and the reason it is a departure.
+//! footprints was a volume bomb on the serving path (#255). This runs in the
+//! drain beside the pod ([`crate::fetch_drain`]), with no request waiting on it
+//! and its own memory, so the box is sized to the QUESTION instead: see
+//! [`half_width_for`], the one deliberate departure from the TypeScript.
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
@@ -68,9 +66,9 @@ pub const BUILDING_HALF_WIDTH_M: f64 = 500.0;
 /// that question uncovered, and it is asked again on the next fold, forever. A
 /// visible refusal with a reason is the honest end of that.
 ///
-/// The numbers are measured, not chosen: over the 44 golden days the walk disc
-/// (`walkableRoads` and `buildingsNear`, which share it) has p50 369 m, p95
-/// 940 m and max 1832 m, and no other lookup exceeds 800 m.
+/// The numbers are measured, not chosen: over the golden days of 2026-09 the
+/// walk disc (`walkableRoads` and `buildingsNear`, which share it) had p50
+/// 369 m, p95 940 m and max 1832 m, and no other lookup exceeded 800 m.
 pub const MAX_HALF_WIDTH_M: f64 = 20_000.0;
 pub const MAX_BUILDING_HALF_WIDTH_M: f64 = 2_500.0;
 

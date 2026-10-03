@@ -1,19 +1,13 @@
 //! Shared application state.
 //!
 //! Deliberately thin, and it should stay that way. The TypeScript server this
-//! replaced kept a velocity cache and the Lean tenant mode overrides in
-//! module-level mutables; neither belongs here:
-//!
-//!   * the tenant overrides (`setVerifiedCoreOverride`) existed ONLY to drive
-//!     the TS↔Lean A/B, so they were scaffolding to retire with the TS arm
-//!     (#975) rather than state to carry across. ⚠ THAT RETIREMENT HAPPENED
-//!     (2026-08-26) and this sentence stayed in the future tense until
-//!     2026-09-01; the symbol survives nowhere but in this comment.
-//!   * the velocity cache DID need a home, and this is it (#982). It is
-//!     process-local on purpose: a deploy restarts the pod and that is the
-//!     invalidation, which is why there is no version tag and no clear hook.
-//!     `crate::velocity_cache` carries the note about what would have to come
-//!     back if anything ever changed an answer without a restart.
+//! replaced kept a velocity cache and the TS↔Lean A/B overrides in module-level
+//! mutables. The overrides went with the TS arm (#975, 2026-08-26) and are not
+//! carried. The velocity cache DID need a home, and this is it (#982): it is
+//! process-local on purpose — a deploy restarts the pod and that is the
+//! invalidation, which is why there is no version tag and no clear hook.
+//! `crate::velocity_cache` says what would have to come back if anything ever
+//! changed an answer without a restart.
 
 use std::sync::Arc;
 
