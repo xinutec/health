@@ -5,23 +5,22 @@ import Verified.JsNum
 # Segment classification scoring cluster (port of the pure kernels in `src/geo/segments.ts`)
 
 The motion-only classifier that turns a window's kinematic features into a mode
-+ confidence. Ported here: `rangeScore` (the Gaussian match) and the six per-mode
++ confidence, whole: `rangeScore` (the Gaussian match) and the six per-mode
 scorers, `scoreWindow` (assemble + stable-sort desc), `normalizeScores`
 (probability + margin), `roadSupportedConfidence`, `isStationaryIncoherent`, the
-`pedestrianCoreDisplacementM` largest-pedestrian-run, and the
-`enforcePhysicalConstraints` mode decision.
-
-The window→segment *merging* (`mergeWindows` / `smoothSegments` / `findStays` /
-`classifySegments`) sequences these over arrays and builds `TrackSegment`s — that
-stays with the orchestrator for now; here we port the leaf math each pass calls.
+`pedestrianCoreDisplacementM` largest-pedestrian-run, the
+`enforcePhysicalConstraints` mode decision, and the window→segment half that
+sequences them — `mergeWindows`, `smoothSegments`, `findStays` and
+`classifySegments`, which `head.rs` calls as the `segments` mode. The scorer
+leaves were ported first and the merging followed.
 
 `rangeScore` is `exp`-based ⇒ scores are ≤1-ULP (guarded relatively); the sort
 ORDER of the modes — what actually classifies — is pinned EXACTLY. Displacement
 reuses the shared `haversineMeters` (≤1 ULP). `roadSupportedConfidence` /
 `isStationaryIncoherent` / `enforcePhysicalConstraints` are exact (arith +
-`Math.round` + discrete). The `refinedReason` text (a `toFixed` display string)
-stays shell — control flow uses `RefinedKind`, not the sentence. UNPROVEN;
-pinned by the `#guard`s against Node/V8.
+`Math.round` + discrete). The `refinedReason` text is a display string; control
+flow uses `RefinedKind`, not the sentence. UNPROVEN; pinned by the `#guard`s
+against Node/V8.
 -/
 
 namespace Verified.Geo.Segments

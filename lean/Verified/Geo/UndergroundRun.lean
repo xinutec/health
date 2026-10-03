@@ -19,12 +19,12 @@ train actually followed.
 The TS is `async` ONLY because its station and line lookups are injected; they
 are modelled here as plain functions of a coordinate. That is what makes the
 private `isCoarse` predicate reference-testable through this public function
-rather than needing a test-only export. (I had recorded this module as needing a
-stub OSM *adapter*; that was wrong — the signature takes the lookups directly.)
+rather than needing a test-only export.
 
 `reconstructUndergroundJourney` (the two-leg interchange split) and
-`annotateUndergroundRuns` (the segment-level orchestration) are the larger
-follow-on and stay shell for now.
+`annotateUndergroundRuns` (the segment-level orchestration) followed, in
+`Verified.Geo.UndergroundJourney` and `Verified.Geo.UndergroundAnnotate`; the
+cascade runs the latter as `undergroundRail`.
 
 Exactness: every gate is exact; `equirectMeters` is this module's own metric —
 `cos` at the FIRST point, as in `EpisodeGeometry`, NOT `metersBetween`'s

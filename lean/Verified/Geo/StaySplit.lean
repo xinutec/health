@@ -2,19 +2,34 @@ import Verified.Geo.SegmentMerge
 import Verified.Geo.Worldline
 import Verified.JsNum
 /-!
-# Stay-split evidence scorer (port of the pure leaf of `src/geo/stay-split.ts`)
+# Re-cutting segments on evidence (port of `src/geo/stay-split.ts`, grown since)
 
-`stay-split.ts` is a suite of `<T extends TrackSegment>` array transforms that
-split/reassign segments over an in-stay gap — record orchestration that stays
-shell — a note that is now SUPERSEDED: under the standing Lean/shell boundary
-(pure record/array work belongs in Lean) those passes are in scope, and they sit
-in the middle of the velocity pass order, so the pipeline cannot fold in Lean
-without them. `shedVehiclePedestrianEdges` is the first of them, below.
+The passes that split or reassign a segment where the track alone cut it
+wrong, each in its own namespace below. The file's order is not the cascade's:
+`Stays` and `Walks` run first, in `SplitFold` straight after segmentation; the
+rest run in `PassFold`'s cascade as `vehicleSplit`, `walkVehicleHandoff`,
+`vehicleArrival`, `vehicleEdgeShed`, `rideHeadClaim`, `stayArrivalClaim` and
+`walkDwell`.
 
-Its original pure decision leaf is `scoreSplitEvidence`: the weighted
-log-evidence (nats) that the user *left* during a gap, summed across step
-density (the only direct movement signal), gap-anomaly ratio, HR, and
-post-gap proximity. `> SPLIT_THRESHOLD_NATS` triggers a split.
+* `Shed` — `shedVehiclePedestrianEdges`, the walked edges off a ride;
+* `Handoff` — `reassignWalkTailToVehicle`, a walk's tail that is the vehicle
+  pulling away;
+* `Arrival` — `reassignVehicleArrivalWalk`, a ride's head that is the walk in;
+* `VehicleLeg` — `splitWalksOnVehicleLeg`, a ride hidden inside a walk;
+* `RideHead` / `FootArrival` — the boundary between a stay and the ride or
+  walk beside it, claimed from the fixes' speed and the steps;
+* `Stays` — `splitStaysOnEvidence`, one stay → stays and an unknown gap, from
+  `scoreSplitEvidence` below: the weighted log-evidence (nats) that the user
+  LEFT during a gap, summed across step density (the only direct movement
+  signal), gap-anomaly ratio, HR and post-gap proximity, `> SPLIT_THRESHOLD_NATS`
+  to split;
+* `Walks` — `splitWalksOnEvidence`, one walk → sit / walk / sit by cadence;
+* `Dwell` — `splitWalksOnDwell`, the stops carved out of a walk by held
+  position and steps.
+
+`scoreSplitEvidence` was the TypeScript's one pure leaf; the rest were array
+transforms the first port left in the shell, brought over once the standing
+boundary put pure record work in Lean.
 
 All discrete branches + arithmetic, no transcendentals ⇒ EXACT (guarded at
 ≤1 ULP only because decimal literals like `5.3` are not the same double as the

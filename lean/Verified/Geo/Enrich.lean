@@ -27,7 +27,7 @@ that, upstream in the same pass list.
 `nearbyWays` and `reverseGeocode` are lookups; the caller supplies them. Every
 decision taken on their answers is here.
 
-`computeRailRoadProximity` is NOT computed. The TS computes it and passes it to
+`computeRailRoadProximity` is NOT computed. The TS computed it and passed it to
 `refineMode`, which forwards it to the FACTOR arm only — and the corpus takes the
 legacy cascade (`USE_FACTOR_SCORER` is unset; see `RefineMode`). Computing a value
 no reachable branch reads would be modelling the TS's shape rather than its

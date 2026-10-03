@@ -30,10 +30,10 @@ All three are the TS's, and none of them is an error:
 * a stationary segment the venue resolver declines to name, which
   {@link Verified.Geo.StayEnrich.enrichStay} returns unchanged.
 
-The TS has a FOURTH: the `try` around the body turns any lookup failure into a
-warning and an unenriched segment. That one is deliberately not ported. The Lean
-arm's lookups are recorded tables which panic on a key the run never asked
-about, and a miss is the finding — swallowing it here would turn a wiring
+The TS had a FOURTH: the `try` around the body turned any lookup failure into a
+warning and an unenriched segment. That one is deliberately not ported. A lookup
+here is an ask the host answers or DECLINES (#1709); a decline is recorded and
+counted, and a failure is a failure — swallowing either would turn a wiring
 divergence into a segment that merely looks unenriched.
 
 ## `prev` is the loop's INPUT, not its output
