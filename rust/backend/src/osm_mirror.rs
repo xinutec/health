@@ -346,6 +346,14 @@ const UPSERT_BATCH: usize = 500;
 
 /// Bulk-upsert features into one geometry table. Returns rows written.
 ///
+/// ⚠ `feature_type` FOLLOWS THE PARSE on a duplicate key. `parse_element` files
+/// an element from its tags alone, whichever bucket's query returned it, so a
+/// re-fetch that files a row differently is a rule that changed (or OSM that
+/// did), and the row must move with it: the Gare Montparnasse halls were
+/// fetched as buildings on 2026-10-01, `building=train_station` joined the venue
+/// tags on 10-03, and the landmark fetch that returned them left them buildings
+/// — invisible to every landmark reader (#1891).
+///
 /// ⚠ WRITTEN OUT TWICE, points and lines, for `DL-SQLX-SCHEMA-TRUTH`'s reason:
 /// SQL that reaches the driver through a variable cannot be checked against the
 /// schema, and a table name is not something to parameterise.
@@ -386,7 +394,8 @@ async fn upsert_points(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
     }
     let sql = format!(
         "INSERT INTO osm_points (osm_id, osm_type, feature_type, subtype, name, tags_json, geom) \
-         VALUES {} ON DUPLICATE KEY UPDATE subtype = VALUES(subtype), name = VALUES(name), \
+         VALUES {} ON DUPLICATE KEY UPDATE feature_type = VALUES(feature_type), \
+         subtype = VALUES(subtype), name = VALUES(name), \
          tags_json = VALUES(tags_json), geom = VALUES(geom)",
         value_tuples(features.len())
     );
@@ -407,7 +416,8 @@ async fn upsert_lines(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
     }
     let sql = format!(
         "INSERT INTO osm_lines (osm_id, osm_type, feature_type, subtype, name, tags_json, geom) \
-         VALUES {} ON DUPLICATE KEY UPDATE subtype = VALUES(subtype), name = VALUES(name), \
+         VALUES {} ON DUPLICATE KEY UPDATE feature_type = VALUES(feature_type), \
+         subtype = VALUES(subtype), name = VALUES(name), \
          tags_json = VALUES(tags_json), geom = VALUES(geom)",
         value_tuples(features.len())
     );
@@ -472,6 +482,11 @@ pub const VOCAB_BUCKET: &str = "landmark";
 /// recorded with the vocabulary that fetched it, and a read under another one
 /// does not see it — the next fold declines, the drain fetches, the old row
 /// keeps its date (#1891, 2026-10-03).
+/// Bumped when what a landmark fetch FILES changes without the tag list
+/// changing — a parse or upsert rule — so the boxes fetched under the old
+/// filing stop counting. 2: `feature_type` follows the parse on a duplicate key.
+pub const FILING_VERSION: u8 = 2;
+
 #[must_use]
 pub fn venue_vocab(venue_tags: &[(String, Vec<String>)]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -481,6 +496,7 @@ pub fn venue_vocab(venue_tags: &[(String, Vec<String>)]) -> String {
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
+    eat(&[FILING_VERSION]);
     for (k, vs) in venue_tags {
         eat(k.as_bytes());
         eat(b"=");
