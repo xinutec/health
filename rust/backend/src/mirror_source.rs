@@ -424,7 +424,16 @@ impl MirrorSource {
         let boxes = self.coverage_rows(bucket)?.to_vec();
         let mut covered = lean::osm_covered(lat, lon, radius_m, &boxes, now, false)
             .with_context(|| format!("coverage gate for {bucket}"))?;
-        if !covered && self.has_local_data(bucket, lat, lon, radius_m)? {
+        // ⚠ NOT for the landmark bucket. The probe exists because a SIBLING
+        // bucket's fetch can leave rows without a coverage box; nothing but the
+        // landmark fetch writes landmarks, so for them it is only a bypass of
+        // the box's date and vocabulary (`osm_mirror::VOCAB_BUCKET`), and a
+        // vocabulary the box was not fetched under is exactly what must decline
+        // (#1891, 2026-10-03: every area he had been kept its old landmark box).
+        if !covered
+            && bucket != crate::osm_mirror::VOCAB_BUCKET
+            && self.has_local_data(bucket, lat, lon, radius_m)?
+        {
             // ⚠ Asked through Lean again rather than set to `true` here.
             // `hasLocalData` short-circuits staleness as well as containment,
             // and that trade is a rule — it belongs in `decideCoverage`, not in
