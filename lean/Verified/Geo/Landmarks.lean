@@ -31,12 +31,25 @@ and the restriction is the whole design:
 * a polygon already carries the precise `encloses` signal, so the loose radius
   must not widen it.
 
+A railway station's BUILDING is the other enclosing institution (2026-10-03):
+an hour inside Gare Montparnasse read "Maison du Chocolat", "McDonald's" and
+"Artisanal", the shops of its gallery, and no rule about the train could reach
+them — the walk from the last of them to the platform was twelve minutes of
+milling about on the forecourt, longer than a journey to a station can be told
+from. The outline settles it: inside the station building is at the station.
+Outline ONLY, and a station mapped as a point gets no radius: the nodes of a
+large station (entrances, platforms) spread hundreds of metres, and dinner at
+Pizza Union is within 150 m of a King's Cross entrance (2026-05-22).
+
 Pure and total. UNPROVEN; the thresholds and the tag order are the TypeScript's.
 -/
 namespace Verified.Geo.Landmarks
 
 /-- Amenity subtypes big enough that being inside one names the stay. -/
 def LARGE_INSTITUTION_SUBTYPES : List String := ["hospital"]
+
+/-- A railway station's building, as `VENUE_TAGS` files it: `(type, subtype)`. -/
+def STATION_BUILDING : String × String := ("railway", "train_station")
 
 /-- Open spaces where being INSIDE the outline names a stay NOTHING ELSE names:
 from the middle of a park every venue is far and every edge is out of range
@@ -71,7 +84,8 @@ were never fetched, and no stay could be named after them.
 * `natural=beach` — La Concha (2026-10-03): an afternoon on the beach came out
   as a stop with no name, the nearest named thing a car park. -/
 def VENUE_TAGS : List (String × List String × String) :=
-  [("building", ["hotel"], "tourism"), ("natural", ["beach"], "natural")]
+  [("building", ["hotel"], "tourism"), ("natural", ["beach"], "natural"),
+   ("building", ["train_station"], "railway")]
 
 /-- One OSM feature near the query point. -/
 structure Feature where
@@ -107,7 +121,8 @@ private def tagOf (tags : List (String × String)) (k : String) : Option String 
 the module note — each narrowing is a specific day that went wrong. -/
 def isEnclosingInstitution (type_ subtype : String) (distanceM : Float)
     (encloses isPoint : Bool) : Bool :=
-  if type_ != "amenity" then false
+  if (type_, subtype) == STATION_BUILDING then encloses && !isPoint
+  else if type_ != "amenity" then false
   else if !(LARGE_INSTITUTION_SUBTYPES.contains subtype) then false
   else if encloses then true
   else isPoint && distanceM ≤ LARGE_INSTITUTION_POINT_RADIUS_M
@@ -150,7 +165,8 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
           (tagOf f.tags k).bind fun v =>
             if vs.contains v then
               some { name, type_ := ty, subtype := v, distanceM := f.distanceM
-                   , enclosing := false, openingHours := tagOf f.tags "opening_hours"
+                   , enclosing := isEnclosingInstitution ty v f.distanceM f.encloses isPoint
+                   , openingHours := tagOf f.tags "opening_hours"
                    , inside := ENCLOSING_OPEN_SPACES.contains (ty, v) && f.encloses && !isPoint }
             else none
       byTag ++ venue ++ ped
@@ -226,7 +242,20 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 -- ⚠ A university is NOT a large institution here: its campus eateries are
 -- destinations in their own right (2026-05-14).
 #guard isEnclosingInstitution "amenity" "university" 10 true false == false
--- Only `amenity` at all.
+-- Only `amenity` at all…
 #guard isEnclosingInstitution "shop" "hospital" 10 true false == false
+-- …and the station BUILDING: its outline encloses, nothing else about it does.
+#guard isEnclosingInstitution "railway" "train_station" 500 true false == true
+#guard isEnclosingInstitution "railway" "train_station" 10 false false == false
+#guard isEnclosingInstitution "railway" "train_station" 10 true true == false
+#guard isEnclosingInstitution "railway" "station" 10 true false == false
+-- Shaped: a named station building the stay is inside is an enclosing landmark
+-- filed under `railway`; a hotel's building never is.
+#guard (shapeLandmarks [] [feat "Gare M" [("building", "train_station")] 60 (encloses := true) (isPoint := false)]).map
+    (fun l => (l.type_, l.subtype, l.enclosing)) == [("railway", "train_station", true)]
+#guard (shapeLandmarks [] [feat "Gare M" [("building", "train_station")] 60 (isPoint := false)]).map
+    (·.enclosing) == [false]
+#guard (shapeLandmarks [] [feat "H" [("building", "hotel")] 5 (encloses := true) (isPoint := false)]).map
+    (·.enclosing) == [false]
 
 end Verified.Geo.Landmarks

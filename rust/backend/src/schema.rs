@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 90] = [
+    let migrations: [&str; 91] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -738,6 +738,13 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     tcx         MEDIUMTEXT NULL,
     PRIMARY KEY (user_id, point_id)
   )"#,
+        // A landmark box remembers the venue-tag vocabulary it was fetched
+        // under (`osm_mirror::venue_vocab`, #1891 2026-10-03): a box fetched
+        // before a tag joined the list has none of that tag's features, and
+        // counting it as coverage would keep them out of the mirror for 180
+        // days. Rows keep their dates; a read under another vocabulary simply
+        // does not see them.
+        r#"ALTER TABLE osm_coverage ADD COLUMN IF NOT EXISTS vocab VARCHAR(16) NULL"#,
     ];
 
     sqlx::query(

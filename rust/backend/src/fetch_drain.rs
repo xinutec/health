@@ -229,6 +229,7 @@ pub async fn drain_osm(
     dry_run: bool,
 ) -> Result<OsmDrain> {
     let mut out = OsmDrain::default();
+    let vocab = osm_mirror::venue_vocab(venue_tags);
 
     // ⚠ THE BUCKETS COME FROM THE QUEUE, not from a loop over `BUCKETS`: a
     // bucket with nothing waiting must not cost a coverage read.
@@ -254,7 +255,8 @@ pub async fn drain_osm(
         }
         // Read once per bucket and extended in memory as boxes land, so a key
         // the run has just covered is recognised without a second round trip.
-        let mut boxes = osm_mirror::coverage_rows(pool, &bucket).await?;
+        let bucket_vocab = osm_mirror::vocab_for(&bucket, &vocab);
+        let mut boxes = osm_mirror::coverage_rows(pool, &bucket, bucket_vocab).await?;
 
         for p in pending {
             // ⚠ Both of the next two are RETIRED rather than failed: a key
@@ -323,7 +325,7 @@ pub async fn drain_osm(
             // ⚠ AFTER the rows. A coverage row is a promise the area can be
             // answered from the mirror; written first, a crash mid-insert would
             // look like a fetched area with no roads in it (#976).
-            osm_mirror::record_coverage(pool, &bucket, &bbox).await?;
+            osm_mirror::record_coverage(pool, &bucket, &bbox, bucket_vocab).await?;
             boxes.push(lean::CoverageRow {
                 min_lat: bbox.min_lat,
                 max_lat: bbox.max_lat,
@@ -408,16 +410,22 @@ pub async fn fixes_since(pool: &MySqlPool, since_s: i64) -> Result<Vec<Fix>> {
 /// ⚠ A fix that lands in the same second as the read, after it, is missed by
 /// the strict `>`; the fold's decline records that ground when it is asked, so
 /// the cost is a view, not a hole.
-pub async fn precover(pool: &MySqlPool, since_s: i64) -> Result<(i64, usize)> {
+pub async fn precover(
+    pool: &MySqlPool,
+    venue_tags: &[(String, Vec<String>)],
+    since_s: i64,
+) -> Result<(i64, usize)> {
     let fixes = fixes_since(pool, since_s).await?;
     let Some(&(newest, _, _)) = fixes.last() else {
         return Ok((since_s, 0));
     };
     let now_ms = chrono::Utc::now().timestamp_millis();
     let cells = cells_of(&fixes);
+    let vocab = osm_mirror::venue_vocab(venue_tags);
     let mut queued = 0usize;
     for bucket in osm_mirror::BUCKETS {
-        let boxes = osm_mirror::coverage_rows(pool, bucket).await?;
+        let boxes =
+            osm_mirror::coverage_rows(pool, bucket, osm_mirror::vocab_for(bucket, &vocab)).await?;
         let kind = osm_mirror::queue_kind(bucket);
         for &(lat, lon) in &cells {
             if lean::osm_covered(lat, lon, PRECOVER_RADIUS_M, &boxes, now_ms, false)? {
@@ -460,7 +468,7 @@ pub async fn watch(pool: &MySqlPool, client: &reqwest::Client, interval: Duratio
             }
             _ = ticker.tick() => {}
         }
-        match precover(pool, since_s).await {
+        match precover(pool, &venue_tags, since_s).await {
             Ok((newest, queued)) => {
                 since_s = newest;
                 if queued > 0 {

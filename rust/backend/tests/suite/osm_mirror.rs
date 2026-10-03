@@ -290,3 +290,47 @@ fn a_kind_round_trips_and_a_geocode_kind_is_not_one_of_ours() {
     assert_eq!(bucket_of("nominatim_z16"), None);
     assert_eq!(bucket_of("osm_not_a_bucket"), None);
 }
+
+mod venue_vocab {
+    use backend::osm_mirror::{VOCAB_BUCKET, venue_vocab, vocab_for};
+
+    fn tags(spec: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+        spec.iter()
+            .map(|(k, vs)| (k.to_string(), vs.iter().map(|v| v.to_string()).collect()))
+            .collect()
+    }
+
+    /// The same list names the same vocabulary on every run and every host.
+    #[test]
+    fn stable_and_sixteen_hex_digits() {
+        let a = venue_vocab(&tags(&[("building", &["hotel"]), ("natural", &["beach"])]));
+        let b = venue_vocab(&tags(&[("building", &["hotel"]), ("natural", &["beach"])]));
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 16);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "{a}");
+    }
+
+    /// Adding a tag, or a value under a tag, is a new vocabulary: the boxes
+    /// fetched before it hold none of its features.
+    #[test]
+    fn a_new_tag_or_value_is_a_new_vocabulary() {
+        let base = venue_vocab(&tags(&[("building", &["hotel"])]));
+        assert_ne!(
+            base,
+            venue_vocab(&tags(&[("building", &["hotel", "train_station"])]))
+        );
+        assert_ne!(
+            base,
+            venue_vocab(&tags(&[("building", &["hotel"]), ("natural", &["beach"])]))
+        );
+        assert_ne!(venue_vocab(&tags(&[])), base);
+    }
+
+    /// Only the landmark bucket's boxes carry a vocabulary.
+    #[test]
+    fn only_landmark_boxes_are_keyed_by_it() {
+        assert_eq!(vocab_for(VOCAB_BUCKET, "abc"), Some("abc"));
+        assert_eq!(vocab_for("highway", "abc"), None);
+        assert_eq!(vocab_for("building", "abc"), None);
+    }
+}

@@ -426,16 +426,22 @@ async fn upsert_lines(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
 /// area can be answered from the mirror; writing it before the features would
 /// make a crash mid-insert look like a fetched area with no roads in it, which
 /// is the shape #976 is about.
-pub async fn record_coverage(pool: &MySqlPool, feature_type: &str, bbox: &Bbox) -> Result<()> {
+pub async fn record_coverage(
+    pool: &MySqlPool,
+    feature_type: &str,
+    bbox: &Bbox,
+    vocab: Option<&str>,
+) -> Result<()> {
     sqlx::query(
-        "INSERT INTO osm_coverage (min_lat, max_lat, min_lon, max_lon, feature_type) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO osm_coverage (min_lat, max_lat, min_lon, max_lon, feature_type, vocab) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(bbox.min_lat)
     .bind(bbox.max_lat)
     .bind(bbox.min_lon)
     .bind(bbox.max_lon)
     .bind(feature_type)
+    .bind(vocab)
     .execute(pool)
     .await
     .context("recording an osm_coverage box")?;
@@ -453,8 +459,50 @@ pub fn bucket_of(kind: &str) -> Option<&str> {
     BUCKETS.contains(&b).then_some(b)
 }
 
+/// The bucket whose boxes depend on the venue-tag vocabulary.
+pub const VOCAB_BUCKET: &str = "landmark";
+
+/// A short, stable name for a venue-tag vocabulary: 64-bit FNV-1a of the tags
+/// in their served order, as 16 hex digits.
+///
+/// ⚠ THE VOCABULARY IS PART OF A LANDMARK BOX'S IDENTITY, like its bucket. A
+/// box fetched when `VENUE_TAGS` lacked `building=train_station` holds no
+/// station buildings, and the gate cannot tell that from "there are none": the
+/// day would be served without them for `COVERAGE_FRESH_DAYS`. So the box is
+/// recorded with the vocabulary that fetched it, and a read under another one
+/// does not see it — the next fold declines, the drain fetches, the old row
+/// keeps its date (#1891, 2026-10-03).
+#[must_use]
+pub fn venue_vocab(venue_tags: &[(String, Vec<String>)]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |b: &[u8]| {
+        for &x in b {
+            h ^= u64::from(x);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for (k, vs) in venue_tags {
+        eat(k.as_bytes());
+        eat(b"=");
+        for v in vs {
+            eat(v.as_bytes());
+            eat(b",");
+        }
+        eat(b";");
+    }
+    format!("{h:016x}")
+}
+
+/// The vocabulary a bucket's boxes are read and written under: the venue
+/// vocabulary for [`VOCAB_BUCKET`], none for every other bucket.
+#[must_use]
+pub fn vocab_for<'a>(bucket: &str, venue_vocab: &'a str) -> Option<&'a str> {
+    (bucket == VOCAB_BUCKET).then_some(venue_vocab)
+}
+
 /// Every fresh coverage box for one bucket, so a drain can ask the same gate
-/// the serving path asks.
+/// the serving path asks. `vocab` is [`vocab_for`] the bucket: when `Some`,
+/// only boxes recorded under it count.
 ///
 /// ⚠ `CAST(… AS CHAR)` then `str::parse`, for [`crate::mirror_source`]'s
 /// reason: these columns are `DECIMAL(9,6)` and sqlx will not hand a DECIMAL
@@ -463,15 +511,18 @@ pub fn bucket_of(kind: &str) -> Option<&str> {
 pub async fn coverage_rows(
     pool: &MySqlPool,
     feature_type: &str,
+    vocab: Option<&str>,
 ) -> Result<Vec<crate::lean::CoverageRow>> {
     use sqlx::Row;
     let rows = sqlx::query(
         "SELECT CAST(min_lat AS CHAR) AS min_lat, CAST(max_lat AS CHAR) AS max_lat, \
             CAST(min_lon AS CHAR) AS min_lon, CAST(max_lon AS CHAR) AS max_lon, \
             CAST(UNIX_TIMESTAMP(fetched_at) AS SIGNED) AS fetched_s \
-         FROM osm_coverage WHERE feature_type = ?",
+         FROM osm_coverage WHERE feature_type = ? AND (? IS NULL OR vocab = ?)",
     )
     .bind(feature_type)
+    .bind(vocab)
+    .bind(vocab)
     .fetch_all(pool)
     .await
     .with_context(|| format!("reading osm_coverage for {feature_type}"))?;

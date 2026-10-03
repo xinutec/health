@@ -341,45 +341,22 @@ impl MirrorSource {
     /// production's places to centroid 0.0 and still printed OK.
     fn coverage_rows(&mut self, bucket: &str) -> Result<&[CoverageRow]> {
         if !self.coverage.contains_key(bucket) {
-            let rows = self
-                .block(
-                    sqlx::query(
-                        "SELECT CAST(min_lat AS CHAR) AS min_lat, \
-                            CAST(max_lat AS CHAR) AS max_lat, \
-                            CAST(min_lon AS CHAR) AS min_lon, \
-                            CAST(max_lon AS CHAR) AS max_lon, \
-                            CAST(UNIX_TIMESTAMP(fetched_at) AS SIGNED) AS fetched_s \
-                     FROM osm_coverage WHERE feature_type = ?",
-                    )
-                    .bind(bucket)
-                    .fetch_all(&self.pool),
-                )
+            // ⚠ The landmark bucket's boxes are read under the CURRENT venue
+            // vocabulary (`osm_mirror::venue_vocab`): a box fetched before a
+            // tag joined `VENUE_TAGS` is not coverage for it. Asked of Lean
+            // once per source, the same way the drain asks.
+            let vocab = if bucket == crate::osm_mirror::VOCAB_BUCKET {
+                Some(crate::osm_mirror::venue_vocab(&crate::lean::venue_tags()?))
+            } else {
+                None
+            };
+            let pool = self.pool.clone();
+            let b = bucket.to_string();
+            let out = self
+                .block(async move {
+                    crate::osm_mirror::coverage_rows(&pool, &b, vocab.as_deref()).await
+                })
                 .with_context(|| format!("reading osm_coverage for {bucket}"))?;
-
-            let mut out = Vec::with_capacity(rows.len());
-            for r in rows {
-                let f = |name: &str| -> Result<f64> {
-                    r.try_get::<String, _>(name)
-                        .with_context(|| format!("osm_coverage.{name} is not a string"))?
-                        .trim()
-                        .parse::<f64>()
-                        .with_context(|| format!("osm_coverage.{name} does not parse"))
-                };
-                out.push(CoverageRow {
-                    min_lat: f("min_lat")?,
-                    max_lat: f("max_lat")?,
-                    min_lon: f("min_lon")?,
-                    max_lon: f("max_lon")?,
-                    // ⚠ A row with no fetch time is FRESH, not stale — legacy
-                    // data from before fetch times were tracked. Lean's
-                    // `decideCoverage` says so; mapping it to 0 here would make
-                    // every one of them stale and re-fetch the whole mirror.
-                    fetched_at: r
-                        .try_get::<Option<i64>, _>("fetched_s")
-                        .context("osm_coverage.fetched_at does not decode")?
-                        .map(|s| s * 1000),
-                });
-            }
             self.coverage.insert(bucket.to_string(), out);
         }
         Ok(&self.coverage[bucket])
