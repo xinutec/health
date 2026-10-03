@@ -63,9 +63,9 @@
 //! claim that there are no roads there (#976).
 //!
 //! ⚠ **AND IT RECORDS THE DECLINE.** The write half is [`crate::osm_mirror`],
-//! drained out of band by `backend fetch-osm`: a fetch here would put an
-//! Overpass round trip on the serving path, which is what the queue exists to
-//! avoid (#1076, #1658).
+//! drained beside the pod by [`crate::fetch_drain`] (#1889): a fetch here would
+//! put an Overpass round trip on the serving path, which is what the queue
+//! exists to avoid (#1076, #1658).
 //!
 //! The three matcher reads — `walkableRoads`, `buildingsNear`,
 //! `drivableRoads` — come through here too (#1709), on the same pool and
@@ -519,7 +519,7 @@ impl MirrorSource {
 impl MirrorSource {
     /// Ways of the given subtypes intersecting the disc plus its margin, as the
     /// fold reads them. `None` declines: the coverage gate said no, and the
-    /// decline is recorded for `fetch-osm`.
+    /// decline is recorded for the drain.
     fn ways(
         &mut self,
         lat: f64,
@@ -988,8 +988,8 @@ impl RowSource for MirrorSource {
             Some(crate::nominatim::Cached::Answer(None)) => Some(Value::Null),
             // ⚠ **RECORDED, NOT FETCHED.** A decline used to leave no trace, so
             // the same coordinate went unanswered on every fold forever. The
-            // queue is what lets a job fill it later; fetching here would put a
-            // Nominatim round trip on the serving path (#1071, #1076).
+            // queue is what lets the drain fill it within seconds; fetching here
+            // would put a Nominatim round trip on the serving path (#1071, #1076).
             Some(crate::nominatim::Cached::Failed { .. }) | None => {
                 let pool = self.pool.clone();
                 let kind = crate::nominatim::query_type(zoom);

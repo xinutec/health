@@ -1,5 +1,5 @@
-//! What the serving path could not answer, so a job can fetch it later
-//! (#1076, #1658).
+//! What the serving path could not answer, so the drain beside it can fetch it
+//! (#1076, #1658, #1889).
 //!
 //! # Why a queue and not a fetch
 //!
@@ -11,8 +11,9 @@
 //!
 //! Fetching inline would fix that and put a network round trip on the serving
 //! path, which is where the fold's latency already hurts (#1071 measures ~27 s
-//! on a heavy day). So the request RECORDS and a job FETCHES: the day is blank
-//! once and right afterwards.
+//! on a heavy day). So the request RECORDS and the drain FETCHES, within
+//! seconds and off the response path: the day is blank once and right on its
+//! next view (`crate::fetch_drain`).
 //!
 //! # `kind` is `osm_cache.query_type`
 //!
@@ -31,8 +32,9 @@
 //!
 //! Every decline — the seven answerer tables and the three matcher reads —
 //! comes through `MirrorSource`'s coverage gate (#1709), so there is one
-//! `INSERT` and one key vocabulary. The drain is `backend fetch-osm`, where
-//! Overpass is.
+//! `INSERT` and one key vocabulary. The drain is `crate::fetch_drain`, which
+//! the `health-fetch` sidecar runs continuously and `backend fetch-osm` /
+//! `fetch-geocodes` run by hand.
 
 use anyhow::{Context, Result};
 use sqlx::{MySqlPool, Row};
@@ -176,9 +178,9 @@ pub async fn failed(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Resul
 /// Retire a key that will fail the same way every time.
 ///
 /// ⚠ THE DIFFERENCE FROM [`failed`] IS THE CAUSE, not the count. A transport
-/// failure earns another night; a PERMANENT refusal — a malformed query, an area
-/// the endpoint will not serve — is the same query tomorrow, and spending
-/// [`MAX_ATTEMPTS`] nights discovering that is an invisible loop against a
+/// failure earns another attempt; a PERMANENT refusal — a malformed query, an area
+/// the endpoint will not serve — is the same query next time, and spending
+/// [`MAX_ATTEMPTS`] attempts discovering that is an invisible loop against a
 /// rate-limited public service. The row STAYS, past the bar, carrying why.
 pub async fn exhaust(pool: &MySqlPool, kind: &str, key: &str, why: &str) -> Result<()> {
     let why: String = why.chars().take(255).collect();

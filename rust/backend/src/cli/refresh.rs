@@ -1161,6 +1161,19 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
     Ok(())
 }
 
+/// Tier 2 of #982 — the node cron is `refresh-rail-stops.ts`.
+///
+/// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED — rail now carries the
+/// `tile_key` bus has had all along, added 2026-08-25 once the port's parity was
+/// established. Before it, this DELETEd the whole table and rewrote what it
+/// found, so a run at 10-of-18 coverage dropped every relation living only in
+/// the 8 tiles that failed. The measured shape is why it was invisible: 441
+/// relations found against 268 cached, so the count went UP and the summary read
+/// like a healthy refresh that found more data (#1134, #1153).
+///
+/// ⚠ THE REFUSAL RULE IS UNCHANGED and is still the rail one — zero relations
+/// with any failure. It no longer has to carry the partial case, because tile
+/// ownership does.
 pub(crate) async fn refresh_rail_stops(dry_run: bool) -> Result<()> {
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
     let pool = db::connect(&cfg.db.url())

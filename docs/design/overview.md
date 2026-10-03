@@ -64,8 +64,12 @@ depends on. The entry points are subcommands of `bin/backend`; the list is
   Nextcloud SSO, Fitbit OAuth, the OwnTracks proxy.
 - **`sync`** — the CronJob: every user with a linked account, every stream,
   each written by the one API that owns it (`google/source.rs`).
+- **`watch-fetch-queue`** — the `health-fetch` sidecar beside `serve`: the
+  map and name lookups a fold declined, fetched within seconds, and the ground
+  around fixes as they arrive (`fetch_drain.rs`).
 - the refresh jobs (`decode-day`, `refresh-focus-places`, `refresh-rail-*`,
-  `refresh-bus-routes`, `fetch-osm`, `fetch-geocodes`) and the operator tools
+  `refresh-bus-routes`; `fetch-osm` and `fetch-geocodes` run the sidecar's
+  drain by hand) and the operator tools
   (`day`, `velocity`, `census`, `mirror-check`, `rows-check`, the
   `google-compare*` family).
 

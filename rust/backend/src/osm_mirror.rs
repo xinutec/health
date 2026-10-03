@@ -80,7 +80,7 @@ pub const MAX_BUILDING_HALF_WIDTH_M: f64 = 2_500.0;
 /// forced. `fetchBboxAround` centred a FIXED half-width on the query point, so a
 /// question whose radius exceeded it could never be satisfied by its own fetch —
 /// on the serving path that merely meant the enrichment was skipped, but a drain
-/// that re-queues the same key every night is an unbounded loop against a
+/// that re-queues the same key on every pass is an unbounded loop against a
 /// two-slot public endpoint.
 ///
 /// `MARGIN` is what keeps the answer stable against the difference between this
@@ -451,4 +451,48 @@ pub use crate::fetch_queue::{parse_queue_key, queue_key, queue_kind};
 pub fn bucket_of(kind: &str) -> Option<&str> {
     let b = kind.strip_prefix("osm_")?;
     BUCKETS.contains(&b).then_some(b)
+}
+
+/// Every fresh coverage box for one bucket, so a drain can ask the same gate
+/// the serving path asks.
+///
+/// ⚠ `CAST(… AS CHAR)` then `str::parse`, for [`crate::mirror_source`]'s
+/// reason: these columns are `DECIMAL(9,6)` and sqlx will not hand a DECIMAL
+/// back as an `f64`. The first loader in this crate to get that wrong decoded
+/// 117 places to centroid 0.0 and still printed OK.
+pub async fn coverage_rows(
+    pool: &MySqlPool,
+    feature_type: &str,
+) -> Result<Vec<crate::lean::CoverageRow>> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT CAST(min_lat AS CHAR) AS min_lat, CAST(max_lat AS CHAR) AS max_lat, \
+            CAST(min_lon AS CHAR) AS min_lon, CAST(max_lon AS CHAR) AS max_lon, \
+            CAST(UNIX_TIMESTAMP(fetched_at) AS SIGNED) AS fetched_s \
+         FROM osm_coverage WHERE feature_type = ?",
+    )
+    .bind(feature_type)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("reading osm_coverage for {feature_type}"))?;
+    rows.iter()
+        .map(|r| {
+            let f = |name: &str| -> Result<f64> {
+                r.try_get::<String, _>(name)
+                    .with_context(|| format!("osm_coverage.{name} is not a string"))?
+                    .trim()
+                    .parse::<f64>()
+                    .with_context(|| format!("osm_coverage.{name} does not parse"))
+            };
+            Ok(crate::lean::CoverageRow {
+                min_lat: f("min_lat")?,
+                max_lat: f("max_lat")?,
+                min_lon: f("min_lon")?,
+                max_lon: f("max_lon")?,
+                // A row with no fetch time is FRESH, not stale — see
+                // `decideCoverage`. Mapping it to 0 re-fetches the whole mirror.
+                fetched_at: r.try_get::<Option<i64>, _>("fetched_s")?.map(|s| s * 1000),
+            })
+        })
+        .collect()
 }

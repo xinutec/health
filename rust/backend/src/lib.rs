@@ -51,6 +51,7 @@ pub mod config;
 pub mod db;
 pub mod decode_fixture;
 pub mod error;
+pub mod fetch_drain;
 pub mod fetch_queue;
 pub mod fitbit;
 pub mod fold;

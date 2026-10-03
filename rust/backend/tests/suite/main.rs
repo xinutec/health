@@ -63,6 +63,7 @@ mod connection_status;
 mod date_bounds;
 mod decode_request;
 mod decode_window;
+mod fetch_drain;
 mod focus_mining;
 mod focus_places;
 mod fold_env;

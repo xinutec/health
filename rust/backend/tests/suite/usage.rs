@@ -65,6 +65,10 @@ fn every_production_argv_parses_as_it_did() {
             limit: 200
         })
     ));
+    assert!(matches!(
+        parse(&["watch-fetch-queue"]),
+        Ok(Command::WatchFetchQueue { interval_s: 15 })
+    ));
     match parse(&["refresh-focus-places"]) {
         Ok(Command::RefreshFocusPlaces {
             user: None,

@@ -170,6 +170,9 @@ async fn main() -> Result<()> {
             limit,
             kind,
         } => fetch_osm(dry_run, limit, kind.as_deref()).await,
+        // Both halves, continuously, beside the serving pod (#1889): what a
+        // fold declined, and the ground around fixes as they arrive.
+        C::WatchFetchQueue { interval_s } => watch_fetch_queue(interval_s).await,
         // #1071's instrument: several days in ONE process, so the arena's
         // high-water is visible; `velocity` restarts the process each time.
         C::VelocityMany { user, dates } => velocity_many(&user, &dates).await,
@@ -263,12 +266,7 @@ async fn main() -> Result<()> {
 /// per row, is how a lookup that costs microseconds becomes one that costs
 /// hundreds of milliseconds.
 async fn sync(passes: fitbit::run::Passes) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    cli::init_tracing();
 
     // ⚠ `from_env_batch`: the Fitbit credentials are OPTIONAL here. Without
     // them the run is Google-only, which is what it becomes when the Fitbit Web
@@ -304,12 +302,7 @@ async fn sync(passes: fitbit::run::Passes) -> Result<()> {
 /// body. The 8081 default is a local-run convenience and is not what production
 /// uses.
 async fn serve() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    cli::init_tracing();
 
     let cfg = Config::from_env()?;
     let pool = db::connect(&cfg.db.url()).await?;

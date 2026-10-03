@@ -262,6 +262,12 @@ pub enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
+    /// drain the fetch queue continuously: declined asks, and the ground around new fixes
+    WatchFetchQueue {
+        /// seconds between looks at the queue
+        #[arg(long, default_value_t = 15)]
+        interval_s: u64,
+    },
     /// issue a session cookie
     MintSession { user: String },
     /// revoke a session cookie
