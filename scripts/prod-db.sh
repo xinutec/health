@@ -27,26 +27,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/_devshell.sh"
 	exit 2
 }
 
-# ⚠ REFUSE `node dist/…` AGAINST PRODUCTION.
-#
-# `dist/` is compiled output of `src/`, which was deleted on 2026-08-26 (#975).
-# It was gitignored, so a clean checkout never had it — but machines predating
-# the deletion kept a copy that still ran. The 67 scripts that invoked it, and
-# the 6 MB tree itself, are gone as of 2026-08-29 (#1225). THIS GUARD STAYS: it
-# costs nothing, and it is what would catch the next `dist/` reappearing on
-# somebody's machine.
-#
-# Two of the reachable ones WRITE: `refresh-presence-log.js` and
-# `refresh-focus-places.js` both contain INSERT/UPDATE/DELETE, and
-# `ab-validate.sh` pipes the first through this script. So on this one
-# machine, a wired command would have run the DELETED TypeScript against the
-# production database — including whatever bugs it had when it was retired
-# (see #1140 for one that deletes real focus places).
-#
-# Refusing here rather than in twenty callers because this is the single
-# chokepoint every prod-touching path goes through. A loud refusal beats a
-# silent wrong execution; a clean checkout already fails with "Cannot find
-# module", and this makes THIS machine behave the same way.
+# ⚠ REFUSE `node dist/…` AGAINST PRODUCTION. `dist/` was the compiled TypeScript
+# backend, deleted with `src/` on 2026-08-26 (#975); machines predating the
+# deletion kept a copy that still ran, and two of its scripts wrote to the
+# database (#1140 names a bug that deleted real focus places). The scripts that
+# invoked it went on 2026-08-29 (#1225). The guard stays: this is the one
+# chokepoint every prod-touching path goes through, and a loud refusal beats a
+# silent run of retired code.
 for arg in "$@"; do
 	case "$arg" in
 	dist/* | */dist/*)

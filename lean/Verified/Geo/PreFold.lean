@@ -314,15 +314,15 @@ def stepless (steps : List (Int × Float)) (s : Seg) : Bool :=
 
 /-- A walk the body calls a sit, that GOT somewhere, was a ride.
 
-The biometric signature turns a stepless walk into a stay, which is right when
-the walk is GPS wander and wrong when it is a vehicle the segmenter read
-slowly. 2026-10-01: Métro 4 from Odéon to Montparnasse, five minutes on coarse
+The biometric signature turns a stepless walk into a stay — right when the
+walk is GPS wander, wrong when it is a vehicle the segmenter read slowly.
+2026-10-01: Métro 4 from Odéon to Montparnasse, five minutes on coarse
 station-to-station fixes averaging 5 km/h, served as a stay on Boulevard
-Saint-Germain. Its ends lie 1.3 km apart at under 100 m accuracy, 17 km/h
-end to end, one step in five minutes; wander does not cover that, and a walk
-takes steps. (2026-06-18's walk to Euston Square, flipped to a sit on a low
-average cadence, has hundreds and stays as the cascade reads it.) Such a leg goes to `driving`, the placeholder for an
-unidentified vehicle, where the rail passes can claim it. -/
+Saint-Germain; its ends lie 1.3 km apart at under 100 m accuracy, 17 km/h end
+to end, one step in five minutes. Wander does not cover that, and a walk takes
+steps (2026-06-18's walk to Euston Square, flipped to a sit on a low average
+cadence, has hundreds and is left alone). Such a leg goes to `driving`, the
+placeholder for an unidentified vehicle, where the rail passes can claim it. -/
 def movedIsNotStill (steps : List (Int × Float))
     (raw : Array Verified.Geo.UndergroundRun.CoarseFix) (s : Seg) : Seg :=
   if effectiveMode s != "stationary" || !s.refinedKinds.contains "gps-jitter" then s
