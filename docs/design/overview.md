@@ -218,9 +218,12 @@ red gate as "this needs looking at", not as "this cannot ship".
 ## Schema evolution
 
 Migrations are numbered SQL statements in `rust/backend/src/schema.rs`. A
-`schema_migrations` table tracks which have been applied. To change the
-schema, append a new migration — never modify or remove existing ones.
-This means data is never dropped during deployment.
+`schema_migrations` table tracks which have been applied, BY ARRAY INDEX. To
+change the schema, append a new migration — never modify, remove or insert:
+an inserted statement runs under the number of the one it displaced, and
+production records that number as done while the new statement never ran
+(2026-10-03; slot 88 is the repeat that episode left). Data is never dropped
+during deployment.
 
 ## Data ownership / what we store
 
@@ -232,26 +235,31 @@ re-fetches, on-the-fly aggregation) to avoid that class of problem.
 
 Three deliberate exceptions, each justified:
 
-- **Mirror third-party data we don't own.** Fitbit health metrics (HR,
-  sleep, activity, ...) — Fitbit may sunset, accounts may close,
-  history disappears. Without our own copy we lose access. So we sync
-  Fitbit into MariaDB and treat *our* tables as the source of truth
-  henceforth.
+- **Mirror third-party data we don't own.** The watch's biometrics (HR,
+  sleep, activity, ...) — an API may sunset, accounts may close, history
+  disappears; Fitbit's Web API does so on 2026-10-30. So we sync them into
+  MariaDB (from Google's Health API since 2026-09, `google/source.rs` says
+  which stream from where) and treat *our* tables as the source of truth
+  henceforth; `google_points` archives the types with no table of their own.
 - **Cache external API responses we don't own** when the upstream is
-  rate-limited or slow. `osm_cache` mirrors Nominatim/Overpass results;
-  the cache is a courtesy to them, not duplication of ours. Cached
-  results are pure functions of inputs (lat/lon), so drift is impossible.
+  rate-limited or slow. `osm_cache` holds Nominatim answers; `osm_points`,
+  `osm_lines` and `osm_coverage` are the Overpass mirror, filled on demand
+  from `osm_fetch_queue` by the `health-fetch` sidecar. The cache is a
+  courtesy to them, not duplication of ours, and its rows are functions of
+  their inputs (a coordinate, a box), so drift is impossible.
 - **Persist algorithmic outputs, not their inputs.** `focus_places` is
   the result of running the focus-places pipeline over the user's
   PhoneTrack history; it's a computed cache that's cheap to refresh
   (re-fetch + recompute weekly) and avoids a slow recompute on every
-  dashboard load. Crucially, we **don't** persist the raw GPS history
-  itself — that lives in Nextcloud (PhoneTrack), which we own. When
-  the algorithm runs, it re-fetches.
+  dashboard load. The raw GPS history itself lives in Nextcloud
+  (PhoneTrack), which we own, and the algorithm re-fetches it; the one copy
+  here is `motion_log`, every fix the OwnTracks proxy forwarded with its
+  heading, speed and accuracy — the motion witness (#296), and what the
+  fetch drain reads to cover new ground before a day is viewed.
 
 What we explicitly do **not** do:
 
-- Mirror PhoneTrack history into the health DB.
+- Mirror PhoneTrack history into the health DB beyond `motion_log`.
 - Pre-aggregate summary tables (e.g. "weekly_step_total") that can be
   computed at query time from the underlying intraday data.
 - Store derivable values alongside the inputs they're derived from.
@@ -304,8 +312,20 @@ DayState[] (DayState.lean) + EpisodeGeometry[] (EpisodeGeometry.lean)
 
 ### Caches and their purpose
 
-Three caches sit in front of the slow parts. Each is a *cache*, not a
-source of truth — wiping any of them is safe; the next request rebuilds.
+These sit in front of the slow parts. Each is a *cache*, not a source of
+truth — wiping any of them is safe; the next request (or the drain)
+rebuilds.
+
+- **The OSM mirror** (`osm_points`, `osm_lines`, `osm_coverage`) — Overpass
+  answers by feature bucket, with the boxes fetched and when; a fold that
+  finds no box DECLINES and records the ask in `osm_fetch_queue`, which the
+  `health-fetch` sidecar drains within seconds (`fetch_drain.rs`). A
+  landmark box also carries the venue-tag vocabulary it was fetched under.
+- **The velocity cache** (per pod, `velocity_cache.rs`) — a computed day,
+  five minutes for a settled day and one minute for the live one
+  (`Verified.VelocityCache`); a deploy restarts the pod and clears it.
+- **The location caches** (per pod, `location_cache.rs`) — the freshest
+  fix and the raw tail per user, ten seconds each.
 
 - **`focus_places`** (per-user) — clusters of overnight + frequent
   presence, computed offline by `backend refresh-focus-places` (the rule in
