@@ -66,6 +66,10 @@ fn every_production_argv_parses_as_it_did() {
         })
     ));
     assert!(matches!(
+        parse(&["google-sync-exercise-routes", "--limit", "3"]),
+        Ok(Command::GoogleSyncExerciseRoutes { limit: Some(3) })
+    ));
+    assert!(matches!(
         parse(&["watch-fetch-queue"]),
         Ok(Command::WatchFetchQueue { interval_s: 15 })
     ));

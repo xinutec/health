@@ -146,7 +146,9 @@ pub const STREAMS: &[Stream] = &[
         owner: Owner::Google,
         why: "Fitbit's history had no table for workouts. Google's `exercise` serves all 756 \
               (2026-10-02): 396 from the watch since 2023 (walks, runs, rides, workouts) and 360 \
-              walks the Fit app detected in 2026, each with its summary, events and splits",
+              walks the Fit app detected in 2026, each with its summary, events and splits; \
+              the GPS track of each `hasGps` session rides with it into exercise_routes as \
+              Google's TCX export (2026-10-03)",
     },
     Stream {
         name: "google_points",

@@ -317,6 +317,17 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
             Ok(n) => tracing::info!("[{user_id}] google exercise_sessions: {n} session(s)"),
             Err(e) => tracing::error!("[{user_id}] google exercise_sessions failed: {e:#}"),
         }
+        // The routes ride with the sessions: a GPS session with no stored
+        // track is asked once (routes.rs).
+        match crate::google::routes::sync_routes(pool, http, &token, &user_id, None).await {
+            Ok(s) if s.stored + s.refused == 0 => {}
+            Ok(s) => tracing::info!(
+                "[{user_id}] google exercise_routes: {} stored, {} refused",
+                s.stored,
+                s.refused
+            ),
+            Err(e) => tracing::error!("[{user_id}] google exercise_routes failed: {e:#}"),
+        }
     }
     if !crate::google::source::fitbit_still_owns("google_points") {
         for (data_type, _, _) in crate::google::archive::ARCHIVE_TYPES {

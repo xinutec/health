@@ -118,6 +118,12 @@ pub enum Command {
     },
     /// write every recorded workout Google holds (#1886)
     GoogleSyncExercise,
+    /// fetch the GPS track (TCX) of every GPS workout that has none stored (#1886)
+    GoogleSyncExerciseRoutes {
+        /// at most this many sessions this run
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     /// archive every SpO2 reading Google holds over a UTC date range (#1886)
     GoogleArchiveSpo2 {
         /// first day archived (YYYY-MM-DD, UTC)

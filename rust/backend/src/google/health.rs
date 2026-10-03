@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::lean::Weigh;
 
-const BASE: &str = "https://health.googleapis.com/v4";
+pub(crate) const BASE: &str = "https://health.googleapis.com/v4";
 
 /// Pages requested at a time. Google's maximum; the whole history is ~150
 /// weigh-ins, so this is one page in practice and the loop is for correctness

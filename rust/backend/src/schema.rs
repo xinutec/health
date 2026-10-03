@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 88] = [
+    let migrations: [&str; 90] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -715,6 +715,29 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // activity-level): the key gains their number (`archive::number_points`).
         r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
    DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
+        // ⚠ A REPEAT OF 87, ON PURPOSE. On 2026-10-03 the exercise_routes CREATE
+        // below was INSERTED at 87 instead of appended; prod skipped it (87 was
+        // recorded) and ran this ALTER again as 88, recording 88. Prod's record
+        // therefore says 88 ran, and the only statement whose effect prod has at
+        // 88 is this one. A fresh database runs it twice, harmlessly. The rule
+        // this slot exists to remember: migrations are versioned by ARRAY INDEX —
+        // append, never insert.
+        r#"ALTER TABLE google_points ADD COLUMN IF NOT EXISTS seq SMALLINT NOT NULL DEFAULT 0,
+   DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, data_type, start_utc, source, seq)"#,
+        // The GPS track of a recorded workout, as Google's TCX export, one row
+        // per session asked (#1886, 2026-10-03). A refusal keeps its status
+        // with a NULL document, so a session is asked once.
+        r#"CREATE TABLE IF NOT EXISTS exercise_routes (
+    user_id     VARCHAR(64) NOT NULL,
+    point_id    VARCHAR(32) NOT NULL,
+    fetched_at  DATETIME NOT NULL,
+    http_status SMALLINT NOT NULL,
+    bytes       INT NOT NULL DEFAULT 0,
+    trackpoints INT NULL,
+    positions   INT NULL,
+    tcx         MEDIUMTEXT NULL,
+    PRIMARY KEY (user_id, point_id)
+  )"#,
     ];
 
     sqlx::query(

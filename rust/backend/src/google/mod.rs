@@ -19,5 +19,6 @@ pub mod exercise;
 pub mod health;
 pub mod oauth;
 pub mod probe;
+pub mod routes;
 pub mod source;
 pub mod sync;

@@ -617,3 +617,49 @@ mod active_minutes {
         assert!(active_minutes_of_rollup_point(&p).is_none());
     }
 }
+
+mod exercise_routes {
+    use backend::google::routes::{export_url, positions, trackpoints};
+
+    const TCX: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities><Activity Sport="Running"><Id>2025-03-01T08:00:00Z</Id>
+    <Lap StartTime="2025-03-01T08:00:00Z"><Track>
+      <Trackpoint><Time>2025-03-01T08:00:00Z</Time><Position><LatitudeDegrees>51.5</LatitudeDegrees><LongitudeDegrees>-0.1</LongitudeDegrees></Position><AltitudeMeters>12</AltitudeMeters></Trackpoint>
+      <Trackpoint><Time>2025-03-01T08:00:01Z</Time><HeartRateBpm><Value>120</Value></HeartRateBpm></Trackpoint>
+      <Trackpoint attr="x"><Time>2025-03-01T08:00:02Z</Time><Position><LatitudeDegrees>51.5001</LatitudeDegrees><LongitudeDegrees>-0.1001</LongitudeDegrees></Position></Trackpoint>
+    </Track></Lap>
+  </Activity></Activities>
+</TrainingCenterDatabase>"#;
+
+    /// Three trackpoints, two of them with a fix: the one recorded under cover
+    /// counts as a trackpoint and not as a position.
+    #[test]
+    fn counts_trackpoints_and_positions_separately() {
+        assert_eq!(trackpoints(TCX), 3);
+        assert_eq!(positions(TCX), 2);
+    }
+
+    #[test]
+    fn an_empty_document_has_none() {
+        assert_eq!(trackpoints(""), 0);
+        assert_eq!(positions(""), 0);
+    }
+
+    /// The export is a custom method on the session's point, and `alt=media`
+    /// is what makes it the document rather than a JSON wrapper.
+    #[test]
+    fn the_export_url_names_the_point_and_asks_for_media() {
+        let u = export_url("4093039881136750928");
+        assert!(
+            u.ends_with(
+                "/dataTypes/exercise/dataPoints/4093039881136750928:exportExerciseTcx?alt=media"
+            ),
+            "{u}"
+        );
+        assert!(
+            u.starts_with("https://health.googleapis.com/v4/users/me/"),
+            "{u}"
+        );
+    }
+}

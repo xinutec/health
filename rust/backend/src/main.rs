@@ -220,6 +220,7 @@ async fn main() -> Result<()> {
             google_backfill_steps(from, until, write).await
         }
         C::GoogleSyncExercise => google_sync_exercise().await,
+        C::GoogleSyncExerciseRoutes { limit } => google_sync_exercise_routes(limit).await,
         C::GoogleArchivePoints {
             from,
             until,
