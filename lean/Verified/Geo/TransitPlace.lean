@@ -256,17 +256,37 @@ Montparnasse the last five minutes before the platform walk sat at
 "McDonald's", its centroid outside every hall outline under 100 m fixes, and
 the stay before it was inside Hall 1). FORWARD ONLY: a stay before entering the
 building is a destination of its own; being inside is the evidence, and it
-starts there. `enclosedAt i` is the station a building-enclosed stay at `i`
-belongs to (the station node in range of it), `none` for every other segment. -/
+starts there. `enclosedAt i` is the stations in range of a building-enclosed
+stay at `i`, nearest first, and empty for every other segment; `trainBoard j` is
+where the train at `j` boards. The chain is named for the station the train
+ahead boards at when that is in range — at Montparnasse the Métro's node sits
+nearer the halls than the gare's, and the TGV says which one the wait was for —
+and for the nearest otherwise. -/
 def stationsFromEnclosed (segments : Array Seg)
-    (enclosedAt : Nat → Option String) (stationsAt : Nat → Array String) :
+    (enclosedAt : Nat → Array String) (stationsAt : Nat → Array String)
+    (trainBoard : Nat → Option String := fun _ => none) :
     Array (Option String) := Id.run do
   let mut out : Array (Option String) := Array.replicate segments.size none
   let mut chain : Option String := none
   for i in [0 : segments.size] do
     let some s := segments[i]? | continue
     let dur := s.endTs - s.startTs
-    if let some st := enclosedAt i then
+    let here := enclosedAt i
+    if !here.isEmpty then
+      -- The train this wait was for: the first one after the stay, within the
+      -- boarding-wait bound. Not the chain's own walk: the name does not need
+      -- the chain to reach the train, only to know which train it was.
+      let mut board : Option String := none
+      let mut j := i + 1
+      while j < segments.size do
+        let some t := segments[j]? | break
+        if effMode t == "train" then
+          if t.startTs - s.endTs ≤ BOARDING_WAIT_MAX_S then board := trainBoard j
+          break
+        j := j + 1
+      let st := match board with
+        | some b => if here.contains b then b else here[0]!
+        | none => here[0]!
       chain := some st
       out := out.set! i (some st)
       continue
@@ -463,17 +483,37 @@ private def hall : Array Seg :=
   #[sg "stationary" 0 300, sg "walking" 300 540, sg "stationary" 540 900,
     sg "walking" 900 1440, sg "stationary" 1440 1740, sg "walking" 1740 2460,
     sg "train" 2460 9000]
-private def inside (segs : Array Seg) (at_ : Nat) (others : List (Nat × Array String) := []) :
+private def inside (segs : Array Seg) (at_ : Nat) (others : List (Nat × Array String) := [])
+    (here : Array String := #["S"]) (boardsAt : Option String := none) :
     Array (Option String) :=
-  stationsFromEnclosed segs (fun i => if i == at_ then some "S" else none) fun i =>
-    match others.find? (·.1 == i) with
-    | some (_, sts) => sts
-    | none => #["S"]
+  stationsFromEnclosed segs (fun i => if i == at_ then here else #[])
+    (fun i => match others.find? (·.1 == i) with
+      | some (_, sts) => sts
+      | none => #["S"])
+    (fun i => if i == 6 then boardsAt else none)
 
 -- From the enclosed stay forward to the train; the stay before it is its own.
 #guard inside hall 2 == #[none, none, S, none, S, none, none]
 -- No enclosed stay, no chain (Pizza Union).
-#guard stationsFromEnclosed hall (fun _ => none) (fun _ => #["S"]) == Array.replicate 7 none
+#guard stationsFromEnclosed hall (fun _ => #[]) (fun _ => #["S"]) == Array.replicate 7 none
+-- Two stations in range of the halls, the Métro's nearer: the TGV's board
+-- station names the wait; with no train label, or a train boarding elsewhere,
+-- the nearest does.
+#guard inside hall 2 [(4, #["M", "G"])] (here := #["M", "G"]) (boardsAt := some "G")
+  == #[none, none, some "G", none, some "G", none, none]
+#guard inside hall 2 [(4, #["M", "G"])] (here := #["M", "G"])
+  == #[none, none, some "M", none, some "M", none, none]
+#guard inside hall 2 [(4, #["M", "G"])] (here := #["M", "G"]) (boardsAt := some "X")
+  == #[none, none, some "M", none, some "M", none, none]
+-- The train names the wait even when the walk to the platform is longer than
+-- the chain follows (the chain still stops there); a train past the wait bound
+-- does not.
+#guard inside (withAt hall 5 (sg "walking" 1740 (1740 + INTERCHANGE_WALK_MAX_S + 1)))
+    2 [(4, #["M", "G"])] (here := #["M", "G"]) (boardsAt := some "G")
+  == #[none, none, some "G", none, some "G", none, none]
+#guard inside (withAt hall 6 (sg "train" (900 + BOARDING_WAIT_MAX_S + 1) 99999))
+    2 [(4, #["M", "G"])] (here := #["M", "G"]) (boardsAt := some "G")
+  == #[none, none, some "M", none, some "M", none, none]
 -- A later stay at another station, or at none, closes it.
 #guard inside hall 2 [(4, #["T"])] == #[none, none, S, none, none, none, none]
 #guard inside hall 2 [(4, #[])] == #[none, none, S, none, none, none, none]

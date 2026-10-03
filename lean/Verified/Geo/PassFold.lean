@@ -502,17 +502,18 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt trainBoard walkWithin
   -- A stay the station BUILDING encloses (`placeKind`, written by the namer
   -- with the name), given the station node in range of it.
-  let enclosedAt (i : Nat) : Option String := do
-    let s ← segs[i]?
-    guard (Verified.Geo.SegmentMerge.effectiveMode s == "stationary")
-    guard (s.placeSource.any (·.2 == "enclosing"))
-    guard (s.placeKind == some Verified.Geo.Landmarks.STATION_BUILDING)
+  let enclosedAt (i : Nat) : Array String := Id.run do
+    let some s := segs[i]? | return #[]
+    if Verified.Geo.SegmentMerge.effectiveMode s != "stationary" then return #[]
+    if !s.placeSource.any (·.2 == "enclosing") then return #[]
+    if s.placeKind != some Verified.Geo.Landmarks.STATION_BUILDING then return #[]
     let pts := inWindow e s
-    guard (!pts.isEmpty)
+    if pts.isEmpty then return #[]
     let n := Float.ofNat pts.size
-    (Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
-      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations)[0]?
-  let fromInside := Verified.Geo.TransitPlace.stationsFromEnclosed segs enclosedAt stationsAt
+    return Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
+      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations
+  let fromInside :=
+    Verified.Geo.TransitPlace.stationsFromEnclosed segs enclosedAt stationsAt trainBoard
   let mut out := segs
   for i in [0 : out.size] do
     let some s := out[i]? | continue
