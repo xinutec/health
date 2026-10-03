@@ -189,22 +189,40 @@ def stationAtTransitInterchange
 than this is somewhere he went, and a train later is how he left it. -/
 def BOARDING_WAIT_MAX_S : Int := 90 * 60
 
+/-- The longest walk from the concourse to the platform that is still inside
+the station. Measured on both sides, not surveyed: the walks to the platform at
+Victoria (2026-06-12) and Stanmore (2026-09-06) are 4 and 3 minutes; the walk
+from Pizza Union along Pentonville Road to King's Cross (2026-05-22) is 9, and
+every fix of it is within station range of a King's Cross entrance, so range
+alone cannot tell a journey to the station from a walk inside it. -/
+def PLATFORM_WALK_MAX_S : Int := 5 * 60
+
 /-- Boarding continuity, the mirror of `stationAtTrainAlight`: a stay that runs
 straight into a train is the wait for it, and so is every stay before it at the
 SAME station, across short walks (2026-10-01: an hour inside Gare Montparnasse
 read "Maison du Chocolat", "McDonald's" and "Jardin Atlantique", the garden on
 the station roof).
 
-The anchor must touch the train, as the alight rule's must: dinner at Pizza
-Union and a walk to King's Cross for the train home (2026-05-22) is a meal, not
-a wait. Read right to left; a stay not in range of the chain's station closes
-the chain for everything earlier. `stationsAt i` is the caller's answer for the
-stay at `i`: the stations in range, nearest first, or none at all when the stay
-must keep its name (an established focus place). In range, not nearest: at
-Montparnasse a Métro entrance sits nearer the concourse than any node of the
-gare above it. -/
+The anchor touches the train, as the alight rule's does: dinner at Pizza Union
+and a walk to King's Cross for the train home (2026-05-22) is a meal, not a
+wait. The anchor is a stay, or a short walk that never leaves the range of the
+station the train BOARDS at: the last wait on the platform is absorbed into the
+train as its boarding (2026-10-01, 11:03), which leaves the walk from the
+concourse to the platform touching the train, and the hour of waits before it
+read as the shops beside each. Pizza Union's walk sets out from outside any
+node of King's Cross, so it anchors nothing. Read right to left; a stay not in
+range of the chain's station closes the chain for everything earlier.
+
+`stationsAt i` is the caller's answer for the stay at `i`: the stations in
+range, nearest first, or none at all when the stay must keep its name (an
+established focus place). In range, not nearest: at Montparnasse a Métro
+entrance sits nearer the concourse than any node of the gare above it.
+`trainBoard i` is the station the train at `i` boards at, when its label says;
+`walkWithin i st` is whether every fix of the walk at `i` is in range of `st`. -/
 def stationsBeforeBoarding (segments : Array Seg)
-    (stationsAt : Nat → Array String) : Array (Option String) := Id.run do
+    (stationsAt : Nat → Array String)
+    (trainBoard : Nat → Option String := fun _ => none)
+    (walkWithin : Nat → String → Bool := fun _ _ => false) : Array (Option String) := Id.run do
   let mut out : Array (Option String) := Array.replicate segments.size none
   -- `some none`: a train is directly to the right. `some (some st)`: the chain
   -- is at `st`. `none`: closed.
@@ -216,6 +234,11 @@ def stationsBeforeBoarding (segments : Array Seg)
     chain := match effMode s, chain with
       | "train", _ => some none
       | "walking", some (some st) => if dur ≤ INTERCHANGE_WALK_MAX_S then some (some st) else none
+      | "walking", some none =>
+        -- The walk to the platform: an anchor only inside the board station.
+        match trainBoard (i + 1) with
+        | some b => if dur ≤ PLATFORM_WALK_MAX_S && walkWithin i b then some (some b) else none
+        | none => none
       | "stationary", some want =>
         let here := if dur ≤ BOARDING_WAIT_MAX_S then stationsAt i else #[]
         match want with
@@ -348,15 +371,46 @@ private def wait : Array Seg :=
 
 private def S : Option String := some "S"
 
+/-- `stay | walk | stay | walk | train`: the Montparnasse hour as served live,
+the platform wait absorbed into the train. The last walk is the one to the
+platform. -/
+private def toPlatform (within : Bool) (boardsAt : Option String := some "S")
+    (walkS : Int := 300) (others : List (Nat × Array String) := []) : Array (Option String) :=
+  stationsBeforeBoarding
+    #[sg "stationary" 0 300, sg "walking" 300 840, sg "stationary" 840 1100,
+      sg "walking" 1100 (1100 + walkS), sg "train" (1100 + walkS) 9000]
+    (fun i => match others.find? (·.1 == i) with
+      | some (_, sts) => sts
+      | none => #["S"])
+    (fun i => if i == 4 then boardsAt else none)
+    (fun i st => i == 3 && st == "S" && within)
+
 #guard stationsWithin 0 0 two == #["Near", "Far"]
 #guard stationsWithin 0 0 tie == #["First", "Second"]
 #guard stationsWithin 0 0 beyond == #[]
 #guard stationsWithin 0 0 atRadius == #["Edge"]
 #guard BOARDING_WAIT_MAX_S == 5400
+#guard PLATFORM_WALK_MAX_S == 300
 #guard board wait == #[S, none, S, none, S, none]
 -- A walk between the stay and the train is going TO the train: no anchor.
 #guard board #[sg "stationary" 0 1900, sg "walking" 1900 2100, sg "train" 2100 9000]
   == #[none, none, none]
+-- …unless it never leaves the board station: the walk to the platform after the
+-- last wait was absorbed into the train (10-01). The chain is at the BOARD
+-- station, so a stay in range of it is named, and one that is not closes it.
+#guard toPlatform (within := true) == #[S, none, S, none, none]
+#guard toPlatform (within := false) == #[none, none, none, none, none]
+-- The train's label must say where it boards; a walk inside some station the
+-- train did not board at (a Métro entrance beside the restaurant) is nothing.
+#guard toPlatform (within := true) (boardsAt := none) == #[none, none, none, none, none]
+-- The platform walk has its own, shorter bar: Pizza Union's nine minutes along
+-- Pentonville Road are in range of King's Cross the whole way and are a journey.
+#guard toPlatform (within := true) (walkS := PLATFORM_WALK_MAX_S) == #[S, none, S, none, none]
+#guard toPlatform (within := true) (walkS := PLATFORM_WALK_MAX_S + 1)
+  == #[none, none, none, none, none]
+#guard toPlatform (within := true) (walkS := 9 * 60) == #[none, none, none, none, none]
+-- The stay before the platform walk must be in range of the BOARD station.
+#guard toPlatform (within := true) (others := [(2, #["T"])]) == #[none, none, none, none, none]
 -- A stay AFTER a train is the alight rule's, not this one's.
 #guard board #[sg "train" 0 600, sg "stationary" 600 900] == #[none, none]
 #guard board #[sg "stationary" 0 300] == #[none]

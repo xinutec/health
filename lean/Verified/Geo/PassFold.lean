@@ -488,7 +488,17 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
     let n := Float.ofNat pts.size
     return Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
       ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations
-  let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt
+  let inStation (st : String) (p : Shed.PointF) : Bool :=
+    (e.nearbyStations p.lat p.lon R).any fun n => n.name == st && n.distanceM ≤ R
+  let trainBoard (i : Nat) : Option String := do
+    let s ← segs[i]?
+    let rail ← Verified.Geo.RailAbsorbers.parseRailWayName s.wayName
+    if rail.board.isEmpty then none else some rail.board
+  let walkWithin (i : Nat) (st : String) : Bool :=
+    match segs[i]? with
+    | some w => let pts := inWindow e w; !pts.isEmpty && pts.all (inStation st)
+    | none => false
+  let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt trainBoard walkWithin
   let mut out := segs
   for i in [0 : out.size] do
     let some s := out[i]? | continue
@@ -499,8 +509,6 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
                                refinedReason := some (match s.refinedReason with
                                  | some r => s!"{r}; {why}"
                                  | none => why) }
-  let inStation (st : String) (p : Shed.PointF) : Bool :=
-    (e.nearbyStations p.lat p.lon R).any fun n => n.name == st && n.distanceM ≤ R
   let absorbed := out.mapIdx fun i w =>
     if Verified.Geo.SegmentMerge.effectiveMode w != "walking"
         || w.endTs - w.startTs > Verified.Geo.TransitPlace.INTERCHANGE_WALK_MAX_S then w
