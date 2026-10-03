@@ -117,8 +117,10 @@ private def tagOf (tags : List (String × String)) (k : String) : Option String 
 
 /-- Should this landmark outrank nearer point POIs?
 
-⚠ `amenity` only, `hospital` only, and the radius fallback for POINTS only. See
-the module note — each narrowing is a specific day that went wrong. -/
+⚠ `amenity` only, `hospital` only, and the radius fallback for POINTS only; the
+one other institution is a railway station's BUILDING (`STATION_BUILDING`), by
+outline alone. See the module note — each narrowing is a specific day that went
+wrong. -/
 def isEnclosingInstitution (type_ subtype : String) (distanceM : Float)
     (encloses isPoint : Bool) : Bool :=
   if (type_, subtype) == STATION_BUILDING then encloses && !isPoint

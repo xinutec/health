@@ -430,7 +430,8 @@ async fn upsert_lines(pool: &MySqlPool, features: &[&Feature]) -> Result<u64> {
     Ok(out.rows_affected())
 }
 
-/// Record that a box has been fetched for a bucket.
+/// Record that a box has been fetched for a bucket, under `vocab` when the
+/// bucket's boxes are keyed by one ([`vocab_for`]).
 ///
 /// ⚠ WRITTEN LAST, after the rows are in. A coverage row is a PROMISE that the
 /// area can be answered from the mirror; writing it before the features would

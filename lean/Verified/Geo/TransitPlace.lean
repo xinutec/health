@@ -3,10 +3,11 @@ import Verified.Geo.TubeHop
 /-!
 # Transit continuity for place-naming (port of `src/geo/transit-place.ts`)
 
-Three rules that give the place-picker the transit context it otherwise lacks.
+Four rules that give the place-picker the transit context it otherwise lacks.
 The venue scorer ranks what is mapped near a coordinate; it has no idea the
-user just got off a train, so a station forecourt resolves to whatever café,
-hotel or doughnut counter happens to be mapped inside the concourse.
+user just got off a train or is about to board one, so a station forecourt
+resolves to whatever café, hotel or doughnut counter happens to be mapped
+inside the concourse.
 
 * `stationAtTrainAlight` — a stay DIRECTLY after a train, within station
   range, is at the station just alighted at (2026-05-22: an ambulance wait on
@@ -18,9 +19,16 @@ hotel or doughnut counter happens to be mapped inside the concourse.
   Circle→Met platform change read "Krispy Kreme", a unit mapped 40 m away
   inside the station). The first rule cannot see this one: it bails the moment
   a walk sits between the train and the stay.
-* `stationsBeforeBoarding` — a stay that runs straight into a train, and the
-  stays before it at the same station, are the wait for it (2026-10-01: an
-  hour in Gare Montparnasse read as shop visits).
+* `stationsBeforeBoarding` — a stay that runs straight into a train, or is
+  parted from it only by a short walk inside the board station, and the stays
+  before it at the same station across short walks, are the wait for it
+  (2026-10-01: an hour in Gare Montparnasse read as shop visits; 06-12 Victoria
+  and 09-06 Stanmore through the walk to the platform).
+* `stationsFromEnclosed` — a stay the station BUILDING encloses is the wait
+  whatever touches the train, and so is every stay after it at the same
+  station up to the train; named for the station the train boards at
+  (2026-10-03: the last five minutes before Montparnasse's platform walk read
+  "McDonald's").
 
 The first two are `async` in the TS only because the station lookup is injected
 (`osm: Pick<OsmAdapter, "nearbyStations">`) — the TubeHop shape. Modelled here
@@ -43,8 +51,9 @@ would silently answer "not a train" and look correct while meaning something
 else. Indices here are `Int` and `segAt` returns `none` outside the array, the
 same landmine `WalkAnchors` records.
 
-UNPROVEN; every value pinned against Node/V8
-(`lean/experiments/transit-place-refs.mts`).
+UNPROVEN. The first two rules are pinned against Node/V8
+(`lean/experiments/transit-place-refs.mts`); the two boarding rules are
+Lean-only (#1891, 2026-10) and pinned by their `#guard`s below.
 -/
 
 namespace Verified.Geo.TransitPlace

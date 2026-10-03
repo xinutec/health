@@ -472,11 +472,13 @@ def interchangeStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
 private def isStationStay (s : Seg) : Bool :=
   Verified.Geo.SegmentMerge.effectiveMode s == "stationary" && s.placeSource.any (·.2 == "station")
 
-/-- Name the waits before a train after their station
-(`TransitPlace.stationsBeforeBoarding`), then fold the walks between two waits
-at the SAME station into one wait when the walk never leaves that station's
-range: moving about inside Gare Montparnasse is being at Gare Montparnasse, not
-a journey. -/
+/-- Name the waits before a train after their station — the chain back from
+the train (`TransitPlace.stationsBeforeBoarding`, through a stay or a short
+walk inside the board station) and the chain forward from a stay the station
+building encloses (`TransitPlace.stationsFromEnclosed`, read off `placeKind`)
+— then fold the walks between two waits at the SAME station into one wait when
+the walk never leaves that station's range: moving about inside Gare
+Montparnasse is being at Gare Montparnasse, not a journey. -/
 def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
   let R := Verified.Geo.TransitPlace.STATION_AT_ALIGHT_RADIUS_M
   let stationsAt (i : Nat) : Array String := Id.run do
