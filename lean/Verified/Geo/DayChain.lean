@@ -35,7 +35,7 @@ at all.
 
 `sleepPlace` is `bestPlace(preferResidential: true)` composed with `placeLabel` —
 venue resolution against the OSM mirror, the same class as `Env.bestPlace` in the
-fold. It is a lookup, so it crosses as an answer table.
+fold. It is a lookup, so it crosses as an ask the host answers (#1709).
 
 The empty-day arm (`inferEmptyDayStatesFromBracket`) is NOT here. It fires only
 when the day has no states AND no points, reads a cross-day bracket this env does
