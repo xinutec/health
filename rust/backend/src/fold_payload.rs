@@ -835,15 +835,23 @@ pub fn encode_lookups(
         ])),
         "reverseGeocode": geocode_table(sec("reverseGeocode")),
         "nearbyLandmarks": table3(sec("nearbyLandmarks"), default_radius_m::NEARBY_LANDMARKS, |v| {
-            list_of(v, |l| json!({
-                "name": raw(l, "name"),
-                "type": raw(l, "type"),
-                "subtype": raw(l, "subtype"),
-                "distanceM": num_bits(l, "distanceM"),
-                "openingHours": opt_str(l, "openingHours"),
-                // ⚠ `=== true`, so a missing flag is false rather than null.
-                "enclosing": l.get("enclosing") == Some(&Value::Bool(true)),
-            }))
+            list_of(v, |l| {
+                let mut o = json!({
+                    "name": raw(l, "name"),
+                    "type": raw(l, "type"),
+                    "subtype": raw(l, "subtype"),
+                    "distanceM": num_bits(l, "distanceM"),
+                    "openingHours": opt_str(l, "openingHours"),
+                    // ⚠ `=== true`, so a missing flag is false rather than null.
+                    "enclosing": l.get("enclosing") == Some(&Value::Bool(true)),
+                });
+                // Inside an open space's outline: only when true, so a day
+                // with no open space encodes exactly as it always has.
+                if l.get("inside") == Some(&Value::Bool(true)) {
+                    o["inside"] = Value::Bool(true);
+                }
+                o
+            })
         }),
         // The stay CONTEXT of each naming question, not its answer: Lean
         // computes the label, and what it cannot compute is the venue-local

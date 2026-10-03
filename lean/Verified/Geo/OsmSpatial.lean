@@ -402,6 +402,20 @@ def mbrContainsPoint (coords : Array (Float × Float)) (lat lon : Float) : Bool 
     let mx (f : Float × Float → Float) : Float := coords.foldl (fun m p => max m (f p)) (f c0)
     lat ≥ mn (·.1) && lat ≤ mx (·.1) && lon ≥ mn (·.2) && lon ≤ mx (·.2)
 
+/-- Whether a CLOSED way (first vertex = last, four or more) contains the point,
+by ray casting: a true inside test, not `mbrContainsPoint`'s bounding box. A
+point on the boundary may fall either way, which no caller depends on. -/
+def ringContains (coords : Array (Float × Float)) (lat lon : Float) : Bool := Id.run do
+  if coords.size < 4 || coords[0]? != coords[coords.size - 1]? then return false
+  let mut inside := false
+  for i in [1 : coords.size] do
+    let (aLat, aLon) := coords[i - 1]!
+    let (bLat, bLon) := coords[i]!
+    if (aLat > lat) != (bLat > lat) then
+      let crossLon := aLon + (lat - aLat) / (bLat - aLat) * (bLon - aLon)
+      if lon < crossLon then inside := !inside
+  return inside
+
 /-- A line with its distance and enclosure resolved. -/
 structure ScoredLine where
   row : LineRow
@@ -416,9 +430,18 @@ def queryLines (rows : Array LineRow) (lat lon radiusM : Float)
     (subtypes : Array String := #[]) : Array ScoredLine :=
   let mpd := mPerDegAt lat
   let dDeg := radiusM / mpd
+  -- A CLOSED way encloses by the true inside test; its bounding box also covers
+  -- the streets around it (#325: a hospital "enclosed" a stay 34 m outside it).
+  -- An open way has no inside, so it keeps the box.
+  let closed (c : Array (Float × Float)) := c.size ≥ 4 && c[0]? == c[c.size - 1]?
   let scored := rows.map fun r =>
-    (r, lineDistDeg r.coords lat lon, mbrContainsPoint r.coords lat lon)
-  let inRadius := scored.filter fun s => s.2.1 < dDeg
+    (r, lineDistDeg r.coords lat lon,
+      if closed r.coords then ringContains r.coords lat lon else mbrContainsPoint r.coords lat lon)
+  -- In range, or STANDING INSIDE it: from the middle of a large outline every
+  -- edge is out of range, and a stay deep inside Cristina Enea park (2026-10-03,
+  -- 130 m from its outline) had no candidate at all. The reported distance stays
+  -- the edge's, so a venue inside the park still ranks against it as before.
+  let inRadius := scored.filter fun s => s.2.1 < dDeg || ringContains s.1.coords lat lon
   let wanted :=
     if subtypes.isEmpty then inRadius
     else inRadius.filter fun s => subtypes.contains s.1.subtype
@@ -496,6 +519,20 @@ private def R150 : Array ScoredLine := queryLines LINES LQLAT LQLON 150 RAIL_SUB
 #guard (R150.filter (·.row.osmId == 8))[0]!.encloses == true
 #guard (R150.filter (·.row.osmId == 1))[0]!.encloses == false
 #guard approxL (R150.filter (·.row.osmId == 8))[0]!.distanceM 0
+
+-- A closed outline the point lies DEEP inside is kept although every edge is
+-- out of range: a 2 km square around the query point, edges ~1 km away. An open
+-- way of the same vertices, and the same square shifted off the point, are not.
+private def SQUARE (dLat dLon : Float) : Array (Float × Float) :=
+  #[(LQLAT - 0.01 + dLat, LQLON - 0.015 + dLon), (LQLAT - 0.01 + dLat, LQLON + 0.015 + dLon),
+    (LQLAT + 0.01 + dLat, LQLON + 0.015 + dLon), (LQLAT + 0.01 + dLat, LQLON - 0.015 + dLon),
+    (LQLAT - 0.01 + dLat, LQLON - 0.015 + dLon)]
+#guard ringContains (SQUARE 0 0) LQLAT LQLON
+#guard !ringContains (SQUARE 0.05 0) LQLAT LQLON
+#guard !ringContains ((SQUARE 0 0).pop) LQLAT LQLON
+#guard lids (queryLines #[lr 20 "park" (some "Big Park") (SQUARE 0 0)] LQLAT LQLON 100) == #[20]
+#guard lids (queryLines #[lr 21 "park" (some "Open") (SQUARE 0 0).pop] LQLAT LQLON 100) == #[]
+#guard lids (queryLines #[lr 22 "park" (some "Far Park") (SQUARE 0.05 0)] LQLAT LQLON 100) == #[]
 
 -- `linesAtPoint`: distinct names in distance order. The unnamed tram way
 -- contributes nothing, the motorway is not a rail class, and the second Jubilee

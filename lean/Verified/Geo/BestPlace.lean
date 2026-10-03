@@ -101,6 +101,9 @@ structure Poi where
   /-- Raw OSM `opening_hours`. ~70% of venue POIs lack it. -/
   openingHours : Option String := none
   enclosing : Bool := false
+  /-- Standing inside an open space's outline (`Landmarks.ENCLOSING_OPEN_SPACES`):
+  names the stay only where nothing else does. -/
+  inside : Bool := false
   deriving Inhabited, BEq, Repr
 
 /-- JS truthiness for a string field: absent AND empty both read as false. -/
@@ -364,6 +367,8 @@ inductive Source where
   | ranked
   /-- The ranked landmark with no stay to score against. -/
   | landmark
+  /-- An open space the stay lies inside, where nothing else named it. -/
+  | openSpace
   /-- A geocoded address or area, with no venue behind it. -/
   | address
   deriving Inhabited, BEq, Repr
@@ -371,7 +376,7 @@ inductive Source where
 def Source.key : Source → String
   | .enclosing => "enclosing" | .geocodeVenue => "geocodeVenue" | .lodging => "lodging"
   | .residential => "residential" | .nearField => "nearField" | .ranked => "ranked"
-  | .landmark => "landmark" | .address => "address"
+  | .landmark => "landmark" | .openSpace => "openSpace" | .address => "address"
 
 /--
 `bestPlace`, whole, with the branch that answered (`Source`).
@@ -386,6 +391,7 @@ enables the two overrides an overnight stay needs.
 def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option (Result × Source) :=
   let landmarks := reads.landmarks.map (toLandmark reads.samples stay.isSome)
+  let openSpace := (reads.landmarks.find? (·.inside)).map (toLandmark reads.samples stay.isSome)
   let detailed := reads.geocode DETAIL_ZOOM
   -- `bestLandmark` and `nominatimWon` are the two `let`s the TS threads through
   -- the chain; they are computed here and read below. The third component says
@@ -420,24 +426,25 @@ def bestPlaceSourced (reads : Reads) (stay : Option StayShape) (priors : Option 
     some (withAddressFrom (landmarkToResult (bestLandmark.getD default)) detailed, .enclosing)
   else if detailed.any (fun d => hasSpecificVenue d && (if stay.isSome then nominatimWon else true))
     then detailed.map (·, .geocodeVenue)
-  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks
+  else rest bestLandmark rankedSource detailed reads.geocode preferResidential landmarks openSpace
 where
   /-- The tail of the chain. Split out only because Lean has no early `return`;
   the ORDER is the TS's and is load-bearing — the lodging override must beat the
   residential address, and both must beat the landmark. -/
   rest (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
       (geocode : Int → Option Result) (preferResidential : Bool)
-      (landmarks : List Landmark) : Option (Result × Source) :=
+      (landmarks : List Landmark) (openSpace : Option Landmark) : Option (Result × Source) :=
     if preferResidential then
       match pickLodgingOverride landmarks with
       | some lodging => some (withAddressFrom (landmarkToResult lodging) detailed, .lodging)
-      | none => afterLodging bestLandmark rankedSource detailed geocode preferResidential
-    else afterLodging bestLandmark rankedSource detailed geocode preferResidential
+      | none => afterLodging bestLandmark rankedSource detailed geocode preferResidential openSpace
+    else afterLodging bestLandmark rankedSource detailed geocode preferResidential openSpace
   /-- `geocode AREA_ZOOM` is applied HERE and nowhere earlier — this is the only
   branch the TS asks it on, and asking it sooner would put a request on the wire
   the run never made. -/
   afterLodging (bestLandmark : Option Landmark) (rankedSource : Source) (detailed : Option Result)
-      (geocode : Int → Option Result) (preferResidential : Bool) : Option (Result × Source) :=
+      (geocode : Int → Option Result) (preferResidential : Bool)
+      (openSpace : Option Landmark) : Option (Result × Source) :=
     -- ⚠ A geocode that names a VENUE is not the neutral address this arm is
     -- for. A venueless mined cluster asks for an address so that a
     -- low-confidence nearby venue does not name it — and the zoom-18 result at
@@ -450,6 +457,11 @@ where
     else match bestLandmark with
     | some bl => some (withAddressFrom (landmarkToResult bl) detailed, rankedSource)
     | none =>
+      -- No venue named it: an open space it lies inside does, before any
+      -- address (2026-10-03, Cristina Enea).
+      match openSpace with
+      | some o => some (withAddressFrom (landmarkToResult o) detailed, .openSpace)
+      | none =>
       if detailed.any hasResidentialAddress then detailed.map (·, .residential)
       else
         let area := geocode AREA_ZOOM
@@ -591,6 +603,16 @@ private def hospital : Poi :=
 private def enclosingReads : Reads :=
   { landmarks := [hospital, poi "Costa" "amenity" "cafe" 5], geocode := geo (some detailedAddr) none }
 #guard (bestPlace enclosingReads (some stay) none false).map placeLabel == some "Hospital U"
+
+-- An open space the stay lies inside names it when no venue does — and only then.
+private def parkPoi : Poi :=
+  { name := "Big Park", type := "leisure", subtype := "park", distanceM := 130, inside := true }
+private def parkOnly : Reads := { landmarks := [parkPoi], geocode := geo none none }
+#guard (bestPlaceSourced parkOnly (some stay) none false).map (fun (r, src) => (placeLabel r, src.key))
+  == some ("Big Park", "openSpace")
+#guard ((bestPlaceSourced { enclosingReads with landmarks := enclosingReads.landmarks ++ [parkPoi] }
+    (some stay) none false).map (·.2.key)) == some "enclosing"
+
 
 -- No landmarks and no geocode names nothing at all.
 private def emptyReads : Reads := { landmarks := [], geocode := geo none none }

@@ -1828,6 +1828,12 @@ pub fn shape_landmarks(
                         .unwrap_or(false),
                 ),
             );
+            // Inside an open space's outline (`Landmarks.ENCLOSING_OPEN_SPACES`):
+            // only when true, so the recorded traces, which never carry it,
+            // read the same.
+            if m.get("inside").and_then(serde_json::Value::as_bool) == Some(true) {
+                o.insert("inside".into(), serde_json::Value::Bool(true));
+            }
             if let Some(h) = m.get("openingHours").and_then(serde_json::Value::as_str) {
                 o.insert("openingHours".into(), serde_json::Value::String(h.into()));
             }

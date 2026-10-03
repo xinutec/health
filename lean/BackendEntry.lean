@@ -618,6 +618,7 @@ def dispatch (j : Json) : Json :=
             , ("subtype", Json.str l.subtype)
             , ("distanceMBits", Json.str (toString l.distanceM.toBits))
             , ("enclosing", Json.bool l.enclosing)
+            , ("inside", Json.bool l.inside)
             , ("openingHours", match l.openingHours with
                 | none => Json.null
                 | some h => Json.str h) ]).toArray) ]

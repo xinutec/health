@@ -356,6 +356,7 @@ private def parsePoi (j : Json) : Except String Verified.Geo.BestPlace.Poi := do
     distanceM := ← jBits (← j.getObjVal? "distanceM")
     openingHours := ← optStr j "openingHours"
     enclosing := ← optBool j "enclosing" false
+    inside := ← optBool j "inside" false
   }
 
 private def parseVenueStats (j : Json) : Except String Verified.Geo.VenuePrior.VenueTypeStats := do

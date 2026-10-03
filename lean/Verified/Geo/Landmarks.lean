@@ -38,6 +38,16 @@ namespace Verified.Geo.Landmarks
 /-- Amenity subtypes big enough that being inside one names the stay. -/
 def LARGE_INSTITUTION_SUBTYPES : List String := ["hospital"]
 
+/-- Open spaces where being INSIDE the outline names a stay NOTHING ELSE names:
+from the middle of a park every venue is far and every edge is out of range
+(2026-10-03, lying on the grass in Cristina Enea, 130 m from its outline: the
+stop had no name). A FALLBACK, not an enclosing institution: as one it beat the
+lodging rule and renamed 04-29's confirmed hotel stay after the palace garden
+beside it. Outline only — a park mapped as a point says nothing about where it
+ends. `encloses` is the true inside test for a closed way. -/
+def ENCLOSING_OPEN_SPACES : List (String × String) :=
+  [("leisure", "park"), ("leisure", "garden"), ("natural", "beach")]
+
 /-- How near a point-mapped institution still counts as enclosing. -/
 def LARGE_INSTITUTION_POINT_RADIUS_M : Float := 80
 
@@ -84,6 +94,8 @@ structure Landmark where
   distanceM : Float
   enclosing : Bool
   openingHours : Option String
+  /-- Standing inside an open space's outline (`ENCLOSING_OPEN_SPACES`). -/
+  inside : Bool := false
   deriving Inhabited, Repr, BEq
 
 private def tagOf (tags : List (String × String)) (k : String) : Option String :=
@@ -123,7 +135,8 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
         | some sub =>
           [{ name, type_ := k, subtype := sub, distanceM := f.distanceM
            , enclosing := isEnclosingInstitution k sub f.distanceM f.encloses isPoint
-           , openingHours := tagOf f.tags "opening_hours" }]
+           , openingHours := tagOf f.tags "opening_hours"
+           , inside := ENCLOSING_OPEN_SPACES.contains (k, sub) && f.encloses && !isPoint }]
       -- ⚠ A pedestrian way is a landmark with NO enclosing test and no opening
       -- hours: it names a street, not a venue.
       let ped :=
@@ -137,7 +150,8 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
           (tagOf f.tags k).bind fun v =>
             if vs.contains v then
               some { name, type_ := ty, subtype := v, distanceM := f.distanceM
-                   , enclosing := false, openingHours := tagOf f.tags "opening_hours" }
+                   , enclosing := false, openingHours := tagOf f.tags "opening_hours"
+                   , inside := ENCLOSING_OPEN_SPACES.contains (ty, v) && f.encloses && !isPoint }
             else none
       byTag ++ venue ++ ped
   -- ⚠ STABLE, by distance only. Ties keep the order above, which is why points
@@ -163,6 +177,15 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard (shapeLandmarks [] [feat "X" [("building", "hotel"), ("amenity", "bar")] 20 (isPoint := false)]).map
     (fun l => (l.type_, l.subtype)) == [("amenity", "bar")]
 #guard shapeLandmarks [] [feat "Flats" [("building", "apartments")] 20 (isPoint := false)] == []
+-- Inside a park's or a beach's OUTLINE is inside it; its point, or outside the
+-- outline, is not; and it is no enclosing institution, which outranks venues.
+#guard (shapeLandmarks [] [feat "P" [("leisure", "park")] 130 (encloses := true) (isPoint := false)]).map
+    (fun l => (l.inside, l.enclosing)) == [(true, false)]
+#guard (shapeLandmarks [] [feat "P" [("leisure", "park")] 130 (encloses := false) (isPoint := false)]).map
+    (·.inside) == [false]
+#guard (shapeLandmarks [feat "P" [("leisure", "park")] 5 (encloses := true)] []).map (·.inside) == [false]
+#guard (shapeLandmarks [] [feat "B" [("natural", "beach")] 40 (encloses := true) (isPoint := false)]).map
+    (·.inside) == [true]
 -- A named beach is a place; other natural features are not.
 #guard (shapeLandmarks [] [feat "La Concha" [("natural", "beach")] 40 (isPoint := false)]).map
     (fun l => (l.type_, l.subtype)) == [("natural", "beach")]
