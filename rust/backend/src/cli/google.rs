@@ -910,9 +910,9 @@ pub(crate) async fn google_backfill_sleep(
     Ok(())
 }
 
-/// Re-fetch `days` of step minutes through the routine writer, so rows written
-/// before it stored instants get their `ts_utc` and a minute filed under two
-/// wall clocks keeps one.
+/// Archive Google's step minutes over `[from, until)` by wall clock, holes
+/// only: the history Fitbit's API never covered (2023-04-15 → 2024-01-12,
+/// #1886). A stored minute keeps its value.
 ///
 /// ⚠ **DRY RUN UNLESS `--write`**, as the sleep backfill.
 pub(crate) async fn google_backfill_steps(
@@ -950,6 +950,9 @@ pub(crate) async fn google_backfill_steps(
     Ok(())
 }
 
+/// Archive the types with no table of their own into `google_points`
+/// (`archive::ARCHIVE_TYPES`), a month at a time over `[from, until)`; holes
+/// only. ⚠ **DRY RUN UNLESS `--write`.**
 pub(crate) async fn google_archive_points(
     from: chrono::NaiveDate,
     until: chrono::NaiveDate,
@@ -1005,6 +1008,7 @@ pub(crate) async fn google_archive_points(
     Ok(())
 }
 
+/// Every workout Google holds, into `exercise_sessions` (`exercise::sync_exercise`).
 pub(crate) async fn google_sync_exercise() -> Result<()> {
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
@@ -1026,6 +1030,8 @@ pub(crate) async fn google_sync_exercise() -> Result<()> {
     Ok(())
 }
 
+/// The TCX route of every GPS workout with none stored (`routes::sync_routes`);
+/// `limit` bounds a run.
 pub(crate) async fn google_sync_exercise_routes(limit: Option<usize>) -> Result<()> {
     let user_id = std::env::var("GH_USER_ID")
         .context("GH_USER_ID names the Google-configured user and must be set")?;
@@ -1053,6 +1059,8 @@ pub(crate) async fn google_sync_exercise_routes(limit: Option<usize>) -> Result<
     Ok(())
 }
 
+/// Every SpO2 reading over `[from, until)` by UTC date into `spo2_intraday`,
+/// holes only (`sync::sync_spo2_intraday`). ⚠ **DRY RUN UNLESS `--write`.**
 pub(crate) async fn google_archive_spo2(
     from: chrono::NaiveDate,
     until: chrono::NaiveDate,
