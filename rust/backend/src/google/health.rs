@@ -1,4 +1,7 @@
-//! Google Health API v4 — the weight feed. Port of the retired TypeScript `health.ts`.
+//! Google Health API v4 — the client every Google stream reads through: paged
+//! `dataPoints` walks, filtered walks, the daily roll-up and the typed fetchers.
+//! It began as the weight feed (a port of the retired TypeScript `health.ts`,
+//! #260) and grew with the migration (#1886).
 //!
 //! Unified data model: `GET /v4/users/me/dataTypes/{type}/dataPoints`, paged.
 
@@ -10,9 +13,10 @@ use crate::lean::Weigh;
 
 pub(crate) const BASE: &str = "https://health.googleapis.com/v4";
 
-/// Pages requested at a time. Google's maximum; the whole history is ~150
-/// weigh-ins, so this is one page in practice and the loop is for correctness
-/// rather than for volume.
+/// Page size for the weight walk. Google's maximum; the weigh-in history was
+/// ~150 points when this was written, so it is one page in practice and the
+/// loop is for correctness. The intraday walks size their own pages
+/// (`fetch_points`).
 const PAGE_SIZE: u32 = 1000;
 
 /// A bound on the page walk.

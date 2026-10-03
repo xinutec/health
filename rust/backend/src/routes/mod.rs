@@ -6,12 +6,8 @@
 //! change here as a change to the live site.
 //!
 //! `/velocity` answers from the OSM mirror through Lean rather than MariaDB's
-//! `ORDER BY ST_Distance … LIMIT 50`. #413's re-bless was the decision to let
-//! it, and it is taken: #413 recorded 0 of 315 timeline states differing for
-//! the oracle swap alone, with 9 queries separately predicted where `LIMIT 50`
-//! displacement loses a named street. That prediction has never been read back
-//! against the served output — so it is an open measurement, not a warning
-//! against deploying something already deployed.
+//! `ORDER BY ST_Distance … LIMIT 50` (#413: 0 of 315 timeline states moved on
+//! the swap; the corpus has been blessed against it since).
 //!
 //! # Nothing in this file decides anything
 //!
