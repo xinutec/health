@@ -46,7 +46,7 @@ log (see `docs/proposals/README.md`).
 | `cargo nextest run` | The backend test suite, from `rust/`. (`pnpm test` is gone with the TypeScript backend.) |
 | `bin/backend <sub>` | The CLI. `bin/backend --help` (or no subcommand) lists them — `check`, `sync`, `serve`, `coverage`, `freshness`, `zones-census`, `decode-day`, the `compare-*` pairs, and the rest. |
 | `cargo test -p backend --release --test corpus_gate --test decoder_scoreboard --test hsmm_decode_corpus` | The replay gates, from `rust/`. `corpus_gate` replays each golden day ONCE and grades it five ways — walks, truth, journeys, day (#1359), and the feasibility ceiling (#1654). They replay the gitignored `tests/golden/` corpora against committed floors blessed from Lean's own output (`DAY_BLESS`, `WALK_BLESS`, `TRUTH_BLESS`, `FEASIBILITY_BLESS`): the walks, the confirmed ground-truth rows, the journeys, the decoder scoreboard, and the same days RE-DECODED from raw materials against their blessed segments. Read the counts off the baselines, not from here. Each ANNOUNCES A SKIP when the corpus is absent rather than passing quietly. |
-| `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud env from the running pod, then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
+| `scripts/prod-db.sh <cmd>` | Run a command against the prod health-db: opens an SSH tunnel and exports the DB + Nextcloud + Google env read from the workload specs and Secrets (nothing execs into the pod), then runs `<cmd>`. e.g. `scripts/prod-db.sh bin/backend coverage`. Refuses anything under `dist/`. |
 | `bash scripts/deploy.sh -m "msg"` | Full deploy: the full gate once → commit (the hook is skipped: its table is a subset of what just ran) → push this repo → wait for CI (capped at 30 min; a build is 20-23) → kubectl rollout on isis. See the script header for `-F file` usage and prerequisites. |
 
 ⚠ The TypeScript-era replay scripts went with the backend (#975, #1225).
@@ -62,7 +62,11 @@ Production runs as `deploy/health-auth` in the `health` namespace of the
 isis k3s cluster. The Docker image (`xinutec/health-sync:latest`) is built by
 this repo's GitHub Actions on every push to `main` and pulled by the cluster on
 rollout. The k8s manifests live in the home monorepo (`xinutec/pippijn` <!-- dev-lint: allow-pii the repository's name -->
-`code/kubes/health/k8s/`).
+`code/kubes/health/k8s/`), GENERATED from the Dhall model
+`code/kubes/dhall/apps/health.dhall` and applied with `code/kubes/health/k8s/sync.sh`;
+the serving pod is two containers from one image, `bin/backend serve` and the
+`health-fetch` sidecar (`bin/backend watch-fetch-queue`), and the rollout below
+restarts both.
 
 `scripts/deploy.sh` is the one-step path. The manual equivalent is:
 

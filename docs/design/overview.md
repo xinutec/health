@@ -16,10 +16,10 @@ to the Rust or Lean symbol that does the work (#919).
 
 ```
    ┌──────────────┐                     ┌────────────────────┐
-   │  Fitbit API  │                     │ Nextcloud (dash.*) │
+   │ Google Health│                     │ Nextcloud (dash.*) │
    └──────┬───────┘                     │  SSO + PhoneTrack  │
           │ OAuth2 + REST               └─────┬───────┬──────┘
-          ▼ (CronJob, hourly)                 │       │ live GPS fetch
+          ▼ (CronJob, 15 min)                 │       │ live GPS fetch
    ┌──────────────┐                           │       │ (no mirror)
    │ MariaDB      │◄───── biometrics ─────────┤       │
    │ on isis      │                           │       │
@@ -83,7 +83,8 @@ the map. Built to static files, served by the backend (`routes/site.rs`).
 
 Deployed on isis's k3s cluster in the `health` namespace:
 - MariaDB (Deployment + headless Service + PVC)
-- health-auth (Deployment + Service running `bin/backend serve`)
+- health-auth (Deployment + Service: `bin/backend serve`, and the `health-fetch`
+  sidecar running `bin/backend watch-fetch-queue` from the same image)
 - health-sync (CronJob running `bin/backend sync` every 15 minutes), and the
   refresh CronJobs in `04-cronjobs.yaml` — count them there
 - Ingress with cert-manager TLS at `health.xinutec.org`
