@@ -11,9 +11,9 @@
 //! null when the tz is unknown — a guess stored in a UTC column is worse than
 //! an absent value, because nothing downstream can tell it was a guess.
 //!
-//! # How the TypeScript does it, and why the port does not copy that
+//! # How the TypeScript did it, and why the port does not copy that
 //!
-//! It has no tz database, so it round-trips through `Intl`: pretend the
+//! It had no tz database, so it round-tripped through `Intl`: pretend the
 //! components are UTC, render that instant in the target zone, measure how far
 //! the rendering diverged, and subtract. Ingenious and correct for the common
 //! case, but it silently picks ONE answer at a DST boundary without saying

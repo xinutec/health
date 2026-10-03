@@ -7,8 +7,8 @@ use backend::db;
 
 /// Rebuild `focus_places` and `venue_type_priors` from PhoneTrack history.
 ///
-/// Tier 2 of #982 — the node cron is `refresh-focus-places.ts`, which
-/// runs Sundays 04:00. The geometry (stays, clusters, splitting, hour profiles,
+/// Ported from `refresh-focus-places.ts` (#982); the CronJob runs Sundays
+/// 04:00. The geometry (stays, clusters, splitting, hour profiles,
 /// identity) is `ServeEntry`'s `focus` mode; the amenity vote is
 /// `Verified.Geo.FocusMining.mineCluster`; everything here is the IO around
 /// them.
@@ -82,12 +82,12 @@ pub(crate) async fn refresh_focus_places_one(
     // ── 1. the point history ────────────────────────────────────────────────
     // ⚠ `Config::nextcloud_base_url` is None IN PRODUCTION (#1037) — the sync
     // path types it nullable because "no PhoneTrack source" is a real state
-    // there. THIS cron does not share that: its TypeScript has its own schema
-    // with `.default("https://dash.xinutec.org")`, so it has always fetched
-    // against that host whether or not `NC_BASE_URL` was set.
+    // there. THIS cron did not share that: the TypeScript it replaced defaulted
+    // the host to `https://dash.xinutec.org`, so it always fetched there whether
+    // or not `NC_BASE_URL` was set.
     //
-    // Reading the shared config here would make the Rust arm quietly unable to
-    // fetch anything in the exact deployment the node cron works in.
+    // Reading the shared config here would quietly fetch nothing in the very
+    // deployment the cron has always worked in.
     let nc_base_url = backend::config::focus_nc_base_url();
     let ctx = backend::nextcloud::phonetrack::PhoneTrack::open(
         reqwest::Client::new(),
@@ -138,9 +138,9 @@ pub(crate) async fn refresh_focus_places_one(
     // ⚠ REFUSE TO WRITE ON A PARTIAL HISTORY (#1140). The write path below ends
     // in `DELETE FROM focus_places`, and a device whose points call failed makes
     // `points` a SUBSET — real places then match nothing, and get deleted. The
-    // TypeScript does not check this: it logs a per-device warning and carries
-    // on, so one flaky device on one Sunday silently drops rows and the run
-    // still reports success.
+    // The TypeScript did not check this: it logged a per-device warning and
+    // carried on, so one flaky device on one Sunday silently dropped rows and the
+    // run still reported success.
     //
     // Skipping a week is strictly better: the previous snapshot stands.
     if failed_devices > 0 {
@@ -687,7 +687,7 @@ pub(crate) const FOCUS_DEFAULT_LOOKBACK_DAYS: i64 = 180;
 /// Pool each rail route's historic GPS corridor and snap it, filling
 /// `rail_route_cache`.
 ///
-/// Tier 2 of #982 — the node cron is `refresh-rail-routes.ts`, nightly
+/// Ported from `refresh-rail-routes.ts` (#982); the CronJob runs nightly
 /// at 05:00. Two passes, as there: walk the window pooling every train leg's
 /// fixes per route key, then snap each pooled cloud once.
 ///
@@ -748,7 +748,7 @@ pub(crate) async fn refresh_rail_routes(window_days: i64) -> Result<()> {
                 .to_string();
             // ⚠ A day that will not compute is SKIPPED with a warning, not an
             // abort — one bad day must not cost the other twenty. The
-            // TypeScript does the same, and the pooled corridor degrades
+            // The TypeScript did the same, and the pooled corridor degrades
             // gracefully because it is a union over many days.
             days_attempted += 1;
             let result =
@@ -1118,7 +1118,7 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
         let tz = &tz_by_user[&user_id];
 
         // ⚠ Bad JSON is SKIPPED with a warning, not an abort — one corrupt day
-        // must not stop the other 89. The TypeScript does the same.
+        // must not stop the other 89. The TypeScript did the same.
         let Ok(segments) = serde_json::from_str::<serde_json::Value>(&segments_json) else {
             eprintln!("refresh-presence-log: bad JSON for {user_id} {date}");
             skipped += 1;
@@ -1161,7 +1161,7 @@ pub(crate) async fn refresh_presence_log(pool: &sqlx::MySqlPool, lookback: i64) 
     Ok(())
 }
 
-/// Tier 2 of #982 — the node cron is `refresh-rail-stops.ts`.
+/// Ported from `refresh-rail-stops.ts` (#982).
 ///
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED — rail now carries the
 /// `tile_key` bus has had all along, added 2026-08-25 once the port's parity was
@@ -1438,7 +1438,7 @@ pub(crate) async fn retire_unplannable(
     Ok(())
 }
 
-/// Tier 2 of #982 — the node cron is `refresh-bus-routes.ts`.
+/// Ported from `refresh-bus-routes.ts` (#982).
 ///
 /// ⚠ A PARTIAL RUN REPLACES ONLY THE TILES THAT ANSWERED. That is what makes it
 /// lossless, and it is why the refusal can be as narrow as "every tile failed".

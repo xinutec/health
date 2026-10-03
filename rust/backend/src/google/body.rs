@@ -76,8 +76,8 @@ pub async fn sync_google_weight(
     // EMPTY, and a failure there would leave the table with a hole where the
     // stale-but-plausible values were — worse than either endpoint,
     // because a gap in weight reads as "did not weigh" rather than as a failed
-    // sync. The TypeScript runs these as separate statements on a shared
-    // connection and has exactly that exposure.
+    // sync. The TypeScript ran these as separate statements on a shared
+    // connection and had exactly that exposure.
     let mut tx = pool.begin().await.context("opening the weight tx")?;
 
     let del = sqlx::query("DELETE FROM body WHERE user_id = ? AND date >= ?")

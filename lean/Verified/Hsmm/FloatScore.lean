@@ -2,7 +2,7 @@
 # Float scoring primitives (implementation-first port of `src/hmm/emissions.ts`)
 
 The verified trellis (`Score.lean` and below) works over *integer* fixed-point
-scores. The TypeScript backend produces those integers by computing emission /
+scores. The TypeScript backend produced those integers by computing emission /
 transition / duration log-likelihoods in IEEE `Float` and quantising. This
 module begins moving that scoring INTO Lean, so the decoder can eventually build
 its own tensors from raw observations instead of receiving a ~48 MB pre-scored

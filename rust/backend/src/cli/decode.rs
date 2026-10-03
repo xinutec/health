@@ -41,7 +41,7 @@ use crate::classification_inputs::CLASSIFIER_VERSION;
 
 /// Decode a day's HSMM and persist it to `decoded_days`.
 ///
-/// Tier 2 of #982 — the node cron is `decode-day.ts`, daily at 06:00.
+/// Ported from `decode-day.ts` (#982); the CronJob runs daily at 06:00.
 ///
 /// ⚠ THE WHOLE MODEL IS BUILT AND DECODED IN LEAN. `assemblesegments` takes raw
 /// `edges`/`nodes`/`obs`/`places`, builds the route-graph model, the coverage

@@ -106,13 +106,13 @@ pub struct FitbitConfig {
 /// ⚠ NOT `Config::nextcloud_base_url`, which is `Option` and is `None` in
 /// production because `NC_BASE_URL` is unset there (#1037). The sync path types
 /// it nullable because "no PhoneTrack source" is a real state for it. The focus
-/// cron does not share that: its TypeScript has its own schema with
-/// `.default("https://dash.xinutec.org")`, so it has always fetched against
-/// that host whether or not the variable was set.
+/// cron did not share that: the TypeScript it replaced defaulted the host to
+/// `https://dash.xinutec.org`, so it always fetched there whether or not the
+/// variable was set.
 ///
-/// Reading the shared config there would leave the Rust arm fetching ZERO
-/// points in the exact deployment where the node cron works — and the result
-/// would look like a user with no location history rather than a fault.
+/// Reading the shared config there would fetch ZERO points in the very
+/// deployment the cron has always worked in — and the result would look like a
+/// user with no location history rather than a fault.
 pub fn focus_nc_base_url() -> String {
     std::env::var("NC_BASE_URL")
         .ok()

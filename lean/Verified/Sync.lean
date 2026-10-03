@@ -201,7 +201,7 @@ request that would time out or be truncated server-side.
 FIXED.** Chunk *k* ends on the day chunk *k+1* begins, so a fix recorded on a
 boundary day is fetched twice. It is harmless downstream — `Verified.FitbitTz`
 picks the nearest fix in time and a duplicate is nearest to itself — and the
-TypeScript has always done it. Closing the interval would drop whichever end of
+TypeScript always did it. Closing the interval would drop whichever end of
 the boundary day the half-open form excluded, which is a real change to which
 fixes exist, made silently, to remove a duplicate nothing minds.
 
@@ -215,7 +215,7 @@ next reader to discover it from a request count.
 `none` rather than a shorter list when either endpoint fails to parse, when
 `days` is not positive, or when the span needs more than `maxChunks` requests.
 
-⚠ The `maxChunks` refusal is NEW — the TypeScript has no bound and would walk a
+⚠ The `maxChunks` refusal is NEW — the TypeScript had no bound and would walk a
 corrupt cursor across years, one HTTP request per week, before anything noticed.
 It REFUSES rather than truncating, for the reason `dateRangeInclusive` does: a
 prefix of the fixes is not a smaller answer to the same question, it is a

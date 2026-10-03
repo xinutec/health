@@ -2,7 +2,7 @@
 //!
 //! `/location/latest` and `/location/tail` both answer from PhoneTrack, and the
 //! Map tab polls both. Without a cache each poll is a nested walk of one HTTP
-//! call per device against Nextcloud, so the TypeScript keeps a per-user entry
+//! call per device against Nextcloud, so the TypeScript kept a per-user entry
 //! for ten seconds and this does the same.
 //!
 //! ⚠ Process-local, like the velocity cache, and for the same reason: a deploy
@@ -13,7 +13,7 @@
 //!
 //! `velocity_cache` serialises concurrent misses because computing a day is
 //! expensive enough that two of them at once matters. These are one bounded
-//! HTTP walk, and the TypeScript does not serialise them either — two polls
+//! HTTP walk, and the TypeScript did not serialise them either — two polls
 //! landing together do two fetches and the second wins. Adding a lock would be
 //! a behaviour change dressed as an optimisation, so it is left out.
 

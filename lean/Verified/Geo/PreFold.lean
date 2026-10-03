@@ -130,7 +130,7 @@ def applyBiometricSignature (hr steps : List (Int × Float)) (stats : List ModeS
 
 {@link Verified.Geo.Segments.enforcePhysicalConstraints} decides the mode;
 what the call site adds is the record rewrite, and it is not the obvious one:
-the TS writes the new mode into `mode` AND into `refinedMode`, so a downstream
+the TS wrote the new mode into `mode` AND into `refinedMode`, so a downstream
 consumer reading either sees the override. Reading `mode` (not `effectiveMode`)
 is also the TS's — a leg some earlier pass refined to `driving` is not tested
 against the driving ceiling here.

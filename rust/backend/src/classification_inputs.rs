@@ -18,7 +18,7 @@
 //! In `loadBiometrics` those are two distinct arguments: `home_tz` read from
 //! sync_state, and the display tz the request resolved. On the loader path they
 //! are the same value, and passing it twice is honest about that rather than
-//! dropping a parameter the TypeScript has — the two differ only for a caller
+//! dropping a parameter the TypeScript had — the two differ only for a caller
 //! that does not exist yet.
 //!
 //! The insertion order below is `load-classification-inputs.ts`'s RETURN order,

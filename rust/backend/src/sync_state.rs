@@ -24,7 +24,7 @@ use sqlx::{MySqlPool, Row};
 /// Read one key. `None` when the row is absent.
 ///
 /// ⚠ Absent and empty are DIFFERENT and both are preserved. A cursor stored as
-/// `""` is not the same as no cursor: the TS reads `row?.value ?? null`, so an
+/// `""` is not the same as no cursor: the TS read `row?.value ?? null`, so an
 /// empty string comes back as an empty string, and a backfill that treats it as
 /// "never ran" would restart from the floor date and re-fetch years of data.
 pub async fn get(pool: &MySqlPool, user_id: &str, key: &str) -> Result<Option<String>> {

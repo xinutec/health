@@ -551,7 +551,7 @@ pub fn battery_series(rows: &[&Value], tail: Option<&Value>, day_end_ts: i64) ->
 }
 
 /// A PhoneTrack row from the loader's JSON. A row missing a coordinate is not a
-/// fix; the TS reads `p.ts`/`p.lat`/`p.lon` off a typed row and never sees one.
+/// fix; the TS read `p.ts`/`p.lat`/`p.lon` off a typed row and never saw one.
 fn parse_input_fix(v: &Value) -> Option<Fix> {
     Some(Fix {
         ts: v.get("ts")?.as_i64()?,

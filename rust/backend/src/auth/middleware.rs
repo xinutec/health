@@ -96,7 +96,7 @@ pub async fn require_session(
     // ⚠ The share window is anchored on the OWNER's civil date, resolved in
     // UTC here because the recipient's zone is not known at this point — the
     // `tz` query parameter belongs to the route, not to authentication. The
-    // TypeScript does the same (`new Date().toISOString().slice(0, 10)`), so a
+    // TypeScript did the same (`new Date().toISOString().slice(0, 10)`), so a
     // link near midnight can differ by a day from what the viewer sees.
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
