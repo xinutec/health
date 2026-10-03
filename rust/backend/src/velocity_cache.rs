@@ -35,7 +35,9 @@
 //! for TS inside a live process. That toggle went with the TS arm (#975), and
 //! with it the only thing that changed an answer without a restart. Anything
 //! that later changes the pipeline's answer under a RUNNING pod has to bring
-//! both back; this paragraph is the note that says so.
+//! both back; this paragraph is the note that says so. The drain beside the
+//! pod (`fetch_drain`, 2026-10-03) changes the DATA under a running pod, not
+//! the pipeline; the five-minute window is what absorbs that.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

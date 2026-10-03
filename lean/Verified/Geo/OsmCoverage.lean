@@ -29,6 +29,12 @@ network when the answer is already local" — and it is what stops a trip to an
 unfetched city looping on Overpass timeouts when an earlier visit already
 brought the roads back as overflow.
 
+Two things the host does before a row reaches this gate (2026-10-03): a
+landmark box is read only under the venue-tag vocabulary it was fetched with
+(`osm_mirror::coverage_rows`), and `hasLocalData` is not asked for the landmark
+bucket at all, where it could only bypass a box's date or vocabulary
+(`mirror_source`).
+
 Pure and total. The only transcendental is `cos` in `metersPerDegLon`, which
 reaches a box edge and never a coordinate. UNPROVEN; pinned by the `#guard`s,
 every one of which is what `src/geo/osm-local.ts` actually did under Node —
