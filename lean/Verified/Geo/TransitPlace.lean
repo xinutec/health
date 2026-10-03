@@ -249,6 +249,36 @@ def stationsBeforeBoarding (segments : Array Seg)
       if effMode s == "stationary" then out := out.set! i (some st)
   return out
 
+/-- Boarding continuity from INSIDE the station: a stay the station's building
+encloses is the wait whatever touches the train, and so is every stay after it
+at the same station, across short walks, up to the train (2026-10-03: at
+Montparnasse the last five minutes before the platform walk sat at
+"McDonald's", its centroid outside every hall outline under 100 m fixes, and
+the stay before it was inside Hall 1). FORWARD ONLY: a stay before entering the
+building is a destination of its own; being inside is the evidence, and it
+starts there. `enclosedAt i` is the station a building-enclosed stay at `i`
+belongs to (the station node in range of it), `none` for every other segment. -/
+def stationsFromEnclosed (segments : Array Seg)
+    (enclosedAt : Nat → Option String) (stationsAt : Nat → Array String) :
+    Array (Option String) := Id.run do
+  let mut out : Array (Option String) := Array.replicate segments.size none
+  let mut chain : Option String := none
+  for i in [0 : segments.size] do
+    let some s := segments[i]? | continue
+    let dur := s.endTs - s.startTs
+    if let some st := enclosedAt i then
+      chain := some st
+      out := out.set! i (some st)
+      continue
+    chain := match effMode s, chain with
+      | "walking", some st => if dur ≤ INTERCHANGE_WALK_MAX_S then some st else none
+      | "stationary", some st =>
+        if dur ≤ BOARDING_WAIT_MAX_S && (stationsAt i).contains st then some st else none
+      | _, _ => none
+    if let some st := chain then
+      if effMode s == "stationary" then out := out.set! i (some st)
+  return out
+
 /-! ## Reference guards
 
 Pinned against `lean/experiments/transit-place-refs.mts`. -/
@@ -424,6 +454,35 @@ private def toPlatform (within : Bool) (boardsAt : Option String := some "S")
 -- The walk bar is inclusive, and one second over closes the chain.
 #guard board (withAt wait 1 (sg "walking" 120 840)) == #[S, none, S, none, S, none]
 #guard board (withAt wait 1 (sg "walking" 119 840)) == #[none, none, S, none, S, none]
+
+/-! ### `stationsFromEnclosed` -/
+
+/-- `stay | walk | stay(inside) | walk | stay | walk(12 min) | train`: the hour
+as served live, the third stay inside Hall 1. -/
+private def hall : Array Seg :=
+  #[sg "stationary" 0 300, sg "walking" 300 540, sg "stationary" 540 900,
+    sg "walking" 900 1440, sg "stationary" 1440 1740, sg "walking" 1740 2460,
+    sg "train" 2460 9000]
+private def inside (segs : Array Seg) (at_ : Nat) (others : List (Nat × Array String) := []) :
+    Array (Option String) :=
+  stationsFromEnclosed segs (fun i => if i == at_ then some "S" else none) fun i =>
+    match others.find? (·.1 == i) with
+    | some (_, sts) => sts
+    | none => #["S"]
+
+-- From the enclosed stay forward to the train; the stay before it is its own.
+#guard inside hall 2 == #[none, none, S, none, S, none, none]
+-- No enclosed stay, no chain (Pizza Union).
+#guard stationsFromEnclosed hall (fun _ => none) (fun _ => #["S"]) == Array.replicate 7 none
+-- A later stay at another station, or at none, closes it.
+#guard inside hall 2 [(4, #["T"])] == #[none, none, S, none, none, none, none]
+#guard inside hall 2 [(4, #[])] == #[none, none, S, none, none, none, none]
+-- A long walk closes it; the platform walk's length does not matter.
+#guard inside (withAt hall 3 (sg "walking" 900 (900 + INTERCHANGE_WALK_MAX_S + 1))) 2
+  == #[none, none, S, none, none, none, none]
+-- Nothing after the train.
+#guard inside #[sg "stationary" 0 300, sg "train" 300 900, sg "stationary" 900 1200] 0
+  == #[S, none, none]
 -- So is the wait bar, on the anchor too.
 #guard board (withAt wait 2 (sg "stationary" 840 6240)) == #[S, none, S, none, S, none]
 #guard board (withAt wait 2 (sg "stationary" 839 6240)) == #[none, none, none, none, S, none]

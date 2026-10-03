@@ -481,7 +481,8 @@ fold's jitter pass and the sleep-place attribution both consume. -/
 def resolve (reads : Reads) (stay : Option StayShape) (priors : Option VenuePriors)
     (preferResidential : Bool) : Option Verified.Geo.SegmentMerge.ResolvedPlace :=
   (bestPlaceSourced reads stay priors preferResidential).map fun (r, src) =>
-    { label := placeLabel r, city := extractCity (some r.address), source := src.key }
+    { label := placeLabel r, city := extractCity (some r.address), source := src.key
+      category := r.category, type_ := r.type }
 
 /-! ## Guards
 

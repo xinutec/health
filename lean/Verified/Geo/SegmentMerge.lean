@@ -89,6 +89,12 @@ structure Seg where
       behind, and a name that no longer matches its pair has no source — so a
       confidence can never outlive the name it was measured for. -/
   placeSource : Option (String × String) := none
+  /-- The OSM key and value of the feature that named the stay, when the
+      namer said (`ResolvedPlace.category`, `.type_`): `("railway",
+      "train_station")` for a station building. Read by a later pass that needs
+      to know WHAT enclosed the stay without asking the namer again — a second
+      ask is a new question a golden fixture cannot answer. -/
+  placeKind : Option (String × String) := none
   city : Option String := none
   wayName : Option String := none
   refinedReason : Option String := none
@@ -1065,6 +1071,11 @@ structure ResolvedPlace where
   /-- The naming chain's branch (`BestPlace.Source.key`); empty from a reader
       that does not say. -/
   source : String := ""
+  /-- The winning feature's OSM key and value (`BestPlace.Result.category`,
+      `.type`): `("railway", "train_station")` for a station building. Empty
+      from a reader that does not say. -/
+  category : String := ""
+  type_ : String := ""
   deriving Inhabited, BEq, Repr
 
 /-- Collapse each planned run into one stay, re-resolving its name from the

@@ -275,14 +275,16 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
         | some p =>
           withCity
             { seg with place := some p.label, focusPlaceId := some wp.cand.id
-                       placeSource := some (p.label, p.source) }
+                       placeSource := some (p.label, p.source)
+                       placeKind := some (p.category, p.type_) }
             (some p)
     | none =>
       -- 5b. Somewhere new. The day's own centroid, and the overnight check
       -- decides whether an address beats a venue.
       match reads.place cLat cLon isSleepWindow true with
       | none => seg
-      | some p => withCity { seg with place := some p.label, placeSource := some (p.label, p.source) } (some p)
+      | some p => withCity { seg with place := some p.label, placeSource := some (p.label, p.source)
+                                      placeKind := some (p.category, p.type_) } (some p)
 
 /-! ## Guards
 

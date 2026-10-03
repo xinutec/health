@@ -17,6 +17,7 @@ import Verified.Geo.BiometricWindows
 import Verified.Geo.BiometricLabels
 import Verified.Geo.RoadMatchAnnotate
 import Verified.Geo.WalkAnnotate
+import Verified.Geo.Landmarks
 /-!
 # The refinement cascade (port of the `passes` array in `src/geo/velocity.ts`)
 
@@ -499,12 +500,28 @@ def boardingStayLabels (e : Env) (segs : Array Seg) : Array Seg := Id.run do
     | some w => let pts := inWindow e w; !pts.isEmpty && pts.all (inStation st)
     | none => false
   let names := Verified.Geo.TransitPlace.stationsBeforeBoarding segs stationsAt trainBoard walkWithin
+  -- A stay the station BUILDING encloses (`placeKind`, written by the namer
+  -- with the name), given the station node in range of it.
+  let enclosedAt (i : Nat) : Option String := do
+    let s ← segs[i]?
+    guard (Verified.Geo.SegmentMerge.effectiveMode s == "stationary")
+    guard (s.placeSource.any (·.2 == "enclosing"))
+    guard (s.placeKind == some Verified.Geo.Landmarks.STATION_BUILDING)
+    let pts := inWindow e s
+    guard (!pts.isEmpty)
+    let n := Float.ofNat pts.size
+    (Verified.Geo.TransitPlace.stationsWithin ((pts.foldl (fun a p => a + p.lat) 0) / n)
+      ((pts.foldl (fun a p => a + p.lon) 0) / n) e.nearbyStations)[0]?
+  let fromInside := Verified.Geo.TransitPlace.stationsFromEnclosed segs enclosedAt stationsAt
   let mut out := segs
   for i in [0 : out.size] do
     let some s := out[i]? | continue
-    let some (some station) := names[i]? | continue
+    let (station, why) ← match names[i]? with
+      | some (some st) => pure (st, "the wait before boarding → named station")
+      | _ => match fromInside[i]? with
+        | some (some st) => pure (st, "inside the station before boarding → named station")
+        | _ => continue
     if isStationStay s then continue
-    let why := "the wait before boarding → named station"
     out := out.set! i { s with place := some station, placeSource := some (station, "station")
                                refinedReason := some (match s.refinedReason with
                                  | some r => s!"{r}; {why}"
