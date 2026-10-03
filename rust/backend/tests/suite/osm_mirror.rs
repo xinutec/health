@@ -13,8 +13,8 @@ use backend::osm_mirror::{
 use serde_json::json;
 
 /// The list the fetch asks Lean for, asked the same way.
-fn venue() -> Vec<String> {
-    backend::lean::venue_buildings().expect("lean answers venuebuildings")
+fn venue() -> Vec<(String, Vec<String>)> {
+    backend::lean::venue_tags().expect("lean answers venuetags")
 }
 fn parse(el: &serde_json::Value) -> Option<backend::osm_mirror::Feature> {
     parse_element(el, &venue())
@@ -97,6 +97,36 @@ fn a_named_hotel_building_is_a_landmark() {
     )
     .expect("landmark query");
     assert!(q.contains(r#"way["building"~"^(hotel)$"]["name"]"#), "{q}");
+}
+
+/// A NAMED beach is a place (La Concha, 2026-10-03): `natural=` is no venue rule,
+/// so without the venue tag it would not be kept at all. An unnamed beach, or a
+/// named wood, is not.
+#[test]
+fn a_named_beach_is_a_landmark() {
+    let outline = [
+        json!({"lat": 43.31, "lon": -1.99}),
+        json!({"lat": 43.32, "lon": -1.98}),
+    ];
+    let el = |tags: serde_json::Value| json!({"type": "way", "id": 9, "tags": tags, "geometry": outline});
+    let beach = parse(&el(json!({"natural": "beach", "name": "La Concha"}))).expect("beach");
+    assert_eq!(
+        (beach.feature_type.as_str(), beach.subtype.as_deref()),
+        ("landmark", Some("beach"))
+    );
+    assert!(parse(&el(json!({"natural": "beach"}))).is_none());
+    assert!(parse(&el(json!({"natural": "wood", "name": "A Wood"}))).is_none());
+    let q = query(
+        "landmark",
+        &Bbox {
+            min_lat: 43.0,
+            min_lon: -2.0,
+            max_lat: 43.5,
+            max_lon: -1.5,
+        },
+    )
+    .expect("landmark query");
+    assert!(q.contains(r#"way["natural"~"^(beach)$"]["name"]"#), "{q}");
 }
 
 /// ⚠ NODES ONLY. A way tagged `highway=bus_stop` is not a stop, and letting one

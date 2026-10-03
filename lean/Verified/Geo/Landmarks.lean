@@ -50,12 +50,18 @@ def POI_MARKER_TOURISM : List String := ["artwork", "viewpoint", "picnic_site", 
 picker's tie-break; reordering it renames places. -/
 def LANDMARK_TAG_KEYS : List String := ["amenity", "tourism", "leisure", "shop", "place"]
 
-/-- `building=` values that make a named building the venue itself, read as the
-`tourism=` it stands for. The mirror's fetch asks for this list (`venuebuildings`)
-and files these as landmarks; without this they arrived and were dropped here, having no tag below to be read by (2026-10-01: a hotel in
-San Sebastián mapped as `building=hotel` alone, the stay named after the
-pizzeria next door). -/
-def VENUE_BUILDINGS : List String := ["hotel"]
+/-- Tags whose NAMED features are places the venue tags above miss:
+`(key, values, the type they read as)`. The mirror's fetch asks for this list
+(`venuetags`) and files the features as landmarks; without it they arrived, or
+were never fetched, and no stay could be named after them.
+
+* `building=hotel` — a hotel mapped as the building alone (2026-10-01, San
+  Sebastián: the stay was named after the pizzeria next door). Read as the
+  `tourism=hotel` it stands for, so the lodging rule sees it.
+* `natural=beach` — La Concha (2026-10-03): an afternoon on the beach came out
+  as a stop with no name, the nearest named thing a car park. -/
+def VENUE_TAGS : List (String × List String × String) :=
+  [("building", ["hotel"], "tourism"), ("natural", ["beach"], "natural")]
 
 /-- One OSM feature near the query point. -/
 structure Feature where
@@ -126,15 +132,14 @@ def shapeLandmarks (points lines : List Feature) : List Landmark :=
            , enclosing := false, openingHours := none }]
         else []
       -- Only when no venue tag spoke: a building that is also a shop is the shop.
-      let building :=
-        match tagOf f.tags "building" with
-        | some b =>
-          if byTag.isEmpty && VENUE_BUILDINGS.contains b then
-            [{ name, type_ := "tourism", subtype := b, distanceM := f.distanceM
-             , enclosing := false, openingHours := tagOf f.tags "opening_hours" }]
-          else []
-        | none => []
-      byTag ++ building ++ ped
+      let venue := if !byTag.isEmpty then [] else
+        VENUE_TAGS.filterMap fun (k, vs, ty) =>
+          (tagOf f.tags k).bind fun v =>
+            if vs.contains v then
+              some { name, type_ := ty, subtype := v, distanceM := f.distanceM
+                   , enclosing := false, openingHours := tagOf f.tags "opening_hours" }
+            else none
+      byTag ++ venue ++ ped
   -- ⚠ STABLE, by distance only. Ties keep the order above, which is why points
   -- come first.
   filterLandmarks (out.mergeSort (fun a b => a.distanceM ≤ b.distanceM))
@@ -158,6 +163,10 @@ private def feat (name : String) (tags : List (String × String)) (d : Float)
 #guard (shapeLandmarks [] [feat "X" [("building", "hotel"), ("amenity", "bar")] 20 (isPoint := false)]).map
     (fun l => (l.type_, l.subtype)) == [("amenity", "bar")]
 #guard shapeLandmarks [] [feat "Flats" [("building", "apartments")] 20 (isPoint := false)] == []
+-- A named beach is a place; other natural features are not.
+#guard (shapeLandmarks [] [feat "La Concha" [("natural", "beach")] 40 (isPoint := false)]).map
+    (fun l => (l.type_, l.subtype)) == [("natural", "beach")]
+#guard shapeLandmarks [] [feat "A Wood" [("natural", "wood")] 40 (isPoint := false)] == []
 
 -- ⚠ TWO tags, TWO landmarks — the picker resolves precedence, not this.
 #guard (shapeLandmarks [feat "X" [("amenity", "cafe"), ("tourism", "attraction")] 10] []).length == 2

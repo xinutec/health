@@ -789,19 +789,19 @@ pub fn osm_covered(
     Ok(c.covered)
 }
 
-/// The `building=` values whose named buildings are venues
-/// (`Verified.Geo.Landmarks.VENUE_BUILDINGS`). The mirror's fetch asks once per
-/// run and hands the list to [`crate::osm_mirror::parse_element`] and
+/// The tags whose NAMED features are places (`Verified.Geo.Landmarks.VENUE_TAGS`):
+/// `(key, values)`, e.g. `("natural", ["beach"])`. The mirror's fetch asks once
+/// per run and hands the list to [`crate::osm_mirror::parse_element`] and
 /// [`crate::osm_mirror::overpass_query`]; the rule is Lean's.
-pub fn venue_buildings() -> Result<Vec<String>> {
+pub fn venue_tags() -> Result<Vec<(String, Vec<String>)>> {
     #[derive(Deserialize)]
     struct Answer {
-        buildings: Vec<String>,
+        tags: Vec<(String, Vec<String>)>,
     }
-    let out = serve(&serde_json::json!({ "mode": "venuebuildings" }).to_string())
-        .context("lean serve venuebuildings")?;
-    let a: Answer = serde_json::from_str(&out).context("venuebuildings answer")?;
-    Ok(a.buildings)
+    let out = serve(&serde_json::json!({ "mode": "venuetags" }).to_string())
+        .context("lean serve venuetags")?;
+    let a: Answer = serde_json::from_str(&out).context("venuetags answer")?;
+    Ok(a.tags)
 }
 
 /// One train leg the serving path should queue a route fill for.

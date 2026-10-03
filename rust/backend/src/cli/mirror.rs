@@ -544,7 +544,7 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
     }
 
     let client = reqwest::Client::new();
-    let venue_buildings = backend::lean::venue_buildings()?;
+    let venue_tags = backend::lean::venue_tags()?;
     let (mut fetched, mut covered_already, mut failed) = (0usize, 0usize, 0usize);
     let (mut rows_written, mut refused) = (0u64, 0usize);
 
@@ -604,7 +604,7 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
                 }
             };
             let bbox = backend::osm_mirror::fetch_bbox_around(lat, lon, half_width_m);
-            let query = backend::osm_mirror::overpass_query(&bucket, &bbox, &venue_buildings)?;
+            let query = backend::osm_mirror::overpass_query(&bucket, &bbox, &venue_tags)?;
 
             backend::overpass::wait_for_slot(&client, SLOT_WAIT_CAP_S).await;
             let outcome = backend::overpass::fetch_attempt(
@@ -640,7 +640,7 @@ pub(crate) async fn fetch_osm(dry_run: bool, limit: i64, only: Option<&str>) -> 
             let elements = backend::overpass::elements(&body)?;
             let features: Vec<_> = elements
                 .iter()
-                .filter_map(|el| backend::osm_mirror::parse_element(el, &venue_buildings))
+                .filter_map(|el| backend::osm_mirror::parse_element(el, &venue_tags))
                 .collect();
             let written = backend::osm_mirror::upsert_features(&pool, &features).await?;
             // ⚠ AFTER the rows. A coverage row is a promise the area can be

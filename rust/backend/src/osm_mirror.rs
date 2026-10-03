@@ -170,23 +170,27 @@ pub const BUCKETS: [&str; 7] = [
 /// `(minLat, minLon, maxLat, maxLon)` — not the `(lon, lat)` order WKT uses
 /// three functions away in this same file.
 ///
-/// `venue_buildings` is [`crate::lean::venue_buildings`]: the landmark fetch also
-/// asks for the NAMED buildings of those types, which [`parse_element`] files
-/// as landmarks.
+/// `venue_tags` is [`crate::lean::venue_tags`]: the landmark fetch also asks for
+/// the NAMED features with those tags, which [`parse_element`] files as
+/// landmarks.
 pub fn overpass_query(
     feature_type: &str,
     bbox: &Bbox,
-    venue_buildings: &[String],
+    venue_tags: &[(String, Vec<String>)],
 ) -> Result<String> {
     let Some(filters) = filters_for(feature_type) else {
         bail!("no Overpass filter is defined for feature_type={feature_type}");
     };
     let mut filters: Vec<String> = filters.iter().map(|f| (*f).to_string()).collect();
-    if feature_type == "landmark" && !venue_buildings.is_empty() {
-        filters.push(format!(
-            r#"way["building"~"^({})$"]["name"]"#,
-            venue_buildings.join("|")
-        ));
+    if feature_type == "landmark" {
+        for (key, values) in venue_tags.iter().filter(|(_, vs)| !vs.is_empty()) {
+            for kind in ["node", "way"] {
+                filters.push(format!(
+                    r#"{kind}["{key}"~"^({})$"]["name"]"#,
+                    values.join("|")
+                ));
+            }
+        }
     }
     let b = format!(
         "{},{},{},{}",
@@ -261,10 +265,10 @@ impl Feature {
 /// mirror written here matches the rows already in production.
 #[must_use]
 ///
-/// `venue_buildings` is [`crate::lean::venue_buildings`]: a NAMED building of one
-/// of those types, with no venue tag, is a landmark. A hotel is often mapped as
-/// the building alone (2026-10-01, San Sebastián).
-pub fn parse_element(el: &Value, venue_buildings: &[String]) -> Option<Feature> {
+/// `venue_tags` is [`crate::lean::venue_tags`]: a NAMED feature with one of
+/// those tags and no venue tag of its own is a landmark — a hotel mapped as the
+/// building alone (2026-10-01), a beach (2026-10-03).
+pub fn parse_element(el: &Value, venue_tags: &[(String, Vec<String>)]) -> Option<Feature> {
     let kind = el.get("type")?.as_str()?;
     let id = el.get("id")?.as_i64()?;
     let empty = Map::new();
@@ -281,11 +285,21 @@ pub fn parse_element(el: &Value, venue_buildings: &[String]) -> Option<Feature> 
         let hit = FEATURE_TYPE_RULES
             .iter()
             .chain(FEATURE_TYPE_RULES_TAIL.iter())
-            .find(|(t, _)| tag(t).is_some())?;
-        let venue_building = hit.1 == "building"
-            && tag("building").is_some_and(|b| venue_buildings.iter().any(|v| v == b))
-            && tag("name").is_some();
-        (if venue_building { "landmark" } else { hit.1 }, tag(hit.0))
+            .find(|(t, _)| tag(t).is_some());
+        // A venue rule that spoke keeps the element (a shop with a footprint is
+        // the shop); otherwise a named feature with a venue tag is a landmark,
+        // and that is the only way a `natural=` element is kept at all.
+        let spoke = hit.is_some_and(|(_, ft)| *ft == "landmark");
+        let venue = tag("name").and(
+            venue_tags
+                .iter()
+                .find(|(k, vs)| tag(k).is_some_and(|v| vs.iter().any(|x| x == v))),
+        );
+        match (spoke, venue, hit) {
+            (false, Some((k, _)), _) => ("landmark", tag(k)),
+            (_, _, Some(h)) => (h.1, tag(h.0)),
+            (_, _, None) => return None,
+        }
     };
 
     let geom_wkt = match kind {
