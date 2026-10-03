@@ -2794,10 +2794,10 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
       decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
         (meanCadenceSpm steps a b).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
     -- Only the LAST stop before a train can be its platform wait. One with a
-    -- later stop between it and the train is not against the train at all, and
-    -- read to the train the later sits pulled the cadence under the bar: the
-    -- hour in Gare Montparnasse (2026-10-01) came out one 46-minute walk with no
-    -- stop in it.
+    -- later stop between it and the train is not against the train at all,
+    -- and, read to the train, the later sits pulled the cadence under the bar:
+    -- the hour in Gare Montparnasse (2026-10-01) came out one 46-minute walk
+    -- with no stop in it.
     let anotherStopAfter := fun (de : Int) =>
       (findDwell (fixes.filter (·.ts > de)) steps de seg.endTs (fun _ _ => true)).isSome
     let admit := fun (ds de : Int) =>
