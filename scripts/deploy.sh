@@ -138,7 +138,10 @@ step() {
 # develop` so it layers over — not shadows — the shebang's gh. HEALTH_DEVSHELL=1
 # tells any nested health script it is already
 # inside the devShell, so it skips its own re-exec.
-DEV="nix develop $HEALTH_DIR -c env HEALTH_DEVSHELL=1"
+# The same GC root scripts/dev uses (#1887); see the note there.
+NIX_PROFILE="${XDG_STATE_HOME:-$HOME/.local/state}/nix-roots/health-dev"
+mkdir -p "$(dirname "$NIX_PROFILE")"
+DEV="nix develop $HEALTH_DIR --profile $NIX_PROFILE -c env HEALTH_DEVSHELL=1"
 # The replay gates that compared two arms died with the TypeScript backend
 # (#975) and have no successor by construction. The single-arm ones came back
 # in Rust against Lean and run in the full table. What is gone is coverage

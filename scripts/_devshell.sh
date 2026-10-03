@@ -23,6 +23,9 @@ set -euo pipefail # redundant (every caller sets it first) but satisfies DL-SHEL
 
 if [[ -z "${HEALTH_DEVSHELL:-}" ]]; then
 	_health_repo="$(cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd)"
-	exec nix develop "$_health_repo" -c \
+	# The same GC root scripts/dev uses (#1887); see the note there.
+	_health_profile="${XDG_STATE_HOME:-$HOME/.local/state}/nix-roots/health-dev"
+	mkdir -p "$(dirname "$_health_profile")"
+	exec nix develop "$_health_repo" --profile "$_health_profile" -c \
 		env HEALTH_DEVSHELL=1 bash "${BASH_SOURCE[1]}" "$@"
 fi

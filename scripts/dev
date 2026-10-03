@@ -15,4 +15,12 @@ if [[ "${HEALTH_DEVSHELL:-}" == "1" ]]; then
 	exec "$@"
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec nix develop "$root" --no-warn-dirty -c env HEALTH_DEVSHELL=1 "$@"
+# ⚠ A GC ROOT, or the shell is not there when a gate needs it: Nix's auto-GC
+# (the Mac's disk under min-free) collected the unrooted dev shell, lean4
+# included, in the middle of two gated deploys on 2026-10-01 (#1887).
+# `--profile` makes the shell's closure a root. Outside the repo, so no checkout
+# carries it and every session shares one; a flake.lock bump re-roots on the
+# next call, and an unchanged shell adds no generation.
+profile="${XDG_STATE_HOME:-$HOME/.local/state}/nix-roots/health-dev"
+mkdir -p "$(dirname "$profile")"
+exec nix develop "$root" --no-warn-dirty --profile "$profile" -c env HEALTH_DEVSHELL=1 "$@"
