@@ -137,10 +137,6 @@ pub fn run_day(cap: &Value, inputs: &Value, answerer: &mut dyn Answerer) -> Resu
     Ok(folded)
 }
 
-/// Resident set size of this process (MiB), or 0 if nothing can say.
-///
-/// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER (#1071): the
-/// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
 /// Give the heap a fold freed back to the kernel, and say what that moved.
 ///
 /// ⚠ Measured from the node, 2026-09-25, with folds already running ONE AT A
@@ -191,6 +187,10 @@ pub fn cgroup_memory() -> Option<(u64, u64)> {
     Some((peak, oom))
 }
 
+/// Resident set size of this process (MiB), or 0 if nothing can say.
+///
+/// ⚠ `/proc` FIRST, because `ps` READ ZERO IN THE CONTAINER (#1071): the
+/// serving image is alpine, whose busybox `ps` does not take `-o rss= -p`.
 /// `/proc/self/statm` needs no fork and exists on every Linux; `ps` stays as
 /// the macOS fallback.
 pub fn rss_mib() -> u64 {

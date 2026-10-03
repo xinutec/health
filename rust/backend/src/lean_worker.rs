@@ -26,9 +26,9 @@
 //! a worker OUT of the pool, and a nested call takes another; the pool grows to
 //! the nesting depth (two, in practice) and never deadlocks on itself. Idle
 //! workers beyond `MAX_IDLE` are dropped when returned, so memory stays bounded,
-//! and a worker that has served `RECYCLE_AFTER_CALLS` requests is dropped too:
-//! the day fold's heap grows across days (#1071) and a fresh process is the
-//! only reset that is known to work.
+//! and a worker that has served `LEAN_WORKER_RECYCLE_CALLS` requests (default
+//! 500) is dropped too: the day fold's heap grows across days (#1071) and a
+//! fresh process is the only reset that is known to work.
 //!
 //! # Failure is loud and local
 //!

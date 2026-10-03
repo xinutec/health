@@ -301,8 +301,8 @@ pub async fn compute_with(
 
     // ⚠ A day whose asks were DECLINED was built from DEFAULTS for them, and
     // that is not the same day. It is not an error — unfetched ground declines
-    // by design and is queued for `fetch-osm` — but it must be visible, because
-    // the response looks identical either way.
+    // by design and is queued for the drain beside the pod — but it must be
+    // visible, because the response looks identical either way.
     let by_table = folded.declined_by_table();
     if !by_table.is_empty() {
         tracing::info!(date, ?by_table, "day served with declined lookups");
@@ -334,11 +334,11 @@ pub async fn compute_with(
     mark(&mut timing, "watchBattery");
 
     // ⚠ The rail-route fill is IDENTIFIED but not RUN. `unsnappedTrainRoutes`
-    // names the legs whose route is missing; computing one is
-    // `computeRailRoute`, two OSM corridor queries and a snapper that this port
-    // does not have yet. Logging the count rather than silently doing nothing
-    // is the difference between a known gap and a forgotten one: until the
-    // worker exists, those legs draw raw until the nightly job runs (#363).
+    // names the legs whose route is missing; the TypeScript's miss-driven fill
+    // worker (#363, 2026-07) was not ported. Logging the count rather than
+    // silently doing nothing is the difference between a known gap and a
+    // forgotten one: those legs draw raw until `refresh-rail-routes` runs at
+    // 05:00.
     if let Ok(candidates) = rail_fill_candidates(&out, &h)
         && !candidates.is_empty()
     {
