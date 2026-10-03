@@ -243,28 +243,12 @@ async fn sync_one_user(
     backfill_pass(pool, client, access, user_id, &window_start).await
 }
 
-/// Reconcile weight against Google Health, if it is configured.
-///
-/// # Why it runs FIRST, and why it cannot fail the run
-///
-/// It shares nothing with the Fitbit passes — no token, no rate budget, no
-/// cursor — and the whole job is one page plus ~150 idempotent row writes. So it
-/// goes first, where a spent Fitbit budget cannot starve it: the deep backfill
-/// can consume the hour, and weight would then never be reconciled on a busy
-/// day. Matching `sync.ts`, which puts it above the user loop for the same
-/// reason.
-///
-/// ⚠ INERT without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN` and
-/// `GH_USER_ID`, and that silence is deliberate — the sync runs on hosts where
-/// Google is not set up. It is logged at DEBUG rather than WARN so it does not
-/// cry wolf, which does mean a credential that goes missing looks like a host
-/// that never had one.
 /// The streams `google::source` says Google owns, beyond weight.
 ///
 /// ⚠ FAILS SOFT, like `google_weight`. Google being unreachable must not take
-/// down the Fitbit streams that still run in the same job — those are the ones
-/// with a September deadline, and losing a night of them to an unrelated outage
-/// is the worse trade.
+/// down the Fitbit streams that still run in the same job — those end on
+/// 2026-10-30, and losing a night of them to an unrelated outage is the worse
+/// trade.
 ///
 /// ⚠ The user is the one Google is configured for, not every Fitbit user.
 /// `GH_USER_ID` names it, and there is exactly one.
@@ -389,6 +373,22 @@ async fn google_streams(pool: &MySqlPool, http: &reqwest::Client) {
     }
 }
 
+/// Reconcile weight against Google Health, if it is configured.
+///
+/// # Why it runs FIRST, and why it cannot fail the run
+///
+/// It shares nothing with the Fitbit passes — no token, no rate budget, no
+/// cursor — and the whole job is one page plus ~150 idempotent row writes. So it
+/// goes first, where a spent Fitbit budget cannot starve it: the deep backfill
+/// can consume the hour, and weight would then never be reconciled on a busy
+/// day. Matching `sync.ts`, which puts it above the user loop for the same
+/// reason.
+///
+/// ⚠ INERT without `GH_CLIENT_ID` / `GH_CLIENT_SECRET` / `GH_REFRESH_TOKEN` and
+/// `GH_USER_ID`, and that silence is deliberate — the sync runs on hosts where
+/// Google is not set up. It is logged at DEBUG rather than WARN so it does not
+/// cry wolf, which does mean a credential that goes missing looks like a host
+/// that never had one.
 async fn google_weight(pool: &MySqlPool, http: &reqwest::Client) {
     let (Some(creds), Some(user_id)) = (
         crate::google::oauth::GoogleCreds::from_env(),
