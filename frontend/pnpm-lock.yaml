@@ -50,11 +50,11 @@ importers:
         specifier: ^1.9.21
         version: 1.9.21
       '@xinutec/ui-harness':
-        specifier: github:xinutec/ui-harness#c9d49cb1ca6d1f47820ea7686e592bf81d33b011
-        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011(@playwright/test@1.63.0)
+        specifier: github:xinutec/ui-harness#a68eba05fef26f9370051dfd1da40fd2ff1221de
+        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de(@playwright/test@1.63.0)
       '@xinutec/ui-scaffold':
-        specifier: github:xinutec/ui-harness#c9d49cb1ca6d1f47820ea7686e592bf81d33b011&path:/scaffold
-        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011#path:/scaffold(8160c2f28cdd58034296b7a2f2216469)
+        specifier: github:xinutec/ui-harness#a68eba05fef26f9370051dfd1da40fd2ff1221de&path:/scaffold
+        version: https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de#path:/scaffold(8160c2f28cdd58034296b7a2f2216469)
       chart.js:
         specifier: ^4.5.1
         version: 4.5.1
@@ -1795,8 +1795,8 @@ packages:
   '@vitest/utils@4.1.11':
     resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011':
-    resolution: {gitHosted: true, integrity: sha512-t4/RyuZ3bmbzvOFEZaJBKbIAK5wDhM0XxCtdiWYeBk7YMRykXfj35oXP4SqTBaNVC+z8xw9zUuqxmSRLut5Faw==, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011}
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de':
+    resolution: {gitHosted: true, integrity: sha512-w6leKYPGD8VJl5YIElhAR21Ai2oVLTb72VB/uMxe/yyO/2XT/jl9P1l8StdKAwyx/evntsTIBaBc70MY6IH0og==, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de}
     version: 0.1.0
     peerDependencies:
       '@playwright/test': '>=1.61.0'
@@ -1804,8 +1804,8 @@ packages:
       '@playwright/test':
         optional: true
 
-  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011#path:/scaffold':
-    resolution: {gitHosted: true, integrity: sha512-t4/RyuZ3bmbzvOFEZaJBKbIAK5wDhM0XxCtdiWYeBk7YMRykXfj35oXP4SqTBaNVC+z8xw9zUuqxmSRLut5Faw==, path: /scaffold, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011}
+  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de#path:/scaffold':
+    resolution: {gitHosted: true, integrity: sha512-w6leKYPGD8VJl5YIElhAR21Ai2oVLTb72VB/uMxe/yyO/2XT/jl9P1l8StdKAwyx/evntsTIBaBc70MY6IH0og==, path: /scaffold, tarball: https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de}
     version: 0.1.0
     peerDependencies:
       '@angular/cdk': ^22.1.7
@@ -4787,13 +4787,13 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011(@playwright/test@1.63.0)':
+  '@xinutec/ui-harness@https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de(@playwright/test@1.63.0)':
     dependencies:
       '@types/node': 24.19.0
     optionalDependencies:
       '@playwright/test': 1.63.0
 
-  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/c9d49cb1ca6d1f47820ea7686e592bf81d33b011#path:/scaffold(8160c2f28cdd58034296b7a2f2216469)':
+  '@xinutec/ui-scaffold@https://codeload.github.com/xinutec/ui-harness/tar.gz/a68eba05fef26f9370051dfd1da40fd2ff1221de#path:/scaffold(8160c2f28cdd58034296b7a2f2216469)':
     dependencies:
       '@angular/cdk': 22.2.1(@angular/common@22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(@angular/forms@22.2.1(@angular/common@22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(@angular/platform-browser@22.2.1(@angular/common@22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2)))(rxjs@7.8.2))(@angular/platform-browser@22.2.1(@angular/common@22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2)))(rxjs@7.8.2)
       '@angular/common': 22.2.1(@angular/core@22.2.1(@angular/compiler@22.2.1)(rxjs@7.8.2))(rxjs@7.8.2)
