@@ -297,7 +297,8 @@ classifySegments (Verified/Geo/Segments.lean) — window features → mode score
        │
        ▼
 the fold (DayEntry, driven by fold.rs): every place, way and biometric
-lookup is an ask, answered from the OSM mirror and the DB
+lookup is an ask, answered from the OSM mirror and the DB — or declined
+and queued for the drain, so the next view is complete
        │
        ▼
 the refinement pass cascade (Verified/Geo/PassFold.lean — rail runs,
