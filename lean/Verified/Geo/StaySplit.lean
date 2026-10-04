@@ -8,8 +8,8 @@ The passes that split or reassign a segment where the track alone cut it
 wrong, each in its own namespace below. The file's order is not the cascade's:
 `Stays` and `Walks` run first, in `SplitFold` straight after segmentation; the
 rest run in `PassFold`'s cascade as `vehicleSplit`, `walkVehicleHandoff`,
-`vehicleArrival`, `vehicleEdgeShed`, `rideHeadClaim`, `stayArrivalClaim` and
-`walkDwell`.
+`vehicleArrival`, `vehicleEdgeShed`, `rideHeadClaim`, `stayArrivalClaim`,
+`walkDwell` and `stayEdgeWalk`.
 
 * `Shed` — `shedVehiclePedestrianEdges`, the walked edges off a ride;
 * `Handoff` — `reassignWalkTailToVehicle`, a walk's tail that is the vehicle
@@ -25,7 +25,9 @@ rest run in `PassFold`'s cascade as `vehicleSplit`, `walkVehicleHandoff`,
   to split;
 * `Walks` — `splitWalksOnEvidence`, one walk → sit / walk / sit by cadence;
 * `Dwell` — `splitWalksOnDwell`, the stops carved out of a walk by held
-  position and steps.
+  position and steps;
+* `EdgeWalk` — `carveStayEdgeWalks`, the stepped walk out of a stay's tail or
+  into its head, where two stays meet with no walk between them.
 
 `scoreSplitEvidence` was the TypeScript's one pure leaf; the rest were array
 transforms the first port left in the shell, brought over once the standing
@@ -2944,3 +2946,128 @@ private def BRIEF : Array PointF :=
 #guard splitWalksOnDwell #[{ WALK with mode := "driving" }] STOP [] unnamed == #[{ WALK with mode := "driving" }]
 
 end DwellGuards
+
+namespace EdgeWalk
+
+open Verified.Geo.SegmentMerge (Seg)
+open Verified.Geo.Worldline (FeasibilityStepPoint meanCadenceSpm PEDESTRIAN_MIN_CADENCE_SPM)
+open Verified.Hsmm.FloatScore (haversineMeters)
+open Shed (PointF segMode sortedIn walkRemainder median)
+open Verified.JsNum (jsRound)
+
+/-! A short walk between two stays that the segmenter left inside one of them
+(#1855): the walk out of a restaurant at the TAIL of its stay (2026-10-03,
+21:04–21:06, 141 m at 90–103 steps/min), or the walk in at the HEAD of the next
+one (2026-09-30, 18:58–19:00, 106 m at 61–103 steps/min, the walk the jitter
+fold merged into the restaurant). Carved only between two stays: next to a walk
+the boundary is `FootArrival`'s and the ride passes' business. -/
+
+/-- Within this of the stay's median position a fix is at the stay. -/
+def EDGE_AT_STAY_M : Float := 25
+/-- The edge fix must be this far out: a walk to somewhere, not a wander. -/
+def EDGE_MIN_NET_M : Float := 80
+/-- Shorter is a GPS step, longer the segmenter would have cut itself. -/
+def EDGE_MIN_S : Int := 60
+def EDGE_MAX_S : Int := 10 * 60
+/-- The stay must keep this much, so an edge is never the whole stay. -/
+def EDGE_MIN_REMAINING_STAY_S : Int := 10 * 60
+
+/-- The stay re-windowed: kinematics recomputed over its own fixes, its place kept. -/
+private def shrinkStay (s : Seg) (startTs endTs : Int) (points : Array PointF) : Seg :=
+  let fixes := points.filter fun p => p.ts ≥ startTs && p.ts < endTs
+  let speeds := fixes.map (·.speedKmh)
+  if h : 0 < speeds.size then
+    { s with startTs, endTs, pointCount := Int.ofNat fixes.size
+             avgSpeed := jsRound (median speeds * 10) / 10
+             maxSpeed := jsRound (speeds.foldl max speeds[0] * 10) / 10 }
+  else { s with startTs, endTs, pointCount := 0 }
+
+private def walkSeg (s : Seg) (startTs endTs : Int) (points : Array PointF) (netM : Float) : Seg :=
+  { walkRemainder s startTs endTs points with
+    mode := "walking", needsReenrich := false
+    refinedReason := some s!"walk at a stay's edge: {toString (jsRound netM).toInt64.toInt} m in {endTs - startTs} s, stepped"
+    refinedKinds := #["edge-walk"] }
+
+/-- `(walkStart, walkEnd, netM)` of the stepped run leaving (`tail`) or reaching
+    (head) the stay, or `none`. -/
+private def edgeRun (s : Seg) (points : Array PointF) (steps : List FeasibilityStepPoint)
+    (tail : Bool) : Option (Int × Int × Float) := Id.run do
+  let fixes := sortedIn points s.startTs s.endTs
+  if fixes.size < 4 then return none
+  let cLat := median (fixes.map (·.lat))
+  let cLon := median (fixes.map (·.lon))
+  let at_ := fun (p : PointF) => haversineMeters cLat cLon p.lat p.lon ≤ EDGE_AT_STAY_M
+  let ordered := if tail then fixes.reverse else fixes
+  let some edge := ordered[0]? | return none
+  let netM := haversineMeters cLat cLon edge.lat edge.lon
+  if netM < EDGE_MIN_NET_M then return none
+  let some k := ordered.findIdx? at_ | return none
+  let some boundary := ordered[k]? | return none
+  let (a, b) := if tail then (boundary.ts, s.endTs) else (s.startTs, boundary.ts)
+  if b - a < EDGE_MIN_S || b - a > EDGE_MAX_S then return none
+  if s.endTs - s.startTs - (b - a) < EDGE_MIN_REMAINING_STAY_S then return none
+  match meanCadenceSpm steps a b with
+  | some c => if c ≥ PEDESTRIAN_MIN_CADENCE_SPM then return some (a, b, netM) else return none
+  | none => return none
+
+/-- Carve the stepped walk off a stay's edge where it meets another stay. -/
+def carveStayEdgeWalks (segments : Array Seg) (points : Array PointF)
+    (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for hm_i : i in [0:segments.size] do
+    let s := segments[i]
+    let stay := fun (j : Nat) => (segments[j]?.map (segMode · == "stationary")).getD false
+    if segMode s != "stationary" then out := out.push s; continue
+    let head := if 0 < i && stay (i - 1) then edgeRun s points steps false else none
+    let tail := if stay (i + 1) then edgeRun s points steps true else none
+    let lo := match head with | some (_, b, _) => b | none => s.startTs
+    let hi := match tail with | some (a, _, _) => a | none => s.endTs
+    -- Both edges carved must still leave the stay its floor.
+    if hi - lo < EDGE_MIN_REMAINING_STAY_S then out := out.push s; continue
+    if let some (a, b, m) := head then out := out.push (walkSeg s a b points m)
+    out := out.push (if head.isSome || tail.isSome then shrinkStay s lo hi points else s)
+    if let some (a, b, m) := tail then out := out.push (walkSeg s a b points m)
+  return out
+
+end EdgeWalk
+
+section EdgeWalkGuards
+
+open EdgeWalk
+open Shed (PointF)
+open Verified.Geo.SegmentMerge (Seg)
+
+-- A stay at the origin from 0 to 1800 s, then its last 150 s walked 150 m north.
+private def ewFx (ts : Int) (northM : Float) : PointF := ⟨ts, 51.52 + northM / 111195, -0.13, 0⟩
+private def ewStill (a b : Int) : Array PointF :=
+  (Array.range ((b - a).toNat / 30)).map fun i => ewFx (a + Int.ofNat i * 30) (if i % 2 == 0 then 0 else 3)
+private def ewOut : Array PointF := (Array.range 6).map fun i => ewFx (1680 + Int.ofNat i * 25) (Float.ofNat (i + 1) * 25)
+private def ewStay (a b : Int) : Seg := { startTs := a, endTs := b, mode := "stationary" }
+private def ewSteps (a b : Int) (spm : Float) : List Verified.Geo.Worldline.FeasibilityStepPoint :=
+  (List.range ((b - a).toNat / 60)).map fun i => { ts := a + Int.ofNat i * 60, steps := spm }
+private def ewModes (segs : Array Seg) : Array (String × Int × Int) :=
+  segs.map fun s => (s.mode, s.startTs, s.endTs)
+private def ewDay : Array Seg := #[ewStay 0 1830, ewStay 1860 4000]
+private def ewPts : Array PointF := ewStill 0 1680 ++ ewOut ++ ewStill 1860 4000 |>.map fun p =>
+  if p.ts ≥ 1860 then { p with lat := p.lat + 150 / 111195 } else p
+
+-- Walked out of the first stay into the second: the tail is carved.
+#guard ewModes (carveStayEdgeWalks ewDay ewPts (ewSteps 1680 1860 95)) ==
+  #[("stationary", 0, 1680), ("walking", 1680, 1830), ("stationary", 1860, 4000)]
+-- The same track with no steps is GPS drift: untouched.
+#guard ewModes (carveStayEdgeWalks ewDay ewPts []) == ewModes ewDay
+-- Next to a walk the boundary is not this pass's: untouched.
+#guard ewModes (carveStayEdgeWalks #[ewStay 0 1830, { ewStay 1860 4000 with mode := "walking" }] ewPts (ewSteps 1680 1860 95)) ==
+  #[("stationary", 0, 1830), ("walking", 1860, 4000)]
+-- Out only 50 m: a wander, not a walk.
+private def ewNear : Array PointF := ewPts.map fun p =>
+  if p.ts ≥ 1680 && p.ts < 1860 then { p with lat := 51.52 + (p.lat - 51.52) / 3 } else p
+#guard ewModes (carveStayEdgeWalks ewDay ewNear (ewSteps 1680 1860 95)) == ewModes ewDay
+-- The head: walked in to the second stay from 150 m out.
+private def ewIn : Array PointF := ewStill 0 1830 ++
+  ((Array.range 6).map fun i => ewFx (1860 + Int.ofNat i * 25) (150 - Float.ofNat i * 25)) ++
+  (ewStill 2010 4000)
+#guard ewModes (carveStayEdgeWalks ewDay ewIn (ewSteps 1860 2040 95)) ==
+  #[("stationary", 0, 1830), ("walking", 1860, 1985), ("stationary", 1985, 4000)]
+
+end EdgeWalkGuards

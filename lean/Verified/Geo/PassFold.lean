@@ -741,6 +741,12 @@ def passes (e : Env) : Array Pass := #[
   ("walkDwell", fun segs =>
     Dwell.splitWalksOnDwell segs e.points e.feasSteps e.nameStay),
 
+  -- A short walk between two stays that one of them swallowed: the stepped run
+  -- out of a stay's tail or into its head (#1855). After `consolidateJitterStays`,
+  -- which is what folds a demoted walk-in into the stay it reached. The walk
+  -- carries no name, so nothing new is asked of the mirror.
+  ("stayEdgeWalk", fun segs => EdgeWalk.carveStayEdgeWalks segs e.points e.feasSteps),
+
   -- Re-enrich the on-foot remainders `vehicleSplit` left behind. The OSM pass
   -- ran ~30 passes ago, on segments not yet split, so everything it concluded
   -- about a walk that turned out to span a ride was derived from a window
@@ -1015,7 +1021,7 @@ private def PAIR_MIRROR : Env :=
     "interchange", "driveStops", "railReconcile", "mergeSameRouteTrains",
     "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
-    "rideHeadClaim", "stayArrivalClaim", "walkDwell",
+    "rideHeadClaim", "stayArrivalClaim", "walkDwell", "stayEdgeWalk",
     "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
@@ -1039,18 +1045,18 @@ def TS_CASCADE : Array String := #[
   "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel", "vehicleSplit",
   "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed", "rideHeadClaim",
   "stayArrivalClaim",
-  -- `walkDwell`, `lineSubstitute`, `boardingStayLabel`, `railThrough` and
-  -- `boardAtWait` are Lean-only (#1694, #238, #325, #1891); they sit
-  -- here so the containment check
-  -- keeps holding for the order the TS had.
-  "walkDwell",
+  -- `walkDwell`, `stayEdgeWalk`, `lineSubstitute`, `boardingStayLabel`,
+  -- `railThrough` and `boardAtWait` are Lean-only (#1694, #1855, #238, #325,
+  -- #1891); they sit here so the containment check keeps holding for the order
+  -- the TS had.
+  "walkDwell", "stayEdgeWalk",
   "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "tubeHop",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
   "boardAtWait", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 46
+#guard TS_CASCADE.size == 47
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1621,6 +1627,18 @@ private def DWELL : Env := { NO_LOOKUPS with points := dwellTrack }
 #guard fires DWELL "walkDwell" #[wk 0 1200]
 #guard (runNamed DWELL "walkDwell" #[wk 0 1200]).map (·.mode) == #["walking", "stationary", "walking"]
 
+-- A stay whose last 150 s walk 150 m north, at 95 steps/min, into the next
+-- stay: the edge pass carves stay | walk | stay.
+private def edgeTrack : Array Shed.PointF :=
+  (Array.range 56).map (fun i => fxm (Int.ofNat i * 30) (if i % 2 == 0 then 0 else 3) 0.2) ++
+  (Array.range 6).map (fun i => fxm (1680 + Int.ofNat i * 25) (Float.ofNat (i + 1) * 25) 4) ++
+  (Array.range 70).map (fun i => fxm (1860 + Int.ofNat i * 30) (150 + if i % 2 == 0 then 0 else 3) 0.2)
+private def EDGE : Env :=
+  { NO_LOOKUPS with points := edgeTrack
+                    steps := (Array.range 3).map fun k => { ts := 1680 + 60 * Int.ofNat k, steps := 95 } }
+#guard (runNamed EDGE "stayEdgeWalk" #[st 0 1830, st 1860 4000]).map (·.mode) ==
+  #["stationary", "walking", "stationary"]
+
 /-- One train leg holding a ride, a walk out of the station, then a standstill —
 the 06-18 shape, lifted from `Interchange`'s own guards.
 
@@ -1904,7 +1922,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 46
+#guard witnessed.size == 47
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
