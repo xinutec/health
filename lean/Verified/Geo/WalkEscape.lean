@@ -34,7 +34,8 @@ Two boundary notes:
 namespace Verified.Geo.WalkEscape
 
 open Verified.Geo.WalkableRoute
-  (Pt Proj Ways metersBetween projectPointToSegment WalkGraph RouteOptions routeOnWalkable)
+  (Pt Proj Ways metersBetween projectPointToSegment WalkGraph RouteOptions routeOnWalkable
+   routeOnWalkableIn buildWalkGraph)
 
 private def pi : Float := 3.14159265358979323846
 private def posInf : Float := 1.0 / 0.0
@@ -653,6 +654,10 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
   if originalBadM < opts.minCrossingM then return (drawn, #[])
 
   let pts := densify drawn opts.densifyStepM
+  -- The routing graph over the whole network, built at most once for every
+  -- run on the leg, and not at all when no run gets as far as routing
+  -- (`routeOnWalkable_eq_In`).
+  let walkGraph : Thunk WalkGraph := Thunk.mk fun _ => buildWalkGraph ways
   let mut segCross : Array Float := #[]
   for hm_k : k in [1:pts.size] do
     have hb_k : k < pts.size := hm_k.upper
@@ -731,7 +736,7 @@ def correctWalkPath (drawn : Array TPt) (ways : Ways) (buildings : Array Ring)
         -- CASE 2 — route the gap along the streets. The bound is floored like
         -- the budget: going around a block is legitimately several times a
         -- NARROW gap's straight line.
-        let route := routeOnWalkable anchorA.pt anchorB.pt ways
+        let route := routeOnWalkableIn walkGraph.get anchorA.pt anchorB.pt ways
           { snapRadiusM := opts.routeSnapRadiusM,
             maxRouteM := max opts.minRouteBudgetM (straightM * opts.maxDetourRatio) }
         match route with

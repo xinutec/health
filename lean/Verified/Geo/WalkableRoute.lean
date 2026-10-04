@@ -103,13 +103,15 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
   let mut adj : Array (Array (Nat × Float)) := #[]
   let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
   for w in ways do
+    -- One key per vertex: an interior vertex ends one segment and starts the
+    -- next, and the exact `toFixed` key is the build's dominant cost.
+    let keys := w.map fun c => Verified.JsNum.coordKey7 c.lat c.lon
     for hm_i : i in [1:w.size] do
       have hb_i : i < w.size := hm_i.upper
       -- `nodeAt` for each end, earlier coordinate first — that order is what
       -- numbers the nodes.
       let mut ids : Array Nat := #[]
-      for c in #[w[i - 1], w[i]] do
-        let key := Verified.JsNum.coordKey7 c.lat c.lon
+      for (c, key) in #[(w[i - 1], (keys[i - 1]?).getD (.raw 0 0)), (w[i], (keys[i]?).getD (.raw 0 0))] do
         match index[key]? with
         | some id => ids := ids.push id
         | none =>
@@ -262,12 +264,14 @@ Shortest walkable path from `a` to `b`:
 `[snapped-a, …graph nodes…, snapped-b]`, or `none`.
 
 `ways` must be in way-iteration order — it fixes node numbering and breaks the
-snap tie. The graph is built here, as the TS builds it per call.
+snap tie. `graph` is `buildWalkGraph ways`: a caller routing several gaps over one
+network builds it once (`routeOnWalkable` builds it per call, as the TS did, and
+the building-escape corrector paid ~450 ms a call for it on a 5,000-way
+network, 2026-10-04).
 -/
-def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
+def routeOnWalkableIn (graph : WalkGraph) (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
     Option (Array Pt) := Id.run do
   if ways.isEmpty then return none
-  let graph := buildWalkGraph ways
   let some from_ := snapToEdge a ways graph | return none
   let some to := snapToEdge b ways graph | return none
   if from_.distM > opts.snapRadiusM || to.distM > opts.snapRadiusM then return none
@@ -366,6 +370,14 @@ def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) :
       | some prevPt => metersBetween prevPt p > 0.5
     if keep then out := out.push p
   return if out.size ≥ 2 then some out else none
+
+
+/-- `routeOnWalkableIn` over a graph built for this one call. -/
+def routeOnWalkable (a b : Pt) (ways : Ways) (opts : RouteOptions := {}) : Option (Array Pt) :=
+  routeOnWalkableIn (buildWalkGraph ways) a b ways opts
+
+theorem routeOnWalkable_eq_In (a b : Pt) (ways : Ways) (opts : RouteOptions) :
+    routeOnWalkable a b ways opts = routeOnWalkableIn (buildWalkGraph ways) a b ways opts := rfl
 
 /-! ## Parity with Node/V8 (`lean/experiments/walkable-route-refs.mts`) -/
 
