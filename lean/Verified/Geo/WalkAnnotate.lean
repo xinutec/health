@@ -127,6 +127,60 @@ inductive Draw where
   | recon
   deriving Inhabited, BEq, Repr
 
+/-! ## Remembering a walk's result (#1921)
+
+A walk's drawn line is a function of the walk's own inputs — its fixes, the
+roads and buildings answered for its disc, its step evidence, the cascade's
+name for it, the draw arm and flags — and of the code. The host keeps the result
+keyed by a hash of those inputs (and the code version, which it adds), so a
+walk already drawn is not drawn again: a page load re-drew every walk of the
+day on every fold, the same walks every time. -/
+
+/-- Two independently seeded 64-bit FNV-1a lanes over the inputs' exact bits. -/
+structure MemoKey where
+  a : UInt64 := 0xcbf29ce484222325
+  b : UInt64 := 0x6c62272e07bb0142
+  deriving Inhabited, BEq
+
+namespace MemoKey
+def u64 (k : MemoKey) (x : UInt64) : MemoKey :=
+  { a := (k.a ^^^ x) * 0x100000001b3
+    b := (k.b ^^^ (x * 0x9e3779b97f4a7c15)) * 0x00000100000001b3 }
+def nat (k : MemoKey) (n : Nat) : MemoKey := (k.u64 n.toUInt64).u64 (n >>> 64).toUInt64
+def int (k : MemoKey) (i : Int) : MemoKey := (k.u64 (if i < 0 then 1 else 0)).nat i.natAbs
+def float (k : MemoKey) (x : Float) : MemoKey := k.u64 x.toBits
+def bool (k : MemoKey) (b : Bool) : MemoKey := k.u64 (if b then 1 else 2)
+def str (k : MemoKey) (s : String) : MemoKey :=
+  s.toUTF8.foldl (fun k b => k.u64 b.toUInt64) (k.nat s.utf8ByteSize)
+def opt {α : Type} (f : MemoKey → α → MemoKey) (k : MemoKey) : Option α → MemoKey
+  | none => k.u64 0
+  | some x => f (k.u64 1) x
+def arr {α : Type} (f : MemoKey → α → MemoKey) (k : MemoKey) (xs : Array α) : MemoKey :=
+  xs.foldl f (k.nat xs.size)
+def pt (k : MemoKey) (p : Pt) : MemoKey := (k.float p.lat).float p.lon
+private def hex16 (x : UInt64) : String :=
+  let s := String.mk (Nat.toDigits 16 x.toNat)
+  String.mk (List.replicate (16 - s.length) '0') ++ s
+def render (k : MemoKey) : String := hex16 k.a ++ hex16 k.b
+end MemoKey
+
+/-- A walk's drawn result, as the three branches of the pass write it onto the
+    segment. `apply` is those writes; the name falls back to the segment's own,
+    so it is resolved where the patch lands, not where it was made. -/
+inductive WalkPatch where
+  | smoothed (drawn : Array TPt) (wayUm : Array (String × Nat))
+  | matched (drawn : Array TPt) (name : Option String) (wayUm : Array (String × Nat))
+  | plain (name : Option String) (wayUm : Array (String × Nat))
+  deriving Inhabited, BEq, Repr
+
+def WalkPatch.apply (seg : Seg) : WalkPatch → Seg
+  | .smoothed drawn wayUm => { seg with walkSmoothedPath := some drawn, walkWayUm := wayUm }
+  | .matched drawn name wayUm =>
+    { seg with walkMatchedPath := some drawn, wayName := name.orElse (fun _ => seg.wayName),
+               walkWayUm := wayUm }
+  | .plain name wayUm =>
+    { seg with wayName := name.orElse (fun _ => seg.wayName), walkWayUm := wayUm }
+
 /-- The shell: the two OSM reads and the five solver leaves. -/
 structure Env where
   /-- `osm.walkableRoads(lat, lon, radiusM)`. Full way records since #445:
@@ -154,6 +208,11 @@ structure Env where
   correct : Array TPt → Ways → Array Ring → Option Float → Array TPt
   /-- `snapPassages(drawn, { ways }, buildings)`. -/
   snapPassages : Array TPt → Ways → Array Ring → Array TPt
+  /-- A walk's remembered result by key, or `none`: the default, and what
+  every replay answers, so a gate always draws. -/
+  memoGet : String → Option WalkPatch := fun _ => none
+  /-- Offer a freshly drawn result to the host; returns it unchanged. -/
+  memoPut : String → WalkPatch → WalkPatch := fun _ p => p
 
 /-! ## Constants -/
 
@@ -306,6 +365,7 @@ pedometer count. -/
 def evidenceFor (segments : Array Seg) (si : Nat) (stepsWalked : Option Float) : WalkEvidence :=
   let (s, e) := Verified.Geo.WalkAnchors.walkEndpointAnchors segments si
   { start := s.map toSmoothAnchor, finish := e.map toSmoothAnchor, stepsWalked := stepsWalked }
+
 
 /-! ## The pass -/
 
@@ -498,6 +558,71 @@ private def drawMatcher (env : Env) (flags : Flags) (ways : Array Way) (building
     | none => pure ()
   return (drawn, useMatch, false, matchName, report)
 
+/-- The key of one walk's result: every input the per-walk branch of
+    `annotateWalkMatches` reads. The host adds the code version. -/
+def walkMemoKey (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Array Way)
+    (buildings : Array Ring) (stepsWalked : Option Float) (ev : WalkEvidence)
+    (cascadeName : Option String) : String :=
+  let anchor := fun (k : MemoKey) (a : Verified.Geo.WalkSmooth.WalkAnchor) =>
+    ((k.float a.lat).float a.lon).float a.sigmaM
+  let k : MemoKey := {}
+  let k := k.u64 (match draw with | .matcher => 1 | .recon => 2)
+  let k := (((k.bool flags.matchDisable).bool flags.recon).bool flags.refine).bool flags.buildingEscape
+  let k := k.arr (fun k f => (((k.int f.ts).float f.lat).float f.lon).opt MemoKey.float f.accuracy) inWin
+  let k := k.arr (fun k w =>
+    (((k.int w.osmId).opt MemoKey.str w.name).opt MemoKey.str w.subtype).arr MemoKey.pt w.coords) ways
+  let k := k.arr (fun k r => k.arr MemoKey.pt r) buildings
+  let k := k.opt MemoKey.float stepsWalked
+  let k := ((k.opt anchor ev.start).opt anchor ev.finish).opt MemoKey.float ev.stepsWalked
+  let k := k.opt MemoKey.str cascadeName
+  k.render
+
+/-- One walk's drawing, from exactly the inputs `walkMemoKey` hashes: the two
+    take the same arguments, so the drawing CANNOT read anything the key leaves
+    out — a new input has to become an argument here, and with it a field of the
+    key. `env` contributes code only (the solvers and their profiles), which the
+    host versions by the binary. -/
+def drawWalk (env : Env) (draw : Draw) (flags : Flags) (inWin : Array PedFix) (ways : Array Way)
+    (buildings : Array Ring) (stepsWalked : Option Float) (ev : WalkEvidence)
+    (cascadeName : Option String) : WalkPatch := Id.run do
+  let clean := despike inWin
+  let held := hold clean
+  let (drawn0, useMatch, smoothed0, matchName, wayUm) := match draw with
+    | .recon =>
+      -- ⚠ The recon arm runs NO matcher, so it has no identity report —
+      -- empty here means "not measured", not "the route named nothing".
+      let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
+      (d, false, s, none, #[])
+    | .matcher => drawMatcher env flags ways buildings clean held ev cascadeName
+  let mut drawn := drawn0
+  let mut corrected := false
+  if flags.buildingEscape && !buildings.isEmpty then
+    let budget := stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
+    let fixed := env.correct drawn (ways.map Way.coords) buildings budget
+    corrected := changed drawn fixed
+    if corrected then drawn := fixed
+    -- The passage snap runs LAST, on the final line, so it cannot
+    -- perturb the gate's or the corrector's accept/reject decisions.
+    let snapped := env.snapPassages drawn (ways.map Way.coords) buildings
+    if changed drawn snapped then
+      drawn := snapped
+      corrected := true
+  -- ⚠ `walkWayUm` IS ATTACHED ON EVERY BRANCH, including the ones that
+  -- throw the matcher's line away (#1464). A report present only where
+  -- the route was drawn could not answer "what did the matcher want
+  -- here?" on the legs where it was overridden — which is the half of
+  -- the bracket that says whether a nats value is doing anything.
+  if smoothed0 then
+    return WalkPatch.smoothed drawn wayUm
+  else if useMatch || corrected then
+    -- #445: when the full match ships, its own route names the leg —
+    -- the corrector only escapes buildings locally and does not change
+    -- which ways the route ran along. A leg whose route touched no
+    -- named way keeps the cascade's name.
+    return WalkPatch.matched drawn matchName wayUm
+  else
+    return WalkPatch.plain matchName wayUm
+
 /--
 Attach `walkMatchedPath` / `walkSmoothedPath` to every walking leg the evidence
 can confidently place. Returns a new segment array; the input is not mutated.
@@ -553,51 +678,16 @@ def annotateWalkMatches (segments : Array Seg) (displayFixes : Array PedFix)
           -- draws: without the teleport-RUN collapse a dense indoor jitter that
           -- `despike` cannot see reaches the solver as mutually-consistent
           -- evidence the robust kernel keeps.
-          let held := hold clean
           let stepsWalked := stepsInWindow stepPoints seg.startTs seg.endTs
           let ev := evidenceFor segments si stepsWalked
-          let (drawn0, useMatch, smoothed0, matchName, wayUm) := match draw with
-            | .recon =>
-              -- ⚠ The recon arm runs NO matcher, so it has no identity report —
-              -- empty here means "not measured", not "the route named nothing".
-              let (d, s) := drawRecon env (ways.map Way.coords) buildings held ev
-              (d, false, s, none, #[])
-            | .matcher => drawMatcher env flags ways buildings clean held ev seg.wayName
-          let mut drawn := drawn0
-          let mut corrected := false
-          if flags.buildingEscape && !buildings.isEmpty then
-            let budget := stepsWalked.map (· * STEP_STRIDE_M * STEP_SLACK_RATIO)
-            let fixed := env.correct drawn (ways.map Way.coords) buildings budget
-            corrected := changed drawn fixed
-            if corrected then drawn := fixed
-            -- The passage snap runs LAST, on the final line, so it cannot
-            -- perturb the gate's or the corrector's accept/reject decisions.
-            let snapped := env.snapPassages drawn (ways.map Way.coords) buildings
-            if changed drawn snapped then
-              drawn := snapped
-              corrected := true
-          -- ⚠ `walkWayUm` IS ATTACHED ON EVERY BRANCH, including the ones that
-          -- throw the matcher's line away (#1464). A report present only where
-          -- the route was drawn could not answer "what did the matcher want
-          -- here?" on the legs where it was overridden — which is the half of
-          -- the bracket that says whether a nats value is doing anything.
-          if smoothed0 then
-            out := out.push { seg with walkSmoothedPath := some drawn, walkWayUm := wayUm }
-          else if useMatch || corrected then
-            -- #445: when the full match ships, its own route names the leg —
-            -- the corrector only escapes buildings locally and does not change
-            -- which ways the route ran along. A leg whose route touched no
-            -- named way keeps the cascade's name.
-            out := out.push
-              { seg with
-                  walkMatchedPath := some drawn
-                  wayName := matchName.orElse (fun _ => seg.wayName)
-                  walkWayUm := wayUm }
-          else
-            out := out.push
-              { seg with
-                  wayName := matchName.orElse (fun _ => seg.wayName)
-                  walkWayUm := wayUm }
+          -- Remembered, or drawn and offered to the host (#1921). A replay
+          -- remembers nothing, so every gate draws.
+          let key := walkMemoKey draw flags p.inWin ways buildings stepsWalked ev seg.wayName
+          let patch : WalkPatch := match env.memoGet key with
+            | some pt => pt
+            | none => env.memoPut key
+                (drawWalk env draw flags p.inWin ways buildings stepsWalked ev seg.wayName)
+          out := out.push (patch.apply seg)
     | _, _, _ => out := out.push seg
   return out
 

@@ -183,6 +183,50 @@ async fn run(st: &AppState, session: &UserSession, p: Params) -> Result<Response
     Ok(Json(out).into_response())
 }
 
+/// After a start, fold each user's today and yesterday once in the background,
+/// so the walk memo (`crate::walk_memo`, #1921) is warm before anyone loads a
+/// page: a deploy changes the code version and every remembered walk with it,
+/// and without this the first load after each deploy drew every walk again.
+/// One day at a time through the fold slot, so a request never waits behind
+/// more than one of these. Failures are logged and skipped; nothing depends on
+/// this having run.
+pub async fn warm_recent(st: &AppState) {
+    let users: Vec<String> = match sqlx::query_scalar("SELECT user_id FROM nc_tokens")
+        .fetch_all(&st.pool)
+        .await
+    {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(error = %e, "walk memo warm-up: no user list");
+            return;
+        }
+    };
+    let now = chrono::Utc::now().timestamp();
+    for user in users {
+        let tz = crate::sync_state::get(&st.pool, &user, "home_tz")
+            .await
+            .ok()
+            .flatten();
+        for back in [0_i64, 1] {
+            let Ok(date) = timezone::local_date_at(now - back * 86_400, tz.as_deref()) else {
+                continue;
+            };
+            let t0 = std::time::Instant::now();
+            let _slot = fold_slot().await;
+            match compute(st, &user, &date, None).await {
+                Ok(_) => tracing::info!(
+                    %date,
+                    ms = t0.elapsed().as_millis() as u64,
+                    "walk memo warm-up: day folded"
+                ),
+                Err(e) => {
+                    tracing::warn!(%date, error = %format!("{e:#}"), "walk memo warm-up failed")
+                }
+            }
+        }
+    }
+}
+
 /// Compute one day. Only reached on a cache miss.
 ///
 /// ⚠ `pub`, not `pub(crate)`, and the difference is not style: `backend` is a

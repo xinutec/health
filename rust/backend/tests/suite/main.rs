@@ -127,4 +127,5 @@ mod velocity_cache_store;
 mod velocity_episode_bits;
 mod velocity_route;
 mod venue_rank_probe;
+mod walk_memo;
 mod watch_battery;

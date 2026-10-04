@@ -78,3 +78,4 @@ pub mod state;
 pub mod sync_state;
 pub mod timezone;
 pub mod velocity_cache;
+pub mod walk_memo;

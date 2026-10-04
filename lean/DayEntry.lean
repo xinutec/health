@@ -569,6 +569,50 @@ private def parseChain (j : Json) (segs : Array Seg)
     sleepPlace := fun lat lon => (namer.name lat lon none true).map (·.label)
   }
 
+/-- A walk's remembered result on the wire: lines as exact float bits, the
+    way report as `[name, um]` pairs. -/
+def walkPatchJson (p : Verified.Geo.WalkAnnotate.WalkPatch) : Json :=
+  let line := fun (d : Array Verified.Geo.PathPt) =>
+    Json.arr (d.map fun q => Json.arr #[fBits q.lat, fBits q.lon, fBits q.ts])
+  let um := fun (w : Array (String × Nat)) =>
+    Json.arr (w.map fun (n, x) => Json.arr #[Json.str n, Lean.toJson x])
+  let name := fun (n : Option String) => match n with | some s => Json.str s | none => Json.null
+  match p with
+  | .smoothed d w => Json.mkObj [("k", "s"), ("d", line d), ("w", um w)]
+  | .matched d n w => Json.mkObj [("k", "m"), ("d", line d), ("n", name n), ("w", um w)]
+  | .plain n w => Json.mkObj [("k", "p"), ("n", name n), ("w", um w)]
+
+def parseWalkPatch (j : Json) : Except String Verified.Geo.WalkAnnotate.WalkPatch := do
+  let line := fun (v : Json) => do
+    (← v.getArr?).mapM fun q => do
+      let a ← q.getArr?
+      let some la := a[0]? | throw "patch point: lat"
+      let some lo := a[1]? | throw "patch point: lon"
+      let some ts := a[2]? | throw "patch point: ts"
+      return ({ lat := ← jBits la, lon := ← jBits lo, ts := ← jBits ts } : Verified.Geo.PathPt)
+  let um := fun (v : Json) => do
+    (← v.getArr?).mapM fun e => do
+      let a ← e.getArr?
+      let some n := a[0]? | throw "patch way: name"
+      let some x := a[1]? | throw "patch way: um"
+      return ((← n.getStr?), (← x.getNat?))
+  let name ← optStr j "n"
+  match ← (← j.getObjVal? "k").getStr? with
+  | "s" => return .smoothed (← line (← j.getObjVal? "d")) (← um (← j.getObjVal? "w"))
+  | "m" => return .matched (← line (← j.getObjVal? "d")) name (← um (← j.getObjVal? "w"))
+  | "p" => return .plain name (← um (← j.getObjVal? "w"))
+  | k => throw s!"patch kind {k}"
+
+-- The codec is the identity on what the pass writes, bits included.
+private def patchRT (p : Verified.Geo.WalkAnnotate.WalkPatch) : Bool :=
+  match parseWalkPatch (walkPatchJson p) with
+  | .ok q => q == p
+  | .error _ => false
+#guard patchRT (.matched #[{ lat := 43.3124365, lon := -1.978038, ts := 1791100000.5 }] (some "Kalea")
+  #[("Kalea", 1200000), ("", 7)])
+#guard patchRT (.smoothed #[{ lat := -0.0, lon := 0.1, ts := 0 }] #[])
+#guard patchRT (.plain none #[("A", 1)])
+
 private def parseEnv (j : Json) : Except String Env := do
   let namer ← namerOf j
   let homeTz ← (← j.getObjVal? "homeTz").getStr?
@@ -642,6 +686,11 @@ private def parseEnv (j : Json) : Except String Env := do
       correct := fun drawn ways buildings budget =>
         (Verified.Geo.WalkEscape.correctWalkPath drawn ways buildings
           { stepBudgetM := budget }).1
+      -- A walk's remembered result (#1921). Only the serving host keeps
+      -- any; a replay answers nothing and every walk is drawn.
+      memoGet := fun key => DayEntry.Host.askAs "memo.walkGet" key parseWalkPatch
+      memoPut := fun key patch =>
+        DayEntry.Host.tell "memo.walkPut" (key ++ "|" ++ (walkPatchJson patch).compress) patch
       snapPassages := fun drawn ways buildings =>
         Verified.Geo.WalkEscape.snapPassages drawn ways buildings }
     -- Computed, not injected, as of #430 — see `Verified.Geo.BestPlace`.

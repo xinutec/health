@@ -70,10 +70,14 @@ unsafe def timedImpl {α : Type} (name : String) (f : Unit → α) : α :=
 @[implemented_by timedImpl]
 def timed {α : Type} (name : String) (f : Unit → α) : α := f ()
 
-unsafe def takeTimingsImpl (_dep : Nat) : Json :=
+unsafe def takeTimingsImpl (dep : Nat) : Json :=
   unsafeBaseIO do
     let a ← spansRef.modifyGet fun a => (a, #[])
-    pure (Json.mkObj (a.toList.map fun (n, ns) => (n, Lean.toJson (ns / 1000000))))
+    -- ⚠ `dep` MUST REACH THE RESULT. A body that never mentions the argument is
+    -- a closed term, and the compiler lifts it out and runs it ONCE: every later
+    -- fold in the same worker reported the first fold's timings (2026-10-04).
+    let tail := if dep == 0x7fffffffffff then [("dep", Lean.toJson dep)] else []
+    pure (Json.mkObj ((a.toList.map fun (n, ns) => (n, Lean.toJson (ns / 1000000))) ++ tail))
 
 /-- The spans so far as `{name: ms}`, and reset. `_dep` is any value computed
 after the spans it should include: without a data dependency the call is a
@@ -114,6 +118,23 @@ unsafe def askImpl (what key : String) : Option Json :=
   match unsafeBaseIO io.toBaseIO with
   | .ok v => v
   | .error _ => none
+
+unsafe def tellImpl {α : Type} (what key : String) (v : α) : α :=
+  let io : IO Unit := do
+    let out ← IO.getStdout
+    out.putStr (askLine what key)
+    out.putStr "\n"
+    out.flush
+    let _ ← (← IO.getStdin).getLine
+  -- Two different results, so the call cannot be folded away as unused.
+  match unsafeBaseIO io.toBaseIO with
+  | .ok _ => v
+  | .error _ => dbgTrace s!"lean: telling the host {what} failed" fun _ => v
+
+/-- Hand the host a value to keep (`memo.*`), and go on with `v`. The host
+answers with an empty line; nothing here reads it. -/
+@[implemented_by tellImpl]
+def tell {α : Type} (_what _key : String) (v : α) : α := v
 
 /-- One question to the host. See the module header for the wire. -/
 @[implemented_by askImpl]

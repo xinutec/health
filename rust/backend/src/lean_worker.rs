@@ -293,6 +293,14 @@ impl Worker {
         loop {
             let line = self.next_line(timeout)?;
             if let Some(ask) = parse_ask(&line)? {
+                // A remembered walk (#1921): answered from the store, and NOT
+                // recorded — it is not a question about the world, so no count,
+                // capture or fetch queue may see it.
+                if ask.what.starts_with("memo.") {
+                    let answer = crate::walk_memo::answer(&ask).unwrap_or(Value::Null);
+                    self.send(&serde_json::json!({ "answer": answer }).to_string())?;
+                    continue;
+                }
                 let (reply, answered) = match memo.get(&ask) {
                     Some((r, ok)) => (std::sync::Arc::clone(r), *ok),
                     None => {

@@ -337,6 +337,12 @@ async fn serve() -> Result<()> {
         .await
         .context("applying the schema")?;
 
+    // Remembered walks (#1921), for this process only. A failure costs speed,
+    // not answers: every walk is then drawn, as before.
+    if let Err(e) = backend::walk_memo::init(&pool).await {
+        tracing::warn!(error = %format!("{e:#}"), "walk memo off");
+    }
+
     // ⚠ A sweep, because the per-request path only deletes a session when its
     // owner comes back with the cookie. Dormant accounts would otherwise
     // accumulate rows forever, and the table would grow with people who left.
@@ -356,7 +362,14 @@ async fn serve() -> Result<()> {
         }
     });
 
-    let app = routes::router(AppState::new(pool, cfg, http));
+    let state = AppState::new(pool, cfg, http);
+    // Warm the walk memo a minute after start, once the pod has settled (#1921).
+    let warm = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        routes::velocity::warm_recent(&warm).await;
+    });
+    let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .with_context(|| format!("binding port {port}"))?;

@@ -92,7 +92,7 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
     // this file existed. A const path is opaque to it.
     //
     // ⚠ Oldest first, and the INDEX IS THE VERSION. Append only.
-    let migrations: [&str; 91] = [
+    let migrations: [&str; 92] = [
         r#"CREATE TABLE IF NOT EXISTS tokens (
     user_id VARCHAR(64) PRIMARY KEY,
     access_token TEXT NOT NULL,
@@ -745,6 +745,16 @@ async fn apply(pool: &MySqlPool) -> Result<()> {
         // days. Rows keep their dates; a read under another vocabulary simply
         // does not see them.
         r#"ALTER TABLE osm_coverage ADD COLUMN IF NOT EXISTS vocab VARCHAR(16) NULL"#,
+        // A walk's drawn result, keyed by a hash of every input the fold's walk
+        // drawing reads and by the code that drew it (`walk_memo`, #1921). Rows
+        // of another code version are cleared when a server starts.
+        r#"CREATE TABLE IF NOT EXISTS walk_memo (
+    code_version CHAR(32) NOT NULL,
+    memo_key CHAR(32) NOT NULL,
+    value MEDIUMTEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (code_version, memo_key)
+  )"#,
     ];
 
     sqlx::query(
