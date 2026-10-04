@@ -16,6 +16,7 @@ import {
 	HealthService,
 	type HeartRatePoint,
 	type HrvDay,
+	type BreathingDay,
 	type LatestFix,
 	type TrackTailPoint,
 	type SleepLog,
@@ -47,6 +48,7 @@ import { DayNavComponent } from "../day-nav/day-nav.component";
 import { PullToRefreshComponent } from "../pull-to-refresh/pull-to-refresh.component";
 import { HeartrateChartComponent } from "../heartrate-chart/heartrate-chart.component";
 import { HrvChartComponent } from "../hrv-chart/hrv-chart.component";
+import { BreathingChartComponent } from "../breathing-chart/breathing-chart.component";
 import { HypnogramComponent } from "../hypnogram/hypnogram.component";
 import { IntradayHrComponent } from "../intraday-hr/intraday-hr.component";
 import { MapComponent } from "../map/map.component";
@@ -65,19 +67,20 @@ interface DayData {
 	velocity: VelocityData | null;
 }
 
-/** Rolling-window payload — the last 30 days of activity + sleep + HRV.
+/** The Trends window: activity, sleep, HRV, body and breathing rate.
  *  Does NOT depend on the selected day, so it is fetched once and the
  *  selected day is derived from it. */
 interface WindowData {
 	activity: ActivityDay[];
 	sleep: SleepLog[];
 	hrv: HrvDay[];
+	breathing: BreathingDay[];
 	body: BodyDay[];
 }
 
 /** Client-side fetch durations (ms) for the performance panel. */
 export interface LoadTimings {
-	window?: { activity: number; sleep: number; hrv: number; body: number; total: number };
+	window?: { activity: number; sleep: number; hrv: number; body: number; breathing: number; total: number };
 	day?: { stages: number; hr: number; velocity: number; total: number };
 }
 
@@ -136,6 +139,7 @@ export interface LoadTimings {
 		StepsChartComponent,
 		HeartrateChartComponent,
 		HrvChartComponent,
+		BreathingChartComponent,
 		SleepChartComponent,
 		WeightChartComponent,
 	],
@@ -176,7 +180,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	/** Recorded fetch durations for the performance panel. */
 	readonly timings = signal<LoadTimings>({});
 
-	/** Activity + sleep + HRV over the Trends window. Day-independent but
+	/** The Trends window's tables. Day-independent but
 	 *  keyed on `trendDays`, so it loads once per session at the default
 	 *  span and refetches only when the user changes the Trends range —
 	 *  never on day-navigation. */
@@ -185,24 +189,32 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		// `trendDays` key thereafter means it reloads only when the span
 		// changes.
 		params: () => (this.dataReady() ? this.trendDays() : undefined),
-		defaultValue: { activity: [], sleep: [], hrv: [], body: [] },
+		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [] },
 		loader: async ({ params: days, abortSignal }) => {
 			const t0 = performance.now();
 			const timed = <T>(p: Promise<T>): Promise<[T, number]> => {
 				const start = performance.now();
 				return p.then((v) => [v, performance.now() - start] as [T, number]);
 			};
-			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody]] = await Promise.all([
+			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody], [breathing, tBreathing]] = await Promise.all([
 				timed(this.health.getActivity(days, abortSignal).catch(() => [] as ActivityDay[])),
 				timed(this.health.getSleep(days, abortSignal).catch(() => [] as SleepLog[])),
 				timed(this.health.getHrv(days, abortSignal).catch(() => [] as HrvDay[])),
 				timed(this.health.getBody(days, abortSignal).catch(() => [] as BodyDay[])),
+				timed(this.health.getBreathing(days, abortSignal).catch(() => [] as BreathingDay[])),
 			]);
 			this.timings.update((t) => ({
 				...t,
-				window: { activity: tActivity, sleep: tSleep, hrv: tHrv, body: tBody, total: performance.now() - t0 },
+				window: {
+					activity: tActivity,
+					sleep: tSleep,
+					hrv: tHrv,
+					body: tBody,
+					breathing: tBreathing,
+					total: performance.now() - t0,
+				},
 			}));
-			return { activity, sleep, hrv, body };
+			return { activity, sleep, hrv, body, breathing };
 		},
 	});
 
@@ -266,6 +278,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly sleep = computed(() => this.windowData.value().sleep);
 	readonly hrv = computed(() => this.windowData.value().hrv);
 	readonly body = computed(() => this.windowData.value().body);
+	readonly breathing = computed(() => this.windowData.value().breathing);
 	readonly sleepStages = computed(() => this.displayedDay().stages);
 	readonly intradayHr = computed(() => this.displayedDay().hr);
 	readonly velocity = computed(() => this.displayedDay().velocity);

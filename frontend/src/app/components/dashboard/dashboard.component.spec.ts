@@ -92,6 +92,7 @@ function makeHealthMock(opts: { activity?: ActivityDay[]; sleep?: SleepLog[] } =
 		getSleep: () => Promise.resolve(opts.sleep ?? []),
 		getHrv: () => Promise.resolve([]),
 		getBody: () => Promise.resolve([]),
+		getBreathing: () => Promise.resolve([]),
 		getSleepStages: () => Promise.resolve([]),
 		getHeartRateIntraday: () => Promise.resolve([]),
 		getVelocity: (date: string) => {

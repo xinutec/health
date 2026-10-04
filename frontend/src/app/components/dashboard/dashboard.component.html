@@ -77,12 +77,13 @@
 							<div class="perf-content">
 								@if (timings().window; as w) {
 									<section>
-										<h4>Window load (activity · sleep · HRV)</h4>
+										<h4>Window load</h4>
 										<table>
 											<tr><td>activity</td><td>{{ w.activity | number:'1.0-0' }} ms</td></tr>
 											<tr><td>sleep</td><td>{{ w.sleep | number:'1.0-0' }} ms</td></tr>
 											<tr><td>hrv</td><td>{{ w.hrv | number:'1.0-0' }} ms</td></tr>
 											<tr><td>body</td><td>{{ w.body | number:'1.0-0' }} ms</td></tr>
+											<tr><td>breathing</td><td>{{ w.breathing | number:'1.0-0' }} ms</td></tr>
 											<tr class="total"><td>total (parallel)</td><td>{{ w.total | number:'1.0-0' }} ms</td></tr>
 										</table>
 									</section>
@@ -153,6 +154,9 @@
 				</div>
 				<div class="section">
 					<app-sleep-chart [sleep]="sleep()" />
+				</div>
+				<div class="section">
+					<app-breathing-chart [breathing]="breathing()" />
 				</div>
 			</div>
 		</mat-tab>

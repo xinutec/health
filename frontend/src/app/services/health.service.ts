@@ -332,6 +332,15 @@ export interface HrvDay {
   deep_rmssd: number;
 }
 
+export interface BreathingDay {
+  date: string;
+  // DECIMAL columns come back as strings from the driver; the chart coerces.
+  full_sleep_rate: number | string | null;
+  deep_sleep_rate: number | string | null;
+  light_sleep_rate: number | string | null;
+  rem_sleep_rate: number | string | null;
+}
+
 export interface BodyDay {
   date: string;
   // DECIMAL columns come back as strings from the driver; the chart coerces.
@@ -426,6 +435,12 @@ export class HealthService {
     const res = await this.fetch(`/api/hrv?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch HRV");
     return HealthService.body<HrvDay[]>(res);
+  }
+
+  async getBreathing(days = 30, signal?: AbortSignal): Promise<BreathingDay[]> {
+    const res = await this.fetch(`/api/breathing?days=${days}`, { signal });
+    if (!res.ok) throw new Error("Failed to fetch breathing rate");
+    return HealthService.body<BreathingDay[]>(res);
   }
 
   async getBody(days = 30, signal?: AbortSignal): Promise<BodyDay[]> {
