@@ -343,21 +343,25 @@ pub(crate) async fn refresh_focus_places_one(
     }
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let (voted, flat_stays) =
+    let (voted, flat_stays, unanswered) =
         backend::mirror_source::with_mirror_answerer(pool.clone(), now_ms, move |ans| {
             let mut out: Vec<backend::lean::MinedCluster> = Vec::with_capacity(pending.len());
+            // Per cluster: did the mirror fail to answer for any of its stays?
+            let mut unanswered: Vec<bool> = Vec::with_capacity(pending.len());
             // #343 P0: the soft-mining population is BY CONSTRUCTION the stays the
             // hard miner sees — collected inside the same loop, after the residence
             // skip (empty `stays`) and the mirror-could-not-answer skip.
             let mut flat: Vec<backend::lean::MineStay> = Vec::new();
             for c in pending {
                 let mut ms: Vec<backend::lean::MineStay> = Vec::with_capacity(c.stays.len());
+                let mut missed = false;
                 for s in c.stays {
                     // ⚠ `None` means the MIRROR could not answer, which is NOT
                     // "no venues here". This stay then casts no vote, rather than
                     // a vote for nothing (#976, and the empty-landmarks day of
                     // #1054).
                     let Some(shaped) = ans.nearby_landmarks(s.lat, s.lon)? else {
+                        missed = true;
                         continue;
                     };
                     ms.push(backend::lean::MineStay {
@@ -374,8 +378,9 @@ pub(crate) async fn refresh_focus_places_one(
                     .unwrap_or_else(|| serde_json::json!([]));
                 flat.extend(ms.iter().cloned());
                 out.push(backend::lean::mine_cluster(&ms, &centroid)?);
+                unanswered.push(missed);
             }
-            Ok((out, flat))
+            Ok((out, flat, unanswered))
         })
         .await?;
 
@@ -400,9 +405,11 @@ pub(crate) async fn refresh_focus_places_one(
     }
     eprintln!(
         "[{user_id}] amenity mining: {mine_ok}/{} clusters labelled, {} attributed stay(s), \
-         {residential} skipped as residential",
+         {residential} skipped as residential, {} the mirror could not fully answer \
+         (an empty vote there keeps the stored label)",
         mined.len(),
-        attributed_all.len()
+        attributed_all.len(),
+        unanswered.iter().filter(|&&u| u).count()
     );
 
     // ── 6. the priors blob — a full recompute, never incremental ────────────
@@ -588,6 +595,14 @@ pub(crate) async fn refresh_focus_places_one(
         let display_name = names.get(&id);
         let (amenity_label, amenity_kind) = &labels[i];
 
+        // ⚠ A cluster the mirror could not answer for KEEPS its stored label
+        // when this vote came out empty: no answer is not "no venue". The
+        // re-mine of 2026-10-04 04:01Z ran while landmark boxes refiled under
+        // a new vocabulary were still unfetched and stored 45 labels where a
+        // run hours later finds 59, so 04-29's Bustan stay read as its street
+        // (#1909). A vote that ANSWERED empty still clears the label.
+        let keep_label = amenity_label.is_none() && unanswered.get(i).copied().unwrap_or(false);
+
         if let Some(old_id) = assignments[i] {
             // ⚠ UPDATE preserves `id` and `first_seen_ts` — the original "first
             // time we observed this place". Rewriting either would break the
@@ -596,8 +611,9 @@ pub(crate) async fn refresh_focus_places_one(
             sqlx::query(
                 "UPDATE focus_places SET centroid_lat = ?, centroid_lon = ?, radius_m = ?, \
                    total_dwell_sec = ?, visit_count = ?, unique_days = ?, last_seen_ts = ?, \
-                   detected_label = ?, display_name = ?, sleep_hours = ?, amenity_label = ?, \
-                   amenity_kind = ?, hour_profile = ?, refreshed_at = CURRENT_TIMESTAMP \
+                   detected_label = ?, display_name = ?, sleep_hours = ?, \
+                   amenity_label = IF(?, amenity_label, ?), amenity_kind = IF(?, amenity_kind, ?), \
+                   hour_profile = ?, refreshed_at = CURRENT_TIMESTAMP \
                  WHERE id = ?",
             )
             .bind(clat)
@@ -610,7 +626,9 @@ pub(crate) async fn refresh_focus_places_one(
             .bind(detected)
             .bind(display_name)
             .bind(sleep_h.round() as i64)
+            .bind(keep_label)
             .bind(amenity_label)
+            .bind(keep_label)
             .bind(amenity_kind)
             .bind(profile)
             .bind(old_id)
