@@ -41,6 +41,22 @@ struct Br {
 ///
 /// ⚠ A day present in only one type still writes. The columns are independent
 /// and a missing stage rate is a null, exactly as the Fitbit writer leaves it.
+///
+/// # A zero is no reading (#1908)
+///
+/// Google sends `0.0` for a stage it could not read, on nights that had sleep in
+/// that stage (15 nights to 2026-10-04, mostly REM; 10-04 had 38 minutes of
+/// deep). No breathing rate is 0, so a zero is stored as NULL. Every run re-reads
+/// the whole history, so the next run also clears the zeros already stored.
+///
+/// # What `full_sleep_rate` is
+///
+/// Not an average of the stages: on nights with all three, it equals the deep
+/// rate on 834 of 941. With no deep reading Google falls back to another part of
+/// the night (06-14 has no stage reading at all and a full rate of 16.4), and the
+/// fallback can sit below every stage (3 of 941 nights; 10-04 reads 14.8 beside
+/// light 20.6 and REM 18.4). It is stored as Google gives it, the figure the
+/// Fitbit app shows; `hr-trend --averages` counts those nights as `without_deep`.
 pub async fn sync_breathing_rate(
     pool: &MySqlPool,
     http: &reqwest::Client,
@@ -57,6 +73,8 @@ pub async fn sync_breathing_rate(
     )
     .await
     .context("fetching daily-respiratory-rate")?
+    .into_iter()
+    .filter(|d| d.value > 0.0)
     {
         by_day.entry(d.date).or_default().full = Some(d.value);
     }
@@ -87,6 +105,8 @@ pub async fn sync_breathing_rate(
         )
         .await
         .with_context(|| format!("fetching {pointer}"))?
+        .into_iter()
+        .filter(|d| d.value > 0.0)
         {
             let e = by_day.entry(d.date).or_default();
             match which {

@@ -608,19 +608,19 @@ pub(crate) async fn coverage() -> Result<()> {
     Ok(())
 }
 
-/// The OwnTracks proxy's decisions, newest last (#1730).
-///
-/// The same fields as the `owntracks …` log line, read from the table the
-/// route writes beside it, so the answer survives a rollout. ⚠ `CAST(... AS
-/// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
-/// INT decoding as a Rust integer fails on real rows in ways an empty table
-/// never shows.
-/// The three daily-summary series the heart-rate trend reads: `(table, metric
+/// The daily-summary series the heart-rate trend reads: `(table, metric
 /// column, key)`. Every table dates its rows in a `date DATE` column.
-const HR_TREND_SOURCES: [(&str, &str, &str); 3] = [
+///
+/// `resp` is Google's daily figure, which is the deep-sleep rate when there is
+/// one (see `google::sync::sync_breathing_rate`); the three stage rates beside
+/// it are null where Google had no reading for that stage (#1908).
+const HR_TREND_SOURCES: [(&str, &str, &str); 6] = [
     ("daily_activity", "resting_heart_rate", "rhr"),
     ("hrv_daily", "daily_rmssd", "rmssd"),
     ("breathing_rate", "full_sleep_rate", "resp"),
+    ("breathing_rate", "deep_sleep_rate", "resp_deep"),
+    ("breathing_rate", "light_sleep_rate", "resp_light"),
+    ("breathing_rate", "rem_sleep_rate", "resp_rem"),
 ];
 
 fn is_iso_date(s: &str) -> bool {
@@ -634,7 +634,7 @@ fn is_iso_date(s: &str) -> bool {
 /// Recent resting HR / HRV / breathing rate, one row per date since `since`.
 ///
 /// `backend hr-trend [--json] [SINCE]` — a table, or with `--json` the array
-/// `[{"date", "rhr", "rmssd", "resp"}]` a key present only where that table
+/// `[{"date", "rhr", "rmssd", "resp", "resp_deep", "resp_light", "resp_rem"}]`, a key present only where that table
 /// has a row for the day, `null` where the row holds no value. Replaces the
 /// Node probe deleted in 045bcbe; `~/Code/dicom-scan/refresh_hr_data.py` reads
 /// it through `scripts/prod-db.sh` (#1733).
@@ -684,18 +684,21 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string(&out)?);
         return Ok(());
     }
-    println!("date        RHR   RMSSD  resp");
+    println!("date        RHR   RMSSD  resp  deep light   rem");
     let cell = |o: &serde_json::Value, k: &str| match o.get(k).and_then(serde_json::Value::as_f64) {
         Some(n) => format!("{n:>5}"),
         None => "  -  ".to_string(),
     };
     for o in &out {
         println!(
-            "{}  {} {} {}",
+            "{}  {} {} {} {} {} {}",
             o["date"].as_str().unwrap_or("-"),
             cell(o, "rhr"),
             cell(o, "rmssd"),
-            cell(o, "resp")
+            cell(o, "resp"),
+            cell(o, "resp_deep"),
+            cell(o, "resp_light"),
+            cell(o, "resp_rem")
         );
     }
     Ok(())
@@ -706,7 +709,10 @@ pub(crate) async fn hr_trend(since: &str, json: bool) -> Result<()> {
 ///
 /// `backend hr-trend --averages <FROM> <BOUNDARY>` — `{"windows", "preop",
 /// "postop"}` where `preop` covers `[FROM, BOUNDARY)` and `postop`
-/// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. The dates are the CALLER's:
+/// `[BOUNDARY, now)`, each `{key: {"avg", "n"}}`. `resp` also carries
+/// `without_deep`: how many of its `n` nights had no deep-sleep reading, so
+/// their figure is Google's fallback rather than the deep-sleep rate (#1908).
+/// The dates are the CALLER's:
 /// this repository is public, and which day divides the two windows belongs
 /// to the case file that asks, not here.
 pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> {
@@ -750,6 +756,33 @@ pub(crate) async fn hr_trend_averages(from: &str, boundary: &str) -> Result<()> 
                         "avg": a.and_then(|s| s.parse::<f64>().ok()),
                         "n": n.parse::<u64>().unwrap_or(0),
                     }),
+                );
+            }
+            let sql = match &hi {
+                Some(_) => {
+                    "SELECT CAST(COUNT(*) AS CHAR) AS n FROM breathing_rate \
+                     WHERE full_sleep_rate IS NOT NULL AND deep_sleep_rate IS NULL \
+                     AND date >= ? AND date < ?"
+                }
+                None => {
+                    "SELECT CAST(COUNT(*) AS CHAR) AS n FROM breathing_rate \
+                     WHERE full_sleep_rate IS NOT NULL AND deep_sleep_rate IS NULL \
+                     AND date >= ?"
+                }
+            };
+            let mut q = sqlx::query(sql).bind(lo.clone());
+            if let Some(h) = &hi {
+                q = q.bind(h.clone());
+            }
+            let n: String = q
+                .fetch_one(&pool)
+                .await
+                .context("counting nights without a deep-sleep reading")?
+                .get("n");
+            if let Some(resp) = o.get_mut("resp").and_then(serde_json::Value::as_object_mut) {
+                resp.insert(
+                    "without_deep".into(),
+                    serde_json::json!(n.parse::<u64>().unwrap_or(0)),
                 );
             }
             Ok::<_, anyhow::Error>(serde_json::Value::Object(o))
@@ -815,6 +848,13 @@ pub(crate) async fn hrv_history() -> Result<()> {
     Ok(())
 }
 
+/// The OwnTracks proxy's decisions, newest last (#1730).
+///
+/// The same fields as the `owntracks …` log line, read from the table the
+/// route writes beside it, so the answer survives a rollout. ⚠ `CAST(... AS
+/// CHAR)` on every column: this is a readout, and a TINYINT or an unsigned
+/// INT decoding as a Rust integer fails on real rows in ways an empty table
+/// never shows.
 pub(crate) async fn owntracks_log(user: &str, limit: i64) -> Result<()> {
     use sqlx::Row as _;
     let cfg = backend::config::Config::from_env_batch().context("reading configuration")?;
