@@ -134,15 +134,20 @@ const UNANSWERED_KINDS: [&str; 6] = [
 /// days are re-captured (#1076); the fold is right to ask. Raised again the
 /// same evening when daytime stays at a residence joined the rule, and once
 /// more for the base-rate pseudo-count (06-09: a renamed stay, a new key).
-const UNANSWERED_BY_DAY: [(&str, usize); 43] = [
-    ("2026-04-29", 7),
+///
+/// 2026-10-04 with the far Home/Work ask (#325): a stay of 30 minutes or more
+/// that elected Home or Work from 1.2σ away asks the resolver at its own
+/// centroid. 04-29 gained that key (live, the answer moves no stay); 09-30 was
+/// re-captured for it and answers every key; 05-20 had fallen to 3.
+const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
+    ("2026-04-29", 8),
     ("2026-04-30", 6),
     ("2026-05-11", 2),
     ("2026-05-12", 3),
     ("2026-05-14", 1),
     ("2026-05-15", 2),
     ("2026-05-18", 3),
-    ("2026-05-20", 5),
+    ("2026-05-20", 3),
     ("2026-05-22", 5),
     ("2026-05-25", 5),
     ("2026-06-02", 3),
@@ -178,7 +183,6 @@ const UNANSWERED_BY_DAY: [(&str, usize); 43] = [
     ("2026-09-15", 3),
     // Captured the same day, mid-journey: 9 geocodes and 3 ways off the
     // mirror's ground in France and under the Channel.
-    ("2026-09-30", 22),
     ("2026-10-01", 202),
 ];
 

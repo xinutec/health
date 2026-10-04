@@ -24,7 +24,9 @@ becomes one chain (#430 B2).
    and its biometric coherence
    ({@link Verified.Geo.BiometricCoherence.biometricCoherence}) as the two
    modulating signals.
-3. A winner that is **Home or Work** wins outright — those are intent labels.
+3. A winner that is **Home or Work** wins outright — those are intent labels —
+   unless the stay sits {@link HOME_WORK_FAR_SIGMA}σ or more from it and the
+   resolver, asked at the stay's own centroid, finds a building enclosing it.
    "Stay" is a clustering bucket, not a timeline name, so it falls through.
 4. A winner that is **not residential and carries a mined `amenityLabel`** takes
    that label.
@@ -182,6 +184,20 @@ gate's verdict, so it falls through with `preferResidential := false`. Gating
 `venueless` on this too would be the natural-looking change and would diverge. -/
 def MINED_LABEL_MIN_DAYS : Float := 2
 
+/-- In σ of the place ({@link Verified.Geo.PlacePrior.effectiveSigmaM}), how far
+a stay must sit from the Home or Work it elected before the building around it
+is asked about (#325). Census over the corpus (2026-10-04): of 74 stays named
+Home or Work, 72 sit within 50 m of the stored centroid and one at 50–100 m,
+all with σ ≈ 100 m; the one past it is 09-30's 74-minute wait inside St Pancras
+station, 150–200 m from Work, which elected Work as an ordinary candidate. -/
+def HOME_WORK_FAR_SIGMA : Float := 1.2
+
+/-- …and how long it must last. A piece of the walk in, carved as a stay before
+the merge, is far from Work and inside the station next to it: named for the
+station, it carried that name into the merged Work stay on 07-10 (live,
+2026-10-04). The 09-30 wait was 74 minutes. -/
+def HOME_WORK_FAR_MIN_S : Int := 30 * 60
+
 /-- A mined `focus_places` row as this branch reads it: the scorer's candidate
 fields plus the three the LABEL cascade branches on. One record rather than two
 projections, because unlike the fix series both halves are read on the same
@@ -248,7 +264,19 @@ def enrichStay (reads : Reads) (biom : Biom) (places : List NamedPlace)
       let placeLon := wp.cand.centroidLon
       -- 3. Home and Work are intent labels and win outright. "Stay" is a
       -- clustering bucket, so it is NOT here and falls through to naming.
-      if wp.displayName == some "Home" || wp.displayName == some "Work" then
+      -- Far from it, a building the stay is inside names it instead: the
+      -- intent label is the guess, the outline around the fixes is evidence.
+      let far := seg.endTs - seg.startTs ≥ HOME_WORK_FAR_MIN_S &&
+        Verified.Hsmm.FloatScore.haversineMeters cLat cLon placeLat placeLon
+          ≥ HOME_WORK_FAR_SIGMA * Verified.Geo.PlacePrior.effectiveSigmaM wp.cand
+      let inside := if far then (reads.place cLat cLon false true).filter (·.source == "enclosing")
+        else none
+      if let some p := inside then
+        withCity
+          { seg with place := some p.label, placeSource := some (p.label, p.source)
+                     placeKind := some (p.category, p.type_) }
+          (some p)
+      else if wp.displayName == some "Home" || wp.displayName == some "Work" then
         withCity
           { seg with place := wp.displayName, focusPlaceId := some wp.cand.id
                      placeSource := wp.displayName.map fun n => (n, n.toLower) }
@@ -409,6 +437,21 @@ private def run (reads : Reads) (places : List NamedPlace) (prev : Option Seg :=
 -- with `preferResidential=true`.
 #guard (run spy [home]).place == some "Home"
 #guard (run spy [home]).focusPlaceId == some 1
+
+-- 3, far (#325): a stay 200 m from Home, inside a building the resolver
+-- reports as enclosing, is named for the building; a non-enclosing answer, or
+-- the same building at the place itself, leaves it Home.
+private def enclosingAt (src : String) : Reads :=
+  { spy with place := fun _ _ _ _ => some { label := "St Pancras", source := src, city := some "London" } }
+private def farHome : NamedPlace := { home with cand := cand 1 (LAT + 200 / 111195) LON 40 }
+private def runFar (reads : Reads) : Seg := enrichStay reads {} [farHome] none stay LAT LON
+#guard (runFar (enclosingAt "enclosing")).place == some "St Pancras"
+#guard (runFar (enclosingAt "enclosing")).focusPlaceId == none
+#guard (runFar (enclosingAt "nearField")).place == some "Home"
+#guard (run (enclosingAt "enclosing") [home]).place == some "Home"
+-- A short piece far out is not asked about: the stay it joins decides.
+#guard (enrichStay (enclosingAt "enclosing") {} [farHome] none
+  { stay with endTs := stay.startTs + HOME_WORK_FAR_MIN_S - 1 } LAT LON).place == some "Home"
 -- 4 (RETIRED 2026-09-03, #344): the mined label no longer short-circuits the
 -- resolver — a labelled, non-residential cluster asks the resolver like
 -- everything else. What SURVIVES the retirement and stays pinned here: a
