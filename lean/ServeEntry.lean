@@ -1028,20 +1028,34 @@ private def buildDurations (c : Verified.Hsmm.Assemble.ModelContext) (T S maxD h
     for d0 in [0:maxD] do
       durBase := durBase.set! (s * maxD + d0) (← encScore halfOB (quant (Verified.Hsmm.Assemble.durAt c s (d0 + 1) assembleRefE)))
   let qiOf := fun (x : Float) => (Float.toInt64 x).toInt   -- dur is finite
-  let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
-  for (rep, cls) in reps.zipIdx do
+  -- Coverage depends on `e` alone, so once per `e` for every class and `d`.
+  let covered : Array Bool := (Array.range T).map (Verified.Hsmm.Assemble.coveredAtE c)
+  -- A pure loop: in `Except` each of the ~2.4M cells paid for the monad, which
+  -- was half the phase (#1774). An out-of-range delta is recorded and thrown
+  -- after the loop instead.
+  let (durDelta, bad) : Array Nat × Option Int := Id.run do
+    let mut durDelta : Array Nat := Array.replicate (nC * maxD * T) halfOB
+    let mut bad : Option Int := none
     for d0 in [0:maxD] do
-      -- The gamma prior once per (class, d); each `e` adds only the relaxation
-      -- and the segment evidence (`durAt_eq_durAtFrom`, #1774).
-      let base := Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
-      let qRef := match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
-        | some v => qiOf v | none => 0
-      for e in [0:T] do
-        let qE := match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) e base) with
+      -- The gamma prior once per (class, d) (`durAt_eq_durAtFrom`), and the
+      -- reference cell each delta is taken against.
+      let bases := reps.map fun rep => Verified.Hsmm.Assemble.durPriorBase c rep (d0 + 1)
+      let qRefs := (reps.zip bases).map fun (rep, base) =>
+        match quant (Verified.Hsmm.Assemble.durAtFrom c rep (d0 + 1) assembleRefE base) with
           | some v => qiOf v | none => 0
-        let delta := qE - qRef
-        if delta.natAbs > halfOB then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
-        durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
+      for e in [0:T] do
+        -- The segment's window once per (d, e) for every class
+        -- (`durAtFrom_eq_W`, #1774).
+        let w := Verified.Hsmm.SegmentEvidence.windowAt c.obs c.stepPref (d0 + 1) e
+        let cov := covered[e]!
+        for cls in [0:nC] do
+          let qE := match quant (Verified.Hsmm.Assemble.durAtFromW c reps[cls]! (d0 + 1) cov w bases[cls]!) with
+            | some v => qiOf v | none => 0
+          let delta := qE - qRefs[cls]!
+          if delta.natAbs > halfOB then bad := some delta
+          durDelta := durDelta.set! ((cls * maxD + d0) * T + e) (delta + (halfOB : Int)).toNat
+    return (durDelta, bad)
+  if let some delta := bad then throw s!"dur delta {delta} exceeds halfOB {halfOB}"
   return (durClass, durBase, durDelta)
 
 /-- Build the packed `PData` directly from the assembled model — the in-process

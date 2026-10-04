@@ -250,6 +250,26 @@ def durAtFrom (c : ModelContext) (s d e : Nat) (base : Float) : Float :=
   Assembly.durationLogProbFrom c.obs c.stepPref st d e covered
     (Duration.minDurationByMode .train) base c.segEvidenceOn
 
+/-- Whether minute `e` is covered — one per `e`, shared by every state. -/
+def coveredAtE (c : ModelContext) (e : Nat) : Bool :=
+  match c.obs[e]? with | some o => coveredAt c o.ts | none => false
+
+/-- `durAtFrom` with what depends only on `(d, e)` — the coverage and the
+    segment's window — resolved by the caller once for every state (#1774). -/
+def durAtFromW (c : ModelContext) (s d : Nat) (covered : Bool)
+    (w : Option SegmentEvidence.Window) (base : Float) : Float :=
+  match c.states[s]? with
+  | none => negInf
+  | some st =>
+  Assembly.durationLogProbFromW st d covered (Duration.minDurationByMode .train) base
+    c.segEvidenceOn w
+
+theorem durAtFrom_eq_W (c : ModelContext) (s d e : Nat) (base : Float) :
+    durAtFrom c s d e base
+      = durAtFromW c s d (coveredAtE c e) (SegmentEvidence.windowAt c.obs c.stepPref d e) base := by
+  unfold durAtFrom durAtFromW coveredAtE
+  cases c.states[s]? <;> rfl
+
 /-- `duration(s, d, obs[e])` — the mode's duration prior at `d`, the train-hop
     relaxation and the segment evidence at `e`. DEFINED as the split
     (`durPriorBase` then `durAtFrom`) since 2026-09-29, so the hoisted decoder

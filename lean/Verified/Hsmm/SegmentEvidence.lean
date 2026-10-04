@@ -144,16 +144,26 @@ def windowFor (obs : Array ObsRow) (pref : Array Float) (startIndex segEnd : Int
                 sl * sl, (pref[hiIdx]?).getD 0 - (pref[loIdx]?).getD 0⟩
       | _, _ => none
 
+/-- The window of the segment of length `d` ending at `segEnd`. It depends on
+    the segment and not on the state, so the duration build resolves it once per
+    `(d, segEnd)` and scores every state class from it (#1774). -/
+def windowAt (obs : Array ObsRow) (pref : Array Float) (d segEnd : Nat) : Option Window :=
+  windowFor obs pref ((segEnd : Int) - (d : Int) + 1) (segEnd : Int)
+
+/-- A resolved window scored for one mode; `none` and `unknown` assert nothing. -/
+def segmentEvidenceOf (mode : Mode) (d : Nat) (w : Option Window) : Float :=
+  if mode == .unknown then 0.0
+  else match w with
+    | none => 0.0
+    | some w => segmentEvidence mode d.toFloat w
+
 /-- Segment-evidence resolved over the observation tensor: the caller supplies
     only the state mode, segment length `d`, and end index `segEnd` (the duration
     hook's arguments). `startIndex = segEnd − d + 1`, matching the TS
     `buildSegmentEvidence`. -/
 def segmentEvidenceAt (obs : Array ObsRow) (pref : Array Float)
     (mode : Mode) (d segEnd : Nat) : Float :=
-  if mode == .unknown then 0.0
-  else match windowFor obs pref ((segEnd : Int) - (d : Int) + 1) (segEnd : Int) with
-    | none => 0.0
-    | some w => segmentEvidence mode d.toFloat w
+  segmentEvidenceOf mode d (windowAt obs pref d segEnd)
 
 -- Parity with `buildSegmentEvidence`'s window resolution (values from Node/V8).
 private def sev (i : Nat) (prev next : Option Fix) : ObsRow :=

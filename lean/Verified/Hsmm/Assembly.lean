@@ -75,6 +75,19 @@ def durationLogProbFrom (obs : Array ObsRow) (pref : Array Float)
   TrainHopDuration.trainHopDurationLogProbFrom s d.toFloat covered trainMin base
     + (if segEvidenceOn then SegmentEvidence.segmentEvidenceAt obs pref s.mode d segEnd else 0.0)
 
+/-- `durationLogProbFrom` with the segment's window already resolved
+    (`SegmentEvidence.windowAt`), shared by every state at one `(d, segEnd)`. -/
+def durationLogProbFromW (s : State) (d : Nat) (covered : Bool) (trainMin base : Float)
+    (segEvidenceOn : Bool) (w : Option SegmentEvidence.Window) : Float :=
+  TrainHopDuration.trainHopDurationLogProbFrom s d.toFloat covered trainMin base
+    + (if segEvidenceOn then SegmentEvidence.segmentEvidenceOf s.mode d w else 0.0)
+
+theorem durationLogProbFrom_eq_W (obs : Array ObsRow) (pref : Array Float)
+    (s : State) (d segEnd : Nat) (covered : Bool) (trainMin base : Float) (segEvidenceOn : Bool) :
+    durationLogProbFrom obs pref s d segEnd covered trainMin base segEvidenceOn
+      = durationLogProbFromW s d covered trainMin base segEvidenceOn
+          (SegmentEvidence.windowAt obs pref d segEnd) := rfl
+
 theorem durationLogProbFull_eq (obs : Array ObsRow) (pref : Array Float)
     (s : State) (d segEnd : Nat) (covered : Bool)
     (fit : GammaFit) (minForMode trainMin : Float) (segEvidenceOn : Bool) :
