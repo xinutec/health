@@ -69,6 +69,46 @@ def relaxStep (u p : Nat) (s : LState) (tw : Nat × Nat) : LState :=
         heap := s.heap.push (p + tw.2) tw.1 }
     else s
 
+/-! ## The step, compiled in place (#1921)
+
+`relaxStep` and `lstep` read `s.dist`, `s.heap`, … while `s` still holds them,
+so each write found its array shared and copied it — `dist` and `prev` are one
+entry per graph vertex (29,000 on a long walk), copied on every relaxation.
+These twins take the state apart first, so every field has one owner when it
+is written. `@[csimp]` swaps them in for compiled code; every proof still reads
+the definitions above. -/
+
+theorem Heap.pop_eq_none {h : Heap} (e : h.pop = none) : h = ⟨#[]⟩ := by
+  cases h with
+  | mk a =>
+    unfold Verified.Rail.Heap.pop at e
+    split at e
+    · rename_i hz
+      have : a.size = 0 := by
+        rcases Nat.eq_zero_or_pos a.size with h0 | hp
+        · exact h0
+        · simp [Array.getElem?_eq_getElem hp] at hz
+      simp [Array.eq_empty_of_size_eq_zero this]
+    · split at e <;> simp at e
+
+def relaxStepFast (u p : Nat) (s : LState) (tw : Nat × Nat) : LState :=
+  match s with
+  | ⟨dist, prev, done, heap, ex⟩ =>
+    match dist.getD tw.1 none with
+    | none =>
+      ⟨dist.setIfInBounds tw.1 (some (p + tw.2)), prev.setIfInBounds tw.1 u, done,
+        heap.push (p + tw.2) tw.1, ex⟩
+    | some dv =>
+      if p + tw.2 < dv then
+        ⟨dist.setIfInBounds tw.1 (some (p + tw.2)), prev.setIfInBounds tw.1 u, done,
+          heap.push (p + tw.2) tw.1, ex⟩
+      else ⟨dist, prev, done, heap, ex⟩
+
+@[csimp] theorem relaxStep_eq_fast : @relaxStep = @relaxStepFast := by
+  funext u p s tw
+  cases s
+  simp only [relaxStep, relaxStepFast]
+
 def relaxL (u p : Nat) (edges : Array (Nat × Nat)) (s : LState) : LState :=
   edges.foldl (relaxStep u p) s
 
@@ -86,6 +126,32 @@ def lstep (g : Graph) (maxR : Nat) (s : LState) : LState :=
         let s' := { s with heap := h', done := s.done.setIfInBounds u true }
         if p > maxR then { s' with exhausted := true }
         else relaxL u p (g.adj.getD u #[]) s'
+
+def lstepFast (g : Graph) (maxR : Nat) (s : LState) : LState :=
+  match s with
+  | ⟨dist, prev, done, heap, ex⟩ =>
+    if ex then ⟨dist, prev, done, heap, ex⟩
+    else
+      match heap.pop with
+      | none => ⟨dist, prev, done, ⟨#[]⟩, ex⟩
+      | some ((p, u), h') =>
+        if done.getD u false then ⟨dist, prev, done, h', ex⟩
+        else
+          let done' := done.setIfInBounds u true
+          if p > maxR then ⟨dist, prev, done', h', true⟩
+          else relaxL u p (g.adj.getD u #[]) ⟨dist, prev, done', h', ex⟩
+
+@[csimp] theorem lstep_eq_fast : @lstep = @lstepFast := by
+  funext g maxR s
+  cases s with
+  | mk dist prev done heap ex =>
+    simp only [lstep, lstepFast]
+    split
+    · rfl
+    · split
+      · rename_i e
+        rw [Heap.pop_eq_none e]
+      · rfl
 
 /-- The search is over for good: radius-exhausted or drained. -/
 def lterminal (s : LState) : Bool := s.exhausted || s.heap.size == 0

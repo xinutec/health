@@ -49,6 +49,29 @@ def siftUp (a : Array (Nat × Nat)) (i : Nat) : Array (Nat × Nat) :=
   termination_by i
   decreasing_by omega
 
+def siftUpFast (a : Array (Nat × Nat)) (i : Nat) : Array (Nat × Nat) :=
+  if _h : i = 0 then a
+  else
+    let j := (i - 1) / 2
+    let aj := a.getD j (0, 0)
+    let ai := a.getD i (0, 0)
+    if aj.1 ≤ ai.1 then a
+    else siftUpFast ((a.setIfInBounds i aj).setIfInBounds j ai) j
+  termination_by i
+  decreasing_by omega
+
+@[csimp] theorem siftUp_eq_fast : @siftUp = @siftUpFast := by
+  funext a i
+  induction i using Nat.strongRecOn generalizing a with
+  | _ i ih =>
+    unfold siftUp siftUpFast
+    split
+    · rfl
+    · simp only []
+      split
+      · rfl
+      · exact ih _ (by omega) _
+
 def push (h : Heap) (p v : Nat) : Heap :=
   let a := h.a.push (p, v)
   ⟨siftUp a (a.size - 1)⟩
@@ -76,6 +99,26 @@ def siftDown (a : Array (Nat × Nat)) : Nat → Nat → Array (Nat × Nat)
           (a.getD i (0, 0)))
         fuel (sDown a i)
 
+def siftDownFast (a : Array (Nat × Nat)) : Nat → Nat → Array (Nat × Nat)
+  | 0, _ => a
+  | fuel + 1, i =>
+    let j := sDown a i
+    if j = i then a
+    else
+      let aj := a.getD j (0, 0)
+      let ai := a.getD i (0, 0)
+      siftDownFast ((a.setIfInBounds i aj).setIfInBounds j ai) fuel j
+
+@[csimp] theorem siftDown_eq_fast : @siftDown = @siftDownFast := by
+  funext a fuel i
+  induction fuel generalizing a i with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [siftDown, siftDownFast]
+    split
+    · rfl
+    · exact ih _ _
+
 /-- Pop the minimum. Mirrors TS: move the last element to the root and
 sift down (skipped when the heap becomes empty). -/
 def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
@@ -86,6 +129,31 @@ def pop (h : Heap) : Option ((Nat × Nat) × Heap) :=
       some (top, ⟨siftDown (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0)))
         (h.a.pop.setIfInBounds 0 (h.a.getD (h.a.size - 1) (0, 0))).size 0⟩)
     else some (top, ⟨h.a.pop⟩)
+
+/-! ### The same functions, compiled in place (#1921)
+
+Each reads what it needs BEFORE it writes, so the array has one owner when it
+is written and Lean updates it in place. The definitions above read the array
+again after writing it (`(a.set i (a.getD j)).set j (a.getD i)`, `h.a.pop` then
+`h.a.getD`), which makes every write a copy: a pop cost the whole heap, and the
+walk matcher's searches spent most of their time copying. `@[csimp]` swaps
+these in for compiled code; every proof still reads the definitions above. -/
+
+def popFast (h : Heap) : Option ((Nat × Nat) × Heap) :=
+  let a := h.a
+  match a[0]? with
+  | none => none
+  | some top =>
+    let last := a.getD (a.size - 1) (0, 0)
+    let a' := a.pop
+    if a'.size > 0 then
+      let b := a'.setIfInBounds 0 last
+      some (top, ⟨siftDown b b.size 0⟩)
+    else some (top, ⟨a'⟩)
+
+@[csimp] theorem pop_eq_fast : @pop = @popFast := by
+  funext h
+  simp only [pop, popFast]
 
 end Heap
 
