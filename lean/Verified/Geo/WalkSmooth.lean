@@ -36,7 +36,8 @@ bit-identical, and the guards below compare with a tolerance rather than `==`.
 namespace Verified.Geo.WalkSmooth
 
 open Verified.Geo.WalkableRoute (Pt Ways metersBetween projectPointToSegment)
-open Verified.Geo.WalkEscape (Ring TPt nearestWalkable routeChordAroundBuildings)
+open Verified.Geo.WalkEscape (Ring TPt nearestWalkable routeChordAroundBuildings
+  routeChordAroundBuildingsIn RingCtx)
 
 private def pi : Float := 3.14159265358979323846
 private def posInf : Float := 1.0 / 0.0
@@ -943,6 +944,9 @@ def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
   -- No points, nothing to splice.
   let some o0 := out[0]? | return out
   let mut repaired : Array SmoothedPoint := #[o0]
+  -- The footprints' boxes once for the line, and only if a chord needs them
+  -- (`routeChordAroundBuildings_eq_In`).
+  let ctx : Thunk RingCtx := Thunk.mk fun _ => RingCtx.ofRings buildings 0
   for hm_i : i in [0:out.size] do
     if hi1 : i + 1 < out.size then
       let a := out[i]
@@ -950,7 +954,7 @@ def spliceCornerDetours (out : Array SmoothedPoint) (buildings : Array Ring)
       -- `exempt` is one per state; a state without an entry is not exempt.
       if !(exempt[i]?.getD false) && !(exempt[i+1]?.getD false) then
         let chordM := hyp (fr.toE b.lon - fr.toE a.lon) (fr.toN b.lat - fr.toN a.lat)
-        let path := if chordM > 1 then routeChordAroundBuildings a.pt b.pt buildings else none
+        let path := if chordM > 1 then routeChordAroundBuildingsIn ctx.get a.pt b.pt buildings else none
         match path with
         | none => pure ()
         | some path =>

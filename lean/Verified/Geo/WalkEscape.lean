@@ -580,6 +580,19 @@ def routeChordAroundBuildings (a b : Pt) (buildings : Array Ring) : Option (Arra
   if buildings.isEmpty then some #[a, b]
   else repairChord CORNER_MAX_DEPTH a b (RingCtx.ofRings buildings 0)
 
+/-- `routeChordAroundBuildings` over boxes already built — `ctx` is
+    `RingCtx.ofRings buildings 0`. A caller routing every chord of a line builds
+    them once: per chord it was a bbox for every building, 2,139 on a long walk,
+    160 times (#1921). -/
+def routeChordAroundBuildingsIn (ctx : RingCtx) (a b : Pt) (buildings : Array Ring) :
+    Option (Array Pt) :=
+  if buildings.isEmpty then some #[a, b]
+  else repairChord CORNER_MAX_DEPTH a b ctx
+
+theorem routeChordAroundBuildings_eq_In (a b : Pt) (buildings : Array Ring) :
+    routeChordAroundBuildings a b buildings
+      = routeChordAroundBuildingsIn (RingCtx.ofRings buildings 0) a b buildings := rfl
+
 /-! ## The corrector -/
 
 /-- Insert intermediate vertices so no chord exceeds `stepM`; timestamps are
