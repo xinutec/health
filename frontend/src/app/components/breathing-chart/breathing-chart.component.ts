@@ -59,8 +59,15 @@ export class BreathingChartComponent {
     effect(() => {
       const data = this.breathing();
       const fullVals = data.map((d) => rate(d.full_sleep_rate));
-      const deepVals = data.map((d) => rate(d.deep_sleep_rate));
-      const allVals = [...fullVals, ...deepVals].filter((v): v is number => v != null);
+      const stages = [
+        // The Sleep chart's stage colours; its deep navy is lifted to read as a line.
+        { label: "Deep", vals: data.map((d) => rate(d.deep_sleep_rate)), color: "#4a6fa5" },
+        { label: "Light", vals: data.map((d) => rate(d.light_sleep_rate)), color: chartColors.blue },
+        { label: "REM", vals: data.map((d) => rate(d.rem_sleep_rate)), color: chartColors.purple },
+      ];
+      const allVals = [fullVals, ...stages.map((st) => st.vals)]
+        .flat()
+        .filter((v): v is number => v != null);
       if (allVals.length === 0) {
         this.chartData.set({ labels: [], datasets: [] });
         return;
@@ -79,8 +86,9 @@ export class BreathingChartComponent {
       this.chartData.set({
         labels: data.map((d) => formatDay(d.date)),
         datasets: [
+          // Overall is Google's daily figure, not an average of the stages.
           {
-            label: "Sleep",
+            label: "Overall",
             data: fullVals,
             borderColor: chartColors.amber,
             backgroundColor: "rgba(245, 158, 11, 0.1)",
@@ -89,16 +97,17 @@ export class BreathingChartComponent {
             pointRadius: 3,
             spanGaps: true,
           },
-          {
-            label: "Deep sleep",
-            data: deepVals,
-            borderColor: chartColors.blue,
-            backgroundColor: "rgba(59, 130, 246, 0.08)",
-            fill: true,
+          ...stages.map((st) => ({
+            label: st.label,
+            data: st.vals,
+            borderColor: st.color,
+            backgroundColor: st.color,
+            borderWidth: 1.5,
+            fill: false,
             tension: 0.3,
-            pointRadius: 3,
+            pointRadius: 2,
             spanGaps: true,
-          },
+          })),
         ],
       });
     });

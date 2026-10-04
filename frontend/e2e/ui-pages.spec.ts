@@ -75,7 +75,7 @@ const HRV = [
 
 const BREATHING = [
 	{ date: day(0), full_sleep_rate: "14.2", deep_sleep_rate: "13.4", light_sleep_rate: "14.6", rem_sleep_rate: "15.1" },
-	{ date: day(-1), full_sleep_rate: "14.8", deep_sleep_rate: null, light_sleep_rate: null, rem_sleep_rate: null },
+	{ date: day(-1), full_sleep_rate: "14.8", deep_sleep_rate: "0.0", light_sleep_rate: "16.1", rem_sleep_rate: "15.7" },
 ] satisfies BreathingDay[];
 
 const SPO2 = [
