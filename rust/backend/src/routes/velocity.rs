@@ -312,6 +312,15 @@ pub async fn compute_with(
     }
 
     let out: Value = serde_json::from_str(&folded.out).context("the fold's answer is not JSON")?;
+    // Where the fold's time went inside Lean: its stages, each pass, and per
+    // kind of lookup the wait for the answer and the parse of it. Overlapping
+    // by design (a pass's lookups are inside the pass), so they are read side
+    // by side, never summed.
+    if let Some(lt) = out.get("leanTiming").and_then(Value::as_object) {
+        for (k, v) in lt {
+            timing.insert(format!("lean.{k}"), v.clone());
+        }
+    }
     let segments = out.get("segs").cloned().unwrap_or_else(|| json!([]));
 
     // ⚠ Drawn geometry ships ONCE, in `episodes`. The segment-level path arrays

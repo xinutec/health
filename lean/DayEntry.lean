@@ -814,7 +814,8 @@ def dayResult (j : Json) : Json :=
       { hr := (env.hr.map fun h => ⟨h.ts, h.bpm⟩).toArray
         steps := env.steps.map fun s => ⟨s.ts, s.steps⟩
         stepsThrough }
-    let segsSplit := Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
+    let segsSplit := DayEntry.Host.timed "splitFold" fun _ =>
+      Verified.Geo.SplitFold.splitFold env.points splitCtx segsRaw
     -- The OSM enrichment stage, chained on both sides so the two sub-chains
     -- meet here rather than through another arm's output (#430 B2).
     let namer ← namerOf envJson
@@ -849,7 +850,7 @@ def dayResult (j : Json) : Json :=
     -- only proves the flag was written, not that it was read.
     let segsEnriched :=
       if skipEnrich then dbgTrace "lean: skipEnrich — enrichment stage skipped" fun _ => segsSplit
-      else Verified.Geo.EnrichFold.enrichFold enrichReads
+      else DayEntry.Host.timed "enrichFold" fun _ => Verified.Geo.EnrichFold.enrichFold enrichReads
         { hr := env.hr.map fun h => ⟨h.ts, h.bpm⟩
           steps := (env.steps.map fun s => ⟨s.ts, s.steps⟩).toList }
         enrichPlaces env.points segsSplit
@@ -859,7 +860,8 @@ def dayResult (j : Json) : Json :=
     -- pass before it, so a shell that re-imposed the sequence would put the
     -- thing under test outside the test. Their observations are the fold's own
     -- `steps` and `hr`, which is why only `modeStats` was added to the wire.
-    let segs := Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched env.rawFixes
+    let segs := DayEntry.Host.timed "preFold" fun _ =>
+      Verified.Geo.PreFold.preFold env.biomSteps env.hr modeStats segsEnriched env.rawFixes
     -- ⚠ `passLimit` RUNS A PREFIX OF THE CASCADE, for #1071's per-pass memory
     -- attribution. Absent it runs them all, which is every caller but the
     -- ablation harness. A truncated cascade is a WRONG day on purpose — passes
@@ -878,13 +880,14 @@ def dayResult (j : Json) : Json :=
         dbgTrace s!"lean: passLimit {n} — running {min n.toNat allPasses.size} of {allPasses.size} passes"
           fun _ => allPasses.extract 0 n.toNat
       | none => allPasses
+    let chosen := chosen.map fun (n, f) => (n, fun s => DayEntry.Host.timed s!"pass.{n}" fun _ => f s)
     let (out, trace) := Verified.Geo.PassFold.runPassArrayTraced chosen segs
     -- The fold's output is the chain's input, which is the whole reason these
     -- run in one call rather than two: a second bridge crossing would have to
     -- ship the segments back out and in again, and the two arms could then be
     -- compared against different segment lists without anything saying so.
     let chain ← parseChain envJson out env.points env.displayFixes
-    let (states, episodes) := Verified.Geo.DayChain.dayChain chain
+    let (states, episodes) := DayEntry.Host.timed "dayChain" fun _ => Verified.Geo.DayChain.dayChain chain
     let base := [
       -- The split stage's output — the earliest boundary, and the only one whose
       -- input is not another Lean stage's output.
@@ -901,7 +904,9 @@ def dayResult (j : Json) : Json :=
       ("journeys", Json.arr
         ((Verified.Geo.ServedJourneys.servedJourneys states).map journeyJson)),
       ("passes", Json.arr ((Verified.Geo.PassFold.passNames env).map Json.str)),
-      ("changed", Json.arr ((changedPasses segs trace).map Json.str))]
+      ("changed", Json.arr ((changedPasses segs trace).map Json.str)),
+      -- Read last: it depends on the states, so it runs after everything above.
+      ("leanTiming", DayEntry.Host.takeTimings states.size)]
     return Json.mkObj (if !wantTrace then base else base ++ [
       ("trace", Json.arr (trace.map fun (name, segs) =>
         Json.mkObj [("name", Json.str name), ("segs", Json.arr (segs.map segJson))]))])

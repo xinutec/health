@@ -38,6 +38,49 @@ open Lean (Json)
 
 namespace DayEntry.Host
 
+/-! ## Where a day's time goes
+
+Wall-clock spans, summed by name, read out once per day by `takeTimings`. The
+logic stays pure: `timed` is `f ()` to every proof and guard, and only the
+compiled binary reads the clock around it. The route ships the result as
+`lean.<name>` in its `timing` (2026-10-04: a 5.9 s fold of which the mirror's
+database was 0.31 s and nothing said where the rest went). -/
+
+initialize spansRef : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
+
+/-- Add `ns` to the span `name`. -/
+def addSpan (name : String) (ns : Nat) : BaseIO Unit :=
+  spansRef.modify fun a =>
+    match a.findIdx? (·.1 == name) with
+    | some i => a.modify i fun (n, t) => (n, t + ns)
+    | none => a.push (name, ns)
+
+unsafe def timedImpl {α : Type} (name : String) (f : Unit → α) : α :=
+  let io : IO α := do
+    let t0 ← IO.monoNanosNow
+    let r ← IO.lazyPure f
+    let t1 ← IO.monoNanosNow
+    addSpan name (t1 - t0)
+    pure r
+  match unsafeBaseIO io.toBaseIO with
+  | .ok r => r
+  | .error _ => f ()
+
+/-- `f ()`, timed under `name` in the compiled binary. -/
+@[implemented_by timedImpl]
+def timed {α : Type} (name : String) (f : Unit → α) : α := f ()
+
+unsafe def takeTimingsImpl (_dep : Nat) : Json :=
+  unsafeBaseIO do
+    let a ← spansRef.modifyGet fun a => (a, #[])
+    pure (Json.mkObj (a.toList.map fun (n, ns) => (n, Lean.toJson (ns / 1000000))))
+
+/-- The spans so far as `{name: ms}`, and reset. `_dep` is any value computed
+after the spans it should include: without a data dependency the call is a
+closed term the compiler may evaluate once, at start-up. -/
+@[implemented_by takeTimingsImpl]
+def takeTimings (_dep : Nat) : Json := Json.mkObj []
+
 /-- The line an ask goes out as. -/
 def askLine (what key : String) : String :=
   (Json.mkObj [("ask", Json.mkObj [("what", Json.str what), ("key", Json.str key)])]).compress
@@ -59,9 +102,15 @@ unsafe def askImpl (what key : String) : Option Json :=
     out.putStr (askLine what key)
     out.putStr "\n"
     out.flush
+    let t0 ← IO.monoNanosNow
     let line ← (← IO.getStdin).getLine
+    let t1 ← IO.monoNanosNow
+    addSpan s!"ask.{what}.wait" (t1 - t0)
     if line.isEmpty then return none
-    return parseReply line
+    let r ← IO.lazyPure fun _ => parseReply line
+    let t2 ← IO.monoNanosNow
+    addSpan s!"ask.{what}.parse" (t2 - t1)
+    return r
   match unsafeBaseIO io.toBaseIO with
   | .ok v => v
   | .error _ => none
