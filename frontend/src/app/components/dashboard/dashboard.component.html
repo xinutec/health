@@ -84,6 +84,7 @@
 											<tr><td>hrv</td><td>{{ w.hrv | number:'1.0-0' }} ms</td></tr>
 											<tr><td>body</td><td>{{ w.body | number:'1.0-0' }} ms</td></tr>
 											<tr><td>breathing</td><td>{{ w.breathing | number:'1.0-0' }} ms</td></tr>
+											<tr><td>spo2</td><td>{{ w.spo2 | number:'1.0-0' }} ms</td></tr>
 											<tr class="total"><td>total (parallel)</td><td>{{ w.total | number:'1.0-0' }} ms</td></tr>
 										</table>
 									</section>
@@ -151,6 +152,9 @@
 				</div>
 				<div class="section">
 					<app-breathing-chart [breathing]="breathing()" />
+				</div>
+				<div class="section">
+					<app-spo2-chart [spo2]="spo2()" />
 				</div>
 				<div class="section">
 					<app-weight-chart [body]="body()" />

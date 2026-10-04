@@ -19,6 +19,7 @@ import type {
 	LatestFix,
 	SleepLog,
 	SleepStage,
+	Spo2Day,
 	UserInfo,
 	VelocityData,
 } from "../src/app/services/health.service";
@@ -76,6 +77,11 @@ const BREATHING = [
 	{ date: day(0), full_sleep_rate: "14.2", deep_sleep_rate: "13.4", light_sleep_rate: "14.6", rem_sleep_rate: "15.1" },
 	{ date: day(-1), full_sleep_rate: "14.8", deep_sleep_rate: null, light_sleep_rate: null, rem_sleep_rate: null },
 ] satisfies BreathingDay[];
+
+const SPO2 = [
+	{ date: day(0), avg_value: "95.8", min_value: "92.1", max_value: "98.4" },
+	{ date: day(-1), avg_value: "96.2", min_value: "93.0", max_value: "98.9" },
+] satisfies Spo2Day[];
 
 const BODY = [
 	{ date: day(0), weight_kg: "74.2", bmi: "22.9", body_fat_pct: "18.5" },
@@ -167,6 +173,7 @@ async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/hrv*", (r) => r.fulfill({ json: HRV }));
 	await page.route("**/api/body*", (r) => r.fulfill({ json: BODY }));
 	await page.route("**/api/breathing*", (r) => r.fulfill({ json: BREATHING }));
+	await page.route("**/api/spo2*", (r) => r.fulfill({ json: SPO2 }));
 	await page.route("**/api/sleep*", (r) => r.fulfill({ json: SLEEP }));
 	await page.route("**/api/sleep/stages*", (r) => r.fulfill({ json: STAGES }));
 	await page.route("**/api/heartrate/intraday*", (r) => r.fulfill({ json: INTRADAY }));
@@ -242,6 +249,7 @@ test("dashboard Trends tab — no text overlaps @ phone width", async ({ page },
 	await page.getByText("Resting Heart Rate").waitFor();
 	await page.getByText("Heart Rate Variability (RMSSD)").waitFor();
 	await page.getByText("Breathing Rate").waitFor();
+	await page.getByText("Blood Oxygen (SpO2)").waitFor();
 	await page.getByText("30d", { exact: true }).waitFor(); // the range toggle row (mat-button-toggle)
 	await expectNoTextOverlaps(page, testInfo);
 });

@@ -17,6 +17,7 @@ import {
 	type HeartRatePoint,
 	type HrvDay,
 	type BreathingDay,
+	type Spo2Day,
 	type LatestFix,
 	type TrackTailPoint,
 	type SleepLog,
@@ -49,6 +50,7 @@ import { PullToRefreshComponent } from "../pull-to-refresh/pull-to-refresh.compo
 import { HeartrateChartComponent } from "../heartrate-chart/heartrate-chart.component";
 import { HrvChartComponent } from "../hrv-chart/hrv-chart.component";
 import { BreathingChartComponent } from "../breathing-chart/breathing-chart.component";
+import { Spo2ChartComponent } from "../spo2-chart/spo2-chart.component";
 import { HypnogramComponent } from "../hypnogram/hypnogram.component";
 import { IntradayHrComponent } from "../intraday-hr/intraday-hr.component";
 import { MapComponent } from "../map/map.component";
@@ -67,7 +69,7 @@ interface DayData {
 	velocity: VelocityData | null;
 }
 
-/** The Trends window: activity, sleep, HRV, body and breathing rate.
+/** The Trends window: activity, sleep, HRV, body, breathing rate and SpO2.
  *  Does NOT depend on the selected day, so it is fetched once and the
  *  selected day is derived from it. */
 interface WindowData {
@@ -75,12 +77,13 @@ interface WindowData {
 	sleep: SleepLog[];
 	hrv: HrvDay[];
 	breathing: BreathingDay[];
+	spo2: Spo2Day[];
 	body: BodyDay[];
 }
 
 /** Client-side fetch durations (ms) for the performance panel. */
 export interface LoadTimings {
-	window?: { activity: number; sleep: number; hrv: number; body: number; breathing: number; total: number };
+	window?: { activity: number; sleep: number; hrv: number; body: number; breathing: number; spo2: number; total: number };
 	day?: { stages: number; hr: number; velocity: number; total: number };
 }
 
@@ -140,6 +143,7 @@ export interface LoadTimings {
 		HeartrateChartComponent,
 		HrvChartComponent,
 		BreathingChartComponent,
+		Spo2ChartComponent,
 		SleepChartComponent,
 		WeightChartComponent,
 	],
@@ -189,19 +193,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		// `trendDays` key thereafter means it reloads only when the span
 		// changes.
 		params: () => (this.dataReady() ? this.trendDays() : undefined),
-		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [] },
+		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [], spo2: [] },
 		loader: async ({ params: days, abortSignal }) => {
 			const t0 = performance.now();
 			const timed = <T>(p: Promise<T>): Promise<[T, number]> => {
 				const start = performance.now();
 				return p.then((v) => [v, performance.now() - start] as [T, number]);
 			};
-			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody], [breathing, tBreathing]] = await Promise.all([
+			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody], [breathing, tBreathing], [spo2, tSpo2]] = await Promise.all([
 				timed(this.health.getActivity(days, abortSignal).catch(() => [] as ActivityDay[])),
 				timed(this.health.getSleep(days, abortSignal).catch(() => [] as SleepLog[])),
 				timed(this.health.getHrv(days, abortSignal).catch(() => [] as HrvDay[])),
 				timed(this.health.getBody(days, abortSignal).catch(() => [] as BodyDay[])),
 				timed(this.health.getBreathing(days, abortSignal).catch(() => [] as BreathingDay[])),
+				timed(this.health.getSpo2(days, abortSignal).catch(() => [] as Spo2Day[])),
 			]);
 			this.timings.update((t) => ({
 				...t,
@@ -211,10 +216,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
 					hrv: tHrv,
 					body: tBody,
 					breathing: tBreathing,
+					spo2: tSpo2,
 					total: performance.now() - t0,
 				},
 			}));
-			return { activity, sleep, hrv, body, breathing };
+			return { activity, sleep, hrv, body, breathing, spo2 };
 		},
 	});
 
@@ -279,6 +285,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly hrv = computed(() => this.windowData.value().hrv);
 	readonly body = computed(() => this.windowData.value().body);
 	readonly breathing = computed(() => this.windowData.value().breathing);
+	readonly spo2 = computed(() => this.windowData.value().spo2);
 	readonly sleepStages = computed(() => this.displayedDay().stages);
 	readonly intradayHr = computed(() => this.displayedDay().hr);
 	readonly velocity = computed(() => this.displayedDay().velocity);

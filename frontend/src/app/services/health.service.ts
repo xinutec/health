@@ -341,6 +341,14 @@ export interface BreathingDay {
   rem_sleep_rate: number | string | null;
 }
 
+export interface Spo2Day {
+  date: string;
+  // DECIMAL columns come back as strings from the driver; the chart coerces.
+  avg_value: number | string | null;
+  min_value: number | string | null;
+  max_value: number | string | null;
+}
+
 export interface BodyDay {
   date: string;
   // DECIMAL columns come back as strings from the driver; the chart coerces.
@@ -441,6 +449,12 @@ export class HealthService {
     const res = await this.fetch(`/api/breathing?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch breathing rate");
     return HealthService.body<BreathingDay[]>(res);
+  }
+
+  async getSpo2(days = 30, signal?: AbortSignal): Promise<Spo2Day[]> {
+    const res = await this.fetch(`/api/spo2?days=${days}`, { signal });
+    if (!res.ok) throw new Error("Failed to fetch SpO2");
+    return HealthService.body<Spo2Day[]>(res);
   }
 
   async getBody(days = 30, signal?: AbortSignal): Promise<BodyDay[]> {
