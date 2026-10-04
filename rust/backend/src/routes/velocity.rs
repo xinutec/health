@@ -240,7 +240,7 @@ pub async fn compute_with(
         phase = std::time::Instant::now();
     };
 
-    let inputs = classification_inputs::load(
+    let (inputs, load_split) = classification_inputs::load_timed(
         &st.pool,
         &st.http,
         &base_url,
@@ -265,6 +265,9 @@ pub async fn compute_with(
     }
     let inputs = inputs;
     mark(&mut timing, "load");
+    for (name, ms) in load_split {
+        timing.insert(format!("load.{name}"), json!(ms));
+    }
 
     let h = head::run(&inputs, date)?;
     let cap = head::capture(&inputs, date, user_id)?;

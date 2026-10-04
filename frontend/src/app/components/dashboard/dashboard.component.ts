@@ -181,6 +181,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  Set in ngOnInit from the route's `:token` param. */
 	private isShareView = false;
 
+	/** The server timing entries that are counts, not milliseconds. */
+	readonly timingCounts: ReadonlySet<string> = new Set(["asks", "answered", "mirrorQueries"]);
+
 	/** Recorded fetch durations for the performance panel. */
 	readonly timings = signal<LoadTimings>({});
 

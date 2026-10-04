@@ -105,7 +105,7 @@
 										<h4>Server pipeline phases</h4>
 										<table>
 											@for (entry of phases | keyvalue; track entry.key) {
-												<tr><td>{{ entry.key }}</td><td>{{ entry.value | number:'1.0-0' }} ms</td></tr>
+												<tr><td>{{ entry.key }}</td><td>{{ entry.value | number:'1.0-0' }}{{ timingCounts.has(entry.key) ? '' : ' ms' }}</td></tr>
 											}
 										</table>
 									</section>

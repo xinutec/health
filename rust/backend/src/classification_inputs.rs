@@ -1362,6 +1362,7 @@ pub struct DayIdentity<'a> {
 /// `osm` is deliberately absent: it is an ADAPTER, not data, and
 /// `toSerializedInputs` strips it for the same reason. `osmTrace` / `osmRowSet`
 /// belong to fixture capture, not to loading.
+/// [`load_timed`] without its split: what every caller but the route reads.
 pub async fn load(
     pool: &MySqlPool,
     http: &reqwest::Client,
@@ -1370,14 +1371,38 @@ pub async fn load(
     bounds: crate::timezone::DayBounds,
     home_tz: Option<&str>,
 ) -> Result<Value> {
+    Ok(load_timed(pool, http, base_url, identity, bounds, home_tz)
+        .await?
+        .0)
+}
+
+/// Every day input with how long each read took, in milliseconds, in read
+/// order. The route ships the split in `timing` as `load.<read>`: a 14.5 s
+/// `load` on 2026-10-04 (2.6 s for the same day off-pod) said nothing about
+/// which of its fourteen reads was slow.
+pub async fn load_timed(
+    pool: &MySqlPool,
+    http: &reqwest::Client,
+    base_url: &str,
+    identity: &DayIdentity<'_>,
+    bounds: crate::timezone::DayBounds,
+    home_tz: Option<&str>,
+) -> Result<(Value, Vec<(&'static str, u64)>)> {
     let DayIdentity {
         user_id,
         date,
         display_tz,
     } = *identity;
     let (start_utc, end_utc) = (bounds.start_utc, bounds.end_utc);
+    let mut split: Vec<(&'static str, u64)> = Vec::new();
+    let mut t = std::time::Instant::now();
+    let mut lap = |name: &'static str, split: &mut Vec<(&'static str, u64)>| {
+        split.push((name, t.elapsed().as_millis() as u64));
+        t = std::time::Instant::now();
+    };
     let (phonetrack, battery_tail) =
         phonetrack_windows(pool, http, base_url, user_id, date, end_utc).await?;
+    lap("phonetrack", &mut split);
     let mut m = Map::new();
     m.insert(
         "identity".into(),
@@ -1386,23 +1411,32 @@ pub async fn load(
     m.insert("phonetrack".into(), phonetrack);
     m.insert("batteryTail".into(), battery_tail);
     m.insert("knownPlaces".into(), known_places(pool, user_id).await?);
+    lap("knownPlaces", &mut split);
     let mut biom = biometrics(pool, user_id, start_utc, end_utc, home_tz, home_tz).await?;
+    lap("biometrics", &mut split);
     if let Some(o) = biom.as_object_mut() {
         o.insert("stepsThrough".into(), steps_through(pool, user_id).await?);
+        lap("stepsThrough", &mut split);
     }
     m.insert("biometrics".into(), biom);
     m.insert(
         "motionLog".into(),
         motion_log(pool, user_id, start_utc, end_utc).await?,
     );
+    lap("motionLog", &mut split);
     m.insert(
         "modeBiometrics".into(),
         mode_biometrics(pool, user_id).await?,
     );
+    lap("modeBiometrics", &mut split);
     m.insert("hsmmDecode".into(), hsmm_decode(pool, user_id, date).await?);
+    lap("hsmmDecode", &mut split);
     m.insert("railRouteCache".into(), rail_route_cache(pool).await?);
+    lap("railRouteCache", &mut split);
     m.insert("busRouteCache".into(), bus_route_cache(pool).await?);
+    lap("busRouteCache", &mut split);
     m.insert("railStopsCache".into(), rail_stops_cache(pool).await?);
+    lap("railStopsCache", &mut split);
     // ⚠ `homeTz` is ALREADY DEFAULTED by the time it reaches here, matching the
     // TS `homeTzRaw ?? "Europe/Amsterdam"`. The default is the pipeline's
     // displayTz fallback for segments no GPS fix covers, so an absent value and
@@ -1416,13 +1450,16 @@ pub async fn load(
         "sleepWindows".into(),
         sleep_windows(pool, user_id, date, home_tz).await?,
     );
+    lap("sleepWindows", &mut split);
     m.insert(
         "emptyDayBracket".into(),
         empty_day_bracket(pool, user_id, date).await?,
     );
+    lap("emptyDayBracket", &mut split);
     m.insert(
         "venuePriors".into(),
         venue_priors(pool, user_id, end_utc).await?,
     );
-    Ok(Value::Object(m))
+    lap("venuePriors", &mut split);
+    Ok((Value::Object(m), split))
 }
