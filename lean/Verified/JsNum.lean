@@ -94,7 +94,7 @@ The integer `n` of ECMA-262 21.1.3.3 step 10 for `|x|`: the integer closest to
 `|x| · 10^f`, ties going to the larger. Exact — no floating point is involved
 past the decomposition. Meaningful for finite `x` only.
 -/
-def toFixedN (x : Float) (f : Nat) : Nat :=
+def toFixedNExact (x : Float) (f : Nat) : Nat :=
   let d := decompose x
   let n := d.m * 10 ^ f
   if d.e ≥ 0 then
@@ -105,6 +105,42 @@ def toFixedN (x : Float) (f : Nat) : Nat :=
     -- ⌊n/den + 1/2⌋. A tie makes the numerator an exact multiple of `2·den`,
     -- and flooring then lands on the LARGER candidate, as the spec requires.
     (2 * n + den) / (2 * den)
+
+/-- `toFixedNExact`, with a floating-point fast path for the coordinate case
+(`f = 7`, `|x| < 200`). There `y = |x|·10⁷ < 2³¹`, so the product is within
+2.2·10⁻⁷ of the exact one and `y + 0.5` is exact; away from a tie — `y`'s
+fraction more than 10⁻⁶ from ½ — `⌊y + 0.5⌋` is the exact answer, and nearer
+it the exact arithmetic decides. The exact path's big-integer division was the
+walk graph's dominant cost (#1921): two keys per segment, 33,000 segments on a
+long walk. -/
+def toFixedN (x : Float) (f : Nat) : Nat :=
+  if f == 7 && x.abs < 200 then
+    let y := x.abs * 10000000.0
+    let r := y - Float.floor y
+    if Float.abs (r - 0.5) > 1e-6 then (Float.floor (y + 0.5)).toUInt64.toNat
+    else toFixedNExact x f
+  else toFixedNExact x f
+
+-- The fast path agrees with the exact one: a sweep through London and Paris
+-- coordinates in steps that land between and near the 10⁻⁷ grid, both signs,
+-- and the near-tie values themselves (k + ½)·10⁻⁷ that the fast path hands back.
+private def lcg (s : Nat) : Nat := (s * 6364136223846793005 + 1442695040888963407) % 2 ^ 64
+private def sweep (n : Nat) : Bool := Id.run do
+  let mut s := 12345
+  for i in [0:n] do
+    s := lcg s
+    let base := if i % 3 == 0 then 51.5 else if i % 3 == 1 then -0.1278 else 48.8566
+    let off := (s % 1000000).toFloat * 1.3e-9
+    let x := base + off
+    if toFixedN x 7 != toFixedNExact x 7 then return false
+    if toFixedN (-x) 7 != toFixedNExact (-x) 7 then return false
+    let tie := (Float.floor (x * 1e7) + 0.5) / 1e7
+    if toFixedN tie 7 != toFixedNExact tie 7 then return false
+  return true
+#guard sweep 20000
+#guard toFixedN 0.00000005 7 == toFixedNExact 0.00000005 7
+#guard toFixedN 179.9999999 7 == toFixedNExact 179.9999999 7
+#guard toFixedN (-0.0) 7 == 0
 
 /-- Render `n` with a decimal point `f` digits from the right, zero-padding a
     short `n` — steps 11-12 of the spec. -/

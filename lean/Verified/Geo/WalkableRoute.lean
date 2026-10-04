@@ -87,6 +87,10 @@ structure WalkGraph where
   nodes : Array Pt
   /-- Per node, the `(neighbour, distance-in-metres)` pairs. -/
   adj : Array (Array (Nat × Float))
+  /-- Each node's fused coordinate key → its id, as `buildWalkGraph` numbered
+      them. Empty for a graph built by hand, which `snapToEdge` then indexes
+      itself. -/
+  index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
   deriving Inhabited
 
 /-- A way network as coordinate lists, in way-iteration order. Order is
@@ -138,7 +142,7 @@ def buildWalkGraph (ways : Ways) : WalkGraph := Id.run do
               if !(adj[a].any (fun e => e.1 == b)) then adj := adj.set a (adj[a].push (b, d)) haa
               if hab' : b < adj.size then
                 if !(adj[b].any (fun e => e.1 == a)) then adj := adj.set b (adj[b].push (a, d)) hab'
-  return { nodes, adj }
+  return { nodes, adj, index }
 
 /-- Where an endpoint splices into the network. -/
 structure Snap where
@@ -155,10 +159,15 @@ structure Snap where
     ids. Strict improvement, so the FIRST edge at the minimum distance wins —
     way-iteration order is load-bearing. -/
 def snapToEdge (p : Pt) (ways : Ways) (graph : WalkGraph) : Option Snap := Id.run do
-  let mut index : Std.HashMap Verified.JsNum.CoordKey Nat := {}
-  for hm_i : i in [0:graph.nodes.size] do
-    let n := graph.nodes[i]
-    index := index.insert (Verified.JsNum.coordKey7 n.lat n.lon) i
+  -- The builder's own index when it has one: each node was created from a
+  -- unique key, so it is the map below, and rebuilding it — 29,000 exact keys
+  -- on a long walk, twice per route — was most of a route's cost (#1921).
+  let mut index : Std.HashMap Verified.JsNum.CoordKey Nat :=
+    if graph.index.size == graph.nodes.size then graph.index else {}
+  if index.size != graph.nodes.size then
+    for hm_i : i in [0:graph.nodes.size] do
+      let n := graph.nodes[i]
+      index := index.insert (Verified.JsNum.coordKey7 n.lat n.lon) i
   let mut best : Option Snap := none
   for w in ways do
     for hm_i : i in [1:w.size] do
