@@ -322,6 +322,12 @@ describe("TimelineComponent name certainty (#325)", () => {
 		expect(certaintyOf(f, 0)).toBeUndefined();
 	});
 
+	it("leaves an inferred stay unmarked: `no data (inferred)` already says it is a claim", () => {
+		reset();
+		const f = setup([state("stationary", 120, { place: "Home", placeConfidence: 2 / 3, inferred: true })]);
+		expect(certaintyOf(f, 0)).toBeUndefined();
+	});
+
 	it("says nothing when the name has no recorded rule", () => {
 		reset();
 		const f = setup([

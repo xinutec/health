@@ -254,6 +254,39 @@ def inferredEmptyDay (e : Env) : Option DayState :=
   e.bracketPlace.map fun place =>
     Verified.Geo.DayState.buildInferredStayState place e.dayTz e.dayStartTs e.dayEndTs
 
+/-- A hole at least this long between two states at the same place is bridged. -/
+def BRIDGE_MIN_S : Int := 1800
+
+/-- Fill each hole of `BRIDGE_MIN_S` or more that has NO fix in it and lies
+between two stationary/sleeping states at the same named place with an
+INFERRED stay there: the phone was quiet and the person never left (2026-05-11:
+asleep at Home to 07:56, the first fix at Home at 11:38, and nothing served in
+between). A hole with a fix in it is not silence — what it says is the
+segments' business — and a hole between two different places stays a hole.
+Nor is the DAY'S END a silence: a stay clipped at midnight and the next night's
+sleep leave a hole that is only the boundary, and bridging it would put a small
+"inferred" row on almost every night. -/
+def bridgeSamePlaceHoles (states : Array DayState)
+    (points : Array Verified.Geo.EpisodeGeometry.Fix) (dayEndTs : Int) : Array DayState := Id.run do
+  let still := fun (s : DayState) => s.mode == "stationary" || s.mode == "sleeping"
+  let mut out : Array DayState := #[]
+  for h : i in [0:states.size] do
+    let a := states[i]
+    out := out.push a
+    match states[i + 1]? with
+    | some b =>
+      if still a && still b && b.startTs - a.endTs ≥ BRIDGE_MIN_S && a.endTs + 120 < dayEndTs then
+        match a.place, b.place with
+        | some pa, some pb =>
+          if pa == pb && !(points.any fun p => p.ts > a.endTs && p.ts < b.startTs) then
+            out := out.push
+              { startTs := a.endTs, endTs := b.startTs, mode := "stationary", place := some pa
+                placeSource := some "inferred", tz := b.tz.orElse (fun _ => a.tz)
+                inferred := some true }
+        | _, _ => pure ()
+    | none => pure ()
+  return out
+
 /-- The served timeline and its geometry.
 
 Returns both because they are one decision: the episodes are 1:1 with the FINAL
@@ -274,8 +307,9 @@ def dayChain (e : Env) :
     | some st => (#[st], #[])
     | none => (#[], #[])
   else
-  let continued := Verified.Geo.DwellContinuation.applyDwellContinuation
-    states e.segments e.dwellPlaces e.dayEndTs
+  let continued := bridgeSamePlaceHoles
+    (Verified.Geo.DwellContinuation.applyDwellContinuation
+      states e.segments e.dwellPlaces e.dayEndTs) e.points e.dayEndTs
   -- ⚠ CITY IS STAMPED LAST, over the FINAL states (#339). The client it
   -- replaces ran over the served list, so an INFERRED stay — created by the
   -- dwell continuation, after `segmentsToDayStates` has returned — got a header
@@ -323,5 +357,26 @@ private def observedEnv : Env :=
   { emptyEnv with points := #[{ ts := 100, lat := 51.5, lon := -0.1, speedKmh := 0.0 }] }
 
 #guard (dayChain { observedEnv with bracketPlace := some "St Elsewhere" }).1 == #[]
+
+/-! ### `bridgeSamePlaceHoles` -/
+
+private def hs (a b : Int) (m : String) (pl : String) : DayState :=
+  { startTs := a, endTs := b, mode := m, place := some pl }
+private def fixAt (t : Int) : Verified.Geo.EpisodeGeometry.Fix :=
+  { ts := t, lat := 51.5, lon := -0.1, speedKmh := 0.0 }
+
+-- A quiet hour between sleep at Home and a stay at Home: bridged, and inferred.
+#guard (bridgeSamePlaceHoles #[hs 0 1000 "sleeping" "Home", hs 4600 9000 "stationary" "Home"] #[] 86400).map
+    (fun s => (s.startTs, s.endTs, s.inferred)) ==
+  #[(0, 1000, none), (1000, 4600, some true), (4600, 9000, none)]
+-- A fix in the hole: not silence, so not bridged.
+#guard (bridgeSamePlaceHoles #[hs 0 1000 "sleeping" "Home", hs 4600 9000 "stationary" "Home"]
+    #[fixAt 2000] 86400).size == 2
+-- Two different places: the hole stays.
+#guard (bridgeSamePlaceHoles #[hs 0 1000 "stationary" "Home", hs 4600 9000 "stationary" "Work"] #[] 86400).size == 2
+-- Shorter than BRIDGE_MIN_S: the hole stays.
+#guard (bridgeSamePlaceHoles #[hs 0 1000 "stationary" "Home", hs 2000 9000 "stationary" "Home"] #[] 86400).size == 2
+-- A stay clipped at the day's end and the next night's sleep: the boundary stays.
+#guard (bridgeSamePlaceHoles #[hs 0 86340 "stationary" "Home", hs 89000 99000 "sleeping" "Home"] #[] 86400).size == 2
 
 end Verified.Geo.DayChain

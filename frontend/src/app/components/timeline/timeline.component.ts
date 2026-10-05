@@ -288,7 +288,8 @@ export class TimelineComponent {
 
     const c = state.placeConfidence;
     const certainty =
-      (state.mode === "stationary" || state.mode === "sleeping") && state.place && c != null && c < CERTAINTY_SHOWN_BELOW
+      // Not on an inferred stay: its "no data (inferred)" already says it is a claim.
+      (state.mode === "stationary" || state.mode === "sleeping") && state.place && !state.inferred && c != null && c < CERTAINTY_SHOWN_BELOW
         ? `${Math.round(c * 100)}%`
         : undefined;
 
