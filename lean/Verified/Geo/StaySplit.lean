@@ -2806,10 +2806,16 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
   | 0 => #[seg]
   | fuel + 1 =>
     let fixes := sortedIn points seg.startTs seg.endTs
-    -- The stretch between a train and the stop must have been walked.
-    let walkedSide := fun (a b : Int) =>
+    -- The stretch between a train and the stop must have been walked: at
+    -- least `DWELL_TRAIN_SIDE_WALK_S` long, and its `DWELL_TRAIN_SIDE_WALK_S`
+    -- next to the STOP at pedestrian cadence. Not the whole stretch's mean: its
+    -- train end is the exit (escalators, a barrier, steps barely counted), and
+    -- 06-16's pharmacy, reached after four brisk minutes, averaged 53 spm with
+    -- the minute and a half out of Wembley Park in it.
+    let walkedSide := fun (a b : Int) (stopAtEnd : Bool) =>
+      let (wa, wb) := if stopAtEnd then (b - DWELL_TRAIN_SIDE_WALK_S, b) else (a, a + DWELL_TRAIN_SIDE_WALK_S)
       decide (b - a ≥ DWELL_TRAIN_SIDE_WALK_S) &&
-        (meanCadenceSpm steps a b).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
+        (meanCadenceSpm steps wa wb).any (fun c => decide (c ≥ Verified.Geo.Worldline.PEDESTRIAN_MIN_CADENCE_SPM))
     -- Only the LAST stop before a train can be its platform wait. One with a
     -- later stop between it and the train is not against the train at all,
     -- and, read to the train, the later sits pulled the cadence under the bar:
@@ -2818,8 +2824,8 @@ private def cutWalk (seg : Seg) (points : Array PointF) (steps : List Feasibilit
     let anotherStopAfter := fun (de : Int) =>
       (findDwell (fixes.filter (·.ts > de)) steps de seg.endTs (fun _ _ => true)).isSome
     let admit := fun (ds de : Int) =>
-      (!trainBefore || walkedSide seg.startTs ds)
-        && (!trainAfter || anotherStopAfter de || walkedSide de seg.endTs)
+      (!trainBefore || walkedSide seg.startTs ds true)
+        && (!trainAfter || anotherStopAfter de || walkedSide de seg.endTs false)
     match findDwell fixes steps seg.startTs seg.endTs admit with
     | none => #[seg]
     | some (a, b) =>

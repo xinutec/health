@@ -154,7 +154,7 @@ const UNANSWERED_BY_DAY: [(&str, usize); 42] = [
     ("2026-06-09", 6),
     ("2026-06-12", 5),
     ("2026-06-15", 9),
-    ("2026-06-16", 4),
+    ("2026-06-16", 5), // +1 2026-10-05: the pharmacy stop the walkDwell fix carves asks its own naming geocode
     ("2026-06-17", 2),
     ("2026-06-18", 6),
     ("2026-06-22", 2),
