@@ -73,6 +73,8 @@ const DAILY_TYPES: &[&str] = &[
     // bound is now reported out loud, and a type that does not fit the
     // assumption is worth seeing say so rather than being quietly dropped.
     "daily-heart-rate-zones",
+    // A weigh-in's sibling: how much body-fat history is there to backfill?
+    "body-fat",
 ];
 
 const CANDIDATES: &[&str] = &[
@@ -112,6 +114,10 @@ const CANDIDATES: &[&str] = &[
     "active-minutes",
     "total-calories",
     "active-energy-burned",
+    // The scale's other readings (Hume → Health Connect → Google). Google has
+    // no type for muscle, bone, water or BMR — these two are all there is.
+    "body-fat",
+    "height",
 ];
 
 /// The sorted key paths of one JSON value — the testable face of [`shape`].
