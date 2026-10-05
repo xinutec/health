@@ -439,4 +439,49 @@ private def LABEL : String := "Euston Square → Wembley Park · Metropolitan Li
   == some "tube hop station-pair (was: earlier note)"
 #guard upgradeTubeHops #[] FAST stationsAt oneLine == #[]
 
+/-! ## `bridgeFastGaps` — a ride in the gap between two states
+
+A short hop whose whole ride falls BETWEEN two states — GPS drops on the
+platform and comes back at the far station — leaves no segment for
+`upgradeTubeHops` to judge. 2026-07-16: a hospital stay ending 09:14:33 beside
+Euston Square, a walk starting 09:15:57 beside King's Cross, ~900 m apart: no
+foot covers that. The gap is filled with a vehicle leg (`driving`, the
+placeholder every pass uses), and `upgradeTubeHops` then names it a train if the
+two ends are stations on a shared line — or leaves it a vehicle, which a gap
+crossed at this speed is either way. -/
+
+def GAP_RIDE_MIN_S : Int := 30
+def GAP_RIDE_MAX_S : Int := 900
+/-- Displacement across the gap; below this a fast-looking gap is GPS noise. -/
+def GAP_RIDE_MIN_M : Float := 400
+
+def bridgeFastGaps (segments : Array Seg) (points : Array Fix) : Array Seg := Id.run do
+  let mut out : Array Seg := #[]
+  for h : i in [0:segments.size] do
+    let seg := segments[i]
+    out := out.push seg
+    match segments[i + 1]? with
+    | none => pure ()
+    | some nxt =>
+      let gap := nxt.startTs - seg.endTs
+      if gap ≥ GAP_RIDE_MIN_S && gap ≤ GAP_RIDE_MAX_S then
+        let before := (points.filter (·.ts ≤ seg.endTs)).back?
+        let after := points.find? (·.ts ≥ nxt.startTs)
+        match before, after with
+        | some a, some b =>
+          let dt := b.ts - a.ts
+          let d := haversineMeters a.lat a.lon b.lat b.lon
+          let kmh := if dt > 0 then d / Float.ofInt dt * 3.6 else 0
+          if d ≥ GAP_RIDE_MIN_M && kmh ≥ TUBE_HOP_MIN_AVG_KMH then
+            out := out.push
+              { startTs := seg.endTs, endTs := nxt.startTs, mode := "driving"
+                confidence := 0.5, confidenceMargin := 0
+                avgSpeed := kmh, maxSpeed := kmh, linearity := 1
+                pointCount := Int.ofNat (samplesInWindow points seg.endTs nxt.startTs).size
+                displayTz := seg.displayTz
+                refinedReason := some s!"gap ride: {d.round} m in {dt} s between two states"
+                refinedKinds := #["gap-ride"] }
+        | _, _ => pure ()
+  return out
+
 end Verified.Geo.TubeHop

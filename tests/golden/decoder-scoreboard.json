@@ -121,8 +121,8 @@
 	},
 	"2026-07-16": {
 		"journeysExpected": 4,
-		"journeysMatched": 1,
-		"legModeScorable": 10,
+		"journeysMatched": 0,
+		"legModeScorable": 9,
 		"legModeMatching": 7,
 		"legLineScorable": 2,
 		"legLineMatching": 2,
