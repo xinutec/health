@@ -126,21 +126,25 @@ const POST_TS: &[&str] = &[
 /// 2026-10-05: 07-16's Euston Square → King's Cross hop re-timed from the signal
 /// to 09:14–09:16, and the `partial` "09:15 – 09:17 walking" row it contradicts
 /// folded into its note — rows −1, enforceable unchanged, one walking leg fewer.
+///
+/// 2026-10-06: 07-16's "08:41 – 08:47 train" split on the steps into the
+/// Baker Street change walk (08:42–08:45) and the train to Euston Square
+/// (08:45–08:47) — rows +1, enforceable +1, one more walking leg.
 const TS_FILES: usize = 31;
-const TS_ROWS: usize = 399;
-const TS_ENFORCEABLE: usize = 373;
+const TS_ROWS: usize = 400;
+const TS_ENFORCEABLE: usize = 374;
 const TS_UNPARSEABLE: usize = 5;
 /// 6 since 2026-10-05 joined; 2026-10-02's `Times: Europe/Madrid` was the
 /// corpus's first day narrated in Spanish time, 10-03 to 10-05 the next.
 const TS_DECLARED_TZ: usize = 6;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
 const TS_JOURNEYS: usize = 94;
-const TS_LEGS: usize = 229;
+const TS_LEGS: usize = 230;
 /// ⚠ THE HISTOGRAM, NOT JUST THE TOTAL. The leg total could be reached with the
 /// modes shuffled — a `line` assigned to a walk, or `sleeping` failing to fold
 /// to `stationary`, changes what a leg IS without changing how many there are.
 const TS_LEG_MODES: [(&str, usize); 4] =
-    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 144)];
+    [("bus", 3), ("driving", 6), ("train", 76), ("walking", 145)];
 
 #[test]
 fn the_narrative_corpus_matches_its_blessed_shape() {
