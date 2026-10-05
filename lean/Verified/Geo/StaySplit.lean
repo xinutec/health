@@ -3111,7 +3111,21 @@ private def edgeRun (s : Seg) (points : Array PointF) (steps : List FeasibilityS
   if netM < EDGE_MIN_NET_M then return none
   let some k := ordered.findIdx? at_ | return none
   let some boundary := ordered[k]? | return none
-  let (a, b) := if tail then (boundary.ts, s.endTs) else (s.startTs, boundary.ts)
+  let (a, b0) := if tail then (boundary.ts, s.endTs) else (s.startTs, boundary.ts)
+  -- A tail walk ends where it ARRIVES — the first fix within `EDGE_AT_STAY_M`
+  -- of the edge fix — not at the stay's end: the minutes already at the next
+  -- place are that place's, and counting them diluted 09-30's walk back to the
+  -- hotel (89–98 steps/min, 19:16–19:18) under the cadence floor.
+  let b := if tail then Id.run do
+      -- The first fix from which every later one stays within reach of the
+      -- edge, and only when at least `EDGE_MIN_S` is then spent there.
+      let after := fixes.filter (·.ts > a)
+      let mut arrive := b0
+      for p in after.reverse do
+        if haversineMeters edge.lat edge.lon p.lat p.lon ≤ EDGE_AT_STAY_M then arrive := p.ts
+        else break
+      return if b0 - arrive ≥ EDGE_MIN_S then arrive else b0
+    else b0
   if b - a < EDGE_MIN_S || b - a > EDGE_MAX_S then return none
   if s.endTs - s.startTs - (b - a) < EDGE_MIN_REMAINING_STAY_S then return none
   match meanCadenceSpm steps a b with
@@ -3122,8 +3136,14 @@ private def edgeRun (s : Seg) (points : Array PointF) (steps : List FeasibilityS
 def carveStayEdgeWalks (segments : Array Seg) (points : Array PointF)
     (steps : List FeasibilityStepPoint) : Array Seg := Id.run do
   let mut out : Array Seg := #[]
+  -- Where the previous stay's tail walk arrived, when that was before its end:
+  -- the next stay starts there.
+  let mut arrived : Option Int := none
   for hm_i : i in [0:segments.size] do
-    let s := segments[i]
+    let s := match arrived with
+      | some t => shrinkStay segments[i] t segments[i].endTs points
+      | none => segments[i]
+    arrived := none
     let stay := fun (j : Nat) => (segments[j]?.map (segMode · == "stationary")).getD false
     if segMode s != "stationary" then out := out.push s; continue
     let head := if 0 < i && stay (i - 1) then edgeRun s points steps false else none
@@ -3134,7 +3154,9 @@ def carveStayEdgeWalks (segments : Array Seg) (points : Array PointF)
     if hi - lo < EDGE_MIN_REMAINING_STAY_S then out := out.push s; continue
     if let some (a, b, m) := head then out := out.push (walkSeg s a b points m)
     out := out.push (if head.isSome || tail.isSome then shrinkStay s lo hi points else s)
-    if let some (a, b, m) := tail then out := out.push (walkSeg s a b points m)
+    if let some (a, b, m) := tail then
+      out := out.push (walkSeg s a b points m)
+      if b < s.endTs then arrived := some b
   return out
 
 end EdgeWalk

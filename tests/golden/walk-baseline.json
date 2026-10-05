@@ -2678,6 +2678,16 @@
       "routeCorr": null,
       "speedKmh": 3.0153137788114748,
       "stallM": 2.4499720451257443
+    },
+    {
+      "startTs": 1790792194,
+      "budgetM": 73.5,
+      "lenM": 98.81093348261254,
+      "offPathM": null,
+      "p90M": null,
+      "routeCorr": null,
+      "speedKmh": 4.285775428161508,
+      "stallM": 0.0
     }
   ],
   "2026-10-01": [
