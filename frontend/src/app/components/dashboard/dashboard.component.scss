@@ -23,6 +23,15 @@
 /* Velocity load-failure banner: a centred message + retry button shown
  * in place of the location/transport/timeline charts when their data
  * failed to load (as opposed to genuinely being empty). */
+.load-error {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 8px 16px;
+	color: var(--mat-sys-on-surface-variant);
+}
+
 .velocity-error {
 	display: flex;
 	flex-direction: column;

@@ -102,12 +102,13 @@ export class AppComponent {
 		// Wired once here, so no view has to know a service worker exists.
 		this.swUpdates.start();
 
-		// One unauthenticated fetch; failure just leaves the footer empty.
+		// One unauthenticated fetch.
 		fetch("/version")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((v: { sha?: string } | null) => {
 				if (v?.sha) this.version.set(v.sha.slice(0, 7));
 			})
+			// dev-lint: allow-ignored-error a failure just leaves the version footer empty
 			.catch(() => {});
 
 		// Load the owner's share status once the user is known, so the
@@ -115,9 +116,8 @@ export class AppComponent {
 		// /api/share is owner-only and a recipient has no link to copy.
 		effect(() => {
 			if (this.health.user() && this.mode() !== "share" && this.health.shareStatus() === null) {
-				this.health.refreshShareStatus().catch(() => {
-					// Non-fatal — the Settings page remains the reliable path.
-				});
+				// dev-lint: allow-ignored-error non-fatal: the Settings page remains the reliable path
+				this.health.refreshShareStatus().catch(() => {});
 			}
 		});
 	}

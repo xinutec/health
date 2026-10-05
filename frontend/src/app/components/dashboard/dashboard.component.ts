@@ -68,6 +68,8 @@ interface DayData {
 	stages: SleepStage[];
 	hr: HeartRatePoint[];
 	velocity: VelocityData | null;
+	/** The tables that failed to load, by name, for the banner. */
+	failed: readonly string[];
 }
 
 /** The Trends window: activity, sleep, HRV, body, breathing rate and SpO2.
@@ -82,6 +84,23 @@ interface WindowData {
 	body: BodyDay[];
 	/** Null when the read failed: the chart then has no estimate to draw. */
 	bodyBefore: BodyBefore | null;
+	/** The tables that failed to load, by name, for the banner. */
+	failed: readonly string[];
+}
+
+/** A table that failed to load: drawn empty, but named in `failed`, so the
+ *  view does not tell a failed load apart from an empty week by nothing at
+ *  all. An abort is a superseded load, not a failure. */
+function missing<T>(failed: string[], name: string, empty: T): (e: unknown) => T {
+	return (e: unknown) => {
+		if (!(e instanceof DOMException && e.name === "AbortError")) failed.push(name);
+		return empty;
+	};
+}
+
+/** "sleep", "sleep and HRV", "sleep, HRV and weight". */
+export function listOf(names: readonly string[]): string {
+	return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 /** Client-side fetch durations (ms) for the performance panel. */
@@ -202,7 +221,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		// `trendDays` key thereafter means it reloads only when the span
 		// changes.
 		params: () => (this.dataReady() ? this.trendDays() : undefined),
-		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [], spo2: [], bodyBefore: null },
+		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [], spo2: [], bodyBefore: null, failed: [] },
 		loader: async ({ params: days, abortSignal }) => {
 			const t0 = performance.now();
 			const timed = <T>(p: Promise<T>): Promise<[T, number]> => {
@@ -211,14 +230,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
 			};
 			// Started first so it runs alongside the tables. Not in the timings
 			// panel: one indexed row read, and it is not a table.
+			const failed: string[] = [];
 			const bodyBeforeP = this.health.getBodyBefore(days, abortSignal).catch(() => null);
 			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody], [breathing, tBreathing], [spo2, tSpo2]] = await Promise.all([
-				timed(this.health.getActivity(days, abortSignal).catch(() => [] as ActivityDay[])),
-				timed(this.health.getSleep(days, abortSignal).catch(() => [] as SleepLog[])),
-				timed(this.health.getHrv(days, abortSignal).catch(() => [] as HrvDay[])),
-				timed(this.health.getBody(days, abortSignal).catch(() => [] as BodyDay[])),
-				timed(this.health.getBreathing(days, abortSignal).catch(() => [] as BreathingDay[])),
-				timed(this.health.getSpo2(days, abortSignal).catch(() => [] as Spo2Day[])),
+				timed(this.health.getActivity(days, abortSignal).catch(missing(failed, "activity", [] as ActivityDay[]))),
+				timed(this.health.getSleep(days, abortSignal).catch(missing(failed, "sleep", [] as SleepLog[]))),
+				timed(this.health.getHrv(days, abortSignal).catch(missing(failed, "HRV", [] as HrvDay[]))),
+				timed(this.health.getBody(days, abortSignal).catch(missing(failed, "weight", [] as BodyDay[]))),
+				timed(this.health.getBreathing(days, abortSignal).catch(missing(failed, "breathing rate", [] as BreathingDay[]))),
+				timed(this.health.getSpo2(days, abortSignal).catch(missing(failed, "SpO₂", [] as Spo2Day[]))),
 			]);
 			const bodyBefore = await bodyBeforeP;
 			this.timings.update((t) => ({
@@ -233,7 +253,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 					total: performance.now() - t0,
 				},
 			}));
-			return { activity, sleep, hrv, body, breathing, spo2, bodyBefore };
+			return { activity, sleep, hrv, body, breathing, spo2, bodyBefore, failed };
 		},
 	});
 
@@ -242,19 +262,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  params keep it idle until the user is ready. */
 	private readonly dayData = resource<DayData, { date: string; walkMatch: boolean } | undefined>({
 		params: () => (this.dataReady() ? { date: this.selectedDate(), walkMatch: this.walkMatch() } : undefined),
-		defaultValue: { stages: [], hr: [], velocity: null },
+		defaultValue: { stages: [], hr: [], velocity: null, failed: [] },
 		loader: async ({ params: { date, walkMatch }, abortSignal }) => {
 			const t0 = performance.now();
 			// A fresh load for this day: clear any prior velocity failure so a
 			// retry (or a navigation to a healthy day) drops the error banner.
 			this.velocityFailed.set(false);
+			const failed: string[] = [];
 			const timed = <T>(p: Promise<T>): Promise<[T, number]> => {
 				const start = performance.now();
 				return p.then((v) => [v, performance.now() - start] as [T, number]);
 			};
 			const [[stages, tStages], [hr, tHr], [velocity, tVelocity]] = await Promise.all([
-				timed(this.health.getSleepStages(date, abortSignal).catch(() => [] as SleepStage[])),
-				timed(this.health.getHeartRateIntraday(date, abortSignal).catch(() => [] as HeartRatePoint[])),
+				timed(this.health.getSleepStages(date, abortSignal).catch(missing(failed, "sleep stages", [] as SleepStage[]))),
+				timed(this.health.getHeartRateIntraday(date, abortSignal).catch(missing(failed, "heart rate", [] as HeartRatePoint[]))),
 				timed(
 					!this.showsLocation()
 						? Promise.resolve(null)
@@ -272,7 +293,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 				...t,
 				day: { stages: tStages, hr: tHr, velocity: tVelocity, total: performance.now() - t0 },
 			}));
-			return { stages, hr, velocity };
+			return { stages, hr, velocity, failed };
 		},
 	});
 
@@ -287,7 +308,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  reads through this snapshot to keep the previous day's content on
 	 *  screen — dimmed by `.stale` — until the new day lands, instead of
 	 *  blanking it. Updated in the same constructor effect. */
-	private readonly lastDay = signal<DayData>({ stages: [], hr: [], velocity: null });
+	private readonly lastDay = signal<DayData>({ stages: [], hr: [], velocity: null, failed: [] });
 	/** The day payload to render: the resolved value, or the last good one
 	 *  while a new day loads. */
 	private readonly displayedDay = computed(() =>
@@ -305,6 +326,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly sleepStages = computed(() => this.displayedDay().stages);
 	readonly intradayHr = computed(() => this.displayedDay().hr);
 	readonly velocity = computed(() => this.displayedDay().velocity);
+	/** The tables this view failed to load, as a phrase, or "" when none did. */
+	readonly missingTables = computed(() =>
+		listOf([...this.displayedDay().failed, ...this.windowData.value().failed]),
+	);
 
 	/** Set when a velocity load rejected (network/server error), cleared at
 	 *  the start of each load. Lets the view tell "this day's location data
@@ -577,6 +602,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	 *  no longer leaves the day stuck looking empty. */
 	retryDay(): void {
 		this.dayData.reload();
+	}
+
+	/** Re-run both loads: bound to the failed-tables banner. */
+	retryAll(): void {
+		this.dayData.reload();
+		this.windowData.reload();
 	}
 
 	/** Switch tabs and mirror the choice into `?tab=` so reload and

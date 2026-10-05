@@ -396,6 +396,38 @@ describe("DashboardComponent — velocity load failure", () => {
 	});
 });
 
+describe("DashboardComponent — a table that fails to load", () => {
+	beforeEach(() => TestBed.resetTestingModule());
+
+	const text = (fixture: ComponentFixture<unknown>): string =>
+		(fixture.nativeElement as HTMLElement).textContent ?? "";
+
+	it("names the tables that failed instead of drawing them empty", async () => {
+		// A failed fetch fell back to [] and drew as "no data" — the same
+		// sentence a genuinely empty week gets (DL-TS-ERROR-IGNORED).
+		const mock = makeHealthMock();
+		mock.health.getSleep = () => Promise.reject(new Error("backend error"));
+		mock.health.getHrv = () => Promise.reject(new Error("backend error"));
+		const fixture = setup(mock);
+		await boot(fixture);
+		mock.pending.get(todayLocal())?.resolve(vel());
+		await pump(fixture);
+
+		expect(text(fixture)).toContain("Couldn't load sleep and HRV");
+	});
+
+	it("says so for the day's own tables too", async () => {
+		const mock = makeHealthMock();
+		mock.health.getSleepStages = () => Promise.reject(new Error("backend error"));
+		const fixture = setup(mock);
+		await boot(fixture);
+		mock.pending.get(todayLocal())?.resolve(vel());
+		await pump(fixture);
+
+		expect(text(fixture)).toContain("Couldn't load sleep stages");
+	});
+});
+
 describe("DashboardComponent — a share link with location off", () => {
 	beforeEach(() => TestBed.resetTestingModule());
 
