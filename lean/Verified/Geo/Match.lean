@@ -663,20 +663,24 @@ def QCorridor.edgeWeightScaled (co : QCorridor) (a b : QPt) : Nat :=
 /-- Even-odd ray cast, cross-multiplied exact (the float side divides;
 `qPointInRing`). -/
 def qPointInRing (p : QPt) (ring : Array QPt) : Bool := Id.run do
-  let n := ring.size
+  -- One pass carrying the previous vertex: the `j` of the classic loop is
+  -- always `i - 1` (wrapping to the last), and reading each vertex once is
+  -- what this costs on the matcher's hot path (#1921) — four `getD`s an edge
+  -- were a third of the 09-30 walk stage.
+  let some last := ring.back? | return false
+  let mut yj := last.la
+  let mut xj := last.lo
   let mut inside := false
-  let mut j := n - 1
-  for i in [0:n] do
-    let yi := (ring.getD i default).la
-    let xi := (ring.getD i default).lo
-    let yj := (ring.getD j default).la
-    let xj := (ring.getD j default).lo
+  for v in ring do
+    let yi := v.la
+    let xi := v.lo
     if (yi > p.la) ≠ (yj > p.la) then
       let dy := yj - yi
       let lhs := (p.lo - xi) * dy
       let rhs := (xj - xi) * (p.la - yi)
       if (if dy > 0 then lhs < rhs else lhs > rhs) then inside := !inside
-    j := i
+    yj := yi
+    xj := xi
   return inside
 
 /-- An axis-aligned integer bounding box (the exact bbox reject). -/
@@ -2178,6 +2182,38 @@ theorem qMatchWalkSegment_path_sound (fixes : Array QPt) (ways : Array QWay)
 
 private def sq : Array QPt :=
   #[⟨0, 0, 0⟩, ⟨0, 100, 0⟩, ⟨100, 100, 0⟩, ⟨100, 0, 0⟩]
+
+/-- The classic two-index loop `qPointInRing` replaced, kept to pin it. -/
+private def qPointInRingRef (p : QPt) (ring : Array QPt) : Bool := Id.run do
+  let n := ring.size
+  let mut inside := false
+  let mut j := n - 1
+  for i in [0:n] do
+    let yi := (ring.getD i default).la
+    let xi := (ring.getD i default).lo
+    let yj := (ring.getD j default).la
+    let xj := (ring.getD j default).lo
+    if (yi > p.la) ≠ (yj > p.la) then
+      let dy := yj - yi
+      let lhs := (p.lo - xi) * dy
+      let rhs := (xj - xi) * (p.la - yi)
+      if (if dy > 0 then lhs < rhs else lhs > rhs) then inside := !inside
+    j := i
+  return inside
+
+/-- A concave "C" with a collinear run, so the grid below lands on vertices,
+    on edges and inside the notch. -/
+private def cRing : Array QPt :=
+  #[⟨0, 0, 0⟩, ⟨0, 60, 0⟩, ⟨20, 60, 0⟩, ⟨20, 20, 0⟩, ⟨40, 20, 0⟩, ⟨60, 20, 0⟩,
+    ⟨60, 60, 0⟩, ⟨80, 60, 0⟩, ⟨80, 0, 0⟩]
+
+-- The one-pass loop agrees with the classic one at every point of a grid over
+-- (and beyond) the C, and on the empty and one-vertex rings.
+#guard (List.range 21).all fun a => (List.range 17).all fun b =>
+  let q : QPt := ⟨(a : Int) * 5 - 10, (b : Int) * 5 - 10, 0⟩
+  qPointInRing q cRing == qPointInRingRef q cRing && qPointInRing q sq == qPointInRingRef q sq
+#guard qPointInRing ⟨0, 0, 0⟩ #[] == qPointInRingRef ⟨0, 0, 0⟩ #[]
+#guard qPointInRing ⟨0, 0, 0⟩ #[⟨0, 0, 0⟩] == qPointInRingRef ⟨0, 0, 0⟩ #[⟨0, 0, 0⟩]
 
 -- A point inside the unit-ish square is inside; one outside is not.
 #guard qPointInRing ⟨50, 50, 0⟩ sq == true
