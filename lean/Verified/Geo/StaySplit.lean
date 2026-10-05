@@ -2927,6 +2927,51 @@ def claimSteplessDepartures (segments : Array Seg) (points : Array PointF)
         | none => pure ()
   return out
 
+/-- A stepless walk beside a train joins it only when it is NOT walking-paced:
+    still (sat in the train at a terminus) or vehicle-paced (pulling out). A
+    stepless walk at a walker's pace is an escalator or a platform passage —
+    2026-07-01's in-station change at Baker Street — and stays a walk. -/
+def RIDE_EDGE_STILL_KMH : Float := 1
+def RIDE_EDGE_MOVING_KMH : Float := 10
+/-- How far before the walk step data must exist for "stepless" to be evidence. -/
+def RIDE_EDGE_DATA_LOOKBACK_S : Int := 600
+
+/-- Join each stepless "walk" directly beside a train to it unless it moved at a
+    walker's pace: a still or vehicle-paced walk the watch saw no step of is the
+    ride — pulling out while the GPS still drew a walk, or sitting in the train at
+    a terminus before it left
+    (2026-09-06: no steps 20:22–20:28 at Stanmore, the Jubilee terminus, served
+    as a 0 km/h walk before the ride). The step data must exist near the walk,
+    or no stepped minute is no evidence. -/
+def absorbSteplessRideEdges (segments : Array Seg) (steps : List FeasibilityStepPoint) :
+    Array Seg := Id.run do
+  if steps.isEmpty then return segments
+  let counted := fun (w : Seg) =>
+    steps.any fun s => decide (s.ts + 60 > w.startTs - RIDE_EDGE_DATA_LOOKBACK_S) && decide (s.ts < w.startTs)
+  let rideEdge := fun (w : Seg) =>
+    segMode w == "walking" && counted w
+      && (w.avgSpeed < RIDE_EDGE_STILL_KMH || w.avgSpeed ≥ RIDE_EDGE_MOVING_KMH)
+      && (firstStepped steps w.startTs w.endTs).isNone
+  let mut out : Array Seg := #[]
+  let mut i := 0
+  while i < segments.size do
+    let seg := segments[i]!
+    match segments[i + 1]? with
+    | some nxt =>
+      if rideEdge seg && segMode nxt == "train" then
+        -- the head: the walk joins the train that follows
+        out := out.push { nxt with startTs := seg.startTs }
+        i := i + 2
+        continue
+      if segMode seg == "train" && rideEdge nxt then
+        out := out.push { seg with endTs := nxt.endTs }
+        i := i + 2
+        continue
+    | none => pure ()
+    out := out.push seg
+    i := i + 1
+  return out
+
 end StepDeparture
 
 section DwellGuards

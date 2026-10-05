@@ -867,6 +867,10 @@ def passes (e : Env) : Array Pass := #[
         e.nearbyStations lat lon Verified.Geo.RailRunAnnotate.RAIL_RUN_STATION_RADIUS_M)
       (fun lat lon => e.linesAtPoint lat lon LINES_AT_POINT_DEFAULT_RADIUS_M)),
 
+  -- A stepless "walk" beside a train is the ride itself: pulling out while GPS
+  -- still drew a walk, or sitting in it at a terminus (09-06). Lean-only.
+  ("rideEdgeWalk", fun segs => StepDeparture.absorbSteplessRideEdges segs e.feasSteps),
+
   -- One ride `tubeHop` labelled as two legs back to back on one line, with
   -- nothing between, is joined (2026-10-01, Hendaye to San Sebastián). Narrow:
   -- re-running the assembler here merged real changes of trains.
@@ -1084,7 +1088,7 @@ private def PAIR_MIRROR : Env :=
     "interchangeSplit", "rideTailTrim", "walkThrough", "interchangeLabel",
     "vehicleSplit", "walkVehicleHandoff", "vehicleArrival", "vehicleEdgeShed",
     "rideHeadClaim", "stayArrivalClaim", "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
-    "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop",
+    "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
     "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz", "biomEnrich", "hsmmOverride", "finalMerge",
     "repairHandoff", "railReconcile2", "lineSubstitute", "changeoverWindow", "interchangeStayLabel",
     "boardingStayLabel", "boardAtWait", "alightAfterHold", "vehicleIdentity"]
@@ -1112,13 +1116,13 @@ def TS_CASCADE : Array String := #[
   -- #1855, #238, #325, #1891); they sit here so the containment check keeps holding for the order
   -- the TS had.
   "walkDwell", "stayEdgeWalk", "staySteplessDeparture",
-  "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop",
+  "reenrichSplitWalks", "boardingAnchor", "alightAnchor", "railJourney", "gapRide", "tubeHop", "rideEdgeWalk",
   "railThrough", "railSnap", "busEvidence", "busRoutes", "roadMatch", "walkMatch", "displayTz",
   "biomEnrich", "hsmmOverride", "finalMerge", "repairHandoff", "railReconcile2",
   "lineSubstitute", "changeoverWindow", "interchangeStayLabel", "boardingStayLabel",
   "boardAtWait", "alightAfterHold", "vehicleIdentity"]
 
-#guard TS_CASCADE.size == 50
+#guard TS_CASCADE.size == 51
 
 /-- Is `xs` an order-preserving subsequence of `ys`? -/
 private def isSubsequence : List String → List String → Bool
@@ -1714,6 +1718,16 @@ private def GAP : Env := { NO_LOOKUPS with points := gapTrack }
 #guard (runNamed GAP "gapRide" #[st 0 600, st 690 1300]).map (·.mode) ==
   #["stationary", "driving", "stationary"]
 
+-- A still, stepless "walk" (the stay before it had steps) straight into a train
+-- joins it; the same walk at a walker's pace does not.
+private def RIDEEDGE : Env := { NO_LOOKUPS with steps := #[{ ts := 100, steps := 30 }] }
+#guard (runNamed RIDEEDGE "rideEdgeWalk"
+    #[st 0 200, { wk 200 380 with avgSpeed := 0 }, { wk 380 900 with mode := "train" }]).map (·.mode) ==
+  #["stationary", "train"]
+#guard (runNamed RIDEEDGE "rideEdgeWalk"
+    #[st 0 200, { wk 200 380 with avgSpeed := 4 }, { wk 380 900 with mode := "train" }]).map (·.mode) ==
+  #["stationary", "walking", "train"]
+
 #guard (runNamed STEPLESS "staySteplessDeparture" #[st 0 1200, wk 1200 3000]).map (·.startTs) ==
   #[0, 1500]
 
@@ -2015,7 +2029,7 @@ def witnessed : Array String :=
 
 -- `lineSubstitute` fires on a leg whose line the relations rule out.
 #guard fires SUB "lineSubstitute" #[leg "Euston Square → King's Cross St Pancras · Victoria Line"]
-#guard witnessed.size == 50
+#guard witnessed.size == 51
 #guard unwitnessed.all (passNames NO_LOOKUPS).contains
 -- The two lists partition the wired set, so a new pass must be classified.
 #guard witnessed.size + unwitnessed.size == (passNames NO_LOOKUPS).size
