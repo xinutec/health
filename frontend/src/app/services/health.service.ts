@@ -357,6 +357,14 @@ export interface BodyDay {
   body_fat_pct: number | string | null;
 }
 
+/** `/api/body/before`: the window `/api/body?days=N` covers, and the last
+ *  weight and body fat recorded before it (none for a share viewer). */
+export interface BodyBefore {
+  since: string;
+  weight: { date: string; value: number } | null;
+  bodyFat: { date: string; value: number } | null;
+}
+
 export interface ShareStatus {
   active: boolean;
   token?: string;
@@ -463,6 +471,12 @@ export class HealthService {
     const res = await this.fetch(`/api/body?days=${days}`, { signal });
     if (!res.ok) throw new Error("Failed to fetch body");
     return HealthService.body<BodyDay[]>(res);
+  }
+
+  async getBodyBefore(days = 30, signal?: AbortSignal): Promise<BodyBefore> {
+    const res = await this.fetch(`/api/body/before?days=${days}`, { signal });
+    if (!res.ok) throw new Error("Failed to fetch body before");
+    return HealthService.body<BodyBefore>(res);
   }
 
   async getActivity(days = 30, signal?: AbortSignal): Promise<ActivityDay[]> {

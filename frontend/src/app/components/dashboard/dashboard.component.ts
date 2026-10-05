@@ -12,6 +12,7 @@ import { MatTabsModule } from "@angular/material/tabs";
 import { FormsModule } from "@angular/forms";
 import {
 	type ActivityDay,
+	type BodyBefore,
 	type BodyDay,
 	HealthService,
 	type HeartRatePoint,
@@ -79,6 +80,8 @@ interface WindowData {
 	breathing: BreathingDay[];
 	spo2: Spo2Day[];
 	body: BodyDay[];
+	/** Null when the read failed: the chart then has no estimate to draw. */
+	bodyBefore: BodyBefore | null;
 }
 
 /** Client-side fetch durations (ms) for the performance panel. */
@@ -199,13 +202,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
 		// `trendDays` key thereafter means it reloads only when the span
 		// changes.
 		params: () => (this.dataReady() ? this.trendDays() : undefined),
-		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [], spo2: [] },
+		defaultValue: { activity: [], sleep: [], hrv: [], body: [], breathing: [], spo2: [], bodyBefore: null },
 		loader: async ({ params: days, abortSignal }) => {
 			const t0 = performance.now();
 			const timed = <T>(p: Promise<T>): Promise<[T, number]> => {
 				const start = performance.now();
 				return p.then((v) => [v, performance.now() - start] as [T, number]);
 			};
+			// Started first so it runs alongside the tables. Not in the timings
+			// panel: one indexed row read, and it is not a table.
+			const bodyBeforeP = this.health.getBodyBefore(days, abortSignal).catch(() => null);
 			const [[activity, tActivity], [sleep, tSleep], [hrv, tHrv], [body, tBody], [breathing, tBreathing], [spo2, tSpo2]] = await Promise.all([
 				timed(this.health.getActivity(days, abortSignal).catch(() => [] as ActivityDay[])),
 				timed(this.health.getSleep(days, abortSignal).catch(() => [] as SleepLog[])),
@@ -214,6 +220,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 				timed(this.health.getBreathing(days, abortSignal).catch(() => [] as BreathingDay[])),
 				timed(this.health.getSpo2(days, abortSignal).catch(() => [] as Spo2Day[])),
 			]);
+			const bodyBefore = await bodyBeforeP;
 			this.timings.update((t) => ({
 				...t,
 				window: {
@@ -226,7 +233,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 					total: performance.now() - t0,
 				},
 			}));
-			return { activity, sleep, hrv, body, breathing, spo2 };
+			return { activity, sleep, hrv, body, breathing, spo2, bodyBefore };
 		},
 	});
 
@@ -292,6 +299,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 	readonly sleep = computed(() => this.windowData.value().sleep);
 	readonly hrv = computed(() => this.windowData.value().hrv);
 	readonly body = computed(() => this.windowData.value().body);
+	readonly bodyBefore = computed(() => this.windowData.value().bodyBefore);
 	readonly breathing = computed(() => this.windowData.value().breathing);
 	readonly spo2 = computed(() => this.windowData.value().spo2);
 	readonly sleepStages = computed(() => this.displayedDay().stages);

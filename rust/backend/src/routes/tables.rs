@@ -277,6 +277,94 @@ days_back_handler!(
     SQL_BODY,
     "SELECT * FROM body WHERE user_id = ? AND date >= ? ORDER BY date"
 );
+/// `GET /body/before?days=N` — the window `/body?days=N` covers, and the last
+/// weight and body fat recorded BEFORE it, so the chart can estimate the
+/// window's first day between that reading and the first one inside.
+///
+/// ⚠ A share viewer gets no readings: the window's edge is the share's, and
+/// what lies before it is exactly what the link does not show.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyBefore {
+    pub since: String,
+    pub weight: Option<Reading>,
+    pub body_fat: Option<Reading>,
+}
+
+#[derive(serde::Serialize)]
+pub struct Reading {
+    pub date: String,
+    pub value: f64,
+}
+
+fn reading(row: Option<sqlx::mysql::MySqlRow>) -> Result<Option<Reading>> {
+    row.map(|r| {
+        Ok(Reading {
+            date: r.try_get("d")?,
+            value: r.try_get("v")?,
+        })
+    })
+    .transpose()
+}
+
+pub async fn body_before(
+    State(st): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Query(p): Query<DaysParams>,
+) -> Response {
+    let run = async {
+        let Some(since) = since_date(&session, p.days.as_deref())? else {
+            return Ok(bad_request("days must be an integer between 1 and 365"));
+        };
+        let (weight, body_fat) = if session.share_viewer.is_some() {
+            (None, None)
+        } else {
+            // ⚠ CAST and DATE_FORMAT in SQL: a `DECIMAL` and a `DATE` decode
+            // through sqlx only by accident of the row in hand.
+            let weight = sqlx::query(
+                "SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, CAST(weight_kg AS DOUBLE) AS v \
+                 FROM body WHERE user_id = ? AND date < ? AND weight_kg IS NOT NULL \
+                 ORDER BY date DESC LIMIT 1",
+            )
+            .bind(&session.user_id)
+            .bind(&since)
+            .fetch_optional(&st.pool)
+            .await?;
+            let body_fat = sqlx::query(
+                "SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, CAST(body_fat_pct AS DOUBLE) AS v \
+                 FROM body WHERE user_id = ? AND date < ? AND body_fat_pct IS NOT NULL \
+                 ORDER BY date DESC LIMIT 1",
+            )
+            .bind(&session.user_id)
+            .bind(&since)
+            .fetch_optional(&st.pool)
+            .await?;
+            (reading(weight)?, reading(body_fat)?)
+        };
+        Ok::<_, anyhow::Error>(
+            Json(BodyBefore {
+                since,
+                weight,
+                body_fat,
+            })
+            .into_response(),
+        )
+    };
+    match run.await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, endpoint = "body_before", "read failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(crate::error::ErrorBody {
+                    error: "internal".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
 days_back_handler!(
     spo2,
     SQL_SPO2,

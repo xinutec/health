@@ -71,6 +71,7 @@ pub fn router(state: AppState) -> Router {
         .route("/heartrate/zones", get(tables::heartrate_zones))
         .route("/heartrate/intraday", get(tables::heartrate_intraday))
         .route("/body", get(tables::body))
+        .route("/body/before", get(tables::body_before))
         .route("/spo2", get(tables::spo2))
         .route("/hrv", get(tables::hrv))
         .route("/breathing", get(tables::breathing))

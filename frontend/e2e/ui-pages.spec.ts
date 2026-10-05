@@ -12,6 +12,7 @@ import {
 
 import type {
 	ActivityDay,
+	BodyBefore,
 	BodyDay,
 	BreathingDay,
 	HeartRatePoint,
@@ -83,10 +84,20 @@ const SPO2 = [
 	{ date: day(-1), avg_value: "96.2", min_value: "93.0", max_value: "98.9" },
 ] satisfies Spo2Day[];
 
+// Sparse, like real weigh-ins: the first day of the window has none, so the
+// chart estimates it from BODY_BEFORE.
 const BODY = [
-	{ date: day(0), weight_kg: "74.2", bmi: "22.9", body_fat_pct: "18.5" },
-	{ date: day(-1), weight_kg: "74.5", bmi: "23.0", body_fat_pct: "18.7" },
+	{ date: day(-23), weight_kg: "74.9", bmi: null, body_fat_pct: "18.9" },
+	{ date: day(-16), weight_kg: "75.3", bmi: null, body_fat_pct: "19.2" },
+	{ date: day(-6), weight_kg: "74.5", bmi: null, body_fat_pct: "18.7" },
+	{ date: day(0), weight_kg: "74.2", bmi: null, body_fat_pct: "18.5" },
 ] satisfies BodyDay[];
+
+const BODY_BEFORE = {
+	since: day(-30),
+	weight: { date: day(-36), value: 75.6 },
+	bodyFat: { date: day(-36), value: 19.4 },
+} satisfies BodyBefore;
 
 // ⚠ THE INSTANT AND THE ZONE ARE THE WHOLE WIRE now (#1532): the route repairs
 // a missing instant and no longer serves the wall clock. This fixture carried
@@ -172,6 +183,7 @@ async function mockApi(page: Page): Promise<void> {
 	await page.route("**/api/activity*", (r) => r.fulfill({ json: ACTIVITY }));
 	await page.route("**/api/hrv*", (r) => r.fulfill({ json: HRV }));
 	await page.route("**/api/body*", (r) => r.fulfill({ json: BODY }));
+	await page.route("**/api/body/before*", (r) => r.fulfill({ json: BODY_BEFORE }));
 	await page.route("**/api/breathing*", (r) => r.fulfill({ json: BREATHING }));
 	await page.route("**/api/spo2*", (r) => r.fulfill({ json: SPO2 }));
 	await page.route("**/api/sleep*", (r) => r.fulfill({ json: SLEEP }));
