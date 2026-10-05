@@ -95,6 +95,8 @@ const POST_TS: &[&str] = &[
     // The second San Sebastián day: the beach and the park named by their
     // outlines (10-03's rules), two cafés and the dinner wrong for want of OSM.
     "2026-10-03.md",
+    // The third: every row served right once the user fixed two venues in OSM.
+    "2026-10-04.md",
 ];
 
 /// ⚠ **`2026-06-24` NO LONGER CARRIES ITS TS-ERA SHAPE**, and this is the note
@@ -118,9 +120,9 @@ const TS_FILES: usize = 31;
 const TS_ROWS: usize = 400;
 const TS_ENFORCEABLE: usize = 373;
 const TS_UNPARSEABLE: usize = 5;
-/// 4 since 2026-10-03 joined; 2026-10-02's `Times: Europe/Madrid` was the
-/// corpus's first day narrated in Spanish time, 10-03 the second.
-const TS_DECLARED_TZ: usize = 4;
+/// 5 since 2026-10-04 joined; 2026-10-02's `Times: Europe/Madrid` was the
+/// corpus's first day narrated in Spanish time, 10-03 and 10-04 the next.
+const TS_DECLARED_TZ: usize = 5;
 /// `groundTruthJourneys` over the same corpus, same source, same day.
 const TS_JOURNEYS: usize = 93;
 const TS_LEGS: usize = 229;
